@@ -1716,6 +1716,21 @@
     <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
   {/if}
 
+  <!-- Phase 116 (issue #119, Akzeptanzkriterium 5) — an account with no linked Employee row makes
+       every employee-scoped fetch in loadAll() a no-op (Promise.resolve). Without this the month
+       simply looked empty. Rendered only once loading has finished, so it cannot flash.
+       role="status", not role="alert": this is a standing condition, not a just-happened event. -->
+  {#if !loading && !hasEmployeeLink}
+    <div class="alert alert-warning" role="status" data-testid="no-employee-link-notice">
+      <span>ℹ</span>
+      <span>
+        <strong>Kein Mitarbeiterprofil verknüpft.</strong>
+        Diesem Konto ist kein Mitarbeiterprofil zugeordnet. Soll-Zeiten, Urlaub und Saldo können deshalb
+        nicht geladen werden. Bitte die Betriebsleitung kontaktieren.
+      </span>
+    </div>
+  {/if}
+
   <!-- ── Metrics row (design variant 1c "Fortschritt", quick 260820-elk) ───────
        Month card (nav + progress bar) + quiet Konto card. The metrics have left the
        month bar entirely — MonthBar is called WITHOUT `stats`/`statRenders` below, so it
@@ -1730,8 +1745,8 @@
       {workdaysSoFar}
       {runningCount}
       isLocked={monthIsLocked || monthMetrics.closed}
-      {loading}
-      error={!!error && !loading}
+      loading={saldoCardState === "loading"}
+      error={saldoCardState === "error"}
       onRetry={loadAll}
     >
       {#snippet monthNav()}
@@ -1894,199 +1909,218 @@
   <!-- ── Listenansicht ──────────────────────────────────────────────────── -->
   {#if teView === "list"}
     <div class="card card-animate list-card" data-testid="time-entries-list">
-      <div class="table-wrapper">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Datum</th>
-              <th>Von</th>
-              <th>Bis</th>
-              <th>Pause</th>
-              <th>Netto</th>
-              {#if isShiftBased && monthSaldo}
-                <th title="Kumulierter Gesamtsaldo bis zu diesem Tag (§615)">Gesamtsaldo</th>
-              {/if}
-              <th>Quelle</th>
-              <th>Notiz</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each allEntries as slot (slot.id)}
-              {#if slot.kind === "TE"}
-                {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
-                {@const slotArbzg = arbzgDayMap.get(slotDate)}
-                <tr
-                  class:row-invalid={slot.isInvalid}
-                  class:row-focus={slot.id === focusedEntryId}
-                  class:row-day-focus={slotDate === selectedDate && slot.id !== focusedEntryId}
-                  data-testid={`time-entry-row-${slot.id}`}
-                >
-                  <td class="font-mono"
-                    >{new Date(slot.startTime).toLocaleDateString("de-DE", {
-                      day: "2-digit",
-                      month: "2-digit",
-                      year: "numeric",
-                    })}{#if slotArbzg}
-                      <span class="list-arbzg-hint"
-                        >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
-                          class="arbzg-tooltip"
-                          >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
-                              />{/if}{/each}</span
-                        ></span
-                      >
-                    {/if}</td
+      {#if listState === "loading"}
+        <!-- Phase 116 (issue #119, Akzeptanzkriterium 1) — mirrors the calendar branch above:
+             while loading, show a skeleton, never a claim about the month's contents. -->
+        <div class="list-skeleton" data-testid="time-entries-list-skeleton" aria-hidden="true">
+          {#each Array(6) as _, i (i)}<div class="skeleton list-skel-row"></div>{/each}
+        </div>
+      {:else}
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Datum</th>
+                <th>Von</th>
+                <th>Bis</th>
+                <th>Pause</th>
+                <th>Netto</th>
+                {#if isShiftBased && monthSaldo}
+                  <th title="Kumulierter Gesamtsaldo bis zu diesem Tag (§615)">Gesamtsaldo</th>
+                {/if}
+                <th>Quelle</th>
+                <th>Notiz</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each allEntries as slot (slot.id)}
+                {#if slot.kind === "TE"}
+                  {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
+                  {@const slotArbzg = arbzgDayMap.get(slotDate)}
+                  <tr
+                    class:row-invalid={slot.isInvalid}
+                    class:row-focus={slot.id === focusedEntryId}
+                    class:row-day-focus={slotDate === selectedDate && slot.id !== focusedEntryId}
+                    data-testid={`time-entry-row-${slot.id}`}
                   >
-                  <td class="font-mono">{fmtTime(slot.startTime)}</td>
-                  <td class="font-mono">
-                    {#if slot.endTime}{fmtTime(slot.endTime)}
-                    {:else}<span class="badge badge-green">Aktiv</span>{/if}
-                  </td>
-                  <td>
-                    {fmtBreaks(slot)}
-                    {#if enforceBreakConfirmation && isUnconfirmedBreak(slot)}
-                      <!-- Phase 112 — only AUTO is badged here. breakStatus is @default(CONFIRMED)
-                           in the schema, so badging every state would put a pill on every row of
-                           every month and destroy the signal. The modal still shows all three. -->
-                      <span
-                        class="badge {breakBadgeClass(slot.breakStatus)} break-cell-badge"
-                        data-testid={`time-entry-row-${slot.id}-break-badge`}
-                        title="Automatisch eingetragene Pflichtpause nach § 4 ArbZG — bitte bestätigen"
-                        >{breakBadgeLabel(slot.breakStatus)}</span
-                      >
-                    {/if}
-                  </td>
-                  <td class="font-mono font-medium">{slotNet(slot)}</td>
-                  {#if isShiftBased && monthSaldo}
-                    {@const cum = monthSaldoDayMap.get(slotDate)}
-                    <td class="font-mono {cum != null ? balClass(cum) : ''}">
-                      {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
+                    <td class="font-mono"
+                      >{new Date(slot.startTime).toLocaleDateString("de-DE", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                      })}{#if slotArbzg}
+                        <span class="list-arbzg-hint"
+                          >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
+                            class="arbzg-tooltip"
+                            >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
+                                />{/if}{/each}</span
+                          ></span
+                        >
+                      {/if}</td
+                    >
+                    <td class="font-mono">{fmtTime(slot.startTime)}</td>
+                    <td class="font-mono">
+                      {#if slot.endTime}{fmtTime(slot.endTime)}
+                      {:else}<span class="badge badge-green">Aktiv</span>{/if}
                     </td>
-                  {/if}
-                  <td
-                    ><span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span
-                    ></td
-                  >
-                  <td class="note-cell text-muted">
-                    {#if slot.isInvalid && slot.invalidReason}
-                      <span class="invalid-reason">{slot.invalidReason}</span>
-                    {:else}
-                      {slot.note ?? "---"}
-                    {/if}
-                  </td>
-                  <td class="action-cell">
-                    {#if slot.isLocked}
-                      <!-- Locked entries are read-only (D-08). Per Phase 73-03 +
-                         74-01: render the buttons as disabled instead of
-                         hiding so the row testids stay queryable for the
-                         locked-month spec — matches the
-                         `getByTestId(...-edit).toBeDisabled()` contract. -->
-                      <span class="row-actions row-actions--visible">
+                    <td>
+                      {fmtBreaks(slot)}
+                      {#if enforceBreakConfirmation && isUnconfirmedBreak(slot)}
+                        <!-- Phase 112 — only AUTO is badged here. breakStatus is @default(CONFIRMED)
+                             in the schema, so badging every state would put a pill on every row of
+                             every month and destroy the signal. The modal still shows all three. -->
                         <span
-                          class="badge badge-locked"
-                          title="Monat ist abgeschlossen"
-                          data-testid={`time-entry-row-${slot.id}-locked-badge`}>🔒 Gesperrt</span
+                          class="badge {breakBadgeClass(slot.breakStatus)} break-cell-badge"
+                          data-testid={`time-entry-row-${slot.id}-break-badge`}
+                          title="Automatisch eingetragene Pflichtpause nach § 4 ArbZG — bitte bestätigen"
+                          >{breakBadgeLabel(slot.breakStatus)}</span
                         >
-                        <button
-                          class="btn-icon"
-                          disabled
-                          title="Eintrag gesperrt"
-                          data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
-                        >
-                        <button
-                          class="btn-icon btn-icon-danger"
-                          disabled
-                          title="Eintrag gesperrt"
-                          data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
-                        >
-                      </span>
-                    {:else if withdrawConfirmId === slot.id}
-                      <!-- Phase 96 (RETRO-17) — withdraw confirm, mirrors the
-                           delete-confirm pattern above with its own label/testids. -->
-                      <span class="del-confirm">
-                        <span class="text-muted" style="font-size:0.8rem;">Zurückziehen?</span>
-                        <button
-                          class="btn btn-sm btn-danger"
-                          onclick={() => withdrawRetroRequest(slot)}
-                          data-testid={`time-entry-row-${slot.id}-confirm-withdraw`}>Ja</button
-                        >
-                        <button
-                          class="btn btn-sm btn-ghost"
-                          onclick={() => (withdrawConfirmId = "")}
-                          data-testid={`time-entry-row-${slot.id}-cancel-withdraw`}>Nein</button
-                        >
-                      </span>
-                    {:else}
-                      <span class="row-actions row-actions--visible">
-                        <button
-                          class="btn-icon"
-                          onclick={() => openEdit(slot)}
-                          title="Bearbeiten"
-                          data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
-                        >
-                        {#if isPendingNachtrag(slot)}
-                          <!-- Phase 96 (RETRO-17/D-11) — a pending Nachtrag is
-                               withdrawn via DELETE /retro-entry-requests/:id
-                               (soft-deletes request + coupled entry), not the
-                               plain DELETE /time-entries/:id (which would
-                               re-run the retro-window guard and 403). -->
-                          <button
-                            class="btn-icon btn-icon-danger"
-                            onclick={() => (withdrawConfirmId = slot.id)}
-                            title="Zurückziehen"
-                            data-testid={`time-entry-row-${slot.id}-withdraw`}>↩️</button
+                      {/if}
+                    </td>
+                    <td class="font-mono font-medium">{slotNet(slot)}</td>
+                    {#if isShiftBased && monthSaldo}
+                      {@const cum = monthSaldoDayMap.get(slotDate)}
+                      <td class="font-mono {cum != null ? balClass(cum) : ''}">
+                        {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
+                      </td>
+                    {/if}
+                    <td
+                      ><span class="badge {sourceBadge(slot.source)}"
+                        >{sourceLabel(slot.source)}</span
+                      ></td
+                    >
+                    <td class="note-cell text-muted">
+                      {#if slot.isInvalid && slot.invalidReason}
+                        <span class="invalid-reason">{slot.invalidReason}</span>
+                      {:else}
+                        {slot.note ?? "---"}
+                      {/if}
+                    </td>
+                    <td class="action-cell">
+                      {#if slot.isLocked}
+                        <!-- Locked entries are read-only (D-08). Per Phase 73-03 +
+                           74-01: render the buttons as disabled instead of
+                           hiding so the row testids stay queryable for the
+                           locked-month spec — matches the
+                           `getByTestId(...-edit).toBeDisabled()` contract. -->
+                        <span class="row-actions row-actions--visible">
+                          <span
+                            class="badge badge-locked"
+                            title="Monat ist abgeschlossen"
+                            data-testid={`time-entry-row-${slot.id}-locked-badge`}>🔒 Gesperrt</span
                           >
-                        {:else}
+                          <button
+                            class="btn-icon"
+                            disabled
+                            title="Eintrag gesperrt"
+                            data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
+                          >
                           <button
                             class="btn-icon btn-icon-danger"
-                            onclick={() => openDeleteDialog(slot.id)}
-                            title="Löschen"
+                            disabled
+                            title="Eintrag gesperrt"
                             data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
                           >
-                        {/if}
-                      </span>
-                    {/if}
-                  </td>
-                </tr>
-              {:else}
-                <!-- 260611-ly6 — BS row: read-only, single-day, no times, no breaks, no actions.
-                     Distinct data-testid namespace (`bs-row-*`) so it never collides with the
-                     existing `time-entry-row-*` testids used by E2E specs. -->
-                <tr class="row-bs" data-testid={`bs-row-${slot.id}`}>
-                  <td class="font-mono"
-                    >{new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
-                      day: "2-digit",
-                      month: "2-digit",
-                      year: "numeric",
-                    })}</td
-                  >
-                  <td class="font-mono text-muted">—</td>
-                  <td class="font-mono text-muted">—</td>
-                  <td class="text-muted">—</td>
-                  <td class="font-mono font-medium text-muted">—</td>
-                  <td><span class="badge badge-blue">Berufsschule</span></td>
-                  <td class="note-cell text-muted"
-                    >{slot.source === "PATTERN" ? "Automatisch (Muster)" : "Manuell eingefügt"}</td
-                  >
-                  <td class="action-cell">
-                    <span
-                      class="text-muted"
-                      style="font-size: 0.75rem;"
-                      title="Berufsschultage werden unter Schichten verwaltet">Schichten →</span
+                        </span>
+                      {:else if withdrawConfirmId === slot.id}
+                        <!-- Phase 96 (RETRO-17) — withdraw confirm, mirrors the
+                             delete-confirm pattern above with its own label/testids. -->
+                        <span class="del-confirm">
+                          <span class="text-muted" style="font-size:0.8rem;">Zurückziehen?</span>
+                          <button
+                            class="btn btn-sm btn-danger"
+                            onclick={() => withdrawRetroRequest(slot)}
+                            data-testid={`time-entry-row-${slot.id}-confirm-withdraw`}>Ja</button
+                          >
+                          <button
+                            class="btn btn-sm btn-ghost"
+                            onclick={() => (withdrawConfirmId = "")}
+                            data-testid={`time-entry-row-${slot.id}-cancel-withdraw`}>Nein</button
+                          >
+                        </span>
+                      {:else}
+                        <span class="row-actions row-actions--visible">
+                          <button
+                            class="btn-icon"
+                            onclick={() => openEdit(slot)}
+                            title="Bearbeiten"
+                            data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
+                          >
+                          {#if isPendingNachtrag(slot)}
+                            <!-- Phase 96 (RETRO-17/D-11) — a pending Nachtrag is
+                                 withdrawn via DELETE /retro-entry-requests/:id
+                                 (soft-deletes request + coupled entry), not the
+                                 plain DELETE /time-entries/:id (which would
+                                 re-run the retro-window guard and 403). -->
+                            <button
+                              class="btn-icon btn-icon-danger"
+                              onclick={() => (withdrawConfirmId = slot.id)}
+                              title="Zurückziehen"
+                              data-testid={`time-entry-row-${slot.id}-withdraw`}>↩️</button
+                            >
+                          {:else}
+                            <button
+                              class="btn-icon btn-icon-danger"
+                              onclick={() => openDeleteDialog(slot.id)}
+                              title="Löschen"
+                              data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
+                            >
+                          {/if}
+                        </span>
+                      {/if}
+                    </td>
+                  </tr>
+                {:else}
+                  <!-- 260611-ly6 — BS row: read-only, single-day, no times, no breaks, no actions.
+                       Distinct data-testid namespace (`bs-row-*`) so it never collides with the
+                       existing `time-entry-row-*` testids used by E2E specs. -->
+                  <tr class="row-bs" data-testid={`bs-row-${slot.id}`}>
+                    <td class="font-mono"
+                      >{new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                      })}</td
                     >
-                  </td>
-                </tr>
-              {/if}
-            {/each}
-          </tbody>
-        </table>
-      </div>
-      {#if allEntries.length === 0}
-        <div class="empty-state">
-          <span class="empty-icon">📋</span>
-          <h3>Keine Einträge</h3>
-          <p class="text-muted">Keine Zeiteinträge in diesem Monat.</p>
+                    <td class="font-mono text-muted">—</td>
+                    <td class="font-mono text-muted">—</td>
+                    <td class="text-muted">—</td>
+                    <td class="font-mono font-medium text-muted">—</td>
+                    <td><span class="badge badge-blue">Berufsschule</span></td>
+                    <td class="note-cell text-muted"
+                      >{slot.source === "PATTERN"
+                        ? "Automatisch (Muster)"
+                        : "Manuell eingefügt"}</td
+                    >
+                    <td class="action-cell">
+                      <span
+                        class="text-muted"
+                        style="font-size: 0.75rem;"
+                        title="Berufsschultage werden unter Schichten verwaltet">Schichten →</span
+                      >
+                    </td>
+                  </tr>
+                {/if}
+              {/each}
+            </tbody>
+          </table>
         </div>
+        {#if listState === "no-employee"}
+          <div class="empty-state" data-testid="time-entries-list-no-employee">
+            <span class="empty-icon">👤</span>
+            <h3>Kein Mitarbeiterprofil</h3>
+            <p class="text-muted">
+              Ohne verknüpftes Mitarbeiterprofil können keine Zeiteinträge angezeigt werden.
+            </p>
+          </div>
+        {:else if listState === "empty"}
+          <div class="empty-state">
+            <span class="empty-icon">📋</span>
+            <h3>Keine Einträge</h3>
+            <p class="text-muted">Keine Zeiteinträge in diesem Monat.</p>
+          </div>
+        {/if}
       {/if}
     </div>
   {/if}
@@ -2608,6 +2642,17 @@
   }
   .list-card .table-wrapper {
     overflow-x: auto;
+  }
+  /* Phase 116 (issue #119) — list-view loading skeleton. Reuses the global .skeleton shimmer
+     recipe (app.css:883); only the row geometry is page-scoped. */
+  .list-card .list-skeleton {
+    display: grid;
+    gap: 0.75rem;
+    padding: 1.25rem 1.5rem;
+  }
+  .list-card .list-skel-row {
+    height: 2.25rem;
+    border-radius: var(--r-sm);
   }
   .list-card .empty-state {
     padding: 48px 24px;
