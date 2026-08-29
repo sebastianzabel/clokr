@@ -26,34 +26,40 @@
  * the phase plan: sourcing the hero card from /dashboard/my-week while the entry card keeps
  * reading /time-entries would re-create the very two-source split this phase removes.
  *
- * ENTRY SELECTION — a deliberate mirror of `apps/api/src/services/clock/resolver.ts:44-77`:
+ * ENTRY SELECTION — a deliberate mirror of `apps/api/src/services/clock/resolver.ts`
+ * (state lookup: open entry first, otherwise the closed one with the latest `endTime`):
  * the open entry wins if there is one; otherwise the closed entry with the LATEST `endTime`
  * (the resolver uses `orderBy: { endTime: "desc" }`). That is what makes the entry this
  * module names provably the entry the resolver would REOPEN — and therefore what makes
  * `reopenGapStartLabel()` able to state the gap-break start as fact.
  *
- * `isInvalid` IS DELIBERATELY NOT FILTERED — and that is the opposite of what a naive
- * "mirror the server" reading would do. `resolvePresenceState` filters it and the resolver's
- * READ lookup filters it, but the resolver's WRITE path does not, and the day-uniqueness
- * index is partial:
+ * `isInvalid` IS DELIBERATELY NOT FILTERED. Since Phase 118 (Issue #124) the resolver's READ
+ * lookup no longer filters it either — this module is therefore an exact mirror of the
+ * server, no longer a deliberate divergence. Why the filter would be wrong at either end:
  *   - An `isInvalid: true` OPEN entry on today is reachable in production
- *     (`attendance-checker.ts:236-266` auto-invalidates open entries older than
- *     `autoDeleteOpenHours`, default 14 h, i.e. on the same calendar day; `resolver.ts:82-91`
- *     creates one directly when leave is CANCELLATION_REQUESTED).
+ *     (`attendance-checker.ts` auto-invalidates open entries older than `autoDeleteOpenHours`,
+ *     default 14 h, i.e. on the same calendar day; the resolver's START branch creates one
+ *     directly when leave is CANCELLATION_REQUESTED).
  *   - WITH the filter such a day would resolve to "idle" → the card offers Einstempeln →
  *     the resolver's START branch calls `timeEntry.create` → the partial unique index
- *     `TimeEntry_employeeId_date_unique_not_deleted` rejects it → P2002 → HTTP 500.
- *   - WITHOUT the filter the day resolves to "running" → the card offers Ausstempeln →
- *     the resolver finds no valid open entry → CONFLICT NOT_CLOCKED_IN → HTTP 409, which is
- *     exactly today's behaviour.
- * A confusing 409 is strictly better than a 500. Do NOT "align this with presence.ts".
+ *     `TimeEntry_employeeId_date_unique_not_deleted` rejects it → P2002. Phase 118 does catch
+ *     that P2002 as a 409, but the user would still get a conflict instead of the action they
+ *     need.
+ *   - WITHOUT the filter the day resolves to "running" → the card offers Ausstempeln → the
+ *     resolver finds the open entry and closes it. Since Phase 118 that is the success case;
+ *     before it, this ended in CONFLICT NOT_CLOCKED_IN → HTTP 409 (exactly the finding from
+ *     Issue #124).
+ * Do NOT reintroduce this filter here.
  *
- * UMFANGSGRENZE: `apps/api/src/services/clock/resolver.ts` and `state-machine.ts` MUST NOT be
- * changed. Their REOPEN behaviour is deliberate and regression-tested for NFC/WIFI double
- * taps (`services/clock/__tests__/consolidate.cross-source.test.ts`, "2026-06-04 prod
- * incident"). This module is the UI-side answer to that: it removes the ACCIDENTAL path into
- * REOPEN. It is NOT an authorisation control — anyone can POST /clock-in directly and still
- * reach REOPEN, by design. Nothing here may be mistaken for a security boundary.
+ * HISTORY: Phase 115 set `resolver.ts`/`state-machine.ts` as its scope boundary and defused
+ * the REOPEN semantics only on the UI side. Phase 118 (Issue #124) opened the resolver itself:
+ * the READ lookup no longer filters `isInvalid`, and a row coupled to a PENDING Zeitnachtrag is
+ * rejected as CONFLICT RETRO_PENDING. `state-machine.ts` remains unchanged. The REOPEN
+ * semantics themselves stay regression-tested
+ * (`services/clock/__tests__/consolidate.cross-source.test.ts`, 2026-06-04 prod incident).
+ * This module still removes the ACCIDENTAL path into REOPEN. It is NOT an authorisation
+ * control — anyone who calls POST /clock-in directly still reaches REOPEN, by design. Nothing
+ * here may be mistaken for a security boundary.
  */
 
 export type DayStateKind = "running" | "finished" | "idle";
@@ -86,14 +92,14 @@ export const IDLE_DAY_STATE: DayState = { kind: "idle", entry: null, isLocked: f
 export function resolveDayState(entries: ClockDayEntry[] | null | undefined): DayState {
   const rows = entries ?? [];
 
-  // Open entry wins — mirrors resolver.ts:44-52, which looks up `endTime: null` FIRST.
+  // Open entry wins — mirrors resolver.ts's state lookup, which checks for `endTime: null` FIRST.
   const open = rows.find((e) => e.endTime === null || e.endTime === undefined);
   if (open) {
     return { kind: "running", entry: open, isLocked: open.isLocked === true };
   }
 
-  // Otherwise the closed entry with the LATEST endTime — mirrors the resolver's
-  // `orderBy: { endTime: "desc" }` (resolver.ts:54-66), so we name the row it would REOPEN.
+  // Otherwise the closed entry with the LATEST endTime — mirrors the resolver's closed-entry
+  // lookup, which orders by `orderBy: { endTime: "desc" }`, so we name the row it would REOPEN.
   const closed = rows
     .filter((e) => !!e.endTime)
     .sort((a, b) => new Date(b.endTime!).getTime() - new Date(a.endTime!).getTime())[0];
@@ -121,9 +127,9 @@ export function primaryClockLabel(day: DayState): "Einstempeln" | "Ausstempeln" 
 /**
  * May the finished day be deliberately reopened (behind a Rückfrage)?
  *
- * A locked month is excluded: `resolver.ts:117-123` answers a REOPEN on a locked entry with
- * CONFLICT MONTH_LOCKED → HTTP 409. Offering the action there would be the same disease this
- * phase treats — the UI proposing something the server refuses.
+ * A locked month is excluded: `resolver.ts`'s REOPEN branch answers a REOPEN on a locked
+ * entry with CONFLICT MONTH_LOCKED → HTTP 409. Offering the action there would be the same
+ * disease this phase treats — the UI proposing something the server refuses.
  */
 export function canReopenFinishedDay(day: DayState): boolean {
   return day.kind === "finished" && !day.isLocked;
@@ -132,8 +138,8 @@ export function canReopenFinishedDay(day: DayState): boolean {
 /**
  * "17:46" — the local HH:MM of the recorded clock-out.
  *
- * This is `gapBreakStart` in `resolver.ts:126`: the timestamp the REOPEN branch uses as the
- * start of the phantom break it creates. That is why the Rückfrage may name it as fact
+ * This is `gapBreakStart` in `resolver.ts`'s REOPEN branch: the timestamp that branch uses as
+ * the start of the phantom break it creates. That is why the Rückfrage may name it as fact
  * ("Der Zeitraum 17:46–jetzt wird als Pause erfasst") rather than as a guess.
  */
 export function reopenGapStartLabel(day: DayState): string | null {

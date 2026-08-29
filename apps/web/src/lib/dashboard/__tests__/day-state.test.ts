@@ -119,10 +119,12 @@ describe("resolveDayState — selects the entry the server resolver would act on
   });
 
   it("an isInvalid open entry is deliberately NOT filtered out", () => {
-    // Filtering it (as presence.ts and the resolver's READ lookup do) would resolve this day
-    // to "idle" → Einstempeln → START → timeEntry.create → the partial unique index
-    // TimeEntry_employeeId_date_unique_not_deleted rejects it → P2002 → HTTP 500.
-    // Not filtering it keeps today's honest HTTP 409 (CONFLICT NOT_CLOCKED_IN).
+    // Since Phase 118 the resolver's READ lookup no longer filters isInvalid either, so this
+    // module now mirrors it exactly. Filtering it here would resolve this day to "idle" →
+    // Einstempeln → START → timeEntry.create → the partial unique index
+    // TimeEntry_employeeId_date_unique_not_deleted rejects it (P2002, mapped to 409 since
+    // Phase 118) instead of the action the user needs. Not filtering means: "running" →
+    // Ausstempeln → the resolver closes the open entry.
     expect(resolveDayState([{ ...RUNNING, isInvalid: true }]).kind).toBe("running");
   });
 });
