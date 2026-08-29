@@ -167,15 +167,6 @@
   let overlapLoading = $state(false);
   let overlapTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Attest-Modal (für bereits genehmigte Krankmeldungen) — Modal primitive owns Escape/backdrop/focus-trap.
-  let attestModal: LeaveRequest | null = $state(null);
-  let attestOpen = $state(false);
-  let attestPresent = $state(false);
-  let attestFrom = $state("");
-  let attestTo = $state("");
-  let attestSaving = $state(false);
-  let attestError = $state("");
-
   // Highlighted request (from notification deep-link)
   let highlightRequestId: string | null = $state(null);
 
@@ -832,42 +823,6 @@
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  // ── Attest-Modal (für bereits genehmigte Krankmeldungen) ─────────────────
-  function openAttestModal(req: LeaveRequest) {
-    attestModal = req;
-    attestPresent = req.attestPresent ?? false;
-    attestFrom = req.attestValidFrom ?? "";
-    attestTo = req.attestValidTo ?? "";
-    attestError = "";
-    attestOpen = true;
-  }
-
-  function closeAttestModal() {
-    if (attestSaving) return;
-    attestOpen = false;
-    attestModal = null;
-  }
-
-  async function saveAttest() {
-    if (!attestModal) return;
-    attestSaving = true;
-    attestError = "";
-    try {
-      await api.patch(`/leave/requests/${attestModal.id}/attest`, {
-        attestPresent,
-        attestValidFrom: attestPresent && attestFrom ? attestFrom : null,
-        attestValidTo: attestPresent && attestTo ? attestTo : null,
-      });
-      attestOpen = false;
-      attestModal = null;
-      await loadData();
-    } catch (e: unknown) {
-      attestError = e instanceof Error ? e.message : "Fehler";
-    } finally {
-      attestSaving = false;
-    }
-  }
-
   // ── Helfer ────────────────────────────────────────────────────────────────
   function fmtDate(iso: string): string {
     if (!iso) return "";
@@ -1145,13 +1100,6 @@
   // When Modal closes (Escape/backdrop), reset form fields.
   $effect(() => {
     if (!showForm) resetFormFields();
-  });
-  // When attest modal closes (Escape/backdrop), clear state.
-  $effect(() => {
-    if (!attestOpen) {
-      attestModal = null;
-      attestError = "";
-    }
   });
 </script>
 
@@ -2173,65 +2121,6 @@
     {/if}
   {/if}<!-- Ende Liste -->
 
-  <!-- ── Attest-Modal ─────────────────────────────────────────────────────────── -->
-  {#if attestModal}
-    <Modal
-      bind:open={attestOpen}
-      eyebrow="Krankmeldung"
-      title={`Attest: ${attestModal.employee.firstName} ${attestModal.employee.lastName}`}
-    >
-      <p class="text-muted" style="font-size:0.875rem;margin-bottom:1rem;">
-        {fmtDate(attestModal.startDate)} – {fmtDate(attestModal.endDate)} · {typeName(
-          attestModal.typeCode,
-        )}
-      </p>
-      <div class="attest-box">
-        <label class="toggle-label">
-          <input type="checkbox" bind:checked={attestPresent} class="toggle-cb" />
-          <span>Attest liegt vor</span>
-        </label>
-        {#if attestPresent}
-          <div class="attest-dates">
-            <div class="form-group">
-              <label class="form-label" for="a-from">Gültig von</label>
-              <input
-                id="a-from"
-                type="date"
-                bind:value={attestFrom}
-                class="form-input"
-                style="max-width:160px"
-              />
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="a-to">Gültig bis</label>
-              <input
-                id="a-to"
-                type="date"
-                bind:value={attestTo}
-                class="form-input"
-                style="max-width:160px"
-              />
-            </div>
-          </div>
-        {/if}
-      </div>
-      {#if attestError}
-        <div class="alert alert-error" role="alert" style="margin-top:0.75rem">
-          <span>⚠</span><span>{attestError}</span>
-        </div>
-      {/if}
-
-      {#snippet footer()}
-        <button class="btn btn-ghost" onclick={closeAttestModal} disabled={attestSaving}
-          >Abbrechen</button
-        >
-        <button class="btn btn-primary" onclick={saveAttest} disabled={attestSaving}>
-          {attestSaving ? "Speichern…" : "Speichern"}
-        </button>
-      {/snippet}
-    </Modal>
-  {/if}
-
   <!-- ── Phase 87: Terminkollision-Warnung (Urlaub anlegen) ──────────────────── -->
   {#if collisionSummary}
     <ConfirmDialog
@@ -2380,40 +2269,6 @@
     font-family: var(--font-mono);
     font-size: 0.875rem;
     margin-left: auto;
-  }
-
-  /* ── Attest ───────────────────────────────────────────────────────── */
-  .attest-box {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    padding: 0.875rem 1rem;
-  }
-  .attest-title {
-    font-size: 0.8125rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-bottom: 0.625rem;
-  }
-  .attest-dates {
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-    margin-top: 0.75rem;
-  }
-  .toggle-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-    font-weight: 500;
-  }
-  .toggle-cb {
-    width: 16px;
-    height: 16px;
-    accent-color: var(--brand);
   }
 
   /* ── Table ────────────────────────────────────────────────────────── */
