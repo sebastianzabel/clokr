@@ -43,7 +43,12 @@
 
   let logs: AuditLog[] = $state([]);
   let total = $state(0);
-  let loading = $state(false);
+  // Phase 116 (issue #119) — starts TRUE. Genuine fix: `onMount` (:62) calls `loadLogs()`, which
+  // fires AFTER mount, so the first painted frame hit the `{:else if logs.length === 0}` arm at
+  // :208 and showed "Keine Audit-Einträge" before any request had been made. Safe: loadLogs is
+  // `loading = true` → try → `finally { loading = false }`, no early return. `retentionLoading`
+  // (:56) is a separate flag with its own finally and is deliberately NOT flipped.
+  let loading = $state(true);
   let loadError = $state("");
 
   let filterAction = $state("");
