@@ -139,12 +139,18 @@
 
   // Phase 76.2 (ARCH-V19-01) — D-03 unified clock response shapes.
   // Backend adapters land in Plans 2 (/clock-in) + 3 (/:id/clock-out).
-  // Successful /clock-in responses always carry resolution.kind === "CLOCKED_IN";
   // CONFLICT branches surface as thrown ApiError (HTTP 409) and never reach here.
+  //
+  // Phase 115 (issue #118): the resolver's REOPEN branch (services/clock/resolver.ts:115-142)
+  // ALSO resolves to kind "CLOCKED_IN" — but it returns the EXISTING entry with endTime
+  // nulled and breakMinutes recomputed from all Break rows, NOT a fresh row. The comment
+  // that used to stand here claimed a fresh entry was guaranteed, and that assumption is
+  // what made the timer restart at `new Date()` on a reopened day. It has been retired:
+  // `entry` is the full TimeEntry row in both cases.
   type ClockInResponse = {
     resolution: {
       kind: "CLOCKED_IN";
-      entry: { id: string; employeeId: string; source: string; startTime: string };
+      entry: ClockDayEntry & { employeeId: string; source: string };
     };
     audit?: { id: string };
   };
@@ -793,24 +799,45 @@
   }
 
   // ── Clock In/Out ───────────────────────────────────────────────────────────
+  // Phase 115 (issue #118): the single POST /clock-in call site. Used by the primary
+  // "Einstempeln" action on a not-started day AND by the confirmed "Erneut einstempeln"
+  // action on a finished day. The server decides which of the two it is — START or
+  // REOPEN (services/clock/state-machine.ts:18-22) — and we simply adopt the entry it
+  // returns, which is what makes the timer correct in both cases.
+  async function performClockIn(): Promise<void> {
+    const res = await api.post<ClockInResponse>("/time-entries/clock-in", {
+      source: "MOBILE",
+    });
+    // Phase 76.2 D-03 unified shape — reads from res.resolution.entry
+    // (the legacy `res.entry` shape is gone, see Plan 2 SUMMARY).
+    // CONFLICT branches reach us as thrown ApiError (HTTP 409) — defensive
+    // check guards against any unexpected resolver shape drift.
+    if (res.resolution.kind !== "CLOCKED_IN") {
+      throw new Error("Unerwartete Antwort beim Einstempeln");
+    }
+    const entry = res.resolution.entry;
+    // Optimistic: adopt the SERVER's row so `day`, `activeEntryId` and `clockStart`
+    // all follow from it before loadData() returns. upsertDayEntry replaces by id,
+    // so a REOPEN updates the same row instead of appending a phantom second one.
+    todayEntries = upsertDayEntry(todayEntries, entry);
+    // A REOPEN arrives with breakMinutes already recomputed from ALL Break rows
+    // (resolver.ts:130-136). Adopting it keeps the value we later send on clock-out
+    // equal to what the server already stored.
+    breakMinutes = entry.breakMinutes ?? 0;
+  }
+
   async function handleClock() {
     if (clockLoading) return; // D-02a: idempotency guard — touch events can fire before disabled={clockLoading} applies
+    // Phase 115 (issue #118): a FINISHED day has no primary clock action. Reopening it is
+    // a separate, confirmed path (openReopenDialog / confirmReopen) — never this one.
+    // This is a usability guard, NOT an authorisation control: a crafted POST /clock-in
+    // still reaches REOPEN by design (the Umfangsgrenze forbids a server-side gate, and
+    // REOPEN is a deliberate NFC/WIFI fix). Do not mistake it for security.
+    if (day.kind === "finished") return;
     clockLoading = true;
     try {
       if (!clockedIn) {
-        const res = await api.post<ClockInResponse>("/time-entries/clock-in", {
-          source: "MOBILE",
-        });
-        // Phase 76.2 D-03 unified shape — reads from res.resolution.entry
-        // (the legacy `res.entry` shape is gone, see Plan 2 SUMMARY).
-        // CONFLICT branches reach us as thrown ApiError (HTTP 409) — defensive
-        // check guards against any unexpected resolver shape drift.
-        if (res.resolution.kind !== "CLOCKED_IN") {
-          throw new Error("Unerwartete Antwort beim Einstempeln");
-        }
-        activeEntryId = res.resolution.entry.id;
-        clockedIn = true;
-        clockStart = new Date();
+        await performClockIn();
       } else if (activeEntryId) {
         // If a break is open, close it first so the time gets recorded before
         // we ask the server to clock out (otherwise the time would silently
@@ -829,9 +856,9 @@
         await api.post<ClockOutResponse>(`/time-entries/${activeEntryId}/clock-out`, {
           breakMinutes,
         });
-        clockedIn = false;
-        activeEntryId = null;
-        clockStart = null;
+        // Phase 115 (issue #118): clockedIn / activeEntryId / clockStart are $derived now.
+        // They resolve to the closed state on their own once loadData() returns the closed
+        // row, and the open-break $effect then clears breakStartedAt.
         breakMinutes = 0;
         clearStoredOpenBreak();
       }
@@ -840,6 +867,35 @@
       toasts.error(err instanceof Error ? err.message : "Fehler beim Stempeln");
       // D-02a: if the request succeeded but the response was lost, re-sync so clockedIn reflects
       // the server and the user cannot fire a spurious second clock-in.
+      try {
+        await loadData();
+      } catch {
+        /* ignore reload error */
+      }
+    } finally {
+      clockLoading = false;
+    }
+  }
+
+  // ── Deliberate re-clock-in on a finished day (Phase 115, issue #118) ──────
+  // The server maps this to REOPEN (state-machine.ts:18-22) — the gap since the recorded
+  // clock-out becomes a Break row. That consequence is named in the dialog before anything
+  // is sent; it is never reachable from the card's primary action.
+  let reopenDialogOpen = $state(false);
+
+  function openReopenDialog() {
+    if (!canReopenFinishedDay(day) || clockLoading) return;
+    reopenDialogOpen = true;
+  }
+
+  async function confirmReopen(): Promise<void> {
+    if (clockLoading) return;
+    clockLoading = true;
+    try {
+      await performClockIn();
+      await loadData();
+    } catch (err) {
+      toasts.error(err instanceof Error ? err.message : "Fehler beim Stempeln");
       try {
         await loadData();
       } catch {
