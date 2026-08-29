@@ -74,3 +74,36 @@ export function deriveVacationSummary(
 
   return { total, carryOver, used, planned, carryOverRemaining, left, remaining, availableTotal };
 }
+
+// ── Urlaubskonto-Karte: deutsche Beschriftung ──────────────────────────────────────────────
+// The copy lives here, not in the template: a string in a `.svelte` template cannot be
+// unit-tested (`tsc --noEmit` does not typecheck templates) and drifts. Same precedent as
+// Phase 113's `karenz-nudge.ts`. Both functions are pinned by exact-string assertions.
+
+/** Base label for the Urlaubskonto card. `Resturlaub` means EXACTLY ONE thing on /leave:
+ *  the available balance (`VacationSummary.remaining`) — never the Vorjahresübertrag. */
+export const VAC_CARD_LABEL = "Resturlaub";
+
+/** Qualifier appended when there ARE pending requests, so the card's number (which does not
+ *  subtract them) cannot be read as contradicting the strip's `Verbleibend` (which does).
+ *  CONDITIONAL on purpose — same reasoning as Phase 107 gap G-03 two rows below in the
+ *  Urlaubskonto panel: at `planned === 0` both numbers are equal and the qualifier would
+ *  advertise a difference that does not exist. Do NOT collapse this to a constant. */
+export const VAC_CARD_LABEL_WITH_PENDING = "Resturlaub (ohne beantragte)";
+
+export function vacationCardLabel(planned: number): string {
+  return planned > 0 ? VAC_CARD_LABEL_WITH_PENDING : VAC_CARD_LABEL;
+}
+
+/** Replaces the pre-Phase-114 `von ${total + carryOver} verfügbar` line. Two changes, both
+ *  required by the acceptance criteria: `verfügbar` → `gesamt` (the word `verfügbar` now
+ *  belongs to nothing on this page — the balance is `Resturlaub`), and the sum is broken
+ *  down so `Genommen 31 bei Anspruch 24` resolves without arithmetic. No year is
+ *  interpolated: `loadVacationSummary()` always fetches the CURRENT year regardless of the
+ *  viewed `calYear`, so a year in this string would be a false statement. */
+export function vacationCardDelta(total: number, carryOver: number): string {
+  if (carryOver > 0) {
+    return `von ${total + carryOver} gesamt (${total} Anspruch + ${carryOver} Übertrag Vorjahr)`;
+  }
+  return `von ${total} gesamt`;
+}
