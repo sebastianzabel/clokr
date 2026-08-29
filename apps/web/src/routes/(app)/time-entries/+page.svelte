@@ -2,6 +2,9 @@
   import { onMount, tick } from "svelte";
   import { page } from "$app/stores";
   import { normalizeDateParam, resolveFocusTarget } from "$lib/breaks/deep-link";
+  // Phase 93 (BREAK-07) status-badge mapping — extracted in Phase 112 so the list cell and the
+  // edit modal provably share one mapping and the colour/copy contract is unit-testable.
+  import { breakBadgeClass, breakBadgeLabel, isUnconfirmedBreak } from "$lib/breaks/break-badge";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { toasts } from "$stores/toast";
@@ -873,22 +876,6 @@
     return (
       e.isInvalid === true && e.invalidReason === PENDING_NACHTRAG_REASON && !!e.retroRequestId
     );
-  }
-
-  // ── Phase 93 (BREAK-07) — status-badge mapping (UI-SPEC color/copy contract) ─
-  function breakBadgeClass(status: TimeEntry["breakStatus"]): string {
-    return status === "CONFIRMED"
-      ? "badge-green"
-      : status === "WAIVED"
-        ? "badge-gray"
-        : "badge-yellow"; // AUTO — action required
-  }
-  function breakBadgeLabel(status: TimeEntry["breakStatus"]): string {
-    return status === "CONFIRMED"
-      ? "Pause bestätigt"
-      : status === "WAIVED"
-        ? "Durchgearbeitet"
-        : "Pause unbestätigt"; // AUTO
   }
 
   function fmtBreaks(e: TimeEntry): string {
