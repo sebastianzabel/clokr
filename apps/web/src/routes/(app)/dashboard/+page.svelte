@@ -38,6 +38,12 @@
     type KarenzOverrunResponse,
     type KarenzNudgeSummary,
   } from "$lib/leave/karenz-nudge";
+  import {
+    summarizeUnconfirmedBreaks,
+    breakNudgeHref,
+    BREAK_NUDGE_EMPTY,
+    type BreakNudgeSummary,
+  } from "$lib/breaks/break-nudge";
   import { format, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
   import {
@@ -207,12 +213,14 @@
   // GET /time-entries (breakStatus === "AUTO" && !isLocked). Gated behind the
   // tenant dormancy flag `enforceBreakConfirmation` (fail-safe false) so the
   // feature stays invisible until the tenant enables it.
+  //
+  // Phase 112 (issue #115): the count, the German label AND the deep-link URL all come from
+  // $lib/breaks/break-nudge.ts. They used to be built inline here, and the inline version
+  // forwarded the API's full ISO instant into the URL, which crashed the destination.
   let enforceBreakConfirmation = $state(false);
-  let unconfirmedBreakDays = $state(0);
-  // Earliest (lexicographically smallest, i.e. oldest) unconfirmed AUTO day —
-  // used to deep-link the nudge straight to the most overdue day. null when
-  // there are no unconfirmed days.
-  let earliestUnconfirmedBreakDate = $state<string | null>(null);
+  let breakNudge = $state<BreakNudgeSummary>(BREAK_NUDGE_EMPTY);
+  // Kept as a separate name because hasNoOpenItems() and the {#if} below read it.
+  let unconfirmedBreakDays = $derived(breakNudge.count);
 
   // ── Karenztage-Hinweis (Phase 104, D-21) ────────────────────────────────────
   // § 5 EFZG: Krankheitstage über die tenant-konfigurierte Karenzzeit hinaus ohne Attest.
@@ -432,23 +440,13 @@
               Array<{ date: string; breakStatus?: string; isLocked?: boolean }>
             >(`/time-entries?from=${from}&to=${today}`)
             .catch(() => [] as Array<{ date: string; breakStatus?: string; isLocked?: boolean }>);
-          const days = new Set<string>();
-          for (const row of breakRows) {
-            if (row.breakStatus === "AUTO" && row.isLocked !== true) days.add(row.date);
-          }
-          unconfirmedBreakDays = days.size;
-          // ISO yyyy-MM-dd sorts lexicographically, so the smallest string is
-          // the oldest (most overdue) day — the natural deep-link target.
-          earliestUnconfirmedBreakDate =
-            days.size > 0 ? [...days].reduce((a, b) => (a < b ? a : b)) : null;
+          breakNudge = summarizeUnconfirmedBreaks(breakRows);
         } else {
-          unconfirmedBreakDays = 0;
-          earliestUnconfirmedBreakDate = null;
+          breakNudge = BREAK_NUDGE_EMPTY;
         }
       } catch {
         enforceBreakConfirmation = false;
-        unconfirmedBreakDays = 0;
-        earliestUnconfirmedBreakDate = null;
+        breakNudge = BREAK_NUDGE_EMPTY;
       }
 
       // Karenztage-Hinweis (D-21) — self-scoped, fail-safe: any error renders nothing.
@@ -1494,18 +1492,12 @@
               {/if}
               {#if enforceBreakConfirmation && unconfirmedBreakDays > 0}
                 <a
-                  href={earliestUnconfirmedBreakDate
-                    ? `/time-entries?view=list&date=${earliestUnconfirmedBreakDate}`
-                    : "/time-entries?view=list"}
+                  href={breakNudgeHref(breakNudge)}
                   class="oi-row"
                   data-testid="dashboard-break-nudge"
                 >
                   <span class="oi-dot oi-dot--warn"></span>
-                  <span
-                    >{unconfirmedBreakDays === 1
-                      ? "1 Tag: Pause bestätigen"
-                      : `${unconfirmedBreakDays} Tage: Pause bestätigen`}</span
-                  >
+                  <span>{breakNudge.label}</span>
                   <span class="oi-link">→</span>
                 </a>
               {/if}
