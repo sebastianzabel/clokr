@@ -5,6 +5,7 @@
   // Phase 93 (BREAK-07) status-badge mapping — extracted in Phase 112 so the list cell and the
   // edit modal provably share one mapping and the colour/copy contract is unit-testable.
   import { breakBadgeClass, breakBadgeLabel, isUnconfirmedBreak } from "$lib/breaks/break-badge";
+  import UnconfirmedBreakPanel from "$lib/components/breaks/UnconfirmedBreakPanel.svelte";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { toasts } from "$stores/toast";
@@ -276,6 +277,29 @@
   // Feature gate (fail-safe dormant). When false the badge + all action buttons
   // are hidden entirely (no placeholder). Sourced from GET /settings/work.
   let enforceBreakConfirmation = $state(false);
+
+  // Phase 112 — the unconfirmed AUTO days of the LOADED month, oldest first. Feeds the
+  // explanation panel above both views. Dormant unless the tenant opted in.
+  let monthUnconfirmedBreaks = $derived(
+    enforceBreakConfirmation
+      ? entries
+          .filter((e) => isUnconfirmedBreak(e))
+          .map((e) => {
+            const day = (e.date ?? e.startTime).split("T")[0];
+            return {
+              entryId: e.id,
+              date: day,
+              label: new Date(`${day}T12:00:00`).toLocaleDateString("de-DE", {
+                day: "2-digit",
+                month: "2-digit",
+                year: "numeric",
+              }),
+            };
+          })
+          .sort((a, b) => a.date.localeCompare(b.date))
+      : [],
+  );
+
   // In-flight guard shared by Bestätigen (confirm) and Durchgearbeitet (waive)
   // PATCHes — disables the buttons + drives the .btn-spinner.
   let breakActionPending = $state(false);
@@ -1678,6 +1702,17 @@
       {loading}
     />
   </div>
+
+  <!-- Phase 112 — § 4 ArbZG explanation + the mobile route into the confirm modal. Rendered
+       above BOTH views: the page is also reachable from the nav and from the calendar, and the
+       explanation is exactly as relevant there. -->
+  <UnconfirmedBreakPanel
+    days={monthUnconfirmedBreaks}
+    onOpen={(entryId) => {
+      const target = entries.find((e) => e.id === entryId);
+      if (target) openEdit(target);
+    }}
+  />
 
   <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
   {#if teView === "calendar"}
