@@ -1627,8 +1627,21 @@
         <div class="vac-stat-value">{vacSummaryTotal}<span class="vac-stat-unit">T</span></div>
       </div>
       {#if vacSummaryCarryOver > 0}
-        <div class="vac-stat">
-          <div class="vac-stat-label">Resturlaub</div>
+        <!-- Phase 114 (RU-01/RU-03): zwei Kacheln statt einer. Der BRUTTO-Übertrag war bisher
+             nirgends als Zahl sichtbar — nur eingerechnet — weshalb „Genommen 31 bei Anspruch 24"
+             unerklärt blieb. Die zweite Kachel ist die frühere Kachel „Resturlaub": sie meint
+             ausschließlich den ungenutzten REST des Übertrags. Beide stehen bewusst
+             nebeneinander; getrennt wäre „(Rest) 0" wieder eine verwaiste Zahl. Kein Jahr im
+             Label — die Entitlement-Zahlen kommen immer aus dem laufenden Jahr, unabhängig vom
+             angezeigten calYear (siehe deferred-items.md). -->
+        <div class="vac-stat" data-testid="vac-stat-carryover">
+          <div class="vac-stat-label">Übertrag Vorjahr</div>
+          <div class="vac-stat-value vac-stat-carry">
+            +{vacSummaryCarryOver}<span class="vac-stat-unit">T</span>
+          </div>
+        </div>
+        <div class="vac-stat" data-testid="vac-stat-carryover-rest">
+          <div class="vac-stat-label">Übertrag Vorjahr (Rest)</div>
           <div class="vac-stat-value {vacSummaryCarryOverRemaining === 0 ? '' : 'vac-stat-carry'}">
             {vacSummaryCarryOverRemaining === 0 ? "0" : "+" + vacSummaryCarryOverRemaining}<span
               class="vac-stat-unit">T</span
@@ -1642,7 +1655,7 @@
       </div>
       {#if vacSummaryPlanned > 0}
         <div class="vac-stat">
-          <div class="vac-stat-label">Geplant</div>
+          <div class="vac-stat-label">Beantragt</div>
           <div class="vac-stat-value vac-stat-planned">
             {vacSummaryPlanned}<span class="vac-stat-unit">T</span>
           </div>

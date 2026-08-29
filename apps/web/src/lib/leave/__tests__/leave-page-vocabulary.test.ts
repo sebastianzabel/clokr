@@ -93,7 +93,10 @@ describe("leave page vocabulary — the new terms must be PRESENT", () => {
 
 describe("leave page vocabulary — structure", () => {
   it("has exactly six strip tiles (five before, plus the gross Übertrag)", () => {
-    expect(PAGE.match(/vac-stat-label/g)!.length).toBe(6);
+    // Counts TILE MARKUP only. A bare /vac-stat-label/ scan would also hit the two
+    // `.vac-stat-label` selectors in the <style> block and report 8 — a number that would
+    // silently drift with any CSS edit and would not be measuring "how many tiles".
+    expect(PAGE.match(/<div class="vac-stat-label">/g)!.length).toBe(6);
   });
 
   it("keeps the two Übertrag tiles adjacent — separated, `(Rest) 0` would be an orphaned number again", () => {
@@ -106,9 +109,16 @@ describe("leave page vocabulary — structure", () => {
 
   it("introduces no new CSS class — the new tiles reuse the existing recipe only", () => {
     expect(PAGE).not.toContain("vac-stat-carryover-value");
-    const grossIdx = PAGE.indexOf('<div class="vac-stat-label">Übertrag Vorjahr</div>');
-    const restEnd = PAGE.indexOf('<div class="vac-stat-label">Übertrag Vorjahr (Rest)</div>') + 800;
-    const block = PAGE.slice(grossIdx - 200, restEnd);
+    // Window bounded EXACTLY to the two Übertrag tiles: from the gross tile's opening <div>
+    // to the {/if} that closes the carry-over branch. A fixed-width slice would spill into
+    // the neighbouring `Beantragt` tile and flag its legitimate, pre-existing
+    // `vac-stat-planned` class — i.e. fail on markup that is correct.
+    const blockStart = PAGE.indexOf('<div class="vac-stat" data-testid="vac-stat-carryover">');
+    const restIdx = PAGE.indexOf('<div class="vac-stat-label">Übertrag Vorjahr (Rest)</div>');
+    const blockEnd = PAGE.indexOf("{/if}", restIdx);
+    expect(blockStart).toBeGreaterThan(-1);
+    expect(blockEnd).toBeGreaterThan(blockStart);
+    const block = PAGE.slice(blockStart, blockEnd);
     const allowed = new Set([
       "vac-stat",
       "vac-stat-label",
@@ -116,9 +126,16 @@ describe("leave page vocabulary — structure", () => {
       "vac-stat-unit",
       "vac-stat-carry",
     ]);
-    for (const cls of block.match(/vac-stat[a-z-]*/g) ?? []) {
-      expect(allowed.has(cls), `unexpected class "${cls}" in the Übertrag tiles`).toBe(true);
+    // Scan CLASS ATTRIBUTES only. A bare token scan over the block would also match the
+    // `data-testid="vac-stat-carryover"` hooks, which are test selectors, not CSS classes —
+    // it would fail on markup that is in fact correct while proving nothing about styling.
+    for (const attr of block.matchAll(/class="([^"]*)"/g)) {
+      for (const cls of attr[1].match(/vac-stat[a-z-]*/g) ?? []) {
+        expect(allowed.has(cls), `unexpected class "${cls}" in the Übertrag tiles`).toBe(true);
+      }
     }
+    // And the tiles must not have grown a bespoke selector in <style> either.
+    expect(PAGE).not.toContain(".vac-stat-carryover");
   });
 
   it("does not interpolate a year into any Urlaubs-label", () => {
