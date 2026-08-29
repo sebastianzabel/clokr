@@ -40,19 +40,19 @@ export async function resolveClockEvent(
       return { kind: "CONFLICT", reason: "LEAVE_APPROVED" } as const;
     }
 
-    // Current state lookup. Gefiltert wird `deletedAt: null` (CLAUDE.md, Pflicht fuer
-    // soft-delete-faehige Modelle) und `endTime` — bewusst NICHT `isInvalid`.
+    // Current state lookup. Filters on `deletedAt: null` (CLAUDE.md — mandatory for
+    // soft-delete-capable models) and `endTime` — deliberately NOT `isInvalid`.
     //
-    // Phase 118 (D-01): `isInvalid` ist eine fachliche Markierung am Eintrag, kein
-    // Clock-State. Der Schreibpfad erzeugt `isInvalid`-Zeilen selbst (:82-91 bei
-    // CANCELLATION_REQUESTED, § 8 BUrlG; `attendance-checker.ts:296-303` nach
-    // `autoDeleteOpenHours`). Der Tages-Eindeutigkeitsindex
-    // `TimeEntry_employeeId_date_unique_not_deleted` ist partiell auf `deletedAt IS NULL`
-    // und kennt `isInvalid` NICHT — es gibt pro Mitarbeiter und Tag also hoechstens EINE
-    // nicht-geloeschte Zeile. Diese Zeile vor dem Resolver zu verstecken erzeugte beide
-    // Haelften von Issue #124 gleichzeitig: den ewig offenen Eintrag (OUT → NOT_CLOCKED_IN
-    // → 409 "Bereits ausgestempelt") und den P2002 beim naechsten IN (→ 500).
-    // Diesen Filter NICHT wieder einfuehren.
+    // Phase 118 (D-01): `isInvalid` is a business-domain flag on the row, not a
+    // clock state. The write path creates `isInvalid` rows itself (:82-91 for
+    // CANCELLATION_REQUESTED, § 8 BUrlG; `attendance-checker.ts:296-303` after
+    // `autoDeleteOpenHours`). The day-uniqueness index
+    // `TimeEntry_employeeId_date_unique_not_deleted` is partial on `deletedAt IS NULL`
+    // and does NOT know about `isInvalid` — there can be at most ONE non-deleted row
+    // per employee per day. Hiding that row from the resolver produced both halves
+    // of issue #124 at once: the permanently open entry (OUT → NOT_CLOCKED_IN →
+    // 409 "already clocked out") and the P2002 on the next IN (→ 500).
+    // Do not reintroduce this filter.
     const openEntry = await tx.timeEntry.findFirst({
       where: {
         employeeId: event.employeeId,
@@ -76,19 +76,19 @@ export async function resolveClockEvent(
         })
       : null;
 
-    // Phase 118 (D-02/D-03): eine an einen noch PENDING Zeitnachtrag gekoppelte Zeile
-    // (Phase 96, `TimeEntry.retroRequestId @unique`) ist ein ANTRAG, keine Stempelung.
-    // Sie ist geschlossen (startTime+endTime aus dem Antrag) und wuerde oben als
-    // CLOSED_SAME_DAY_ENTRY gelesen — ein Tap wuerde sie per REOPEN auf `endTime: null`
-    // setzen und der Genehmigungs-Flow gaebe anschliessend einen kaputten Eintrag frei.
-    // Real erreichbar: `createRetroRequestSchema` (retro-entry-requests.ts:20-42) hat keine
-    // Vergangenheitsgrenze, `targetDate = heute` wird akzeptiert.
+    // Phase 118 (D-02/D-03): a row coupled to a still-PENDING Zeitnachtrag
+    // (Phase 96, `TimeEntry.retroRequestId @unique`) is a REQUEST, not a punch.
+    // It is closed (startTime+endTime come from the request) and would be read
+    // above as CLOSED_SAME_DAY_ENTRY — a tap would REOPEN it to `endTime: null`
+    // and the approval flow would then release a corrupted entry. This is
+    // genuinely reachable: `createRetroRequestSchema` (retro-entry-requests.ts:20-42)
+    // has no past-date limit, `targetDate = today` is accepted.
     //
-    // Qualifiziert auf "Antrag noch PENDING": der Approve-Zweig
-    // (retro-entry-requests.ts:363-365) setzt `isInvalid` auf `false`, laesst `retroRequestId`
-    // aber gesetzt — eine freigegebene Nachtrag-Zeile ist ein ganz normaler geschlossener
-    // Eintrag und muss weiter per REOPEN benutzbar bleiben. Der Reject-Zweig (:466-473)
-    // soft-loescht die Zeile; sie faellt schon durch `deletedAt: null` heraus.
+    // Qualified on "request still PENDING": the approve branch
+    // (retro-entry-requests.ts:363-365) sets `isInvalid` to `false` but leaves
+    // `retroRequestId` set — an approved Nachtrag row is a perfectly ordinary
+    // closed entry and must remain usable via REOPEN. The reject branch (:466-473)
+    // soft-deletes the row; it already falls out via `deletedAt: null`.
     const retroCandidate = openEntry ?? closedEntry;
     if (retroCandidate?.retroRequestId) {
       const pendingRetro = await tx.retroEntryRequest.findFirst({
@@ -205,15 +205,15 @@ export async function resolveClockEvent(
       }
 
       case "STOP": {
-        // WR-01/WR-02: `openEntry` aus dem State-Lookup wiederverwenden (bereits mit
-        // `deletedAt: null` geladen und ueber den FOR-UPDATE-Lock auf Employee geschuetzt).
-        // Ein frueheres redundantes findUnique ohne deletedAt-Filter wurde dadurch ersetzt.
-        // Phase 118 (D-01/D-04): dieser Eintrag KANN `isInvalid: true` sein — genau das ist
-        // der Fall aus Issue #124. Der Clock-Pfad schliesst ihn und laesst
-        // `isInvalid`/`invalidReason` unangetastet: die Invaliditaet gehoert ihrem Erzeuger
-        // (die Stornierungs-Genehmigung revalidiert automatisch — CLAUDE.md § 8 BUrlG; der
-        // Attendance-Checker setzt sie). Stilles Revalidieren beim Ausstempeln waere ein
-        // "silent overwrite" im Sinne der Revisionssicherheits-Regeln.
+        // WR-01/WR-02: reuse `openEntry` from the state lookup (already loaded with
+        // `deletedAt: null` and protected by the FOR-UPDATE lock on Employee).
+        // Replaces an earlier redundant findUnique that omitted the deletedAt filter.
+        // Phase 118 (D-01/D-04): this entry CAN be `isInvalid: true` — exactly the
+        // case from issue #124. The clock path closes it and leaves
+        // `isInvalid`/`invalidReason` untouched: invalidity belongs to whoever set
+        // it (the cancellation approval auto-revalidates — CLAUDE.md § 8 BUrlG; the
+        // attendance checker sets it). Silently revalidating on clock-out would be
+        // a "silent overwrite" per the Revisionssicherheit rules.
         const target = openEntry!;
         // D-02: 60s server double-tap debounce. A STOP within 60s of START is an accidental
         // double-tap → NO-OP: leave the entry open, produce no zero/near-zero-duration row.

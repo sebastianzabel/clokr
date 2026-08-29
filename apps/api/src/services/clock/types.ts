@@ -30,10 +30,11 @@ export type ConflictReason =
   | "NOT_CLOCKED_IN"
   | "LEAVE_APPROVED"
   | "MONTH_LOCKED"
-  // Phase 118 (D-03): die Tageszeile ist an einen noch PENDING Zeitnachtrag (Phase 96)
-  // gekoppelt — ein Antrag, keine Stempelung. Ehrlicher 409 statt eines irrefuehrenden
-  // "Bereits eingestempelt". Wird NICHT von `decide()` erzeugt, sondern vom Resolver VOR
-  // dem State-Bau (D-05: die State-Machine bleibt eine reine Funktion ohne DB-Wissen).
+  // Phase 118 (D-03): this day's row is coupled to a still-PENDING Zeitnachtrag
+  // (Phase 96) — a request, not a punch. An honest 409 instead of a misleading
+  // "already clocked in". NOT produced by `decide()`, but by the resolver BEFORE
+  // building state (D-05: the state machine stays a pure function with no DB
+  // knowledge).
   | "RETRO_PENDING";
 
 export type ClockState =
