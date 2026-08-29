@@ -20,6 +20,15 @@
     type CollisionSummary,
   } from "$lib/phorest/appointmentCollisions";
   import { toasts } from "$stores/toast";
+  import KarenzAttestPanel from "$lib/components/leave/KarenzAttestPanel.svelte";
+  import {
+    summarizeKarenzOverrun,
+    karenzOverrunDays,
+    KARENZ_NUDGE_EMPTY,
+    KARENZ_BADGE_TOOLTIP,
+    type KarenzOverrunResponse,
+    type KarenzNudgeSummary,
+  } from "$lib/leave/karenz-nudge";
   import {
     mapVacationBalance,
     resolveAdjustmentBadge,
@@ -169,6 +178,10 @@
 
   // Highlighted request (from notification deep-link)
   let highlightRequestId: string | null = $state(null);
+
+  // Karenztage-Hinweis (Phase 113, issue #116) — see loadKarenzOverrun().
+  let karenzSummary = $state<KarenzNudgeSummary>(KARENZ_NUDGE_EMPTY);
+  let karenzDays = $state<string[]>([]);
 
   // Drag-to-select date range in calendar
   let dragStart: string | null = $state(null);
@@ -422,6 +435,7 @@
     loadCalendar();
     loadVacationSummary();
     loadOvertimeBalance();
+    loadKarenzOverrun();
 
     // Deep-link: highlight a specific request from notification
     const requestId = $page.url.searchParams.get("request");
@@ -458,6 +472,23 @@
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
       loading = false;
+    }
+  }
+
+  // ── Karenztage-Hinweis (Phase 113, issue #116) ────────────────────────────
+  // Fed from GET /leave/karenz-overrun (self-scoped, server-derived 12-month window) and
+  // NOT from `myRequests`: that list is filtered to ONE calYear server-side
+  // (leave.ts:734-737) and paginated at 10 rows, so a January visitor's overrun from the
+  // previous year would silently vanish from the explanation. Fail-safe: any error renders
+  // nothing, exactly like the dashboard nudge (dashboard/+page.svelte:452-460).
+  async function loadKarenzOverrun() {
+    try {
+      const res = await api.get<KarenzOverrunResponse>("/leave/karenz-overrun");
+      karenzSummary = summarizeKarenzOverrun(res);
+      karenzDays = karenzOverrunDays(res);
+    } catch {
+      karenzSummary = KARENZ_NUDGE_EMPTY;
+      karenzDays = [];
     }
   }
 
@@ -1621,6 +1652,10 @@
       nötig ist.
     </div>
   {/if}
+  <!-- Phase 113 (issue #116) — the destination explanation the „Attest"-Hinweis deep-links
+       to. Above BOTH views: the page is reachable from the nav and from the calendar, and
+       the explanation is equally relevant there. Renders nothing when there is no overrun. -->
+  <KarenzAttestPanel label={karenzSummary.label} days={karenzDays} />
   {#snippet vacStats()}
     <div class="vac-stats">
       <div class="vac-stat">
@@ -2073,6 +2108,7 @@
                         class="badge badge-attest {req.attestPresent
                           ? 'badge-green'
                           : 'badge-gray'}"
+                        title={req.attestPresent ? "Attest liegt vor." : KARENZ_BADGE_TOOLTIP}
                       >
                         {req.attestPresent ? "Attest" : "Kein Attest"}
                       </span>
