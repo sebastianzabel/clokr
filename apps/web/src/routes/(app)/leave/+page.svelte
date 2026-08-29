@@ -36,6 +36,7 @@
     type VacationEntitlementRow,
     type LastDaysAdjustment,
   } from "$lib/leave/vacation-balance";
+  import { deriveVacationSummary } from "$lib/leave/vacation-summary";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -916,11 +917,9 @@
       ? confirmedMinutes + (maxNegativeBalanceMinutes ?? 0) < minutesNeeded
       : confirmedHours + toleranceHours - hoursNeeded < 0,
   );
-  let vacRemaining = $derived(
-    vacationBalance
-      ? vacationBalance.total + vacationBalance.carryOver - vacationBalance.used
-      : null,
-  );
+  // Phase 114: `vacSummary.remaining` is `number | null` — the null branch is what makes the
+  // Urlaubskonto-Karte render "–" instead of a fake "0". Do NOT add `?? 0`.
+  let vacRemaining = $derived(vacSummary.remaining);
   let vacAfter = $derived(vacRemaining !== null ? vacRemaining - effectiveDays : null);
   // ── Lane assignment: stable gantt-style rows across calendar days ────────
   // Returns a Map<absenceId, laneIndex> so that a multi-day absence always
@@ -989,14 +988,17 @@
       )
       .reduce((sum, r) => sum + Number(r.days), 0),
   );
-  let vacSummaryTotal = $derived(vacationBalance?.total ?? 0);
-  let vacSummaryCarryOver = $derived(vacationBalance?.carryOver ?? 0);
-  let vacSummaryUsed = $derived(vacationBalance?.used ?? 0);
-  let vacSummaryPlanned = $derived(pendingVacDays);
-  let vacSummaryCarryOverRemaining = $derived(Math.max(0, vacSummaryCarryOver - vacSummaryUsed));
-  let vacSummaryLeft = $derived(
-    vacSummaryTotal + vacSummaryCarryOver - vacSummaryUsed - vacSummaryPlanned,
-  );
+  // Phase 114 — every Urlaubs-Größe on this page comes from ONE pinned pure function
+  // (apps/web/src/lib/leave/vacation-summary.ts). The formulas are a verbatim copy of the
+  // inline $derived expressions that used to live here; a legacy-oracle test asserts they
+  // still produce identical numbers. Do not re-inline them.
+  let vacSummary = $derived(deriveVacationSummary(vacationBalance, pendingVacDays));
+  let vacSummaryTotal = $derived(vacSummary.total);
+  let vacSummaryCarryOver = $derived(vacSummary.carryOver);
+  let vacSummaryUsed = $derived(vacSummary.used);
+  let vacSummaryPlanned = $derived(vacSummary.planned);
+  let vacSummaryCarryOverRemaining = $derived(vacSummary.carryOverRemaining);
+  let vacSummaryLeft = $derived(vacSummary.left);
   let showVacSummary = $state(true);
 
   // ── Austrittsdatum für pro-rata Warnung ──────────────────────────────────
