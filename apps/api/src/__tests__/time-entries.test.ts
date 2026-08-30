@@ -305,7 +305,7 @@ describe("Time Entries API", () => {
         method: "POST",
         url: `/api/v1/time-entries/${entry.id}/clock-out`,
         headers: { authorization: `Bearer ${data.empToken}` },
-        payload: { breakMinutes: 0 },
+        payload: {},
       });
 
       expect(clockOutRes.statusCode).toBe(200);
@@ -341,7 +341,7 @@ describe("Time Entries API", () => {
           method: "POST",
           url: `/api/v1/time-entries/${e.id}/clock-out`,
           headers: { authorization: `Bearer ${data.adminToken}` },
-          payload: { breakMinutes: 0 },
+          payload: {},
         });
       }
     });

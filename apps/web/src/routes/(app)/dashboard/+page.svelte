@@ -799,8 +799,8 @@
     // so a REOPEN updates the same row instead of appending a phantom second one.
     todayEntries = upsertDayEntry(todayEntries, entry);
     // A REOPEN arrives with breakMinutes already recomputed from ALL Break rows
-    // (resolver.ts:130-136). Adopting it keeps the value we later send on clock-out
-    // equal to what the server already stored.
+    // (resolver.ts:130-136). Adopting it keeps the local *display* in sync with the
+    // value the server recomputed — the client never sends it back (Phase 129).
     breakMinutes = entry.breakMinutes ?? 0;
   }
 
@@ -831,9 +831,8 @@
         // Phase 76.2 D-03 — explicit generic. We don't currently consume the
         // response (the dashboard state below is unconditional on success);
         // CONFLICT branches surface as thrown ApiError, caught below.
-        await api.post<ClockOutResponse>(`/time-entries/${activeEntryId}/clock-out`, {
-          breakMinutes,
-        });
+        // Phase 129: no breakMinutes in the body — the server derives it from Break rows only.
+        await api.post<ClockOutResponse>(`/time-entries/${activeEntryId}/clock-out`, {});
         // Phase 115 (issue #118): clockedIn / activeEntryId / clockStart are $derived now.
         // They resolve to the closed state on their own once loadData() returns the closed
         // row, and the open-break $effect then clears breakStartedAt.
