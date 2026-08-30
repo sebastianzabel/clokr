@@ -536,8 +536,15 @@
       workDaysDirty,
   );
 
+  // Gate the registration on "the baseline has been taken" (WR-01). Every snapshot starts as ""
+  // and only gets its real value at the end of onMount's try, so every *Dirty flag reads true
+  // until then. Registering that would arm the navigation guard on a page that has no form yet —
+  // permanently so if the load throws, since the snapshot block is then never reached and the
+  // page renders nothing but an error banner (no visible marker to explain the dialog).
+  let snapshotsReady = $state(false);
+
   $effect(() => {
-    markUnsaved("admin-system", anyUnsaved);
+    markUnsaved("admin-system", snapshotsReady && anyUnsaved);
     return () => markUnsaved("admin-system", false);
   });
 
@@ -697,6 +704,7 @@
         smtpPassword.length > 0,
       );
       workDaysSnapshot = snap(defaultWorkDays);
+      snapshotsReady = true;
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {

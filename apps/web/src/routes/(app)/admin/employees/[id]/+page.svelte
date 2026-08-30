@@ -372,6 +372,7 @@
         empBsSlotBlockWeek,
       );
       vacationSnapshot = snap(vacYear, eVacTotal, eVacCarried, eVacDeadline);
+      snapshotsReady = true;
     } catch {
       loadError = "Fehler beim Laden des Mitarbeiters.";
     } finally {
@@ -1635,8 +1636,15 @@
       vacationDirty,
   );
 
+  // Gate the registration on "the baseline has been taken" (WR-01). Every snapshot starts as ""
+  // and only gets its real value at the end of onMount's try, so every *Dirty flag reads true
+  // until then. A stale bookmark to a deleted employee hits the early `loadError` return before
+  // that block, which would otherwise trap the operator behind a discard dialog on a page that
+  // renders only an error and shows no "Nicht gespeichert" marker to explain it.
+  let snapshotsReady = $state(false);
+
   $effect(() => {
-    markUnsaved("admin-employee-detail", anyUnsaved);
+    markUnsaved("admin-employee-detail", snapshotsReady && anyUnsaved);
     return () => markUnsaved("admin-employee-detail", false);
   });
 

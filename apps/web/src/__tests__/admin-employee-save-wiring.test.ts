@@ -154,8 +154,28 @@ describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
   });
 
   it("registers under its own id and de-registers on unmount", () => {
-    expect(PAGE).toContain('markUnsaved("admin-employee-detail", anyUnsaved)');
+    expect(PAGE).toContain('markUnsaved("admin-employee-detail", snapshotsReady && anyUnsaved)');
     expect(PAGE).toContain('return () => markUnsaved("admin-employee-detail", false)');
+  });
+
+  // WR-01: every snapshot starts as "" and only gets its baseline at the end of onMount's try.
+  // The early `if (empRes.status === "rejected") { loadError = …; return; }` skips that block, so
+  // registering the bare `anyUnsaved` traps the operator on a stale bookmark to a deleted employee
+  // behind a discard dialog — on a page that renders only an error and shows no marker.
+  it("WR-01: registration is gated on snapshotsReady, never the bare anyUnsaved", () => {
+    expect(PAGE).not.toContain('markUnsaved("admin-employee-detail", anyUnsaved)');
+    expect(PAGE).toContain("let snapshotsReady = $state(false)");
+  });
+
+  it("WR-01: snapshotsReady is set only after the last baseline snapshot, inside the try", () => {
+    const iVacation = PAGE.indexOf("vacationSnapshot = snap(vacYear");
+    const iReady = PAGE.indexOf("snapshotsReady = true");
+    const iCatch = PAGE.indexOf('loadError = "Fehler beim Laden des Mitarbeiters."');
+    expect(iVacation).toBeGreaterThan(-1);
+    // After the last snapshot assignment...
+    expect(iReady).toBeGreaterThan(iVacation);
+    // ...and before the catch, i.e. still inside the try that a load failure short-circuits.
+    expect(iReady).toBeLessThan(iCatch);
   });
 
   it("uses a different registry id than admin/system, so the pages cannot clear each other", () => {

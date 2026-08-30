@@ -219,8 +219,28 @@ describe("D-11/D-12 — unsaved markers on admin/system", () => {
   });
 
   it("the page registers itself under one id and de-registers on unmount", () => {
-    expect(PAGE).toContain('markUnsaved("admin-system", anyUnsaved)');
+    expect(PAGE).toContain('markUnsaved("admin-system", snapshotsReady && anyUnsaved)');
     expect(PAGE).toContain('return () => markUnsaved("admin-system", false)');
+  });
+
+  // WR-01: every snapshot starts as "" and only gets its baseline at the end of onMount's try,
+  // so every *Dirty flag reads true until then. A non-401 load failure (the first statement of
+  // onMount is `await api.get("/settings/work")`) jumps to the catch and never reaches that
+  // block — leaving the guard armed forever on a page that renders only an error banner.
+  it("WR-01: registration is gated on snapshotsReady, never the bare anyUnsaved", () => {
+    expect(PAGE).not.toContain('markUnsaved("admin-system", anyUnsaved)');
+    expect(PAGE).toContain("let snapshotsReady = $state(false)");
+  });
+
+  it("WR-01: snapshotsReady is set only after the last baseline snapshot, inside the try", () => {
+    const iWorkDays = PAGE.indexOf("workDaysSnapshot = snap(defaultWorkDays)");
+    const iReady = PAGE.indexOf("snapshotsReady = true");
+    const iCatch = PAGE.indexOf('error = e instanceof Error ? e.message : "Fehler beim Laden"');
+    expect(iWorkDays).toBeGreaterThan(-1);
+    // After the last snapshot assignment...
+    expect(iReady).toBeGreaterThan(iWorkDays);
+    // ...and before the catch, i.e. still inside the try that a load failure short-circuits.
+    expect(iReady).toBeLessThan(iCatch);
   });
 
   it("T-109-22: the SMTP snapshot records password PRESENCE, never the password", () => {
