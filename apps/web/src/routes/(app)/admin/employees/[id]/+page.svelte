@@ -318,6 +318,59 @@
 
       // Initialise form fields from loaded data
       initFields();
+
+      // Phase 109 (D-11/D-12) — baseline snapshots, taken once every field above is hydrated,
+      // so no section starts marked "Nicht gespeichert" right after load.
+      stammdatenSnapshot = snap(
+        eFirstName,
+        eLastName,
+        eEmployeeNumber,
+        eRole,
+        eNfcCardId,
+        eExitDate,
+        eBirthDate,
+        eClassification,
+        eCoverageWeight,
+        eRequiresSupervision,
+      );
+      scheduleSnapshot = snap(
+        eType,
+        eWeeklyHours,
+        eMonthlyHours,
+        eCoreStart,
+        eCoreEnd,
+        eCoreDays,
+        eMon,
+        eTue,
+        eWed,
+        eThu,
+        eFri,
+        eSat,
+        eSun,
+        eMonWd,
+        eTueWd,
+        eWedWd,
+        eThuWd,
+        eFriWd,
+        eSatWd,
+        eSunWd,
+        eThreshold,
+        ePayout,
+        eOvertimeMode,
+        eWorkDays,
+        eContractWorkDays,
+        eValidFrom,
+      );
+      pausendauerSnapshot = snap(eBreakOver6hOverride, eBreakOver9hOverride);
+      phorestPufferSnapshot = snap(ePhorestPrepOverride, ePhorestWrapupOverride);
+      patternsSnapshot = snap(bsPatterns);
+      bsSlotEmpSnapshot = snap(
+        empBsSlotFirstLong,
+        empBsSlotSecondLong,
+        empBsSlotShortDay,
+        empBsSlotBlockWeek,
+      );
+      vacationSnapshot = snap(vacYear, eVacTotal, eVacCarried, eVacDeadline);
     } catch {
       loadError = "Fehler beim Laden des Mitarbeiters.";
     } finally {
@@ -693,6 +746,18 @@
       );
       employee = { ...employee, firstName: eFirstName, lastName: eLastName };
       stammdatenSaved = true;
+      stammdatenSnapshot = snap(
+        eFirstName,
+        eLastName,
+        eEmployeeNumber,
+        eRole,
+        eNfcCardId,
+        eExitDate,
+        eBirthDate,
+        eClassification,
+        eCoverageWeight,
+        eRequiresSupervision,
+      );
       setTimeout(() => (stammdatenSaved = false), 3000);
       if (res.proRataWarning) {
         toasts.warning(res.proRataWarning.message, 8000);
@@ -737,6 +802,7 @@
         breakOver9hOverride: newOver9,
       };
       pausendauerSaved = true;
+      pausendauerSnapshot = snap(eBreakOver6hOverride, eBreakOver9hOverride);
       setTimeout(() => (pausendauerSaved = false), 3000);
     } catch (e: unknown) {
       // Server returns one of 4 verbatim German messages (Phase 64 D-08) — surface as-is
@@ -779,6 +845,7 @@
         phorestWrapupMinutesOverride: newWrapup,
       };
       phorestPufferSaved = true;
+      phorestPufferSnapshot = snap(ePhorestPrepOverride, ePhorestWrapupOverride);
       setTimeout(() => (phorestPufferSaved = false), 3000);
     } catch (e: unknown) {
       phorestPufferError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
@@ -852,6 +919,12 @@
         bsSlotBlockWeekMinutes: v4,
       };
       empBsSlotSaved = true;
+      bsSlotEmpSnapshot = snap(
+        empBsSlotFirstLong,
+        empBsSlotSecondLong,
+        empBsSlotShortDay,
+        empBsSlotBlockWeek,
+      );
       setTimeout(() => (empBsSlotSaved = false), 3000);
     } catch (e: unknown) {
       empBsSlotError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
@@ -1178,6 +1251,7 @@
       });
       bsNewKeyCounter = 0; // reset — all rows have server ids now
       bsPatternsSaved = true;
+      patternsSnapshot = snap(bsPatterns); // bsPatterns already holds the just-hydrated rows above
       toasts.success("Berufsschultage gespeichert", 2000);
       setTimeout(() => (bsPatternsSaved = false), 2000);
 
@@ -1360,6 +1434,34 @@
     try {
       await api.put<WorkSchedule>(`/settings/work/${employee.id}`, buildSchedulePayload(extra));
       arbeitszeitSaved = true;
+      scheduleSnapshot = snap(
+        eType,
+        eWeeklyHours,
+        eMonthlyHours,
+        eCoreStart,
+        eCoreEnd,
+        eCoreDays,
+        eMon,
+        eTue,
+        eWed,
+        eThu,
+        eFri,
+        eSat,
+        eSun,
+        eMonWd,
+        eTueWd,
+        eWedWd,
+        eThuWd,
+        eFriWd,
+        eSatWd,
+        eSunWd,
+        eThreshold,
+        ePayout,
+        eOvertimeMode,
+        eWorkDays,
+        eContractWorkDays,
+        eValidFrom,
+      );
       setTimeout(() => (arbeitszeitSaved = false), 3000);
     } catch (e: unknown) {
       if (
@@ -1422,6 +1524,7 @@
         carryOverDeadline: eVacDeadline || null,
       });
       urlaubSaved = true;
+      vacationSnapshot = snap(vacYear, eVacTotal, eVacCarried, eVacDeadline);
       setTimeout(() => (urlaubSaved = false), 3000);
     } catch (e: unknown) {
       urlaubError = e instanceof Error ? e.message : "Fehler beim Speichern";
@@ -1429,6 +1532,93 @@
       urlaubSaving = false;
     }
   }
+
+  // ── Unsaved-section tracking (Phase 109, D-11/D-12 · AK-06/AK-07) ──────────────
+  // One snapshot per button-gated group, taken at load (onMount above) and re-taken after each
+  // successful save. Snapshot comparison rather than per-field oninput flags — same pattern as
+  // admin/system/+page.svelte (plan 109-06): three lines per section instead of one per input,
+  // and undoing an edit by hand clears the marker again, which a per-field flag cannot do.
+  // N-02: every save path on this page is already button-gated — there is no instant-save
+  // control here to exclude, unlike admin/system.
+  function snap(...values: unknown[]): string {
+    return JSON.stringify(values);
+  }
+
+  let stammdatenSnapshot = $state("");
+  let stammdatenDirty = $derived(
+    snap(
+      eFirstName,
+      eLastName,
+      eEmployeeNumber,
+      eRole,
+      eNfcCardId,
+      eExitDate,
+      eBirthDate,
+      eClassification,
+      eCoverageWeight,
+      eRequiresSupervision,
+    ) !== stammdatenSnapshot,
+  );
+
+  let scheduleSnapshot = $state("");
+  let scheduleDirty = $derived(
+    // N-04: eValidFrom (the WorkSchedule's validFrom) is part of this snapshot — value and
+    // effective date are one decision, so changing either marks this section unsaved.
+    snap(
+      eType,
+      eWeeklyHours,
+      eMonthlyHours,
+      eCoreStart,
+      eCoreEnd,
+      eCoreDays,
+      eMon,
+      eTue,
+      eWed,
+      eThu,
+      eFri,
+      eSat,
+      eSun,
+      eMonWd,
+      eTueWd,
+      eWedWd,
+      eThuWd,
+      eFriWd,
+      eSatWd,
+      eSunWd,
+      eThreshold,
+      ePayout,
+      eOvertimeMode,
+      eWorkDays,
+      eContractWorkDays,
+      eValidFrom,
+    ) !== scheduleSnapshot,
+  );
+
+  let pausendauerSnapshot = $state("");
+  let pausendauerDirty = $derived(
+    snap(eBreakOver6hOverride, eBreakOver9hOverride) !== pausendauerSnapshot,
+  );
+
+  let phorestPufferSnapshot = $state("");
+  let phorestPufferDirty = $derived(
+    snap(ePhorestPrepOverride, ePhorestWrapupOverride) !== phorestPufferSnapshot,
+  );
+
+  // bsPatterns is the whole array savePatterns() maps over — snapshotting it as one JSON string
+  // catches every field of every row (add/remove/reorder included), not just edits to one field.
+  let patternsSnapshot = $state("");
+  let patternsDirty = $derived(snap(bsPatterns) !== patternsSnapshot);
+
+  let bsSlotEmpSnapshot = $state("");
+  let bsSlotEmpDirty = $derived(
+    snap(empBsSlotFirstLong, empBsSlotSecondLong, empBsSlotShortDay, empBsSlotBlockWeek) !==
+      bsSlotEmpSnapshot,
+  );
+
+  let vacationSnapshot = $state("");
+  let vacationDirty = $derived(
+    snap(vacYear, eVacTotal, eVacCarried, eVacDeadline) !== vacationSnapshot,
+  );
 
   // ── Danger Zone state ──────────────────────────────────────────────────────
   let anonConfirmOpen = $state(false);
@@ -1495,7 +1685,11 @@
     {#snippet tabContent(tab)}
       {#if tab === "stammdaten"}
         <!-- ── Stammdaten ──────────────────────────────────────────────────── -->
-        <Section title="Persönliche Daten" sub="Name, Mitarbeiternummer, NFC, Austrittsdatum">
+        <Section
+          title="Persönliche Daten"
+          sub="Name, Mitarbeiternummer, NFC, Austrittsdatum"
+          dirty={stammdatenDirty}
+        >
           {#snippet footer()}
             <button class="btn btn-primary" onclick={saveStammdaten} disabled={stammdatenSaving}>
               {stammdatenSaving ? "Speichern…" : "Speichern"}
@@ -1635,6 +1829,7 @@
         <Section
           title="Arbeitszeitmodell"
           sub="Festzeit, Gleitzeit, Monatsstunden oder Schichtplan"
+          dirty={scheduleDirty}
         >
           {#snippet footer()}
             <button class="btn btn-primary" onclick={saveSchedule} disabled={arbeitszeitSaving}>
@@ -2063,6 +2258,7 @@
           <Section
             title="Pausendauer (Optional)"
             sub="Überschreibt Tenant-Standard für diesen Mitarbeiter. Leer = Standard verwenden."
+            dirty={pausendauerDirty}
           >
             {#snippet footer()}
               <button
@@ -2154,6 +2350,7 @@
           <Section
             title="Phorest Vor-/Nachbereitungszeit (Optional)"
             sub="Überschreibt Tenant-Standard für diesen Mitarbeiter. Leer = Standard verwenden."
+            dirty={phorestPufferDirty}
           >
             {#snippet footer()}
               <button
@@ -2217,6 +2414,7 @@
           <Section
             title="Berufsschultag (Optional)"
             sub="Wiederkehrende Berufsschultage und Block-Wochen für BBiG-§15-Freistellung"
+            dirty={patternsDirty}
           >
             {#snippet footer()}
               <button
@@ -2675,6 +2873,7 @@
           <Section
             title="Zeitgutschrift Berufsschule (Mitarbeiter-Override)"
             sub="Überschreibt Pattern- und Mandanten-Vorgabe für diesen Azubi. Leer = von tieferer Schicht erben."
+            dirty={bsSlotEmpDirty}
           >
             {#snippet footer()}
               <button class="btn btn-primary" onclick={saveBsSlotEmp} disabled={empBsSlotSaving}>
@@ -2966,7 +3165,11 @@
         {/if}
       {:else if tab === "urlaub"}
         <!-- ── Urlaub ───────────────────────────────────────────────────────── -->
-        <Section title="Urlaubsanspruch {vacYear}" sub="Jahresurlaub, Übertrag und Verfalldatum">
+        <Section
+          title="Urlaubsanspruch {vacYear}"
+          sub="Jahresurlaub, Übertrag und Verfalldatum"
+          dirty={vacationDirty}
+        >
           {#snippet footer()}
             <button class="btn btn-primary" onclick={saveVacation} disabled={urlaubSaving}>
               {urlaubSaving ? "Speichern…" : "Speichern"}
@@ -3040,7 +3243,11 @@
         </Section>
       {:else if tab === "berechtigungen"}
         <!-- ── Berechtigungen ─────────────────────────────────────────────── -->
-        <Section title="Rolle & Zugang" sub="Benutzerkonto, Rolle und Einladungsstatus">
+        <Section
+          title="Rolle & Zugang"
+          sub="Benutzerkonto, Rolle und Einladungsstatus"
+          dirty={stammdatenDirty}
+        >
           {#snippet footer()}
             <button class="btn btn-primary" onclick={saveStammdaten} disabled={stammdatenSaving}>
               {stammdatenSaving ? "Speichern…" : "Speichern"}
