@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
+import { mkdtempSync, writeFileSync, rmSync, readdirSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { parseReleaseNote, loadReleaseNotes } from "../release-notes";
+import { parseReleaseNote, loadReleaseNotes, RELEASE_NOTES_DIR } from "../release-notes";
 
 describe("parseReleaseNote", () => {
   it("parses a bare headline with no body into empty intro/sections/footnote", () => {
@@ -143,6 +143,57 @@ describe("loadReleaseNotes", () => {
       expect(notes.map((n) => n.version)).toEqual(["1.10.0", "1.9.18"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── Corpus sweep (AK-16 backfill) ───────────────────────────────────────────
+// A malformed note file degrades to "skipped" at runtime by design (loadReleaseNotes' fail-silent
+// contract, AK-06) -- which means production would silently drop an entry with nothing turning
+// red. This sweep is the counterweight: it runs the THROWING variant, parseReleaseNote, against
+// every real file in docs/release-notes/ so malformed content fails CI before it can ever ship
+// silently. Both halves are needed; neither is sufficient alone.
+//
+// Read the real directory via the exported RELEASE_NOTES_DIR, not a hand-built path -- this is
+// also the dev-side proof that the constant resolves correctly (the Docker gate in Plan 04 proves
+// the image side).
+const corpusFiles = readdirSync(RELEASE_NOTES_DIR).filter((f) => /^v\d+\.\d+\.\d+\.md$/.test(f));
+
+describe("release-notes corpus (AK-16 backfill)", () => {
+  it("finds at least 22 real corpus files to sweep", () => {
+    expect(corpusFiles.length).toBeGreaterThanOrEqual(22);
+  });
+
+  it.each(corpusFiles)("%s parses and is renderable", (file) => {
+    const version = file.slice(1, -3);
+    const markdown = readFileSync(join(RELEASE_NOTES_DIR, file), "utf-8");
+
+    const note = parseReleaseNote(version, markdown);
+
+    expect(note.title.length).toBeGreaterThan(0);
+    expect(note.sections.length > 0 || note.intro.length > 0).toBe(true);
+
+    // AK-13 canary on real content: no bullet span looks like it could be markup. Complements
+    // the hostile-payload unit test above, which proves the render path treats such text as
+    // literal -- this proves no shipped note accidentally contains any in the first place.
+    for (const section of note.sections) {
+      for (const bullet of section.bullets) {
+        for (const span of bullet.spans) {
+          expect(span.text).not.toMatch(/<[a-zA-Z]/);
+        }
+      }
+    }
+  });
+
+  it("loadReleaseNotes() with no argument returns >= 22 notes sorted newest-first, real corpus", () => {
+    const notes = loadReleaseNotes();
+    expect(notes.length).toBeGreaterThanOrEqual(22);
+    const tupleOf = (version: string) => {
+      const [major, minor, patch] = version.split(".").map(Number);
+      return major * 1_000_000 + minor * 1_000 + patch;
+    };
+    for (let i = 1; i < notes.length; i++) {
+      expect(tupleOf(notes[i - 1].version)).toBeGreaterThanOrEqual(tupleOf(notes[i].version));
     }
   });
 });
