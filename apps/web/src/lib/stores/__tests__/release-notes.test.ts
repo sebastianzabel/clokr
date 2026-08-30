@@ -181,4 +181,96 @@ describe("release-notes store (Phase 110)", () => {
     mod.openWhatsNew();
     expect(get(mod.whatsNewOpen)).toBe(true);
   });
+
+  // ── Readiness-gate race fix (110-07 checkpoint follow-up) ─────────────────
+  // Reproduced live: the What's-New drawer auto-opened on every login instead of once per
+  // release, because `hasUnreadReleaseNotes` read `releaseNotesStore` and `lastSeenStore`
+  // independently and the two backing fetches settle at different times. Whichever endpoint
+  // answers first left the OTHER store at its untouched initial value for one tick; when
+  // `/release-notes` answered first, `lastSeenStore` was still `null`, so
+  // `"1.9.18" !== null` made the derived store flip true and latch the layout's auto-open
+  // `$effect` before the real seen state ever arrived.
+  it("does not flag unread while only GET /release-notes has resolved (notes-before-seen ordering) — proven to fail pre-fix", async () => {
+    let resolveSeen!: (v: { lastSeenVersion: string | null }) => void;
+    const seenPromise = new Promise<{ lastSeenVersion: string | null }>((resolve) => {
+      resolveSeen = resolve;
+    });
+    apiGet.mockImplementation((path: string) => {
+      if (path === "/release-notes")
+        return Promise.resolve({ releases: [note({ version: "1.9.18" })] });
+      if (path === "/me/release-notes-seen") return seenPromise;
+      return Promise.reject(new Error(`unexpected path ${path}`));
+    });
+    const mod = await freshModule();
+
+    mod.loadReleaseNotesData();
+    // Let only the /release-notes microtask chain settle — /me/release-notes-seen is still
+    // pending on `seenPromise`. Without the readiness gate, `releaseNotesStore` already holds
+    // the payload here while `lastSeenStore` is still its initial `null`.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(get(mod.releaseNotesStore)).toHaveLength(1); // sanity: the race window is real
+    expect(get(mod.hasUnreadReleaseNotes)).toBe(false);
+
+    // Now let the seen fetch settle too, with a genuinely different (older) seen version —
+    // the derived store must recompute to the CORRECT final answer, not stay stuck false.
+    resolveSeen({ lastSeenVersion: "1.9.17" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(get(mod.hasUnreadReleaseNotes)).toBe(true);
+  });
+
+  it("does not flag unread while only GET /me/release-notes-seen has resolved (seen-before-notes ordering)", async () => {
+    let resolveNotes!: (v: { releases: ReturnType<typeof note>[] }) => void;
+    const notesPromise = new Promise<{ releases: ReturnType<typeof note>[] }>((resolve) => {
+      resolveNotes = resolve;
+    });
+    apiGet.mockImplementation((path: string) => {
+      if (path === "/release-notes") return notesPromise;
+      if (path === "/me/release-notes-seen") return Promise.resolve({ lastSeenVersion: "1.9.17" });
+      return Promise.reject(new Error(`unexpected path ${path}`));
+    });
+    const mod = await freshModule();
+
+    mod.loadReleaseNotesData();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(get(mod.lastSeenStore)).toBe("1.9.17"); // sanity: the race window is real
+    expect(get(mod.hasUnreadReleaseNotes)).toBe(false);
+
+    resolveNotes({ releases: [note({ version: "1.9.18" })] });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(get(mod.hasUnreadReleaseNotes)).toBe(true);
+  });
+
+  it("a failed GET /me/release-notes-seen never flags unread, even after /release-notes resolves with a new version (fail-silent, not fail-noisy)", async () => {
+    apiGet.mockImplementation((path: string) => {
+      if (path === "/release-notes")
+        return Promise.resolve({ releases: [note({ version: "1.9.18" })] });
+      if (path === "/me/release-notes-seen") return Promise.reject(new Error("boom"));
+      return Promise.reject(new Error(`unexpected path ${path}`));
+    });
+    const mod = await freshModule();
+
+    mod.loadReleaseNotesData();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(get(mod.releaseNotesStore)).toHaveLength(1);
+    expect(get(mod.lastSeenStore)).toBeNull(); // unchanged by the failed fetch
+    // The crux: an unresolved "have they seen it?" must never be treated as "they haven't".
+    expect(get(mod.hasUnreadReleaseNotes)).toBe(false);
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    expect(consoleWarnSpy).not.toHaveBeenCalled();
+  });
 });
