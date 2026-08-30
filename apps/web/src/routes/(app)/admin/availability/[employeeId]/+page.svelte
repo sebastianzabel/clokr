@@ -15,6 +15,7 @@
   import { authStore } from "$stores/auth";
   import { tenantFeatures } from "$stores/tenant-features";
   import { toasts } from "$stores/toast";
+  import { markUnsaved } from "$stores/unsaved";
   import ListDetail from "$lib/components/admin/ListDetail.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import AvailabilityWeekGrid, {
@@ -80,6 +81,13 @@
   const dirty = $derived(
     snapshotsReady && !loading && !featureDisabled && currentSnapshot !== lastSnapshot,
   );
+
+  // Phase 109 (D-12) — one registry entry per PAGE. `dirty` already carries the WR-01 gate, so the
+  // registration reads it directly rather than repeating `snapshotsReady &&` here.
+  $effect(() => {
+    markUnsaved("admin-availability-detail", dirty);
+    return () => markUnsaved("admin-availability-detail", false);
+  });
 
   function applyEntries(entries: ApiAvailabilityEntry[]): void {
     const recurring: RecurringEntry[] = [];
@@ -204,6 +212,12 @@
 >
   {#snippet actions()}
     <a class="btn btn-ghost btn-sm" href="/admin/availability">Zurück</a>
+    <!-- Neither Section on this page has a footer snippet, so Section.dirty would render
+         nothing — the global .unsaved-hint recipe is rendered directly here, next to the
+         button it refers to, same as the inline case on admin/system. -->
+    {#if dirty}
+      <span class="unsaved-hint" role="status">Nicht gespeichert</span>
+    {/if}
     <button
       class="btn btn-primary btn-sm"
       disabled={featureDisabled || !dirty || saving}

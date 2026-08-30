@@ -20,7 +20,7 @@
 // - AK-02: no text/number input on this page carries an inline write handler (this page has no
 //   inline `<input>` at all — the grid/list are separate child components).
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -211,6 +211,58 @@ describe("WR-01 — the baseline gate", () => {
 
     expect(dirty).toBe(false);
     expect(disabled).toBe(true);
+  });
+});
+
+describe("D-12 — guard registration on admin/availability/[employeeId]", () => {
+  it("registers under the unsaved registry, gated through dirty", () => {
+    expect(PAGE).toContain('markUnsaved("admin-availability-detail", dirty)');
+  });
+
+  it("the effect de-registers on unmount", () => {
+    expect(PAGE).toContain('return () => markUnsaved("admin-availability-detail", false)');
+  });
+
+  it("the registration inherits the WR-01 gate through dirty", () => {
+    // Verifies the two guarantees are chained: the markUnsaved call reads `dirty` directly (not
+    // a hand-repeated `snapshotsReady && ...`), and `dirty`'s own derivation still contains the
+    // WR-01 gate — so a later loosening of `dirty` would surface here too.
+    expect(PAGE).toContain('markUnsaved("admin-availability-detail", dirty)');
+    expect(PAGE).toMatch(/const dirty = \$derived\(\s*snapshotsReady &&/);
+  });
+
+  it("the marker is the global recipe, rendered inline (no Section footer on this page)", () => {
+    expect(PAGE).toContain('<span class="unsaved-hint" role="status">Nicht gespeichert</span>');
+    expect(PAGE.match(/class="unsaved-hint"/g) ?? []).toHaveLength(1);
+    expect(PAGE).not.toContain("dirty={");
+  });
+
+  it("the registry id is unique across admin routes", () => {
+    function adminPageFiles(): string[] {
+      const candidates = [
+        () => fileURLToPath(new URL("../routes/(app)/admin", import.meta.url)),
+        () => resolve(process.cwd(), "src/routes/(app)/admin"),
+      ];
+      for (const getDir of candidates) {
+        try {
+          const dir = getDir();
+          return (readdirSync(dir, { recursive: true }) as string[])
+            .filter((f) => f.endsWith("+page.svelte"))
+            .map((f) => resolve(dir, f));
+        } catch {
+          continue;
+        }
+      }
+      throw new Error("could not locate src/routes/(app)/admin from either candidate path");
+    }
+
+    const files = adminPageFiles();
+    expect(files.length).toBeGreaterThan(1);
+    const hits = files.filter((f) =>
+      readFileSync(f, "utf8").includes('markUnsaved("admin-availability-detail"'),
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toContain("availability");
   });
 });
 
