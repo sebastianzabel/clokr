@@ -433,7 +433,11 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 
 - All user-facing strings, error messages, and labels are in German
 - Examples: `"Mitarbeiter nicht gefunden"`, `"Ungültige Anmeldedaten"`, `"Konto temporär gesperrt"`
-- Comments in route files mix German and English (German for domain terms, English for technical comments)
+- Code comments are **English**, without exception (see the Language section above). German
+  appears only inside user-facing string literals; German domain nouns (`Monatsabschluss`,
+  `Zeitnachtrag`, `Revisionssicherheit`, `Betriebsurlaub`, `ArbZG`) stay untranslated when named
+  inside English prose. Legacy files still contain German comment prose — that is drift to fix on
+  sight in a file you are already editing, not a convention to follow (GitHub issue #131)
 - All variable names, function names, type names in English
 - Domain-specific German terms kept where they are proper nouns: `Monatsabschluss`, `Sonderurlaub`, `Betriebsurlaub`, `ArbZG`
 
