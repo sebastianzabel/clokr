@@ -9,6 +9,7 @@
   import Topbar from "$lib/components/layout/Topbar.svelte";
   import BottomTabBar from "$lib/components/layout/BottomTabBar.svelte";
   import CommandPalette from "$lib/components/ui/CommandPalette.svelte";
+  import ErrorBoundary from "$lib/components/ui/ErrorBoundary.svelte";
 
   interface Props {
     children?: import("svelte").Snippet;
@@ -118,7 +119,9 @@
     <Topbar {currentPath} {currentPageLabel} />
     <main class="main" id="main-content">
       <div class="page-fade">
-        {@render children?.()}
+        <ErrorBoundary scope="view">
+          {@render children?.()}
+        </ErrorBoundary>
       </div>
     </main>
     <BottomTabBar {currentPath} />
