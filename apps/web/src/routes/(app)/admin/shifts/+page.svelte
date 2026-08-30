@@ -4,6 +4,7 @@
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { toasts } from "$stores/toast";
+  import { markUnsaved } from "$stores/unsaved";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
@@ -177,6 +178,7 @@
       }
       patternMatrix = matrix;
       patternMatrixInitial = JSON.parse(JSON.stringify(matrix));
+      snapshotsReady = true;
     } catch (e) {
       console.error(e);
       error = "Fehler beim Laden der Konfiguration.";
@@ -196,6 +198,21 @@
     return [0, 1, 2, 3, 4, 5, 6].some((d) => isCellDirty(empId, d));
   }
   const dirtyEmployeeCount = $derived(shiftEmployees.filter((e) => isRowDirty(e.id)).length);
+
+  // Phase 109 (D-11/D-12) — this page already had the baseline this phase's idiom prescribes
+  // (patternMatrixInitial, taken in loadAll and re-taken only on a fully successful save), so no
+  // second snapshot mechanism is introduced here. dirtyEmployeeCount IS the derivation.
+  const patternsDirty = $derived(dirtyEmployeeCount > 0);
+
+  // Gate the registration on "the baseline has been taken" (WR-01): loadAll can fail (its catch
+  // sets `error`) or never run at all (a non-ADMIN is redirected out of onMount before loadAll),
+  // and an unregistered page must not be able to arm the navigation guard.
+  let snapshotsReady = $state(false);
+
+  $effect(() => {
+    markUnsaved("admin-shifts", snapshotsReady && patternsDirty);
+    return () => markUnsaved("admin-shifts", false);
+  });
   // Soll-Hint per Wochentag column: average weekly hours / 5 for Mo–Fr only.
   // Returns null for Sa/So (most stores closed) and when no clean signal is available.
   function sollHintForDow(dow: number): string | null {
@@ -500,9 +517,14 @@
       </Section>
     {:else if currentTab === "muster"}
       <!-- ── Pattern-Editor section (Phase 48) ─────────────────────── -->
+      <!-- The template and coverage-rule editors above live in <Modal> — a modal draft is
+           dismissible by ESC and backdrop (Modal.svelte:26,33), which beforeNavigate never sees
+           and Section.dirty cannot render for. Modal drafts are deliberately out of the page
+           registry; only this Section carries a dirty prop. -->
       <Section
         title="Schicht-Muster (Wochenrhythmus)"
         sub="Wiederkehrendes Wochenmuster pro Mitarbeiter. Nur Mitarbeiter mit Arbeitszeitmodell „Schichtplan ist führend&quot; (SHIFT_BASED) erscheinen hier. Änderungen werden erst beim Klick auf „Muster speichern&quot; übernommen."
+        dirty={patternsDirty}
       >
         {#if shiftEmployees.length === 0}
           <div class="callout info">

@@ -110,3 +110,62 @@ describe("the pattern Section has a footer — the marker belongs in it", () => 
     expect(textOrNumberInputHandlers(PAGE)).toEqual([]);
   });
 });
+
+describe("D-11/D-12 — unsaved marker and guard registration on admin/shifts", () => {
+  it("patternsDirty reuses the existing baseline, it does not add a second mechanism", () => {
+    expect(PAGE).toContain("const patternsDirty = $derived(dirtyEmployeeCount > 0)");
+    expect(PAGE).not.toContain("function snap(");
+  });
+
+  it("the registration is gated on snapshotsReady (WR-01)", () => {
+    expect(PAGE).toContain('markUnsaved("admin-shifts", snapshotsReady && patternsDirty)');
+    expect(PAGE).not.toContain('markUnsaved("admin-shifts", patternsDirty)');
+  });
+
+  it("snapshotsReady is set in loadAll's try, right after the baseline", () => {
+    const body = fnBody("async function loadAll");
+    const catchIdx = body.indexOf("} catch");
+    const baselineIdx = body.indexOf("patternMatrixInitial = JSON.parse(");
+    const readyIdx = body.indexOf("snapshotsReady = true");
+    expect(catchIdx).toBeGreaterThan(-1);
+    expect(baselineIdx).toBeGreaterThan(-1);
+    expect(readyIdx).toBeGreaterThan(baselineIdx);
+    expect(readyIdx).toBeLessThan(catchIdx);
+    expect(PAGE).not.toMatch(/finally\s*\{[^}]*snapshotsReady/s);
+  });
+
+  it("exactly one Section carries a dirty prop, and it is the pattern Section", () => {
+    expect((PAGE.match(/dirty=\{patternsDirty\}/g) ?? []).length).toBe(1);
+    const titleIdx = PAGE.indexOf('title="Schicht-Muster (Wochenrhythmus)"');
+    const sectionEnd = PAGE.indexOf("</Section>", titleIdx);
+    const dirtyIdx = PAGE.indexOf("dirty={patternsDirty}");
+    expect(titleIdx).toBeGreaterThan(-1);
+    expect(dirtyIdx).toBeGreaterThan(-1);
+    expect(dirtyIdx).toBeLessThan(sectionEnd);
+    expect(PAGE).not.toContain('class="unsaved-hint"');
+  });
+
+  it("the baseline re-take stays on the fully-successful path", () => {
+    const body = fnBody("async function saveBulkPatterns");
+    const ifStart = body.indexOf("if (fail === 0)");
+    const elseStart = body.indexOf("} else if (ok === 0)");
+    expect(ifStart).toBeGreaterThan(-1);
+    expect(elseStart).toBeGreaterThan(ifStart);
+    const successBranch = body.slice(ifStart, elseStart);
+    expect(successBranch).toContain(
+      "patternMatrixInitial = JSON.parse(JSON.stringify(patternMatrix))",
+    );
+  });
+
+  it("modal drafts are not registered", () => {
+    expect(PAGE).not.toContain('markUnsaved("admin-shifts", tpl');
+    const registrationIdx = PAGE.indexOf('markUnsaved("admin-shifts",');
+    const registrationLine = PAGE.slice(registrationIdx, PAGE.indexOf(")", registrationIdx));
+    expect(registrationLine).not.toContain("tplName");
+    expect(registrationLine).not.toContain("ruleMinStaff");
+  });
+
+  it("the effect de-registers on unmount", () => {
+    expect(PAGE).toContain('return () => markUnsaved("admin-shifts", false)');
+  });
+});
