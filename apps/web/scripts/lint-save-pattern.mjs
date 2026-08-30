@@ -70,7 +70,9 @@ const WRITEISH = /\b(api\.|save[A-Z]|toggle[A-Z])/;
  * `{`/`}` depth char-by-char and only treats a bare `>` as the tag terminator while depth
  * is back at 0 — i.e. outside any `{…}` JS-expression attribute value.
  */
+/** @param {string} source @returns {string[]} */
 function extractInputTags(source) {
+  /** @type {string[]} */
   const tags = [];
   const re = /<input\b/g;
   let m;
@@ -101,7 +103,13 @@ function extractInputTags(source) {
  * that writes outside a button-gated group. `file` is carried through into each entry
  * purely for reporting — the detector itself is file-agnostic.
  */
+/**
+ * @param {string} source
+ * @param {string} file
+ * @returns {{ file: string, type: string, handler: string, rule: "a" | "b" }[]}
+ */
 export function findSavePatternViolations(source, file) {
+  /** @type {{ file: string, type: string, handler: string, rule: "a" | "b" }[]} */
   const violations = [];
   for (const tag of extractInputTags(source)) {
     const type = tag.match(/type="([a-z]+)"/)?.[1];
@@ -120,10 +128,13 @@ export function findSavePatternViolations(source, file) {
   return violations;
 }
 
+/** @param {string} scope @returns {string[]} */
 function listSvelteFiles(scope) {
   const abs = resolve(repoRoot, scope);
   if (!existsSync(abs)) return [];
+  /** @type {string[]} */
   const out = [];
+  /** @param {string} dir */
   const walk = (dir) => {
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry);
@@ -140,6 +151,7 @@ function listSvelteFiles(scope) {
 }
 
 function main() {
+  /** @type {{ file: string, type: string, handler: string, rule: "a" | "b" }[]} */
   const violations = [];
   let totalFiles = 0;
 
