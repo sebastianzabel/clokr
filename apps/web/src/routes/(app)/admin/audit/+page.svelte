@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
+  import { markUnsaved } from "$stores/unsaved";
   import { format } from "date-fns";
   import { de } from "date-fns/locale";
   import Pagination from "$components/ui/Pagination.svelte";
@@ -61,6 +62,29 @@
   let retentionLoading = $state(false);
   let retentionSaving = $state(false);
 
+  // ── Unsaved-section tracking (Phase 109, D-11/D-12 · AK-06/AK-07) ──────────────
+  // At exactly one persisted value, `String(retentionYears)` would be shorter — the snap()
+  // helper is used anyway so this page carries the same, everywhere-recognizable idiom as the
+  // other six pages this phase touched.
+  function snap(...values: unknown[]): string {
+    return JSON.stringify(values);
+  }
+
+  // filterAction/filterEntity parameterise a READ (applyFilter → loadLogs); changing one is not
+  // an unsaved edit and must never arm the guard — they are deliberately excluded here.
+  let retentionSnapshot = $state("");
+  let retentionDirty = $derived(snap(retentionYears) !== retentionSnapshot);
+
+  // Gate on "the baseline has been taken" (WR-01): loadRetention swallows its error and keeps the
+  // default of 10, which would otherwise read as an unsaved change to a retention period nobody
+  // touched — a claim with legal weight (§ 147 AO / § 41 EStG).
+  let snapshotsReady = $state(false);
+
+  $effect(() => {
+    markUnsaved("admin-audit", snapshotsReady && retentionDirty);
+    return () => markUnsaved("admin-audit", false);
+  });
+
   const ACTIONS = ["LOGIN", "CREATE", "UPDATE", "DELETE", "EXPORT"];
   const ENTITIES = ["TimeEntry", "LeaveRequest", "Employee", "User", "OvertimeAccount", "Settings"];
 
@@ -94,6 +118,8 @@
     try {
       const cfg = await api.get<WorkSettings>("/settings/work");
       retentionYears = cfg.dataRetentionYears ?? 10;
+      retentionSnapshot = snap(retentionYears);
+      snapshotsReady = true;
     } catch {
       // keep default — non-blocking
     } finally {
@@ -105,6 +131,7 @@
     retentionSaving = true;
     try {
       await api.put("/settings/work", { dataRetentionYears: retentionYears });
+      retentionSnapshot = snap(retentionYears); // Phase 109 — section is clean again
       toasts.success("Aufbewahrungsfrist aktualisiert");
     } catch (e: unknown) {
       toasts.error(e instanceof Error ? e.message : "Fehler beim Speichern");
@@ -261,7 +288,11 @@
       </Section>
     {:else if currentTab === "config"}
       <!-- ── Aufbewahrung ──────────────────────────────────────── -->
-      <Section title="Aufbewahrung" sub="Standard: 10 Jahre (GoBD, § 147 AO)">
+      <Section
+        title="Aufbewahrung"
+        sub="Standard: 10 Jahre (GoBD, § 147 AO)"
+        dirty={retentionDirty}
+      >
         {#snippet footer()}
           <span class="audit-spacer"></span>
           <button

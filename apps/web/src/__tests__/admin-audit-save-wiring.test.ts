@@ -133,3 +133,67 @@ describe("AK-02", () => {
     expect(textOrNumberInputHandlers(PAGE)).toEqual([]);
   });
 });
+
+describe("D-11/D-12 — unsaved marker and guard registration on admin/audit", () => {
+  it("retentionDirty is $derived(snap(retentionYears) !== retentionSnapshot)", () => {
+    expect(PAGE).toContain(
+      "let retentionDirty = $derived(snap(retentionYears) !== retentionSnapshot);",
+    );
+  });
+
+  it("the log filters are not part of the dirty state", () => {
+    const start = PAGE.indexOf("let retentionDirty = $derived(");
+    const end = PAGE.indexOf(";", start);
+    const slice = PAGE.slice(start, end);
+    expect(slice).not.toContain("filterAction");
+    expect(slice).not.toContain("filterEntity");
+
+    const markUnsavedLine = PAGE.slice(
+      PAGE.indexOf('markUnsaved("admin-audit"'),
+      PAGE.indexOf(")", PAGE.indexOf('markUnsaved("admin-audit"')) + 1,
+    );
+    expect(markUnsavedLine).not.toContain("filterAction");
+    expect(markUnsavedLine).not.toContain("filterEntity");
+  });
+
+  it("the registration is gated on snapshotsReady (WR-01)", () => {
+    expect(PAGE).toContain('markUnsaved("admin-audit", snapshotsReady && retentionDirty)');
+    expect(PAGE).not.toContain('markUnsaved("admin-audit", retentionDirty)');
+  });
+
+  it("snapshotsReady = true sits inside loadRetention's try, after retentionYears is set, never in finally", () => {
+    const body = fnBody("async function loadRetention");
+    const hydrationPoint = body.indexOf("retentionYears = cfg.dataRetentionYears");
+    const readyPoint = body.indexOf("snapshotsReady = true");
+    expect(readyPoint).toBeGreaterThan(hydrationPoint);
+    expect(PAGE).not.toMatch(/finally\s*\{[^}]*snapshotsReady/s);
+  });
+
+  it("T-109-24 — no retentionSnapshot = snap( assignment is inside a finally block, and the saveRetention reset precedes its catch", () => {
+    for (const m of PAGE.matchAll(/retentionSnapshot = snap\(/g)) {
+      const idx = m.index ?? -1;
+      const before = PAGE.slice(Math.max(0, idx - 120), idx);
+      expect(before).not.toMatch(/finally\s*\{/);
+    }
+    const saveBody = fnBody("async function saveRetention");
+    const snapPoint = saveBody.indexOf("retentionSnapshot = snap(");
+    const catchPoint = saveBody.indexOf("} catch");
+    expect(snapPoint).toBeGreaterThan(-1);
+    expect(snapPoint).toBeLessThan(catchPoint);
+  });
+
+  it("exactly one dirty={ prop, on the Aufbewahrung section", () => {
+    const matches = PAGE.match(/dirty=\{/g) ?? [];
+    expect(matches).toHaveLength(1);
+    const sectionStart = PAGE.indexOf('<Section\n        title="Aufbewahrung"');
+    expect(sectionStart).toBeGreaterThan(-1);
+    const sectionEnd = PAGE.indexOf("</Section>", sectionStart);
+    const dirtyIdx = PAGE.indexOf("dirty={");
+    expect(dirtyIdx).toBeGreaterThan(sectionStart);
+    expect(dirtyIdx).toBeLessThan(sectionEnd);
+  });
+
+  it("the effect de-registers on unmount", () => {
+    expect(PAGE).toContain('return () => markUnsaved("admin-audit", false);');
+  });
+});
