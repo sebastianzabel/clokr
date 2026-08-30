@@ -45,7 +45,7 @@ import { render, cleanup } from "@testing-library/svelte";
 import ThrowingChild from "$tests/fixtures/ThrowingChild.svelte";
 
 describe("boundary-onerror-reach — D-05 characterization (Issue #127)", () => {
-  let errorSpy: ReturnType<typeof vi.fn>;
+  let errorSpy: ReturnType<typeof vi.fn<(ev: ErrorEvent) => void>>;
 
   beforeEach(() => {
     // Rebuild what clientLogger.install() does to `window`, WITHOUT touching the real
