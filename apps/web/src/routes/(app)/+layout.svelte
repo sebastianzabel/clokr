@@ -4,6 +4,7 @@
   import { page } from "$app/stores";
   import { authStore } from "$stores/auth";
   import { tenantFeatures } from "$stores/tenant-features";
+  import { clearUnsaved } from "$stores/unsaved";
   import { clientLogger } from "$lib/utils/logger";
   import Sidebar from "$lib/components/layout/Sidebar.svelte";
   import Topbar from "$lib/components/layout/Topbar.svelte";
@@ -70,6 +71,7 @@
     if (sessionTimeoutMs <= 0) return; // 0 = disabled
     inactivityTimer = setTimeout(() => {
       authStore.logout();
+      clearUnsaved(); // N-08 — a timed-out session must never be held hostage by a dirty section
       goto("/login?reason=timeout");
     }, sessionTimeoutMs);
   }

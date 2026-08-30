@@ -3,6 +3,7 @@
   import { tenantFeatures } from "$stores/tenant-features";
   import { versionStore, loadVersion } from "$stores/version";
   import { goto } from "$app/navigation";
+  import { clearUnsaved } from "$stores/unsaved";
   import { api } from "$api/client";
   import Icon from "$lib/components/Icon.svelte";
   import { onMount } from "svelte";
@@ -156,6 +157,7 @@
       // swallow — local logout still proceeds
     } finally {
       authStore.logout();
+      clearUnsaved(); // N-08: the nav guard cannot tell a logout from any other navigation
       goto("/login");
     }
   }
