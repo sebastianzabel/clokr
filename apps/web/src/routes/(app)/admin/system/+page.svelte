@@ -356,18 +356,44 @@
   let pwSaved = $state(false);
   let pwError = $state("");
 
-  // E-Mail-Benachrichtigungen
-  let emailEnabled = $state(false);
-  let emailOnLeaveRequest = $state(true);
-  let emailOnLeaveDecision = $state(true);
-  let emailOnOvertimeWarning = $state(false);
-  let emailOnMissingEntries = $state(false);
-  let emailOnClockOutReminder = $state(false);
-  let emailOnMonthClose = $state(true);
-  let emailOnRetroEntry = $state(true);
-  let emailSaving = $state(false);
-  let emailSaved = $state(false);
-  let emailError = $state("");
+  // Phase 109 (D-01/D-03/D-04, AK-01/AK-03/AK-05) — the eight E-Mail-Benachrichtigungs-Toggles are
+  // atomic single values: each one is independently meaningful, so each one saves on flip.
+  // Keys are the `PUT /settings/security` field names verbatim, so the payload is `{ [flag]: next }`
+  // with no mapping layer. Deliberately NOT the `_gOtherFields` full spread used elsewhere in this
+  // file — that snapshot is read once at load and never refreshed, and copying it into a new handler
+  // would widen a known lost-update race (N-09).
+  type EmailFlag =
+    | "emailNotificationsEnabled"
+    | "emailOnLeaveRequest"
+    | "emailOnLeaveDecision"
+    | "emailOnOvertimeWarning"
+    | "emailOnMissingEntries"
+    | "emailOnClockOutReminder"
+    | "emailOnMonthClose"
+    | "emailOnRetroEntry";
+
+  const EMAIL_FLAG_LABELS: Record<EmailFlag, string> = {
+    emailNotificationsEnabled: "E-Mail-Benachrichtigungen",
+    emailOnLeaveRequest: "Neuer Urlaubsantrag",
+    emailOnLeaveDecision: "Urlaub genehmigt / abgelehnt",
+    emailOnOvertimeWarning: "Überstunden-Warnung",
+    emailOnMissingEntries: "Fehlende Zeiteinträge",
+    emailOnClockOutReminder: "Vergessene Stempelung",
+    emailOnMonthClose: "Monatsabschluss",
+    emailOnRetroEntry: "Zeitnachtrag",
+  };
+
+  let emailFlags = $state<Record<EmailFlag, boolean>>({
+    emailNotificationsEnabled: false,
+    emailOnLeaveRequest: true,
+    emailOnLeaveDecision: true,
+    emailOnOvertimeWarning: false,
+    emailOnMissingEntries: false,
+    emailOnClockOutReminder: false,
+    emailOnMonthClose: true,
+    emailOnRetroEntry: true,
+  });
+  let emailFlagSaving = $state<EmailFlag | null>(null);
 
   // NFC Terminals
   interface TerminalKey {
@@ -511,14 +537,16 @@
         pwRequireLower = sec.passwordRequireLower;
         pwRequireDigit = sec.passwordRequireDigit;
         pwRequireSpecial = sec.passwordRequireSpecial;
-        emailEnabled = sec.emailNotificationsEnabled ?? false;
-        emailOnLeaveRequest = sec.emailOnLeaveRequest ?? true;
-        emailOnLeaveDecision = sec.emailOnLeaveDecision ?? true;
-        emailOnOvertimeWarning = sec.emailOnOvertimeWarning ?? false;
-        emailOnMissingEntries = sec.emailOnMissingEntries ?? false;
-        emailOnClockOutReminder = sec.emailOnClockOutReminder ?? false;
-        emailOnMonthClose = sec.emailOnMonthClose ?? true;
-        emailOnRetroEntry = sec.emailOnRetroEntry ?? true;
+        emailFlags = {
+          emailNotificationsEnabled: sec.emailNotificationsEnabled ?? false,
+          emailOnLeaveRequest: sec.emailOnLeaveRequest ?? true,
+          emailOnLeaveDecision: sec.emailOnLeaveDecision ?? true,
+          emailOnOvertimeWarning: sec.emailOnOvertimeWarning ?? false,
+          emailOnMissingEntries: sec.emailOnMissingEntries ?? false,
+          emailOnClockOutReminder: sec.emailOnClockOutReminder ?? false,
+          emailOnMonthClose: sec.emailOnMonthClose ?? true,
+          emailOnRetroEntry: sec.emailOnRetroEntry ?? true,
+        };
         sessionTimeoutMinutes = sec.sessionTimeoutMinutes ?? 60;
         refreshTokenDays = sec.refreshTokenDays ?? 7;
         rememberMeEnabled = sec.rememberMeEnabled ?? true;
@@ -1052,27 +1080,22 @@
     }
   }
 
-  async function saveEmailConfig() {
-    emailSaving = true;
-    emailSaved = false;
-    emailError = "";
+  async function toggleEmailFlag(flag: EmailFlag, next: boolean) {
+    const previous = emailFlags[flag];
+    emailFlags[flag] = next; // optimistic — mirrors the checkbox the browser already flipped
+    emailFlagSaving = flag;
     try {
-      await api.put("/settings/security", {
-        emailNotificationsEnabled: emailEnabled,
-        emailOnLeaveRequest,
-        emailOnLeaveDecision,
-        emailOnOvertimeWarning,
-        emailOnMissingEntries,
-        emailOnClockOutReminder,
-        emailOnMonthClose,
-        emailOnRetroEntry,
-      });
-      emailSaved = true;
-      setTimeout(() => (emailSaved = false), 3000);
+      const res = await api.put<SecurityConfig>("/settings/security", { [flag]: next });
+      const serverValue = res?.[flag];
+      emailFlags[flag] = typeof serverValue === "boolean" ? serverValue : next;
+      toasts.success(
+        `${EMAIL_FLAG_LABELS[flag]} ${emailFlags[flag] ? "aktiviert" : "deaktiviert"}.`,
+      );
     } catch (e: unknown) {
-      emailError = e instanceof Error ? e.message : "Fehler";
+      emailFlags[flag] = previous; // revert BEFORE the toast (D-04)
+      toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
     } finally {
-      emailSaving = false;
+      emailFlagSaving = null;
     }
   }
 
@@ -2261,11 +2284,6 @@
       {:else if currentTab === "kommunikation"}
         <!-- ── E-Mail-Benachrichtigungen ────────────────────────────────────── -->
         <Section title="E-Mail-Benachrichtigungen" sub="Welche Ereignisse per E-Mail melden">
-          {#if emailError}
-            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
-              <span>⚠</span><span>{emailError}</span>
-            </div>
-          {/if}
           <div class="toggle-row">
             <div class="toggle-info">
               <span class="toggle-row-label">E-Mail-Benachrichtigungen aktivieren</span>
@@ -2278,12 +2296,19 @@
               <input
                 type="checkbox"
                 aria-label="E-Mail-Benachrichtigungen aktivieren"
-                bind:checked={emailEnabled}
+                checked={emailFlags.emailNotificationsEnabled}
+                onchange={(ev) =>
+                  toggleEmailFlag(
+                    "emailNotificationsEnabled",
+                    (ev.currentTarget as HTMLInputElement).checked,
+                  )}
+                disabled={emailFlagSaving !== null}
+                data-testid="admin-system-email-emailNotificationsEnabled"
               />
               <span class="switch-slider"></span>
             </label>
           </div>
-          {#if emailEnabled}
+          {#if emailFlags.emailNotificationsEnabled}
             <h4 class="sys-subtitle" style="margin-top: 1rem;">Benachrichtigungstypen</h4>
             <div class="toggle-row">
               <span class="toggle-row-label">Neuer Urlaubsantrag</span>
@@ -2291,7 +2316,14 @@
                 <input
                   type="checkbox"
                   aria-label="Benachrichtigung: Neuer Urlaubsantrag"
-                  bind:checked={emailOnLeaveRequest}
+                  checked={emailFlags.emailOnLeaveRequest}
+                  onchange={(ev) =>
+                    toggleEmailFlag(
+                      "emailOnLeaveRequest",
+                      (ev.currentTarget as HTMLInputElement).checked,
+                    )}
+                  disabled={emailFlagSaving !== null}
+                  data-testid="admin-system-email-emailOnLeaveRequest"
                 />
                 <span class="switch-slider"></span>
               </label>
@@ -2302,7 +2334,14 @@
                 <input
                   type="checkbox"
                   aria-label="Benachrichtigung: Urlaub genehmigt / abgelehnt"
-                  bind:checked={emailOnLeaveDecision}
+                  checked={emailFlags.emailOnLeaveDecision}
+                  onchange={(ev) =>
+                    toggleEmailFlag(
+                      "emailOnLeaveDecision",
+                      (ev.currentTarget as HTMLInputElement).checked,
+                    )}
+                  disabled={emailFlagSaving !== null}
+                  data-testid="admin-system-email-emailOnLeaveDecision"
                 />
                 <span class="switch-slider"></span>
               </label>
@@ -2313,7 +2352,14 @@
                 <input
                   type="checkbox"
                   aria-label="Benachrichtigung: Überstunden-Warnung"
-                  bind:checked={emailOnOvertimeWarning}
+                  checked={emailFlags.emailOnOvertimeWarning}
+                  onchange={(ev) =>
+                    toggleEmailFlag(
+                      "emailOnOvertimeWarning",
+                      (ev.currentTarget as HTMLInputElement).checked,
+                    )}
+                  disabled={emailFlagSaving !== null}
+                  data-testid="admin-system-email-emailOnOvertimeWarning"
                 />
                 <span class="switch-slider"></span>
               </label>
@@ -2324,7 +2370,14 @@
                 <input
                   type="checkbox"
                   aria-label="Benachrichtigung: Fehlende Zeiteinträge"
-                  bind:checked={emailOnMissingEntries}
+                  checked={emailFlags.emailOnMissingEntries}
+                  onchange={(ev) =>
+                    toggleEmailFlag(
+                      "emailOnMissingEntries",
+                      (ev.currentTarget as HTMLInputElement).checked,
+                    )}
+                  disabled={emailFlagSaving !== null}
+                  data-testid="admin-system-email-emailOnMissingEntries"
                 />
                 <span class="switch-slider"></span>
               </label>
@@ -2335,7 +2388,14 @@
                 <input
                   type="checkbox"
                   aria-label="Benachrichtigung: Vergessene Stempelung"
-                  bind:checked={emailOnClockOutReminder}
+                  checked={emailFlags.emailOnClockOutReminder}
+                  onchange={(ev) =>
+                    toggleEmailFlag(
+                      "emailOnClockOutReminder",
+                      (ev.currentTarget as HTMLInputElement).checked,
+                    )}
+                  disabled={emailFlagSaving !== null}
+                  data-testid="admin-system-email-emailOnClockOutReminder"
                 />
                 <span class="switch-slider"></span>
               </label>
@@ -2346,7 +2406,14 @@
                 <input
                   type="checkbox"
                   aria-label="Benachrichtigung: Monatsabschluss"
-                  bind:checked={emailOnMonthClose}
+                  checked={emailFlags.emailOnMonthClose}
+                  onchange={(ev) =>
+                    toggleEmailFlag(
+                      "emailOnMonthClose",
+                      (ev.currentTarget as HTMLInputElement).checked,
+                    )}
+                  disabled={emailFlagSaving !== null}
+                  data-testid="admin-system-email-emailOnMonthClose"
                 />
                 <span class="switch-slider"></span>
               </label>
@@ -2357,20 +2424,19 @@
                 <input
                   type="checkbox"
                   aria-label="Benachrichtigung: Zeitnachtrag"
-                  bind:checked={emailOnRetroEntry}
+                  checked={emailFlags.emailOnRetroEntry}
+                  onchange={(ev) =>
+                    toggleEmailFlag(
+                      "emailOnRetroEntry",
+                      (ev.currentTarget as HTMLInputElement).checked,
+                    )}
+                  disabled={emailFlagSaving !== null}
+                  data-testid="admin-system-email-emailOnRetroEntry"
                 />
                 <span class="switch-slider"></span>
               </label>
             </div>
           {/if}
-          {#snippet footer()}
-            <button class="btn btn-primary" onclick={saveEmailConfig} disabled={emailSaving}>
-              {emailSaving ? "Speichern…" : "Speichern"}
-            </button>
-            {#if emailSaved}
-              <span class="saved-hint">✓ Gespeichert</span>
-            {/if}
-          {/snippet}
         </Section>
 
         <!-- ── E-Mail / SMTP ────────────────────────────────────────────────── -->
