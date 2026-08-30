@@ -12,6 +12,8 @@
   import CommandPalette from "$lib/components/ui/CommandPalette.svelte";
   import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
   import ErrorBoundary from "$lib/components/ui/ErrorBoundary.svelte";
+  import WhatsNewPanel from "$lib/components/layout/WhatsNewPanel.svelte";
+  import { hasUnreadReleaseNotes, whatsNewOpen } from "$stores/release-notes";
 
   interface Props {
     children?: import("svelte").Snippet;
@@ -114,6 +116,22 @@
     pendingUrl = null;
   }
 
+  // Phase 110 (D-07/AK-07): auto-open once per session when this user has not yet acknowledged
+  // the newest release baked into the running image. Fires only once — autoOpened latches — so
+  // dismissing it (which writes the seen state server-side) is final for this session even if the
+  // PUT fails.
+  //
+  // Safe on the post-login landing route because WhatsNewPanel is a non-modal drawer: it sets
+  // no `inert` on sibling nodes and does not lock body scroll, so the "Einstempeln" button
+  // stays reachable while it is open (N-07, asserted in WhatsNewPanel.test.ts).
+  let autoOpened = $state(false);
+  $effect(() => {
+    if (autoOpened) return;
+    if (!$hasUnreadReleaseNotes) return;
+    autoOpened = true;
+    whatsNewOpen.set(true);
+  });
+
   onMount(() => {
     if (!$authStore.accessToken) {
       goto("/login");
@@ -175,6 +193,7 @@
     onConfirm={discardAndLeave}
     onCancel={keepEditing}
   />
+  <WhatsNewPanel />
 {/if}
 
 <style>
