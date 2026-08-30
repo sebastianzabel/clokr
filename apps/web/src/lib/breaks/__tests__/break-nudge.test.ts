@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  summarizeUnconfirmedBreaks,
+  summarizeUnconfirmedBreakDays,
   breakNudgeHref,
   toBreakDayString,
   BREAK_NUDGE_EMPTY,
@@ -9,32 +9,25 @@ import {
 // Phase 112 (GitHub issue #115). The first three tests ARE the phase: no test pinned the URL
 // the dashboard nudge emits, which is why 18c27fcc could ship a link that crashed its own
 // destination for a month without anyone noticing.
+//
+// Phase 126 (GitHub issue #126): these pins survive unchanged in intent. The input shape moved
+// from row objects (`{ date, breakStatus, isLocked }`) to plain day strings, because the
+// filtering that used to happen here now happens server-side (find-unconfirmed-break-days.ts) —
+// but the URL contract this describes is unaffected.
 
 describe("breakNudgeHref — the URL pin that was missing", () => {
   it("Test 1: a full-ISO API date yields a plain yyyy-MM-dd deep link", () => {
-    const href = breakNudgeHref(
-      summarizeUnconfirmedBreaks([
-        { date: "2026-08-05T00:00:00.000Z", breakStatus: "AUTO", isLocked: false },
-      ]),
-    );
+    const href = breakNudgeHref(summarizeUnconfirmedBreakDays(["2026-08-05T00:00:00.000Z"]));
     expect(href).toBe("/time-entries?view=list&date=2026-08-05");
   });
 
   it("Test 2: no time component can ever leak into the date param", () => {
-    const href = breakNudgeHref(
-      summarizeUnconfirmedBreaks([
-        { date: "2026-08-05T00:00:00.000Z", breakStatus: "AUTO", isLocked: false },
-      ]),
-    );
+    const href = breakNudgeHref(summarizeUnconfirmedBreakDays(["2026-08-05T00:00:00.000Z"]));
     expect(href).not.toMatch(/date=[^&]*T/);
   });
 
   it("Test 3: the destination's own computation is VALID for the emitted param (and invalid for the raw API value)", () => {
-    const href = breakNudgeHref(
-      summarizeUnconfirmedBreaks([
-        { date: "2026-08-05T00:00:00.000Z", breakStatus: "AUTO", isLocked: false },
-      ]),
-    );
+    const href = breakNudgeHref(summarizeUnconfirmedBreakDays(["2026-08-05T00:00:00.000Z"]));
     // Reproduces time-entries/+page.svelte's own line verbatim.
     const param = new URL(href, "http://x").searchParams.get("date")!;
     expect(Number.isNaN(new Date(param + "T12:00:00").getTime())).toBe(false);
@@ -45,9 +38,7 @@ describe("breakNudgeHref — the URL pin that was missing", () => {
   });
 
   it("Test 4: an already-plain day is idempotent", () => {
-    const href = breakNudgeHref(
-      summarizeUnconfirmedBreaks([{ date: "2026-08-05", breakStatus: "AUTO", isLocked: false }]),
-    );
+    const href = breakNudgeHref(summarizeUnconfirmedBreakDays(["2026-08-05"]));
     expect(href).toBe("/time-entries?view=list&date=2026-08-05");
   });
 
@@ -56,67 +47,38 @@ describe("breakNudgeHref — the URL pin that was missing", () => {
   });
 });
 
-describe("summarizeUnconfirmedBreaks", () => {
-  it("Test 6: CONFIRMED and WAIVED rows are ignored", () => {
-    const summary = summarizeUnconfirmedBreaks([
-      { date: "2026-08-05T00:00:00.000Z", breakStatus: "CONFIRMED", isLocked: false },
-      { date: "2026-08-06T00:00:00.000Z", breakStatus: "WAIVED", isLocked: false },
-    ]);
-    expect(summary.count).toBe(0);
-    expect(breakNudgeHref(summary)).toBe("/time-entries?view=list");
-  });
-
-  it("Test 7: a locked AUTO row is ignored — a closed month is not actionable", () => {
-    const summary = summarizeUnconfirmedBreaks([
-      { date: "2026-08-05T00:00:00.000Z", breakStatus: "AUTO", isLocked: true },
-    ]);
-    expect(summary).toEqual(BREAK_NUDGE_EMPTY);
-  });
-
-  it("Test 8: a missing isLocked is treated as NOT locked", () => {
-    const summary = summarizeUnconfirmedBreaks([
-      { date: "2026-08-05T00:00:00.000Z", breakStatus: "AUTO" },
-    ]);
-    expect(summary.count).toBe(1);
-    expect(summary.earliestDay).toBe("2026-08-05");
-  });
-
-  it("Test 9: two rows on the same calendar day count once", () => {
-    const summary = summarizeUnconfirmedBreaks([
-      { date: "2026-08-05T00:00:00.000Z", breakStatus: "AUTO", isLocked: false },
-      { date: "2026-08-05T22:00:00.000Z", breakStatus: "AUTO", isLocked: false },
+// Phase 126 (issue #126): the breakStatus / isLocked / window filters that used to be
+// asserted here moved server-side to find-unconfirmed-break-days.ts. They are pinned by
+// apps/api/src/__tests__/dashboard-open-items-break.test.ts — deliberately NOT re-asserted
+// here, because a second client-side assertion of the rule is how the divergence started.
+describe("summarizeUnconfirmedBreakDays", () => {
+  it("Test 9: two entries on the same calendar day count once", () => {
+    const summary = summarizeUnconfirmedBreakDays([
+      "2026-08-05T00:00:00.000Z",
+      "2026-08-05T22:00:00.000Z",
     ]);
     expect(summary.count).toBe(1);
     expect(summary.days).toEqual(["2026-08-05"]);
   });
 
   it("Test 10: earliestDay is the smallest day across months and days are ascending", () => {
-    const summary = summarizeUnconfirmedBreaks([
-      { date: "2026-08-05T00:00:00.000Z", breakStatus: "AUTO", isLocked: false },
-      { date: "2025-11-04T00:00:00.000Z", breakStatus: "AUTO", isLocked: false },
-    ]);
+    const summary = summarizeUnconfirmedBreakDays(["2026-08-05T00:00:00.000Z", "2025-11-04"]);
     expect(summary.earliestDay).toBe("2025-11-04");
     expect(summary.days).toEqual(["2025-11-04", "2026-08-05"]);
   });
 
   it("Test 11: German copy — singular and plural are byte-identical to the shipped wording", () => {
-    const one = summarizeUnconfirmedBreaks([
-      { date: "2026-08-05T00:00:00.000Z", breakStatus: "AUTO" },
-    ]);
+    const one = summarizeUnconfirmedBreakDays(["2026-08-05"]);
     expect(one.label).toBe("1 Tag: Pause bestätigen");
 
-    const three = summarizeUnconfirmedBreaks([
-      { date: "2026-08-05T00:00:00.000Z", breakStatus: "AUTO" },
-      { date: "2026-08-06T00:00:00.000Z", breakStatus: "AUTO" },
-      { date: "2026-08-07T00:00:00.000Z", breakStatus: "AUTO" },
-    ]);
+    const three = summarizeUnconfirmedBreakDays(["2026-08-05", "2026-08-06", "2026-08-07"]);
     expect(three.label).toBe("3 Tage: Pause bestätigen");
   });
 
-  it("Test 12: undefined and an empty array both yield the empty summary", () => {
-    expect(summarizeUnconfirmedBreaks(undefined)).toEqual(BREAK_NUDGE_EMPTY);
-    expect(summarizeUnconfirmedBreaks(null)).toEqual(BREAK_NUDGE_EMPTY);
-    expect(summarizeUnconfirmedBreaks([])).toEqual(BREAK_NUDGE_EMPTY);
+  it("Test 12 (D-08 fail-safe): undefined, null and an empty array all yield the empty summary — an absent list must never render as a '0'", () => {
+    expect(summarizeUnconfirmedBreakDays(undefined)).toEqual(BREAK_NUDGE_EMPTY);
+    expect(summarizeUnconfirmedBreakDays(null)).toEqual(BREAK_NUDGE_EMPTY);
+    expect(summarizeUnconfirmedBreakDays([])).toEqual(BREAK_NUDGE_EMPTY);
   });
 });
 
