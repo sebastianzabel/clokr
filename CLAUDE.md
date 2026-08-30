@@ -208,20 +208,54 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   - No daily targets, no daily +/- display in calendar
   - Holiday/absence deductions do NOT apply (flexible schedule)
 - `WorkSchedule.validFrom` MUST be the 1st of a calendar month for every contract CHANGE (PUT `/api/v1/settings/work/:employeeId` and tenant-config bulk apply). Non-1st dates are rejected with HTTP 400 + German message `"Vertragswechsel sind nur zum Monats-1. erlaubt."` (see `apps/api/src/utils/month-first-date.ts` for the canonical constant `MONTH_FIRST_ERROR`). The initial schedule on employee creation (POST `/api/v1/employees`) is exempt — `validFrom = hireDate` may be any day, because contract START is not a contract CHANGE. Existing non-1st rows (pre-Phase-60) are preserved for audit-trail purposes; surface them via `pnpm --filter @clokr/api exec tsx scripts/audit-workschedule-non-month1.ts`. See GitHub issue #220.
-- `WorkSchedule.workDays` MUST be the set of weekday indices (0=Sun..6=Sat) where the corresponding `{day}Hours` value is > 0. The invariant is enforced server-side on every create/update path (POST `/api/v1/employees`, PUT `/api/v1/settings/work/:employeeId` regular + cancelOrphanShifts branches, PUT `/api/v1/settings/work` applyToExisting bulk-apply) via `normalizeWorkDays()` in `apps/api/src/utils/calculate-work-days.ts`. Legacy rows that pre-date this enforcement may still diverge — surface them via `pnpm --filter @clokr/api exec tsx scripts/audit-workdays-vs-day-hours.ts`. Existing divergent rows are NOT auto-migrated (Revisionssicherheit). The audit that established this invariant was Phase 61; its artefacts were archived with the milestone and are not in the repo.
-- **`SHIFT_BASED` is an exception to the invariant above (Phase 107, D-30).** For this type the
-  contractual quantity is a COUNT, stored in `WorkSchedule.contractWorkDaysPerWeek Int?` (D-01) —
-  not a weekday set. The concrete weekdays a `SHIFT_BASED` employee actually works come from the
-  roster (`Shift`), never from `workDays`. The `{day}Hours` columns are placeholders for this type
-  and are NOT authoritative (`getScheduledHours()` in `apps/api/src/routes/leave.ts`, Phase 100 /
-  OTC-04; `apps/api/src/utils/shift-based-saldo.ts:53-57`), so the "`workDays` = days with
-  `{day}Hours > 0`" equality above does not govern `SHIFT_BASED` rows — it remains true and
-  enforced only for `FIXED_SCHEDULE`, `FLEXTIME` and `MONTHLY_HOURS`. Since Phase 107 (D-02), no
-  form write path touches `workDays` for `SHIFT_BASED` any more, so no NEW divergence between
-  `workDays` and reality can be created; existing divergent rows are deliberately preserved as
-  evidence for Phase 108 / GitHub issue #95, which needs them to distinguish *guessed* from
-  *correct* — do NOT "fix" them on sight. Consequently, the `audit-workdays-vs-day-hours.ts`
-  findings for `SHIFT_BASED` rows (script referenced above) are EXPECTED, not a bug.
+- **`{day}Hours` is authoritative data only for `FIXED_SCHEDULE`.** For `FLEXTIME`, `MONTHLY_HOURS`
+  and `SHIFT_BASED` the seven `{day}Hours` columns are a legacy 1/0 flag rather than hours;
+  `workDays` is what carries the contractual information for those types. Measured against a
+  pseudonymized production copy on `main`'s schema (2026-08-30, Phase 95b / GitHub issue #95):
+
+  | Schedule type | rows | `{day}Hours` content | flagged by `audit-workdays-vs-day-hours.ts` |
+  | --- | --- | --- | --- |
+  | `FIXED_SCHEDULE` | 6 | real values (4.00 / 8.00 / 9.50) | 0 |
+  | `FLEXTIME` | 1 | uniformly 1.00 | 1 |
+  | `MONTHLY_HOURS` | 4 | uniformly 0.00 | 0 (by design — see the audit-script bullet) |
+  | `SHIFT_BASED` | 15 | uniformly 8.00 or 1.00 | 4 (expected) |
+
+- `WorkSchedule.workDays` is normalised **on write** to the set of weekday indices (0=Sun..6=Sat)
+  where the corresponding `{day}Hours` value is > 0, on every create/update path (POST
+  `/api/v1/employees`, PUT `/api/v1/settings/work/:employeeId` regular + cancelOrphanShifts
+  branches, PUT `/api/v1/settings/work` applyToExisting bulk-apply) via `normalizeWorkDays()` in
+  `apps/api/src/utils/calculate-work-days.ts`. **That is a write-path normalisation, not a statement
+  about what stored rows mean.** Because its input hours are placeholders for every type except
+  `FIXED_SCHEDULE`, the equality "`workDays` = days with `{day}Hours > 0`" describes reality for
+  `FIXED_SCHEDULE` only. Since Phase 107 (D-02) no form write path routes `SHIFT_BASED` `workDays`
+  through it at all. The audit that established the normalisation was Phase 61; its artefacts were
+  archived with the milestone and are not in the repo.
+
+- **Divergent legacy rows MUST NOT be "corrected" (Phase 95b, D-01).** Surface them with
+  `pnpm --filter @clokr/api exec tsx scripts/audit-workdays-vs-day-hours.ts` — then leave them
+  alone. `workDays` is the source of truth for leave consumption (`calculateWorkDays`) and pro-rata
+  (`countWorkDaysPerWeek`), so aligning it to the placeholder hours replaces the RIGHT value with
+  the WRONG one: the `MONTHLY_HOURS` rows (all day-hours 0.00) would end up with an EMPTY
+  `workDays` and lose their Mo–Fr set, and the `FLEXTIME` row's deliberate 4-day week would become
+  a 5-day week mid-year, changing retroactively what an already-taken leave day consumed. Phase 95b
+  therefore changed not one data row — no migration, no backfill. This is not only
+  Revisionssicherheit: the correction would be factually wrong.
+
+- **The audit script checks ONE direction only, deliberately.** It reports a row when a day has
+  `{day}Hours > 0` but is missing from `workDays`; it never reports the reverse (a day in
+  `workDays` whose `{day}Hours` is 0), and it skips rows whose day-hours are all zero. A naive
+  two-directional SQL query reports 9 rows where the script reports 5 — the 4 extra are exactly the
+  `MONTHLY_HOURS` placeholder rows whose "correction" is the harmful one. `SHIFT_BASED` hits are
+  labelled EXPECTED in the script's output for the same reason.
+
+- **`SHIFT_BASED` (Phase 107, D-30).** For this type the contractual quantity is a COUNT, stored in
+  `WorkSchedule.contractWorkDaysPerWeek Int?` (D-01) — not a weekday set. The concrete weekdays a
+  `SHIFT_BASED` employee actually works come from the roster (`Shift`), never from `workDays`. The
+  `{day}Hours` columns are placeholders and are NOT authoritative (`getScheduledHours()` in
+  `apps/api/src/routes/leave.ts`, Phase 100 / OTC-04; `apps/api/src/utils/shift-based-saldo.ts:53-57`).
+  Since Phase 107 (D-02) no form write path touches `workDays` for `SHIFT_BASED` any more, so no NEW
+  divergence can be created; existing divergent rows are preserved and are EXPECTED findings of
+  `audit-workdays-vs-day-hours.ts`, not bugs — do NOT "fix" them on sight (Phase 95b, D-01).
 - `resolveContractWorkDaysPerWeek()` in `apps/api/src/routes/leave.ts` is the ONLY place the
   `SHIFT_BASED` contractual-count fallback chain lives (`contractWorkDaysPerWeek` →
   `workDays.length` → `TenantConfig.defaultWorkDays.length` → `5`, Phase 107 D-04) — it mirrors
