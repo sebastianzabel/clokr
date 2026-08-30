@@ -1482,6 +1482,21 @@
           title="Pausen automatisch abziehen"
           sub="Pflicht-Pausen nach § 4 ArbZG (>6h: 30 Min., >9h: 45 Min.)"
         >
+          {#snippet footer()}
+            <button
+              class="btn btn-primary"
+              onclick={saveBreakDefaults}
+              disabled={breakDefaultsSaving}
+              data-testid="admin-system-pausendauer-save"
+            >
+              {#if breakDefaultsSaving}<Spinner />{/if}
+              Speichern
+            </button>
+            {#if breakDefaultsSaved}
+              <span class="saved-hint">✓ Gespeichert</span>
+            {/if}
+          {/snippet}
+
           {#if autoBreakError}
             <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
               <span>⚠</span><span>{autoBreakError}</span>
@@ -1528,7 +1543,10 @@
           <!-- Phase 65 — Tenant-Default Pausendauer (BREAK-05, D-01..D-03)
              Always visible (not gated on autoBreakEnabled): admins should
              be able to pre-configure the defaults so that turning Auto-Pause ON
-             later picks them up. Each input is independently saved on blur. -->
+             later picks them up.
+             Phase 109 (D-02/AK-02): number fields never write on their own. Both values are sent
+             together by the section's Speichern button below — one operator decision, one audit
+             row. -->
           <div class="form-group" style="margin-top: 1rem;">
             <label class="form-label" for="sys-break-over6h">Pause &gt;6h (Min)</label>
             <input
@@ -1538,7 +1556,6 @@
               max="120"
               step="1"
               bind:value={defaultBreakOver6h}
-              onblur={saveBreakDefaults}
               class="form-input modal-input-sm"
               disabled={breakDefaultsSaving}
               data-testid="admin-system-pausendauer-over6h"
@@ -1554,7 +1571,6 @@
               max="180"
               step="1"
               bind:value={defaultBreakOver9h}
-              onblur={saveBreakDefaults}
               class="form-input modal-input-sm"
               disabled={breakDefaultsSaving}
               data-testid="admin-system-pausendauer-over9h"
@@ -1566,7 +1582,6 @@
               <span>⚠</span><span>{breakDefaultsError}</span>
             </div>
           {/if}
-          {#if breakDefaultsSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
           {#if autoBreakSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
 
           <!-- Phase 93.06 — v1.9.3 Pausen-Bestätigung (BREAK-05 / BREAK-01) -->

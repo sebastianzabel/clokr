@@ -116,13 +116,10 @@ describe("AK-02 — text/number inputs never write outside a button-gated group"
     expect(unexpected).toEqual([]);
   });
 
-  it("records the two known D-02 violations that plan 109-03 removes", () => {
-    // Plan 109-03 replaces this assertion with `toEqual([])` and deletes KNOWN_VIOLATIONS
-    // entirely — that is a strengthening of this pin, never a relaxation.
-    expect(textOrNumberInputHandlers(PAGE).sort()).toEqual([
-      "saveBreakDefaults",
-      "saveBreakDefaults",
-      "saveRetroEntryWindowDays",
-    ]);
+  it("records the remaining known D-02 violation that plan 109-03 Task 2 removes", () => {
+    // Interim value after Task 1 (this commit) button-gated `saveBreakDefaults` — its two
+    // occurrences are gone from the census. Task 2 replaces this assertion with `toEqual([])`
+    // and deletes KNOWN_VIOLATIONS entirely — a strengthening of this pin, never a relaxation.
+    expect(textOrNumberInputHandlers(PAGE).sort()).toEqual(["saveRetroEntryWindowDays"]);
   });
 });
