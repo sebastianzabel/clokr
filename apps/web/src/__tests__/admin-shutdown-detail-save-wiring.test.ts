@@ -146,3 +146,73 @@ describe("AK-02", () => {
     expect(textOrNumberInputHandlers(PAGE)).toEqual([]);
   });
 });
+
+describe("D-11/D-12 — unsaved marker and guard registration on admin/shutdowns/[id]", () => {
+  it("shutdownDirty is $derived(snap(...)) and not hand-set", () => {
+    expect(PAGE).toMatch(/let shutdownDirty = \$derived\(\s*snap\(/);
+  });
+
+  it("the snap(...) argument block contains all five form* variables", () => {
+    const start = PAGE.indexOf("let shutdownDirty = $derived(");
+    expect(start).toBeGreaterThan(-1);
+    const end = PAGE.indexOf(");", start);
+    const slice = PAGE.slice(start, end);
+    // PATCH keys (from the 109-10 pin) mapped to their backing $state variables:
+    // name<->formName, startDate<->formStart, endDate<->formEnd,
+    // deductsFromVacation<->formDeducts, notes<->formNotes.
+    for (const v of ["formName", "formStart", "formEnd", "formDeducts", "formNotes"]) {
+      expect(slice).toContain(v);
+    }
+  });
+
+  it("the registration is gated on snapshotsReady (WR-01)", () => {
+    expect(PAGE).toContain('markUnsaved("admin-shutdown-detail", snapshotsReady && shutdownDirty)');
+    expect(PAGE).not.toContain('markUnsaved("admin-shutdown-detail", shutdownDirty)');
+  });
+
+  it("snapshotsReady is set after formNotes hydration, never in a finally", () => {
+    const start = PAGE.indexOf("onMount(async ()");
+    const hydrationPoint = PAGE.indexOf("formNotes = found.notes", start);
+    const catchPoint = PAGE.indexOf("} catch", hydrationPoint);
+    const readyPoint = PAGE.indexOf("snapshotsReady = true", hydrationPoint);
+    expect(readyPoint).toBeGreaterThan(hydrationPoint);
+    expect(readyPoint).toBeLessThan(catchPoint);
+    expect(PAGE).not.toMatch(/finally\s*\{[^}]*snapshotsReady/s);
+  });
+
+  it("the pre-flight validation returns do not clear the marker", () => {
+    const body = PAGE.slice(
+      PAGE.indexOf("async function saveShutdown"),
+      PAGE.indexOf("async function confirmDelete"),
+    );
+    const patchPoint = body.indexOf("const updated = await api.patch");
+    expect(patchPoint).toBeGreaterThan(-1);
+    const snapPoint = body.indexOf("shutdownSnapshot = snap(");
+    expect(snapPoint).toBeGreaterThan(patchPoint);
+    // exactly one reset in saveShutdown
+    expect(body.match(/shutdownSnapshot = snap\(/g)).toHaveLength(1);
+  });
+
+  it("T-109-24 — no shutdownSnapshot = snap( assignment is inside a finally block", () => {
+    for (const m of PAGE.matchAll(/shutdownSnapshot = snap\(/g)) {
+      const idx = m.index ?? -1;
+      const before = PAGE.slice(Math.max(0, idx - 120), idx);
+      expect(before).not.toMatch(/finally\s*\{/);
+    }
+  });
+
+  it("exactly one dirty={ prop, on the Betriebsurlaub section", () => {
+    const matches = PAGE.match(/dirty=\{/g) ?? [];
+    expect(matches).toHaveLength(1);
+    const sectionStart = PAGE.indexOf('<Section title="Betriebsurlaub"');
+    expect(sectionStart).toBeGreaterThan(-1);
+    const sectionEnd = PAGE.indexOf("</Section>", sectionStart);
+    const dirtyIdx = PAGE.indexOf("dirty={");
+    expect(dirtyIdx).toBeGreaterThan(sectionStart);
+    expect(dirtyIdx).toBeLessThan(sectionEnd);
+  });
+
+  it("the effect de-registers on unmount", () => {
+    expect(PAGE).toContain('return () => markUnsaved("admin-shutdown-detail", false);');
+  });
+});

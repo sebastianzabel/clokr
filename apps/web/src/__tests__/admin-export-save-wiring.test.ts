@@ -175,3 +175,77 @@ describe("AK-02", () => {
     expect(textOrNumberInputHandlers(PAGE)).toEqual([]);
   });
 });
+
+describe("D-11/D-12 — unsaved marker and guard registration on admin/export", () => {
+  it("datevDirty is $derived(snap(...)) with exactly the four datev* variables", () => {
+    const start = PAGE.indexOf("let datevDirty = $derived(");
+    expect(start).toBeGreaterThan(-1);
+    const end = PAGE.indexOf(");", start);
+    const slice = PAGE.slice(start, end);
+    expect(slice).toMatch(/\$derived\(\s*snap\(/);
+    for (const v of [
+      "datevNormalstundenNr",
+      "datevUrlaubNr",
+      "datevKrankNr",
+      "datevSonderurlaubNr",
+    ]) {
+      expect(slice).toContain(v);
+    }
+  });
+
+  it("the registration is gated on snapshotsReady (WR-01)", () => {
+    expect(PAGE).toContain('markUnsaved("admin-export", snapshotsReady && datevDirty)');
+    expect(PAGE).not.toContain('markUnsaved("admin-export", datevDirty)');
+  });
+
+  it("snapshotsReady = true sits inside loadDatev's try, after _gOtherFields = cfg, never in finally", () => {
+    const body = fnBody("async function loadDatev");
+    const gOtherPoint = body.indexOf("_gOtherFields = cfg");
+    const readyPoint = body.indexOf("snapshotsReady = true");
+    expect(readyPoint).toBeGreaterThan(gOtherPoint);
+    expect(PAGE).not.toMatch(/finally\s*\{[^}]*snapshotsReady/s);
+  });
+
+  it("the export parameters get no marker — exactly one dirty={ prop, on Lohnartennummern", () => {
+    const matches = PAGE.match(/dirty=\{/g) ?? [];
+    expect(matches).toHaveLength(1);
+    const lohnartStart = PAGE.indexOf('<Section\n        title="Lohnartennummern"');
+    expect(lohnartStart).toBeGreaterThan(-1);
+    const lohnartEnd = PAGE.indexOf("</Section>", lohnartStart);
+    const dirtyIdx = PAGE.indexOf("dirty={");
+    expect(dirtyIdx).toBeGreaterThan(lohnartStart);
+    expect(dirtyIdx).toBeLessThan(lohnartEnd);
+
+    const exportKonfigStart = PAGE.indexOf('<Section title="Export konfigurieren"');
+    expect(exportKonfigStart).toBeGreaterThan(-1);
+    const exportKonfigEnd = PAGE.indexOf("</Section>", exportKonfigStart);
+    const exportKonfigSlice = PAGE.slice(exportKonfigStart, exportKonfigEnd);
+    expect(exportKonfigSlice).not.toContain("dirty=");
+    expect(exportKonfigSlice).not.toContain("unsaved-hint");
+  });
+
+  it("the _gOtherFields spread is untouched", () => {
+    const body = fnBody("async function saveDatev");
+    expect(body).toContain("..._gOtherFields");
+    const datevKeys = new Set(body.match(/datev[A-Za-z]+/g) ?? []);
+    expect(
+      [...datevKeys].filter((k) =>
+        ["datevNormalstundenNr", "datevUrlaubNr", "datevKrankNr", "datevSonderurlaubNr"].includes(
+          k,
+        ),
+      ),
+    ).toHaveLength(4);
+  });
+
+  it("T-109-24 — no datevSnapshot = snap( assignment is inside a finally block", () => {
+    for (const m of PAGE.matchAll(/datevSnapshot = snap\(/g)) {
+      const idx = m.index ?? -1;
+      const before = PAGE.slice(Math.max(0, idx - 120), idx);
+      expect(before).not.toMatch(/finally\s*\{/);
+    }
+  });
+
+  it("the effect de-registers on unmount", () => {
+    expect(PAGE).toContain('return () => markUnsaved("admin-export", false);');
+  });
+});
