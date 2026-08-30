@@ -21,7 +21,11 @@
  *
  * This gate does NOT try to judge whether a checkbox should be instant or grouped — that
  * classification judgment is documented, not linted (see §3.2.1). Checkboxes, selects,
- * and `type="time"`/`type="date"` inputs are out of scope for this rule by construction.
+ * and `type="time"`/`type="date"` inputs are out of scope for this rule by construction —
+ * see EXCLUDED_INPUT_TYPES for the full list. An `<input>` with NO `type=` attribute is a
+ * text input per the HTML spec and IS in scope (WR-04). `<textarea>` is text-like and would
+ * be a D-02 violation on `onblur`, but this scanner only walks `<input>` tags — a `<textarea>`
+ * autosave has to be caught in review, not by this gate.
  *
  * Scope:
  *   - apps/web/src/routes/(app)/admin/**\/+page.svelte
@@ -59,7 +63,36 @@ const repoRoot = (() => {
 
 const SCOPES = ["apps/web/src/routes/(app)/admin", "apps/web/src/lib/components/admin"];
 
-const WRITEISH = /\b(api\.|save[A-Z]|toggle[A-Z])/;
+// `[Ss]ave[A-Z]` rather than `save[A-Z]` so `handleSaveField` — a plausible name in this
+// codebase — is matched too; `persist`/`commitX`/`fetch(` close the same class of near-misses.
+// Handler-vocabulary matching is inherently a heuristic: a write handler with a name outside
+// this set is still a judgment call documented in §3.2.1 rather than something the gate can see.
+// NOTE: `[Ss]ave[A-Z]` and `[Pp]ersist` deliberately carry NO leading `\b`. A word boundary
+// only exists between a non-word and a word char, so `\bsave[A-Z]` cannot match the `SaveF`
+// inside `handleSaveField` — the exact near-miss that motivated widening this pattern.
+const WRITEISH = /(\bapi\.|[Ss]ave[A-Z]|\btoggle[A-Z]|[Pp]ersist|[Cc]ommit[A-Z]|\bfetch\()/;
+
+// A missing or unrecognised `type` IS a text input per the HTML spec, so the detector must
+// default to "text" rather than skipping the tag (WR-04: seven text inputs inside the linted
+// scope carry no literal `type=` and were invisible to the gate). Only the types the rule
+// deliberately excludes are skipped — checkbox/radio/time/date are out of scope by construction.
+const EXCLUDED_INPUT_TYPES = new Set([
+  "checkbox",
+  "radio",
+  "time",
+  "date",
+  "datetime-local",
+  "file",
+  "color",
+  "range",
+  "month",
+  "week",
+  "hidden",
+  "submit",
+  "button",
+  "reset",
+  "image",
+]);
 
 /**
  * Extract every `<input …>` tag from `source`, brace-depth aware.
@@ -69,6 +102,10 @@ const WRITEISH = /\b(api\.|save[A-Z]|toggle[A-Z])/;
  * closing `>` to a regex that doesn't understand nesting. This scanner instead tracks
  * `{`/`}` depth char-by-char and only treats a bare `>` as the tag terminator while depth
  * is back at 0 — i.e. outside any `{…}` JS-expression attribute value.
+ *
+ * It additionally skips over quoted attribute values, because a literal `>` inside one would
+ * otherwise truncate the tag and hide every attribute after it. That is not theoretical:
+ * `admin/system/+page.svelte` carries `sub="Pflicht-Pausen nach § 4 ArbZG (>6h: 30 Min., …)"`.
  */
 /** @param {string} source @returns {string[]} */
 function extractInputTags(source) {
@@ -79,9 +116,16 @@ function extractInputTags(source) {
   while ((m = re.exec(source))) {
     let depth = 0;
     let end = -1;
+    /** @type {string | null} */
+    let quote = null;
     for (let i = m.index; i < source.length; i++) {
       const ch = source[i];
-      if (ch === "{") depth++;
+      if (quote) {
+        if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === '"' || ch === "'") quote = ch;
+      else if (ch === "{") depth++;
       else if (ch === "}") depth--;
       else if (ch === ">" && depth <= 0) {
         end = i + 1;
@@ -112,8 +156,9 @@ export function findSavePatternViolations(source, file) {
   /** @type {{ file: string, type: string, handler: string, rule: "a" | "b" }[]} */
   const violations = [];
   for (const tag of extractInputTags(source)) {
-    const type = tag.match(/type="([a-z]+)"/)?.[1];
-    if (type !== "number" && type !== "text") continue;
+    // Single OR double quotes, and a missing type defaults to "text" per the HTML spec.
+    const type = tag.match(/type\s*=\s*["']([a-z-]+)["']/i)?.[1]?.toLowerCase() ?? "text";
+    if (EXCLUDED_INPUT_TYPES.has(type)) continue;
 
     if (/onblur=/.test(tag)) {
       const onblur = tag.match(/onblur=\{([\s\S]*?)\}\s*(?:\n|\/?>|[a-z-]+=)/);
