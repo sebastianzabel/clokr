@@ -53,6 +53,17 @@ export type MonthSaldoResult = {
    *  schedule type, for closed months, and for the zeroed early returns (missing employee,
    *  exempt, no schedule). */
   rosterIncomplete?: boolean;
+  /** Phase 125 (issue #125, D-02/D-03) — distinct days in
+   *  [month-start-or-hireDate, to-date cutoff] with credited worked minutes > 0, taken from the
+   *  SAME `closeEmployeeMonth` to-date result that produced `workedMinutes` above. The
+   *  "up to and including today" clamping is therefore the core's own `effectiveEnd`, not a
+   *  second derivation.
+   *
+   *  ABSENT — never a fabricated 0 — for a CLOSED month and for the three zeroed early returns.
+   *  A SaldoSnapshot stores no day count and D-07 forbids adding a column, so for a closed month
+   *  the honest answer is "not known here", exactly as `rosterIncomplete` above is undefined
+   *  rather than false where it cannot be known. Consumers must render nothing in that case. */
+  workedDays?: number;
   days: MonthSaldoDay[];
 };
 
@@ -491,6 +502,7 @@ export async function computeMonthSaldo(
     balanceMinutes: lastDayResult?.balanceMinutes ?? 0,
     closed: false,
     rosterIncomplete,
+    workedDays: lastDayResult?.workedDays ?? 0,
     days,
   };
 }
