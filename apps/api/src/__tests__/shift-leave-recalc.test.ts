@@ -52,6 +52,11 @@ import * as ShiftLeaveRecalcModule from "../utils/shift-leave-recalc-resolver";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// Phase 120 (D-11(c)): `app.inject` sends no `user-agent` unless the test supplies one, so
+// without this the `userAgent` column would be `null` and the D-05 assertion could only ever
+// check the IP.
+const TEST_USER_AGENT = "clokr-phase120-test";
+
 function addDaysIso(iso: string, days: number): string {
   return dbDateStr(new Date(utcMidnight(iso).getTime() + days * DAY_MS));
 }
@@ -294,7 +299,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     return app.inject({
       method: "POST",
       url: `/api/v1/shifts/${qs}`,
-      headers: { authorization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${token}`, "user-agent": TEST_USER_AGENT },
       payload: {
         employeeId,
         date: dateIso,
@@ -376,10 +381,15 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     expect(auditRow).toBeTruthy();
     expect(auditRow!.createdAt).toBeTruthy();
     const oldVal = auditRow!.oldValue as { days: number };
-    const newVal = auditRow!.newValue as { days: number; trigger: string };
+    const newVal = auditRow!.newValue as { days: number; trigger: string; triggerSource: string };
     expect(oldVal.days).toBe(2);
     expect(newVal.days).toBe(1);
     expect(newVal.trigger).toBe("Roster-Planung");
+    // Phase 120 (D-05/D-07): the row came from a real HTTP route call, so it must carry that
+    // caller's identity — and say so explicitly, not leave it to be inferred from a non-empty IP.
+    expect(auditRow!.ipAddress).toBeTruthy();
+    expect(auditRow!.userAgent).toBe(TEST_USER_AGENT);
+    expect(newVal.triggerSource).toBe("REQUEST");
 
     // AC-RC-02 / D-18
     const notifications = await app.prisma.notification.findMany({

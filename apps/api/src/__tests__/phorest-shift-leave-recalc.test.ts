@@ -327,10 +327,15 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     expect(audits.length).toBe(1);
     expect(audits[0].userId).toBeNull(); // the SYSTEM convention: never a literal "SYSTEM" string
     const oldVal = audits[0].oldValue as { days: number };
-    const newVal = audits[0].newValue as { days: number; trigger: string };
+    const newVal = audits[0].newValue as { days: number; trigger: string; triggerSource: string };
     expect(oldVal.days).toBe(2);
     expect(newVal.days).toBe(1);
     expect(newVal.trigger).toBe("Roster-Planung");
+    // Phase 120 (D-06/D-07): no request exists on the cron path — the row must carry no IP and no
+    // invented substitute, and must SAY it is a sync so the empty IP is not ambiguous.
+    expect(audits[0].ipAddress).toBeNull();
+    expect(audits[0].userAgent).toBeNull();
+    expect(newVal.triggerSource).toBe("SYNC");
 
     const notifications = await notificationsFor(requestId);
     const recipients = notifications.map((n) => n.userId);
@@ -573,6 +578,13 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     const audits = await auditRowsFor(requestId);
     expect(audits.length).toBe(1);
     expect(audits[0].userId).toBe(managerUserId); // a REAL actor, not the SYSTEM sentinel
+    // Phase 120 (D-06): this pins that decision deliberately — a manual re-sync carries a real
+    // acting user but is still a sync, and still gets no IP. Without this assertion, a future
+    // reader could reasonably "fix" the manual path by threading a request into it and break
+    // the decision silently.
+    expect(audits[0].ipAddress).toBeNull();
+    const newVal = audits[0].newValue as { triggerSource: string };
+    expect(newVal.triggerSource).toBe("SYNC");
 
     const notifications = await notificationsFor(requestId);
     const recipients = notifications.map((n) => n.userId);
