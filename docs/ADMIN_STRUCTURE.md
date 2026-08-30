@@ -816,13 +816,71 @@ the exact confusion this rule exists to remove — a save that did not happen mu
 
 **Leaving with unsaved changes prompts (D-12).** Each page registers an aggregate dirty flag
 with `markUnsaved(<page id>, dirty)` from `$stores/unsaved`, cleared again by the same call (or
-its own `$effect` cleanup) when the page unmounts or the section becomes clean. The
-`(app)/+layout.svelte` layout runs a single `beforeNavigate` guard that checks `hasUnsaved()`
+its own `$effect` cleanup) when the page unmounts or the section becomes clean.
+
+The registration is gated on a `snapshotsReady` flag that becomes `true` only once the page's
+baseline snapshot has actually been taken — set it as the last statement inside the load's `try`
+(or, where the load has several exits, directly at the single site that assigns the baseline),
+never in `finally`. Without the gate every snapshot is still `""` while the page loads, so every
+dirty flag reads `true`, and a load that throws makes that permanent: the guard is armed on a
+page showing nothing but an error banner, with no marker to explain the dialog. This was a live
+defect found in code review (WR-01) on the first two pages that shipped, and it exists in the
+wild on any page that derives `dirty` from an unset baseline.
+
+The `(app)/+layout.svelte` layout runs a single `beforeNavigate` guard that checks `hasUnsaved()`
 and opens the shared `ConfirmDialog` primitive before letting a dirty navigation through. Every
 logout path (there are four: Topbar, Sidebar, the inactivity timer, and the 401 handler in
 `client.ts`) clears the registry via `clearUnsaved()` _before_ it navigates — the guard has no
 way to tell a forced logout from any other navigation, so the logout paths themselves carry that
 responsibility (N-08).
+
+**Where the marker renders.** `Section` renders the `dirty` hint inside its `footer` snippet
+only. A page whose save button does not live in a `Section` footer — a sticky save bar
+(`admin/vacation`), a `ListDetail` `actions` snippet (`admin/availability/[employeeId]`), a
+Section that only has an `actions` snippet (`admin/phorest`'s mapping table) — renders the same
+global `.unsaved-hint` recipe directly, next to the button it refers to. Do not add a `dirty`
+prop to a footerless Section: it renders nothing and reads as done work.
+
+**Which admin pages carry the marker and the guard.** Nine pages register; eleven are
+deliberately excluded, each with a reason:
+
+| Page                              | Registry id                 | Marker location                                                                          |
+| --------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------- |
+| `admin/system`                    | `admin-system`              | `Section.dirty` (multiple footers)                                                       |
+| `admin/employees/[id]`            | `admin-employee-detail`     | `Section.dirty` (multiple footers)                                                       |
+| `admin/vacation`                  | `admin-vacation`            | inline `.unsaved-hint` in the sticky save bar                                            |
+| `admin/phorest`                   | `admin-phorest`             | `Section.dirty` (Verbindung, Import) + inline `.unsaved-hint` (Mitarbeiter-Zuordnung)    |
+| `admin/shifts`                    | `admin-shifts`              | `Section.dirty` (Schicht-Muster)                                                         |
+| `admin/shutdowns/[id]`            | `admin-shutdown-detail`     | `Section.dirty` (Betriebsurlaub)                                                         |
+| `admin/export`                    | `admin-export`              | `Section.dirty` (Lohnartennummern only — Export konfigurieren is never dirty, see below) |
+| `admin/audit`                     | `admin-audit`               | `Section.dirty` (Aufbewahrung only — log filters are never dirty, see below)             |
+| `admin/availability/[employeeId]` | `admin-availability-detail` | inline `.unsaved-hint` in the `ListDetail` actions snippet                               |
+
+| Page                                                                    | Excluded because                                                                                                                                                                                            |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `admin/employees` (list)                                                | the only editable form is the invite `<Modal>` with its own Abbrechen; a modal draft is a modal-dismissal concern that `beforeNavigate` never sees, and `Section.dirty` cannot render inside a modal footer |
+| `admin/shutdowns` (list)                                                | same — the only form is the create `<Modal>`                                                                                                                                                                |
+| `admin/month-close`                                                     | `selectedYear`/`statusFilter` are filters; `unlockReason`/`gapAcknowledged` are one-shot confirmations inside modals; the writes (`close-month`, `unlock-month`) are operations, not form state             |
+| `admin/import`                                                          | an operation (paste CSV → `POST /imports/:mode`), nothing is held as a setting                                                                                                                              |
+| `admin/integrations`                                                    | no update endpoint exists; the single write creates a NEW API key and the two inputs clear afterwards                                                                                                       |
+| `admin/themes`                                                          | no write path and no bound form state                                                                                                                                                                       |
+| `admin/availability` (list)                                             | list view — no write path                                                                                                                                                                                   |
+| `admin/audit/[id]`                                                      | detail view — no write path                                                                                                                                                                                 |
+| `admin/special-leave`, `admin/special-leave/[id]`, `admin/+page.svelte` | redirect stubs — no UI, no form state                                                                                                                                                                       |
+
+Two exceptions within otherwise-registered pages get the same "no marker" treatment: `admin/export`'s
+"Export konfigurieren" fields are parameters of a single download, never persisted, and
+`admin/audit`'s `filterAction`/`filterEntity` parameterise a read (`applyFilter` → `loadLogs`),
+not an edit — both are excluded from their page's snapshot and are pinned as such in each page's
+own `*-save-wiring.test.ts`.
+
+This table is not maintained by hand:
+`apps/web/src/__tests__/admin-unsaved-registry.test.ts` walks the admin route directory and fails
+if a `+page.svelte` appears in neither list, if two pages register the same id, or if a
+registration is not gated on a readiness flag. A new admin page therefore cannot ship without
+someone deciding which side of this table it belongs on. Employee-facing pages are deliberately
+out of scope (D-13/D-14) and are their own follow-up phase; `inbox` uses the same `Section`
+primitive but is not under `admin/`.
 
 **Enforcement:** `pnpm --filter @clokr/web lint:save-pattern` (wired into CI) mechanically
 enforces the text/number half of this rule (D-02) across the whole `admin/**` scope, including
@@ -831,7 +889,8 @@ question above, which is why this section exists as prose rather than only as a 
 vitest pins in `apps/web/src/__tests__/admin-system-save-wiring.test.ts` and
 `admin-employee-save-wiring.test.ts` additionally pin the specific classification decisions named
 above (which controls are instant, which are button-gated) for the two admin pages that exist
-today.
+today. `apps/web/src/__tests__/admin-unsaved-registry.test.ts` is the equivalent mechanical gate
+for D-11/D-12's page coverage, described above.
 
 ### 3.3 Breadcrumbs on Detail Pages
 
