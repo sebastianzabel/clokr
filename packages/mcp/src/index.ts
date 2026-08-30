@@ -188,12 +188,11 @@ server.tool(
   "Clock out (stop time tracking)",
   {
     entryId: z.string().describe("Time entry ID to clock out"),
-    breakMinutes: z.number().default(0).describe("Break minutes"),
   },
-  async ({ entryId, breakMinutes }) => {
-    const { status, data } = await apiCall("POST", `time-entries/${entryId}/clock-out`, {
-      breakMinutes,
-    });
+  // Breaks are recorded via POST /time-entries/:id/breaks, which derives breakMinutes from the
+  // Break rows. This server exposes no tool for that yet (Phase 129, D-06 — noted, not built).
+  async ({ entryId }) => {
+    const { status, data } = await apiCall("POST", `time-entries/${entryId}/clock-out`, {});
     if (status === 200) {
       return {
         content: [
@@ -421,4 +420,6 @@ async function main() {
   console.error("Clokr MCP Server running on stdio");
 }
 
-main().catch(console.error);
+main().catch((err: unknown) => {
+  console.error(err);
+});

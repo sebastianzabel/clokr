@@ -40,8 +40,10 @@ const clockInSchema = z.object({
   note: z.string().optional(),
 });
 
+// No `breakMinutes` here on purpose (Phase 129, issue #129): the value is derived from the
+// entry's Break rows and nothing else. Zod strips unknown keys, so a caller that still sends
+// it gets no error — and no effect.
 const clockOutSchema = z.object({
-  breakMinutes: z.number().int().min(0).default(0),
   note: z.string().optional(),
 });
 
@@ -750,76 +752,78 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const closedEntryId = resolution.entry.id;
 
       // ── Post-resolution side effects (adapter — explicitly out of resolver scope per CONTEXT D-05) ──
-      const initialBreakMinutes = body.breakMinutes ?? 0;
-      if (initialBreakMinutes > 0) {
+      // The removed breakMinutes branch also persisted the note; the resolver's STOP case does not
+      // (only START does), so keep the note write — now independent of whether a break exists.
+      if (body.note !== undefined) {
         await app.prisma.timeEntry.update({
           where: { id: closedEntryId },
-          data: { breakMinutes: initialBreakMinutes, note: body.note },
+          data: { note: body.note },
         });
-      } else {
-        // Auto-break (Phase 64 contract — preserved verbatim).
-        const targetEmployee = await app.prisma.employee.findUnique({
-          where: { id: entry.employeeId },
-        });
-        const tenantConfig = targetEmployee
-          ? await app.prisma.tenantConfig.findUnique({
-              where: { tenantId: targetEmployee.tenantId },
-            })
-          : null;
+      }
 
-        // D-01 Pitfall 1 guard: skip auto-break when Break records already exist on this entry.
-        // A reopened entry carries a gap Break — auto-break must not overwrite its breakMinutes.
-        const existingBreakCount = await app.prisma.break.count({
-          where: { timeEntryId: closedEntryId },
+      // Auto-break (Phase 64 contract — preserved verbatim; Phase 129 removed the `else` wrapper
+      // that used to guard it, but changed nothing inside it).
+      const targetEmployee = await app.prisma.employee.findUnique({
+        where: { id: entry.employeeId },
+      });
+      const tenantConfig = targetEmployee
+        ? await app.prisma.tenantConfig.findUnique({
+            where: { tenantId: targetEmployee.tenantId },
+          })
+        : null;
+
+      // D-01 Pitfall 1 guard: skip auto-break when Break records already exist on this entry.
+      // A reopened entry carries a gap Break — auto-break must not overwrite its breakMinutes.
+      const existingBreakCount = await app.prisma.break.count({
+        where: { timeEntryId: closedEntryId },
+      });
+      if (tenantConfig?.autoBreakEnabled && targetEmployee && existingBreakCount === 0) {
+        const closedEntry = await app.prisma.timeEntry.findUnique({
+          where: { id: closedEntryId },
         });
-        if (tenantConfig?.autoBreakEnabled && targetEmployee && existingBreakCount === 0) {
-          const closedEntry = await app.prisma.timeEntry.findUnique({
-            where: { id: closedEntryId },
-          });
-          if (closedEntry?.startTime && closedEntry?.endTime) {
-            const workDurationMin =
-              (closedEntry.endTime.getTime() - closedEntry.startTime.getTime()) / 60000;
-            const autoBreakMin = getEffectiveBreakDuration(
-              targetEmployee,
-              tenantConfig,
-              workDurationMin,
-            );
-            if (autoBreakMin > 0) {
-              let breakStartTime: Date;
-              if (tenantConfig.defaultBreakStart) {
-                const [hh, mm] = tenantConfig.defaultBreakStart.split(":").map(Number);
-                breakStartTime = new Date(closedEntry.startTime);
-                breakStartTime.setHours(hh, mm, 0, 0);
-                if (
-                  breakStartTime <= closedEntry.startTime ||
-                  breakStartTime >= closedEntry.endTime
-                ) {
-                  const midMs =
-                    closedEntry.startTime.getTime() +
-                    (closedEntry.endTime.getTime() - closedEntry.startTime.getTime()) / 2;
-                  breakStartTime = new Date(midMs - (autoBreakMin / 2) * 60000);
-                }
-              } else {
+        if (closedEntry?.startTime && closedEntry?.endTime) {
+          const workDurationMin =
+            (closedEntry.endTime.getTime() - closedEntry.startTime.getTime()) / 60000;
+          const autoBreakMin = getEffectiveBreakDuration(
+            targetEmployee,
+            tenantConfig,
+            workDurationMin,
+          );
+          if (autoBreakMin > 0) {
+            let breakStartTime: Date;
+            if (tenantConfig.defaultBreakStart) {
+              const [hh, mm] = tenantConfig.defaultBreakStart.split(":").map(Number);
+              breakStartTime = new Date(closedEntry.startTime);
+              breakStartTime.setHours(hh, mm, 0, 0);
+              if (
+                breakStartTime <= closedEntry.startTime ||
+                breakStartTime >= closedEntry.endTime
+              ) {
                 const midMs =
                   closedEntry.startTime.getTime() +
                   (closedEntry.endTime.getTime() - closedEntry.startTime.getTime()) / 2;
                 breakStartTime = new Date(midMs - (autoBreakMin / 2) * 60000);
               }
-              const breakEndTime = new Date(breakStartTime.getTime() + autoBreakMin * 60000);
-
-              await app.prisma.break.create({
-                data: {
-                  timeEntryId: closedEntryId,
-                  startTime: breakStartTime,
-                  endTime: breakEndTime,
-                },
-              });
-              // Phase 91 (BREAK-02): Pflichtpause auto-inserted → mark AUTO for confirmation
-              await app.prisma.timeEntry.update({
-                where: { id: closedEntryId },
-                data: { breakMinutes: autoBreakMin, breakStatus: "AUTO" },
-              });
+            } else {
+              const midMs =
+                closedEntry.startTime.getTime() +
+                (closedEntry.endTime.getTime() - closedEntry.startTime.getTime()) / 2;
+              breakStartTime = new Date(midMs - (autoBreakMin / 2) * 60000);
             }
+            const breakEndTime = new Date(breakStartTime.getTime() + autoBreakMin * 60000);
+
+            await app.prisma.break.create({
+              data: {
+                timeEntryId: closedEntryId,
+                startTime: breakStartTime,
+                endTime: breakEndTime,
+              },
+            });
+            // Phase 91 (BREAK-02): Pflichtpause auto-inserted → mark AUTO for confirmation
+            await app.prisma.timeEntry.update({
+              where: { id: closedEntryId },
+              data: { breakMinutes: autoBreakMin, breakStatus: "AUTO" },
+            });
           }
         }
       }
