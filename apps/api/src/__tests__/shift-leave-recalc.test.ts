@@ -253,6 +253,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
       deductVacationDays,
       reverseVacationDays,
       audit: app.audit,
+      triggerSource: "REQUEST", // Phase 120 (D-07): stands in for a route call site
     };
   });
 

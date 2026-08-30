@@ -275,7 +275,13 @@ export async function syncPhorestShifts(
     // header note above `PHOREST_SYNC_ACTOR_ID`). `notifiedThisRun` is the per-run notification
     // de-dup Set, shared across all four mutation sites below.
     const actorUserId = opts.actorUserId ?? PHOREST_SYNC_ACTOR_ID;
-    const recalcDeps: RecalcDeps = { ...recalcDepsBase, audit: buildPhorestSafeAudit(app) };
+    const recalcDeps: RecalcDeps = {
+      ...recalcDepsBase,
+      audit: buildPhorestSafeAudit(app),
+      // Phase 120 (D-06/D-07): no `request` — the cron path has none, and an invented IP would be
+      // worse than an empty one. `triggerSource` is what makes that emptiness readable.
+      triggerSource: "SYNC",
+    };
     const notifiedThisRun = new Set<string>();
 
     // Window: today .. today + phorestSyncWindowDays (tenant TZ), overridable per opts (SS-06).
