@@ -689,7 +689,7 @@ This follows the Linear and GitHub patterns: save actions are scoped to their ca
 **Save button state machine (per section):**
 
 ```
-idle → [user edits field] → dirty → [click Speichern] → saving (Spinner visible)
+idle → [user edits field] → dirty (Section renders "Nicht gespeichert") → [click Speichern] → saving …
      → success ("✓ Gespeichert" for 1500ms) → idle
      → error (<div class="alert alert-error">) → idle (user fixes and retries)
 ```
@@ -734,6 +734,104 @@ idle → [user edits field] → dirty → [click Speichern] → saving (Spinner 
 ```
 
 **Anti-pattern reference:** A global sticky save bar at the top of the page violates §4.E (Hidden Destructive Actions) and the general per-card save principle. Any admin page with a global save bar is a Regulatorium violation.
+
+### 3.2.1 Instant save vs. section button — how to classify a control
+
+Phase 109 (Issue #35) found the same page carrying both patterns in visually identical toggle
+rows, with no written rule to tell them apart. This section is that rule.
+
+**The rule reads at the control, not at the page (D-01).** Two classes, no third:
+
+- **Atomic single value** — a checkbox or a select that stands on its own — saves on
+  interaction, with a success toast and an optimistic rollback on failure.
+- **Form group** — several fields that only mean something together — saves via one
+  Speichern button in the `Section` `footer` snippet (§3.2 above).
+
+**Text and number fields are always a form group (D-02).** No debounced autosave, no
+save-on-blur, regardless of whether the field has siblings. A lone number input with its own
+button is correct and must not be "fixed" into an instant save. This is the type-based
+override that wins over the atomic-value test above — it is the operative form of the audit
+requirement below, and it is enforced mechanically by `pnpm --filter @clokr/web
+lint:save-pattern` (see "Enforcement" below).
+
+**Why this is the audit rule, not "audit ⇒ button" (D-06):** `apps/api/src/routes/settings.ts:677`
+writes one unconditional audit row per `PUT /settings/work`, and that is exactly the endpoint
+every instant-save toggle on `admin/system` writes through. One operator action producing one
+audit row is a correct record; what would be wrong is a _chain_ of rows from a single change —
+and that is exactly what the text/number carve-out above prevents. Reading D-06 as "anything
+audited must be a button" would have made the rule "everywhere in admin is a button", which was
+considered and rejected.
+
+**Always a button, whatever the control looks like:**
+
+- Security configuration — password policy, session config / "Angemeldet bleiben", SMTP
+  credentials, Phorest credentials (D-07).
+- Anything carrying an effective date: _value and effective date are one decision and can only
+  be correct together_ (N-04, D-08) — e.g. the `WorkSchedule` on `admin/employees/[id]`, which
+  is additionally only legal on the 1st of a month (`MONTH_FIRST_ERROR`,
+  `apps/api/src/utils/month-first-date.ts`).
+
+**Instant-save handler shape.** `toggleWifi()`
+(`apps/web/src/routes/(app)/settings/+page.svelte:113-125`) is the reference: `await` the
+request, write back the _server's_ value, then `toasts.success(...)`; in `catch`, revert the
+optimistic value FIRST, then `toasts.error(...)` — never the other order, or the switch briefly
+shows a state the server never accepted. The in-admin example that shipped in Phase 109 (plan
+109-04) follows the same shape, keyed over a registry instead of a single variable:
+
+```ts
+async function toggleEmailFlag(flag: EmailFlag, next: boolean) {
+  const previous = emailFlags[flag];
+  emailFlags[flag] = next; // optimistic — mirrors the checkbox the browser already flipped
+  emailFlagSaving = flag;
+  try {
+    const res = await api.put<SecurityConfig>("/settings/security", { [flag]: next });
+    const serverValue = res?.[flag];
+    emailFlags[flag] = typeof serverValue === "boolean" ? serverValue : next;
+    toasts.success(`${EMAIL_FLAG_LABELS[flag]} ${emailFlags[flag] ? "aktiviert" : "deaktiviert"}.`);
+  } catch (e: unknown) {
+    emailFlags[flag] = previous; // revert BEFORE the toast (D-04)
+    toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
+  } finally {
+    emailFlagSaving = null;
+  }
+}
+```
+
+**Payloads are minimal.** A newly converted instant handler sends only the field it changed —
+`toggleEmailFlag` above sends `{ [flag]: next }`, a single key, never a full-config spread. The
+`_gOtherFields` full-config spread that older handlers in `admin/system` use caches a snapshot
+taken once at page load and never refreshed; copying that pattern into a new handler widens a
+known lost-update race (N-09) instead of merely inheriting it. Both `/settings/work` and
+`/settings/security` accept true partial payloads — there is no technical reason to spread more
+than the changed field.
+
+**Unsaved state is visible (D-11).** Pass `dirty` to `Section`; it renders the "Nicht
+gespeichert" hint (`role="status"`, class `unsaved-hint`) in the footer next to the Speichern
+button. Derive `dirty` by snapshot comparison — take one string snapshot (e.g. via
+`JSON.stringify` of exactly the fields the save handler submits) once at load, and re-take it
+inside the handler's `try` block **only on the success path**, immediately after marking the
+save as done. Re-taking it in `finally` would clear the marker after a FAILED save too, which is
+the exact confusion this rule exists to remove — a save that did not happen must keep showing
+"Nicht gespeichert".
+
+**Leaving with unsaved changes prompts (D-12).** Each page registers an aggregate dirty flag
+with `markUnsaved(<page id>, dirty)` from `$stores/unsaved`, cleared again by the same call (or
+its own `$effect` cleanup) when the page unmounts or the section becomes clean. The
+`(app)/+layout.svelte` layout runs a single `beforeNavigate` guard that checks `hasUnsaved()`
+and opens the shared `ConfirmDialog` primitive before letting a dirty navigation through. Every
+logout path (there are four: Topbar, Sidebar, the inactivity timer, and the 401 handler in
+`client.ts`) clears the registry via `clearUnsaved()` _before_ it navigates — the guard has no
+way to tell a forced logout from any other navigation, so the logout paths themselves carry that
+responsibility (N-08).
+
+**Enforcement:** `pnpm --filter @clokr/web lint:save-pattern` (wired into CI) mechanically
+enforces the text/number half of this rule (D-02) across the whole `admin/**` scope, including
+pages that do not exist yet — it does not, and cannot, judge the atomic-value-vs-form-group
+question above, which is why this section exists as prose rather than only as a lint rule. The
+vitest pins in `apps/web/src/__tests__/admin-system-save-wiring.test.ts` and
+`admin-employee-save-wiring.test.ts` additionally pin the specific classification decisions named
+above (which controls are instant, which are button-gated) for the two admin pages that exist
+today.
 
 ### 3.3 Breadcrumbs on Detail Pages
 
@@ -881,6 +979,12 @@ The current `/admin/employees` modal-heavy edit flow (employee edit modal with 8
 ---
 
 ## 7. Future Enforcement (lint:admin-layout)
+
+**One gate has shipped since this section was written:** `pnpm --filter @clokr/web
+lint:save-pattern` (Phase 109, `apps/web/scripts/lint-save-pattern.mjs`) is live in CI and
+enforces the D-02 text/number half of §3.2.1 across the whole `admin/**` scope. It is narrower
+than the `lint:admin-layout` sketch below — it does not check template imports, `PageHead`
+matching, or `DangerZone` placement — so `lint:admin-layout` remains deferred for those checks.
 
 The planned `lint:admin-layout` automation script is **deferred to v2 backlog**, tracked as **ADMIN-LINT-01** in REQUIREMENTS.md.
 
