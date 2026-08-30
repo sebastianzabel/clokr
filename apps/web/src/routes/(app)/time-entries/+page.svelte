@@ -230,6 +230,10 @@
     // Phase 97-05 (SALDO-DISP-07) — SHIFT_BASED open months only; undefined otherwise
     // (never a fabricated false), matching computeMonthSaldo's own contract.
     rosterIncomplete?: boolean;
+    // Phase 125 (issue #125) — distinct worked days to date, from the SAME server computation as
+    // `workedMinutes`. Absent for a CLOSED month (the SaldoSnapshot stores no day count) —
+    // undefined, never a fabricated 0, matching computeMonthSaldo's own contract.
+    workedDays?: number;
     days: MonthSaldoDay[];
   }
   let monthSaldo: MonthSaldo | null = $state(null);
@@ -1411,21 +1415,32 @@
     }),
   );
   // Worked + Expected up to cutoff: today if clocked, yesterday otherwise
-  let totalWorked = $derived(
-    entries
-      .filter((e) => {
-        if (!e.endTime || e.isInvalid) return false;
-        if (hasTodayEntries) return true;
-        const d = (e.date ?? e.startTime).split("T")[0];
-        return d < todayStr;
-      })
-      .reduce(
-        (s, e) =>
-          s +
-          Math.floor((new Date(e.endTime!).getTime() - new Date(e.startTime).getTime()) / 60000) -
-          (e.breakMinutes ?? 0),
-        0,
-      ),
+  //
+  // Phase 125 (issue #125) — one predicate, two outputs. `totalWorked` (the card's Ist in every
+  // non-SHIFT branch) and `workedEntryDays` (its "N Arbeitstage bisher" in those same branches)
+  // are read off the SAME filtered list, so they cannot disagree the way issue #125 reported.
+  // SHIFT_BASED uses neither: there both numbers come from GET /overtime/month-saldo
+  // (monthSaldo.workedMinutes / monthSaldo.workedDays). `entries` is already scoped to the
+  // displayed month by fromDate/toDate.
+  const netEntryMinutes = (e: TimeEntry): number =>
+    Math.floor((new Date(e.endTime!).getTime() - new Date(e.startTime).getTime()) / 60000) -
+    (e.breakMinutes ?? 0);
+
+  let entriesToDate = $derived(
+    entries.filter((e) => {
+      if (!e.endTime || e.isInvalid) return false;
+      if (hasTodayEntries) return true;
+      const d = (e.date ?? e.startTime).split("T")[0];
+      return d < todayStr;
+    }),
+  );
+  let totalWorked = $derived(entriesToDate.reduce((s, e) => s + netEntryMinutes(e), 0));
+  let workedEntryDays = $derived(
+    new Set(
+      entriesToDate
+        .filter((e) => netEntryMinutes(e) > 0)
+        .map((e) => (e.date ?? e.startTime).split("T")[0]),
+    ).size,
   );
   let totalExpected = $derived(
     calendarDays
@@ -1475,6 +1490,10 @@
     sollLabel: string;
     closed: boolean;
     rosterIncomplete: boolean;
+    // Phase 125 (issue #125) — the "N Arbeitstage bisher" count, deliberately a MonthMetrics field
+    // so it is produced by the SAME branch as `istMin` above it and can never be sourced from
+    // somewhere else. `null` = this branch has no count and the card must print none.
+    workdaysSoFar: number | null;
     extraNote?: string;
   };
   let monthMetrics: MonthMetrics = $derived.by(() => {
@@ -1486,6 +1505,7 @@
         sollLabel: "Soll (bisher)",
         closed: false,
         rosterIncomplete: false,
+        workdaysSoFar: null,
       };
     }
 
@@ -1499,6 +1519,7 @@
         sollLabel: "Soll (bisher)",
         closed: monthSaldo.closed,
         rosterIncomplete: monthSaldo.rosterIncomplete ?? false,
+        workdaysSoFar: monthSaldo.workedDays ?? null,
       };
     }
 
@@ -1512,6 +1533,7 @@
         sollLabel: "Soll",
         closed: false,
         rosterIncomplete: false,
+        workdaysSoFar: workedEntryDays,
       };
     }
 
@@ -1523,6 +1545,7 @@
         sollLabel: "Soll",
         closed: false,
         rosterIncomplete: false,
+        workdaysSoFar: workedEntryDays,
       };
     }
 
@@ -1539,14 +1562,10 @@
       sollLabel: "Soll (bisher)",
       closed: false,
       rosterIncomplete: false,
+      workdaysSoFar: workedEntryDays,
       extraNote,
     };
   });
-  // Counts over already-loaded day/entry data — CONTEXT explicitly permits this (not a saldo
-  // computation).
-  let workdaysSoFar = $derived(
-    calendarDays.filter((d) => d.isCurrentMonth && !d.isFuture && d.workedMin > 0).length,
-  );
   let runningCount = $derived(entries.filter((e) => !e.endTime).length);
   // Phase 116 (issue #119) — the account's link to an Employee row. `false` means every
   // employee-scoped fetch in loadAll() was replaced by Promise.resolve(...) and never attempted.
@@ -1742,7 +1761,7 @@
       saldoMin={monthMetrics.saldoMin}
       sollLabel={monthMetrics.sollLabel}
       extraNote={monthMetrics.extraNote}
-      {workdaysSoFar}
+      workdaysSoFar={monthMetrics.workdaysSoFar}
       {runningCount}
       isLocked={monthIsLocked || monthMetrics.closed}
       loading={saldoCardState === "loading"}
