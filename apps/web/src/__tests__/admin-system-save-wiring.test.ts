@@ -35,6 +35,41 @@ const PAGE = readRouteFile(
   "src/routes/(app)/admin/system/+page.svelte",
 );
 
+// Brace/paren-depth fnBody() slicer (Phase 109, Plan 01's admin-employee-save-wiring.test.ts
+// correction) rather than the naive two-space-indent heuristic from vacation-summary.test.ts:
+// robust against a function whose own parameter type contains braces before the real body starts.
+function fnBody(marker: string): string {
+  const start = PAGE.indexOf(marker);
+  expect(start, `marker not found: ${marker}`).toBeGreaterThan(-1);
+
+  let i = start;
+  let parenDepth = 0;
+  let bodyStart = -1;
+  while (i < PAGE.length) {
+    const ch = PAGE[i];
+    if (ch === "(") parenDepth++;
+    else if (ch === ")") parenDepth--;
+    else if (ch === "{" && parenDepth === 0) {
+      bodyStart = i;
+      break;
+    }
+    i++;
+  }
+  expect(bodyStart, `function body opening brace not found for: ${marker}`).toBeGreaterThan(-1);
+
+  let depth = 0;
+  let j = bodyStart;
+  for (; j < PAGE.length; j++) {
+    if (PAGE[j] === "{") depth++;
+    else if (PAGE[j] === "}") {
+      depth--;
+      if (depth === 0) break;
+    }
+  }
+  expect(j, `unterminated function: ${marker}`).toBeLessThan(PAGE.length);
+  return PAGE.slice(bodyStart, j + 1);
+}
+
 describe("D-03/N-11 — the nine already-correct instant handlers stay instant", () => {
   const INSTANT_HANDLERS = [
     "saveAvailabilityEnabled",
@@ -120,4 +155,43 @@ describe("AK-02 — text/number inputs never write outside a button-gated group"
       expect(PAGE).not.toContain(`onblur={${name}}`);
     },
   );
+});
+
+describe("D-01/AK-01 — the eight E-Mail-Benachrichtigungs-Toggles save instantly", () => {
+  const EMAIL_FLAGS = [
+    "emailNotificationsEnabled",
+    "emailOnLeaveRequest",
+    "emailOnLeaveDecision",
+    "emailOnOvertimeWarning",
+    "emailOnMissingEntries",
+    "emailOnClockOutReminder",
+    "emailOnMonthClose",
+    "emailOnRetroEntry",
+  ] as const;
+
+  it.each(EMAIL_FLAGS)("%s is wired to toggleEmailFlag, not to a button", (flag) => {
+    // Prettier wraps the multi-line arrow-function call, so `toggleEmailFlag(` and the flag
+    // literal land on separate lines — match across whitespace rather than a single substring.
+    expect(PAGE).toMatch(new RegExp(`toggleEmailFlag\\(\\s*"${flag}"`));
+  });
+
+  it("the section no longer has a save button", () => {
+    expect(PAGE).not.toContain("saveEmailConfig");
+  });
+
+  it("AK-03: the catch branch reverts BEFORE it toasts (toggleWifi order)", () => {
+    const body = fnBody("async function toggleEmailFlag");
+    const iRevert = body.indexOf("emailFlags[flag] = previous");
+    const iToast = body.indexOf("toasts.error");
+    expect(iRevert).toBeGreaterThan(-1);
+    expect(iToast).toBeGreaterThan(iRevert);
+  });
+
+  it("N-09: the payload is minimal — no _gOtherFields snapshot", () => {
+    expect(fnBody("async function toggleEmailFlag")).not.toContain("_gOtherFields");
+  });
+
+  it("AK-05: success feedback is the existing toast store, no new status component", () => {
+    expect(fnBody("async function toggleEmailFlag")).toContain("toasts.success");
+  });
 });
