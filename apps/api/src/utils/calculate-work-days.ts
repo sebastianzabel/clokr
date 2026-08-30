@@ -160,8 +160,14 @@ function isLiteralMoFr(arr: number[]): boolean {
  * `apps/api/src/routes/leave.ts` and CLAUDE.md §"Schedule Types"). Do NOT read this function's
  * output as governing SHIFT_BASED `workDays` — for that type the `{day}Hours` columns are
  * placeholders (`getScheduledHours()`, Phase 100 / OTC-04) and a value derived here has no
- * authority. Existing divergent SHIFT_BASED rows are deliberately left alone (evidence for
- * Phase 108 / GitHub issue #95), not something this function is expected to correct.
+ * authority.
+ *
+ * Existing divergent rows are left alone PERMANENTLY, and no correction is pending (Phase 95b, D-01).
+ * They are not guessed `workDays`: they are stale placeholder `{day}Hours`, which this function
+ * normalises on write but which are authoritative only for FIXED_SCHEDULE. Aligning `workDays` to
+ * them would replace the right value with the wrong one — MONTHLY_HOURS rows would end up with an
+ * EMPTY `workDays` and lose their leave accounting. The rule and the production evidence live in
+ * CLAUDE.md §"Schedule Types"; surface the rows with `scripts/audit-workdays-vs-day-hours.ts`.
  */
 export function normalizeWorkDays(
   explicit: number[] | undefined,
