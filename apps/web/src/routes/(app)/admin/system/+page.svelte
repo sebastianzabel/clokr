@@ -1303,7 +1303,14 @@
     }
   }
 
-  async function toggleEmailFlag(flag: EmailFlag, next: boolean) {
+  // WR-03: `el` removes this handler's dependency on Svelte flushing between the optimistic write
+  // and the revert. The markup binds one-way (`checked={…}`), so the only thing that puts the DOM
+  // checkbox back is a state transition Svelte actually observes — and `set_checked` early-returns
+  // when the new value equals the LAST APPLIED one without ever reading `element.checked`. If both
+  // writes land in one batch (a pre-flight throw, a cached response, a sync guard before the
+  // await), Svelte sees `previous → previous`, applies nothing, and the browser's own flip stays on
+  // screen. Writing `el.checked` directly is the one line that cannot be defeated that way.
+  async function toggleEmailFlag(flag: EmailFlag, next: boolean, el?: HTMLInputElement) {
     const previous = emailFlags[flag];
     emailFlags[flag] = next; // optimistic — mirrors the checkbox the browser already flipped
     emailFlagSaving = flag;
@@ -1311,11 +1318,14 @@
       const res = await api.put<SecurityConfig>("/settings/security", { [flag]: next });
       const serverValue = res?.[flag];
       emailFlags[flag] = typeof serverValue === "boolean" ? serverValue : next;
+      // The server may answer with a value other than `next`; resync the DOM unconditionally.
+      if (el) el.checked = emailFlags[flag];
       toasts.success(
         `${EMAIL_FLAG_LABELS[flag]} ${emailFlags[flag] ? "aktiviert" : "deaktiviert"}.`,
       );
     } catch (e: unknown) {
       emailFlags[flag] = previous; // revert BEFORE the toast (D-04)
+      if (el) el.checked = previous;
       toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
     } finally {
       emailFlagSaving = null;
@@ -2539,6 +2549,7 @@
                   toggleEmailFlag(
                     "emailNotificationsEnabled",
                     (ev.currentTarget as HTMLInputElement).checked,
+                    ev.currentTarget as HTMLInputElement,
                   )}
                 disabled={emailFlagSaving !== null}
                 data-testid="admin-system-email-emailNotificationsEnabled"
@@ -2559,6 +2570,7 @@
                     toggleEmailFlag(
                       "emailOnLeaveRequest",
                       (ev.currentTarget as HTMLInputElement).checked,
+                      ev.currentTarget as HTMLInputElement,
                     )}
                   disabled={emailFlagSaving !== null}
                   data-testid="admin-system-email-emailOnLeaveRequest"
@@ -2577,6 +2589,7 @@
                     toggleEmailFlag(
                       "emailOnLeaveDecision",
                       (ev.currentTarget as HTMLInputElement).checked,
+                      ev.currentTarget as HTMLInputElement,
                     )}
                   disabled={emailFlagSaving !== null}
                   data-testid="admin-system-email-emailOnLeaveDecision"
@@ -2595,6 +2608,7 @@
                     toggleEmailFlag(
                       "emailOnOvertimeWarning",
                       (ev.currentTarget as HTMLInputElement).checked,
+                      ev.currentTarget as HTMLInputElement,
                     )}
                   disabled={emailFlagSaving !== null}
                   data-testid="admin-system-email-emailOnOvertimeWarning"
@@ -2613,6 +2627,7 @@
                     toggleEmailFlag(
                       "emailOnMissingEntries",
                       (ev.currentTarget as HTMLInputElement).checked,
+                      ev.currentTarget as HTMLInputElement,
                     )}
                   disabled={emailFlagSaving !== null}
                   data-testid="admin-system-email-emailOnMissingEntries"
@@ -2631,6 +2646,7 @@
                     toggleEmailFlag(
                       "emailOnClockOutReminder",
                       (ev.currentTarget as HTMLInputElement).checked,
+                      ev.currentTarget as HTMLInputElement,
                     )}
                   disabled={emailFlagSaving !== null}
                   data-testid="admin-system-email-emailOnClockOutReminder"
@@ -2649,6 +2665,7 @@
                     toggleEmailFlag(
                       "emailOnMonthClose",
                       (ev.currentTarget as HTMLInputElement).checked,
+                      ev.currentTarget as HTMLInputElement,
                     )}
                   disabled={emailFlagSaving !== null}
                   data-testid="admin-system-email-emailOnMonthClose"
@@ -2667,6 +2684,7 @@
                     toggleEmailFlag(
                       "emailOnRetroEntry",
                       (ev.currentTarget as HTMLInputElement).checked,
+                      ev.currentTarget as HTMLInputElement,
                     )}
                   disabled={emailFlagSaving !== null}
                   data-testid="admin-system-email-emailOnRetroEntry"

@@ -278,6 +278,25 @@ describe("D-01/AK-01 — the eight E-Mail-Benachrichtigungs-Toggles save instant
     expect(fnBody("async function toggleEmailFlag")).not.toContain("_gOtherFields");
   });
 
+  // WR-03: the markup binds one-way, so the state revert only reaches the DOM if Svelte flushes
+  // between the optimistic write and the revert. Today the awaited fetch guarantees that task
+  // boundary, but a pre-flight throw / cached response / sync guard ahead of the await would put
+  // both writes in one batch — Svelte would see `previous → previous` and set_checked would
+  // early-return, leaving the browser's own flip on screen. Writing el.checked removes the
+  // dependency entirely.
+  it("WR-03: the rollback writes the DOM directly, not only the state", () => {
+    const body = fnBody("async function toggleEmailFlag");
+    expect(body).toContain("if (el) el.checked = previous;");
+  });
+
+  it("WR-03: the handler accepts the element and every call site passes it", () => {
+    expect(PAGE).toContain(
+      "async function toggleEmailFlag(flag: EmailFlag, next: boolean, el?: HTMLInputElement)",
+    );
+    // One element argument per flag — all eight toggles, none left on the flush-dependent path.
+    expect((PAGE.match(/^\s*ev\.currentTarget as HTMLInputElement,$/gm) ?? []).length).toBe(8);
+  });
+
   it("AK-05: success feedback is the existing toast store, no new status component", () => {
     expect(fnBody("async function toggleEmailFlag")).toContain("toasts.success");
   });
