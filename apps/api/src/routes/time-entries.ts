@@ -452,6 +452,13 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             resolution,
           });
         }
+        if (resolution.reason === "RETRO_PENDING") {
+          return reply.code(409).send({
+            error: "Für diesen Tag liegt ein offener Zeitnachtrag zur Genehmigung vor.",
+            action: "BLOCKED",
+            resolution,
+          });
+        }
         return reply.code(409).send({ error: "Konflikt", resolution });
       }
 
@@ -644,6 +651,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             .code(409)
             .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden", resolution });
         }
+        if (resolution.reason === "RETRO_PENDING") {
+          return reply.code(409).send({
+            error: "Für diesen Tag liegt ein offener Zeitnachtrag zur Genehmigung vor.",
+            resolution,
+          });
+        }
         return reply.code(409).send({ error: "Konflikt", resolution });
       }
       app.log.error({ resolution }, "clock_in_unexpected_resolution_kind");
@@ -707,6 +720,19 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         }
         if (resolution.reason === "NOT_CLOCKED_IN") {
           return reply.code(409).send({ error: "Bereits ausgestempelt", resolution });
+        }
+        // Phase 118: on this route the pre-guard `if (entry.endTime) return 409
+        // "Bereits ausgestempelt"` usually fires first, because a Zeitnachtrag
+        // created from the review form carries both times. It is NOT guaranteed:
+        // `manualEntrySchema.endTime` is nullable, so the entry-first Nachtrag
+        // path (Phase 96) can leave a pending row open. This branch is therefore
+        // genuinely reachable, and it keeps the honest message from being
+        // swallowed by the generic "Konflikt" fallback below.
+        if (resolution.reason === "RETRO_PENDING") {
+          return reply.code(409).send({
+            error: "Für diesen Tag liegt ein offener Zeitnachtrag zur Genehmigung vor.",
+            resolution,
+          });
         }
         return reply.code(409).send({ error: "Konflikt", resolution });
       }
