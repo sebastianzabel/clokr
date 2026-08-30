@@ -722,10 +722,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           return reply.code(409).send({ error: "Bereits ausgestempelt", resolution });
         }
         // Phase 118: on this route the pre-guard `if (entry.endTime) return 409
-        // "Bereits ausgestempelt"` almost always fires first, because a pending
-        // Zeitnachtrag row always has `endTime` set. This branch exists for
-        // completeness so the message never gets swallowed by the generic
-        // "Konflikt" fallback below.
+        // "Bereits ausgestempelt"` usually fires first, because a Zeitnachtrag
+        // created from the review form carries both times. It is NOT guaranteed:
+        // `manualEntrySchema.endTime` is nullable, so the entry-first Nachtrag
+        // path (Phase 96) can leave a pending row open. This branch is therefore
+        // genuinely reachable, and it keeps the honest message from being
+        // swallowed by the generic "Konflikt" fallback below.
         if (resolution.reason === "RETRO_PENDING") {
           return reply.code(409).send({
             error: "Für diesen Tag liegt ein offener Zeitnachtrag zur Genehmigung vor.",
