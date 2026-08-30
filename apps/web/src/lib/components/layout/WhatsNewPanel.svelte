@@ -103,7 +103,18 @@
     bottom: 0;
     right: 0;
     width: min(400px, 92vw);
-    z-index: 150;
+    /* Phase 110-07 checkpoint fix: this drawer is chrome that must sit above ALL persistent app
+       chrome (Sidebar, Topbar, BottomTabBar, the mobile "Mehr" sheet) since it can open on any
+       authenticated route -- Topbar.svelte's own comment puts the highest of those at 1000. It
+       previously sat at 150, below that chrome, so its close button was covered by the Topbar
+       avatar and unclickable (measured: elementFromPoint on the close button's centre hit
+       .topbar-actions, not the button). 2000 is deliberately in the gap between the app-chrome
+       band (<=1000) and the global-overlay band (CommandPalette 9000/9001, Toast 9999,
+       skip-to-content 10000): it must win over chrome, but Toast must still win over an open
+       drawer (an error toast has to stay visible while it's open) and the CommandPalette --
+       invoked from anywhere via keyboard shortcut -- keeps its own precedence too. Pinned by
+       whats-new-stacking.test.ts. */
+    z-index: 2000;
     background: var(--bg-card);
     border-left: 1px solid var(--border);
     box-shadow: var(--shadow-lg);
