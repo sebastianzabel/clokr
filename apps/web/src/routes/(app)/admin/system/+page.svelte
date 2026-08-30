@@ -737,19 +737,28 @@
   // saveDatev moved to /admin/export (Phase 58).
 
   async function saveHolidayDeduction() {
-    if (!_gOtherFields) return; // guard: need full work-settings context to avoid partial overwrite
+    // bind:checked has already written the new value into the state, so the DOM and the state
+    // agree and an explicit revert actually lands (WR-02). The former one-way `checked={…}` plus
+    // "assign only on success" left the browser's own flip on screen after a failed save.
+    const previous = !monthlyHoursHolidayDeduction;
+    // guard: need full work-settings context to avoid partial overwrite
+    if (!_gOtherFields) {
+      monthlyHoursHolidayDeduction = previous;
+      toasts.error("Einstellungen sind noch nicht geladen.");
+      return;
+    }
     holidayDeductionSaving = true;
-    const newValue = !monthlyHoursHolidayDeduction; // capture desired state once
     try {
       await api.put("/settings/work", {
         ..._gOtherFields,
         federalState: gFederalState,
         timezone: gTimezone,
-        monthlyHoursHolidayDeduction: newValue,
+        monthlyHoursHolidayDeduction,
       });
-      monthlyHoursHolidayDeduction = newValue; // commit only after success
-    } catch {
-      // revert on error — state unchanged because we did not assign yet
+      toasts.success("Einstellung gespeichert.");
+    } catch (e: unknown) {
+      monthlyHoursHolidayDeduction = previous;
+      toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
     } finally {
       holidayDeductionSaving = false;
     }
@@ -759,23 +768,30 @@
   // When enabled, the time-entries pipeline deducts 30min (>6h) / 45min (>9h)
   // breaks on clock-out (apps/api/src/routes/time-entries.ts:400,641,909).
   async function toggleAutoBreak() {
-    if (!_gOtherFields) return;
+    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02). This drives
+    // the § 4 ArbZG auto-deduction, so the checkbox must never outlive a failed save. Error
+    // feedback stays the section's own inline banner (autoBreakError, rendered above the toggle).
+    const previous = !autoBreakEnabled;
+    if (!_gOtherFields) {
+      autoBreakEnabled = previous;
+      autoBreakError = "Einstellungen sind noch nicht geladen.";
+      return;
+    }
     autoBreakSaving = true;
     autoBreakError = "";
     autoBreakSaved = false;
-    const newValue = !autoBreakEnabled;
     try {
       await api.put("/settings/work", {
         ..._gOtherFields,
         federalState: gFederalState,
         timezone: gTimezone,
-        autoBreakEnabled: newValue,
-        defaultBreakStart: newValue ? defaultBreakStart : null,
+        autoBreakEnabled,
+        defaultBreakStart: autoBreakEnabled ? defaultBreakStart : null,
       });
-      autoBreakEnabled = newValue;
       autoBreakSaved = true;
       setTimeout(() => (autoBreakSaved = false), 2500);
     } catch (e: unknown) {
+      autoBreakEnabled = previous;
       autoBreakError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
     } finally {
       autoBreakSaving = false;
@@ -858,23 +874,28 @@
   // one never clobbers the other. blockMonthCloseOnUnconfirmedBreak is only
   // meaningful while enforceBreakConfirmation is on (UI disables toggle #2).
   async function toggleEnforceBreakConfirmation() {
-    if (!_gOtherFields) return;
+    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02).
+    const previous = !enforceBreakConfirmation;
+    if (!_gOtherFields) {
+      enforceBreakConfirmation = previous;
+      breakConfirmError = "Einstellungen sind noch nicht geladen.";
+      return;
+    }
     breakConfirmSaving = true;
     breakConfirmError = "";
     breakConfirmSaved = false;
-    const newValue = !enforceBreakConfirmation;
     try {
       await api.put("/settings/work", {
         ..._gOtherFields,
         federalState: gFederalState,
         timezone: gTimezone,
-        enforceBreakConfirmation: newValue,
+        enforceBreakConfirmation,
         blockMonthCloseOnUnconfirmedBreak,
       });
-      enforceBreakConfirmation = newValue;
       breakConfirmSaved = true;
       setTimeout(() => (breakConfirmSaved = false), 2500);
     } catch (e: unknown) {
+      enforceBreakConfirmation = previous;
       breakConfirmError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
     } finally {
       breakConfirmSaving = false;
@@ -882,24 +903,34 @@
   }
 
   async function toggleBlockMonthCloseOnUnconfirmedBreak() {
-    if (!_gOtherFields) return;
-    if (!enforceBreakConfirmation) return; // No-op: only meaningful when enforcement is on.
+    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02).
+    const previous = !blockMonthCloseOnUnconfirmedBreak;
+    if (!_gOtherFields) {
+      blockMonthCloseOnUnconfirmedBreak = previous;
+      breakConfirmError = "Einstellungen sind noch nicht geladen.";
+      return;
+    }
+    // No-op: only meaningful when enforcement is on. The input is `disabled` in that case, so
+    // this is unreachable from the UI — revert silently rather than reporting a non-event.
+    if (!enforceBreakConfirmation) {
+      blockMonthCloseOnUnconfirmedBreak = previous;
+      return;
+    }
     breakConfirmSaving = true;
     breakConfirmError = "";
     breakConfirmSaved = false;
-    const newValue = !blockMonthCloseOnUnconfirmedBreak;
     try {
       await api.put("/settings/work", {
         ..._gOtherFields,
         federalState: gFederalState,
         timezone: gTimezone,
         enforceBreakConfirmation,
-        blockMonthCloseOnUnconfirmedBreak: newValue,
+        blockMonthCloseOnUnconfirmedBreak,
       });
-      blockMonthCloseOnUnconfirmedBreak = newValue;
       breakConfirmSaved = true;
       setTimeout(() => (breakConfirmSaved = false), 2500);
     } catch (e: unknown) {
+      blockMonthCloseOnUnconfirmedBreak = previous;
       breakConfirmError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
     } finally {
       breakConfirmSaving = false;
@@ -908,20 +939,26 @@
 
   // Phase 47.3 / 49.4 — Tenant Feature-Toggle: Verfügbarkeits-System
   async function saveAvailabilityEnabled() {
-    if (!_gOtherFields) return;
+    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02).
+    const previous = !availabilityEnabled;
+    if (!_gOtherFields) {
+      availabilityEnabled = previous;
+      toasts.error("Einstellungen sind noch nicht geladen.");
+      return;
+    }
     availabilitySaving = true;
-    const newValue = !availabilityEnabled;
     try {
       await api.put("/settings/work", {
         ..._gOtherFields,
         federalState: gFederalState,
         timezone: gTimezone,
-        availabilityEnabled: newValue,
+        availabilityEnabled,
       });
-      availabilityEnabled = newValue;
-      tenantFeatures.applyLocal(newValue); // propagate to Sidebar + BottomTabBar
-    } catch {
-      // revert: state unchanged
+      tenantFeatures.applyLocal(availabilityEnabled); // propagate to Sidebar + BottomTabBar
+      toasts.success("Einstellung gespeichert.");
+    } catch (e: unknown) {
+      availabilityEnabled = previous;
+      toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
     } finally {
       availabilitySaving = false;
     }
@@ -931,19 +968,25 @@
   // Mirrors saveAvailabilityEnabled exactly; the backend reads
   // TenantConfig.vocationalSchoolAutoCleanupShifts in shift-cleanup.ts.
   async function saveVocationalSchoolAutoCleanupShifts() {
-    if (!_gOtherFields) return;
+    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02).
+    const previous = !vocationalSchoolAutoCleanupShifts;
+    if (!_gOtherFields) {
+      vocationalSchoolAutoCleanupShifts = previous;
+      toasts.error("Einstellungen sind noch nicht geladen.");
+      return;
+    }
     vsAutoCleanupSaving = true;
-    const newValue = !vocationalSchoolAutoCleanupShifts;
     try {
       await api.put("/settings/work", {
         ..._gOtherFields,
         federalState: gFederalState,
         timezone: gTimezone,
-        vocationalSchoolAutoCleanupShifts: newValue,
+        vocationalSchoolAutoCleanupShifts,
       });
-      vocationalSchoolAutoCleanupShifts = newValue;
-    } catch {
-      // revert: state unchanged — toggle bounces back since we never wrote the new value
+      toasts.success("Einstellung gespeichert.");
+    } catch (e: unknown) {
+      vocationalSchoolAutoCleanupShifts = previous;
+      toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
     } finally {
       vsAutoCleanupSaving = false;
     }
@@ -951,20 +994,27 @@
 
   // Phase 76.29 — Monatsabschluss mit Lücken toggle
   async function saveCloseMonthWithGaps() {
-    if (!_gOtherFields) return;
+    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02). This one
+    // gates Monatsabschluss with missing entries, so a silently-wrong checkbox is a compliance
+    // problem, not just a cosmetic one.
+    const previous = !closeMonthWithGapsAllowed;
+    if (!_gOtherFields) {
+      closeMonthWithGapsAllowed = previous;
+      toasts.error("Einstellungen sind noch nicht geladen.");
+      return;
+    }
     closeMonthWithGapsSaving = true;
-    const newValue = !closeMonthWithGapsAllowed;
     try {
       await api.put("/settings/work", {
         ..._gOtherFields,
         federalState: gFederalState,
         timezone: gTimezone,
-        closeMonthWithGapsAllowed: newValue,
+        closeMonthWithGapsAllowed,
       });
-      closeMonthWithGapsAllowed = newValue;
       toasts.success("Einstellung gespeichert.");
-    } catch {
-      // revert: state unchanged — toggle bounces back since we never wrote
+    } catch (e: unknown) {
+      closeMonthWithGapsAllowed = previous;
+      toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
     } finally {
       closeMonthWithGapsSaving = false;
     }
@@ -1176,12 +1226,16 @@
   }
 
   async function toggleTwoFa() {
+    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02). 2FA is the
+    // most security-relevant toggle on the page; it must never claim a state the server rejected.
+    const previous = !twoFaEnabled;
     twoFaSaving = true;
     twoFaError = "";
     try {
-      await api.put("/settings/security", { twoFaEnabled: !twoFaEnabled });
-      twoFaEnabled = !twoFaEnabled;
+      await api.put("/settings/security", { twoFaEnabled });
+      toasts.success("Einstellung gespeichert.");
     } catch (e: unknown) {
+      twoFaEnabled = previous;
       twoFaError = e instanceof Error ? e.message : "Fehler";
     } finally {
       twoFaSaving = false;
@@ -1564,7 +1618,7 @@
               <input
                 type="checkbox"
                 aria-label="Verfügbarkeits-System aktivieren"
-                checked={availabilityEnabled}
+                bind:checked={availabilityEnabled}
                 onchange={saveAvailabilityEnabled}
                 disabled={availabilitySaving}
               />
@@ -1597,7 +1651,7 @@
               <input
                 type="checkbox"
                 aria-label="BS-Shift-Auto-Cleanup aktivieren"
-                checked={vocationalSchoolAutoCleanupShifts}
+                bind:checked={vocationalSchoolAutoCleanupShifts}
                 onchange={saveVocationalSchoolAutoCleanupShifts}
                 disabled={vsAutoCleanupSaving}
               />
@@ -1672,7 +1726,7 @@
               <input
                 type="checkbox"
                 aria-label="Feiertagsabzug für Monatsstunden aktivieren"
-                checked={monthlyHoursHolidayDeduction}
+                bind:checked={monthlyHoursHolidayDeduction}
                 onchange={saveHolidayDeduction}
                 disabled={holidayDeductionSaving}
               />
@@ -1720,7 +1774,7 @@
               <input
                 type="checkbox"
                 aria-label="Pausen automatisch abziehen"
-                checked={autoBreakEnabled}
+                bind:checked={autoBreakEnabled}
                 onchange={toggleAutoBreak}
                 disabled={autoBreakSaving}
                 data-testid="admin-system-pausendauer-autoBreakEnabled"
@@ -1808,7 +1862,7 @@
               <input
                 type="checkbox"
                 aria-label="Pausen-Bestätigung erforderlich"
-                checked={enforceBreakConfirmation}
+                bind:checked={enforceBreakConfirmation}
                 onchange={toggleEnforceBreakConfirmation}
                 disabled={breakConfirmSaving}
                 data-testid="admin-system-pausen-enforceBreakConfirmation"
@@ -1827,7 +1881,7 @@
               <input
                 type="checkbox"
                 aria-label="Monatsabschluss bei unbestätigten Pausen blockieren"
-                checked={blockMonthCloseOnUnconfirmedBreak}
+                bind:checked={blockMonthCloseOnUnconfirmedBreak}
                 onchange={toggleBlockMonthCloseOnUnconfirmedBreak}
                 disabled={breakConfirmSaving || !enforceBreakConfirmation}
                 data-testid="admin-system-pausen-blockMonthCloseOnUnconfirmedBreak"
@@ -1928,7 +1982,7 @@
               <input
                 type="checkbox"
                 aria-label="Monatsabschluss mit Lücken erlauben"
-                checked={closeMonthWithGapsAllowed}
+                bind:checked={closeMonthWithGapsAllowed}
                 onchange={saveCloseMonthWithGaps}
                 disabled={closeMonthWithGapsSaving}
                 data-testid="admin-system-arbeitszeit-closeMonthWithGapsAllowed"
@@ -2197,7 +2251,7 @@
               <input
                 type="checkbox"
                 aria-label="2-Faktor-Authentifizierung aktivieren"
-                checked={twoFaEnabled}
+                bind:checked={twoFaEnabled}
                 onchange={toggleTwoFa}
                 disabled={twoFaSaving}
                 data-testid="admin-system-sicherheit-twoFaEnabled"

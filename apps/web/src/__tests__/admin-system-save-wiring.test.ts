@@ -6,7 +6,10 @@
 // established precedent of reading route source with `readFileSync` instead).
 //
 // The DO-NOT-TOUCH lists this file locks down come from `109-CONTEXT.md`:
-// - D-03 / N-11: nine handlers already save instantly via `onchange=` and must stay that way.
+// - D-03 / N-11: nine handlers save instantly via `onchange=` and must stay that way. NOTE: this
+//   file originally called all nine "already correct". For the eight checkbox ones that was
+//   FALSE and the pin cemented the defect — see the WR-02 describe block below for the
+//   corrected contract (rollback + loud failure), which the review reproduced live.
 // - D-07: security-relevant controls (password policy, session config incl. `rememberMeEnabled`,
 //   SMTP) must stay button-gated (`onclick=`), regardless of how toggle-shaped they look.
 // - D-01: the remaining genuine form groups stay button-gated.
@@ -70,7 +73,7 @@ function fnBody(marker: string): string {
   return PAGE.slice(bodyStart, j + 1);
 }
 
-describe("D-03/N-11 — the nine already-correct instant handlers stay instant", () => {
+describe("D-03/N-11 — the nine instant handlers stay instant", () => {
   const INSTANT_HANDLERS = [
     "saveAvailabilityEnabled",
     "saveVocationalSchoolAutoCleanupShifts",
@@ -92,8 +95,92 @@ describe("D-03/N-11 — the nine already-correct instant handlers stay instant",
   // name it. Owner decision recorded in 109-CONTEXT.md: leave it as-is (status quo) unless
   // explicitly decided otherwise. This count pins that the list above is exactly the nine
   // handlers the research established — not four, not five, not ten.
-  it("there are exactly nine already-correct instant handlers (D-03 correction, not five)", () => {
+  it("there are exactly nine instant handlers (D-03 correction, not five)", () => {
     expect(INSTANT_HANDLERS.length).toBe(9);
+  });
+});
+
+// WR-02 — CORRECTION of this file's original claim.
+//
+// Plan 109-01 pinned the nine handlers above as "already correct". For the eight CHECKBOX ones
+// that assertion was FALSE, and pinning it cemented the defect. They were wired one-way
+// (`checked={state}`) with a pessimistic handler that wrote the state only on success. Nothing
+// bounced back on failure: the browser had already flipped the DOM checkbox, the state never
+// changed, so Svelte's template effect never re-ran — and `set_checked` early-returns when the
+// new value equals the LAST APPLIED one, without ever reading `element.checked`.
+//
+// Reproduced live (109-BROWSER-UAT.md): with the API stopped, flipping "Pausen automatisch
+// abziehen" left the checkbox `checked: true`, emitted no error, while `autoBreakEnabled` in the
+// DB stayed `f`. Only a full reload corrected the display.
+//
+// `saveDefaultBreakStart` is excluded: it sits on a `type="time"` input, not a checkbox, so the
+// DOM/state divergence described above does not apply to it.
+describe("WR-02 — the eight instant checkbox toggles roll back and report on failure", () => {
+  /** handler → the state variable it owns */
+  const TOGGLES: Record<string, string> = {
+    saveHolidayDeduction: "monthlyHoursHolidayDeduction",
+    saveAvailabilityEnabled: "availabilityEnabled",
+    saveVocationalSchoolAutoCleanupShifts: "vocationalSchoolAutoCleanupShifts",
+    saveCloseMonthWithGaps: "closeMonthWithGapsAllowed",
+    toggleAutoBreak: "autoBreakEnabled",
+    toggleEnforceBreakConfirmation: "enforceBreakConfirmation",
+    toggleBlockMonthCloseOnUnconfirmedBreak: "blockMonthCloseOnUnconfirmedBreak",
+    toggleTwoFa: "twoFaEnabled",
+  };
+  const ENTRIES = Object.entries(TOGGLES);
+
+  it("there are exactly eight of them (saveDefaultBreakStart is a time input, not a checkbox)", () => {
+    expect(ENTRIES.length).toBe(8);
+  });
+
+  // This is the assertion that would have FAILED against the old source: every one of these
+  // eight carried `checked={state}` and none carried `bind:checked={state}`.
+  it.each(ENTRIES)("%s's checkbox uses bind:checked, not one-way checked=", (_handler, state) => {
+    expect(PAGE).toContain(`bind:checked={${state}}`);
+    // Lookbehind so the `checked={x}` inside `bind:checked={x}` does not match itself.
+    expect(PAGE).not.toMatch(new RegExp(`(?<!bind:)checked=\\{${state}\\}`));
+  });
+
+  it.each(ENTRIES)("%s captures the pre-flip value as `previous`", (handler, state) => {
+    expect(fnBody(`async function ${handler}`)).toContain(`const previous = !${state};`);
+  });
+
+  it.each(ENTRIES)("%s reverts the state on failure", (handler, state) => {
+    const body = fnBody(`async function ${handler}`);
+    const iCatch = body.indexOf("} catch");
+    expect(iCatch).toBeGreaterThan(-1);
+    // The revert must be in the catch, not merely somewhere in the function.
+    expect(body.slice(iCatch)).toContain(`${state} = previous;`);
+  });
+
+  it.each(ENTRIES)("%s fails loudly — no bare catch {}", (handler) => {
+    const body = fnBody(`async function ${handler}`);
+    const tail = body.slice(body.indexOf("} catch"));
+    // Either a toast or the section's own rendered inline error banner.
+    expect(tail).toMatch(/toasts\.error\(|\w*Error = /);
+  });
+
+  // The old shape is what made the failure silent: assign the new value only after the await.
+  // If `newValue` comes back, the pessimistic pattern has come back with it.
+  it.each(ENTRIES)("%s no longer uses the pessimistic newValue shape", (handler) => {
+    expect(fnBody(`async function ${handler}`)).not.toContain("const newValue =");
+  });
+
+  // Every early `return` guard bails BEFORE the try, so it too has to undo the browser's flip —
+  // otherwise the checkbox stays flipped with no request and no message at all.
+  it.each(ENTRIES)("%s reverts on every early-return guard as well", (handler, state) => {
+    const body = fnBody(`async function ${handler}`);
+    const guards = [...body.matchAll(/if \([^)]*\) \{([\s\S]*?)\n {4}\}/g)];
+    for (const [, block] of guards) {
+      if (!block.includes("return;")) continue;
+      expect(block).toContain(`${state} = previous;`);
+    }
+  });
+
+  it("the compliance-weighted three are covered by name (2FA, Monatsabschluss, § 4 ArbZG)", () => {
+    expect(Object.keys(TOGGLES)).toEqual(
+      expect.arrayContaining(["toggleTwoFa", "saveCloseMonthWithGaps", "toggleAutoBreak"]),
+    );
   });
 });
 
