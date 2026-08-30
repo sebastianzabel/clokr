@@ -138,6 +138,45 @@ jobs:
           artifact-name: ${{ matrix.image }}-${{ steps.meta.outputs.version }}.sbom.spdx.json
           upload-release-assets: true
 
+  # ── Release notes body (Phase 110, AK-04/AK-15) ───────────────────────────────
+  # Replaces the former manual step 5 of docs/release-process.md ("write the German release notes
+  # by hand on the GitHub Release"). The notes now live in the repo at docs/release-notes/vX.Y.Z.md,
+  # are written BEFORE the release-please PR merges, and are baked into the API image by
+  # apps/api/Dockerfile. This job makes the GitHub Release body the DOWNSTREAM copy of that same
+  # file, so the text shown in-app and the text shown on GitHub cannot drift apart (N-03).
+  #
+  # Deliberately NO `needs: promote`: a missing notes file must not delay or block the
+  # digest-preserving promotion, and a promote failure must not hide a missing notes file. The two
+  # concerns fail independently and are read independently.
+  publish-notes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Publish the German release notes from the repo
+        env:
+          # WR-03: hoist expressions into env rather than splicing them into the script.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          NOTES="docs/release-notes/${TAG}.md"
+          if [ ! -f "$NOTES" ]; then
+            echo "::error title=Release notes missing::${NOTES} does not exist at ${TAG}."
+            echo "docs/release-process.md requires the German release notes to be on main BEFORE the" >&2
+            echo "release-please PR is merged, because apps/api/Dockerfile bakes them into the image" >&2
+            echo "built from that merge commit. This tag's image therefore also shipped without them." >&2
+            echo "Add docs/release-notes/${TAG}.md, then re-run this job." >&2
+            exit 1
+          fi
+          TITLE=$(head -n 1 "$NOTES" | sed 's/^##[[:space:]]*//')
+          gh release edit "$TAG" --title "$TITLE" --notes-file "$NOTES"
+          echo "Release body for ${TAG} published from ${NOTES}."
+
   # ── Post-Deploy Smoke (DEVOPS-V8-05) ─────────────────────────────────
   # Runs after promote completes for BOTH images. Skipped until Phase 71
   # provisions the int cluster + sets the INT_BASE_URL repository variable
