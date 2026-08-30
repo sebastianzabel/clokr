@@ -23,7 +23,24 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { screen } from "@testing-library/svelte";
+
+// MobileMoreSheet itself has no `$app/*` import, but mounting it pulls in
+// $stores/version -> $api/client -> $stores/auth -> $app/environment transitively, and
+// apps/web/vitest.config.ts declares no `$app` alias (see that file's own comment on
+// why route/`$app/*` resolution is deliberately kept out of the component-test config).
+// Mocking "$app/environment" directly does not help — Vite's import-analysis plugin
+// fails to resolve the bare specifier before Vitest's mock registry gets a chance to
+// intercept it. Mocking "$stores/auth" instead (a real, alias-resolvable path) replaces
+// the whole module before its own `$app/environment` import is ever transformed, which
+// unblocks mounting without touching vitest.config.ts or any production file — nothing
+// in this test cares about auth state.
+vi.mock("$stores/auth", () => ({ authStore: { subscribe: () => () => {} } }));
+
+import { renderWithTheme } from "$tests/test-utils";
+import { versionStore } from "$stores/version";
+import MobileMoreSheet from "../MobileMoreSheet.svelte";
 
 function readComponentFile(relativeFromHere: string, relativeFromCwd: string): string {
   try {
@@ -99,5 +116,31 @@ describe("version line — Wave 0 pin (Phase 110, D-09/AK-09)", () => {
       'import { versionStore, loadVersion } from "$stores/version"',
     );
     expect(MOBILE_MORE_SHEET).toMatch(/onMount\(\(\) => \{\s*loadVersion\(\);/);
+  });
+});
+
+describe("MobileMoreSheet version line — mounted pin", () => {
+  afterEach(() => {
+    // versionStore is a module-level singleton (apps/web/src/lib/stores/version.ts) —
+    // without this reset the value set here would leak into every later test file in
+    // the same worker (T-110-12).
+    versionStore.set("");
+  });
+
+  const baseProps = { open: true, items: [], currentPath: "/dashboard" };
+
+  it("renders v1.9.18 when versionStore is populated", () => {
+    versionStore.set("1.9.18");
+    const { container } = renderWithTheme(MobileMoreSheet, baseProps);
+
+    expect(screen.getByText("v1.9.18")).toBeTruthy();
+    expect(container.querySelector('[aria-label="Anwendungsversion"]')).not.toBeNull();
+  });
+
+  it("renders no version container when versionStore is empty (fail-silent, AK-06)", () => {
+    versionStore.set("");
+    const { container } = renderWithTheme(MobileMoreSheet, baseProps);
+
+    expect(container.querySelector('[aria-label="Anwendungsversion"]')).toBeNull();
   });
 });
