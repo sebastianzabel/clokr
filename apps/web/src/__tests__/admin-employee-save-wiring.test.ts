@@ -133,3 +133,59 @@ describe("AK-02 — no text/number input writes inline on this page", () => {
     expect(textOrNumberInputHandlers(PAGE)).toEqual([]);
   });
 });
+
+describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
+  const FLAGS = [
+    "stammdatenDirty",
+    "scheduleDirty",
+    "pausendauerDirty",
+    "phorestPufferDirty",
+    "patternsDirty",
+    "bsSlotEmpDirty",
+    "vacationDirty",
+  ] as const;
+
+  it.each(FLAGS)("%s is derived from a snapshot", (name) => {
+    expect(PAGE).toContain(`let ${name} = $derived(`);
+  });
+
+  it("all eight footer Sections receive a dirty prop", () => {
+    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(8);
+  });
+
+  it("registers under its own id and de-registers on unmount", () => {
+    expect(PAGE).toContain('markUnsaved("admin-employee-detail", anyUnsaved)');
+    expect(PAGE).toContain('return () => markUnsaved("admin-employee-detail", false)');
+  });
+
+  it("uses a different registry id than admin/system, so the pages cannot clear each other", () => {
+    expect(PAGE).not.toContain('markUnsaved("admin-system"');
+  });
+
+  it("N-02: no control on this page was converted to instant save", () => {
+    // The exempt toggle is the ONLY onchange-to-write path here and it was already correct.
+    const onchangeWrites = [...PAGE.matchAll(/onchange=\{(save\w+)\}/g)].map((m) => m[1]);
+    expect(onchangeWrites).toEqual([]);
+  });
+
+  it("AK-10: the Arbeitszeitmodell snapshot covers validFrom (N-04 — Wert und Stichtag sind eine Entscheidung)", () => {
+    const slice = PAGE.slice(
+      PAGE.indexOf("let scheduleDirty"),
+      PAGE.indexOf("let scheduleDirty") + 600,
+    );
+    expect(slice).toContain("validFrom");
+  });
+
+  it("T-109-26: no snapshot reset is the first statement of a finally block", () => {
+    // Mirrors 109-06's equivalent pin (T-109-24) — a failed save must keep the marker.
+    const lines = PAGE.split("\n");
+    lines.forEach((line, i) => {
+      if (/Snapshot = snap\(/.test(line)) {
+        const precedingFinally = lines
+          .slice(Math.max(0, i - 3), i)
+          .some((l) => l.includes("finally"));
+        expect(precedingFinally).toBe(false);
+      }
+    });
+  });
+});

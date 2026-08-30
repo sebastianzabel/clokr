@@ -2,6 +2,7 @@
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import { authStore } from "$stores/auth";
+  import { markUnsaved } from "$stores/unsaved";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import { onMount } from "svelte";
@@ -1619,6 +1620,25 @@
   let vacationDirty = $derived(
     snap(vacYear, eVacTotal, eVacCarried, eVacDeadline) !== vacationSnapshot,
   );
+
+  // Phase 109 (D-12) — one registry entry per page. Cleanup de-registers on unmount so a saved
+  // page that the operator leaves cannot strand a stale entry and trap the next navigation
+  // (T-109-27, mirrors T-109-23 on admin/system). Registry id ("admin-employee-detail") is
+  // distinct from admin/system's ("admin-system") so the two pages cannot clear each other.
+  let anyUnsaved = $derived(
+    stammdatenDirty ||
+      scheduleDirty ||
+      pausendauerDirty ||
+      phorestPufferDirty ||
+      patternsDirty ||
+      bsSlotEmpDirty ||
+      vacationDirty,
+  );
+
+  $effect(() => {
+    markUnsaved("admin-employee-detail", anyUnsaved);
+    return () => markUnsaved("admin-employee-detail", false);
+  });
 
   // ── Danger Zone state ──────────────────────────────────────────────────────
   let anonConfirmOpen = $state(false);
