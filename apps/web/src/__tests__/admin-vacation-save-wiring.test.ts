@@ -8,7 +8,7 @@
 // incomplete snapshot tuple would produce neither a marker nor a guard, and would fail
 // silently because nothing else knows the field set — this file is that knowledge.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -174,6 +174,161 @@ describe("D-11 — this page has no Section footer to carry the marker", () => {
     const afterStack = PAGE.slice(stackEnd);
     const modalFooterCount = (afterStack.match(/\{#snippet footer\(\)\}/g) ?? []).length;
     expect(modalFooterCount).toBe(2);
+  });
+});
+
+// Phase 109, Plan 11, Task 2 — pins for the globalSnapshot/globalDirty wiring 109-11 adds
+// on top of the read-only census above (D-11/D-12, WR-01, T-109-24).
+describe("D-11/D-12 — unsaved marker and guard registration on admin/vacation", () => {
+  // Function names/keywords that appear inside a value expression but are not the underlying
+  // state variable itself, e.g. `clampKarenzDays(sickNoteRequiredAfterDays)` or
+  // `Math.round(maxNegHours * 60)`.
+  const STOPWORDS = new Set(["Math", "round", "null", "clampKarenzDays", "parseThresholdsInput"]);
+
+  function valueIdentifiers(objectLiteralBody: string): string[] {
+    const ids: string[] = [];
+    for (const rawLine of objectLiteralBody.split("\n")) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith("//")) continue;
+      const afterColon = line.includes(":") ? line.slice(line.indexOf(":") + 1) : line;
+      for (const m of afterColon.matchAll(/[a-zA-Z_][a-zA-Z0-9_]*/g)) {
+        if (!STOPWORDS.has(m[0])) ids.push(m[0]);
+      }
+    }
+    return ids;
+  }
+
+  function sliceBalancedParen(source: string, openParenIndex: number): string {
+    let depth = 0;
+    let i = openParenIndex;
+    for (; i < source.length; i++) {
+      if (source[i] === "(") depth++;
+      else if (source[i] === ")") {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    return source.slice(openParenIndex + 1, i);
+  }
+
+  function globalDirtySnapArgs(): string {
+    const marker = "let globalDirty = $derived(";
+    const idx = PAGE.indexOf(marker);
+    expect(idx, "globalDirty derivation not found").toBeGreaterThan(-1);
+    const snapIdx = PAGE.indexOf("snap(", idx);
+    expect(snapIdx, "snap( call not found inside globalDirty").toBeGreaterThan(-1);
+    return sliceBalancedParen(PAGE, snapIdx + 4);
+  }
+
+  it("globalDirty is derived from a snapshot, not hand-set", () => {
+    expect(PAGE).toMatch(/let globalDirty = \$derived\(\s*snap\(/);
+    expect(PAGE).not.toMatch(/globalDirty = (true|false)/);
+  });
+
+  it("the snapshot covers every state variable saveGlobal submits", () => {
+    const saveGlobalBody = fnBody("async function saveGlobal");
+    const workBodyStart = saveGlobalBody.indexOf('api.put("/settings/work", {');
+    const workObjStart = saveGlobalBody.indexOf("{", workBodyStart);
+    const workObj = sliceBalancedObject(saveGlobalBody, workObjStart);
+    const secBodyStart = saveGlobalBody.indexOf('api.put("/settings/security", {');
+    const secObjStart = saveGlobalBody.indexOf("{", secBodyStart);
+    const secObj = sliceBalancedObject(saveGlobalBody, secObjStart);
+
+    const submitted = new Set([...valueIdentifiers(workObj), ...valueIdentifiers(secObj)]);
+    // Two allowed exceptions, neither a persisted value of its own:
+    //  - gWeekly is $derived from gMon..gSun, already covered via those seven.
+    //  - gApplyToExisting is an action modifier saveGlobal itself resets to false on success,
+    //    not a persisted setting — a marker for it would claim an unsaved change that does not
+    //    exist.
+    submitted.delete("gWeekly");
+    submitted.delete("gApplyToExisting");
+
+    const snapArgs = new Set(
+      globalDirtySnapArgs()
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    );
+
+    for (const id of submitted) {
+      expect(snapArgs.has(id), `globalDirty's snap(...) is missing "${id}"`).toBe(true);
+    }
+  });
+
+  it("the registration is gated on snapshotsReady (WR-01)", () => {
+    expect(PAGE).toContain('markUnsaved("admin-vacation", snapshotsReady && globalDirty)');
+    expect(PAGE).not.toMatch(/markUnsaved\("admin-vacation", globalDirty\)/);
+  });
+
+  it("snapshotsReady is set inside onMount's try, after the last field assignment", () => {
+    const onMountStart = PAGE.indexOf("onMount(async (");
+    expect(onMountStart, "onMount not found").toBeGreaterThan(-1);
+    const catchIdx = PAGE.indexOf("} catch", onMountStart);
+    expect(catchIdx, "onMount's catch not found").toBeGreaterThan(onMountStart);
+    const onMountTry = PAGE.slice(onMountStart, catchIdx);
+
+    const lastFieldIdx = onMountTry.lastIndexOf("reminderUpcomingDays =");
+    const readyIdx = onMountTry.indexOf("snapshotsReady = true");
+    expect(lastFieldIdx, "reminderUpcomingDays assignment not found in onMount").toBeGreaterThan(
+      -1,
+    );
+    expect(readyIdx, "snapshotsReady = true not found in onMount's try").toBeGreaterThan(-1);
+    expect(readyIdx).toBeGreaterThan(lastFieldIdx);
+
+    expect(PAGE).not.toMatch(/finally\s*\{[^}]*snapshotsReady/s);
+  });
+
+  it("the effect de-registers on unmount", () => {
+    expect(PAGE).toContain('return () => markUnsaved("admin-vacation", false)');
+  });
+
+  it("T-109-24: no snapshot reset is the first statement of a finally block", () => {
+    const lines = PAGE.split("\n");
+    lines.forEach((line, i) => {
+      if (!line.includes("globalSnapshot = snap(")) return;
+      const before = lines.slice(Math.max(0, i - 3), i).join("\n");
+      expect(
+        before,
+        `line ${i + 1}: a "finally" appears within 3 lines above a globalSnapshot reset`,
+      ).not.toContain("finally");
+    });
+  });
+
+  it("the marker is the global recipe, rendered inline (no Section footer on this page)", () => {
+    expect(PAGE).toContain('<span class="unsaved-hint" role="status">Nicht gespeichert</span>');
+    expect(PAGE).not.toContain("dirty={");
+  });
+
+  it("the save bar stays visible while something is unsaved", () => {
+    expect(PAGE).toContain("{#if !loading && !error && (globalDirty ||");
+  });
+
+  it("the registry id is unique across admin routes", () => {
+    function adminPageFiles(): string[] {
+      const candidates = [
+        () => fileURLToPath(new URL("../routes/(app)/admin", import.meta.url)),
+        () => resolve(process.cwd(), "src/routes/(app)/admin"),
+      ];
+      for (const getDir of candidates) {
+        try {
+          const dir = getDir();
+          return (readdirSync(dir, { recursive: true }) as string[])
+            .filter((f) => f.endsWith("+page.svelte"))
+            .map((f) => resolve(dir, f));
+        } catch {
+          continue;
+        }
+      }
+      throw new Error("could not locate src/routes/(app)/admin from either candidate path");
+    }
+
+    const files = adminPageFiles();
+    expect(files.length).toBeGreaterThan(1);
+    const hits = files.filter((f) =>
+      readFileSync(f, "utf8").includes('markUnsaved("admin-vacation"'),
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toContain("vacation");
   });
 });
 

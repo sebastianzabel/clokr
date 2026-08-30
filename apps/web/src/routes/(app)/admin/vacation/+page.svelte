@@ -433,6 +433,45 @@
       // Reset nach Speichern
       gApplyToExisting = false;
       gSaved = true;
+      globalSnapshot = snap(
+        gMon,
+        gTue,
+        gWed,
+        gThu,
+        gFri,
+        gSat,
+        gSun,
+        gThreshold,
+        gPayout,
+        gCarryOverDay,
+        gCarryOverMonth,
+        gVacationDays,
+        gArbzgEnabled,
+        gClockOutHours,
+        gMissingDays,
+        gAutoInvalidateHours,
+        christmasEveRule,
+        newYearsEveRule,
+        holidayRulesValidFromYear,
+        vacationLeadTimeDays,
+        vacationMaxAdvanceMonths,
+        halfDayAllowed,
+        sickSelfReport,
+        sickNoteRequiredAfterDays,
+        autoCalcPartTimeVacation,
+        fullTimeWorkDaysPerWeek,
+        enforceMinVacation,
+        carryOverRequiresReason,
+        vacationReminderStartMonth,
+        carryoverWarningEnabled,
+        carryoverWarningThresholdsText,
+        reminderPendingHours,
+        reminderUpcomingDays,
+        reminderPendingEnabled,
+        reminderUpcomingEnabled,
+        maxNegEnabled,
+        maxNegHours,
+      ); // Phase 109 — section is clean again
       setTimeout(() => (gSaved = false), 3000);
     } catch (e: unknown) {
       gError = e instanceof Error ? e.message : "Fehler";
