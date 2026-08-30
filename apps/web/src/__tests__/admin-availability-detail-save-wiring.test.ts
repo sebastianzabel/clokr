@@ -97,9 +97,11 @@ describe("the page already carries the snapshot idiom — plan 109-14 reuses it"
     );
   });
 
-  it("derives dirty from loading/featureDisabled and the snapshot comparison", () => {
+  it("derives dirty from snapshotsReady, loading/featureDisabled and the snapshot comparison", () => {
+    // 109-14 (WR-01): gated on snapshotsReady — see the dedicated "WR-01 — the baseline gate"
+    // describe block below for the gate's own tests.
     expect(PAGE).toMatch(
-      /const dirty = \$derived\(\s*!loading && !featureDisabled && currentSnapshot !== lastSnapshot/,
+      /const dirty = \$derived\(\s*snapshotsReady && !loading && !featureDisabled && currentSnapshot !== lastSnapshot/,
     );
   });
 
@@ -124,8 +126,10 @@ describe("lastSnapshot is assigned in exactly one place", () => {
   // that does not reach applyEntries leaves the baseline at "".
 });
 
-describe("WR-01 — the baseline is reachable only on the happy path (today)", () => {
-  // These assertions describe the IST-Zustand; plan 109-14 reverses them.
+describe("WR-01 — the baseline gate", () => {
+  // 109-10 pinned the IST-Zustand here (dirty === true on an unrendered error page). 109-14
+  // closes the gap: these assertions describe the fixed contract, and the two `not.toContain`
+  // pins from 109-10 are now their positive counterparts below.
   const mountStart = PAGE.indexOf("onMount(() => {");
   const scriptEnd = PAGE.indexOf("</script>");
   const MOUNT = PAGE.slice(mountStart, scriptEnd);
@@ -136,6 +140,9 @@ describe("WR-01 — the baseline is reachable only on the happy path (today)", (
   });
 
   it("the loadError assignment precedes the applyEntries call", () => {
+    // The early-return path in onMount never reaches the baseline — this is exactly why the
+    // gate works: `loadError =` sits before `applyEntries(` unconditionally, so `snapshotsReady`
+    // (set only inside applyEntries) is never true on this path.
     expect(MOUNT.indexOf("loadError =")).toBeLessThan(MOUNT.indexOf("applyEntries("));
   });
 
@@ -143,19 +150,68 @@ describe("WR-01 — the baseline is reachable only on the happy path (today)", (
     expect(MOUNT).toContain("return;");
   });
 
-  it("snapshotsReady does not exist yet (today's gap)", () => {
-    expect(PAGE).not.toContain("snapshotsReady");
+  it("declares snapshotsReady as a $state(false)", () => {
+    expect(PAGE).toContain("let snapshotsReady = $state(false)");
   });
 
-  it("markUnsaved is not registered yet (today's gap)", () => {
-    expect(PAGE).not.toContain("markUnsaved");
+  it("dirty is gated on snapshotsReady", () => {
+    expect(PAGE).toMatch(
+      /const dirty = \$derived\(\s*snapshotsReady && !loading && !featureDisabled && currentSnapshot !== lastSnapshot/,
+    );
   });
 
-  // With the employee request rejected, applyEntries never runs, lastSnapshot stays "" while
-  // currentSnapshot is {"r":[],"o":[]}, so dirty is true and the Speichern button on a page
-  // showing nothing but an error is ENABLED. This is WR-01 (109-REVIEW-FIX.md) reproduced
-  // independently of the unsaved registry. Plan 109-14 replaces the two `not.toContain`
-  // assertions above with their positive counterparts — a strengthening, never a relaxation.
+  it("snapshotsReady is set at the single baseline site, never in a finally", () => {
+    expect(fnBody("function applyEntries").indexOf("lastSnapshot = JSON.stringify(")).toBeLessThan(
+      fnBody("function applyEntries").indexOf("snapshotsReady = true"),
+    );
+    expect(PAGE).not.toMatch(/finally\s*\{[^}]*snapshotsReady/s);
+    expect(PAGE.match(/snapshotsReady = true/g) ?? []).toHaveLength(1);
+  });
+
+  it("the Speichern button is disabled on the load-error path (fails without the gate)", () => {
+    // Evaluates the REAL `dirty` and `disabled` expressions extracted from source — not a
+    // paraphrase — against the exact state reachable after a failed employee load: onMount sets
+    // `loading = false` and returns before `applyEntries()` ever runs, so `snapshotsReady` stays
+    // `false`, `lastSnapshot` stays `""`, and the entry arrays stay at their initial `[]`. Without
+    // `snapshotsReady &&` in `dirty`'s derivation this evaluates to `disabled === false` (the
+    // WR-01 defect); with the gate it is `true`.
+    const dirtyExprMatch = PAGE.match(/const dirty = \$derived\(([\s\S]*?)\);/);
+    expect(dirtyExprMatch, "dirty derivation not found").not.toBeNull();
+    // Strip a trailing comma left over from `$derived(\n  expr,\n)` formatting — valid in a call
+    // argument list, not inside a parenthesized expression passed to `new Function`.
+    const dirtyExpr = dirtyExprMatch![1].trim().replace(/,\s*$/, "");
+
+    const disabledExprMatch = PAGE.match(/disabled=\{([^}]+)\}/);
+    expect(disabledExprMatch, "disabled attribute not found").not.toBeNull();
+    const disabledExpr = disabledExprMatch![1];
+
+    // State reachable after a failed employee load (onMount's early-return branch).
+    const snapshotsReady = false;
+    const loading = false;
+    const featureDisabled = false;
+    const saving = false;
+    const lastSnapshot = "";
+    const currentSnapshot = JSON.stringify({ r: [], o: [] });
+
+    const dirty = new Function(
+      "snapshotsReady",
+      "loading",
+      "featureDisabled",
+      "currentSnapshot",
+      "lastSnapshot",
+      `return (${dirtyExpr});`,
+    )(snapshotsReady, loading, featureDisabled, currentSnapshot, lastSnapshot);
+
+    const disabled = new Function(
+      "featureDisabled",
+      "dirty",
+      "saving",
+      `return (${disabledExpr});`,
+    )(featureDisabled, dirty, saving);
+
+    expect(dirty).toBe(false);
+    expect(disabled).toBe(true);
+  });
 });
 
 describe("save() re-takes the baseline on the success path only", () => {

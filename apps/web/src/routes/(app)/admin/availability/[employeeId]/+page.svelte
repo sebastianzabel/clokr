@@ -65,9 +65,21 @@
   let featureDisabled = $state(false);
   let lastSnapshot = $state("");
 
+  // WR-01 (109-REVIEW-FIX.md): `lastSnapshot` is assigned in exactly one place — the last
+  // statement of applyEntries() — and onMount has paths that never reach it (a rejected employee
+  // request returns early; a rejected availability request that is not a 410 falls through).
+  // Without this flag `lastSnapshot` stays "" while `currentSnapshot` is `{"r":[],"o":[]}`, so
+  // `dirty` reads true on a page that shows nothing but an error: the Speichern button is enabled
+  // and would PUT an empty entries array. Setting the flag AT the single baseline site rather
+  // than "at the end of onMount's try" is deliberate — this onMount has several exits, and a
+  // trailing assignment would have to be duplicated into each of them correctly.
+  let snapshotsReady = $state(false);
+
   const currentSnapshot = $derived(JSON.stringify({ r: recurringEntries, o: oneOffEntries }));
 
-  const dirty = $derived(!loading && !featureDisabled && currentSnapshot !== lastSnapshot);
+  const dirty = $derived(
+    snapshotsReady && !loading && !featureDisabled && currentSnapshot !== lastSnapshot,
+  );
 
   function applyEntries(entries: ApiAvailabilityEntry[]): void {
     const recurring: RecurringEntry[] = [];
@@ -96,6 +108,7 @@
     recurringEntries = recurring;
     oneOffEntries = oneoff;
     lastSnapshot = JSON.stringify({ r: recurringEntries, o: oneOffEntries });
+    snapshotsReady = true;
   }
 
   function buildPayload() {
