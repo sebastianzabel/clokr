@@ -34,21 +34,35 @@ interface Props {
   footer?: Snippet;
   animate?: boolean;
   tone?: "default" | "danger";
+  dirty?: boolean;
   children: Snippet;
 }
 ```
 
 **Snippets:**
 
-| Name      | Required | Description                                                   |
-| --------- | -------- | ------------------------------------------------------------- |
-| `children`| yes      | Section body content                                          |
-| `actions` | no       | Right-aligned action cluster in the section header row        |
-| `footer`  | no       | Save-area stripe rendered below the body, separated by a rule |
+| Name       | Required | Description                                                   |
+| ---------- | -------- | ------------------------------------------------------------- |
+| `children` | yes      | Section body content                                          |
+| `actions`  | no       | Right-aligned action cluster in the section header row        |
+| `footer`   | no       | Save-area stripe rendered below the body, separated by a rule |
+
+**Props:**
+
+| Name    | Required | Description                                                                                                  |
+| ------- | -------- | ------------------------------------------------------------------------------------------------------------ |
+| `dirty` | no       | Renders the "Nicht gespeichert" hint in the footer while the section holds unsaved changes (Phase 109, D-11) |
 
 **`animate` context propagation (D-08):** When `Section` is a child of `SectionStack` or `ToolPage`,
 `animate` is inherited from the `admin-animate` Svelte context set by the parent shell. Pass an
 explicit `animate` prop to override the context.
+
+**`footer` blast radius (Phase 109, N-03):** the `footer` snippet has **14** consumers across the
+admin area, not the smaller count an earlier count assumed — any change to `Section`'s footer
+markup (such as the `dirty` prop above) affects all of them: `admin/audit`, `admin/employees`,
+`admin/employees/[id]`, `admin/export`, `admin/import`, `admin/integrations`, `admin/month-close`,
+`admin/phorest`, `admin/shifts`, `admin/shutdowns`, `admin/shutdowns/[id]`, `admin/system`,
+`admin/vacation`, `inbox`.
 
 Usage:
 
@@ -91,8 +105,8 @@ interface Props {
 
 **Snippets:**
 
-| Name      | Required | Description                                         |
-| --------- | -------- | --------------------------------------------------- |
+| Name      | Required | Description                                             |
+| --------- | -------- | ------------------------------------------------------- |
 | `actions` | **yes**  | Destructive action buttons and their confirmation flows |
 
 Usage:
@@ -153,11 +167,11 @@ interface Props {
 
 **Snippets:**
 
-| Name        | Required | Description                                                      |
-| ----------- | -------- | ---------------------------------------------------------------- |
-| `children`  | **yes**  | One or more `<Section>` cards in layout order                    |
-| `actions`   | no       | Right-aligned action cluster next to the H1 in `<PageHead>`      |
-| `dangerZone`| no       | `<DangerZone>` rendered after `children`, separated from content |
+| Name         | Required | Description                                                      |
+| ------------ | -------- | ---------------------------------------------------------------- |
+| `children`   | **yes**  | One or more `<Section>` cards in layout order                    |
+| `actions`    | no       | Right-aligned action cluster next to the H1 in `<PageHead>`      |
+| `dangerZone` | no       | `<DangerZone>` rendered after `children`, separated from content |
 
 Usage:
 
@@ -225,11 +239,11 @@ interface Props {
 
 **Snippets:**
 
-| Name         | Required | Description                                                         |
-| ------------ | -------- | ------------------------------------------------------------------- |
-| `list`       | no       | List-mode body content (table, search bar, record rows)             |
-| `tabContent` | no       | Called with `(tabId: string)` — render tab panel content by tab id  |
-| `actions`    | no       | Right-aligned action cluster next to the H1 in `<PageHead>`         |
+| Name         | Required | Description                                                        |
+| ------------ | -------- | ------------------------------------------------------------------ |
+| `list`       | no       | List-mode body content (table, search bar, record rows)            |
+| `tabContent` | no       | Called with `(tabId: string)` — render tab panel content by tab id |
+| `actions`    | no       | Right-aligned action cluster next to the H1 in `<PageHead>`        |
 
 **Keyboard navigation (detail mode):** When the tab strip is focused, `ArrowLeft` / `ArrowRight`
 cycle through tabs (wrapping), `Home` jumps to the first tab, `End` jumps to the last.
@@ -262,10 +276,7 @@ Usage (detail mode with tabs):
 
   let activeTab = $state("general");
 
-  const crumbs = [
-    { label: "Mandanten", href: "/admin/tenants" },
-    { label: tenantName },
-  ];
+  const crumbs = [{ label: "Mandanten", href: "/admin/tenants" }, { label: tenantName }];
 
   const tabs = [
     { id: "general", label: "Allgemein" },
@@ -274,14 +285,7 @@ Usage (detail mode with tabs):
   ];
 </script>
 
-<ListDetail
-  eyebrow="Administration"
-  title="Mandant"
-  view="detail"
-  {crumbs}
-  {tabs}
-  bind:activeTab
->
+<ListDetail eyebrow="Administration" title="Mandant" view="detail" {crumbs} {tabs} bind:activeTab>
   {#snippet tabContent(tab)}
     {#if tab === "general"}
       <Section title="ALLGEMEIN">
@@ -333,12 +337,12 @@ interface Props {
 
 **Snippets:**
 
-| Name      | Required | Description                                                              |
-| --------- | -------- | ------------------------------------------------------------------------ |
-| `form`    | **yes**  | Main tool form / controls area (primary content)                         |
-| `actions` | no       | Right-aligned action cluster next to the H1 in `<PageHead>`              |
-| `result`  | no       | Output area rendered below the form (e.g. generated report or download)  |
-| `history` | no       | History / log area rendered last (e.g. past export runs)                 |
+| Name      | Required | Description                                                             |
+| --------- | -------- | ----------------------------------------------------------------------- |
+| `form`    | **yes**  | Main tool form / controls area (primary content)                        |
+| `actions` | no       | Right-aligned action cluster next to the H1 in `<PageHead>`             |
+| `result`  | no       | Output area rendered below the form (e.g. generated report or download) |
+| `history` | no       | History / log area rendered last (e.g. past export runs)                |
 
 Usage (no steps):
 
@@ -374,27 +378,18 @@ Usage (with steps):
   const steps = ["Zeitraum", "Prüfen", "Exportieren"];
 </script>
 
-<ToolPage
-  eyebrow="Administration"
-  title="DATEV-Export"
-  {steps}
-  {currentStep}
->
+<ToolPage eyebrow="Administration" title="DATEV-Export" {steps} {currentStep}>
   {#snippet form()}
     {#if currentStep === 0}
       <Section title="ZEITRAUM WÄHLEN">
         <DateRangePicker />
       </Section>
-      <button class="btn btn-primary" onclick={() => (currentStep = 1)}>
-        Weiter
-      </button>
+      <button class="btn btn-primary" onclick={() => (currentStep = 1)}> Weiter </button>
     {:else if currentStep === 1}
       <Section title="PRÜFBERICHT">
         <ReviewTable />
       </Section>
-      <button class="btn btn-primary" onclick={() => (currentStep = 2)}>
-        Exportieren
-      </button>
+      <button class="btn btn-primary" onclick={() => (currentStep = 2)}> Exportieren </button>
     {:else}
       <Section title="EXPORTIEREN">
         <ExportButton />
@@ -425,11 +420,11 @@ import ToolPage from "$lib/components/admin/ToolPage.svelte";
 
 ## Which shell to use?
 
-| Pattern | Shell | When |
-|---------|-------|------|
-| All settings visible at once | `SectionStack` | Settings, config, profile pages |
-| Navigate from a list to a record | `ListDetail` | Tenant list → tenant detail, employee list → employee detail |
-| A focused task with a clear end | `ToolPage` | Import, export, report generation, bulk operations |
+| Pattern                          | Shell          | When                                                         |
+| -------------------------------- | -------------- | ------------------------------------------------------------ |
+| All settings visible at once     | `SectionStack` | Settings, config, profile pages                              |
+| Navigate from a list to a record | `ListDetail`   | Tenant list → tenant detail, employee list → employee detail |
+| A focused task with a clear end  | `ToolPage`     | Import, export, report generation, bulk operations           |
 
 When in doubt, consult [`docs/ADMIN_STRUCTURE.md`](/docs/ADMIN_STRUCTURE.md) — the Regulatorium
 specifies exact criteria, anti-patterns, and rationale for each template choice.
