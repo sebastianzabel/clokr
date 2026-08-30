@@ -15,7 +15,7 @@ function baseProps(overrides: Record<string, unknown> = {}) {
     istMin: 0,
     saldoMin: 0 as number | null,
     sollLabel: "Soll (bisher)",
-    workdaysSoFar: 0,
+    workdaysSoFar: 0 as number | null,
     runningCount: 0,
     isLocked: false,
     ...overrides,
@@ -120,5 +120,33 @@ describe("MonatSaldoCard — error", () => {
     const btn = screen.getByRole("button", { name: "Erneut laden" });
     await fireEvent.click(btn);
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("MonatSaldoCard — Arbeitstage-Zähler (Phase 125, issue #125)", () => {
+  it("present: shows the day count when workdaysSoFar is a number", () => {
+    renderWithTheme(MonatSaldoCard, baseProps({ workdaysSoFar: 8 }));
+    const el = screen.getByTestId("monat-saldo-workdays");
+    expect(el).toHaveTextContent("8 Arbeitstage bisher");
+  });
+
+  it("absent: shows no day count when workdaysSoFar is null, figure still renders", () => {
+    renderWithTheme(MonatSaldoCard, baseProps({ workdaysSoFar: null }));
+    expect(screen.queryByTestId("monat-saldo-workdays")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Arbeitstage bisher/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("monat-saldo-figure")).toBeInTheDocument();
+  });
+
+  it("absent but running: the running counter survives even without a day count", () => {
+    renderWithTheme(MonatSaldoCard, baseProps({ workdaysSoFar: null, runningCount: 1 }));
+    expect(screen.queryByText(/Arbeitstage bisher/)).not.toBeInTheDocument();
+    expect(screen.getByText(/1 läuft/)).toBeInTheDocument();
+  });
+
+  it("present with running: both the day count and the running counter show in one line", () => {
+    renderWithTheme(MonatSaldoCard, baseProps({ workdaysSoFar: 3, runningCount: 2 }));
+    const el = screen.getByTestId("monat-saldo-workdays");
+    expect(el).toHaveTextContent("3 Arbeitstage bisher");
+    expect(el).toHaveTextContent("2 läuft");
   });
 });

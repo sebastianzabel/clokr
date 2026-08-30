@@ -28,8 +28,12 @@
     saldoMin: number | null;
     /** "Soll (bisher)" or "Soll" — mirrors the label the month bar used to show. */
     sollLabel: string;
-    /** Days in the displayed month, up to today, with worked minutes > 0. */
-    workdaysSoFar: number;
+    /** Days in the displayed month, up to and including today, with worked minutes > 0.
+     *  `null` = the caller has no such number for this month and the card must claim none
+     *  (Phase 125 / issue #125: the count used to be recomputed client-side and could contradict
+     *  `istMin`; it is now sourced from wherever `istMin` came from, and that source does not
+     *  always have it — a CLOSED month's SaldoSnapshot stores no day count). */
+    workdaysSoFar: number | null;
     /** Currently running (open-ended) entries. */
     runningCount: number;
     isLocked: boolean;
@@ -106,10 +110,16 @@
                 {fmtMin(sollToDateMin)} h · Ist {fmtMin(istMin)} h erfüllt
               </div>
             {/if}
-            <div class="msc-context-line">
-              {workdaysSoFar} Arbeitstage bisher{#if runningCount > 0}
-                &nbsp;· {runningCount} läuft{/if}
-            </div>
+            {#if workdaysSoFar !== null}
+              <div class="msc-context-line" data-testid="monat-saldo-workdays">
+                {workdaysSoFar} Arbeitstage bisher{#if runningCount > 0}
+                  &nbsp;· {runningCount} läuft{/if}
+              </div>
+            {:else if runningCount > 0}
+              <div class="msc-context-line" data-testid="monat-saldo-running">
+                {runningCount} läuft
+              </div>
+            {/if}
             {#if extraNote}
               <div class="msc-context-line">{extraNote}</div>
             {/if}
