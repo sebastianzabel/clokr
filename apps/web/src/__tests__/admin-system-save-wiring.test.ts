@@ -195,3 +195,61 @@ describe("D-01/AK-01 — the eight E-Mail-Benachrichtigungs-Toggles save instant
     expect(fnBody("async function toggleEmailFlag")).toContain("toasts.success");
   });
 });
+
+describe("D-11/D-12 — unsaved markers on admin/system", () => {
+  const SECTIONS = [
+    "companyDirty",
+    "storeHoursDirty",
+    "coreDefaultsDirty",
+    "breakDefaultsDirty",
+    "retroWindowDirty",
+    "bsSlotDirty",
+    "sessionDirty",
+    "pwDirty",
+    "smtpDirty",
+    "workDaysDirty",
+  ] as const;
+
+  it.each(SECTIONS)("%s is derived, not hand-set", (name) => {
+    expect(PAGE).toContain(`let ${name} = $derived(`);
+  });
+
+  it("every button-gated Section receives a dirty prop", () => {
+    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(9);
+  });
+
+  it("the page registers itself under one id and de-registers on unmount", () => {
+    expect(PAGE).toContain('markUnsaved("admin-system", anyUnsaved)');
+    expect(PAGE).toContain('return () => markUnsaved("admin-system", false)');
+  });
+
+  it("T-109-22: the SMTP snapshot records password PRESENCE, never the password", () => {
+    const line = PAGE.split("\n").find((l) => l.includes("smtpPassword.length > 0"));
+    expect(line).toBeDefined();
+    expect(PAGE).not.toContain("snap(smtpPassword)");
+  });
+
+  it("D-03: the Pausendauer snapshot excludes the two instant controls", () => {
+    const slice = PAGE.slice(
+      PAGE.indexOf("let breakDefaultsSnapshot"),
+      PAGE.indexOf("let retroWindowSnapshot"),
+    );
+    expect(slice).not.toContain("autoBreakEnabled");
+    expect(slice).not.toContain("defaultBreakStart");
+  });
+
+  // T-109-24: re-taking a snapshot inside `finally` would clear the "Nicht gespeichert" marker
+  // after a FAILED save, telling the operator their change is persisted when it is not.
+  it("T-109-24: no snapshot reset is the first statement of a finally block", () => {
+    expect(PAGE).not.toMatch(/finally \{\s*\n\s*\w+Snapshot = snap\(/);
+  });
+
+  // WARNING-01 (plan-checker): saveBsSlots submits FOUR parsed values
+  // (bsSlotFirstLong/Second/ShortDay/BlockWeek, see the v1..v4 parseSlot calls) — the snapshot
+  // must cover all four or editing bsSlotBlockWeek alone would silently never mark the section.
+  it("WARNING-01: the bsSlot snapshot covers all four fields the handler submits", () => {
+    expect(PAGE).toContain(
+      "snap(bsSlotFirstLong, bsSlotSecondLong, bsSlotShortDay, bsSlotBlockWeek)",
+    );
+  });
+});

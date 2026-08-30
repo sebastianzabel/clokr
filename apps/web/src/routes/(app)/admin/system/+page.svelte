@@ -7,6 +7,7 @@
   import Spinner from "$components/ui/Spinner.svelte";
   import { toasts } from "$stores/toast";
   import { tenantFeatures } from "$stores/tenant-features";
+  import { markUnsaved } from "$stores/unsaved";
 
   // ── Tabs (Phase 58: tabbed config layout) ──────────────────────────────────
   const TABS = [
@@ -478,6 +479,68 @@
   let retroWindowSnapshot = $state("");
   let retroWindowDirty = $derived(snap(retroEntryWindowDays) !== retroWindowSnapshot);
 
+  let bsSlotSnapshot = $state("");
+  let bsSlotDirty = $derived(
+    snap(bsSlotFirstLong, bsSlotSecondLong, bsSlotShortDay, bsSlotBlockWeek) !== bsSlotSnapshot,
+  );
+
+  let sessionSnapshot = $state("");
+  let sessionDirty = $derived(
+    snap(
+      sessionTimeoutMinutes,
+      refreshTokenDays,
+      rememberMeEnabled,
+      rememberMeDays,
+      maxSessionsPerUser,
+      loginMaxAttempts,
+      loginLockoutMinutes,
+    ) !== sessionSnapshot,
+  );
+
+  let pwSnapshot = $state("");
+  let pwDirty = $derived(
+    snap(pwMinLength, pwRequireUpper, pwRequireLower, pwRequireDigit, pwRequireSpecial) !==
+      pwSnapshot,
+  );
+
+  // smtpPassword is write-only: record only WHETHER one was typed, never the value (T-109-22).
+  let smtpSnapshot = $state("");
+  let smtpDirty = $derived(
+    snap(
+      smtpHost,
+      smtpPort,
+      smtpUser,
+      smtpFromEmail,
+      smtpFromName,
+      smtpSecure,
+      smtpPassword.length > 0,
+    ) !== smtpSnapshot,
+  );
+
+  let workDaysSnapshot = $state("");
+  let workDaysDirty = $derived(snap(defaultWorkDays) !== workDaysSnapshot);
+
+  // Phase 109 (D-12) — one registry entry per PAGE, not per section: the guard only needs to know
+  // whether anything is unsaved. The cleanup de-registers on unmount so a saved-and-left page cannot
+  // leave a stale entry behind.
+  let anyUnsaved = $derived(
+    companyDirty ||
+      storeHoursDirty ||
+      coreDefaultsDirty ||
+      breakDefaultsDirty ||
+      retroWindowDirty ||
+      bsSlotDirty ||
+      sessionDirty ||
+      pwDirty ||
+      smtpDirty ||
+      workDaysDirty,
+  );
+
+  $effect(() => {
+    markUnsaved("admin-system", anyUnsaved);
+    return () => markUnsaved("admin-system", false);
+  });
+
   onMount(async () => {
     try {
       const cfg = await api.get<TenantConfig>("/settings/work");
@@ -607,6 +670,33 @@
       coreDefaultsSnapshot = snap(defaultCoreStart, defaultCoreEnd, defaultCoreDays);
       breakDefaultsSnapshot = snap(defaultBreakOver6h, defaultBreakOver9h);
       retroWindowSnapshot = snap(retroEntryWindowDays);
+      bsSlotSnapshot = snap(bsSlotFirstLong, bsSlotSecondLong, bsSlotShortDay, bsSlotBlockWeek);
+      sessionSnapshot = snap(
+        sessionTimeoutMinutes,
+        refreshTokenDays,
+        rememberMeEnabled,
+        rememberMeDays,
+        maxSessionsPerUser,
+        loginMaxAttempts,
+        loginLockoutMinutes,
+      );
+      pwSnapshot = snap(
+        pwMinLength,
+        pwRequireUpper,
+        pwRequireLower,
+        pwRequireDigit,
+        pwRequireSpecial,
+      );
+      smtpSnapshot = snap(
+        smtpHost,
+        smtpPort,
+        smtpUser,
+        smtpFromEmail,
+        smtpFromName,
+        smtpSecure,
+        smtpPassword.length > 0,
+      );
+      workDaysSnapshot = snap(defaultWorkDays);
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
@@ -964,6 +1054,7 @@
         bsSlotWarnings = res.warnings;
       }
       bsSlotSaved = true;
+      bsSlotSnapshot = snap(bsSlotFirstLong, bsSlotSecondLong, bsSlotShortDay, bsSlotBlockWeek); // Phase 109 — clean again
       setTimeout(() => (bsSlotSaved = false), 3000);
     } catch (e: unknown) {
       bsSlotError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
@@ -996,6 +1087,7 @@
         defaultWorkDays,
       });
       workDaysSaved = true;
+      workDaysSnapshot = snap(defaultWorkDays); // Phase 109 — section is clean again
       setTimeout(() => (workDaysSaved = false), 3000);
     } catch (e) {
       workDaysError = e instanceof Error ? e.message : "Fehler beim Speichern";
@@ -1042,6 +1134,17 @@
       smtpPassword = "";
       smtpPasswordSet = true;
       smtpSaved = true;
+      // Phase 109 — taken AFTER the smtpPassword reset above, so the cleared field is the
+      // new baseline; the snapshot itself stores only whether a password was typed (T-109-22).
+      smtpSnapshot = snap(
+        smtpHost,
+        smtpPort,
+        smtpUser,
+        smtpFromEmail,
+        smtpFromName,
+        smtpSecure,
+        smtpPassword.length > 0,
+      );
       setTimeout(() => (smtpSaved = false), 3000);
     } catch (e: unknown) {
       smtpError = e instanceof Error ? e.message : "Fehler";
@@ -1092,6 +1195,16 @@
         loginLockoutMinutes,
       });
       sessionSaved = true;
+      sessionSnapshot = snap(
+        // Phase 109 — section is clean again
+        sessionTimeoutMinutes,
+        refreshTokenDays,
+        rememberMeEnabled,
+        rememberMeDays,
+        maxSessionsPerUser,
+        loginMaxAttempts,
+        loginLockoutMinutes,
+      );
       setTimeout(() => (sessionSaved = false), 3000);
     } catch (e: unknown) {
       sessionError = e instanceof Error ? e.message : "Fehler";
@@ -1113,6 +1226,13 @@
         passwordRequireSpecial: pwRequireSpecial,
       });
       pwSaved = true;
+      pwSnapshot = snap(
+        pwMinLength,
+        pwRequireUpper,
+        pwRequireLower,
+        pwRequireDigit,
+        pwRequireSpecial,
+      ); // Phase 109 — clean again
       setTimeout(() => (pwSaved = false), 3000);
     } catch (e: unknown) {
       pwError = e instanceof Error ? e.message : "Fehler";
@@ -1519,6 +1639,12 @@
                 Speichern
               </button>
               {#if workDaysSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
+              <!-- Phase 109 (D-02/Pitfall 4): this lone number field stays behind a button because
+                   D-02 is a type-based carve-out that overrides D-01's atomic-value framing — do
+                   NOT "fix" it into an instant save. No Section footer here (inline control), so
+                   the same global hint recipe (plan 109-02) is rendered directly, not via Section. -->
+              {#if workDaysDirty}<span class="unsaved-hint" role="status">Nicht gespeichert</span
+                >{/if}
               {#if workDaysError}<span class="error-hint">{workDaysError}</span>{/if}
             </div>
           </div>
@@ -1855,6 +1981,7 @@
         <Section
           title="Berufsschule — Zeitgutschrift"
           sub="Tenant-weite Zeitgutschrift-Slots für Berufsschultage (§ 15 Abs. 2 BBiG)"
+          dirty={bsSlotDirty}
         >
           {#snippet footer()}
             <button
@@ -2073,7 +2200,7 @@
         </Section>
 
         <!-- ── Session-Management ───────────────────────────────────────────── -->
-        <Section title="Session-Management" sub="Timeouts & Sperrzeiten">
+        <Section title="Session-Management" sub="Timeouts & Sperrzeiten" dirty={sessionDirty}>
           {#if sessionError}
             <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
               <span>⚠</span><span>{sessionError}</span>
@@ -2232,7 +2359,7 @@
         </Section>
 
         <!-- ── Passwort-Richtlinie ──────────────────────────────────────────── -->
-        <Section title="Passwort-Richtlinie" sub="BSI-konforme Komplexitätsregeln">
+        <Section title="Passwort-Richtlinie" sub="BSI-konforme Komplexitätsregeln" dirty={pwDirty}>
           {#if pwError}
             <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
               <span>⚠</span><span>{pwError}</span>
@@ -2489,7 +2616,7 @@
         </Section>
 
         <!-- ── E-Mail / SMTP ────────────────────────────────────────────────── -->
-        <Section title="E-Mail / SMTP" sub="Postausgangsserver konfigurieren">
+        <Section title="E-Mail / SMTP" sub="Postausgangsserver konfigurieren" dirty={smtpDirty}>
           {#if smtpError}
             <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
               <span>⚠</span><span>{smtpError}</span>
