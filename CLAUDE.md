@@ -278,12 +278,14 @@ Read these before modifying any page in `apps/web` — they are checked in, unli
 | `apps/web/.lintrc-tokens.txt` | The banned legacy patterns (`--color-*` / `--glass-*` / `--radius-*` / `--gray-*`) plus a replacement cheat sheet |
 | `apps/web/src/app.css` | The shared class recipes — card surfaces, `.badge`, `.callout`, calendar cells, page wrapper, section stacking, summary bars, entrance animations |
 | `apps/web/scripts/lint-ui-classes.mjs` | Which class names are allowed in the scoped primitive directories, and where that scope ends |
+| `docs/ADMIN_STRUCTURE.md §3.2.1` | When a control saves instantly and when it waits for the section button (Phase 109, D-01/D-02) |
 
 Reuse an existing recipe from `app.css` before inventing a class or a token.
 
-Verify with `pnpm --filter @clokr/web lint:tokens` + `lint:ui-classes`. Note that `lint:ui-classes`
-only scans `lib/components/ui/` and `lib/components/layout/` — components elsewhere (`lib/components/saldo/`,
-`calendar/`, `breaks/`, …) are outside that gate and need their own mounted test instead.
+Verify with `pnpm --filter @clokr/web lint:tokens` + `lint:ui-classes` + `lint:save-pattern`. Note
+that `lint:ui-classes` only scans `lib/components/ui/` and `lib/components/layout/` — components
+elsewhere (`lib/components/saldo/`, `calendar/`, `breaks/`, …) are outside that gate and need their
+own mounted test instead.
 
 ## Svelte 5 Gotchas
 

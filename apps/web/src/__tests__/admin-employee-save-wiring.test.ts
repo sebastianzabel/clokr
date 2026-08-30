@@ -1,0 +1,211 @@
+// Phase 109 (Issue #35), Plan 01, Task 2 — Wave-0 regression net for
+// `admin/employees/[id]/+page.svelte` (3856 lines, zero prior test coverage).
+//
+// Same source-read technique as `admin-system-save-wiring.test.ts` (this page isn't mountable
+// either — no `$app` alias in `apps/web/vitest.config.ts`). Per 109-RESEARCH.md / N-02, every
+// save path on this page is ALREADY button-gated — this pin exists so a later plan cannot
+// silently convert one of them, not because a conversion is planned here.
+//
+// D-08/AK-10 is the sharpest edge on this page: `saveSchedule` carries `validFrom`, a
+// `WorkSchedule` change's effective date, and N-04 requires "Wert und Stichtag" to be written
+// together, never half-finished — so this control must never become an instant write.
+
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { describe, it, expect } from "vitest";
+
+// fileURLToPath decodes the %28/%29 that the "(app)" route group produces in import.meta.url.
+function readRouteFile(relativeFromHere: string, relativeFromCwd: string): string {
+  try {
+    return readFileSync(fileURLToPath(new URL(relativeFromHere, import.meta.url)), "utf8");
+  } catch {
+    // Fallback: `pnpm --filter @clokr/web test` runs with cwd `apps/web`.
+    return readFileSync(resolve(process.cwd(), relativeFromCwd), "utf8");
+  }
+}
+
+const PAGE = readRouteFile(
+  "../routes/(app)/admin/employees/[id]/+page.svelte",
+  "src/routes/(app)/admin/employees/[id]/+page.svelte",
+);
+
+// The plan's reference slicer (`vacation-summary.test.ts:47-55`) finds a function's end by
+// searching for the next "\n  }" (a two-space-indented closing brace) after the marker. That
+// heuristic breaks on this page: several save functions take an optional object-typed
+// parameter — e.g. `async function doSaveSchedule(extra?: { keepOrphanShifts?: boolean; ... })`
+// — whose OWN closing brace ("  }) {") is a two-space-indented "}" that appears before the
+// function body even starts, so the naive slice would end before reaching anything inside the
+// real body. `fnBody` here instead tracks paren/brace depth so a parameter type's braces can
+// never be mistaken for the function body's closing brace.
+function fnBody(marker: string): string {
+  const start = PAGE.indexOf(marker);
+  expect(start, `marker not found: ${marker}`).toBeGreaterThan(-1);
+
+  let i = start;
+  let parenDepth = 0;
+  let bodyStart = -1;
+  while (i < PAGE.length) {
+    const ch = PAGE[i];
+    if (ch === "(") parenDepth++;
+    else if (ch === ")") parenDepth--;
+    else if (ch === "{" && parenDepth === 0) {
+      bodyStart = i;
+      break;
+    }
+    i++;
+  }
+  expect(bodyStart, `function body opening brace not found for: ${marker}`).toBeGreaterThan(-1);
+
+  let depth = 0;
+  let j = bodyStart;
+  for (; j < PAGE.length; j++) {
+    if (PAGE[j] === "{") depth++;
+    else if (PAGE[j] === "}") {
+      depth--;
+      if (depth === 0) break;
+    }
+  }
+  expect(j, `unterminated function: ${marker}`).toBeLessThan(PAGE.length);
+  return PAGE.slice(bodyStart, j + 1);
+}
+
+describe("D-08/AK-10 — Vertragsdaten mit validFrom stay button-gated", () => {
+  it("saveSchedule is wired via onclick=, never onchange=", () => {
+    expect(PAGE).toContain("onclick={saveSchedule}");
+    expect(PAGE).not.toContain("onchange={saveSchedule}");
+  });
+
+  it("the saveSchedule chain actually writes validFrom — not a same-named stub", () => {
+    // `saveSchedule()` is a thin wrapper (`return doSaveSchedule()`); pinning "validFrom"
+    // directly on its own body would prove nothing (it isn't there — it's one call deeper).
+    // Trace the real chain instead: saveSchedule -> doSaveSchedule -> buildSchedulePayload,
+    // where `validFrom: eValidFrom` is actually assembled into the PUT body.
+    expect(fnBody("async function saveSchedule")).toContain("doSaveSchedule");
+    expect(fnBody("async function doSaveSchedule")).toContain("buildSchedulePayload");
+    expect(fnBody("function buildSchedulePayload")).toContain("validFrom");
+  });
+
+  // N-04 (Triage-Kommentar, 26.08.2026): "Autosave nur für Einstellungen, die sofort gelten.
+  // Alles mit einem Gültigkeitsdatum behält einen expliziten Speichern-Button, weil Wert und
+  // Stichtag EINE Entscheidung sind und nur gemeinsam korrekt sein können." A half-written
+  // intermediate state (new value, stale validFrom or vice versa) must never be persisted.
+});
+
+describe("N-02 — every save path on this page is already button-gated", () => {
+  const BUTTON_GATED = [
+    "saveStammdaten",
+    "saveSchedule",
+    "savePausendauer",
+    "savePhorestPuffer",
+    "saveBsSlotEmp",
+    "savePatterns",
+    "saveVacation",
+  ] as const;
+
+  it.each(BUTTON_GATED)("%s is wired via onclick=, never onchange=", (name) => {
+    expect(PAGE).toContain(`onclick={${name}}`);
+    expect(PAGE).not.toContain(`onchange={${name}}`);
+  });
+
+  it("the § 18 ArbZG exemption toggle stays confirm-gated — the PATCH fires only on confirm", () => {
+    expect(PAGE).toContain("onchange={onExemptToggleChange}");
+    expect(PAGE).toContain("onConfirm={confirmExemptToggle}");
+    // The change handler itself must only stage the intent and open the dialog; the actual
+    // api.patch() must live in confirmExemptToggle, never here.
+    expect(fnBody("function onExemptToggleChange")).not.toContain("api.patch");
+  });
+});
+
+describe("AK-02 — no text/number input writes inline on this page", () => {
+  function textOrNumberInputHandlers(source: string): string[] {
+    const found: string[] = [];
+    for (const tag of source.match(/<input\b[\s\S]*?>/g) ?? []) {
+      const type = tag.match(/type="([a-z]+)"/)?.[1];
+      if (type !== "number" && type !== "text") continue;
+      for (const m of tag.matchAll(/on(?:blur|change|input)=\{(\w+)\}/g)) found.push(m[1]);
+    }
+    return found;
+  }
+
+  it("returns the empty array today and must stay empty", () => {
+    expect(textOrNumberInputHandlers(PAGE)).toEqual([]);
+  });
+});
+
+describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
+  const FLAGS = [
+    "stammdatenDirty",
+    "scheduleDirty",
+    "pausendauerDirty",
+    "phorestPufferDirty",
+    "patternsDirty",
+    "bsSlotEmpDirty",
+    "vacationDirty",
+  ] as const;
+
+  it.each(FLAGS)("%s is derived from a snapshot", (name) => {
+    expect(PAGE).toContain(`let ${name} = $derived(`);
+  });
+
+  it("all eight footer Sections receive a dirty prop", () => {
+    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(8);
+  });
+
+  it("registers under its own id and de-registers on unmount", () => {
+    expect(PAGE).toContain('markUnsaved("admin-employee-detail", snapshotsReady && anyUnsaved)');
+    expect(PAGE).toContain('return () => markUnsaved("admin-employee-detail", false)');
+  });
+
+  // WR-01: every snapshot starts as "" and only gets its baseline at the end of onMount's try.
+  // The early `if (empRes.status === "rejected") { loadError = …; return; }` skips that block, so
+  // registering the bare `anyUnsaved` traps the operator on a stale bookmark to a deleted employee
+  // behind a discard dialog — on a page that renders only an error and shows no marker.
+  it("WR-01: registration is gated on snapshotsReady, never the bare anyUnsaved", () => {
+    expect(PAGE).not.toContain('markUnsaved("admin-employee-detail", anyUnsaved)');
+    expect(PAGE).toContain("let snapshotsReady = $state(false)");
+  });
+
+  it("WR-01: snapshotsReady is set only after the last baseline snapshot, inside the try", () => {
+    const iVacation = PAGE.indexOf("vacationSnapshot = snap(vacYear");
+    const iReady = PAGE.indexOf("snapshotsReady = true");
+    const iCatch = PAGE.indexOf('loadError = "Fehler beim Laden des Mitarbeiters."');
+    expect(iVacation).toBeGreaterThan(-1);
+    // After the last snapshot assignment...
+    expect(iReady).toBeGreaterThan(iVacation);
+    // ...and before the catch, i.e. still inside the try that a load failure short-circuits.
+    expect(iReady).toBeLessThan(iCatch);
+  });
+
+  it("uses a different registry id than admin/system, so the pages cannot clear each other", () => {
+    expect(PAGE).not.toContain('markUnsaved("admin-system"');
+  });
+
+  it("N-02: no control on this page was converted to instant save", () => {
+    // The exempt toggle is the ONLY onchange-to-write path here and it was already correct.
+    const onchangeWrites = [...PAGE.matchAll(/onchange=\{(save\w+)\}/g)].map((m) => m[1]);
+    expect(onchangeWrites).toEqual([]);
+  });
+
+  it("AK-10: the Arbeitszeitmodell snapshot covers validFrom (N-04 — Wert und Stichtag sind eine Entscheidung)", () => {
+    const slice = PAGE.slice(
+      PAGE.indexOf("let scheduleDirty"),
+      PAGE.indexOf("let scheduleDirty") + 600,
+    );
+    expect(slice).toContain("validFrom");
+  });
+
+  it("T-109-26: no snapshot reset is the first statement of a finally block", () => {
+    // Mirrors 109-06's equivalent pin (T-109-24) — a failed save must keep the marker.
+    const lines = PAGE.split("\n");
+    lines.forEach((line, i) => {
+      if (/Snapshot = snap\(/.test(line)) {
+        const precedingFinally = lines
+          .slice(Math.max(0, i - 3), i)
+          .some((l) => l.includes("finally"));
+        expect(precedingFinally).toBe(false);
+      }
+    });
+  });
+});

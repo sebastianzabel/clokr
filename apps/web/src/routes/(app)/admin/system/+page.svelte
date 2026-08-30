@@ -7,6 +7,7 @@
   import Spinner from "$components/ui/Spinner.svelte";
   import { toasts } from "$stores/toast";
   import { tenantFeatures } from "$stores/tenant-features";
+  import { markUnsaved } from "$stores/unsaved";
 
   // ── Tabs (Phase 58: tabbed config layout) ──────────────────────────────────
   const TABS = [
@@ -178,6 +179,7 @@
         shiftStoreHoursMode,
       });
       storeHoursMsg = "Gespeichert.";
+      storeHoursSnapshot = snap(storeHours, shiftStoreHoursMode); // Phase 109 — section is clean again
       toasts.success("Ladenöffnungszeiten aktualisiert.");
     } catch (e: unknown) {
       storeHoursMsg = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
@@ -356,18 +358,44 @@
   let pwSaved = $state(false);
   let pwError = $state("");
 
-  // E-Mail-Benachrichtigungen
-  let emailEnabled = $state(false);
-  let emailOnLeaveRequest = $state(true);
-  let emailOnLeaveDecision = $state(true);
-  let emailOnOvertimeWarning = $state(false);
-  let emailOnMissingEntries = $state(false);
-  let emailOnClockOutReminder = $state(false);
-  let emailOnMonthClose = $state(true);
-  let emailOnRetroEntry = $state(true);
-  let emailSaving = $state(false);
-  let emailSaved = $state(false);
-  let emailError = $state("");
+  // Phase 109 (D-01/D-03/D-04, AK-01/AK-03/AK-05) — the eight E-Mail-Benachrichtigungs-Toggles are
+  // atomic single values: each one is independently meaningful, so each one saves on flip.
+  // Keys are the `PUT /settings/security` field names verbatim, so the payload is `{ [flag]: next }`
+  // with no mapping layer. Deliberately NOT the `_gOtherFields` full spread used elsewhere in this
+  // file — that snapshot is read once at load and never refreshed, and copying it into a new handler
+  // would widen a known lost-update race (N-09).
+  type EmailFlag =
+    | "emailNotificationsEnabled"
+    | "emailOnLeaveRequest"
+    | "emailOnLeaveDecision"
+    | "emailOnOvertimeWarning"
+    | "emailOnMissingEntries"
+    | "emailOnClockOutReminder"
+    | "emailOnMonthClose"
+    | "emailOnRetroEntry";
+
+  const EMAIL_FLAG_LABELS: Record<EmailFlag, string> = {
+    emailNotificationsEnabled: "E-Mail-Benachrichtigungen",
+    emailOnLeaveRequest: "Neuer Urlaubsantrag",
+    emailOnLeaveDecision: "Urlaub genehmigt / abgelehnt",
+    emailOnOvertimeWarning: "Überstunden-Warnung",
+    emailOnMissingEntries: "Fehlende Zeiteinträge",
+    emailOnClockOutReminder: "Vergessene Stempelung",
+    emailOnMonthClose: "Monatsabschluss",
+    emailOnRetroEntry: "Zeitnachtrag",
+  };
+
+  let emailFlags = $state<Record<EmailFlag, boolean>>({
+    emailNotificationsEnabled: false,
+    emailOnLeaveRequest: true,
+    emailOnLeaveDecision: true,
+    emailOnOvertimeWarning: false,
+    emailOnMissingEntries: false,
+    emailOnClockOutReminder: false,
+    emailOnMonthClose: true,
+    emailOnRetroEntry: true,
+  });
+  let emailFlagSaving = $state<EmailFlag | null>(null);
 
   // NFC Terminals
   interface TerminalKey {
@@ -421,6 +449,104 @@
     { scope: "read:overtime", label: "Überstunden lesen" },
     { scope: "admin", label: "Voller Zugriff" },
   ];
+
+  // ── Unsaved-section tracking (Phase 109, D-11/D-12 · AK-06/AK-07) ──────────────
+  // One snapshot per button-gated group, taken at load and re-taken after each successful save.
+  // Snapshot comparison rather than per-field oninput flags: it is three lines per section instead
+  // of one per input, and undoing an edit by hand clears the marker again, which a per-field flag
+  // cannot do. Instant-save controls are deliberately NOT in any snapshot — they are never "unsaved".
+  function snap(...values: unknown[]): string {
+    return JSON.stringify(values);
+  }
+
+  let companySnapshot = $state("");
+  let companyDirty = $derived(snap(gTenantName, gFederalState, gTimezone) !== companySnapshot);
+
+  let storeHoursSnapshot = $state("");
+  let storeHoursDirty = $derived(snap(storeHours, shiftStoreHoursMode) !== storeHoursSnapshot);
+
+  let coreDefaultsSnapshot = $state("");
+  let coreDefaultsDirty = $derived(
+    snap(defaultCoreStart, defaultCoreEnd, defaultCoreDays) !== coreDefaultsSnapshot,
+  );
+
+  // Only the two number fields — autoBreakEnabled / defaultBreakStart are instant (D-03).
+  let breakDefaultsSnapshot = $state("");
+  let breakDefaultsDirty = $derived(
+    snap(defaultBreakOver6h, defaultBreakOver9h) !== breakDefaultsSnapshot,
+  );
+
+  let retroWindowSnapshot = $state("");
+  let retroWindowDirty = $derived(snap(retroEntryWindowDays) !== retroWindowSnapshot);
+
+  let bsSlotSnapshot = $state("");
+  let bsSlotDirty = $derived(
+    snap(bsSlotFirstLong, bsSlotSecondLong, bsSlotShortDay, bsSlotBlockWeek) !== bsSlotSnapshot,
+  );
+
+  let sessionSnapshot = $state("");
+  let sessionDirty = $derived(
+    snap(
+      sessionTimeoutMinutes,
+      refreshTokenDays,
+      rememberMeEnabled,
+      rememberMeDays,
+      maxSessionsPerUser,
+      loginMaxAttempts,
+      loginLockoutMinutes,
+    ) !== sessionSnapshot,
+  );
+
+  let pwSnapshot = $state("");
+  let pwDirty = $derived(
+    snap(pwMinLength, pwRequireUpper, pwRequireLower, pwRequireDigit, pwRequireSpecial) !==
+      pwSnapshot,
+  );
+
+  // smtpPassword is write-only: record only WHETHER one was typed, never the value (T-109-22).
+  let smtpSnapshot = $state("");
+  let smtpDirty = $derived(
+    snap(
+      smtpHost,
+      smtpPort,
+      smtpUser,
+      smtpFromEmail,
+      smtpFromName,
+      smtpSecure,
+      smtpPassword.length > 0,
+    ) !== smtpSnapshot,
+  );
+
+  let workDaysSnapshot = $state("");
+  let workDaysDirty = $derived(snap(defaultWorkDays) !== workDaysSnapshot);
+
+  // Phase 109 (D-12) — one registry entry per PAGE, not per section: the guard only needs to know
+  // whether anything is unsaved. The cleanup de-registers on unmount so a saved-and-left page cannot
+  // leave a stale entry behind.
+  let anyUnsaved = $derived(
+    companyDirty ||
+      storeHoursDirty ||
+      coreDefaultsDirty ||
+      breakDefaultsDirty ||
+      retroWindowDirty ||
+      bsSlotDirty ||
+      sessionDirty ||
+      pwDirty ||
+      smtpDirty ||
+      workDaysDirty,
+  );
+
+  // Gate the registration on "the baseline has been taken" (WR-01). Every snapshot starts as ""
+  // and only gets its real value at the end of onMount's try, so every *Dirty flag reads true
+  // until then. Registering that would arm the navigation guard on a page that has no form yet —
+  // permanently so if the load throws, since the snapshot block is then never reached and the
+  // page renders nothing but an error banner (no visible marker to explain the dialog).
+  let snapshotsReady = $state(false);
+
+  $effect(() => {
+    markUnsaved("admin-system", snapshotsReady && anyUnsaved);
+    return () => markUnsaved("admin-system", false);
+  });
 
   onMount(async () => {
     try {
@@ -511,14 +637,16 @@
         pwRequireLower = sec.passwordRequireLower;
         pwRequireDigit = sec.passwordRequireDigit;
         pwRequireSpecial = sec.passwordRequireSpecial;
-        emailEnabled = sec.emailNotificationsEnabled ?? false;
-        emailOnLeaveRequest = sec.emailOnLeaveRequest ?? true;
-        emailOnLeaveDecision = sec.emailOnLeaveDecision ?? true;
-        emailOnOvertimeWarning = sec.emailOnOvertimeWarning ?? false;
-        emailOnMissingEntries = sec.emailOnMissingEntries ?? false;
-        emailOnClockOutReminder = sec.emailOnClockOutReminder ?? false;
-        emailOnMonthClose = sec.emailOnMonthClose ?? true;
-        emailOnRetroEntry = sec.emailOnRetroEntry ?? true;
+        emailFlags = {
+          emailNotificationsEnabled: sec.emailNotificationsEnabled ?? false,
+          emailOnLeaveRequest: sec.emailOnLeaveRequest ?? true,
+          emailOnLeaveDecision: sec.emailOnLeaveDecision ?? true,
+          emailOnOvertimeWarning: sec.emailOnOvertimeWarning ?? false,
+          emailOnMissingEntries: sec.emailOnMissingEntries ?? false,
+          emailOnClockOutReminder: sec.emailOnClockOutReminder ?? false,
+          emailOnMonthClose: sec.emailOnMonthClose ?? true,
+          emailOnRetroEntry: sec.emailOnRetroEntry ?? true,
+        };
         sessionTimeoutMinutes = sec.sessionTimeoutMinutes ?? 60;
         refreshTokenDays = sec.refreshTokenDays ?? 7;
         rememberMeEnabled = sec.rememberMeEnabled ?? true;
@@ -542,6 +670,41 @@
       } catch {
         /* ignore */
       }
+
+      // Phase 109 — baseline for the unsaved markers. Must run after ALL state above is hydrated.
+      companySnapshot = snap(gTenantName, gFederalState, gTimezone);
+      storeHoursSnapshot = snap(storeHours, shiftStoreHoursMode);
+      coreDefaultsSnapshot = snap(defaultCoreStart, defaultCoreEnd, defaultCoreDays);
+      breakDefaultsSnapshot = snap(defaultBreakOver6h, defaultBreakOver9h);
+      retroWindowSnapshot = snap(retroEntryWindowDays);
+      bsSlotSnapshot = snap(bsSlotFirstLong, bsSlotSecondLong, bsSlotShortDay, bsSlotBlockWeek);
+      sessionSnapshot = snap(
+        sessionTimeoutMinutes,
+        refreshTokenDays,
+        rememberMeEnabled,
+        rememberMeDays,
+        maxSessionsPerUser,
+        loginMaxAttempts,
+        loginLockoutMinutes,
+      );
+      pwSnapshot = snap(
+        pwMinLength,
+        pwRequireUpper,
+        pwRequireLower,
+        pwRequireDigit,
+        pwRequireSpecial,
+      );
+      smtpSnapshot = snap(
+        smtpHost,
+        smtpPort,
+        smtpUser,
+        smtpFromEmail,
+        smtpFromName,
+        smtpSecure,
+        smtpPassword.length > 0,
+      );
+      workDaysSnapshot = snap(defaultWorkDays);
+      snapshotsReady = true;
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
@@ -562,6 +725,7 @@
         timezone: gTimezone,
       });
       stateSaved = true;
+      companySnapshot = snap(gTenantName, gFederalState, gTimezone); // Phase 109 — section is clean again
       setTimeout(() => (stateSaved = false), 3000);
     } catch (e: unknown) {
       stateError = e instanceof Error ? e.message : "Fehler";
@@ -573,19 +737,28 @@
   // saveDatev moved to /admin/export (Phase 58).
 
   async function saveHolidayDeduction() {
-    if (!_gOtherFields) return; // guard: need full work-settings context to avoid partial overwrite
+    // bind:checked has already written the new value into the state, so the DOM and the state
+    // agree and an explicit revert actually lands (WR-02). The former one-way `checked={…}` plus
+    // "assign only on success" left the browser's own flip on screen after a failed save.
+    const previous = !monthlyHoursHolidayDeduction;
+    // guard: need full work-settings context to avoid partial overwrite
+    if (!_gOtherFields) {
+      monthlyHoursHolidayDeduction = previous;
+      toasts.error("Einstellungen sind noch nicht geladen.");
+      return;
+    }
     holidayDeductionSaving = true;
-    const newValue = !monthlyHoursHolidayDeduction; // capture desired state once
     try {
       await api.put("/settings/work", {
         ..._gOtherFields,
         federalState: gFederalState,
         timezone: gTimezone,
-        monthlyHoursHolidayDeduction: newValue,
+        monthlyHoursHolidayDeduction,
       });
-      monthlyHoursHolidayDeduction = newValue; // commit only after success
-    } catch {
-      // revert on error — state unchanged because we did not assign yet
+      toasts.success("Einstellung gespeichert.");
+    } catch (e: unknown) {
+      monthlyHoursHolidayDeduction = previous;
+      toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
     } finally {
       holidayDeductionSaving = false;
     }
@@ -595,23 +768,30 @@
   // When enabled, the time-entries pipeline deducts 30min (>6h) / 45min (>9h)
   // breaks on clock-out (apps/api/src/routes/time-entries.ts:400,641,909).
   async function toggleAutoBreak() {
-    if (!_gOtherFields) return;
+    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02). This drives
+    // the § 4 ArbZG auto-deduction, so the checkbox must never outlive a failed save. Error
+    // feedback stays the section's own inline banner (autoBreakError, rendered above the toggle).
+    const previous = !autoBreakEnabled;
+    if (!_gOtherFields) {
+      autoBreakEnabled = previous;
+      autoBreakError = "Einstellungen sind noch nicht geladen.";
+      return;
+    }
     autoBreakSaving = true;
     autoBreakError = "";
     autoBreakSaved = false;
-    const newValue = !autoBreakEnabled;
     try {
       await api.put("/settings/work", {
         ..._gOtherFields,
         federalState: gFederalState,
         timezone: gTimezone,
-        autoBreakEnabled: newValue,
-        defaultBreakStart: newValue ? defaultBreakStart : null,
+        autoBreakEnabled,
+        defaultBreakStart: autoBreakEnabled ? defaultBreakStart : null,
       });
-      autoBreakEnabled = newValue;
       autoBreakSaved = true;
       setTimeout(() => (autoBreakSaved = false), 2500);
     } catch (e: unknown) {
+      autoBreakEnabled = previous;
       autoBreakError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
     } finally {
       autoBreakSaving = false;
@@ -679,6 +859,7 @@
         defaultBreakOver9h: Math.trunc(defaultBreakOver9h),
       });
       breakDefaultsSaved = true;
+      breakDefaultsSnapshot = snap(defaultBreakOver6h, defaultBreakOver9h); // Phase 109 — clean again
       setTimeout(() => (breakDefaultsSaved = false), 2500);
     } catch (e: unknown) {
       // Server message is German + user-friendly (Phase 64 D-07) — surface verbatim
@@ -693,23 +874,28 @@
   // one never clobbers the other. blockMonthCloseOnUnconfirmedBreak is only
   // meaningful while enforceBreakConfirmation is on (UI disables toggle #2).
   async function toggleEnforceBreakConfirmation() {
-    if (!_gOtherFields) return;
+    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02).
+    const previous = !enforceBreakConfirmation;
+    if (!_gOtherFields) {
+      enforceBreakConfirmation = previous;
+      breakConfirmError = "Einstellungen sind noch nicht geladen.";
+      return;
+    }
     breakConfirmSaving = true;
     breakConfirmError = "";
     breakConfirmSaved = false;
-    const newValue = !enforceBreakConfirmation;
     try {
       await api.put("/settings/work", {
         ..._gOtherFields,
         federalState: gFederalState,
         timezone: gTimezone,
-        enforceBreakConfirmation: newValue,
+        enforceBreakConfirmation,
         blockMonthCloseOnUnconfirmedBreak,
       });
-      enforceBreakConfirmation = newValue;
       breakConfirmSaved = true;
       setTimeout(() => (breakConfirmSaved = false), 2500);
     } catch (e: unknown) {
+      enforceBreakConfirmation = previous;
       breakConfirmError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
     } finally {
       breakConfirmSaving = false;
@@ -717,24 +903,34 @@
   }
 
   async function toggleBlockMonthCloseOnUnconfirmedBreak() {
-    if (!_gOtherFields) return;
-    if (!enforceBreakConfirmation) return; // No-op: only meaningful when enforcement is on.
+    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02).
+    const previous = !blockMonthCloseOnUnconfirmedBreak;
+    if (!_gOtherFields) {
+      blockMonthCloseOnUnconfirmedBreak = previous;
+      breakConfirmError = "Einstellungen sind noch nicht geladen.";
+      return;
+    }
+    // No-op: only meaningful when enforcement is on. The input is `disabled` in that case, so
+    // this is unreachable from the UI — revert silently rather than reporting a non-event.
+    if (!enforceBreakConfirmation) {
+      blockMonthCloseOnUnconfirmedBreak = previous;
+      return;
+    }
     breakConfirmSaving = true;
     breakConfirmError = "";
     breakConfirmSaved = false;
-    const newValue = !blockMonthCloseOnUnconfirmedBreak;
     try {
       await api.put("/settings/work", {
         ..._gOtherFields,
         federalState: gFederalState,
         timezone: gTimezone,
         enforceBreakConfirmation,
-        blockMonthCloseOnUnconfirmedBreak: newValue,
+        blockMonthCloseOnUnconfirmedBreak,
       });
-      blockMonthCloseOnUnconfirmedBreak = newValue;
       breakConfirmSaved = true;
       setTimeout(() => (breakConfirmSaved = false), 2500);
     } catch (e: unknown) {
+      blockMonthCloseOnUnconfirmedBreak = previous;
       breakConfirmError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
     } finally {
       breakConfirmSaving = false;
@@ -743,20 +939,26 @@
 
   // Phase 47.3 / 49.4 — Tenant Feature-Toggle: Verfügbarkeits-System
   async function saveAvailabilityEnabled() {
-    if (!_gOtherFields) return;
+    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02).
+    const previous = !availabilityEnabled;
+    if (!_gOtherFields) {
+      availabilityEnabled = previous;
+      toasts.error("Einstellungen sind noch nicht geladen.");
+      return;
+    }
     availabilitySaving = true;
-    const newValue = !availabilityEnabled;
     try {
       await api.put("/settings/work", {
         ..._gOtherFields,
         federalState: gFederalState,
         timezone: gTimezone,
-        availabilityEnabled: newValue,
+        availabilityEnabled,
       });
-      availabilityEnabled = newValue;
-      tenantFeatures.applyLocal(newValue); // propagate to Sidebar + BottomTabBar
-    } catch {
-      // revert: state unchanged
+      tenantFeatures.applyLocal(availabilityEnabled); // propagate to Sidebar + BottomTabBar
+      toasts.success("Einstellung gespeichert.");
+    } catch (e: unknown) {
+      availabilityEnabled = previous;
+      toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
     } finally {
       availabilitySaving = false;
     }
@@ -766,19 +968,25 @@
   // Mirrors saveAvailabilityEnabled exactly; the backend reads
   // TenantConfig.vocationalSchoolAutoCleanupShifts in shift-cleanup.ts.
   async function saveVocationalSchoolAutoCleanupShifts() {
-    if (!_gOtherFields) return;
+    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02).
+    const previous = !vocationalSchoolAutoCleanupShifts;
+    if (!_gOtherFields) {
+      vocationalSchoolAutoCleanupShifts = previous;
+      toasts.error("Einstellungen sind noch nicht geladen.");
+      return;
+    }
     vsAutoCleanupSaving = true;
-    const newValue = !vocationalSchoolAutoCleanupShifts;
     try {
       await api.put("/settings/work", {
         ..._gOtherFields,
         federalState: gFederalState,
         timezone: gTimezone,
-        vocationalSchoolAutoCleanupShifts: newValue,
+        vocationalSchoolAutoCleanupShifts,
       });
-      vocationalSchoolAutoCleanupShifts = newValue;
-    } catch {
-      // revert: state unchanged — toggle bounces back since we never wrote the new value
+      toasts.success("Einstellung gespeichert.");
+    } catch (e: unknown) {
+      vocationalSchoolAutoCleanupShifts = previous;
+      toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
     } finally {
       vsAutoCleanupSaving = false;
     }
@@ -786,26 +994,34 @@
 
   // Phase 76.29 — Monatsabschluss mit Lücken toggle
   async function saveCloseMonthWithGaps() {
-    if (!_gOtherFields) return;
+    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02). This one
+    // gates Monatsabschluss with missing entries, so a silently-wrong checkbox is a compliance
+    // problem, not just a cosmetic one.
+    const previous = !closeMonthWithGapsAllowed;
+    if (!_gOtherFields) {
+      closeMonthWithGapsAllowed = previous;
+      toasts.error("Einstellungen sind noch nicht geladen.");
+      return;
+    }
     closeMonthWithGapsSaving = true;
-    const newValue = !closeMonthWithGapsAllowed;
     try {
       await api.put("/settings/work", {
         ..._gOtherFields,
         federalState: gFederalState,
         timezone: gTimezone,
-        closeMonthWithGapsAllowed: newValue,
+        closeMonthWithGapsAllowed,
       });
-      closeMonthWithGapsAllowed = newValue;
       toasts.success("Einstellung gespeichert.");
-    } catch {
-      // revert: state unchanged — toggle bounces back since we never wrote
+    } catch (e: unknown) {
+      closeMonthWithGapsAllowed = previous;
+      toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
     } finally {
       closeMonthWithGapsSaving = false;
     }
   }
 
-  // Phase 76.29 — Rückwirkende Einträge Selbstbearbeitungsfenster (onblur)
+  // Phase 76.29 — Rückwirkende Einträge Selbstbearbeitungsfenster (Phase 109 D-02: button-gated
+  // — a number field never writes on its own)
   async function saveRetroEntryWindowDays() {
     if (!_gOtherFields) return;
     retroWindowError = "";
@@ -825,6 +1041,7 @@
       });
       retroEntryWindowDays = val;
       retroWindowSaved = true;
+      retroWindowSnapshot = snap(retroEntryWindowDays); // Phase 109 — section is clean again
       setTimeout(() => (retroWindowSaved = false), 2500);
     } catch (e: unknown) {
       retroWindowError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
@@ -895,6 +1112,7 @@
         bsSlotWarnings = res.warnings;
       }
       bsSlotSaved = true;
+      bsSlotSnapshot = snap(bsSlotFirstLong, bsSlotSecondLong, bsSlotShortDay, bsSlotBlockWeek); // Phase 109 — clean again
       setTimeout(() => (bsSlotSaved = false), 3000);
     } catch (e: unknown) {
       bsSlotError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
@@ -927,6 +1145,7 @@
         defaultWorkDays,
       });
       workDaysSaved = true;
+      workDaysSnapshot = snap(defaultWorkDays); // Phase 109 — section is clean again
       setTimeout(() => (workDaysSaved = false), 3000);
     } catch (e) {
       workDaysError = e instanceof Error ? e.message : "Fehler beim Speichern";
@@ -946,6 +1165,7 @@
         defaultCoreDays,
       });
       coreDefaultsSaved = true;
+      coreDefaultsSnapshot = snap(defaultCoreStart, defaultCoreEnd, defaultCoreDays); // Phase 109 — clean again
       setTimeout(() => (coreDefaultsSaved = false), 3000);
     } catch (e: unknown) {
       coreDefaultsError = e instanceof Error ? e.message : "Fehler";
@@ -972,6 +1192,17 @@
       smtpPassword = "";
       smtpPasswordSet = true;
       smtpSaved = true;
+      // Phase 109 — taken AFTER the smtpPassword reset above, so the cleared field is the
+      // new baseline; the snapshot itself stores only whether a password was typed (T-109-22).
+      smtpSnapshot = snap(
+        smtpHost,
+        smtpPort,
+        smtpUser,
+        smtpFromEmail,
+        smtpFromName,
+        smtpSecure,
+        smtpPassword.length > 0,
+      );
       setTimeout(() => (smtpSaved = false), 3000);
     } catch (e: unknown) {
       smtpError = e instanceof Error ? e.message : "Fehler";
@@ -995,12 +1226,16 @@
   }
 
   async function toggleTwoFa() {
+    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02). 2FA is the
+    // most security-relevant toggle on the page; it must never claim a state the server rejected.
+    const previous = !twoFaEnabled;
     twoFaSaving = true;
     twoFaError = "";
     try {
-      await api.put("/settings/security", { twoFaEnabled: !twoFaEnabled });
-      twoFaEnabled = !twoFaEnabled;
+      await api.put("/settings/security", { twoFaEnabled });
+      toasts.success("Einstellung gespeichert.");
     } catch (e: unknown) {
+      twoFaEnabled = previous;
       twoFaError = e instanceof Error ? e.message : "Fehler";
     } finally {
       twoFaSaving = false;
@@ -1022,6 +1257,16 @@
         loginLockoutMinutes,
       });
       sessionSaved = true;
+      sessionSnapshot = snap(
+        // Phase 109 — section is clean again
+        sessionTimeoutMinutes,
+        refreshTokenDays,
+        rememberMeEnabled,
+        rememberMeDays,
+        maxSessionsPerUser,
+        loginMaxAttempts,
+        loginLockoutMinutes,
+      );
       setTimeout(() => (sessionSaved = false), 3000);
     } catch (e: unknown) {
       sessionError = e instanceof Error ? e.message : "Fehler";
@@ -1043,6 +1288,13 @@
         passwordRequireSpecial: pwRequireSpecial,
       });
       pwSaved = true;
+      pwSnapshot = snap(
+        pwMinLength,
+        pwRequireUpper,
+        pwRequireLower,
+        pwRequireDigit,
+        pwRequireSpecial,
+      ); // Phase 109 — clean again
       setTimeout(() => (pwSaved = false), 3000);
     } catch (e: unknown) {
       pwError = e instanceof Error ? e.message : "Fehler";
@@ -1051,27 +1303,32 @@
     }
   }
 
-  async function saveEmailConfig() {
-    emailSaving = true;
-    emailSaved = false;
-    emailError = "";
+  // WR-03: `el` removes this handler's dependency on Svelte flushing between the optimistic write
+  // and the revert. The markup binds one-way (`checked={…}`), so the only thing that puts the DOM
+  // checkbox back is a state transition Svelte actually observes — and `set_checked` early-returns
+  // when the new value equals the LAST APPLIED one without ever reading `element.checked`. If both
+  // writes land in one batch (a pre-flight throw, a cached response, a sync guard before the
+  // await), Svelte sees `previous → previous`, applies nothing, and the browser's own flip stays on
+  // screen. Writing `el.checked` directly is the one line that cannot be defeated that way.
+  async function toggleEmailFlag(flag: EmailFlag, next: boolean, el?: HTMLInputElement) {
+    const previous = emailFlags[flag];
+    emailFlags[flag] = next; // optimistic — mirrors the checkbox the browser already flipped
+    emailFlagSaving = flag;
     try {
-      await api.put("/settings/security", {
-        emailNotificationsEnabled: emailEnabled,
-        emailOnLeaveRequest,
-        emailOnLeaveDecision,
-        emailOnOvertimeWarning,
-        emailOnMissingEntries,
-        emailOnClockOutReminder,
-        emailOnMonthClose,
-        emailOnRetroEntry,
-      });
-      emailSaved = true;
-      setTimeout(() => (emailSaved = false), 3000);
+      const res = await api.put<SecurityConfig>("/settings/security", { [flag]: next });
+      const serverValue = res?.[flag];
+      emailFlags[flag] = typeof serverValue === "boolean" ? serverValue : next;
+      // The server may answer with a value other than `next`; resync the DOM unconditionally.
+      if (el) el.checked = emailFlags[flag];
+      toasts.success(
+        `${EMAIL_FLAG_LABELS[flag]} ${emailFlags[flag] ? "aktiviert" : "deaktiviert"}.`,
+      );
     } catch (e: unknown) {
-      emailError = e instanceof Error ? e.message : "Fehler";
+      emailFlags[flag] = previous; // revert BEFORE the toast (D-04)
+      if (el) el.checked = previous;
+      toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
     } finally {
-      emailSaving = false;
+      emailFlagSaving = null;
     }
   }
 
@@ -1171,7 +1428,11 @@
         </Section>
 
         <!-- ── Unternehmen & Region ─────────────────────────────────────────── -->
-        <Section title="Unternehmen & Region" sub="Firmenname, Bundesland & Zeitzone">
+        <Section
+          title="Unternehmen & Region"
+          sub="Firmenname, Bundesland & Zeitzone"
+          dirty={companyDirty}
+        >
           {#snippet footer()}
             <button
               class="btn btn-primary"
@@ -1234,6 +1495,7 @@
         <Section
           title="Ladenöffnungszeiten"
           sub="Wochentägliche Öffnungs- und Schließzeiten. Schichtplanung warnt bei Konflikten."
+          dirty={storeHoursDirty}
         >
           {#snippet footer()}
             <button
@@ -1366,7 +1628,7 @@
               <input
                 type="checkbox"
                 aria-label="Verfügbarkeits-System aktivieren"
-                checked={availabilityEnabled}
+                bind:checked={availabilityEnabled}
                 onchange={saveAvailabilityEnabled}
                 disabled={availabilitySaving}
               />
@@ -1399,7 +1661,7 @@
               <input
                 type="checkbox"
                 aria-label="BS-Shift-Auto-Cleanup aktivieren"
-                checked={vocationalSchoolAutoCleanupShifts}
+                bind:checked={vocationalSchoolAutoCleanupShifts}
                 onchange={saveVocationalSchoolAutoCleanupShifts}
                 disabled={vsAutoCleanupSaving}
               />
@@ -1449,6 +1711,12 @@
                 Speichern
               </button>
               {#if workDaysSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
+              <!-- Phase 109 (D-02/Pitfall 4): this lone number field stays behind a button because
+                   D-02 is a type-based carve-out that overrides D-01's atomic-value framing — do
+                   NOT "fix" it into an instant save. No Section footer here (inline control), so
+                   the same global hint recipe (plan 109-02) is rendered directly, not via Section. -->
+              {#if workDaysDirty}<span class="unsaved-hint" role="status">Nicht gespeichert</span
+                >{/if}
               {#if workDaysError}<span class="error-hint">{workDaysError}</span>{/if}
             </div>
           </div>
@@ -1468,7 +1736,7 @@
               <input
                 type="checkbox"
                 aria-label="Feiertagsabzug für Monatsstunden aktivieren"
-                checked={monthlyHoursHolidayDeduction}
+                bind:checked={monthlyHoursHolidayDeduction}
                 onchange={saveHolidayDeduction}
                 disabled={holidayDeductionSaving}
               />
@@ -1481,7 +1749,23 @@
         <Section
           title="Pausen automatisch abziehen"
           sub="Pflicht-Pausen nach § 4 ArbZG (>6h: 30 Min., >9h: 45 Min.)"
+          dirty={breakDefaultsDirty}
         >
+          {#snippet footer()}
+            <button
+              class="btn btn-primary"
+              onclick={saveBreakDefaults}
+              disabled={breakDefaultsSaving}
+              data-testid="admin-system-pausendauer-save"
+            >
+              {#if breakDefaultsSaving}<Spinner />{/if}
+              Speichern
+            </button>
+            {#if breakDefaultsSaved}
+              <span class="saved-hint">✓ Gespeichert</span>
+            {/if}
+          {/snippet}
+
           {#if autoBreakError}
             <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
               <span>⚠</span><span>{autoBreakError}</span>
@@ -1500,7 +1784,7 @@
               <input
                 type="checkbox"
                 aria-label="Pausen automatisch abziehen"
-                checked={autoBreakEnabled}
+                bind:checked={autoBreakEnabled}
                 onchange={toggleAutoBreak}
                 disabled={autoBreakSaving}
                 data-testid="admin-system-pausendauer-autoBreakEnabled"
@@ -1528,7 +1812,10 @@
           <!-- Phase 65 — Tenant-Default Pausendauer (BREAK-05, D-01..D-03)
              Always visible (not gated on autoBreakEnabled): admins should
              be able to pre-configure the defaults so that turning Auto-Pause ON
-             later picks them up. Each input is independently saved on blur. -->
+             later picks them up.
+             Phase 109 (D-02/AK-02): number fields never write on their own. Both values are sent
+             together by the section's Speichern button below — one operator decision, one audit
+             row. -->
           <div class="form-group" style="margin-top: 1rem;">
             <label class="form-label" for="sys-break-over6h">Pause &gt;6h (Min)</label>
             <input
@@ -1538,7 +1825,6 @@
               max="120"
               step="1"
               bind:value={defaultBreakOver6h}
-              onblur={saveBreakDefaults}
               class="form-input modal-input-sm"
               disabled={breakDefaultsSaving}
               data-testid="admin-system-pausendauer-over6h"
@@ -1554,7 +1840,6 @@
               max="180"
               step="1"
               bind:value={defaultBreakOver9h}
-              onblur={saveBreakDefaults}
               class="form-input modal-input-sm"
               disabled={breakDefaultsSaving}
               data-testid="admin-system-pausendauer-over9h"
@@ -1566,7 +1851,6 @@
               <span>⚠</span><span>{breakDefaultsError}</span>
             </div>
           {/if}
-          {#if breakDefaultsSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
           {#if autoBreakSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
 
           <!-- Phase 93.06 — v1.9.3 Pausen-Bestätigung (BREAK-05 / BREAK-01) -->
@@ -1588,7 +1872,7 @@
               <input
                 type="checkbox"
                 aria-label="Pausen-Bestätigung erforderlich"
-                checked={enforceBreakConfirmation}
+                bind:checked={enforceBreakConfirmation}
                 onchange={toggleEnforceBreakConfirmation}
                 disabled={breakConfirmSaving}
                 data-testid="admin-system-pausen-enforceBreakConfirmation"
@@ -1607,7 +1891,7 @@
               <input
                 type="checkbox"
                 aria-label="Monatsabschluss bei unbestätigten Pausen blockieren"
-                checked={blockMonthCloseOnUnconfirmedBreak}
+                bind:checked={blockMonthCloseOnUnconfirmedBreak}
                 onchange={toggleBlockMonthCloseOnUnconfirmedBreak}
                 disabled={breakConfirmSaving || !enforceBreakConfirmation}
                 data-testid="admin-system-pausen-blockMonthCloseOnUnconfirmedBreak"
@@ -1622,6 +1906,7 @@
         <Section
           title="Kernarbeitszeit-Defaults (Gleitzeit)"
           sub="Standard-Kernzeit für neue Gleitzeit-Mitarbeiter"
+          dirty={coreDefaultsDirty}
         >
           {#snippet footer()}
             <button
@@ -1707,7 +1992,7 @@
               <input
                 type="checkbox"
                 aria-label="Monatsabschluss mit Lücken erlauben"
-                checked={closeMonthWithGapsAllowed}
+                bind:checked={closeMonthWithGapsAllowed}
                 onchange={saveCloseMonthWithGaps}
                 disabled={closeMonthWithGapsSaving}
                 data-testid="admin-system-arbeitszeit-closeMonthWithGapsAllowed"
@@ -1721,7 +2006,23 @@
         <Section
           title="Rückwirkende Einträge"
           sub="Frist für eigenständige Bearbeitung vergangener Zeiteinträge"
+          dirty={retroWindowDirty}
         >
+          {#snippet footer()}
+            <button
+              class="btn btn-primary"
+              onclick={saveRetroEntryWindowDays}
+              disabled={retroWindowSaving}
+              data-testid="admin-system-retro-window-save"
+            >
+              {#if retroWindowSaving}<Spinner />{/if}
+              Speichern
+            </button>
+            {#if retroWindowSaved}
+              <span class="saved-hint">✓ Gespeichert</span>
+            {/if}
+          {/snippet}
+
           {#if retroWindowError}
             <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
               <span>⚠</span><span>{retroWindowError}</span>
@@ -1737,7 +2038,6 @@
               max="90"
               step="1"
               bind:value={retroEntryWindowDays}
-              onblur={saveRetroEntryWindowDays}
               class="form-input modal-input-sm"
               disabled={retroWindowSaving}
               data-testid="admin-system-arbeitszeit-retroEntryWindowDays"
@@ -1748,14 +2048,12 @@
               Referenzwert (ArbZG-Referentenentwurf 2023): 7 Tage. Standard: 10 Tage.
             </p>
           </div>
-          {#if retroWindowSaved}
-            <span class="saved-hint">✓ Gespeichert</span>
-          {/if}
         </Section>
         <!-- ── Berufsschule — Zeitgutschrift (Phase 76.35) ─────────────────── -->
         <Section
           title="Berufsschule — Zeitgutschrift"
           sub="Tenant-weite Zeitgutschrift-Slots für Berufsschultage (§ 15 Abs. 2 BBiG)"
+          dirty={bsSlotDirty}
         >
           {#snippet footer()}
             <button
@@ -1963,7 +2261,7 @@
               <input
                 type="checkbox"
                 aria-label="2-Faktor-Authentifizierung aktivieren"
-                checked={twoFaEnabled}
+                bind:checked={twoFaEnabled}
                 onchange={toggleTwoFa}
                 disabled={twoFaSaving}
                 data-testid="admin-system-sicherheit-twoFaEnabled"
@@ -1974,7 +2272,7 @@
         </Section>
 
         <!-- ── Session-Management ───────────────────────────────────────────── -->
-        <Section title="Session-Management" sub="Timeouts & Sperrzeiten">
+        <Section title="Session-Management" sub="Timeouts & Sperrzeiten" dirty={sessionDirty}>
           {#if sessionError}
             <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
               <span>⚠</span><span>{sessionError}</span>
@@ -2133,7 +2431,7 @@
         </Section>
 
         <!-- ── Passwort-Richtlinie ──────────────────────────────────────────── -->
-        <Section title="Passwort-Richtlinie" sub="BSI-konforme Komplexitätsregeln">
+        <Section title="Passwort-Richtlinie" sub="BSI-konforme Komplexitätsregeln" dirty={pwDirty}>
           {#if pwError}
             <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
               <span>⚠</span><span>{pwError}</span>
@@ -2234,11 +2532,6 @@
       {:else if currentTab === "kommunikation"}
         <!-- ── E-Mail-Benachrichtigungen ────────────────────────────────────── -->
         <Section title="E-Mail-Benachrichtigungen" sub="Welche Ereignisse per E-Mail melden">
-          {#if emailError}
-            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
-              <span>⚠</span><span>{emailError}</span>
-            </div>
-          {/if}
           <div class="toggle-row">
             <div class="toggle-info">
               <span class="toggle-row-label">E-Mail-Benachrichtigungen aktivieren</span>
@@ -2251,12 +2544,20 @@
               <input
                 type="checkbox"
                 aria-label="E-Mail-Benachrichtigungen aktivieren"
-                bind:checked={emailEnabled}
+                checked={emailFlags.emailNotificationsEnabled}
+                onchange={(ev) =>
+                  toggleEmailFlag(
+                    "emailNotificationsEnabled",
+                    (ev.currentTarget as HTMLInputElement).checked,
+                    ev.currentTarget as HTMLInputElement,
+                  )}
+                disabled={emailFlagSaving !== null}
+                data-testid="admin-system-email-emailNotificationsEnabled"
               />
               <span class="switch-slider"></span>
             </label>
           </div>
-          {#if emailEnabled}
+          {#if emailFlags.emailNotificationsEnabled}
             <h4 class="sys-subtitle" style="margin-top: 1rem;">Benachrichtigungstypen</h4>
             <div class="toggle-row">
               <span class="toggle-row-label">Neuer Urlaubsantrag</span>
@@ -2264,7 +2565,15 @@
                 <input
                   type="checkbox"
                   aria-label="Benachrichtigung: Neuer Urlaubsantrag"
-                  bind:checked={emailOnLeaveRequest}
+                  checked={emailFlags.emailOnLeaveRequest}
+                  onchange={(ev) =>
+                    toggleEmailFlag(
+                      "emailOnLeaveRequest",
+                      (ev.currentTarget as HTMLInputElement).checked,
+                      ev.currentTarget as HTMLInputElement,
+                    )}
+                  disabled={emailFlagSaving !== null}
+                  data-testid="admin-system-email-emailOnLeaveRequest"
                 />
                 <span class="switch-slider"></span>
               </label>
@@ -2275,7 +2584,15 @@
                 <input
                   type="checkbox"
                   aria-label="Benachrichtigung: Urlaub genehmigt / abgelehnt"
-                  bind:checked={emailOnLeaveDecision}
+                  checked={emailFlags.emailOnLeaveDecision}
+                  onchange={(ev) =>
+                    toggleEmailFlag(
+                      "emailOnLeaveDecision",
+                      (ev.currentTarget as HTMLInputElement).checked,
+                      ev.currentTarget as HTMLInputElement,
+                    )}
+                  disabled={emailFlagSaving !== null}
+                  data-testid="admin-system-email-emailOnLeaveDecision"
                 />
                 <span class="switch-slider"></span>
               </label>
@@ -2286,7 +2603,15 @@
                 <input
                   type="checkbox"
                   aria-label="Benachrichtigung: Überstunden-Warnung"
-                  bind:checked={emailOnOvertimeWarning}
+                  checked={emailFlags.emailOnOvertimeWarning}
+                  onchange={(ev) =>
+                    toggleEmailFlag(
+                      "emailOnOvertimeWarning",
+                      (ev.currentTarget as HTMLInputElement).checked,
+                      ev.currentTarget as HTMLInputElement,
+                    )}
+                  disabled={emailFlagSaving !== null}
+                  data-testid="admin-system-email-emailOnOvertimeWarning"
                 />
                 <span class="switch-slider"></span>
               </label>
@@ -2297,7 +2622,15 @@
                 <input
                   type="checkbox"
                   aria-label="Benachrichtigung: Fehlende Zeiteinträge"
-                  bind:checked={emailOnMissingEntries}
+                  checked={emailFlags.emailOnMissingEntries}
+                  onchange={(ev) =>
+                    toggleEmailFlag(
+                      "emailOnMissingEntries",
+                      (ev.currentTarget as HTMLInputElement).checked,
+                      ev.currentTarget as HTMLInputElement,
+                    )}
+                  disabled={emailFlagSaving !== null}
+                  data-testid="admin-system-email-emailOnMissingEntries"
                 />
                 <span class="switch-slider"></span>
               </label>
@@ -2308,7 +2641,15 @@
                 <input
                   type="checkbox"
                   aria-label="Benachrichtigung: Vergessene Stempelung"
-                  bind:checked={emailOnClockOutReminder}
+                  checked={emailFlags.emailOnClockOutReminder}
+                  onchange={(ev) =>
+                    toggleEmailFlag(
+                      "emailOnClockOutReminder",
+                      (ev.currentTarget as HTMLInputElement).checked,
+                      ev.currentTarget as HTMLInputElement,
+                    )}
+                  disabled={emailFlagSaving !== null}
+                  data-testid="admin-system-email-emailOnClockOutReminder"
                 />
                 <span class="switch-slider"></span>
               </label>
@@ -2319,7 +2660,15 @@
                 <input
                   type="checkbox"
                   aria-label="Benachrichtigung: Monatsabschluss"
-                  bind:checked={emailOnMonthClose}
+                  checked={emailFlags.emailOnMonthClose}
+                  onchange={(ev) =>
+                    toggleEmailFlag(
+                      "emailOnMonthClose",
+                      (ev.currentTarget as HTMLInputElement).checked,
+                      ev.currentTarget as HTMLInputElement,
+                    )}
+                  disabled={emailFlagSaving !== null}
+                  data-testid="admin-system-email-emailOnMonthClose"
                 />
                 <span class="switch-slider"></span>
               </label>
@@ -2330,24 +2679,24 @@
                 <input
                   type="checkbox"
                   aria-label="Benachrichtigung: Zeitnachtrag"
-                  bind:checked={emailOnRetroEntry}
+                  checked={emailFlags.emailOnRetroEntry}
+                  onchange={(ev) =>
+                    toggleEmailFlag(
+                      "emailOnRetroEntry",
+                      (ev.currentTarget as HTMLInputElement).checked,
+                      ev.currentTarget as HTMLInputElement,
+                    )}
+                  disabled={emailFlagSaving !== null}
+                  data-testid="admin-system-email-emailOnRetroEntry"
                 />
                 <span class="switch-slider"></span>
               </label>
             </div>
           {/if}
-          {#snippet footer()}
-            <button class="btn btn-primary" onclick={saveEmailConfig} disabled={emailSaving}>
-              {emailSaving ? "Speichern…" : "Speichern"}
-            </button>
-            {#if emailSaved}
-              <span class="saved-hint">✓ Gespeichert</span>
-            {/if}
-          {/snippet}
         </Section>
 
         <!-- ── E-Mail / SMTP ────────────────────────────────────────────────── -->
-        <Section title="E-Mail / SMTP" sub="Postausgangsserver konfigurieren">
+        <Section title="E-Mail / SMTP" sub="Postausgangsserver konfigurieren" dirty={smtpDirty}>
           {#if smtpError}
             <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
               <span>⚠</span><span>{smtpError}</span>

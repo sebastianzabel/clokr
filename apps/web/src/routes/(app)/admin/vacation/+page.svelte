@@ -4,6 +4,7 @@
   import { onMount } from "svelte";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
+  import { markUnsaved } from "$stores/unsaved";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
@@ -193,6 +194,75 @@
   // KPI helpers
   let kpiCarryOverLabel = $derived(`${gCarryOverDay}. ${MONTHS[gCarryOverMonth - 1]}`);
 
+  // ── Unsaved-marker tracking (Phase 109, D-11/D-12 · AK-06/AK-07) ───────────
+  // One snapshot for the whole page, because exactly one button (saveGlobal) commits it.
+  // Snapshot comparison rather than per-field oninput flags: it is three lines total instead
+  // of one per input, and undoing an edit by hand clears the marker again, which a per-field
+  // flag cannot do. Instant-save controls are deliberately NOT in the snapshot — they are
+  // never "unsaved".
+  function snap(...values: unknown[]): string {
+    return JSON.stringify(values);
+  }
+
+  let globalSnapshot = $state("");
+  let globalDirty = $derived(
+    snap(
+      gMon,
+      gTue,
+      gWed,
+      gThu,
+      gFri,
+      gSat,
+      gSun,
+      gThreshold,
+      gPayout,
+      gCarryOverDay,
+      gCarryOverMonth,
+      gVacationDays,
+      gArbzgEnabled,
+      gClockOutHours,
+      gMissingDays,
+      gAutoInvalidateHours,
+      christmasEveRule,
+      newYearsEveRule,
+      holidayRulesValidFromYear,
+      vacationLeadTimeDays,
+      vacationMaxAdvanceMonths,
+      halfDayAllowed,
+      sickSelfReport,
+      sickNoteRequiredAfterDays,
+      autoCalcPartTimeVacation,
+      fullTimeWorkDaysPerWeek,
+      enforceMinVacation,
+      carryOverRequiresReason,
+      vacationReminderStartMonth,
+      carryoverWarningEnabled,
+      carryoverWarningThresholdsText,
+      reminderPendingHours,
+      reminderUpcomingDays,
+      reminderPendingEnabled,
+      reminderUpcomingEnabled,
+      maxNegEnabled,
+      maxNegHours,
+    ) !== globalSnapshot,
+  );
+  // gWeekly is NOT included — it's a $derived of gMon..gSun (:192), already covered.
+  // gApplyToExisting is NOT included — it's not a persisted value but a modifier of the next
+  // save, which saveGlobal itself resets to false on success (:320). A marker for it would
+  // claim an unsaved setting that does not exist.
+
+  // Gate the registration on "the baseline has been taken" (WR-01). The snapshot starts as ""
+  // and only gets its real value at the end of onMount's try, so globalDirty reads true until
+  // then. Registering that would arm the navigation guard on a page that has no form yet —
+  // permanently so if the load throws, since the snapshot assignment is then never reached and
+  // the page renders nothing but an error banner (no visible marker to explain the dialog).
+  let snapshotsReady = $state(false);
+
+  $effect(() => {
+    markUnsaved("admin-vacation", snapshotsReady && globalDirty);
+    return () => markUnsaved("admin-vacation", false);
+  });
+
   onMount(async () => {
     try {
       const cfg = await api.get<TenantConfig>("/settings/work");
@@ -246,6 +316,46 @@
       reminderPendingHours = cfg.reminderPendingLeaveHours ?? 48;
       reminderUpcomingEnabled = cfg.reminderUpcomingAbsenceEnabled ?? true;
       reminderUpcomingDays = cfg.reminderUpcomingAbsenceDays ?? 3;
+      globalSnapshot = snap(
+        gMon,
+        gTue,
+        gWed,
+        gThu,
+        gFri,
+        gSat,
+        gSun,
+        gThreshold,
+        gPayout,
+        gCarryOverDay,
+        gCarryOverMonth,
+        gVacationDays,
+        gArbzgEnabled,
+        gClockOutHours,
+        gMissingDays,
+        gAutoInvalidateHours,
+        christmasEveRule,
+        newYearsEveRule,
+        holidayRulesValidFromYear,
+        vacationLeadTimeDays,
+        vacationMaxAdvanceMonths,
+        halfDayAllowed,
+        sickSelfReport,
+        sickNoteRequiredAfterDays,
+        autoCalcPartTimeVacation,
+        fullTimeWorkDaysPerWeek,
+        enforceMinVacation,
+        carryOverRequiresReason,
+        vacationReminderStartMonth,
+        carryoverWarningEnabled,
+        carryoverWarningThresholdsText,
+        reminderPendingHours,
+        reminderUpcomingDays,
+        reminderPendingEnabled,
+        reminderUpcomingEnabled,
+        maxNegEnabled,
+        maxNegHours,
+      );
+      snapshotsReady = true;
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
@@ -323,6 +433,45 @@
       // Reset nach Speichern
       gApplyToExisting = false;
       gSaved = true;
+      globalSnapshot = snap(
+        gMon,
+        gTue,
+        gWed,
+        gThu,
+        gFri,
+        gSat,
+        gSun,
+        gThreshold,
+        gPayout,
+        gCarryOverDay,
+        gCarryOverMonth,
+        gVacationDays,
+        gArbzgEnabled,
+        gClockOutHours,
+        gMissingDays,
+        gAutoInvalidateHours,
+        christmasEveRule,
+        newYearsEveRule,
+        holidayRulesValidFromYear,
+        vacationLeadTimeDays,
+        vacationMaxAdvanceMonths,
+        halfDayAllowed,
+        sickSelfReport,
+        sickNoteRequiredAfterDays,
+        autoCalcPartTimeVacation,
+        fullTimeWorkDaysPerWeek,
+        enforceMinVacation,
+        carryOverRequiresReason,
+        vacationReminderStartMonth,
+        carryoverWarningEnabled,
+        carryoverWarningThresholdsText,
+        reminderPendingHours,
+        reminderUpcomingDays,
+        reminderPendingEnabled,
+        reminderUpcomingEnabled,
+        maxNegEnabled,
+        maxNegHours,
+      ); // Phase 109 — section is clean again
       setTimeout(() => (gSaved = false), 3000);
     } catch (e: unknown) {
       gError = e instanceof Error ? e.message : "Fehler";
@@ -1102,7 +1251,11 @@
 </SectionStack>
 
 <!-- ── Sticky save bar (applies to all settings tabs) ────────────────────── -->
-{#if !loading && !error && activeTab !== "sonderurlaub" && activeTab !== "uebersicht"}
+<!-- Phase 109 (D-11): also shown on "Übersicht"/"Sonderurlaub" while something is unsaved —
+     without this, an admin who edits on "Standards" and switches to "Übersicht" has an
+     unsaved change with no marker anywhere and no way to save it, and then gets a navigation
+     dialog with nothing on screen explaining it. Same defect class as WR-01, one tab away. -->
+{#if !loading && !error && (globalDirty || (activeTab !== "sonderurlaub" && activeTab !== "uebersicht"))}
   <div class="vac-save-bar" role="region" aria-label="Globale Vorgaben speichern">
     {#if gError}
       <div class="alert alert-error" role="alert">
@@ -1115,6 +1268,9 @@
         Auch auf bestehende Mitarbeiter anwenden
       </label>
       <div class="vac-save-actions">
+        {#if globalDirty}
+          <span class="unsaved-hint" role="status">Nicht gespeichert</span>
+        {/if}
         {#if gSaved}
           <span class="saved-hint">&#10003; Gespeichert</span>
         {/if}

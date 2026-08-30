@@ -1,14 +1,16 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { goto } from "$app/navigation";
+  import { beforeNavigate, goto } from "$app/navigation";
   import { page } from "$app/stores";
   import { authStore } from "$stores/auth";
   import { tenantFeatures } from "$stores/tenant-features";
+  import { clearUnsaved, hasUnsaved } from "$stores/unsaved";
   import { clientLogger } from "$lib/utils/logger";
   import Sidebar from "$lib/components/layout/Sidebar.svelte";
   import Topbar from "$lib/components/layout/Topbar.svelte";
   import BottomTabBar from "$lib/components/layout/BottomTabBar.svelte";
   import CommandPalette from "$lib/components/ui/CommandPalette.svelte";
+  import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
   import ErrorBoundary from "$lib/components/ui/ErrorBoundary.svelte";
 
   interface Props {
@@ -70,11 +72,47 @@
     if (sessionTimeoutMs <= 0) return; // 0 = disabled
     inactivityTimer = setTimeout(() => {
       authStore.logout();
+      clearUnsaved(); // N-08 — a timed-out session must never be held hostage by a dirty section
       goto("/login?reason=timeout");
     }, sessionTimeoutMs);
   }
 
   const ACTIVITY_EVENTS = ["mousedown", "keydown", "touchstart", "scroll"] as const;
+
+  // ── Unsaved-changes navigation guard (Phase 109, D-12 / AK-07) ──
+  // beforeNavigate's callback is SYNCHRONOUS: cancel() must be decided now, so a custom dialog
+  // cannot be awaited here (N-07). The guard therefore always cancels when the registry is
+  // non-empty, remembers the target, and re-issues the navigation from the dialog's confirm handler.
+  // It has no way to recognise a forced logout — that is why all four logout call sites clear the
+  // registry themselves (N-08).
+  let confirmLeaveOpen = $state(false);
+  let pendingUrl = $state<string | null>(null);
+
+  beforeNavigate((navigation) => {
+    if (!hasUnsaved()) return;
+    navigation.cancel();
+    if (navigation.willUnload) {
+      // Tab close / real browser navigation: the browser shows its own, non-customisable
+      // prompt. Rendering our dialog into a page that is unloading would never be seen.
+      return;
+    }
+    pendingUrl = navigation.to?.url.href ?? null;
+    confirmLeaveOpen = true;
+  });
+
+  function discardAndLeave() {
+    clearUnsaved(); // must precede the goto, or this guard would cancel its own retry
+    confirmLeaveOpen = false;
+    const target = pendingUrl;
+    pendingUrl = null;
+    if (target) void goto(target);
+  }
+
+  function keepEditing() {
+    // ConfirmDialog also routes ESC and backdrop clicks here (its M-01 fix), so this is the
+    // single place that has to forget the pending target.
+    pendingUrl = null;
+  }
 
   onMount(() => {
     if (!$authStore.accessToken) {
@@ -127,6 +165,16 @@
     <BottomTabBar {currentPath} />
   </div>
   <CommandPalette />
+  <ConfirmDialog
+    bind:open={confirmLeaveOpen}
+    title="Ungespeicherte Änderungen verwerfen?"
+    description="Auf dieser Seite gibt es Änderungen, die noch nicht gespeichert wurden. Wenn du die Seite verlässt, gehen sie verloren."
+    confirmLabel="Verwerfen und verlassen"
+    cancelLabel="Auf der Seite bleiben"
+    danger
+    onConfirm={discardAndLeave}
+    onCancel={keepEditing}
+  />
 {/if}
 
 <style>

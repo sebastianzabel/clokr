@@ -7,6 +7,7 @@
   import Pagination from "$components/ui/Pagination.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import { toasts } from "$stores/toast";
+  import { markUnsaved } from "$stores/unsaved";
 
   // Phase 85.1-03 — extracted from admin/system/+page.svelte (D-10: eigener Admin-Tab).
   // Phorest
@@ -31,6 +32,27 @@
   // Phase 85.1-03 (D-01) — Vor-/Nachbereitungszeit puffer (tenant-global, 0-30 Min.)
   let phPrepMinutes = $state(0);
   let phWrapupMinutes = $state(0);
+
+  // ── Phase 109 (D-11/D-12) — unsaved markers + navigation-guard registration ──
+  // Identical idiom to admin/system (109-06): a snapshot string per button-gated group,
+  // taken once at load and re-taken only on that group's successful save.
+  function snap(...values: unknown[]): string {
+    return JSON.stringify(values);
+  }
+
+  let phConnectionSnapshot = $state("");
+  // The password is a write-only secret: it is never hydrated from the server (onMount does not
+  // assign phPassword), so only its PRESENCE may enter the snapshot — never the value itself.
+  // Same rule as the SMTP password on admin/system (T-109-22, plan 109-06).
+  let phConnectionDirty = $derived(
+    snap(phBusinessId, phBranchId, phUsername, phPassword.length > 0) !== phConnectionSnapshot,
+  );
+
+  let phImportSnapshot = $state("");
+  let phImportDirty = $derived(
+    snap(phPrepMinutes, phWrapupMinutes, phSyncWindowDays, phAutoSync, phSyncCron) !==
+      phImportSnapshot,
+  );
 
   // ── Block A: Staff-Zuordnung (mapping table) ──────────────────────────────
   interface PhEmployee {
@@ -69,6 +91,24 @@
   let phPagedRows = $derived(
     phMappingRows.slice((phMapPage - 1) * phMapPageSize, phMapPage * phMapPageSize),
   );
+
+  // The mapping table is pre-filled with the server's SUGGESTED employee for every unmapped row
+  // (loadPhMapping: `s.savedEmployeeId ?? s.suggestedEmployeeId ?? ""`). Comparing selected
+  // against saved would therefore report the page as unsaved the moment it finishes loading,
+  // before the operator has touched anything. The baseline is the selection AS LOADED.
+  let phMappingSnapshot = $state<string | null>(null);
+  let phMappingDirty = $derived(
+    phMappingSnapshot !== null &&
+      snap(phMappingRows.map((r) => r.selectedEmployeeId)) !== phMappingSnapshot,
+  );
+
+  let snapshotsReady = $state(false);
+  let anyUnsaved = $derived(phConnectionDirty || phImportDirty || phMappingDirty);
+
+  $effect(() => {
+    markUnsaved("admin-phorest", snapshotsReady && anyUnsaved);
+    return () => markUnsaved("admin-phorest", false);
+  });
 
   // ── Block C: Sync-Observability ───────────────────────────────────────────
   interface PhSyncRun {
@@ -143,6 +183,15 @@
       phSyncWindowDays = ph.phorestSyncWindowDays ?? 7;
       phPrepMinutes = ph.phorestPrepMinutes ?? 0;
       phWrapupMinutes = ph.phorestWrapupMinutes ?? 0;
+      phConnectionSnapshot = snap(phBusinessId, phBranchId, phUsername, phPassword.length > 0);
+      phImportSnapshot = snap(
+        phPrepMinutes,
+        phWrapupMinutes,
+        phSyncWindowDays,
+        phAutoSync,
+        phSyncCron,
+      );
+      snapshotsReady = true;
       // Von/Bis bleiben leer: das Zeitfenster (Tage) ist der Default für den
       // manuellen Sync, eine explizite Range ist nur ein optionaler Override.
       // SS-01/SS-05: wenn konfiguriert, Mapping-Tabelle + Observability laden
@@ -174,6 +223,16 @@
       });
       phConfigured = true;
       phSaved = true;
+      // savePhorest submits all nine fields regardless of which of the two Section footer
+      // buttons triggered it, so both config snapshots are re-taken together on success.
+      phConnectionSnapshot = snap(phBusinessId, phBranchId, phUsername, phPassword.length > 0);
+      phImportSnapshot = snap(
+        phPrepMinutes,
+        phWrapupMinutes,
+        phSyncWindowDays,
+        phAutoSync,
+        phSyncCron,
+      );
       setTimeout(() => (phSaved = false), 3000);
       // Nach dem ersten Speichern Mapping + Observability nachladen.
       if (phMappingRows.length === 0) {
@@ -242,8 +301,10 @@
         selectedEmployeeId: s.savedEmployeeId ?? s.suggestedEmployeeId ?? "",
         savingRow: false,
       }));
+      phMappingSnapshot = snap(phMappingRows.map((r) => r.selectedEmployeeId));
     } catch {
       phMappingRows = [];
+      phMappingSnapshot = snap([]);
     } finally {
       phMappingLoading = false;
     }
@@ -264,6 +325,7 @@
         employeeId: row.selectedEmployeeId,
       });
       row.savedEmployeeId = row.selectedEmployeeId;
+      phMappingSnapshot = snap(phMappingRows.map((r) => r.selectedEmployeeId));
       toasts.success("Zuordnung gespeichert.");
     } catch (e: unknown) {
       toasts.error(e instanceof Error ? e.message : "Zuordnung fehlgeschlagen.");
@@ -287,6 +349,9 @@
       await api.delete(`/integrations/phorest/mappings/${staffId}`);
       const row = phMappingRows.find((r) => r.phorestStaffId === staffId);
       if (row) row.savedEmployeeId = null;
+      // Removing a mapping leaves the row's `selected` value in place, so without a re-take
+      // the page would stay marked unsaved after a successful removal.
+      phMappingSnapshot = snap(phMappingRows.map((r) => r.selectedEmployeeId));
       toasts.success("Zuordnung aufgehoben.");
     } catch (e: unknown) {
       toasts.error(e instanceof Error ? e.message : "Aufheben fehlgeschlagen.");
@@ -413,7 +478,7 @@
   {/if}
 
   <!-- ── Verbindung (Zugangsdaten) ───────────────────────────────────────── -->
-  <Section title="Verbindung" sub="Zugangsdaten zur Phorest-API">
+  <Section title="Verbindung" sub="Zugangsdaten zur Phorest-API" dirty={phConnectionDirty}>
     {#if phError}
       <div class="alert alert-error ph-alert" role="alert">
         <span>⚠</span><span>{phError}</span>
@@ -490,7 +555,11 @@
 
   <!-- ── Import-Einstellungen ────────────────────────────────────────────── -->
   {#if phConfigured}
-    <Section title="Import-Einstellungen" sub="Puffer, Zeitfenster & automatischer Abgleich">
+    <Section
+      title="Import-Einstellungen"
+      sub="Puffer, Zeitfenster & automatischer Abgleich"
+      dirty={phImportDirty}
+    >
       <h4 class="ph-subtitle">Vor-/Nachbereitungszeit</h4>
       <p class="text-muted ph-note">
         Phorest hält die buchbare Zeit fest — die tatsächliche Arbeitszeit beginnt früher und endet
@@ -582,6 +651,11 @@
           <span class="badge {phUnmappedCount > 0 ? 'badge-yellow' : 'badge-green'}">
             {phMappedCount}/{phStaffTotal} zugeordnet
           </span>
+        {/if}
+        <!-- This Section has no footer snippet, so Section.dirty would render nothing — the
+             global hint recipe is rendered directly, same as the inline case on admin/system. -->
+        {#if phMappingDirty}
+          <span class="unsaved-hint" role="status">Nicht gespeichert</span>
         {/if}
       {/snippet}
 

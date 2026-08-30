@@ -1,4 +1,5 @@
 import { authStore } from "$stores/auth";
+import { clearUnsaved } from "$stores/unsaved";
 import { get } from "svelte/store";
 
 const BASE_URL = "/api/v1";
@@ -48,6 +49,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         return request<T>(path, options); // Retry
       }
       authStore.logout();
+      clearUnsaved(); // N-08 / A1: window.location.href bypasses SvelteKit's router, and it is not
+      // settled whether beforeNavigate sees it — clearing here is correct either way
       window.location.href = "/login";
     }
     throw new ApiError(401, (data as { error?: string })?.error ?? "Unauthorized", data);
@@ -90,6 +93,8 @@ async function upload<T>(path: string, formData: FormData): Promise<T> {
     const refreshed = await tryRefresh();
     if (refreshed) return upload<T>(path, formData); // Retry with the fresh token
     authStore.logout();
+    clearUnsaved(); // N-08 / A1: window.location.href bypasses SvelteKit's router, and it is not
+    // settled whether beforeNavigate sees it — clearing here is correct either way
     window.location.href = "/login";
     throw new ApiError(401, (data as { error?: string })?.error ?? "Unauthorized", data);
   }

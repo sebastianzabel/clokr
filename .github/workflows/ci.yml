@@ -213,6 +213,11 @@ jobs:
         # blocks reintroduction of banned v1.2 tokens (--color-*, --glass-*, etc.).
         run: pnpm --filter @clokr/web lint:tokens
 
+      - name: Lint save pattern (Phase 109, D-02/AK-02)
+        # Text and number fields in the admin area never write outside a button-gated
+        # group. See docs/ADMIN_STRUCTURE.md §3.2.1.
+        run: pnpm --filter @clokr/web lint:save-pattern
+
       - name: Type check API
         id: typecheck
         run: pnpm --filter @clokr/api typecheck
