@@ -34,6 +34,11 @@ import { utcMidnight, dbDateStr, todayStr } from "./test-dates";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// Phase 120 (D-11(e)/D-12): `app.inject` sends no `user-agent` unless the test supplies one, so
+// without this the `userAgent` column would be `null` and the D-12 assertions could only ever
+// check the IP.
+const TEST_USER_AGENT = "clokr-phase120-test";
+
 function addDaysIso(iso: string, days: number): string {
   return dbDateStr(new Date(utcMidnight(iso).getTime() + days * DAY_MS));
 }
@@ -226,8 +231,18 @@ describe("Leave provisional approval — SHIFT_BASED roster-aware recompute (Pha
     return app.inject({
       method: "PATCH",
       url: `/api/v1/leave/requests/${id}/review`,
-      headers: { authorization: `Bearer ${adminToken}` },
+      headers: { authorization: `Bearer ${adminToken}`, "user-agent": TEST_USER_AGENT },
       payload: { status: "APPROVED" },
+    });
+  }
+
+  // Phase 120 (D-03/D-11(b)): the rejection counterpart to `approve()` above.
+  async function reject(id: string, reviewNote: string) {
+    return app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${id}/review`,
+      headers: { authorization: `Bearer ${adminToken}`, "user-agent": TEST_USER_AGENT },
+      payload: { status: "REJECTED", reviewNote },
     });
   }
 
@@ -321,6 +336,35 @@ describe("Leave provisional approval — SHIFT_BASED roster-aware recompute (Pha
 
     // deductVacationDays() got the FRESH value (1), not the stale creation-time value (2).
     expect(await usedDaysFor(sb4Emp.id, start)).toBe(usedBefore + 1);
+
+    // Phase 120 (D-01/D-02/D-04): the approval CHANGED `days` — the audit row must show both sides.
+    // `oldVal.days !== newVal.days` is the regression guard for D-04: an implementation that
+    // re-reads the row after the update() instead of snapshotting before it makes these two equal.
+    const auditRow = await app.prisma.auditLog.findFirst({
+      where: { action: "APPROVE", entity: "LeaveRequest", entityId: created.id },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(auditRow).toBeTruthy();
+    const oldVal = auditRow!.oldValue as {
+      status: string;
+      days: number;
+      daysProvisional: boolean | null;
+    };
+    const newVal = auditRow!.newValue as {
+      status: string;
+      days: number;
+      daysProvisional: boolean | null;
+    };
+    expect(oldVal.status).toBe("PENDING");
+    expect(newVal.status).toBe("APPROVED");
+    expect(oldVal.days).toBe(2);
+    expect(newVal.days).toBe(1);
+    expect(oldVal.days).not.toBe(newVal.days);
+    expect(oldVal.daysProvisional).toBeNull();
+    expect(newVal.daysProvisional).toBe(false);
+    // Phase 120 (D-12 / D-11(e)): the reviewer's identity, on the same entry.
+    expect(auditRow!.ipAddress).toBeTruthy();
+    expect(auditRow!.userAgent).toBe(TEST_USER_AGENT);
   });
 
   it("approving while the period still has NO roster at all sets daysProvisional true and persists the D-07 upper bound; LeaveEntitlement.usedDays reflects it", async () => {
@@ -396,5 +440,46 @@ describe("Leave provisional approval — SHIFT_BASED roster-aware recompute (Pha
     const afterBody = JSON.parse(after.body);
     expect(Number(afterBody.days)).toBe(2); // same number, both days are now rostered
     expect(afterBody.provisional).toBe(false);
+  });
+
+  it("Phase 120 (D-03): a REJECT records the full before/after pair too — `days` unchanged is STATED, not absent", async () => {
+    // A period no other test in this file touches, so a 201 here also proves no overlap collision.
+    const start = addDaysIso(RC01_MONDAY, 21);
+    const createRes = await postVacation(sb3Token, start, start);
+    expect(createRes.statusCode).toBe(201);
+    const created = JSON.parse(createRes.body);
+
+    const rejectRes = await reject(created.id, "Phase 120 audit pair");
+    expect(rejectRes.statusCode).toBe(200);
+
+    const auditRow = await app.prisma.auditLog.findFirst({
+      where: { action: "REJECT", entity: "LeaveRequest", entityId: created.id },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(auditRow).toBeTruthy();
+    expect(auditRow!.oldValue).toBeTruthy();
+    expect(auditRow!.newValue).toBeTruthy();
+    const oldVal = auditRow!.oldValue as {
+      status: string;
+      days: number;
+      daysProvisional: boolean | null;
+    };
+    const newVal = auditRow!.newValue as {
+      status: string;
+      days: number;
+      daysProvisional: boolean | null;
+      reviewNote: string;
+    };
+    expect(oldVal.status).toBe("PENDING");
+    expect(newVal.status).toBe("REJECTED");
+    expect(newVal.days).toBe(oldVal.days); // rejection changes no value — and says so
+    expect(newVal.daysProvisional).toBe(oldVal.daysProvisional);
+    expect(newVal.reviewNote).toBe("Phase 120 audit pair");
+    // The recorded numbers are JSON numbers, not a Decimal serialised as a string.
+    expect(typeof oldVal.days).toBe("number");
+    expect(typeof newVal.days).toBe("number");
+    // Phase 120 (D-12 / D-11(e)): a rejection is a reviewer action too — it carries the reviewer.
+    expect(auditRow!.ipAddress).toBeTruthy();
+    expect(auditRow!.userAgent).toBe(TEST_USER_AGENT);
   });
 });

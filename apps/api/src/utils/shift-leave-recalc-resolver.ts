@@ -122,6 +122,24 @@ export interface RecalcDeps {
    * records — a rollback of the shift mutation rolls the audit row back too.
    */
   audit: FastifyInstance["audit"];
+  /**
+   * Phase 120 (D-05/D-06). Optional pass-through of the acting request, so `LEAVE_DAYS_ADJUSTED`
+   * carries `ipAddress`/`userAgent` like every neighbouring `app.audit()` call already does. It
+   * lives on `deps` and NOT as an eighth positional parameter — this function already takes seven,
+   * and `deps` is where `audit` itself already lives.
+   * Absent for the four `services/phorest/sync-shifts.ts` call sites: no request exists on the
+   * cron path, and an invented IP would be worse than an empty one (D-06).
+   */
+  request?: { ip: string; headers: Record<string, string | string[] | undefined> };
+  /**
+   * Phase 120 (D-07). REQUIRED, and deliberately NOT derived from `request` being present: an
+   * empty `ipAddress` on its own cannot distinguish "cron, correctly" from "route, and the
+   * pass-through was forgotten". Making it required means a new call site that forgets to declare
+   * its origin fails to compile instead of silently logging the wrong one.
+   * Mirrors the `triggerSource` convention Phase 103 introduced for retroactive Absence rows —
+   * same vocabulary, no new one.
+   */
+  triggerSource: "REQUEST" | "SYNC";
 }
 
 /**
@@ -264,7 +282,13 @@ export async function recalcProvisionalLeaveForShiftChange(
         days: newDays,
         daysProvisional: recomputed.provisional,
         trigger: "Roster-Planung",
+        // Phase 120 (D-07) — explicit origin. `trigger` above is the Phase 107 field CLAUDE.md
+        // documents and consumers read; this is an addition beside it, not a replacement.
+        triggerSource: deps.triggerSource,
       },
+      // Phase 120 (D-05/D-06) — undefined on the cron path, and that emptiness is now readable
+      // because `triggerSource` says which path this was.
+      request: deps.request,
       tx,
     });
 

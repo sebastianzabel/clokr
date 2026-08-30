@@ -155,6 +155,10 @@
   // file's doc comment) so every call site maps `section9Movements` the same way and
   // the mapping is unit-testable without mounting this page.
   let vacationBalance = $state<VacationBalance | null>(null);
+  // Phase 117 (issue #122, D-03) — initialised `true` so the FIRST painted frame is a skeleton
+  // and never an unearned claim about the year on screen. Same rule as Phase 116's `loading`
+  // flip on /time-entries. Every exit path of loadVacationSummary clears it.
+  let vacSummaryLoading = $state(true);
 
   // Stunden- und Tage-Vorschau (vom Server berechnet, Feiertage berücksichtigt)
   let hoursPreview: number | null = $state(null);
@@ -348,7 +352,10 @@
       calYear--;
     } else calMonth--;
     loadCalendar();
-    if (calYear !== prevYear) loadData();
+    if (calYear !== prevYear) {
+      loadData();
+      loadVacationSummary(calYear);
+    }
   }
   function nextMonth() {
     const prevYear = calYear;
@@ -357,7 +364,10 @@
       calYear++;
     } else calMonth++;
     loadCalendar();
-    if (calYear !== prevYear) loadData();
+    if (calYear !== prevYear) {
+      loadData();
+      loadVacationSummary(calYear);
+    }
   }
   function gotoMonthYear(m: number, y: number) {
     const prevYear = calYear;
@@ -365,7 +375,10 @@
     calYear = y;
     showMonthPicker = false;
     loadCalendar();
-    if (calYear !== prevYear) loadData();
+    if (calYear !== prevYear) {
+      loadData();
+      loadVacationSummary(calYear);
+    }
   }
   function gotoToday() {
     const now = new Date();
@@ -374,17 +387,22 @@
     calYear = now.getFullYear();
     showMonthPicker = false;
     loadCalendar();
-    if (calYear !== prevYear) loadData();
+    if (calYear !== prevYear) {
+      loadData();
+      loadVacationSummary(calYear);
+    }
   }
   function prevYear() {
     calYear--;
     loadCalendar();
     loadData();
+    loadVacationSummary(calYear);
   }
   function nextYear() {
     calYear++;
     loadCalendar();
     loadData();
+    loadVacationSummary(calYear);
   }
 
   // Year dropdown options for the list-view filter (current ± 2).
@@ -429,7 +447,7 @@
   onMount(async () => {
     await loadData();
     loadCalendar();
-    loadVacationSummary();
+    loadVacationSummary(calYear);
     loadOvertimeBalance();
     loadKarenzOverrun();
 
@@ -488,20 +506,46 @@
     }
   }
 
-  async function loadVacationSummary() {
+  /**
+   * Phase 117 (issue #122) — loads the entitlement figures for ONE year: the year the page is
+   * currently showing. `year` is REQUIRED and has no default on purpose. The previous signature
+   * took no parameter and read `new Date().getFullYear()` internally, so the tiles under the
+   * heading „Urlaubsjahr 2025" were the 2026 figures. A forgotten argument must be a compile
+   * error, never a silent fallback to „heute" — that fallback IS the bug.
+   *
+   * `viewedExitDate` stays here (D-06): the Austrittsdatum is year-independent, loading it
+   * alongside is harmless, and splitting it would churn a file Phase 114 has only just touched.
+   */
+  async function loadVacationSummary(year: number) {
+    vacSummaryLoading = true;
+    // D-03 — while we are finding out, show nothing rather than the other year's numbers.
+    // Clearing the state (instead of only hiding the strip) covers EVERY reader of
+    // `vacationBalance` in one move: the Kachelleiste, the Urlaubskonto-Karte (which renders
+    // its „–" placeholder at `remaining === null`) and the form's Urlaubskonto-Panel.
+    vacationBalance = null;
     const userId = $authStore.user?.employeeId;
-    if (!userId) return;
+    if (!userId) {
+      vacSummaryLoading = false;
+      return;
+    }
     try {
-      const year = new Date().getFullYear();
       const [entitlements, empData] = await Promise.all([
         api.get<VacationEntitlementRow[]>(`/leave/entitlements/${userId}?year=${year}`),
         api.get<{ exitDate: string | null }>(`/employees/${userId}`).catch(() => null),
       ]);
+      // Paging the selector twice quickly leaves two responses in flight. Dropping the
+      // superseded one is what stops the numbers and the heading from disagreeing again —
+      // last-response-wins would reintroduce this very bug on a fast double-click.
+      if (year !== calYear) return;
       const vac = entitlements.find((e) => e.typeCode === "VACATION");
       vacationBalance = mapVacationBalance(vac);
       viewedExitDate = empData?.exitDate ?? null;
     } catch {
       /* silent */
+    } finally {
+      // Only the response for the year currently on screen may clear the skeleton; a superseded
+      // response must leave it up for the request that is still in flight.
+      if (year === calYear) vacSummaryLoading = false;
     }
   }
 
@@ -617,11 +661,12 @@
       }
     } else if (type === "VACATION") {
       try {
-        const year = new Date().getFullYear();
         const userId = $authStore.user?.employeeId;
         if (!userId) return;
+        // Phase 117 (issue #122): the SECOND writer of vacationBalance — it must read the same
+        // year the tiles claim, or it re-mixes them on form open.
         const entitlements = await api.get<VacationEntitlementRow[]>(
-          `/leave/entitlements/${userId}?year=${year}`,
+          `/leave/entitlements/${userId}?year=${calYear}`,
         );
         const vac = entitlements.find((e) => e.typeCode === "VACATION");
         vacationBalance = mapVacationBalance(vac);
@@ -774,7 +819,7 @@
       resetForm();
       pendingCreate = null;
       collisionSummary = null;
-      await Promise.all([loadData(), loadCalendar(), loadVacationSummary()]);
+      await Promise.all([loadData(), loadCalendar(), loadVacationSummary(calYear)]);
       return true;
     } catch (e: unknown) {
       formError = e instanceof Error ? e.message : "Fehler";
@@ -803,7 +848,7 @@
 
   async function cancelRequest(id: string, reason: string) {
     await api.delete(`/leave/requests/${id}`, { reason });
-    await Promise.all([loadData(), loadCalendar(), loadVacationSummary()]);
+    await Promise.all([loadData(), loadCalendar(), loadVacationSummary(calYear)]);
   }
 
   async function confirmCancelDialog(reason: string) {
@@ -1620,6 +1665,17 @@
        to. Above BOTH views: the page is reachable from the nav and from the calendar, and
        the explanation is equally relevant there. Renders nothing when there is no overrun. -->
   <KarenzAttestPanel label={karenzSummary.label} days={karenzDays} />
+  <!-- Phase 117 (issue #122, D-03) — while the entitlement figures for the selected year are in
+       flight, the strip shows a skeleton, never the numbers of the year we just left. Same rule
+       and same recipe as Phase 116's /time-entries list skeleton: the global `.skeleton` shimmer
+       from app.css, aria-hidden, only the geometry is page-scoped. Four tiles is the strip's
+       usual width; the two Übertrag tiles are conditional, so the placeholder count is
+       deliberately approximate — it is a shimmer, not a claim. -->
+  {#snippet vacStatsSkeleton()}
+    <div class="vac-summary-skeleton" data-testid="vac-summary-skeleton" aria-hidden="true">
+      {#each Array(4) as _, i (i)}<div class="skeleton vac-summary-skel-tile"></div>{/each}
+    </div>
+  {/snippet}
   {#snippet vacStats()}
     <div class="vac-stats">
       <div class="vac-stat">
@@ -1751,7 +1807,11 @@
         <button class="btn btn-ghost btn-sm cal-monthbar-today" onclick={gotoToday}>Heute</button>
       </div>
       {#if showVacSummary}
-        {@render vacStats()}
+        {#if vacSummaryLoading}
+          {@render vacStatsSkeleton()}
+        {:else}
+          {@render vacStats()}
+        {/if}
       {/if}
     </div>
 
@@ -1970,7 +2030,11 @@
         </button>
       </div>
       {#if showVacSummary}
-        {@render vacStats()}
+        {#if vacSummaryLoading}
+          {@render vacStatsSkeleton()}
+        {:else}
+          {@render vacStats()}
+        {/if}
       {/if}
     </div>
 
@@ -2446,6 +2510,22 @@
     align-items: flex-end;
     gap: 28px;
     flex-wrap: wrap;
+  }
+
+  /* Phase 117 (issue #122, D-03) — Ladezustand der Kachelleiste. Reuses the global .skeleton
+     shimmer (app.css:883); only the geometry is page-scoped, same split as Phase 116's
+     .list-skeleton on /time-entries. Mirrors .vac-stats' own flex row + 28px gap so the strip
+     does not jump when the numbers arrive. */
+  .vac-summary-skeleton {
+    display: flex;
+    align-items: flex-end;
+    gap: 28px;
+    flex-wrap: wrap;
+  }
+  .vac-summary-skel-tile {
+    width: 72px;
+    height: 38px;
+    border-radius: var(--r-sm);
   }
 
   .vac-stat {

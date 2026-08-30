@@ -1101,6 +1101,18 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
       }
 
+      // Phase 120 (D-01/D-04): snapshot the pre-decision state BEFORE the update() below overwrites
+      // `days`/`daysProvisional` (Phase 107 writes both in the same call that flips `status`). Reading
+      // these values again after the write would return the NEW ones and silently produce an audit row
+      // whose oldValue equals its newValue — the exact failure this phase exists to prevent.
+      // `days` is a Prisma Decimal; JSON.stringify() would serialise it as a string, so Number() is
+      // load-bearing, not cosmetic (it matches the LEAVE_DAYS_ADJUSTED row's numeric `days`).
+      const auditOldValue = {
+        status: existing.status,
+        days: Number(existing.days),
+        daysProvisional: existing.daysProvisional,
+      };
+
       const updated = await app.prisma.leaveRequest.update({
         where: { id },
         data: {
@@ -1317,12 +1329,27 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
       }
 
+      // Phase 120 (D-01/D-02/D-03): a value-changing operation records before AND after. BOTH actions
+      // write the full pair — REJECT does not change `days`, and "unchanged" is a different statement
+      // from "not recorded" in a revisionssichere Spur. `status` is part of the pair because only the
+      // OLD status answers "was this a first approval or the reversal of a cancellation?".
       await app.audit({
         userId: req.user.sub,
         action: body.status === "APPROVED" ? "APPROVE" : "REJECT",
         entity: "LeaveRequest",
         entityId: id,
-        newValue: { status: body.status, reviewNote: body.reviewNote },
+        oldValue: auditOldValue,
+        newValue: {
+          status: updated.status,
+          days: Number(updated.days),
+          daysProvisional: updated.daysProvisional,
+          reviewNote: body.reviewNote,
+        },
+        // Phase 120 (D-12): CLAUDE.md §Audit-Proof names "userId, timestamp, IP, and before/after
+        // values" in ONE sentence — this entry was missing two of those parts, not one. Same call site,
+        // same rule, same phase. Verhaltensneutral: `request` is optional on `app.audit`
+        // (plugins/audit.ts:13) and feeds nothing but `ipAddress`/`userAgent`.
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       // Retroactive recalculation: leave approval affects snapshots
