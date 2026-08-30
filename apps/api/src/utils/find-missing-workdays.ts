@@ -12,7 +12,9 @@
  * all data and passes it in via MissingWorkdaysInput.
  *
  * Schedule-model dispatch (CLOSE-02):
- *   FIXED_WEEKLY / FIXED_SCHEDULE: expected days = days in span where getDayHoursFromSchedule > 0.
+ *   FIXED_SCHEDULE / FIXED_WEEKLY / null / unknown: expected days = days in span that
+ *     isObligatedWorkday() reports as obligated - `workDays`-primary, with a `{day}Hours > 0`
+ *     fallback for rows whose `workDays` is empty or absent (Phase 128, D-01).
  *   SHIFT_BASED: expected days = rosterDates (pre-fetched Shift.date set). MUST NOT call
  *     getDayHoursFromSchedule in this branch (pitfall A4 fix).
  *   MONTHLY_HOURS / FLEXTIME: return gaps=[] immediately (D-01 — no daily gap rule).
@@ -29,6 +31,9 @@
  */
 
 import { getDayHoursFromSchedule, getDayOfWeekInTz, dateStrInTz } from "./timezone";
+// presence.ts is import-free and pure (no Prisma, no DB, no async) — importing it here
+// does not break this file's own purity contract (Phase 128, D-01).
+import { isObligatedWorkday } from "./presence";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -135,8 +140,8 @@ export function findMissingWorkdays(input: MissingWorkdaysInput): MissingWorkday
   // SHIFT_BASED: expected = rosterDates (pre-fetched Shift.date set).
   //   DO NOT use getDayHoursFromSchedule here — pitfall A4 fix.
   //
-  // FIXED_WEEKLY / FIXED_SCHEDULE / unknown: iterate every day in span;
-  //   expected if getDayHoursFromSchedule(schedule, dow) > 0.
+  // FIXED_WEEKLY / FIXED_SCHEDULE / null / unknown: iterate every day in span;
+  //   expected if isObligatedWorkday() reports the day as obligated (Phase 128, D-01).
 
   let expectedDates: Set<string>;
 
@@ -145,11 +150,44 @@ export function findMissingWorkdays(input: MissingWorkdaysInput): MissingWorkday
     // If rosterDates is not provided, treat as empty set → no gaps.
     expectedDates = input.rosterDates ?? new Set<string>();
   } else {
-    // FIXED_WEEKLY, FIXED_SCHEDULE, or any unknown type — use schedule hours.
+    // FIXED_SCHEDULE / FIXED_WEEKLY / null / unknown - workDays-primary (Phase 128, D-01).
+    //
+    // Until Phase 128 this branch decided obligation from a positive `getDayHoursFromSchedule()`
+    // return value, i.e. the {day}Hours columns. For every schedule type other than FIXED_SCHEDULE
+    // those columns are a legacy 1/0 flag rather than hours, and even for FIXED_SCHEDULE legacy
+    // rows may diverge from `workDays` (pre-Phase-61 rows; see
+    // scripts/audit-workdays-vs-day-hours.ts). CLAUDE.md makes `workDays` the source of truth for
+    // which weekdays an employee owes.
+    //
+    // Phase 111 could not change this function (Umfangsgrenze of GitHub issue #114) and put the
+    // work-days-primary-schedule.ts adapter in front of the /open-items call site instead, which
+    // left the card workDays-primary and the Monatsabschluss {day}Hours-primary. The rule now lives
+    // HERE, so the card (GET /dashboard/open-items), the Monatsabschluss (close-employee-month.ts,
+    // GET /overtime/close-month/status, auto-close-month.ts) and the missing-entry notifications
+    // (attendance-checker.ts) all read one rule and cannot drift apart. The adapter was deleted.
+    //
+    // isObligatedWorkday() is the SAME predicate the three dashboard presence sites already use -
+    // no new obligation semantics is introduced here, the existing one only moved. Its
+    // `workDays.length > 0 ? workDays.includes(dow) : expectedHours > 0` fallback keeps rows with
+    // an empty or absent `workDays` (e.g. the getEffectiveSchedule() fallback object in
+    // routes/time-entries.ts) on exactly their previous behaviour.
+    //
+    // `hasShift: false` is inert: SHIFT_BASED never reaches this branch - it returns rosterDates
+    // above (pitfall A4).
+    const scheduleType = schedule.type == null ? null : String(schedule.type);
+    const workDays = Array.isArray(schedule.workDays) ? schedule.workDays.map(Number) : [];
+
     expectedDates = new Set<string>();
     iterateDateRange(effectiveStart, effectiveEnd, tz, (ds, utcDate) => {
       const dow = getDayOfWeekInTz(utcDate, tz);
-      if (getDayHoursFromSchedule(schedule, dow) > 0) {
+      const obligated = isObligatedWorkday({
+        scheduleType,
+        workDays,
+        dow,
+        expectedHours: getDayHoursFromSchedule(schedule, dow),
+        hasShift: false,
+      });
+      if (obligated) {
         expectedDates.add(ds);
       }
     });

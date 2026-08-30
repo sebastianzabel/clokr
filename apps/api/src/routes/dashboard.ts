@@ -23,7 +23,6 @@ import type { PresenceEntry, PresenceLeave, PresenceAbsence } from "../utils/pre
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { getConfirmedCarryOver, getConfirmedCarryOverBulk } from "../utils/confirmed-saldo"; // Phase 97-04
 import { findMissingWorkdays } from "../utils/find-missing-workdays"; // Phase 111 — canonical gap detector
-import { workDaysPrimarySchedule } from "../utils/work-days-primary-schedule"; // Phase 111
 import { findUnconfirmedBreakDays } from "../utils/find-unconfirmed-break-days"; // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
 
 export async function dashboardRoutes(app: FastifyInstance) {
@@ -1164,9 +1163,10 @@ export async function dashboardRoutes(app: FastifyInstance) {
           const openItemsEnd = exitDate && exitDate < yesterday ? exitDate : yesterday;
 
           const openItemsGapResult = findMissingWorkdays({
-            // workDaysPrimarySchedule: makes the FIXED branch honour `workDays` over the
-            // {day}Hours placeholders WITHOUT changing findMissingWorkdays itself (Umfangsgrenze).
-            schedule: workDaysPrimarySchedule((schedule ?? {}) as Record<string, unknown>),
+            // Phase 128 (D-01/D-02): the detector's FIXED branch is workDays-primary itself now, so
+            // the Phase 111 workDaysPrimarySchedule() projection that used to sit here is gone -
+            // this card and the Monatsabschluss read one rule from one place.
+            schedule: (schedule ?? {}) as Record<string, unknown>,
             effectiveStart: openItemsStart,
             effectiveEnd: openItemsEnd,
             tz,
