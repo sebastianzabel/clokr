@@ -376,6 +376,11 @@ model WorkSchedule {
   type                      ScheduleType @default(FIXED_SCHEDULE)
   weeklyHours               Decimal?     @db.Decimal(5, 2) // null erlaubt; SHIFT_BASED + FLEXTIME nutzen es als Wochen-Soll, FIXED_SCHEDULE als Σ aus per-day, MONTHLY_HOURS null
   monthlyHours              Decimal?     @db.Decimal(5, 2) // z.B. 15.00 für Minijobber
+  // Phase 95b (D-02): authoritative data ONLY for FIXED_SCHEDULE. For FLEXTIME, MONTHLY_HOURS and
+  // SHIFT_BASED these seven columns are a legacy 1/0 flag rather than hours (verified against
+  // production 2026-08-30) — `workDays` carries the contractual information for those types.
+  // Rows where the two disagree are NOT corrected; see CLAUDE.md "Schedule Types" and
+  // apps/api/scripts/audit-workdays-vs-day-hours.ts.
   mondayHours               Decimal      @default(8) @db.Decimal(4, 2)
   tuesdayHours              Decimal      @default(8) @db.Decimal(4, 2)
   wednesdayHours            Decimal      @default(8) @db.Decimal(4, 2)
@@ -388,6 +393,8 @@ model WorkSchedule {
   // Pro-Rata-Berechnung (countWorkDaysPerWeek). Befüllt aus TenantConfig.defaultWorkDays
   // beim Anlegen neuer Mitarbeiter; pro MA überschreibbar via /admin/vacation.
   // Format: Array aus Wochentag-Nummern (0=So, 1=Mo, …, 6=Sa). Default: Mo-Fr.
+  // Phase 95b (D-01): for every type except FIXED_SCHEDULE this field — not {day}Hours — is the
+  // contractual truth; legacy rows diverging from {day}Hours are deliberately preserved.
   workDays                  Int[]        @default([1, 2, 3, 4, 5])
   // Phase 107 (D-01): contractual workday count, SHIFT_BASED only. Null for
   // FIXED_SCHEDULE / FLEXTIME / MONTHLY_HOURS by construction. The concrete weekdays
