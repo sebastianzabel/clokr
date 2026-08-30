@@ -16,8 +16,13 @@
 // mount (no test in `apps/web` has ever mounted a route page), `describe`/`it`/`expect` imported
 // explicitly because `vitest.config.ts` sets `globals: false`.
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, it, expect } from "vitest";
 
+import { mapVacationBalance } from "../vacation-balance";
 import type { VacationBalance } from "../vacation-balance";
 import {
   deriveVacationSummary,
@@ -27,6 +32,27 @@ import {
   VAC_CARD_LABEL_WITH_PENDING,
   type VacationSummary,
 } from "../vacation-summary";
+
+// fileURLToPath decodes the %28/%29 that the "(app)" route group produces in import.meta.url.
+const PAGE_URL = new URL("../../../routes/(app)/leave/+page.svelte", import.meta.url);
+let PAGE: string;
+try {
+  PAGE = readFileSync(fileURLToPath(PAGE_URL), "utf8");
+} catch {
+  // Fallback: `pnpm --filter @clokr/web test` runs with cwd `apps/web`.
+  PAGE = readFileSync(resolve(process.cwd(), "src/routes/(app)/leave/+page.svelte"), "utf8");
+}
+
+/** The body of one top-level function of `leave/+page.svelte`, from its declaration to the
+ *  two-space-indented `}` that closes it. Slicing keeps each assertion inside the function it
+ *  is about, so a match elsewhere on this 2700-line page cannot make a broken wiring look fixed. */
+function fnBody(marker: string): string {
+  const start = PAGE.indexOf(marker);
+  expect(start, `marker not found: ${marker}`).toBeGreaterThan(-1);
+  const end = PAGE.indexOf("\n  }", start);
+  expect(end, `unterminated function: ${marker}`).toBeGreaterThan(start);
+  return PAGE.slice(start, end);
+}
 
 /** Build a `VacationBalance` from the four numbers that actually drive the arithmetic.
  *  `provisionalUsed`, `carryOverDeadline` and `section9Movements` play no part in any of the
@@ -271,5 +297,162 @@ describe("vacationCardDelta", () => {
     expect(delta).toContain(String(24));
     expect(delta).toContain(String(14));
     expect(delta).toContain("Übertrag Vorjahr");
+  });
+});
+
+// ── Phase 117 (GitHub issue #122): the tiles' year IS the heading's year ─────────────────────
+//
+// Phase 114 recorded this defect as deferred item #1 and worked AROUND it — it is the reason no
+// year appears in any tile label (`leave-page-vocabulary.test.ts:141`). What nothing asserted was
+// the relationship itself: `loadVacationSummary()` hardcoded `new Date().getFullYear()` and was
+// never called when the selector moved, so `Anspruch`/`Übertrag`/`Genommen` showed the current
+// year under a heading naming another one, while `Beantragt` (fetched as
+// `/leave/requests?year=${calYear}`) followed correctly and `Verbleibend` mixed the two.
+//
+// Two of these blocks read the PAGE SOURCE. That is deliberate and it is not a new harness: it is
+// the same `readFileSync` technique `leave-page-vocabulary.test.ts` already uses, for the same
+// reason — `apps/web/vitest.config.ts` declares no `$app/*` alias, so no route page in this repo
+// can be mounted under vitest, and the thing under test here is a wiring decision that lives in
+// the component, not in a pure function. The other two blocks pin the pure half at the seam
+// Phase 114 built.
+
+describe("loadVacationSummary fetches the SELECTED year (issue #122)", () => {
+  it("takes the year as a REQUIRED parameter — a forgotten argument must be a compile error", () => {
+    expect(PAGE).toContain("async function loadVacationSummary(year: number)");
+  });
+
+  it("has no wall-clock fallback left in either entitlement fetch", () => {
+    // This exact line existed TWICE (loadVacationSummary and loadBalanceForType's VACATION
+    // branch) and is the whole defect. `?? calYear`, a default parameter, or any other
+    // reinstatement of "heute" would put it back in a new costume.
+    expect(PAGE).not.toContain("const year = new Date().getFullYear();");
+  });
+
+  it("interpolates the parameter into the entitlements URL", () => {
+    const body = fnBody("async function loadVacationSummary(");
+    expect(body).toContain("/leave/entitlements/${userId}?year=${year}");
+    expect(body).not.toContain("new Date(");
+  });
+
+  it("year-scopes the SECOND writer of vacationBalance too", () => {
+    // `loadBalanceForType("VACATION")` assigns the same `vacationBalance` state the tiles read.
+    // Left on the current year it would snap the tiles back on form open — the same bug, later.
+    const body = fnBody("async function loadBalanceForType(");
+    expect(body).toContain("/leave/entitlements/${userId}?year=${calYear}");
+    expect(body).not.toContain("new Date(");
+  });
+
+  it("drops a superseded in-flight response instead of letting it overwrite a newer one", () => {
+    const body = fnBody("async function loadVacationSummary(");
+    expect(body).toContain("if (year !== calYear) return;");
+    expect(body).toContain("if (year === calYear) vacSummaryLoading = false;");
+  });
+});
+
+describe("every year-changing path reloads the figures (D-02, issue #122)", () => {
+  // The issue text names only prevYear/nextYear. These six are ALL the sites that assign
+  // `calYear`; fixing two of them would leave the identical defect on the rarer four.
+  const YEAR_CHANGING = [
+    "function prevMonth(",
+    "function nextMonth(",
+    "function gotoMonthYear(",
+    "function gotoToday(",
+    "function prevYear(",
+    "function nextYear(",
+  ];
+
+  it.each(YEAR_CHANGING)("%s reloads the vacation summary for the new year", (marker) => {
+    expect(fnBody(marker)).toContain("loadVacationSummary(calYear)");
+  });
+
+  it("has no zero-argument call left anywhere on the page", () => {
+    expect(PAGE).not.toContain("loadVacationSummary()");
+  });
+
+  it("passes calYear at all nine call sites (six navigation + onMount + two reload paths)", () => {
+    expect((PAGE.match(/loadVacationSummary\(calYear\)/g) ?? []).length).toBe(9);
+  });
+
+  it("shows a loading state instead of the previous year's numbers while refetching (D-03)", () => {
+    expect(PAGE).toContain("let vacSummaryLoading = $state(true)");
+    // Whitespace-robust on purpose: prettier owns the line breaks around the {#if}.
+    const sites = [...PAGE.matchAll(/\{@render vacStats\(\)\}/g)];
+    expect(sites.length).toBe(2);
+    for (const site of sites) {
+      expect(PAGE.slice(Math.max(0, site.index - 160), site.index)).toContain("vacSummaryLoading");
+    }
+    expect((PAGE.match(/\{@render vacStatsSkeleton\(\)\}/g) ?? []).length).toBe(2);
+  });
+});
+
+describe("one response, one year — no tile value survives a year switch (issue #122)", () => {
+  // The reported symptom: Anspruch/Übertrag/Genommen from 2026 next to Beantragt from 2025,
+  // with Verbleibend silently mixing them. These fixtures are chosen so that EVERY derived
+  // field differs between the two years — if any one of them could be carried over from the
+  // previous response, this test names it.
+  const Y2025 = balance(30, 28, 5);
+  const Y2026 = balance(24, 3, 14);
+
+  it("derives every figure from the balance it was handed, and nothing else", () => {
+    const a = deriveVacationSummary(Y2025, 2);
+    const b = deriveVacationSummary(Y2026, 2);
+    expect(a).toEqual({
+      total: 30,
+      carryOver: 5,
+      used: 28,
+      planned: 2,
+      carryOverRemaining: 0,
+      left: 5,
+      remaining: 7,
+      availableTotal: 35,
+    });
+    expect(b).toEqual({
+      total: 24,
+      carryOver: 14,
+      used: 3,
+      planned: 2,
+      carryOverRemaining: 11,
+      left: 33,
+      remaining: 35,
+      availableTotal: 38,
+    });
+    for (const key of [
+      "total",
+      "carryOver",
+      "used",
+      "carryOverRemaining",
+      "left",
+      "remaining",
+      "availableTotal",
+    ] as const) {
+      expect(a[key], `${key} must not be shared between the two years`).not.toBe(b[key]);
+    }
+  });
+
+  it("keeps `planned` independent of the balance — it is the one figure that already followed the year", () => {
+    expect(deriveVacationSummary(Y2025, 2).planned).toBe(2);
+    expect(deriveVacationSummary(Y2026, 2).planned).toBe(2);
+  });
+});
+
+describe("a year without an entitlement row (D-04)", () => {
+  it("renders zeros and the card's en-dash, never another year's numbers", () => {
+    // The API returns no VACATION row for that year -> `.find()` yields undefined ->
+    // mapVacationBalance -> null -> the strip's six zeros and `remaining === null`, which is
+    // what makes the Urlaubskonto-Karte render „–". A fallback to a different year would be
+    // the reported mixing defect in a new form; there is deliberately none.
+    const noRow = mapVacationBalance(undefined);
+    expect(noRow).toBeNull();
+    const summary = deriveVacationSummary(noRow, 0);
+    expect(summary).toEqual({
+      total: 0,
+      carryOver: 0,
+      used: 0,
+      planned: 0,
+      carryOverRemaining: 0,
+      left: 0,
+      remaining: null,
+      availableTotal: null,
+    });
   });
 });
