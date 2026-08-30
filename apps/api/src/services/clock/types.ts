@@ -29,7 +29,13 @@ export type ConflictReason =
   | "ALREADY_CLOCKED_IN"
   | "NOT_CLOCKED_IN"
   | "LEAVE_APPROVED"
-  | "MONTH_LOCKED";
+  | "MONTH_LOCKED"
+  // Phase 118 (D-03): this day's row is coupled to a still-PENDING Zeitnachtrag
+  // (Phase 96) — a request, not a punch. An honest 409 instead of a misleading
+  // "already clocked in". NOT produced by `decide()`, but by the resolver BEFORE
+  // building state (D-05: the state machine stays a pure function with no DB
+  // knowledge).
+  | "RETRO_PENDING";
 
 export type ClockState =
   | { kind: "NO_OPEN_ENTRY" }

@@ -40,12 +40,7 @@
     type KarenzOverrunResponse,
     type KarenzNudgeSummary,
   } from "$lib/leave/karenz-nudge";
-  import {
-    summarizeUnconfirmedBreaks,
-    breakNudgeHref,
-    BREAK_NUDGE_EMPTY,
-    type BreakNudgeSummary,
-  } from "$lib/breaks/break-nudge";
+  import { summarizeUnconfirmedBreakDays, breakNudgeHref } from "$lib/breaks/break-nudge";
   import {
     resolveDayState,
     upsertDayEntry,
@@ -240,21 +235,29 @@
     missingDays: string[];
     pendingRequests: number;
     invalidEntries: number;
+    unconfirmedBreakDays: string[];
     total: number;
   } | null = $state(null);
 
-  // ── Pausen-Bestätigung Nudge (BREAK-07) ──────────────────────────────────────
-  // Self-service dashboard nudge: points the employee at their own unconfirmed
-  // AUTO break days on /time-entries. Sourced client-side from the self-scoped
-  // GET /time-entries (breakStatus === "AUTO" && !isLocked). Gated behind the
-  // tenant dormancy flag `enforceBreakConfirmation` (fail-safe false) so the
-  // feature stays invisible until the tenant enables it.
+  // ── Pausen-Bestätigung Nudge (BREAK-05/07) ───────────────────────────────
+  // Phase 126 (issue #126): the count is SERVER-COMPUTED. `openItems.unconfirmedBreakDays`
+  // comes from findUnconfirmedBreakDays — the same detector that gates the Monatsabschluss,
+  // the auto-close defer and the BREAK_UNCONFIRMED cron — so the card and the backend can no
+  // longer disagree.
   //
-  // Phase 112 (issue #115): the count, the German label AND the deep-link URL all come from
-  // $lib/breaks/break-nudge.ts. They used to be built inline here, and the inline version
-  // forwarded the API's full ISO instant into the URL, which crashed the destination.
-  let enforceBreakConfirmation = $state(false);
-  let breakNudge = $state<BreakNudgeSummary>(BREAK_NUDGE_EMPTY);
+  // Deleted here, deliberately (D-06): a 12-month `GET /time-entries` fetch plus a client-side
+  // breakStatus/isLocked predicate. It counted days outside the current month, which trigger no
+  // notification and block no Monatsabschluss, and it counted FLEXTIME/MONTHLY_HOURS employees,
+  // for whom the detector returns nothing at all.
+  //
+  // D-09: no `enforceBreakConfirmation` state any more. The detector returns [] for a tenant
+  // that has not opted in, so the dormancy gate is inherited — the extra `/settings/work` fetch
+  // that existed only to read that flag is gone too.
+  //
+  // D-08 fail-safe: when the open-items fetch fails, `openItems` stays null, this derives to
+  // BREAK_NUDGE_EMPTY and the whole card is skipped by the `{#if openItems}` below. The card
+  // must render NOTHING rather than a "0" — a "0" is a factual claim the client cannot support.
+  let breakNudge = $derived(summarizeUnconfirmedBreakDays(openItems?.unconfirmedBreakDays));
   // Kept as a separate name because hasNoOpenItems() and the {#if} below read it.
   let unconfirmedBreakDays = $derived(breakNudge.count);
 
@@ -428,40 +431,6 @@
         }
       } catch {
         isExempt = false;
-      }
-
-      // Pausen-Bestätigung Nudge (BREAK-07) — self-service, employee-scoped.
-      // Read the tenant dormancy flag first; fail-safe to false so a network
-      // blip or a tenant without the feature never surfaces the nudge. Only
-      // when the flag is ON do we fetch the caller's own recent entries and
-      // count the DISTINCT dates that carry an unconfirmed AUTO break in a
-      // still-open (non-locked) month. Locked months self-exclude via isLocked.
-      try {
-        const workCfg = await api
-          .get<{ enforceBreakConfirmation?: boolean }>("/settings/work")
-          .catch(() => null);
-        enforceBreakConfirmation = workCfg?.enforceBreakConfirmation === true;
-
-        if (enforceBreakConfirmation) {
-          // Phase 93 (BREAK-07) — look back 12 months, not just to the 1st of last
-          // month. Phase 92-04 defers auto-close on unconfirmed AUTO breaks, so a
-          // still-open (non-locked) month can carry unconfirmed breaks well beyond
-          // last month; a narrow window would silently undercount the most overdue
-          // days this nudge exists to surface. Locked months self-exclude below.
-          const prev = subMonths(new Date(), 12);
-          const from = format(new Date(prev.getFullYear(), prev.getMonth(), 1), "yyyy-MM-dd");
-          const breakRows = await api
-            .get<
-              Array<{ date: string; breakStatus?: string; isLocked?: boolean }>
-            >(`/time-entries?from=${from}&to=${today}`)
-            .catch(() => [] as Array<{ date: string; breakStatus?: string; isLocked?: boolean }>);
-          breakNudge = summarizeUnconfirmedBreaks(breakRows);
-        } else {
-          breakNudge = BREAK_NUDGE_EMPTY;
-        }
-      } catch {
-        enforceBreakConfirmation = false;
-        breakNudge = BREAK_NUDGE_EMPTY;
       }
 
       // Karenztage-Hinweis (D-21) — self-scoped, fail-safe: any error renders nothing.
@@ -1609,7 +1578,7 @@
                   <span class="oi-link">→</span>
                 </a>
               {/if}
-              {#if enforceBreakConfirmation && unconfirmedBreakDays > 0}
+              {#if unconfirmedBreakDays > 0}
                 <a
                   href={breakNudgeHref(breakNudge)}
                   class="oi-row"

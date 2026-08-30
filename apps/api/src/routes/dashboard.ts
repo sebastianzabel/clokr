@@ -11,6 +11,7 @@ import {
   dateStrInTz,
   weekRangeUtc,
   monthRangeUtc,
+  monthDayBounds,
   calcExpectedMinutesTz,
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
@@ -23,6 +24,7 @@ import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { getConfirmedCarryOver, getConfirmedCarryOverBulk } from "../utils/confirmed-saldo"; // Phase 97-04
 import { findMissingWorkdays } from "../utils/find-missing-workdays"; // Phase 111 — canonical gap detector
 import { workDaysPrimarySchedule } from "../utils/work-days-primary-schedule"; // Phase 111
+import { findUnconfirmedBreakDays } from "../utils/find-unconfirmed-break-days"; // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -1061,8 +1063,14 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const missingDays: string[] = [];
       let pendingRequestsCount = 0;
       let invalidEntriesCount = 0;
+      let unconfirmedBreakDays: string[] = [];
 
       if (employeeId) {
+        // Phase 126: hoisted out of the §18-exemption short-circuit because the break-confirmation
+        // derivation below needs scheduleType too, and an exempt employee is still subject to
+        // break confirmation — the client-side counter this replaces never checked exemption either.
+        const schedule = await getEffectiveSchedule(app, employeeId);
+
         // Phase 76.7 (D-08, UI-V19-04 supporting backend) — exempt employees never
         // get "missing dates" surfaced on their personal dashboard. The Stempeluhr
         // CTA is also hidden client-side (Plan 03), but we short-circuit here so the
@@ -1074,7 +1082,6 @@ export async function dashboardRoutes(app: FastifyInstance) {
         });
         if (!meEmployee?.isTimeTrackingExempt) {
           // 1. Missing time entries (workdays without entries in last 7 days)
-          const schedule = await getEffectiveSchedule(app, employeeId);
           const recentEntries = await app.prisma.timeEntry.findMany({
             where: {
               employeeId,
@@ -1197,6 +1204,46 @@ export async function dashboardRoutes(app: FastifyInstance) {
           select: { id: true },
         });
         invalidEntriesCount = invalidEntries.length;
+
+        // 3b. Unbestätigte Pflichtpausen (§ 4 ArbZG, BREAK-05) — Phase 126, GitHub issue #126.
+        //
+        // D-02: the number is produced HERE, by the canonical detector, and never again by a
+        // client-side predicate. Before this, dashboard/+page.svelte counted AUTO days itself over a
+        // 12-MONTH window with none of the detector's filters (no type:"WORK", no
+        // MONTHLY_HOURS/FLEXTIME exclusion), so the card demanded action on days the backend does not
+        // know about. Same error class as the inline {day}Hours predicate Phase 111 removed above.
+        //
+        // D-01: the window is the CURRENT MONTH — deliberately NOT widened to match the old client
+        // counter. Days outside the current month trigger no notification and block no
+        // Monatsabschluss; a hint demanding an unenforced action IS the defect (Phase 113 / #116
+        // removed exactly such a promise rather than building it). Making older months actionable
+        // also opens the question of whether they should block month close — its own domain ticket.
+        //
+        // D-09: no explicit enforceBreakConfirmation branch here. findUnconfirmedBreakDays returns []
+        // for an un-opted tenant as its FIRST check (BREAK-05 Gesamt-Opt-in), so the gate is inherited.
+        const breakTenantConfig = await app.prisma.tenantConfig.findUnique({
+          where: { tenantId },
+          select: { enforceBreakConfirmation: true },
+        });
+        const breakMonthRef = todayInTz(tz);
+        const { start: breakMonthStart, end: breakMonthEnd } = monthRangeUtc(
+          breakMonthRef.getUTCFullYear(),
+          breakMonthRef.getUTCMonth() + 1,
+          tz,
+        );
+        const { firstDay: breakMonthFirstDay, lastDay: breakMonthLastDay } = monthDayBounds(
+          breakMonthStart,
+          breakMonthEnd,
+          tz,
+        );
+        unconfirmedBreakDays = await findUnconfirmedBreakDays(app.prisma, {
+          employeeId,
+          monthFirstDay: breakMonthFirstDay,
+          monthLastDay: breakMonthLastDay,
+          tz,
+          scheduleType: String(schedule?.type ?? ""),
+          enforceBreakConfirmation: breakTenantConfig?.enforceBreakConfirmation ?? false,
+        });
       }
 
       // 4. Team-wide pending approvals (only for managers/admins)
@@ -1213,6 +1260,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
         });
       }
 
+      // unconfirmedBreakDays is deliberately NOT summed into `total`. `total` is the Phase-111
+      // contract the client feeds into hasNoOpenItems($lib/leave/karenz-nudge.ts) as a value
+      // SEPARATE from the break and Karenz counts; folding it in here would double-count it there.
       const total =
         missingDays.length + pendingRequestsCount + invalidEntriesCount + pendingApprovalsCount;
 
@@ -1221,6 +1271,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         pendingRequests: pendingRequestsCount,
         invalidEntries: invalidEntriesCount,
         pendingApprovals: pendingApprovalsCount,
+        unconfirmedBreakDays,
         total,
       };
     },

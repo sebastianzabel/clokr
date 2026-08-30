@@ -276,13 +276,18 @@ export async function presenceRoutes(app: FastifyInstance) {
             // between our pre-check and our resolver call. Emit
             // WIFI_PRESENCE_CONFIRMED on the existing entry (preserves the
             // pre-Plan-5 idempotent contract).
+            // Phase 118 (D-07): no `isInvalid` filter. After D-01 the winner of the race
+            // can be an `isInvalid` row (CANCELLATION_REQUESTED via resolver.ts:82-91, or
+            // invalidated by the attendance-checker). With the old filter, exactly the
+            // entries this phase makes reachable would silently lose the
+            // WIFI_PRESENCE_CONFIRMED audit entry — a gap in Revisionssicherheit.
+            // The soft-delete filter stays (CLAUDE.md requirement).
             const winnerEntry = await app.prisma.timeEntry.findFirst({
               where: {
                 employeeId: employee.id,
                 date: today,
                 deletedAt: null,
                 endTime: null,
-                isInvalid: false,
               },
             });
             if (winnerEntry) {
@@ -299,9 +304,11 @@ export async function presenceRoutes(app: FastifyInstance) {
             }
             return reply.code(200).send({ ok: true });
           }
-          // Other CONFLICTs (LEAVE_APPROVED, MONTH_LOCKED, NOT_CLOCKED_IN —
-          // shouldn't fire on IN) — log + still return 200 to preserve the
-          // adapter's idempotent contract (Pitfall 4 — never 409 on /events).
+          // Other CONFLICTs (LEAVE_APPROVED, MONTH_LOCKED, RETRO_PENDING, NOT_CLOCKED_IN —
+          // NOT_CLOCKED_IN shouldn't fire on IN) — log + still return 200 to preserve the
+          // adapter's idempotent contract (Pitfall 4 — never 409 on /events). Phase 118:
+          // that new reason deliberately gets no branch of its own here — the /events
+          // adapter never responds with 409.
           app.log.warn(
             { employeeId: employee.id, mac, reason: resolution.reason },
             "WIFI_CONNECTED_UNEXPECTED_CONFLICT",
