@@ -10,9 +10,9 @@
 // - D-07: security-relevant controls (password policy, session config incl. `rememberMeEnabled`,
 //   SMTP) must stay button-gated (`onclick=`), regardless of how toggle-shaped they look.
 // - D-01: the remaining genuine form groups stay button-gated.
-// - AK-02 (D-02): text/number inputs must never write outside a button-gated group — the two
-//   known violations (`saveBreakDefaults`, `saveRetroEntryWindowDays`) are census-pinned here so
-//   plan 109-03's removal of them is a visible, provable strengthening, not a silent relaxation.
+// - AK-02 (D-02): text/number inputs must never write outside a button-gated group. Plan 109-03
+//   removed the two former violations (`saveBreakDefaults`, `saveRetroEntryWindowDays`, both now
+//   button-gated) — the census assertion below is the empty set.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -96,8 +96,6 @@ describe("D-01 — genuine form groups stay button-gated", () => {
 });
 
 describe("AK-02 — text/number inputs never write outside a button-gated group", () => {
-  const KNOWN_VIOLATIONS = new Set(["saveBreakDefaults", "saveRetroEntryWindowDays"]);
-
   // Filtered to type="number" | type="text" and not "every input" on purpose:
   // `saveDefaultBreakStart` sits on a type="time" field that D-03 explicitly leaves instant,
   // and all nine instant handlers above are checkboxes — neither is a D-02 concern.
@@ -111,15 +109,15 @@ describe("AK-02 — text/number inputs never write outside a button-gated group"
     return found;
   }
 
-  it("introduces no NEW text/number instant-write handler", () => {
-    const unexpected = textOrNumberInputHandlers(PAGE).filter((h) => !KNOWN_VIOLATIONS.has(h));
-    expect(unexpected).toEqual([]);
+  it("AK-02: no text/number input in admin/system carries an inline write handler", () => {
+    expect(textOrNumberInputHandlers(PAGE)).toEqual([]);
   });
 
-  it("records the remaining known D-02 violation that plan 109-03 Task 2 removes", () => {
-    // Interim value after Task 1 (this commit) button-gated `saveBreakDefaults` — its two
-    // occurrences are gone from the census. Task 2 replaces this assertion with `toEqual([])`
-    // and deletes KNOWN_VIOLATIONS entirely — a strengthening of this pin, never a relaxation.
-    expect(textOrNumberInputHandlers(PAGE).sort()).toEqual(["saveRetroEntryWindowDays"]);
-  });
+  it.each(["saveBreakDefaults", "saveRetroEntryWindowDays"])(
+    "%s is button-gated, never onblur (D-02/N-01)",
+    (name) => {
+      expect(PAGE).toContain(`onclick={${name}}`);
+      expect(PAGE).not.toContain(`onblur={${name}}`);
+    },
+  );
 });

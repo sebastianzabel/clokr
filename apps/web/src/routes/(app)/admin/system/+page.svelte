@@ -805,7 +805,8 @@
     }
   }
 
-  // Phase 76.29 — Rückwirkende Einträge Selbstbearbeitungsfenster (onblur)
+  // Phase 76.29 — Rückwirkende Einträge Selbstbearbeitungsfenster (Phase 109 D-02: button-gated
+  // — a number field never writes on its own)
   async function saveRetroEntryWindowDays() {
     if (!_gOtherFields) return;
     retroWindowError = "";
@@ -1737,6 +1738,21 @@
           title="Rückwirkende Einträge"
           sub="Frist für eigenständige Bearbeitung vergangener Zeiteinträge"
         >
+          {#snippet footer()}
+            <button
+              class="btn btn-primary"
+              onclick={saveRetroEntryWindowDays}
+              disabled={retroWindowSaving}
+              data-testid="admin-system-retro-window-save"
+            >
+              {#if retroWindowSaving}<Spinner />{/if}
+              Speichern
+            </button>
+            {#if retroWindowSaved}
+              <span class="saved-hint">✓ Gespeichert</span>
+            {/if}
+          {/snippet}
+
           {#if retroWindowError}
             <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
               <span>⚠</span><span>{retroWindowError}</span>
@@ -1752,7 +1768,6 @@
               max="90"
               step="1"
               bind:value={retroEntryWindowDays}
-              onblur={saveRetroEntryWindowDays}
               class="form-input modal-input-sm"
               disabled={retroWindowSaving}
               data-testid="admin-system-arbeitszeit-retroEntryWindowDays"
@@ -1763,9 +1778,6 @@
               Referenzwert (ArbZG-Referentenentwurf 2023): 7 Tage. Standard: 10 Tage.
             </p>
           </div>
-          {#if retroWindowSaved}
-            <span class="saved-hint">✓ Gespeichert</span>
-          {/if}
         </Section>
         <!-- ── Berufsschule — Zeitgutschrift (Phase 76.35) ─────────────────── -->
         <Section
