@@ -36,12 +36,12 @@ The parser implements exactly this fixed, project-owned grammar — not general 
 _<optionaler Audit-Hinweis>_
 ```
 
-Four rules, and only these four are given meaning by the parser:
+Four STRUCTURAL rules, and only these four give a construct a distinct data shape:
 
 1. Exactly one `## v<version> — <Titel>` line — always the first non-empty line of the file.
 2. `### <Heading>` opens a section (e.g. "Neue Funktionen", "Fehlerbehebungen", "Sicherheit").
 3. `- <text>` is a bullet inside the current section.
-4. `**bold**` inside a bullet marks a bold span.
+4. `**bold**` inside a bullet marks a bold span (`{ text, bold: true }`).
 
 Everything else — including a `[link](url)` or a `> [!CAUTION]` blockquote callout — is carried
 as literal text and displayed literally, not rendered as a link or a callout. That is a
@@ -49,6 +49,16 @@ deliberate, documented limitation: it is what removes the XSS surface by constru
 rather than by sanitising untrusted markup. If a body needs to draw attention to something, say so
 in prose; do not rely on Markdown syntax beyond the four rules above to carry meaning in the
 rendered dialog.
+
+**Cosmetic exception (Phase 110-07 checkpoint fix):** inline emphasis markers that carry no
+structural meaning above — `**bold**` outside a bullet (e.g. in the intro paragraph), single-`*`
+italic, and inline code wrapped in a backtick pair — are stripped down to their plain content
+wherever they appear, instead of being displayed with their raw punctuation. This was found live:
+the intro paragraph and several "Betrieb & Migration" bullets in `v1.9.18.md` showed literal `**`
+and backtick characters in the running drawer. This stripping never produces a new data shape or
+any HTML — it only removes delimiter characters — so it does not weaken the XSS-by-construction
+guarantee above. A genuinely unrecognised construct (`[link](url)`, `> [!CAUTION]`) is still left
+completely untouched, punctuation and all.
 
 ## When to write one
 

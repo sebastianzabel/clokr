@@ -12,10 +12,18 @@
  * more; there is nowhere in this pipeline an HTML string could even form.
  *
  * The grammar implemented here is documented in `docs/release-notes/README.md` and is
- * intentionally NOT general CommonMark — it supports exactly four constructs: one `## vX.Y.Z —
- * <title>` headline, `### <heading>` sections, `- <text>` bullets (with optional indented
- * continuation lines), and `**bold**` spans inside a bullet. Everything else in a release body
- * (links, blockquote callouts, …) is carried as literal text.
+ * intentionally NOT general CommonMark — it supports exactly four STRUCTURAL constructs: one
+ * `## vX.Y.Z — <title>` headline, `### <heading>` sections, `- <text>` bullets (with optional
+ * indented continuation lines), and `**bold**` spans inside a bullet that become a `bold: true`
+ * span. Everything else in a release body (links, blockquote callouts, …) is carried as literal
+ * text, unrecognised and unprocessed.
+ *
+ * Separately (Plan 07 checkpoint fix), inline COSMETIC emphasis markers that carry no structural
+ * meaning here — `**bold**` outside a bullet, single-`*` italic, and inline code delimited by a
+ * backtick pair — are stripped down to their plain content wherever they appear (intro, footnote,
+ * and inside bullets alongside the structural `**`), by {@link stripInlineMarkers}, so their raw
+ * punctuation never reaches the rendered drawer. This is textual cleanup, not Markdown rendering:
+ * it removes delimiter characters, never adds a tag or a new span type.
  */
 import { readFileSync, readdirSync } from "fs";
 import { join, resolve } from "path";
@@ -61,12 +69,42 @@ const FOOTNOTE_RE = /^_(.+)_$/;
 const CORPUS_FILENAME_RE = /^v\d+\.\d+\.\d+\.md$/;
 
 /**
+ * Strip inline Markdown emphasis markers down to their plain content wherever the grammar does
+ * not give them structural meaning: inline code (`` `x` ``) and single-asterisk italic (`*x*`)
+ * are NOT among the four documented rules in `docs/release-notes/README.md`, so they were
+ * previously carried through completely unprocessed -- including the delimiter punctuation
+ * itself. Found in the Plan 07 checkpoint: the running drawer showed literal backtick characters
+ * around inline identifiers like `` `SHIFT_BASED` `` and literal `**` around a bold aside that
+ * sits in intro text rather than inside a bullet (the one place `**` WAS already handled).
+ *
+ * This only removes delimiter characters -- it never produces HTML, a tag, or a new span type,
+ * so it does not touch the AK-13/N-08 guarantee that this module never forms markup: a hostile
+ * payload with no backtick/asterisk pairs (e.g. `<img src=x onerror=alert(1)>`) passes through
+ * unchanged, exactly as the existing hostile-payload test already pins.
+ *
+ * Order matters: `**bold**` is stripped before single-`*` italic, otherwise "**x**" would first
+ * be read as an "*"-wrapped "*x*" pair and leave stray asterisks behind.
+ */
+function stripInlineMarkers(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1");
+}
+
+/**
  * Split bullet text on `**` into alternating plain/bold spans.
  *
  * Even-indexed fragments are plain, odd-indexed are bold; empty fragments (adjacent `**` or a
  * leading/trailing `**`) are dropped. A trailing UNMATCHED `**` (an odd total delimiter count)
  * must not turn the remainder of the bullet bold -- a stray asterisk pair in a shipped note must
  * not corrupt everything after it, so the last fragment always stays plain in that case.
+ *
+ * `**` still marks bold as before (it is one of the four documented grammar rules); each
+ * resulting fragment is additionally run through {@link stripInlineMarkers} so a backtick or
+ * single-asterisk marker inside either a bold or a plain fragment does not surface its raw
+ * punctuation (Plan 07 checkpoint fix). `**` itself never survives into a fragment here (it was
+ * just used as the split delimiter), so re-running that half of `stripInlineMarkers` is a no-op.
  */
 function splitSpans(text: string): ReleaseNoteSpan[] {
   const parts = text.split("**");
@@ -78,7 +116,7 @@ function splitSpans(text: string): ReleaseNoteSpan[] {
     if (part === "") continue;
     const isLast = idx === parts.length - 1;
     const bold = unmatchedTrailing ? !isLast && idx % 2 === 1 : idx % 2 === 1;
-    spans.push({ text: part, bold });
+    spans.push({ text: stripInlineMarkers(part), bold });
   }
   return spans;
 }
@@ -120,7 +158,10 @@ export function parseReleaseNote(version: string, markdown: string): ReleaseNote
 
   const flushParagraph = () => {
     if (currentParagraph.length > 0) {
-      intro.push(currentParagraph.join(" "));
+      // Intro paragraphs stay plain strings (not spans) -- unlike bullets, this text never
+      // needed a `bold`/`code` render distinction, so stripping is enough (Plan 07 checkpoint
+      // fix: intro previously carried its `**`/backtick markers through completely raw).
+      intro.push(stripInlineMarkers(currentParagraph.join(" ")));
       currentParagraph = [];
     }
   };
@@ -135,7 +176,7 @@ export function parseReleaseNote(version: string, markdown: string): ReleaseNote
       while (j < lines.length && lines[j].trim() === "") j++;
       if (j < lines.length) {
         const footnoteMatch = lines[j].trim().match(FOOTNOTE_RE);
-        if (footnoteMatch) footnote = footnoteMatch[1];
+        if (footnoteMatch) footnote = stripInlineMarkers(footnoteMatch[1]);
       }
       break; // nothing beyond the rule matters other than the optional footnote
     }
@@ -162,8 +203,9 @@ export function parseReleaseNote(version: string, markdown: string): ReleaseNote
       } else {
         // A bullet outside any section is not part of the documented grammar; carry it as
         // literal intro text rather than throwing -- a shipped note with an odd list before its
-        // first heading must not take the API down.
-        intro.push(bulletMatch[1]);
+        // first heading must not take the API down. Same marker stripping as every other intro
+        // paragraph (Plan 07 checkpoint fix).
+        intro.push(stripInlineMarkers(bulletMatch[1]));
       }
       continue;
     }

@@ -114,6 +114,73 @@ describe("parseReleaseNote", () => {
       { text: "<img src=x onerror=alert(1)>", bold: false },
     ]);
   });
+
+  // ── Plan 07 checkpoint fix: raw Markdown markers leaking into the running drawer ──────────
+  // Measured live: `.whats-new-intro` showed literal `**` around a bold aside that sits in intro
+  // text (never handled -- rule 4 only covers `**` "inside a bullet"), and 6 literal backtick
+  // characters around inline identifiers inside bullets in the "Betrieb & Migration" section.
+  // These four tests would fail against the pre-fix parser (intro/footnote had zero marker
+  // handling; bullets only stripped `**`, never backticks).
+
+  it("strips a bold marker from intro text even though it sits outside any bullet", () => {
+    const md = [
+      "## v1.9.18 — Titel",
+      "",
+      "Feature-Release. **Zwei Schema-Migrationen erforderlich** — siehe unten.",
+      "",
+      "### Neue Funktionen",
+      "",
+      "- Bullet",
+    ].join("\n");
+    const note = parseReleaseNote("1.9.18", md);
+    expect(note.intro).toEqual([
+      "Feature-Release. Zwei Schema-Migrationen erforderlich — siehe unten.",
+    ]);
+  });
+
+  it("strips a backtick code marker from a bullet, keeping the identifier as plain text", () => {
+    const md = [
+      "## v1.9.18 — Titel",
+      "",
+      "### Betrieb & Migration",
+      "",
+      "- Migration `20260825090500_section9_credit_unique_pair` anwenden.",
+    ].join("\n");
+    const note = parseReleaseNote("1.9.18", md);
+    expect(note.sections[0].bullets[0].spans).toEqual([
+      { text: "Migration 20260825090500_section9_credit_unique_pair anwenden.", bold: false },
+    ]);
+  });
+
+  it("strips a backtick marker from intro text and from the footnote", () => {
+    const md = [
+      "## v1.9.18 — Titel",
+      "",
+      "Enthält eine Migration (neue Tabelle `OpeningBalance`).",
+      "",
+      "---",
+      "",
+      "_Siehe `docs/runbooks/`._",
+    ].join("\n");
+    const note = parseReleaseNote("1.9.18", md);
+    expect(note.intro).toEqual(["Enthält eine Migration (neue Tabelle OpeningBalance)."]);
+    expect(note.footnote).toBe("Siehe docs/runbooks/.");
+  });
+
+  it("still handles bold AND backticks together in the same bullet, bold wins the span split", () => {
+    const md = [
+      "## v1.9.18 — Titel",
+      "",
+      "### Betrieb & Migration",
+      "",
+      "- **Zwei Migrationen anwenden:** `20260825090500_a` und `20260825145353_b`.",
+    ].join("\n");
+    const note = parseReleaseNote("1.9.18", md);
+    expect(note.sections[0].bullets[0].spans).toEqual([
+      { text: "Zwei Migrationen anwenden:", bold: true },
+      { text: " 20260825090500_a und 20260825145353_b.", bold: false },
+    ]);
+  });
 });
 
 describe("loadReleaseNotes", () => {
