@@ -24,6 +24,7 @@ import type {
   WorkdayGap,
 } from "../find-missing-workdays";
 import { findMissingWorkdays } from "../find-missing-workdays";
+import { getDayOfWeekInTz } from "../timezone"; // Phase 128: dow helper for T1/T6 assertions
 
 const TZ = "Europe/Berlin";
 
@@ -379,5 +380,181 @@ describe("findMissingWorkdays — mid-month hire/exit boundaries (CLOSE-04, D-03
 
     // 2026-07-10 (Thursday = exitDate) is inclusive → IS a gap (no entry, D-03)
     expect(gapDates(result)).toContain("2026-07-10");
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Phase 128 (D-01): the FIXED branch reads `workDays`, not `{day}Hours`
+// ──────────────────────────────────────────────────────────────────────────────
+
+/** dow of a "YYYY-MM-DD" fixture date, 0=Sun..6=Sat, in the fixture TZ. */
+function dowOfFixture(dateStr: string): number {
+  return getDayOfWeekInTz(new Date(`${dateStr}T12:00:00Z`), TZ);
+}
+
+describe("findMissingWorkdays — FIXED branch is workDays-primary (Phase 128, D-01)", () => {
+  it("T1: divergent NARROWER workDays [2,3,4] beats Mon-Fri {day}Hours", () => {
+    // Tue/Wed/Thu = 2/3/4. Mon-Fri {day}Hours = 8, Sat/Sun = 0.
+    const input = baseFixedInput({
+      schedule: {
+        ...FIXED_SCHEDULE_MON_FRI,
+        workDays: [2, 3, 4],
+      } as Record<string, unknown>,
+    });
+    const result = findMissingWorkdays(input);
+    const dates = gapDates(result);
+
+    expect(dates).toContain("2026-07-01"); // Wed
+    expect(dates).toContain("2026-07-02"); // Thu
+    expect(dates).toContain("2026-07-07"); // Tue
+    expect(dates).not.toContain("2026-07-06"); // Mon — {day}Hours=8 but not in workDays
+    expect(dates).not.toContain("2026-07-03"); // Fri — {day}Hours=8 but not in workDays
+
+    // Every returned gap is on one of the three obligated weekdays — assert over the
+    // whole set, not only the sampled days above.
+    for (const d of dates) {
+      expect([2, 3, 4]).toContain(dowOfFixture(d));
+    }
+  });
+
+  it("T2: divergent WIDER workDays includes Saturday despite saturdayHours=0", () => {
+    // The old {day}Hours-only code could never produce a Saturday gap here — this is
+    // the direction that proves workDays LEADS rather than merely filters.
+    const input = baseFixedInput({
+      schedule: {
+        ...FIXED_SCHEDULE_MON_FRI,
+        workDays: [1, 2, 3, 4, 5, 6],
+        saturdayHours: 0,
+      } as Record<string, unknown>,
+    });
+    const result = findMissingWorkdays(input);
+    const dates = gapDates(result);
+
+    expect(dates).toContain("2026-07-04");
+    expect(dates).toContain("2026-07-11");
+    expect(dates).toContain("2026-07-18");
+    expect(dates).toContain("2026-07-25");
+  });
+
+  it("T3: empty workDays falls back to {day}Hours > 0", () => {
+    const input = baseFixedInput({
+      schedule: {
+        ...FIXED_SCHEDULE_MON_FRI,
+        workDays: [] as number[],
+      } as Record<string, unknown>,
+    });
+    const result = findMissingWorkdays(input);
+    const baseline = findMissingWorkdays(baseFixedInput());
+
+    expect(gapDates(result)).toEqual(gapDates(baseline));
+  });
+
+  it("T4: workDays key absent entirely — does not throw, matches T3's fallback result", () => {
+    // Mirrors the getEffectiveSchedule() fallback object in routes/time-entries.ts
+    // (lines ~3016-3030), which has no `workDays` key at all.
+    const scheduleWithoutWorkDays: Record<string, unknown> = {
+      type: "FIXED_SCHEDULE",
+      weeklyHours: 40,
+      mondayHours: 8,
+      tuesdayHours: 8,
+      wednesdayHours: 8,
+      thursdayHours: 8,
+      fridayHours: 8,
+      saturdayHours: 0,
+      sundayHours: 0,
+      // no workDays key
+    };
+    const input = baseFixedInput({ schedule: scheduleWithoutWorkDays });
+
+    expect(() => findMissingWorkdays(input)).not.toThrow();
+
+    const result = findMissingWorkdays(input);
+    const baseline = findMissingWorkdays(baseFixedInput());
+    expect(gapDates(result)).toEqual(gapDates(baseline));
+  });
+
+  it("T5: Prisma-Decimal-like {day}Hours honoured on the fallback path (no workDays key)", () => {
+    class DecimalLike {
+      constructor(private readonly n: number) {}
+      toString() {
+        return String(this.n);
+      }
+      valueOf() {
+        return this.n;
+      }
+    }
+    const scheduleWithoutWorkDays: Record<string, unknown> = {
+      type: "FIXED_SCHEDULE",
+      weeklyHours: 40,
+      mondayHours: new DecimalLike(8),
+      tuesdayHours: new DecimalLike(8),
+      wednesdayHours: new DecimalLike(8),
+      thursdayHours: new DecimalLike(8),
+      fridayHours: new DecimalLike(8),
+      saturdayHours: new DecimalLike(0),
+      sundayHours: new DecimalLike(0),
+      // no workDays key
+    };
+    const input = baseFixedInput({ schedule: scheduleWithoutWorkDays });
+    const result = findMissingWorkdays(input);
+    const dates = gapDates(result);
+
+    expect(dates).toContain("2026-07-01"); // Wed, 8h
+    expect(dates).not.toContain("2026-07-04"); // Sat, 0h
+    expect(dates).not.toContain("2026-07-05"); // Sun, 0h
+  });
+
+  it("T6: type null and unknown type behave like FIXED with workDays [2,3,4]", () => {
+    const allEightHours: Record<string, unknown> = {
+      weeklyHours: 56,
+      mondayHours: 8,
+      tuesdayHours: 8,
+      wednesdayHours: 8,
+      thursdayHours: 8,
+      fridayHours: 8,
+      saturdayHours: 8,
+      sundayHours: 8,
+      workDays: [2, 3, 4],
+    };
+
+    const nullTypeResult = findMissingWorkdays(
+      baseFixedInput({ schedule: { ...allEightHours, type: null } }),
+    );
+    const unknownTypeResult = findMissingWorkdays(
+      baseFixedInput({ schedule: { ...allEightHours, type: "SOMETHING_NEW" } }),
+    );
+
+    for (const result of [nullTypeResult, unknownTypeResult]) {
+      const dates = gapDates(result);
+      expect(dates.length).toBeGreaterThan(0);
+      for (const d of dates) {
+        expect([2, 3, 4]).toContain(dowOfFixture(d));
+      }
+    }
+  });
+
+  it("T7: findMissingWorkdays does not mutate its schedule input", () => {
+    const schedule: Record<string, unknown> = {
+      ...FIXED_SCHEDULE_MON_FRI,
+      workDays: [2, 3, 4],
+    };
+    const before = JSON.stringify(schedule);
+
+    findMissingWorkdays(baseFixedInput({ schedule }));
+
+    expect(JSON.stringify(schedule)).toBe(before);
+  });
+
+  it("T8: SHIFT_BASED regression guard — roster branch is unaffected by workDays", () => {
+    const input = baseFixedInput({
+      schedule: {
+        ...SHIFT_BASED_SCHEDULE,
+        workDays: [1, 2, 3, 4, 5],
+      } as Record<string, unknown>,
+      rosterDates: new Set<string>(["2026-07-02"]),
+    });
+    const result = findMissingWorkdays(input);
+
+    expect(gapDates(result)).toEqual(["2026-07-02"]);
   });
 });
