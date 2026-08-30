@@ -96,7 +96,7 @@ describe("Auto-Break on Clock-out", () => {
     expect(body.entry.breakStatus).toBe("AUTO");
   });
 
-  it("does not auto-insert break when manual breaks provided", async () => {
+  it("ignores breakMinutes in the clock-out body — auto-break still applies (Phase 129, D-04)", async () => {
     const startTime = new Date(Date.now() - 8 * 60 * 60 * 1000);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -119,10 +119,10 @@ describe("Auto-Break on Clock-out", () => {
 
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
-    // Manual break provided, auto-break should NOT override
-    expect(body.entry.breakMinutes).toBe(15);
-    // Phase 91 (BREAK-02): human-provided break stays default CONFIRMED, never AUTO
-    expect(body.entry.breakStatus).toBe("CONFIRMED");
+    // Phase 129: a body value can no longer reach the breakMinutes column, so the
+    // auto-break path decides — same >6h Pflichtpause as the sibling test above.
+    expect(body.entry.breakMinutes).toBe(30);
+    expect(body.entry.breakStatus).toBe("AUTO");
   });
 
   it("does not auto-insert break for short shifts (<6h)", async () => {
