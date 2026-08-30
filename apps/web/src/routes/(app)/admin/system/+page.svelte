@@ -178,6 +178,7 @@
         shiftStoreHoursMode,
       });
       storeHoursMsg = "Gespeichert.";
+      storeHoursSnapshot = snap(storeHours, shiftStoreHoursMode); // Phase 109 — section is clean again
       toasts.success("Ladenöffnungszeiten aktualisiert.");
     } catch (e: unknown) {
       storeHoursMsg = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
@@ -448,6 +449,35 @@
     { scope: "admin", label: "Voller Zugriff" },
   ];
 
+  // ── Unsaved-section tracking (Phase 109, D-11/D-12 · AK-06/AK-07) ──────────────
+  // One snapshot per button-gated group, taken at load and re-taken after each successful save.
+  // Snapshot comparison rather than per-field oninput flags: it is three lines per section instead
+  // of one per input, and undoing an edit by hand clears the marker again, which a per-field flag
+  // cannot do. Instant-save controls are deliberately NOT in any snapshot — they are never "unsaved".
+  function snap(...values: unknown[]): string {
+    return JSON.stringify(values);
+  }
+
+  let companySnapshot = $state("");
+  let companyDirty = $derived(snap(gTenantName, gFederalState, gTimezone) !== companySnapshot);
+
+  let storeHoursSnapshot = $state("");
+  let storeHoursDirty = $derived(snap(storeHours, shiftStoreHoursMode) !== storeHoursSnapshot);
+
+  let coreDefaultsSnapshot = $state("");
+  let coreDefaultsDirty = $derived(
+    snap(defaultCoreStart, defaultCoreEnd, defaultCoreDays) !== coreDefaultsSnapshot,
+  );
+
+  // Only the two number fields — autoBreakEnabled / defaultBreakStart are instant (D-03).
+  let breakDefaultsSnapshot = $state("");
+  let breakDefaultsDirty = $derived(
+    snap(defaultBreakOver6h, defaultBreakOver9h) !== breakDefaultsSnapshot,
+  );
+
+  let retroWindowSnapshot = $state("");
+  let retroWindowDirty = $derived(snap(retroEntryWindowDays) !== retroWindowSnapshot);
+
   onMount(async () => {
     try {
       const cfg = await api.get<TenantConfig>("/settings/work");
@@ -570,6 +600,13 @@
       } catch {
         /* ignore */
       }
+
+      // Phase 109 — baseline for the unsaved markers. Must run after ALL state above is hydrated.
+      companySnapshot = snap(gTenantName, gFederalState, gTimezone);
+      storeHoursSnapshot = snap(storeHours, shiftStoreHoursMode);
+      coreDefaultsSnapshot = snap(defaultCoreStart, defaultCoreEnd, defaultCoreDays);
+      breakDefaultsSnapshot = snap(defaultBreakOver6h, defaultBreakOver9h);
+      retroWindowSnapshot = snap(retroEntryWindowDays);
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
@@ -590,6 +627,7 @@
         timezone: gTimezone,
       });
       stateSaved = true;
+      companySnapshot = snap(gTenantName, gFederalState, gTimezone); // Phase 109 — section is clean again
       setTimeout(() => (stateSaved = false), 3000);
     } catch (e: unknown) {
       stateError = e instanceof Error ? e.message : "Fehler";
@@ -707,6 +745,7 @@
         defaultBreakOver9h: Math.trunc(defaultBreakOver9h),
       });
       breakDefaultsSaved = true;
+      breakDefaultsSnapshot = snap(defaultBreakOver6h, defaultBreakOver9h); // Phase 109 — clean again
       setTimeout(() => (breakDefaultsSaved = false), 2500);
     } catch (e: unknown) {
       // Server message is German + user-friendly (Phase 64 D-07) — surface verbatim
@@ -854,6 +893,7 @@
       });
       retroEntryWindowDays = val;
       retroWindowSaved = true;
+      retroWindowSnapshot = snap(retroEntryWindowDays); // Phase 109 — section is clean again
       setTimeout(() => (retroWindowSaved = false), 2500);
     } catch (e: unknown) {
       retroWindowError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
@@ -975,6 +1015,7 @@
         defaultCoreDays,
       });
       coreDefaultsSaved = true;
+      coreDefaultsSnapshot = snap(defaultCoreStart, defaultCoreEnd, defaultCoreDays); // Phase 109 — clean again
       setTimeout(() => (coreDefaultsSaved = false), 3000);
     } catch (e: unknown) {
       coreDefaultsError = e instanceof Error ? e.message : "Fehler";
@@ -1195,7 +1236,11 @@
         </Section>
 
         <!-- ── Unternehmen & Region ─────────────────────────────────────────── -->
-        <Section title="Unternehmen & Region" sub="Firmenname, Bundesland & Zeitzone">
+        <Section
+          title="Unternehmen & Region"
+          sub="Firmenname, Bundesland & Zeitzone"
+          dirty={companyDirty}
+        >
           {#snippet footer()}
             <button
               class="btn btn-primary"
@@ -1258,6 +1303,7 @@
         <Section
           title="Ladenöffnungszeiten"
           sub="Wochentägliche Öffnungs- und Schließzeiten. Schichtplanung warnt bei Konflikten."
+          dirty={storeHoursDirty}
         >
           {#snippet footer()}
             <button
@@ -1505,6 +1551,7 @@
         <Section
           title="Pausen automatisch abziehen"
           sub="Pflicht-Pausen nach § 4 ArbZG (>6h: 30 Min., >9h: 45 Min.)"
+          dirty={breakDefaultsDirty}
         >
           {#snippet footer()}
             <button
@@ -1661,6 +1708,7 @@
         <Section
           title="Kernarbeitszeit-Defaults (Gleitzeit)"
           sub="Standard-Kernzeit für neue Gleitzeit-Mitarbeiter"
+          dirty={coreDefaultsDirty}
         >
           {#snippet footer()}
             <button
@@ -1760,6 +1808,7 @@
         <Section
           title="Rückwirkende Einträge"
           sub="Frist für eigenständige Bearbeitung vergangener Zeiteinträge"
+          dirty={retroWindowDirty}
         >
           {#snippet footer()}
             <button
