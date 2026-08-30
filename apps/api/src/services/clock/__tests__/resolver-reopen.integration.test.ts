@@ -56,8 +56,17 @@ describe("services/clock/resolver — D-01 reopen path (resolver-reopen.integrat
   });
 
   function buildEvent(opts: { source: string; intent: ClockIntent; hoursAgo: number }): ClockEvent {
-    const now = new Date();
-    const timestamp = new Date(now.getTime() - opts.hoursAgo * 3600 * 1000);
+    // Issue #136: anchor to NOON UTC so every hoursAgo offset (all <= 4h here) lands on the
+    // SAME UTC day. Deriving each timestamp from `new Date()` let a "same-day sequence" straddle
+    // midnight whenever the run happened within `hoursAgo` of it: the last event got a different
+    // dateStr day-key, the resolver correctly created a SECOND per-day entry, and the
+    // "exactly one active row" invariant failed for a reason unrelated to the code under test.
+    // Observed in CI at 01:26 UTC (`expected 2 to be 1`) while the same commit was green locally
+    // at 00:50 UTC. Production derives dateStr in the tenant timezone; the test only needs a
+    // stable same-day anchor. Same idiom as consolidate.cross-source.test.ts.
+    const base = new Date();
+    base.setUTCHours(12, 0, 0, 0);
+    const timestamp = new Date(base.getTime() - opts.hoursAgo * 3600 * 1000);
     const dateStr = timestamp.toISOString().slice(0, 10);
     return {
       employeeId: data.employee.id,
