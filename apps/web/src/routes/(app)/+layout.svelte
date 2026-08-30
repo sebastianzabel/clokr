@@ -14,6 +14,7 @@
   import ErrorBoundary from "$lib/components/ui/ErrorBoundary.svelte";
   import WhatsNewPanel from "$lib/components/layout/WhatsNewPanel.svelte";
   import { hasUnreadReleaseNotes, whatsNewOpen } from "$stores/release-notes";
+  import { isMobileViewport } from "$lib/utils/viewport";
 
   interface Props {
     children?: import("svelte").Snippet;
@@ -121,13 +122,20 @@
   // dismissing it (which writes the seen state server-side) is final for this session even if the
   // PUT fails.
   //
-  // Safe on the post-login landing route because WhatsNewPanel is a non-modal drawer: it sets
-  // no `inert` on sibling nodes and does not lock body scroll, so the "Einstempeln" button
-  // stays reachable while it is open (N-07, asserted in WhatsNewPanel.test.ts).
+  // WhatsNewPanel is a non-modal drawer: it sets no `inert` on sibling nodes and does not lock
+  // body scroll, so the "Einstempeln" button stays reachable in MECHANISM while it is open (N-07,
+  // asserted in WhatsNewPanel.test.ts). That held on desktop but not in OUTCOME on a phone —
+  // measured live at 390x844, the drawer covered 92% of the viewport width and its full height
+  // directly over the button (`elementFromPoint()` on the button's centre resolved into
+  // `aside.whats-new`). Below the app's mobile breakpoint (isMobileViewport(), same 960px
+  // BottomTabBar.svelte/`.app` grid already use) auto-open is therefore suppressed entirely —
+  // manual opening via the version-line dot (Sidebar + MobileMoreSheet) stays available at every
+  // width; only the AUTOMATIC trigger yields to the primary clock-in action on a phone.
   let autoOpened = $state(false);
   $effect(() => {
     if (autoOpened) return;
     if (!$hasUnreadReleaseNotes) return;
+    if (isMobileViewport()) return;
     autoOpened = true;
     whatsNewOpen.set(true);
   });
