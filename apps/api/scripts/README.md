@@ -16,7 +16,7 @@ classified by lifecycle.
 | recalculate-snapshots-after-shift-netto-fix.ts | 2026-06-11 | Recompute SHIFT_BASED SaldoSnapshots after v1.8.9 brutto→netto fix; locked-month-safe; idempotent                                                                                                                                                                               | Migration artifact (quick-260611-gap) |
 | anonymize-dump.ts                              | 2026-04    | Batch DSGVO anonymization across all employees in a connected DB (CronJob entry)                                                                                                                                                                                                | Operator tool                         |
 | validate-anonymization.ts                      | 2026-04    | Companion verifier for anonymize-dump.ts — asserts the post-condition holds                                                                                                                                                                                                     | Operator tool                         |
-| audit-workdays-vs-day-hours.ts                 | 2026-05    | Surface WorkSchedule rows whose workDays mismatches the per-day hours                                                                                                                                                                                                           | Audit tool                            |
+| audit-workdays-vs-day-hours.ts                 | 2026-05    | Surface WorkSchedule rows whose workDays mismatches the per-day hours; one-directional by design, labels SHIFT_BASED hits EXPECTED (Phase 95b)                                                                                                                                  | Audit tool                            |
 | audit-workschedule-non-month1.ts               | 2026-05    | Surface WorkSchedule rows whose validFrom is not the 1st of a month (pre-Phase-60)                                                                                                                                                                                              | Audit tool                            |
 | backfill-auto-revalidate.ts                    | 2026-05    | Re-revalidate TimeEntries marked isInvalid after a leave cancellation                                                                                                                                                                                                           | Migration artifact (Phase 67.2)       |
 | audit-saldo-chain-integrity.ts                 | 2026-08-17 | Walk every active MONTHLY SaldoSnapshot chain; report unexplained carry-over deltas (read-only, exits 2 on findings)                                                                                                                                                            | Audit tool                            |
@@ -67,6 +67,13 @@ carry-over delta(s) and/or duplicate-month link(s) — so it can be used from CI
 unchanged. It performs ZERO writes and deliberately prints truncated employee ids only, with
 no names and no employee numbers (DSGVO), unlike `audit-workdays-vs-day-hours.ts` and
 `audit-workschedule-non-month1.ts`. Operator runbook: `docs/runbooks/saldo-chain-integrity.md`.
+
+`audit-workdays-vs-day-hours.ts` (Phase 95b) is one-directional by design: it reports a day
+whose `{day}Hours` is > 0 but missing from `workDays`, never the reverse, and labels every
+`SHIFT_BASED` hit `[EXPECTED]` in its output rather than a review item. Its findings are for
+review only — Phase 95b established that "correcting" them would be wrong, not merely
+audit-unsafe, because `{day}Hours` is a legacy placeholder for every type except
+`FIXED_SCHEDULE`. See CLAUDE.md "Schedule Types".
 
 ## Test infrastructure
 

@@ -12,6 +12,7 @@ import { describe, it, expect } from "vitest";
 import {
   classifyScheduleRow,
   deriveWorkDaysFromDayHours,
+  renderReport,
   type ScheduleRow,
 } from "../audit-workdays-vs-day-hours";
 
@@ -149,5 +150,70 @@ describe("audit-workdays-vs-day-hours classifyScheduleRow / deriveWorkDaysFromDa
       saturday_hours: "1.00",
     });
     expect(deriveWorkDaysFromDayHours(onlySaturday)).toEqual([6]);
+  });
+});
+
+describe("audit-workdays-vs-day-hours renderReport (pure, DB-free)", () => {
+  const shiftBasedDivergent = mk({
+    schedule_id: "sched-shift-divergent",
+    type: "SHIFT_BASED",
+    work_days: [1, 2, 3],
+    monday_hours: "8.00",
+    tuesday_hours: "8.00",
+    wednesday_hours: "8.00",
+    thursday_hours: "8.00",
+    friday_hours: "8.00",
+    saturday_hours: "8.00",
+    sunday_hours: "8.00",
+  });
+
+  const monthlyHoursPlaceholder = mk({
+    schedule_id: "sched-monthly-placeholder",
+    type: "MONTHLY_HOURS",
+    work_days: [1, 2, 3, 4, 5],
+    monday_hours: "0.00",
+    tuesday_hours: "0.00",
+    wednesday_hours: "0.00",
+    thursday_hours: "0.00",
+    friday_hours: "0.00",
+    saturday_hours: "0.00",
+    sunday_hours: "0.00",
+  });
+
+  const flextimeDivergent = mk({
+    schedule_id: "sched-flex-divergent",
+    type: "FLEXTIME",
+    work_days: [2, 3, 4, 5],
+    monday_hours: "1.00",
+    tuesday_hours: "1.00",
+    wednesday_hours: "1.00",
+    thursday_hours: "1.00",
+    friday_hours: "1.00",
+    saturday_hours: "1.00",
+    sunday_hours: "1.00",
+  });
+
+  it("GT-95b-07 (D-04): SHIFT_BASED hit is labelled [EXPECTED]; the MONTHLY_HOURS non-finding never appears", () => {
+    const output = renderReport([shiftBasedDivergent, monthlyHoursPlaceholder]);
+    expect(output).toContain("[EXPECTED]");
+    expect(output).not.toContain("sched-monthly-placeholder");
+  });
+
+  it("GT-95b-08 (D-03): output states the one-directional semantics and the MONTHLY_HOURS reason", () => {
+    const output = renderReport([shiftBasedDivergent, monthlyHoursPlaceholder]);
+    expect(output).toContain("ONE-DIRECTIONAL");
+    expect(output).toContain("MONTHLY_HOURS");
+  });
+
+  it("GT-95b-09: a clean run (nothing divergent) still prints the asymmetry note", () => {
+    const output = renderReport([monthlyHoursPlaceholder]);
+    expect(output).toContain("No WorkSchedule rows");
+    expect(output).toContain("ONE-DIRECTIONAL");
+  });
+
+  it("GT-95b-10: a divergent FLEXTIME row renders with [REVIEW], not [EXPECTED]", () => {
+    const output = renderReport([flextimeDivergent]);
+    expect(output).toContain("[REVIEW]");
+    expect(output).not.toContain("[EXPECTED]");
   });
 });

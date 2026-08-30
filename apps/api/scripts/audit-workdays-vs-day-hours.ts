@@ -9,6 +9,19 @@
  * new rows from diverging, but legacy rows are preserved per CLAUDE.md
  * Revisionssicherheit — they MUST NOT be auto-migrated or deleted.
  *
+ * This check is ONE-DIRECTIONAL by design. It reports a day whose {day}Hours is > 0 but which is
+ * missing from `workDays`, and NEVER the reverse (a day in `workDays` whose {day}Hours is 0); rows
+ * whose day-hours are all zero are skipped entirely. The reverse direction is not a finding
+ * because {day}Hours is authoritative only for FIXED_SCHEDULE — for FLEXTIME, MONTHLY_HOURS and
+ * SHIFT_BASED it is a legacy 1/0 flag rather than hours, and `workDays` carries the contractual
+ * truth. MONTHLY_HOURS rows legitimately store workDays=[1,2,3,4,5] with all day-hours 0.00; a
+ * naive two-directional query reports 9 production rows where this script reports 5, and
+ * "correcting" the 4 extras would EMPTY their `workDays` and destroy their leave accounting
+ * (calculateWorkDays / countWorkDaysPerWeek). See CLAUDE.md "Schedule Types" (Phase 95b, D-01/D-03).
+ *
+ * Findings are therefore for REVIEW, never for automatic correction — and SHIFT_BASED findings are
+ * expected by design (Phase 107), which is why they are labelled EXPECTED in the output.
+ *
  * Read-only. ZERO mutations. Exit 0 even if divergent rows are found.
  *
  * Run:
@@ -120,6 +133,67 @@ export function classifyScheduleRow(row: ScheduleRow): Classification {
   };
 }
 
+/** Condensed asymmetry explanation, printed in every run (findings or not). See module header. */
+export const ASYMMETRY_NOTE =
+  "This check is ONE-DIRECTIONAL: it reports a day whose {day}Hours is > 0 but missing from " +
+  "workDays, and never the reverse; rows whose day-hours are all zero are skipped entirely " +
+  "(MONTHLY_HOURS legitimately stores workDays=[1,2,3,4,5] with all-zero hours). {day}Hours is " +
+  'authoritative only for FIXED_SCHEDULE. See CLAUDE.md "Schedule Types" (Phase 95b, D-01/D-03).';
+
+/** Whole stdout text for a report over `rows`. Pure and unit-testable — the runner just prints it. */
+export function renderReport(rows: ScheduleRow[]): string {
+  const classified = rows.map((r) => ({ ...r, ...classifyScheduleRow(r) }));
+  const divergent = classified.filter((r) => r.divergent);
+
+  const lines: string[] = [];
+
+  if (divergent.length === 0) {
+    lines.push("No WorkSchedule rows with workDays diverging from per-day-hours.");
+    lines.push("");
+    lines.push(ASYMMETRY_NOTE);
+    return lines.join("\n");
+  }
+
+  const expectedCount = divergent.filter((r) => r.expected).length;
+  const reviewCount = divergent.length - expectedCount;
+  lines.push(
+    `Found ${divergent.length} divergent WorkSchedule row(s): ${expectedCount} EXPECTED ` +
+      `(SHIFT_BASED, see CLAUDE.md), ${reviewCount} to review.`,
+  );
+
+  let currentTenant = "";
+  for (const r of divergent) {
+    if (r.tenant_id !== currentTenant) {
+      lines.push(`\n== Tenant: ${r.tenant_name} (${r.tenant_id}) ==`);
+      currentTenant = r.tenant_id;
+    }
+
+    const prefix = r.expected ? "[EXPECTED]" : "[REVIEW]  ";
+    lines.push(
+      `  ${prefix} [${r.type.padEnd(15)}] ${r.employee_number.padEnd(12)} ` +
+        `${r.employee_first_name} ${r.employee_last_name} ` +
+        `— scheduleId=${r.schedule_id} ` +
+        `stored=[${(r.work_days ?? []).join(",")}] derived=[${r.derived.join(",")}] ` +
+        `validFrom=${r.valid_from.toISOString()} ` +
+        `(${r.offending.join(", ")})`,
+    );
+  }
+
+  lines.push("");
+  lines.push(ASYMMETRY_NOTE);
+  lines.push(
+    "Divergent rows are NOT corrected (Phase 95b, D-01): workDays is the source of truth for " +
+      "leave consumption (calculateWorkDays) and pro-rata (countWorkDaysPerWeek), so aligning " +
+      "it to placeholder hours would replace the right value with the wrong one.",
+  );
+  lines.push(
+    "Review manually via /admin/employees/{id}. Phase 61 prevents new divergent rows but does " +
+      "NOT auto-migrate (Revisionssicherheit).",
+  );
+
+  return lines.join("\n");
+}
+
 // ── Part B: read-only audit runner (only executed when run as a script) ───────
 
 async function run(): Promise<number> {
@@ -162,37 +236,7 @@ async function run(): Promise<number> {
       ORDER BY t.name ASC, e."lastName" ASC, ws."validFrom" ASC;
     `;
 
-    const divergent = rows
-      .map((r) => ({ ...r, ...classifyScheduleRow(r) }))
-      .filter((r) => r.divergent);
-
-    if (divergent.length === 0) {
-      console.log("No WorkSchedule rows with workDays diverging from per-day-hours.");
-      return 0;
-    }
-
-    console.log(`Found ${divergent.length} divergent WorkSchedule row(s):\n`);
-
-    let currentTenant = "";
-    for (const r of divergent) {
-      if (r.tenant_id !== currentTenant) {
-        console.log(`\n== Tenant: ${r.tenant_name} (${r.tenant_id}) ==`);
-        currentTenant = r.tenant_id;
-      }
-
-      console.log(
-        `  [${r.type.padEnd(15)}] ${r.employee_number.padEnd(12)} ` +
-          `${r.employee_first_name} ${r.employee_last_name} ` +
-          `— scheduleId=${r.schedule_id} ` +
-          `stored=[${(r.work_days ?? []).join(",")}] derived=[${r.derived.join(",")}] ` +
-          `validFrom=${r.valid_from.toISOString()} ` +
-          `(${r.offending.join(", ")})`,
-      );
-    }
-    console.log(
-      `\nReview manually via /admin/employees/{id}. Phase 61 prevents new ` +
-        `divergent rows but does NOT auto-migrate (Revisionssicherheit).`,
-    );
+    console.log(renderReport(rows));
     return 0;
   } catch (err) {
     console.error(err);
