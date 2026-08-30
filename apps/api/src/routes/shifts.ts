@@ -1,4 +1,4 @@
-import { FastifyInstance } from "fastify";
+import { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { isAvailabilityEnabled } from "../utils/tenant-availability";
@@ -582,7 +582,22 @@ async function notifyLeaveDaysAdjusted(
 export async function shiftRoutes(app: FastifyInstance) {
   // Phase 107 (D-14): binds `app.audit` for this app instance; the other four dependencies are
   // pure imported functions, identical across every call below.
-  const recalcDeps: RecalcDeps = { ...recalcDepsBase, audit: app.audit.bind(app) };
+  const recalcDeps: RecalcDeps = {
+    ...recalcDepsBase,
+    audit: app.audit.bind(app),
+    triggerSource: "REQUEST", // Phase 120 (D-07)
+  };
+
+  /**
+   * Phase 120 (D-05/D-06) — the per-request variant of `recalcDeps`. The object above is built
+   * once per route registration and therefore cannot carry a request; every one of the seven
+   * call sites below calls this helper with its own `req` so the `LEAVE_DAYS_ADJUSTED` row gets
+   * the acting caller's IP and user agent, exactly like the `app.audit()` calls beside them.
+   */
+  const recalcDepsFor = (req: FastifyRequest): RecalcDeps => ({
+    ...recalcDeps,
+    request: { ip: req.ip, headers: req.headers as Record<string, string> },
+  });
 
   app.addHook("preHandler", requireAuth);
 
@@ -1975,7 +1990,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
         const adjustments = await recalcProvisionalLeaveForShiftChange(
           tx,
-          recalcDeps,
+          recalcDepsFor(req),
           body.employeeId,
           req.user.tenantId,
           weekStart,
@@ -2286,7 +2301,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           adjustments.push(
             ...(await recalcProvisionalLeaveForShiftChange(
               tx,
-              recalcDeps,
+              recalcDepsFor(req),
               pair.employeeId,
               req.user.tenantId,
               pair.weekStart,
@@ -2688,7 +2703,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           adjustments.push(
             ...(await recalcProvisionalLeaveForShiftChange(
               tx,
-              recalcDeps,
+              recalcDepsFor(req),
               employeeId,
               tenantId,
               weekStart,
@@ -3014,7 +3029,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           adjustments.push(
             ...(await recalcProvisionalLeaveForShiftChange(
               tx,
-              recalcDeps,
+              recalcDepsFor(req),
               employeeId,
               tenantId,
               weekStart,
@@ -3136,7 +3151,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           adjustments.push(
             ...(await recalcProvisionalLeaveForShiftChange(
               tx,
-              recalcDeps,
+              recalcDepsFor(req),
               pair.employeeId,
               req.user.tenantId,
               pair.weekStart,
@@ -3196,7 +3211,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         await tx.shift.delete({ where: { id } });
         const adjustments = await recalcProvisionalLeaveForShiftChange(
           tx,
-          recalcDeps,
+          recalcDepsFor(req),
           existing.employeeId,
           req.user.tenantId,
           weekStart,
@@ -3349,7 +3364,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
         const adjustments = await recalcProvisionalLeaveForShiftChange(
           tx,
-          recalcDeps,
+          recalcDepsFor(req),
           shift.employeeId,
           req.user.tenantId,
           weekStart,
