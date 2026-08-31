@@ -22,6 +22,9 @@
  *     → returns `{ tenantId, adminToken, baseUrl }` (see test-bootstrap.ts:213-217)
  *   * Login (to get refreshToken + user for localStorage hydration):
  *     POST /api/v1/auth/login → `{ accessToken, refreshToken, user }`
+ *   * Release notes seen (Phase 110 follow-up, suppresses the What's-New auto-open drawer
+ *     from covering visual baselines): GET /api/v1/release-notes (public) → `{ releases }`,
+ *     then PUT /api/v1/me/release-notes-seen → `{ version }`.
  *   * Employee create: POST /api/v1/employees
  *     Body schema in employees.ts:38-99 is FLAT (no nested workSchedule);
  *     accepts `weeklyHours`, `scheduleType`, `workDays`, `hireDate` (ISO datetime).
@@ -321,6 +324,28 @@ export async function seedDeterministicTenant(
     Authorization: `Bearer ${loginBody.accessToken}`,
     "content-type": "application/json",
   };
+
+  // 2b. Acknowledge the newest release note for this fresh admin user (Phase 110 follow-up).
+  //     Without this, `hasUnreadReleaseNotes` (apps/web/src/lib/stores/release-notes.ts) is true
+  //     for every seeded visual-tenant admin because a brand-new User row has
+  //     `lastSeenReleaseVersion: null`, and `(app)/+layout.svelte`'s auto-open `$effect` opens
+  //     the WhatsNewPanel over the very first page load — covering ~1-2% of pixels on the
+  //     dashboard and calendar baselines. Seeding the "seen" marker via the same PUT the panel's
+  //     own dismiss button calls (`markReleaseNotesSeen()`) is deterministic and does not depend
+  //     on the drawer's open/close animation timing, unlike waiting for it to render and
+  //     dismissing it from the page. `GET /release-notes` is unauthenticated and public
+  //     (apps/api/src/routes/release-notes.ts); an empty corpus (`releases: []`) is a no-op here,
+  //     matching `markReleaseNotesSeen()`'s own "nothing to acknowledge" behavior.
+  const releaseNotesRes = await request.get(`${apiBaseUrl}/api/v1/release-notes`);
+  if (releaseNotesRes.ok()) {
+    const { releases } = (await releaseNotesRes.json()) as { releases: { version: string }[] };
+    if (releases.length > 0) {
+      await request.put(`${apiBaseUrl}/api/v1/me/release-notes-seen`, {
+        headers: authHeaders,
+        data: { version: releases[0].version },
+      });
+    }
+  }
 
   // 3. Create the 4 deterministic employees. The createEmployeeSchema is FLAT
   //    (no nested workSchedule); the API creates a WorkSchedule row internally
