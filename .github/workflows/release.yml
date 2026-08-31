@@ -1,6 +1,12 @@
 name: Release — Promote & Publish
 
-# Triggered when a GitHub Release is published (which creates a git tag).
+# Triggered when a GitHub Release is published (which creates a git tag), or manually via
+# workflow_dispatch against an existing tag. Publishing via release-please's default
+# GITHUB_TOKEN does not start this run — GitHub does not create workflow runs from events
+# created by GITHUB_TOKEN — so the `release: published` trigger below can be inert; observed
+# on v1.10.0 (2026-08-31): neither promote nor publish-notes ran. Once RELEASE_PLEASE_TOKEN
+# exists (see release-please.yml) the release trigger works reliably and workflow_dispatch
+# becomes the re-run path instead of the recovery path — see docs/release-process.md.
 # Both clokr-api + clokr-web are promoted via a digest-preserving copy from the
 # corresponding `:sha-{SHA}` image to the release tags. No rebuild.
 #
@@ -11,14 +17,29 @@ name: Release — Promote & Publish
 # image digest end-to-end.
 #
 # Tag semantics (Memory feedback_release_tag_on_main):
-# The release tag MUST point at the merge commit on main. ${{ github.sha }} in a
-# release-event context is the tagged commit's SHA — equal to the merge commit
-# SHA when the release is cut AFTER the PR merges. The :sha-{SHA} image for that
-# commit was built and scanned by build-push.yml on the merge.
+# The release tag MUST point at the merge commit on main. The commit is resolved from the
+# tag itself (env.RELEASE_TAG, see below) rather than from the run's automatic commit-SHA
+# context value — on a workflow_dispatch that automatic value is the HEAD of the ref the run
+# was started from, NOT the tagged commit, so relying on it would risk promoting an
+# unreleased image. Resolving the commit from the tag makes both triggers agree, and
+# reproduces today's release-path value exactly (verified: `git rev-list -n1 <tag>` ==
+# `gh api repos/{owner}/{repo}/commits/<tag>`).
 
 on:
   release:
     types: [published]
+  # Manual re-run against an existing tag. While no RELEASE_PLEASE_TOKEN secret exists,
+  # release-please publishes the Release with the default GITHUB_TOKEN, and GitHub does not start
+  # workflow runs from events created by that token — the `release: published` trigger above is
+  # then inert. Observed on v1.10.0 (2026-08-31): neither promote nor publish-notes ran. Dispatching
+  # with the tag is the supported recovery; do NOT un-draft and re-publish the Release by hand to
+  # fake a human-token event. This trigger stays useful after the secret exists, as the re-run path.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to promote and publish notes for (e.g. v1.10.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write # required for release asset upload via sbom-action
@@ -35,6 +56,11 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
+  # inputs.tag is empty on a release event, so this falls through to the run's automatic
+  # ref-name context value (the tag itself, e.g. v1.10.0). On workflow_dispatch, that same
+  # automatic value is the BRANCH the run was started from (e.g. "main"), not a tag — that is
+  # why every consumer below reads RELEASE_TAG instead of the automatic ref-name value directly.
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   promote:
@@ -55,11 +81,26 @@ jobs:
 
       - name: Extract metadata
         id: meta
+        env:
+          # workflow_dispatch introduces a hand-typed RELEASE_TAG that ends up in crane copy
+          # DESTINATIONS under packages: write — reject anything but vX.Y.Z[-suffix] below before
+          # any tag is written (T-UMA-01). gh needs GH_TOKEN for the commit-resolution call.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
+            echo "::error title=Invalid tag format::RELEASE_TAG '${RELEASE_TAG}' does not match the expected vX.Y.Z (optional -suffix) shape."
+            exit 1
+          fi
           OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          VERSION=${GITHUB_REF_NAME#v}
+          VERSION=${RELEASE_TAG#v}
           MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1-2)
-          SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+          # Resolve the commit from the tag itself rather than the run's automatic commit-SHA
+          # context value: on a workflow_dispatch that automatic value is the HEAD of the ref
+          # the run was started from, NOT the tagged commit. This is the one resolution path
+          # both triggers share (see the header comment above).
+          COMMIT_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG}" --jq .sha)
+          SHA_SHORT=$(echo "$COMMIT_SHA" | cut -c1-7)
           echo "owner=${OWNER_LC}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "major_minor=${MAJOR_MINOR}" >> "$GITHUB_OUTPUT"
@@ -155,13 +196,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Publish the German release notes from the repo
         env:
           # WR-03: hoist expressions into env rather than splicing them into the script.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
           NOTES="docs/release-notes/${TAG}.md"
@@ -207,7 +248,7 @@ jobs:
           # curl -sfS exits non-zero on HTTP >= 400 — so reaching the jq parse
           # step already implies the service is up.
           set -euo pipefail
-          EXPECTED="${GITHUB_REF_NAME#v}"
+          EXPECTED="${RELEASE_TAG#v}"
           ACTUAL=$(curl -sfS --max-time 10 "${INT_BASE_URL}/api/v1/version" | jq -r '.version')
           if [ "$ACTUAL" != "$EXPECTED" ]; then
             echo "Version mismatch: expected $EXPECTED, got $ACTUAL" >&2
