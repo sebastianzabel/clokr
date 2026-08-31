@@ -53,6 +53,7 @@ import { presenceRoutes } from "./routes/presence";
 import { adminPresenceSourcesRoutes } from "./routes/admin-presence-sources";
 import { adminSchoolHolidaysRoutes } from "./routes/admin/school-holidays";
 import { meRoutes } from "./routes/me";
+import { releaseNotesRoutes } from "./routes/release-notes";
 import { testBootstrapRoutes } from "./routes/test-bootstrap";
 import { retroEntryRequestRoutes } from "./routes/retro-entry-requests";
 import { requireAuth } from "./middleware/auth";
@@ -304,6 +305,8 @@ export async function buildApp() {
   await app.register(adminPresenceSourcesRoutes, { prefix: "/api/v1/admin/presence-sources" });
   await app.register(adminSchoolHolidaysRoutes, { prefix: "/api/v1/admin/school-holidays" });
   await app.register(meRoutes, { prefix: "/api/v1/me" });
+  // Phase 110 (D-04/N-06): baked release notes, public GET, no requireAuth.
+  await app.register(releaseNotesRoutes, { prefix: "/api/v1" });
 
   // Phase 73-01 + 74-03 (D-05): test-only bootstrap + X-Test-Now header.
   // The plugin self-gates on ALLOW_TEST_BOOTSTRAP; registering it

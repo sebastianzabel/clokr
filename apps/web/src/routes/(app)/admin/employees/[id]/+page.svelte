@@ -3485,6 +3485,22 @@
     border-color: var(--brand);
   }
 
+  /* Phase 107 (issue #94, human-verify follow-up) — this scoped block redeclares
+     background/color for .input/.select/.form-input above, which ties the CSS
+     specificity of app.css's shared `.form-input:disabled` recipe (both are a
+     single class + pseudo-class). Svelte's per-component style injection then
+     wins that tie, silently defeating the global disabled treatment for every
+     background/color property it also sets — only `cursor: not-allowed` survived,
+     which is invisible until hover. Re-assert the exact same shared recipe here
+     so a disabled field on this page reads visibly quieter, not just non-hoverable. */
+  .input:disabled,
+  .select:disabled,
+  .form-input:disabled {
+    background: var(--bg-subtle);
+    color: var(--text-muted);
+    cursor: not-allowed;
+  }
+
   .hint,
   .form-hint {
     font-size: 12px;
