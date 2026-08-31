@@ -28,9 +28,12 @@ The shipping image is bit-identical to the image that passed the Trivy scan on m
    `ghcr.io/{owner}/clokr-{api,web}:sha-{SHA}`, Trivy scans them. The API image also bakes
    `docs/release-notes/` into itself via `apps/api/Dockerfile` — the notes file from step 2 is
    already on `main` by the time this build runs, so it is inside the image it describes.
-5. **`release.yml` promotes.** It **waits** for the `:sha-{SHA}` image to appear (up to 30 min),
-   then `crane copy`s it to `:X.Y.Z`, `:X.Y` and `:latest`. No rebuild — the shipped image is
-   bit-identical to the scanned one.
+5. **`release.yml` promotes — but check it actually started.** It **waits** for the `:sha-{SHA}`
+   image to appear (up to 30 min), then `crane copy`s it to `:X.Y.Z`, `:X.Y` and `:latest`. No
+   rebuild — the shipped image is bit-identical to the scanned one. Promotion is only automatic
+   once `RELEASE_PLEASE_TOKEN` exists (see "Why release.yml does not start by itself" below);
+   until then, verify a `Release — Promote & Publish` run exists for the tag and start one by
+   hand if not: `gh workflow run release.yml --ref main -f tag=vX.Y.Z`.
 6. **`release.yml`'s `publish-notes` job sets the GitHub Release title and body** from
    `docs/release-notes/vX.Y.Z.md` — the same file baked into the image in step 4. Nothing is
    written by hand at this point; this REPLACES the former manual step, it is not an extra one.
@@ -65,6 +68,92 @@ The two runs are triggered by different events and cannot `needs:` one another.
 
 If that wait ever times out, Build & Push failed or never ran. Fix that; do not promote a
 different image.
+
+### Why release.yml does not start by itself
+
+GitHub does not start new workflow runs from events created by the default `GITHUB_TOKEN`. The
+`release-please` action in `.github/workflows/release-please.yml` runs with that default token
+unless `RELEASE_PLEASE_TOKEN` is configured, so the Release it publishes carries `GITHUB_TOKEN`'s
+identity and `release.yml`'s `release: published` trigger never fires.
+
+This is not theoretical — it happened cutting v1.10.0 (2026-08-31): `release.yml` never ran,
+`promote` never produced `:1.10.0` / `:1.10` / `:latest` images, and the GitHub Release body kept
+release-please's 26 KB English commit dump instead of `docs/release-notes/v1.10.0.md`. Recovery
+that day was un-drafting and re-publishing the Release by hand so the event carried a human
+token — **that is not the supported recovery and must not become the habit.** Faking a
+human-token event by re-publishing risks re-running anything else hooked to `release: published`
+and is a manual step nobody will remember under pressure. The supported recovery is dispatching
+`release.yml` directly against the existing tag:
+
+```bash
+gh workflow run release.yml --ref main -f tag=vX.Y.Z
+```
+
+`workflow_dispatch` is only offered by GitHub once the workflow file containing it is on the
+default branch (`main`) — it will not appear as an option on a release cut from a branch where
+that trigger hasn't landed yet.
+
+Two more symptoms of the same `GITHUB_TOKEN` restriction — the `action_required` release-please
+check and the release PR sitting `BEHIND` — are listed as bullets under "Known behaviours that
+look like failures" below, with their recovery commands.
+
+**Once `RELEASE_PLEASE_TOKEN` exists**, the observable behaviour changes: the published Release
+starts `release.yml` on its own, `promote` and `publish-notes` run without anyone dispatching
+them, and the manual `gh workflow run` command above becomes the re-run path (for repeating a
+run) rather than the normal path (for finishing every release).
+
+#### Enabling the root fix
+
+`release-please.yml` already declares
+`token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}` — nothing in the repo changes when
+the secret is added; the workflow upgrades itself the moment it exists. Two ways to provide it,
+described here without a recommendation — pick per your own operational preference:
+
+- **Fine-grained PAT**, scoped to this repository only, three permissions — mirroring exactly
+  what `release-please.yml` already declares for `GITHUB_TOKEN`
+  (`contents: write`, `pull-requests: write`):
+  - **Contents: Read and write** — commits the version bump + `CHANGELOG.md`, creates the tag,
+    publishes the Release (releases fall under Contents for fine-grained tokens)
+  - **Pull requests: Read and write** — opens and continuously rewrites the release PR
+  - **Metadata: Read-only** — GitHub forces this on as soon as any other repository permission
+    is set
+
+  Explicitly **not** required, and worth saying why so nobody grants more than necessary:
+  - **Workflows: write** — only needed to push files under `.github/workflows/`. release-please
+    never does that here: `release-please-config.json`'s `extra-files` are only
+    `apps/api/package.json`, `apps/web/package.json`, plus `CHANGELOG.md`, `package.json` and
+    `.release-please-manifest.json`. If a workflow file is ever added to `extra-files`, the push
+    fails with GitHub's "refusing to allow a PAT to create or update workflow" error — that is
+    the signal to add this permission, not before.
+  - **Actions** — release-please dispatches nothing itself. Downstream workflows run again
+    because the event is attributed to the token's owner instead of `GITHUB_TOKEN`, not because
+    of an Actions permission.
+  - **Packages** — promotion runs in `release.yml` under its own token, not this one.
+
+  Simplest to set up; expires and must be rotated. A silent expiry is the failure mode to watch
+  for (see below) — it is why the `||` fallback exists rather than a hard requirement.
+
+- **GitHub App token** — the same three repository permissions (Contents RW, Pull requests RW,
+  Metadata R), installed on this repo, minted in-workflow via
+  `actions/create-github-app-token`. Better hygiene (short-lived, not tied to a person), at the
+  cost of more setup: an app to register, install, and a step to mint the token before
+  `release-please-action` runs.
+
+Add the secret once you've chosen:
+
+```bash
+gh secret set RELEASE_PLEASE_TOKEN
+```
+
+Enter the token value at the prompt — never paste it into a commit, a plan, or an agent session.
+
+**What a silently expired PAT looks like:** the `|| github.token` fallback means an expired PAT
+degrades the pipeline back to the manual dispatch path instead of failing loudly (T-UMA-08 in the
+`260831-uma` phase's threat register) — `release-please.yml` keeps running green, but its output
+is authored as `GITHUB_TOKEN` again. The observable symptom is "the release PR merged and a
+Release was published, but `release.yml` never ran and `:latest` still points at the previous
+version" — the same v1.10.0 symptom described above, recurring. If you see that after a release
+you believed was token-enabled, check whether the PAT expired and rotate it.
 
 ### Version scheme
 
@@ -146,6 +235,16 @@ _that_ commit, and only then tag it.
 - **The `smoke-test` job is red on a first pass, by construction.** It probes int's
   `/api/v1/version` right after promote, but int is only repointed in the manual step above. Re-run
   it after bumping int if you want it green.
+- **Checks on the release-please branch arrive as `action_required`.** Another symptom of the
+  `GITHUB_TOKEN` restriction described in "Why release.yml does not start by itself" above —
+  they sit unstarted awaiting approval instead of running. Approve from the CLI, no UI needed:
+  `gh api -X POST repos/{owner}/{repo}/actions/runs/{id}/approve` (find ids with
+  `gh run list --branch release-please--branches--main`). Verify this on the next release — it
+  is expected to disappear once `RELEASE_PLEASE_TOKEN` exists.
+- **The release PR can sit `BEHIND`.** release-please does not always re-write its branch the
+  moment the `docs:` release-notes commit from step 2 lands on `main`, so with "require branches
+  to be up to date" branch protection the merge button is blocked even though nothing is wrong.
+  Run `gh pr update-branch <n>` first.
 - **Trivy gates on CRITICAL/HIGH.** Per `docs/cve-handling.md` the order is: update the direct
   dependency → override the transitive one (`pnpm.overrides`) → only then justify an exception in
   `.trivyignore`. Never lower the severity threshold. Note that both runtime images currently ship
@@ -176,6 +275,7 @@ pseudonymizer runs its own inline verification.
 ## References
 
 - Workflow: `.github/workflows/release.yml`
+- Workflow: `.github/workflows/release-please.yml`
 - Workflow: `.github/workflows/build-push.yml`
 - Workflow: `.github/workflows/release-notes-guard.yml`
 - Corpus: `docs/release-notes/README.md`
