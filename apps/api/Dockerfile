@@ -33,6 +33,13 @@ COPY packages/types/ ./packages/types/
 COPY packages/db/ ./packages/db/
 COPY apps/api/ ./apps/api/
 
+# Phase 110 (D-04 revised / N-02 / N-06): the German release notes live in the repo and are baked
+# into the API image. apps/api/src/utils/release-notes.ts resolves them relative to its own
+# compiled location, so they must be inside the build context under the same repo-root-relative
+# path they have in git. Only the API bakes them — apps/web is a client-only SPA and reads them
+# through GET /api/v1/release-notes like it reads GET /api/v1/version.
+COPY docs/release-notes/ ./docs/release-notes/
+
 # Generate Prisma client — ensure @prisma/client is resolvable from schema location
 #
 # `pnpm --filter @clokr/db exec prisma generate`, never a bare `npx` invocation: npx's
@@ -190,6 +197,20 @@ COPY --from=build /app/packages/ ./packages/
 COPY --from=build /app/package.json ./
 COPY --from=build /app/pnpm-workspace.yaml ./
 COPY --from=build /app/pnpm-lock.yaml ./
+
+COPY --from=build /app/docs/release-notes/ ./docs/release-notes/
+
+# Build gate: the release-notes corpus must actually be in the image. A missing corpus would ship
+# a dead What's-New dialog that fails silently by design (AK-06) — i.e. with nothing turning red
+# anywhere. Fail the BUILD instead.
+RUN test -n "$(find /app/docs/release-notes -name 'v*.md' -type f -print -quit)" \
+    || (echo "FATAL: no release-notes markdown under /app/docs/release-notes -- check the COPY steps in apps/api/Dockerfile and that docs/release-notes/ is populated in the repo" >&2; exit 1)
+
+# Build gate: the COMPILED loader must resolve that corpus from its own dist/ location. The path
+# arithmetic in RELEASE_NOTES_DIR differs between src/utils (dev) and dist/utils (image) only by
+# tsconfig's rootDir/outDir staying in step; this gate is the only thing that catches it if they
+# ever drift. Runs the real module, not a re-implementation of it.
+RUN cd /app/apps/api && node -e "const { loadReleaseNotes } = require('./dist/utils/release-notes'); const n = loadReleaseNotes(); if (!Array.isArray(n) || n.length === 0) { console.error('FATAL: loadReleaseNotes() resolved 0 releases inside the image -- RELEASE_NOTES_DIR does not point at /app/docs/release-notes from dist/utils'); process.exit(1); } console.log('release notes baked:', n.length, 'newest', n[0].version);"
 
 # apps/api/node_modules/typescript and packages/db/node_modules/typescript are each
 # workspace package's own local symlink into the root .pnpm/typescript@* entry just removed

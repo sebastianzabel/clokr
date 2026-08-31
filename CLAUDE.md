@@ -140,13 +140,18 @@ Current: recalculated from hire date on every request (does not scale). Target a
 **Read `docs/release-process.md` before cutting, tagging or deploying a release.** It is the
 canonical order and it is NOT reconstructible from the workflows alone.
 
-The two rules that get broken most often:
+The three rules that get broken most often:
 
 - **Bump the version BEFORE the tag.** The version is baked into the image from `package.json`
   (`apps/api/src/app.ts:59-65`); promotion is a digest-preserving re-tag with no rebuild, so tagging
   a pre-bump image makes `/api/v1/version` report the old version.
 - **Never `kubectl set image` on int.** ArgoCD runs `selfHeal: true` and reverts it in seconds.
   Change `image.tag` in `k8s-homelab/argocd-apps/clokr-app.yaml` instead.
+- **Write the German release notes BEFORE merging the release PR.** They live at
+  `docs/release-notes/vX.Y.Z.md`, are baked into the API image (`apps/api/Dockerfile`) and shown
+  in-app by the What's-New dialog; `release.yml`'s `publish-notes` job fills the GitHub Release
+  body from that same file. Notes written after the merge can never be inside the image they
+  describe — that is why the old "write them by hand afterwards" step no longer exists.
 
 Environments: dev = local docker · int = k3s (ArgoCD) · prod = dmz-proxy (`/opt/awh-infra/.env`).
 Refreshing int from prod data requires `apps/api/scripts/pseudonymize-dump.ts` — never restore a raw

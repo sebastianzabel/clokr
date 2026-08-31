@@ -20,6 +20,12 @@ const updatePreferencesSchema = z.object({
   language: languageEnum.optional(),
 });
 
+// Phase 110 (D-10/AK-10): the version string is echoed back to the client and stored, so it is
+// bounded to a semver triple rather than accepted as free text.
+const updateReleaseNotesSeenSchema = z.object({
+  version: z.string().regex(/^\d+\.\d+\.\d+$/, "Ungültige Versionsangabe"),
+});
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface UiPreferences {
@@ -125,6 +131,62 @@ export async function meRoutes(app: FastifyInstance) {
       });
 
       return next;
+    },
+  });
+
+  // ── Release notes seen state (Phase 110) ────────────────────────────────────
+
+  // GET /api/v1/me/release-notes-seen
+  app.get("/release-notes-seen", {
+    preHandler: requireAuth, // no role gate — D-08/AK-08: every role sees the What's-New dialog
+    schema: {
+      tags: ["Mein Bereich"],
+      description: "Get the release-notes version this user last acknowledged",
+      security: [{ bearerAuth: [] }],
+    },
+    handler: async (req, reply) => {
+      const userId = req.user.sub;
+      if (userId.startsWith("apikey:")) {
+        return reply.code(400).send({ error: "API-Keys haben keinen Gesehen-Status" });
+      }
+      const user = await app.prisma.user.findUnique({
+        where: { id: userId },
+        select: { lastSeenReleaseVersion: true },
+      });
+      if (!user) return reply.code(404).send({ error: "Benutzer nicht gefunden" });
+      return { lastSeenVersion: user.lastSeenReleaseVersion };
+    },
+  });
+
+  // PUT /api/v1/me/release-notes-seen
+  app.put("/release-notes-seen", {
+    preHandler: requireAuth, // no role gate — D-08/AK-08: every role sees the What's-New dialog
+    schema: {
+      tags: ["Mein Bereich"],
+      description: "Set the release-notes version this user last acknowledged",
+      security: [{ bearerAuth: [] }],
+    },
+    handler: async (req, reply) => {
+      const userId = req.user.sub;
+      if (userId.startsWith("apikey:")) {
+        return reply.code(400).send({ error: "API-Keys haben keinen Gesehen-Status" });
+      }
+      const body = updateReleaseNotesSeenSchema.parse(req.body);
+
+      const user = await app.prisma.user.update({
+        where: { id: userId },
+        data: { lastSeenReleaseVersion: body.version },
+        select: { lastSeenReleaseVersion: true },
+      });
+
+      // Phase 110 (N-09): deliberately no audit-log write here. CLAUDE.md scopes the audit
+      // obligation to "data relevant to working time, leave, and payroll" — a user dismissing an
+      // informational What's-New dialog carries no legal consequence, cannot alter a saldo, a
+      // leave day, or a payroll figure, and is not something anyone could later need to
+      // reconstruct for an audit. The in-repo precedent for exactly this category is
+      // PUT /api/v1/me/preferences above, which stores comparable per-user UI state and also
+      // writes no audit row.
+      return { lastSeenVersion: user.lastSeenReleaseVersion };
     },
   });
 

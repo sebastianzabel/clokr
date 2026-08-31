@@ -3,7 +3,13 @@ import bcrypt from "bcryptjs";
 import iconv from "iconv-lite";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
 import { computeOvertimeBalanceHours } from "../time-entries";
-import { todayStr, utcMidnight, dowOf } from "../../__tests__/test-dates";
+import {
+  todayStr,
+  utcMidnight,
+  dowOf,
+  monthStartUtc,
+  monthEndUtc,
+} from "../../__tests__/test-dates";
 import type { FastifyInstance } from "fastify";
 
 // Mirror of the module-private classifyOvertimeBalance thresholds in dashboard.ts (NORMAL |x|<=20,
@@ -1766,15 +1772,9 @@ describe("Reports API", () => {
       tenantBEmpId = ot2Data.employee.id;
 
       // Create 3 MONTHLY SaldoSnapshots within the last 6 months for empNormal
-      const now = new Date();
       for (let i = 1; i <= 3; i++) {
-        const month = new Date(now);
-        month.setUTCMonth(month.getUTCMonth() - i);
-        month.setUTCDate(1);
-        month.setUTCHours(0, 0, 0, 0);
-        const periodEnd = new Date(month);
-        periodEnd.setUTCMonth(periodEnd.getUTCMonth() + 1);
-        periodEnd.setUTCDate(0); // last day of month
+        const month = monthStartUtc(i);
+        const periodEnd = monthEndUtc(i);
 
         await prisma.saldoSnapshot.create({
           data: {
@@ -1792,13 +1792,8 @@ describe("Reports API", () => {
       }
 
       // Create one OLD snapshot (8 months ago) — must be excluded
-      const oldMonth = new Date(now);
-      oldMonth.setUTCMonth(oldMonth.getUTCMonth() - 8);
-      oldMonth.setUTCDate(1);
-      oldMonth.setUTCHours(0, 0, 0, 0);
-      const oldPeriodEnd = new Date(oldMonth);
-      oldPeriodEnd.setUTCMonth(oldPeriodEnd.getUTCMonth() + 1);
-      oldPeriodEnd.setUTCDate(0);
+      const oldMonth = monthStartUtc(8);
+      const oldPeriodEnd = monthEndUtc(8);
       await prisma.saldoSnapshot.create({
         data: {
           employeeId: empNormalId,
