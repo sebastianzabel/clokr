@@ -114,3 +114,32 @@ export function monthsAheadStr(months: number, tz: string = TEST_TZ): string {
   const [y, m, d] = today.split("-").map(Number);
   return dbDateStr(new Date(Date.UTC(y, m - 1 + months, d)));
 }
+
+/**
+ * UTC midnight of the FIRST day of the month `monthsAgo` calendar months before
+ * the current month (resolved in the tenant timezone).
+ *
+ * Builds the date from (year, month, 1) via `Date.UTC` instead of mutating a
+ * live `new Date()`. That is the whole point: `new Date()` still carries its
+ * day-of-month, so `setUTCMonth(getUTCMonth() - n)` BEFORE `setUTCDate(1)`
+ * overflows on a 31st ("31 June" rolls forward into July) and two different `n`
+ * values collapse onto the SAME month start — which then violates the
+ * SaldoSnapshot unique constraint (employeeId, periodType, periodStart).
+ * Because the day component here is always 1, no overflow is possible; a
+ * negative or out-of-range month index is normalised across the year by
+ * `Date.UTC` itself.
+ */
+export function monthStartUtc(monthsAgo: number, tz: string = TEST_TZ): Date {
+  const [y, m] = todayStr(tz).split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1 - monthsAgo, 1));
+}
+
+/**
+ * UTC midnight of the LAST day of the same month `monthStartUtc(monthsAgo)`
+ * returns. Day 0 of the FOLLOWING month is the last day of the target month,
+ * and — like `monthStartUtc` — carries no day component that could overflow.
+ */
+export function monthEndUtc(monthsAgo: number, tz: string = TEST_TZ): Date {
+  const [y, m] = todayStr(tz).split("-").map(Number);
+  return new Date(Date.UTC(y, m - monthsAgo, 0));
+}
