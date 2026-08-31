@@ -14,22 +14,45 @@ The shipping image is bit-identical to the image that passed the Trivy scan on m
 
 1. **Check the release PR.** It shows the next version (derived from the Conventional Commit
    history) and the `CHANGELOG.md` it will write. Nothing to bump by hand.
-2. **Merge it.** That single act:
+2. **Write the German release notes into the repo.** The open release PR already shows the next
+   version. Write `docs/release-notes/vX.Y.Z.md` per
+   [`RELEASE_NOTES_TEMPLATE.md`](RELEASE_NOTES_TEMPLATE.md) and land it on `main` as
+   `docs(release): add release notes for vX.Y.Z`. A `docs:` commit does not bump the version, so
+   the release PR keeps saying X.Y.Z.
+   `.github/workflows/release-notes-guard.yml` fails the release PR while the file is missing.
+3. **Merge the release PR.** That single act:
    - bumps the version in all three `package.json` files (root, `apps/api`, `apps/web`)
    - commits `CHANGELOG.md`
    - creates tag `vX.Y.Z` and publishes the GitHub Release
-3. **`build-push.yml`** runs on the merge, builds both images, pushes
-   `ghcr.io/{owner}/clokr-{api,web}:sha-{SHA}`, Trivy scans them.
-4. **`release.yml`** runs on the published Release. It **waits** for the `:sha-{SHA}` image to
-   appear (up to 30 min), then `crane copy`s it to `:X.Y.Z`, `:X.Y` and `:latest`. No rebuild —
-   the shipped image is bit-identical to the scanned one.
-5. **Write the German release notes by hand** on the GitHub Release, per
-   [`RELEASE_NOTES_TEMPLATE.md`](RELEASE_NOTES_TEMPLATE.md). The generated `CHANGELOG.md` is the
-   technical, English, commit-derived history; the release notes are the customer-facing,
-   thematically grouped document. Different audiences, different texts — the changelog does not
-   replace them.
-6. **Verify:** `curl https://{your-host}/api/v1/version` returns `{"version":"X.Y.Z"}`. The
+4. **`build-push.yml`** runs on the merge, builds both images, pushes
+   `ghcr.io/{owner}/clokr-{api,web}:sha-{SHA}`, Trivy scans them. The API image also bakes
+   `docs/release-notes/` into itself via `apps/api/Dockerfile` — the notes file from step 2 is
+   already on `main` by the time this build runs, so it is inside the image it describes.
+5. **`release.yml` promotes.** It **waits** for the `:sha-{SHA}` image to appear (up to 30 min),
+   then `crane copy`s it to `:X.Y.Z`, `:X.Y` and `:latest`. No rebuild — the shipped image is
+   bit-identical to the scanned one.
+6. **`release.yml`'s `publish-notes` job sets the GitHub Release title and body** from
+   `docs/release-notes/vX.Y.Z.md` — the same file baked into the image in step 4. Nothing is
+   written by hand at this point; this REPLACES the former manual step, it is not an extra one.
+7. **Verify:** `curl https://{your-host}/api/v1/version` returns `{"version":"X.Y.Z"}`. The
    Sidebar shows `vX.Y.Z` below the logout button.
+
+### Why the notes moved in front of the build
+
+The old step 5 wrote the German release notes onto an already-published GitHub Release, by
+hand — but that Release, and the image for that version, already existed by then. Measured
+across the last three releases before this change, `build-push.yml` had already built and
+Trivy-scanned the image 11–16 minutes before anyone touched the notes (v1.9.18 17:53→18:05,
+v1.9.17 10:10→10:25, v1.9.16 22:12→22:29 — release created → notes published). An image can
+never contain notes that did not exist yet when it was built, and the in-app What's-New dialog
+needs exactly that: notes baked into the image, not fetched at runtime (see `docs/release-notes/`
+and Phase 110). Writing the notes on `main` before the release-please PR merges — the same commit
+`build-push.yml` builds from — is what makes the in-app text and the GitHub Release body one
+truth instead of two.
+
+This REPLACES a manual step; it does not add one. The rest of the pipeline is unchanged: the
+version is still bumped before the tag (step 3), and promotion (step 5) is still a
+digest-preserving re-tag with no rebuild.
 
 ### Why release.yml waits for the image
 
@@ -98,7 +121,7 @@ crane copy ghcr.io/{owner}/clokr-web:X.Y.W ghcr.io/{owner}/clokr-web:latest
 
 ## Getting the release onto int and prod
 
-Steps 1-9 above produce and publish the image. They do **not** deploy it. Two manual pins follow:
+Steps 1-7 above produce and publish the image. They do **not** deploy it. Two manual pins follow:
 
 - **int** — `image.tag` in `k8s-homelab/argocd-apps/clokr-app.yaml`, then commit + push. ArgoCD syncs.
 - **prod** — the image tag variables in `/opt/awh-infra/.env` on `dmz-proxy`, then recreate the containers.
@@ -154,5 +177,8 @@ pseudonymizer runs its own inline verification.
 
 - Workflow: `.github/workflows/release.yml`
 - Workflow: `.github/workflows/build-push.yml`
+- Workflow: `.github/workflows/release-notes-guard.yml`
+- Corpus: `docs/release-notes/README.md`
 - Research: `.planning/research/v1.8-pipeline-state.md` §5
 - Phase: `.planning/phases/69-pr-231-nachholen-runtime-version-image-promotion/`
+- Phase: `.planning/phases/110-release-notes-in-der-app-anzeigen/`

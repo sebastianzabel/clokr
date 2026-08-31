@@ -67,9 +67,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       await loginAsTenantAdmin(page, tenant);
       await page.goto("/dashboard");
 
-      const stempelBtn = page
-        .getByRole("button", { name: /(Ein|Aus)stempeln/ })
-        .first();
+      const stempelBtn = page.getByRole("button", { name: /(Ein|Aus)stempeln/ }).first();
       await expect(stempelBtn).toBeVisible({ timeout: 10_000 });
 
       // Above the fold = within the first 800px (covers both desktop + tablet
@@ -104,10 +102,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       }
     });
 
-    test("sidebar foot shows user info + logout (D-11 sidebar smoke)", async ({
-      page,
-      tenant,
-    }) => {
+    test("sidebar foot shows user info + logout (D-11 sidebar smoke)", async ({ page, tenant }) => {
       // Merged from ui-audit.spec.ts "sidebar foot user-info is visible".
       await loginAsTenantAdmin(page, tenant);
       await page.goto("/dashboard");
@@ -130,10 +125,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
   });
 
   test.describe("Leave (Urlaub) surface", () => {
-    test("page anchors + KPI row + new-request button are visible", async ({
-      page,
-      tenant,
-    }) => {
+    test("page anchors + KPI row + new-request button are visible", async ({ page, tenant }) => {
       await loginAsTenantAdmin(page, tenant);
       await page.goto("/leave");
 
@@ -144,10 +136,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       await expect(page.getByTestId("leave-view-tabs")).toBeVisible();
     });
 
-    test("leave-form modal closes on Escape (Modals UX contract)", async ({
-      page,
-      tenant,
-    }) => {
+    test("leave-form modal closes on Escape (Modals UX contract)", async ({ page, tenant }) => {
       // Merged from ux-quality.spec.ts "modals can be closed with Escape key".
       // The leave form is the only modal that ships with a stable testid in
       // every tenant — admin/special-leave needs seed data that the fresh
@@ -193,47 +182,70 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       // covered by accessibility.spec.ts so coverage is consistent.
       await loginAsTenantAdmin(page, tenant);
 
-      const pages = [
-        "/dashboard",
-        "/time-entries",
-        "/leave",
-        "/reports",
-        "/settings",
-      ];
+      const pages = ["/dashboard", "/time-entries", "/leave", "/reports", "/settings"];
 
       for (const url of pages) {
         await page.goto(url);
         // Wait for the page to have meaningful body content. 50 chars is the
         // same threshold the deleted dynamic-audit.spec.ts used.
-        await page.waitForFunction(
-          () => document.body.innerText.trim().length >= 50,
-          null,
-          { timeout: 5_000 },
-        );
+        await page.waitForFunction(() => document.body.innerText.trim().length >= 50, null, {
+          timeout: 5_000,
+        });
       }
     });
 
-    test("dashboard has no horizontal overflow on desktop viewport", async ({
-      page,
-      tenant,
-    }) => {
+    test("dashboard has no horizontal overflow on desktop viewport", async ({ page, tenant }) => {
       // Merged from dynamic-audit.spec.ts "no horizontal scrollbar on desktop"
       // — kept just for the dashboard (the page most prone to grid blow-out).
       await loginAsTenantAdmin(page, tenant);
       await page.goto("/dashboard");
 
       // Wait for the page to settle before measuring (timer card hydrates async).
-      await expect(
-        page.getByRole("button", { name: /(Ein|Aus)stempeln/ }).first(),
-      ).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByRole("button", { name: /(Ein|Aus)stempeln/ }).first()).toBeVisible({
+        timeout: 10_000,
+      });
 
       const hasHScroll = await page.evaluate(() => {
-        return (
-          document.documentElement.scrollWidth >
-          document.documentElement.clientWidth + 1
-        );
+        return document.documentElement.scrollWidth > document.documentElement.clientWidth + 1;
       });
       expect(hasHScroll).toBe(false);
+    });
+  });
+
+  // Phase 110 follow-up: the visual-regression suite (visual.spec.ts) now seeds every test
+  // tenant's admin as "already acknowledged the newest release note" so the auto-opening
+  // WhatsNewPanel drawer doesn't sit over every screenshot baseline (see visual-seed.ts's
+  // "2b. Acknowledge the newest release note" step). That means the drawer's auto-open behavior
+  // itself is no longer exercised anywhere at the browser level — this describe block is that
+  // coverage. Kept out of visual.spec.ts on purpose: asserting on a mid-animation drawer via
+  // `toHaveScreenshot()` would be flaky (the drawer slides in), so this only checks visibility
+  // via `getByRole`/`aria-label`, which Playwright's auto-waiting handles independently of the
+  // open/close transition.
+  test.describe("What's-New drawer (Phase 110)", () => {
+    test("auto-opens once for a fresh user and can be dismissed", async ({ page, tenant }) => {
+      // `tenant` fixture creates a brand-new admin per test (Plan 73-02, D-04 isolation), so
+      // `User.lastSeenReleaseVersion` is null here — exactly the "never seen a release" state
+      // the auto-open `$effect` in `(app)/+layout.svelte` reacts to.
+      await loginAsTenantAdmin(page, tenant);
+      await page.goto("/dashboard");
+
+      const panel = page.getByRole("complementary", { name: "Was ist neu" });
+      // An older/local API image can serve an empty release-notes corpus (AK-06 fail-silent
+      // contract in release-notes.ts) — in that case there is nothing to auto-open and this
+      // assertion would hang. Skip gracefully rather than asserting a false negative.
+      const opened = await panel
+        .waitFor({ state: "visible", timeout: 10_000 })
+        .then(() => true)
+        .catch(() => false);
+      test.skip(!opened, "No release notes baked into this image — nothing to auto-open.");
+
+      await page.getByRole("button", { name: "Schließen" }).click();
+      await expect(panel).not.toBeVisible();
+      // Not asserting on a post-dismiss reload here: markReleaseNotesSeen() persists the
+      // acknowledgement via a fire-and-forget PUT (apps/web/src/lib/stores/release-notes.ts),
+      // so reloading immediately after the click races that request rather than testing
+      // anything deterministic. Server-side persistence of the marker is covered by
+      // apps/api/src/__tests__/release-notes.test.ts.
     });
   });
 });

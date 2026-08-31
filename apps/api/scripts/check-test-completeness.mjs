@@ -18,8 +18,8 @@
  */
 import { readFileSync } from "node:fs";
 
-const MIN_FILES = 199; // see 106-MEASUREMENTS.md § "Suite size" (post-flip row); raise when adding files
-const MIN_TESTS = 2239; // see 106-MEASUREMENTS.md § "Suite size" (post-flip row); raise when adding tests
+const MIN_FILES = 213; // Phase 110-04: measured green run (213 files / 2425 tests incl. 3 skipped); raise when adding files
+const MIN_TESTS = 2425; // Phase 110-04: measured green run; raise when adding tests
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

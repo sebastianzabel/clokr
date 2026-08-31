@@ -237,6 +237,7 @@ model User {
   failedLoginAttempts Int       @default(0)
   lockedUntil         DateTime? @db.Timestamptz
   uiPreferences       Json?     @db.JsonB
+  lastSeenReleaseVersion String?  // Phase 110 (D-10/D-11): last release-notes version this user acknowledged
   lastFailedLoginAt   DateTime? @db.Timestamptz
   lastLoginAt         DateTime? @db.Timestamptz
   createdAt           DateTime  @default(now()) @db.Timestamptz
