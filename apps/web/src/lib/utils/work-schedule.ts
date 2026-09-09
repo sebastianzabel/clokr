@@ -86,7 +86,13 @@ function hasNonEmptyWorkDays(s: WorkScheduleLike): s is WorkScheduleLike & { wor
 const warned = new WeakSet<object>();
 function maybeWarnDivergence(s: WorkScheduleLike): void {
   if (!hasNonEmptyWorkDays(s)) return;
-  if (s.type === "SHIFT_BASED" || s.type === "MONTHLY_HOURS") return;
+  // {day}Hours is authoritative data only for FIXED_SCHEDULE (CLAUDE.md); for
+  // FLEXTIME, MONTHLY_HOURS and SHIFT_BASED it is a legacy placeholder while
+  // workDays carries the contract, so a workDays-vs-hours divergence only means
+  // something for FIXED_SCHEDULE. Positive check (not an exclusion list) so the
+  // type enumeration exists in exactly one place (issue #142). An undefined
+  // `type` is treated as "not known to be FIXED_SCHEDULE" and stays silent.
+  if (s.type !== "FIXED_SCHEDULE") return;
   const fromHours = DAY_HOUR_KEYS.map((k, i) => (toNumber(s[k]) > 0 ? i : -1)).filter(
     (i) => i >= 0,
   );
