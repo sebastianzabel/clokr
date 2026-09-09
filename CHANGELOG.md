@@ -1,5 +1,50 @@
 # Changelog
 
+## [1.10.1](https://github.com/sebastianzabel/clokr/compare/v1.10.0...v1.10.1) (2026-09-09)
+
+
+### Bug Fixes
+
+* **136-01:** anchor resolver-reopen test seeds to one clock read ([dad880d](https://github.com/sebastianzabel/clokr/commit/dad880d62817004ef668d1f381cd9aff3616b63d))
+* **136-01:** derive the two shift anchors that expire on 2026-09-17 ([8b203b3](https://github.com/sebastianzabel/clokr/commit/8b203b3c8038d3bdf3816de73f432b850bbe85c9))
+* **136-02:** anchor break-notifications test days to one tenant-TZ clock read ([5390854](https://github.com/sebastianzabel/clokr/commit/5390854ec26b39071640de07d4b95353d7a667d4))
+* **136-03:** retire karenz-overrun's private daysAgo() for daysAgoStrInTz(ANCHOR, n) ([96bdd2a](https://github.com/sebastianzabel/clokr/commit/96bdd2a73d0a985d1740dd0e0013ece0bfc6b834))
+* **136-04:** feed vocational-school-retroactive's opts.now at the two comparing sites ([3276de2](https://github.com/sebastianzabel/clokr/commit/3276de20bdb926a95b04b1e244830435ae7a8535))
+* **136-05:** anchor leave-overtime-comp-confirmed-check's REQUEST_MONDAY to one clock read ([3882391](https://github.com/sebastianzabel/clokr/commit/38823918c6fccc331756eefded1c1d92cac257e5))
+* **136-07:** seed section9-credit's literal entitlement years, pin its Stichtag test ([70a96fa](https://github.com/sebastianzabel/clokr/commit/70a96fadff700073f2ad413421ed880da76b17e9))
+* **136-08:** seed section9-invariants' 2026 entitlement year ([41c6ad6](https://github.com/sebastianzabel/clokr/commit/41c6ad6525e881b42d7fb7edf5ec8fcfebfc49e5))
+* **136-09:** seed reports-sick-days' D-30 entitlement year ([a8987c8](https://github.com/sebastianzabel/clokr/commit/a8987c853cb6d46cff08373c5fee495b8308986b))
+* **136-10:** pin leave-correct's YEAR to its literal Mon-Fri fixture year ([f330222](https://github.com/sebastianzabel/clokr/commit/f330222b630d19fa19ec4b061de3e8c1519549f3))
+* **136-11:** seed leave.test's 2026 entitlement year (year filter already landed via [#173](https://github.com/sebastianzabel/clokr/issues/173)) ([9c2023f](https://github.com/sebastianzabel/clokr/commit/9c2023f86aa42aee056118494f573e5c9c66e0d1))
+* **136-12:** anchor shifts-under-coverage on a holiday-free week ([583353a](https://github.com/sebastianzabel/clokr/commit/583353aafca5cd3d6580dc8d10f99c8fb405fe47))
+* **136-13:** anchor shifts-week-workdays-primary on a holiday-free week ([5cf87d8](https://github.com/sebastianzabel/clokr/commit/5cf87d87e26a6996f7606a660e6c369dd860e5e9))
+* **136-14:** anchor shift-week-leave-absence-minutes on a holiday-free week ([a5cad62](https://github.com/sebastianzabel/clokr/commit/a5cad6212577a0493287320302c300e334c364e2))
+* **136-15:** derive soll-korrelation's reference weeks and year scans without expiry ([0c60c6a](https://github.com/sebastianzabel/clokr/commit/0c60c6a9a8ea54301ab3a3c65d2c9977e110bcda))
+* **136-16:** pin the clock across workschedule-validfrom-month1's capture and request ([5e25348](https://github.com/sebastianzabel/clokr/commit/5e253480fd498cb850fb118136c89088dad11792))
+* **136-17:** derive schedule-type-switch-guard's month start and pin the clock ([802a184](https://github.com/sebastianzabel/clokr/commit/802a1843470ebefe8249d31a6df3ffe6a64f3843))
+* **136-18:** derive month-saldo's month in the tenant timezone ([7f5c8da](https://github.com/sebastianzabel/clokr/commit/7f5c8da2da80d9ceea0e5dbb1d51f03ad34036e7))
+* **136-19:** keep shifts Test 2's anchor inside one calendar month ([7a4476d](https://github.com/sebastianzabel/clokr/commit/7a4476d08843a17c9957f257b14b2c9dd5586608))
+* **136-20:** one anchor and a tenant-TZ month label in overtime-monthly-hours ([06be067](https://github.com/sebastianzabel/clokr/commit/06be06704a4db5a3ace1f84ebbf74b2b371710d6))
+* **136:** Bündel B, C und D — Jahreswechsel, Feiertage, Monatsgrenzen ([77a117d](https://github.com/sebastianzabel/clokr/commit/77a117d71a9f1b73b890a8d36724052d0297942b))
+* **136:** fünf Tests auf einen Uhr-Anker ziehen (Bündel E) ([0f4ee90](https://github.com/sebastianzabel/clokr/commit/0f4ee909b84b66a52f80f06a2d10b21bfa5a0ade))
+* **136:** zwei Schicht-Anker ableiten, die am 17.09. ablaufen (Batch A) ([d189f61](https://github.com/sebastianzabel/clokr/commit/d189f61ac71f57dcf3f121f723f24499d185236e))
+* **141-01:** GREEN — /open-items reads TenantConfig.missingEntriesDays ([eb2536b](https://github.com/sebastianzabel/clokr/commit/eb2536b0cedbbc34f2c1203570cd5ee62b8e8659))
+* **141-01:** single source of truth for missing-entries window ([e6fe2b0](https://github.com/sebastianzabel/clokr/commit/e6fe2b0515d59117a65556e0142659acb0aab2c0))
+* **141:** open-items liest TenantConfig.missingEntriesDays — eine Quelle für Karte und Cron ([0828229](https://github.com/sebastianzabel/clokr/commit/0828229c95974924d3cf6da23778356bb245b1f8))
+* **142-01:** divergence warning fires only for FIXED_SCHEDULE (GREEN) ([a563a82](https://github.com/sebastianzabel/clokr/commit/a563a8288af3ccc4ea3026d5a04138a717399165))
+* **142:** Divergenzwarnung nur noch für FIXED_SCHEDULE ([4ef5943](https://github.com/sebastianzabel/clokr/commit/4ef594399c442055f5c7ec1f30c989def38347fe))
+* **143-01:** guard schedule dereference before !schedule check in close-month handlers ([645655f](https://github.com/sebastianzabel/clokr/commit/645655f144d43d8e992ff242edd9018551631402))
+* **143:** !schedule-Prüfung vor der Dereferenzierung, gemeinsamer Helfer statt dritter Kopie ([3ee68a5](https://github.com/sebastianzabel/clokr/commit/3ee68a51649fecef6e92557c3ddb9fd5e81a2625))
+* **164-01:** give FLEXTIME the Ø-Methode day rate instead of the {day}Hours placeholder ([7ef439e](https://github.com/sebastianzabel/clokr/commit/7ef439e1a1712ef746913f0fcd88d32d3055c92c))
+* **164-02:** wire both calendars to the FLEXTIME day rate ([b333553](https://github.com/sebastianzabel/clokr/commit/b333553ed644654757ce1b89a19759748dc0877f)), closes [#164](https://github.com/sebastianzabel/clokr/issues/164)
+* **164:** FLEXTIME bekommt den Ø-Methode-Tagessatz statt des Platzhalters ([5a9f783](https://github.com/sebastianzabel/clokr/commit/5a9f7832a16adceed850db49712b3d91f8841afc))
+* **167-01:** derive the reverse-hook shift date instead of writing it ([7c854c7](https://github.com/sebastianzabel/clokr/commit/7c854c7394dfaff6d2161fee01fe54497cabad08))
+* **173-01:** pin ?year on the flaky vacation-deduction test ([2a405c0](https://github.com/sebastianzabel/clokr/commit/2a405c0eecca5215d216e16e3c494a9db30c78ba))
+* **173-02:** order GET /leave/entitlements/:id by year desc ([ee3a84c](https://github.com/sebastianzabel/clokr/commit/ee3a84c736cfe68e3929a2a88870ef99aa34ab5f))
+* **173:** Anspruchszeilen deterministisch greifen — Test pinnt das Jahr, Endpunkt ordnet ([5a763ad](https://github.com/sebastianzabel/clokr/commit/5a763ad36e89c47e2714a41362d653a0b3c387fa))
+* **deps:** 7 HIGH-Advisories schließen — Audit-Gate entsperrt alle offenen PRs ([2b09542](https://github.com/sebastianzabel/clokr/commit/2b09542d75e0b8d5d2da470ef98b50fc351fb28a))
+* **deps:** close all 7 HIGH advisories blocking the pnpm audit gate ([91dfffc](https://github.com/sebastianzabel/clokr/commit/91dfffc0bcd59f575a9b2e2451071964919f0739))
+
 ## [1.10.0](https://github.com/sebastianzabel/clokr/compare/v1.9.18...v1.10.0) (2026-08-31)
 
 
