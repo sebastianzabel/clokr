@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  seedEntitlementYears,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 describe("Leave / Absence API", () => {
@@ -10,6 +16,14 @@ describe("Leave / Absence API", () => {
   beforeAll(async () => {
     app = await getTestApp();
     data = await seedTestData(app, "lv");
+    // Issue #136 (batch B): this file's requests book onto hardcoded 2026 dates (see e.g.
+    // "rejects vacation exceeding remaining days" and the "Vacation day deductions" describe
+    // below), while seedTestData only provisions the LIVE current year's entitlement row.
+    await seedEntitlementYears(app, {
+      employeeId: data.employee.id,
+      leaveTypeId: data.vacationType.id,
+      years: [2026],
+    });
   });
 
   afterAll(async () => {
