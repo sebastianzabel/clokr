@@ -11,7 +11,7 @@
 // in this file ever needs to be relaxed, the helper logic is wrong,
 // not the test. Investigate root cause — do not silently weaken.
 
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -451,5 +451,113 @@ describe("employee form — group controls carry no orphan <label> (deferred-ite
     // the a11y_label_has_associated_control finding recorded in deferred-items.md
     // item 2.
     expect(ROUTE_SOURCE).not.toContain('<label class="form-label">');
+  });
+});
+
+// Issue #142 — the divergence warning must fire only for FIXED_SCHEDULE, since
+// {day}Hours is authoritative only for that type (CLAUDE.md). FLEXTIME's seven
+// {day}Hours columns are just as much a placeholder as SHIFT_BASED's and
+// MONTHLY_HOURS's, so comparing them against workDays produces a guaranteed
+// false alarm on every FLEXTIME schedule whose workDays is a proper subset of
+// the placeholder weekdays (the one prod FLEXTIME row: workDays=[Di..Fr]
+// against filler hours on all five weekdays).
+describe("maybeWarnDivergence — divergence warning fires only for FIXED_SCHEDULE (issue #142)", () => {
+  let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("prod FLEXTIME row repro — type: FLEXTIME, workDays: [Di..Fr], placeholder Mo..Fr hours=1 → no warning", () => {
+    const sched = build({
+      type: "FLEXTIME",
+      workDays: [2, 3, 4, 5],
+      mondayHours: 1,
+      tuesdayHours: 1,
+      wednesdayHours: 1,
+      thursdayHours: 1,
+      fridayHours: 1,
+    });
+    isWorkDay(sched, new Date(2026, 5, 1)); // any date; only workDays presence matters here
+    expect(consoleWarnSpy).not.toHaveBeenCalled();
+  });
+
+  it("FIXED_SCHEDULE with divergent workDays/*Hours still warns exactly once", () => {
+    const sched = build({
+      type: "FIXED_SCHEDULE",
+      workDays: [1, 2, 3, 4, 5],
+      mondayHours: 8,
+      tuesdayHours: 8,
+      wednesdayHours: 8,
+      thursdayHours: 8,
+      fridayHours: 0,
+    });
+    isWorkDay(sched, new Date(2026, 5, 1));
+    expect(consoleWarnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("FIXED_SCHEDULE with agreeing workDays/*Hours does not warn", () => {
+    const sched = build({
+      type: "FIXED_SCHEDULE",
+      workDays: [1, 2, 3, 4, 5],
+      mondayHours: 8,
+      tuesdayHours: 8,
+      wednesdayHours: 8,
+      thursdayHours: 8,
+      fridayHours: 8,
+    });
+    isWorkDay(sched, new Date(2026, 5, 1));
+    expect(consoleWarnSpy).not.toHaveBeenCalled();
+  });
+
+  it("undefined type does not warn even with divergent workDays/*Hours — deliberate (D-Q2), not incidental", () => {
+    const sched = build({
+      type: undefined,
+      workDays: [1, 2, 3, 4, 5],
+      mondayHours: 8,
+      tuesdayHours: 8,
+      wednesdayHours: 8,
+      thursdayHours: 8,
+      fridayHours: 0,
+    });
+    isWorkDay(sched, new Date(2026, 5, 1));
+    expect(consoleWarnSpy).not.toHaveBeenCalled();
+  });
+
+  it.each(["SHIFT_BASED", "MONTHLY_HOURS"] as const)(
+    "%s with divergent workDays/placeholder hours still does not warn (regression guard)",
+    (type) => {
+      const sched = build({
+        type,
+        workDays: [2, 3, 4, 5],
+        mondayHours: 1,
+        tuesdayHours: 1,
+        wednesdayHours: 1,
+        thursdayHours: 1,
+        fridayHours: 1,
+      });
+      isWorkDay(sched, new Date(2026, 5, 1));
+      expect(consoleWarnSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("one-shot behaviour survives the guard change — same divergent FIXED_SCHEDULE object warns exactly once across repeated calls", () => {
+    const sched = build({
+      type: "FIXED_SCHEDULE",
+      workDays: [1, 2, 3, 4, 5],
+      mondayHours: 8,
+      tuesdayHours: 8,
+      wednesdayHours: 8,
+      thursdayHours: 8,
+      fridayHours: 0,
+    });
+    isWorkDay(sched, new Date(2026, 5, 1));
+    isWorkDay(sched, new Date(2026, 5, 2));
+    isWorkDay(sched, new Date(2026, 5, 3));
+    expect(consoleWarnSpy).toHaveBeenCalledTimes(1);
   });
 });
