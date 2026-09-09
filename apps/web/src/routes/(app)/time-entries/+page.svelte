@@ -27,7 +27,7 @@
   import { de } from "date-fns/locale";
   import {
     isWorkDay,
-    getDayExpectedHours,
+    getDayExpectedMinutes,
     countWorkingDaysInMonth,
     monthlyBudgetSollMinutes,
   } from "$lib/utils/work-schedule";
@@ -552,7 +552,11 @@
         holidays,
         absences,
         hireDate,
-        schedule?.type === "MONTHLY_HOURS" || schedule?.type === "FLEXTIME",
+        // Issue #164: FLEXTIME must NOT take the MONTHLY_HOURS path. It has no
+        // monthlyHours budget, so that path produced a Soll of 0 for every cell —
+        // and a Monat-Saldo equal to the full Ist. Its Soll is the Ø-Methode rate,
+        // which the else-branch now derives via getDayExpectedMinutes().
+        schedule?.type === "MONTHLY_HOURS",
         shiftMinByDate,
         bsAbsences,
       );
@@ -816,7 +820,7 @@
       // when building the map (multi-shift days).
       expectedMin = shiftMinByDate.get(dateStr) ?? 0;
     } else {
-      expectedMin = sched ? getDayExpectedHours(sched, date) * 60 : 0;
+      expectedMin = sched ? getDayExpectedMinutes(sched, date) : 0;
     }
     if (isBeforeHire) expectedMin = 0;
     if (isHoliday) expectedMin = 0;

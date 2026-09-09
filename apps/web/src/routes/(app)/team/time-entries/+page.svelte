@@ -24,7 +24,7 @@
   } from "$lib/time-entries/month-view-state";
   import {
     isWorkDay,
-    getDayExpectedHours,
+    getDayExpectedMinutes,
     countWorkingDaysInMonth,
     monthlyBudgetSollMinutes,
   } from "$lib/utils/work-schedule";
@@ -696,7 +696,7 @@
       // when building the map (multi-shift days).
       expectedMin = shiftMinByDate.get(dateStr) ?? 0;
     } else {
-      expectedMin = sched ? getDayExpectedHours(sched, date) * 60 : 0;
+      expectedMin = sched ? getDayExpectedMinutes(sched, date) : 0;
     }
     if (isBeforeHire) expectedMin = 0;
     if (isHoliday) expectedMin = 0;
@@ -1037,6 +1037,16 @@
 
   // ── Reaktive Ableitungen ───────────────────────────────────────────────────
   let isMonthlyHours = $derived(schedule?.type === "MONTHLY_HOURS");
+  // Issue #164 — mirrors /time-entries' isNoDailyTarget for the two types the SERVER
+  // treats as gap-free (find-missing-workdays.ts:134, presence.ts:72, overtime.ts:82,
+  // attendance-checker.ts:648, auto-close-month.ts:310): a per-day +/- is meaningless
+  // when the contract fixes only a weekly or monthly total. SHIFT_BASED is deliberately
+  // NOT included here, unlike on /time-entries: this page sources its SHIFT_BASED Soll
+  // from real roster minutes, where a daily diff does mean something. That residual
+  // difference between the two pages is out of scope for #164 and left visible.
+  let isNoDailyTarget = $derived(
+    schedule?.type === "MONTHLY_HOURS" || schedule?.type === "FLEXTIME",
+  );
   let monthlyTarget = $derived(
     isMonthlyHours && schedule?.monthlyHours ? Number(schedule.monthlyHours) * 60 : 0,
   );
@@ -1536,13 +1546,13 @@
                       >{cum >= 0 ? "+" : "−"}{fmtMin(Math.abs(cum))}</span
                     >
                   {/if}
-                {:else if day.expectedMin > 0 && !isMonthlyHours}
+                {:else if day.expectedMin > 0 && !isNoDailyTarget}
                   {@const b = day.workedMin - day.expectedMin}
                   <span class="day-bal {balClass(b)}"
                     >{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span
                   >
                 {/if}
-              {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture && !isMonthlyHours}
+              {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture && !isNoDailyTarget}
                 <span class="day-missing">−{fmtMin(day.expectedMin)}&thinsp;h</span>
               {/if}
             </button>

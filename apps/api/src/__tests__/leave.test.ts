@@ -366,11 +366,23 @@ describe("Leave / Absence API", () => {
   });
 
   describe("Vacation day deductions", () => {
+    // Issue #173: approving a single-year VACATION request can itself create a SECOND
+    // "Urlaub" LeaveEntitlement row for the same employee as a side effect —
+    // deductVacationDays() -> recalculateCarryOver() projects next year's carry-over and
+    // creates that row if it doesn't exist yet (routes/leave.ts). GET /entitlements/:id
+    // without `?year` then returns both rows with no `orderBy`, so `.find(e =>
+    // e.leaveType?.name === "Urlaub")` could non-deterministically pick either one.
+    // Pinning `?year=` to the year the request books onto (startDate.getUTCFullYear(),
+    // the same accessor deductVacationDays() itself uses) makes the assertion
+    // deterministic without weakening it — the frontend does the same (see
+    // apps/web/src/routes/(app)/leave/+page.svelte and vacation-summary.test.ts).
+    const bookingYear = new Date("2026-12-07").getUTCFullYear();
+
     it("approving vacation deducts from entitlement", async () => {
       // Check entitlement before
       const beforeRes = await app.inject({
         method: "GET",
-        url: `/api/v1/leave/entitlements/${data.employee.id}`,
+        url: `/api/v1/leave/entitlements/${data.employee.id}?year=${bookingYear}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
       const entitlements = JSON.parse(beforeRes.body);
@@ -402,7 +414,7 @@ describe("Leave / Absence API", () => {
       // Check entitlement after
       const afterRes = await app.inject({
         method: "GET",
-        url: `/api/v1/leave/entitlements/${data.employee.id}`,
+        url: `/api/v1/leave/entitlements/${data.employee.id}?year=${bookingYear}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
       const entAfter = JSON.parse(afterRes.body);
@@ -412,6 +424,96 @@ describe("Leave / Absence API", () => {
       const usedAfter = Number(vacEntAfter?.usedDays ?? 0);
 
       expect(usedAfter).toBe(usedBefore + Number(days));
+    });
+
+    it("picks the booking-year entitlement even when a second Urlaub row exists for another year (regression, issue #173)", async () => {
+      // Deliberately reproduces the trap the test above closed: a SECOND "Urlaub"
+      // LeaveEntitlement row for the SAME employee, in a year other than the one the
+      // request books onto, with a usedDays value ("999") that would make the
+      // assertion fail loudly if the wrong row were ever picked up. Without `?year`
+      // pinning and the endpoint's `orderBy: { year: "desc" }` (routes/leave.ts), which
+      // row a plain `.find()` over the unordered array returns is not guaranteed by
+      // Postgres — this proves it no longer matters.
+      const vacType = await app.prisma.leaveType.findFirst({
+        where: { tenantId: data.tenant.id, name: "Urlaub" },
+      });
+      expect(vacType).toBeTruthy();
+      const decoyYear = bookingYear + 3;
+      await app.prisma.leaveEntitlement.upsert({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId: data.employee.id,
+            leaveTypeId: vacType!.id,
+            year: decoyYear,
+          },
+        },
+        create: {
+          employeeId: data.employee.id,
+          leaveTypeId: vacType!.id,
+          year: decoyYear,
+          totalDays: 0,
+          usedDays: 999,
+        },
+        update: { usedDays: 999 },
+      });
+
+      // Check entitlement before (booking year only — the decoy row must not be picked)
+      const beforeRes = await app.inject({
+        method: "GET",
+        url: `/api/v1/leave/entitlements/${data.employee.id}?year=${bookingYear}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      const entitlements = JSON.parse(beforeRes.body);
+      const vacEnt = entitlements.find(
+        (e: { leaveType?: { name: string }; usedDays?: number }) => e.leaveType?.name === "Urlaub",
+      );
+      const usedBefore = Number(vacEnt?.usedDays ?? 0);
+      expect(usedBefore).not.toBe(999);
+
+      // Create and approve another 1-day vacation, still within the booking year
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/leave/requests",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          type: "VACATION",
+          startDate: "2026-12-09",
+          endDate: "2026-12-09",
+        },
+      });
+      const { id: requestId, days } = JSON.parse(createRes.body);
+
+      await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${requestId}/review`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { status: "APPROVED" },
+      });
+
+      // Check entitlement after — must still be the booking-year row, decoy untouched
+      const afterRes = await app.inject({
+        method: "GET",
+        url: `/api/v1/leave/entitlements/${data.employee.id}?year=${bookingYear}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      const entAfter = JSON.parse(afterRes.body);
+      const vacEntAfter = entAfter.find(
+        (e: { leaveType?: { name: string }; usedDays?: number }) => e.leaveType?.name === "Urlaub",
+      );
+      const usedAfter = Number(vacEntAfter?.usedDays ?? 0);
+
+      expect(usedAfter).toBe(usedBefore + Number(days));
+
+      const decoyAfter = await app.prisma.leaveEntitlement.findUnique({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId: data.employee.id,
+            leaveTypeId: vacType!.id,
+            year: decoyYear,
+          },
+        },
+      });
+      expect(Number(decoyAfter?.usedDays)).toBe(999);
     });
   });
 
