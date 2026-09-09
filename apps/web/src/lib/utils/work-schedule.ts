@@ -49,6 +49,11 @@ function ymd(date: Date): string {
 export interface WorkScheduleLike {
   type?: "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
   monthlyHours?: number | string | null;
+  // FLEXTIME + SHIFT_BASED weekly target (Prisma Decimal — arrives as a string
+  // on the wire). Issue #164: FLEXTIME's Ø-Methode day rate is weeklyHours /
+  // contractWorkDaysPerWeek, mirroring apps/api/src/utils/timezone.ts's
+  // avgWorkMinutesCore.
+  weeklyHours?: number | string | null;
   mondayHours: number | string;
   tuesdayHours: number | string;
   wednesdayHours: number | string;
@@ -121,6 +126,16 @@ export function isWorkDay(schedule: WorkScheduleLike | null | undefined, date: D
   return toNumber(schedule[DAY_HOUR_KEYS[dow]]) > 0;
 }
 
+// Contracted workdays per week — the divisor of the Ø-Methode (BAG 9 AZR 406/17).
+// MUST use the same day-membership source as isWorkDay() above: workDays when
+// non-empty, count({day}Hours > 0) otherwise. Mixing the two sources would make
+// the ratio meaningless — the server states this explicitly in
+// apps/api/src/utils/timezone.ts:268-271, which this mirrors.
+function contractWorkDaysPerWeek(s: WorkScheduleLike): number {
+  if (hasNonEmptyWorkDays(s)) return s.workDays.length;
+  return DAY_HOUR_KEYS.filter((k) => toNumber(s[k]) > 0).length;
+}
+
 export function getDayExpectedHours(
   schedule: WorkScheduleLike | null | undefined,
   date: Date,
@@ -132,7 +147,47 @@ export function getDayExpectedHours(
     const mh = toNumber(schedule.monthlyHours);
     if (mh === 0) return 0; // D-03 / D-04
   }
+  // FLEXTIME (issue #164): {day}Hours is a legacy 1/0 placeholder for this type
+  // (CLAUDE.md "Schedule Types"; production evidence in issue #142), so returning
+  // it here produced a 1:00 h daily Soll. The server's Soll for FLEXTIME is the
+  // Ø-Methode rate — apps/api/src/utils/timezone.ts:332-334 routes FLEXTIME to
+  // avgWorkMinutesCore, which is weeklyHours × 60 × workdaysInRange ÷ workDaysPerWeek
+  // (BAG 9 AZR 406/17). Per day that is weeklyHours ÷ workDaysPerWeek. weeklyHours > 0
+  // is enforced for FLEXTIME on every write path (apps/api/src/routes/settings.ts:341-350);
+  // the <= 0 guard mirrors avgWorkMinutesCore's own defensive return for legacy rows.
+  //
+  // Deliberately its own branch rather than the positive `type === "FIXED_SCHEDULE"`
+  // check that maybeWarnDivergence uses one function above: MONTHLY_HOURS with a
+  // budget, and an undefined type, both still return the {day}Hours value here and
+  // are pinned by shipped assertions in __tests__/work-schedule.test.ts.
+  if (schedule.type === "FLEXTIME") {
+    const weekly = toNumber(schedule.weeklyHours);
+    if (weekly <= 0) return 0;
+    const perWeek = contractWorkDaysPerWeek(schedule);
+    if (perWeek === 0) return 0;
+    return weekly / perWeek;
+  }
   return toNumber(schedule[DAY_HOUR_KEYS[date.getDay()]]);
+}
+
+/**
+ * The calendar cell's Soll in whole minutes. Callers must use this instead of
+ * `getDayExpectedHours(...) * 60`.
+ *
+ * FLEXTIME's Ø-Methode rate (weeklyHours ÷ workDaysPerWeek) is frequently not a
+ * whole number of minutes — e.g. 38.5 h over 4 workdays is 577.5 min — and fmtMin()
+ * formats with `minutes % 60`, so an unrounded value would render as "9:37.5".
+ * The server rounds ONCE per range (avgWorkMinutesCore's Math.round); a per-cell
+ * calendar can only round per day, which can differ from the server's month total
+ * by at most 0.5 min per day. Every other schedule type keeps the exact
+ * `hours × 60` it produced before, so FIXED_SCHEDULE is bit-for-bit unchanged.
+ */
+export function getDayExpectedMinutes(
+  schedule: WorkScheduleLike | null | undefined,
+  date: Date,
+): number {
+  const hours = getDayExpectedHours(schedule, date);
+  return schedule?.type === "FLEXTIME" ? Math.round(hours * 60) : hours * 60;
 }
 
 export function countWorkingDaysInMonth(

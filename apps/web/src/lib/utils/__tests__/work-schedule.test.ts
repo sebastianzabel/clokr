@@ -18,6 +18,7 @@ import path from "node:path";
 import {
   isWorkDay,
   getDayExpectedHours,
+  getDayExpectedMinutes,
   countWorkingDaysInMonth,
   monthlyBudgetSollMinutes,
   arbeitstageFieldVariant,
@@ -559,5 +560,163 @@ describe("maybeWarnDivergence — divergence warning fires only for FIXED_SCHEDU
     isWorkDay(sched, new Date(2026, 5, 2));
     isWorkDay(sched, new Date(2026, 5, 3));
     expect(consoleWarnSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Issue #164 — FLEXTIME's daily Soll must be the server's Ø-Methode day rate
+// (weeklyHours / contractWorkDaysPerWeek), mirroring
+// apps/api/src/utils/timezone.ts:215-286 (avgWorkMinutesCore), not the legacy
+// {day}Hours 1/0 placeholder. Prod-row repro from the issue.
+describe("getDayExpectedHours / getDayExpectedMinutes — FLEXTIME Ø-Methode (issue #164)", () => {
+  it("prod-row repro: workDays=[Di..Fr], placeholder *Hours=1, weeklyHours=30 → Tuesday = 7.5h / 450min (NOT 1h / 60min)", () => {
+    const sched = build({
+      type: "FLEXTIME",
+      workDays: [2, 3, 4, 5],
+      mondayHours: 1,
+      tuesdayHours: 1,
+      wednesdayHours: 1,
+      thursdayHours: 1,
+      fridayHours: 1,
+      weeklyHours: 30,
+    });
+    const tuesday = new Date(2026, 5, 2); // June 2 2026 = Tuesday
+    expect(getDayExpectedHours(sched, tuesday)).toBe(7.5);
+    expect(getDayExpectedMinutes(sched, tuesday)).toBe(450);
+  });
+
+  it("same schedule, Monday (not in workDays) → 0h / 0min", () => {
+    const sched = build({
+      type: "FLEXTIME",
+      workDays: [2, 3, 4, 5],
+      mondayHours: 1,
+      tuesdayHours: 1,
+      wednesdayHours: 1,
+      thursdayHours: 1,
+      fridayHours: 1,
+      weeklyHours: 30,
+    });
+    const monday = new Date(2026, 5, 1);
+    expect(getDayExpectedHours(sched, monday)).toBe(0);
+    expect(getDayExpectedMinutes(sched, monday)).toBe(0);
+  });
+
+  it("same schedule, Saturday → 0h / 0min", () => {
+    const sched = build({
+      type: "FLEXTIME",
+      workDays: [2, 3, 4, 5],
+      mondayHours: 1,
+      tuesdayHours: 1,
+      wednesdayHours: 1,
+      thursdayHours: 1,
+      fridayHours: 1,
+      weeklyHours: 30,
+    });
+    const saturday = new Date(2026, 5, 6);
+    expect(getDayExpectedHours(sched, saturday)).toBe(0);
+    expect(getDayExpectedMinutes(sched, saturday)).toBe(0);
+  });
+
+  it("rounding: weeklyHours=38.5, workDays=[Di..Fr] → getDayExpectedMinutes = 578 (Math.round(577.5)), always an integer", () => {
+    const sched = build({
+      type: "FLEXTIME",
+      workDays: [2, 3, 4, 5],
+      mondayHours: 1,
+      tuesdayHours: 1,
+      wednesdayHours: 1,
+      thursdayHours: 1,
+      fridayHours: 1,
+      weeklyHours: 38.5,
+    });
+    const tuesday = new Date(2026, 5, 2);
+    const minutes = getDayExpectedMinutes(sched, tuesday);
+    expect(minutes).toBe(578);
+    expect(Number.isInteger(minutes)).toBe(true);
+  });
+
+  it("weeklyHours=null (legacy FLEXTIME row) → 0 on a workday, mirroring avgWorkMinutesCore's wh <= 0 guard", () => {
+    const sched = build({
+      type: "FLEXTIME",
+      workDays: [2, 3, 4, 5],
+      mondayHours: 1,
+      tuesdayHours: 1,
+      wednesdayHours: 1,
+      thursdayHours: 1,
+      fridayHours: 1,
+      weeklyHours: null,
+    });
+    const tuesday = new Date(2026, 5, 2);
+    expect(getDayExpectedHours(sched, tuesday)).toBe(0);
+    expect(getDayExpectedMinutes(sched, tuesday)).toBe(0);
+  });
+
+  it("legacy divisor fallback: workDays=[] + *Hours=1 on Mo-Fr + weeklyHours=40 → Monday = 8h / 480min (divisor 5 from count(*Hours>0)), same membership source as isWorkDay", () => {
+    const sched = build({
+      type: "FLEXTIME",
+      workDays: [],
+      mondayHours: 1,
+      tuesdayHours: 1,
+      wednesdayHours: 1,
+      thursdayHours: 1,
+      fridayHours: 1,
+      weeklyHours: 40,
+    });
+    const monday = new Date(2026, 5, 1);
+    expect(getDayExpectedHours(sched, monday)).toBe(8);
+    expect(getDayExpectedMinutes(sched, monday)).toBe(480);
+  });
+
+  it("FIXED_SCHEDULE regression: getDayExpectedMinutes on the existing 8h Monday case = 480, getDayExpectedHours still 8 (AC-164-04)", () => {
+    const sched = build({
+      type: "FIXED_SCHEDULE",
+      workDays: [1, 2, 3, 4, 5],
+      mondayHours: 8,
+      tuesdayHours: 8,
+      wednesdayHours: 8,
+      thursdayHours: 8,
+      fridayHours: 8,
+    });
+    const monday = new Date(2026, 5, 1);
+    expect(getDayExpectedHours(sched, monday)).toBe(8);
+    expect(getDayExpectedMinutes(sched, monday)).toBe(480);
+  });
+
+  it("SHIFT_BASED and MONTHLY_HOURS(monthlyHours=null) → getDayExpectedMinutes = 0", () => {
+    const shiftBased = build({
+      type: "SHIFT_BASED",
+      workDays: [2, 3, 4, 5],
+      tuesdayHours: 8,
+      wednesdayHours: 8,
+      thursdayHours: 8,
+      fridayHours: 8,
+    });
+    const monthlyNoBudget = build({
+      type: "MONTHLY_HOURS",
+      workDays: [1, 2, 3, 4, 5],
+      mondayHours: 4,
+      monthlyHours: null,
+    });
+    const tuesday = new Date(2026, 5, 2);
+    const monday = new Date(2026, 5, 1);
+    expect(getDayExpectedMinutes(shiftBased, tuesday)).toBe(0);
+    expect(getDayExpectedMinutes(monthlyNoBudget, monday)).toBe(0);
+  });
+
+  it("MONTHLY_HOURS(monthlyHours=60, mondayHours=4) → getDayExpectedMinutes = 240 (unchanged {day}Hours path)", () => {
+    const sched = build({
+      type: "MONTHLY_HOURS",
+      workDays: [1, 2, 3, 4, 5],
+      mondayHours: 4,
+      tuesdayHours: 4,
+      wednesdayHours: 4,
+      thursdayHours: 4,
+      fridayHours: 4,
+      monthlyHours: 60,
+    });
+    const monday = new Date(2026, 5, 1);
+    expect(getDayExpectedMinutes(sched, monday)).toBe(240);
+  });
+
+  it("getDayExpectedMinutes(null, date) → 0", () => {
+    expect(getDayExpectedMinutes(null, new Date(2026, 5, 1))).toBe(0);
   });
 });
