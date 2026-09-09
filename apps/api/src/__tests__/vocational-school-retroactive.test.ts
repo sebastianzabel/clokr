@@ -155,13 +155,21 @@ describe("Berufsschule — rückwirkende Musteränderungen (Phase 103, Tracer)",
     });
 
     const weeksAhead = 4;
+    // Issue #136 batch E — ONE clock read shared by the production call and the test's own
+    // expectation. previewVocationalSchoolGeneration resolves `now = opts.now ?? new Date()`
+    // (generator.ts:169); passing `now: anchor` here pins production to the SAME instant the
+    // test then derives `expectedDates` from, instead of each side reading the live clock
+    // independently across a possible UTC midnight crossing.
+    const anchor = new Date();
     const result = await previewVocationalSchoolGeneration(app.prisma, {
       tenantId: data.tenant.id,
       employeeId: data.employee.id,
       weeksAhead,
+      now: anchor,
     });
 
-    const today = todayUtc();
+    const today = new Date(anchor.getTime());
+    today.setUTCHours(0, 0, 0, 0);
     const expectedDates: string[] = [];
     for (let i = 0; i <= weeksAhead * 7; i++) {
       const d = new Date(today.getTime());
@@ -1004,13 +1012,21 @@ describe("Berufsschule — rückwirkende Musteränderungen (Phase 103, Tracer)",
       },
     });
 
+    // Issue #136 batch E — ONE clock read shared by the production call and the assertion.
+    // resolveRetroactiveWindow derives `windowEnd = dateOnlyUtc(now)` from its own read
+    // (generator.ts:915-916); passing `now: anchor` pins production to the SAME instant the
+    // assertion below then derives its expected windowEnd from.
+    const anchor = new Date();
     const window = await resolveRetroactiveWindow(app.prisma, {
       tenantId: data.tenant.id,
       employeeId: data.employee.id,
+      now: anchor,
     });
+    const expectedWindowEnd = new Date(anchor.getTime());
+    expectedWindowEnd.setUTCHours(0, 0, 0, 0);
     expect(window).not.toBeNull();
     expect(window!.windowStart.getTime()).toBe(older.getTime());
-    expect(window!.windowEnd.getTime()).toBe(todayUtc().getTime());
+    expect(window!.windowEnd.getTime()).toBe(expectedWindowEnd.getTime());
   });
 
   // ── Task 2 — GET retroactive-preview / POST retroactive-apply routes ───────
