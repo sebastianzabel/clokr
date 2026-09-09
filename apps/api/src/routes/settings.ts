@@ -12,6 +12,7 @@ import {
 } from "../utils/month-first-date";
 import { normalizeWorkDays, type PerDayHours } from "../utils/calculate-work-days";
 import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
+import { DEFAULT_MISSING_ENTRIES_DAYS } from "../utils/missing-entries-window";
 import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
@@ -407,7 +408,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         arbzgEnabled: true,
         availabilityEnabled: true,
         clockOutReminderHours: 10,
-        missingEntriesDays: 7,
+        missingEntriesDays: DEFAULT_MISSING_ENTRIES_DAYS,
         autoDeleteOpenHours: 14,
         autoBreakEnabled: false,
         defaultBreakStart: null,
