@@ -19,6 +19,7 @@
  * the tenant TZ).
  */
 import { todayInTz, dateStrInTz } from "../utils/timezone";
+import { getHolidays, type FederalStateCode } from "../utils/holidays";
 
 /** Must mirror the tenant timezone seeded in `setup.ts:61`. */
 export const TEST_TZ = "Europe/Berlin";
@@ -142,4 +143,92 @@ export function monthStartUtc(monthsAgo: number, tz: string = TEST_TZ): Date {
 export function monthEndUtc(monthsAgo: number, tz: string = TEST_TZ): Date {
   const [y, m] = todayStr(tz).split("-").map(Number);
   return new Date(Date.UTC(y, m - monthsAgo, 0));
+}
+
+/** `dateStr` shifted by `n` whole calendar days (may be negative). */
+export function addDaysStr(dateStr: string, n: number): string {
+  return dbDateStr(new Date(utcMidnight(dateStr).getTime() + n * DAY_MS));
+}
+
+/**
+ * First Monday, searching forward one week at a time from `weeksAhead` weeks
+ * after the CURRENT week's Monday (tenant TZ), whose whole Mon-Sun span
+ * contains zero public holidays for `state` — plus, optionally, an extra
+ * caller-supplied constraint (`accept`).
+ *
+ * Issue #136 (batch C): `shifts-under-coverage.test.ts`,
+ * `shifts-week-workdays-primary.test.ts`, `shift-week-leave-absence-minutes
+ * .test.ts` and `soll-korrelation-display.test.ts` each derived a "future
+ * Monday, N weeks ahead" fixture week to avoid COLLIDING with other suites'
+ * fixture data, but never checked it against the calendar. Roughly one week
+ * in nine contains a German Feiertag, and the pinned Soll-minute assertions
+ * in those files are whole-week 5-workday figures — landing on Christi
+ * Himmelfahrt (always a Thursday) or any other weekday Feiertag silently
+ * drops 480 minutes and the test goes red on a date nobody chose on purpose.
+ * This promotes `routes/__tests__/shifts.test.ts`'s private `findCleanMonday`
+ * (Phase 104, D-15 Tier 2) into the one shared implementation this file's own
+ * header already requires ("no test file may keep a private copy").
+ *
+ * Why it reads `getHolidays`, the endpoint's own holiday source, rather than
+ * a second hand-written Feiertag table: a second table would (a) need
+ * maintaining, (b) drift from the product, and (c) be a fresh set of
+ * absolute date literals — the exact bomb #136 exists to remove. The
+ * necessary, bounded honesty about that choice: if `getHolidays` itself were
+ * wrong (say it forgot a Feiertag), this helper would happily pick that week,
+ * the endpoint under test would ALSO fail to deduct it, and the caller would
+ * stay green on a genuinely broken product. That risk is real and is
+ * deliberately delegated to `utils/__tests__/holidays.test.ts`, which tests
+ * `getHolidays` as a pure function against its own expectations — the
+ * callers of this helper assert week Soll ARITHMETIC, never the holiday
+ * table itself, so `getHolidays` here only selects the FIXTURE week; it never
+ * computes an expected value.
+ *
+ * Why the whole Mon-Sun week, not just the Monday: the endpoint's week range
+ * is Mon-Sun and it deducts every holiday that falls anywhere in it,
+ * including Sat/Sun-only Feiertage that would be invisible to a
+ * Monday-only check.
+ *
+ * Why the holiday years are derived PER CANDIDATE (the union of the
+ * candidate Monday's and Sunday's calendar year) instead of a fixed list: a
+ * week straddling 31 December must see both years' holiday tables, and a
+ * fixed `[2027, 2028, 2029]`-style list is itself exactly the kind of
+ * expiring literal #136 exists to remove.
+ *
+ * Known blind spot, by design: this helper only sees COMPUTED holidays
+ * (`getHolidays`). Tenant-specific `PublicHoliday` DB rows (e.g.
+ * `soll-korrelation-display.test.ts`'s WR-01 block) are invisible to it —
+ * callers that seed one must do so into a week this helper already reports
+ * clean, never rely on this helper to route around a DB-seeded holiday.
+ */
+export function holidayFreeMondayStr(
+  weeksAhead: number,
+  state: FederalStateCode = "NI",
+  accept: (mondayStr: string) => boolean = () => true,
+  tz: string = TEST_TZ,
+): string {
+  const startMonday = addDaysStr(mondayOfWeekStr(tz), weeksAhead * 7);
+  const MAX_WEEKS = 104;
+  for (let w = 0; w < MAX_WEEKS; w++) {
+    const mondayStr = addDaysStr(startMonday, w * 7);
+    const sundayStr = addDaysStr(mondayStr, 6);
+    const mondayYear = Number(mondayStr.slice(0, 4));
+    const sundayYear = Number(sundayStr.slice(0, 4));
+    const years = new Set([mondayYear, sundayYear]);
+    const holidayDates = new Set<string>();
+    for (const y of years) {
+      for (const h of getHolidays(y, state)) holidayDates.add(h.date);
+    }
+    let clean = true;
+    for (const hd of holidayDates) {
+      if (hd >= mondayStr && hd <= sundayStr) {
+        clean = false;
+        break;
+      }
+    }
+    if (clean && accept(mondayStr)) return mondayStr;
+  }
+  throw new Error(
+    `holidayFreeMondayStr: no holiday-free Monday found within ${MAX_WEEKS} weeks of ` +
+      `weeksAhead=${weeksAhead}, state=${state}`,
+  );
 }
