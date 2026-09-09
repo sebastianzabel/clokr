@@ -21,27 +21,22 @@
  *
  * Setup pattern mirrors Phase 76.11 (shift-week-leave-absence-minutes.test.ts)
  * and the SHIFT_BASED fixture in overtime-calc.test.ts. Uses a future Monday
- * (> 4 weeks ahead) to avoid calendar collisions with other test suites.
+ * (> 4 weeks ahead) to avoid calendar collisions with other test suites, and
+ * (issue #136, batch C) is additionally guaranteed Feiertag-free for its whole
+ * Mon-Sun span via holidayFreeMondayStr: the endpoint deducts
+ * getHolidays(year, "NI") from baseSoll, while this file's reference
+ * calcExpectedMinutesTz call (Test A) passes no holiday set at all — a
+ * Feiertag anywhere in the week would silently yield 1920 against the pinned
+ * 2400 the anti-off-by-one guard (Test C's toBe(2400) assertions) depends on.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { holidayFreeMondayStr } from "./test-dates";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import { calcExpectedMinutesTz, calcLeaveAbsenceMinutesTz, weekRangeUtc } from "../utils/timezone";
 
 const TZ = "Europe/Berlin";
-
-function futureMondayIso(weeksAhead: number): string {
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-  const dow = today.getUTCDay(); // 0=Sun..6=Sat
-  // Mirror the GET /week resolver logic (shifts.ts):
-  // dow === 0 ? -6 : 1 - dow
-  const mondayOffset = dow === 0 ? -6 : 1 - dow;
-  const monday = new Date(today);
-  monday.setUTCDate(monday.getUTCDate() + mondayOffset + weeksAhead * 7);
-  return monday.toISOString().slice(0, 10);
-}
 
 function mondayDate(iso: string): Date {
   const d = new Date(iso + "T00:00:00Z");
@@ -94,8 +89,9 @@ describe("Phase 76.23 — contractSollMinutesByEmp in GET /shifts/week (§ 615 p
     const suffix = "76-23-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
     // Use week 6 weeks ahead — avoids collision with other test suites that use
-    // 4–5 weeks ahead (76.10, 76.11).
-    weekMonday = futureMondayIso(6);
+    // 4–5 weeks ahead (76.10, 76.11) — and holiday-free (issue #136), so the
+    // pinned 2400-minute assertions below never silently drift.
+    weekMonday = holidayFreeMondayStr(6, "NI");
     monday = mondayDate(weekMonday);
     sunday = sundayDate(weekMonday);
 

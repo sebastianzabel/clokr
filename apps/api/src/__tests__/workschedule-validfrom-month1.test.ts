@@ -14,9 +14,10 @@
  * Pattern mirrors apps/api/src/routes/__tests__/schedule-versioning.test.ts
  * (shared singleton app, seedTestData, cleanupTestData).
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { monthStartUtc } from "./test-dates";
 import { MONTH_FIRST_ERROR } from "../utils/month-first-date";
 import type { FastifyInstance } from "fastify";
 
@@ -162,42 +163,59 @@ describe("WorkSchedule.validFrom month-1st enforcement (Phase 60, #220)", () => 
 
   describe("Test 3: applyToExisting (PUT /settings/work) snaps validFrom to month-1st", () => {
     it("bulk apply writes WorkSchedule rows with validFrom = 1st of current UTC month", async () => {
-      const captured = new Date();
-      const expectedYear = captured.getUTCFullYear();
-      const expectedMonth = captured.getUTCMonth(); // 0-indexed
-
-      const res = await app.inject({
-        method: "PUT",
-        url: "/api/v1/settings/work",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: {
-          applyToExisting: true,
-          defaultWeeklyHours: 38,
-          defaultMondayHours: 7.6,
-          defaultTuesdayHours: 7.6,
-          defaultWednesdayHours: 7.6,
-          defaultThursdayHours: 7.6,
-          defaultFridayHours: 7.6,
-          defaultSaturdayHours: 0,
-          defaultSundayHours: 0,
-        },
+      // Issue #136 (batch D): the test used to capture `expectedYear`/`expectedMonth`
+      // from `new Date()` BEFORE the request, while the server snaps with
+      // `snapToMonthFirstUtc(new Date())` (settings.ts) DURING it — a UTC month-end
+      // crossing between the two reads makes the server write next month's 1st against
+      // a stale expectation. Eliminated structurally: pin the clock across the capture
+      // AND the request to one derived (never literal), safely mid-month instant, so
+      // the test's `new Date()` and the server's `new Date()` are the same instant by
+      // construction and no boundary can fall between them.
+      vi.useFakeTimers({
+        now: new Date(monthStartUtc(0).getTime() + 10 * 24 * 60 * 60 * 1000),
+        toFake: ["Date"],
       });
+      try {
+        const captured = new Date();
+        const expectedYear = captured.getUTCFullYear();
+        const expectedMonth = captured.getUTCMonth(); // 0-indexed
 
-      expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.body);
-      expect(body.appliedCount).toBeGreaterThanOrEqual(1);
+        const res = await app.inject({
+          method: "PUT",
+          url: "/api/v1/settings/work",
+          headers: { authorization: `Bearer ${data.adminToken}` },
+          payload: {
+            applyToExisting: true,
+            defaultWeeklyHours: 38,
+            defaultMondayHours: 7.6,
+            defaultTuesdayHours: 7.6,
+            defaultWednesdayHours: 7.6,
+            defaultThursdayHours: 7.6,
+            defaultFridayHours: 7.6,
+            defaultSaturdayHours: 0,
+            defaultSundayHours: 0,
+          },
+        });
 
-      // The bulk-apply row is the most recently CREATED row for this employee
-      // (Test 2 wrote a 2026-06-01 row which still wins on `validFrom desc`,
-      // so we sort by `createdAt desc` to find the row Test 3 wrote).
-      const newest = await app.prisma.workSchedule.findFirst({
-        where: { employeeId: data.employee.id },
-        orderBy: { createdAt: "desc" },
-      });
-      expect(newest).not.toBeNull();
-      expect(newest!.validFrom.getUTCDate()).toBe(1);
-      expect(newest!.validFrom.getUTCFullYear()).toBe(expectedYear);
-      expect(newest!.validFrom.getUTCMonth()).toBe(expectedMonth);
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body.appliedCount).toBeGreaterThanOrEqual(1);
+
+        // The bulk-apply row is the most recently CREATED row for this employee
+        // (Test 2 wrote a 2026-06-01 row which still wins on `validFrom desc`,
+        // so we sort by `createdAt desc` to find the row Test 3 wrote). This is an
+        // ORDER, not a `gte` filter, so the unfaked Postgres clock is unaffected.
+        const newest = await app.prisma.workSchedule.findFirst({
+          where: { employeeId: data.employee.id },
+          orderBy: { createdAt: "desc" },
+        });
+        expect(newest).not.toBeNull();
+        expect(newest!.validFrom.getUTCDate()).toBe(1);
+        expect(newest!.validFrom.getUTCFullYear()).toBe(expectedYear);
+        expect(newest!.validFrom.getUTCMonth()).toBe(expectedMonth);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

@@ -22,43 +22,22 @@
  *  D. Absence (deletedAt: null) covering Mo-Tu → absenceMinutesByEmp[empId]
  *     === 960. Soft-deleted Absence in the same window → undefined or 0
  *     (deletedAt:null soft-delete filter).
+ *
+ * Issue #136 (batch C): the fixture week is additionally guaranteed
+ * Feiertag-free via holidayFreeMondayStr (its doc comment already CLAIMED "no
+ * Sunday/holiday interference", which was never actually true) — a Feiertag on
+ * the Mo or Tu of the derived week would silently drop 480 of the pinned 960
+ * leave/absence minutes. The private futureMondayIso/addDaysIso copies (mixed
+ * local getFullYear/getMonth/getDate with UTC week math) are retired in favour
+ * of the shared, tenant-TZ-correct string helpers in test-dates.ts.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { holidayFreeMondayStr } from "./test-dates";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 
 const TZ = "Europe/Berlin";
-
-function pad2(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
-function todayIso(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
-
-function addDaysIso(iso: string, days: number): string {
-  const d = new Date(iso + "T12:00:00Z");
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-/**
- * Resolve the Monday of the week N weeks in the future (no Sunday/holiday
- * interference). Returns ISO "YYYY-MM-DD" for that Monday.
- */
-function futureMondayIso(weeksAhead: number): string {
-  const today = new Date(todayIso() + "T00:00:00Z");
-  const dow = today.getUTCDay(); // 0=Sun..6=Sat
-  // mondayOffset matches the GET /week resolver (shifts.ts L701-L704):
-  // dow === 0 ? -6 : 1 - dow
-  const mondayOffset = dow === 0 ? -6 : 1 - dow;
-  const monday = new Date(today);
-  monday.setUTCDate(monday.getUTCDate() + mondayOffset + weeksAhead * 7);
-  return monday.toISOString().slice(0, 10);
-}
 
 describe("Phase 76.11 — /shifts/week emits leaveMinutesByEmp + absenceMinutesByEmp (SOLL-V19-01)", () => {
   let app: FastifyInstance;
@@ -73,7 +52,7 @@ describe("Phase 76.11 — /shifts/week emits leaveMinutesByEmp + absenceMinutesB
     app = await getTestApp();
     const prisma = app.prisma;
     suiteSuffix = "soll-v19-01-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    weekMonday = futureMondayIso(8); // 8 weeks ahead — safely in the future
+    weekMonday = holidayFreeMondayStr(8, "NI"); // 8 weeks ahead, holiday-free — safely in the future
 
     const tenant = await prisma.tenant.create({
       data: {

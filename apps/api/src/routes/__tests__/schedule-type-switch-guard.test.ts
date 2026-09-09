@@ -13,8 +13,9 @@
  *
  * Test run: pnpm --filter @clokr/api test -- schedule-type-switch-guard
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
+import { monthStartUtc } from "../../__tests__/test-dates";
 import { MODEL_SWITCH_SAME_MONTH_ERROR } from "../../utils/month-first-date";
 import type { FastifyInstance } from "fastify";
 
@@ -315,109 +316,125 @@ describe("Schedule type-switch guard (Phase 76.24-01)", () => {
       // and write a FIXED_SCHEDULE row at a date AFTER thisMonthFirst. That makes it the
       // most-recent, ensuring current.type === "FIXED_SCHEDULE".
       const empId = data.adminEmployee.id;
-      const now = new Date();
-      const thisMonthFirst = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-      // A month-1st strictly after thisMonthFirst so it sorts as most-recent
-      const laterMonthFirst = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 2, 1));
-
-      // Clean slate at thisMonthFirst and laterMonthFirst for this employee
-      await app.prisma.workSchedule.deleteMany({
-        where: { employeeId: empId, validFrom: { gte: thisMonthFirst } },
+      // Issue #136 (batch D): thisMonthFirst used to be derived from a fresh new Date()
+      // and then compared/seeded against, while the server ALSO snaps its own
+      // new Date() (snapToMonthFirstUtc) at request time — a month-end crossing between
+      // the seed and the request makes the engineered collision land in the wrong month
+      // and the guard silently stops firing. Pin the clock across seed + request +
+      // assertion to a derived, safely-mid-month instant so the test's and the server's
+      // "now" are the same instant by construction.
+      vi.useFakeTimers({
+        now: new Date(monthStartUtc(0).getTime() + 10 * 24 * 60 * 60 * 1000),
+        toFake: ["Date"],
       });
+      try {
+        const thisMonthFirst = monthStartUtc(0);
+        // A month-1st strictly after thisMonthFirst so it sorts as most-recent
+        const laterMonthFirst = new Date(
+          Date.UTC(thisMonthFirst.getUTCFullYear(), thisMonthFirst.getUTCMonth() + 2, 1),
+        );
 
-      // Write MONTHLY_HOURS at thisMonthFirst (the collision row the guard must block)
-      await app.prisma.workSchedule.create({
-        data: {
-          employeeId: empId,
-          type: "MONTHLY_HOURS",
-          weeklyHours: null,
-          monthlyHours: 80,
-          mondayHours: 0,
-          tuesdayHours: 0,
-          wednesdayHours: 0,
-          thursdayHours: 0,
-          fridayHours: 0,
-          saturdayHours: 0,
-          sundayHours: 0,
-          overtimeThreshold: 60,
-          allowOvertimePayout: false,
-          validFrom: thisMonthFirst,
-        },
-      });
+        // Clean slate at thisMonthFirst and laterMonthFirst for this employee
+        await app.prisma.workSchedule.deleteMany({
+          where: { employeeId: empId, validFrom: { gte: thisMonthFirst } },
+        });
 
-      // Write FIXED_SCHEDULE at laterMonthFirst so it is the most-recent row
-      // (bulk-apply picks it via orderBy: validFrom desc, take: 1)
-      await app.prisma.workSchedule.create({
-        data: {
-          employeeId: empId,
-          type: "FIXED_SCHEDULE",
-          weeklyHours: 40,
-          mondayHours: 8,
-          tuesdayHours: 8,
-          wednesdayHours: 8,
-          thursdayHours: 8,
-          fridayHours: 8,
-          saturdayHours: 0,
-          sundayHours: 0,
-          overtimeThreshold: 60,
-          allowOvertimePayout: false,
-          validFrom: laterMonthFirst,
-        },
-      });
+        // Write MONTHLY_HOURS at thisMonthFirst (the collision row the guard must block)
+        await app.prisma.workSchedule.create({
+          data: {
+            employeeId: empId,
+            type: "MONTHLY_HOURS",
+            weeklyHours: null,
+            monthlyHours: 80,
+            mondayHours: 0,
+            tuesdayHours: 0,
+            wednesdayHours: 0,
+            thursdayHours: 0,
+            fridayHours: 0,
+            saturdayHours: 0,
+            sundayHours: 0,
+            overtimeThreshold: 60,
+            allowOvertimePayout: false,
+            validFrom: thisMonthFirst,
+          },
+        });
 
-      // Confirm the most-recent schedule is FIXED_SCHEDULE (qualifies for bulk-apply)
-      const latestSched = await app.prisma.workSchedule.findFirst({
-        where: { employeeId: empId },
-        orderBy: { validFrom: "desc" },
-      });
-      expect(latestSched?.type).toBe("FIXED_SCHEDULE");
+        // Write FIXED_SCHEDULE at laterMonthFirst so it is the most-recent row
+        // (bulk-apply picks it via orderBy: validFrom desc, take: 1)
+        await app.prisma.workSchedule.create({
+          data: {
+            employeeId: empId,
+            type: "FIXED_SCHEDULE",
+            weeklyHours: 40,
+            mondayHours: 8,
+            tuesdayHours: 8,
+            wednesdayHours: 8,
+            thursdayHours: 8,
+            fridayHours: 8,
+            saturdayHours: 0,
+            sundayHours: 0,
+            overtimeThreshold: 60,
+            allowOvertimePayout: false,
+            validFrom: laterMonthFirst,
+          },
+        });
 
-      // Confirm collision row is MONTHLY_HOURS
-      const preRow = await app.prisma.workSchedule.findFirst({
-        where: { employeeId: empId, validFrom: thisMonthFirst },
-      });
-      expect(preRow).not.toBeNull();
-      expect(preRow!.type).toBe("MONTHLY_HOURS");
+        // Confirm the most-recent schedule is FIXED_SCHEDULE (qualifies for bulk-apply)
+        const latestSched = await app.prisma.workSchedule.findFirst({
+          where: { employeeId: empId },
+          orderBy: { validFrom: "desc" },
+        });
+        expect(latestSched?.type).toBe("FIXED_SCHEDULE");
 
-      const preCount = await app.prisma.workSchedule.count({ where: { employeeId: empId } });
+        // Confirm collision row is MONTHLY_HOURS
+        const preRow = await app.prisma.workSchedule.findFirst({
+          where: { employeeId: empId, validFrom: thisMonthFirst },
+        });
+        expect(preRow).not.toBeNull();
+        expect(preRow!.type).toBe("MONTHLY_HOURS");
 
-      // Act: bulk apply with applyToExisting=true
-      // The guard should detect: existing row at now (thisMonthFirst) has type MONTHLY_HOURS ≠ FIXED_SCHEDULE
-      // → skip this employee, increment skippedModelSwitch
-      const res = await app.inject({
-        method: "PUT",
-        url: "/api/v1/settings/work",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: {
-          applyToExisting: true,
-          defaultWeeklyHours: 40,
-          defaultMondayHours: 8,
-          defaultTuesdayHours: 8,
-          defaultWednesdayHours: 8,
-          defaultThursdayHours: 8,
-          defaultFridayHours: 8,
-          defaultSaturdayHours: 0,
-          defaultSundayHours: 0,
-        },
-      });
+        const preCount = await app.prisma.workSchedule.count({ where: { employeeId: empId } });
 
-      expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.body);
+        // Act: bulk apply with applyToExisting=true
+        // The guard should detect: existing row at now (thisMonthFirst) has type
+        // MONTHLY_HOURS ≠ FIXED_SCHEDULE → skip this employee, increment skippedModelSwitch
+        const res = await app.inject({
+          method: "PUT",
+          url: "/api/v1/settings/work",
+          headers: { authorization: `Bearer ${data.adminToken}` },
+          payload: {
+            applyToExisting: true,
+            defaultWeeklyHours: 40,
+            defaultMondayHours: 8,
+            defaultTuesdayHours: 8,
+            defaultWednesdayHours: 8,
+            defaultThursdayHours: 8,
+            defaultFridayHours: 8,
+            defaultSaturdayHours: 0,
+            defaultSundayHours: 0,
+          },
+        });
 
-      // The admin employee was skipped because of model-switch collision
-      expect(typeof body.skippedModelSwitch).toBe("number");
-      expect(body.skippedModelSwitch).toBeGreaterThanOrEqual(1);
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body);
 
-      // Row count unchanged — no new row created at thisMonthFirst
-      const postCount = await app.prisma.workSchedule.count({ where: { employeeId: empId } });
-      expect(postCount).toBe(preCount);
+        // The admin employee was skipped because of model-switch collision
+        expect(typeof body.skippedModelSwitch).toBe("number");
+        expect(body.skippedModelSwitch).toBeGreaterThanOrEqual(1);
 
-      // The MONTHLY_HOURS collision row is still intact
-      const postRow = await app.prisma.workSchedule.findFirst({
-        where: { employeeId: empId, validFrom: thisMonthFirst },
-      });
-      expect(postRow).not.toBeNull();
-      expect(postRow!.type).toBe("MONTHLY_HOURS");
+        // Row count unchanged — no new row created at thisMonthFirst
+        const postCount = await app.prisma.workSchedule.count({ where: { employeeId: empId } });
+        expect(postCount).toBe(preCount);
+
+        // The MONTHLY_HOURS collision row is still intact
+        const postRow = await app.prisma.workSchedule.findFirst({
+          where: { employeeId: empId, validFrom: thisMonthFirst },
+        });
+        expect(postRow).not.toBeNull();
+        expect(postRow!.type).toBe("MONTHLY_HOURS");
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
@@ -430,56 +447,65 @@ describe("Schedule type-switch guard (Phase 76.24-01)", () => {
       // is the most-recent, then let bulk-apply create a new versioned row at thisMonthFirst.
       const empId = data.adminEmployee.id;
 
-      const now = new Date();
-      const thisMonthFirst = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-
-      // Clean up any rows at or after thisMonthFirst (left from the collision test above)
-      await app.prisma.workSchedule.deleteMany({
-        where: { employeeId: empId, validFrom: { gte: thisMonthFirst } },
+      // Issue #136 (batch D): same remedy as the collision test above — pin the clock
+      // across the derivation, the request and the assertion.
+      vi.useFakeTimers({
+        now: new Date(monthStartUtc(0).getTime() + 10 * 24 * 60 * 60 * 1000),
+        toFake: ["Date"],
       });
+      try {
+        const thisMonthFirst = monthStartUtc(0);
 
-      // The most-recent schedule is now the seeded 2024-01-01 FIXED_SCHEDULE row
-      const current = await app.prisma.workSchedule.findFirst({
-        where: { employeeId: empId },
-        orderBy: { validFrom: "desc" },
-      });
-      expect(current?.type).toBe("FIXED_SCHEDULE");
+        // Clean up any rows at or after thisMonthFirst (left from the collision test above)
+        await app.prisma.workSchedule.deleteMany({
+          where: { employeeId: empId, validFrom: { gte: thisMonthFirst } },
+        });
 
-      const beforeCount = await app.prisma.workSchedule.count({ where: { employeeId: empId } });
+        // The most-recent schedule is now the seeded 2024-01-01 FIXED_SCHEDULE row
+        const current = await app.prisma.workSchedule.findFirst({
+          where: { employeeId: empId },
+          orderBy: { validFrom: "desc" },
+        });
+        expect(current?.type).toBe("FIXED_SCHEDULE");
 
-      // Act: bulk apply — no collision at thisMonthFirst; should create versioned row
-      const res = await app.inject({
-        method: "PUT",
-        url: "/api/v1/settings/work",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: {
-          applyToExisting: true,
-          defaultWeeklyHours: 38,
-          defaultMondayHours: 7.6,
-          defaultTuesdayHours: 7.6,
-          defaultWednesdayHours: 7.6,
-          defaultThursdayHours: 7.6,
-          defaultFridayHours: 7.6,
-          defaultSaturdayHours: 0,
-          defaultSundayHours: 0,
-        },
-      });
+        const beforeCount = await app.prisma.workSchedule.count({ where: { employeeId: empId } });
 
-      expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.body);
-      expect(body.appliedCount).toBeGreaterThanOrEqual(1);
+        // Act: bulk apply — no collision at thisMonthFirst; should create versioned row
+        const res = await app.inject({
+          method: "PUT",
+          url: "/api/v1/settings/work",
+          headers: { authorization: `Bearer ${data.adminToken}` },
+          payload: {
+            applyToExisting: true,
+            defaultWeeklyHours: 38,
+            defaultMondayHours: 7.6,
+            defaultTuesdayHours: 7.6,
+            defaultWednesdayHours: 7.6,
+            defaultThursdayHours: 7.6,
+            defaultFridayHours: 7.6,
+            defaultSaturdayHours: 0,
+            defaultSundayHours: 0,
+          },
+        });
 
-      // Admin employee got a new versioned row
-      const afterCount = await app.prisma.workSchedule.count({ where: { employeeId: empId } });
-      expect(afterCount).toBe(beforeCount + 1);
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body.appliedCount).toBeGreaterThanOrEqual(1);
 
-      // The new row is at thisMonthFirst with 38h
-      const newRow = await app.prisma.workSchedule.findFirst({
-        where: { employeeId: empId, validFrom: thisMonthFirst },
-      });
-      expect(newRow).not.toBeNull();
-      expect(Number(newRow!.weeklyHours)).toBe(38);
-      expect(newRow!.type).toBe("FIXED_SCHEDULE");
+        // Admin employee got a new versioned row
+        const afterCount = await app.prisma.workSchedule.count({ where: { employeeId: empId } });
+        expect(afterCount).toBe(beforeCount + 1);
+
+        // The new row is at thisMonthFirst with 38h
+        const newRow = await app.prisma.workSchedule.findFirst({
+          where: { employeeId: empId, validFrom: thisMonthFirst },
+        });
+        expect(newRow).not.toBeNull();
+        expect(Number(newRow!.weeklyHours)).toBe(38);
+        expect(newRow!.type).toBe("FIXED_SCHEDULE");
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });
