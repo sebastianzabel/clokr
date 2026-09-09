@@ -13,6 +13,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { todayStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 import { computeMonthSaldo } from "../utils/month-saldo";
 import { monthRangeUtc } from "../utils/timezone";
@@ -55,16 +56,19 @@ describe("month-saldo endpoint + computeMonthSaldo", () => {
   it("(a) open month: balanceMinutes equals §615 closeEmployeeMonth result, NOT worked−roster", async () => {
     // data.employee is FIXED_SCHEDULE 40h/week (Mo-Fr 8h each, seeded by setup.ts)
     // Use a past month that is definitely not closed.
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1; // current month (open by definition)
+    // Issue #136 (batch D): derived from todayStr() (tenant TZ, Europe/Berlin) instead of
+    // local getFullYear()/getMonth()/getDate() — the endpoint resolves the month in
+    // Europe/Berlin (month-saldo.ts), so on a runner ahead of Berlin, right around
+    // midnight, the local basis could ask for month M+1 while Berlin is still on M,
+    // making the [monthStart, today] to-date window empty.
+    const [year, month, dayOfMonth] = todayStr().split("-").map(Number);
 
     // Create one time entry, 9h worked (480+60=540 gross, 0 break). The header now reflects the
     // TO-DATE (bisher) §615 state (windowEnd = today, or yesterday when no today-entries), so the
     // entry MUST fall within [monthStart, today] to be counted. Use min(day 2, today's day-of-month):
     // when today is the 1st/2nd, place it on today (the hasTodayEntries guard then includes today);
     // otherwise day 2 (a past day, always inside the to-date window).
-    const testDay = Math.min(2, now.getDate());
+    const testDay = Math.min(2, dayOfMonth);
     const testDate = ymd(year, month, testDay);
     // Clean up any pre-existing entry for that date
     await app.prisma.timeEntry.deleteMany({
@@ -208,10 +212,10 @@ describe("month-saldo endpoint + computeMonthSaldo", () => {
   // ── Authorization: EMPLOYEE can read own, forbidden for other employee ────
 
   it("EMPLOYEE may read their own month-saldo", async () => {
-    const now = new Date();
+    const [year, month] = todayStr().split("-").map(Number);
     const res = await app.inject({
       method: "GET",
-      url: `/api/v1/overtime/month-saldo/${data.employee.id}?year=${now.getFullYear()}&month=${now.getMonth() + 1}`,
+      url: `/api/v1/overtime/month-saldo/${data.employee.id}?year=${year}&month=${month}`,
       headers: { authorization: `Bearer ${data.empToken}` },
     });
     expect(res.statusCode).toBe(200);
@@ -219,10 +223,10 @@ describe("month-saldo endpoint + computeMonthSaldo", () => {
 
   it("EMPLOYEE is forbidden from reading another employee month-saldo", async () => {
     // adminEmployee is a different employee in the same tenant
-    const now = new Date();
+    const [year, month] = todayStr().split("-").map(Number);
     const res = await app.inject({
       method: "GET",
-      url: `/api/v1/overtime/month-saldo/${data.adminEmployee.id}?year=${now.getFullYear()}&month=${now.getMonth() + 1}`,
+      url: `/api/v1/overtime/month-saldo/${data.adminEmployee.id}?year=${year}&month=${month}`,
       headers: { authorization: `Bearer ${data.empToken}` },
     });
     expect(res.statusCode).toBe(403);
@@ -230,10 +234,10 @@ describe("month-saldo endpoint + computeMonthSaldo", () => {
 
   it("returns 404 for cross-tenant employee lookup", async () => {
     const fakeId = "00000000-0000-0000-0000-000000000001";
-    const now = new Date();
+    const [year, month] = todayStr().split("-").map(Number);
     const res = await app.inject({
       method: "GET",
-      url: `/api/v1/overtime/month-saldo/${fakeId}?year=${now.getFullYear()}&month=${now.getMonth() + 1}`,
+      url: `/api/v1/overtime/month-saldo/${fakeId}?year=${year}&month=${month}`,
       headers: { authorization: `Bearer ${data.adminToken}` },
     });
     expect(res.statusCode).toBe(404);

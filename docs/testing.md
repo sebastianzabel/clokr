@@ -293,8 +293,9 @@ tenant-TZ-resolved endpoint logic, not between two different local formattings. 
 
 **`apps/api/src/__tests__/test-dates.ts` is the ONLY place test date math may live.** Every helper
 that derives a calendar day from "now" (`todayStr`, `pastDateStr`, `futureDateStr`,
-`daysAgoStrInTz`, `nextWeekdayStr`, `mondayOfWeekStr`, `monthsAheadStr`) or reads a stored
-`@db.Date` value (`dbDateStr`) lives there — no test file should keep a private copy of this math.
+`daysAgoStrInTz`, `nextWeekdayStr`, `mondayOfWeekStr`, `monthsAheadStr`, `holidayFreeMondayStr`) or
+reads/shifts a stored `@db.Date` value (`dbDateStr`, `addDaysStr`) lives there — no test file
+should keep a private copy of this math.
 
 **Known harness limitation — do not "fix" by weakening a test.** Shifting the process clock does
 NOT shift external, unshifted clocks the suite also talks to:
@@ -318,6 +319,37 @@ NOT shift external, unshifted clocks the suite also talks to:
   `logs[0]` — unordered — can return one of those instead of this test's own entry; see Phase 106
   plan 05's R7 section in `106-MEASUREMENTS.md` for the full four-way diagnosis). If you see this,
   name the exact test in your summary — do not touch the assertion.
+
+## Reproducing year-rollover date bugs (`CLOKR_TEST_SEED_YEAR_OFFSET`)
+
+`CLOKR_TEST_FAKE_CLOCK` above can only shift the time of day within TODAY — it is structurally
+incapable of simulating a year rollover (moving `|offset|` past 24h would change the calendar
+date, which the harness deliberately does not allow). Several test files (issue #136, batch B)
+book a fixture into a hardcoded calendar year while `seedTestData` (`setup.ts`) provisions the
+one `LeaveEntitlement` row it creates for `new Date().getFullYear()` — a coupling invisible on
+any date within that year and only reproducible on 2027-01-01 for a 2026-fixture file, etc.
+
+Reproduce that on demand, at any date, with one opt-in env var — the calendar-axis counterpart
+to `CLOKR_TEST_FAKE_CLOCK`:
+
+```bash
+pnpm --filter @clokr/api run test:setup
+CLOKR_TEST_SEED_YEAR_OFFSET=1 pnpm --filter @clokr/api exec vitest run src/__tests__/section9-credit.test.ts
+```
+
+`CLOKR_TEST_SEED_YEAR_OFFSET=<N>` shifts only the year `seedTestData` seeds its
+`LeaveEntitlement` fixture for (`new Date().getFullYear() + N`); it does not touch any other
+date derivation. Absent the var (or `0`), `setup.ts` behaves exactly as before.
+
+**A non-zero offset is EXPECTED to break unrelated suites** that legitimately book into the live
+current year — it is a per-file diagnostic lever for reproducing a year-boundary bug on demand,
+never a suite-wide mode, and must never be set in CI or left set across a normal run.
+
+Files whose fixtures span more than one hardcoded year (or where a fixture date's WEEKDAY is
+itself load-bearing, e.g. `leave-correct.test.ts`) additionally seed the extra years explicitly
+via `seedEntitlementYears()` from `./setup` rather than relying on this lever alone — see that
+function's own doc comment for why templating the year through the date literals themselves is
+the wrong fix.
 
 **Measured effect of this phase** — reported as data, not as "fixed", taken directly from
 the plan 01/02 SUMMARYs:
