@@ -38,9 +38,10 @@ import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { todayStr } from "./test-dates";
 
 /**
- * Computes the next Monday at least 14 days out from "now" (UTC arithmetic, so the produced
+ * Computes the next Monday at least 14 days out from `now` (UTC arithmetic, so the produced
  * "YYYY-MM-DD" string is identical regardless of the runner's own timezone), advanced past any
  * NI (Niedersachsen — this file's fixture tenant's federalState) public holiday in a BOUNDED
  * loop.
@@ -53,9 +54,14 @@ import { getHolidays, STATE_MAP } from "../utils/holidays";
  *
  * getScheduledHours subtracts holidays, so an un-checked holiday Monday would silently cost 0h
  * and invert every assertion in this file.
+ *
+ * Issue #136 batch E — `now` is an explicit parameter rather than an internal `new Date()` read.
+ * The module-level caller below and the `beforeAll` self-guard used to each read the clock
+ * independently; when today is a Monday the computed date is exactly 14 days out, so a midnight
+ * between the two reads made the guard's `daysOut` 13 and killed every test in this file for a
+ * reason unrelated to what it tests.
  */
-function computeRequestMonday(): string {
-  const now = new Date();
+function computeRequestMonday(now: Date): string {
   let candidate = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 14),
   );
@@ -83,10 +89,16 @@ function computeRequestMonday(): string {
   );
 }
 
+// Issue #136 batch E — ONE clock read. computeRequestMonday() used to read "now" itself and the
+// beforeAll guard below read it AGAIN; when today is a Monday the computed date is exactly 14
+// days out, so a midnight between the two reads made daysOut 13 and failed the guard — killing
+// every test in this file for a reason unrelated to what it tests.
+const NOW = new Date();
+
 // A Monday, computed dynamically and holiday-checked (see computeRequestMonday above) — the
 // schedule below grants exactly 4h on Mondays and 0 on every other weekday, so requesting this
 // ONE day needs exactly 4h.
-const REQUEST_MONDAY = computeRequestMonday();
+const REQUEST_MONDAY = computeRequestMonday(NOW);
 
 describe("POST /leave/requests OVERTIME_COMP — validates against confirmed carry-over, not stale/live balance", () => {
   let app: FastifyInstance;
@@ -99,12 +111,7 @@ describe("POST /leave/requests OVERTIME_COMP — validates against confirmed car
     // docblock above): assert the invariant rather than merely trusting the computation.
     const requestDate = new Date(REQUEST_MONDAY + "T00:00:00Z");
     expect(requestDate.getUTCDay()).toBe(1); // Monday
-    const today = new Date();
-    const todayUtcMidnight = Date.UTC(
-      today.getUTCFullYear(),
-      today.getUTCMonth(),
-      today.getUTCDate(),
-    );
+    const todayUtcMidnight = Date.UTC(NOW.getUTCFullYear(), NOW.getUTCMonth(), NOW.getUTCDate());
     const requestUtcMidnight = Date.UTC(
       requestDate.getUTCFullYear(),
       requestDate.getUTCMonth(),
@@ -114,6 +121,10 @@ describe("POST /leave/requests OVERTIME_COMP — validates against confirmed car
     expect(daysOut).toBeGreaterThanOrEqual(14);
     const requestYearHolidays = getHolidays(requestDate.getUTCFullYear(), STATE_MAP.NIEDERSACHSEN);
     expect(requestYearHolidays.some((h) => h.date === REQUEST_MONDAY)).toBe(false);
+    // The anchor above is frozen at module eval; assert against the LIVE clock too, so a stale
+    // anchor can never let a PAST-dated request through to the route's lead-time / max-advance
+    // checks. ~14 days of slack — this can only fire if something is badly wrong.
+    expect(REQUEST_MONDAY > todayStr()).toBe(true);
 
     app = await getTestApp();
     const prisma = app.prisma;
