@@ -516,7 +516,7 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 
 - Section separators: `// ── Section Name ──────────────────` used throughout route files and app.ts to visually separate logical blocks
 - JSDoc-style comments for utility functions that have non-obvious behavior — see `apps/api/src/utils/timezone.ts`
-- German domain context comments where business rules apply: `// Einladung nur erstellen wenn kein Passwort gesetzt`
+- Business-rule context comments are **English** (see § Language Conventions above). `// Einladung nur erstellen wenn kein Passwort gesetzt` in `apps/api/src/routes/employees.ts` is a legacy example of the OLD, no-longer-followed pattern, not a convention to imitate — it is drift to fix on sight in that file, not here (Issue #131)
 - TODO comments for known future work: `// TODO(owner-gate): construct once the Phorest web-calendar URL format is pinned.`
 - Used sparingly — mainly on exported utility functions and plugin interfaces
 - Declare module augmentation blocks use JSDoc for plugin-decorated properties:
