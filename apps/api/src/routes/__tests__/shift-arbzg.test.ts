@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
+import { dbDateStr, dowOf, futureDateStr, todayStr, utcMidnight } from "../../__tests__/test-dates";
 
 /**
  * Phase 47.4-01 — ArbZG § 3 (Tägliche Höchstarbeitszeit, hard-block)
@@ -21,10 +22,28 @@ describe("Shift ArbZG Validation (Phase 47.4-01)", () => {
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
 
-  // Target dates: Tue + Wed in 2026 (clear of past-immutable + weekend edges).
-  // 2026-09-15 = Tue, 2026-09-16 = Wed
-  const PREV_ISO = "2026-09-15";
-  const TARGET_ISO = "2026-09-16";
+  // Two consecutive weekdays, always in the future — derived, never written (GH #136/#167).
+  // The intent was always "clear of past-immutable + weekend edges"; a literal stops
+  // expressing that the moment the calendar passes it, and POST /shifts then answers 422
+  // SHIFT_PAST_IMMUTABLE before any ArbZG rule is reached. Anchoring on a Monday keeps
+  // PREV/TARGET on Mon+Tue, so neither can drift onto a weekend.
+  const PREV_ISO = (() => {
+    let d = futureDateStr(7);
+    while (dowOf(d) !== 1) d = dbDateStr(new Date(utcMidnight(d).getTime() + 86_400_000));
+    return d;
+  })();
+  const TARGET_ISO = dbDateStr(new Date(utcMidnight(PREV_ISO).getTime() + 86_400_000));
+
+  // GH #136/#167 — the anchor must stay in the FUTURE, or every case below turns into a
+  // 422 SHIFT_PAST_IMMUTABLE instead of testing an ArbZG rule. This cannot be shown with
+  // CLOKR_TEST_FAKE_CLOCK (that harness shifts the time of day, never the date), so the
+  // property is asserted here and therefore re-proved on every single run.
+  it("anchor dates stay in the future and on weekdays (guards against date expiry)", () => {
+    expect(PREV_ISO > todayStr()).toBe(true);
+    expect(TARGET_ISO > PREV_ISO).toBe(true);
+    expect([1, 2, 3, 4, 5]).toContain(dowOf(PREV_ISO));
+    expect([1, 2, 3, 4, 5]).toContain(dowOf(TARGET_ISO));
+  });
 
   beforeAll(async () => {
     app = await getTestApp();
