@@ -218,6 +218,19 @@ jobs:
         # group. See docs/ADMIN_STRUCTURE.md §3.2.1.
         run: pnpm --filter @clokr/web lint:save-pattern
 
+      - name: Test comment-language script (extractor + classifier unit tests)
+        # Root-level, node environment (see vitest.config.mjs) — protects the detector
+        # itself (extractComments/classifyComment) from regressions, in particular the
+        # ALL-CAPS domain-noun fix (SOLL/IST false positive vs. KEINE-style emphasis).
+        run: pnpm run test:scripts
+
+      - name: Lint comment language (Issue #131 — CLAUDE.md:87 "comments: English")
+        # Root-level script (see package.json "lint:comment-language") because it scans
+        # BOTH apps/api/src and apps/web/src, unlike the app-scoped lint:* steps above.
+        # Fails only on NEW German comments not already in scripts/lint-comment-language-
+        # baseline.json — existing German prose is tracked, not rewritten (Issue #131 scope).
+        run: pnpm run lint:comment-language
+
       - name: Type check API
         id: typecheck
         run: pnpm --filter @clokr/api typecheck
