@@ -58,12 +58,12 @@
       "fast-jwt": ">=6.2.4",
       "defu": ">=6.1.5",
       "lodash": ">=4.18.0",
-      "fast-uri": ">=4.1.2",
+      "fast-uri": ">=4.1.3",
       "fast-xml-builder": ">=1.1.7",
       "vite": ">=8.0.16",
       "form-data": ">=4.0.6",
       "brace-expansion": ">=5.0.9",
-      "sharp": ">=0.35.0",
+      "sharp": ">=0.35.4",
       "find-my-way": ">=9.7.0",
       "@fastify/static": ">=10.1.1",
       "ip-address": ">=10.3.1",
@@ -71,7 +71,8 @@
       "postcss": ">=8.5.18",
       "prettier": "3.8.3",
       "@playwright/test": "1.60.0",
-      "deepmerge-ts": ">=8.0.0"
+      "deepmerge-ts": ">=8.0.0",
+      "mysql2": ">=3.22.0"
     }
   }
 }
