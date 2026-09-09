@@ -2564,9 +2564,17 @@ export async function leaveRoutes(app: FastifyInstance) {
       const vacTypeId = await ensureLeaveType(app.prisma, tenantId, "VACATION");
       await autoCarryOver(app.prisma, tenantId, employeeId, vacTypeId, targetYear);
 
+      // Issue #173: without `?year` this can return more than one row per LeaveType (e.g. a
+      // next-year carry-over projection row created as a side effect of approving a booking
+      // — see recalculateCarryOver()). Postgres gives no row order without ORDER BY, so a
+      // caller that picks "the" row for a type (rather than filtering by year itself) would
+      // get a non-deterministic result. `desc` surfaces the most recent year first, which is
+      // the more useful default for such a caller; it is a no-op for the `?year` path, which
+      // resolves to at most one row.
       const rows = await app.prisma.leaveEntitlement.findMany({
         where: { employeeId, ...(year ? { year: targetYear } : {}) },
         include: { leaveType: true },
+        orderBy: { year: "desc" },
       });
 
       // Vacation type meta — shared with selfHealUsedDays AND the pro-rata mapping below
