@@ -56,6 +56,32 @@ const openingBalanceSchema = z.object({
 // status responses or snapshot creation. Single source of truth for the filter.
 const EXCLUDE_EXEMPT_EMPLOYEE_FILTER = { isTimeTrackingExempt: false } as const;
 
+/**
+ * The employee's schedule type as a plain string, or "" when the employee has no
+ * WorkSchedule row at all (`workSchedules[0]` is `undefined` — TS's index access does
+ * not model that). `String()` is a runtime no-op for a present row, since
+ * WorkSchedule.type is a non-nullable Prisma enum; it exists to widen $Enums.ScheduleType
+ * to the `string` that downstream consumers such as unconfirmedDaysFromEntries() declare.
+ */
+function scheduleTypeOf(schedule: { type?: unknown } | null | undefined): string {
+  return String(schedule?.type ?? "");
+}
+
+/**
+ * True when the daily completeness check does not apply: no schedule row at all, or a
+ * schedule type with no daily target. Phase 76.26 (D-01): FLEXTIME is gap-free for the
+ * same reason as MONTHLY_HOURS — no daily gap rule.
+ *
+ * GH #143: both close-month handlers used to inline this predicate AFTER dereferencing
+ * `schedule.type`, so the `!schedule` arm could never be reached. Shared here so a third
+ * copy cannot drift into existence.
+ */
+function isGapFreeSchedule(schedule: { type?: unknown } | null | undefined): boolean {
+  if (!schedule) return true;
+  const scheduleType = scheduleTypeOf(schedule);
+  return scheduleType === "MONTHLY_HOURS" || scheduleType === "FLEXTIME";
+}
+
 export async function overtimeRoutes(app: FastifyInstance) {
   // GET /api/v1/overtime/:employeeId  – Kontostand
   app.get("/:employeeId", {
@@ -474,10 +500,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
         const schedule = emp.workSchedules[0];
 
-        // No schedule or MONTHLY_HOURS → ready (no daily checks needed)
-        // Phase 76.26: FLEXTIME is also gap-free (D-01 — no daily gap rule, like MONTHLY_HOURS).
-        const scheduleTypeSt = String(schedule.type);
-        if (!schedule || scheduleTypeSt === "MONTHLY_HOURS" || scheduleTypeSt === "FLEXTIME") {
+        // No schedule or MONTHLY_HOURS/FLEXTIME → ready (no daily checks needed) — GH #143.
+        const scheduleTypeSt = scheduleTypeOf(schedule);
+        if (isGapFreeSchedule(schedule)) {
           result.push({
             employeeId: emp.id,
             employeeName: `${emp.firstName} ${emp.lastName}`,
@@ -775,10 +800,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
         for (const emp of unclosedEmployees) {
           const schedule = emp.workSchedules[0];
 
-          // No schedule or MONTHLY_HOURS → no missing dates
-          // Phase 76.26: FLEXTIME is also gap-free (D-01 — no daily gap rule, like MONTHLY_HOURS).
-          const scheduleTypeYs = String(schedule?.type ?? "");
-          if (!schedule || scheduleTypeYs === "MONTHLY_HOURS" || scheduleTypeYs === "FLEXTIME") {
+          // No schedule or MONTHLY_HOURS/FLEXTIME → no missing dates — GH #143.
+          const scheduleTypeYs = scheduleTypeOf(schedule);
+          if (isGapFreeSchedule(schedule)) {
             continue;
           }
 
