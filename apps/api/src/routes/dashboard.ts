@@ -24,6 +24,7 @@ import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { getConfirmedCarryOver, getConfirmedCarryOverBulk } from "../utils/confirmed-saldo"; // Phase 97-04
 import { findMissingWorkdays } from "../utils/find-missing-workdays"; // Phase 111 — canonical gap detector
 import { findUnconfirmedBreakDays } from "../utils/find-unconfirmed-break-days"; // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
+import { resolveMissingEntriesDays } from "../utils/missing-entries-window"; // GitHub issue #141 — single source for both Karte and Cron
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -1051,10 +1052,23 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const isManager = role === "ADMIN" || role === "MANAGER";
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const today = todayInTz(tz);
-      const sevenDaysAgo = new Date(today);
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      // GitHub issue #141: hoisted here (rather than fetched separately below) so the Karte and
+      // the Cron (attendance-checker.ts, Feature 2) read missingEntriesDays through the SAME
+      // resolveMissingEntriesDays() function and cannot drift apart. No card-specific upper bound
+      // exists here on purpose — the write path's z.number().int().min(1).max(90) in settings.ts
+      // is the only bound (a second one would recreate the exact divergence this issue closes).
+      // Also carries enforceBreakConfirmation, folding in the second TenantConfig read this
+      // handler used to do further down (see D-09 below) — net query count is unchanged.
+      const openItemsConfig = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId },
+        select: { missingEntriesDays: true, enforceBreakConfirmation: true },
+      });
+      const missingEntriesDays = resolveMissingEntriesDays(openItemsConfig);
+      const windowStart = new Date(today);
+      windowStart.setDate(windowStart.getDate() - missingEntriesDays);
       // findMissingWorkdays' effectiveEnd is INCLUSIVE; the replaced loop ran `cursor < today`,
-      // so the last day of the window is yesterday. Window size and bounds are unchanged.
+      // so the last day of the window is yesterday. The window's SIZE is now configured
+      // (missingEntriesDays); its bounds (windowStart..yesterday, inclusive) are unchanged.
       const yesterday = new Date(today);
       yesterday.setDate(yesterday.getDate() - 1);
 
@@ -1080,19 +1094,19 @@ export async function dashboardRoutes(app: FastifyInstance) {
           select: { isTimeTrackingExempt: true, hireDate: true, exitDate: true },
         });
         if (!meEmployee?.isTimeTrackingExempt) {
-          // 1. Missing time entries (workdays without entries in last 7 days)
+          // 1. Missing time entries (workdays without entries in the configured window)
           const recentEntries = await app.prisma.timeEntry.findMany({
             where: {
               employeeId,
               deletedAt: null,
               type: "WORK",
-              date: { gte: sevenDaysAgo, lt: today },
+              date: { gte: windowStart, lt: today },
             },
             select: { date: true },
           });
           const entryDates = new Set(recentEntries.map((e) => dateStrInTz(e.date, tz)));
 
-          // Fetch holidays for the 7-day window (window can span two years near Jan 1)
+          // Fetch holidays for the configured window (can span two years near Jan 1)
           const openItemsTenant = await app.prisma.tenant.findUnique({
             where: { id: tenantId },
             select: { federalState: true },
@@ -1100,14 +1114,14 @@ export async function dashboardRoutes(app: FastifyInstance) {
           const openItemsStateCode = openItemsTenant?.federalState
             ? (STATE_MAP[openItemsTenant.federalState] ?? null)
             : null;
-          const startYear = sevenDaysAgo.getFullYear();
+          const startYear = windowStart.getFullYear();
           const endYear = today.getFullYear();
           const openItemsHolidays = getHolidays(startYear, openItemsStateCode);
           if (endYear !== startYear)
             openItemsHolidays.push(...getHolidays(endYear, openItemsStateCode));
           const openItemsHolidaySet = new Set(openItemsHolidays.map((h) => h.date));
 
-          // Approved leave + Absences in the 7-day window cover the day too
+          // Approved leave + Absences in the configured window cover the day too
           // (mirrors overtime.ts close-month/status logic — a day is only "missing"
           // if no entry, no holiday, no leave, no absence covers it)
           const approvedLeaveInWindow = await app.prisma.leaveRequest.findMany({
@@ -1116,7 +1130,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
               deletedAt: null,
               status: "APPROVED",
               startDate: { lte: today },
-              endDate: { gte: sevenDaysAgo },
+              endDate: { gte: windowStart },
             },
             select: { startDate: true, endDate: true, halfDay: true },
           });
@@ -1125,7 +1139,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
               employeeId,
               deletedAt: null,
               startDate: { lte: today },
-              endDate: { gte: sevenDaysAgo },
+              endDate: { gte: windowStart },
             },
             select: { startDate: true, endDate: true, halfDay: true },
           });
@@ -1147,7 +1161,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
               where: {
                 employeeId,
                 employee: { tenantId },
-                date: { gte: sevenDaysAgo, lte: yesterday },
+                date: { gte: windowStart, lte: yesterday },
                 deletedAt: null,
               },
               select: { date: true },
@@ -1159,7 +1173,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
           // before hire or after exit carries no obligation.
           const hireDate = meEmployee?.hireDate ?? null;
           const exitDate = meEmployee?.exitDate ?? null;
-          const openItemsStart = hireDate && hireDate > sevenDaysAgo ? hireDate : sevenDaysAgo;
+          const openItemsStart = hireDate && hireDate > windowStart ? hireDate : windowStart;
           const openItemsEnd = exitDate && exitDate < yesterday ? exitDate : yesterday;
 
           const openItemsGapResult = findMissingWorkdays({
@@ -1221,10 +1235,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
         //
         // D-09: no explicit enforceBreakConfirmation branch here. findUnconfirmedBreakDays returns []
         // for an un-opted tenant as its FIRST check (BREAK-05 Gesamt-Opt-in), so the gate is inherited.
-        const breakTenantConfig = await app.prisma.tenantConfig.findUnique({
-          where: { tenantId },
-          select: { enforceBreakConfirmation: true },
-        });
+        // GitHub issue #141: reuses the openItemsConfig read hoisted above instead of a second
+        // TenantConfig fetch — net query count for the handler is unchanged.
         const breakMonthRef = todayInTz(tz);
         const { start: breakMonthStart, end: breakMonthEnd } = monthRangeUtc(
           breakMonthRef.getUTCFullYear(),
@@ -1242,7 +1254,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
           monthLastDay: breakMonthLastDay,
           tz,
           scheduleType: String(schedule?.type ?? ""),
-          enforceBreakConfirmation: breakTenantConfig?.enforceBreakConfirmation ?? false,
+          enforceBreakConfirmation: openItemsConfig?.enforceBreakConfirmation ?? false,
         });
       }
 
