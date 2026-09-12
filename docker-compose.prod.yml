@@ -49,7 +49,9 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio:latest
+    # Pinned by digest to quay.io: the docker.io/minio/minio repository was REMOVED
+    # (Docker Hub returns 404), which broke every pull. quay.io is MinIO's own registry.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
