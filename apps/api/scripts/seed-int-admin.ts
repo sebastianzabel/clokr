@@ -161,19 +161,23 @@ async function main(): Promise<void> {
           "[seed-int-admin] --disable-2fa given, but no tenant could be resolved for this user — nothing changed.",
         );
       } else {
-        await prisma.tenantConfig.update({
+        const updated = await prisma.tenantConfig.update({
           where: { tenantId },
           data: { twoFaEnabled: false },
         });
         // Revisionssicherheit: a tenant security setting must never change unlogged.
+        // entityId is the TenantConfig ROW id, matching what the app writes for this
+        // entity (apps/api/src/routes/settings.ts) — AuditLog is indexed on
+        // (entity, entityId), so using tenantId here would hide this row from every
+        // history lookup for that config. The tenant is carried in newValue instead.
         await prisma.auditLog.create({
           data: {
             userId: null,
             action: "TENANT_CONFIG_UPDATED",
             entity: "TenantConfig",
-            entityId: tenantId,
+            entityId: updated.id,
             oldValue: { twoFaEnabled: true },
-            newValue: { twoFaEnabled: false },
+            newValue: { twoFaEnabled: false, tenantId },
           },
         });
         console.log(`[seed-int-admin] 2FA disabled for tenantId=${tenantId} (AuditLog written).`);

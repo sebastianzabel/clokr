@@ -248,10 +248,9 @@ The script picks an **existing active ADMIN** (lowest id) and never creates a pe
 
 ### 9. (Optional) drop the old DB(s) after a few days
 
-`clokr_old_*` archives accumulate — one per refresh; three currently exist on int. List them with
-`\l`, and drop the ones you've confirmed the current `clokr` has superseded:
-
-After validating the new `clokr` works as expected, drop the rollback DB:
+`clokr_old_*` archives accumulate — one per refresh, and nothing prunes them. After validating
+that the new `clokr` works as expected, drop this run's rollback DB, and take the opportunity to
+list the older ones (`\l`) and drop any the current `clokr` has long since superseded:
 
 ```bash
 PGPASSWORD=<int-pg-password> psql -h localhost -p 5433 -U clokr -d postgres \
