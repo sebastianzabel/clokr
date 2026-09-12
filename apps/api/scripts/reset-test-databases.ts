@@ -21,30 +21,60 @@
  *      `isWorkerDatabaseName`).
  *   2. The marker-stamp rollback (`mayRollbackDrop`) removes an orphan that — by construction —
  *      has no marker yet, so possession cannot authorize it. It requires the worker-namespace name
- *      AND membership in `WORKER_DATABASE_NAMES`, i.e. the exact set this run derived from the
- *      template.
+ *      AND membership in the worker-name set this run derived from the template
+ *      (`workerDatabaseNames`, passed in explicitly as of Phase 132 since that set is now
+ *      namespace-dependent).
  *
- * The dev database `clokr` carries no marker, has a non-worker name, and is not in
- * `WORKER_DATABASE_NAMES` — it is therefore STRUCTURALLY undroppable on both paths, not merely
- * excluded by a naming convention. The template `clokr_test` is excluded too: `isWorkerDatabaseName`
- * is false for it, so the migrated template survives every reset. This file must NOT reach the
- * production runtime image; apps/api/Dockerfile removes it from the runtime stage and asserts
- * its absence (D-08 gate).
+ * The dev database `clokr` carries no marker, has a non-worker name, and is not in this run's
+ * worker-name set — it is therefore STRUCTURALLY undroppable on both paths, not merely excluded
+ * by a naming convention. The template is excluded too: `isWorkerDatabaseName` is false for it,
+ * so the migrated template survives every reset. This file must NOT reach the production runtime
+ * image; apps/api/Dockerfile removes it from the runtime stage and asserts its absence (D-08 gate).
  *
  * `COMMENT ON DATABASE` lives in `pg_shdescription`, keyed to the database OID — a `TEMPLATE`
  * copy does NOT inherit it (reproduced live, 106-RESEARCH.md). Every cloned worker database is
  * therefore stamped individually, immediately after its `CREATE DATABASE ... TEMPLATE`.
+ *
+ * Phase 132: the template and worker names are now per WORKING DIRECTORY (D-06/D-10). A run in
+ * linked git worktree A derives its own namespace, its own `templateName`, and its own
+ * `workerNames` — it can therefore never touch worktree B's databases, because the drop and clone
+ * loops below iterate exactly `workerNames`, nothing broader. In the main working tree the
+ * namespace is empty and every name is byte-identical to today's.
  */
+import { execFileSync } from "node:child_process";
 import pg from "pg";
 import {
-  TEST_DATABASE_NAME,
   TEST_DATABASE_MARKER,
-  WORKER_DATABASE_NAMES,
   isWorkerDatabaseName,
   parseDatabaseUrl,
   databaseNameOf,
   describeTarget,
+  templateDatabaseName,
+  workerDatabaseNames,
+  namespacedDatabaseUrl,
+  resolveTestNamespace,
+  buildMarkerComment,
 } from "../src/utils/test-database";
+
+/**
+ * The absolute git directory of the working directory running this script — the value D-12
+ * records in the marker so an orphaned namespace can be attributed from the database itself
+ * rather than from a side ledger. Falls back to process.cwd() when git cannot answer. Copied
+ * verbatim from ensure-test-database.ts (Phase 132) rather than moved into test-database.ts:
+ * this is a provenance string, NOT a second namespace derivation, and test-database.ts must stay
+ * free of anything a `setupFiles` re-import would pay for — see that module's header.
+ */
+function provisioningPath(): string {
+  try {
+    return execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-dir"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 10_000,
+    }).trim();
+  } catch {
+    return process.cwd();
+  }
+}
 
 /**
  * The ONE place in this repository that issues `DROP DATABASE` (Phase 106, D-07/D-08).
@@ -73,14 +103,19 @@ function fatal(message: string): never {
  * freshly cloned worker database whose marker stamp failed. That orphan carries no marker by
  * construction, so possession — the normal mechanism — is unavailable to authorize its removal.
  *
- * The name gate still applies, and membership in `WORKER_DATABASE_NAMES` is required on top of it,
- * so the target is provably one of the N names THIS run derived from the template. The dev database
- * `clokr` and the template `clokr_test` are absent from that set and fail `isWorkerDatabaseName`
- * besides. Without this, reachability was the only thing standing between that statement and a
- * non-worker database — a correct argument, but not an enforced one.
+ * The name gate still applies, and membership in `workerNames` is required on top of it, so the
+ * target is provably one of the N names THIS run derived from the template. The dev database
+ * `clokr` and the template are absent from that set and fail `isWorkerDatabaseName` besides.
+ * Without this, reachability was the only thing standing between that statement and a non-worker
+ * database — a correct argument, but not an enforced one.
+ *
+ * `workerNames` is now an explicit parameter (Phase 132) rather than a module-level constant:
+ * this function is module-level and exported and cannot close over `main()`'s namespace-derived
+ * set, and the set is namespace-dependent, so it must be passed in for the "one of the N names
+ * THIS run derived" guarantee to stay literally true.
  */
-export function mayRollbackDrop(name: string): boolean {
-  return isWorkerDatabaseName(name) && WORKER_DATABASE_NAMES.includes(name);
+export function mayRollbackDrop(name: string, workerNames: readonly string[]): boolean {
+  return isWorkerDatabaseName(name) && workerNames.includes(name);
 }
 
 /** Escape single quotes for a `COMMENT ON DATABASE ... IS '<literal>'` statement. */
@@ -129,8 +164,7 @@ async function main(): Promise<void> {
     fatal(`reset-test-databases: REFUSED — ${(err as Error).message}`);
   }
 
-  const target = describeTarget(url.toString());
-  const dbName = databaseNameOf(url);
+  let target = describeTarget(url.toString());
 
   // ── Refusal gate — every branch below exits before ANY connection is opened ──────────
   if (process.env.NODE_ENV === "production") {
@@ -146,12 +180,26 @@ async function main(): Promise<void> {
         `mechanism (D-01). Remove ?schema= from TEST_DATABASE_URL.\n  target: ${target}`,
     );
   }
-  if (dbName !== TEST_DATABASE_NAME) {
+
+  // ── Namespace (Phase 132) ────────────────────────────────────────────────────────────
+  // Resolve THIS working directory's namespace once, then rewrite the input into it, exactly
+  // like ensure-test-database.ts — after the schema/production refusals above, before the
+  // template-identity check below (which must compare against the RESOLVED template name).
+  const namespace = resolveTestNamespace();
+  url = namespacedDatabaseUrl(url, namespace);
+  target = describeTarget(url.toString());
+  const dbName = databaseNameOf(url);
+  const templateName = templateDatabaseName(namespace);
+  const workerNames = workerDatabaseNames(namespace);
+
+  if (dbName !== templateName) {
     fatal(
       `reset-test-databases: REFUSED — TEST_DATABASE_URL points at "${dbName}", not the ` +
-        `template "${TEST_DATABASE_NAME}". This script derives the ${WORKER_DATABASE_NAMES.length} ` +
-        `worker database names itself from the template target — being pointed at a worker ` +
-        `database is a misconfiguration, not a shortcut.\n  target: ${target}`,
+        `template "${templateName}" for THIS working directory. In a linked git worktree that is ` +
+        `"clokr_test_<ns>"; in the main working tree it is "clokr_test" (Phase 132, D-06). This ` +
+        `script derives the ${workerNames.length} worker database names itself from the template ` +
+        `target — being pointed at a worker database is a misconfiguration, not a shortcut.\n` +
+        `  target: ${target}`,
     );
   }
 
@@ -164,7 +212,7 @@ async function main(): Promise<void> {
   try {
     // ── Drop phase ───────────────────────────────────────────────────────────────────
     let dropped = 0;
-    for (const name of WORKER_DATABASE_NAMES) {
+    for (const name of workerNames) {
       const markerRow = await maint.query<{ marker: string | null }>(
         "SELECT shobj_description(oid, 'pg_database') AS marker FROM pg_database WHERE datname = $1",
         [name],
@@ -204,32 +252,32 @@ async function main(): Promise<void> {
     }
 
     // ── Template quiesce — CREATE DATABASE ... TEMPLATE requires zero connections on the source
-    await terminateTemplateBackends(maint, TEST_DATABASE_NAME);
+    await terminateTemplateBackends(maint, templateName);
 
     // ── Clone phase ──────────────────────────────────────────────────────────────────
     let created = 0;
-    for (const name of WORKER_DATABASE_NAMES) {
+    for (const name of workerNames) {
       try {
-        await maint.query(`CREATE DATABASE "${name}" TEMPLATE "${TEST_DATABASE_NAME}"`);
+        await maint.query(`CREATE DATABASE "${name}" TEMPLATE "${templateName}"`);
       } catch (err) {
         const message = (err as Error).message;
         if (/being accessed by other users/i.test(message)) {
           // Retry once after re-quiescing the template.
-          await terminateTemplateBackends(maint, TEST_DATABASE_NAME);
+          await terminateTemplateBackends(maint, templateName);
           try {
-            await maint.query(`CREATE DATABASE "${name}" TEMPLATE "${TEST_DATABASE_NAME}"`);
+            await maint.query(`CREATE DATABASE "${name}" TEMPLATE "${templateName}"`);
           } catch (retryErr) {
-            const report = await pgStatActivityReport(maint, TEST_DATABASE_NAME);
+            const report = await pgStatActivityReport(maint, templateName);
             fatal(
-              `reset-test-databases: FATAL — CREATE DATABASE "${name}" TEMPLATE "${TEST_DATABASE_NAME}" ` +
+              `reset-test-databases: FATAL — CREATE DATABASE "${name}" TEMPLATE "${templateName}" ` +
                 `failed twice: ${(retryErr as Error).message}\n` +
                 `  target: ${target}\n` +
-                `  pg_stat_activity for template "${TEST_DATABASE_NAME}":\n${report}`,
+                `  pg_stat_activity for template "${templateName}":\n${report}`,
             );
           }
         } else {
           fatal(
-            `reset-test-databases: FATAL — CREATE DATABASE "${name}" TEMPLATE "${TEST_DATABASE_NAME}" ` +
+            `reset-test-databases: FATAL — CREATE DATABASE "${name}" TEMPLATE "${templateName}" ` +
               `failed: ${message}\n  target: ${target}`,
           );
         }
@@ -244,17 +292,18 @@ async function main(): Promise<void> {
       const workerClient = new pg.Client({ connectionString: workerUrl.toString() });
       try {
         await workerClient.connect();
-        const comment =
-          `${TEST_DATABASE_MARKER} — provisioned by apps/api/scripts/reset-test-databases.ts ` +
-          `(Phase 106). Contents are disposable.`;
+        const comment = buildMarkerComment(
+          "apps/api/scripts/reset-test-databases.ts",
+          provisioningPath(),
+        );
         const escaped = escapeLiteral(comment);
         await workerClient.query(`COMMENT ON DATABASE "${name}" IS '${escaped}'`);
       } catch (err) {
         await workerClient.end().catch(() => {});
-        if (!mayRollbackDrop(name)) {
+        if (!mayRollbackDrop(name, workerNames)) {
           fatal(
             `reset-test-databases: REFUSED to roll back "${name}" — it is not one of the ` +
-              `${WORKER_DATABASE_NAMES.length} worker databases this run derived from the ` +
+              `${workerNames.length} worker databases this run derived from the ` +
               `template, so it must not be dropped.\n  target: ${target}`,
           );
         }

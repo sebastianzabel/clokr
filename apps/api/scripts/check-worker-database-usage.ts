@@ -6,7 +6,7 @@
  * test file runs inside exactly one worker — it cannot prove all N workers actually ran. This
  * script is the complementary, run-level check: after a full `pnpm test`, it connects through the
  * maintenance database and reads Postgres's OWN write counters (`pg_stat_database`) for every
- * `WORKER_DATABASE_NAMES` entry.
+ * entry in the current working directory's worker-name set (`workerDatabaseNames()`).
  *
  * `tup_inserted` — not a row count of any application table — is the signal on purpose. Suites call
  * `cleanupTestData` in `afterAll`, so a table row count can legitimately be zero after a fully green
@@ -18,10 +18,15 @@
  * Deliberately non-vacuous: run this against a freshly-cloned `test:setup` (no test run yet) and it
  * MUST fail, naming every worker database — see the acceptance criteria in
  * .planning/phases/106-.../106-04-PLAN.md Task 3 and this script's own header comment.
+ *
+ * Phase 132: this now proves usage of the CURRENT working directory's N worker databases — a
+ * concurrent run from another git worktree has its own namespace and its own set, and is
+ * invisible here by construction.
  */
 import pg from "pg";
 import {
-  WORKER_DATABASE_NAMES,
+  workerDatabaseNames,
+  namespacedDatabaseUrl,
   parseDatabaseUrl,
   describeTarget,
 } from "../src/utils/test-database";
@@ -47,7 +52,12 @@ async function main(): Promise<void> {
     fatal(`check-worker-database-usage: REFUSED — ${(err as Error).message}`);
   }
 
+  // Rewrite through the current working directory's namespace (Phase 132) before connecting. In
+  // the main working tree and in CI (CLOKR_TEST_NAMESPACE="") this is a no-op — CI keeps
+  // connecting to the exact unnamespaced literal it always has.
+  url = namespacedDatabaseUrl(url);
   const target = describeTarget(url.toString());
+  const workerNames = workerDatabaseNames();
 
   const maintenanceUrl = new URL(url.toString());
   maintenanceUrl.pathname = "/postgres";
@@ -58,7 +68,7 @@ async function main(): Promise<void> {
   try {
     const result = await client.query<StatRow>(
       "SELECT datname, tup_inserted, xact_commit FROM pg_stat_database WHERE datname = ANY($1)",
-      [WORKER_DATABASE_NAMES],
+      [workerNames],
     );
     rows = result.rows;
   } finally {
@@ -71,7 +81,7 @@ async function main(): Promise<void> {
   const missing: string[] = [];
   const lines: string[] = [];
 
-  for (const name of WORKER_DATABASE_NAMES) {
+  for (const name of workerNames) {
     const row = byName.get(name);
     if (!row) {
       missing.push(name);
@@ -103,9 +113,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  console.log(
-    `check-worker-database-usage: all ${WORKER_DATABASE_NAMES.length} worker databases were used.`,
-  );
+  console.log(`check-worker-database-usage: all ${workerNames.length} worker databases were used.`);
   for (const line of lines) {
     console.log(line);
   }
