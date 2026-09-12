@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.10.2](https://github.com/sebastianzabel/clokr/compare/v1.10.1...v1.10.2) (2026-09-12)
+
+
+### Bug Fixes
+
+* **ci:** MinIO aus quay.io ziehen — docker.io/minio/minio wurde entfernt ([3e8b066](https://github.com/sebastianzabel/clokr/commit/3e8b066612c555d4b8db7a99b52ebdf270337945))
+* **ci:** pull MinIO from quay.io — docker.io/minio/minio was removed ([0a0f3c1](https://github.com/sebastianzabel/clokr/commit/0a0f3c1c901056b5c5cd1154806c6b656e94471f))
+* **data-refresh:** anchor the 2FA audit row and untangle the cleanup step ([62dcb40](https://github.com/sebastianzabel/clokr/commit/62dcb408e833819b72339df3bc56d0383d945e9d))
+* **scripts:** harden seed-int-admin.ts and track it ([d03427d](https://github.com/sebastianzabel/clokr/commit/d03427d67f71b11a539bae35d6491f381a7c7560))
+* **test:** identify the bulk-apply row by id, not by createdAt recency ([4f29c49](https://github.com/sebastianzabel/clokr/commit/4f29c495d03478f149d1fa2d6e0c04421714fd66))
+
 ## [1.10.1](https://github.com/sebastianzabel/clokr/compare/v1.10.0...v1.10.1) (2026-09-09)
 
 
