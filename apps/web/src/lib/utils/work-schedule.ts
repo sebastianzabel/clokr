@@ -49,6 +49,11 @@ function ymd(date: Date): string {
 export interface WorkScheduleLike {
   type?: "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
   monthlyHours?: number | string | null;
+  // FLEXTIME + SHIFT_BASED weekly target (Prisma Decimal — arrives as a string
+  // on the wire). Issue #164: FLEXTIME's Ø-Methode day rate is weeklyHours /
+  // contractWorkDaysPerWeek, mirroring apps/api/src/utils/timezone.ts's
+  // avgWorkMinutesCore.
+  weeklyHours?: number | string | null;
   mondayHours: number | string;
   tuesdayHours: number | string;
   wednesdayHours: number | string;
@@ -86,7 +91,13 @@ function hasNonEmptyWorkDays(s: WorkScheduleLike): s is WorkScheduleLike & { wor
 const warned = new WeakSet<object>();
 function maybeWarnDivergence(s: WorkScheduleLike): void {
   if (!hasNonEmptyWorkDays(s)) return;
-  if (s.type === "SHIFT_BASED" || s.type === "MONTHLY_HOURS") return;
+  // {day}Hours is authoritative data only for FIXED_SCHEDULE (CLAUDE.md); for
+  // FLEXTIME, MONTHLY_HOURS and SHIFT_BASED it is a legacy placeholder while
+  // workDays carries the contract, so a workDays-vs-hours divergence only means
+  // something for FIXED_SCHEDULE. Positive check (not an exclusion list) so the
+  // type enumeration exists in exactly one place (issue #142). An undefined
+  // `type` is treated as "not known to be FIXED_SCHEDULE" and stays silent.
+  if (s.type !== "FIXED_SCHEDULE") return;
   const fromHours = DAY_HOUR_KEYS.map((k, i) => (toNumber(s[k]) > 0 ? i : -1)).filter(
     (i) => i >= 0,
   );
@@ -115,6 +126,16 @@ export function isWorkDay(schedule: WorkScheduleLike | null | undefined, date: D
   return toNumber(schedule[DAY_HOUR_KEYS[dow]]) > 0;
 }
 
+// Contracted workdays per week — the divisor of the Ø-Methode (BAG 9 AZR 406/17).
+// MUST use the same day-membership source as isWorkDay() above: workDays when
+// non-empty, count({day}Hours > 0) otherwise. Mixing the two sources would make
+// the ratio meaningless — the server states this explicitly in
+// apps/api/src/utils/timezone.ts:268-271, which this mirrors.
+function contractWorkDaysPerWeek(s: WorkScheduleLike): number {
+  if (hasNonEmptyWorkDays(s)) return s.workDays.length;
+  return DAY_HOUR_KEYS.filter((k) => toNumber(s[k]) > 0).length;
+}
+
 export function getDayExpectedHours(
   schedule: WorkScheduleLike | null | undefined,
   date: Date,
@@ -126,7 +147,47 @@ export function getDayExpectedHours(
     const mh = toNumber(schedule.monthlyHours);
     if (mh === 0) return 0; // D-03 / D-04
   }
+  // FLEXTIME (issue #164): {day}Hours is a legacy 1/0 placeholder for this type
+  // (CLAUDE.md "Schedule Types"; production evidence in issue #142), so returning
+  // it here produced a 1:00 h daily Soll. The server's Soll for FLEXTIME is the
+  // Ø-Methode rate — apps/api/src/utils/timezone.ts:332-334 routes FLEXTIME to
+  // avgWorkMinutesCore, which is weeklyHours × 60 × workdaysInRange ÷ workDaysPerWeek
+  // (BAG 9 AZR 406/17). Per day that is weeklyHours ÷ workDaysPerWeek. weeklyHours > 0
+  // is enforced for FLEXTIME on every write path (apps/api/src/routes/settings.ts:341-350);
+  // the <= 0 guard mirrors avgWorkMinutesCore's own defensive return for legacy rows.
+  //
+  // Deliberately its own branch rather than the positive `type === "FIXED_SCHEDULE"`
+  // check that maybeWarnDivergence uses one function above: MONTHLY_HOURS with a
+  // budget, and an undefined type, both still return the {day}Hours value here and
+  // are pinned by shipped assertions in __tests__/work-schedule.test.ts.
+  if (schedule.type === "FLEXTIME") {
+    const weekly = toNumber(schedule.weeklyHours);
+    if (weekly <= 0) return 0;
+    const perWeek = contractWorkDaysPerWeek(schedule);
+    if (perWeek === 0) return 0;
+    return weekly / perWeek;
+  }
   return toNumber(schedule[DAY_HOUR_KEYS[date.getDay()]]);
+}
+
+/**
+ * The calendar cell's Soll in whole minutes. Callers must use this instead of
+ * `getDayExpectedHours(...) * 60`.
+ *
+ * FLEXTIME's Ø-Methode rate (weeklyHours ÷ workDaysPerWeek) is frequently not a
+ * whole number of minutes — e.g. 38.5 h over 4 workdays is 577.5 min — and fmtMin()
+ * formats with `minutes % 60`, so an unrounded value would render as "9:37.5".
+ * The server rounds ONCE per range (avgWorkMinutesCore's Math.round); a per-cell
+ * calendar can only round per day, which can differ from the server's month total
+ * by at most 0.5 min per day. Every other schedule type keeps the exact
+ * `hours × 60` it produced before, so FIXED_SCHEDULE is bit-for-bit unchanged.
+ */
+export function getDayExpectedMinutes(
+  schedule: WorkScheduleLike | null | undefined,
+  date: Date,
+): number {
+  const hours = getDayExpectedHours(schedule, date);
+  return schedule?.type === "FLEXTIME" ? Math.round(hours * 60) : hours * 60;
 }
 
 export function countWorkingDaysInMonth(
@@ -165,6 +226,56 @@ export function countWorkingDaysInMonth(
  * @param holidayDeduction    the tenant monthlyHoursHolidayDeduction flag
  * @param holidayDateStrings  yyyy-MM-dd keys of public holidays (any range; filtered to this month)
  */
+// ── Phase 107 (D-22..D-26, issue #94) — Arbeitstage/Woche field decision ──
+//
+// The employee form (admin/employees/[id]/+page.svelte) renders exactly one
+// Arbeitstage/Woche variant per ScheduleType, inside that type's own {#if}
+// branch. This function is the single, pure, testable specification of that
+// mapping — the template's four branches (FIXED_SCHEDULE / FLEXTIME /
+// MONTHLY_HOURS / the SHIFT_BASED {:else} catch-all) must stay in sync with
+// it. Deliberately NOT wired into the template's {#if} conditions (Plan 02
+// Task 3): the four variants render entirely different markup (disabled
+// input / chip group / nothing / plain input), so routing the template
+// through this function would not reduce duplication, only add a layer —
+// its value here is a pinning test against regression, not reuse.
+export type ArbeitstageFieldVariant = "count" | "derived" | "chips" | "none";
+
+export function arbeitstageFieldVariant(
+  type: WorkScheduleLike["type"] | undefined,
+): ArbeitstageFieldVariant {
+  switch (type) {
+    case "FIXED_SCHEDULE":
+      return "derived"; // D-24: disabled, count of {day}Hours > 0
+    case "FLEXTIME":
+      return "chips"; // D-25: Mo-So weekday selector, writes workDays
+    case "MONTHLY_HOURS":
+      return "none"; // D-26: no field at all
+    case "SHIFT_BASED":
+    default:
+      return "count"; // D-23 (mirrors the template's own {:else} catch-all default)
+  }
+}
+
+/**
+ * Phase 107 (D-02/D-23) — the exact workDays/contractWorkDaysPerWeek slice of
+ * buildSchedulePayload() (admin/employees/[id]/+page.svelte's PUT body
+ * builder), extracted so it is unit-testable without mounting the component
+ * and so the component itself consumes the tested implementation rather than
+ * a parallel copy. SHIFT_BASED omits workDays entirely from the payload
+ * (defence in depth — the server freezes it regardless, D-02) and is the
+ * only type that ever sends a non-null contractWorkDaysPerWeek.
+ */
+export function buildContractWorkDaysPayload(
+  type: WorkScheduleLike["type"] | undefined,
+  workDays: number[],
+  contractWorkDaysPerWeek: number | null,
+): { workDays?: number[]; contractWorkDaysPerWeek: number | null } {
+  return {
+    ...(type === "SHIFT_BASED" ? {} : { workDays }),
+    contractWorkDaysPerWeek: type === "SHIFT_BASED" ? contractWorkDaysPerWeek : null,
+  };
+}
+
 export function monthlyBudgetSollMinutes(
   schedule: WorkScheduleLike | null | undefined,
   monthStart: Date,

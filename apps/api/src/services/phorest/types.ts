@@ -191,6 +191,15 @@ export interface SyncResult {
   // per-day app.audit() row is sufficient observability; a persisted counter is an additive
   // migration deferred until the owner wants sync-run history for it). Not touched by finalizeRun.
   protectedPendingLeave: number;
+  // Phase 107 (D-14/D-15, T-107-27): count of per-shift transactions (shift write + the shared
+  // shift-leave-recalc resolver call, see sync-shifts.ts) that threw and were rolled back —
+  // isolated to that one shift so the rest of the run continues. IN-MEMORY ONLY, mirroring
+  // protectedPendingLeave immediately above: no PhorestSyncRun DB column is written for it (a
+  // persisted counter is an additive migration deferred until it's actually needed). Surfaced via
+  // the run's own "Phorest sync finished" log line and, on the manual trigger, the endpoint's
+  // response body (routes/integrations.ts returns the whole SyncResult) — "the run reports the
+  // failure rather than swallowing it silently" (107-06-PLAN.md). Not touched by finalizeRun.
+  leaveRecalcFailures: number;
   error?: string;
 }
 

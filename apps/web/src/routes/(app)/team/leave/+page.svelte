@@ -21,6 +21,7 @@
     stornoSuccessToast,
     type StornoKind,
   } from "$lib/leave/storno"; // Quick 260824-ef6
+  import { resolveAdjustmentBadge, type LastDaysAdjustment } from "$lib/leave/vacation-balance"; // Phase 107-07
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -53,6 +54,10 @@
     attestPresent: boolean;
     attestValidFrom: string | null;
     attestValidTo: string | null;
+    // Phase 107-07 (D-12/D-19): set at approval time, server-derived only — see
+    // GET /leave/requests' own doc comment for both fields.
+    daysProvisional?: boolean | null;
+    lastDaysAdjustment?: LastDaysAdjustment | null;
   }
 
   interface OverlapEntry {
@@ -1459,6 +1464,34 @@
                     data-testid={`leave-team-row-${req.id}-status-badge`}
                     >{statusLabel(req.status)}</span
                   >
+                  {#if req.lastDaysAdjustment}
+                    {@const adjBadge = resolveAdjustmentBadge(req.lastDaysAdjustment)!}
+                    <!-- Phase 107-07 (D-19/D-21): mirrors leave/+page.svelte's own request
+                         row exactly, so the approving manager sees the same signal on the
+                         request they approved. Persistent — not tied to notification
+                         read/dismissed state. -->
+                    <span
+                      class={adjBadge.badgeClass}
+                      data-testid={`leave-team-row-${req.id}-adjustment-badge`}
+                      title={adjBadge.tooltip}
+                    >
+                      {adjBadge.icon} Angepasst: {adjBadge.direction === "up"
+                        ? "+"
+                        : "−"}{#if adjBadge.bold}<strong>{adjBadge.delta}</strong
+                        >{:else}{adjBadge.delta}{/if} Tag(e)
+                    </span>
+                  {/if}
+                  {#if req.daysProvisional}
+                    <!-- Phase 107-07 (D-12): --warn tone, NOT --bad/row-invalid — a
+                         provisional request is fully valid and payable today. -->
+                    <span
+                      class="badge badge-yellow"
+                      data-testid={`leave-team-row-${req.id}-provisional-badge`}
+                      title="Verbrauch vorläufig geschätzt — wird angepasst, sobald der Schichtplan für diesen Zeitraum steht."
+                    >
+                      Vorläufig
+                    </span>
+                  {/if}
                   {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
                     <span
                       class="badge badge-attest {req.attestPresent ? 'badge-green' : 'badge-gray'}"

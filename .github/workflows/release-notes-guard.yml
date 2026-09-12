@@ -1,0 +1,44 @@
+name: Release Notes Guard
+
+# Phase 110 (AK-15). The German release notes now live in the repo (docs/release-notes/vX.Y.Z.md)
+# and are baked into the API image by apps/api/Dockerfile. The image is built from the
+# release-please merge commit, so the notes file must ALREADY be on main when that PR merges —
+# a note written afterwards can never be inside the image it describes (N-01).
+#
+# This job is the only thing between "merged the release PR" and "shipped a release whose
+# What's-New dialog is empty". It runs on every PR but only does work for the release PR, which is
+# the only PR whose title carries a version.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  require-notes-for-release-pr:
+    runs-on: ubuntu-latest
+    if: "startsWith(github.event.pull_request.title, 'chore(main): release ')"
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Assert docs/release-notes/v<version>.md exists and is correctly headed
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          VERSION="${PR_TITLE##* }"
+          NOTES="docs/release-notes/v${VERSION}.md"
+          if [ ! -f "$NOTES" ]; then
+            echo "::error title=Release notes missing::${NOTES} is required before this PR may merge."
+            echo "Write the German notes per docs/RELEASE_NOTES_TEMPLATE.md and land them on main as" >&2
+            echo "  docs(release): add release notes for v${VERSION}" >&2
+            echo "A docs: commit does not bump the version, so this release PR will still say ${VERSION}." >&2
+            exit 1
+          fi
+          head -n 1 "$NOTES" | grep -qE "^## v${VERSION} — " || {
+            echo "::error title=Headline mismatch::${NOTES} must start with '## v${VERSION} — <Titel>'"
+            exit 1
+          }
+          echo "OK: ${NOTES} is present and correctly headed."

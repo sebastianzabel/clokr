@@ -44,6 +44,13 @@ export async function consolidateSameDayEntries(
       date: openEntry.date,
       id: { not: openEntry.id },
       endTime: { not: null, lte: openEntry.startTime },
+      // Phase 118 (D-08): a row coupled to a Zeitnachtrag (Phase 96,
+      // `retroRequestId @unique`) is off-limits as a predecessor. Merging would either
+      // extend it or soft-delete it, breaking the 1:1 coupling to the RetroEntryRequest —
+      // the approval flow would then release no entry, or a corrupted one. `isInvalid` is
+      // deliberately NOT filtered here (consistent with D-01: an invalidated row is a real
+      // attendance row).
+      retroRequestId: null,
     },
     orderBy: { endTime: "desc" },
   });

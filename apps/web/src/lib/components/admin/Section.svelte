@@ -12,6 +12,7 @@
     footer   — per-card save area stripe (snippet)
     animate  — opt-in card-animate entrance (default: inherited via admin-animate context)
     tone     — "default" | "danger" (escape hatch; prefer DangerZone)
+    dirty    — true while the section holds unsaved changes (Phase 109, D-11)
     children — section body (required)
 
   Example:
@@ -33,10 +34,20 @@
     footer?: Snippet;
     animate?: boolean;
     tone?: "default" | "danger";
+    dirty?: boolean;
     children: Snippet;
   }
 
-  let { title, sub, actions, footer, animate, tone = "default", children }: Props = $props();
+  let {
+    title,
+    sub,
+    actions,
+    footer,
+    animate,
+    tone = "default",
+    dirty = false,
+    children,
+  }: Props = $props();
 
   const contextAnimate = getContext<boolean | undefined>("admin-animate");
   const shouldAnimate = $derived(animate ?? contextAnimate ?? false);
@@ -62,6 +73,9 @@
   {#if footer}
     <footer class="section-footer">
       {@render footer()}
+      {#if dirty}
+        <span class="unsaved-hint" role="status">Nicht gespeichert</span>
+      {/if}
     </footer>
   {/if}
 </section>

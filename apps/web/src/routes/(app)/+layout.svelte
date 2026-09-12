@@ -1,14 +1,20 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { goto } from "$app/navigation";
+  import { beforeNavigate, goto } from "$app/navigation";
   import { page } from "$app/stores";
   import { authStore } from "$stores/auth";
   import { tenantFeatures } from "$stores/tenant-features";
+  import { clearUnsaved, hasUnsaved } from "$stores/unsaved";
   import { clientLogger } from "$lib/utils/logger";
   import Sidebar from "$lib/components/layout/Sidebar.svelte";
   import Topbar from "$lib/components/layout/Topbar.svelte";
   import BottomTabBar from "$lib/components/layout/BottomTabBar.svelte";
   import CommandPalette from "$lib/components/ui/CommandPalette.svelte";
+  import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
+  import ErrorBoundary from "$lib/components/ui/ErrorBoundary.svelte";
+  import WhatsNewPanel from "$lib/components/layout/WhatsNewPanel.svelte";
+  import { hasUnreadReleaseNotes, whatsNewOpen } from "$stores/release-notes";
+  import { isMobileViewport } from "$lib/utils/viewport";
 
   interface Props {
     children?: import("svelte").Snippet;
@@ -69,11 +75,70 @@
     if (sessionTimeoutMs <= 0) return; // 0 = disabled
     inactivityTimer = setTimeout(() => {
       authStore.logout();
+      clearUnsaved(); // N-08 — a timed-out session must never be held hostage by a dirty section
       goto("/login?reason=timeout");
     }, sessionTimeoutMs);
   }
 
   const ACTIVITY_EVENTS = ["mousedown", "keydown", "touchstart", "scroll"] as const;
+
+  // ── Unsaved-changes navigation guard (Phase 109, D-12 / AK-07) ──
+  // beforeNavigate's callback is SYNCHRONOUS: cancel() must be decided now, so a custom dialog
+  // cannot be awaited here (N-07). The guard therefore always cancels when the registry is
+  // non-empty, remembers the target, and re-issues the navigation from the dialog's confirm handler.
+  // It has no way to recognise a forced logout — that is why all four logout call sites clear the
+  // registry themselves (N-08).
+  let confirmLeaveOpen = $state(false);
+  let pendingUrl = $state<string | null>(null);
+
+  beforeNavigate((navigation) => {
+    if (!hasUnsaved()) return;
+    navigation.cancel();
+    if (navigation.willUnload) {
+      // Tab close / real browser navigation: the browser shows its own, non-customisable
+      // prompt. Rendering our dialog into a page that is unloading would never be seen.
+      return;
+    }
+    pendingUrl = navigation.to?.url.href ?? null;
+    confirmLeaveOpen = true;
+  });
+
+  function discardAndLeave() {
+    clearUnsaved(); // must precede the goto, or this guard would cancel its own retry
+    confirmLeaveOpen = false;
+    const target = pendingUrl;
+    pendingUrl = null;
+    if (target) void goto(target);
+  }
+
+  function keepEditing() {
+    // ConfirmDialog also routes ESC and backdrop clicks here (its M-01 fix), so this is the
+    // single place that has to forget the pending target.
+    pendingUrl = null;
+  }
+
+  // Phase 110 (D-07/AK-07): auto-open once per session when this user has not yet acknowledged
+  // the newest release baked into the running image. Fires only once — autoOpened latches — so
+  // dismissing it (which writes the seen state server-side) is final for this session even if the
+  // PUT fails.
+  //
+  // WhatsNewPanel is a non-modal drawer: it sets no `inert` on sibling nodes and does not lock
+  // body scroll, so the "Einstempeln" button stays reachable in MECHANISM while it is open (N-07,
+  // asserted in WhatsNewPanel.test.ts). That held on desktop but not in OUTCOME on a phone —
+  // measured live at 390x844, the drawer covered 92% of the viewport width and its full height
+  // directly over the button (`elementFromPoint()` on the button's centre resolved into
+  // `aside.whats-new`). Below the app's mobile breakpoint (isMobileViewport(), same 960px
+  // BottomTabBar.svelte/`.app` grid already use) auto-open is therefore suppressed entirely —
+  // manual opening via the version-line dot (Sidebar + MobileMoreSheet) stays available at every
+  // width; only the AUTOMATIC trigger yields to the primary clock-in action on a phone.
+  let autoOpened = $state(false);
+  $effect(() => {
+    if (autoOpened) return;
+    if (!$hasUnreadReleaseNotes) return;
+    if (isMobileViewport()) return;
+    autoOpened = true;
+    whatsNewOpen.set(true);
+  });
 
   onMount(() => {
     if (!$authStore.accessToken) {
@@ -118,12 +183,25 @@
     <Topbar {currentPath} {currentPageLabel} />
     <main class="main" id="main-content">
       <div class="page-fade">
-        {@render children?.()}
+        <ErrorBoundary scope="view">
+          {@render children?.()}
+        </ErrorBoundary>
       </div>
     </main>
     <BottomTabBar {currentPath} />
   </div>
   <CommandPalette />
+  <ConfirmDialog
+    bind:open={confirmLeaveOpen}
+    title="Ungespeicherte Änderungen verwerfen?"
+    description="Auf dieser Seite gibt es Änderungen, die noch nicht gespeichert wurden. Wenn du die Seite verlässt, gehen sie verloren."
+    confirmLabel="Verwerfen und verlassen"
+    cancelLabel="Auf der Seite bleiben"
+    danger
+    onConfirm={discardAndLeave}
+    onCancel={keepEditing}
+  />
+  <WhatsNewPanel />
 {/if}
 
 <style>

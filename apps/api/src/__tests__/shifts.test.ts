@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
+import { dbDateStr, futureDateStr, nextWeekdayStr, utcMidnight } from "./test-dates";
 
 describe("Shift Planning API", () => {
   let app: FastifyInstance;
@@ -813,6 +814,13 @@ describe("Shift Planning API", () => {
 
   describe("Phase 43 — Reverse-hook: leave approval marks conflicting shifts", () => {
     it("PATCH leave to APPROVED flips conflictsWithLeave on overlapping shifts + audit + notify", async () => {
+      // GH #167 — derived, never written. A fixed literal silently turns into a PAST
+      // date as the calendar advances, and POST /shifts then rejects it with
+      // SHIFT_PAST_IMMUTABLE (422) instead of 201. Deriving a weekday at least a week
+      // out keeps the date's MEANING ("a future working day") stable forever.
+      const shiftDate = nextWeekdayStr(futureDateStr(7));
+      const leaveEndDate = dbDateStr(new Date(utcMidnight(shiftDate).getTime() + 86_400_000));
+
       // Create a shift first (no leave yet → no 409)
       const shiftRes = await app.inject({
         method: "POST",
@@ -820,7 +828,7 @@ describe("Shift Planning API", () => {
         headers: { authorization: `Bearer ${managerToken}` },
         payload: {
           employeeId: data.employee.id,
-          date: "2026-09-07", // Mo
+          date: shiftDate,
           startTime: "08:00",
           endTime: "16:00",
         },
@@ -834,8 +842,8 @@ describe("Shift Planning API", () => {
         data: {
           employeeId: data.employee.id,
           leaveTypeId: data.vacationType.id,
-          startDate: new Date("2026-09-07"),
-          endDate: new Date("2026-09-08"),
+          startDate: utcMidnight(shiftDate),
+          endDate: utcMidnight(leaveEndDate),
           days: 2,
           status: "PENDING",
         },

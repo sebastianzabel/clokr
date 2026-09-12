@@ -21,6 +21,7 @@ import { join } from "node:path";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { daysAgoStrInTz } from "./test-dates";
 import {
   karenzOverrunFromRequests,
   normalizeKarenzDays,
@@ -627,13 +628,12 @@ describe("tenant config range — sickNoteRequiredAfterDays (D-22)", () => {
 
 // ── Task 1 (gap closure, plan 104-11): GET /leave/karenz-overrun — self-service Hinweis (D-21) ──
 
-/** YYYY-MM-DD, `n` days before today (UTC). Keeps this suite free of date time bombs and away
- *  from the documented 00:00-02:00 "today"-boundary flake window. */
-function daysAgo(n: number): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - n);
-  return d.toISOString().slice(0, 10);
-}
+// Issue #136 batch E — ONE clock read for this describe. The private daysAgo() this replaces
+// read new Date() per call, so approveSick(..., daysAgo(10), daysAgo(6)) evaluated "now" twice
+// and a UTC midnight between the two turned a 5-day span into 4 or 6. Test 3's
+// daysAgo(10)/daysAgo(8) sits exactly on the "länger als 3 Tage" boundary, where a one-day slip
+// inverts the assertion.
+const KARENZ_ANCHOR = new Date();
 
 describe("Self-service Hinweis (D-21)", () => {
   let app: FastifyInstance;
@@ -657,8 +657,8 @@ describe("Self-service Hinweis (D-21)", () => {
         app,
         fx.employee.id,
         fx.sickType.id,
-        daysAgo(10),
-        daysAgo(6),
+        daysAgoStrInTz(KARENZ_ANCHOR, 10),
+        daysAgoStrInTz(KARENZ_ANCHOR, 6),
       );
 
       const res = await app.inject({
@@ -683,7 +683,14 @@ describe("Self-service Hinweis (D-21)", () => {
         where: { tenantId: fx.tenant.id },
         data: { sickNoteRequiredAfterDays: 3 },
       });
-      await approveSick(app, fx.employee.id, fx.sickType.id, daysAgo(10), daysAgo(6), true);
+      await approveSick(
+        app,
+        fx.employee.id,
+        fx.sickType.id,
+        daysAgoStrInTz(KARENZ_ANCHOR, 10),
+        daysAgoStrInTz(KARENZ_ANCHOR, 6),
+        true,
+      );
 
       const res = await app.inject({
         method: "GET",
@@ -706,7 +713,13 @@ describe("Self-service Hinweis (D-21)", () => {
         where: { tenantId: fx.tenant.id },
         data: { sickNoteRequiredAfterDays: 3 },
       });
-      await approveSick(app, fx.employee.id, fx.sickType.id, daysAgo(10), daysAgo(8));
+      await approveSick(
+        app,
+        fx.employee.id,
+        fx.sickType.id,
+        daysAgoStrInTz(KARENZ_ANCHOR, 10),
+        daysAgoStrInTz(KARENZ_ANCHOR, 8),
+      );
 
       const res = await app.inject({
         method: "GET",
@@ -754,8 +767,20 @@ describe("Self-service Hinweis (D-21)", () => {
         data: { employeeId: employeeB.id, balanceHours: 0 },
       });
 
-      const reqA = await approveSick(app, fx.employee.id, fx.sickType.id, daysAgo(10), daysAgo(6));
-      const reqB = await approveSick(app, employeeB.id, fx.sickType.id, daysAgo(10), daysAgo(6));
+      const reqA = await approveSick(
+        app,
+        fx.employee.id,
+        fx.sickType.id,
+        daysAgoStrInTz(KARENZ_ANCHOR, 10),
+        daysAgoStrInTz(KARENZ_ANCHOR, 6),
+      );
+      const reqB = await approveSick(
+        app,
+        employeeB.id,
+        fx.sickType.id,
+        daysAgoStrInTz(KARENZ_ANCHOR, 10),
+        daysAgoStrInTz(KARENZ_ANCHOR, 6),
+      );
 
       const res = await app.inject({
         method: "GET",
@@ -839,8 +864,8 @@ describe("Self-service Hinweis (D-21)", () => {
         where: { tenantId: fx.tenant.id },
         data: { sickNoteRequiredAfterDays: 3 },
       });
-      const start = daysAgo(10);
-      const end = daysAgo(6);
+      const start = daysAgoStrInTz(KARENZ_ANCHOR, 10);
+      const end = daysAgoStrInTz(KARENZ_ANCHOR, 6);
       await approveSick(app, fx.employee.id, fx.sickType.id, start, end);
 
       const res = await app.inject({

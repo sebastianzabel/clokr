@@ -14,23 +14,20 @@
  *      how the bug reached prod: the fix in (1) alone is not sufficient).
  *
  * Pattern mirrors shifts-under-coverage.test.ts (Phase 76.23 sibling).
+ *
+ * Issue #136 (batch C): the fixture week is additionally guaranteed
+ * Feiertag-free via holidayFreeMondayStr. This file's workDays = [2,3,4]
+ * (Tue-Thu) and Christi Himmelfahrt is ALWAYS a Thursday, so any anchor that
+ * doesn't check the calendar eventually lands one of the three leave days on
+ * the Feiertag and silently drops 480 of the pinned 1800 minutes.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { holidayFreeMondayStr } from "./test-dates";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 
 const TZ = "Europe/Berlin";
-
-function futureMondayIso(weeksAhead: number): string {
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-  const dow = today.getUTCDay(); // 0=Sun..6=Sat
-  const mondayOffset = dow === 0 ? -6 : 1 - dow;
-  const monday = new Date(today);
-  monday.setUTCDate(monday.getUTCDate() + mondayOffset + weeksAhead * 7);
-  return monday.toISOString().slice(0, 10);
-}
 
 function mondayDate(iso: string): Date {
   const d = new Date(iso + "T00:00:00Z");
@@ -52,8 +49,9 @@ describe("GET /shifts/week — workDays-primary divisor, end-to-end (SOLL-WORKDA
     const prisma = app.prisma;
     const suffix = "soll-wd-01-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
-    // 10 weeks ahead — avoids collision with 76.10/76.11/76.23 fixture weeks.
-    weekMonday = futureMondayIso(10);
+    // 10 weeks ahead — avoids collision with 76.10/76.11/76.23 fixture weeks — and
+    // holiday-free (issue #136), so the pinned 1800-minute assertion never drifts.
+    weekMonday = holidayFreeMondayStr(10, "NI");
     monday = mondayDate(weekMonday);
 
     const tenant = await prisma.tenant.create({

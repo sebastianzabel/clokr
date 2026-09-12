@@ -1,0 +1,288 @@
+// Phase 109 (Issue #35), Plan 10, Task 2 — Wave-0 (gap closure) regression net for
+// `admin/availability/[employeeId]/+page.svelte` (313 lines, zero prior test coverage).
+//
+// This is a source-read PIN, not a behaviour test: `apps/web/vitest.config.ts` has no
+// `$app` alias, so a route page cannot be mounted (see `nav-guard.test.ts` for the
+// established `readRouteFile` shape this file follows).
+//
+// What this pins (T-109-40, WR-01):
+// - The page independently invented its own snapshot mechanism (`lastSnapshot`/
+//   `currentSnapshot`/`dirty`) before Phase 109 existed — plan 109-14 must reuse it, not
+//   build a second one.
+// - `lastSnapshot` is assigned in exactly one place: the last statement of `applyEntries()`.
+// - WR-01 (109-REVIEW-FIX.md), reproduced HERE independently of the unsaved registry: `onMount`
+//   can return early — before the employee load even resolves — before `applyEntries` ever
+//   runs. `lastSnapshot` then stays `""` while `currentSnapshot` is `{"r":[],"o":[]}`, so
+//   `dirty` is `true` and the Speichern button on a page showing nothing but an error is
+//   ENABLED. This describe block documents the IST-Zustand; plan 109-14 must flip the two
+//   `not.toContain` assertions to their positive counterparts.
+// - `save()` re-takes the baseline only on its success path, never in a `finally`.
+// - AK-02: no text/number input on this page carries an inline write handler (this page has no
+//   inline `<input>` at all — the grid/list are separate child components).
+
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { describe, it, expect } from "vitest";
+
+// fileURLToPath decodes the %28/%29 that the "(app)" route group produces in import.meta.url.
+function readRouteFile(relativeFromHere: string, relativeFromCwd: string): string {
+  try {
+    return readFileSync(fileURLToPath(new URL(relativeFromHere, import.meta.url)), "utf8");
+  } catch {
+    // Fallback: `pnpm --filter @clokr/web test` runs with cwd `apps/web`.
+    return readFileSync(resolve(process.cwd(), relativeFromCwd), "utf8");
+  }
+}
+
+const PAGE = readRouteFile(
+  "../routes/(app)/admin/availability/[employeeId]/+page.svelte",
+  "src/routes/(app)/admin/availability/[employeeId]/+page.svelte",
+);
+
+/** Brace/paren-depth fnBody() slicer — copied from admin-system-save-wiring.test.ts (Plan
+ *  109-01's correction), robust against functions whose own parameter types contain braces. */
+function fnBody(marker: string): string {
+  const start = PAGE.indexOf(marker);
+  expect(start, `marker not found: ${marker}`).toBeGreaterThan(-1);
+
+  let i = start;
+  let parenDepth = 0;
+  let bodyStart = -1;
+  while (i < PAGE.length) {
+    const ch = PAGE[i];
+    if (ch === "(") parenDepth++;
+    else if (ch === ")") parenDepth--;
+    else if (ch === "{" && parenDepth === 0) {
+      bodyStart = i;
+      break;
+    }
+    i++;
+  }
+  expect(bodyStart, `function body opening brace not found for: ${marker}`).toBeGreaterThan(-1);
+
+  let depth = 0;
+  let j = bodyStart;
+  for (; j < PAGE.length; j++) {
+    if (PAGE[j] === "{") depth++;
+    else if (PAGE[j] === "}") {
+      depth--;
+      if (depth === 0) break;
+    }
+  }
+  expect(j, `unterminated function: ${marker}`).toBeLessThan(PAGE.length);
+  return PAGE.slice(bodyStart, j + 1);
+}
+
+/** AK-02 census helper — same shape as admin-system-save-wiring.test.ts. */
+function textOrNumberInputHandlers(source: string): string[] {
+  const found: string[] = [];
+  for (const tag of source.match(/<input\b[\s\S]*?>/g) ?? []) {
+    const type = tag.match(/type="([a-z]+)"/)?.[1];
+    if (type !== "number" && type !== "text") continue;
+    for (const m of tag.matchAll(/on(?:blur|change|input)=\{(\w+)\}/g)) found.push(m[1]);
+  }
+  return found;
+}
+
+describe("the page already carries the snapshot idiom — plan 109-14 reuses it", () => {
+  it("declares lastSnapshot as an empty-string $state", () => {
+    expect(PAGE).toContain('let lastSnapshot = $state("")');
+  });
+
+  it("derives currentSnapshot from a JSON.stringify of both entry arrays", () => {
+    expect(PAGE).toMatch(
+      /const currentSnapshot = \$derived\(\s*JSON\.stringify\(\{ r: recurringEntries, o: oneOffEntries \}\)/,
+    );
+  });
+
+  it("derives dirty from snapshotsReady, loading/featureDisabled and the snapshot comparison", () => {
+    // 109-14 (WR-01): gated on snapshotsReady — see the dedicated "WR-01 — the baseline gate"
+    // describe block below for the gate's own tests.
+    expect(PAGE).toMatch(
+      /const dirty = \$derived\(\s*snapshotsReady && !loading && !featureDisabled && currentSnapshot !== lastSnapshot/,
+    );
+  });
+
+  // this page independently invented the Phase-109 snapshot comparison. Plan 109-14 does NOT
+  // introduce a second mechanism — it gates this one and registers it.
+});
+
+describe("lastSnapshot is assigned in exactly one place", () => {
+  it("has exactly one reassignment, excluding its own $state declaration", () => {
+    // The plan's literal /lastSnapshot = /g also matches the `let lastSnapshot = $state("")`
+    // declaration line — a negative lookbehind for "let " excludes the declaration and counts
+    // only the real reassignment.
+    const assignments = PAGE.match(/(?<!let )lastSnapshot = /g) ?? [];
+    expect(assignments).toHaveLength(1);
+  });
+
+  it("the single assignment site is the last statement of applyEntries()", () => {
+    expect(fnBody("function applyEntries")).toContain("lastSnapshot = JSON.stringify(");
+  });
+
+  // the single assignment site is what makes the missing ready-gate provable — every code path
+  // that does not reach applyEntries leaves the baseline at "".
+});
+
+describe("WR-01 — the baseline gate", () => {
+  // 109-10 pinned the IST-Zustand here (dirty === true on an unrendered error page). 109-14
+  // closes the gap: these assertions describe the fixed contract, and the two `not.toContain`
+  // pins from 109-10 are now their positive counterparts below.
+  const mountStart = PAGE.indexOf("onMount(() => {");
+  const scriptEnd = PAGE.indexOf("</script>");
+  const MOUNT = PAGE.slice(mountStart, scriptEnd);
+
+  it("onMount contains a loadError assignment", () => {
+    expect(mountStart).toBeGreaterThan(-1);
+    expect(MOUNT).toContain("loadError =");
+  });
+
+  it("the loadError assignment precedes the applyEntries call", () => {
+    // The early-return path in onMount never reaches the baseline — this is exactly why the
+    // gate works: `loadError =` sits before `applyEntries(` unconditionally, so `snapshotsReady`
+    // (set only inside applyEntries) is never true on this path.
+    expect(MOUNT.indexOf("loadError =")).toBeLessThan(MOUNT.indexOf("applyEntries("));
+  });
+
+  it("onMount has an early return before hydration", () => {
+    expect(MOUNT).toContain("return;");
+  });
+
+  it("declares snapshotsReady as a $state(false)", () => {
+    expect(PAGE).toContain("let snapshotsReady = $state(false)");
+  });
+
+  it("dirty is gated on snapshotsReady", () => {
+    expect(PAGE).toMatch(
+      /const dirty = \$derived\(\s*snapshotsReady && !loading && !featureDisabled && currentSnapshot !== lastSnapshot/,
+    );
+  });
+
+  it("snapshotsReady is set at the single baseline site, never in a finally", () => {
+    expect(fnBody("function applyEntries").indexOf("lastSnapshot = JSON.stringify(")).toBeLessThan(
+      fnBody("function applyEntries").indexOf("snapshotsReady = true"),
+    );
+    expect(PAGE).not.toMatch(/finally\s*\{[^}]*snapshotsReady/s);
+    expect(PAGE.match(/snapshotsReady = true/g) ?? []).toHaveLength(1);
+  });
+
+  it("the Speichern button is disabled on the load-error path (fails without the gate)", () => {
+    // Evaluates the REAL `dirty` and `disabled` expressions extracted from source — not a
+    // paraphrase — against the exact state reachable after a failed employee load: onMount sets
+    // `loading = false` and returns before `applyEntries()` ever runs, so `snapshotsReady` stays
+    // `false`, `lastSnapshot` stays `""`, and the entry arrays stay at their initial `[]`. Without
+    // `snapshotsReady &&` in `dirty`'s derivation this evaluates to `disabled === false` (the
+    // WR-01 defect); with the gate it is `true`.
+    const dirtyExprMatch = PAGE.match(/const dirty = \$derived\(([\s\S]*?)\);/);
+    expect(dirtyExprMatch, "dirty derivation not found").not.toBeNull();
+    // Strip a trailing comma left over from `$derived(\n  expr,\n)` formatting — valid in a call
+    // argument list, not inside a parenthesized expression passed to `new Function`.
+    const dirtyExpr = dirtyExprMatch![1].trim().replace(/,\s*$/, "");
+
+    const disabledExprMatch = PAGE.match(/disabled=\{([^}]+)\}/);
+    expect(disabledExprMatch, "disabled attribute not found").not.toBeNull();
+    const disabledExpr = disabledExprMatch![1];
+
+    // State reachable after a failed employee load (onMount's early-return branch).
+    const snapshotsReady = false;
+    const loading = false;
+    const featureDisabled = false;
+    const saving = false;
+    const lastSnapshot = "";
+    const currentSnapshot = JSON.stringify({ r: [], o: [] });
+
+    const dirty = new Function(
+      "snapshotsReady",
+      "loading",
+      "featureDisabled",
+      "currentSnapshot",
+      "lastSnapshot",
+      `return (${dirtyExpr});`,
+    )(snapshotsReady, loading, featureDisabled, currentSnapshot, lastSnapshot);
+
+    const disabled = new Function(
+      "featureDisabled",
+      "dirty",
+      "saving",
+      `return (${disabledExpr});`,
+    )(featureDisabled, dirty, saving);
+
+    expect(dirty).toBe(false);
+    expect(disabled).toBe(true);
+  });
+});
+
+describe("D-12 — guard registration on admin/availability/[employeeId]", () => {
+  it("registers under the unsaved registry, gated through dirty", () => {
+    expect(PAGE).toContain('markUnsaved("admin-availability-detail", dirty)');
+  });
+
+  it("the effect de-registers on unmount", () => {
+    expect(PAGE).toContain('return () => markUnsaved("admin-availability-detail", false)');
+  });
+
+  it("the registration inherits the WR-01 gate through dirty", () => {
+    // Verifies the two guarantees are chained: the markUnsaved call reads `dirty` directly (not
+    // a hand-repeated `snapshotsReady && ...`), and `dirty`'s own derivation still contains the
+    // WR-01 gate — so a later loosening of `dirty` would surface here too.
+    expect(PAGE).toContain('markUnsaved("admin-availability-detail", dirty)');
+    expect(PAGE).toMatch(/const dirty = \$derived\(\s*snapshotsReady &&/);
+  });
+
+  it("the marker is the global recipe, rendered inline (no Section footer on this page)", () => {
+    expect(PAGE).toContain('<span class="unsaved-hint" role="status">Nicht gespeichert</span>');
+    expect(PAGE.match(/class="unsaved-hint"/g) ?? []).toHaveLength(1);
+    expect(PAGE).not.toContain("dirty={");
+  });
+
+  it("the registry id is unique across admin routes", () => {
+    function adminPageFiles(): string[] {
+      const candidates = [
+        () => fileURLToPath(new URL("../routes/(app)/admin", import.meta.url)),
+        () => resolve(process.cwd(), "src/routes/(app)/admin"),
+      ];
+      for (const getDir of candidates) {
+        try {
+          const dir = getDir();
+          return (readdirSync(dir, { recursive: true }) as string[])
+            .filter((f) => f.endsWith("+page.svelte"))
+            .map((f) => resolve(dir, f));
+        } catch {
+          continue;
+        }
+      }
+      throw new Error("could not locate src/routes/(app)/admin from either candidate path");
+    }
+
+    const files = adminPageFiles();
+    expect(files.length).toBeGreaterThan(1);
+    const hits = files.filter((f) =>
+      readFileSync(f, "utf8").includes('markUnsaved("admin-availability-detail"'),
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toContain("availability");
+  });
+});
+
+describe("save() re-takes the baseline on the success path only", () => {
+  it("save() calls applyEntries with the response entries", () => {
+    expect(fnBody("async function save")).toContain("applyEntries(res.entries ?? [])");
+  });
+
+  it("the applyEntries call sits inside the try, before the catch", () => {
+    const body = fnBody("async function save");
+    const applyIdx = body.indexOf("applyEntries(res.entries ?? [])");
+    const catchIdx = body.indexOf("} catch (err)");
+    expect(applyIdx).toBeGreaterThan(-1);
+    expect(catchIdx).toBeGreaterThan(-1);
+    expect(applyIdx).toBeLessThan(catchIdx);
+  });
+});
+
+describe("AK-02", () => {
+  it("no text/number input in admin/availability/[employeeId] carries an inline write handler", () => {
+    expect(textOrNumberInputHandlers(PAGE)).toEqual([]);
+  });
+});

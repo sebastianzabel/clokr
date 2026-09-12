@@ -23,23 +23,12 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { holidayFreeMondayStr } from "./test-dates";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import { getHolidays } from "../utils/holidays";
 
 const TZ = "Europe/Berlin";
-
-function futureMondayIso(weeksAhead: number): string {
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-  const dow = today.getUTCDay(); // 0=Sun..6=Sat
-  // Mirror the GET /week resolver logic (shifts.ts):
-  // dow === 0 ? -6 : 1 - dow
-  const mondayOffset = dow === 0 ? -6 : 1 - dow;
-  const monday = new Date(today);
-  monday.setUTCDate(monday.getUTCDate() + mondayOffset + weeksAhead * 7);
-  return monday.toISOString().slice(0, 10);
-}
 
 /**
  * Find the ISO string of the Monday of the week that contains a specific
@@ -90,20 +79,27 @@ describe("Phase 76.32 — SOLL-KORRELATION display correctness (BS single-count 
   const { FEIERTAG_ISO, FEIERTAG_WEEK_MONDAY, REFERENCE_WEEK_MONDAY } = (() => {
     const today = new Date();
     const todayIso = today.toISOString().slice(0, 10);
-    // Scan 2027 and 2028 — at least one Himmelfahrt (always Thursday) will be found.
-    for (const year of [2027, 2028, 2029]) {
+    // Issue #136 (batch C): derived from the live clock, never a fixed list — a fixed
+    // [2027, 2028, 2029] eventually runs out exactly like the anchors this batch fixes
+    // elsewhere.
+    const y0 = today.getUTCFullYear();
+    for (const year of [y0, y0 + 1, y0 + 2, y0 + 3]) {
       const holidays = getHolidays(year, "NI");
       for (const h of holidays) {
         if (h.date <= todayIso) continue; // must be in the future
         const d = new Date(h.date + "T00:00:00Z");
         const dow = d.getUTCDay(); // 1=Mon..5=Fri
         if (dow < 1 || dow > 5) continue; // must fall on a Mon–Fri workday
-        // Non-holiday reference week: 2 weeks before (gives buffer if the preceding
-        // week has another holiday in NI, which is uncommon).
+        // The Feiertag week itself IS the fixture this test is about — derived from the
+        // found holiday, never from holidayFreeMondayStr.
         const feiertagWeekMonday = mondayOfWeekContaining(h.date);
-        const refMondayDate = new Date(feiertagWeekMonday + "T00:00:00Z");
-        refMondayDate.setUTCDate(refMondayDate.getUTCDate() - 14);
-        const referenceWeekMonday = refMondayDate.toISOString().slice(0, 10);
+        // Issue #136: the old "-14 days" arithmetic only "gives buffer", per its own
+        // comment — during the Himmelfahrt→Pfingsten stretch that lands on ANOTHER
+        // holiday week. holidayFreeMondayStr gives a genuine guarantee (whole Mon-Sun
+        // span checked against getHolidays) instead of a hopeful offset; the `accept`
+        // predicate is redundant with that guarantee (a holiday week can never be
+        // holiday-free) but documents the intent explicitly.
+        const referenceWeekMonday = holidayFreeMondayStr(1, "NI", (m) => m !== feiertagWeekMonday);
         return {
           FEIERTAG_ISO: h.date,
           FEIERTAG_WEEK_MONDAY: feiertagWeekMonday,
@@ -112,7 +108,7 @@ describe("Phase 76.32 — SOLL-KORRELATION display correctness (BS single-count 
       }
     }
     // Fallback: should never be reached — Christi Himmelfahrt exists every year.
-    throw new Error("No future weekday national Feiertag found in NI for 2027–2029");
+    throw new Error(`No future weekday national Feiertag found in NI for ${y0}–${y0 + 3}`);
   })();
 
   beforeAll(async () => {
@@ -121,7 +117,8 @@ describe("Phase 76.32 — SOLL-KORRELATION display correctness (BS single-count 
     const suffix = "76-32-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
     // Use week 8 weeks ahead — avoids collision with shifts-under-coverage.test.ts (6 weeks)
-    weekMonday = futureMondayIso(8);
+    // — and holiday-free (issue #136), so contractSoll stays exactly 2280.
+    weekMonday = holidayFreeMondayStr(8, "NI");
 
     // ── Tenant + config ──────────────────────────────────────────────────────
     const tenant = await prisma.tenant.create({
@@ -300,11 +297,14 @@ describe("Phase 76.32 — SOLL-KORRELATION display correctness (BS single-count 
   // ── Test 2: Feiertag deduction (SALDO-02 / D-08) ─────────────────────────
   // RED: current code does NOT deduct public holidays from baseSoll.
   // GREEN after Task 2: holiday week Soll is reduced by exactly one day's Soll.
-  it("Test 2 (SALDO-02): week with gesetzlicher Feiertag (Christi Himmelfahrt 2027-05-05) → Soll reduced by one day", async () => {
-    // Verify the holiday exists in the computed set (no DB seed needed — getHolidays is pure)
-    const holidays2027 = getHolidays(2027, "NI");
-    const himmelfahrt = holidays2027.find((h) => h.date === FEIERTAG_ISO);
-    expect(himmelfahrt).toBeDefined(); // sanity: Christi Himmelfahrt must be in NI set
+  it("Test 2 (SALDO-02): week with a gesetzlicher Feiertag on a Mon-Fri workday → Soll reduced by one day", async () => {
+    // Verify the holiday exists in the computed set (no DB seed needed — getHolidays is pure).
+    // Issue #136: reads the SAME year FEIERTAG_ISO was found in, not a hardcoded 2027 — the
+    // scan above (derived from the live clock) is not guaranteed to land in 2027.
+    const feiertagYear = Number(FEIERTAG_ISO.slice(0, 4));
+    const holidaysFeiertagYear = getHolidays(feiertagYear, "NI");
+    const himmelfahrt = holidaysFeiertagYear.find((h) => h.date === FEIERTAG_ISO);
+    expect(himmelfahrt).toBeDefined(); // sanity: the found Feiertag must be in NI's set
 
     // GET /shifts/week for the reference week (no holiday)
     const bodyRef = await getWeek(REFERENCE_WEEK_MONDAY);
@@ -392,10 +392,13 @@ describe("WR-02 RED→GREEN: leave inside Feiertag week — leave credit must ex
   let holidayMonday: string; // the Monday of the holiday week (= the holiday date itself)
   let holidayTuesday: string; // next day after the Monday holiday
 
-  // Find first future Monday national holiday in NI.
+  // Find first future Monday national holiday in NI. Deliberately does NOT use
+  // holidayFreeMondayStr — this describe wants a holiday MONDAY (the opposite guarantee).
   const MONDAY_HOLIDAY_ISO = (() => {
     const today = new Date().toISOString().slice(0, 10);
-    for (const year of [2026, 2027, 2028, 2029]) {
+    // Issue #136: derived from the live clock, never a fixed list.
+    const y0 = new Date().getUTCFullYear();
+    for (const year of [y0, y0 + 1, y0 + 2, y0 + 3]) {
       const holidays = getHolidays(year, "NI");
       for (const h of holidays) {
         if (h.date <= today) continue;
@@ -403,7 +406,7 @@ describe("WR-02 RED→GREEN: leave inside Feiertag week — leave credit must ex
         if (dow === 1) return h.date; // first future Monday holiday
       }
     }
-    throw new Error("No future Monday national holiday found in NI 2026-2029");
+    throw new Error(`No future Monday national holiday found in NI ${y0}-${y0 + 3}`);
   })();
 
   beforeAll(async () => {
@@ -589,17 +592,11 @@ describe("WR-01 RED→GREEN: DB PublicHoliday must be federalState-scoped per bu
   let niEmpId: string;
   let byEmpId: string;
   // A future Monday in a week that has NO computed NI or BY holidays (to isolate the DB row).
-  // We pick a week 12 weeks ahead; if that week has a computed holiday we shift further.
+  // We pick a week 12 weeks ahead, guaranteed holiday-free via holidayFreeMondayStr (issue
+  // #136 — the old comment promised "if that week has a computed holiday we shift further",
+  // which the hand-rolled arithmetic never actually did).
   // The test seeds its OWN DB PublicHoliday for BAYERN — so it controls the signal.
-  const TEST_WEEK_MONDAY = (() => {
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-    const dow = today.getUTCDay();
-    const mondayOffset = dow === 0 ? -6 : 1 - dow;
-    const base = new Date(today);
-    base.setUTCDate(base.getUTCDate() + mondayOffset + 12 * 7);
-    return base.toISOString().slice(0, 10);
-  })();
+  const TEST_WEEK_MONDAY = holidayFreeMondayStr(12, "NI");
 
   // The Monday of TEST_WEEK is the PublicHoliday date for BAYERN.
   const BY_HOLIDAY_DATE = TEST_WEEK_MONDAY;

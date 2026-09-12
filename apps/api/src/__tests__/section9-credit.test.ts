@@ -6,9 +6,15 @@
  * `describe()` blocks per detection step so later plans can append their own blocks
  * without re-reading this file's fixtures.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  seedEntitlementYears,
+} from "./setup";
 import { dbDateStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 
@@ -19,6 +25,15 @@ describe("Section9Credit detection (AU_PENDING) — Phase 104-05", () => {
   beforeAll(async () => {
     app = await getTestApp();
     data = await seedTestData(app, "s9c");
+    // Issue #136 (batch B): this describe's fixtures book VACATION/SICK onto hardcoded
+    // 2026 dates (Test 1-7) while seedTestData only provisions the LIVE current year's
+    // LeaveEntitlement row — seed 2026 explicitly so this block's outcome is inert to
+    // the calendar, matching D-2.
+    await seedEntitlementYears(app, {
+      employeeId: data.employee.id,
+      leaveTypeId: data.vacationType.id,
+      years: [2026],
+    });
   });
 
   afterAll(async () => {
@@ -54,10 +69,15 @@ describe("Section9Credit detection (AU_PENDING) — Phase 104-05", () => {
     });
   }
 
-  async function getEntitlement() {
+  // Issue #136 (batch B): `year` is required, never defaulted — the endpoint already
+  // supports `?year=` filtering (leave.ts's entitlements route), and once a second
+  // year's row exists (as it does once seedEntitlementYears above ran), an unfiltered
+  // read's `.find()` by leave-type name would pick an arbitrary row instead of this
+  // block's own fixture year.
+  async function getEntitlement(year: number) {
     const res = await app.inject({
       method: "GET",
-      url: `/api/v1/leave/entitlements/${data.employee.id}`,
+      url: `/api/v1/leave/entitlements/${data.employee.id}?year=${year}`,
       headers: { authorization: `Bearer ${data.adminToken}` },
     });
     const rows = JSON.parse(res.body) as Array<{ leaveType?: { name: string }; usedDays?: number }>;
@@ -103,7 +123,7 @@ describe("Section9Credit detection (AU_PENDING) — Phase 104-05", () => {
     const vacId = JSON.parse(vac.body).id as string;
     expect((await approve(vacId)).statusCode).toBe(200);
 
-    const usedAfterVacationApproval = Number((await getEntitlement())?.usedDays ?? 0);
+    const usedAfterVacationApproval = Number((await getEntitlement(2026))?.usedDays ?? 0);
 
     const sick = await createRequest({
       type: "SICK",
@@ -117,7 +137,7 @@ describe("Section9Credit detection (AU_PENDING) — Phase 104-05", () => {
     const credits = await app.prisma.section9Credit.findMany({ where: { sickRequestId: sickId } });
     expect(credits).toHaveLength(1);
 
-    const usedAfterSickApproval = Number((await getEntitlement())?.usedDays ?? 0);
+    const usedAfterSickApproval = Number((await getEntitlement(2026))?.usedDays ?? 0);
     expect(usedAfterSickApproval).toBe(usedAfterVacationApproval);
   });
 
@@ -536,6 +556,13 @@ describe("confirm — Phase 104-06 Task 1", () => {
   beforeAll(async () => {
     app = await getTestApp();
     data = await seedTestData(app, "s9cf");
+    // Issue #136 (batch B): every attestValidFrom in this describe is a hardcoded 2026
+    // date, while seedTestData only provisions the LIVE current year's row.
+    await seedEntitlementYears(app, {
+      employeeId: data.employee.id,
+      leaveTypeId: data.vacationType.id,
+      years: [2026],
+    });
   });
 
   afterAll(async () => {
@@ -872,14 +899,10 @@ describe("confirm — Phase 104-06 Task 1", () => {
     // 2024: seed a real LeaveEntitlement row so recalculateCarryOver's `prev` lookup (it
     // reads year-1 to compute year's carriedOverDays/deadline) has something to find — without
     // it, recalculateCarryOver(..., 2025) silently no-ops and no row 2025 is ever created.
-    await app.prisma.leaveEntitlement.create({
-      data: {
-        employeeId: data.employee.id,
-        leaveTypeId: data.vacationType.id,
-        year: 2024,
-        totalDays: 30,
-        usedDays: 0,
-      },
+    await seedEntitlementYears(app, {
+      employeeId: data.employee.id,
+      leaveTypeId: data.vacationType.id,
+      years: [2024],
     });
     const { sickId } = await vacAndSick(["2024-09-02", "2024-09-06"], ["2024-09-02", "2024-09-06"]);
     const credit = await creditFor(sickId);
@@ -921,29 +944,42 @@ describe("confirm — Phase 104-06 Task 1", () => {
     const { sickId } = await vacAndSick(["2026-03-16", "2026-03-16"], ["2026-03-16", "2026-03-16"]);
     const credit = await creditFor(sickId);
 
-    const res = await confirmCredit(credit.id, {
-      attestSource: "EAU",
-      attestValidFrom: "2026-03-16",
-      attestValidTo: "2026-03-16",
-      reason: "AU für 2026, Übertragsfrist für 2027 noch nicht abgelaufen",
-    });
-    expect(res.statusCode).toBe(200);
+    // Issue #136 (batch B, D-3): this assertion is a statement about "now" — the confirm
+    // handler compares `carryRow.carryOverDeadline < new Date()` (leave.ts) to decide whether
+    // the ILLNESS override fires, and the 2027-03-31 Stichtag it must NOT have passed yet
+    // eventually does, on 2027-04-01. Pin the clock inside the file's own 2026 fixture era so
+    // this test's premise is no longer a race against the real calendar. Narrow window: only
+    // the confirm call and the two assertions that follow are pinned; nothing in between
+    // filters on a DB `createdAt` (confirmed: the confirm handler only does entitlement/audit
+    // writes here, no `createdAt: { gte }` reads), so the unfaked Postgres clock is unaffected.
+    vi.useFakeTimers({ now: new Date("2026-06-01T10:00:00Z"), toFake: ["Date"] });
+    try {
+      const res = await confirmCredit(credit.id, {
+        attestSource: "EAU",
+        attestValidFrom: "2026-03-16",
+        attestValidTo: "2026-03-16",
+        reason: "AU für 2026, Übertragsfrist für 2027 noch nicht abgelaufen",
+      });
+      expect(res.statusCode).toBe(200);
 
-    // originYear (2026) + 1 = 2027 — its Stichtag (2027-03-31) has NOT passed relative to
-    // any realistic test-execution date, so the ILLNESS override must not fire.
-    const carryRow = await app.prisma.leaveEntitlement.findUniqueOrThrow({
-      where: {
-        employeeId_leaveTypeId_year: {
-          employeeId: data.employee.id,
-          leaveTypeId: data.vacationType.id,
-          year: 2027,
+      // originYear (2026) + 1 = 2027 — its Stichtag (2027-03-31) has NOT passed relative to
+      // the pinned "now" above, so the ILLNESS override must not fire.
+      const carryRow = await app.prisma.leaveEntitlement.findUniqueOrThrow({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId: data.employee.id,
+            leaveTypeId: data.vacationType.id,
+            year: 2027,
+          },
         },
-      },
-    });
-    expect(carryRow.carryOverReason).toBeNull();
-    expect(carryRow.carryOverDeadline?.toISOString()).toBe(
-      new Date(2027, 2, 31, 23, 59, 59).toISOString(),
-    );
+      });
+      expect(carryRow.carryOverReason).toBeNull();
+      expect(carryRow.carryOverDeadline?.toISOString()).toBe(
+        new Date(2027, 2, 31, 23, 59, 59).toISOString(),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("Test 10 (D-17): the SECTION9_CREDIT_CONFIRMED audit row carries both request ids, the credited range, creditedDays, attestSource and the reason", async () => {
@@ -1054,13 +1090,18 @@ describe("confirm — Phase 104-06 Task 1", () => {
       where: { tenantId: data.tenant.id, name: "Krankmeldung" },
     });
 
-    // 2029 deliberately has no entitlement row for this employee.
+    // Issue #136 (batch B): a hardcoded literal year ("2029 deliberately has no entitlement
+    // row") is itself a time bomb — it becomes false once the live year reaches 2029.
+    // Derive a year far enough ahead (+50) that no seedTestData/seedEntitlementYears call
+    // anywhere in this file could ever provision it, so the premise holds forever. The
+    // month/day are unchanged; nothing here depends on the resulting weekday.
+    const NO_ROW_YEAR = new Date().getFullYear() + 50;
     const noRow = await app.prisma.leaveEntitlement.findUnique({
       where: {
         employeeId_leaveTypeId_year: {
           employeeId: data.employee.id,
           leaveTypeId: data.vacationType.id,
-          year: 2029,
+          year: NO_ROW_YEAR,
         },
       },
     });
@@ -1070,8 +1111,8 @@ describe("confirm — Phase 104-06 Task 1", () => {
       data: {
         employeeId: data.employee.id,
         leaveTypeId: data.vacationType.id,
-        startDate: new Date("2029-03-05"), // Monday
-        endDate: new Date("2029-03-07"), // Wednesday
+        startDate: new Date(`${NO_ROW_YEAR}-03-05`),
+        endDate: new Date(`${NO_ROW_YEAR}-03-07`),
         days: 3,
         status: "APPROVED",
       },
@@ -1080,8 +1121,8 @@ describe("confirm — Phase 104-06 Task 1", () => {
       data: {
         employeeId: data.employee.id,
         leaveTypeId: sickType.id,
-        startDate: new Date("2029-03-05"),
-        endDate: new Date("2029-03-07"),
+        startDate: new Date(`${NO_ROW_YEAR}-03-05`),
+        endDate: new Date(`${NO_ROW_YEAR}-03-07`),
         days: 3,
         status: "APPROVED",
       },
@@ -1091,19 +1132,19 @@ describe("confirm — Phase 104-06 Task 1", () => {
         employeeId: data.employee.id,
         sickRequestId: sick.id,
         vacationRequestId: vac.id,
-        overlapStart: new Date("2029-03-05"),
-        overlapEnd: new Date("2029-03-07"),
+        overlapStart: new Date(`${NO_ROW_YEAR}-03-05`),
+        overlapEnd: new Date(`${NO_ROW_YEAR}-03-07`),
       },
     });
 
     const res = await confirmCredit(credit.id, {
       attestSource: "EAU",
-      attestValidFrom: "2029-03-05",
-      attestValidTo: "2029-03-07",
-      reason: "AU liegt vor, aber für 2029 existiert kein Urlaubsanspruch",
+      attestValidFrom: `${NO_ROW_YEAR}-03-05`,
+      attestValidTo: `${NO_ROW_YEAR}-03-07`,
+      reason: `AU liegt vor, aber für ${NO_ROW_YEAR} existiert kein Urlaubsanspruch`,
     });
     expect(res.statusCode).toBe(409);
-    expect(JSON.parse(res.body).error).toContain("2029");
+    expect(JSON.parse(res.body).error).toContain(String(NO_ROW_YEAR));
 
     // The whole transaction rolled back: the Vorgang is still open and re-confirmable once
     // the Urlaubsanspruch exists, and no entitlement row was conjured up.
@@ -1123,6 +1164,12 @@ describe("reject and reopen — Phase 104-06 Task 2", () => {
   beforeAll(async () => {
     app = await getTestApp();
     data = await seedTestData(app, "s9rr");
+    // Issue #136 (batch B): this describe's fixtures book onto hardcoded 2026 dates.
+    await seedEntitlementYears(app, {
+      employeeId: data.employee.id,
+      leaveTypeId: data.vacationType.id,
+      years: [2026],
+    });
   });
 
   afterAll(async () => {
@@ -1373,14 +1420,10 @@ describe("display surface — Phase 104-10 Task 1", () => {
     // silently booking into thin air. Provision the row so the display assertions run against
     // a state that is actually bookable. (2036 is provisioned by Test 5 itself, which already
     // discovered the same fixture requirement.)
-    await app.prisma.leaveEntitlement.create({
-      data: {
-        employeeId: data.employee.id,
-        leaveTypeId: data.vacationType.id,
-        year: 2033,
-        totalDays: 30,
-        usedDays: 0,
-      },
+    await seedEntitlementYears(app, {
+      employeeId: data.employee.id,
+      leaveTypeId: data.vacationType.id,
+      years: [2033],
     });
   });
 
@@ -1537,14 +1580,10 @@ describe("display surface — Phase 104-10 Task 1", () => {
     // deductVacationDays only ever `updateMany`s an EXISTING LeaveEntitlement row — it never
     // creates one — so a future year needs a pre-existing row before any request can book
     // against it (same fixture requirement 104-06's own R9-positive test discovered).
-    await app.prisma.leaveEntitlement.create({
-      data: {
-        employeeId: data.employee.id,
-        leaveTypeId: data.vacationType.id,
-        year: 2036,
-        totalDays: 30,
-        usedDays: 0,
-      },
+    await seedEntitlementYears(app, {
+      employeeId: data.employee.id,
+      leaveTypeId: data.vacationType.id,
+      years: [2036],
     });
     const { creditId } = await vacAndSick(
       ["2036-04-06", "2036-04-10"],
@@ -1591,14 +1630,10 @@ describe("display surface — Phase 104-10 Task 1", () => {
   });
 
   it("Test 6: an entitlement year with no credits returns section9Movements: [] and every other field unchanged", async () => {
-    await app.prisma.leaveEntitlement.create({
-      data: {
-        employeeId: data.employee.id,
-        leaveTypeId: data.vacationType.id,
-        year: 2038,
-        totalDays: 30,
-        usedDays: 0,
-      },
+    await seedEntitlementYears(app, {
+      employeeId: data.employee.id,
+      leaveTypeId: data.vacationType.id,
+      years: [2038],
     });
     const res = await app.inject({
       method: "GET",

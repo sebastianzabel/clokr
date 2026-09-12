@@ -10,11 +10,23 @@ name: Release Please
 #   2. writes CHANGELOG.md from the Conventional Commit history
 #   3. creates tag vX.Y.Z and publishes the GitHub Release
 #
-# Publishing the Release triggers release.yml, which promotes the already-built,
-# already-Trivy-scanned image by digest-preserving re-tag. That chain is why
-# release.yml now waits for the image to exist: release-please publishes the
-# moment the PR merges, while build-push.yml is still building the very commit
-# being released. A human cutting the release by hand used to provide that wait
+# Whether publishing the Release starts release.yml depends on the token above:
+#
+# - Without RELEASE_PLEASE_TOKEN (the default today): the action runs as the default
+#   GITHUB_TOKEN, and GitHub does not start new workflow runs from events created by that
+#   token — so `release: published` is inert. Observed on v1.10.0 (2026-08-31): release.yml
+#   never ran, promote never produced :1.10.0/:1.10/:latest images, and the Release body kept
+#   this action's English commit dump instead of docs/release-notes/v1.10.0.md. Both jobs must
+#   then be started by hand: `gh workflow run release.yml --ref main -f tag=vX.Y.Z`.
+# - With the secret set: the published Release starts release.yml on its own, and the manual
+#   dispatch becomes the re-run path rather than the normal one.
+#
+# See docs/release-process.md for how to create RELEASE_PLEASE_TOKEN and which token type to
+# use — that tradeoff is documented once, there, not repeated here.
+#
+# That chain is why release.yml waits for the image to exist under EITHER token mode:
+# release-please publishes the moment the PR merges, while build-push.yml is still building the
+# very commit being released. A human cutting the release by hand used to provide that wait
 # implicitly.
 #
 # The generated CHANGELOG.md is the technical, English, commit-derived history.
@@ -47,5 +59,10 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@a02a34c4d625f9be7cb89156071d8567266a2445 # v4.2.0
         with:
+          # Falls back to the default GITHUB_TOKEN while the secret does not exist, so this
+          # workflow keeps behaving exactly as before and upgrades itself the moment the secret is
+          # added — see the header comment for what changes then. Token-source-agnostic on purpose:
+          # a fine-grained PAT and a GitHub-App installation token are both just "not GITHUB_TOKEN".
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json

@@ -166,6 +166,16 @@ export { computeDailySollMinutes };
 export type CloseMonthResult = {
   // SaldoSnapshot field values (caller writes to DB)
   workedMinutes: number;
+  /**
+   * Phase 125 (issue #125, D-01) — distinct calendar days (tenant TZ) inside
+   * [effectiveStart, effectiveEnd] whose credited worked minutes are > 0.
+   *
+   * Produced by the SAME traversal as `workedMinutes` (step 5) plus the SAME BS loop
+   * (step 6) that feeds it, so the pair can never disagree the way issue #125 reported
+   * ("Ist 62:06 h" printed beside "1 Arbeitstage bisher"). Invariant, asserted in
+   * close-employee-month.test.ts: workedMinutes > 0 <=> workedDays > 0.
+   */
+  workedDays: number;
   expectedMinutes: number; // C_net for SHIFT_BASED; netExpected otherwise
   balanceMinutes: number; // D-01 two-clause for SHIFT_BASED; flat diff otherwise
   carryOverOut: number; // carryOverIn + balanceMinutes (before TRACK_ONLY zeroing)
@@ -293,6 +303,7 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
       // Employee left before this month — return zeroed result.
       return {
         workedMinutes: 0,
+        workedDays: 0,
         expectedMinutes: 0,
         balanceMinutes: 0,
         carryOverOut: carryOverIn,
@@ -376,11 +387,27 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
   const effectiveStartStr = dateStrInTz(effectiveStart, tz);
   const effectiveEndStr = dateStrInTz(effectiveEnd, tz);
 
+  // Phase 125 (D-01): one traversal, two outputs. This per-day minute map (below) tracks
+  // net minutes so `workedDays` (step 8) is derived from the SAME filtered entry set that
+  // produces `workedMinutes` — the divergence issue #125 reported is not repaired here, it is
+  // made unconstructible.
+  //
+  // The step-2 distinct-days Set above was deliberately NOT reused, although it spans the
+  // identical day range: it is built BEFORE the net duration is known, so it would also count a
+  // day whose entries net to 0 minutes (contradicting D-03's "days with worked minutes > 0"), and
+  // it knows nothing about the Berufsschule credit that step 6 adds to the SAME returned
+  // `workedMinutes` (step 8: totalWorked = workedMinutes + bsWorkedMinutes). That Set keeps its
+  // own job — gap detection via findMissingWorkdays — untouched.
+  const workedMinutesByDate = new Map<string, number>();
+
   let workedMinutes = 0;
   for (const e of entries) {
     const ds = dateStrInTz(e.date, tz);
     if (ds < effectiveStartStr || ds > effectiveEndStr) continue;
-    workedMinutes += (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
+    const netMinutes =
+      (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
+    workedMinutes += netMinutes;
+    workedMinutesByDate.set(ds, (workedMinutesByDate.get(ds) ?? 0) + netMinutes);
   }
 
   // ── Step 6: Compute BS-doubling (pure inline, no DB) ──────────────────────
@@ -520,6 +547,11 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
     );
 
     bsWorkedMinutes += res.creditedMinutes;
+    // Phase 125 (D-01): step 8 returns totalWorked = workedMinutes + bsWorkedMinutes, so a BS day
+    // carrying a BBiG-§15 credit IS a worked day for this count. Without this line the invariant
+    // "workedMinutes > 0 <=> workedDays > 0" would break for an Azubi whose month contains only
+    // Berufsschule days: minutes > 0, days == 0.
+    workedMinutesByDate.set(ds, (workedMinutesByDate.get(ds) ?? 0) + res.creditedMinutes);
     // D-04: MONTHLY_HOURS credits worked only (contributesToExpected === false).
     if (res.contributesToExpected) {
       bsExpectedMinutes += res.creditedMinutes;
@@ -785,6 +817,13 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
 
   const totalWorked = workedMinutes + bsWorkedMinutes;
 
+  // Phase 125 (D-03): "days with worked minutes > 0". Counted over the accumulated per-day map,
+  // so the day set and `totalWorked` above are two readings of one traversal.
+  let workedDays = 0;
+  for (const dayMinutes of workedMinutesByDate.values()) {
+    if (dayMinutes > 0) workedDays++;
+  }
+
   // Phase 76.22: SHIFT_BASED uses D-01 two-clause formula via shiftBalanceOverride.
   // Non-SHIFT branches use the flat totalWorked − netExpected subtraction.
   const balanceMinutes =
@@ -808,6 +847,7 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
 
   return {
     workedMinutes: Math.round(totalWorked),
+    workedDays,
     expectedMinutes: Math.round(scheduleType === "SHIFT_BASED" ? expectedMinutes : netExpected),
     balanceMinutes,
     carryOverOut,

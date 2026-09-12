@@ -18,10 +18,12 @@
  * clock-out, the master-gate case (enforceBreakConfirmation=false) is the proof that
  * un-opted tenants see ZERO behavior change once the cron ships.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
+import { fromZonedTime } from "date-fns-tz";
+import { daysAgoStrInTz } from "./test-dates";
 
 // ── Seed helpers ──────────────────────────────────────────────────────────────
 
@@ -116,16 +118,24 @@ async function seedAutoEntry(app: FastifyInstance, employeeId: string, dateStr: 
   });
 }
 
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function otherDayStr(): string {
-  // A distinct date from today, still safely in the past — avoids the
-  // partial-unique-index collision (employeeId, date WHERE deletedAt IS NULL).
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
+/**
+ * The two seeded days, derived from ONE clock read (issue #136 batch E).
+ *
+ * Two independent corrections over the old todayStr()/otherDayStr() pair:
+ *  1. Tenant timezone, not UTC. checkUnconfirmedBreaks resolves the month with
+ *     dateStrInTz(now, tz) in Europe/Berlin (attendance-checker.ts:942-949); between 00:00 and
+ *     02:00 Berlin the UTC slice is still yesterday.
+ *  2. The second day must stay inside the SAME tenant-TZ month, because the cron scans only the
+ *     current month (monthRangeUtc -> monthDayBounds -> date: { gte, lte }). Plain "yesterday"
+ *     leaves that window on the 1st of every month, at any hour, so entry B gets no nudge and the
+ *     auto-dismiss test reads undefined instead of null. A month always has at least two days, so
+ *     stepping FORWARD on the 1st and BACK on every other day is inside-the-month unconditionally.
+ *     (daysAgoStrInTz with a negative n means "n days AHEAD" — the name reads the other way.)
+ */
+function anchorDays(now: Date): { today: string; other: string } {
+  const today = daysAgoStrInTz(now, 0);
+  const dayOfMonth = Number(today.slice(8, 10));
+  return { today, other: daysAgoStrInTz(now, dayOfMonth === 1 ? -1 : 1) };
 }
 
 // ── Test suite ────────────────────────────────────────────────────────────────
@@ -152,7 +162,8 @@ describe("break-notifications — BREAK-06 nudge cron (RED — app.tryBreakUncon
   it("(RED) emits ONE BREAK_UNCONFIRMED per AUTO entry with relatedType/relatedId/userId set", async () => {
     const seed = await seedBreakTenant(app, "emit", { enforceBreakConfirmation: true });
     tenantIds.push(seed.tenant.id);
-    const entry = await seedAutoEntry(app, seed.employee.id, todayStr());
+    const { today } = anchorDays(new Date());
+    const entry = await seedAutoEntry(app, seed.employee.id, today);
 
     await app.tryBreakUnconfirmedNudge();
 
@@ -167,7 +178,8 @@ describe("break-notifications — BREAK-06 nudge cron (RED — app.tryBreakUncon
   it("(RED) per-entry dedup: a second call produces NO additional row for the same undismissed entry", async () => {
     const seed = await seedBreakTenant(app, "dedup", { enforceBreakConfirmation: true });
     tenantIds.push(seed.tenant.id);
-    await seedAutoEntry(app, seed.employee.id, todayStr());
+    const { today } = anchorDays(new Date());
+    await seedAutoEntry(app, seed.employee.id, today);
 
     await app.tryBreakUnconfirmedNudge();
     await app.tryBreakUnconfirmedNudge();
@@ -182,7 +194,8 @@ describe("break-notifications — BREAK-06 nudge cron (RED — app.tryBreakUncon
     const seed = await seedBreakTenant(app, "isolation", { enforceBreakConfirmation: true });
     tenantIds.push(seed.tenant.id);
     // Only the primary employee has an AUTO entry — the secondary must stay untouched.
-    await seedAutoEntry(app, seed.employee.id, todayStr());
+    const { today } = anchorDays(new Date());
+    await seedAutoEntry(app, seed.employee.id, today);
 
     await app.tryBreakUnconfirmedNudge();
 
@@ -195,7 +208,8 @@ describe("break-notifications — BREAK-06 nudge cron (RED — app.tryBreakUncon
   it("(RED / master gate T-92-04) enforceBreakConfirmation=false → ZERO BREAK_UNCONFIRMED despite an AUTO entry", async () => {
     const seed = await seedBreakTenant(app, "gateoff", { enforceBreakConfirmation: false });
     tenantIds.push(seed.tenant.id);
-    await seedAutoEntry(app, seed.employee.id, todayStr());
+    const { today } = anchorDays(new Date());
+    await seedAutoEntry(app, seed.employee.id, today);
 
     await app.tryBreakUnconfirmedNudge();
 
@@ -211,8 +225,9 @@ describe("break-notifications — BREAK-06 nudge cron (RED — app.tryBreakUncon
   it("(RED) auto-dismiss e2e: confirming ONE AUTO entry dismisses only its own nudge; the other stays open", async () => {
     const seed = await seedBreakTenant(app, "dismiss", { enforceBreakConfirmation: true });
     tenantIds.push(seed.tenant.id);
-    const entryA = await seedAutoEntry(app, seed.employee.id, todayStr());
-    const entryB = await seedAutoEntry(app, seed.employee.id, otherDayStr());
+    const { today, other } = anchorDays(new Date());
+    const entryA = await seedAutoEntry(app, seed.employee.id, today);
+    const entryB = await seedAutoEntry(app, seed.employee.id, other);
 
     await app.tryBreakUnconfirmedNudge();
 
@@ -239,5 +254,51 @@ describe("break-notifications — BREAK-06 nudge cron (RED — app.tryBreakUncon
     });
     expect(notifA?.dismissedAt, "confirmed entry's own nudge must auto-dismiss").not.toBeNull();
     expect(notifB?.dismissedAt, "the OTHER (still-AUTO) entry's nudge must stay open").toBeNull();
+  });
+
+  it("issue #136: on the 1st of a month at 00:30 Europe/Berlin both seeded days are still inside the scanned month", async () => {
+    // PINNED is DERIVED, never a literal: roll the real clock to the 1st of the FOLLOWING
+    // month, then build 00:30 Europe/Berlin for that date via fromZonedTime. This instant is
+    // simultaneously the 1st of a month AND inside the 00:00-02:00 Berlin band, so it reproduces
+    // both causes from D-2 with one pin, and it can never expire.
+    const real = new Date();
+    const nextMonthFirst = new Date(Date.UTC(real.getUTCFullYear(), real.getUTCMonth() + 1, 1));
+    const y = nextMonthFirst.getUTCFullYear();
+    const m = String(nextMonthFirst.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(nextMonthFirst.getUTCDate()).padStart(2, "0");
+    const PINNED = fromZonedTime(`${y}-${m}-${d}T00:30:00`, "Europe/Berlin");
+
+    let seed: Awaited<ReturnType<typeof seedBreakTenant>> | undefined;
+    try {
+      vi.useFakeTimers({ now: PINNED, toFake: ["Date"] });
+
+      seed = await seedBreakTenant(app, "monthfirst", { enforceBreakConfirmation: true });
+      tenantIds.push(seed.tenant.id);
+
+      const { today, other } = anchorDays(new Date());
+      expect(today.slice(0, 7), "same-month property, stated explicitly").toBe(other.slice(0, 7));
+      expect(today, "still two distinct days — the partial unique index depends on it").not.toBe(
+        other,
+      );
+
+      const entryA = await seedAutoEntry(app, seed.employee.id, today);
+      const entryB = await seedAutoEntry(app, seed.employee.id, other);
+
+      await app.tryBreakUnconfirmedNudge();
+
+      const notifA = await app.prisma.notification.findFirst({
+        where: { relatedType: "TimeEntry", relatedId: entryA.id, type: "BREAK_UNCONFIRMED" },
+      });
+      const notifB = await app.prisma.notification.findFirst({
+        where: { relatedType: "TimeEntry", relatedId: entryB.id, type: "BREAK_UNCONFIRMED" },
+      });
+      expect(notifA, "entry on the 1st must be nudged even though today IS the 1st").not.toBeNull();
+      expect(
+        notifB,
+        "the other seeded day must stay inside the scanned month and also be nudged",
+      ).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -6,6 +6,7 @@ import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { fetchCloseMonthData } from "../utils/close-month-data";
 import { findMissingWorkdays } from "../utils/find-missing-workdays";
 import { findUnconfirmedBreakEntries } from "../utils/find-unconfirmed-break-days";
+import { resolveMissingEntriesDays } from "../utils/missing-entries-window";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -132,7 +133,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
           const cfg = await app.prisma.tenantConfig.findUnique({
             where: { tenantId: tenant.id },
           });
-          const dayThreshold = cfg?.missingEntriesDays ?? 7;
+          const dayThreshold = resolveMissingEntriesDays(cfg);
           const cutoffDate = new Date();
           cutoffDate.setDate(cutoffDate.getDate() - dayThreshold);
 

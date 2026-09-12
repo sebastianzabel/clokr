@@ -11,6 +11,7 @@ import {
   dateStrInTz,
   weekRangeUtc,
   monthRangeUtc,
+  monthDayBounds,
   calcExpectedMinutesTz,
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
@@ -21,6 +22,9 @@ import { resolvePresenceState, isObligatedWorkday, isDayDue } from "../utils/pre
 import type { PresenceEntry, PresenceLeave, PresenceAbsence } from "../utils/presence";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { getConfirmedCarryOver, getConfirmedCarryOverBulk } from "../utils/confirmed-saldo"; // Phase 97-04
+import { findMissingWorkdays } from "../utils/find-missing-workdays"; // Phase 111 — canonical gap detector
+import { findUnconfirmedBreakDays } from "../utils/find-unconfirmed-break-days"; // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
+import { resolveMissingEntriesDays } from "../utils/missing-entries-window"; // GitHub issue #141 — single source for both Karte and Cron
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -1048,39 +1052,61 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const isManager = role === "ADMIN" || role === "MANAGER";
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const today = todayInTz(tz);
-      const sevenDaysAgo = new Date(today);
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      // GitHub issue #141: hoisted here (rather than fetched separately below) so the Karte and
+      // the Cron (attendance-checker.ts, Feature 2) read missingEntriesDays through the SAME
+      // resolveMissingEntriesDays() function and cannot drift apart. No card-specific upper bound
+      // exists here on purpose — the write path's z.number().int().min(1).max(90) in settings.ts
+      // is the only bound (a second one would recreate the exact divergence this issue closes).
+      // Also carries enforceBreakConfirmation, folding in the second TenantConfig read this
+      // handler used to do further down (see D-09 below) — net query count is unchanged.
+      const openItemsConfig = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId },
+        select: { missingEntriesDays: true, enforceBreakConfirmation: true },
+      });
+      const missingEntriesDays = resolveMissingEntriesDays(openItemsConfig);
+      const windowStart = new Date(today);
+      windowStart.setDate(windowStart.getDate() - missingEntriesDays);
+      // findMissingWorkdays' effectiveEnd is INCLUSIVE; the replaced loop ran `cursor < today`,
+      // so the last day of the window is yesterday. The window's SIZE is now configured
+      // (missingEntriesDays); its bounds (windowStart..yesterday, inclusive) are unchanged.
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
 
       // Personal open items (only when the user has an employee record)
       const missingDays: string[] = [];
       let pendingRequestsCount = 0;
       let invalidEntriesCount = 0;
+      let unconfirmedBreakDays: string[] = [];
 
       if (employeeId) {
+        // Phase 126: hoisted out of the §18-exemption short-circuit because the break-confirmation
+        // derivation below needs scheduleType too, and an exempt employee is still subject to
+        // break confirmation — the client-side counter this replaces never checked exemption either.
+        const schedule = await getEffectiveSchedule(app, employeeId);
+
         // Phase 76.7 (D-08, UI-V19-04 supporting backend) — exempt employees never
         // get "missing dates" surfaced on their personal dashboard. The Stempeluhr
         // CTA is also hidden client-side (Plan 03), but we short-circuit here so the
         // open-items query stays cheap. BUrlG signals (pendingRequests +
         // invalidEntries) stay outside this guard — vacation tracking still applies.
-        const meExempt = await app.prisma.employee.findUnique({
+        const meEmployee = await app.prisma.employee.findUnique({
           where: { id: employeeId },
-          select: { isTimeTrackingExempt: true },
+          select: { isTimeTrackingExempt: true, hireDate: true, exitDate: true },
         });
-        if (!meExempt?.isTimeTrackingExempt) {
-          // 1. Missing time entries (workdays without entries in last 7 days)
-          const schedule = await getEffectiveSchedule(app, employeeId);
+        if (!meEmployee?.isTimeTrackingExempt) {
+          // 1. Missing time entries (workdays without entries in the configured window)
           const recentEntries = await app.prisma.timeEntry.findMany({
             where: {
               employeeId,
               deletedAt: null,
               type: "WORK",
-              date: { gte: sevenDaysAgo, lt: today },
+              date: { gte: windowStart, lt: today },
             },
             select: { date: true },
           });
           const entryDates = new Set(recentEntries.map((e) => dateStrInTz(e.date, tz)));
 
-          // Fetch holidays for the 7-day window (window can span two years near Jan 1)
+          // Fetch holidays for the configured window (can span two years near Jan 1)
           const openItemsTenant = await app.prisma.tenant.findUnique({
             where: { id: tenantId },
             select: { federalState: true },
@@ -1088,14 +1114,14 @@ export async function dashboardRoutes(app: FastifyInstance) {
           const openItemsStateCode = openItemsTenant?.federalState
             ? (STATE_MAP[openItemsTenant.federalState] ?? null)
             : null;
-          const startYear = sevenDaysAgo.getFullYear();
+          const startYear = windowStart.getFullYear();
           const endYear = today.getFullYear();
           const openItemsHolidays = getHolidays(startYear, openItemsStateCode);
           if (endYear !== startYear)
             openItemsHolidays.push(...getHolidays(endYear, openItemsStateCode));
           const openItemsHolidaySet = new Set(openItemsHolidays.map((h) => h.date));
 
-          // Approved leave + Absences in the 7-day window cover the day too
+          // Approved leave + Absences in the configured window cover the day too
           // (mirrors overtime.ts close-month/status logic — a day is only "missing"
           // if no entry, no holiday, no leave, no absence covers it)
           const approvedLeaveInWindow = await app.prisma.leaveRequest.findMany({
@@ -1104,44 +1130,79 @@ export async function dashboardRoutes(app: FastifyInstance) {
               deletedAt: null,
               status: "APPROVED",
               startDate: { lte: today },
-              endDate: { gte: sevenDaysAgo },
+              endDate: { gte: windowStart },
             },
-            select: { startDate: true, endDate: true },
+            select: { startDate: true, endDate: true, halfDay: true },
           });
           const absencesInWindow = await app.prisma.absence.findMany({
             where: {
               employeeId,
               deletedAt: null,
               startDate: { lte: today },
-              endDate: { gte: sevenDaysAgo },
+              endDate: { gte: windowStart },
             },
-            select: { startDate: true, endDate: true },
+            select: { startDate: true, endDate: true, halfDay: true },
           });
-          const coveredDates = new Set<string>();
-          for (const range of [...approvedLeaveInWindow, ...absencesInWindow]) {
-            const s = range.startDate < sevenDaysAgo ? sevenDaysAgo : range.startDate;
-            const e = range.endDate > today ? today : range.endDate;
-            const cur = new Date(s);
-            while (cur <= e) {
-              coveredDates.add(dateStrInTz(cur, tz));
-              cur.setDate(cur.getDate() + 1);
-            }
+
+          // Phase 111 (issue #114) — the inline `{day}Hours > 0` predicate that used to live here
+          // read {day}Hours for EVERY schedule type. For SHIFT_BASED/FLEXTIME/MONTHLY_HOURS those
+          // columns are a legacy 1/0 flag, not hours, so a free day with thursdayHours=1 was
+          // reported as missing forever. Commit 523d7042 (v1.9.5) fixed the three sibling sites in
+          // this file and missed this one. Route through the canonical detector instead — the same
+          // one the Monatsabschluss and GET /overtime/close-month/status use, so card and
+          // Monatsabschluss cannot drift apart.
+          const openItemsScheduleType = String(schedule?.type ?? "");
+
+          // SHIFT_BASED obligation comes from the roster, never from {day}Hours (pitfall A4).
+          // Tenant-scoped via the employee relation + soft-delete filtered (CLAUDE.md).
+          let openItemsRosterDates: Set<string> | undefined;
+          if (openItemsScheduleType === "SHIFT_BASED") {
+            const openItemsShifts = await app.prisma.shift.findMany({
+              where: {
+                employeeId,
+                employee: { tenantId },
+                date: { gte: windowStart, lte: yesterday },
+                deletedAt: null,
+              },
+              select: { date: true },
+            });
+            openItemsRosterDates = new Set(openItemsShifts.map((sh) => dateStrInTz(sh.date, tz)));
           }
 
-          const cursor = new Date(sevenDaysAgo);
-          while (cursor < today) {
-            const dateStr = dateStrInTz(cursor, tz);
-            if (openItemsHolidaySet.has(dateStr) || coveredDates.has(dateStr)) {
-              cursor.setDate(cursor.getDate() + 1);
-              continue;
-            }
-            const dow = getDayOfWeekInTz(cursor, tz);
-            const expectedH = schedule ? getDayHoursFromSchedule(schedule, dow) : 0;
-            if (expectedH > 0 && !entryDates.has(dateStr)) {
-              missingDays.push(dateStr);
-            }
-            cursor.setDate(cursor.getDate() + 1);
-          }
+          // Clamp to the employment span, mirroring GET /overtime/close-month/status — a day
+          // before hire or after exit carries no obligation.
+          const hireDate = meEmployee?.hireDate ?? null;
+          const exitDate = meEmployee?.exitDate ?? null;
+          const openItemsStart = hireDate && hireDate > windowStart ? hireDate : windowStart;
+          const openItemsEnd = exitDate && exitDate < yesterday ? exitDate : yesterday;
+
+          const openItemsGapResult = findMissingWorkdays({
+            // Phase 128 (D-01/D-02): the detector's FIXED branch is workDays-primary itself now, so
+            // the Phase 111 workDaysPrimarySchedule() projection that used to sit here is gone -
+            // this card and the Monatsabschluss read one rule from one place.
+            schedule: (schedule ?? {}) as Record<string, unknown>,
+            effectiveStart: openItemsStart,
+            effectiveEnd: openItemsEnd,
+            tz,
+            entryDates,
+            approvedLeave: approvedLeaveInWindow.map((lr) => ({
+              startDate: lr.startDate,
+              endDate: lr.endDate,
+              halfDay: Boolean(lr.halfDay),
+            })),
+            absences: absencesInWindow.map((ab) => ({
+              startDate: ab.startDate,
+              endDate: ab.endDate,
+              halfDay: Boolean(ab.halfDay),
+            })),
+            holidayDateStrings: openItemsHolidaySet,
+            rosterDates: openItemsRosterDates,
+          });
+
+          // partial:true gaps come from half-day leave/absence days without an entry. This card
+          // renders a nagging "Nachtragen" CTA and has never nagged about a leave-covered day;
+          // surfacing them here would trade one false positive for a new one. Full gaps only.
+          missingDays.push(...openItemsGapResult.gaps.filter((g) => !g.partial).map((g) => g.date));
         }
 
         // 2. Own pending leave requests — BUrlG still applies for exempt employees
@@ -1157,6 +1218,44 @@ export async function dashboardRoutes(app: FastifyInstance) {
           select: { id: true },
         });
         invalidEntriesCount = invalidEntries.length;
+
+        // 3b. Unbestätigte Pflichtpausen (§ 4 ArbZG, BREAK-05) — Phase 126, GitHub issue #126.
+        //
+        // D-02: the number is produced HERE, by the canonical detector, and never again by a
+        // client-side predicate. Before this, dashboard/+page.svelte counted AUTO days itself over a
+        // 12-MONTH window with none of the detector's filters (no type:"WORK", no
+        // MONTHLY_HOURS/FLEXTIME exclusion), so the card demanded action on days the backend does not
+        // know about. Same error class as the inline {day}Hours predicate Phase 111 removed above.
+        //
+        // D-01: the window is the CURRENT MONTH — deliberately NOT widened to match the old client
+        // counter. Days outside the current month trigger no notification and block no
+        // Monatsabschluss; a hint demanding an unenforced action IS the defect (Phase 113 / #116
+        // removed exactly such a promise rather than building it). Making older months actionable
+        // also opens the question of whether they should block month close — its own domain ticket.
+        //
+        // D-09: no explicit enforceBreakConfirmation branch here. findUnconfirmedBreakDays returns []
+        // for an un-opted tenant as its FIRST check (BREAK-05 Gesamt-Opt-in), so the gate is inherited.
+        // GitHub issue #141: reuses the openItemsConfig read hoisted above instead of a second
+        // TenantConfig fetch — net query count for the handler is unchanged.
+        const breakMonthRef = todayInTz(tz);
+        const { start: breakMonthStart, end: breakMonthEnd } = monthRangeUtc(
+          breakMonthRef.getUTCFullYear(),
+          breakMonthRef.getUTCMonth() + 1,
+          tz,
+        );
+        const { firstDay: breakMonthFirstDay, lastDay: breakMonthLastDay } = monthDayBounds(
+          breakMonthStart,
+          breakMonthEnd,
+          tz,
+        );
+        unconfirmedBreakDays = await findUnconfirmedBreakDays(app.prisma, {
+          employeeId,
+          monthFirstDay: breakMonthFirstDay,
+          monthLastDay: breakMonthLastDay,
+          tz,
+          scheduleType: String(schedule?.type ?? ""),
+          enforceBreakConfirmation: openItemsConfig?.enforceBreakConfirmation ?? false,
+        });
       }
 
       // 4. Team-wide pending approvals (only for managers/admins)
@@ -1173,6 +1272,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
         });
       }
 
+      // unconfirmedBreakDays is deliberately NOT summed into `total`. `total` is the Phase-111
+      // contract the client feeds into hasNoOpenItems($lib/leave/karenz-nudge.ts) as a value
+      // SEPARATE from the break and Karenz counts; folding it in here would double-count it there.
       const total =
         missingDays.length + pendingRequestsCount + invalidEntriesCount + pendingApprovalsCount;
 
@@ -1181,6 +1283,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         pendingRequests: pendingRequestsCount,
         invalidEntries: invalidEntriesCount,
         pendingApprovals: pendingApprovalsCount,
+        unconfirmedBreakDays,
         total,
       };
     },

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { toasts } from "$stores/toast";
   import { authStore } from "$stores/auth";
+  import { markUnsaved } from "$stores/unsaved";
   import { api } from "$api/client";
   import ToolPage from "$lib/components/admin/ToolPage.svelte";
   import Section from "$lib/components/admin/Section.svelte";
@@ -37,6 +38,27 @@
   // Hold the full /settings/work payload so we don't partial-overwrite on save.
   let _gOtherFields: Record<string, unknown> | null = $state(null);
 
+  // ── Unsaved-section tracking (Phase 109, D-11/D-12 · AK-06/AK-07) ──────────────
+  function snap(...values: unknown[]): string {
+    return JSON.stringify(values);
+  }
+
+  let datevSnapshot = $state("");
+  let datevDirty = $derived(
+    snap(datevNormalstundenNr, datevUrlaubNr, datevKrankNr, datevSonderurlaubNr) !== datevSnapshot,
+  );
+
+  // Gate the registration on "the baseline has been taken" (WR-01). loadDatev swallows its error
+  // ("non-blocking: keep defaults"), and saveDatev then provably cannot write at all
+  // (`if (!_gOtherFields) return;`) — a "Nicht gespeichert" marker on a page whose save button is
+  // a no-op would be a lie, and the guard would trap the user on it.
+  let snapshotsReady = $state(false);
+
+  $effect(() => {
+    markUnsaved("admin-export", snapshotsReady && datevDirty);
+    return () => markUnsaved("admin-export", false);
+  });
+
   async function loadDatev() {
     try {
       const cfg = await api.get<DatevConfig>("/settings/work");
@@ -45,6 +67,8 @@
       datevKrankNr = Number(cfg.datevKrankNr ?? 200);
       datevSonderurlaubNr = Number(cfg.datevSonderurlaubNr ?? 302);
       _gOtherFields = cfg as Record<string, unknown>;
+      datevSnapshot = snap(datevNormalstundenNr, datevUrlaubNr, datevKrankNr, datevSonderurlaubNr);
+      snapshotsReady = true;
     } catch {
       // non-blocking: keep defaults
     }
@@ -64,6 +88,7 @@
         datevSonderurlaubNr,
       });
       datevSaved = true;
+      datevSnapshot = snap(datevNormalstundenNr, datevUrlaubNr, datevKrankNr, datevSonderurlaubNr); // Phase 109 — section is clean again
       setTimeout(() => (datevSaved = false), 3000);
     } catch (e: unknown) {
       datevError = e instanceof Error ? e.message : "Fehler";
@@ -154,6 +179,7 @@
       <Section
         title="Lohnartennummern"
         sub="Zuordnung der DATEV-LODAS-Lohnarten — wirkt sich auf alle generierten Exporte aus."
+        dirty={datevDirty}
       >
         {#if datevError}
           <div class="alert alert-error" role="alert">
@@ -235,6 +261,10 @@
       <div class="export-grid">
         <!-- Configure (col-7) -->
         <div class="col-7">
+          <!-- No `dirty=` prop here on purpose: advisorNumber/clientNumber/taxOffice/period/
+               format are parameters of a single download, never persisted (Phase 109, D-01) — an
+               "unsaved" marker for them would be noise, and a navigation guard would train the
+               operator to click through the dialog. -->
           <Section title="Export konfigurieren" sub="Format · Zeitraum · Empfänger">
             <div class="field field-format">
               <span class="field-label">Format</span>

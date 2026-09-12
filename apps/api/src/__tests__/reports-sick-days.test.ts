@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  seedEntitlementYears,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 /**
@@ -372,6 +378,13 @@ describe("Reports: § 9 BUrlG attribution in the Monatsbericht (D-30)", () => {
   beforeAll(async () => {
     app = await getTestApp();
     d = await seedTestData(app, "rpt-s9");
+    // Issue #136 (batch B): this describe's confirmCredit calls book onto hardcoded 2026
+    // dates, while seedTestData only provisions the LIVE current year's entitlement row.
+    await seedEntitlementYears(app, {
+      employeeId: d.employee.id,
+      leaveTypeId: d.vacationType.id,
+      years: [2026],
+    });
   });
 
   afterAll(async () => {

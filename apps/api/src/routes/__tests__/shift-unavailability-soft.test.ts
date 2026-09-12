@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
+import { dowOf, futureDateStr, nextWeekdayStr, todayStr } from "../../__tests__/test-dates";
 
 /**
  * Phase 47.3-03 — Soft-Enforcement Override (SHIFT_CONFLICT_UNAVAILABILITY)
@@ -16,10 +17,24 @@ describe("Shift Unavailability Soft-Enforcement (Phase 47.3-03)", () => {
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
 
-  // Target a future Wednesday so Phase 47.2 past-immutable gate doesn't fire.
-  // Mo=2026-09-14..So=2026-09-20, Wednesday=2026-09-16, dayOfWeek=2 (Mo=0..So=6).
-  const TARGET_ISO = "2026-09-16";
-  const TARGET_DOW = 2;
+  // A future weekday, derived rather than written (GH #136/#167). A literal stops meaning
+  // "future" once the calendar passes it, and the Phase 47.2 past-immutable gate then answers
+  // 422 before the soft-enforcement rule under test is reached.
+  // The date is load-bearing TWICE: it must be in the future AND its weekday must match the
+  // seeded availability row — so TARGET_DOW is derived FROM the date and cannot drift apart
+  // from it. dowOf() is JS-style (0=Sun..6=Sat); this project's dayOfWeek is Mo=0..Su=6.
+  const TARGET_ISO = nextWeekdayStr(futureDateStr(7));
+  const TARGET_DOW = (dowOf(TARGET_ISO) + 6) % 7;
+
+  // GH #136/#167 — the anchor must stay in the FUTURE and TARGET_DOW must keep matching it,
+  // or the Phase 47.2 gate answers 422 before the soft-enforcement rule under test is reached.
+  // CLOKR_TEST_FAKE_CLOCK cannot show this (it shifts the time of day, never the date), so the
+  // property is asserted here and re-proved on every run.
+  it("anchor date stays in the future and TARGET_DOW matches it (guards against date expiry)", () => {
+    expect(TARGET_ISO > todayStr()).toBe(true);
+    expect(TARGET_DOW).toBe((dowOf(TARGET_ISO) + 6) % 7);
+    expect([1, 2, 3, 4, 5]).toContain(dowOf(TARGET_ISO));
+  });
 
   beforeAll(async () => {
     app = await getTestApp();

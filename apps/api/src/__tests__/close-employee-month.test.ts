@@ -2198,3 +2198,133 @@ describe("TC-HALFSICK-ABSENCE — half-day SICK Absence saldo correctness (76.32
     ).toBe(0);
   });
 });
+
+describe("closeEmployeeMonth — workedDays (Phase 125, issue #125)", () => {
+  const WD_TZ = "Europe/Berlin";
+  const WD_START = new Date("2026-07-01T00:00:00Z");
+  const WD_END = new Date("2026-07-31T23:59:59.999Z");
+  const WD_SCHEDULE = {
+    type: "FIXED_SCHEDULE",
+    weeklyHours: 40,
+    mondayHours: 8,
+    tuesdayHours: 8,
+    wednesdayHours: 8,
+    thursdayHours: 8,
+    fridayHours: 8,
+    saturdayHours: 0,
+    sundayHours: 0,
+    workDays: [1, 2, 3, 4, 5],
+    validFrom: new Date("2024-01-01"),
+  } as unknown as Record<string, unknown>;
+
+  /** One entry on `dateStr`, `hhStart`–`hhEnd` UTC, `breakMin` break. */
+  function wdEntry(dateStr: string, hhStart: string, hhEnd: string, breakMin: number) {
+    return {
+      date: new Date(dateStr + "T00:00:00Z"),
+      startTime: new Date(`${dateStr}T${hhStart}:00Z`),
+      endTime: new Date(`${dateStr}T${hhEnd}:00Z`),
+      breakMinutes: breakMin,
+    };
+  }
+
+  function wdInput(
+    entries: CloseMonthInput["entries"],
+    overrides: Partial<CloseMonthInput> = {},
+  ): CloseMonthInput {
+    const { firstDay, lastDay } = monthDayBounds(WD_START, WD_END, WD_TZ);
+    return {
+      employeeId: "wd-pure",
+      monthStart: WD_START,
+      monthEnd: WD_END,
+      monthFirstDay: firstDay,
+      monthLastDay: lastDay,
+      tz: WD_TZ,
+      carryOverIn: 0,
+      schedule: WD_SCHEDULE,
+      hireDate: new Date("2024-01-01T00:00:00Z"),
+      exitDate: null,
+      isTimeTrackingExempt: false,
+      breakOver6hOverride: null,
+      breakOver9hOverride: null,
+      entries,
+      shifts: [],
+      approvedLeave: [],
+      absences: [],
+      holidayDateStrings: new Set<string>(),
+      tenantConfig: null,
+      ...overrides,
+    };
+  }
+
+  it("D-08 (a): workedDays counts distinct days of the same filtered set", () => {
+    const entries = [
+      wdEntry("2026-07-06", "07:00", "15:30", 30),
+      wdEntry("2026-07-07", "07:00", "15:30", 30),
+      wdEntry("2026-07-08", "07:00", "15:30", 30),
+    ] as unknown as CloseMonthInput["entries"];
+
+    const result = closeEmployeeMonth(wdInput(entries));
+
+    expect(result.workedMinutes, "D-08(a): 3 × 480 = 1440").toBe(1440);
+    expect(result.workedDays, "D-08(a): 3 distinct days").toBe(3);
+  });
+
+  it("D-08 (b): a day carrying several entries counts ONCE", () => {
+    const entries = [
+      wdEntry("2026-07-06", "07:00", "11:00", 0), // 240 net
+      wdEntry("2026-07-06", "12:00", "15:00", 0), // 180 net, same date
+      wdEntry("2026-07-07", "07:00", "15:30", 30), // 480 net
+    ] as unknown as CloseMonthInput["entries"];
+
+    const result = closeEmployeeMonth(wdInput(entries));
+
+    expect(result.workedMinutes, "D-08(b): 240 + 180 + 480 = 900").toBe(900);
+    expect(result.workedDays, "D-08(b): 2026-07-06 counts once despite two entries").toBe(2);
+  });
+
+  it("D-08 (c): workedMinutes > 0 iff workedDays > 0", () => {
+    const empty = closeEmployeeMonth(wdInput([] as unknown as CloseMonthInput["entries"]));
+    expect(empty.workedMinutes).toBe(0);
+    expect(empty.workedDays).toBe(0);
+
+    const eightDays = [
+      "2026-07-06",
+      "2026-07-07",
+      "2026-07-08",
+      "2026-07-09",
+      "2026-07-10",
+      "2026-07-13",
+      "2026-07-14",
+      "2026-07-15",
+    ].map((d) => wdEntry(d, "07:00", "15:30", 30)) as unknown as CloseMonthInput["entries"];
+    const eightResult = closeEmployeeMonth(wdInput(eightDays));
+
+    expect(
+      eightResult.workedDays,
+      "D-08(c): the ticket's shape (many worked days) can no longer report 1",
+    ).toBe(8);
+    expect(eightResult.workedMinutes).toBe(3840);
+
+    for (const result of [empty, eightResult]) {
+      expect(result.workedMinutes > 0).toBe(result.workedDays > 0);
+    }
+  });
+
+  it("D-08: a day outside the employment span counts toward neither number", () => {
+    const entries = [
+      wdEntry("2026-07-06", "07:00", "15:30", 30),
+      wdEntry("2026-07-07", "07:00", "15:30", 30),
+      wdEntry("2026-07-08", "07:00", "15:30", 30),
+    ] as unknown as CloseMonthInput["entries"];
+
+    const result = closeEmployeeMonth(
+      wdInput(entries, { hireDate: new Date("2026-07-07T00:00:00Z") }),
+    );
+
+    expect(
+      result.workedDays,
+      "D-03: the count inherits the SAME effective-span clamp as the minutes",
+    ).toBe(2);
+    expect(result.workedMinutes).toBe(960);
+  });
+});

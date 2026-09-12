@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  seedEntitlementYears,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import { computeAffectedMonths } from "../utils/correction-lock";
 
@@ -410,11 +416,22 @@ describe("Leave correction — reverse-OLD/apply-NEW saldo (94-02)", () => {
   let overtimeTypeId: string;
   let sickTypeId: string;
   let parentalTypeId: string;
-  const YEAR = new Date().getFullYear();
+  // Issue #136 (batch B, D-2): every request date in this describe is a hardcoded
+  // Mon-Fri 2026 span whose day COUNT is load-bearing (e.g. 2026-03-02..03-06 = exactly
+  // 5 workdays, asserted via toBe(5) below) — templating YEAR through the date literals
+  // would shift the weekday and silently change every day count in the file. YEAR must
+  // follow the dates, not the live clock; the corresponding LeaveEntitlement row is seeded
+  // explicitly below instead of relying on seedTestData's live-year default.
+  const YEAR = 2026;
 
   beforeAll(async () => {
     app = await getTestApp();
     data = await seedTestData(app, "lc3");
+    await seedEntitlementYears(app, {
+      employeeId: data.employee.id,
+      leaveTypeId: data.vacationType.id,
+      years: [YEAR],
+    });
     overtimeTypeId = (
       await app.prisma.leaveType.create({
         data: {

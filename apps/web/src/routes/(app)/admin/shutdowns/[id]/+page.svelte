@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
+  import { markUnsaved } from "$stores/unsaved";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import { onMount } from "svelte";
@@ -72,6 +73,9 @@
       formDeducts = found.deductsFromVacation;
       formNotes = found.notes ?? "";
 
+      shutdownSnapshot = snap(formName, formStart, formEnd, formDeducts, formNotes);
+      snapshotsReady = true;
+
       if (employeesRes.status === "fulfilled") {
         const d = employeesRes.value;
         allEmployees = (Array.isArray(d) ? d : d.employees) ?? [];
@@ -93,6 +97,27 @@
   let formEnd = $state("");
   let formDeducts = $state(false);
   let formNotes = $state("");
+
+  // ── Unsaved-section tracking (Phase 109, D-11/D-12 · AK-06/AK-07) ──────────────
+  // Snapshot comparison rather than per-field oninput flags — same idiom as admin/system.
+  function snap(...values: unknown[]): string {
+    return JSON.stringify(values);
+  }
+
+  let shutdownSnapshot = $state("");
+  let shutdownDirty = $derived(
+    snap(formName, formStart, formEnd, formDeducts, formNotes) !== shutdownSnapshot,
+  );
+
+  // Gate the registration on "the baseline has been taken" (WR-01). onMount returns early on a
+  // failed load AND on a not-found id, both before any field is hydrated — registering an ungated
+  // dirty flag would arm the navigation guard on a page that shows nothing but an error.
+  let snapshotsReady = $state(false);
+
+  $effect(() => {
+    markUnsaved("admin-shutdown-detail", snapshotsReady && shutdownDirty);
+    return () => markUnsaved("admin-shutdown-detail", false);
+  });
 
   // Delete confirm
   let deleteConfirmOpen = $state(false);
@@ -137,6 +162,7 @@
         notes: formNotes || undefined,
       });
       shutdown = updated;
+      shutdownSnapshot = snap(formName, formStart, formEnd, formDeducts, formNotes); // Phase 109 — section is clean again
       toasts.success("Betriebsurlaub gespeichert.");
     } catch {
       saveError = "Speichern fehlgeschlagen.";
@@ -225,7 +251,11 @@
   >
     {#snippet tabContent(_tab)}
       <!-- ── Zeitraum & Einstellungen ──────────────────────────────────────── -->
-      <Section title="Betriebsurlaub" sub="Zeitraum und Einstellungen">
+      <!-- Exceptions are added/removed through immediate writes from a <Modal>, which is
+           dismissible by ESC and backdrop (Modal.svelte:26,33) — a modal draft is a
+           modal-dismissal concern that beforeNavigate never sees and Section.dirty cannot
+           render for. Only this section's own dirty flag is tracked here. -->
+      <Section title="Betriebsurlaub" sub="Zeitraum und Einstellungen" dirty={shutdownDirty}>
         {#if saveError}
           <div class="alert alert-error">{saveError}</div>
         {/if}

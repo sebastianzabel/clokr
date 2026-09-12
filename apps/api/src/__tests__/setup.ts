@@ -17,6 +17,23 @@ import { Prisma } from "@clokr/db";
 // Keep JsonValue reachable from this module's public types (intentional no-op type alias)
 export type _SeedJsonValue = Prisma.JsonValue;
 
+/**
+ * Test-only lever that moves the year `seedTestData` provisions the fixture
+ * LeaveEntitlement for. Absent or 0, this file behaves exactly as before.
+ *
+ * This is the calendar-axis counterpart to CLOKR_TEST_FAKE_CLOCK
+ * (vitest.clock-setup.ts), which can only shift the time of day within today
+ * and is structurally incapable of simulating a year rollover. Setting
+ * CLOKR_TEST_SEED_YEAR_OFFSET=1 reproduces 2027-01-01 for the one thing that
+ * actually depends on the year: whether the entitlement row a test books onto
+ * exists at all.
+ *
+ * A non-zero offset is EXPECTED to break unrelated suites that legitimately
+ * book into the live current year. It is a per-file diagnostic lever, never a
+ * suite-wide mode.
+ */
+export const SEED_YEAR_OFFSET = Number(process.env.CLOKR_TEST_SEED_YEAR_OFFSET ?? 0);
+
 let app: FastifyInstance;
 
 export async function getTestApp(): Promise<FastifyInstance> {
@@ -192,7 +209,7 @@ export async function seedTestData(testApp: FastifyInstance, suffix = "") {
   });
 
   // Create leave entitlement for current year
-  const currentYear = new Date().getFullYear();
+  const currentYear = new Date().getFullYear() + SEED_YEAR_OFFSET;
   await prisma.leaveEntitlement.create({
     data: {
       employeeId: employee.id,
@@ -229,6 +246,53 @@ export async function seedTestData(testApp: FastifyInstance, suffix = "") {
     empToken,
     vacationType,
   };
+}
+
+/**
+ * Idempotently ensure a `LeaveEntitlement` row exists for `employeeId` /
+ * `leaveTypeId` for every year in `years`, in addition to whatever
+ * `seedTestData` already provisioned for the live (or offset) current year.
+ *
+ * Issue #136 (batch B): `seedTestData` above seeds exactly ONE entitlement
+ * row, for `new Date().getFullYear() + SEED_YEAR_OFFSET`, while several test
+ * files book vacation deductions onto their own hardcoded fixture years
+ * (2025/2026/2029/…). Those rows exist only while the live year happens to
+ * match the literal — this helper provisions them explicitly so the fixture
+ * is inert to the calendar, without rewriting the (often weekday-load-bearing,
+ * see the plan's D-2) date literals themselves. Upsert, not create, so a
+ * caller can safely re-request a year `seedTestData` (or a prior call) has
+ * already provisioned.
+ */
+export async function seedEntitlementYears(
+  app: FastifyInstance,
+  opts: {
+    employeeId: string;
+    leaveTypeId: string;
+    years: number[];
+    totalDays?: number; // default 30, matching seedTestData
+  },
+): Promise<void> {
+  const prisma = app.prisma;
+  const totalDays = opts.totalDays ?? 30;
+  for (const year of opts.years) {
+    await prisma.leaveEntitlement.upsert({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: opts.employeeId,
+          leaveTypeId: opts.leaveTypeId,
+          year,
+        },
+      },
+      create: {
+        employeeId: opts.employeeId,
+        leaveTypeId: opts.leaveTypeId,
+        year,
+        totalDays,
+        usedDays: 0,
+      },
+      update: {},
+    });
+  }
 }
 
 /**

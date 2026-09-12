@@ -74,11 +74,17 @@ only resolves inside the compose network. The `clokr` bucket is created automati
 exports `MINIO_ENDPOINT` / `MINIO_PORT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` / `MINIO_BUCKET`.
 
 It is **not** a `services:` container, and that is not an oversight: GitHub Actions service
-containers cannot override a container's command, and `minio/minio`'s default `CMD` is bare
+containers cannot override a container's command, and the MinIO image's default `CMD` is bare
 `minio` with no `server /data` subcommand — verified with
-`docker inspect --format '{{json .Config.Cmd}}' minio/minio:latest` — so such a container exits
+`docker inspect --format '{{json .Config.Cmd}}' <image>` — so such a container exits
 immediately after printing usage. `docker-compose.yml` can use a service definition only because
 compose supports `command:`.
+
+The image comes from **quay.io**, not Docker Hub, and is pinned by digest. The
+`docker.io/minio/minio` repository was removed — Docker Hub answers 404 and every pull fails with
+`repository does not exist or may require 'docker login'`. If you see that error, you are on a
+checkout that predates the switch; pull `main`. The digest is identical in `ci.yml`,
+`docker-compose.yml` and `docker-compose.prod.yml` — change it in all three or not at all.
 
 ## Why a `pretest` script, not a `docker-entrypoint-initdb.d` mount
 
@@ -293,8 +299,9 @@ tenant-TZ-resolved endpoint logic, not between two different local formattings. 
 
 **`apps/api/src/__tests__/test-dates.ts` is the ONLY place test date math may live.** Every helper
 that derives a calendar day from "now" (`todayStr`, `pastDateStr`, `futureDateStr`,
-`daysAgoStrInTz`, `nextWeekdayStr`, `mondayOfWeekStr`, `monthsAheadStr`) or reads a stored
-`@db.Date` value (`dbDateStr`) lives there — no test file should keep a private copy of this math.
+`daysAgoStrInTz`, `nextWeekdayStr`, `mondayOfWeekStr`, `monthsAheadStr`, `holidayFreeMondayStr`) or
+reads/shifts a stored `@db.Date` value (`dbDateStr`, `addDaysStr`) lives there — no test file
+should keep a private copy of this math.
 
 **Known harness limitation — do not "fix" by weakening a test.** Shifting the process clock does
 NOT shift external, unshifted clocks the suite also talks to:
@@ -319,15 +326,69 @@ NOT shift external, unshifted clocks the suite also talks to:
   plan 05's R7 section in `106-MEASUREMENTS.md` for the full four-way diagnosis). If you see this,
   name the exact test in your summary — do not touch the assertion.
 
+## Reproducing year-rollover date bugs (`CLOKR_TEST_SEED_YEAR_OFFSET`)
+
+`CLOKR_TEST_FAKE_CLOCK` above can only shift the time of day within TODAY — it is structurally
+incapable of simulating a year rollover (moving `|offset|` past 24h would change the calendar
+date, which the harness deliberately does not allow). Several test files (issue #136, batch B)
+book a fixture into a hardcoded calendar year while `seedTestData` (`setup.ts`) provisions the
+one `LeaveEntitlement` row it creates for `new Date().getFullYear()` — a coupling invisible on
+any date within that year and only reproducible on 2027-01-01 for a 2026-fixture file, etc.
+
+Reproduce that on demand, at any date, with one opt-in env var — the calendar-axis counterpart
+to `CLOKR_TEST_FAKE_CLOCK`:
+
+```bash
+pnpm --filter @clokr/api run test:setup
+CLOKR_TEST_SEED_YEAR_OFFSET=1 pnpm --filter @clokr/api exec vitest run src/__tests__/section9-credit.test.ts
+```
+
+`CLOKR_TEST_SEED_YEAR_OFFSET=<N>` shifts only the year `seedTestData` seeds its
+`LeaveEntitlement` fixture for (`new Date().getFullYear() + N`); it does not touch any other
+date derivation. Absent the var (or `0`), `setup.ts` behaves exactly as before.
+
+**A non-zero offset is EXPECTED to break unrelated suites** that legitimately book into the live
+current year — it is a per-file diagnostic lever for reproducing a year-boundary bug on demand,
+never a suite-wide mode, and must never be set in CI or left set across a normal run.
+
+Files whose fixtures span more than one hardcoded year (or where a fixture date's WEEKDAY is
+itself load-bearing, e.g. `leave-correct.test.ts`) additionally seed the extra years explicitly
+via `seedEntitlementYears()` from `./setup` rather than relying on this lever alone — see that
+function's own doc comment for why templating the year through the date literals themselves is
+the wrong fix.
+
 **Measured effect of this phase** — reported as data, not as "fixed", taken directly from
 the plan 01/02 SUMMARYs:
 
-| Stage                                                          | Files   | Passed | Failed | Skipped |
-| -------------------------------------------------------------- | ------- | ------ | ------ | ------- |
-| Isolated DB, `db push`-provisioned (101-01, wave-1 baseline)   | 177/180 | 1929   | 4      | 3       |
-| Isolated DB, `migrate deploy`-provisioned (101-02, D-02 alone) | 180/180 | 1933   | **0**  | 3       |
-| + the TI-03 guard's own 14-case test file (101-02 final)       | 181/181 | 1947   | **0**  | 3       |
-| Phase 106 — parallel, N=4 databases (`fileParallelism: true`)  | 199/199 | 2231   | **0**  | 3       |
+| Stage                                                                                 | Files   | Passed | Failed | Skipped |
+| ------------------------------------------------------------------------------------- | ------- | ------ | ------ | ------- |
+| Isolated DB, `db push`-provisioned (101-01, wave-1 baseline)                          | 177/180 | 1929   | 4      | 3       |
+| Isolated DB, `migrate deploy`-provisioned (101-02, D-02 alone)                        | 180/180 | 1933   | **0**  | 3       |
+| + the TI-03 guard's own 14-case test file (101-02 final)                              | 181/181 | 1947   | **0**  | 3       |
+| Phase 106 — parallel, N=4 databases (`fileParallelism: true`)                         | 199/199 | 2231   | **0**  | 3       |
+| Phase 107 final — SHIFT_BASED Arbeitstage/Woche (feature phase, no test-infra change) | 204/204 | 2304   | **0**  | 3       |
+
+**Phase 107's own baseline reconciliation (107-08 Task 2), reported because it corrects the
+number above rather than merely restating it:** `107-VALIDATION.md` (written at Phase 107 plan
+time) cited "Phase 106 final = 2231" as the AC-REG-01 baseline. Re-measured empirically at
+Phase 107's actual branch point (`263ed0aa`, the merge-base with `main` — confirmed identical to
+`main`'s HEAD) by holding out every one of Phase 107's own new/extended test files
+(`workschedule-contract-workdays.test.ts`, `leave-provisional-approval.test.ts`,
+`shift-leave-recalc.test.ts`, `phorest-shift-leave-recalc.test.ts`,
+`leave-provisional-readside.test.ts`, and reverting `vacation-calc.test.ts` to its pre-phase
+content) while keeping Phase 107's source changes applied, the suite reports **199 files / 2236
+passed / 0 failed / 3 skipped** — 5 more than the cited 2231. A per-file diff between that run and
+the full Phase-107 run showed every one of the 199 pre-existing files reporting an IDENTICAL test
+count in both runs (only the 5 held-out files and `vacation-calc.test.ts` differed), so the +5 is
+not hidden growth inside any pre-existing file caused by this phase's source changes — it reflects
+`main` commits between "Phase 106 final" (the PR #60 merge) and `263ed0aa` (the later
+dependency-bump commit Phase 107 actually branched from) that are unrelated to Phase 107. Phase
+107's OWN test-file contribution is therefore exactly **+68** (2304 − 2236: 47 tests across five
+brand-new files + 21 new tests in `vacation-calc.test.ts`, verified via an isolated re-run of that
+file's pre-phase content — 32 tests — against its current 53), not the nominal +73 a naive
+`2304 − 2231` subtraction would suggest. The AC-REG-01 gate (`passed >= 2231`, `failed == 0`) is
+met either way; this note exists so Phase 108 starts from the correct **2304** figure instead of
+silently carrying the 5-test drift forward again.
 
 `test`-job CI wall clock, same job (`.github/workflows/ci.yml`'s `test` job), same runner
 shape: **BEFORE 1019s** (run `32994847691`, unmodified sequential config) → **FINAL 590s**

@@ -13,9 +13,18 @@
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import { format, startOfMonth, endOfMonth, addMonths, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
+  // Phase 116 (GitHub issue #119) — same module the own /time-entries page uses; one answer,
+  // two callers, no drift.
+  import {
+    settled,
+    valueOr,
+    anyFailed,
+    resolveMonthListState,
+    resolveSaldoCardState,
+  } from "$lib/time-entries/month-view-state";
   import {
     isWorkDay,
-    getDayExpectedHours,
+    getDayExpectedMinutes,
     countWorkingDaysInMonth,
     monthlyBudgetSollMinutes,
   } from "$lib/utils/work-schedule";
@@ -133,8 +142,13 @@
   let schedule: WorkSchedule | null = $state(null);
   let holidays: Map<string, string> = $state(new Map()); // dateStr → name
   let calendarDays: CalDay[] = $state([]);
-  let loading = $state(false);
+  // Phase 116 (issue #119) — starts TRUE so the first painted frame is never "loaded and empty".
+  // Safe because BOTH exits of loadAll() clear it: the early return above and the finally below.
+  let loading = $state(true);
   let error = $state("");
+  // Phase 116 (issue #119) — true when /settings/work/:id, /overtime/:id or
+  // /overtime/month-saldo/:id FAILED, as opposed to legitimately returning nothing.
+  let saldoFetchFailed = $state(false);
   let saving = $state(false);
   let saveError = $state("");
   let arbzgEnabled = $state(true);
@@ -184,6 +198,10 @@
     // Phase 97-05 (SALDO-DISP-07) — SHIFT_BASED open months only; undefined otherwise
     // (never a fabricated false), matching computeMonthSaldo's own contract.
     rosterIncomplete?: boolean;
+    // Phase 125 (issue #125) — distinct worked days to date, from the SAME server computation as
+    // `workedMinutes`. Absent for a CLOSED month (the SaldoSnapshot stores no day count) —
+    // undefined, never a fabricated 0, matching computeMonthSaldo's own contract.
+    workedDays?: number;
     days: MonthSaldoDay[];
   }
   let monthSaldo: MonthSaldo | null = $state(null);
@@ -284,10 +302,16 @@
       shiftMinByDate = new Map();
       monthSaldo = null;
       calendarDays = [];
+      // Phase 116 (issue #119) — clear the flag on the path that never sets it. `loading` now
+      // starts TRUE (see its declaration), and this branch returns before the try/finally that
+      // would otherwise clear it. Without this line the page would sit in a permanent skeleton
+      // until an employee is selected — `onMount` deliberately does not call loadAll() here.
+      loading = false;
       return;
     }
     loading = true;
     error = "";
+    saldoFetchFailed = false;
     try {
       const year = calMonth.getFullYear();
       const empId = selectedEmployeeId;
@@ -302,21 +326,21 @@
         rawBsAbsences,
       ] = await Promise.all([
         api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}&employeeId=${empId}`),
-        api.get<WorkSchedule>(`/settings/work/${empId}`).catch(() => null),
+        settled(api.get<WorkSchedule>(`/settings/work/${empId}`)),
         api.get<PublicHoliday[]>(`/holidays?year=${year}`).catch(() => [] as PublicHoliday[]),
         api
           .get<Absence[]>(`/leave/requests?status=APPROVED&employeeId=${empId}`)
           .catch(() => [] as Absence[]),
-        api
-          .get<{
+        settled(
+          api.get<{
             balanceHours: number;
             // Phase 97-05 (SALDO-DISP-01/03/04/07) — additive split fields.
             confirmedMinutes?: number;
             openMonthMinutes?: number | null;
             hasClosedMonth?: boolean;
             rosterIncomplete?: boolean;
-          }>(`/overtime/${empId}`)
-          .catch(() => null),
+          }>(`/overtime/${empId}`),
+        ),
         api.get<{ hireDate?: string }>(`/employees/${empId}`).catch(() => null),
         api
           .get<{
@@ -334,17 +358,22 @@
           .catch(() => [] as BsAbsence[]),
       ]);
       entries = rawEntries;
-      schedule = rawSchedule;
+      schedule = valueOr(rawSchedule, null);
       holidays = new Map(rawHolidays.map((h) => [h.date.split("T")[0], h.name]));
       absences = rawAbsences;
       bsAbsences = rawBsAbsences;
-      overtimeTotalHours = rawOvertime ? Number(rawOvertime.balanceHours) : null;
+      const overtimeValue = valueOr(rawOvertime, null);
+      overtimeTotalHours = overtimeValue ? Number(overtimeValue.balanceHours) : null;
       // Phase 97-05 — split fields, undefined when the endpoint didn't return them (older
       // cached response / fail-safe branch); the Gesamt-Saldo snippet falls back accordingly.
-      overtimeConfirmedMinutes = rawOvertime?.confirmedMinutes;
-      overtimeOpenMonthMinutes = rawOvertime?.openMonthMinutes;
-      overtimeHasClosedMonth = rawOvertime?.hasClosedMonth;
-      overtimeRosterIncomplete = rawOvertime?.rosterIncomplete;
+      overtimeConfirmedMinutes = overtimeValue?.confirmedMinutes;
+      overtimeOpenMonthMinutes = overtimeValue?.openMonthMinutes;
+      overtimeHasClosedMonth = overtimeValue?.hasClosedMonth;
+      overtimeRosterIncomplete = overtimeValue?.rosterIncomplete;
+      // Phase 116 (issue #119) — a 500 here used to become `schedule = null`, which monthMetrics
+      // turns into `sollToDateMin: 0`, which SollIstBar prints as "noch keine Sollzeit in diesem
+      // Monat". Now it reaches MonatSaldoCard's existing error branch instead.
+      saldoFetchFailed = anyFailed(rawSchedule, rawOvertime);
       hireDate = rawEmployee?.hireDate ? rawEmployee.hireDate.split("T")[0] : null;
       arbzgEnabled = rawConfig?.arbzgEnabled !== false;
       defaultBreakStart = rawConfig?.defaultBreakStart ?? null;
@@ -357,11 +386,16 @@
       // LONGER sourced from here (it must be month-INDEPENDENT — see the Gesamt-Saldo tile, bound to
       // the live lifetime GET /overtime/:id), so non-SHIFT types no longer need this fetch.
       if (schedule?.type === "SHIFT_BASED") {
-        monthSaldo = await api
-          .get<MonthSaldo>(
+        // Phase 116 (issue #119) — for SHIFT_BASED this endpoint is THE source of every figure
+        // MonatSaldoCard shows. On failure monthMetrics silently fell through to the
+        // FIXED_*/FLEXTIME branch and rendered a DIFFERENT, wrong number as fact.
+        const rawMonthSaldo = await settled(
+          api.get<MonthSaldo>(
             `/overtime/month-saldo/${empId}?year=${calMonth.getFullYear()}&month=${calMonth.getMonth() + 1}`,
-          )
-          .catch(() => null);
+          ),
+        );
+        monthSaldo = valueOr(rawMonthSaldo, null);
+        if (anyFailed(rawMonthSaldo)) saldoFetchFailed = true;
       } else {
         monthSaldo = null;
       }
@@ -662,7 +696,7 @@
       // when building the map (multi-shift days).
       expectedMin = shiftMinByDate.get(dateStr) ?? 0;
     } else {
-      expectedMin = sched ? getDayExpectedHours(sched, date) * 60 : 0;
+      expectedMin = sched ? getDayExpectedMinutes(sched, date) : 0;
     }
     if (isBeforeHire) expectedMin = 0;
     if (isHoliday) expectedMin = 0;
@@ -1003,6 +1037,16 @@
 
   // ── Reaktive Ableitungen ───────────────────────────────────────────────────
   let isMonthlyHours = $derived(schedule?.type === "MONTHLY_HOURS");
+  // Issue #164 — mirrors /time-entries' isNoDailyTarget for the two types the SERVER
+  // treats as gap-free (find-missing-workdays.ts:134, presence.ts:72, overtime.ts:82,
+  // attendance-checker.ts:648, auto-close-month.ts:310): a per-day +/- is meaningless
+  // when the contract fixes only a weekly or monthly total. SHIFT_BASED is deliberately
+  // NOT included here, unlike on /time-entries: this page sources its SHIFT_BASED Soll
+  // from real roster minutes, where a daily diff does mean something. That residual
+  // difference between the two pages is out of scope for #164 and left visible.
+  let isNoDailyTarget = $derived(
+    schedule?.type === "MONTHLY_HOURS" || schedule?.type === "FLEXTIME",
+  );
   let monthlyTarget = $derived(
     isMonthlyHours && schedule?.monthlyHours ? Number(schedule.monthlyHours) * 60 : 0,
   );
@@ -1035,21 +1079,32 @@
     }),
   );
   // Worked + Expected up to cutoff: today if clocked, yesterday otherwise
-  let totalWorked = $derived(
-    entries
-      .filter((e) => {
-        if (!e.endTime || e.isInvalid) return false;
-        if (hasTodayEntries) return true;
-        const d = (e.date ?? e.startTime).split("T")[0];
-        return d < todayStr;
-      })
-      .reduce(
-        (s, e) =>
-          s +
-          Math.floor((new Date(e.endTime!).getTime() - new Date(e.startTime).getTime()) / 60000) -
-          (e.breakMinutes ?? 0),
-        0,
-      ),
+  //
+  // Phase 125 (issue #125) — one predicate, two outputs. `totalWorked` (the card's Ist in every
+  // non-SHIFT branch) and `workedEntryDays` (its "N Arbeitstage bisher" in those same branches)
+  // are read off the SAME filtered list, so they cannot disagree the way issue #125 reported.
+  // SHIFT_BASED uses neither: there both numbers come from GET /overtime/month-saldo
+  // (monthSaldo.workedMinutes / monthSaldo.workedDays). `entries` is already scoped to the
+  // displayed month by fromDate/toDate.
+  const netEntryMinutes = (e: TimeEntry): number =>
+    Math.floor((new Date(e.endTime!).getTime() - new Date(e.startTime).getTime()) / 60000) -
+    (e.breakMinutes ?? 0);
+
+  let entriesToDate = $derived(
+    entries.filter((e) => {
+      if (!e.endTime || e.isInvalid) return false;
+      if (hasTodayEntries) return true;
+      const d = (e.date ?? e.startTime).split("T")[0];
+      return d < todayStr;
+    }),
+  );
+  let totalWorked = $derived(entriesToDate.reduce((s, e) => s + netEntryMinutes(e), 0));
+  let workedEntryDays = $derived(
+    new Set(
+      entriesToDate
+        .filter((e) => netEntryMinutes(e) > 0)
+        .map((e) => (e.date ?? e.startTime).split("T")[0]),
+    ).size,
   );
   let totalExpected = $derived(
     calendarDays
@@ -1079,6 +1134,10 @@
     saldoMin: number | null; // null → no schedule / no Soll target
     sollLabel: string;
     closed: boolean;
+    // Phase 125 (issue #125) — the "N Arbeitstage bisher" count, deliberately a MonthMetrics field
+    // so it is produced by the SAME branch as `istMin` above it and can never be sourced from
+    // somewhere else. `null` = this branch has no count and the card must print none.
+    workdaysSoFar: number | null;
   };
   let monthMetrics: MonthMetrics = $derived.by(() => {
     if (!schedule) {
@@ -1088,6 +1147,7 @@
         saldoMin: null,
         sollLabel: "Soll (bisher)",
         closed: false,
+        workdaysSoFar: null,
       };
     }
 
@@ -1100,6 +1160,7 @@
         saldoMin: monthSaldo.balanceMinutes,
         sollLabel: "Soll (bisher)",
         closed: monthSaldo.closed,
+        workdaysSoFar: monthSaldo.workedDays ?? null,
       };
     }
 
@@ -1113,6 +1174,7 @@
         saldoMin: null,
         sollLabel: "Soll",
         closed: false,
+        workdaysSoFar: workedEntryDays,
       };
     }
 
@@ -1123,6 +1185,7 @@
         saldoMin: mBalance,
         sollLabel: "Soll",
         closed: false,
+        workdaysSoFar: workedEntryDays,
       };
     }
 
@@ -1133,13 +1196,9 @@
       saldoMin: mBalance,
       sollLabel: "Soll (bisher)",
       closed: false,
+      workdaysSoFar: workedEntryDays,
     };
   });
-  // Counts over already-loaded day/entry data — CONTEXT explicitly permits this (not a saldo
-  // computation).
-  let workdaysSoFar = $derived(
-    calendarDays.filter((d) => d.isCurrentMonth && !d.isFuture && d.workedMin > 0).length,
-  );
   let runningCount = $derived(entries.filter((e) => !e.endTime).length);
   // ArbZG live check for the modal: existing entries for formDate + current form values
   let modalWarnings = $derived.by(() => {
@@ -1237,6 +1296,26 @@
       return 0;
     });
   });
+
+  // Phase 116 (issue #119) — the ONE answer to "what does the list render right now".
+  // `hasEmployeeLink` is always true where this renders (the markup sits inside
+  // {#if selectedEmployee}), but it is passed honestly rather than hard-coded so the
+  // "no-employee" arm survives if that wrapper ever moves.
+  let listState = $derived(
+    resolveMonthListState({
+      loading,
+      hasEmployeeLink: selectedEmployeeId !== null,
+      rowCount: allEntries.length,
+    }),
+  );
+  let saldoCardState = $derived(
+    resolveSaldoCardState({
+      loading,
+      hasEmployeeLink: selectedEmployeeId !== null,
+      fetchFailed: saldoFetchFailed,
+      pageError: !!error,
+    }),
+  );
 </script>
 
 <svelte:head><title>Team-Zeiten – Clokr</title></svelte:head>
@@ -1370,11 +1449,11 @@
       istMin={monthMetrics.istMin}
       saldoMin={monthMetrics.saldoMin}
       sollLabel={monthMetrics.sollLabel}
-      {workdaysSoFar}
+      workdaysSoFar={monthMetrics.workdaysSoFar}
       {runningCount}
       isLocked={monthIsLocked || monthMetrics.closed}
-      {loading}
-      error={!!error && !loading}
+      loading={saldoCardState === "loading"}
+      error={saldoCardState === "error"}
       onRetry={loadAll}
       monthNav={monthNavBar}
     />
@@ -1467,13 +1546,13 @@
                       >{cum >= 0 ? "+" : "−"}{fmtMin(Math.abs(cum))}</span
                     >
                   {/if}
-                {:else if day.expectedMin > 0 && !isMonthlyHours}
+                {:else if day.expectedMin > 0 && !isNoDailyTarget}
                   {@const b = day.workedMin - day.expectedMin}
                   <span class="day-bal {balClass(b)}"
                     >{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span
                   >
                 {/if}
-              {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture && !isMonthlyHours}
+              {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture && !isNoDailyTarget}
                 <span class="day-missing">−{fmtMin(day.expectedMin)}&thinsp;h</span>
               {/if}
             </button>
@@ -1510,122 +1589,134 @@
   <!-- ── Listenansicht ──────────────────────────────────────────────────── -->
   {#if teView === "list"}
     <div class="card card-animate list-card">
-      <div class="table-wrapper">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Datum</th>
-              <th>Von</th>
-              <th>Bis</th>
-              <th>Pause</th>
-              <th>Netto</th>
-              {#if isShiftBased && monthSaldo}
-                <th title="Kumulierter Gesamtsaldo bis zu diesem Tag (§615)">Gesamtsaldo</th>
-              {/if}
-              <th>Quelle</th>
-              <th>Notiz</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each allEntries as slot (slot.id)}
-              {#if slot.kind === "TE"}
-                {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
-                {@const slotArbzg = arbzgDayMap.get(slotDate)}
-                <tr class:row-invalid={slot.isInvalid}>
-                  <td class="font-mono"
-                    >{new Date(slot.startTime).toLocaleDateString("de-DE", {
-                      day: "2-digit",
-                      month: "2-digit",
-                      year: "numeric",
-                    })}{#if slotArbzg}
-                      <span class="list-arbzg-hint"
-                        >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
-                          class="arbzg-tooltip"
-                          >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
-                              />{/if}{/each}</span
-                        ></span
-                      >
-                    {/if}</td
-                  >
-                  <td class="font-mono">{fmtTime(slot.startTime)}</td>
-                  <td class="font-mono">
-                    {#if slot.endTime}{fmtTime(slot.endTime)}
-                    {:else}<span class="badge badge-green">Aktiv</span>{/if}
-                  </td>
-                  <td>{fmtBreaks(slot)}</td>
-                  <td class="font-mono font-medium">{slotNet(slot)}</td>
-                  {#if isShiftBased && monthSaldo}
-                    {@const cum = monthSaldoDayMap.get(slotDate)}
-                    <td class="font-mono {cum != null ? balClass(cum) : ''}">
-                      {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
-                    </td>
-                  {/if}
-                  <td
-                    ><span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span
-                    ></td
-                  >
-                  <td class="note-cell text-muted">
-                    {#if slot.isInvalid && slot.invalidReason}
-                      <span class="invalid-reason">{slot.invalidReason}</span>
-                    {:else}
-                      {slot.note ?? "---"}
-                    {/if}
-                  </td>
-                  <td class="action-cell">
-                    {#if slot.isLocked}
-                      <!-- locked entries are read-only; no actions shown (D-08) -->
-                    {:else}
-                      <span class="row-actions row-actions--visible">
-                        <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
-                          >✏️</button
-                        >
-                        <button
-                          class="btn-icon btn-icon-danger"
-                          onclick={() => openDeleteDialog(slot.id)}
-                          title="Löschen">🗑</button
-                        >
-                      </span>
-                    {/if}
-                  </td>
-                </tr>
-              {:else}
-                <!-- 260611-ly6 — BS row: read-only, single-day, no times, no breaks, no actions. -->
-                <tr class="row-bs" data-testid={`bs-row-${slot.id}`}>
-                  <td class="font-mono"
-                    >{new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
-                      day: "2-digit",
-                      month: "2-digit",
-                      year: "numeric",
-                    })}</td
-                  >
-                  <td class="font-mono text-muted">—</td>
-                  <td class="font-mono text-muted">—</td>
-                  <td class="text-muted">—</td>
-                  <td class="font-mono font-medium text-muted">—</td>
-                  <td><span class="badge badge-blue">Berufsschule</span></td>
-                  <td class="note-cell text-muted"
-                    >{slot.source === "PATTERN" ? "Automatisch (Muster)" : "Manuell eingefügt"}</td
-                  >
-                  <td class="action-cell">
-                    <span
-                      class="text-muted"
-                      style="font-size: 0.75rem;"
-                      title="Berufsschultage werden unter Schichten verwaltet">Schichten →</span
-                    >
-                  </td>
-                </tr>
-              {/if}
-            {/each}
-          </tbody>
-        </table>
-      </div>
-      {#if allEntries.length === 0}
-        <div class="empty-state">
-          <span class="empty-icon">📋</span>
-          <h3>Keine Einträge</h3>
-          <p class="text-muted">Keine Zeiteinträge in diesem Monat.</p>
+      {#if listState === "loading"}
+        <!-- Phase 116 (issue #119, Akzeptanzkriterium 3) — the mirror of the own page's fix.
+             This page was built as a copy of /time-entries and inherited the same ungated
+             empty state. -->
+        <div class="list-skeleton" data-testid="team-time-entries-list-skeleton" aria-hidden="true">
+          {#each Array(6) as _, i (i)}<div class="skeleton list-skel-row"></div>{/each}
         </div>
+      {:else}
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Datum</th>
+                <th>Von</th>
+                <th>Bis</th>
+                <th>Pause</th>
+                <th>Netto</th>
+                {#if isShiftBased && monthSaldo}
+                  <th title="Kumulierter Gesamtsaldo bis zu diesem Tag (§615)">Gesamtsaldo</th>
+                {/if}
+                <th>Quelle</th>
+                <th>Notiz</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each allEntries as slot (slot.id)}
+                {#if slot.kind === "TE"}
+                  {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
+                  {@const slotArbzg = arbzgDayMap.get(slotDate)}
+                  <tr class:row-invalid={slot.isInvalid}>
+                    <td class="font-mono"
+                      >{new Date(slot.startTime).toLocaleDateString("de-DE", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                      })}{#if slotArbzg}
+                        <span class="list-arbzg-hint"
+                          >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
+                            class="arbzg-tooltip"
+                            >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
+                                />{/if}{/each}</span
+                          ></span
+                        >
+                      {/if}</td
+                    >
+                    <td class="font-mono">{fmtTime(slot.startTime)}</td>
+                    <td class="font-mono">
+                      {#if slot.endTime}{fmtTime(slot.endTime)}
+                      {:else}<span class="badge badge-green">Aktiv</span>{/if}
+                    </td>
+                    <td>{fmtBreaks(slot)}</td>
+                    <td class="font-mono font-medium">{slotNet(slot)}</td>
+                    {#if isShiftBased && monthSaldo}
+                      {@const cum = monthSaldoDayMap.get(slotDate)}
+                      <td class="font-mono {cum != null ? balClass(cum) : ''}">
+                        {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
+                      </td>
+                    {/if}
+                    <td
+                      ><span class="badge {sourceBadge(slot.source)}"
+                        >{sourceLabel(slot.source)}</span
+                      ></td
+                    >
+                    <td class="note-cell text-muted">
+                      {#if slot.isInvalid && slot.invalidReason}
+                        <span class="invalid-reason">{slot.invalidReason}</span>
+                      {:else}
+                        {slot.note ?? "---"}
+                      {/if}
+                    </td>
+                    <td class="action-cell">
+                      {#if slot.isLocked}
+                        <!-- locked entries are read-only; no actions shown (D-08) -->
+                      {:else}
+                        <span class="row-actions row-actions--visible">
+                          <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
+                            >✏️</button
+                          >
+                          <button
+                            class="btn-icon btn-icon-danger"
+                            onclick={() => openDeleteDialog(slot.id)}
+                            title="Löschen">🗑</button
+                          >
+                        </span>
+                      {/if}
+                    </td>
+                  </tr>
+                {:else}
+                  <!-- 260611-ly6 — BS row: read-only, single-day, no times, no breaks, no actions. -->
+                  <tr class="row-bs" data-testid={`bs-row-${slot.id}`}>
+                    <td class="font-mono"
+                      >{new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                      })}</td
+                    >
+                    <td class="font-mono text-muted">—</td>
+                    <td class="font-mono text-muted">—</td>
+                    <td class="text-muted">—</td>
+                    <td class="font-mono font-medium text-muted">—</td>
+                    <td><span class="badge badge-blue">Berufsschule</span></td>
+                    <td class="note-cell text-muted"
+                      >{slot.source === "PATTERN"
+                        ? "Automatisch (Muster)"
+                        : "Manuell eingefügt"}</td
+                    >
+                    <td class="action-cell">
+                      <span
+                        class="text-muted"
+                        style="font-size: 0.75rem;"
+                        title="Berufsschultage werden unter Schichten verwaltet">Schichten →</span
+                      >
+                    </td>
+                  </tr>
+                {/if}
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        {#if listState === "empty"}
+          <div class="empty-state">
+            <span class="empty-icon">📋</span>
+            <h3>Keine Einträge</h3>
+            <p class="text-muted">Keine Zeiteinträge in diesem Monat.</p>
+          </div>
+        {/if}
       {/if}
     </div>
   {/if}
@@ -1869,6 +1960,17 @@
   }
   .list-card .table-wrapper {
     overflow-x: auto;
+  }
+  /* Phase 116 (issue #119) — list-view loading skeleton. Reuses the global .skeleton shimmer
+     recipe (app.css:883); only the row geometry is page-scoped. */
+  .list-card .list-skeleton {
+    display: grid;
+    gap: 0.75rem;
+    padding: 1.25rem 1.5rem;
+  }
+  .list-card .list-skel-row {
+    height: 2.25rem;
+    border-radius: var(--r-sm);
   }
   .list-card .empty-state {
     padding: 48px 24px;

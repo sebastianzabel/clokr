@@ -13,8 +13,10 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { todayStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 import { computeMonthSaldo } from "../utils/month-saldo";
+import { monthRangeUtc } from "../utils/timezone";
 import bcrypt from "bcryptjs";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -54,16 +56,19 @@ describe("month-saldo endpoint + computeMonthSaldo", () => {
   it("(a) open month: balanceMinutes equals §615 closeEmployeeMonth result, NOT worked−roster", async () => {
     // data.employee is FIXED_SCHEDULE 40h/week (Mo-Fr 8h each, seeded by setup.ts)
     // Use a past month that is definitely not closed.
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1; // current month (open by definition)
+    // Issue #136 (batch D): derived from todayStr() (tenant TZ, Europe/Berlin) instead of
+    // local getFullYear()/getMonth()/getDate() — the endpoint resolves the month in
+    // Europe/Berlin (month-saldo.ts), so on a runner ahead of Berlin, right around
+    // midnight, the local basis could ask for month M+1 while Berlin is still on M,
+    // making the [monthStart, today] to-date window empty.
+    const [year, month, dayOfMonth] = todayStr().split("-").map(Number);
 
     // Create one time entry, 9h worked (480+60=540 gross, 0 break). The header now reflects the
     // TO-DATE (bisher) §615 state (windowEnd = today, or yesterday when no today-entries), so the
     // entry MUST fall within [monthStart, today] to be counted. Use min(day 2, today's day-of-month):
     // when today is the 1st/2nd, place it on today (the hasTodayEntries guard then includes today);
     // otherwise day 2 (a past day, always inside the to-date window).
-    const testDay = Math.min(2, now.getDate());
+    const testDay = Math.min(2, dayOfMonth);
     const testDate = ymd(year, month, testDay);
     // Clean up any pre-existing entry for that date
     await app.prisma.timeEntry.deleteMany({
@@ -207,10 +212,10 @@ describe("month-saldo endpoint + computeMonthSaldo", () => {
   // ── Authorization: EMPLOYEE can read own, forbidden for other employee ────
 
   it("EMPLOYEE may read their own month-saldo", async () => {
-    const now = new Date();
+    const [year, month] = todayStr().split("-").map(Number);
     const res = await app.inject({
       method: "GET",
-      url: `/api/v1/overtime/month-saldo/${data.employee.id}?year=${now.getFullYear()}&month=${now.getMonth() + 1}`,
+      url: `/api/v1/overtime/month-saldo/${data.employee.id}?year=${year}&month=${month}`,
       headers: { authorization: `Bearer ${data.empToken}` },
     });
     expect(res.statusCode).toBe(200);
@@ -218,10 +223,10 @@ describe("month-saldo endpoint + computeMonthSaldo", () => {
 
   it("EMPLOYEE is forbidden from reading another employee month-saldo", async () => {
     // adminEmployee is a different employee in the same tenant
-    const now = new Date();
+    const [year, month] = todayStr().split("-").map(Number);
     const res = await app.inject({
       method: "GET",
-      url: `/api/v1/overtime/month-saldo/${data.adminEmployee.id}?year=${now.getFullYear()}&month=${now.getMonth() + 1}`,
+      url: `/api/v1/overtime/month-saldo/${data.adminEmployee.id}?year=${year}&month=${month}`,
       headers: { authorization: `Bearer ${data.empToken}` },
     });
     expect(res.statusCode).toBe(403);
@@ -229,10 +234,10 @@ describe("month-saldo endpoint + computeMonthSaldo", () => {
 
   it("returns 404 for cross-tenant employee lookup", async () => {
     const fakeId = "00000000-0000-0000-0000-000000000001";
-    const now = new Date();
+    const [year, month] = todayStr().split("-").map(Number);
     const res = await app.inject({
       method: "GET",
-      url: `/api/v1/overtime/month-saldo/${fakeId}?year=${now.getFullYear()}&month=${now.getMonth() + 1}`,
+      url: `/api/v1/overtime/month-saldo/${fakeId}?year=${year}&month=${month}`,
       headers: { authorization: `Bearer ${data.adminToken}` },
     });
     expect(res.statusCode).toBe(404);
@@ -524,6 +529,300 @@ describe("rosterIncomplete (Phase 97-05, SALDO-DISP-07) — computeMonthSaldo", 
     try {
       const result = await computeMonthSaldo(app, zeroRosterEmpId, RI_YEAR, RI_MONTH);
       expect(result.rosterIncomplete).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("workedDays (Phase 125, issue #125) — computeMonthSaldo", () => {
+  let app: FastifyInstance;
+  let tenantId: string;
+  let adminToken: string;
+  let shiftEmpAId: string;
+  let shiftEmpBId: string;
+
+  const WD_YEAR = 2026;
+  const WD_MONTH = 9;
+  // Mid-month, no entry today → the endpoint's to-date cutoff is 2026-09-14, so every
+  // seeded date below sits strictly inside the to-date window (D-09 / issue #136 — a fixed
+  // anchor, no relative offsets from the live clock).
+  const WD_NOW = new Date("2026-09-15T10:00:00.000Z");
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const prisma = app.prisma;
+    const suffix = "mswd-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+    const tenant = await prisma.tenant.create({
+      data: {
+        name: `MonthSaldoWD ${suffix}`,
+        slug: `mswd-${suffix}`,
+        federalState: "NIEDERSACHSEN",
+      },
+    });
+    tenantId = tenant.id;
+    await prisma.tenantConfig.create({
+      data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
+    });
+
+    const passwordHash = await bcrypt.hash("test1234", 10);
+
+    const adminUser = await prisma.user.create({
+      data: {
+        email: `admin-${suffix}@test.de`,
+        passwordHash,
+        role: "ADMIN",
+        isActive: true,
+      },
+    });
+    await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: adminUser.id,
+        employeeNumber: `ADM-${suffix}`,
+        firstName: "Admin",
+        lastName: "WD",
+        hireDate: new Date("2024-01-01T00:00:00Z"),
+      },
+    });
+
+    const shiftSchedule = {
+      type: "SHIFT_BASED" as const,
+      weeklyHours: 38,
+      mondayHours: 7.6,
+      tuesdayHours: 7.6,
+      wednesdayHours: 7.6,
+      thursdayHours: 7.6,
+      fridayHours: 7.6,
+      saturdayHours: 0,
+      sundayHours: 0,
+      validFrom: new Date("2026-09-01"),
+    };
+
+    // Employee A — SHIFT_BASED (D-08 d; the reported employee is Phorest-integrated), open month.
+    {
+      const user = await prisma.user.create({
+        data: {
+          email: `mswda-${suffix}@test.de`,
+          passwordHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const emp = await prisma.employee.create({
+        data: {
+          tenantId,
+          userId: user.id,
+          employeeNumber: `MSWDA-${suffix}`,
+          firstName: "Shift",
+          lastName: "OpenMonth",
+          hireDate: new Date("2026-09-01"),
+        },
+      });
+      shiftEmpAId = emp.id;
+      await prisma.workSchedule.create({ data: { employeeId: emp.id, ...shiftSchedule } });
+      await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+
+      for (const d of ["2026-09-01", "2026-09-02", "2026-09-03"]) {
+        await prisma.timeEntry.create({
+          data: {
+            employeeId: emp.id,
+            date: new Date(d + "T00:00:00Z"),
+            startTime: new Date(`${d}T08:00:00Z`),
+            endTime: new Date(`${d}T16:00:00Z`),
+            breakMinutes: 30,
+            type: "WORK",
+            source: "MANUAL",
+            isInvalid: false,
+          },
+        });
+      }
+      // An invalid entry — must count toward neither number.
+      await prisma.timeEntry.create({
+        data: {
+          employeeId: emp.id,
+          date: new Date("2026-09-04T00:00:00Z"),
+          startTime: new Date("2026-09-04T08:00:00Z"),
+          endTime: new Date("2026-09-04T16:00:00Z"),
+          breakMinutes: 30,
+          type: "WORK",
+          source: "MANUAL",
+          isInvalid: true,
+        },
+      });
+      // A soft-deleted entry — must count toward neither number.
+      await prisma.timeEntry.create({
+        data: {
+          employeeId: emp.id,
+          date: new Date("2026-09-07T00:00:00Z"),
+          startTime: new Date("2026-09-07T08:00:00Z"),
+          endTime: new Date("2026-09-07T16:00:00Z"),
+          breakMinutes: 30,
+          type: "WORK",
+          source: "MANUAL",
+          isInvalid: false,
+          deletedAt: new Date(),
+        },
+      });
+
+      for (const d of [
+        "2026-09-01",
+        "2026-09-02",
+        "2026-09-03",
+        "2026-09-04",
+        "2026-09-07",
+        "2026-09-08",
+        "2026-09-09",
+        "2026-09-10",
+        "2026-09-11",
+      ]) {
+        await prisma.shift.create({
+          data: {
+            employeeId: emp.id,
+            date: new Date(d + "T00:00:00Z"),
+            startTime: "08:00",
+            endTime: "16:00",
+          },
+        });
+      }
+    }
+
+    // Employee B — a second SHIFT_BASED employee, closed via a non-superseded MONTHLY snapshot.
+    {
+      const user = await prisma.user.create({
+        data: {
+          email: `mswdb-${suffix}@test.de`,
+          passwordHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const emp = await prisma.employee.create({
+        data: {
+          tenantId,
+          userId: user.id,
+          employeeNumber: `MSWDB-${suffix}`,
+          firstName: "Shift",
+          lastName: "ClosedMonth",
+          hireDate: new Date("2026-09-01"),
+        },
+      });
+      shiftEmpBId = emp.id;
+      await prisma.workSchedule.create({ data: { employeeId: emp.id, ...shiftSchedule } });
+      await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+
+      const { start: monthStartUtc, end: monthEndUtc } = monthRangeUtc(
+        WD_YEAR,
+        WD_MONTH,
+        "Europe/Berlin",
+      );
+      await prisma.saldoSnapshot.create({
+        data: {
+          employeeId: emp.id,
+          periodType: "MONTHLY",
+          periodStart: monthStartUtc,
+          periodEnd: monthEndUtc,
+          workedMinutes: 6840, // 3 × 380 min (arbitrary non-zero, only closedness matters here)
+          expectedMinutes: 7220,
+          balanceMinutes: -380,
+          carryOver: -380,
+          closedAt: new Date("2026-10-01T08:00:00Z"),
+          superseded: false,
+        },
+      });
+    }
+
+    // Phase 125 (D-09): the JWT is issued with iat/exp derived from "now". Every test in this
+    // block fakes the clock to WD_NOW (a fixed FUTURE anchor relative to real wall-clock time,
+    // per D-09/issue #136) to keep the endpoint's to-date cutoff deterministic — so the token
+    // itself must ALSO be issued under that same faked instant, or it reads as already expired
+    // the moment a test fakes the clock forward to WD_NOW. Fake the clock for the login call
+    // only, then restore it — each `it` below re-fakes WD_NOW for its own request.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(WD_NOW);
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: `admin-${suffix}@test.de`, password: "test1234" },
+    });
+    vi.useRealTimers();
+    adminToken = JSON.parse(loginRes.body).accessToken;
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("month-saldo workedDays test cleanup failed:", err);
+    }
+  });
+
+  it("(d) SHIFT_BASED open month: workedDays === 3", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(WD_NOW);
+    try {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/month-saldo/${shiftEmpAId}?year=${WD_YEAR}&month=${WD_MONTH}`,
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as { workedDays?: number; workedMinutes: number };
+      expect(body.workedDays).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("(e) invalid and soft-deleted entries count toward neither number", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(WD_NOW);
+    try {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/month-saldo/${shiftEmpAId}?year=${WD_YEAR}&month=${WD_MONTH}`,
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as { workedDays?: number; workedMinutes: number };
+      // 3 × (8h − 30min break) = 3 × 450 = 1350
+      expect(body.workedMinutes).toBe(1350);
+      expect(body.workedDays).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the biconditional survives the endpoint", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(WD_NOW);
+    try {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/month-saldo/${shiftEmpAId}?year=${WD_YEAR}&month=${WD_MONTH}`,
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      const body = JSON.parse(res.body) as { workedDays?: number; workedMinutes: number };
+      expect(body.workedMinutes > 0).toBe((body.workedDays ?? 0) > 0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closed month asserts no workedDays (absent field, not 0)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(WD_NOW);
+    try {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/month-saldo/${shiftEmpBId}?year=${WD_YEAR}&month=${WD_MONTH}`,
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as { closed: boolean; workedDays?: number };
+      expect(body.closed).toBe(true);
+      expect(body).not.toHaveProperty("workedDays");
     } finally {
       vi.useRealTimers();
     }

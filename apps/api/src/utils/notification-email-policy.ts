@@ -51,6 +51,10 @@ const TOGGLE_ENTRIES: Record<string, EmailPolicy> = {
   BREAK_COMPLIANCE_ALERT:  { email: "toggle", field: "emailOnMissingEntries" }, // Phase 92 (BREAK-06)
   CLOCK_OUT_REMINDER:      { email: "toggle", field: "emailOnClockOutReminder" },
   MONTH_CLOSE_BLOCKED:     { email: "toggle", field: "emailOnMonthClose" }, // auto-close-month.ts
+  // Phase 107 (D-19): a roster change recomputed an APPROVED provisional VACATION request's
+  // consumption. emailOnLeaveDecision is the closest existing toggle (this adjusts an already
+  // approved leave decision) — reusing it avoids adding a third leave-email column.
+  LEAVE_DAYS_ADJUSTED:     { email: "toggle", field: "emailOnLeaveDecision" },
 };
 
 // ── B. Retro-Entry toggle — the four RETRO_ENTRY_* types (NEW field, @default(true)) ──

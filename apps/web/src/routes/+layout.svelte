@@ -14,6 +14,7 @@
   // No runtime locale switching this milestone — DE remains active everywhere.
   import "$lib/i18n";
   import Toast from "$lib/components/ui/Toast.svelte";
+  import ErrorBoundary from "$lib/components/ui/ErrorBoundary.svelte";
 
   interface Props {
     children?: import("svelte").Snippet;
@@ -22,5 +23,7 @@
   let { children }: Props = $props();
 </script>
 
-{@render children?.()}
+<ErrorBoundary scope="app">
+  {@render children?.()}
+</ErrorBoundary>
 <Toast />

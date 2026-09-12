@@ -4,6 +4,7 @@
   import { mode } from "$stores/mode";
   import { authStore } from "$stores/auth";
   import { avatarVersion } from "$stores/avatar";
+  import { clearUnsaved } from "$stores/unsaved";
   import { api } from "$api/client";
   import LanguageToggle from "$lib/components/ui/LanguageToggle.svelte";
 
@@ -60,6 +61,7 @@
     } finally {
       avatarMenuOpen = false;
       authStore.logout();
+      clearUnsaved(); // N-08: the nav guard cannot tell a logout from any other navigation
       goto("/login");
     }
   }

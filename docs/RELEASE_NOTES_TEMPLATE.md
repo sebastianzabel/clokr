@@ -56,11 +56,18 @@ _<optionaler Audit-/Revisionssicherheits-Hinweis>_
 
 ## Erstellen (Ablauf)
 
-1. Notes-Datei nach obiger Struktur schreiben (Zwischenablage/Scratchpad).
-2. Commit-Range zur Orientierung: `git log --oneline <prev-tag>..<tag>` — dann **nach Thema** zusammenfassen, nicht 1:1 übernehmen.
-3. Release **erst nach grünem CI Build & Push** anlegen (sonst `MANIFEST_UNKNOWN` beim Promote):
-   `gh release create vX.Y.Z --title "vX.Y.Z — …" --notes-file <datei>`
-4. Bestehende Notes nachbessern: `gh release edit vX.Y.Z --title "…" --notes-file <datei>`
+1. Datei `docs/release-notes/vX.Y.Z.md` nach obiger Struktur schreiben — **vor** dem Merge der
+   release-please-PR. Die Version steht im Titel der offenen PR.
+2. Commit-Range zur Orientierung: `git log --oneline <prev-tag>..HEAD` — dann **nach Thema**
+   zusammenfassen, nicht 1:1 übernehmen.
+3. Als `docs(release): add release notes for vX.Y.Z` auf `main` landen. Ein `docs:`-Commit
+   verändert die Version nicht.
+4. Den GitHub-Release-Body schreibt **niemand von Hand**: `.github/workflows/release.yml`
+   (Job `publish-notes`) füllt ihn aus genau dieser Datei. Nachbessern heißt: Datei ändern,
+   Job erneut laufen lassen.
+
+Die Datei wird zusätzlich ins API-Abbild gebacken (`apps/api/Dockerfile`) und im
+What's-New-Dialog angezeigt — derselbe Text, eine Wahrheit.
 
 ## Referenz-Beispiel (Auszug v1.8.25)
 

@@ -2,7 +2,9 @@
   import { authStore } from "$stores/auth";
   import { tenantFeatures } from "$stores/tenant-features";
   import { versionStore, loadVersion } from "$stores/version";
+  import { hasUnreadReleaseNotes, loadReleaseNotesData, openWhatsNew } from "$stores/release-notes";
   import { goto } from "$app/navigation";
+  import { clearUnsaved } from "$stores/unsaved";
   import { api } from "$api/client";
   import Icon from "$lib/components/Icon.svelte";
   import { onMount } from "svelte";
@@ -19,6 +21,10 @@
   // Fail-silent (D-08) — no toast, no console.error.
   onMount(() => {
     loadVersion();
+    // Phase 110 (D-07/D-09): the unread marker must be able to render as soon as the shell does,
+    // so the notes and the seen state are hydrated here alongside the version. Both loaders are
+    // single-shot and fail-silent, so calling this from two components costs one request total.
+    loadReleaseNotesData();
   });
 
   type NavItem = { href: string; label: string; icon: string };
@@ -156,6 +162,7 @@
       // swallow — local logout still proceeds
     } finally {
       authStore.logout();
+      clearUnsaved(); // N-08: the nav guard cannot tell a logout from any other navigation
       goto("/login");
     }
   }
@@ -223,7 +230,19 @@
 
   {#if $versionStore}
     <div class="sidebar-version" aria-label="Anwendungsversion">
-      <span class="version-label" translate="no">v{$versionStore}</span>
+      <button
+        type="button"
+        class="version-btn"
+        onclick={openWhatsNew}
+        aria-label="Was ist neu in Version {$versionStore}"
+        title="Was ist neu"
+        data-testid="sidebar-whats-new"
+      >
+        <span class="version-label" translate="no">v{$versionStore}</span>
+        {#if $hasUnreadReleaseNotes}
+          <span class="version-dot" aria-hidden="true"></span>
+        {/if}
+      </button>
     </div>
   {/if}
 </aside>
@@ -437,11 +456,40 @@
     text-align: center;
   }
 
+  /* Phase 110 (D-09): the version line is now the What's-New entry point — reset the
+     button chrome so it still reads as plain text, keep a visible focus ring because it
+     is now a real interactive control. */
+  .version-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-1);
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .version-btn:focus-visible {
+    outline: 2px solid var(--brand-light);
+    outline-offset: 2px;
+  }
+
   .version-label {
     font-size: 0.75rem;
     color: var(--text-faint);
     font-feature-settings: "tnum";
     letter-spacing: 0.02em;
+  }
+
+  /* Mirrors Topbar.svelte's .notif-dot.unread-dot idiom. */
+  .version-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+    flex-shrink: 0;
   }
 
   @media (max-width: 960px) {

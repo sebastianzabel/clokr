@@ -15,6 +15,7 @@
   import { authStore } from "$stores/auth";
   import { tenantFeatures } from "$stores/tenant-features";
   import { toasts } from "$stores/toast";
+  import { markUnsaved } from "$stores/unsaved";
   import ListDetail from "$lib/components/admin/ListDetail.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import AvailabilityWeekGrid, {
@@ -65,9 +66,28 @@
   let featureDisabled = $state(false);
   let lastSnapshot = $state("");
 
+  // WR-01 (109-REVIEW-FIX.md): `lastSnapshot` is assigned in exactly one place — the last
+  // statement of applyEntries() — and onMount has paths that never reach it (a rejected employee
+  // request returns early; a rejected availability request that is not a 410 falls through).
+  // Without this flag `lastSnapshot` stays "" while `currentSnapshot` is `{"r":[],"o":[]}`, so
+  // `dirty` reads true on a page that shows nothing but an error: the Speichern button is enabled
+  // and would PUT an empty entries array. Setting the flag AT the single baseline site rather
+  // than "at the end of onMount's try" is deliberate — this onMount has several exits, and a
+  // trailing assignment would have to be duplicated into each of them correctly.
+  let snapshotsReady = $state(false);
+
   const currentSnapshot = $derived(JSON.stringify({ r: recurringEntries, o: oneOffEntries }));
 
-  const dirty = $derived(!loading && !featureDisabled && currentSnapshot !== lastSnapshot);
+  const dirty = $derived(
+    snapshotsReady && !loading && !featureDisabled && currentSnapshot !== lastSnapshot,
+  );
+
+  // Phase 109 (D-12) — one registry entry per PAGE. `dirty` already carries the WR-01 gate, so the
+  // registration reads it directly rather than repeating `snapshotsReady &&` here.
+  $effect(() => {
+    markUnsaved("admin-availability-detail", dirty);
+    return () => markUnsaved("admin-availability-detail", false);
+  });
 
   function applyEntries(entries: ApiAvailabilityEntry[]): void {
     const recurring: RecurringEntry[] = [];
@@ -96,6 +116,7 @@
     recurringEntries = recurring;
     oneOffEntries = oneoff;
     lastSnapshot = JSON.stringify({ r: recurringEntries, o: oneOffEntries });
+    snapshotsReady = true;
   }
 
   function buildPayload() {
@@ -191,6 +212,12 @@
 >
   {#snippet actions()}
     <a class="btn btn-ghost btn-sm" href="/admin/availability">Zurück</a>
+    <!-- Neither Section on this page has a footer snippet, so Section.dirty would render
+         nothing — the global .unsaved-hint recipe is rendered directly here, next to the
+         button it refers to, same as the inline case on admin/system. -->
+    {#if dirty}
+      <span class="unsaved-hint" role="status">Nicht gespeichert</span>
+    {/if}
     <button
       class="btn btn-primary btn-sm"
       disabled={featureDisabled || !dirty || saving}

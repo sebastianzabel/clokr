@@ -99,6 +99,27 @@ Note that `.planning/` is gitignored — the planning artifacts are local. The i
 public half, the phase is the private half, and the commit scope (`fix(104-11): …`) is what
 ties them together in the history.
 
+### The phase number IS the issue number
+
+From v1.11.0 on, a new phase takes the number of the issue it implements. Issue #126 becomes
+Phase 126, and its commits are scoped `fix(126-01): …`.
+
+**Why:** the two numbering lines used to run independently, and nothing in the repo recorded the
+mapping. Phase 118 implements issue #124, Phase 114 implements issue #117, Phase 111 implements
+issue #114 — an offset that shifts per phase and is not derivable from either side. Since
+`.planning/` is gitignored, a commit scope like `fix(118-02): …` was unresolvable to an issue for
+anyone but the machine that planned it. Making the numbers identical removes the lookup entirely.
+
+**The exception, stated so it is not discovered the hard way:** phase numbers 1–118 are already
+taken by the v1.7–v1.10 history, and issue numbers restart from #1. A low-numbered issue therefore
+collides with an existing phase — issue #35 cannot become "Phase 35". When an issue's number is
+already used by a shipped phase, keep the issue's number and append a letter (`Phase 35b`), and say
+in the phase's ROADMAP entry which older phase it collides with. Every currently open issue at or
+above #120 is collision-free, so this only bites the older backlog.
+
+Phases 107–118 (milestone v1.10.0) keep their historical numbers; they are not renumbered.
+Their mapping is recorded in the ROADMAP entry of each phase (`**GitHub:** Issue #NNN`).
+
 ## One-time manual steps
 
 Projects v2 built-in automations can be **read** through the API but not enabled — there is no

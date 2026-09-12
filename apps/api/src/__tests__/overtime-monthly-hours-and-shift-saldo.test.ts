@@ -11,8 +11,9 @@
  * Pattern mirrors apps/api/src/__tests__/overtime-absence-saldo.test.ts:
  * shared singleton Fastify app, fresh tenant per suite, no Date mocking.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { todayStr as tenantTodayStr, utcMidnight } from "./test-dates";
 import { updateOvertimeAccount } from "../routes/time-entries";
 import { monthRangeUtc, dateStrInTz } from "../utils/timezone";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
@@ -267,9 +268,13 @@ describe("updateOvertimeAccount — MONTHLY_HOURS multi-month pro-rata + SHIFT_B
 
     // ── Shift seeding: 3 past weekdays in the current month, 8h each ────────
     // Walk backwards from "yesterday" picking weekdays inside the current month.
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-    const monthLabel = dateStrInTz(today, TZ).slice(0, 7); // "YYYY-MM"
+    // Issue #136 (batch D): derived from tenantTodayStr() (Europe/Berlin) instead of a
+    // UTC-truncated new Date() — on the 1st between 00:00 and 02:00 Berlin the UTC
+    // instant is still the previous month, which would seed shifts into the wrong
+    // month label and desync from production's own tenant-TZ range. The backwards walk
+    // itself is unchanged — only the starting point's basis moved from UTC to tenant TZ.
+    const monthLabel = tenantTodayStr(TZ).slice(0, 7); // "YYYY-MM"
+    const today = utcMidnight(tenantTodayStr(TZ));
     const collected: Date[] = [];
     const cursor = new Date(today.getTime() - 86400000); // yesterday
     while (collected.length < 3 && dateStrInTz(cursor, TZ).startsWith(monthLabel)) {
@@ -332,8 +337,19 @@ describe("updateOvertimeAccount — MONTHLY_HOURS multi-month pro-rata + SHIFT_B
     // Snapshot covers [hireDate, 2 months ago end-of-month] with carryOver=0,
     // so the open range becomes [snapshot.periodEnd + 1, yesterday], spanning
     // at least 2 calendar months as soon as today is past day 2 of any month.
-    const now = new Date();
-    const todayStr = dateStrInTz(now, TZ);
+    // Issue #136 (batch D): hoist ONE anchor for everything below (this test's own
+    // range recomputation AND production's `updateOvertimeAccount` internal "now"),
+    // and pin the clock across the write so both reads are the SAME instant by
+    // construction. Pre-fix, this test captured `now` here and `updateOvertimeAccount`
+    // read its own `new Date()` independently — a midnight between the two moved
+    // `effectiveEnd` by a day (240min for this Mo+Tu=4h schedule), past the `< 1`
+    // (hour) tolerance below. Verified safe to pin: `saldoSnapshot.create({closedAt:
+    // new Date()})` right below is a WRITE, not a `createdAt: { gte }` filter, and
+    // `updateOvertimeAccount` (time-entries.ts) reads only `forDate ?? new Date()`
+    // internally — no DB clock filter either, so the unfaked Postgres clock is
+    // unaffected by this pin.
+    const NOW = new Date();
+    const todayStr = dateStrInTz(NOW, TZ);
     const [yNow, mNow] = todayStr.split("-").map(Number);
     // Use a snapshot that ends 2 calendar months before "now" to guarantee
     // the open range spans at least one month boundary regardless of day-of-month.
@@ -359,11 +375,17 @@ describe("updateOvertimeAccount — MONTHLY_HOURS multi-month pro-rata + SHIFT_B
       },
     });
 
-    await updateOvertimeAccount(app, monthlyEmpId);
+    vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
+    let account;
+    try {
+      await updateOvertimeAccount(app, monthlyEmpId);
 
-    const account = await app.prisma.overtimeAccount.findUnique({
-      where: { employeeId: monthlyEmpId },
-    });
+      account = await app.prisma.overtimeAccount.findUnique({
+        where: { employeeId: monthlyEmpId },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
     const balanceHours = Number(account?.balanceHours ?? 0);
 
     // Reproduce production's range computation:

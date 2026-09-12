@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
+import { monthStartUtc, monthEndUtc } from "../../__tests__/test-dates";
 import type { FastifyInstance } from "fastify";
 
 describe("GET /api/v1/dashboard/overtime-trend", () => {
@@ -57,35 +58,14 @@ describe("GET /api/v1/dashboard/overtime-trend", () => {
   it("returns team carry-over sums grouped by periodStart, ascending", async () => {
     // Seed 3 MONTHLY snapshots for the admin employee of tenant A
     // Use recent months within the 6-month window
-    const now = new Date();
-
-    const month1 = new Date(now);
-    month1.setUTCMonth(month1.getUTCMonth() - 4);
-    month1.setUTCDate(1);
-    month1.setUTCHours(0, 0, 0, 0);
-
-    const month2 = new Date(now);
-    month2.setUTCMonth(month2.getUTCMonth() - 3);
-    month2.setUTCDate(1);
-    month2.setUTCHours(0, 0, 0, 0);
-
-    const month3 = new Date(now);
-    month3.setUTCMonth(month3.getUTCMonth() - 2);
-    month3.setUTCDate(1);
-    month3.setUTCHours(0, 0, 0, 0);
+    const month1 = monthStartUtc(4);
+    const month2 = monthStartUtc(3);
+    const month3 = monthStartUtc(2);
 
     // periodEnd = last day of the respective month
-    const end1 = new Date(month1);
-    end1.setUTCMonth(end1.getUTCMonth() + 1);
-    end1.setUTCDate(0);
-
-    const end2 = new Date(month2);
-    end2.setUTCMonth(end2.getUTCMonth() + 1);
-    end2.setUTCDate(0);
-
-    const end3 = new Date(month3);
-    end3.setUTCMonth(end3.getUTCMonth() + 1);
-    end3.setUTCDate(0);
+    const end1 = monthEndUtc(4);
+    const end2 = monthEndUtc(3);
+    const end3 = monthEndUtc(2);
 
     await app.prisma.saldoSnapshot.create({
       data: {
@@ -195,14 +175,8 @@ describe("GET /api/v1/dashboard/overtime-trend", () => {
 
   it("excludes data from other tenants", async () => {
     // Seed tenant B with large values that must NOT appear in tenant A's response
-    const now = new Date();
-    const bMonth = new Date(now);
-    bMonth.setUTCMonth(bMonth.getUTCMonth() - 1);
-    bMonth.setUTCDate(1);
-    bMonth.setUTCHours(0, 0, 0, 0);
-    const bEnd = new Date(bMonth);
-    bEnd.setUTCMonth(bEnd.getUTCMonth() + 1);
-    bEnd.setUTCDate(0);
+    const bMonth = monthStartUtc(1);
+    const bEnd = monthEndUtc(1);
 
     await app.prisma.saldoSnapshot.create({
       data: {
@@ -266,13 +240,8 @@ describe("GET /api/v1/dashboard/overtime-trend", () => {
     });
 
     // MONTHLY snapshot older than 6 months (should be excluded)
-    const oldMonth = new Date(now);
-    oldMonth.setUTCMonth(oldMonth.getUTCMonth() - 7);
-    oldMonth.setUTCDate(1);
-    oldMonth.setUTCHours(0, 0, 0, 0);
-    const oldEnd = new Date(oldMonth);
-    oldEnd.setUTCMonth(oldEnd.getUTCMonth() + 1);
-    oldEnd.setUTCDate(0);
+    const oldMonth = monthStartUtc(7);
+    const oldEnd = monthEndUtc(7);
 
     await app.prisma.saldoSnapshot.create({
       data: {

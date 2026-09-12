@@ -16,7 +16,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  seedEntitlementYears,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 describe("§ 9 BUrlG legal invariants — Phase 104-06 Task 3", () => {
@@ -27,6 +33,14 @@ describe("§ 9 BUrlG legal invariants — Phase 104-06 Task 3", () => {
   beforeAll(async () => {
     app = await getTestApp();
     data = await seedTestData(app, "s9inv");
+    // Issue #136 (batch B): every confirmCredit(..., attestValidFrom: "2026-xx-xx") in this
+    // file books into calendar year 2026, while seedTestData only provisions a
+    // LeaveEntitlement row for the LIVE current year — seed 2026 explicitly.
+    await seedEntitlementYears(app, {
+      employeeId: data.employee.id,
+      leaveTypeId: data.vacationType.id,
+      years: [2026],
+    });
   });
 
   afterAll(async () => {
