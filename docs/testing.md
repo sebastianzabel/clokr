@@ -74,11 +74,17 @@ only resolves inside the compose network. The `clokr` bucket is created automati
 exports `MINIO_ENDPOINT` / `MINIO_PORT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` / `MINIO_BUCKET`.
 
 It is **not** a `services:` container, and that is not an oversight: GitHub Actions service
-containers cannot override a container's command, and `minio/minio`'s default `CMD` is bare
+containers cannot override a container's command, and the MinIO image's default `CMD` is bare
 `minio` with no `server /data` subcommand — verified with
-`docker inspect --format '{{json .Config.Cmd}}' minio/minio:latest` — so such a container exits
+`docker inspect --format '{{json .Config.Cmd}}' <image>` — so such a container exits
 immediately after printing usage. `docker-compose.yml` can use a service definition only because
 compose supports `command:`.
+
+The image comes from **quay.io**, not Docker Hub, and is pinned by digest. The
+`docker.io/minio/minio` repository was removed — Docker Hub answers 404 and every pull fails with
+`repository does not exist or may require 'docker login'`. If you see that error, you are on a
+checkout that predates the switch; pull `main`. The digest is identical in `ci.yml`,
+`docker-compose.yml` and `docker-compose.prod.yml` — change it in all three or not at all.
 
 ## Why a `pretest` script, not a `docker-entrypoint-initdb.d` mount
 

@@ -171,6 +171,25 @@ describe("WorkSchedule.validFrom month-1st enforcement (Phase 60, #220)", () => 
       // AND the request to one derived (never literal), safely mid-month instant, so
       // the test's `new Date()` and the server's `new Date()` are the same instant by
       // construction and no boundary can fall between them.
+      // The row this test writes must be identified by IDENTITY, not by recency:
+      // `createdAt` carries `@default(now())`, which Prisma resolves from the JS clock
+      // — the very clock `vi.useFakeTimers` replaces. The pinned instant is month-start
+      // + 10 days, so on any calendar day after the 11th it lies BEFORE real `now()`,
+      // and Test 2's row (written moments earlier under the real clock, validFrom
+      // 2026-06-01) sorts as the newer one. `orderBy: createdAt desc` then returned
+      // June instead of the current month and the assertion failed — every month from
+      // the 12th onward, green from the 1st to the 11th. Capturing the pre-existing ids
+      // and taking the row that is not among them removes the clock from the selection
+      // entirely, so no ordering assumption remains to break.
+      const idsBefore = new Set(
+        (
+          await app.prisma.workSchedule.findMany({
+            where: { employeeId: data.employee.id },
+            select: { id: true },
+          })
+        ).map((r) => r.id),
+      );
+
       vi.useFakeTimers({
         now: new Date(monthStartUtc(0).getTime() + 10 * 24 * 60 * 60 * 1000),
         toFake: ["Date"],
@@ -201,18 +220,20 @@ describe("WorkSchedule.validFrom month-1st enforcement (Phase 60, #220)", () => 
         const body = JSON.parse(res.body);
         expect(body.appliedCount).toBeGreaterThanOrEqual(1);
 
-        // The bulk-apply row is the most recently CREATED row for this employee
-        // (Test 2 wrote a 2026-06-01 row which still wins on `validFrom desc`,
-        // so we sort by `createdAt desc` to find the row Test 3 wrote). This is an
-        // ORDER, not a `gte` filter, so the unfaked Postgres clock is unaffected.
-        const newest = await app.prisma.workSchedule.findFirst({
-          where: { employeeId: data.employee.id },
-          orderBy: { createdAt: "desc" },
-        });
-        expect(newest).not.toBeNull();
-        expect(newest!.validFrom.getUTCDate()).toBe(1);
-        expect(newest!.validFrom.getUTCFullYear()).toBe(expectedYear);
-        expect(newest!.validFrom.getUTCMonth()).toBe(expectedMonth);
+        // The row Test 3 wrote is the one whose id did not exist before the request.
+        // Independent of both clocks and of `validFrom` ordering (Test 2's 2026-06-01
+        // row would win that one).
+        const written = (
+          await app.prisma.workSchedule.findMany({
+            where: { employeeId: data.employee.id },
+            select: { id: true, validFrom: true },
+          })
+        ).filter((r) => !idsBefore.has(r.id));
+
+        expect(written).toHaveLength(1);
+        expect(written[0].validFrom.getUTCDate()).toBe(1);
+        expect(written[0].validFrom.getUTCFullYear()).toBe(expectedYear);
+        expect(written[0].validFrom.getUTCMonth()).toBe(expectedMonth);
       } finally {
         vi.useRealTimers();
       }
