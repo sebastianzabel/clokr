@@ -7,16 +7,27 @@
  * exactly the defect this phase closes. Nothing in this file threads a `schema` option anywhere;
  * doing so was explicitly rejected as "every future connection path would have to remember it".
  *
- * Plain module: no side effects, no CLI behaviour. Every error message emitted anywhere in the
- * Phase 101 test-DB code path MUST go through `describeTarget` or `redactDatabaseUrl` below —
- * never print a raw connection string (it carries a password, even if only a local placeholder one).
+ * Every error message emitted anywhere in the Phase 101 test-DB code path MUST go through
+ * `describeTarget` or `redactDatabaseUrl` below — never print a raw connection string (it carries
+ * a password, even if only a local placeholder one).
  *
  * Lives under `src/utils/` (not `apps/api/scripts/`, where `ensure-test-database.ts` lives)
  * because `apps/api/tsconfig.json` pins `rootDir` to `./src` — a file under `src` (the TI-01 proof
  * test) cannot import a sibling outside that root (TS6059), while files under `scripts` are
  * outside the tsc-compiled program entirely (tsconfig.json's `include` covers only `src`) and can
  * freely import inward. This is the one canonical copy; nothing restates these constants.
+ *
+ * Still no module-evaluation side effect, and still imports nothing outside the Node standard
+ * library (Phase 132 adds `node:child_process` and `node:crypto`, which carry no third-party
+ * dependency graph). The reason the original "zero imports" sentence existed is unchanged and
+ * still binding: this module is reached from `vitest.worker-setup.ts`, a `setupFiles` entry
+ * Vitest evaluates once per test file, so pulling in `pg` here cost 197 package loads (Phase 101).
+ * Nothing in this file may import `pg` or any workspace package. The `git` subprocess below is
+ * spawned only from an explicit function call, never at module evaluation, and at most once per
+ * process — see the memo in `resolveTestNamespace`.
  */
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 /** The one and only name the integration suite is allowed to connect to. */
 export const TEST_DATABASE_NAME = "clokr_test";
@@ -89,6 +100,92 @@ export function isValidTestNamespace(namespace: string): boolean {
   if (namespace === "") return true;
   const parsed = parseTestDatabaseName(`${TEST_DATABASE_NAME}_${namespace}`);
   return parsed !== null && parsed.namespace === namespace && parsed.workerIndex === null;
+}
+
+/**
+ * The explicit namespace override (Phase 132, D-02). Two jobs, one mechanism:
+ *  - a human escape hatch for cases the git heuristic cannot answer (two independent CLONES of
+ *    the same repository are two main working trees, not worktrees, so both derive "");
+ *  - the propagation channel from vitest.setup.ts's globalSetup into every worker, so
+ *    vitest.worker-setup.ts never spawns git once per test file.
+ * CI sets it to the empty string deliberately (.github/workflows/ci.yml), which pins CI's
+ * database names to exactly today's `clokr_test` / `clokr_test_<n>` regardless of how the runner
+ * happens to have checked the repository out (D-06, acceptance criterion 6).
+ */
+export const TEST_NAMESPACE_ENV_VAR = "CLOKR_TEST_NAMESPACE";
+
+/**
+ * The per-working-directory namespace, derived from git. `""` for the main working tree.
+ *
+ * D-01: `git rev-parse --git-dir` points at THIS working directory's git directory, while
+ * `--git-common-dir` points at the shared one. Equal => main working tree; different => linked
+ * worktree. `--path-format=absolute` (git >= 2.31) is NOT optional: invoked from a subdirectory of
+ * the MAIN tree — which is the normal case, since every one of these scripts runs with cwd =
+ * apps/api — git returns `--git-dir` absolute and `--git-common-dir` RELATIVE ("../../.git").
+ * Comparing those two raw strings reports the main tree as a worktree and would rename CI's
+ * databases. The flag also canonicalizes symlinks (/tmp vs /private/tmp), so no realpath call is
+ * needed here. Both facts were reproduced empirically — see 132-RESEARCH.md.
+ *
+ * D-03 (interpretation, see 132-01-PLAN.md § decision_note): the SHA-256 is taken over the
+ * absolute `--git-dir`, not the common dir. The common dir is identical for every linked worktree
+ * of one repository, so hashing it would give two worktrees the SAME namespace — the exact
+ * collision this phase removes. The git-dir (`<common>/worktrees/<id>`) is unique per worktree and
+ * survives `git worktree move`, which is the stability D-01 asks for.
+ *
+ * D-07: never guess. git missing, git failing, not a repository, unexpected output — every one of
+ * them resolves to the EMPTY namespace (today's behaviour), because a guessed namespace would
+ * point at a database nobody provisioned.
+ */
+export function deriveTestNamespace(cwd: string = process.cwd()): string {
+  let out: string;
+  try {
+    out = execFileSync(
+      "git",
+      ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"],
+      { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 10_000 },
+    );
+  } catch {
+    return "";
+  }
+  const lines = out
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "");
+  if (lines.length !== 2) return "";
+  const [gitDir, gitCommonDir] = lines;
+  if (gitDir === gitCommonDir) return "";
+  return createHash("sha256").update(gitDir).digest("hex").slice(0, 8);
+}
+
+/**
+ * The namespace this process must use. `TEST_NAMESPACE_ENV_VAR` wins when SET — including when
+ * set to the empty string, which is an explicit "main-tree names, please" (D-02, and how CI pins
+ * acceptance criterion 6). Otherwise the value is derived once and written back into
+ * `process.env`, so (a) a repeated call inside one process never re-spawns git, and (b) a child
+ * process — every vitest worker — inherits it instead of deriving it again. That inheritance is
+ * the same channel `TEST_DATABASE_URL` already travels; see vitest.setup.ts's header.
+ *
+ * An override that is set but malformed THROWS. D-07's "never guess" governs DERIVATION; a human
+ * who typed an override deserves a loud error, not a silent fallback to a different database than
+ * the one they asked for.
+ */
+export function resolveTestNamespace(cwd?: string): string {
+  const override = process.env[TEST_NAMESPACE_ENV_VAR];
+  if (override !== undefined) {
+    const ns = override.trim();
+    if (!isValidTestNamespace(ns)) {
+      throw new Error(
+        `${TEST_NAMESPACE_ENV_VAR} is "${override}", which is not a valid test namespace. ` +
+          `Expected the empty string (the main working tree's names: ${TEST_DATABASE_NAME}, ` +
+          `${TEST_DATABASE_NAME}_<n>) or exactly 8 lowercase hex characters. Unset it to let this ` +
+          `working directory derive its own namespace from git.`,
+      );
+    }
+    return ns;
+  }
+  const derived = deriveTestNamespace(cwd);
+  process.env[TEST_NAMESPACE_ENV_VAR] = derived;
+  return derived;
 }
 
 /**
