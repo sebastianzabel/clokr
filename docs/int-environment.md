@@ -137,7 +137,7 @@ Or via UI: ArgoCD UI → clokr → History and Rollback → pick a previous revi
 | -------------------------------- | ----------------------------------------------------------------------------------- |
 | Check sync status                | `argocd app get clokr`                                                              |
 | Tail API logs                    | `kubectl -n clokr logs deployment/clokr-api -f`                                     |
-| Connect to int Postgres          | `kubectl -n clokr port-forward statefulset/clokr-db 5432:5432`                      |
+| Connect to int Postgres          | `kubectl -n clokr port-forward statefulset/clokr-postgres 5432:5432`                |
 | Force re-sync                    | `argocd app sync clokr`                                                             |
 | Rollback                         | `argocd app rollback clokr <N>`                                                     |
 | Set repo variable for smoke gate | `gh variable set INT_BASE_URL --body 'https://clokr-int.example.com'` (already set) |
