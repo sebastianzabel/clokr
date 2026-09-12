@@ -3,7 +3,7 @@ import { resolve } from "path";
 import { assertTestDatabaseMarker } from "./scripts/test-database-guard";
 import {
   TEST_DATABASE_NAME,
-  WORKER_DATABASE_NAMES,
+  workerDatabaseNames,
   parseDatabaseUrl,
 } from "./src/utils/test-database";
 
@@ -17,6 +17,13 @@ import {
  * name (see scripts/test-database-guard.ts). A throw here aborts the ENTIRE run before a single test
  * file loads: no partial run, no silent connection to whatever DATABASE_URL happened to resolve to.
  * Do not catch, warn, or continue on failure.
+ *
+ * Phase 132 plan 01 (interim fix): `WORKER_DATABASE_NAMES` was removed from `test-database.ts` in
+ * favour of `workerDatabaseNames()`; this file is updated here ONLY to keep importing, not to gain
+ * namespace-awareness — it still checks the main tree's `TEST_DATABASE_NAME`/`workerDatabaseNames()`
+ * defaults (both resolve to the empty namespace's names today). 132-RESEARCH.md's recommendation to
+ * derive `CLOKR_TEST_NAMESPACE` once, here, and propagate it to every worker is plan 03's job, not
+ * this interim fix's.
  */
 export async function setup(): Promise<void> {
   // override: false — the shell / CI's own environment is authoritative; .env.test is the LOCAL
@@ -42,7 +49,7 @@ export async function setup(): Promise<void> {
   // confusing red file. `test:setup` provisions these (D-02: pre-provisioned, never created by a
   // worker), so a failure here means setup did not run or did not finish.
   const templateUrl = parseDatabaseUrl(process.env.TEST_DATABASE_URL, "TEST_DATABASE_URL");
-  for (const name of WORKER_DATABASE_NAMES) {
+  for (const name of workerDatabaseNames()) {
     const workerUrl = new URL(templateUrl.toString());
     workerUrl.pathname = `/${name}`;
     await assertTestDatabaseMarker(workerUrl.toString(), name);
