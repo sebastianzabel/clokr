@@ -13,8 +13,8 @@
  * connection blocking the drop is a LOUD failure naming the database and the holding
  * backend(s), never a silent fallback to reuse.
  *
- * D-07/D-08: this script — and only this script — may drop a database. It contains exactly two
- * `DROP DATABASE` statements, and BOTH are gated:
+ * D-07/D-08: this script — and only this script — may drop a database. It contains exactly THREE
+ * `DROP DATABASE` statements (widened from two in Phase 132), and ALL THREE are gated:
  *
  *   1. The reset drop (`mayDropDatabase`) requires the target to carry the `TEST_DATABASE_MARKER`
  *      (possession, the actual mechanism) AND to have a worker-namespace name (convenience, see
@@ -24,6 +24,10 @@
  *      AND membership in the worker-name set this run derived from the template
  *      (`workerDatabaseNames`, passed in explicitly as of Phase 132 since that set is now
  *      namespace-dependent).
+ *   3. The orphan prune (`mayPruneDatabase`, Phase 132 D-11) removes a FOREIGN namespace's
+ *      databases when the marker's recorded provisioning path (D-12) no longer exists on disk.
+ *      Reached only via `--prune-orphans`, and only actually drops with `--confirm` — a dry run is
+ *      the default. See `mayPruneDatabase`'s own doc comment for the four absolute refusals.
  *
  * The dev database `clokr` carries no marker, has a non-worker name, and is not in this run's
  * worker-name set — it is therefore STRUCTURALLY undroppable on both paths, not merely excluded
@@ -40,13 +44,22 @@
  * `workerNames` — it can therefore never touch worktree B's databases, because the drop and clone
  * loops below iterate exactly `workerNames`, nothing broader. In the main working tree the
  * namespace is empty and every name is byte-identical to today's.
+ *
+ * Phase 132 also adds `--prune-orphans` (D-11): the ONE way a namespace whose working directory
+ * is gone gets reclaimed, since the reset path above only ever touches its OWN namespace by
+ * design. Dry run by default; `--confirm` is required to actually drop anything. See
+ * `mayPruneDatabase` and `pruneOrphanNamespaces` below. `test:setup`'s normal invocation passes no
+ * arguments and is completely unaffected — the flag parsing added to the top of `main()` only
+ * ever branches away from today's behaviour, never changes it.
  */
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import pg from "pg";
 import {
   TEST_DATABASE_MARKER,
   isWorkerDatabaseName,
   parseDatabaseUrl,
+  parseTestDatabaseName,
   databaseNameOf,
   describeTarget,
   templateDatabaseName,
@@ -54,6 +67,7 @@ import {
   namespacedDatabaseUrl,
   resolveTestNamespace,
   buildMarkerComment,
+  markerProvenancePath,
 } from "../src/utils/test-database";
 
 /**
@@ -118,6 +132,43 @@ export function mayRollbackDrop(name: string, workerNames: readonly string[]): b
   return isWorkerDatabaseName(name) && workerNames.includes(name);
 }
 
+/**
+ * The third and last drop gate (Phase 132, D-11). It authorizes removing the databases of a
+ * namespace whose working directory is GONE — the one case neither existing gate can cover,
+ * because both are scoped to the names THIS run derived (D-10) and an orphan by definition
+ * belongs to a different namespace.
+ *
+ * Possession is still required. What replaces "this run derived the name" as the second proof is
+ * D-12's provisioning path, read back out of the marker: the database itself says which working
+ * directory created it, and that directory no longer exists on disk.
+ *
+ * Four refusals are absolute and stated separately rather than folded together, because each one
+ * is a different way this could go wrong:
+ *  - namespace "" is NEVER prunable. The main working tree's clokr_test / clokr_test_<n> are
+ *    exactly the databases CI and every non-worktree developer use; no provenance check may put
+ *    them at risk.
+ *  - the caller's OWN namespace is never prunable, even if the provenance path looks dead.
+ *  - an UNKNOWN provenance (provenanceExists === null: no path in the marker, i.e. any database
+ *    stamped before Phase 132) is refused. Unknown is not orphaned. The report tells the operator
+ *    to look, rather than this script guessing.
+ *  - a missing/foreign marker is refused, exactly as in mayDropDatabase.
+ */
+export function mayPruneDatabase(args: {
+  name: string;
+  marker: string | null;
+  /** true = the recorded working directory still exists; false = it does not; null = none recorded. */
+  provenanceExists: boolean | null;
+  ownNamespace: string;
+}): boolean {
+  const parsed = parseTestDatabaseName(args.name);
+  if (parsed === null) return false;
+  if (parsed.namespace === "") return false;
+  if (parsed.namespace === args.ownNamespace) return false;
+  if (args.marker === null || !args.marker.startsWith(TEST_DATABASE_MARKER)) return false;
+  if (args.provenanceExists !== false) return false;
+  return true;
+}
+
 /** Escape single quotes for a `COMMENT ON DATABASE ... IS '<literal>'` statement. */
 function escapeLiteral(s: string): string {
   return s.replace(/'/g, "''");
@@ -154,7 +205,174 @@ async function terminateTemplateBackends(client: pg.Client, templateName: string
   );
 }
 
+interface PruneOptions {
+  ownNamespace: string;
+  target: string;
+  confirmed: boolean;
+}
+
+/**
+ * `--prune-orphans` (Phase 132, D-11): lists every `clokr_test*` database this Postgres server
+ * knows about, attributes each to a namespace and a provisioning working directory, and reports a
+ * verdict for it. Drops nothing unless `opts.confirmed` is true — dry run is the default, and the
+ * caller (`main()`) only sets it from an explicit `--confirm` flag.
+ */
+async function pruneOrphanNamespaces(maint: pg.Client, opts: PruneOptions): Promise<void> {
+  // Every clokr_test* database, not just templates: COMMENT ON DATABASE lives in
+  // pg_shdescription keyed to the database OID and is NOT inherited by a TEMPLATE clone, so
+  // reset-test-databases.ts stamps each worker individually — and a cleanup tool that read only
+  // the template's comment would miss every worker of a namespace whose template was already
+  // removed (132-RESEARCH.md).
+  const rows = await maint.query<{ datname: string; marker: string | null }>(
+    `SELECT datname, shobj_description(oid, 'pg_database') AS marker
+       FROM pg_database
+      WHERE datname LIKE 'clokr\\_test%'
+      ORDER BY datname`,
+  );
+
+  interface Entry {
+    name: string;
+    namespace: string;
+    workerIndex: number | null;
+    marker: string | null;
+    provenance: string | null;
+    provenanceExists: boolean | null;
+    prunable: boolean;
+  }
+
+  const entries: Entry[] = [];
+  for (const row of rows.rows) {
+    const parsed = parseTestDatabaseName(row.datname);
+    if (parsed === null) continue; // a name that merely starts with the prefix is not ours
+    const provenance = row.marker === null ? null : markerProvenancePath(row.marker);
+    const provenanceExists = provenance === null ? null : existsSync(provenance);
+    entries.push({
+      name: row.datname,
+      namespace: parsed.namespace,
+      workerIndex: parsed.workerIndex,
+      marker: row.marker,
+      provenance,
+      provenanceExists,
+      prunable: mayPruneDatabase({
+        name: row.datname,
+        marker: row.marker,
+        provenanceExists,
+        ownNamespace: opts.ownNamespace,
+      }),
+    });
+  }
+
+  // Verdict order mirrors mayPruneDatabase's own refusal order — see that function's doc comment
+  // for why each of these is a SEPARATE, absolute check rather than folded together.
+  function verdict(e: Entry): string {
+    if (e.namespace === "") return "main working tree (never pruned)";
+    if (e.namespace === opts.ownNamespace) return "own namespace (in use)";
+    if (e.marker === null || !e.marker.startsWith(TEST_DATABASE_MARKER)) {
+      return "no marker — inspect manually";
+    }
+    if (e.provenanceExists === null) return "provenance unknown — inspect manually";
+    if (e.provenanceExists === true) return "worktree present";
+    return "ORPHAN";
+  }
+
+  const byNamespace = new Map<string, Entry[]>();
+  for (const e of entries) {
+    const list = byNamespace.get(e.namespace) ?? [];
+    list.push(e);
+    byNamespace.set(e.namespace, list);
+  }
+
+  const namespaceOrder = [...byNamespace.keys()].sort((a, b) => a.localeCompare(b));
+  let orphanCount = 0;
+  const orphanNamespaces = new Set<string>();
+  console.error(`reset-test-databases --prune-orphans: target ${opts.target}`);
+  for (const ns of namespaceOrder) {
+    const label = ns === "" ? "<main working tree>" : ns;
+    console.error(`namespace ${label}:`);
+    for (const e of byNamespace.get(ns)!) {
+      const v = verdict(e);
+      if (v === "ORPHAN") {
+        orphanCount += 1;
+        orphanNamespaces.add(ns);
+      }
+      console.error(
+        `  ${e.name}  provisioned-from=${e.provenance ?? "<none recorded>"}  verdict=${v}`,
+      );
+    }
+  }
+  console.error(
+    `${entries.length} database(s) across ${namespaceOrder.length} namespace(s); ` +
+      `${orphanCount} orphaned across ${orphanNamespaces.size} namespace(s).`,
+  );
+
+  if (!opts.confirmed) {
+    console.error(
+      `Dry run — nothing was dropped. Re-run with --prune-orphans --confirm to drop the ` +
+        `${orphanCount} database(s) marked ORPHAN above.`,
+    );
+    return;
+  }
+
+  // Drop workers before templates within a namespace so a half-finished prune never leaves a
+  // template without its workers.
+  const toDrop = entries
+    .filter((e) => e.prunable)
+    .sort((a, b) => {
+      if (a.workerIndex !== null && b.workerIndex === null) return -1;
+      if (a.workerIndex === null && b.workerIndex !== null) return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+  let dropped = 0;
+  for (const e of toDrop) {
+    // Re-check immediately before dropping — never trust the list computed above. Mirrors the
+    // reset path's own re-check discipline (see mayDropDatabase's call site above).
+    if (
+      !mayPruneDatabase({
+        name: e.name,
+        marker: e.marker,
+        provenanceExists: e.provenanceExists,
+        ownNamespace: opts.ownNamespace,
+      })
+    ) {
+      continue;
+    }
+    try {
+      await maint.query(`DROP DATABASE "${e.name}" WITH (FORCE)`);
+      dropped += 1;
+    } catch (err) {
+      const report = await pgStatActivityReport(maint, e.name);
+      fatal(
+        `reset-test-databases: FATAL — DROP DATABASE "${e.name}" failed even WITH (FORCE) during ` +
+          `--prune-orphans: ${(err as Error).message}\n` +
+          `  target: ${opts.target}\n` +
+          `  pg_stat_activity for "${e.name}":\n${report}`,
+      );
+    }
+  }
+  console.error(`reset-test-databases --prune-orphans: ${dropped} dropped.`);
+}
+
 async function main(): Promise<void> {
+  // ── Argv (Phase 132, D-11) — before anything else, so a bad flag fails fast ───────────
+  const argv = process.argv.slice(2);
+  const pruneMode = argv.includes("--prune-orphans");
+  const confirmed = argv.includes("--confirm");
+  const unknownFlags = argv.filter((a) => a !== "--prune-orphans" && a !== "--confirm");
+  if (unknownFlags.length > 0) {
+    fatal(
+      `reset-test-databases: unknown argument(s) ${unknownFlags.join(", ")}.\n` +
+        `  usage: tsx scripts/reset-test-databases.ts [--prune-orphans [--confirm]]`,
+    );
+  }
+  if (confirmed && !pruneMode) {
+    fatal(
+      `reset-test-databases: --confirm is only meaningful together with --prune-orphans. The ` +
+        `normal reset path takes no confirmation because it only ever touches the ` +
+        `${workerDatabaseNames().length} worker databases of this working directory's own namespace.`,
+    );
+  }
+
   const raw = process.env.TEST_DATABASE_URL;
 
   let url: URL;
@@ -208,6 +426,13 @@ async function main(): Promise<void> {
   maintenanceUrl.pathname = "/postgres";
   const maint = new pg.Client({ connectionString: maintenanceUrl.toString() });
   await maint.connect();
+
+  // ── Prune branch (Phase 132, D-11) — reuses this same maintenance connection ─────────
+  if (pruneMode) {
+    await pruneOrphanNamespaces(maint, { ownNamespace: namespace, target, confirmed });
+    await maint.end();
+    process.exit(0);
+  }
 
   try {
     // ── Drop phase ───────────────────────────────────────────────────────────────────
