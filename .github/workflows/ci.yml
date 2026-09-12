@@ -99,10 +99,15 @@ jobs:
         # every PR, not once on a developer laptop.
         #
         # Why a `docker run` step and not a `services:` container: GitHub Actions service containers
-        # cannot override a container's command, and minio/minio's default CMD is bare `minio`
+        # cannot override a container's command, and the MinIO image's default CMD is bare `minio`
         # (no `server /data`), so a service-container MinIO exits immediately after printing usage.
-        # Verified via `docker inspect minio/minio:latest`. docker-compose.yml can use `services`
-        # only because compose supports `command:`.
+        # Verified via `docker inspect` on the pinned image below. docker-compose.yml can use
+        # `services` only because compose supports `command:`.
+        #
+        # Registry: quay.io, NOT docker.io. The docker.io/minio/minio repository was REMOVED —
+        # Docker Hub returns 404 and every pull fails with "repository does not exist or may
+        # require 'docker login'". Pinned by digest (multi-arch: amd64 for CI, arm64 for local
+        # dev) so a repeat of that removal cannot break the build silently.
         #
         # Same image as docker-compose.yml so dev and CI cannot drift.
         run: |
@@ -110,7 +115,7 @@ jobs:
             -p 9000:9000 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:latest server /data
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e server /data
           echo "Waiting for MinIO to become ready…"
           for i in $(seq 1 30); do
             if curl -fsS http://localhost:9000/minio/health/live > /dev/null; then
