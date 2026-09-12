@@ -85,7 +85,7 @@ Before running on int:
 Connect to int Postgres:
 
 ```bash
-kubectl -n clokr port-forward statefulset/clokr-db 5432:5432
+kubectl -n clokr port-forward statefulset/clokr-postgres 5432:5432
 # In another terminal:
 export TARGET_DB_URL="postgresql://<INT_DB_USER>:<INT_DB_PASS>@localhost:5432/clokr"
 ```
