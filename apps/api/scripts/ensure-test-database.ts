@@ -21,6 +21,14 @@
  * worker database rather than restating it. Dropping and cloning the per-worker databases lives
  * exclusively in `reset-test-databases.ts` (D-08) — never here.
  *
+ * Phase 132: "the template" is now THIS working directory's template — `clokr_test` in the main
+ * working tree, `clokr_test_<ns>` in a linked git worktree (D-06). The INPUT is still checked
+ * against the unnamespaced test-namespace pattern by the refusal gate below; only AFTER that gate
+ * passes is the target rewritten into this working directory's namespace via
+ * `resolveTestNamespace`/`namespacedDatabaseUrl`. The marker now also records the absolute git-dir
+ * path of the working directory that provisioned it (D-12), so an orphaned namespace can be
+ * attributed from the database itself.
+ *
  * On an accepted target: connects to the *maintenance* database (same URL, pathname swapped to
  * `/postgres`), creates the target database only if `pg_database` doesn't already list it (Postgres
  * has no `CREATE DATABASE IF NOT EXISTS` — a create failure is left fatal, never swallowed), then
@@ -36,20 +44,46 @@
  * inside `src/` and importing it from both directions was the only option that avoids restating
  * the constants.
  */
+import { execFileSync } from "node:child_process";
 import pg from "pg";
 import {
   TEST_DATABASE_NAME,
-  TEST_DATABASE_MARKER,
   isTestDatabaseName,
   parseDatabaseUrl,
   databaseNameOf,
   describeTarget,
+  namespacedDatabaseUrl,
+  resolveTestNamespace,
+  buildMarkerComment,
 } from "../src/utils/test-database";
 
 function refuse(reason: string, target: string): never {
   console.error(`ensure-test-database: REFUSED — ${reason}`);
   console.error(`  target: ${target}`);
   process.exit(1);
+}
+
+/**
+ * The absolute git directory of the working directory running this script — the value D-12
+ * records in the marker so an orphaned namespace can be attributed from the database itself
+ * rather than from a side ledger. Falls back to process.cwd() when git cannot answer (D-07's
+ * condition: the api runtime image installs no git and this script ships inside it).
+ *
+ * NOTE: this is NOT a restatement of the namespace derivation (D-05) — it derives no namespace
+ * and constructs no database name; it records a human-readable provenance string only. Do not
+ * "consolidate" it into test-database.ts's derivation — that would make the marker text depend on
+ * hashing, which it must not.
+ */
+function provisioningPath(): string {
+  try {
+    return execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-dir"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 10_000,
+    }).trim();
+  } catch {
+    return process.cwd();
+  }
 }
 
 async function main(): Promise<void> {
@@ -63,8 +97,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const target = describeTarget(url.toString());
-  const dbName = databaseNameOf(url);
+  let target = describeTarget(url.toString());
+  let dbName = databaseNameOf(url);
 
   // ── Refusal gate — every branch below exits before ANY connection is opened ──────────
   if (process.env.NODE_ENV === "production") {
@@ -85,6 +119,18 @@ async function main(): Promise<void> {
       target,
     );
   }
+
+  // ── Namespace (Phase 132) ────────────────────────────────────────────────────────────
+  // The refusal gate above has already proven the INPUT is a test-namespace target with no
+  // ?schema=. Only now move it into THIS working directory's namespace. Doing this before the
+  // gate would let a rewrite hide the reason a target was refused; doing it after cannot widen
+  // what is accepted, because namespacedDatabaseUrl only ever moves a name within the anchored
+  // namespace. With the empty namespace (the main working tree, D-06) this is a no-op and the
+  // names stay literally clokr_test / clokr_test_<n>.
+  const namespace = resolveTestNamespace();
+  url = namespacedDatabaseUrl(url, namespace);
+  target = describeTarget(url.toString());
+  dbName = databaseNameOf(url);
 
   // ── Maintenance connection: same URL, pathname swapped to /postgres ──────────────────
   const maintenanceUrl = new URL(url.toString());
@@ -113,12 +159,13 @@ async function main(): Promise<void> {
   const testClient = new pg.Client({ connectionString: url.toString() });
   try {
     await testClient.connect();
-    const comment =
-      `${TEST_DATABASE_MARKER} — provisioned by apps/api/scripts/ensure-test-database.ts ` +
-      `(Phase 101). Contents are disposable.`;
+    const comment = buildMarkerComment(
+      "apps/api/scripts/ensure-test-database.ts",
+      provisioningPath(),
+    );
     // COMMENT ON DATABASE cannot take a parameterised literal either; escape single quotes
-    // defensively even though the marker text is a fixed constant, never user input. dbName is
-    // interpolated for the same reason as the CREATE DATABASE statement above.
+    // defensively — a filesystem path can legitimately contain one. dbName is interpolated for
+    // the same reason as the CREATE DATABASE statement above.
     const escaped = comment.replace(/'/g, "''");
     await testClient.query(`COMMENT ON DATABASE "${dbName}" IS '${escaped}'`);
   } finally {
