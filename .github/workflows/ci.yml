@@ -40,6 +40,15 @@ jobs:
       # below, which runs the SAME `pnpm --filter @clokr/api run test:setup` a local developer runs.
       # apps/api/.env.test is TRACKED in git (see .gitignore) and MUST hold this same value.
       TEST_DATABASE_URL: postgresql://clokr:password@localhost:5432/clokr_test
+      # Phase 132 (D-02/D-06): CI has exactly ONE working directory, so the per-working-directory
+      # namespace must be empty and the database names must stay literally clokr_test /
+      # clokr_test_1..4 — byte-identical to every run before this phase. The derivation in
+      # apps/api/src/utils/test-database.ts already returns "" for a main working tree (an
+      # actions/checkout clone is one), so this line changes no behaviour. It is here to make that
+      # a STATEMENT rather than a heuristic that happens to be right: if a future runner image or
+      # checkout action ever produced a linked worktree, an unset variable would silently rename
+      # every database this job provisions. Empty string = "main-tree names, please" (D-02).
+      CLOKR_TEST_NAMESPACE: ""
       JWT_SECRET: test-jwt-secret-min-32-characters-long
       JWT_REFRESH_SECRET: test-refresh-secret-min-32-characters
       JWT_EXPIRES_IN: 15m
