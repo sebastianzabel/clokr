@@ -13,38 +13,82 @@
  * connection blocking the drop is a LOUD failure naming the database and the holding
  * backend(s), never a silent fallback to reuse.
  *
- * D-07/D-08: this script — and only this script — may drop a database. It contains exactly two
- * `DROP DATABASE` statements, and BOTH are gated:
+ * D-07/D-08: this script — and only this script — may drop a database. It contains exactly THREE
+ * `DROP DATABASE` statements (widened from two in Phase 132), and ALL THREE are gated:
  *
  *   1. The reset drop (`mayDropDatabase`) requires the target to carry the `TEST_DATABASE_MARKER`
  *      (possession, the actual mechanism) AND to have a worker-namespace name (convenience, see
  *      `isWorkerDatabaseName`).
  *   2. The marker-stamp rollback (`mayRollbackDrop`) removes an orphan that — by construction —
  *      has no marker yet, so possession cannot authorize it. It requires the worker-namespace name
- *      AND membership in `WORKER_DATABASE_NAMES`, i.e. the exact set this run derived from the
- *      template.
+ *      AND membership in the worker-name set this run derived from the template
+ *      (`workerDatabaseNames`, passed in explicitly as of Phase 132 since that set is now
+ *      namespace-dependent).
+ *   3. The orphan prune (`mayPruneDatabase`, Phase 132 D-11) removes a FOREIGN namespace's
+ *      databases when the marker's recorded provisioning path (D-12) no longer exists on disk.
+ *      Reached only via `--prune-orphans`, and only actually drops with `--confirm` — a dry run is
+ *      the default. See `mayPruneDatabase`'s own doc comment for the four absolute refusals.
  *
- * The dev database `clokr` carries no marker, has a non-worker name, and is not in
- * `WORKER_DATABASE_NAMES` — it is therefore STRUCTURALLY undroppable on both paths, not merely
- * excluded by a naming convention. The template `clokr_test` is excluded too: `isWorkerDatabaseName`
- * is false for it, so the migrated template survives every reset. This file must NOT reach the
- * production runtime image; apps/api/Dockerfile removes it from the runtime stage and asserts
- * its absence (D-08 gate).
+ * The dev database `clokr` carries no marker, has a non-worker name, and is not in this run's
+ * worker-name set — it is therefore STRUCTURALLY undroppable on both paths, not merely excluded
+ * by a naming convention. The template is excluded too: `isWorkerDatabaseName` is false for it,
+ * so the migrated template survives every reset. This file must NOT reach the production runtime
+ * image; apps/api/Dockerfile removes it from the runtime stage and asserts its absence (D-08 gate).
  *
  * `COMMENT ON DATABASE` lives in `pg_shdescription`, keyed to the database OID — a `TEMPLATE`
  * copy does NOT inherit it (reproduced live, 106-RESEARCH.md). Every cloned worker database is
  * therefore stamped individually, immediately after its `CREATE DATABASE ... TEMPLATE`.
+ *
+ * Phase 132: the template and worker names are now per WORKING DIRECTORY (D-06/D-10). A run in
+ * linked git worktree A derives its own namespace, its own `templateName`, and its own
+ * `workerNames` — it can therefore never touch worktree B's databases, because the drop and clone
+ * loops below iterate exactly `workerNames`, nothing broader. In the main working tree the
+ * namespace is empty and every name is byte-identical to today's.
+ *
+ * Phase 132 also adds `--prune-orphans` (D-11): the ONE way a namespace whose working directory
+ * is gone gets reclaimed, since the reset path above only ever touches its OWN namespace by
+ * design. Dry run by default; `--confirm` is required to actually drop anything. See
+ * `mayPruneDatabase` and `pruneOrphanNamespaces` below. `test:setup`'s normal invocation passes no
+ * arguments and is completely unaffected — the flag parsing added to the top of `main()` only
+ * ever branches away from today's behaviour, never changes it.
  */
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import pg from "pg";
 import {
-  TEST_DATABASE_NAME,
   TEST_DATABASE_MARKER,
-  WORKER_DATABASE_NAMES,
   isWorkerDatabaseName,
   parseDatabaseUrl,
+  parseTestDatabaseName,
   databaseNameOf,
   describeTarget,
+  templateDatabaseName,
+  workerDatabaseNames,
+  namespacedDatabaseUrl,
+  resolveTestNamespace,
+  buildMarkerComment,
+  markerProvenancePath,
 } from "../src/utils/test-database";
+
+/**
+ * The absolute git directory of the working directory running this script — the value D-12
+ * records in the marker so an orphaned namespace can be attributed from the database itself
+ * rather than from a side ledger. Falls back to process.cwd() when git cannot answer. Copied
+ * verbatim from ensure-test-database.ts (Phase 132) rather than moved into test-database.ts:
+ * this is a provenance string, NOT a second namespace derivation, and test-database.ts must stay
+ * free of anything a `setupFiles` re-import would pay for — see that module's header.
+ */
+function provisioningPath(): string {
+  try {
+    return execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-dir"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 10_000,
+    }).trim();
+  } catch {
+    return process.cwd();
+  }
+}
 
 /**
  * The ONE place in this repository that issues `DROP DATABASE` (Phase 106, D-07/D-08).
@@ -73,14 +117,56 @@ function fatal(message: string): never {
  * freshly cloned worker database whose marker stamp failed. That orphan carries no marker by
  * construction, so possession — the normal mechanism — is unavailable to authorize its removal.
  *
- * The name gate still applies, and membership in `WORKER_DATABASE_NAMES` is required on top of it,
- * so the target is provably one of the N names THIS run derived from the template. The dev database
- * `clokr` and the template `clokr_test` are absent from that set and fail `isWorkerDatabaseName`
- * besides. Without this, reachability was the only thing standing between that statement and a
- * non-worker database — a correct argument, but not an enforced one.
+ * The name gate still applies, and membership in `workerNames` is required on top of it, so the
+ * target is provably one of the N names THIS run derived from the template. The dev database
+ * `clokr` and the template are absent from that set and fail `isWorkerDatabaseName` besides.
+ * Without this, reachability was the only thing standing between that statement and a non-worker
+ * database — a correct argument, but not an enforced one.
+ *
+ * `workerNames` is now an explicit parameter (Phase 132) rather than a module-level constant:
+ * this function is module-level and exported and cannot close over `main()`'s namespace-derived
+ * set, and the set is namespace-dependent, so it must be passed in for the "one of the N names
+ * THIS run derived" guarantee to stay literally true.
  */
-export function mayRollbackDrop(name: string): boolean {
-  return isWorkerDatabaseName(name) && WORKER_DATABASE_NAMES.includes(name);
+export function mayRollbackDrop(name: string, workerNames: readonly string[]): boolean {
+  return isWorkerDatabaseName(name) && workerNames.includes(name);
+}
+
+/**
+ * The third and last drop gate (Phase 132, D-11). It authorizes removing the databases of a
+ * namespace whose working directory is GONE — the one case neither existing gate can cover,
+ * because both are scoped to the names THIS run derived (D-10) and an orphan by definition
+ * belongs to a different namespace.
+ *
+ * Possession is still required. What replaces "this run derived the name" as the second proof is
+ * D-12's provisioning path, read back out of the marker: the database itself says which working
+ * directory created it, and that directory no longer exists on disk.
+ *
+ * Four refusals are absolute and stated separately rather than folded together, because each one
+ * is a different way this could go wrong:
+ *  - namespace "" is NEVER prunable. The main working tree's clokr_test / clokr_test_<n> are
+ *    exactly the databases CI and every non-worktree developer use; no provenance check may put
+ *    them at risk.
+ *  - the caller's OWN namespace is never prunable, even if the provenance path looks dead.
+ *  - an UNKNOWN provenance (provenanceExists === null: no path in the marker, i.e. any database
+ *    stamped before Phase 132) is refused. Unknown is not orphaned. The report tells the operator
+ *    to look, rather than this script guessing.
+ *  - a missing/foreign marker is refused, exactly as in mayDropDatabase.
+ */
+export function mayPruneDatabase(args: {
+  name: string;
+  marker: string | null;
+  /** true = the recorded working directory still exists; false = it does not; null = none recorded. */
+  provenanceExists: boolean | null;
+  ownNamespace: string;
+}): boolean {
+  const parsed = parseTestDatabaseName(args.name);
+  if (parsed === null) return false;
+  if (parsed.namespace === "") return false;
+  if (parsed.namespace === args.ownNamespace) return false;
+  if (args.marker === null || !args.marker.startsWith(TEST_DATABASE_MARKER)) return false;
+  if (args.provenanceExists !== false) return false;
+  return true;
 }
 
 /** Escape single quotes for a `COMMENT ON DATABASE ... IS '<literal>'` statement. */
@@ -119,7 +205,174 @@ async function terminateTemplateBackends(client: pg.Client, templateName: string
   );
 }
 
+interface PruneOptions {
+  ownNamespace: string;
+  target: string;
+  confirmed: boolean;
+}
+
+/**
+ * `--prune-orphans` (Phase 132, D-11): lists every `clokr_test*` database this Postgres server
+ * knows about, attributes each to a namespace and a provisioning working directory, and reports a
+ * verdict for it. Drops nothing unless `opts.confirmed` is true — dry run is the default, and the
+ * caller (`main()`) only sets it from an explicit `--confirm` flag.
+ */
+async function pruneOrphanNamespaces(maint: pg.Client, opts: PruneOptions): Promise<void> {
+  // Every clokr_test* database, not just templates: COMMENT ON DATABASE lives in
+  // pg_shdescription keyed to the database OID and is NOT inherited by a TEMPLATE clone, so
+  // reset-test-databases.ts stamps each worker individually — and a cleanup tool that read only
+  // the template's comment would miss every worker of a namespace whose template was already
+  // removed (132-RESEARCH.md).
+  const rows = await maint.query<{ datname: string; marker: string | null }>(
+    `SELECT datname, shobj_description(oid, 'pg_database') AS marker
+       FROM pg_database
+      WHERE datname LIKE 'clokr\\_test%'
+      ORDER BY datname`,
+  );
+
+  interface Entry {
+    name: string;
+    namespace: string;
+    workerIndex: number | null;
+    marker: string | null;
+    provenance: string | null;
+    provenanceExists: boolean | null;
+    prunable: boolean;
+  }
+
+  const entries: Entry[] = [];
+  for (const row of rows.rows) {
+    const parsed = parseTestDatabaseName(row.datname);
+    if (parsed === null) continue; // a name that merely starts with the prefix is not ours
+    const provenance = row.marker === null ? null : markerProvenancePath(row.marker);
+    const provenanceExists = provenance === null ? null : existsSync(provenance);
+    entries.push({
+      name: row.datname,
+      namespace: parsed.namespace,
+      workerIndex: parsed.workerIndex,
+      marker: row.marker,
+      provenance,
+      provenanceExists,
+      prunable: mayPruneDatabase({
+        name: row.datname,
+        marker: row.marker,
+        provenanceExists,
+        ownNamespace: opts.ownNamespace,
+      }),
+    });
+  }
+
+  // Verdict order mirrors mayPruneDatabase's own refusal order — see that function's doc comment
+  // for why each of these is a SEPARATE, absolute check rather than folded together.
+  function verdict(e: Entry): string {
+    if (e.namespace === "") return "main working tree (never pruned)";
+    if (e.namespace === opts.ownNamespace) return "own namespace (in use)";
+    if (e.marker === null || !e.marker.startsWith(TEST_DATABASE_MARKER)) {
+      return "no marker — inspect manually";
+    }
+    if (e.provenanceExists === null) return "provenance unknown — inspect manually";
+    if (e.provenanceExists === true) return "worktree present";
+    return "ORPHAN";
+  }
+
+  const byNamespace = new Map<string, Entry[]>();
+  for (const e of entries) {
+    const list = byNamespace.get(e.namespace) ?? [];
+    list.push(e);
+    byNamespace.set(e.namespace, list);
+  }
+
+  const namespaceOrder = [...byNamespace.keys()].sort((a, b) => a.localeCompare(b));
+  let orphanCount = 0;
+  const orphanNamespaces = new Set<string>();
+  console.error(`reset-test-databases --prune-orphans: target ${opts.target}`);
+  for (const ns of namespaceOrder) {
+    const label = ns === "" ? "<main working tree>" : ns;
+    console.error(`namespace ${label}:`);
+    for (const e of byNamespace.get(ns)!) {
+      const v = verdict(e);
+      if (v === "ORPHAN") {
+        orphanCount += 1;
+        orphanNamespaces.add(ns);
+      }
+      console.error(
+        `  ${e.name}  provisioned-from=${e.provenance ?? "<none recorded>"}  verdict=${v}`,
+      );
+    }
+  }
+  console.error(
+    `${entries.length} database(s) across ${namespaceOrder.length} namespace(s); ` +
+      `${orphanCount} orphaned across ${orphanNamespaces.size} namespace(s).`,
+  );
+
+  if (!opts.confirmed) {
+    console.error(
+      `Dry run — nothing was dropped. Re-run with --prune-orphans --confirm to drop the ` +
+        `${orphanCount} database(s) marked ORPHAN above.`,
+    );
+    return;
+  }
+
+  // Drop workers before templates within a namespace so a half-finished prune never leaves a
+  // template without its workers.
+  const toDrop = entries
+    .filter((e) => e.prunable)
+    .sort((a, b) => {
+      if (a.workerIndex !== null && b.workerIndex === null) return -1;
+      if (a.workerIndex === null && b.workerIndex !== null) return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+  let dropped = 0;
+  for (const e of toDrop) {
+    // Re-check immediately before dropping — never trust the list computed above. Mirrors the
+    // reset path's own re-check discipline (see mayDropDatabase's call site above).
+    if (
+      !mayPruneDatabase({
+        name: e.name,
+        marker: e.marker,
+        provenanceExists: e.provenanceExists,
+        ownNamespace: opts.ownNamespace,
+      })
+    ) {
+      continue;
+    }
+    try {
+      await maint.query(`DROP DATABASE "${e.name}" WITH (FORCE)`);
+      dropped += 1;
+    } catch (err) {
+      const report = await pgStatActivityReport(maint, e.name);
+      fatal(
+        `reset-test-databases: FATAL — DROP DATABASE "${e.name}" failed even WITH (FORCE) during ` +
+          `--prune-orphans: ${(err as Error).message}\n` +
+          `  target: ${opts.target}\n` +
+          `  pg_stat_activity for "${e.name}":\n${report}`,
+      );
+    }
+  }
+  console.error(`reset-test-databases --prune-orphans: ${dropped} dropped.`);
+}
+
 async function main(): Promise<void> {
+  // ── Argv (Phase 132, D-11) — before anything else, so a bad flag fails fast ───────────
+  const argv = process.argv.slice(2);
+  const pruneMode = argv.includes("--prune-orphans");
+  const confirmed = argv.includes("--confirm");
+  const unknownFlags = argv.filter((a) => a !== "--prune-orphans" && a !== "--confirm");
+  if (unknownFlags.length > 0) {
+    fatal(
+      `reset-test-databases: unknown argument(s) ${unknownFlags.join(", ")}.\n` +
+        `  usage: tsx scripts/reset-test-databases.ts [--prune-orphans [--confirm]]`,
+    );
+  }
+  if (confirmed && !pruneMode) {
+    fatal(
+      `reset-test-databases: --confirm is only meaningful together with --prune-orphans. The ` +
+        `normal reset path takes no confirmation because it only ever touches the ` +
+        `${workerDatabaseNames().length} worker databases of this working directory's own namespace.`,
+    );
+  }
+
   const raw = process.env.TEST_DATABASE_URL;
 
   let url: URL;
@@ -129,8 +382,7 @@ async function main(): Promise<void> {
     fatal(`reset-test-databases: REFUSED — ${(err as Error).message}`);
   }
 
-  const target = describeTarget(url.toString());
-  const dbName = databaseNameOf(url);
+  let target = describeTarget(url.toString());
 
   // ── Refusal gate — every branch below exits before ANY connection is opened ──────────
   if (process.env.NODE_ENV === "production") {
@@ -146,12 +398,26 @@ async function main(): Promise<void> {
         `mechanism (D-01). Remove ?schema= from TEST_DATABASE_URL.\n  target: ${target}`,
     );
   }
-  if (dbName !== TEST_DATABASE_NAME) {
+
+  // ── Namespace (Phase 132) ────────────────────────────────────────────────────────────
+  // Resolve THIS working directory's namespace once, then rewrite the input into it, exactly
+  // like ensure-test-database.ts — after the schema/production refusals above, before the
+  // template-identity check below (which must compare against the RESOLVED template name).
+  const namespace = resolveTestNamespace();
+  url = namespacedDatabaseUrl(url, namespace);
+  target = describeTarget(url.toString());
+  const dbName = databaseNameOf(url);
+  const templateName = templateDatabaseName(namespace);
+  const workerNames = workerDatabaseNames(namespace);
+
+  if (dbName !== templateName) {
     fatal(
       `reset-test-databases: REFUSED — TEST_DATABASE_URL points at "${dbName}", not the ` +
-        `template "${TEST_DATABASE_NAME}". This script derives the ${WORKER_DATABASE_NAMES.length} ` +
-        `worker database names itself from the template target — being pointed at a worker ` +
-        `database is a misconfiguration, not a shortcut.\n  target: ${target}`,
+        `template "${templateName}" for THIS working directory. In a linked git worktree that is ` +
+        `"clokr_test_<ns>"; in the main working tree it is "clokr_test" (Phase 132, D-06). This ` +
+        `script derives the ${workerNames.length} worker database names itself from the template ` +
+        `target — being pointed at a worker database is a misconfiguration, not a shortcut.\n` +
+        `  target: ${target}`,
     );
   }
 
@@ -161,10 +427,17 @@ async function main(): Promise<void> {
   const maint = new pg.Client({ connectionString: maintenanceUrl.toString() });
   await maint.connect();
 
+  // ── Prune branch (Phase 132, D-11) — reuses this same maintenance connection ─────────
+  if (pruneMode) {
+    await pruneOrphanNamespaces(maint, { ownNamespace: namespace, target, confirmed });
+    await maint.end();
+    process.exit(0);
+  }
+
   try {
     // ── Drop phase ───────────────────────────────────────────────────────────────────
     let dropped = 0;
-    for (const name of WORKER_DATABASE_NAMES) {
+    for (const name of workerNames) {
       const markerRow = await maint.query<{ marker: string | null }>(
         "SELECT shobj_description(oid, 'pg_database') AS marker FROM pg_database WHERE datname = $1",
         [name],
@@ -204,32 +477,32 @@ async function main(): Promise<void> {
     }
 
     // ── Template quiesce — CREATE DATABASE ... TEMPLATE requires zero connections on the source
-    await terminateTemplateBackends(maint, TEST_DATABASE_NAME);
+    await terminateTemplateBackends(maint, templateName);
 
     // ── Clone phase ──────────────────────────────────────────────────────────────────
     let created = 0;
-    for (const name of WORKER_DATABASE_NAMES) {
+    for (const name of workerNames) {
       try {
-        await maint.query(`CREATE DATABASE "${name}" TEMPLATE "${TEST_DATABASE_NAME}"`);
+        await maint.query(`CREATE DATABASE "${name}" TEMPLATE "${templateName}"`);
       } catch (err) {
         const message = (err as Error).message;
         if (/being accessed by other users/i.test(message)) {
           // Retry once after re-quiescing the template.
-          await terminateTemplateBackends(maint, TEST_DATABASE_NAME);
+          await terminateTemplateBackends(maint, templateName);
           try {
-            await maint.query(`CREATE DATABASE "${name}" TEMPLATE "${TEST_DATABASE_NAME}"`);
+            await maint.query(`CREATE DATABASE "${name}" TEMPLATE "${templateName}"`);
           } catch (retryErr) {
-            const report = await pgStatActivityReport(maint, TEST_DATABASE_NAME);
+            const report = await pgStatActivityReport(maint, templateName);
             fatal(
-              `reset-test-databases: FATAL — CREATE DATABASE "${name}" TEMPLATE "${TEST_DATABASE_NAME}" ` +
+              `reset-test-databases: FATAL — CREATE DATABASE "${name}" TEMPLATE "${templateName}" ` +
                 `failed twice: ${(retryErr as Error).message}\n` +
                 `  target: ${target}\n` +
-                `  pg_stat_activity for template "${TEST_DATABASE_NAME}":\n${report}`,
+                `  pg_stat_activity for template "${templateName}":\n${report}`,
             );
           }
         } else {
           fatal(
-            `reset-test-databases: FATAL — CREATE DATABASE "${name}" TEMPLATE "${TEST_DATABASE_NAME}" ` +
+            `reset-test-databases: FATAL — CREATE DATABASE "${name}" TEMPLATE "${templateName}" ` +
               `failed: ${message}\n  target: ${target}`,
           );
         }
@@ -244,17 +517,18 @@ async function main(): Promise<void> {
       const workerClient = new pg.Client({ connectionString: workerUrl.toString() });
       try {
         await workerClient.connect();
-        const comment =
-          `${TEST_DATABASE_MARKER} — provisioned by apps/api/scripts/reset-test-databases.ts ` +
-          `(Phase 106). Contents are disposable.`;
+        const comment = buildMarkerComment(
+          "apps/api/scripts/reset-test-databases.ts",
+          provisioningPath(),
+        );
         const escaped = escapeLiteral(comment);
         await workerClient.query(`COMMENT ON DATABASE "${name}" IS '${escaped}'`);
       } catch (err) {
         await workerClient.end().catch(() => {});
-        if (!mayRollbackDrop(name)) {
+        if (!mayRollbackDrop(name, workerNames)) {
           fatal(
             `reset-test-databases: REFUSED to roll back "${name}" — it is not one of the ` +
-              `${WORKER_DATABASE_NAMES.length} worker databases this run derived from the ` +
+              `${workerNames.length} worker databases this run derived from the ` +
               `template, so it must not be dropped.\n  target: ${target}`,
           );
         }

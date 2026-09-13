@@ -1,6 +1,8 @@
 /**
  * TI-03 guard tests (Phase 101, plan 02) — one case per rejection branch of the pure shape check,
- * plus marker-possession coverage for `assertTestDatabaseMarker`.
+ * plus marker-possession coverage for `assertTestDatabaseMarker`. Extended (Phase 132, plan 03)
+ * with the 8-lowercase-hex namespace segment (D-04) — accept/reject pins for namespaced names and
+ * the namespace near-misses a loose implementation would slip through.
  *
  * Conventions follow scripts/__tests__/audit-saldo-chain-integrity.test.ts: describe/it shape, no
  * mocking framework, no hardcoded calendar date anywhere. Unlike that file, the marker-possession
@@ -49,7 +51,7 @@ describe("assertTestDatabaseUrlShape (TI-03 — pure, no I/O)", () => {
     ).toThrow();
   });
 
-  it("rejects every name outside the anchored namespace, including near-misses (D-06)", () => {
+  it("rejects every name outside the anchored namespace, including near-misses (D-06, extended for the namespace segment in D-04)", () => {
     const rejected = [
       "clokr",
       "clokr_dev",
@@ -60,6 +62,17 @@ describe("assertTestDatabaseUrlShape (TI-03 — pure, no I/O)", () => {
       "clokr_test_1_prod",
       "myclokr_test", // anchoring proof: the pattern is not a substring match
       "postgres",
+      // Phase 132 / D-04: the namespace segment is exactly 8 LOWERCASE HEX characters. A loose
+      // implementation (\w+, [a-z0-9]+, or an unbounded length) accepts every name below and would
+      // silently re-open exactly the hole D-06 closed — see clokr_test_kopie_von_prod_a1b2c3d4.
+      "clokr_test_a1b2c3d", // 7 hex chars — one short
+      "clokr_test_a1b2c3d45", // 9 hex chars — one too many
+      "clokr_test_A1B2C3D4", // uppercase — D-03 specifies lowercase
+      "clokr_test_g1b2c3d4", // "g" is not a hex digit
+      "clokr_test_a1b2c3d4_", // trailing underscore with no worker index
+      "clokr_test_a1b2c3d4_x", // non-numeric worker segment
+      "clokr_test_a1b2c3d4_1_2", // two worker segments
+      "clokr_test_kopie_von_prod_a1b2c3d4", // D-06's near-miss with a valid-looking hex tail
     ];
     for (const name of rejected) {
       expect(
@@ -74,7 +87,19 @@ describe("assertTestDatabaseUrlShape (TI-03 — pure, no I/O)", () => {
   });
 
   it("accepts the template and any per-worker database in the anchored namespace (D-06)", () => {
-    const accepted = ["clokr_test", "clokr_test_1", "clokr_test_4", "clokr_test_12"];
+    const accepted = [
+      "clokr_test",
+      "clokr_test_1",
+      "clokr_test_4",
+      "clokr_test_12",
+      // Phase 132 / D-04: an 8-lowercase-hex working-directory namespace segment, template and
+      // worker forms, plus the all-zero and all-f boundary values.
+      "clokr_test_a1b2c3d4",
+      "clokr_test_a1b2c3d4_1",
+      "clokr_test_a1b2c3d4_4",
+      "clokr_test_00000000",
+      "clokr_test_ffffffff",
+    ];
     for (const name of accepted) {
       const url = assertTestDatabaseUrlShape(
         `postgresql://clokr:password@localhost:5432/${name}`,
@@ -135,6 +160,18 @@ describe("assertTestDatabaseUrlShape (TI-03 — pure, no I/O)", () => {
       ["postgresql://clokr:password@localhost:5432/clokr_test_1_prod", "TEST_DATABASE_URL"],
       ["postgresql://clokr:password@localhost:5432/myclokr_test", "TEST_DATABASE_URL"],
       ["postgresql://clokr:password@localhost:5432/postgres", "TEST_DATABASE_URL"],
+      // Phase 132 / D-04: same namespace near-misses as the rejected-names test above.
+      ["postgresql://clokr:password@localhost:5432/clokr_test_a1b2c3d", "TEST_DATABASE_URL"],
+      ["postgresql://clokr:password@localhost:5432/clokr_test_a1b2c3d45", "TEST_DATABASE_URL"],
+      ["postgresql://clokr:password@localhost:5432/clokr_test_A1B2C3D4", "TEST_DATABASE_URL"],
+      ["postgresql://clokr:password@localhost:5432/clokr_test_g1b2c3d4", "TEST_DATABASE_URL"],
+      ["postgresql://clokr:password@localhost:5432/clokr_test_a1b2c3d4_", "TEST_DATABASE_URL"],
+      ["postgresql://clokr:password@localhost:5432/clokr_test_a1b2c3d4_x", "TEST_DATABASE_URL"],
+      ["postgresql://clokr:password@localhost:5432/clokr_test_a1b2c3d4_1_2", "TEST_DATABASE_URL"],
+      [
+        "postgresql://clokr:password@localhost:5432/clokr_test_kopie_von_prod_a1b2c3d4",
+        "TEST_DATABASE_URL",
+      ],
     ];
     for (const [raw, source] of cases) {
       let thrown: Error | undefined;
@@ -191,5 +228,14 @@ describe("assertTestDatabaseMarker (TI-03 — possession check, opens one connec
   it("rejects a marked namespace database when an exact name is demanded and does not match", async () => {
     const raw = process.env.TEST_DATABASE_URL as string;
     await expect(assertTestDatabaseMarker(raw, "clokr_test_99")).rejects.toThrow();
+  });
+
+  // Phase 132 / D-09: the possession mechanism is unchanged by the namespace (D-08) — the marker
+  // is still not namespace-extended, so the ONLY thing separating one namespace's databases from
+  // another's in this check is the exact name the caller demands, which is why vitest.setup.ts now
+  // passes one (templateDatabaseName(namespace)) instead of no expectedName at all.
+  it("rejects a marked database when a NAMESPACED exact name is demanded and does not match (D-09)", async () => {
+    const raw = process.env.TEST_DATABASE_URL as string;
+    await expect(assertTestDatabaseMarker(raw, "clokr_test_a1b2c3d4")).rejects.toThrow();
   });
 });

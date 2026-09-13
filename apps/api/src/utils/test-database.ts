@@ -7,22 +7,33 @@
  * exactly the defect this phase closes. Nothing in this file threads a `schema` option anywhere;
  * doing so was explicitly rejected as "every future connection path would have to remember it".
  *
- * Plain module: no side effects, no CLI behaviour. Every error message emitted anywhere in the
- * Phase 101 test-DB code path MUST go through `describeTarget` or `redactDatabaseUrl` below —
- * never print a raw connection string (it carries a password, even if only a local placeholder one).
+ * Every error message emitted anywhere in the Phase 101 test-DB code path MUST go through
+ * `describeTarget` or `redactDatabaseUrl` below — never print a raw connection string (it carries
+ * a password, even if only a local placeholder one).
  *
  * Lives under `src/utils/` (not `apps/api/scripts/`, where `ensure-test-database.ts` lives)
  * because `apps/api/tsconfig.json` pins `rootDir` to `./src` — a file under `src` (the TI-01 proof
  * test) cannot import a sibling outside that root (TS6059), while files under `scripts` are
  * outside the tsc-compiled program entirely (tsconfig.json's `include` covers only `src`) and can
  * freely import inward. This is the one canonical copy; nothing restates these constants.
+ *
+ * Still no module-evaluation side effect, and still imports nothing outside the Node standard
+ * library (Phase 132 adds `node:child_process` and `node:crypto`, which carry no third-party
+ * dependency graph). The reason the original "zero imports" sentence existed is unchanged and
+ * still binding: this module is reached from `vitest.worker-setup.ts`, a `setupFiles` entry
+ * Vitest evaluates once per test file, so pulling in `pg` here cost 197 package loads (Phase 101).
+ * Nothing in this file may import `pg` or any workspace package. The `git` subprocess below is
+ * spawned only from an explicit function call, never at module evaluation, and at most once per
+ * process — see the memo in `resolveTestNamespace`.
  */
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 /** The one and only name the integration suite is allowed to connect to. */
 export const TEST_DATABASE_NAME = "clokr_test";
 
 /**
- * The anchored test-database namespace (Phase 106, D-06).
+ * The anchored test-database namespace (Phase 106, D-06; widened by Phase 132, D-03/D-04).
  *
  * `clokr_test` is the TEMPLATE — migrated once per `test:setup`, never connected to by a test.
  * `clokr_test_1` … `clokr_test_<n>` are the per-worker databases cloned from it.
@@ -32,42 +43,189 @@ export const TEST_DATABASE_NAME = "clokr_test";
  * nothing about who created the database. The name is convenience; POSSESSION of
  * TEST_DATABASE_MARKER (see below) is the mechanism — see scripts/test-database-guard.ts.
  *
- * This is the one canonical copy. Nothing anywhere may restate this regex.
+ * Phase 132 adds exactly ONE optional segment: `_[0-9a-f]{8}`, the per-working-directory
+ * namespace (D-03) that lets two linked git worktrees run the integration suite concurrently
+ * without colliding on `clokr_test`/`clokr_test_<n>`. Its alphabet (8 lowercase hex characters,
+ * fixed length) is just as narrow as the numeric worker segment — which is exactly why
+ * `clokr_test_kopie_von_prod` is STILL rejected: `kopie_von_prod` is neither 8 hex characters nor
+ * a bare integer. The pattern remains anchored on both sides. This is still the one canonical
+ * copy — nothing anywhere may restate this regex.
  */
-export const TEST_DATABASE_NAME_PATTERN = /^clokr_test(_\d+)?$/;
+export const TEST_DATABASE_NAME_PATTERN = /^clokr_test(_[0-9a-f]{8})?(_\d+)?$/;
+
+/**
+ * The result of structurally parsing a test-database name against
+ * `TEST_DATABASE_NAME_PATTERN` — the ONLY consumer of that regex. Every predicate below is
+ * derived from this parser so that no second regex ever exists in this file (D-05).
+ */
+export interface ParsedTestDatabaseName {
+  /** The 8-hex working-directory namespace, or "" for the main working tree (D-06). */
+  namespace: string;
+  /** The 1-based worker index, or null for the TEMPLATE. */
+  workerIndex: number | null;
+}
+
+/** Structurally parses a test-database name, or returns `null` if it does not match at all. */
+export function parseTestDatabaseName(name: string): ParsedTestDatabaseName | null {
+  const m = TEST_DATABASE_NAME_PATTERN.exec(name);
+  if (m === null) return null;
+  return {
+    namespace: m[1] === undefined ? "" : m[1].slice(1),
+    workerIndex: m[2] === undefined ? null : Number(m[2].slice(1)),
+  };
+}
 
 /** True for the template and for any worker database in the namespace. */
 export function isTestDatabaseName(name: string): boolean {
-  return TEST_DATABASE_NAME_PATTERN.test(name);
+  return parseTestDatabaseName(name) !== null;
 }
 
 /**
- * True only for a per-worker database — i.e. in the namespace but NOT the template. Derived from
- * `isTestDatabaseName` on purpose: a second regex here would be a restatement.
+ * True only for a per-worker database — i.e. a name carrying a numeric worker segment. This
+ * property is now STRUCTURAL (Phase 132), not a not-equal-to-one-literal comparison: the old form
+ * (`isTestDatabaseName(name) && name !== TEST_DATABASE_NAME`) becomes WRONG once a namespace
+ * exists, because in a linked worktree the TEMPLATE is `clokr_test_<ns>`, which is not equal to
+ * `TEST_DATABASE_NAME` — the old check would misclassify a namespaced TEMPLATE as a worker
+ * database. That would silently disarm two protections at once: `vitest.worker-setup.ts`'s "a
+ * worker must never connect to the template" check, and `mayDropDatabase`'s template exclusion in
+ * `reset-test-databases.ts`. Deriving from `parseTestDatabaseName` keeps this correct regardless
+ * of namespace.
  */
 export function isWorkerDatabaseName(name: string): boolean {
-  return isTestDatabaseName(name) && name !== TEST_DATABASE_NAME;
+  return parseTestDatabaseName(name)?.workerIndex != null;
+}
+
+/** "" (the main working tree, D-06) or exactly 8 lowercase hex characters (D-03). */
+export function isValidTestNamespace(namespace: string): boolean {
+  if (namespace === "") return true;
+  const parsed = parseTestDatabaseName(`${TEST_DATABASE_NAME}_${namespace}`);
+  return parsed !== null && parsed.namespace === namespace && parsed.workerIndex === null;
 }
 
 /**
- * The database name for a 1-based worker index (`VITEST_POOL_ID`). Throws rather than returning a
- * malformed name — a silently wrong name here would send a worker at an unprovisioned target.
+ * The explicit namespace override (Phase 132, D-02). Two jobs, one mechanism:
+ *  - a human escape hatch for cases the git heuristic cannot answer (two independent CLONES of
+ *    the same repository are two main working trees, not worktrees, so both derive "");
+ *  - the propagation channel from vitest.setup.ts's globalSetup into every worker, so
+ *    vitest.worker-setup.ts never spawns git once per test file.
+ * CI sets it to the empty string deliberately (.github/workflows/ci.yml), which pins CI's
+ * database names to exactly today's `clokr_test` / `clokr_test_<n>` regardless of how the runner
+ * happens to have checked the repository out (D-06, acceptance criterion 6).
  */
-export function workerDatabaseName(index: number | string): string {
+export const TEST_NAMESPACE_ENV_VAR = "CLOKR_TEST_NAMESPACE";
+
+/**
+ * The per-working-directory namespace, derived from git. `""` for the main working tree.
+ *
+ * D-01: `git rev-parse --git-dir` points at THIS working directory's git directory, while
+ * `--git-common-dir` points at the shared one. Equal => main working tree; different => linked
+ * worktree. `--path-format=absolute` (git >= 2.31) is NOT optional: invoked from a subdirectory of
+ * the MAIN tree — which is the normal case, since every one of these scripts runs with cwd =
+ * apps/api — git returns `--git-dir` absolute and `--git-common-dir` RELATIVE ("../../.git").
+ * Comparing those two raw strings reports the main tree as a worktree and would rename CI's
+ * databases. The flag also canonicalizes symlinks (/tmp vs /private/tmp), so no realpath call is
+ * needed here. Both facts were reproduced empirically — see 132-RESEARCH.md.
+ *
+ * D-03 (interpretation, see 132-01-PLAN.md § decision_note): the SHA-256 is taken over the
+ * absolute `--git-dir`, not the common dir. The common dir is identical for every linked worktree
+ * of one repository, so hashing it would give two worktrees the SAME namespace — the exact
+ * collision this phase removes. The git-dir (`<common>/worktrees/<id>`) is unique per worktree and
+ * survives `git worktree move`, which is the stability D-01 asks for.
+ *
+ * D-07: never guess. git missing, git failing, not a repository, unexpected output — every one of
+ * them resolves to the EMPTY namespace (today's behaviour), because a guessed namespace would
+ * point at a database nobody provisioned.
+ */
+export function deriveTestNamespace(cwd: string = process.cwd()): string {
+  let out: string;
+  try {
+    out = execFileSync(
+      "git",
+      ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"],
+      { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 10_000 },
+    );
+  } catch {
+    return "";
+  }
+  const lines = out
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "");
+  if (lines.length !== 2) return "";
+  const [gitDir, gitCommonDir] = lines;
+  if (gitDir === gitCommonDir) return "";
+  return createHash("sha256").update(gitDir).digest("hex").slice(0, 8);
+}
+
+/**
+ * The namespace this process must use. `TEST_NAMESPACE_ENV_VAR` wins when SET — including when
+ * set to the empty string, which is an explicit "main-tree names, please" (D-02, and how CI pins
+ * acceptance criterion 6). Otherwise the value is derived once and written back into
+ * `process.env`, so (a) a repeated call inside one process never re-spawns git, and (b) a child
+ * process — every vitest worker — inherits it instead of deriving it again. That inheritance is
+ * the same channel `TEST_DATABASE_URL` already travels; see vitest.setup.ts's header.
+ *
+ * An override that is set but malformed THROWS. D-07's "never guess" governs DERIVATION; a human
+ * who typed an override deserves a loud error, not a silent fallback to a different database than
+ * the one they asked for.
+ */
+export function resolveTestNamespace(cwd?: string): string {
+  const override = process.env[TEST_NAMESPACE_ENV_VAR];
+  if (override !== undefined) {
+    const ns = override.trim();
+    if (!isValidTestNamespace(ns)) {
+      throw new Error(
+        `${TEST_NAMESPACE_ENV_VAR} is "${override}", which is not a valid test namespace. ` +
+          `Expected the empty string (the main working tree's names: ${TEST_DATABASE_NAME}, ` +
+          `${TEST_DATABASE_NAME}_<n>) or exactly 8 lowercase hex characters. Unset it to let this ` +
+          `working directory derive its own namespace from git.`,
+      );
+    }
+    return ns;
+  }
+  const derived = deriveTestNamespace(cwd);
+  process.env[TEST_NAMESPACE_ENV_VAR] = derived;
+  return derived;
+}
+
+/**
+ * The TEMPLATE database name for `namespace` — `clokr_test` for the main working tree (`""`,
+ * D-06), `clokr_test_<namespace>` for a linked worktree. Throws rather than returning a malformed
+ * name — a silently wrong name here would send tooling at an unprovisioned target.
+ */
+export function templateDatabaseName(namespace: string = resolveTestNamespace()): string {
+  if (!isValidTestNamespace(namespace)) {
+    throw new Error(
+      `templateDatabaseName: "${namespace}" is not a valid test namespace ` +
+        `(expected "" for the main working tree, or exactly 8 lowercase hex characters).`,
+    );
+  }
+  return namespace === "" ? TEST_DATABASE_NAME : `${TEST_DATABASE_NAME}_${namespace}`;
+}
+
+/**
+ * The database name for a 1-based worker index (`VITEST_POOL_ID`) within `namespace`. Throws
+ * rather than returning a malformed name — a silently wrong name here would send a worker at an
+ * unprovisioned target.
+ */
+export function workerDatabaseName(
+  index: number | string,
+  namespace: string = resolveTestNamespace(),
+): string {
   const n = typeof index === "string" ? Number(index) : index;
   if (!Number.isInteger(n) || n < 1) {
     throw new Error(
       `workerDatabaseName: expected a 1-based integer worker index, got ${JSON.stringify(index)}.`,
     );
   }
-  return `${TEST_DATABASE_NAME}_${n}`;
+  return `${templateDatabaseName(namespace)}_${n}`;
 }
 
 /**
  * The pinned number of parallel Vitest workers, and therefore of per-worker test databases
- * (Phase 106, D-02). ONE number, identical in CI and locally — never a percentage, never
- * `os.availableParallelism()`. A machine with more cores deliberately leaves performance on the
- * table so that CI and local runs are the same run.
+ * (Phase 106, D-02; per-namespace since Phase 132, D-13). ONE number, identical in CI and locally
+ * — never a percentage, never `os.availableParallelism()`. A machine with more cores deliberately
+ * leaves performance on the table so that CI and local runs are the same run.
  *
  * Derived in 106-MEASUREMENTS.md from the runner's MEASURED nproc and MEASURED memory headroom
  * (D-10 forbids assuming the documented spec). Changing it requires re-running that measurement
@@ -75,10 +233,46 @@ export function workerDatabaseName(index: number | string): string {
  */
 export const TEST_DATABASE_WORKER_COUNT = 4;
 
-/** `clokr_test_1` … `clokr_test_<TEST_DATABASE_WORKER_COUNT>`, in worker-index order. */
-export const WORKER_DATABASE_NAMES: readonly string[] = Object.freeze(
-  Array.from({ length: TEST_DATABASE_WORKER_COUNT }, (_, i) => workerDatabaseName(i + 1)),
-);
+/**
+ * `clokr_test_1` … `clokr_test_<TEST_DATABASE_WORKER_COUNT>` for `namespace`, in worker-index
+ * order. A FUNCTION, not a frozen const (Phase 132) — a module-level const would call
+ * `resolveTestNamespace()` at module-evaluation time, and this module is reached from
+ * `vitest.worker-setup.ts`, a `setupFiles` entry that Vitest re-imports once per test FILE (~200x
+ * per run under `isolate: true`). A module-level derivation would therefore become a per-file cost
+ * on the suite's already-dominant bootstrap. See 132-RESEARCH.md § "Vitest Setup/Worker
+ * Lifecycle".
+ */
+export function workerDatabaseNames(namespace: string = resolveTestNamespace()): readonly string[] {
+  return Object.freeze(
+    Array.from({ length: TEST_DATABASE_WORKER_COUNT }, (_, i) =>
+      workerDatabaseName(i + 1, namespace),
+    ),
+  );
+}
+
+/**
+ * Returns a COPY of `url` whose database name is moved into `namespace`, preserving the worker
+ * index (or the template-ness) of the original. Host, port, credentials and every query parameter
+ * are untouched. With the empty namespace the result is byte-identical to the input — that is what
+ * makes CI's `clokr_test` stay literally `clokr_test` (D-06, AC-6).
+ */
+export function namespacedDatabaseUrl(url: URL, namespace: string = resolveTestNamespace()): URL {
+  const current = databaseNameOf(url);
+  const parsed = parseTestDatabaseName(current);
+  if (parsed === null) {
+    throw new Error(
+      `namespacedDatabaseUrl: "${current}" is not a test-namespace database name, so it cannot ` +
+        `be re-namespaced. Target: ${describeTarget(url.toString())}.`,
+    );
+  }
+  const next = new URL(url.toString());
+  next.pathname = `/${
+    parsed.workerIndex === null
+      ? templateDatabaseName(namespace)
+      : workerDatabaseName(parsed.workerIndex, namespace)
+  }`;
+  return next;
+}
 
 /**
  * Stamped as a `COMMENT ON DATABASE` by ensure-test-database.ts. A database-level comment survives
@@ -87,6 +281,39 @@ export const WORKER_DATABASE_NAMES: readonly string[] = Object.freeze(
  * presence before allowing the app to boot against a given target.
  */
 export const TEST_DATABASE_MARKER = "clokr-test-database:v1";
+
+const MARKER_PROVENANCE_PREFIX = " from ";
+const MARKER_SUFFIX = ". Contents are disposable.";
+
+/**
+ * The full `COMMENT ON DATABASE` text (Phase 132, D-12). `provenancePath` is the absolute git-dir
+ * path of the working directory that provisioned this database — it is what makes an orphaned
+ * namespace answerable from the database itself rather than from a side ledger. Always starts with
+ * `TEST_DATABASE_MARKER`, so every existing `startsWith` possession check keeps working unchanged.
+ * `TEST_DATABASE_MARKER` itself is NOT extended with the namespace (D-08) — that would create a
+ * second truth about ownership next to possession.
+ */
+export function buildMarkerComment(scriptPath: string, provenancePath: string): string {
+  return (
+    `${TEST_DATABASE_MARKER} — provisioned by ${scriptPath} (Phase 132)` +
+    `${MARKER_PROVENANCE_PREFIX}${provenancePath}${MARKER_SUFFIX}`
+  );
+}
+
+/**
+ * The provisioning path recorded by `buildMarkerComment`, or `null` when the comment carries none
+ * (every database stamped before Phase 132). `null` means UNKNOWN, never "orphaned" — the prune
+ * path in `reset-test-databases.ts` refuses to act on an unknown provenance.
+ */
+export function markerProvenancePath(marker: string): string | null {
+  if (!marker.startsWith(TEST_DATABASE_MARKER)) return null;
+  const start = marker.indexOf(MARKER_PROVENANCE_PREFIX);
+  if (start === -1) return null;
+  const from = start + MARKER_PROVENANCE_PREFIX.length;
+  const end = marker.endsWith(MARKER_SUFFIX) ? marker.length - MARKER_SUFFIX.length : marker.length;
+  const path = marker.slice(from, end).trim();
+  return path === "" ? null : path;
+}
 
 /**
  * Parses a database connection string, throwing an `Error` that names `source` (e.g.
