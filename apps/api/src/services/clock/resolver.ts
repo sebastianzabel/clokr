@@ -9,6 +9,7 @@ import { decide } from "./state-machine";
 import { emitClockAudit } from "./audit-actor";
 import { consolidateSameDayEntries, calcBreakMinutesLocal } from "./consolidate";
 import { hasApprovedLeaveOnDate } from "../../utils/leave-check";
+import { invalidReasonFields, CLEARED_INVALID_REASON } from "../../utils/invalid-reason";
 
 export async function resolveClockEvent(
   app: FastifyInstance,
@@ -134,7 +135,9 @@ export async function resolveClockEvent(
               startTime: event.timestamp,
               source: event.source as never, // widened at boundary; DB enforces enum
               isInvalid: leaveCheck?.status === "CANCELLATION_REQUESTED",
-              invalidReason: leaveCheck ? "Urlaubsstornierung ausstehend" : null,
+              ...(leaveCheck
+                ? invalidReasonFields("LEAVE_CANCELLATION_PENDING")
+                : CLEARED_INVALID_REASON),
               note: event.note,
             },
           });
