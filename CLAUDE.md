@@ -69,8 +69,20 @@ Full workflow incl. the SAFETY-CRITICAL one-time int/prod baseline runbook: `doc
 - The worker count is pinned in `apps/api/src/utils/test-database.ts`
   (`TEST_DATABASE_WORKER_COUNT`) — one number for CI and local. Changing it requires re-running
   `test:setup`, because that is what provisions exactly that many databases.
-- `apps/api/src/utils/test-database.ts` is the ONLY place the test-database name pattern
-  (`^clokr_test(_\d+)?$`), the marker and the worker count may be stated. Never restate them.
+- `apps/api/src/utils/test-database.ts` is the ONLY place the test-database name pattern, the
+  marker and the worker count may be stated. Never restate them — not even here. This bullet used
+  to quote the regex inline and went stale the moment Phase 132 widened it, which is the exact
+  failure the rule exists to prevent. Read `TEST_DATABASE_NAME_PATTERN` in that module.
+- **Per-working-directory namespaces (Phase 132).** The MAIN working tree uses an empty namespace,
+  so its names stay `clokr_test` / `clokr_test_1`…`_N` — byte-identical to before, which is what CI
+  relies on. A linked `git worktree` derives an 8-hex namespace and uses `clokr_test_<ns>` /
+  `clokr_test_<ns>_<n>`, so two working directories can run the suite at the same time without
+  colliding. The namespace is decided by `git rev-parse --path-format=absolute --git-dir
+  --git-common-dir`; `--path-format=absolute` is load-bearing, because from a subdirectory git
+  returns one path absolute and the other relative, and comparing them raw would misread the main
+  tree as a worktree and rename CI's databases. `CLOKR_TEST_NAMESPACE` overrides the derivation;
+  absent `git`, the namespace falls back to empty, never to a guess. Orphaned namespaces:
+  `reset-test-databases.ts --prune-orphans` (dry run by default, `--confirm` to act).
 - A startup guard aborts before any test executes if a target is not a marked test database — it
   verifies the template AND every worker database by name and by marker POSSESSION, and each worker
   refuses to run if it cannot resolve its own database. Fix the target, never work around the guard.

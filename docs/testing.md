@@ -41,7 +41,9 @@ The suite now runs `TEST_DATABASE_WORKER_COUNT` (`apps/api/src/utils/test-databa
 at 4) test files in parallel — `apps/api/vitest.config.ts` sets `fileParallelism: true` and
 `maxWorkers: TEST_DATABASE_WORKER_COUNT` — with each worker connected to its own database
 (`clokr_test_1` … `clokr_test_<n>`). The commands above are unchanged; that is deliberate (see
-"Worker databases" below).
+"Worker databases" below). Since Phase 132, two different working directories can run the suite
+at the same time without colliding — see "Per-working-directory namespaces" below; nothing about
+the commands above changes for that either.
 
 **`pnpm --filter @clokr/api test -- <path>` does not work as a single-file filter.**
 Confirmed empirically, not assumed: the `--` is forwarded literally into vitest's own
@@ -107,7 +109,15 @@ property is what makes it a better fit here than an init-time-only mount.
 
 ## How provisioning works (D-02: `migrate deploy`, not `db push`)
 
-`test:setup` does three things now, chained with `&&` (never `;` — an unset/empty
+`test:setup` first resolves this working directory's namespace (Phase 132, see "Per-working-
+directory namespaces" below) via `apps/api/scripts/print-test-database-env.ts` and exports
+`CLOKR_TEST_NAMESPACE` plus a namespace-rewritten `TEST_DATABASE_URL`, before the three `&&`-
+chained stages below run. This resolution has to happen in the shell itself, ahead of the chain:
+the `DATABASE_URL=$TEST_DATABASE_URL prisma migrate deploy` stage is raw POSIX shell and cannot
+import TypeScript, so without the resolved value it would migrate the MAIN working tree's
+template even when invoked from inside a linked worktree.
+
+`test:setup` then does three things, chained with `&&` (never `;` — an unset/empty
 `TEST_DATABASE_URL` must abort before the next command can fall through to any default). The
 order is not negotiable — each step depends on the previous one having actually committed:
 
@@ -144,9 +154,15 @@ order is not negotiable — each step depends on the previous one having actuall
   by a running test.
 - The workers are `clokr_test_1` … `clokr_test_<N>` (N = `TEST_DATABASE_WORKER_COUNT`,
   currently 4), each a `CREATE DATABASE ... TEMPLATE` clone of the template.
-- The anchored namespace pattern is `^clokr_test(_\d+)?$` (Phase 106, D-06), and it lives in
-  exactly one place: `apps/api/src/utils/test-database.ts`'s `TEST_DATABASE_NAME_PATTERN`.
-  Nothing else in the repository restates it.
+- The namespace pattern is **anchored at both ends** and accepts only the template name, an
+  optional 8-character lowercase-hex namespace segment, and an optional numeric worker segment
+  (Phase 106 D-06; widened by Phase 132 D-03/D-04). Anchoring is the point: an unanchored prefix
+  would also accept a name like `clokr_test_kopie_von_prod`, at which point the name says nothing
+  about who created the database.
+  **The regex itself is deliberately NOT reproduced here.** It lives in exactly one place —
+  `apps/api/src/utils/test-database.ts`'s `TEST_DATABASE_NAME_PATTERN` — and a copy in this file
+  is how the previous version of this sentence silently went stale when Phase 106 changed it.
+  Read it there.
 - The name is convenience; the marker is still the actual authorization mechanism, exactly as
   in Phase 101. A `TEMPLATE` copy does **not** inherit `COMMENT ON DATABASE` — it lives in
   `pg_shdescription`, keyed to the database OID, not to anything schema- or data-level — which
@@ -155,6 +171,65 @@ order is not negotiable — each step depends on the previous one having actuall
 - `apps/api/scripts/reset-test-databases.ts` is the only script in this repository that may
   issue `DROP DATABASE`, and it is excluded from the production runtime image by an
   `apps/api/Dockerfile` build gate (named-file removal plus a behavioural absence check).
+
+## Per-working-directory namespaces (Phase 132)
+
+Two working directories of this repository (a linked `git worktree`, not two independent
+clones) can now run the integration suite at the same time without colliding on `clokr_test` /
+`clokr_test_<n>`. Each active working directory gets its own **namespace**:
+
+- **Main working tree:** the namespace is the empty string. Names stay exactly what they were
+  before this phase — `clokr_test`, `clokr_test_1` … `clokr_test_4`. This is what CI uses.
+- **Linked `git worktree`:** the namespace is 8 lowercase hex characters, and the names become
+  `clokr_test_<ns>` (template) and `clokr_test_<ns>_<n>` (workers).
+
+**How `<ns>` is decided:** `git rev-parse --path-format=absolute --git-dir --git-common-dir`.
+If both paths are equal, this is the main working tree and the namespace is empty. If they
+differ, this is a linked worktree, and the namespace is the truncated SHA-256 of the absolute
+`--git-dir` (not the common dir — see the note below). `--path-format=absolute` is
+load-bearing, not cosmetic: from a subdirectory of the MAIN working tree — which is where these
+scripts actually run, `cwd` is `apps/api` — git returns `--git-dir` as an absolute path and
+`--git-common-dir` as a RELATIVE one. Comparing the two raw strings without normalizing them
+would report the main working tree as a worktree and rename CI's databases. The flag also
+canonicalizes symlinks, so nothing here needs a separate `realpath` call.
+
+**The override:** `CLOKR_TEST_NAMESPACE`. Set it to 8 lowercase hex characters to force a
+namespace, set it to the empty string to force the main-tree names (this is what CI does), or
+leave it unset to derive one automatically. One case the heuristic deliberately cannot answer:
+two independent **clones** of this repository are two separate main working trees, and both
+derive the empty namespace — they still collide, and the override is the way out.
+
+**Fallback:** if `git` is unavailable, or the working directory is not a git repository at all,
+the namespace is empty — today's behaviour, never a guess. A guessed namespace would point at a
+database nobody provisioned.
+
+**The cost (D-13):** the worker count stays fixed PER NAMESPACE, so every active working
+directory occupies 5 databases (1 template + 4 workers). Two concurrent working directories
+occupy 10. This is deliberate and is not compensated by shrinking the worker count, because CI
+and local must always provision the same number.
+
+**Precedence — what decides which databases a run uses:** the resolved namespace, not
+`TEST_DATABASE_URL`'s database name. The URL only decides host, port and credentials; the test
+harness rewrites the URL's database name into the resolved namespace before connecting. So a
+stale `export TEST_DATABASE_URL=.../clokr_test` sitting in a worktree shell no longer sends that
+run at the main tree's databases — the old footgun this replaces. To deliberately target a
+different namespace, set `CLOKR_TEST_NAMESPACE` instead of editing the URL.
+
+**Orphan cleanup (D-11):** a worktree that no longer exists on disk leaves its namespace's
+databases behind. List and, once confirmed, remove them:
+
+```bash
+pnpm --filter @clokr/api exec tsx scripts/reset-test-databases.ts --prune-orphans
+pnpm --filter @clokr/api exec tsx scripts/reset-test-databases.ts --prune-orphans --confirm
+```
+
+Dry run is the default — the first command only reports. The report lists every `clokr_test*`
+database together with the working directory that provisioned it (read back from the
+`COMMENT ON DATABASE` marker itself, D-12) and a verdict. The main working tree's own namespace
+and the caller's own namespace can never be pruned. A database whose marker records no
+provisioning path is reported as unknown and is never pruned automatically — it needs a manual
+look. Databases provisioned before Phase 132 fall into that "unknown" bucket for exactly this
+reason.
 
 ## Clean slate — resetting the test databases
 
