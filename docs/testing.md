@@ -215,6 +215,21 @@ stale `export TEST_DATABASE_URL=.../clokr_test` sitting in a worktree shell no l
 run at the main tree's databases — the old footgun this replaces. To deliberately target a
 different namespace, set `CLOKR_TEST_NAMESPACE` instead of editing the URL.
 
+**Before a fresh worktree can run anything: `prisma generate`.** A newly created linked worktree
+needs
+
+```bash
+pnpm --filter @clokr/db exec prisma generate
+```
+
+before its first test run. `packages/db/generated/` is gitignored, and
+`pnpm install --frozen-lockfile` does NOT regenerate it — so the new working directory has no
+Prisma client at all. The failure does not look like a missing build step: the suite dies with
+`Failed to resolve entry for package "@clokr/db"` across most files (180 of 216 when this was hit
+during the Phase 132 demonstration), which reads like a broken workspace rather than a one-command
+prerequisite. Notably the OTHER working directory stayed green throughout the same run, so a
+mass failure confined to one worktree points here first, not at the namespace isolation.
+
 **Orphan cleanup (D-11):** a worktree that no longer exists on disk leaves its namespace's
 databases behind. List and, once confirmed, remove them:
 
