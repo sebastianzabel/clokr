@@ -6,6 +6,7 @@ import { checkArbZG, ArbZGWarning } from "../utils/arbzg";
 import { checkJArbSchG } from "../utils/jarbschg";
 import { getTenantTimezone, dateStrInTz, todayInTz } from "../utils/timezone";
 import { computeEntryAgeInDays } from "../utils/retro-config";
+import { CLEARED_INVALID_REASON } from "../utils/invalid-reason"; // Phase 96 (T1)
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
@@ -389,7 +390,7 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
             const reqAfter = await tx.retroEntryRequest.findUniqueOrThrow({ where: { id } });
             const entryAfter = await tx.timeEntry.update({
               where: { id: entryIdToRelease },
-              data: { isInvalid: false, invalidReason: null, ...correctedFields },
+              data: { isInvalid: false, ...CLEARED_INVALID_REASON, ...correctedFields },
             });
 
             await app.audit({
