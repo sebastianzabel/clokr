@@ -17,6 +17,7 @@ import {
 } from "../utils/timezone";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { hasApprovedLeaveOnDate } from "../utils/leave-check";
+import { invalidReasonFields, CLEARED_INVALID_REASON } from "../utils/invalid-reason";
 import { resolveClockEvent } from "../services/clock/resolver";
 import { resolveActor } from "../services/clock/audit-actor";
 import type { ClockEvent } from "../services/clock/types";
@@ -1271,7 +1272,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                 source: "CORRECTION", // grant-backed write is always a correction
                 createdBy: user.sub,
                 isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
-                invalidReason: manualLeave ? "Urlaubsstornierung ausstehend" : null,
+                ...(manualLeave
+                  ? invalidReasonFields("LEAVE_CANCELLATION_PENDING")
+                  : CLEARED_INVALID_REASON),
               },
             });
 
@@ -1320,7 +1323,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                 source: "MANUAL",
                 createdBy: user.sub,
                 isInvalid: true,
-                invalidReason: "Nachtrag – Genehmigung ausstehend",
+                ...invalidReasonFields("RETRO_APPROVAL_PENDING"),
                 retroRequestId: request.id,
               },
             });
@@ -1349,7 +1352,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               source: "MANUAL",
               createdBy: user.sub,
               isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
-              invalidReason: manualLeave ? "Urlaubsstornierung ausstehend" : null,
+              ...(manualLeave
+                ? invalidReasonFields("LEAVE_CANCELLATION_PENDING")
+                : CLEARED_INVALID_REASON),
             },
           });
         }
@@ -1762,17 +1767,18 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
 
       // Auto-revalidate: if endTime is now set and entry was invalid due to missing clock-out
-      if (updatedEnd && existing.isInvalid && existing.invalidReason === "Ausstempeln fehlt") {
+      if (updatedEnd && existing.isInvalid && existing.invalidReasonCode === "MISSING_CLOCK_OUT") {
         patch.isInvalid = false;
-        patch.invalidReason = null;
+        Object.assign(patch, CLEARED_INVALID_REASON);
       }
       // Phase 96 (RETRO-16/D-10): a pending Nachtrag edit (isOwnPendingNachtragEdit) is
-      // intentionally NOT auto-revalidated here — the string check above matches ONLY
-      // "Ausstempeln fehlt" (verified non-collision, Pitfall 2), never "Nachtrag –
-      // Genehmigung ausstehend". `isInvalid`/`retroRequestId` are never set in `patch`
-      // for this case, so the update preserves both — the entry stays pending until a
-      // manager decides via PATCH /retro-entry-requests/:id/review. Do not add an
-      // isInvalid-clearing branch here for the Nachtrag reason without going through
+      // intentionally NOT auto-revalidated here — the code check above matches ONLY
+      // MISSING_CLOCK_OUT, never RETRO_APPROVAL_PENDING. Since these are two distinct
+      // enum values, the non-collision is now structural rather than a claim about two
+      // strings that happen to differ. `isInvalid`/`retroRequestId` are never set in
+      // `patch` for this case, so the update preserves both — the entry stays pending
+      // until a manager decides via PATCH /retro-entry-requests/:id/review. Do not add
+      // an isInvalid-clearing branch here for the Nachtrag reason without going through
       // that endpoint (Elevation-of-Privilege guard, T-96-12).
 
       // Handle break slots update (non-grant path: runs before the update, as before)
@@ -1999,7 +2005,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // Build update data: always revalidate, optionally correct times
       const updateData: Prisma.TimeEntryUpdateInput = {
         isInvalid: false,
-        invalidReason: null,
+        ...CLEARED_INVALID_REASON,
       };
 
       const hasCorrection =
