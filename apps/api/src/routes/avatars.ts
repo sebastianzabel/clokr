@@ -23,6 +23,13 @@ export async function avatarRoutes(app: FastifyInstance) {
       const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
+      // Tenant scope: copied verbatim from GET /:employeeId below — an ADMIN/MANAGER
+      // self-check above only guards EMPLOYEE callers, so ADMIN/MANAGER still need
+      // this explicit tenant comparison.
+      if (employee.tenantId !== req.user.tenantId) {
+        return reply.code(403).send({ error: "Keine Berechtigung" });
+      }
+
       const data = await req.file();
       if (!data) return reply.code(400).send({ error: "Keine Datei hochgeladen" });
 
@@ -106,6 +113,13 @@ export async function avatarRoutes(app: FastifyInstance) {
       const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
       if (!employee?.avatarPath) {
         return reply.code(404).send({ error: "Kein Avatar vorhanden" });
+      }
+
+      // Tenant scope: copied verbatim from GET /:employeeId above — an ADMIN/MANAGER
+      // self-check above only guards EMPLOYEE callers, so ADMIN/MANAGER still need
+      // this explicit tenant comparison.
+      if (employee.tenantId !== req.user.tenantId) {
+        return reply.code(403).send({ error: "Keine Berechtigung" });
       }
 
       try {

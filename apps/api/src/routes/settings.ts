@@ -1496,8 +1496,29 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.get("/work/:employeeId/history", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
-    handler: async (req, _reply) => {
+    handler: async (req, reply) => {
       const { employeeId } = req.params as { employeeId: string };
+
+      // Tenant isolation guard — copied verbatim from GET /work/:employeeId above
+      // (T-100-09 pattern): the 404 body is IDENTICAL to the genuine not-found
+      // branch so this endpoint cannot be used as a tenant-membership oracle.
+      const employee = await app.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { tenantId: true },
+      });
+      if (!employee || employee.tenantId !== req.user.tenantId) {
+        if (employee) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "CROSS_TENANT_ACCESS_DENIED",
+            entity: "WorkSchedule",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+        }
+        return reply.code(404).send({ error: "Kein Arbeitszeitmodell gefunden" });
+      }
+
       const schedules = await app.prisma.workSchedule.findMany({
         where: { employeeId },
         orderBy: { validFrom: "desc" },
@@ -1561,7 +1582,14 @@ export async function settingsRoutes(app: FastifyInstance) {
         })
         .parse(req.body);
 
-      const existing = await app.prisma.leaveType.findUnique({ where: { id } });
+      // Tenant scope: LeaveType carries tenantId directly, so a combined filter is
+      // the shorter equivalent to a separate lookup + compare — same 404 either way,
+      // no tenant-membership oracle. No extra CROSS_TENANT_ACCESS_DENIED audit here:
+      // this mirrors the established sibling guard (GET /special-leave/rules/:id),
+      // and the row itself stays untouched by a rejected request either way.
+      const existing = await app.prisma.leaveType.findFirst({
+        where: { id, tenantId: req.user.tenantId },
+      });
       if (!existing) return reply.code(404).send({ error: "Abwesenheitstyp nicht gefunden" });
 
       const updated = await app.prisma.leaveType.update({

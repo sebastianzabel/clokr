@@ -2549,7 +2549,7 @@ export async function leaveRoutes(app: FastifyInstance) {
   app.get("/entitlements/:employeeId", {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
-    handler: async (req) => {
+    handler: async (req, reply) => {
       const { employeeId } = req.params as { employeeId: string };
       const { year } = req.query as { year?: string };
       // Plan 74-03 / D-05: respect the test-only X-Test-Now header so the
@@ -2560,6 +2560,36 @@ export async function leaveRoutes(app: FastifyInstance) {
       const now = req.testNow ?? new Date();
       const targetYear = year ? parseInt(year) : now.getFullYear();
       const tenantId = req.user.tenantId;
+
+      // Tenant isolation check, mirroring overtime.ts: this used to be a
+      // `findUnique({ where: { id: employeeId, tenantId } })` further below that only
+      // fed `exitDate` and never rejected a `null` result — a cross-tenant employeeId
+      // silently fell through to the (unfiltered) LeaveEntitlement/Section9Credit
+      // queries below. Loaded here, before any read or write, and reused for the
+      // exitDate the pro-rata calculation further down needs.
+      const employee = await app.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { tenantId: true, exitDate: true },
+      });
+      if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      if (employee.tenantId !== tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Employee",
+          entityId: employeeId,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+      // Same-tenant self-scope: an EMPLOYEE may only read their own leave account —
+      // mirrors overtime.ts:126 (D-03). Frontend only ever calls this with the
+      // caller's own employeeId for EMPLOYEE-role tokens (the admin-facing report
+      // paths use ADMIN/MANAGER tokens), so this is not a behaviour change for any
+      // existing legitimate caller.
+      if (req.user.role === "EMPLOYEE" && req.user.employeeId !== employeeId) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
 
       // Resturlaub auto-übertragen falls nötig
       const vacTypeId = await ensureLeaveType(app.prisma, tenantId, "VACATION");
@@ -2582,12 +2612,9 @@ export async function leaveRoutes(app: FastifyInstance) {
       const vacMeta = await loadVacationTypeMeta(app.prisma, tenantId);
       const { vacationNames } = vacMeta;
 
-      // Fetch exitDate for pro-rata effective entitlement computation (§ 5 Abs. 2 BUrlG)
-      const empForEntitlement = await app.prisma.employee.findUnique({
-        where: { id: employeeId, tenantId },
-        select: { exitDate: true },
-      });
-      const employeeExitDate = empForEntitlement?.exitDate ?? null;
+      // exitDate for pro-rata effective entitlement computation (§ 5 Abs. 2 BUrlG) —
+      // reuse the `employee` row loaded by the tenant guard above.
+      const employeeExitDate = employee.exitDate ?? null;
 
       // Self-heal usedDays from Σ approved LeaveRequest.days.
       // Same logic the report endpoint now uses — see apps/api/src/utils/leave-self-heal.ts.
