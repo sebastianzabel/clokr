@@ -129,6 +129,18 @@
   let correctSaving = $state(false);
   let correctError = $state("");
 
+  // ── Attest-Nachtrag (Phase 201 / Issue #201) ──────────────────────────────
+  // A separate action, NOT a field in the Korrigieren-Modal: PATCH /correct carries the
+  // delta-lock guard and a mandatory Begründung, and an Attest needs neither — it moves no
+  // day and is explicitly allowed after the Monatsabschluss (owner decision 2026-09-14).
+  let attestModal = $state<LeaveRequest | null>(null);
+  let attestOpen = $state(false);
+  let attestPresent = $state(false);
+  let attestFrom = $state("");
+  let attestTo = $state("");
+  let attestSaving = $state(false);
+  let attestError = $state("");
+
   // Quick 260824-ef6: Storno-Button (Zurückziehen / Stornierung beantragen) in der
   // Anträge-Tabelle. `resolveStornoAction` gates which button (if any) a row gets;
   // see apps/web/src/lib/leave/storno.ts for the full decision matrix and reasoning.
@@ -660,6 +672,41 @@
       correctError = e instanceof Error ? e.message : "Fehler";
     } finally {
       correctSaving = false;
+    }
+  }
+
+  // ── Attest-Nachtrag (Phase 201) ─────────────────────────────────────────────
+  function openAttest(req: LeaveRequest) {
+    attestModal = req;
+    attestPresent = req.attestPresent ?? false;
+    attestFrom = req.attestValidFrom ?? "";
+    attestTo = req.attestValidTo ?? "";
+    attestError = "";
+    attestOpen = true;
+  }
+
+  function closeAttest() {
+    attestOpen = false;
+    attestModal = null;
+  }
+
+  async function submitAttest() {
+    if (!attestModal) return;
+    attestSaving = true;
+    attestError = "";
+    try {
+      await api.patch(`/leave/requests/${attestModal.id}/attest`, {
+        attestPresent,
+        attestValidFrom: attestPresent && attestFrom ? attestFrom : null,
+        attestValidTo: attestPresent && attestTo ? attestTo : null,
+      });
+      closeAttest();
+      await loadData();
+      toasts.success(attestPresent ? "Attest gespeichert" : "Attest entfernt");
+    } catch (e: unknown) {
+      attestError = e instanceof Error ? e.message : "Fehler";
+    } finally {
+      attestSaving = false;
     }
   }
 
@@ -1527,6 +1574,15 @@
                     >
                       Korrigieren
                     </button>
+                    {#if SICK_CODES.includes(req.typeCode)}
+                      <button
+                        data-testid={`leave-team-row-${req.id}-attest`}
+                        class="btn btn-sm btn-ghost"
+                        onclick={() => openAttest(req)}
+                      >
+                        {req.attestPresent ? "Attest ändern" : "Attest erfassen"}
+                      </button>
+                    {/if}
                   {/if}
                   {#if resolveStornoAction(req.status, req.employeeId === $authStore.user?.employeeId)}
                     {@const kind = resolveStornoAction(
@@ -1921,6 +1977,50 @@
         disabled={correctSaving}
       >
         {correctSaving ? "Speichert…" : "Bestätigen"}
+      </button>
+    {/snippet}
+  </Modal>
+{/if}
+
+<!-- ── Attest-Modal (Phase 201): Attest nachtragen/ändern an einer genehmigten
+     Krankmeldung. Ruft AUSSCHLIESSLICH PATCH /leave/requests/:id/attest — keine
+     Korrektur, keine Begründung, kein § 9-Vorgang. ──────────────────────────── -->
+{#if attestOpen && attestModal}
+  <Modal bind:open={attestOpen} eyebrow={typeName(attestModal.typeCode)} title="Attest erfassen">
+    <div data-testid="leave-team-attest-modal">
+      <p class="form-hint attest-period">
+        {attestModal.employee.firstName}
+        {attestModal.employee.lastName} · {fmtDate(attestModal.startDate)} – {fmtDate(
+          attestModal.endDate,
+        )}
+      </p>
+      <AttestFields
+        bind:present={attestPresent}
+        bind:validFrom={attestFrom}
+        bind:validTo={attestTo}
+        idPrefix="a"
+      />
+      <p class="form-hint attest-late-hint">
+        Ein Attest kann auch nach dem Monatsabschluss erfasst werden — es ändert keine Zeiten und
+        keinen Saldo, sondern hält nur fest, ob eine Bescheinigung vorliegt.
+      </p>
+      {#if attestError}
+        <div class="alert alert-error review-error" role="alert">
+          <span>⚠</span><span>{attestError}</span>
+        </div>
+      {/if}
+    </div>
+    {#snippet footer()}
+      <button class="btn btn-ghost" onclick={closeAttest} disabled={attestSaving}>
+        Abbrechen
+      </button>
+      <button
+        class="btn btn-primary"
+        data-testid="leave-team-attest-modal-save"
+        onclick={submitAttest}
+        disabled={attestSaving}
+      >
+        {attestSaving ? "Speichert…" : "Speichern"}
       </button>
     {/snippet}
   </Modal>
@@ -2526,6 +2626,12 @@
   .self-approval-note {
     font-size: 0.875rem;
     margin: 0 auto 0 0;
+  }
+  .attest-period {
+    margin: 0 0 0.75rem;
+  }
+  .attest-late-hint {
+    margin: 0.75rem 0 0;
   }
 
   /* ── Review Grid ──────────────────────────────────────────────────── */
