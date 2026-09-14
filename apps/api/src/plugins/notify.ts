@@ -10,6 +10,14 @@ interface NotifyParams {
   tenantId?: string; // Required for email dispatch
   relatedType?: string; // e.g. "LeaveRequest", "TimeEntry" — used for auto-dismiss
   relatedId?: string; // id of the related entity
+  /**
+   * Optional neutral subject for the notification EMAIL. When absent, the subject is derived
+   * from `title` exactly as before — every existing caller is unaffected by construction.
+   * Set it when the in-app title itself is sensitive: a subject line travels further than a
+   * body (inbox lists, lock-screen previews, mail-server logs). Issue #200, owner decision
+   * 2026-09-15.
+   */
+  emailSubject?: string;
 }
 
 /**
@@ -53,6 +61,7 @@ export const notifyPlugin = fp(async (app) => {
     tenantId,
     relatedType,
     relatedId,
+    emailSubject,
   }: NotifyParams) {
     // 1. Always create in-app notification
     await app.prisma.notification.create({
@@ -61,9 +70,11 @@ export const notifyPlugin = fp(async (app) => {
 
     // 2. Attempt email dispatch (fire-and-forget)
     if (tenantId) {
-      sendEmailNotification({ userId, type, title, message, link, tenantId }).catch((err) => {
-        app.log.warn({ err, userId, type }, "Failed to send notification email");
-      });
+      sendEmailNotification({ userId, type, title, message, link, tenantId, emailSubject }).catch(
+        (err) => {
+          app.log.warn({ err, userId, type }, "Failed to send notification email");
+        },
+      );
     }
   }
 
@@ -86,8 +97,10 @@ export const notifyPlugin = fp(async (app) => {
     message,
     link,
     tenantId,
+    emailSubject,
   }: Required<Pick<NotifyParams, "userId" | "type" | "title" | "message" | "tenantId">> & {
     link?: string;
+    emailSubject?: string;
   }) {
     // Fail-closed gate (quick-260825-k3g) — checked FIRST, ahead of the tenant master
     // switch, so a missing registration surfaces even for tenants that have email
@@ -158,7 +171,7 @@ export const notifyPlugin = fp(async (app) => {
     await transporter.sendMail({
       from: `"${smtpConfig.smtpFromName}" <${smtpConfig.smtpFromEmail}>`,
       to: user.email,
-      subject: `${title} – Clokr`,
+      subject: `${emailSubject ?? title} – Clokr`,
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
           <h2 style="color:#2563eb">${escapeHtml(title)}</h2>

@@ -35,6 +35,7 @@ import {
   LEAVE_TYPE_CODES as TYPE_CODES,
   LEAVE_TYPE_DEFS,
   LEAVE_TYPE_LEGACY_ALIASES as LEGACY_ALIASES,
+  LEAVE_REQUEST_EMAIL_SUBJECT,
   leaveTypeFields,
 } from "../utils/leave-type"; // Phase 97 (T2, D-04) — the one mapping
 import type { LeaveTypeCode } from "@clokr/db";
@@ -706,6 +707,9 @@ export async function leaveRoutes(app: FastifyInstance) {
       });
 
       // ── Benachrichtigung: Manager über neuen Antrag informieren ──
+      // Issue #200: title and phrase both come from the single LEAVE_TYPE_DEFS mapping and are
+      // display text only (ADR 0001, never compared). The mail subject is deliberately neutral
+      // while the in-app title is type-specific (owner decision 2026-09-15).
       const typeDef = LEAVE_TYPE_DEFS[body.type];
       const managers = await app.prisma.user.findMany({
         where: {
@@ -719,14 +723,15 @@ export async function leaveRoutes(app: FastifyInstance) {
         await app.notify({
           userId: mgr.id,
           type: "LEAVE_REQUEST",
-          title: "Neuer Urlaubsantrag",
-          message: `${request.employee.firstName} ${request.employee.lastName} hat einen ${typeDef.name}-Antrag gestellt (${body.startDate} – ${body.endDate})`,
+          title: typeDef.notificationTitle,
+          message: `${request.employee.firstName} ${request.employee.lastName} ${typeDef.requestPhrase} (${body.startDate} – ${body.endDate})`,
           // Manager-facing: link to the approval surface (/team/leave honors ?request=),
           // NOT /leave (which only shows the recipient's OWN requests).
           link: `/team/leave?request=${request.id}`,
           tenantId,
           relatedType: "LeaveRequest",
           relatedId: request.id,
+          emailSubject: LEAVE_REQUEST_EMAIL_SUBJECT,
         });
       }
 
