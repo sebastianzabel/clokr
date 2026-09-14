@@ -41,6 +41,7 @@
     vacationCardDelta,
     vacationCardLabel,
   } from "$lib/leave/vacation-summary";
+  import { SICK_TYPE_CODES } from "$lib/leave/leave-kind"; // Phase 201 (Issue #201, B)
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -746,7 +747,7 @@
         type: formType,
         startDate: formStart,
         endDate: formEnd,
-        halfDay: formHalfDay,
+        halfDay: SICK_TYPE_CODES.has(formType) ? false : formHalfDay,
         note: formNote,
         ...(formType === "SPECIAL" && formSpecialRuleId
           ? { specialLeaveRuleId: formSpecialRuleId }
@@ -788,7 +789,7 @@
         await api.patch(`/leave/requests/${editingRequest.id}`, {
           startDate: formStart,
           endDate: formEnd,
-          halfDay: formHalfDay,
+          halfDay: SICK_TYPE_CODES.has(formType) ? false : formHalfDay,
           note: formNote || null,
         });
       } else {
@@ -799,7 +800,7 @@
           type: formType,
           startDate: formStart,
           endDate: formEnd,
-          halfDay: formHalfDay,
+          halfDay: SICK_TYPE_CODES.has(formType) ? false : formHalfDay,
           note: formNote,
           ...(formType === "SPECIAL" && formSpecialRuleId
             ? { specialLeaveRuleId: formSpecialRuleId }
@@ -1148,6 +1149,14 @@
   $effect(() => {
     if (showForm) loadBalanceForType(formType);
   });
+  // Phase 201 (Issue #201, B): partial incapacity to work does not exist (EFZG §3/§4) — the
+  // backend rejects half-day sick leave at all three write paths. The checkbox is therefore
+  // disabled rather than hidden (a hidden option reads like a bug, a disabled one with a
+  // reason reads like a rule), and an already-set selection is discarded when the type
+  // changes.
+  $effect(() => {
+    if (SICK_TYPE_CODES.has(formType)) formHalfDay = false;
+  });
   // When Modal closes (Escape/backdrop), reset form fields.
   $effect(() => {
     if (!showForm) resetFormFields();
@@ -1278,9 +1287,13 @@
      - Modal primitive does not pass attrs through to its inner DOM; a
        display:contents wrapper around the modal body owns
        `leave-form-modal`, and the inner <form> owns `leave-form`. -->
+  <!-- Phase 201 (Issue #201, C): the eyebrow names the SELECTED type. It used to be a fixed
+       "Urlaub", even above a Krankmeldung — same family as Issue #200: a vacation string in a
+       place that knows the type. typeName() is code-driven (TYPE_OPTIONS), never a comparison
+       against a display name. -->
   <Modal
     bind:open={showForm}
-    eyebrow="Urlaub"
+    eyebrow={typeName(formType)}
     title={editingRequest ? "Antrag bearbeiten" : "Neuer Abwesenheitsantrag"}
   >
     <div data-testid="leave-form-modal" style="display: contents">
@@ -1593,10 +1606,14 @@
               type="checkbox"
               data-testid="leave-form-half-day"
               bind:checked={formHalfDay}
+              disabled={SICK_TYPE_CODES.has(formType)}
               class="toggle-cb"
             />
             <span>Halber Tag</span>
           </label>
+          {#if SICK_TYPE_CODES.has(formType)}
+            <p class="form-hint">Halbe Kranktage sind nicht zulässig</p>
+          {/if}
         </div>
 
         <!-- Parallele Abwesenheiten -->

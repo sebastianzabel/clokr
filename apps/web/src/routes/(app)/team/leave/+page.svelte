@@ -15,6 +15,7 @@
   } from "$lib/phorest/appointmentCollisions";
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
+  import AttestFields from "$lib/components/leave/AttestFields.svelte"; // Phase 201
   import {
     resolveStornoAction,
     stornoDialogCopy,
@@ -127,6 +128,18 @@
   let correctReason = $state("");
   let correctSaving = $state(false);
   let correctError = $state("");
+
+  // ── Attest-Nachtrag (Phase 201 / Issue #201) ──────────────────────────────
+  // A separate action, NOT a field in the Korrigieren-Modal: PATCH /correct carries the
+  // delta-lock guard and a mandatory Begründung, and an Attest needs neither — it moves no
+  // day and is explicitly allowed after the Monatsabschluss (owner decision 2026-09-14).
+  let attestModal = $state<LeaveRequest | null>(null);
+  let attestOpen = $state(false);
+  let attestPresent = $state(false);
+  let attestFrom = $state("");
+  let attestTo = $state("");
+  let attestSaving = $state(false);
+  let attestError = $state("");
 
   // Quick 260824-ef6: Storno-Button (Zurückziehen / Stornierung beantragen) in der
   // Anträge-Tabelle. `resolveStornoAction` gates which button (if any) a row gets;
@@ -626,6 +639,13 @@
     if (SICK_CODES.includes(correctType)) correctHalfDay = false;
   });
 
+  // Phase 201 (Issue #201, B): same as the create dialog — an already-set half-day
+  // selection is discarded when switching to a sickness type, so it cannot survive
+  // invisibly behind a disabled checkbox and end up in a 400 from the backend.
+  $effect(() => {
+    if (SICK_CODES.includes(createForm.type)) createForm.halfDay = false;
+  });
+
   async function submitCorrection() {
     if (!correctModal) return;
     // Client-Vorabprüfung (Server ist maßgeblich): Enddatum >= Startdatum.
@@ -659,6 +679,41 @@
       correctError = e instanceof Error ? e.message : "Fehler";
     } finally {
       correctSaving = false;
+    }
+  }
+
+  // ── Attest-Nachtrag (Phase 201) ─────────────────────────────────────────────
+  function openAttest(req: LeaveRequest) {
+    attestModal = req;
+    attestPresent = req.attestPresent ?? false;
+    attestFrom = req.attestValidFrom ?? "";
+    attestTo = req.attestValidTo ?? "";
+    attestError = "";
+    attestOpen = true;
+  }
+
+  function closeAttest() {
+    attestOpen = false;
+    attestModal = null;
+  }
+
+  async function submitAttest() {
+    if (!attestModal) return;
+    attestSaving = true;
+    attestError = "";
+    try {
+      await api.patch(`/leave/requests/${attestModal.id}/attest`, {
+        attestPresent,
+        attestValidFrom: attestPresent && attestFrom ? attestFrom : null,
+        attestValidTo: attestPresent && attestTo ? attestTo : null,
+      });
+      closeAttest();
+      await loadData();
+      toasts.success(attestPresent ? "Attest gespeichert" : "Attest entfernt");
+    } catch (e: unknown) {
+      attestError = e instanceof Error ? e.message : "Fehler";
+    } finally {
+      attestSaving = false;
     }
   }
 
@@ -991,7 +1046,7 @@
         type: createForm.type,
         startDate: createForm.startDate,
         endDate: createForm.endDate,
-        halfDay: createForm.halfDay,
+        halfDay: SICK_CODES.includes(createForm.type) ? false : createForm.halfDay,
         note: createForm.note || null,
       });
       createModalOpen = false;
@@ -1526,6 +1581,15 @@
                     >
                       Korrigieren
                     </button>
+                    {#if SICK_CODES.includes(req.typeCode)}
+                      <button
+                        data-testid={`leave-team-row-${req.id}-attest`}
+                        class="btn btn-sm btn-ghost"
+                        onclick={() => openAttest(req)}
+                      >
+                        {req.attestPresent ? "Attest ändern" : "Attest erfassen"}
+                      </button>
+                    {/if}
                   {/if}
                   {#if resolveStornoAction(req.status, req.employeeId === $authStore.user?.employeeId)}
                     {@const kind = resolveStornoAction(
@@ -1733,34 +1797,13 @@
 
       <!-- Attest (nur für Krankmeldungen) -->
       {#if SICK_CODES.includes(reviewModal.typeCode)}
-        <div class="attest-box review-section">
-          <p class="attest-title">Attest / Arbeitsunfähigkeitsbescheinigung</p>
-          <label class="toggle-label">
-            <input type="checkbox" bind:checked={reviewAttestPresent} class="toggle-cb" />
-            <span>Attest liegt vor</span>
-          </label>
-          {#if reviewAttestPresent}
-            <div class="attest-dates">
-              <div class="form-group">
-                <label class="form-label" for="r-attest-from">Gültig von</label>
-                <input
-                  id="r-attest-from"
-                  type="date"
-                  bind:value={reviewAttestFrom}
-                  class="form-input attest-date-input"
-                />
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="r-attest-to">Gültig bis</label>
-                <input
-                  id="r-attest-to"
-                  type="date"
-                  bind:value={reviewAttestTo}
-                  class="form-input attest-date-input"
-                />
-              </div>
-            </div>
-          {/if}
+        <div class="review-section">
+          <AttestFields
+            bind:present={reviewAttestPresent}
+            bind:validFrom={reviewAttestFrom}
+            bind:validTo={reviewAttestTo}
+            idPrefix="r"
+          />
         </div>
       {/if}
 
@@ -1946,6 +1989,50 @@
   </Modal>
 {/if}
 
+<!-- ── Attest-Modal (Phase 201): Attest nachtragen/ändern an einer genehmigten
+     Krankmeldung. Ruft AUSSCHLIESSLICH PATCH /leave/requests/:id/attest — keine
+     Korrektur, keine Begründung, kein § 9-Vorgang. ──────────────────────────── -->
+{#if attestOpen && attestModal}
+  <Modal bind:open={attestOpen} eyebrow={typeName(attestModal.typeCode)} title="Attest erfassen">
+    <div data-testid="leave-team-attest-modal">
+      <p class="form-hint attest-period">
+        {attestModal.employee.firstName}
+        {attestModal.employee.lastName} · {fmtDate(attestModal.startDate)} – {fmtDate(
+          attestModal.endDate,
+        )}
+      </p>
+      <AttestFields
+        bind:present={attestPresent}
+        bind:validFrom={attestFrom}
+        bind:validTo={attestTo}
+        idPrefix="a"
+      />
+      <p class="form-hint attest-late-hint">
+        Ein Attest kann auch nach dem Monatsabschluss erfasst werden — es ändert keine Zeiten und
+        keinen Saldo, sondern hält nur fest, ob eine Bescheinigung vorliegt.
+      </p>
+      {#if attestError}
+        <div class="alert alert-error review-error" role="alert">
+          <span>⚠</span><span>{attestError}</span>
+        </div>
+      {/if}
+    </div>
+    {#snippet footer()}
+      <button class="btn btn-ghost" onclick={closeAttest} disabled={attestSaving}>
+        Abbrechen
+      </button>
+      <button
+        class="btn btn-primary"
+        data-testid="leave-team-attest-modal-save"
+        onclick={submitAttest}
+        disabled={attestSaving}
+      >
+        {attestSaving ? "Speichert…" : "Speichern"}
+      </button>
+    {/snippet}
+  </Modal>
+{/if}
+
 <!-- ── Create-Modal: Neue Abwesenheit anlegen (Manager-on-behalf-of) ─────── -->
 {#if createModalOpen}
   <Modal bind:open={createModalOpen} eyebrow="Team-Anträge" title="Neue Abwesenheit anlegen">
@@ -1991,9 +2078,17 @@
       </div>
       <div class="form-group">
         <label class="checkbox-row">
-          <input type="checkbox" bind:checked={createForm.halfDay} />
+          <input
+            type="checkbox"
+            data-testid="leave-create-modal-halfday"
+            bind:checked={createForm.halfDay}
+            disabled={SICK_CODES.includes(createForm.type)}
+          />
           Halber Tag
         </label>
+        {#if SICK_CODES.includes(createForm.type)}
+          <p class="form-hint">Halbe Kranktage sind nicht zulässig</p>
+        {/if}
       </div>
       <div class="form-group">
         <label class="form-label" for="create-note">Notiz (optional)</label>
@@ -2365,20 +2460,6 @@
   }
 
   /* ── Attest ───────────────────────────────────────────────────────── */
-  .attest-box {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    padding: 0.875rem 1rem;
-  }
-  .attest-title {
-    font-size: 0.8125rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-bottom: 0.625rem;
-  }
   .attest-dates {
     display: flex;
     gap: 1rem;
@@ -2391,11 +2472,6 @@
     gap: 0.5rem;
     cursor: pointer;
     font-weight: 500;
-  }
-  .toggle-cb {
-    width: 16px;
-    height: 16px;
-    accent-color: var(--brand);
   }
 
   /* ── Pending Cards ────────────────────────────────────────────────── */
@@ -2565,6 +2641,12 @@
   .self-approval-note {
     font-size: 0.875rem;
     margin: 0 auto 0 0;
+  }
+  .attest-period {
+    margin: 0 0 0.75rem;
+  }
+  .attest-late-hint {
+    margin: 0.75rem 0 0;
   }
 
   /* ── Review Grid ──────────────────────────────────────────────────── */
