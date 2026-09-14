@@ -28,21 +28,111 @@ export const LEAVE_TYPE_CODES = [
   "PARENTAL",
 ] as const satisfies readonly LeaveTypeCode[];
 
-/** Code -> display name + the two policy flags a newly created row is seeded with. */
+/**
+ * Code -> display name, the two policy flags a newly created row is seeded with, and the two
+ * notification-copy fields added for Issue #200:
+ *
+ * - `notificationTitle` — the notification headline, a complete noun phrase (e.g. the SICK
+ *   entry's headline below). Used for the IN-APP notification title only — it does NOT reach the
+ *   email subject; see `LEAVE_REQUEST_EMAIL_SUBJECT` below for that.
+ * - `requestPhrase` — a verb phrase completing the sentence
+ *   `{firstName} {lastName} {requestPhrase} ({period})`.
+ *
+ * Both are DISPLAY TEXT ONLY (ADR 0001) and must never become control values — no `===`, no
+ * `.includes()`, no `switch`, ever.
+ *
+ * MATERNITY and PARENTAL are deliberately worded as a Meldung ("angemeldet"/"-Meldung"), never
+ * as an Antrag ("beantragt"/"-antrag"): the issue states these are reported, not applied for.
+ */
 export const LEAVE_TYPE_DEFS: Record<
   LeaveTypeCode,
-  { name: string; isPaid: boolean; requiresApproval: boolean }
+  {
+    name: string;
+    isPaid: boolean;
+    requiresApproval: boolean;
+    notificationTitle: string;
+    requestPhrase: string;
+  }
 > = {
-  VACATION: { name: "Urlaub", isPaid: true, requiresApproval: true },
-  OVERTIME_COMP: { name: "Überstundenausgleich", isPaid: true, requiresApproval: true },
-  SPECIAL: { name: "Sonderurlaub", isPaid: true, requiresApproval: true },
-  UNPAID: { name: "Unbezahlter Urlaub", isPaid: false, requiresApproval: true },
-  SICK: { name: "Krankmeldung", isPaid: true, requiresApproval: false },
-  SICK_CHILD: { name: "Kinderkrank", isPaid: true, requiresApproval: false },
-  EDUCATION: { name: "Bildungsurlaub", isPaid: true, requiresApproval: true },
-  MATERNITY: { name: "Mutterschutz", isPaid: true, requiresApproval: false },
-  PARENTAL: { name: "Elternzeit", isPaid: false, requiresApproval: true },
+  VACATION: {
+    name: "Urlaub",
+    isPaid: true,
+    requiresApproval: true,
+    notificationTitle: "Neuer Urlaubsantrag",
+    requestPhrase: "hat Urlaub beantragt",
+  },
+  OVERTIME_COMP: {
+    name: "Überstundenausgleich",
+    isPaid: true,
+    requiresApproval: true,
+    notificationTitle: "Neuer Antrag auf Überstundenausgleich",
+    requestPhrase: "hat Überstundenausgleich beantragt",
+  },
+  SPECIAL: {
+    name: "Sonderurlaub",
+    isPaid: true,
+    requiresApproval: true,
+    notificationTitle: "Neuer Sonderurlaubsantrag",
+    requestPhrase: "hat Sonderurlaub beantragt",
+  },
+  UNPAID: {
+    name: "Unbezahlter Urlaub",
+    isPaid: false,
+    requiresApproval: true,
+    notificationTitle: "Neuer Antrag auf unbezahlten Urlaub",
+    requestPhrase: "hat unbezahlten Urlaub beantragt",
+  },
+  SICK: {
+    name: "Krankmeldung",
+    isPaid: true,
+    requiresApproval: false,
+    notificationTitle: "Neue Krankmeldung",
+    requestPhrase: "hat sich krankgemeldet",
+  },
+  SICK_CHILD: {
+    name: "Kinderkrank",
+    isPaid: true,
+    requiresApproval: false,
+    notificationTitle: "Neue Kinderkrankmeldung",
+    requestPhrase: "hat Kinderkrank gemeldet",
+  },
+  EDUCATION: {
+    name: "Bildungsurlaub",
+    isPaid: true,
+    requiresApproval: true,
+    notificationTitle: "Neuer Bildungsurlaubsantrag",
+    requestPhrase: "hat Bildungsurlaub beantragt",
+  },
+  MATERNITY: {
+    name: "Mutterschutz",
+    isPaid: true,
+    requiresApproval: false,
+    notificationTitle: "Neue Mutterschutz-Meldung",
+    requestPhrase: "hat Mutterschutz angemeldet",
+  },
+  PARENTAL: {
+    name: "Elternzeit",
+    isPaid: false,
+    requiresApproval: true,
+    notificationTitle: "Neue Elternzeit-Meldung",
+    requestPhrase: "hat Elternzeit angemeldet",
+  },
 };
+
+/**
+ * The neutral email subject for a leave-request notification, uniform across all nine types
+ * (Issue #200, owner decision 2026-09-15). `notify.ts` appends the brand suffix itself — do not
+ * append it here.
+ *
+ * The in-app notification title above is type-specific; the mail subject deliberately is not.
+ * Using the SICK entry's type-specific title as the mail subject would put Art.-9 GDPR
+ * health-category data into an email SUBJECT line, which travels further than a body (inbox
+ * list views, lock-screen push previews, mail-server logs). It covers ALL NINE types, not only
+ * the sickness ones, because a per-type exception list would itself leak by omission — a
+ * neutral subject on every leave notification reveals nothing, whereas "neutral only when it's
+ * sickness" tells the reader it is sickness.
+ */
+export const LEAVE_REQUEST_EMAIL_SUBJECT = "Neue Abwesenheitsmeldung";
 
 /**
  * Names written by seed scripts that predate the canonical set. Exactly two consumers are

@@ -3,6 +3,7 @@ import {
   LEAVE_TYPE_CODES,
   LEAVE_TYPE_DEFS,
   LEAVE_TYPE_LEGACY_ALIASES,
+  LEAVE_REQUEST_EMAIL_SUBJECT,
   leaveTypeFields,
   leaveTypeCodeForName,
   SICK_LEAVE_TYPE_CODES,
@@ -130,5 +131,69 @@ describe("isSickLeaveTypeCode", () => {
     expect(isSickLeaveTypeCode("VACATION")).toBe(false);
     expect(isSickLeaveTypeCode(null)).toBe(false);
     expect(isSickLeaveTypeCode(undefined)).toBe(false);
+  });
+});
+
+describe("LEAVE_TYPE_DEFS notification copy (Issue #200)", () => {
+  it("pins the exact German notificationTitle for every one of the nine codes", () => {
+    expect(LEAVE_TYPE_DEFS.VACATION.notificationTitle).toBe("Neuer Urlaubsantrag");
+    expect(LEAVE_TYPE_DEFS.OVERTIME_COMP.notificationTitle).toBe(
+      "Neuer Antrag auf Überstundenausgleich",
+    );
+    expect(LEAVE_TYPE_DEFS.SPECIAL.notificationTitle).toBe("Neuer Sonderurlaubsantrag");
+    expect(LEAVE_TYPE_DEFS.UNPAID.notificationTitle).toBe("Neuer Antrag auf unbezahlten Urlaub");
+    expect(LEAVE_TYPE_DEFS.SICK.notificationTitle).toBe("Neue Krankmeldung");
+    expect(LEAVE_TYPE_DEFS.SICK_CHILD.notificationTitle).toBe("Neue Kinderkrankmeldung");
+    expect(LEAVE_TYPE_DEFS.EDUCATION.notificationTitle).toBe("Neuer Bildungsurlaubsantrag");
+    expect(LEAVE_TYPE_DEFS.MATERNITY.notificationTitle).toBe("Neue Mutterschutz-Meldung");
+    expect(LEAVE_TYPE_DEFS.PARENTAL.notificationTitle).toBe("Neue Elternzeit-Meldung");
+  });
+
+  it("pins the exact German requestPhrase for every one of the nine codes", () => {
+    expect(LEAVE_TYPE_DEFS.VACATION.requestPhrase).toBe("hat Urlaub beantragt");
+    expect(LEAVE_TYPE_DEFS.OVERTIME_COMP.requestPhrase).toBe("hat Überstundenausgleich beantragt");
+    expect(LEAVE_TYPE_DEFS.SPECIAL.requestPhrase).toBe("hat Sonderurlaub beantragt");
+    expect(LEAVE_TYPE_DEFS.UNPAID.requestPhrase).toBe("hat unbezahlten Urlaub beantragt");
+    expect(LEAVE_TYPE_DEFS.SICK.requestPhrase).toBe("hat sich krankgemeldet");
+    expect(LEAVE_TYPE_DEFS.SICK_CHILD.requestPhrase).toBe("hat Kinderkrank gemeldet");
+    expect(LEAVE_TYPE_DEFS.EDUCATION.requestPhrase).toBe("hat Bildungsurlaub beantragt");
+    expect(LEAVE_TYPE_DEFS.MATERNITY.requestPhrase).toBe("hat Mutterschutz angemeldet");
+    expect(LEAVE_TYPE_DEFS.PARENTAL.requestPhrase).toBe("hat Elternzeit angemeldet");
+  });
+
+  it("has a non-empty notificationTitle and requestPhrase for every code (structural completeness)", () => {
+    for (const code of LEAVE_TYPE_CODES) {
+      expect(typeof LEAVE_TYPE_DEFS[code].notificationTitle).toBe("string");
+      expect(LEAVE_TYPE_DEFS[code].notificationTitle.length).toBeGreaterThan(0);
+      expect(typeof LEAVE_TYPE_DEFS[code].requestPhrase).toBe("string");
+      expect(LEAVE_TYPE_DEFS[code].requestPhrase.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("keeps MATERNITY and PARENTAL in the Meldung register, never the Antrag register", () => {
+    expect(LEAVE_TYPE_DEFS.MATERNITY.requestPhrase).not.toContain("beantragt");
+    expect(LEAVE_TYPE_DEFS.PARENTAL.requestPhrase).not.toContain("beantragt");
+    expect(LEAVE_TYPE_DEFS.MATERNITY.notificationTitle).not.toContain("Antrag");
+    expect(LEAVE_TYPE_DEFS.PARENTAL.notificationTitle).not.toContain("Antrag");
+  });
+
+  it("never uses the forbidden naive one-liner form for notificationTitle", () => {
+    for (const code of LEAVE_TYPE_CODES) {
+      expect(LEAVE_TYPE_DEFS[code].notificationTitle).not.toBe(
+        `Neuer ${LEAVE_TYPE_DEFS[code].name}-Antrag`,
+      );
+    }
+  });
+});
+
+describe("LEAVE_REQUEST_EMAIL_SUBJECT (Issue #200)", () => {
+  it("is the neutral subject string", () => {
+    expect(LEAVE_REQUEST_EMAIL_SUBJECT).toBe("Neue Abwesenheitsmeldung");
+  });
+
+  it("contains none of the nine type names — the privacy property the subject exists for", () => {
+    for (const code of LEAVE_TYPE_CODES) {
+      expect(LEAVE_REQUEST_EMAIL_SUBJECT).not.toContain(LEAVE_TYPE_DEFS[code].name);
+    }
   });
 });
