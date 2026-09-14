@@ -2124,6 +2124,29 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Attest kann nur für Krankmeldungen gesetzt werden" });
       }
 
+      // ── Why this handler has NO status guard and NO Monatsabschluss (locked-month) guard ──
+      // Phase 201 / Issue #201, owner decision 2026-09-14. DELIBERATE, not an oversight.
+      //
+      // An Attest changes NO booked quantity: not startDate, not endDate, not days, not halfDay,
+      // not saldo, not Soll. It records WHETHER a certificate exists for a period that is already
+      // recorded either way. CLAUDE.md's "Immutability after lock" protects BOOKINGS; nothing is
+      // re-booked here, so the rule is not engaged. Compare the correction handler above, which
+      // DOES carry the delta-lock guard — because it moves days.
+      //
+      // Blocking it would be perverse: an AU normally arrives AFTER the illness, often after the
+      // month is closed. A guard here would make such an AU permanently unrecordable and leave the
+      // already-issued monthly report ("davon mit Attest: N", utils/pdf.ts) permanently false about
+      // a matter with pay consequences.
+      //
+      // Clokr records only WHETHER an Attest exists and derives NOTHING from it — no wage
+      // deduction, no blocking of Entgeltfortzahlung, no deduction amount, no automatic status
+      // change, not even as a suggestion. That is a § 7 EFZG decision made OUTSIDE Clokr by the
+      // tax advisor or the owner. Do not add one here. The only readers of attestPresent are
+      // routes/reports.ts (with/without-Attest split), utils/pdf.ts (the printed line) and
+      // utils/find-karenz-overrun-days.ts (the § 5 EFZG nudge) — none touches saldo or Soll.
+      //
+      // Pinned by apps/api/src/__tests__/leave-attest-late.test.ts.
+
       const updated = await app.prisma.leaveRequest.update({
         where: { id },
         data: {
@@ -2144,7 +2167,17 @@ export async function leaveRoutes(app: FastifyInstance) {
         action: "UPDATE",
         entity: "LeaveRequest",
         entityId: id,
-        newValue: { attest: body },
+        oldValue: {
+          attestPresent: existing.attestPresent,
+          attestValidFrom: existing.attestValidFrom?.toISOString().split("T")[0] ?? null,
+          attestValidTo: existing.attestValidTo?.toISOString().split("T")[0] ?? null,
+        },
+        newValue: {
+          attestPresent: updated.attestPresent,
+          attestValidFrom: updated.attestValidFrom?.toISOString().split("T")[0] ?? null,
+          attestValidTo: updated.attestValidTo?.toISOString().split("T")[0] ?? null,
+        },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       return {
