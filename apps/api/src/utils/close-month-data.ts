@@ -63,7 +63,7 @@ export async function fetchCloseMonthData(
 
     // Q3: all APPROVED LeaveRequests overlapping this date range. `include: { leaveType: true }`
     // added in Phase 104 (R4/D-21) so the SAME bulk-fetch also serves the Karenz-overrun
-    // detector (leaveType.name) — a second leaveRequest.findMany here would double-count
+    // detector (leaveType.code) — a second leaveRequest.findMany here would double-count
     // against overtime-perf-n1.test.ts's per-model ≤1 assertion.
     // CLAUDE.md Soft Delete Convention: deletedAt: null is mandatory.
     prisma.leaveRequest.findMany({

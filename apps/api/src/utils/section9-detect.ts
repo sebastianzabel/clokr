@@ -8,19 +8,25 @@
  * auto-detection (D-09) and the tests — mirroring the single-source-of-truth structure of
  * find-unconfirmed-break-days.ts / find-missing-workdays.ts.
  *
- * IMPORTANT (R5 invariant, D-23): this module has zero dependencies and never reads or
- * references the Karenztage rule in any form. § 9 BUrlG grants the vacation credit only
- * against a medical certificate; the § 5 EFZG Karenz threshold governs documentation duty
- * only and must never reach this path.
+ * IMPORTANT (R5 invariant, D-23): this module never reads or references the Karenztage rule in
+ * any form. § 9 BUrlG grants the vacation credit only against a medical certificate; the § 5
+ * EFZG Karenz threshold governs documentation duty only and must never reach this path. Phase 97
+ * (T2) adds one import — the shared sickness-code check from `utils/leave-type.ts` — replacing
+ * the local pair of German sick-type display names this module used to carry. That import
+ * carries no rule content, only the closed set of sickness codes; it does not, and must never,
+ * import from `find-karenz-overrun-days.ts` or reference the Karenz threshold. The invariant
+ * this file protects is "never reads the Karenztage rule", not "imports nothing" — the former is
+ * what R5 actually requires.
  */
-export const SICK_TYPE_NAMES = ["Krankmeldung", "Kinderkrank"] as const;
+import type { LeaveTypeCode } from "@clokr/db";
+import { isSickLeaveTypeCode } from "./leave-type";
 
 export type LeaveRangeRow = {
   id: string;
   startDate: Date;
   endDate: Date;
   status: string;
-  leaveType: { name: string };
+  leaveType: { code: LeaveTypeCode | null };
 };
 
 export type Section9Overlap = {
@@ -28,11 +34,6 @@ export type Section9Overlap = {
   overlapStart: Date;
   overlapEnd: Date;
 };
-
-/** True when the leave type name is one of the two sickness types. */
-export function isSickTypeName(name: string): boolean {
-  return (SICK_TYPE_NAMES as readonly string[]).includes(name);
-}
 
 /** Inclusive intersection of two date ranges, or null when disjoint. */
 export function intersectRanges(
@@ -59,7 +60,7 @@ export function findSection9Overlaps(
   const out: Section9Overlap[] = [];
   for (const c of candidates) {
     if (c.status !== "APPROVED") continue;
-    if (isSickTypeName(c.leaveType.name)) continue;
+    if (isSickLeaveTypeCode(c.leaveType.code)) continue;
     const hit = intersectRanges(sickStart, sickEnd, c.startDate, c.endDate);
     if (!hit) continue;
     out.push({ vacationRequestId: c.id, overlapStart: hit.start, overlapEnd: hit.end });

@@ -58,8 +58,6 @@ function localDateStr(d: Date, tz: string): string {
   return p; // en-CA yields YYYY-MM-DD
 }
 
-const SICK_NAMES = ["Krankmeldung", "Kinderkrank"] as const;
-
 export type KarenzSickRow = {
   id: string;
   startDate: Date;
@@ -68,7 +66,16 @@ export type KarenzSickRow = {
   attestPresent: boolean;
   attestValidFrom: Date | null;
   attestValidTo: Date | null;
-  leaveType: { name: string };
+  // Phase 97 (T2): identity is `LeaveType.code`, not `name` — a tenant renaming its sick type
+  // can no longer break this detector. Typed as a bare `string` (not the `LeaveTypeCode` union
+  // from `@clokr/db`) SPECIFICALLY so this file needs no import to make the switch — the
+  // "imports nothing" invariant this file exists to protect (see the header block above) covers
+  // the type position too, not only the two sickness codes below. Do not "fix" this by importing
+  // `LeaveTypeCode` or `isSickLeaveTypeCode` from `utils/leave-type.ts` — that would satisfy
+  // D-04's one-copy goal but break the doubly-enforced (this file's own Test 9 AND
+  // section9-invariants.test.ts's D-23 test) zero-import guarantee, whose own file header says:
+  // "if one of them fails, the fix is the production code, never the assertion."
+  leaveType: { code: string | null };
   deletedAt?: Date | null;
 };
 
@@ -87,7 +94,10 @@ export function karenzOverrunFromRequests(
   const threshold = normalizeKarenzDays(graceDays);
   const out: KarenzOverrun[] = [];
   for (const r of rows) {
-    if (!(SICK_NAMES as readonly string[]).includes(r.leaveType.name)) continue;
+    // Inlined, not imported from utils/leave-type.ts's isSickLeaveTypeCode — see the
+    // KarenzSickRow.leaveType comment above for why this file duplicates the two-code check
+    // instead of sharing it (D-04 tension, resolved in favour of the stricter R5/D-23 guarantee).
+    if (r.leaveType.code !== "SICK" && r.leaveType.code !== "SICK_CHILD") continue;
     if (r.deletedAt) continue;
     if (r.status !== "APPROVED") continue;
     // § 5 Abs. 1 EFZG zählt KALENDERTAGE, nicht Arbeitstage — calculateWorkDays wäre falsch.

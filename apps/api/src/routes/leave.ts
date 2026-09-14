@@ -27,7 +27,8 @@ import { formatMinutesHM } from "../utils/format-hm"; // Phase 100
 import { shiftNettoMinutes, sumShiftNettoMinutes } from "../utils/shift-netto"; // Phase 100 (OTC-04)
 import { auditReasonSchema } from "../utils/audit-reason"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
-import { isSickTypeName, findSection9Overlaps, intersectRanges } from "../utils/section9-detect"; // Phase 104-05/06
+import { findSection9Overlaps, intersectRanges } from "../utils/section9-detect"; // Phase 104-05/06
+import { isSickLeaveTypeCode } from "../utils/leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
 import { karenzOverrunFromRequests, normalizeKarenzDays } from "../utils/find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
 import { CLEARED_INVALID_REASON } from "../utils/invalid-reason"; // Phase 96 (T1)
 import {
@@ -343,7 +344,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       const blockingOverlap = overlaps.find((o) => {
         if (!isSickRequest) return true; // non-sick: unchanged behaviour
         if (o.status !== "APPROVED") return true; // sick vs PENDING: still blocked
-        if (isSickTypeName(o.leaveType.name)) return true; // sick vs sick: still blocked
+        if (isSickLeaveTypeCode(o.leaveType.code)) return true; // sick vs sick: still blocked
         return false; // § 9 case — permitted
       });
       if (blockingOverlap)
