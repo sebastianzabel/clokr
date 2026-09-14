@@ -41,6 +41,7 @@
     vacationCardDelta,
     vacationCardLabel,
   } from "$lib/leave/vacation-summary";
+  import { SICK_TYPE_CODES } from "$lib/leave/leave-kind"; // Phase 201 (Issue #201, B)
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -746,7 +747,7 @@
         type: formType,
         startDate: formStart,
         endDate: formEnd,
-        halfDay: formHalfDay,
+        halfDay: SICK_TYPE_CODES.has(formType) ? false : formHalfDay,
         note: formNote,
         ...(formType === "SPECIAL" && formSpecialRuleId
           ? { specialLeaveRuleId: formSpecialRuleId }
@@ -788,7 +789,7 @@
         await api.patch(`/leave/requests/${editingRequest.id}`, {
           startDate: formStart,
           endDate: formEnd,
-          halfDay: formHalfDay,
+          halfDay: SICK_TYPE_CODES.has(formType) ? false : formHalfDay,
           note: formNote || null,
         });
       } else {
@@ -799,7 +800,7 @@
           type: formType,
           startDate: formStart,
           endDate: formEnd,
-          halfDay: formHalfDay,
+          halfDay: SICK_TYPE_CODES.has(formType) ? false : formHalfDay,
           note: formNote,
           ...(formType === "SPECIAL" && formSpecialRuleId
             ? { specialLeaveRuleId: formSpecialRuleId }
@@ -1147,6 +1148,14 @@
   // Kontostände laden wenn Typ wechselt oder Formular öffnet
   $effect(() => {
     if (showForm) loadBalanceForType(formType);
+  });
+  // Phase 201 (Issue #201, B): teilweise Arbeitsunfähigkeit gibt es nicht (EFZG §3/§4) —
+  // das Backend lehnt halbe Kranktage an allen drei Schreibpfaden ab. Die Checkbox wird
+  // deshalb deaktiviert statt versteckt (eine versteckte Option liest sich wie ein Fehler,
+  // eine deaktivierte mit Begründung wie eine Regel), und eine bereits gesetzte Auswahl
+  // wird beim Typwechsel verworfen.
+  $effect(() => {
+    if (SICK_TYPE_CODES.has(formType)) formHalfDay = false;
   });
   // When Modal closes (Escape/backdrop), reset form fields.
   $effect(() => {
@@ -1593,10 +1602,14 @@
               type="checkbox"
               data-testid="leave-form-half-day"
               bind:checked={formHalfDay}
+              disabled={SICK_TYPE_CODES.has(formType)}
               class="toggle-cb"
             />
             <span>Halber Tag</span>
           </label>
+          {#if SICK_TYPE_CODES.has(formType)}
+            <p class="form-hint">Halbe Kranktage sind nicht zulässig</p>
+          {/if}
         </div>
 
         <!-- Parallele Abwesenheiten -->

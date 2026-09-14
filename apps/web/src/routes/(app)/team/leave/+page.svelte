@@ -639,6 +639,13 @@
     if (SICK_CODES.includes(correctType)) correctHalfDay = false;
   });
 
+  // Phase 201 (Issue #201, B): dasselbe im Anlegen-Dialog — eine bereits gesetzte
+  // Halbtags-Auswahl wird beim Wechsel auf einen Krank-Typ verworfen, damit sie nicht
+  // unsichtbar hinter einer disabled Checkbox überlebt und im 400 des Backends endet.
+  $effect(() => {
+    if (SICK_CODES.includes(createForm.type)) createForm.halfDay = false;
+  });
+
   async function submitCorrection() {
     if (!correctModal) return;
     // Client-Vorabprüfung (Server ist maßgeblich): Enddatum >= Startdatum.
@@ -1039,7 +1046,7 @@
         type: createForm.type,
         startDate: createForm.startDate,
         endDate: createForm.endDate,
-        halfDay: createForm.halfDay,
+        halfDay: SICK_CODES.includes(createForm.type) ? false : createForm.halfDay,
         note: createForm.note || null,
       });
       createModalOpen = false;
@@ -2071,9 +2078,17 @@
       </div>
       <div class="form-group">
         <label class="checkbox-row">
-          <input type="checkbox" bind:checked={createForm.halfDay} />
+          <input
+            type="checkbox"
+            data-testid="leave-create-modal-halfday"
+            bind:checked={createForm.halfDay}
+            disabled={SICK_CODES.includes(createForm.type)}
+          />
           Halber Tag
         </label>
+        {#if SICK_CODES.includes(createForm.type)}
+          <p class="form-hint">Halbe Kranktage sind nicht zulässig</p>
+        {/if}
       </div>
       <div class="form-group">
         <label class="form-label" for="create-note">Notiz (optional)</label>
