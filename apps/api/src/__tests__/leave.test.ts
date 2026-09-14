@@ -1836,3 +1836,229 @@ describe("ensureLeaveType (Phase 97)", () => {
     expect(after).toBe(before);
   });
 });
+
+describe("Phase 97-05: typeCode derives from LeaveType.code, not name (D-09/D-10/AC-2)", () => {
+  let app: FastifyInstance;
+  const seededTenantIds: string[] = [];
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterAll(async () => {
+    for (const tenantId of seededTenantIds) {
+      try {
+        await cleanupTestData(app, tenantId);
+      } catch (err) {
+        console.error("Test cleanup failed:", err);
+      }
+    }
+  });
+
+  async function seed(suffix: string) {
+    const d = await seedTestData(app, suffix);
+    seededTenantIds.push(d.tenant.id);
+    return d;
+  }
+
+  it("GET /requests: a renamed SICK row still resolves typeCode via its code (AC-2)", async () => {
+    const d = await seed("tc1");
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${d.empToken}` },
+      payload: { type: "SICK", startDate: "2027-02-01", endDate: "2027-02-02", note: "x" },
+    });
+    expect(createRes.statusCode).toBe(201);
+    const { id: requestId } = JSON.parse(createRes.body);
+
+    // Rename the auto-created SICK row — a deliberately different display name so the
+    // assertion below can only pass if resolution goes through `code`, never `name`.
+    await app.prisma.leaveType.updateMany({
+      where: { tenantId: d.tenant.id, code: "SICK" },
+      data: { name: "Grippewelle-Sondername" },
+    });
+
+    const listRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/requests?employeeId=${d.employee.id}`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(listRes.statusCode).toBe(200);
+    const row = JSON.parse(listRes.body).find((r: { id: string }) => r.id === requestId);
+    expect(row.typeCode).toBe("SICK");
+  });
+
+  it("GET /requests: a renamed VACATION row (Erholungsurlaub) still resolves typeCode VACATION — the case that only worked by accident before this phase", async () => {
+    const d = await seed("tc2");
+    await app.prisma.leaveType.update({
+      where: { id: d.vacationType.id },
+      data: { name: "Erholungsurlaub" },
+    });
+
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${d.empToken}` },
+      payload: { type: "VACATION", startDate: "2027-02-08", endDate: "2027-02-09" },
+    });
+    expect(createRes.statusCode).toBe(201);
+    const { id: requestId } = JSON.parse(createRes.body);
+
+    const listRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/requests?employeeId=${d.employee.id}`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    const row = JSON.parse(listRes.body).find((r: { id: string }) => r.id === requestId);
+    expect(row.typeCode).toBe("VACATION");
+  });
+
+  it("GET /requests: a row with code = null yields typeCode null — never a silent VACATION fallback (D-09)", async () => {
+    const d = await seed("tc3");
+    const uncoded = await app.prisma.leaveType.create({
+      data: {
+        tenantId: d.tenant.id,
+        name: "Ohne-Code-Sonderfall",
+        isPaid: true,
+        requiresApproval: true,
+      },
+    });
+    expect(uncoded.code).toBeNull();
+
+    // Bypass the API (POST requires a known TypeCode) — insert directly so the row's code
+    // stays null through the whole test.
+    const req = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: d.employee.id,
+        leaveTypeId: uncoded.id,
+        startDate: new Date("2027-02-15"),
+        endDate: new Date("2027-02-16"),
+        days: 2,
+        status: "PENDING",
+      },
+    });
+
+    const listRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/requests?employeeId=${d.employee.id}`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    const row = JSON.parse(listRes.body).find((r: { id: string }) => r.id === req.id);
+    expect(row.typeCode).toBeNull();
+  });
+
+  it("PATCH .../review APPROVED books usedDays only for code = VACATION, driven by the renamed row's code", async () => {
+    const d = await seed("tc4");
+    await app.prisma.leaveType.update({
+      where: { id: d.vacationType.id },
+      data: { name: "Ferientage" },
+    });
+    const year = 2027;
+    await app.prisma.leaveEntitlement.upsert({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: d.employee.id,
+          leaveTypeId: d.vacationType.id,
+          year,
+        },
+      },
+      create: {
+        employeeId: d.employee.id,
+        leaveTypeId: d.vacationType.id,
+        year,
+        totalDays: 30,
+        usedDays: 0,
+      },
+      update: {},
+    });
+
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${d.empToken}` },
+      payload: { type: "VACATION", startDate: "2027-03-01", endDate: "2027-03-02" },
+    });
+    const { id: requestId, days } = JSON.parse(createRes.body);
+
+    const reviewRes = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${requestId}/review`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+      payload: { status: "APPROVED" },
+    });
+    expect(reviewRes.statusCode).toBe(200);
+
+    const after = await app.prisma.leaveEntitlement.findUnique({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: d.employee.id,
+          leaveTypeId: d.vacationType.id,
+          year,
+        },
+      },
+    });
+    expect(Number(after!.usedDays)).toBe(Number(days));
+  });
+
+  it("PATCH .../review APPROVED does NOT book usedDays when the row's code is null (D-09 — no silent VACATION fallback)", async () => {
+    const d = await seed("tc5");
+    const uncoded = await app.prisma.leaveType.create({
+      data: {
+        tenantId: d.tenant.id,
+        name: "Sonderfall-Kein-Code",
+        isPaid: true,
+        requiresApproval: true,
+      },
+    });
+    const req = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: d.employee.id,
+        leaveTypeId: uncoded.id,
+        startDate: new Date("2027-03-08"),
+        endDate: new Date("2027-03-09"),
+        days: 2,
+        status: "PENDING",
+      },
+    });
+
+    const entBefore = await app.prisma.leaveEntitlement.count({
+      where: { employeeId: d.employee.id },
+    });
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${req.id}/review`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+      payload: { status: "APPROVED" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).typeCode).toBeNull();
+
+    // No entitlement row was created or altered as a side effect of the (non-)booking.
+    const entAfter = await app.prisma.leaveEntitlement.count({
+      where: { employeeId: d.employee.id },
+    });
+    expect(entAfter).toBe(entBefore);
+  });
+
+  it("PATCH .../attest: 400 when the request's type is neither SICK nor SICK_CHILD", async () => {
+    const d = await seed("tc6");
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${d.empToken}` },
+      payload: { type: "VACATION", startDate: "2027-03-15", endDate: "2027-03-16" },
+    });
+    const { id: requestId } = JSON.parse(createRes.body);
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${requestId}/attest`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+      payload: { attestPresent: true },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error).toBe("Attest kann nur für Krankmeldungen gesetzt werden");
+  });
+});
