@@ -59,6 +59,8 @@ export default [
       "apps/web/scripts/**",
       "apps/api/scripts/**",
       "packages/db/src/seed-demo.ts",
+      "packages/db/src/seed.ts",
+      "packages/db/src/reset-demo.ts",
       "apps/api/vitest.*.ts",
     ],
     languageOptions: {

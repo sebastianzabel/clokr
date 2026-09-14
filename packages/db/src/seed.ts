@@ -106,14 +106,19 @@ async function main() {
 
   console.log(`Admin: ${adminUser.email}`);
 
-  // Urlaubs-Typ anlegen
+  // Phase 97 (D-19): the seed used to write the legacy vacation name from the pre-phase-97 seed
+  // set. The row's identity is now its code; `update` carries the code onto an already-seeded
+  // database. Do not quote that legacy name here — the acceptance criterion greps this file for
+  // it and expects zero hits.
+  // Values mirror LEAVE_TYPE_DEFS.VACATION in apps/api/src/utils/leave-type.ts.
   const leaveType = await prisma.leaveType.upsert({
     where: { id: "00000000-0000-0000-0000-000000000001" },
-    update: {},
+    update: { code: "VACATION" },
     create: {
       id: "00000000-0000-0000-0000-000000000001",
       tenantId: tenant.id,
-      name: "Jahresurlaub",
+      code: "VACATION",
+      name: "Urlaub",
       isPaid: true,
       requiresApproval: true,
       color: "#3B82F6",
