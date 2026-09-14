@@ -12,7 +12,7 @@ import {
 } from "../utils/month-first-date";
 import { normalizeWorkDays, type PerDayHours } from "../utils/calculate-work-days";
 import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
-import { findVacationLeaveType } from "../utils/vacation-leave-type"; // Issue #196 — both GET/PUT call findVacationLeaveType(app.prisma, tenantId) below
+import { findVacationLeaveType } from "../utils/vacation-leave-type";
 import { DEFAULT_MISSING_ENTRIES_DAYS } from "../utils/missing-entries-window";
 import {
   ARBZG_FLOOR_OVER_6H,
