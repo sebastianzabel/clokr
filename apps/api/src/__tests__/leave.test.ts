@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
+import type { Prisma } from "@clokr/db";
 import {
   getTestApp,
   closeTestApp,
@@ -1834,6 +1835,64 @@ describe("ensureLeaveType (Phase 97)", () => {
     // here); ensureLeaveType() itself is a find-or-create with no audit call, matching the
     // pre-phase-97 implementation (see docblock).
     expect(after).toBe(before);
+  });
+
+  it("WR-01: a P2002 from a concurrent create resolves to the winner's row (no 500)", async () => {
+    const d = await seed("elt9");
+    await app.prisma.leaveEntitlement.deleteMany({ where: { employeeId: d.employee.id } });
+    await app.prisma.leaveType.delete({ where: { id: d.vacationType.id } });
+
+    // This IS the race winner committing — realCreate really writes to Postgres, the spy
+    // only simulates the constraint violation the loser would have raised.
+    const realCreate = app.prisma.leaveType.create.bind(app.prisma.leaveType);
+    let winnerId = "";
+    const createSpy = vi.spyOn(app.prisma.leaveType, "create").mockImplementationOnce((async (
+      args: Prisma.LeaveTypeCreateArgs,
+    ) => {
+      const winner = await realCreate(args);
+      winnerId = winner.id;
+      throw Object.assign(
+        new Error("Unique constraint failed on the fields: (`tenantId`,`code`)"),
+        { code: "P2002" },
+      );
+    }) as never);
+
+    try {
+      const res = await getEntitlements(d);
+      expect(createSpy).toHaveBeenCalledTimes(1);
+      expect(res.statusCode).toBe(200);
+
+      const rows = await app.prisma.leaveType.findMany({ where: { tenantId: d.tenant.id } });
+      expect(rows).toHaveLength(1);
+      expect(rows[0].id).toBe(winnerId);
+      expect(rows[0].code).toBe("VACATION");
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
+
+  it("WR-01: a P2002 whose row cannot be re-read is rethrown, not silently resolved", async () => {
+    const d = await seed("elt10");
+    await app.prisma.leaveEntitlement.deleteMany({ where: { employeeId: d.employee.id } });
+    await app.prisma.leaveType.delete({ where: { id: d.vacationType.id } });
+
+    // A P2002 raised by the OTHER unique constraint (tenantId, name) — no winner row
+    // exists for this code, so the re-read must come up empty and the error must rethrow.
+    const createSpy = vi.spyOn(app.prisma.leaveType, "create").mockRejectedValueOnce(
+      Object.assign(new Error("Unique constraint failed on the fields: (`tenantId`,`name`)"), {
+        code: "P2002",
+      }),
+    );
+
+    try {
+      const res = await getEntitlements(d);
+      expect(res.statusCode).toBe(500);
+
+      const rows = await app.prisma.leaveType.findMany({ where: { tenantId: d.tenant.id } });
+      expect(rows).toHaveLength(0);
+    } finally {
+      createSpy.mockRestore();
+    }
   });
 });
 

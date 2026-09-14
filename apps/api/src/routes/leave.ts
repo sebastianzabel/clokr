@@ -90,9 +90,17 @@ type TypeCode = LeaveTypeCode;
  * Auditing: unchanged from the pre-phase-97 implementation — this find-or-create writes no
  * AuditLog row and did not before either (the old code renamed legacy rows unaudited in the
  * same way). Not a regression introduced here; tracked as the pre-existing gap it is.
+ *
+ * Review WR-01 (phase 97): step 3's create is P2002-guarded — steps 1-2 above are a
+ * check-then-create race, so two concurrent first-time requests for the same code can both
+ * reach the create. The loser re-reads by `{ tenantId, code }` and resolves to the winner's
+ * row instead of surfacing a bare 500. If that re-read comes up empty, the P2002 did not come
+ * from `@@unique([tenantId, code])` (the model also carries `@@unique([tenantId, name])`) and
+ * is rethrown unchanged rather than guessed at.
  */
 async function ensureLeaveType(
   prisma: FastifyInstance["prisma"],
+  log: FastifyInstance["log"],
   tenantId: string,
   code: TypeCode,
 ): Promise<string> {
@@ -119,8 +127,39 @@ async function ensureLeaveType(
   }
 
   // 3. Create. leaveTypeFields() makes code and name structurally inseparable.
-  const created = await prisma.leaveType.create({ data: { tenantId, ...leaveTypeFields(code) } });
-  return created.id;
+  //
+  // Review WR-01 (phase 97): steps 1-2 above are a check-then-create race. Two concurrent
+  // first-time requests for the same (tenantId, code) both pass them and both arrive here;
+  // @@unique([tenantId, code]) lets exactly one win and raises P2002 on the loser, which
+  // used to surface as a bare HTTP 500 for an operation that had in fact succeeded. Same
+  // race class, same shape as the Section9Credit create below ("§ 9: concurrent detection
+  // lost the race"). Not a phase-97 regression — the name-keyed version had the same gap.
+  try {
+    const created = await prisma.leaveType.create({ data: { tenantId, ...leaveTypeFields(code) } });
+    return created.id;
+  } catch (err: unknown) {
+    if (
+      err &&
+      typeof err === "object" &&
+      "code" in err &&
+      (err as { code: unknown }).code === "P2002"
+    ) {
+      // The winner committed between our step-1 read and this create — re-read and use it.
+      const winner = await prisma.leaveType.findFirst({ where: { tenantId, code } });
+      if (winner) {
+        log.info(
+          { tenantId, code },
+          "LeaveType: concurrent create lost the race, row already exists",
+        );
+        return winner.id;
+      }
+      // No row for this code, so the P2002 did NOT come from @@unique([tenantId, code]) —
+      // LeaveType also carries @@unique([tenantId, name]), which a tenant-renamed row can
+      // violate. There is no id to return here, and returning any other type's id would
+      // book the request onto the WRONG absence type. Fall through and rethrow unchanged.
+    }
+    throw err;
+  }
 }
 
 const createSchema = z
@@ -353,7 +392,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       // Load tenant config for leave rules
       const tenantConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
 
-      const leaveTypeId = await ensureLeaveType(app.prisma, tenantId, body.type);
+      const leaveTypeId = await ensureLeaveType(app.prisma, app.log, tenantId, body.type);
       const leaveType = await app.prisma.leaveType.findUnique({ where: { id: leaveTypeId } });
 
       // ── Half-day sick rejection ──
@@ -1799,7 +1838,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       // legacy names / creates the canonical type on demand).
       const newLeaveTypeId =
         typeChanged && body.type != null
-          ? await ensureLeaveType(app.prisma, tenantId, body.type)
+          ? await ensureLeaveType(app.prisma, app.log, tenantId, body.type)
           : existing.leaveTypeId;
 
       // ── Steps 8-11 run inside ONE interactive transaction (94 CR-01) ──────────
@@ -2576,7 +2615,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       }
 
       // Resturlaub auto-übertragen falls nötig
-      const vacTypeId = await ensureLeaveType(app.prisma, tenantId, "VACATION");
+      const vacTypeId = await ensureLeaveType(app.prisma, app.log, tenantId, "VACATION");
       await autoCarryOver(app.prisma, tenantId, employeeId, vacTypeId, targetYear);
 
       // Issue #173: without `?year` this can return more than one row per LeaveType (e.g. a
