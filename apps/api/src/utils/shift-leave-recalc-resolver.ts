@@ -25,7 +25,7 @@
  *   5. period not entirely in the past (tenant-timezone "today")
  *   6. month not locked (isSnapshotLocked())
  * plus two structural guards CLAUDE.md requires regardless (deletedAt: null, tenant scope) and
- * one scope decision — VACATION type only — documented on VACATION_LEAVE_TYPE_NAME below.
+ * one scope decision — VACATION type only — documented on the code constant below.
  *
  * D-17 is a CONSEQUENCE of this guard set, not a separate mechanism: provisionality only ends
  * when the period elapses (guard 5) or the month locks (guard 6) — every roster change before
@@ -33,7 +33,7 @@
  * once". Do not add a "only adjust once" short-circuit; that would silently reintroduce the
  * exact staleness D-17 exists to prevent.
  */
-import type { Prisma } from "@clokr/db";
+import type { Prisma, LeaveTypeCode } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
 import { isSnapshotLocked } from "./snapshot-lock";
 import { todayInTz } from "./timezone";
@@ -55,12 +55,18 @@ import { todayInTz } from "./timezone";
  * deliberately, at the query, rather than silently mis-handled — logged as a discovered,
  * deliberately-out-of-scope gap in this phase's deferred-items.md.
  *
- * Mirrors `LEAVE_TYPE_DEFS.VACATION.name` in `routes/leave.ts` verbatim (not imported directly
- * — see the "Dependency surface" note below); pinned by a dedicated test in
- * `shift-leave-recalc.test.ts` so a future rename of that display name fails loudly here
- * instead of silently mis-scoping this resolver.
+ * Phase 97 (D-16): the scope is the VACATION type, identified by its stable code. This used to be
+ * the German display name for annual leave, mirrored verbatim from the route module and pinned by
+ * a test so a rename would fail loudly — a workaround for the very defect this phase removes.
+ * Do not quote that name here; the test below and the CI gate from plan 10 both assert it is
+ * gone from this file. The pin stays,
+ * deliberately: it now guards the code, so an accidental change of this scope decision still fails
+ * loudly instead of silently mis-scoping the resolver.
+ *
+ * The "Dependency surface" rule below is unchanged: this file imports nothing from `routes/`.
+ * `LeaveTypeCode` comes from `@clokr/db`.
  */
-const VACATION_LEAVE_TYPE_NAME = "Urlaub";
+const VACATION_LEAVE_TYPE_CODE: LeaveTypeCode = "VACATION";
 
 // ── Dependency surface ──────────────────────────────────────────────────────────────────────
 // This file intentionally imports NOTHING from `routes/` — `resolveLeaveDays()`,
@@ -176,7 +182,7 @@ export async function recalcProvisionalLeaveForShiftChange(
       employeeId,
       deletedAt: null,
       employee: { tenantId },
-      leaveType: { name: VACATION_LEAVE_TYPE_NAME },
+      leaveType: { code: VACATION_LEAVE_TYPE_CODE },
       startDate: { lte: affectedWeekEnd },
       endDate: { gte: affectedWeekStart },
     },
