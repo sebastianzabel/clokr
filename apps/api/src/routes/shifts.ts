@@ -1,4 +1,5 @@
 import { FastifyInstance, FastifyRequest } from "fastify";
+import type { LeaveTypeCode } from "@clokr/db";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { isAvailabilityEnabled } from "../utils/tenant-availability";
@@ -91,15 +92,34 @@ type Availability =
   | "preferred";
 
 /**
- * Classify a leave-type name into one of our availability buckets.
- * Names are German strings (e.g. "Urlaub", "Krankmeldung", "Sonderurlaub").
+ * Classify a leave type into one of our availability buckets — by its stable CODE.
+ *
+ * Phase 97 (D-11): the previous implementation lower-cased the German display name and matched
+ * substrings of it — the vacation bucket was "contains the word for leave, but not the words for
+ * special or unpaid". That misclassified the further-education type as vacation, because its
+ * German name ends in the same word and matches neither exclusion, and it broke entirely for a
+ * tenant who renamed a type. Do not restate those substring tests here: the acceptance criteria
+ * of this task and the CI gate from plan 10 both assert that no such literal survives anywhere
+ * in this file.
+ *
+ * A null code (pre-backfill row, or one the old image wrote during a rolling deploy) falls
+ * through to "other" — the same bucket an unrecognised type has always landed in.
  */
-function classifyLeaveTypeName(name: string): Availability {
-  const n = name.toLowerCase();
-  if (n.includes("urlaub") && !n.includes("sonder") && !n.includes("unbezahlt")) return "vacation";
-  if (n.includes("krank")) return "sick";
-  if (n.includes("sonder")) return "special";
-  return "other";
+function classifyLeaveTypeCode(code: LeaveTypeCode | null): Availability {
+  switch (code) {
+    case "VACATION":
+      return "vacation";
+    case "SICK":
+    case "SICK_CHILD":
+      return "sick";
+    case "SPECIAL":
+      return "special";
+    // EDUCATION, UNPAID, OVERTIME_COMP, MATERNITY, PARENTAL and an unset code all share the
+    // generic bucket. EDUCATION landing here instead of `vacation` is the D-11 correction.
+    // (Codes only — no German display name belongs in this file any more.)
+    default:
+      return "other";
+  }
 }
 
 /**
@@ -205,12 +225,12 @@ async function findShiftConflict(
       startDate: { lte: day },
       endDate: { gte: day },
     },
-    include: { leaveType: { select: { name: true } } },
+    include: { leaveType: { select: { code: true } } },
   });
   if (leave) {
     return {
       kind: "leave",
-      conflictType: classifyLeaveTypeName(leave.leaveType.name) as ConflictType,
+      conflictType: classifyLeaveTypeCode(leave.leaveType.code) as ConflictType,
       leaveRequestId: leave.id,
     };
   }
@@ -922,7 +942,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         }),
         app.prisma.leaveType.findMany({
           where: { tenantId },
-          select: { id: true, name: true },
+          select: { id: true, code: true },
         }),
         app.prisma.leaveRequest.findMany({
           where: {
@@ -1088,8 +1108,12 @@ export async function shiftRoutes(app: FastifyInstance) {
         requiresNonSupervised: r.requiresNonSupervised,
       }));
 
-      // Build leaveType name lookup
-      const leaveTypeNameById = new Map(leaveTypes.map((lt) => [lt.id, lt.name]));
+      // Build leaveType code lookup — Phase 97 (D-11), same fix as findShiftConflict() above:
+      // this map previously keyed off the display name and fed the pre-Phase-97 substring
+      // classifier, sharing the exact same defect (further-education leave misclassified as
+      // vacation), just for the week-grid per-employee availability map instead of the
+      // POST /shifts 409 response.
+      const leaveTypeCodeById = new Map(leaveTypes.map((lt) => [lt.id, lt.code]));
 
       // Generate weekDays array
       const weekDays: string[] = [];
@@ -1112,8 +1136,8 @@ export async function shiftRoutes(app: FastifyInstance) {
       const keyOf = (empId: string, iso: string) => `${empId}::${iso}`;
 
       for (const lr of leaveRequests) {
-        const typeName = leaveTypeNameById.get(lr.leaveTypeId) ?? "";
-        const cls = classifyLeaveTypeName(typeName);
+        const typeCode = leaveTypeCodeById.get(lr.leaveTypeId) ?? null;
+        const cls = classifyLeaveTypeCode(typeCode);
         for (const iso of weekDays) {
           if (coversDay(lr.startDate, lr.endDate, iso)) {
             const k = keyOf(lr.employeeId, iso);

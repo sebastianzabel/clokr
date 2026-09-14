@@ -516,3 +516,162 @@ describe("GET /shifts/week — day-based Soll dedup (Phase 104, D-15 Tier 2)", (
     }
   });
 });
+
+/**
+ * Phase 97 Plan 07 (D-11) — POST /shifts's conflictType is classified from LeaveType.code via
+ * classifyLeaveTypeCode(), not from a substring match on the display name. Covers every one of
+ * the nine canonical codes plus the code=null edge case, and proves the classification survives
+ * a tenant rename of the VACATION type's display name.
+ */
+describe("POST /shifts conflictType — classified by LeaveType.code, not name (Phase 97, D-11)", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+
+  const toIso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  // Dates MUST always be in the future (SHIFT_PAST_IMMUTABLE) — mirrors
+  // apps/api/src/__tests__/shifts.test.ts's own businessDayFromToday helper.
+  const businessDayFromToday = (offset: number): Date => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + offset);
+    while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+    return d;
+  };
+  let nextOffset = 60; // spaced 3 days apart below — comfortably clear of other describe blocks' shift fixtures in this file
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "shifts-d11");
+
+    // Phase 47.1 — shift endpoints require an active SHIFT_BASED WorkSchedule.
+    await app.prisma.workSchedule.create({
+      data: {
+        employeeId: data.employee.id,
+        type: "SHIFT_BASED",
+        weeklyHours: 40,
+        validFrom: new Date("2024-02-01"),
+      },
+    });
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  /** Creates a LeaveType row with the given code/name, an APPROVED LeaveRequest for the
+   *  employee on the next free anchor date, fires POST /shifts on that date, and asserts the
+   *  resulting 409's conflictType. */
+  async function expectConflictType(
+    code:
+      | "VACATION"
+      | "OVERTIME_COMP"
+      | "SPECIAL"
+      | "UNPAID"
+      | "SICK"
+      | "SICK_CHILD"
+      | "EDUCATION"
+      | "MATERNITY"
+      | "PARENTAL"
+      | null,
+    name: string,
+    expected: string,
+  ) {
+    const dateIso = toIso(businessDayFromToday(nextOffset));
+    nextOffset += 3;
+
+    // seedTestData() already creates exactly one VACATION-code LeaveType row per tenant
+    // (data.vacationType); the @@unique([tenantId, code]) constraint (Phase 97 Plan 01) means a
+    // second `code: "VACATION"` row in the same tenant cannot be created. Rename the existing
+    // row in place instead — the more faithful fixture for "a tenant renames its VACATION type"
+    // anyway (same pattern 97-06's SUMMARY documents for the Monatsbericht fixture).
+    const leaveType =
+      code === "VACATION"
+        ? await app.prisma.leaveType.update({
+            where: { id: data.vacationType.id },
+            data: { name },
+          })
+        : await app.prisma.leaveType.create({
+            data: {
+              tenantId: data.tenant.id,
+              code,
+              name,
+              isPaid: true,
+              requiresApproval: true,
+            },
+          });
+    const leave = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: data.employee.id,
+        leaveTypeId: leaveType.id,
+        startDate: new Date(dateIso),
+        endDate: new Date(dateIso),
+        days: 1,
+        status: "APPROVED",
+      },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/shifts",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {
+        employeeId: data.employee.id,
+        date: dateIso,
+        startTime: "08:00",
+        endTime: "16:00",
+      },
+    });
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.body);
+    expect(body.code).toBe("SHIFT_CONFLICT_LEAVE");
+    expect(body.conflictType).toBe(expected);
+
+    await app.prisma.leaveRequest.delete({ where: { id: leave.id } });
+  }
+
+  it("a VACATION-code row renamed to 'Erholungsurlaub' still yields conflictType 'vacation'", async () => {
+    await expectConflictType("VACATION", "Erholungsurlaub", "vacation");
+  });
+
+  it("D-11 (named behavior change): an EDUCATION-code row named 'Bildungsurlaub' now yields conflictType 'other' — previously 'vacation', because the old substring heuristic matched the German word for leave and neither of its two exclusions", async () => {
+    await expectConflictType("EDUCATION", "Bildungsurlaub", "other");
+  });
+
+  it("SPECIAL yields 'special'", async () => {
+    await expectConflictType("SPECIAL", "Sonderurlaub", "special");
+  });
+
+  it("SICK yields 'sick'", async () => {
+    await expectConflictType("SICK", "Krankmeldung", "sick");
+  });
+
+  it("SICK_CHILD yields 'sick'", async () => {
+    await expectConflictType("SICK_CHILD", "Kinderkrank", "sick");
+  });
+
+  it("UNPAID yields 'other'", async () => {
+    await expectConflictType("UNPAID", "Unbezahlter Urlaub", "other");
+  });
+
+  it("OVERTIME_COMP yields 'other'", async () => {
+    await expectConflictType("OVERTIME_COMP", "Überstundenausgleich", "other");
+  });
+
+  it("MATERNITY yields 'other'", async () => {
+    await expectConflictType("MATERNITY", "Mutterschutz", "other");
+  });
+
+  it("PARENTAL yields 'other'", async () => {
+    await expectConflictType("PARENTAL", "Elternzeit", "other");
+  });
+
+  it("a LeaveType row with code=null yields 'other' and does not throw", async () => {
+    await expectConflictType(null, "Alteintrag ohne Code", "other");
+  });
+});
