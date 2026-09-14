@@ -86,6 +86,17 @@ describe("mapVacationBalance", () => {
     expect(result?.carryOver).toBe(7);
   });
 
+  // ── Phase 97 (D-09): typeCode can be null ───────────────────────────────────────────────
+  it("does not throw and maps normally when typeCode is null (Phase 97, D-09)", () => {
+    // The API no longer coerces an unresolvable leave type to the VACATION code; a row with
+    // typeCode: null must still map cleanly — this mapper never reads typeCode itself, so the
+    // only risk is a type-level regression, guarded here at the value level too.
+    const result = mapVacationBalance({ ...baseRow, typeCode: null });
+    expect(result).not.toBeNull();
+    expect(result?.total).toBe(30);
+    expect(() => mapVacationBalance({ ...baseRow, typeCode: null })).not.toThrow();
+  });
+
   // ── Phase 107-07 (D-12/D-13): provisionalUsed ───────────────────────────────────────────
   describe("provisionalUsed", () => {
     it("defaults to 0 when the API response omits provisionalUsedDays entirely (pre-107-07 shape)", () => {

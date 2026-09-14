@@ -46,7 +46,9 @@ export interface VacationBalance {
 
 /** Shape of one row of `GET /leave/entitlements/:employeeId` for the VACATION type. */
 export interface VacationEntitlementRow {
-  typeCode: string;
+  // Phase 97 (D-09): the API no longer coerces an unresolvable type to "VACATION"; the field
+  // can be null. Every consumer compares with === "VACATION", so null simply never matches.
+  typeCode: string | null;
   leaveType: { name: string };
   totalDays: number;
   usedDays: number;
