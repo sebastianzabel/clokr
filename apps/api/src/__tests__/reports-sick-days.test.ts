@@ -636,3 +636,352 @@ describe("Reports: § 9 BUrlG attribution in the Monatsbericht (D-30)", () => {
     expect(res.rawPayload.subarray(0, 4).toString()).toBe("%PDF");
   });
 });
+
+// ── Phase 97 (T2): Monatsbericht type comparisons run on LeaveType.code (Task 1) ──
+// The abwesenheits-aufschlüsselung and the sick-day split used to derive identity from
+// LeaveType.name. These tests construct fixtures with a CORRECT code but a RENAMED
+// display name — only a code-based comparison can pass them; a name-based one would
+// silently drop the renamed row out of its own bucket.
+describe("Reports: Monatsbericht type comparisons run on LeaveType.code (Phase 97 T2)", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+
+  let empRenamed: { id: string };
+  let empNullCode: { id: string };
+  let empParity: { id: string };
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "rpt-code");
+
+    const sickTypeRenamed = await app.prisma.leaveType.create({
+      data: {
+        tenantId: data.tenant.id,
+        code: "SICK",
+        name: "Krank", // renamed away from the canonical "Krankmeldung"
+        isPaid: true,
+        requiresApproval: false,
+        color: "#EF4444",
+      },
+    });
+
+    // seedTestData already created this tenant's one VACATION-code row (the
+    // `@@unique([tenantId, code])` constraint permits only one) — rename IT rather
+    // than creating a second, exactly modelling a tenant renaming its existing type.
+    const vacationTypeRenamed = await app.prisma.leaveType.update({
+      where: { id: data.vacationType.id },
+      data: { name: "Erholungsurlaub" }, // renamed away from the canonical "Urlaub"
+    });
+
+    // A pre-Phase-97 style row: a name the backfill could not map, so it was left
+    // without a code (D-09 — no silent default to the vacation code).
+    const nullCodeType = await app.prisma.leaveType.create({
+      data: {
+        tenantId: data.tenant.id,
+        code: null,
+        name: "Sonderfall ohne Code",
+        isPaid: true,
+        requiresApproval: true,
+        color: "#9CA3AF",
+      },
+    });
+
+    // ── Employee "renamed": SICK + VACATION on renamed-name rows, non-overlapping ──
+    const userRenamed = await app.prisma.user.create({
+      data: {
+        email: `emp-renamed-${Date.now()}@rpt-code-test.de`,
+        passwordHash: "DUMMY",
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const employeeRenamed = await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: userRenamed.id,
+        employeeNumber: `RC-R-${Date.now()}`,
+        firstName: "Rena",
+        lastName: "CodeTest",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    await app.prisma.workSchedule.create({
+      data: {
+        employeeId: employeeRenamed.id,
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date("2024-01-01"),
+      },
+    });
+    await app.prisma.overtimeAccount.create({
+      data: { employeeId: employeeRenamed.id, balanceHours: 0 },
+    });
+    empRenamed = { id: employeeRenamed.id };
+
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: employeeRenamed.id,
+        leaveTypeId: sickTypeRenamed.id,
+        startDate: new Date("2027-02-01T00:00:00.000Z"),
+        endDate: new Date("2027-02-02T00:00:00.000Z"),
+        days: 2,
+        status: "APPROVED",
+        attestPresent: false,
+        reviewedBy: data.adminUser.id,
+        reviewedAt: new Date(),
+      },
+    });
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: employeeRenamed.id,
+        leaveTypeId: vacationTypeRenamed.id,
+        startDate: new Date("2027-02-08T00:00:00.000Z"),
+        endDate: new Date("2027-02-09T00:00:00.000Z"),
+        days: 2,
+        status: "APPROVED",
+        reviewedBy: data.adminUser.id,
+        reviewedAt: new Date(),
+      },
+    });
+
+    // ── Employee "null-code": request on a row with no code at all ─────────────
+    const userNullCode = await app.prisma.user.create({
+      data: {
+        email: `emp-nullcode-${Date.now()}@rpt-code-test.de`,
+        passwordHash: "DUMMY",
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const employeeNullCode = await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: userNullCode.id,
+        employeeNumber: `RC-N-${Date.now()}`,
+        firstName: "Nell",
+        lastName: "CodeTest",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    await app.prisma.workSchedule.create({
+      data: {
+        employeeId: employeeNullCode.id,
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date("2024-01-01"),
+      },
+    });
+    await app.prisma.overtimeAccount.create({
+      data: { employeeId: employeeNullCode.id, balanceHours: 0 },
+    });
+    empNullCode = { id: employeeNullCode.id };
+
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: employeeNullCode.id,
+        leaveTypeId: nullCodeType.id,
+        startDate: new Date("2027-02-15T00:00:00.000Z"),
+        endDate: new Date("2027-02-16T00:00:00.000Z"),
+        days: 2,
+        status: "APPROVED",
+        reviewedBy: data.adminUser.id,
+        reviewedAt: new Date(),
+      },
+    });
+
+    // ── Employee "parity": three canonical, non-overlapping, non-sick types ────
+    const userParity = await app.prisma.user.create({
+      data: {
+        email: `emp-parity-${Date.now()}@rpt-code-test.de`,
+        passwordHash: "DUMMY",
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const employeeParity = await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: userParity.id,
+        employeeNumber: `RC-P-${Date.now()}`,
+        firstName: "Pia",
+        lastName: "CodeTest",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    await app.prisma.workSchedule.create({
+      data: {
+        employeeId: employeeParity.id,
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date("2024-01-01"),
+      },
+    });
+    await app.prisma.overtimeAccount.create({
+      data: { employeeId: employeeParity.id, balanceHours: 0 },
+    });
+    empParity = { id: employeeParity.id };
+
+    const overtimeCompType = await app.prisma.leaveType.create({
+      data: {
+        tenantId: data.tenant.id,
+        code: "OVERTIME_COMP",
+        name: "Überstundenausgleich",
+        isPaid: true,
+        requiresApproval: true,
+        color: "#F59E0B",
+      },
+    });
+    const specialType = await app.prisma.leaveType.create({
+      data: {
+        tenantId: data.tenant.id,
+        code: "SPECIAL",
+        name: "Sonderurlaub",
+        isPaid: true,
+        requiresApproval: true,
+        color: "#8B5CF6",
+      },
+    });
+
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: employeeParity.id,
+        leaveTypeId: vacationTypeRenamed.id,
+        startDate: new Date("2027-02-01T00:00:00.000Z"),
+        endDate: new Date("2027-02-03T00:00:00.000Z"),
+        days: 3,
+        status: "APPROVED",
+        reviewedBy: data.adminUser.id,
+        reviewedAt: new Date(),
+      },
+    });
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: employeeParity.id,
+        leaveTypeId: overtimeCompType.id,
+        startDate: new Date("2027-02-05T00:00:00.000Z"),
+        endDate: new Date("2027-02-05T00:00:00.000Z"),
+        days: 1,
+        status: "APPROVED",
+        reviewedBy: data.adminUser.id,
+        reviewedAt: new Date(),
+      },
+    });
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: employeeParity.id,
+        leaveTypeId: specialType.id,
+        startDate: new Date("2027-02-10T00:00:00.000Z"),
+        endDate: new Date("2027-02-11T00:00:00.000Z"),
+        days: 2,
+        status: "APPROVED",
+        reviewedBy: data.adminUser.id,
+        reviewedAt: new Date(),
+      },
+    });
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  async function monthlyRowFor(employeeId: string) {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/reports/monthly?year=2027&month=2&employeeId=${employeeId}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      rows: Array<{
+        employeeId: string;
+        sickDays: number;
+        sickDaysWithAttest: number;
+        sickDaysWithoutAttest: number;
+        totalAbsenceDays: number;
+        vacationDays: number;
+        overtimeCompDays: number;
+        specialLeaveDays: number;
+        educationDays: number;
+        unpaidDays: number;
+        maternityDays: number;
+        parentalDays: number;
+      }>;
+    };
+    const row = body.rows.find((r) => r.employeeId === employeeId);
+    expect(row).toBeDefined();
+    return row!;
+  }
+
+  it("Case 1: an APPROVED request on a SICK-code row renamed to 'Krank' still counts as a sick day", async () => {
+    const row = await monthlyRowFor(empRenamed.id);
+    expect(row.sickDaysWithoutAttest).toBe(2);
+    expect(row.sickDays).toBe(2);
+  });
+
+  it("Case 2: the same request does NOT count in totalAbsenceDays (the non-sick sum)", async () => {
+    const row = await monthlyRowFor(empRenamed.id);
+    // totalAbsenceDays combines this employee's non-sick requests only — the 2-day
+    // VACATION request, never the 2-day SICK request.
+    expect(row.totalAbsenceDays).toBe(2);
+  });
+
+  it("Case 3: an APPROVED request on a VACATION-code row renamed to 'Erholungsurlaub' appears in vacationDays", async () => {
+    const row = await monthlyRowFor(empRenamed.id);
+    expect(row.vacationDays).toBe(2);
+  });
+
+  it("Case 4: a request on a code=null row appears in none of the seven type sums and is not counted as sick", async () => {
+    const row = await monthlyRowFor(empNullCode.id);
+    expect(row.vacationDays).toBe(0);
+    expect(row.overtimeCompDays).toBe(0);
+    expect(row.specialLeaveDays).toBe(0);
+    expect(row.educationDays).toBe(0);
+    expect(row.unpaidDays).toBe(0);
+    expect(row.maternityDays).toBe(0);
+    expect(row.parentalDays).toBe(0);
+    expect(row.sickDays).toBe(0);
+  });
+
+  it("Case 5 (AC-5): the sum of all seven type buckets over a non-overlapping fixture equals the fixture's own days", async () => {
+    const row = await monthlyRowFor(empParity.id);
+    expect(row.vacationDays).toBe(3);
+    expect(row.overtimeCompDays).toBe(1);
+    expect(row.specialLeaveDays).toBe(2);
+    expect(row.educationDays).toBe(0);
+    expect(row.unpaidDays).toBe(0);
+    expect(row.maternityDays).toBe(0);
+    expect(row.parentalDays).toBe(0);
+    const sum =
+      row.vacationDays +
+      row.overtimeCompDays +
+      row.specialLeaveDays +
+      row.educationDays +
+      row.unpaidDays +
+      row.maternityDays +
+      row.parentalDays;
+    expect(sum).toBe(6);
+  });
+});
