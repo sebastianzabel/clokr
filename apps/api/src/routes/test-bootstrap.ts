@@ -39,6 +39,7 @@ import bcrypt from "bcryptjs";
 import { createHash, randomBytes } from "crypto";
 import { z } from "zod";
 import { config } from "../config.js";
+import { leaveTypeFields } from "../utils/leave-type.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -172,16 +173,11 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
         data: { employeeId: adminEmployee.id, balanceHours: 0 },
       });
 
-      // Standard vacation type — every Plan 74-03 test reads carry-over
-      // off this exact `LeaveType` row.
+      // Standard vacation type — every Plan 74-03 test reads carry-over off this exact
+      // `LeaveType` row. Phase 97 (D-22): leaveTypeFields() writes code and name together,
+      // so this second runtime write path cannot produce a row without a code.
       const vacationType = await prisma.leaveType.create({
-        data: {
-          tenantId: tenant.id,
-          name: "Urlaub",
-          isPaid: true,
-          requiresApproval: true,
-          color: "#3B82F6",
-        },
+        data: { tenantId: tenant.id, ...leaveTypeFields("VACATION"), color: "#3B82F6" },
       });
 
       // LeaveEntitlement for the current year — without it, /leave routes

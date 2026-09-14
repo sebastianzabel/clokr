@@ -1,11 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  intersectRanges,
-  isSickTypeName,
-  findSection9Overlaps,
-  SICK_TYPE_NAMES,
-  type LeaveRangeRow,
-} from "../section9-detect";
+import { intersectRanges, findSection9Overlaps, type LeaveRangeRow } from "../section9-detect";
 
 describe("section9-detect (pure, DB-free)", () => {
   describe("intersectRanges", () => {
@@ -50,22 +44,6 @@ describe("section9-detect (pure, DB-free)", () => {
     });
   });
 
-  describe("isSickTypeName", () => {
-    it("matches both German sick type names", () => {
-      expect(isSickTypeName("Krankmeldung")).toBe(true);
-      expect(isSickTypeName("Kinderkrank")).toBe(true);
-    });
-
-    it("does not match a non-sick type name", () => {
-      expect(isSickTypeName("Urlaub")).toBe(false);
-      expect(isSickTypeName("Elternzeit")).toBe(false);
-    });
-
-    it("SICK_TYPE_NAMES contains exactly the two sick names", () => {
-      expect([...SICK_TYPE_NAMES].sort()).toEqual(["Kinderkrank", "Krankmeldung"]);
-    });
-  });
-
   describe("findSection9Overlaps", () => {
     function row(partial: Partial<LeaveRangeRow>): LeaveRangeRow {
       return {
@@ -73,7 +51,7 @@ describe("section9-detect (pure, DB-free)", () => {
         startDate: new Date("2028-01-01"),
         endDate: new Date("2028-01-01"),
         status: "APPROVED",
-        leaveType: { name: "Urlaub" },
+        leaveType: { code: "VACATION" },
         ...partial,
       };
     }
@@ -85,7 +63,7 @@ describe("section9-detect (pure, DB-free)", () => {
           startDate: new Date("2028-06-05"),
           endDate: new Date("2028-06-09"),
           status: "APPROVED",
-          leaveType: { name: "Urlaub" },
+          leaveType: { code: "VACATION" },
         }),
       ]);
       expect(result).toEqual([
@@ -108,11 +86,11 @@ describe("section9-detect (pure, DB-free)", () => {
       expect(result).toEqual([]);
     });
 
-    it("excludes a SICK/SICK_CHILD candidate (homogeneous overlap stays blocked upstream)", () => {
+    it("excludes a SICK candidate (homogeneous overlap stays blocked upstream)", () => {
       const result = findSection9Overlaps(new Date("2028-06-07"), new Date("2028-06-08"), [
         row({
           status: "APPROVED",
-          leaveType: { name: "Krankmeldung" },
+          leaveType: { code: "SICK" },
           startDate: new Date("2028-06-05"),
           endDate: new Date("2028-06-09"),
         }),
@@ -120,11 +98,61 @@ describe("section9-detect (pure, DB-free)", () => {
       expect(result).toEqual([]);
     });
 
+    it("excludes a SICK_CHILD candidate (homogeneous overlap stays blocked upstream)", () => {
+      const result = findSection9Overlaps(new Date("2028-06-07"), new Date("2028-06-08"), [
+        row({
+          status: "APPROVED",
+          leaveType: { code: "SICK_CHILD" },
+          startDate: new Date("2028-06-05"),
+          endDate: new Date("2028-06-09"),
+        }),
+      ]);
+      expect(result).toEqual([]);
+    });
+
+    it("includes an APPROVED EDUCATION candidate — non-sick, so creditable (rename resilience: a code, not a name, drives this)", () => {
+      const result = findSection9Overlaps(new Date("2028-06-07"), new Date("2028-06-08"), [
+        row({
+          id: "edu-1",
+          status: "APPROVED",
+          leaveType: { code: "EDUCATION" },
+          startDate: new Date("2028-06-05"),
+          endDate: new Date("2028-06-09"),
+        }),
+      ]);
+      expect(result).toEqual([
+        {
+          vacationRequestId: "edu-1",
+          overlapStart: new Date("2028-06-07"),
+          overlapEnd: new Date("2028-06-08"),
+        },
+      ]);
+    });
+
     it("excludes a disjoint candidate", () => {
       const result = findSection9Overlaps(new Date("2028-06-07"), new Date("2028-06-08"), [
         row({ startDate: new Date("2028-01-01"), endDate: new Date("2028-01-05") }),
       ]);
       expect(result).toEqual([]);
+    });
+
+    it("a candidate with code = null is treated as non-sick and IS reported as an overlap — parity with the old unknown-name behaviour, not a new rule", () => {
+      const result = findSection9Overlaps(new Date("2028-06-07"), new Date("2028-06-08"), [
+        row({
+          id: "codeless-1",
+          status: "APPROVED",
+          leaveType: { code: null },
+          startDate: new Date("2028-06-05"),
+          endDate: new Date("2028-06-09"),
+        }),
+      ]);
+      expect(result).toEqual([
+        {
+          vacationRequestId: "codeless-1",
+          overlapStart: new Date("2028-06-07"),
+          overlapEnd: new Date("2028-06-08"),
+        },
+      ]);
     });
 
     it("returns one overlap per candidate for multiple simultaneous overlaps, sorted", () => {

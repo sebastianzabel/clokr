@@ -196,7 +196,7 @@ describe("Leave provisional approval — SHIFT_BASED roster-aware recompute (Pha
     // ── Shared "Urlaub" LeaveType + generous entitlements for every employee, spanning
     //    both years any of the anchor offsets above could land in. ──────────────────────
     const vacType = await prisma.leaveType.create({
-      data: { tenantId, name: "Urlaub", isPaid: true, requiresApproval: true },
+      data: { tenantId, code: "VACATION", name: "Urlaub", isPaid: true, requiresApproval: true },
     });
     vacTypeId = vacType.id;
 

@@ -22,6 +22,8 @@ import {
 } from "../utils/pdf";
 import { selfHealUsedDays, loadVacationTypeMeta } from "../utils/leave-self-heal";
 import { computeMonthSaldo } from "../utils/month-saldo";
+import { isSickLeaveTypeCode } from "../utils/leave-type";
+import type { LeaveTypeCode } from "@clokr/db";
 
 // ── Month name lookup ─────────────────────────────────────────────────────────
 const MONTH_NAMES = [
@@ -58,12 +60,12 @@ type LeaveRequestWithType = {
   attestPresent: boolean;
   attestValidFrom: Date | null;
   attestValidTo: Date | null;
-  leaveType: { name: string };
+  leaveType: { name: string; code: LeaveTypeCode | null };
 };
 
 // ── Phase 104 (D-15, Tier 2) — tagesbasierte Entdopplung ───────────────────────
-// reports.ts hat EIGENE Soll-/Tage-Berechnungen (calcAbsenceMinutes, daysForTypeName,
-// daysForName im DATEV-Export), die weder closeEmployeeMonth() (Tier 1, Plan 104-02)
+// reports.ts hat EIGENE Soll-/Tage-Berechnungen (calcAbsenceMinutes, daysForTypeCode,
+// daysForCode im DATEV-Export), die weder closeEmployeeMonth() (Tier 1, Plan 104-02)
 // noch calcLeaveAbsenceMinutesTz aufrufen. Der dortige Fix erreicht diese Stellen
 // deshalb NICHT — siehe RESEARCH.md "The D-15 Soll-Dedup Surface" (Tier 2). Seit R1
 // (§ 9 BUrlG) ist die Überlappung zweier genehmigter Anträge (SICK vs. VACATION) der
@@ -300,8 +302,10 @@ function computeEmployeeSummary(
     return total;
   }
 
-  function daysForTypeName(typeName: string): number {
-    return countDedupedDays(emp.leaveRequests.filter((lr) => lr.leaveType.name === typeName));
+  // Phase 97 (T2): the type is selected by its stable code. The display name is a tenant's to
+  // change; selecting by it silently dropped a renamed type out of its own row.
+  function daysForTypeCode(code: LeaveTypeCode): number {
+    return countDedupedDays(emp.leaveRequests.filter((lr) => lr.leaveType.code === code));
   }
 
   // ── Worked hours ─────────────────────────────────────────────────────────
@@ -337,7 +341,7 @@ function computeEmployeeSummary(
 
   // ── Sick days ────────────────────────────────────────────────────────────
   // Single source of truth: sick days are counted exclusively from LeaveRequest
-  // records of type "Krankmeldung" / "Kinderkrank" (with attest metadata).
+  // records whose LeaveType.code is one of the two sickness codes (with attest metadata).
   // The Absence model (SICK / SICK_CHILD) is used for document tracking
   // (AU-Bescheinigung path) and must NOT contribute to these counters —
   // adding both would double-count days for the same sick event.
@@ -351,8 +355,8 @@ function computeEmployeeSummary(
       return sum + Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
     }, 0);
 
-  const sickLeaveRequests = emp.leaveRequests.filter(
-    (lr) => lr.leaveType.name === "Krankmeldung" || lr.leaveType.name === "Kinderkrank",
+  const sickLeaveRequests = emp.leaveRequests.filter((lr) =>
+    isSickLeaveTypeCode(lr.leaveType.code),
   );
 
   let sickDaysWithAttest = 0;
@@ -375,21 +379,20 @@ function computeEmployeeSummary(
   }
 
   // ── Absence breakdown ────────────────────────────────────────────────────
-  const SICK_NAMES = ["Krankmeldung", "Kinderkrank"];
-  const nonSickLeave = emp.leaveRequests.filter((lr) => !SICK_NAMES.includes(lr.leaveType.name));
+  const nonSickLeave = emp.leaveRequests.filter((lr) => !isSickLeaveTypeCode(lr.leaveType.code));
   // Phase 104 (D-15, Tier 2): countDedupedDays() gives totalAbsenceDays its OWN
-  // claim set (separate from every daysForTypeName() call below) so a day covered by
+  // claim set (separate from every daysForTypeCode call below) so a day covered by
   // two overlapping non-sick requests is counted once in the aggregate figure too —
   // independent from, not shared with, the per-type calls (which must not lose a
   // day just because an unrelated type's call already saw it).
   let totalAbsenceDays = countDedupedDays(nonSickLeave);
-  let vacationDays = daysForTypeName("Urlaub");
-  const overtimeCompDays = daysForTypeName("Überstundenausgleich");
-  const specialLeaveDays = daysForTypeName("Sonderurlaub");
-  const educationDays = daysForTypeName("Bildungsurlaub");
-  const unpaidDays = daysForTypeName("Unbezahlter Urlaub");
-  const maternityDays = daysForTypeName("Mutterschutz");
-  const parentalDays = daysForTypeName("Elternzeit");
+  let vacationDays = daysForTypeCode("VACATION");
+  const overtimeCompDays = daysForTypeCode("OVERTIME_COMP");
+  const specialLeaveDays = daysForTypeCode("SPECIAL");
+  const educationDays = daysForTypeCode("EDUCATION");
+  const unpaidDays = daysForTypeCode("UNPAID");
+  const maternityDays = daysForTypeCode("MATERNITY");
+  const parentalDays = daysForTypeCode("PARENTAL");
 
   // Phase 104 (D-30): gutgeschriebene § 9-Tage wandern von Urlaub nach Krank-mit-
   // Attest. Sie sind per Definition attestiert — ohne ärztliches Zeugnis gäbe es die
@@ -560,7 +563,11 @@ type DatevEmployee = {
     breakMinutes: number | bigint | null;
   }>;
   absences: Array<{ startDate: Date; endDate: Date; type: string; halfDay?: boolean | null }>;
-  leaveRequests: Array<{ startDate: Date; endDate: Date; leaveType: { name: string } }>;
+  leaveRequests: Array<{
+    startDate: Date;
+    endDate: Date;
+    leaveType: { name: string; code: LeaveTypeCode | null };
+  }>;
 };
 
 function buildDatevLodas(params: {
@@ -597,9 +604,13 @@ function buildDatevLodas(params: {
     return count;
   }
 
-  function daysForName(emp: DatevEmployee, name: string): number {
+  // Phase 97 (D-13): the payroll export selects by the stable code. Selecting by display name
+  // meant a single tenant-side rename silently returned 0 here — and because each Lohnart line
+  // is only written when its day count is > 0, the line vanished from the export entirely.
+  // A missing leave day in a payroll file is a silent accounting error with an external recipient.
+  function daysForCode(emp: DatevEmployee, code: LeaveTypeCode): number {
     return emp.leaveRequests
-      .filter((lr) => lr.leaveType.name === name)
+      .filter((lr) => lr.leaveType.code === code)
       .reduce((sum, lr) => sum + workDaysInMonthRange(lr.startDate, lr.endDate), 0);
   }
 
@@ -649,13 +660,13 @@ function buildDatevLodas(params: {
       );
 
     // Abwesenheiten aus LeaveRequest (nur Arbeitstage)
-    const vacationDays = daysForName(emp, "Urlaub");
-    const overtimeCompDays = daysForName(emp, "Überstundenausgleich");
-    const specialDays = daysForName(emp, "Sonderurlaub");
-    const educationDays = daysForName(emp, "Bildungsurlaub");
-    const unpaidDays = daysForName(emp, "Unbezahlter Urlaub");
-    const maternityDays = daysForName(emp, "Mutterschutz");
-    const parentalDays = daysForName(emp, "Elternzeit");
+    const vacationDays = daysForCode(emp, "VACATION");
+    const overtimeCompDays = daysForCode(emp, "OVERTIME_COMP");
+    const specialDays = daysForCode(emp, "SPECIAL");
+    const educationDays = daysForCode(emp, "EDUCATION");
+    const unpaidDays = daysForCode(emp, "UNPAID");
+    const maternityDays = daysForCode(emp, "MATERNITY");
+    const parentalDays = daysForCode(emp, "PARENTAL");
 
     // Phase 104 (D-30): § 9-Tage aus der Urlaubs-Lohnart heraus- und in die Krank-
     // Lohnart hineinrechnen. Die Summe über beide Zeilen bleibt unverändert — es wird
@@ -1691,7 +1702,12 @@ export async function reportRoutes(app: FastifyInstance) {
         }
       >();
       for (const e of entitlements) {
-        if (!e.leaveType.name.toLowerCase().includes("urlaub")) continue;
+        // Phase 97 (D-11): the annual-leave overview is the VACATION entitlement, selected by
+        // code. The previous version lower-cased the display name and matched a substring of it,
+        // which caught four of the nine canonical names — annual leave plus the special, unpaid
+        // and further-education types, all of which end in the same German word — and summed all
+        // four into a single annual-leave figure. Behaviour change, deliberate and tested.
+        if (e.leaveType.code !== "VACATION") continue;
         const key = e.employee.employeeNumber;
         const existing = empMap.get(key);
         const total = Number(e.totalDays);
@@ -1763,7 +1779,7 @@ export async function reportRoutes(app: FastifyInstance) {
         },
       });
 
-      // Group by employee and aggregate (only "Urlaub" type)
+      // Group by employee and aggregate (VACATION entitlement only, selected by code)
       const empMap = new Map<
         string,
         {
@@ -1777,7 +1793,12 @@ export async function reportRoutes(app: FastifyInstance) {
       >();
 
       for (const e of entitlements) {
-        if (!e.leaveType.name.toLowerCase().includes("urlaub")) continue;
+        // Phase 97 (D-11): the annual-leave overview is the VACATION entitlement, selected by
+        // code. The previous version lower-cased the display name and matched a substring of it,
+        // which caught four of the nine canonical names — annual leave plus the special, unpaid
+        // and further-education types, all of which end in the same German word — and summed all
+        // four into a single annual-leave figure. Behaviour change, deliberate and tested.
+        if (e.leaveType.code !== "VACATION") continue;
         const key = e.employee.employeeNumber;
         const existing = empMap.get(key);
         const total = Number(e.totalDays);

@@ -1566,7 +1566,7 @@ async function seedGoldenScenario(app: FastifyInstance, cell: Cell): Promise<See
   // Approved leave
   if (cell.leave?.length) {
     const lt = await prisma.leaveType.create({
-      data: { tenantId, name: "Urlaub GM", isPaid: true },
+      data: { tenantId, code: "VACATION", name: "Urlaub GM", isPaid: true },
     });
     for (const l of cell.leave) {
       await prisma.leaveRequest.create({

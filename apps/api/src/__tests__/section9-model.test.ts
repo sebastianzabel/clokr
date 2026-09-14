@@ -50,6 +50,7 @@ describe("Section9Credit — model shape (Phase 104 Plan 01)", () => {
     const sickType = await app.prisma.leaveType.create({
       data: {
         tenantId: data.tenant.id,
+        code: "SICK",
         name: "Krankmeldung",
         isPaid: true,
         requiresApproval: false,

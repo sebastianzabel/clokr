@@ -139,6 +139,7 @@ describe("updateOvertimeAccount — MONTHLY_HOURS multi-month pro-rata + SHIFT_B
     const vacationType = await prisma.leaveType.create({
       data: {
         tenantId: tenant.id,
+        code: "VACATION",
         name: "Urlaub",
         isPaid: true,
         requiresApproval: true,

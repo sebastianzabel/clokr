@@ -1,23 +1,27 @@
 /**
  * settings-vacation-type-resolution.test.ts
  *
- * Issue #196 — both `GET` and `PUT /api/v1/settings/vacation/:employeeId` resolved the
- * vacation `LeaveType` with
+ * Issue #196 — both `GET` and `PUT /api/v1/settings/vacation/:employeeId` originally resolved
+ * the vacation `LeaveType` with
  *   `findFirst({ where: { tenantId, name: { contains: "Urlaub", mode: "insensitive" } } })`
  * (apps/api/src/routes/settings.ts, previously lines ~1138-1142 and ~1184-1188) — with NO
  * `orderBy`. Postgres guarantees no row order without `ORDER BY`, and four of the nine
  * `LEAVE_TYPE_DEFS` names in `leave.ts` match that `contains`: "Urlaub" (meant), "Sonderurlaub",
- * "Unbezahlter Urlaub", "Bildungsurlaub" (all not meant). Once a tenant has more than one of
+ * "Unbezahlter Urlaub", "Bildungsurlaub" (all not meant). Once a tenant had more than one of
  * those rows, GET and PUT could resolve DIFFERENT rows, and PUT could silently write the annual
  * leave entitlement onto the wrong one.
  *
- * The fix (`apps/api/src/utils/vacation-leave-type.ts`, `findVacationLeaveType()`) resolves the
- * canonical/legacy names first via exact (case-insensitive) match with a deterministic
- * `orderBy`, falling back to the old `contains` query only when it is unambiguous.
+ * #196's original fix was a deterministic, priority-ordered name resolver kept in a small helper
+ * module of its own, with a documented fallback for a tenant whose single vacation row carried
+ * an arbitrary, non-canonical name. That module's own header said it existed only until Issue #97
+ * shipped a stable identity column — Phase 97 (D-24) is that landing: both handlers now resolve
+ * the vacation type via `findUnique` on the `[tenantId, code]` unique constraint, which makes the
+ * ambiguity #196 worked around structurally impossible rather than merely deterministic. The
+ * helper module and its exports are gone; see git history for the pre-Phase-97 implementation.
  *
  * Block A's fixture inserts the three decoy rows (Sonderurlaub / Unbezahlter Urlaub /
  * Bildungsurlaub) BEFORE the canonical "Urlaub" row. That physical insert order is
- * load-bearing: it is what gives block A the power to fail against the pre-fix code (a
+ * load-bearing: it is what gives block A the power to fail against the pre-#196 code (a
  * sequential scan with no ORDER BY tends to return rows in something close to insertion
  * order), and the fixture-guard test right below it proves that for this run, rather than
  * assuming it.
@@ -25,8 +29,8 @@
  * Every year in this file is derived from `new Date()` — no hardcoded calendar literal
  * (documented time-bomb hazard, see `.planning/STATE.md`).
  *
- * Refs: Issue #196 (this fix), Issue #97 (the eventual stable `code` column that replaces both
- * this file's and leave.ts's name lists).
+ * Refs: Issue #196 (the original fix this file protects), Issue #97 (the stable `code` column
+ * that structurally supersedes it).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, seedTestData, cleanupTestData, SEED_YEAR_OFFSET } from "./setup";
@@ -68,9 +72,14 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     await app.prisma.leaveEntitlement.deleteMany({ where: { employeeId: tenantA.employee.id } });
     await app.prisma.leaveType.delete({ where: { id: tenantA.vacationType.id } });
 
+    // Phase 97 (T2, D-04/plan 03 task 3): the three "decoys" and "Urlaub" are real canonical
+    // types for THIS file's purpose — they get their codes. "Erholungsurlaub" below is not one
+    // of the nine and stays deliberately codeless: it is the case this file's resolution logic
+    // is exercised against, not a fixture gap.
     sonderurlaubA = await app.prisma.leaveType.create({
       data: {
         tenantId: tenantA.tenant.id,
+        code: "SPECIAL",
         name: "Sonderurlaub",
         isPaid: true,
         requiresApproval: true,
@@ -80,6 +89,7 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     unbezahlterUrlaubA = await app.prisma.leaveType.create({
       data: {
         tenantId: tenantA.tenant.id,
+        code: "UNPAID",
         name: "Unbezahlter Urlaub",
         isPaid: false,
         requiresApproval: true,
@@ -89,6 +99,7 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     bildungsurlaubA = await app.prisma.leaveType.create({
       data: {
         tenantId: tenantA.tenant.id,
+        code: "EDUCATION",
         name: "Bildungsurlaub",
         isPaid: true,
         requiresApproval: true,
@@ -96,7 +107,13 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
       select: { id: true, name: true },
     });
     urlaubTypeA = await app.prisma.leaveType.create({
-      data: { tenantId: tenantA.tenant.id, name: "Urlaub", isPaid: true, requiresApproval: true },
+      data: {
+        tenantId: tenantA.tenant.id,
+        code: "VACATION",
+        name: "Urlaub",
+        isPaid: true,
+        requiresApproval: true,
+      },
       select: { id: true, name: true },
     });
 
@@ -106,6 +123,7 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     jahresurlaubB = await app.prisma.leaveType.create({
       data: {
         tenantId: tenantB.tenant.id,
+        code: "VACATION",
         name: "Jahresurlaub",
         isPaid: true,
         requiresApproval: true,
@@ -114,6 +132,8 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     });
 
     // ── Tenant C: single arbitrarily-named urlaub row ──────────────────────────────────────
+    // Deliberately codeless — "Erholungsurlaub" is not one of the nine canonical/legacy names,
+    // exactly the case this file's resolution logic is exercised against.
     await app.prisma.leaveEntitlement.deleteMany({ where: { employeeId: tenantC.employee.id } });
     await app.prisma.leaveType.delete({ where: { id: tenantC.vacationType.id } });
     erholungsurlaubC = await app.prisma.leaveType.create({
@@ -127,6 +147,8 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     });
 
     // ── Tenant D: ambiguous non-canonical names, no canonical/legacy row ───────────────────
+    // First row deliberately codeless (same reasoning as tenant C); second row IS the SPECIAL
+    // type and gets its code.
     await app.prisma.leaveEntitlement.deleteMany({ where: { employeeId: tenantD.employee.id } });
     await app.prisma.leaveType.delete({ where: { id: tenantD.vacationType.id } });
     await app.prisma.leaveType.create({
@@ -140,6 +162,7 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     await app.prisma.leaveType.create({
       data: {
         tenantId: tenantD.tenant.id,
+        code: "SPECIAL",
         name: "Sonderurlaub",
         isPaid: true,
         requiresApproval: true,
@@ -247,6 +270,8 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
   });
 
   describe("B) legacy name 'Jahresurlaub' keeps working — no new 404", () => {
+    // Resolution is by code, not name — this row keeps working because its code is VACATION,
+    // regardless of what it is named. The legacy display name is preserved for realism only.
     it("GET resolves the legacy row", async () => {
       const res = await app.inject({
         method: "GET",
@@ -280,15 +305,28 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     });
   });
 
-  describe("C) single arbitrarily-named urlaub row keeps working — no new 404", () => {
-    it("GET resolves the single non-canonical row (old behaviour preserved)", async () => {
+  describe("C) single arbitrarily-named, codeless urlaub row — deterministic 404 (Phase 97 behavior change)", () => {
+    // #196's old resolver had a fallback for exactly this case: if the priority-ordered name
+    // match found nothing, but the old ambiguous `contains: "Urlaub"` query matched EXACTLY ONE
+    // row, that single row was returned — preserving a tenant's arbitrarily-named vacation row
+    // (e.g. "Erholungsurlaub"). That fallback existed only because the row had no other way to
+    // assert its identity. Phase 97 gives every canonical type a stable code, and identity is now
+    // the code, not a name heuristic of any kind — a row without `code = "VACATION"` has no
+    // identity to be found by, single match or not. This test's positive-resolution case is
+    // therefore gone without replacement (the fallback it protected no longer exists); what
+    // replaces it is the 404 assertion below, which is really block E's case (no vacation type
+    // configured) reached via a different fixture shape.
+    it("GET returns 404 — a codeless row is never selected, even as the sole 'Urlaub'-like match", async () => {
       const res = await app.inject({
         method: "GET",
         url: `/api/v1/settings/vacation/${tenantC.employee.id}?year=${YEAR}`,
         headers: { authorization: `Bearer ${tenantC.adminToken}` },
       });
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.body).leaveTypeId).toBe(erholungsurlaubC.id);
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.body)).toEqual({ error: "Urlaubstyp nicht konfiguriert" });
+      // erholungsurlaubC is referenced only to keep the fixture's intent documented; the row
+      // deliberately has no code and is proven above to never be resolved.
+      expect(erholungsurlaubC.name).toBe("Erholungsurlaub");
     });
   });
 

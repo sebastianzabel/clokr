@@ -126,6 +126,9 @@ const DELETED_MONDAY = nextHolidayFreeMonday(196); // soft-deleted guard
 const NONPROV_MONDAY = nextHolidayFreeMonday(210); // non-provisional guard
 const DOWN_MONDAY = nextHolidayFreeMonday(224); // AC-RC-07 downward, direct call
 const UP_MONDAY = nextHolidayFreeMonday(238, 1); // AC-RC-07 upward, direct call
+const RENAME_SCOPE_MONDAY = nextHolidayFreeMonday(266); // D-16: renamed VACATION-code row still
+// resolves; a SICK-code row in the same week stays out of scope
+const NULL_CODE_MONDAY = nextHolidayFreeMonday(280); // D-16: a code=null row is not adjusted
 const PAST_DAY = pastDateStr(45); // AC-RC-04 — comfortably in the past
 
 describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () => {
@@ -236,8 +239,17 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     const emp2Pair = await makeShiftEmployee("emp2", 3, [3, 4, 6]);
     emp2 = emp2Pair.employee;
 
+    // Phase 97 (D-16): named deliberately NOT the old hardcoded German display name — every
+    // test below creates its LeaveRequest fixtures against this row, so a resolver that still
+    // selected by display name would fail this entire file, not just a dedicated pin test.
     const vacType = await prisma.leaveType.create({
-      data: { tenantId, name: "Urlaub", isPaid: true, requiresApproval: true },
+      data: {
+        tenantId,
+        code: "VACATION",
+        name: "Erholungsurlaub",
+        isPaid: true,
+        requiresApproval: true,
+      },
     });
     vacTypeId = vacType.id;
 
@@ -731,6 +743,102 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
         status: "APPROVED",
         reviewedBy: adminAUserId,
         deletedAt: new Date(),
+      },
+    });
+    const { weekStart, weekEnd } = weekBoundsFor(start);
+    const adjustments = await directRecalc(emp.id, weekStart, weekEnd, adminBUserId);
+    expect(adjustments).toEqual([]);
+    const persisted = await app.prisma.leaveRequest.findUnique({ where: { id: req.id } });
+    expect(Number(persisted!.days)).toBe(2);
+  });
+
+  // ── D-16: VACATION-only scope, by code — rename resilience + SICK-code exclusion ───────────
+  it("D-16: a VACATION-code request (display name already renamed away from 'Urlaub' throughout this file) is resolved and adjusted; a SICK-code request in the same week is not", async () => {
+    const start = RENAME_SCOPE_MONDAY;
+    const end = addDaysIso(RENAME_SCOPE_MONDAY, 2); // Mon+Tue+Wed, count 4 -> upper bound min(3,4)=3
+
+    const vacationReq = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: emp.id,
+        leaveTypeId: vacTypeId,
+        startDate: utcMidnight(start),
+        endDate: utcMidnight(end),
+        days: 3,
+        halfDay: false,
+        daysProvisional: true,
+        status: "APPROVED",
+        reviewedBy: adminAUserId,
+      },
+    });
+
+    // A SICK-code LeaveType — out of the D-16 VACATION-only scope. Its request sits in the SAME
+    // week for the SAME employee, so a scope leak (the selector matching more than VACATION)
+    // would surface here as a second adjustment.
+    const sickType = await app.prisma.leaveType.create({
+      data: { tenantId, code: "SICK", name: "Krankmeldung", isPaid: true, requiresApproval: false },
+    });
+    const sickReq = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: emp.id,
+        leaveTypeId: sickType.id,
+        startDate: utcMidnight(start),
+        endDate: utcMidnight(end),
+        days: 3,
+        halfDay: false,
+        daysProvisional: true,
+        status: "APPROVED",
+        reviewedBy: adminAUserId,
+      },
+    });
+
+    // Roster ONLY Monday -> roster-exact count = 1 < upper bound 3 for the VACATION request, so
+    // the recompute actually changes something (a no-op would pass trivially either way).
+    await app.prisma.shift.create({
+      data: { employeeId: emp.id, date: utcMidnight(start), startTime: "09:00", endTime: "17:00" },
+    });
+
+    const { weekStart, weekEnd } = weekBoundsFor(start);
+    const adjustments = await directRecalc(emp.id, weekStart, weekEnd, adminBUserId);
+
+    expect(adjustments).toHaveLength(1);
+    expect(adjustments[0].leaveRequestId).toBe(vacationReq.id);
+    expect(adjustments[0].direction).toBe("down");
+
+    const persistedVacation = await app.prisma.leaveRequest.findUnique({
+      where: { id: vacationReq.id },
+    });
+    expect(Number(persistedVacation!.days)).toBe(1);
+
+    const persistedSick = await app.prisma.leaveRequest.findUnique({ where: { id: sickReq.id } });
+    expect(Number(persistedSick!.days)).toBe(3); // untouched — SICK is out of scope
+  });
+
+  // ── D-16: a code=null LeaveType row is not adjusted ─────────────────────────────────────────
+  it("D-16: a request on a code=null LeaveType row is not adjusted", async () => {
+    const start = NULL_CODE_MONDAY;
+    const end = addDaysIso(NULL_CODE_MONDAY, 1);
+    // A pre-backfill-style row — no code. Phase 97 (D-09) leaves such rows without a code
+    // rather than guessing one; the resolver must treat this exactly like a wrong-scope type.
+    const uncodedType = await app.prisma.leaveType.create({
+      data: {
+        tenantId,
+        code: null,
+        name: "Uraltzeile ohne Code",
+        isPaid: true,
+        requiresApproval: true,
+      },
+    });
+    const req = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: emp.id,
+        leaveTypeId: uncodedType.id,
+        startDate: utcMidnight(start),
+        endDate: utcMidnight(end),
+        days: 2,
+        halfDay: false,
+        daysProvisional: true,
+        status: "APPROVED",
+        reviewedBy: adminAUserId,
       },
     });
     const { weekStart, weekEnd } = weekBoundsFor(start);

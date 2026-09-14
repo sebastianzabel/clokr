@@ -28,7 +28,8 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
   // Employee B: leave-page regression (stored=10, actual=0)
   let empB_Id: string;
   let empB_EntId: string;
-  // Employee C: legacy alias aggregation (entitlement on "Urlaub", approved request on "Jahresurlaub")
+  // Employee C: codeless legacy row (entitlement on "Urlaub", approved request on "Jahresurlaub" —
+  // no longer aggregated post-Phase-97, see Test 4)
   let empC_Id: string;
   let empC_EntId: string;
 
@@ -78,10 +79,16 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
     });
     adminToken = JSON.parse(loginRes.body).accessToken as string;
 
-    // ── LeaveType "Urlaub" (canonical) + "Jahresurlaub" (legacy alias) ─────
+    // ── LeaveType "Urlaub" (canonical) + "Jahresurlaub" (legacy, codeless) ─────
+    // Employee C exercises what USED TO BE name-based legacy-alias aggregation across two
+    // DISTINCT rows for the same tenant. `jahresurlaub` deliberately stays codeless:
+    // @@unique([tenantId, code]) forbids giving both rows the VACATION code. Phase 97 (Plan 09,
+    // D-12) removes the name-list aggregation this fixture used to exercise; see Test 4 below
+    // for the resulting (deliberate) behavior change.
     const urlaub = await prisma.leaveType.create({
       data: {
         tenantId: tenant.id,
+        code: "VACATION",
         name: "Urlaub",
         isPaid: true,
         requiresApproval: true,
@@ -178,9 +185,10 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
     empB_EntId = entB.id;
     // No LeaveRequest for empB.
 
-    // ── Employee C: legacy alias aggregation ───────────────────────────────
-    // Entitlement is attached to "Urlaub" (canonical) with usedDays=0
-    // BUT approved LeaveRequest is attached to "Jahresurlaub" (legacy) with days=5
+    // ── Employee C: codeless legacy row, no longer aggregated (Test 4 below) ──────────────
+    // Entitlement is attached to "Urlaub" (canonical) with usedDays=0.
+    // An approved LeaveRequest sits on the codeless "Jahresurlaub" row instead — post-Phase-97
+    // this no longer contributes to the canonical entitlement's heal (see Test 4).
     empC_Id = await mkEmployee("empC");
     const entC = await prisma.leaveEntitlement.create({
       data: {
@@ -188,7 +196,7 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
         leaveTypeId: urlaub.id,
         year: currentYear,
         totalDays: 20,
-        usedDays: 0, // DIVERGENT — should heal to 5 (legacy alias aggregation)
+        usedDays: 0,
         carriedOverDays: 0,
       },
     });
@@ -196,7 +204,7 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
     await prisma.leaveRequest.create({
       data: {
         employeeId: empC_Id,
-        leaveTypeId: jahresurlaub.id, // attached to LEGACY typeId
+        leaveTypeId: jahresurlaub.id, // attached to the codeless legacy row, not the canonical one
         status: "APPROVED",
         startDate: new Date(`${currentYear}-04-01T00:00:00Z`),
         endDate: new Date(`${currentYear}-04-07T00:00:00Z`),
@@ -279,7 +287,18 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
     expect(Number(db!.usedDays)).toBe(0);
   });
 
-  it("Test 4: vacation aggregation includes legacy 'Jahresurlaub' typeId", async () => {
+  it("Test 4 (Phase 97 D-12, deliberate behavior change): a codeless legacy row's approved request is NO LONGER aggregated into the canonical VACATION entitlement", async () => {
+    // Pre-Phase-97 this row's usedDays healed to 5 (the "Jahresurlaub" row's approved request
+    // was pulled in via a hard-coded German display-name list). Phase 97 resolves the
+    // aggregation scope by `code === "VACATION"` alone; the codeless "Jahresurlaub" row has no
+    // code and therefore no longer contributes. The tenant's own "Urlaub" LeaveRequest.days
+    // total for empC is zero, so the entitlement heals to 0, not 5 — this is the AC-5
+    // precondition in practice: Step 0's production query proved no codeless row with attached
+    // requests exists in clokr/clokr_test at execution time, so this scenario is confined to
+    // this deliberately-constructed fixture. A real orphaned row like "Jahresurlaub" here is
+    // caught by the Plan 04 backfill/sweep script as a "conflicts" entry (its target code
+    // VACATION is already claimed by the canonical "Urlaub" row) — it is surfaced for a human,
+    // never silently absorbed again.
     const res = await app.inject({
       method: "GET",
       url: `/api/v1/reports/leave-overview?year=${currentYear}`,
@@ -291,15 +310,402 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
       leaveType: { name: string };
       usedDays: number;
     }>;
-    // Find the empC row whose entitlement was on "Urlaub" — its usedDays must
-    // reflect the approved LeaveRequest that lives on the "Jahresurlaub" legacy typeId.
     const rowC = body.find((r) => r.employee.id === empC_Id && r.leaveType.name === "Urlaub");
-    expect(rowC, "Employee C 'Urlaub' row must aggregate the 'Jahresurlaub' request").toBeDefined();
-    expect(rowC!.usedDays).toBe(5);
+    expect(rowC, "Employee C 'Urlaub' row must be present").toBeDefined();
+    expect(rowC!.usedDays).toBe(0);
 
     // Persisted on the canonical entitlement row.
     const db = await app.prisma.leaveEntitlement.findUnique({ where: { id: empC_EntId } });
-    expect(Number(db!.usedDays)).toBe(5);
+    expect(Number(db!.usedDays)).toBe(0);
+  });
+});
+
+// ── Phase 97 Plan 09 (D-12): code-based aggregation scope, and the AC-5 characterization ──────
+// The vacation/non-vacation branch is now driven by `leaveType.code === "VACATION"`, not a
+// German display-name list. These tests pin the plan's <behavior> cases directly.
+describe("selfHealUsedDays resolves the VACATION aggregation scope by code (Phase 97, D-12)", () => {
+  let app: FastifyInstance;
+  const tenantIds: string[] = [];
+  let currentYear: number;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    currentYear = new Date().getFullYear();
+  });
+
+  afterAll(async () => {
+    for (const id of tenantIds) {
+      try {
+        await cleanupTestData(app, id);
+      } catch (err) {
+        console.error("Phase 97-09 self-heal test cleanup failed:", err);
+      }
+    }
+  });
+
+  // Each test gets its OWN tenant — @@unique([tenantId, code]) means a second VACATION-coded
+  // row can never coexist with the first, so a shared tenant across tests would collide the
+  // moment more than one test needs its own VACATION row.
+  const mkTenant = async (slug: string) => {
+    const prisma = app.prisma;
+    const s = `p97sh-${slug}-` + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const tenant = await prisma.tenant.create({
+      data: { name: `P97 SelfHeal ${s}`, slug: s, federalState: "NIEDERSACHSEN" },
+    });
+    tenantIds.push(tenant.id);
+    await prisma.tenantConfig.create({
+      data: { tenantId: tenant.id, defaultVacationDays: 20, timezone: "Europe/Berlin" },
+    });
+    const adminUser = await prisma.user.create({
+      data: {
+        email: `admin-${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "ADMIN",
+        isActive: true,
+      },
+    });
+    await prisma.employee.create({
+      data: {
+        tenantId: tenant.id,
+        userId: adminUser.id,
+        employeeNumber: `ADM-${s}`,
+        firstName: "Admin",
+        lastName: "P97SelfHeal",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: `admin-${s}@test.de`, password: "test1234" },
+    });
+    const adminToken = JSON.parse(loginRes.body).accessToken as string;
+    return { tenantId: tenant.id, adminToken, s };
+  };
+
+  const mkEmployee = async (tenantId: string, slug: string, unique: string) => {
+    const prisma = app.prisma;
+    const u = await prisma.user.create({
+      data: {
+        email: `${slug}-${unique}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const emp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: u.id,
+        employeeNumber: `${slug.toUpperCase()}-${unique}`,
+        firstName: slug,
+        lastName: "P97SelfHeal",
+        hireDate: new Date(`${currentYear}-01-01T00:00:00Z`),
+      },
+    });
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: emp.id,
+        type: "FIXED_SCHEDULE",
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date(`${currentYear}-01-01T00:00:00Z`),
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+    return emp.id;
+  };
+
+  it("a VACATION-code row still heals to Σ approved days after being renamed to something else (the D-12 fix — pre-Phase-97 this fell into the non-vacation branch and only aggregated its own leaveTypeId, which was correct here anyway; the point is the DISCRIMINATOR is now the code)", async () => {
+    const prisma = app.prisma;
+    const { tenantId, adminToken } = await mkTenant("renamed");
+    const unique = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const renamedVacationType = await prisma.leaveType.create({
+      data: {
+        tenantId,
+        code: "VACATION",
+        name: "Erholungsurlaub", // renamed away from the canonical "Urlaub"
+        isPaid: true,
+        requiresApproval: true,
+        color: "#3B82F6",
+      },
+    });
+    const empId = await mkEmployee(tenantId, "renamed-vac", unique);
+    const ent = await prisma.leaveEntitlement.create({
+      data: {
+        employeeId: empId,
+        leaveTypeId: renamedVacationType.id,
+        year: currentYear,
+        totalDays: 20,
+        usedDays: 999, // DIVERGENT — must heal to 7
+        carriedOverDays: 0,
+      },
+    });
+    await prisma.leaveRequest.create({
+      data: {
+        employeeId: empId,
+        leaveTypeId: renamedVacationType.id,
+        status: "APPROVED",
+        startDate: new Date(`${currentYear}-05-01T00:00:00Z`),
+        endDate: new Date(`${currentYear}-05-07T00:00:00Z`),
+        days: 7,
+      },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/entitlements/${empId}?year=${currentYear}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as Array<{ id: string; usedDays: number }>;
+    const row = body.find((r) => r.id === ent.id);
+    expect(row, "entitlement row must be present").toBeDefined();
+    expect(Number(row!.usedDays)).toBe(7);
+
+    const db = await prisma.leaveEntitlement.findUnique({ where: { id: ent.id } });
+    expect(Number(db!.usedDays)).toBe(7);
+  });
+
+  it("a non-vacation row (code = SPECIAL) aggregates only its own leaveTypeId", async () => {
+    const prisma = app.prisma;
+    const { tenantId, adminToken } = await mkTenant("special");
+    const unique = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const specialType = await prisma.leaveType.create({
+      data: {
+        tenantId,
+        code: "SPECIAL",
+        name: "Sonderurlaub",
+        isPaid: true,
+        requiresApproval: true,
+        color: "#A855F7",
+      },
+    });
+    // Prove isolation via a second, unrelated VACATION type whose request must NOT leak into
+    // the SPECIAL sum.
+    const vacationType = await prisma.leaveType.create({
+      data: {
+        tenantId,
+        code: "VACATION",
+        name: "Urlaub",
+        isPaid: true,
+        requiresApproval: true,
+        color: "#3B82F6",
+      },
+    });
+    const empId = await mkEmployee(tenantId, "special-only", unique);
+    const ent = await prisma.leaveEntitlement.create({
+      data: {
+        employeeId: empId,
+        leaveTypeId: specialType.id,
+        year: currentYear,
+        totalDays: 5,
+        usedDays: 0,
+        carriedOverDays: 0,
+      },
+    });
+    await prisma.leaveRequest.create({
+      data: {
+        employeeId: empId,
+        leaveTypeId: specialType.id,
+        status: "APPROVED",
+        startDate: new Date(`${currentYear}-06-01T00:00:00Z`),
+        endDate: new Date(`${currentYear}-06-02T00:00:00Z`),
+        days: 2,
+      },
+    });
+    // Unrelated VACATION request for the same employee — must not contribute to the SPECIAL sum.
+    await prisma.leaveRequest.create({
+      data: {
+        employeeId: empId,
+        leaveTypeId: vacationType.id,
+        status: "APPROVED",
+        startDate: new Date(`${currentYear}-07-01T00:00:00Z`),
+        endDate: new Date(`${currentYear}-07-10T00:00:00Z`),
+        days: 10,
+      },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/entitlements/${empId}?year=${currentYear}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as Array<{ id: string; usedDays: number }>;
+    const row = body.find((r) => r.id === ent.id);
+    expect(row, "entitlement row must be present").toBeDefined();
+    expect(Number(row!.usedDays)).toBe(2); // not 12
+
+    const db = await prisma.leaveEntitlement.findUnique({ where: { id: ent.id } });
+    expect(Number(db!.usedDays)).toBe(2);
+  });
+
+  // ── AC-5 characterization vector (D-12 Schritt 1) ────────────────────────────────────────
+  // One employee, three entitlement rows (VACATION/SPECIAL/SICK), mixed APPROVED/PENDING/
+  // REJECTED requests. Captured against the UNCHANGED code first (see SUMMARY for the
+  // pre-change run), then re-run after the switch — the vector below must be byte-identical
+  // both times. This is the AC-5 evidence for D-12: not an assertion that the code is right,
+  // a MEASUREMENT that nothing moved.
+  it("characterization: the usedDays vector across VACATION/SPECIAL/SICK is unchanged by the code-based switch (AC-5)", async () => {
+    const prisma = app.prisma;
+    const { tenantId, adminToken } = await mkTenant("char");
+    const unique = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const vacationType = await prisma.leaveType.create({
+      data: {
+        tenantId,
+        code: "VACATION",
+        name: "Urlaub-Char",
+        isPaid: true,
+        requiresApproval: true,
+        color: "#3B82F6",
+      },
+    });
+    const specialType = await prisma.leaveType.create({
+      data: {
+        tenantId,
+        code: "SPECIAL",
+        name: "Sonderurlaub-Char",
+        isPaid: true,
+        requiresApproval: true,
+        color: "#A855F7",
+      },
+    });
+    const sickType = await prisma.leaveType.create({
+      data: {
+        tenantId,
+        code: "SICK",
+        name: "Krankmeldung-Char",
+        isPaid: true,
+        requiresApproval: false,
+        color: "#EF4444",
+      },
+    });
+    const empId = await mkEmployee(tenantId, "char-vec", unique);
+
+    const vacEnt = await prisma.leaveEntitlement.create({
+      data: {
+        employeeId: empId,
+        leaveTypeId: vacationType.id,
+        year: currentYear,
+        totalDays: 25,
+        usedDays: 999,
+        carriedOverDays: 0,
+      },
+    });
+    const specialEnt = await prisma.leaveEntitlement.create({
+      data: {
+        employeeId: empId,
+        leaveTypeId: specialType.id,
+        year: currentYear,
+        totalDays: 5,
+        usedDays: 999,
+        carriedOverDays: 0,
+      },
+    });
+    const sickEnt = await prisma.leaveEntitlement.create({
+      data: {
+        employeeId: empId,
+        leaveTypeId: sickType.id,
+        year: currentYear,
+        totalDays: 0,
+        usedDays: 999,
+        carriedOverDays: 0,
+      },
+    });
+
+    // VACATION: two APPROVED (8 + 3 = 11), one PENDING (must not count)
+    await prisma.leaveRequest.create({
+      data: {
+        employeeId: empId,
+        leaveTypeId: vacationType.id,
+        status: "APPROVED",
+        startDate: new Date(`${currentYear}-02-01T00:00:00Z`),
+        endDate: new Date(`${currentYear}-02-08T00:00:00Z`),
+        days: 8,
+      },
+    });
+    await prisma.leaveRequest.create({
+      data: {
+        employeeId: empId,
+        leaveTypeId: vacationType.id,
+        status: "APPROVED",
+        startDate: new Date(`${currentYear}-03-01T00:00:00Z`),
+        endDate: new Date(`${currentYear}-03-03T00:00:00Z`),
+        days: 3,
+      },
+    });
+    await prisma.leaveRequest.create({
+      data: {
+        employeeId: empId,
+        leaveTypeId: vacationType.id,
+        status: "PENDING",
+        startDate: new Date(`${currentYear}-08-01T00:00:00Z`),
+        endDate: new Date(`${currentYear}-08-20T00:00:00Z`),
+        days: 100,
+      },
+    });
+
+    // SPECIAL: one APPROVED (2), one REJECTED (must not count)
+    await prisma.leaveRequest.create({
+      data: {
+        employeeId: empId,
+        leaveTypeId: specialType.id,
+        status: "APPROVED",
+        startDate: new Date(`${currentYear}-04-01T00:00:00Z`),
+        endDate: new Date(`${currentYear}-04-02T00:00:00Z`),
+        days: 2,
+      },
+    });
+    await prisma.leaveRequest.create({
+      data: {
+        employeeId: empId,
+        leaveTypeId: specialType.id,
+        status: "REJECTED",
+        startDate: new Date(`${currentYear}-04-10T00:00:00Z`),
+        endDate: new Date(`${currentYear}-04-30T00:00:00Z`),
+        days: 50,
+      },
+    });
+
+    // SICK: one APPROVED (5)
+    await prisma.leaveRequest.create({
+      data: {
+        employeeId: empId,
+        leaveTypeId: sickType.id,
+        status: "APPROVED",
+        startDate: new Date(`${currentYear}-06-01T00:00:00Z`),
+        endDate: new Date(`${currentYear}-06-05T00:00:00Z`),
+        days: 5,
+      },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/entitlements/${empId}?year=${currentYear}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as Array<{ id: string; usedDays: number }>;
+
+    const vacRow = body.find((r) => r.id === vacEnt.id);
+    const specialRow = body.find((r) => r.id === specialEnt.id);
+    const sickRow = body.find((r) => r.id === sickEnt.id);
+    expect(vacRow, "VACATION row present").toBeDefined();
+    expect(specialRow, "SPECIAL row present").toBeDefined();
+    expect(sickRow, "SICK row present").toBeDefined();
+
+    // THE VECTOR — recorded verbatim in the plan's mandatory SUMMARY output, both pre- and
+    // post-change runs.
+    expect(Number(vacRow!.usedDays)).toBe(11);
+    expect(Number(specialRow!.usedDays)).toBe(2);
+    expect(Number(sickRow!.usedDays)).toBe(5);
   });
 });
 
@@ -358,6 +764,7 @@ describe("selfHealUsedDays is Section9Credit-aware (Phase 104, Pitfall 2)", () =
     const vacationType = await prisma.leaveType.create({
       data: {
         tenantId: tenant.id,
+        code: "VACATION",
         name: "Urlaub",
         isPaid: true,
         requiresApproval: true,
@@ -366,7 +773,13 @@ describe("selfHealUsedDays is Section9Credit-aware (Phase 104, Pitfall 2)", () =
     });
     vacationTypeId = vacationType.id;
     const sickType = await prisma.leaveType.create({
-      data: { tenantId: tenant.id, name: "Krankmeldung", isPaid: true, requiresApproval: false },
+      data: {
+        tenantId: tenant.id,
+        code: "SICK",
+        name: "Krankmeldung",
+        isPaid: true,
+        requiresApproval: false,
+      },
     });
     sickTypeId = sickType.id;
   });
@@ -627,6 +1040,7 @@ describe("carryover expiry gate (COMP-V1814-03)", () => {
     const lt = await prisma.leaveType.create({
       data: {
         tenantId: tenant.id,
+        code: "VACATION",
         name: "Urlaub",
         isPaid: true,
         requiresApproval: true,

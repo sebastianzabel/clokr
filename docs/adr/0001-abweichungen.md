@@ -58,15 +58,31 @@ breiter, nicht schmaler.
 
 ### A.2 Typidentität über den Anzeigenamen
 
+**Status: GESCHLOSSEN (Phase 97, T2 — 2026-09-14).** `LeaveType.code` (Enum `LeaveTypeCode`,
+`@@unique([tenantId, code])`) ist jetzt die Identität; `name` ist reiner, mandantenseitig frei
+umbenennbarer Anzeigetext. Die einzige verbliebene Code<->Name-Abbildung liegt in
+`apps/api/src/utils/leave-type.ts` (D-04). Die ursprüngliche Erhebung unten nannte fünf
+Vergleichsstellen als Beispiel — die vollständige, phasenweit gemessene Fundstelleninventur
+(Plan 97-01) waren **71 Fundstellen über 16 Dateien**, nicht fünf; alle sind auf `code`
+umgestellt, mit Ausnahme der bewusst verbliebenen Anzeigestellen und der beiden
+Absence-Model-Ternärketten (siehe `leave-type-identity-guard.test.ts`s `ALLOWED`-Liste, Plan
+97-10 Task 1). Ein CI-Gate (`apps/api/src/__tests__/leave-type-identity-guard.test.ts`)
+verhindert seit Plan 97-10, dass ein deutscher Anzeigename erneut zum Steuerwert wird — mit zwei
+geführten Rot-Nachweisen (siehe die zugehörige SUMMARY). Drei genuine, ausserhalb des
+Phasenumfangs liegende Restfunde (Cron-Job, Austritts-Pro-rata-Warnung, ein Dashboard-Icon) sind
+als bekannte, verfolgte Ausnahmen in Issue #205 erfasst, nicht stillschweigend akzeptiert.
+
+Die ursprüngliche Erhebung, unverändert als Historie:
+
 `LeaveType` ist eine **mandantenbezogene Tabelle**; die Zuordnung zu den hartkodierten `TYPE_CODES`
-(`leave.ts:59-70`) läuft über einen **Namensvergleich**:
+(`leave.ts:59-70`) lief über einen **Namensvergleich**:
 
 - `leave.ts:101` — `findFirst({ where: { tenantId, name: def.name } })`
 - `leave.ts:108` — Umbenennen alter Seed-Namen über `LEGACY_ALIASES` (`leave.ts:88`)
 - `leave.ts:759, 803, 2071, 2273, 2340` — `TYPE_CODES.find((c) => LEAVE_TYPE_DEFS[c].name === r.leaveType.name)`
 
-Fünf Vergleichsstellen, nicht eine. Ein Mandant, der „Urlaub" umbenennt, verliert die Typzuordnung
-— aufgefangen nur durch die Alias-Liste, die jede künftige Umbenennung mitpflegen müsste.
+Fünf Vergleichsstellen, nicht eine. Ein Mandant, der „Urlaub" umbenennt, verlor die Typzuordnung
+— aufgefangen nur durch die Alias-Liste, die jede künftige Umbenennung mitpflegen musste.
 
 ### Warum das der erste Punkt ist
 

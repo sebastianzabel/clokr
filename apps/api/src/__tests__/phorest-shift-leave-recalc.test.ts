@@ -218,7 +218,7 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     beaUserId = employees.find((e) => e.id === beaId)!.userId;
 
     const vacType = await prisma.leaveType.create({
-      data: { tenantId, name: "Urlaub", isPaid: true, requiresApproval: true },
+      data: { tenantId, code: "VACATION", name: "Urlaub", isPaid: true, requiresApproval: true },
     });
     vacTypeId = vacType.id;
 

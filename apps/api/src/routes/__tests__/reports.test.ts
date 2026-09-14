@@ -1,8 +1,24 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import iconv from "iconv-lite";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
 import { computeOvertimeBalanceHours } from "../time-entries";
+import * as pdfUtils from "../../utils/pdf";
+
+// Phase 97 (D-11, Task 3): the two vacation-overview PDF handlers only expose their
+// aggregated { totalDays, ... } data by feeding it into pdfkit, which compresses its
+// content streams — not observable by decoding the response body. These two functions
+// are wrapped with a spy that still calls straight through to the real implementation
+// (so the actual PDF bytes returned to callers are unaffected), purely to let tests
+// inspect the `data` argument the route built.
+vi.mock("../../utils/pdf", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../utils/pdf")>();
+  return {
+    ...actual,
+    generateVacationOverviewPdf: vi.fn(actual.generateVacationOverviewPdf),
+    streamVacationOverviewPdf: vi.fn(actual.streamVacationOverviewPdf),
+  };
+});
 import {
   todayStr,
   utcMidnight,
@@ -78,6 +94,7 @@ describe("Reports API", () => {
       const overtimeLeaveType = await app.prisma.leaveType.create({
         data: {
           tenantId: datevData.tenant.id,
+          code: "OVERTIME_COMP",
           name: "Überstundenausgleich",
           isPaid: true,
           requiresApproval: false,
@@ -290,6 +307,355 @@ describe("Reports API", () => {
         headers: { authorization: `Bearer ${datevData.empToken}` },
       });
       expect(res.statusCode).toBe(403);
+    });
+  });
+
+  // ── Phase 97 (D-13): DATEV-LODAS Lohnart selection runs on LeaveType.code ──────
+  // Before this change, a tenant renaming its VACATION type silently returned 0 from
+  // daysForName() — and because a Lohnart line is only written when its day count is
+  // > 0, the line vanished from the export entirely. A missing leave day in a payroll
+  // file is a silent accounting error with an external recipient (the Lohnbüro).
+  describe("GET /api/v1/reports/datev — Lohnart selection on LeaveType.code (D-13)", () => {
+    let d13Data: Awaited<ReturnType<typeof seedTestData>>;
+
+    beforeAll(async () => {
+      d13Data = await seedTestData(app, "dv13");
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, d13Data.tenant.id);
+    });
+
+    async function datevBody(url: string, token: string) {
+      const res = await app.inject({
+        method: "GET",
+        url,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      return iconv.decode(res.rawPayload, "win1252");
+    }
+
+    it("D13-1: a VACATION-code row renamed to 'Erholungsurlaub' still produces a U-Lohnart line with the correct day count", async () => {
+      await app.prisma.leaveType.update({
+        where: { id: d13Data.vacationType.id },
+        data: { name: "Erholungsurlaub" },
+      });
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: d13Data.employee.id,
+          leaveTypeId: d13Data.vacationType.id,
+          startDate: new Date("2026-04-06"), // Monday
+          endDate: new Date("2026-04-08"), // Wednesday — 3 workdays
+          days: 3,
+          status: "APPROVED",
+        },
+      });
+
+      const body = await datevBody("/api/v1/reports/datev?year=2026&month=4", d13Data.adminToken);
+      const lines = body.split(/\r\n/);
+      const vacationLine = lines.find(
+        (l) => l.startsWith(`${d13Data.employee.employeeNumber};`) && l.includes(";U;300;"),
+      );
+      expect(vacationLine).toBeDefined();
+      expect(vacationLine).toContain(";3,0;");
+    });
+
+    it("D13-2: a SPECIAL-code row writes the Sonderurlaubs-Lohnart, not the Urlaubs-Lohnart, despite both names containing 'Urlaub'", async () => {
+      const specialType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: d13Data.tenant.id,
+          code: "SPECIAL",
+          name: "Sonderurlaub",
+          isPaid: true,
+          requiresApproval: true,
+          color: "#8B5CF6",
+        },
+      });
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: d13Data.employee.id,
+          leaveTypeId: specialType.id,
+          startDate: new Date("2026-04-13"), // Monday
+          endDate: new Date("2026-04-14"), // Tuesday — 2 workdays
+          days: 2,
+          status: "APPROVED",
+        },
+      });
+
+      const body = await datevBody("/api/v1/reports/datev?year=2026&month=4", d13Data.adminToken);
+      const lines = body.split(/\r\n/);
+      const specialLine = lines.find(
+        (l) => l.startsWith(`${d13Data.employee.employeeNumber};`) && l.includes(";S;302;"),
+      );
+      expect(specialLine).toBeDefined();
+      expect(specialLine).toContain(";2,0;");
+      // Not merged into the Urlaub Lohnart line from D13-1.
+      const vacationLine = lines.find(
+        (l) => l.startsWith(`${d13Data.employee.employeeNumber};`) && l.includes(";U;300;"),
+      );
+      expect(vacationLine).toContain(";3,0;");
+    });
+
+    it("D13-3: a request on a code=null row produces no Ausfall-Lohnart line and leaves the other rows unchanged", async () => {
+      const employee2 = await app.prisma.employee.create({
+        data: {
+          tenantId: d13Data.tenant.id,
+          userId: (
+            await app.prisma.user.create({
+              data: {
+                email: `d13-nullcode-${Date.now()}@test.de`,
+                passwordHash: "DUMMY",
+                role: "EMPLOYEE",
+                isActive: true,
+              },
+            })
+          ).id,
+          employeeNumber: `DV13-N-${Date.now()}`,
+          firstName: "Null",
+          lastName: "CodeTest",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      const nullCodeType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: d13Data.tenant.id,
+          code: null,
+          name: "Sonderfall ohne Code (D13)",
+          isPaid: true,
+          requiresApproval: true,
+          color: "#9CA3AF",
+        },
+      });
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: employee2.id,
+          leaveTypeId: nullCodeType.id,
+          startDate: new Date("2026-04-20"), // Monday
+          endDate: new Date("2026-04-21"), // Tuesday
+          days: 2,
+          status: "APPROVED",
+        },
+      });
+
+      const body = await datevBody("/api/v1/reports/datev?year=2026&month=4", d13Data.adminToken);
+      const lines = body.split(/\r\n/).filter((l) => l.startsWith(`${employee2.employeeNumber};`));
+      // Exactly one line for this employee: the unconditional "normal hours" row with
+      // an empty Ausfallschlüssel — no U/S/K row was written for the code=null request.
+      expect(lines.length).toBe(1);
+      expect(lines[0]).not.toMatch(/;U;|;S;|;K;/);
+
+      // The D13-1/D13-2 employee's rows are unaffected by this new, unrelated employee.
+      const otherBody = body
+        .split(/\r\n/)
+        .filter((l) => l.startsWith(`${d13Data.employee.employeeNumber};`));
+      expect(otherBody.some((l) => l.includes(";U;300;") && l.includes(";3,0;"))).toBe(true);
+      expect(otherBody.some((l) => l.includes(";S;302;") && l.includes(";2,0;"))).toBe(true);
+    });
+
+    it("D13-4 (AC-5): the § 9 Urlaub->Krank rebooking value and field order are unchanged by the code-based selection", async () => {
+      const employee3 = await app.prisma.employee.create({
+        data: {
+          tenantId: d13Data.tenant.id,
+          userId: (
+            await app.prisma.user.create({
+              data: {
+                email: `d13-s9-${Date.now()}@test.de`,
+                passwordHash: "DUMMY",
+                role: "EMPLOYEE",
+                isActive: true,
+              },
+            })
+          ).id,
+          employeeNumber: `DV13-S9-${Date.now()}`,
+          firstName: "S9",
+          lastName: "CodeTest",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      const sickType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: d13Data.tenant.id,
+          code: "SICK",
+          name: "Krankmeldung",
+          isPaid: true,
+          requiresApproval: false,
+          color: "#EF4444",
+        },
+      });
+      const vacReq = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: employee3.id,
+          leaveTypeId: d13Data.vacationType.id,
+          startDate: new Date("2026-05-04"), // Monday
+          endDate: new Date("2026-05-08"), // Friday — 5 workdays
+          days: 5,
+          status: "APPROVED",
+        },
+      });
+      const sickReq = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: employee3.id,
+          leaveTypeId: sickType.id,
+          startDate: new Date("2026-05-06"), // Wednesday
+          endDate: new Date("2026-05-07"), // Thursday — 2 workdays, overlaps the vacation
+          days: 2,
+          status: "APPROVED",
+        },
+      });
+      await app.prisma.section9Credit.create({
+        data: {
+          employeeId: employee3.id,
+          sickRequestId: sickReq.id,
+          vacationRequestId: vacReq.id,
+          overlapStart: new Date("2026-05-06"),
+          overlapEnd: new Date("2026-05-07"),
+          status: "CONFIRMED",
+          creditedStart: new Date("2026-05-06"),
+          creditedEnd: new Date("2026-05-07"),
+          creditedDays: 2,
+          attestSource: "EAU",
+          attestValidFrom: new Date("2026-05-06"),
+          attestValidTo: new Date("2026-05-07"),
+          reason: "D13-4 fixture",
+        },
+      });
+
+      const body = await datevBody("/api/v1/reports/datev?year=2026&month=5", d13Data.adminToken);
+      const lines = body.split(/\r\n/).filter((l) => l.startsWith(`${employee3.employeeNumber};`));
+      // 5-day vacation minus the 2 credited days -> 3 remain as Urlaub.
+      const vacationLine = lines.find((l) => l.includes(";U;300;"));
+      expect(vacationLine).toContain(";3,0;");
+      // The 2 credited days move to Krank (field order: Ausfall, Lohnart, Stunden, Tage).
+      const krankLine = lines.find((l) => l.includes(";K;200;"));
+      expect(krankLine).toContain(";K;200;;2,0;");
+    });
+  });
+
+  // ── Phase 97 (D-11): both vacation-overview PDFs select by LeaveType.code ──────
+  // Before this change, both handlers summed every LeaveEntitlement whose type NAME
+  // lower-cased contained the substring "urlaub" — four of the nine canonical names
+  // (Urlaub, Sonderurlaub, Unbezahlter Urlaub, Bildungsurlaub) match that substring,
+  // so a further-education entitlement was silently added to the annual-leave figure.
+  // Deliberate, tested behaviour change: the overview now shows only the real VACATION
+  // entitlement.
+  describe("GET /api/v1/reports/vacation/pdf & /leave-overview/pdf — VACATION selected by code (D-11)", () => {
+    let d11Data: Awaited<ReturnType<typeof seedTestData>>;
+    const year = new Date().getFullYear();
+
+    beforeAll(async () => {
+      d11Data = await seedTestData(app, "d11");
+
+      const educationType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: d11Data.tenant.id,
+          code: "EDUCATION",
+          name: "Bildungsurlaub",
+          isPaid: true,
+          requiresApproval: true,
+          color: "#10B981",
+        },
+      });
+      await app.prisma.leaveEntitlement.create({
+        data: {
+          employeeId: d11Data.employee.id,
+          leaveTypeId: educationType.id,
+          year,
+          totalDays: 5,
+          usedDays: 0,
+        },
+      });
+
+      // A pre-Phase-97 style row with no code — must never contribute to the overview.
+      const nullCodeType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: d11Data.tenant.id,
+          code: null,
+          name: "Sonderfall ohne Code (D11)",
+          isPaid: true,
+          requiresApproval: true,
+          color: "#9CA3AF",
+        },
+      });
+      await app.prisma.leaveEntitlement.create({
+        data: {
+          employeeId: d11Data.employee.id,
+          leaveTypeId: nullCodeType.id,
+          year,
+          totalDays: 999,
+          usedDays: 0,
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, d11Data.tenant.id);
+    });
+
+    async function overviewRow() {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview/pdf?year=${year}`,
+        headers: { authorization: `Bearer ${d11Data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const calls = vi.mocked(pdfUtils.generateVacationOverviewPdf).mock.calls;
+      const data = calls[calls.length - 1][0];
+      return data.employees.find((e) => e.employeeNumber === d11Data.employee.employeeNumber);
+    }
+
+    async function streamedOverviewRow() {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/vacation/pdf?year=${year}`,
+        headers: { authorization: `Bearer ${d11Data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const calls = vi.mocked(pdfUtils.streamVacationOverviewPdf).mock.calls;
+      const data = calls[calls.length - 1][1];
+      return data.employees.find((e) => e.employeeNumber === d11Data.employee.employeeNumber);
+    }
+
+    it("D11-1: totalDays is 30 (VACATION only), not 35 (VACATION + EDUCATION) — /leave-overview/pdf", async () => {
+      const row = await overviewRow();
+      expect(row).toBeDefined();
+      expect(row!.totalDays).toBe(30);
+    });
+
+    it("D11-1b: the same '30 not 35' holds for /vacation/pdf's streamed overview", async () => {
+      const row = await streamedOverviewRow();
+      expect(row).toBeDefined();
+      expect(row!.totalDays).toBe(30);
+    });
+
+    it("D11-2: a VACATION-code row renamed to 'Erholungsurlaub' still appears with its correct totalDays", async () => {
+      await app.prisma.leaveType.update({
+        where: { id: d11Data.vacationType.id },
+        data: { name: "Erholungsurlaub" },
+      });
+      const row = await overviewRow();
+      expect(row).toBeDefined();
+      expect(row!.totalDays).toBe(30);
+    });
+
+    it("D11-3: a VACATION-code row renamed to 'Freizeit' (no 'urlaub' substring) now appears too — the old substring check would have dropped it", async () => {
+      await app.prisma.leaveType.update({
+        where: { id: d11Data.vacationType.id },
+        data: { name: "Freizeit" },
+      });
+      const row = await overviewRow();
+      expect(row).toBeDefined();
+      // Under the removed substring check, "Freizeit" doesn't match /urlaub/, so this
+      // entitlement would have been skipped and only the EDUCATION row ("Bildungsurlaub",
+      // which DOES match) would have been summed — totalDays would have read 5, not 30.
+      expect(row!.totalDays).toBe(30);
+    });
+
+    it("D11-4: the code=null entitlement (999 days) never contributes to totalDays", async () => {
+      const row = await overviewRow();
+      expect(row).toBeDefined();
+      expect(row!.totalDays).not.toBe(999);
+      expect(row!.totalDays).toBe(30);
     });
   });
 
@@ -1034,6 +1400,7 @@ describe("Reports API", () => {
       const sickType = await prisma.leaveType.create({
         data: {
           tenantId: hdData.tenant.id,
+          code: "SICK",
           name: "Krankmeldung",
           isPaid: true,
           requiresApproval: false,
@@ -1153,6 +1520,7 @@ describe("Reports API", () => {
       const fdSickType = await prisma.leaveType.create({
         data: {
           tenantId: fdData.tenant.id,
+          code: "SICK",
           name: "Krankmeldung",
           isPaid: true,
           requiresApproval: false,
@@ -1226,6 +1594,7 @@ describe("Reports API", () => {
       return app.prisma.leaveType.create({
         data: {
           tenantId,
+          code: "SICK",
           name: "Krankmeldung",
           isPaid: true,
           requiresApproval: false,
@@ -1285,6 +1654,7 @@ describe("Reports API", () => {
         const sonderurlaub = await app.prisma.leaveType.create({
           data: {
             tenantId: t2.tenant.id,
+            code: "SPECIAL",
             name: "Sonderurlaub",
             isPaid: true,
             requiresApproval: false,

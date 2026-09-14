@@ -204,6 +204,7 @@ describe("Phase 76.23 — contractSollMinutesByEmp in GET /shifts/week (§ 615 p
     const vacationType = await prisma.leaveType.create({
       data: {
         tenantId,
+        code: "VACATION",
         name: "Urlaub",
         isPaid: true,
         requiresApproval: true,

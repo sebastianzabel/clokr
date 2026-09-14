@@ -27,9 +27,17 @@ import { formatMinutesHM } from "../utils/format-hm"; // Phase 100
 import { shiftNettoMinutes, sumShiftNettoMinutes } from "../utils/shift-netto"; // Phase 100 (OTC-04)
 import { auditReasonSchema } from "../utils/audit-reason"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
-import { isSickTypeName, findSection9Overlaps, intersectRanges } from "../utils/section9-detect"; // Phase 104-05/06
+import { findSection9Overlaps, intersectRanges } from "../utils/section9-detect"; // Phase 104-05/06
+import { isSickLeaveTypeCode } from "../utils/leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
 import { karenzOverrunFromRequests, normalizeKarenzDays } from "../utils/find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
 import { CLEARED_INVALID_REASON } from "../utils/invalid-reason"; // Phase 96 (T1)
+import {
+  LEAVE_TYPE_CODES as TYPE_CODES,
+  LEAVE_TYPE_DEFS,
+  LEAVE_TYPE_LEGACY_ALIASES as LEGACY_ALIASES,
+  leaveTypeFields,
+} from "../utils/leave-type"; // Phase 97 (T2, D-04) — the one mapping
+import type { LeaveTypeCode } from "@clokr/db";
 
 // Phase 104-10 — § 9 display-surface helpers (calendar/list/entitlement markers, D-28/D-29/D-31).
 
@@ -62,62 +70,96 @@ function formatDayMonth(d: Date | null | undefined): string {
 type DbClient = FastifyInstance["prisma"] | Prisma.TransactionClient;
 
 // ── Feste Abwesenheitstypen ──────────────────────────────────────────────────
-const TYPE_CODES = [
-  "VACATION",
-  "OVERTIME_COMP",
-  "SPECIAL",
-  "UNPAID",
-  "SICK",
-  "SICK_CHILD",
-  "EDUCATION",
-  "MATERNITY",
-  "PARENTAL",
-] as const;
-type TypeCode = (typeof TYPE_CODES)[number];
+// Phase 97 (T2, D-04): the nine codes, their German display names and the legacy seed aliases
+// now live in ONE place, `utils/leave-type.ts`. `TYPE_CODES` / `LEGACY_ALIASES` are transitional
+// import aliases so this move touched no call site; plan 05 replaces the call sites themselves.
+type TypeCode = LeaveTypeCode;
 
-const LEAVE_TYPE_DEFS: Record<
-  TypeCode,
-  { name: string; isPaid: boolean; requiresApproval: boolean }
-> = {
-  VACATION: { name: "Urlaub", isPaid: true, requiresApproval: true },
-  OVERTIME_COMP: { name: "Überstundenausgleich", isPaid: true, requiresApproval: true },
-  SPECIAL: { name: "Sonderurlaub", isPaid: true, requiresApproval: true },
-  UNPAID: { name: "Unbezahlter Urlaub", isPaid: false, requiresApproval: true },
-  SICK: { name: "Krankmeldung", isPaid: true, requiresApproval: false },
-  SICK_CHILD: { name: "Kinderkrank", isPaid: true, requiresApproval: false },
-  EDUCATION: { name: "Bildungsurlaub", isPaid: true, requiresApproval: true },
-  MATERNITY: { name: "Mutterschutz", isPaid: true, requiresApproval: false },
-  PARENTAL: { name: "Elternzeit", isPaid: false, requiresApproval: true },
-};
-
-// Legacy-Namen aus alten Seed-Skripten → werden beim ersten Zugriff umbenannt
-const LEGACY_ALIASES: Partial<Record<TypeCode, string[]>> = {
-  VACATION: ["Jahresurlaub", "Urlaub (Jahresurlaub)"],
-};
-
-/** Stellt sicher, dass ein LeaveType-Eintrag für den Tenant existiert – gibt seine ID zurück.
- *  Migriert automatisch alte Seed-Namen (z.B. "Jahresurlaub" → "Urlaub"). */
+/**
+ * Resolves the LeaveType row for `tenantId` / `code`, creating it when absent. Returns its id.
+ *
+ * Phase 97 (T2, AC-1): the CODE is the identity. `name` is display text a tenant may rename
+ * freely (AC-2), so this function never rewrites the name of a row that already has a code.
+ *
+ * Step 2 is a one-time self-heal for rows written before the phase-97 backfill, or by the OLD
+ * image during a rolling-deploy window (D-21). It is the only runtime caller of the name ->
+ * code direction, it is guarded against producing a second row with the same code for the
+ * tenant, and its lookup is deterministically ordered (issue #196: Postgres gives no row order
+ * without ORDER BY, and GET/PUT resolving different rows is exactly the defect that caused).
+ *
+ * Auditing: unchanged from the pre-phase-97 implementation — this find-or-create writes no
+ * AuditLog row and did not before either (the old code renamed legacy rows unaudited in the
+ * same way). Not a regression introduced here; tracked as the pre-existing gap it is.
+ *
+ * Review WR-01 (phase 97): step 3's create is P2002-guarded — steps 1-2 above are a
+ * check-then-create race, so two concurrent first-time requests for the same code can both
+ * reach the create. The loser re-reads by `{ tenantId, code }` and resolves to the winner's
+ * row instead of surfacing a bare 500. If that re-read comes up empty, the P2002 did not come
+ * from `@@unique([tenantId, code])` (the model also carries `@@unique([tenantId, name])`) and
+ * is rethrown unchanged rather than guessed at.
+ */
 async function ensureLeaveType(
   prisma: FastifyInstance["prisma"],
+  log: FastifyInstance["log"],
   tenantId: string,
   code: TypeCode,
 ): Promise<string> {
+  // 1. Identity path.
+  const byCode = await prisma.leaveType.findFirst({ where: { tenantId, code } });
+  if (byCode) return byCode.id;
+
+  // 2. One-time self-heal of an uncoded row that carries this type's canonical or legacy name.
   const def = LEAVE_TYPE_DEFS[code];
-  // 1. Kanonischer Name
-  const existing = await prisma.leaveType.findFirst({ where: { tenantId, name: def.name } });
-  if (existing) return existing.id;
-  // 2. Legacy-Alias → umbenennen + zurückgeben
-  const aliases = LEGACY_ALIASES[code] ?? [];
-  for (const alias of aliases) {
-    const legacy = await prisma.leaveType.findFirst({ where: { tenantId, name: alias } });
-    if (legacy) {
-      await prisma.leaveType.update({ where: { id: legacy.id }, data: { name: def.name } });
-      return legacy.id;
-    }
+  const candidateNames = [def.name, ...(LEGACY_ALIASES[code] ?? [])];
+  const uncoded = await prisma.leaveType.findFirst({
+    where: { tenantId, code: null, name: { in: candidateNames } },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+  if (uncoded) {
+    const isLegacyName = uncoded.name !== def.name;
+    const healed = await prisma.leaveType.update({
+      where: { id: uncoded.id },
+      // A legacy seed name is not a display text the tenant chose — it is corrected.
+      // A canonical name is left exactly as it is.
+      data: { code, ...(isLegacyName ? { name: def.name } : {}) },
+    });
+    return healed.id;
   }
-  // 3. Neu anlegen
-  const created = await prisma.leaveType.create({ data: { tenantId, ...def } });
-  return created.id;
+
+  // 3. Create. leaveTypeFields() makes code and name structurally inseparable.
+  //
+  // Review WR-01 (phase 97): steps 1-2 above are a check-then-create race. Two concurrent
+  // first-time requests for the same (tenantId, code) both pass them and both arrive here;
+  // @@unique([tenantId, code]) lets exactly one win and raises P2002 on the loser, which
+  // used to surface as a bare HTTP 500 for an operation that had in fact succeeded. Same
+  // race class, same shape as the Section9Credit create below ("§ 9: concurrent detection
+  // lost the race"). Not a phase-97 regression — the name-keyed version had the same gap.
+  try {
+    const created = await prisma.leaveType.create({ data: { tenantId, ...leaveTypeFields(code) } });
+    return created.id;
+  } catch (err: unknown) {
+    if (
+      err &&
+      typeof err === "object" &&
+      "code" in err &&
+      (err as { code: unknown }).code === "P2002"
+    ) {
+      // The winner committed between our step-1 read and this create — re-read and use it.
+      const winner = await prisma.leaveType.findFirst({ where: { tenantId, code } });
+      if (winner) {
+        log.info(
+          { tenantId, code },
+          "LeaveType: concurrent create lost the race, row already exists",
+        );
+        return winner.id;
+      }
+      // No row for this code, so the P2002 did NOT come from @@unique([tenantId, code]) —
+      // LeaveType also carries @@unique([tenantId, name]), which a tenant-renamed row can
+      // violate. There is no id to return here, and returning any other type's id would
+      // book the request onto the WRONG absence type. Fall through and rethrow unchanged.
+    }
+    throw err;
+  }
 }
 
 const createSchema = z
@@ -341,7 +383,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       const blockingOverlap = overlaps.find((o) => {
         if (!isSickRequest) return true; // non-sick: unchanged behaviour
         if (o.status !== "APPROVED") return true; // sick vs PENDING: still blocked
-        if (isSickTypeName(o.leaveType.name)) return true; // sick vs sick: still blocked
+        if (isSickLeaveTypeCode(o.leaveType.code)) return true; // sick vs sick: still blocked
         return false; // § 9 case — permitted
       });
       if (blockingOverlap)
@@ -350,7 +392,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       // Load tenant config for leave rules
       const tenantConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
 
-      const leaveTypeId = await ensureLeaveType(app.prisma, tenantId, body.type);
+      const leaveTypeId = await ensureLeaveType(app.prisma, app.log, tenantId, body.type);
       const leaveType = await app.prisma.leaveType.findUnique({ where: { id: leaveTypeId } });
 
       // ── Half-day sick rejection ──
@@ -813,8 +855,7 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       return rows.map((r) => ({
         ...r,
-        typeCode:
-          TYPE_CODES.find((c) => LEAVE_TYPE_DEFS[c].name === r.leaveType.name) ?? "VACATION",
+        typeCode: r.leaveType.code,
         startDate: r.startDate.toISOString().split("T")[0],
         endDate: r.endDate.toISOString().split("T")[0],
         attestValidFrom: r.attestValidFrom?.toISOString().split("T")[0] ?? null,
@@ -860,8 +901,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       return rows.map((r) => ({
         id: r.id,
         employeeName: `${r.employee.firstName} ${r.employee.lastName}`,
-        typeCode:
-          TYPE_CODES.find((c) => LEAVE_TYPE_DEFS[c].name === r.leaveType.name) ?? "VACATION",
+        typeCode: r.leaveType.code,
         typeName: r.leaveType.name,
         startDate: r.startDate.toISOString().split("T")[0],
         endDate: r.endDate.toISOString().split("T")[0],
@@ -949,9 +989,7 @@ export async function leaveRoutes(app: FastifyInstance) {
             data: { isInvalid: false, ...CLEARED_INVALID_REASON },
           });
 
-          const typeCode = TYPE_CODES.find(
-            (c) => LEAVE_TYPE_DEFS[c].name === existing.leaveType.name,
-          );
+          const typeCode = existing.leaveType.code;
           if (typeCode === "VACATION") {
             await app.prisma.leaveEntitlement.updateMany({
               where: {
@@ -1056,18 +1094,14 @@ export async function leaveRoutes(app: FastifyInstance) {
         });
         return {
           ...refreshed,
-          typeCode:
-            TYPE_CODES.find((c) => LEAVE_TYPE_DEFS[c].name === refreshed!.leaveType.name) ??
-            "VACATION",
+          typeCode: refreshed!.leaveType.code,
           startDate: refreshed!.startDate.toISOString().split("T")[0],
           endDate: refreshed!.endDate.toISOString().split("T")[0],
         };
       }
 
       // ── Normaler Antrag (PENDING) ────────────────────────────────────────────
-      const reviewTypeCode = TYPE_CODES.find(
-        (c) => LEAVE_TYPE_DEFS[c].name === existing.leaveType.name,
-      );
+      const reviewTypeCode = existing.leaveType.code;
 
       // Phase 107 (D-07/D-10, T-107-20): for an APPROVED SHIFT_BASED vacation request, recompute
       // `days` from the roster and determine `daysProvisional` BEFORE the update() call below, so
@@ -1464,9 +1498,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       let proRataWarning: { used: number; entitlement: number; message: string } | undefined =
         undefined;
       if (body.status === "APPROVED") {
-        const typeCodeForWarning = TYPE_CODES.find(
-          (c) => LEAVE_TYPE_DEFS[c].name === existing.leaveType.name,
-        );
+        const typeCodeForWarning = existing.leaveType.code;
         if (typeCodeForWarning === "VACATION") {
           try {
             const empWithExit = await app.prisma.employee.findUnique({
@@ -1478,8 +1510,10 @@ export async function leaveRoutes(app: FastifyInstance) {
               // § 5 Abs. 2 BUrlG: H2 exits (July–December) receive full entitlement — no pro-rata
               // cap applies, so no warning is possible. Guard against false-positive warnings.
               if (empWithExit.exitDate.getMonth() < 6) {
-                const vacLeaveType = await app.prisma.leaveType.findFirst({
-                  where: { tenantId: empWithExit.tenantId, name: "Urlaub" },
+                const vacLeaveType = await app.prisma.leaveType.findUnique({
+                  where: {
+                    tenantId_code: { tenantId: empWithExit.tenantId, code: "VACATION" },
+                  },
                 });
                 if (vacLeaveType) {
                   const entitlement = await app.prisma.leaveEntitlement.findFirst({
@@ -1540,8 +1574,7 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       return {
         ...updated,
-        typeCode:
-          TYPE_CODES.find((c) => LEAVE_TYPE_DEFS[c].name === updated.leaveType.name) ?? "VACATION",
+        typeCode: updated.leaveType.code,
         startDate: updated.startDate.toISOString().split("T")[0],
         endDate: updated.endDate.toISOString().split("T")[0],
         ...(proRataWarning ? { proRataWarning } : {}),
@@ -1568,9 +1601,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(409).send({ error: "Nur ausstehende Anträge können bearbeitet werden" });
 
       // ── Half-day sick rejection (legal: teilweise AU gibt es nicht) ──
-      const existingTypeCode = TYPE_CODES.find(
-        (c) => LEAVE_TYPE_DEFS[c].name === existing.leaveType.name,
-      );
+      const existingTypeCode = existing.leaveType.code;
       if (body.halfDay && (existingTypeCode === "SICK" || existingTypeCode === "SICK_CHILD")) {
         return reply.code(400).send({
           error:
@@ -1618,8 +1649,7 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       return {
         ...updated,
-        typeCode:
-          TYPE_CODES.find((c) => LEAVE_TYPE_DEFS[c].name === updated.leaveType.name) ?? "VACATION",
+        typeCode: updated.leaveType.code,
         startDate: updated.startDate.toISOString().split("T")[0],
         endDate: updated.endDate.toISOString().split("T")[0],
       };
@@ -1671,9 +1701,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       // retained days when type/halfDay changed) touch a finalized (locked) month.
       // The retained overlap of a shortened leave stays untouched, so shortening a
       // long Elternzeit at its unlocked tail is allowed even if early months closed.
-      const existingTypeCode = TYPE_CODES.find(
-        (c) => LEAVE_TYPE_DEFS[c].name === existing.leaveType.name,
-      );
+      const existingTypeCode = existing.leaveType.code;
       const typeChanged = body.type != null && body.type !== existingTypeCode;
       const halfDayChanged = body.halfDay !== existing.halfDay;
       const affectedMonths = computeAffectedMonths({
@@ -1730,18 +1758,18 @@ export async function leaveRoutes(app: FastifyInstance) {
       //    day consumed when corrected INTO a sick type. All domain guards run
       //    PRE-WRITE so a rejected correction never leaves a partial saldo write.
       const tenantId = req.user.tenantId;
-      const oldTypeCode = existingTypeCode; // from existing.leaveType.name (delta-lock step)
+      const oldTypeCode = existingTypeCode; // from existing.leaveType.code (delta-lock step)
       const newType = body.type ?? oldTypeCode;
 
-      // IN-94-01: if the existing leaveType.name is neither canonical nor a known
-      // alias, existingTypeCode (hence oldTypeCode) is undefined; when the type is
-      // also left unchanged, newType is undefined too. The reverse/apply dispatch
-      // would then silently fall through to no-op — updating dates/days on the row
-      // WITHOUT adjusting the entitlement ledger (a stranded Kontingent). For
-      // audit-proof code, fail loud rather than skip the authoritative booking.
+      // IN-94-01: Phase 97 — a LeaveType row whose `code` is NULL (pre-backfill, or written by
+      // the old image during a rolling deploy, D-21) leaves oldTypeCode undefined; when the type
+      // is also left unchanged, newType is undefined too. The reverse/apply dispatch would then
+      // silently fall through to no-op — updating dates/days WITHOUT adjusting the entitlement
+      // ledger (a stranded Kontingent). For audit-proof code, fail loud rather than skip the
+      // authoritative booking.
       if (!oldTypeCode || !newType) {
         app.log.error(
-          { id, name: existing.leaveType.name, oldTypeCode, newType },
+          { id, leaveTypeId: existing.leaveTypeId, oldTypeCode, newType },
           "Unresolved leaveType on leave correction — refusing to skip entitlement booking",
         );
         return reply.code(400).send({ error: "Unbekannter Antragstyp — Korrektur nicht möglich" });
@@ -1810,7 +1838,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       // legacy names / creates the canonical type on demand).
       const newLeaveTypeId =
         typeChanged && body.type != null
-          ? await ensureLeaveType(app.prisma, tenantId, body.type)
+          ? await ensureLeaveType(app.prisma, app.log, tenantId, body.type)
           : existing.leaveTypeId;
 
       // ── Steps 8-11 run inside ONE interactive transaction (94 CR-01) ──────────
@@ -1986,8 +2014,7 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       return {
         ...updated,
-        typeCode:
-          TYPE_CODES.find((c) => LEAVE_TYPE_DEFS[c].name === updated.leaveType.name) ?? "VACATION",
+        typeCode: updated.leaveType.code,
         startDate: updated.startDate.toISOString().split("T")[0],
         endDate: updated.endDate.toISOString().split("T")[0],
       };
@@ -2087,7 +2114,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Antrag nicht gefunden" });
       }
 
-      const typeCode = TYPE_CODES.find((c) => LEAVE_TYPE_DEFS[c].name === existing.leaveType.name);
+      const typeCode = existing.leaveType.code;
       if (typeCode !== "SICK" && typeCode !== "SICK_CHILD") {
         return reply.code(400).send({ error: "Attest kann nur für Krankmeldungen gesetzt werden" });
       }
@@ -2219,9 +2246,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           employeeId: r.employeeId,
           firstName: r.employee.firstName,
           lastName: r.employee.lastName,
-          typeCode: showDetails
-            ? (TYPE_CODES.find((c) => LEAVE_TYPE_DEFS[c].name === r.leaveType.name) ?? "VACATION")
-            : null,
+          typeCode: showDetails ? r.leaveType.code : null,
           typeName: showDetails ? r.leaveType.name : null,
           startDate: r.startDate.toISOString().split("T")[0],
           endDate: r.endDate.toISOString().split("T")[0],
@@ -2429,19 +2454,19 @@ export async function leaveRoutes(app: FastifyInstance) {
         }),
       ]);
 
-      const events: ICalEvent[] = requests.map((r) => {
-        const typeCode = TYPE_CODES.find((c) => LEAVE_TYPE_DEFS[c].name === r.leaveType.name);
-        const summary = LEAVE_TYPE_DEFS[typeCode as TypeCode]?.name ?? r.leaveType.name;
-        return {
-          uid: `leave-${r.id}@clokr`,
-          summary,
-          dtstart: r.startDate.toISOString().split("T")[0],
-          dtend: addOneDay(r.endDate.toISOString().split("T")[0]),
-          description: r.note ?? undefined,
-          status: "CONFIRMED",
-          categories: typeCode ?? "VACATION",
-        };
-      });
+      const events: ICalEvent[] = requests.map((r) => ({
+        uid: `leave-${r.id}@clokr`,
+        // Phase 97 (AC-2): the row's own display name. Before this phase the canonical name from
+        // LEAVE_TYPE_DEFS overrode it, which silently undid a tenant's rename in the calendar feed.
+        summary: r.leaveType.name,
+        dtstart: r.startDate.toISOString().split("T")[0],
+        dtend: addOneDay(r.endDate.toISOString().split("T")[0]),
+        description: r.note ?? undefined,
+        status: "CONFIRMED",
+        // No silent default to the vacation code here (D-09): an uncoded type simply has no
+        // category — it does not get turned into vacation to fill the field.
+        categories: r.leaveType.code ?? undefined,
+      }));
 
       for (const a of absences) {
         const summary =
@@ -2497,16 +2522,14 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const events: ICalEvent[] = requests.map((r) => {
         const name = `${r.employee.firstName} ${r.employee.lastName}`;
-        const typeCode = TYPE_CODES.find((c) => LEAVE_TYPE_DEFS[c].name === r.leaveType.name);
-        const typeName = LEAVE_TYPE_DEFS[typeCode as TypeCode]?.name ?? r.leaveType.name;
         return {
           uid: `leave-${r.id}@clokr`,
-          summary: `${name} \u2014 ${typeName}`,
+          summary: `${name} \u2014 ${r.leaveType.name}`,
           dtstart: r.startDate.toISOString().split("T")[0],
           dtend: addOneDay(r.endDate.toISOString().split("T")[0]),
           description: r.note ?? undefined,
           status: "CONFIRMED",
-          categories: typeCode ?? "VACATION",
+          categories: r.leaveType.code ?? undefined,
         };
       });
 
@@ -2592,7 +2615,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       }
 
       // Resturlaub auto-übertragen falls nötig
-      const vacTypeId = await ensureLeaveType(app.prisma, tenantId, "VACATION");
+      const vacTypeId = await ensureLeaveType(app.prisma, app.log, tenantId, "VACATION");
       await autoCarryOver(app.prisma, tenantId, employeeId, vacTypeId, targetYear);
 
       // Issue #173: without `?year` this can return more than one row per LeaveType (e.g. a
@@ -2610,7 +2633,6 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       // Vacation type meta — shared with selfHealUsedDays AND the pro-rata mapping below
       const vacMeta = await loadVacationTypeMeta(app.prisma, tenantId);
-      const { vacationNames } = vacMeta;
 
       // exitDate for pro-rata effective entitlement computation (§ 5 Abs. 2 BUrlG) —
       // reuse the `employee` row loaded by the tenant guard above.
@@ -2660,7 +2682,11 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       // typeCode + effektiven Resturlaub + anteiligen Urlaubsanspruch im Response markieren
       return rows.map((r) => {
-        const isVacationRow = vacationNames.includes(r.leaveType.name);
+        // Phase 97: the vacation account is the row whose CODE is VACATION. This used to be a
+        // lookup against a hard-coded list of German display names, which misclassified any
+        // renamed row. Do not name that list here — plan 09 removes its last definition and
+        // asserts repo-wide that the identifier is gone.
+        const isVacationRow = r.leaveType.code === "VACATION";
         const effectiveEntitlementDays =
           isVacationRow && employeeExitDate
             ? calculateProRataVacation(Number(r.totalDays), r.year, employeeExitDate)
@@ -2681,9 +2707,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           .reduce((sum, p) => sum + Number(p.days), 0);
         return {
           ...r,
-          typeCode: (Object.entries(LEAVE_TYPE_DEFS).find(
-            ([, d]) => d.name === r.leaveType.name,
-          )?.[0] ?? "VACATION") as TypeCode,
+          typeCode: r.leaveType.code,
           effectiveCarryOverDays: getEffectiveCarryOver(r, now, warnedEntitlementIds.has(r.id)),
           carryOverDeadline: r.carryOverDeadline?.toISOString().split("T")[0] ?? null,
           effectiveEntitlementDays,

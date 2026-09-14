@@ -455,6 +455,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
         leaveType = await app.prisma.leaveType.create({
           data: {
             tenantId: tenant.id,
+            code: "VACATION",
             name: "Urlaub",
             isPaid: true,
             requiresApproval: false,

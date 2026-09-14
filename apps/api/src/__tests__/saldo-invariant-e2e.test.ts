@@ -266,10 +266,12 @@ describe("saldo invariant E2E — all schedule types, Jan–Jul 2026", () => {
       workDays: [2, 3, 4, 5],
     });
 
-    // Leave type + approved vacation Mar 9–13 and SICK May 18–19 for everyone
-    const leaveType = await prisma.leaveType.create({
-      data: { tenantId: data.tenant.id, name: "Urlaub E2E", isPaid: true, requiresApproval: false },
-    });
+    // Approved vacation Mar 9–13 and SICK May 18–19 for everyone. Reuses the tenant's
+    // existing VACATION-coded fixture row (data.vacationType) instead of creating a second
+    // one — @@unique([tenantId, code]) forbids two VACATION rows per tenant (Phase 97 Plan
+    // 03 Task 3, Falle 1); requiresApproval is irrelevant here since requests are written
+    // directly with status: "APPROVED", bypassing the approval workflow.
+    const leaveType = data.vacationType;
     for (const key of EMP_KEYS) {
       await prisma.leaveRequest.create({
         data: {

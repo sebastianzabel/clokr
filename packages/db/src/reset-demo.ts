@@ -349,12 +349,17 @@ async function main() {
 
   // ── Ensure leave type exists in the correct tenant ──────────────────────
 
+  // Phase 97 (D-19): identity is the code, not the display name. The old key was the
+  // tenant-plus-display-name compound, resolved against the legacy seed spelling of the vacation
+  // type. Neither the old key name nor that spelling belongs in this comment — the acceptance
+  // criteria grep this file for both and expect zero hits.
   const leaveType = await prisma.leaveType.upsert({
-    where: { tenantId_name: { tenantId: tenant.id, name: "Jahresurlaub" } },
+    where: { tenantId_code: { tenantId: tenant.id, code: "VACATION" } },
     update: {},
     create: {
       tenantId: tenant.id,
-      name: "Jahresurlaub",
+      code: "VACATION",
+      name: "Urlaub",
       isPaid: true,
       requiresApproval: true,
       color: "#3B82F6",

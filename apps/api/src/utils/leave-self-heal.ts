@@ -14,9 +14,13 @@
  * Invariants:
  *   - Queries against LeaveRequest keep `deletedAt: null` AND `status: "APPROVED"`
  *     (audit-proof per CLAUDE.md).
- *   - Vacation rows aggregate across the canonical leaveType plus any
- *     LEGACY_ALIASES.VACATION (e.g. "Jahresurlaub"); non-vacation rows
- *     aggregate only their own leaveTypeId.
+ *   - Phase 97 (T2, D-12): a row is "the" vacation entitlement when its LeaveType has
+ *     `code === "VACATION"` — identity is the code, never the display name. Because
+ *     `@@unique([tenantId, code])` allows at most one VACATION-coded row per tenant, this is
+ *     always a single leaveTypeId, not a set; a codeless legacy row (pre-backfill, or a
+ *     genuine naming conflict the backfill/sweep script could not resolve) is never absorbed —
+ *     it must be swept/backfilled on its own before its requests are counted anywhere. Every
+ *     other row aggregates only its own leaveTypeId, exactly as before.
  *   - Idempotent: rows already in sync are NOT updated.
  *   - Mutates rows in place so callers can render the healed value directly.
  *   - § 9 BUrlG credits (Section9Credit, status CONFIRMED) are subtracted from the raw sum;
@@ -29,6 +33,7 @@
  *     not do this and we keep parity.
  */
 import type { FastifyInstance } from "fastify";
+import type { LeaveTypeCode } from "@clokr/db";
 import { sumConfirmedSection9DaysByRequest } from "./section9-credit-days";
 
 /**
@@ -45,12 +50,13 @@ export type LeaveEntitlementWithType = {
   leaveTypeId: string;
   year: number;
   usedDays: unknown;
-  leaveType: { id: string; name: string };
+  leaveType: { id: string; code: LeaveTypeCode | null };
 };
 
 export type VacationTypeMeta = {
-  vacationNames: string[];
-  allVacTypeIds: string[];
+  /** The tenant's VACATION LeaveType id, at most one per `@@unique([tenantId, code])`. Kept as
+   *  an array so the aggregation shape below (typeIds: string[]) is unchanged. */
+  vacationTypeIds: string[];
   /**
    * Phase 104 review (IN-03): carried so selfHealUsedDays() can pass a tenant scope into
    * sumConfirmedSection9DaysByRequest() without changing every call site's signature.
@@ -59,8 +65,7 @@ export type VacationTypeMeta = {
 };
 
 /**
- * Resolve the set of LeaveType IDs that all represent "Urlaub" for a tenant,
- * including legacy seed names that may still exist in older tenants.
+ * Resolve the tenant's VACATION-coded LeaveType id.
  *
  * This MUST be called once per request (NOT per row) — calling it inside the
  * row loop would issue O(rows) queries against LeaveType for no reason.
@@ -69,14 +74,11 @@ export async function loadVacationTypeMeta(
   prisma: FastifyInstance["prisma"],
   tenantId: string,
 ): Promise<VacationTypeMeta> {
-  // Canonical + legacy vacation names. Kept inline (not imported from
-  // routes/leave.ts) so this utility has no upward dependency on a route file.
-  const vacationNames = ["Urlaub", "Jahresurlaub", "Urlaub (Jahresurlaub)"];
   const rows = await prisma.leaveType.findMany({
-    where: { tenantId, name: { in: vacationNames } },
+    where: { tenantId, code: "VACATION" },
     select: { id: true },
   });
-  return { vacationNames, allVacTypeIds: rows.map((r) => r.id), tenantId };
+  return { vacationTypeIds: rows.map((r) => r.id), tenantId };
 }
 
 /**
@@ -90,11 +92,11 @@ export async function selfHealUsedDays(
   rows: LeaveEntitlementWithType[],
   ctx: VacationTypeMeta,
 ): Promise<void> {
-  const { vacationNames, allVacTypeIds, tenantId } = ctx;
+  const { vacationTypeIds, tenantId } = ctx;
 
   for (const row of rows) {
-    const isVacation = vacationNames.includes(row.leaveType.name);
-    const typeIds = isVacation ? allVacTypeIds : [row.leaveTypeId];
+    const isVacation = row.leaveType.code === "VACATION";
+    const typeIds = isVacation ? vacationTypeIds : [row.leaveTypeId];
     const yearStart = new Date(`${row.year}-01-01T00:00:00Z`);
     const yearEnd = new Date(`${row.year}-12-31T23:59:59Z`);
 

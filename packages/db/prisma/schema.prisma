@@ -607,7 +607,10 @@ model OvertimePlan {
 model LeaveType {
   id               String   @id @default(uuid())
   tenantId         String
-  name             String // "Urlaub", "Sonderurlaub", etc.
+  name             String // Anzeigetext, frei änderbar — Identität steckt in `code`
+  // Phase 97 (T2) — Identitätsträger. `name` ist ab dieser Phase reiner Anzeigetext (AC-2).
+  // Nullable bleibt sie, bis Plan 10 nach dem Nachlauf-Sweep SET NOT NULL setzt (D-20/D-21).
+  code             LeaveTypeCode?
   isPaid           Boolean  @default(true)
   requiresApproval Boolean  @default(true)
   color            String   @default("#3B82F6")
@@ -621,6 +624,11 @@ model LeaveType {
   requests     LeaveRequest[]
 
   @@unique([tenantId, name])
+  // Phase 97 (T2, AC-1) — der Identitaets-Constraint. `[tenantId, name]` darueber bleibt als
+  // reiner Datenqualitaets-Constraint bestehen und traegt keine Identitaet mehr.
+  // Postgres behandelt NULL in Unique-Indizes als paarweise verschieden (empirisch gegen
+  // PG 18 geprueft), der Index vertraegt die nullable Spalte also auch waehrend des Rollouts.
+  @@unique([tenantId, code])
   @@index([tenantId])
 }
 
@@ -1064,6 +1072,25 @@ enum LeaveRequestStatus {
   REJECTED
   CANCELLED
   CANCELLATION_REQUESTED
+}
+
+// Phase 97 (T2, AC-1) — die stabile, nicht übersetzte Identität einer Abwesenheitsart.
+// Die neun Werte sind wörtlich die bisherigen TYPE_CODES aus routes/leave.ts:66-76.
+// Sie werden hier NICHT umbenannt und NICHT mit AbsenceType zusammengelegt — das ist Issue #98.
+// Bewusst KEIN Auffangwert und kein Platzhalter fuer Unbekanntes: das Vokabular ist geschlossen,
+// ein unmappbarer Name ist ein Datenfehler und muss sichtbar bleiben, nicht absorbiert werden.
+// Den Auffangwert auch nicht im Kommentar beim Namen nennen — das Akzeptanzkriterium unten sucht
+// genau danach, und ein Kommentar innerhalb des Enum-Blocks wuerde es treffen.
+enum LeaveTypeCode {
+  VACATION
+  OVERTIME_COMP
+  SPECIAL
+  UNPAID
+  SICK
+  SICK_CHILD
+  EDUCATION
+  MATERNITY
+  PARENTAL
 }
 
 // Phase 76.29 — retro self-service approval flow status

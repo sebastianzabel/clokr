@@ -8,6 +8,7 @@
 // the sync must ignore implicit name/email matching and rely only on explicit mapping.
 
 import type { FastifyInstance } from "fastify";
+import { leaveTypeFields } from "../../../utils/leave-type";
 
 export const MAPPED_STAFF_ID = "ph-staff-mapped";
 export const UNMAPPED_STAFF_ID = "ph-staff-unmapped";
@@ -166,12 +167,14 @@ export async function seedPendingLeaveRequest(
   });
   if (!emp) throw new Error(`seedPendingLeaveRequest: employee ${employeeId} not found`);
 
+  // LeaveRequest.leaveTypeId is required (schema.prisma, onDelete: Restrict), so we find-or-create
+  // a minimal vacation LeaveType for the tenant first. Phase 97: resolved by code, not by name.
   let leaveType = await prisma.leaveType.findFirst({
-    where: { tenantId: emp.tenantId, name: "Urlaub" },
+    where: { tenantId: emp.tenantId, code: "VACATION" },
   });
   if (!leaveType) {
     leaveType = await prisma.leaveType.create({
-      data: { tenantId: emp.tenantId, name: "Urlaub" },
+      data: { tenantId: emp.tenantId, ...leaveTypeFields("VACATION") },
     });
   }
 

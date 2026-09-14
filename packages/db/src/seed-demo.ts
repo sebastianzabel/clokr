@@ -411,10 +411,15 @@ async function main() {
   const adminUserId = emp.admin.userId;
 
   // ── LeaveTypes ─────────────────────────────────────────────────────────────
+  // Phase 97 (D-19/D-22): code is the identity now; name is display text. The vacation row's
+  // legacy seed spelling is replaced by the canonical name — the acceptance criteria grep this
+  // file for that legacy spelling and expect zero hits. Values mirror LEAVE_TYPE_DEFS in
+  // apps/api/src/utils/leave-type.ts. Variable names stay so the rest of this file is unchanged.
   const jahresurlaub = await prisma.leaveType.create({
     data: {
       tenantId: tenant.id,
-      name: "Jahresurlaub",
+      code: "VACATION",
+      name: "Urlaub",
       isPaid: true,
       requiresApproval: true,
       color: "#3B82F6",
@@ -424,6 +429,7 @@ async function main() {
   const sonderurlaub = await prisma.leaveType.create({
     data: {
       tenantId: tenant.id,
+      code: "SPECIAL",
       name: "Sonderurlaub",
       isPaid: true,
       requiresApproval: true,
@@ -434,6 +440,7 @@ async function main() {
   const unbezahlt = await prisma.leaveType.create({
     data: {
       tenantId: tenant.id,
+      code: "UNPAID",
       name: "Unbezahlter Urlaub",
       isPaid: false,
       requiresApproval: true,

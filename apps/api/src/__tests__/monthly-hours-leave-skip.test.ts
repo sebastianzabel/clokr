@@ -123,6 +123,7 @@ describe("updateOvertimeAccount — MONTHLY_HOURS leave-skip (#192)", () => {
     const vacationType = await prisma.leaveType.create({
       data: {
         tenantId: tenant.id,
+        code: "VACATION",
         name: "Urlaub",
         isPaid: true,
         requiresApproval: true,

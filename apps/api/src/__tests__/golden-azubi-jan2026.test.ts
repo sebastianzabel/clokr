@@ -427,7 +427,7 @@ describe("Phase 76.32 — GOLDEN Azubi Jan 2026: BS + Urlaub + Feiertag", () => 
 
     // ── Approved LeaveRequest — 3 Urlaubstage Mon–Wed Jan 19–21 (spec §1.6) ──
     const lt = await prisma.leaveType.create({
-      data: { tenantId, name: "Urlaub Golden", isPaid: true },
+      data: { tenantId, code: "VACATION", name: "Urlaub Golden", isPaid: true },
     });
     await prisma.leaveRequest.create({
       data: {

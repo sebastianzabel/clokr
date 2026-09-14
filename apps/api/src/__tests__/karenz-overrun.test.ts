@@ -38,7 +38,7 @@ function sickRow(overrides: Partial<KarenzSickRow> = {}): KarenzSickRow {
     attestPresent: false,
     attestValidFrom: null,
     attestValidTo: null,
-    leaveType: { name: "Krankmeldung" },
+    leaveType: { code: "SICK" },
     deletedAt: null,
     ...overrides,
   };
@@ -112,7 +112,43 @@ describe("find-karenz-overrun-days — detector", () => {
   it("Test 7: non-sick leave types are never reported", () => {
     const rows = [
       sickRow({
-        leaveType: { name: "Urlaub" },
+        leaveType: { code: "VACATION" },
+        startDate: new Date("2026-06-01"),
+        endDate: new Date("2026-06-10"),
+      }),
+    ];
+    const result = karenzOverrunFromRequests(rows, "Europe/Berlin", 3);
+    expect(result).toHaveLength(0);
+  });
+
+  it("Test 7b: a SICK_CHILD request is reported the same as SICK", () => {
+    const rows = [
+      sickRow({
+        leaveType: { code: "SICK_CHILD" },
+        startDate: new Date("2026-06-01"),
+        endDate: new Date("2026-06-05"),
+      }),
+    ];
+    const result = karenzOverrunFromRequests(rows, "Europe/Berlin", 3);
+    expect(result).toHaveLength(1);
+  });
+
+  it("Test 7c (rename resilience): a SICK-code row is reported regardless of its display name — KarenzSickRow.leaveType carries only `code` post-Phase-97, so a tenant renaming the type can no longer affect this check", () => {
+    const rows = [
+      sickRow({
+        leaveType: { code: "SICK" },
+        startDate: new Date("2026-06-01"),
+        endDate: new Date("2026-06-05"),
+      }),
+    ];
+    const result = karenzOverrunFromRequests(rows, "Europe/Berlin", 3);
+    expect(result).toHaveLength(1);
+  });
+
+  it("Test 7d: a row with code = null is never reported (not sick)", () => {
+    const rows = [
+      sickRow({
+        leaveType: { code: null },
         startDate: new Date("2026-06-01"),
         endDate: new Date("2026-06-10"),
       }),
@@ -273,6 +309,7 @@ async function seedKarenzFixture(app: FastifyInstance, suffix: string) {
   const sickType = await prisma.leaveType.create({
     data: {
       tenantId: tenant.id,
+      code: "SICK",
       name: "Krankmeldung",
       isPaid: true,
       requiresApproval: true,

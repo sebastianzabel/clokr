@@ -131,6 +131,7 @@ describe("Time Entry Validation Rules", () => {
         (await app.prisma.leaveType.create({
           data: {
             tenantId: data.tenant.id,
+            code: "VACATION",
             name: "Jahresurlaub",
             isPaid: true,
             requiresApproval: true,

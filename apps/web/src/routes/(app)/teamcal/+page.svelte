@@ -6,6 +6,7 @@
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
+  import { leaveKind } from "$lib/leave/leave-kind";
 
   // ── Types ────────────────────────────────────────────────────────────────
   interface Employee {
@@ -17,7 +18,7 @@
   interface LeaveRequest {
     id: string;
     employeeId: string;
-    leaveType: { name: string };
+    typeCode: string | null;
     startDate: string; // YYYY-MM-DD (server returns ISO date strings)
     endDate: string;
     halfDay: boolean;
@@ -41,14 +42,6 @@
     "Dezember",
   ];
   const DOW = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
-
-  // Categorize leave type names → render kind.
-  // Matches the canonical names defined by LEAVE_TYPE_DEFS in apps/api/src/routes/leave.ts.
-  const SICK_TYPE_NAMES = new Set(["Krankmeldung", "Kinderkrank"]);
-
-  function leaveKind(typeName: string): "vacation" | "sick" {
-    return SICK_TYPE_NAMES.has(typeName) ? "sick" : "vacation";
-  }
 
   // ── State ────────────────────────────────────────────────────────────────
   const today = new Date();
@@ -87,7 +80,7 @@
     const map = new Map<string, { kind: "vacation" | "sick"; start: string; end: string }[]>();
     for (const r of requests) {
       if (r.status !== "APPROVED") continue;
-      const kind = leaveKind(r.leaveType?.name ?? "");
+      const kind = leaveKind(r.typeCode);
       const arr = map.get(r.employeeId) ?? [];
       arr.push({ kind, start: r.startDate.slice(0, 10), end: r.endDate.slice(0, 10) });
       map.set(r.employeeId, arr);

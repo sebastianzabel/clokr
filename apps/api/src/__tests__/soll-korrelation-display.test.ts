@@ -518,7 +518,7 @@ describe("WR-02 RED→GREEN: leave inside Feiertag week — leave credit must ex
     // ── Leave type (paid) ───────────────────────────────────────────────────
     // Each test tenant is isolated so no findFirst needed — create directly.
     const leaveTypeRecord = await prisma.leaveType.create({
-      data: { tenantId, name: "Urlaub", isPaid: true },
+      data: { tenantId, code: "VACATION", name: "Urlaub", isPaid: true },
     });
     const leaveTypeId = leaveTypeRecord.id;
 

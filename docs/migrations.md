@@ -181,6 +181,105 @@ Phases that add columns/indexes (e.g. 76.19/76.20/76.21) create a **new** `migra
 migration on top of `0_init`. They **must never regenerate `0_init`** — that baseline is
 frozen.
 
+## Phase 97 — LeaveType.code (Rollout-Reihenfolge)
+
+**0. Rollout-Einheit: die Migration darf nicht vor dem Schreibpfad ausgeliefert werden.**
+
+Die drei Migrationen und die Umstellung der beiden Laufzeit-Schreibpfade (`ensureLeaveType()`,
+`test-bootstrap.ts`) gehen **zwingend in dasselbe Release**. Der Grund ist nicht das kurze
+Rolling-Deploy-Fenster, sondern die ganze Zeitspanne zwischen zwei Releases: solange das
+ausgelieferte Image Abwesenheitsarten noch über den Anzeigenamen anlegt, erzeugt **jede**
+Neuanlage — neuer Mandant, erstmalig genutzter Typ — eine Zeile ohne Code, die für jeden
+code-basierten Leser dauerhaft unsichtbar ist. Auf int reagiert ArgoCD auf jeden Merge nach
+`main`; „wir liefern das gleich hinterher" ist deshalb keine Zusicherung, sondern ein offenes
+Fenster von unbestimmter Dauer.
+
+Praktisch heisst das: **ein Merge, nicht drei.** Vor dem Merge prüfen:
+
+```bash
+# muss BEIDES liefern, sonst nicht mergen:
+ls packages/db/prisma/migrations | grep leave_type_code          # die drei Ordner
+grep -c 'leaveTypeFields' apps/api/src/routes/leave.ts apps/api/src/routes/test-bootstrap.ts
+```
+
+Liefert der zweite Befehl für eine der beiden Dateien `0`, ist der Schreibpfad noch nicht
+umgestellt — dann darf die Migration nicht mit.
+
+**1. Die drei Migrationen** gehen in EINEM Release (additive Spalte → Backfill → Unique-Index).
+`SET NOT NULL` geht **nicht** mit — es ist ein eigener, späterer Schritt (Phase 97 Plan 10).
+
+**2. Vor `migrate deploy` auf der Zielumgebung — Duplikat-Vorprüfung (lesend):**
+
+```sql
+SELECT "tenantId", name, count(*) FROM "LeaveType"
+WHERE name IN ('Urlaub', 'Jahresurlaub', 'Urlaub (Jahresurlaub)')
+GROUP BY "tenantId", name ORDER BY 1;
+```
+
+Erscheint für denselben `tenantId` mehr als eine dieser Zeilen, bildet der Backfill sie auf
+denselben Code ab und `CREATE UNIQUE INDEX` schlägt fehl. Erst auflösen, dann deployen.
+
+**3. Nach `migrate deploy`, sobald der ALTE Pod vollständig terminiert ist — Nachlauf-Sweep:**
+
+Das alte Image kennt `code` nicht. Legt es im Rolling-Deploy-Fenster über `ensureLeaveType()`
+einen bis dahin ungenutzten Typ an, entsteht eine Zeile mit `code = NULL` — widerspruchsfrei,
+ohne Fehler, und für jeden code-basierten Leser dauerhaft unsichtbar. Der Sweep ist sicher
+wiederholbar, weil seine Auswahlbedingung schlicht `code IS NULL` lautet — jede noch offene
+Zeile, unabhängig davon, wie sie entstand. Erst Dry-Run, dann anwenden:
+
+```bash
+DATABASE_URL=... pnpm --filter @clokr/api exec tsx scripts/backfill-leave-type-code.ts --all-tenants
+DATABASE_URL=... pnpm --filter @clokr/api exec tsx scripts/backfill-leave-type-code.ts --all-tenants --apply
+```
+
+**4. Verifikation — nachmessen, nicht zusichern (Lehre aus Phase 96 WR-02):**
+
+```sql
+SELECT count(*) FROM "LeaveType" WHERE code IS NULL;   -- erwartet: 0
+SELECT "tenantId", code, count(*) FROM "LeaveType"
+GROUP BY "tenantId", code HAVING count(*) > 1;         -- erwartet: 0 Zeilen
+```
+
+Erst wenn beide Abfragen das erwartete Ergebnis liefern, darf `SET NOT NULL` (Plan 10) laufen.
+Meldet der Dry-Run `unmapped`-Zeilen, trägt ein Mandant einen eigenen Typnamen — das ist eine
+Rückfrage an den Betreiber, kein Fall für einen Ersatzcode.
+
+**5. `SET NOT NULL` — eigener, SPÄTERER Release. Nicht in diesem Branch anlegen.**
+
+(Schritte 0-4 stehen oben; Schritt 0 ist die Rollout-Einheit R1 — Migration und Schreibpfad in
+EINEM Merge.)
+
+`apps/api/docker-entrypoint.sh` fährt `migrate deploy` im Entrypoint des NEUEN Containers,
+während die ALTE Replica noch Traffic bedient. Jede Migrationsdatei, die im Repo liegt, läuft
+also beim nächsten Deploy — „später" heisst deshalb: den Ordner erst in einem Folge-Release
+anlegen, nicht hier und nur ungenutzt liegen lassen.
+
+Legt das alte Image im Deploy-Fenster über `ensureLeaveType()` einen bis dahin ungenutzten Typ
+an, entsteht eine Zeile mit `code = NULL`. Läuft `SET NOT NULL` im selben Release, bricht
+entweder der alte Pod sichtbar mit einem 500er, oder der `migrate deploy`-Lauf des neuen Pods
+scheitert an der gerade geschriebenen NULL-Zeile — und der neue Pod wird nicht gesund.
+`ALTER COLUMN ... SET NOT NULL` validiert immer sofort per vollem Tabellenscan; eine
+`NOT VALID`-Option gibt es für Spalten-NOT-NULL nicht.
+
+Zwei Vorbedingungen, beide auf der Zielumgebung zu messen, bevor der Ordner überhaupt
+angelegt wird:
+
+```sql
+SELECT count(*) FROM "LeaveType" WHERE code IS NULL;                    -- muss 0 sein
+SELECT count(*) FROM "LeaveType" lt
+  JOIN "LeaveRequest" lr ON lr."leaveTypeId" = lt.id AND lr."deletedAt" IS NULL
+  WHERE lt.code IS NULL;                                                 -- muss 0 sein
+```
+
+Erst danach:
+
+```sql
+ALTER TABLE "LeaveType" ALTER COLUMN "code" SET NOT NULL;
+```
+
+und im Schema `code LeaveTypeCode?` zu `code LeaveTypeCode` ändern.
+Folge-Issue: [#206](https://github.com/sebastianzabel/clokr/issues/206).
+
 ## Retention EOL policy (COMP-V1814-07)
 
 Clokr uses a **two-stage retention lifecycle** for employee data:
