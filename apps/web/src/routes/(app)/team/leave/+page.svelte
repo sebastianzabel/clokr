@@ -639,9 +639,9 @@
     if (SICK_CODES.includes(correctType)) correctHalfDay = false;
   });
 
-  // Phase 201 (Issue #201, B): dasselbe im Anlegen-Dialog — eine bereits gesetzte
-  // Halbtags-Auswahl wird beim Wechsel auf einen Krank-Typ verworfen, damit sie nicht
-  // unsichtbar hinter einer disabled Checkbox überlebt und im 400 des Backends endet.
+  // Phase 201 (Issue #201, B): same as the create dialog — an already-set half-day
+  // selection is discarded when switching to a sickness type, so it cannot survive
+  // invisibly behind a disabled checkbox and end up in a 400 from the backend.
   $effect(() => {
     if (SICK_CODES.includes(createForm.type)) createForm.halfDay = false;
   });

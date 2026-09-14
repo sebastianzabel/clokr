@@ -7,9 +7,10 @@
 // German hint text) and a German label derivation, not behaviour — the same technique as
 // `leave-page-vocabulary.test.ts` and `admin-employee-detail-disabled-field-visibility.test.ts`.
 //
-// The backend guards at `apps/api/src/routes/leave.ts:402/1610/1784` (EFZG §3/§4 — teilweise
-// Arbeitsunfähigkeit gibt es nicht) remain the sole authority. This test asserts only that the
-// UI stops walking into them — it is the second line of defence, never the first.
+// The backend guards at `apps/api/src/routes/leave.ts:402/1610/1784` (EFZG §3/§4 — partial
+// incapacity to work does not exist as a legal concept) remain the sole authority. This test
+// asserts only that the UI stops walking into them — it is the second line of defence, never
+// the first.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
