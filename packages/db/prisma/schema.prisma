@@ -624,6 +624,11 @@ model LeaveType {
   requests     LeaveRequest[]
 
   @@unique([tenantId, name])
+  // Phase 97 (T2, AC-1) — der Identitaets-Constraint. `[tenantId, name]` darueber bleibt als
+  // reiner Datenqualitaets-Constraint bestehen und traegt keine Identitaet mehr.
+  // Postgres behandelt NULL in Unique-Indizes als paarweise verschieden (empirisch gegen
+  // PG 18 geprueft), der Index vertraegt die nullable Spalte also auch waehrend des Rollouts.
+  @@unique([tenantId, code])
   @@index([tenantId])
 }
 
