@@ -1702,7 +1702,12 @@ export async function reportRoutes(app: FastifyInstance) {
         }
       >();
       for (const e of entitlements) {
-        if (!e.leaveType.name.toLowerCase().includes("urlaub")) continue;
+        // Phase 97 (D-11): the annual-leave overview is the VACATION entitlement, selected by
+        // code. The previous version lower-cased the display name and matched a substring of it,
+        // which caught four of the nine canonical names — annual leave plus the special, unpaid
+        // and further-education types, all of which end in the same German word — and summed all
+        // four into a single annual-leave figure. Behaviour change, deliberate and tested.
+        if (e.leaveType.code !== "VACATION") continue;
         const key = e.employee.employeeNumber;
         const existing = empMap.get(key);
         const total = Number(e.totalDays);
@@ -1774,7 +1779,7 @@ export async function reportRoutes(app: FastifyInstance) {
         },
       });
 
-      // Group by employee and aggregate (only "Urlaub" type)
+      // Group by employee and aggregate (VACATION entitlement only, selected by code)
       const empMap = new Map<
         string,
         {
@@ -1788,7 +1793,12 @@ export async function reportRoutes(app: FastifyInstance) {
       >();
 
       for (const e of entitlements) {
-        if (!e.leaveType.name.toLowerCase().includes("urlaub")) continue;
+        // Phase 97 (D-11): the annual-leave overview is the VACATION entitlement, selected by
+        // code. The previous version lower-cased the display name and matched a substring of it,
+        // which caught four of the nine canonical names — annual leave plus the special, unpaid
+        // and further-education types, all of which end in the same German word — and summed all
+        // four into a single annual-leave figure. Behaviour change, deliberate and tested.
+        if (e.leaveType.code !== "VACATION") continue;
         const key = e.employee.employeeNumber;
         const existing = empMap.get(key);
         const total = Number(e.totalDays);

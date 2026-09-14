@@ -1,8 +1,24 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import iconv from "iconv-lite";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
 import { computeOvertimeBalanceHours } from "../time-entries";
+import * as pdfUtils from "../../utils/pdf";
+
+// Phase 97 (D-11, Task 3): the two vacation-overview PDF handlers only expose their
+// aggregated { totalDays, ... } data by feeding it into pdfkit, which compresses its
+// content streams — not observable by decoding the response body. These two functions
+// are wrapped with a spy that still calls straight through to the real implementation
+// (so the actual PDF bytes returned to callers are unaffected), purely to let tests
+// inspect the `data` argument the route built.
+vi.mock("../../utils/pdf", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../utils/pdf")>();
+  return {
+    ...actual,
+    generateVacationOverviewPdf: vi.fn(actual.generateVacationOverviewPdf),
+    streamVacationOverviewPdf: vi.fn(actual.streamVacationOverviewPdf),
+  };
+});
 import {
   todayStr,
   utcMidnight,
@@ -513,6 +529,133 @@ describe("Reports API", () => {
       // The 2 credited days move to Krank (field order: Ausfall, Lohnart, Stunden, Tage).
       const krankLine = lines.find((l) => l.includes(";K;200;"));
       expect(krankLine).toContain(";K;200;;2,0;");
+    });
+  });
+
+  // ── Phase 97 (D-11): both vacation-overview PDFs select by LeaveType.code ──────
+  // Before this change, both handlers summed every LeaveEntitlement whose type NAME
+  // lower-cased contained the substring "urlaub" — four of the nine canonical names
+  // (Urlaub, Sonderurlaub, Unbezahlter Urlaub, Bildungsurlaub) match that substring,
+  // so a further-education entitlement was silently added to the annual-leave figure.
+  // Deliberate, tested behaviour change: the overview now shows only the real VACATION
+  // entitlement.
+  describe("GET /api/v1/reports/vacation/pdf & /leave-overview/pdf — VACATION selected by code (D-11)", () => {
+    let d11Data: Awaited<ReturnType<typeof seedTestData>>;
+    const year = new Date().getFullYear();
+
+    beforeAll(async () => {
+      d11Data = await seedTestData(app, "d11");
+
+      const educationType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: d11Data.tenant.id,
+          code: "EDUCATION",
+          name: "Bildungsurlaub",
+          isPaid: true,
+          requiresApproval: true,
+          color: "#10B981",
+        },
+      });
+      await app.prisma.leaveEntitlement.create({
+        data: {
+          employeeId: d11Data.employee.id,
+          leaveTypeId: educationType.id,
+          year,
+          totalDays: 5,
+          usedDays: 0,
+        },
+      });
+
+      // A pre-Phase-97 style row with no code — must never contribute to the overview.
+      const nullCodeType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: d11Data.tenant.id,
+          code: null,
+          name: "Sonderfall ohne Code (D11)",
+          isPaid: true,
+          requiresApproval: true,
+          color: "#9CA3AF",
+        },
+      });
+      await app.prisma.leaveEntitlement.create({
+        data: {
+          employeeId: d11Data.employee.id,
+          leaveTypeId: nullCodeType.id,
+          year,
+          totalDays: 999,
+          usedDays: 0,
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, d11Data.tenant.id);
+    });
+
+    async function overviewRow() {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview/pdf?year=${year}`,
+        headers: { authorization: `Bearer ${d11Data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const calls = vi.mocked(pdfUtils.generateVacationOverviewPdf).mock.calls;
+      const data = calls[calls.length - 1][0];
+      return data.employees.find((e) => e.employeeNumber === d11Data.employee.employeeNumber);
+    }
+
+    async function streamedOverviewRow() {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/vacation/pdf?year=${year}`,
+        headers: { authorization: `Bearer ${d11Data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const calls = vi.mocked(pdfUtils.streamVacationOverviewPdf).mock.calls;
+      const data = calls[calls.length - 1][1];
+      return data.employees.find((e) => e.employeeNumber === d11Data.employee.employeeNumber);
+    }
+
+    it("D11-1: totalDays is 30 (VACATION only), not 35 (VACATION + EDUCATION) — /leave-overview/pdf", async () => {
+      const row = await overviewRow();
+      expect(row).toBeDefined();
+      expect(row!.totalDays).toBe(30);
+    });
+
+    it("D11-1b: the same '30 not 35' holds for /vacation/pdf's streamed overview", async () => {
+      const row = await streamedOverviewRow();
+      expect(row).toBeDefined();
+      expect(row!.totalDays).toBe(30);
+    });
+
+    it("D11-2: a VACATION-code row renamed to 'Erholungsurlaub' still appears with its correct totalDays", async () => {
+      await app.prisma.leaveType.update({
+        where: { id: d11Data.vacationType.id },
+        data: { name: "Erholungsurlaub" },
+      });
+      const row = await overviewRow();
+      expect(row).toBeDefined();
+      expect(row!.totalDays).toBe(30);
+    });
+
+    it("D11-3: a VACATION-code row renamed to 'Freizeit' (no 'urlaub' substring) now appears too — the old substring check would have dropped it", async () => {
+      await app.prisma.leaveType.update({
+        where: { id: d11Data.vacationType.id },
+        data: { name: "Freizeit" },
+      });
+      const row = await overviewRow();
+      expect(row).toBeDefined();
+      // Under the removed substring check, "Freizeit" doesn't match /urlaub/, so this
+      // entitlement would have been skipped and only the EDUCATION row ("Bildungsurlaub",
+      // which DOES match) would have been summed — totalDays would have read 5, not 30.
+      expect(row!.totalDays).toBe(30);
+    });
+
+    it("D11-4: the code=null entitlement (999 days) never contributes to totalDays", async () => {
+      const row = await overviewRow();
+      expect(row).toBeDefined();
+      expect(row!.totalDays).not.toBe(999);
+      expect(row!.totalDays).toBe(30);
     });
   });
 
