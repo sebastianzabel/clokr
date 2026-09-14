@@ -2062,3 +2062,185 @@ describe("Phase 97-05: typeCode derives from LeaveType.code, not name (D-09/D-10
     expect(JSON.parse(res.body).error).toBe("Attest kann nur für Krankmeldungen gesetzt werden");
   });
 });
+
+describe("Phase 97-05 Task 2: iCal export shows the tenant's own display name; entitlements vacation row is code-driven", () => {
+  let app: FastifyInstance;
+  const seededTenantIds: string[] = [];
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterAll(async () => {
+    for (const tenantId of seededTenantIds) {
+      try {
+        await cleanupTestData(app, tenantId);
+      } catch (err) {
+        console.error("Test cleanup failed:", err);
+      }
+    }
+  });
+
+  async function seed(suffix: string) {
+    const d = await seedTestData(app, suffix);
+    seededTenantIds.push(d.tenant.id);
+    return d;
+  }
+
+  it("GET /ical/personal: a renamed VACATION row shows its own name in SUMMARY, not the canonical one (AC-2 — deliberate behavior change)", async () => {
+    const d = await seed("ic1");
+    await app.prisma.leaveType.update({
+      where: { id: d.vacationType.id },
+      data: { name: "Erholungsurlaub" },
+    });
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${d.empToken}` },
+      payload: { type: "VACATION", startDate: "2027-04-05", endDate: "2027-04-06" },
+    });
+    const { id: requestId } = JSON.parse(createRes.body);
+    await app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${requestId}/review`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+      payload: { status: "APPROVED" },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/leave/ical/personal",
+      headers: { authorization: `Bearer ${d.empToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("SUMMARY:Erholungsurlaub");
+    expect(res.body).not.toContain("SUMMARY:Urlaub\r\n");
+    expect(res.body).toContain("CATEGORIES:VACATION");
+  });
+
+  it("GET /ical/personal: a request on a code = null row has no CATEGORIES line at all (D-09 — no invented VACATION category)", async () => {
+    const d = await seed("ic2");
+    const uncoded = await app.prisma.leaveType.create({
+      data: {
+        tenantId: d.tenant.id,
+        name: "Ohne-Code-Kalenderfall",
+        isPaid: true,
+        requiresApproval: true,
+      },
+    });
+    const req = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: d.employee.id,
+        leaveTypeId: uncoded.id,
+        startDate: new Date("2027-04-12"),
+        endDate: new Date("2027-04-13"),
+        days: 2,
+        status: "APPROVED",
+      },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/leave/ical/personal",
+      headers: { authorization: `Bearer ${d.empToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain(`UID:leave-${req.id}@clokr`);
+    expect(res.body).toContain("SUMMARY:Ohne-Code-Kalenderfall");
+    expect(res.body).not.toContain("CATEGORIES:VACATION");
+    // No CATEGORIES line at all for this event — not just a missing "VACATION" value.
+    const eventBlock = res.body.split(`UID:leave-${req.id}@clokr`)[1].split("END:VEVENT")[0];
+    expect(eventBlock).not.toContain("CATEGORIES:");
+  });
+
+  it("GET /ical/team: summary is '<Vorname> <Nachname> — <Anzeigename der Zeile>'", async () => {
+    const d = await seed("ic3");
+    await app.prisma.leaveType.update({
+      where: { id: d.vacationType.id },
+      data: { name: "Betriebsurlaub-Sonderfall" },
+    });
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${d.empToken}` },
+      payload: { type: "VACATION", startDate: "2027-04-19", endDate: "2027-04-20" },
+    });
+    const { id: requestId } = JSON.parse(createRes.body);
+    await app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${requestId}/review`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+      payload: { status: "APPROVED" },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/leave/ical/team",
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain(
+      `SUMMARY:${d.employee.firstName} ${d.employee.lastName} — Betriebsurlaub-Sonderfall`,
+    );
+  });
+
+  it("GET /entitlements: only the code = VACATION row gets pro-rata reduced on exit — a SPECIAL row named 'Sonderurlaub' (containing the word) is left at full entitlement", async () => {
+    const d = await seed("ic4");
+    const year = 2027;
+    // H1 exit date so § 5 Abs. 2 BUrlG pro-rata applies (month < 6).
+    await app.prisma.employee.update({
+      where: { id: d.employee.id },
+      data: { exitDate: new Date(`${year}-03-31`) },
+    });
+    await app.prisma.leaveEntitlement.upsert({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: d.employee.id,
+          leaveTypeId: d.vacationType.id,
+          year,
+        },
+      },
+      create: {
+        employeeId: d.employee.id,
+        leaveTypeId: d.vacationType.id,
+        year,
+        totalDays: 30,
+        usedDays: 0,
+      },
+      update: { totalDays: 30, usedDays: 0 },
+    });
+    const specialType = await app.prisma.leaveType.create({
+      data: {
+        tenantId: d.tenant.id,
+        code: "SPECIAL",
+        name: "Sonderurlaub",
+        isPaid: true,
+        requiresApproval: true,
+      },
+    });
+    await app.prisma.leaveEntitlement.create({
+      data: {
+        employeeId: d.employee.id,
+        leaveTypeId: specialType.id,
+        year,
+        totalDays: 10,
+        usedDays: 0,
+      },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/entitlements/${d.employee.id}?year=${year}`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const rows = JSON.parse(res.body) as {
+      leaveTypeId: string;
+      effectiveEntitlementDays: number;
+    }[];
+    const vacRow = rows.find((r) => r.leaveTypeId === d.vacationType.id)!;
+    const specialRow = rows.find((r) => r.leaveTypeId === specialType.id)!;
+    expect(vacRow.effectiveEntitlementDays).toBeLessThan(30);
+    expect(specialRow.effectiveEntitlementDays).toBe(10);
+  });
+});

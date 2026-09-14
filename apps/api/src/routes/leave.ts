@@ -2414,19 +2414,19 @@ export async function leaveRoutes(app: FastifyInstance) {
         }),
       ]);
 
-      const events: ICalEvent[] = requests.map((r) => {
-        const typeCode = TYPE_CODES.find((c) => LEAVE_TYPE_DEFS[c].name === r.leaveType.name);
-        const summary = LEAVE_TYPE_DEFS[typeCode as TypeCode]?.name ?? r.leaveType.name;
-        return {
-          uid: `leave-${r.id}@clokr`,
-          summary,
-          dtstart: r.startDate.toISOString().split("T")[0],
-          dtend: addOneDay(r.endDate.toISOString().split("T")[0]),
-          description: r.note ?? undefined,
-          status: "CONFIRMED",
-          categories: typeCode ?? "VACATION",
-        };
-      });
+      const events: ICalEvent[] = requests.map((r) => ({
+        uid: `leave-${r.id}@clokr`,
+        // Phase 97 (AC-2): the row's own display name. Before this phase the canonical name from
+        // LEAVE_TYPE_DEFS overrode it, which silently undid a tenant's rename in the calendar feed.
+        summary: r.leaveType.name,
+        dtstart: r.startDate.toISOString().split("T")[0],
+        dtend: addOneDay(r.endDate.toISOString().split("T")[0]),
+        description: r.note ?? undefined,
+        status: "CONFIRMED",
+        // No silent default to the vacation code here (D-09): an uncoded type simply has no
+        // category — it does not get turned into vacation to fill the field.
+        categories: r.leaveType.code ?? undefined,
+      }));
 
       for (const a of absences) {
         const summary =
@@ -2482,16 +2482,14 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const events: ICalEvent[] = requests.map((r) => {
         const name = `${r.employee.firstName} ${r.employee.lastName}`;
-        const typeCode = TYPE_CODES.find((c) => LEAVE_TYPE_DEFS[c].name === r.leaveType.name);
-        const typeName = LEAVE_TYPE_DEFS[typeCode as TypeCode]?.name ?? r.leaveType.name;
         return {
           uid: `leave-${r.id}@clokr`,
-          summary: `${name} \u2014 ${typeName}`,
+          summary: `${name} \u2014 ${r.leaveType.name}`,
           dtstart: r.startDate.toISOString().split("T")[0],
           dtend: addOneDay(r.endDate.toISOString().split("T")[0]),
           description: r.note ?? undefined,
           status: "CONFIRMED",
-          categories: typeCode ?? "VACATION",
+          categories: r.leaveType.code ?? undefined,
         };
       });
 
@@ -2595,7 +2593,6 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       // Vacation type meta — shared with selfHealUsedDays AND the pro-rata mapping below
       const vacMeta = await loadVacationTypeMeta(app.prisma, tenantId);
-      const { vacationNames } = vacMeta;
 
       // exitDate for pro-rata effective entitlement computation (§ 5 Abs. 2 BUrlG) —
       // reuse the `employee` row loaded by the tenant guard above.
@@ -2645,7 +2642,11 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       // typeCode + effektiven Resturlaub + anteiligen Urlaubsanspruch im Response markieren
       return rows.map((r) => {
-        const isVacationRow = vacationNames.includes(r.leaveType.name);
+        // Phase 97: the vacation account is the row whose CODE is VACATION. This used to be a
+        // lookup against a hard-coded list of German display names, which misclassified any
+        // renamed row. Do not name that list here — plan 09 removes its last definition and
+        // asserts repo-wide that the identifier is gone.
+        const isVacationRow = r.leaveType.code === "VACATION";
         const effectiveEntitlementDays =
           isVacationRow && employeeExitDate
             ? calculateProRataVacation(Number(r.totalDays), r.year, employeeExitDate)
