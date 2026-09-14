@@ -244,6 +244,42 @@ Erst wenn beide Abfragen das erwartete Ergebnis liefern, darf `SET NOT NULL` (Pl
 Meldet der Dry-Run `unmapped`-Zeilen, trägt ein Mandant einen eigenen Typnamen — das ist eine
 Rückfrage an den Betreiber, kein Fall für einen Ersatzcode.
 
+**5. `SET NOT NULL` — eigener, SPÄTERER Release. Nicht in diesem Branch anlegen.**
+
+(Schritte 0-4 stehen oben; Schritt 0 ist die Rollout-Einheit R1 — Migration und Schreibpfad in
+EINEM Merge.)
+
+`apps/api/docker-entrypoint.sh` fährt `migrate deploy` im Entrypoint des NEUEN Containers,
+während die ALTE Replica noch Traffic bedient. Jede Migrationsdatei, die im Repo liegt, läuft
+also beim nächsten Deploy — „später" heisst deshalb: den Ordner erst in einem Folge-Release
+anlegen, nicht hier und nur ungenutzt liegen lassen.
+
+Legt das alte Image im Deploy-Fenster über `ensureLeaveType()` einen bis dahin ungenutzten Typ
+an, entsteht eine Zeile mit `code = NULL`. Läuft `SET NOT NULL` im selben Release, bricht
+entweder der alte Pod sichtbar mit einem 500er, oder der `migrate deploy`-Lauf des neuen Pods
+scheitert an der gerade geschriebenen NULL-Zeile — und der neue Pod wird nicht gesund.
+`ALTER COLUMN ... SET NOT NULL` validiert immer sofort per vollem Tabellenscan; eine
+`NOT VALID`-Option gibt es für Spalten-NOT-NULL nicht.
+
+Zwei Vorbedingungen, beide auf der Zielumgebung zu messen, bevor der Ordner überhaupt
+angelegt wird:
+
+```sql
+SELECT count(*) FROM "LeaveType" WHERE code IS NULL;                    -- muss 0 sein
+SELECT count(*) FROM "LeaveType" lt
+  JOIN "LeaveRequest" lr ON lr."leaveTypeId" = lt.id AND lr."deletedAt" IS NULL
+  WHERE lt.code IS NULL;                                                 -- muss 0 sein
+```
+
+Erst danach:
+
+```sql
+ALTER TABLE "LeaveType" ALTER COLUMN "code" SET NOT NULL;
+```
+
+und im Schema `code LeaveTypeCode?` zu `code LeaveTypeCode` ändern.
+Folge-Issue: [#206](https://github.com/sebastianzabel/clokr/issues/206).
+
 ## Retention EOL policy (COMP-V1814-07)
 
 Clokr uses a **two-stage retention lifecycle** for employee data:
