@@ -60,6 +60,11 @@
     note: string | null;
     isInvalid?: boolean;
     invalidReason?: string | null;
+    // Phase 96 (T1) — the backend's authoritative InvalidReasonCode enum value.
+    // Widened to `string` here because apps/web does not import Prisma types
+    // across the API boundary; `invalidReason` above is only its rendered
+    // German display text, never compared against.
+    invalidReasonCode?: string | null;
     isLocked?: boolean;
     // Phase 96 (RETRO-17) — set when this entry is the coupled pending Nachtrag
     // of a RetroEntryRequest (entry-first flow, 96-02). Already present on the
@@ -933,15 +938,15 @@
           : "Manuell";
   }
 
-  // Phase 96 (RETRO-17/D-13) — exact invalidReason string set by the backend's
-  // entry-first pendingRetroCreate branch (time-entries.ts). Distinguishes a
-  // pending Nachtrag from the OTHER isInvalid case (pending leave-cancellation,
-  // "Urlaubsstornierung ausstehend") so the withdraw affordance only ever
-  // targets a row that is actually coupled to a RetroEntryRequest.
-  const PENDING_NACHTRAG_REASON = "Nachtrag – Genehmigung ausstehend";
+  // Phase 96 (T1) — keyed on the backend's authoritative InvalidReasonCode
+  // enum value, not on the German display text. `invalidReason` is only that
+  // code's rendered form (apps/api/src/utils/invalid-reason.ts) and is never
+  // compared here. The distinction from the OTHER isInvalid case (pending
+  // leave-cancellation, LEAVE_CANCELLATION_PENDING) is enforced by two
+  // distinct enum values, not by two strings that happened to differ.
   function isPendingNachtrag(e: TimeEntry): boolean {
     return (
-      e.isInvalid === true && e.invalidReason === PENDING_NACHTRAG_REASON && !!e.retroRequestId
+      e.isInvalid === true && e.invalidReasonCode === "RETRO_APPROVAL_PENDING" && !!e.retroRequestId
     );
   }
 

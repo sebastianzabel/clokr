@@ -667,6 +667,7 @@ describe("Leave correction — reverse-OLD/apply-NEW saldo (94-02)", () => {
           startTime: new Date(`${date}T08:00:00Z`),
           isInvalid: true,
           invalidReason: "Urlaubsstornierung ausstehend",
+          invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
           ...extra,
         },
       });

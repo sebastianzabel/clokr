@@ -1206,6 +1206,7 @@ describe("Leave / Absence API", () => {
             source: "MANUAL",
             isInvalid: true,
             invalidReason: "Urlaubsstornierung ausstehend",
+            invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
             ...extra,
           },
         });

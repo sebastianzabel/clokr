@@ -28,6 +28,7 @@ import { fromZonedTime } from "date-fns-tz";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { daysAgoStrInTz, dbDateStr, TEST_TZ } from "./test-dates";
+import { invalidReasonFields } from "../utils/invalid-reason";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -148,7 +149,7 @@ async function seedCoupledPending(
       source: "MANUAL",
       createdBy: employeeId,
       isInvalid: true,
-      invalidReason: "Nachtrag – Genehmigung ausstehend",
+      ...invalidReasonFields("RETRO_APPROVAL_PENDING"),
       retroRequestId: request.id,
       isLocked: opts.isLocked ?? false,
     },

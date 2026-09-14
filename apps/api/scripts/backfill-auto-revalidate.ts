@@ -2,12 +2,12 @@
  * Backfill: clear isInvalid on TimeEntries that were corrected before the
  * auto-revalidate fix shipped (the PUT /time-entries/:id handler now clears
  * isInvalid automatically when endTime is added to an entry whose
- * invalidReason is "Ausstempeln fehlt", but entries corrected BEFORE that
+ * invalidReasonCode is "MISSING_CLOCK_OUT", but entries corrected BEFORE that
  * change stay flagged forever and contribute 0h to saldo).
  *
  * Pattern matched (idempotent — safe to re-run):
  *   isInvalid = true
- *   AND invalidReason = 'Ausstempeln fehlt'
+ *   AND "invalidReasonCode" = 'MISSING_CLOCK_OUT'
  *   AND endTime IS NOT NULL
  *   AND deletedAt IS NULL
  *
@@ -25,6 +25,7 @@
 import { PrismaClient } from "@clokr/db";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
+import { CLEARED_INVALID_REASON } from "../src/utils/invalid-reason"; // Phase 96 (T1)
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is required");
@@ -42,7 +43,7 @@ async function main() {
   const stuck = await prisma.timeEntry.findMany({
     where: {
       isInvalid: true,
-      invalidReason: "Ausstempeln fehlt",
+      invalidReasonCode: "MISSING_CLOCK_OUT",
       endTime: { not: null },
       deletedAt: null,
     },
@@ -77,7 +78,7 @@ async function main() {
   for (const e of stuck) {
     await prisma.timeEntry.update({
       where: { id: e.id },
-      data: { isInvalid: false, invalidReason: null },
+      data: { isInvalid: false, ...CLEARED_INVALID_REASON },
     });
     try {
       await prisma.auditLog.create({
@@ -86,8 +87,8 @@ async function main() {
           action: "BACKFILL_REVALIDATE",
           entity: "TimeEntry",
           entityId: e.id,
-          oldValue: { isInvalid: true, invalidReason: "Ausstempeln fehlt" },
-          newValue: { isInvalid: false, invalidReason: null },
+          oldValue: { isInvalid: true, invalidReasonCode: "MISSING_CLOCK_OUT" },
+          newValue: { isInvalid: false, ...CLEARED_INVALID_REASON },
         },
       });
     } catch (err) {
