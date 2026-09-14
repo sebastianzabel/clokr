@@ -232,6 +232,79 @@ describe("Notification email dispatch (notify.ts sendEmailNotification)", () => 
     expect(html).toContain('style="display:inline-block');
   });
 
+  // ── Issue #200 — in-app title type-specific, mail subject neutral ─────────
+  //
+  // Owner decision 2026-09-15 (200-CONTEXT.md): a type-specific in-app title is fine, but a
+  // type-specific mail SUBJECT would put Art.-9 GDPR health-category data ("Neue Krankmeldung")
+  // where it travels further than a body — inbox lists, lock-screen previews, mail-server logs.
+  it("(g) SICK leave request: in-app title is type-specific, mail subject stays neutral, body keeps the type", async () => {
+    await setConfig({
+      ...SMTP_CONFIGURED,
+      emailNotificationsEnabled: true,
+      emailOnLeaveRequest: true,
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { type: "SICK", startDate: "2027-06-07", endDate: "2027-06-09" },
+    });
+    expect(res.statusCode).toBe(201);
+    const requestId = JSON.parse(res.body).id as string;
+
+    // Wait for the fire-and-forget email dispatch to settle BEFORE any assertion that could
+    // throw: if an earlier assertion threw first, this test would return while the dispatch is
+    // still in flight, and the leftover promise would register its sendMail call during a LATER
+    // test instead (corrupting that test's mock call count).
+    await vi.waitFor(() => expect(sendMailMock).toHaveBeenCalled());
+
+    // In-app: type-specific title, as the issue asks.
+    const inApp = await app.prisma.notification.findFirst({
+      where: { userId: data.adminUser.id, type: "LEAVE_REQUEST", relatedId: requestId },
+    });
+    expect(inApp?.title).toBe("Neue Krankmeldung");
+
+    // Email: the neutral subject, for THIS call and every other call captured so far.
+    const call = sendMailMock.mock.calls.find(
+      (c) => c[0].subject === "Neue Abwesenheitsmeldung – Clokr",
+    );
+    expect(call).toBeDefined();
+
+    // Privacy guarantee: no captured subject may carry any sickness hint at all.
+    expect(sendMailMock.mock.calls.every((c) => !/krank/i.test(String(c[0].subject)))).toBe(true);
+
+    // The type was RELOCATED, not lost: the body still carries it.
+    expect(String(call![0].html)).toContain("krankgemeldet");
+  });
+
+  // ── Issue #200 — fallback preserved, explicitly named ──────────────────────
+  //
+  // Case (a) already covers this path incidentally (its LEAVE_REQUEST fixture never sets
+  // `emailSubject`), but incidentally — nobody reading it knows it is load-bearing for the
+  // Issue #200 fallback contract. This test names it explicitly so it cannot be deleted as
+  // redundant: a notification sent WITHOUT `emailSubject` must still derive its subject from
+  // `title`, exactly as before.
+  it("(h) a notification sent WITHOUT emailSubject still derives its subject from title (fallback preserved)", async () => {
+    await setConfig({
+      ...SMTP_CONFIGURED,
+      emailNotificationsEnabled: true,
+      emailOnMissingEntries: true,
+    });
+
+    await app.notify({
+      userId: data.adminUser.id,
+      type: "MISSING_ENTRIES",
+      title: "Fehlende Zeiterfassung",
+      message: "Es fehlen Zeiteinträge.",
+      tenantId: data.tenant.id,
+    });
+
+    await vi.waitFor(() => expect(sendMailMock).toHaveBeenCalledTimes(1));
+    const arg = sendMailMock.mock.calls[0][0];
+    expect(arg.subject).toBe("Fehlende Zeiterfassung – Clokr");
+  });
+
   // ── Phase 104 code review CR-02 — § 9 BUrlG types are in-app only ──────────
   //
   // Before the fix, absence from the old two-list mechanism (a per-type toggle map
