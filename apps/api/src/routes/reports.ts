@@ -65,7 +65,7 @@ type LeaveRequestWithType = {
 
 // ── Phase 104 (D-15, Tier 2) — tagesbasierte Entdopplung ───────────────────────
 // reports.ts hat EIGENE Soll-/Tage-Berechnungen (calcAbsenceMinutes, daysForTypeCode,
-// daysForName im DATEV-Export), die weder closeEmployeeMonth() (Tier 1, Plan 104-02)
+// daysForCode im DATEV-Export), die weder closeEmployeeMonth() (Tier 1, Plan 104-02)
 // noch calcLeaveAbsenceMinutesTz aufrufen. Der dortige Fix erreicht diese Stellen
 // deshalb NICHT — siehe RESEARCH.md "The D-15 Soll-Dedup Surface" (Tier 2). Seit R1
 // (§ 9 BUrlG) ist die Überlappung zweier genehmigter Anträge (SICK vs. VACATION) der
@@ -563,7 +563,11 @@ type DatevEmployee = {
     breakMinutes: number | bigint | null;
   }>;
   absences: Array<{ startDate: Date; endDate: Date; type: string; halfDay?: boolean | null }>;
-  leaveRequests: Array<{ startDate: Date; endDate: Date; leaveType: { name: string } }>;
+  leaveRequests: Array<{
+    startDate: Date;
+    endDate: Date;
+    leaveType: { name: string; code: LeaveTypeCode | null };
+  }>;
 };
 
 function buildDatevLodas(params: {
@@ -600,9 +604,13 @@ function buildDatevLodas(params: {
     return count;
   }
 
-  function daysForName(emp: DatevEmployee, name: string): number {
+  // Phase 97 (D-13): the payroll export selects by the stable code. Selecting by display name
+  // meant a single tenant-side rename silently returned 0 here — and because each Lohnart line
+  // is only written when its day count is > 0, the line vanished from the export entirely.
+  // A missing leave day in a payroll file is a silent accounting error with an external recipient.
+  function daysForCode(emp: DatevEmployee, code: LeaveTypeCode): number {
     return emp.leaveRequests
-      .filter((lr) => lr.leaveType.name === name)
+      .filter((lr) => lr.leaveType.code === code)
       .reduce((sum, lr) => sum + workDaysInMonthRange(lr.startDate, lr.endDate), 0);
   }
 
@@ -652,13 +660,13 @@ function buildDatevLodas(params: {
       );
 
     // Abwesenheiten aus LeaveRequest (nur Arbeitstage)
-    const vacationDays = daysForName(emp, "Urlaub");
-    const overtimeCompDays = daysForName(emp, "Überstundenausgleich");
-    const specialDays = daysForName(emp, "Sonderurlaub");
-    const educationDays = daysForName(emp, "Bildungsurlaub");
-    const unpaidDays = daysForName(emp, "Unbezahlter Urlaub");
-    const maternityDays = daysForName(emp, "Mutterschutz");
-    const parentalDays = daysForName(emp, "Elternzeit");
+    const vacationDays = daysForCode(emp, "VACATION");
+    const overtimeCompDays = daysForCode(emp, "OVERTIME_COMP");
+    const specialDays = daysForCode(emp, "SPECIAL");
+    const educationDays = daysForCode(emp, "EDUCATION");
+    const unpaidDays = daysForCode(emp, "UNPAID");
+    const maternityDays = daysForCode(emp, "MATERNITY");
+    const parentalDays = daysForCode(emp, "PARENTAL");
 
     // Phase 104 (D-30): § 9-Tage aus der Urlaubs-Lohnart heraus- und in die Krank-
     // Lohnart hineinrechnen. Die Summe über beide Zeilen bleibt unverändert — es wird
