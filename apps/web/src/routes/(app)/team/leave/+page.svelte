@@ -15,6 +15,7 @@
   } from "$lib/phorest/appointmentCollisions";
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
+  import AttestFields from "$lib/components/leave/AttestFields.svelte"; // Phase 201
   import {
     resolveStornoAction,
     stornoDialogCopy,
@@ -1733,34 +1734,13 @@
 
       <!-- Attest (nur für Krankmeldungen) -->
       {#if SICK_CODES.includes(reviewModal.typeCode)}
-        <div class="attest-box review-section">
-          <p class="attest-title">Attest / Arbeitsunfähigkeitsbescheinigung</p>
-          <label class="toggle-label">
-            <input type="checkbox" bind:checked={reviewAttestPresent} class="toggle-cb" />
-            <span>Attest liegt vor</span>
-          </label>
-          {#if reviewAttestPresent}
-            <div class="attest-dates">
-              <div class="form-group">
-                <label class="form-label" for="r-attest-from">Gültig von</label>
-                <input
-                  id="r-attest-from"
-                  type="date"
-                  bind:value={reviewAttestFrom}
-                  class="form-input attest-date-input"
-                />
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="r-attest-to">Gültig bis</label>
-                <input
-                  id="r-attest-to"
-                  type="date"
-                  bind:value={reviewAttestTo}
-                  class="form-input attest-date-input"
-                />
-              </div>
-            </div>
-          {/if}
+        <div class="review-section">
+          <AttestFields
+            bind:present={reviewAttestPresent}
+            bind:validFrom={reviewAttestFrom}
+            bind:validTo={reviewAttestTo}
+            idPrefix="r"
+          />
         </div>
       {/if}
 
@@ -2365,20 +2345,6 @@
   }
 
   /* ── Attest ───────────────────────────────────────────────────────── */
-  .attest-box {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    padding: 0.875rem 1rem;
-  }
-  .attest-title {
-    font-size: 0.8125rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-bottom: 0.625rem;
-  }
   .attest-dates {
     display: flex;
     gap: 1rem;
@@ -2391,11 +2357,6 @@
     gap: 0.5rem;
     cursor: pointer;
     font-weight: 500;
-  }
-  .toggle-cb {
-    width: 16px;
-    height: 16px;
-    accent-color: var(--brand);
   }
 
   /* ── Pending Cards ────────────────────────────────────────────────── */
