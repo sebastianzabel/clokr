@@ -30,6 +30,13 @@ import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // P
 import { isSickTypeName, findSection9Overlaps, intersectRanges } from "../utils/section9-detect"; // Phase 104-05/06
 import { karenzOverrunFromRequests, normalizeKarenzDays } from "../utils/find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
 import { CLEARED_INVALID_REASON } from "../utils/invalid-reason"; // Phase 96 (T1)
+import {
+  LEAVE_TYPE_CODES as TYPE_CODES,
+  LEAVE_TYPE_DEFS,
+  LEAVE_TYPE_LEGACY_ALIASES as LEGACY_ALIASES,
+  leaveTypeFields,
+} from "../utils/leave-type"; // Phase 97 (T2, D-04) — the one mapping
+import type { LeaveTypeCode } from "@clokr/db";
 
 // Phase 104-10 — § 9 display-surface helpers (calendar/list/entitlement markers, D-28/D-29/D-31).
 
@@ -62,38 +69,10 @@ function formatDayMonth(d: Date | null | undefined): string {
 type DbClient = FastifyInstance["prisma"] | Prisma.TransactionClient;
 
 // ── Feste Abwesenheitstypen ──────────────────────────────────────────────────
-const TYPE_CODES = [
-  "VACATION",
-  "OVERTIME_COMP",
-  "SPECIAL",
-  "UNPAID",
-  "SICK",
-  "SICK_CHILD",
-  "EDUCATION",
-  "MATERNITY",
-  "PARENTAL",
-] as const;
-type TypeCode = (typeof TYPE_CODES)[number];
-
-const LEAVE_TYPE_DEFS: Record<
-  TypeCode,
-  { name: string; isPaid: boolean; requiresApproval: boolean }
-> = {
-  VACATION: { name: "Urlaub", isPaid: true, requiresApproval: true },
-  OVERTIME_COMP: { name: "Überstundenausgleich", isPaid: true, requiresApproval: true },
-  SPECIAL: { name: "Sonderurlaub", isPaid: true, requiresApproval: true },
-  UNPAID: { name: "Unbezahlter Urlaub", isPaid: false, requiresApproval: true },
-  SICK: { name: "Krankmeldung", isPaid: true, requiresApproval: false },
-  SICK_CHILD: { name: "Kinderkrank", isPaid: true, requiresApproval: false },
-  EDUCATION: { name: "Bildungsurlaub", isPaid: true, requiresApproval: true },
-  MATERNITY: { name: "Mutterschutz", isPaid: true, requiresApproval: false },
-  PARENTAL: { name: "Elternzeit", isPaid: false, requiresApproval: true },
-};
-
-// Legacy-Namen aus alten Seed-Skripten → werden beim ersten Zugriff umbenannt
-const LEGACY_ALIASES: Partial<Record<TypeCode, string[]>> = {
-  VACATION: ["Jahresurlaub", "Urlaub (Jahresurlaub)"],
-};
+// Phase 97 (T2, D-04): the nine codes, their German display names and the legacy seed aliases
+// now live in ONE place, `utils/leave-type.ts`. `TYPE_CODES` / `LEGACY_ALIASES` are transitional
+// import aliases so this move touched no call site; plan 05 replaces the call sites themselves.
+type TypeCode = LeaveTypeCode;
 
 /** Stellt sicher, dass ein LeaveType-Eintrag für den Tenant existiert – gibt seine ID zurück.
  *  Migriert automatisch alte Seed-Namen (z.B. "Jahresurlaub" → "Urlaub"). */
