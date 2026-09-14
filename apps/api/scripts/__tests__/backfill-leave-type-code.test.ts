@@ -7,11 +7,18 @@
  * migration-level test cannot show this, because `test:setup` applies the migration against an
  * empty `LeaveType` table (see the script's own docblock). This test can, and does.
  *
+ * Fixture note: a canonical row ("Urlaub") and a legacy-alias row ("Jahresurlaub") that both
+ * resolve to VACATION are DELIBERATELY kept in separate tenants below. Putting both codeless in
+ * the same tenant is not a fixture convenience question — it is the exact duplicate scenario
+ * `docs/migrations.md`'s pre-deploy check queries for, and the script correctly reports the
+ * second one under `conflicts` rather than writing it (see the dedicated conflict test using
+ * tenant B, which models that scenario on purpose).
+ *
  * Covers, one `it` per <behavior> point in 97-04-PLAN.md:
  *   1. Dry-run: canonical name ("Urlaub") is planned, reason "canonical", DB untouched
  *   2. Dry-run: legacy alias ("Jahresurlaub") is planned, reason "legacy-alias"
  *   3. Dry-run: unmapped name ("Erholungsurlaub") is reported, NOT planned, gets no code
- *   4. Apply: canonical + legacy rows get their code (and the legacy row its canonical name);
+ *   4. Apply: canonical row gets its code; legacy row gets its code AND its canonical name;
  *      the unmapped row keeps code = null
  *   5. Apply: an already-coded row (SICK) is left alone — not in `planned`, fields unchanged
  *   6. Idempotency: a second --apply run writes nothing (`applied === 0`)
@@ -36,22 +43,25 @@ const BACKFILL_ACTION = "LEAVE_TYPE_CODE_BACKFILL";
 describe("backfill-leave-type-code (Phase 97 T2 Plan 04)", () => {
   let app: FastifyInstance;
 
-  // ── Tenant A: canonical + legacy-alias + unmapped + already-coded fixtures ──
+  // ── Tenant A: canonical + unmapped + already-coded + AC-5 entitlement ───
   let tenantAId: string;
   let vacationRowId: string; // "Urlaub" — codeless, canonical name
-  let legacyRowId: string; // "Jahresurlaub" — codeless, legacy alias of VACATION
   let unmappedRowId: string; // "Erholungsurlaub" — codeless, unknown name
-  let sickRowId: string; // "Krankmeldung" — already coded SICK via leaveTypeFields
+  let sickRowId: string; // "Krankmeldung" — already coded SICK via leaveTypeFields shape
 
   // ── Tenant B: conflict fixture ───────────────────────────────────────────
   let tenantBId: string;
   let existingVacationRowId: string; // already coded VACATION
   let conflictingLegacyRowId: string; // codeless "Jahresurlaub" — would collide on VACATION
 
+  // ── Tenant C: standalone legacy-alias row (no colliding canonical row) ──
+  let tenantCId: string;
+  let legacyRowId: string; // "Jahresurlaub" — codeless, legacy alias of VACATION
+
   // ── AC-5 fixture (tenant A) ──────────────────────────────────────────────
   let entitlementId: string;
-  const ENTITLEMENT_USED_DAYS = "3.50";
-  const ENTITLEMENT_TOTAL_DAYS = "30.00";
+  const ENTITLEMENT_USED_DAYS = 3.5;
+  const ENTITLEMENT_TOTAL_DAYS = 30;
 
   async function createTenant(prisma: FastifyInstance["prisma"], slugPrefix: string) {
     const slug = `${slugPrefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -81,11 +91,6 @@ describe("backfill-leave-type-code (Phase 97 T2 Plan 04)", () => {
       data: { tenantId: tenantAId, name: "Urlaub" }, // codeless on purpose — bypasses leaveTypeFields()
     });
     vacationRowId = vacationRow.id;
-
-    const legacyRow = await prisma.leaveType.create({
-      data: { tenantId: tenantAId, name: "Jahresurlaub" }, // codeless, legacy alias of VACATION
-    });
-    legacyRowId = legacyRow.id;
 
     const unmappedRow = await prisma.leaveType.create({
       data: { tenantId: tenantAId, name: "Erholungsurlaub" }, // codeless, not in the closed vocabulary
@@ -151,6 +156,14 @@ describe("backfill-leave-type-code (Phase 97 T2 Plan 04)", () => {
       data: { tenantId: tenantBId, name: "Jahresurlaub" }, // codeless — collides with existingVacationRow's code
     });
     conflictingLegacyRowId = conflictingLegacyRow.id;
+
+    // ── Tenant C: standalone legacy-alias row ────────────────────────────────
+    tenantCId = await createTenant(prisma, "p9704c");
+
+    const legacyRow = await prisma.leaveType.create({
+      data: { tenantId: tenantCId, name: "Jahresurlaub" }, // codeless, legacy alias of VACATION
+    });
+    legacyRowId = legacyRow.id;
   }, 60_000);
 
   afterAll(async () => {
@@ -168,7 +181,7 @@ describe("backfill-leave-type-code (Phase 97 T2 Plan 04)", () => {
     await expect(main([], app.prisma)).rejects.toThrow(/Mandantenauswahl erforderlich/);
   });
 
-  // ── Tests 1-3: dry-run classifies without writing ───────────────────────
+  // ── Tests 1, 3, 5: dry-run classifies tenant A without writing ──────────
   it("dry-run: plans a canonical-name row, writes nothing", async () => {
     const summary: BackfillSummary = await main(["--tenant-id", tenantAId], app.prisma);
 
@@ -185,20 +198,6 @@ describe("backfill-leave-type-code (Phase 97 T2 Plan 04)", () => {
     expect(row.name).toBe("Urlaub");
   });
 
-  it("dry-run: plans a legacy-alias row with reason legacy-alias, writes nothing", async () => {
-    const summary: BackfillSummary = await main(["--tenant-id", tenantAId], app.prisma);
-
-    const planned = summary.planned.find((p) => p.leaveTypeId === legacyRowId);
-    expect(planned).toBeDefined();
-    expect(planned!.to).toBe("VACATION");
-    expect(planned!.reason).toBe("legacy-alias");
-    expect(planned!.renameTo).toBe("Urlaub");
-
-    const row = await app.prisma.leaveType.findUniqueOrThrow({ where: { id: legacyRowId } });
-    expect(row.code).toBeNull();
-    expect(row.name).toBe("Jahresurlaub");
-  });
-
   it("dry-run: reports an unmapped name, does not plan it, assigns no replacement code", async () => {
     const summary: BackfillSummary = await main(["--tenant-id", tenantAId], app.prisma);
 
@@ -211,30 +210,40 @@ describe("backfill-leave-type-code (Phase 97 T2 Plan 04)", () => {
     expect(row.code).toBeNull();
   });
 
-  // ── Test 5: an already-coded row is left alone ──────────────────────────
   it("dry-run: does not plan an already-coded row", async () => {
     const summary: BackfillSummary = await main(["--tenant-id", tenantAId], app.prisma);
     expect(summary.planned.some((p) => p.leaveTypeId === sickRowId)).toBe(false);
   });
 
-  // ── Test 4 + 5 (apply half): --apply writes the planned changes ────────
-  it("--apply: writes code (+ rename for legacy) to planned rows, leaves unmapped and already-coded rows untouched", async () => {
+  // ── Test 2: legacy-alias row (standalone, tenant C) ─────────────────────
+  it("dry-run: plans a legacy-alias row with reason legacy-alias, writes nothing", async () => {
+    const summary: BackfillSummary = await main(["--tenant-id", tenantCId], app.prisma);
+
+    const planned = summary.planned.find((p) => p.leaveTypeId === legacyRowId);
+    expect(planned).toBeDefined();
+    expect(planned!.to).toBe("VACATION");
+    expect(planned!.reason).toBe("legacy-alias");
+    expect(planned!.renameTo).toBe("Urlaub");
+
+    const row = await app.prisma.leaveType.findUniqueOrThrow({ where: { id: legacyRowId } });
+    expect(row.code).toBeNull();
+    expect(row.name).toBe("Jahresurlaub");
+  });
+
+  // ── Test 4 (canonical half) + 5: --apply writes tenant A's planned change ─
+  it("--apply (tenant A): writes code to the canonical row, leaves unmapped and already-coded rows untouched", async () => {
     const before = await app.prisma.leaveType.findUniqueOrThrow({ where: { id: sickRowId } });
 
     const summary: BackfillSummary = await main(["--tenant-id", tenantAId, "--apply"], app.prisma);
 
     expect(summary.dryRun).toBe(false);
-    expect(summary.applied).toBe(2); // vacationRow + legacyRow
+    expect(summary.applied).toBe(1); // vacationRow only
 
     const vacationRow = await app.prisma.leaveType.findUniqueOrThrow({
       where: { id: vacationRowId },
     });
     expect(vacationRow.code).toBe("VACATION");
     expect(vacationRow.name).toBe("Urlaub");
-
-    const legacyRow = await app.prisma.leaveType.findUniqueOrThrow({ where: { id: legacyRowId } });
-    expect(legacyRow.code).toBe("VACATION");
-    expect(legacyRow.name).toBe("Urlaub"); // renamed to the canonical display name
 
     const unmappedRow = await app.prisma.leaveType.findUniqueOrThrow({
       where: { id: unmappedRowId },
@@ -244,6 +253,17 @@ describe("backfill-leave-type-code (Phase 97 T2 Plan 04)", () => {
     const sickRow = await app.prisma.leaveType.findUniqueOrThrow({ where: { id: sickRowId } });
     expect(sickRow.code).toBe(before.code);
     expect(sickRow.name).toBe(before.name);
+  });
+
+  // ── Test 4 (legacy half): --apply writes tenant C's planned change ───────
+  it("--apply (tenant C): writes code AND renames the legacy-alias row to its canonical name", async () => {
+    const summary: BackfillSummary = await main(["--tenant-id", tenantCId, "--apply"], app.prisma);
+
+    expect(summary.applied).toBe(1);
+
+    const legacyRow = await app.prisma.leaveType.findUniqueOrThrow({ where: { id: legacyRowId } });
+    expect(legacyRow.code).toBe("VACATION");
+    expect(legacyRow.name).toBe("Urlaub"); // renamed to the canonical display name
   });
 
   // ── Test 10: exactly one AuditLog row per applied change ────────────────
@@ -289,8 +309,8 @@ describe("backfill-leave-type-code (Phase 97 T2 Plan 04)", () => {
     const entitlement = await app.prisma.leaveEntitlement.findUniqueOrThrow({
       where: { id: entitlementId },
     });
-    expect(entitlement.usedDays.toString()).toBe(ENTITLEMENT_USED_DAYS);
-    expect(entitlement.totalDays.toString()).toBe(ENTITLEMENT_TOTAL_DAYS);
+    expect(Number(entitlement.usedDays)).toBe(ENTITLEMENT_USED_DAYS);
+    expect(Number(entitlement.totalDays)).toBe(ENTITLEMENT_TOTAL_DAYS);
   });
 
   // ── Test 7: conflict is reported, not written, no unique violation ──────
@@ -320,8 +340,8 @@ describe("backfill-leave-type-code (Phase 97 T2 Plan 04)", () => {
   });
 
   // ── --all-tenants scope smoke test ───────────────────────────────────────
-  it("--all-tenants scans at least both fixture tenants", async () => {
+  it("--all-tenants scans at least all three fixture tenants", async () => {
     const summary: BackfillSummary = await main(["--all-tenants"], app.prisma);
-    expect(summary.tenantsScanned).toBeGreaterThanOrEqual(2);
+    expect(summary.tenantsScanned).toBeGreaterThanOrEqual(3);
   });
 });
