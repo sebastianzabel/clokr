@@ -1656,3 +1656,178 @@ describe("Leave / Absence API", () => {
     });
   });
 });
+
+describe("ensureLeaveType (Phase 97)", () => {
+  // Each `it` seeds its own tenant so the LeaveType fixture it manipulates never
+  // interferes with another case's fixture — several cases mutate the row
+  // `seedTestData` creates before hitting the endpoint that calls `ensureLeaveType()`.
+  let app: FastifyInstance;
+  const seededTenantIds: string[] = [];
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterAll(async () => {
+    for (const tenantId of seededTenantIds) {
+      try {
+        await cleanupTestData(app, tenantId);
+      } catch (err) {
+        console.error("Test cleanup failed:", err);
+      }
+    }
+  });
+
+  async function seed(suffix: string) {
+    const d = await seedTestData(app, suffix);
+    seededTenantIds.push(d.tenant.id);
+    return d;
+  }
+
+  async function getEntitlements(d: Awaited<ReturnType<typeof seedTestData>>) {
+    return app.inject({
+      method: "GET",
+      url: `/api/v1/leave/entitlements/${d.employee.id}`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+  }
+
+  it("resolves an already-coded row by code and does not touch its (tenant-renamed) name", async () => {
+    const d = await seed("elt1");
+    await app.prisma.leaveType.update({
+      where: { id: d.vacationType.id },
+      data: { code: "VACATION", name: "Erholungsurlaub" },
+    });
+
+    const res = await getEntitlements(d);
+    expect(res.statusCode).toBe(200);
+
+    const row = await app.prisma.leaveType.findUnique({ where: { id: d.vacationType.id } });
+    expect(row?.code).toBe("VACATION");
+    expect(row?.name).toBe("Erholungsurlaub");
+  });
+
+  it("heals an uncoded canonical-name row: sets the code, leaves the canonical name as-is", async () => {
+    const d = await seed("elt2");
+    // seedTestData's own fixture row is already uncoded, name "Urlaub" (the canonical name).
+    const before = await app.prisma.leaveType.findUnique({ where: { id: d.vacationType.id } });
+    expect(before?.code).toBeNull();
+    expect(before?.name).toBe("Urlaub");
+
+    const res = await getEntitlements(d);
+    expect(res.statusCode).toBe(200);
+
+    const after = await app.prisma.leaveType.findUnique({ where: { id: d.vacationType.id } });
+    expect(after?.id).toBe(d.vacationType.id);
+    expect(after?.code).toBe("VACATION");
+    expect(after?.name).toBe("Urlaub");
+  });
+
+  it("heals an uncoded legacy-name row: sets the code AND corrects the legacy name", async () => {
+    const d = await seed("elt3");
+    await app.prisma.leaveType.update({
+      where: { id: d.vacationType.id },
+      data: { code: null, name: "Jahresurlaub" },
+    });
+
+    const res = await getEntitlements(d);
+    expect(res.statusCode).toBe(200);
+
+    const after = await app.prisma.leaveType.findUnique({ where: { id: d.vacationType.id } });
+    expect(after?.id).toBe(d.vacationType.id);
+    expect(after?.code).toBe("VACATION");
+    expect(after?.name).toBe("Urlaub");
+  });
+
+  it("creates a new row with code, name, isPaid and requiresApproval when none exists", async () => {
+    const d = await seed("elt4");
+    await app.prisma.leaveEntitlement.deleteMany({ where: { employeeId: d.employee.id } });
+    await app.prisma.leaveType.delete({ where: { id: d.vacationType.id } });
+
+    const res = await getEntitlements(d);
+    expect(res.statusCode).toBe(200);
+
+    const rows = await app.prisma.leaveType.findMany({ where: { tenantId: d.tenant.id } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].code).toBe("VACATION");
+    expect(rows[0].name).toBe("Urlaub");
+    expect(rows[0].isPaid).toBe(true);
+    expect(rows[0].requiresApproval).toBe(true);
+  });
+
+  it("is idempotent: two consecutive calls return the same id and create only one row", async () => {
+    const d = await seed("elt5");
+
+    const first = await getEntitlements(d);
+    expect(first.statusCode).toBe(200);
+    const second = await getEntitlements(d);
+    expect(second.statusCode).toBe(200);
+
+    const rows = await app.prisma.leaveType.findMany({ where: { tenantId: d.tenant.id } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(d.vacationType.id);
+  });
+
+  it("does not heal a second uncoded legacy row once a coded row already exists (no duplicate-code write)", async () => {
+    const d = await seed("elt6");
+    // The default fixture row becomes the already-coded row.
+    await app.prisma.leaveType.update({
+      where: { id: d.vacationType.id },
+      data: { code: "VACATION" },
+    });
+    // A second, uncoded legacy-named row for the same tenant — must stay untouched.
+    const legacyRow = await app.prisma.leaveType.create({
+      data: { tenantId: d.tenant.id, name: "Jahresurlaub", isPaid: true, requiresApproval: true },
+    });
+
+    const res = await getEntitlements(d);
+    expect(res.statusCode).toBe(200);
+
+    const rows = await app.prisma.leaveType.findMany({ where: { tenantId: d.tenant.id } });
+    expect(rows).toHaveLength(2);
+    const stillUncoded = rows.find((r) => r.id === legacyRow.id);
+    expect(stillUncoded?.code).toBeNull();
+    expect(stillUncoded?.name).toBe("Jahresurlaub");
+  });
+
+  it("orders a multi-row healing candidate set deterministically (createdAt asc, then id asc)", async () => {
+    const d = await seed("elt7");
+    // Replace the default fixture row with two uncoded candidates for the same code,
+    // created in a known order — the older one (canonical name) must win.
+    await app.prisma.leaveEntitlement.deleteMany({ where: { employeeId: d.employee.id } });
+    await app.prisma.leaveType.delete({ where: { id: d.vacationType.id } });
+    const older = await app.prisma.leaveType.create({
+      data: { tenantId: d.tenant.id, name: "Urlaub", isPaid: true, requiresApproval: true },
+    });
+    // Ensure strictly later createdAt than `older` without relying on real-clock granularity.
+    await app.prisma.leaveType.update({
+      where: { id: older.id },
+      data: { createdAt: new Date(Date.now() - 60_000) },
+    });
+    const newer = await app.prisma.leaveType.create({
+      data: { tenantId: d.tenant.id, name: "Jahresurlaub", isPaid: true, requiresApproval: true },
+    });
+
+    const res = await getEntitlements(d);
+    expect(res.statusCode).toBe(200);
+
+    const healed = await app.prisma.leaveType.findUnique({ where: { id: older.id } });
+    expect(healed?.code).toBe("VACATION");
+    const untouched = await app.prisma.leaveType.findUnique({ where: { id: newer.id } });
+    expect(untouched?.code).toBeNull();
+  });
+
+  it("resolves via GET /entitlements while creating no AuditLog row (unchanged pre-phase-97 behavior)", async () => {
+    const d = await seed("elt8");
+    const before = await app.prisma.auditLog.count();
+
+    const res = await getEntitlements(d);
+    expect(res.statusCode).toBe(200);
+
+    const after = await app.prisma.auditLog.count();
+    // Some auditable side effects may run on this endpoint (e.g. cross-tenant guard is not hit
+    // here); ensureLeaveType() itself is a find-or-create with no audit call, matching the
+    // pre-phase-97 implementation (see docblock).
+    expect(after).toBe(before);
+  });
+});
