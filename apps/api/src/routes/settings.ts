@@ -12,6 +12,7 @@ import {
 } from "../utils/month-first-date";
 import { normalizeWorkDays, type PerDayHours } from "../utils/calculate-work-days";
 import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
+import { findVacationLeaveType } from "../utils/vacation-leave-type"; // Issue #196 — both GET/PUT call findVacationLeaveType(app.prisma, tenantId) below
 import { DEFAULT_MISSING_ENTRIES_DAYS } from "../utils/missing-entries-window";
 import {
   ARBZG_FLOOR_OVER_6H,
@@ -1134,10 +1135,8 @@ export async function settingsRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
-      // Urlaub-LeaveType finden
-      const vacationType = await app.prisma.leaveType.findFirst({
-        where: { tenantId: employee.tenantId, name: { contains: "Urlaub", mode: "insensitive" } },
-      });
+      // Urlaub-LeaveType finden (Issue #196: deterministic, shared with PUT below)
+      const vacationType = await findVacationLeaveType(app.prisma, employee.tenantId);
       if (!vacationType) return reply.code(404).send({ error: "Urlaubstyp nicht konfiguriert" });
 
       const entitlement = await app.prisma.leaveEntitlement.findUnique({
@@ -1181,9 +1180,9 @@ export async function settingsRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
-      const vacationType = await app.prisma.leaveType.findFirst({
-        where: { tenantId: employee.tenantId, name: { contains: "Urlaub", mode: "insensitive" } },
-      });
+      // Issue #196: deterministic, shared with GET above — GET and PUT structurally
+      // cannot resolve different rows any more.
+      const vacationType = await findVacationLeaveType(app.prisma, employee.tenantId);
       if (!vacationType) return reply.code(404).send({ error: "Urlaubstyp nicht konfiguriert" });
 
       // Phase 104 (D-19 / R9): this endpoint is the THIRD writer of carryOverDeadline. An omitted
