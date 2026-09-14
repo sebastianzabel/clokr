@@ -125,7 +125,14 @@ describe("auto-close-month plugin (Phase 76.12 Plan 02) — Ø-Methode + bsAbsen
       });
 
       const vacationType = await prisma.leaveType.create({
-        data: { tenantId, name: "Urlaub", isPaid: true, requiresApproval: true, color: "#3B82F6" },
+        data: {
+          tenantId,
+          code: "VACATION",
+          name: "Urlaub",
+          isPaid: true,
+          requiresApproval: true,
+          color: "#3B82F6",
+        },
       });
       vacationTypeId = vacationType.id;
 

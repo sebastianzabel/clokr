@@ -13,6 +13,7 @@ import bcrypt from "bcryptjs";
 // seedTestData(). Adding `uiPreferences Json?` to User caused TS2883 because the
 // inferred return type implicitly references JsonValue without a local binding.
 import { Prisma } from "@clokr/db";
+import { leaveTypeFields } from "../utils/leave-type";
 
 // Keep JsonValue reachable from this module's public types (intentional no-op type alias)
 export type _SeedJsonValue = Prisma.JsonValue;
@@ -197,15 +198,11 @@ export async function seedTestData(testApp: FastifyInstance, suffix = "") {
     data: { employeeId: employee.id, balanceHours: 0 },
   });
 
-  // Create leave type for vacation
+  // Create leave type for vacation. Phase 97 (T2): leaveTypeFields() pairs code and name
+  // structurally, so this shared fixture — the highest-leverage one, reused across the whole
+  // suite — cannot produce a row without a code.
   const vacationType = await prisma.leaveType.create({
-    data: {
-      tenantId: tenant.id,
-      name: "Urlaub",
-      isPaid: true,
-      requiresApproval: true,
-      color: "#3B82F6",
-    },
+    data: { tenantId: tenant.id, ...leaveTypeFields("VACATION"), color: "#3B82F6" },
   });
 
   // Create leave entitlement for current year

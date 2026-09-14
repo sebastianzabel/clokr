@@ -237,7 +237,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     emp2 = emp2Pair.employee;
 
     const vacType = await prisma.leaveType.create({
-      data: { tenantId, name: "Urlaub", isPaid: true, requiresApproval: true },
+      data: { tenantId, code: "VACATION", name: "Urlaub", isPaid: true, requiresApproval: true },
     });
     vacTypeId = vacType.id;
 

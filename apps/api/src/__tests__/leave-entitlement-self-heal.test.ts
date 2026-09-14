@@ -79,9 +79,15 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
     adminToken = JSON.parse(loginRes.body).accessToken as string;
 
     // ── LeaveType "Urlaub" (canonical) + "Jahresurlaub" (legacy alias) ─────
+    // Employee C exercises the NAME-based legacy-alias aggregation across two DISTINCT rows
+    // for the same tenant — the very mechanism Phase 97 replaces. `jahresurlaub` deliberately
+    // stays codeless: @@unique([tenantId, code]) forbids giving both rows the VACATION code,
+    // and this scenario is earmarked for content-level rewrite once the read side moves off
+    // name matching (97-CONTEXT.md D-14 lists this file; not a Task-3 fixture gap).
     const urlaub = await prisma.leaveType.create({
       data: {
         tenantId: tenant.id,
+        code: "VACATION",
         name: "Urlaub",
         isPaid: true,
         requiresApproval: true,
@@ -358,6 +364,7 @@ describe("selfHealUsedDays is Section9Credit-aware (Phase 104, Pitfall 2)", () =
     const vacationType = await prisma.leaveType.create({
       data: {
         tenantId: tenant.id,
+        code: "VACATION",
         name: "Urlaub",
         isPaid: true,
         requiresApproval: true,
@@ -366,7 +373,13 @@ describe("selfHealUsedDays is Section9Credit-aware (Phase 104, Pitfall 2)", () =
     });
     vacationTypeId = vacationType.id;
     const sickType = await prisma.leaveType.create({
-      data: { tenantId: tenant.id, name: "Krankmeldung", isPaid: true, requiresApproval: false },
+      data: {
+        tenantId: tenant.id,
+        code: "SICK",
+        name: "Krankmeldung",
+        isPaid: true,
+        requiresApproval: false,
+      },
     });
     sickTypeId = sickType.id;
   });
@@ -627,6 +640,7 @@ describe("carryover expiry gate (COMP-V1814-03)", () => {
     const lt = await prisma.leaveType.create({
       data: {
         tenantId: tenant.id,
+        code: "VACATION",
         name: "Urlaub",
         isPaid: true,
         requiresApproval: true,

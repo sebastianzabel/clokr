@@ -177,7 +177,13 @@ describe("v1.8.26 — future-in-month approved leave: header == month-saldo (SHI
     // spilling into August. Pre-fix, computeOvertimeBalanceHours never loaded this row (startDate
     // 07-27 > effectiveEnd 07-22) → its C_net credit was dropped → header diverged from the cells.
     const leaveType = await prisma.leaveType.create({
-      data: { tenantId, name: "Urlaub FIML", isPaid: true, requiresApproval: false },
+      data: {
+        tenantId,
+        code: "VACATION",
+        name: "Urlaub FIML",
+        isPaid: true,
+        requiresApproval: false,
+      },
     });
     await prisma.leaveRequest.create({
       data: {

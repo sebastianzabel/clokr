@@ -273,6 +273,7 @@ async function seedKarenzFixture(app: FastifyInstance, suffix: string) {
   const sickType = await prisma.leaveType.create({
     data: {
       tenantId: tenant.id,
+      code: "SICK",
       name: "Krankmeldung",
       isPaid: true,
       requiresApproval: true,

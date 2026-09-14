@@ -95,6 +95,7 @@ describe("recalculateCarryOver / autoCarryOver — ILLNESS deadline protection (
     const vacationType = await prisma.leaveType.create({
       data: {
         tenantId: tenant.id,
+        code: "VACATION",
         name: "Urlaub",
         isPaid: true,
         requiresApproval: true,
@@ -444,6 +445,7 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
     const vacationType = await prisma.leaveType.create({
       data: {
         tenantId: tenant.id,
+        code: "VACATION",
         name: "Urlaub",
         isPaid: true,
         requiresApproval: true,

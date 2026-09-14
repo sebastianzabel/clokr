@@ -68,7 +68,14 @@ describe("Saldo Ø-Methode (Phase 76.12) — time-entries leave/absence subtract
     });
 
     const vacationType = await prisma.leaveType.create({
-      data: { tenantId, name: "Urlaub", isPaid: true, requiresApproval: true, color: "#3B82F6" },
+      data: {
+        tenantId,
+        code: "VACATION",
+        name: "Urlaub",
+        isPaid: true,
+        requiresApproval: true,
+        color: "#3B82F6",
+      },
     });
     vacationTypeId = vacationType.id;
 

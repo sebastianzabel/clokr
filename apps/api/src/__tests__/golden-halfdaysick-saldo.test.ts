@@ -272,7 +272,7 @@ async function seedFixedSick(app: FastifyInstance): Promise<SeededContext> {
 
   // Half-day SICK LeaveRequest on 2026-02-16
   const lt = await prisma.leaveType.create({
-    data: { tenantId, name: "Krankenstand", isPaid: true },
+    data: { tenantId, code: "SICK", name: "Krankenstand", isPaid: true },
   });
   await prisma.leaveRequest.create({
     data: {
@@ -437,7 +437,7 @@ async function seedShiftSick(app: FastifyInstance): Promise<SeededContext> {
 
   // Half-day SICK LeaveRequest on 2026-01-09
   const lt = await prisma.leaveType.create({
-    data: { tenantId, name: "Krankenstand", isPaid: true },
+    data: { tenantId, code: "SICK", name: "Krankenstand", isPaid: true },
   });
   await prisma.leaveRequest.create({
     data: {

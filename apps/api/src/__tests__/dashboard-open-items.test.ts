@@ -183,6 +183,7 @@ describe("GET /api/v1/dashboard/open-items — work obligation per schedule type
     const leaveType = await prisma.leaveType.create({
       data: {
         tenantId,
+        code: "VACATION",
         name: "Urlaub",
         isPaid: true,
         requiresApproval: true,

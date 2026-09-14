@@ -78,6 +78,7 @@ describe("Reports API", () => {
       const overtimeLeaveType = await app.prisma.leaveType.create({
         data: {
           tenantId: datevData.tenant.id,
+          code: "OVERTIME_COMP",
           name: "Überstundenausgleich",
           isPaid: true,
           requiresApproval: false,
@@ -1034,6 +1035,7 @@ describe("Reports API", () => {
       const sickType = await prisma.leaveType.create({
         data: {
           tenantId: hdData.tenant.id,
+          code: "SICK",
           name: "Krankmeldung",
           isPaid: true,
           requiresApproval: false,
@@ -1153,6 +1155,7 @@ describe("Reports API", () => {
       const fdSickType = await prisma.leaveType.create({
         data: {
           tenantId: fdData.tenant.id,
+          code: "SICK",
           name: "Krankmeldung",
           isPaid: true,
           requiresApproval: false,
@@ -1226,6 +1229,7 @@ describe("Reports API", () => {
       return app.prisma.leaveType.create({
         data: {
           tenantId,
+          code: "SICK",
           name: "Krankmeldung",
           isPaid: true,
           requiresApproval: false,
@@ -1285,6 +1289,7 @@ describe("Reports API", () => {
         const sonderurlaub = await app.prisma.leaveType.create({
           data: {
             tenantId: t2.tenant.id,
+            code: "SPECIAL",
             name: "Sonderurlaub",
             isPaid: true,
             requiresApproval: false,

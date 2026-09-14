@@ -68,9 +68,14 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     await app.prisma.leaveEntitlement.deleteMany({ where: { employeeId: tenantA.employee.id } });
     await app.prisma.leaveType.delete({ where: { id: tenantA.vacationType.id } });
 
+    // Phase 97 (T2, D-04/plan 03 task 3): the three "decoys" and "Urlaub" are real canonical
+    // types for THIS file's purpose — they get their codes. "Erholungsurlaub" below is not one
+    // of the nine and stays deliberately codeless: it is the case this file's resolution logic
+    // is exercised against, not a fixture gap.
     sonderurlaubA = await app.prisma.leaveType.create({
       data: {
         tenantId: tenantA.tenant.id,
+        code: "SPECIAL",
         name: "Sonderurlaub",
         isPaid: true,
         requiresApproval: true,
@@ -80,6 +85,7 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     unbezahlterUrlaubA = await app.prisma.leaveType.create({
       data: {
         tenantId: tenantA.tenant.id,
+        code: "UNPAID",
         name: "Unbezahlter Urlaub",
         isPaid: false,
         requiresApproval: true,
@@ -89,6 +95,7 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     bildungsurlaubA = await app.prisma.leaveType.create({
       data: {
         tenantId: tenantA.tenant.id,
+        code: "EDUCATION",
         name: "Bildungsurlaub",
         isPaid: true,
         requiresApproval: true,
@@ -96,7 +103,13 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
       select: { id: true, name: true },
     });
     urlaubTypeA = await app.prisma.leaveType.create({
-      data: { tenantId: tenantA.tenant.id, name: "Urlaub", isPaid: true, requiresApproval: true },
+      data: {
+        tenantId: tenantA.tenant.id,
+        code: "VACATION",
+        name: "Urlaub",
+        isPaid: true,
+        requiresApproval: true,
+      },
       select: { id: true, name: true },
     });
 
@@ -106,6 +119,7 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     jahresurlaubB = await app.prisma.leaveType.create({
       data: {
         tenantId: tenantB.tenant.id,
+        code: "VACATION",
         name: "Jahresurlaub",
         isPaid: true,
         requiresApproval: true,
@@ -114,6 +128,8 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     });
 
     // ── Tenant C: single arbitrarily-named urlaub row ──────────────────────────────────────
+    // Deliberately codeless — "Erholungsurlaub" is not one of the nine canonical/legacy names,
+    // exactly the case this file's resolution logic is exercised against.
     await app.prisma.leaveEntitlement.deleteMany({ where: { employeeId: tenantC.employee.id } });
     await app.prisma.leaveType.delete({ where: { id: tenantC.vacationType.id } });
     erholungsurlaubC = await app.prisma.leaveType.create({
@@ -127,6 +143,8 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     });
 
     // ── Tenant D: ambiguous non-canonical names, no canonical/legacy row ───────────────────
+    // First row deliberately codeless (same reasoning as tenant C); second row IS the SPECIAL
+    // type and gets its code.
     await app.prisma.leaveEntitlement.deleteMany({ where: { employeeId: tenantD.employee.id } });
     await app.prisma.leaveType.delete({ where: { id: tenantD.vacationType.id } });
     await app.prisma.leaveType.create({
@@ -140,6 +158,7 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     await app.prisma.leaveType.create({
       data: {
         tenantId: tenantD.tenant.id,
+        code: "SPECIAL",
         name: "Sonderurlaub",
         isPaid: true,
         requiresApproval: true,

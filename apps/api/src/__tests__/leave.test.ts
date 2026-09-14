@@ -1709,7 +1709,12 @@ describe("ensureLeaveType (Phase 97)", () => {
 
   it("heals an uncoded canonical-name row: sets the code, leaves the canonical name as-is", async () => {
     const d = await seed("elt2");
-    // seedTestData's own fixture row is already uncoded, name "Urlaub" (the canonical name).
+    // Force the seeded fixture row back to the pre-phase-97 uncoded state this case exercises
+    // (seedTestData's own row is coded from the start since Plan 03 Task 3 — see setup.ts).
+    await app.prisma.leaveType.update({
+      where: { id: d.vacationType.id },
+      data: { code: null, name: "Urlaub" },
+    });
     const before = await app.prisma.leaveType.findUnique({ where: { id: d.vacationType.id } });
     expect(before?.code).toBeNull();
     expect(before?.name).toBe("Urlaub");

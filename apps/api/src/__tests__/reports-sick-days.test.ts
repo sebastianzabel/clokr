@@ -39,6 +39,7 @@ describe("Reports: sick day double-count regression (WR-05)", () => {
     const krankmeldungType = await app.prisma.leaveType.create({
       data: {
         tenantId: data.tenant.id,
+        code: "SICK",
         name: "Krankmeldung",
         isPaid: true,
         requiresApproval: false,
@@ -50,6 +51,7 @@ describe("Reports: sick day double-count regression (WR-05)", () => {
     const kinderkrankType = await app.prisma.leaveType.create({
       data: {
         tenantId: data.tenant.id,
+        code: "SICK_CHILD",
         name: "Kinderkrank",
         isPaid: true,
         requiresApproval: false,

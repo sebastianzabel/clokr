@@ -95,6 +95,7 @@ describe("Phase 76.11 — /shifts/week emits leaveMinutesByEmp + absenceMinutesB
     const vacationType = await prisma.leaveType.create({
       data: {
         tenantId,
+        code: "VACATION",
         name: "Urlaub",
         isPaid: true,
         requiresApproval: true,

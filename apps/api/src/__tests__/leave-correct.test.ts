@@ -31,12 +31,19 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
     data = await seedTestData(app, "lc");
     other = await seedTestData(app, "lc2");
     const pt = await app.prisma.leaveType.create({
-      data: { tenantId: data.tenant.id, name: "Elternzeit", isPaid: false, requiresApproval: true },
+      data: {
+        tenantId: data.tenant.id,
+        code: "PARENTAL",
+        name: "Elternzeit",
+        isPaid: false,
+        requiresApproval: true,
+      },
     });
     parentalTypeId = pt.id;
     const opt = await app.prisma.leaveType.create({
       data: {
         tenantId: other.tenant.id,
+        code: "PARENTAL",
         name: "Elternzeit",
         isPaid: false,
         requiresApproval: true,
@@ -313,6 +320,7 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
   });
 
   it("unresolvable leaveType name → 400 instead of a silent booking skip (IN-94-01)", async () => {
+    // Deliberately codeless — this row must stay unresolvable to exercise the guard.
     const weird = await app.prisma.leaveType.create({
       data: {
         tenantId: data.tenant.id,
@@ -436,6 +444,7 @@ describe("Leave correction — reverse-OLD/apply-NEW saldo (94-02)", () => {
       await app.prisma.leaveType.create({
         data: {
           tenantId: data.tenant.id,
+          code: "OVERTIME_COMP",
           name: "Überstundenausgleich",
           isPaid: true,
           requiresApproval: true,
@@ -446,6 +455,7 @@ describe("Leave correction — reverse-OLD/apply-NEW saldo (94-02)", () => {
       await app.prisma.leaveType.create({
         data: {
           tenantId: data.tenant.id,
+          code: "SICK",
           name: "Krankmeldung",
           isPaid: true,
           requiresApproval: false,
@@ -456,6 +466,7 @@ describe("Leave correction — reverse-OLD/apply-NEW saldo (94-02)", () => {
       await app.prisma.leaveType.create({
         data: {
           tenantId: data.tenant.id,
+          code: "PARENTAL",
           name: "Elternzeit",
           isPaid: false,
           requiresApproval: true,

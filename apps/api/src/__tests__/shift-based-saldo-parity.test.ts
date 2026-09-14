@@ -941,7 +941,7 @@ describe("Fixture E — Ausfallprinzip: 5 leave days, C_net=6840, balance=0 (SAL
     empId = fixture.employee.id;
 
     const lt = await app.prisma.leaveType.create({
-      data: { tenantId, name: "Urlaub E", isPaid: true, requiresApproval: false },
+      data: { tenantId, code: "VACATION", name: "Urlaub E", isPaid: true, requiresApproval: false },
     });
     await app.prisma.leaveRequest.create({
       data: {

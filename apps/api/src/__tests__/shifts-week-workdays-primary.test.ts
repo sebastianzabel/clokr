@@ -155,6 +155,7 @@ describe("GET /shifts/week — workDays-primary divisor, end-to-end (SOLL-WORKDA
     const vacationType = await prisma.leaveType.create({
       data: {
         tenantId,
+        code: "VACATION",
         name: "Urlaub",
         isPaid: true,
         requiresApproval: true,
