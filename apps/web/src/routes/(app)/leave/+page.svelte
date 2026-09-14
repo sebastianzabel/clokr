@@ -1287,9 +1287,13 @@
      - Modal primitive does not pass attrs through to its inner DOM; a
        display:contents wrapper around the modal body owns
        `leave-form-modal`, and the inner <form> owns `leave-form`. -->
+  <!-- Phase 201 (Issue #201, C): der Eyebrow nennt den GEWÄHLTEN Typ. Vorher stand hier
+       fest „Urlaub", auch über einer Krankmeldung — dieselbe Familie wie Issue #200:
+       ein Urlaubs-String an einer Stelle, die den Typ kennt. typeName() ist code-getrieben
+       (TYPE_OPTIONS), nie ein Vergleich auf einen Anzeigenamen. -->
   <Modal
     bind:open={showForm}
-    eyebrow="Urlaub"
+    eyebrow={typeName(formType)}
     title={editingRequest ? "Antrag bearbeiten" : "Neuer Abwesenheitsantrag"}
   >
     <div data-testid="leave-form-modal" style="display: contents">
