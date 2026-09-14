@@ -74,28 +74,51 @@ type DbClient = FastifyInstance["prisma"] | Prisma.TransactionClient;
 // import aliases so this move touched no call site; plan 05 replaces the call sites themselves.
 type TypeCode = LeaveTypeCode;
 
-/** Stellt sicher, dass ein LeaveType-Eintrag für den Tenant existiert – gibt seine ID zurück.
- *  Migriert automatisch alte Seed-Namen (z.B. "Jahresurlaub" → "Urlaub"). */
+/**
+ * Resolves the LeaveType row for `tenantId` / `code`, creating it when absent. Returns its id.
+ *
+ * Phase 97 (T2, AC-1): the CODE is the identity. `name` is display text a tenant may rename
+ * freely (AC-2), so this function never rewrites the name of a row that already has a code.
+ *
+ * Step 2 is a one-time self-heal for rows written before the phase-97 backfill, or by the OLD
+ * image during a rolling-deploy window (D-21). It is the only runtime caller of the name ->
+ * code direction, it is guarded against producing a second row with the same code for the
+ * tenant, and its lookup is deterministically ordered (issue #196: Postgres gives no row order
+ * without ORDER BY, and GET/PUT resolving different rows is exactly the defect that caused).
+ *
+ * Auditing: unchanged from the pre-phase-97 implementation — this find-or-create writes no
+ * AuditLog row and did not before either (the old code renamed legacy rows unaudited in the
+ * same way). Not a regression introduced here; tracked as the pre-existing gap it is.
+ */
 async function ensureLeaveType(
   prisma: FastifyInstance["prisma"],
   tenantId: string,
   code: TypeCode,
 ): Promise<string> {
+  // 1. Identity path.
+  const byCode = await prisma.leaveType.findFirst({ where: { tenantId, code } });
+  if (byCode) return byCode.id;
+
+  // 2. One-time self-heal of an uncoded row that carries this type's canonical or legacy name.
   const def = LEAVE_TYPE_DEFS[code];
-  // 1. Kanonischer Name
-  const existing = await prisma.leaveType.findFirst({ where: { tenantId, name: def.name } });
-  if (existing) return existing.id;
-  // 2. Legacy-Alias → umbenennen + zurückgeben
-  const aliases = LEGACY_ALIASES[code] ?? [];
-  for (const alias of aliases) {
-    const legacy = await prisma.leaveType.findFirst({ where: { tenantId, name: alias } });
-    if (legacy) {
-      await prisma.leaveType.update({ where: { id: legacy.id }, data: { name: def.name } });
-      return legacy.id;
-    }
+  const candidateNames = [def.name, ...(LEGACY_ALIASES[code] ?? [])];
+  const uncoded = await prisma.leaveType.findFirst({
+    where: { tenantId, code: null, name: { in: candidateNames } },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+  if (uncoded) {
+    const isLegacyName = uncoded.name !== def.name;
+    const healed = await prisma.leaveType.update({
+      where: { id: uncoded.id },
+      // A legacy seed name is not a display text the tenant chose — it is corrected.
+      // A canonical name is left exactly as it is.
+      data: { code, ...(isLegacyName ? { name: def.name } : {}) },
+    });
+    return healed.id;
   }
-  // 3. Neu anlegen
-  const created = await prisma.leaveType.create({ data: { tenantId, ...def } });
+
+  // 3. Create. leaveTypeFields() makes code and name structurally inseparable.
+  const created = await prisma.leaveType.create({ data: { tenantId, ...leaveTypeFields(code) } });
   return created.id;
 }
 
