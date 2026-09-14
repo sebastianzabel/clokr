@@ -25,6 +25,7 @@ import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { dateStrInTz } from "../utils/timezone";
 import { computeEntryAgeInDays } from "../utils/retro-config";
+import { invalidReasonFields } from "../utils/invalid-reason";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -141,7 +142,7 @@ async function seedEntryFirstCoupled(
       source: "MANUAL",
       createdBy: employeeId,
       isInvalid: true,
-      invalidReason: "Nachtrag – Genehmigung ausstehend",
+      ...invalidReasonFields("RETRO_APPROVAL_PENDING"),
       retroRequestId: request.id,
       isLocked: opts.isLocked ?? false,
     },

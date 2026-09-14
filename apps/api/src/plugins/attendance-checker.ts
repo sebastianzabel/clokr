@@ -7,6 +7,7 @@ import { fetchCloseMonthData } from "../utils/close-month-data";
 import { findMissingWorkdays } from "../utils/find-missing-workdays";
 import { findUnconfirmedBreakEntries } from "../utils/find-unconfirmed-break-days";
 import { resolveMissingEntriesDays } from "../utils/missing-entries-window";
+import { invalidReasonFields } from "../utils/invalid-reason";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -301,7 +302,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
               where: { id: entry.id },
               data: {
                 isInvalid: true,
-                invalidReason: "Ausstempeln fehlt",
+                ...invalidReasonFields("MISSING_CLOCK_OUT"),
               },
             });
 
@@ -312,7 +313,11 @@ export const attendanceCheckerPlugin = fp(async (app) => {
               entity: "TimeEntry",
               entityId: entry.id,
               oldValue: { isInvalid: false },
-              newValue: { origin: "SYSTEM", isInvalid: true, invalidReason: "Ausstempeln fehlt" },
+              newValue: {
+                origin: "SYSTEM",
+                isInvalid: true,
+                ...invalidReasonFields("MISSING_CLOCK_OUT"),
+              },
             });
 
             // Notify the employee

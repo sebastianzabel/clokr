@@ -29,6 +29,7 @@ import { auditReasonSchema } from "../utils/audit-reason"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
 import { isSickTypeName, findSection9Overlaps, intersectRanges } from "../utils/section9-detect"; // Phase 104-05/06
 import { karenzOverrunFromRequests, normalizeKarenzDays } from "../utils/find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
+import { CLEARED_INVALID_REASON } from "../utils/invalid-reason"; // Phase 96 (T1)
 
 // Phase 104-10 — § 9 display-surface helpers (calendar/list/entitlement markers, D-28/D-29/D-31).
 
@@ -941,11 +942,11 @@ export async function leaveRoutes(app: FastifyInstance) {
               employeeId: existing.employeeId,
               date: { gte: existing.startDate, lte: existing.endDate },
               isInvalid: true,
-              invalidReason: "Urlaubsstornierung ausstehend",
+              invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
               deletedAt: null, // D-08: never touch soft-deleted entries
               isLocked: false, // D-08: never mutate locked-month entries (Revisionssicherheit)
             },
-            data: { isInvalid: false, invalidReason: null },
+            data: { isInvalid: false, ...CLEARED_INVALID_REASON },
           });
 
           const typeCode = TYPE_CODES.find(
@@ -1935,11 +1936,11 @@ export async function leaveRoutes(app: FastifyInstance) {
               employeeId: existing.employeeId,
               date: { gte: from, lte: to },
               isInvalid: true,
-              invalidReason: "Urlaubsstornierung ausstehend",
+              invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
               deletedAt: null,
               isLocked: false,
             },
-            data: { isInvalid: false, invalidReason: null },
+            data: { isInvalid: false, ...CLEARED_INVALID_REASON },
           });
         };
         const ONE_DAY_MS = 24 * 60 * 60 * 1000;

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import { pastDateStr } from "./test-dates";
+import { invalidReasonFields } from "../utils/invalid-reason";
 import type { FastifyInstance } from "fastify";
 
 describe("Time Entries API", () => {
@@ -87,7 +88,7 @@ describe("Time Entries API", () => {
           startTime: new Date("2026-02-10T08:00:00.000Z"),
           endTime: null,
           isInvalid: true,
-          invalidReason: "Ausstempeln fehlt",
+          ...invalidReasonFields("MISSING_CLOCK_OUT"),
           source: "MOBILE",
         },
       });
@@ -120,7 +121,7 @@ describe("Time Entries API", () => {
           startTime: new Date("2026-01-05T08:00:00.000Z"),
           endTime: null,
           isInvalid: true,
-          invalidReason: "Ausstempeln fehlt",
+          ...invalidReasonFields("MISSING_CLOCK_OUT"),
           source: "MOBILE",
         },
       });
@@ -133,7 +134,7 @@ describe("Time Entries API", () => {
           startTime: new Date("2026-02-05T08:00:00.000Z"),
           endTime: null,
           isInvalid: true,
-          invalidReason: "Ausstempeln fehlt",
+          ...invalidReasonFields("MISSING_CLOCK_OUT"),
           source: "MOBILE",
         },
       });
@@ -152,6 +153,50 @@ describe("Time Entries API", () => {
       });
 
       expect(res.statusCode).toBe(200);
+
+      // Phase 96 (WR-03): the PUT must also auto-revalidate the corrected entry —
+      // this pins `existing.invalidReasonCode === "MISSING_CLOCK_OUT"` in the PUT
+      // handler. Asserting only the status code let that branch stop firing unnoticed.
+      const after = await app.prisma.timeEntry.findUnique({ where: { id: target.id } });
+      expect(after?.isInvalid, "supplying the missing endTime revalidates the entry").toBe(false);
+      expect(after?.invalidReasonCode, "code cleared together with the text").toBeNull();
+      expect(after?.invalidReason, "text cleared together with the code").toBeNull();
+    });
+
+    // Phase 96 (WR-03 / T-96-12): the negative half of the same comparison. A
+    // pending-Nachtrag entry carries RETRO_APPROVAL_PENDING, so the auto-revalidate
+    // branch must NOT fire — releasing such an entry is reserved for
+    // PATCH /retro-entry-requests/:id/review (Elevation-of-Privilege guard).
+    it("PUT does NOT auto-revalidate an entry invalidated for a different reason (Phase 96)", async () => {
+      const pending = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date("2026-02-17"),
+          startTime: new Date("2026-02-17T08:00:00.000Z"),
+          endTime: null,
+          isInvalid: true,
+          ...invalidReasonFields("RETRO_APPROVAL_PENDING"),
+          source: "MANUAL",
+        },
+      });
+
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/v1/time-entries/${pending.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          startTime: "2026-02-17T08:00:00.000Z",
+          endTime: "2026-02-17T16:00:00.000Z",
+          reason: "Korrektur nach Rückfrage",
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+
+      const after = await app.prisma.timeEntry.findUnique({ where: { id: pending.id } });
+      expect(after?.isInvalid, "stays pending until a manager reviews the Nachtrag").toBe(true);
+      expect(after?.invalidReasonCode).toBe("RETRO_APPROVAL_PENDING");
+      expect(after?.invalidReason).toBe("Nachtrag \u2013 Genehmigung ausstehend");
     });
 
     it("returns ArbZG warnings when daily hours exceed 10h", async () => {
