@@ -131,7 +131,14 @@ export async function specialLeaveRoutes(app: FastifyInstance) {
       const { id } = req.params as { id: string };
       const body = updateRuleSchema.parse(req.body);
 
-      const existing = await app.prisma.specialLeaveRule.findUnique({ where: { id } });
+      // Tenant scope: SpecialLeaveRule carries tenantId directly, so a combined
+      // filter is the shorter equivalent to a separate lookup + compare — same 404
+      // either way, no tenant-membership oracle. No extra CROSS_TENANT_ACCESS_DENIED
+      // audit here: this mirrors the established sibling guard (GET /rules/:id
+      // above), and the row itself stays untouched by a rejected request either way.
+      const existing = await app.prisma.specialLeaveRule.findFirst({
+        where: { id, tenantId: req.user.tenantId },
+      });
       if (!existing) return reply.code(404).send({ error: "Regel nicht gefunden" });
 
       // Statutory rules: name cannot be changed
@@ -167,7 +174,10 @@ export async function specialLeaveRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
 
-      const existing = await app.prisma.specialLeaveRule.findUnique({ where: { id } });
+      // Tenant scope: same rationale as the PUT handler above.
+      const existing = await app.prisma.specialLeaveRule.findFirst({
+        where: { id, tenantId: req.user.tenantId },
+      });
       if (!existing) return reply.code(404).send({ error: "Regel nicht gefunden" });
 
       if (existing.isStatutory) {
