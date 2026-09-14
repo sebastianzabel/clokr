@@ -2112,6 +2112,26 @@ export async function shiftRoutes(app: FastifyInstance) {
       const existing = await app.prisma.shift.findUnique({ where: { id } });
       if (!existing) return reply.code(404).send({ error: "Schicht nicht gefunden" });
 
+      // Tenant isolation check (Shift has no tenantId of its own — go via employee,
+      // mirroring overtime.ts). This guards the LOADED row's real owner: the
+      // downstream effEmployeeId check further below only ever validates the
+      // (possibly attacker-supplied) NEW employeeId, which would silently reassign a
+      // foreign tenant's shift if left unguarded here.
+      const existingOwner = await app.prisma.employee.findUnique({
+        where: { id: existing.employeeId },
+        select: { tenantId: true },
+      });
+      if (!existingOwner || existingOwner.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Shift",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Schicht nicht gefunden" });
+      }
+
       // Determine the effective (employeeId, date, startTime, endTime) after the update
       const effEmployeeId = body.employeeId ?? existing.employeeId;
       const effDateIso = body.date ?? existing.date.toISOString().slice(0, 10);
@@ -3194,6 +3214,23 @@ export async function shiftRoutes(app: FastifyInstance) {
       const { id } = req.params as { id: string };
       const existing = await app.prisma.shift.findUnique({ where: { id } });
       if (!existing) return reply.code(404).send({ error: "Schicht nicht gefunden" });
+
+      // Tenant isolation check (Shift has no tenantId of its own — go via employee,
+      // mirroring overtime.ts / the PUT handler above).
+      const existingOwner = await app.prisma.employee.findUnique({
+        where: { id: existing.employeeId },
+        select: { tenantId: true },
+      });
+      if (!existingOwner || existingOwner.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Shift",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Schicht nicht gefunden" });
+      }
 
       // Phase 47.2 — Past-immutable: no deletion of shifts dated before today.
       const pastGuard = assertShiftNotPast(existing.date.toISOString().slice(0, 10));
