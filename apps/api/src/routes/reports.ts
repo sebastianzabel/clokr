@@ -562,10 +562,11 @@ type DatevEmployee = {
     endTime: Date | null;
     breakMinutes: number | bigint | null;
   }>;
-  absences: Array<{ startDate: Date; endDate: Date; type: string; halfDay?: boolean | null }>;
   leaveRequests: Array<{
+    id: string;
     startDate: Date;
     endDate: Date;
+    halfDay: boolean;
     leaveType: { name: string; code: LeaveTypeCode | null };
   }>;
 };
@@ -590,18 +591,27 @@ function buildDatevLodas(params: {
     return n.toFixed(digits).replace(".", ",");
   }
 
-  /** Arbeitstage (Mo-Fr) im Schnittmenge aus [from,to] ∩ [start,end] zählen */
-  function workDaysInMonthRange(from: Date, to: Date): number {
+  // Issue #210: same UTC walk and clipping workDaysInMonthRange() always did, now also
+  // exposed as day keys — internal identity only, never rendered — so the sickness /
+  // § 9 / non-sick set operations below all derive from the ONE day rule this export
+  // has always used. workDaysInMonthRange() is unchanged in behaviour, only in
+  // implementation (its length).
+  function workdayKeysInMonthRange(from: Date, to: Date): string[] {
     const s = from < start ? start : from;
     const e2 = to > end ? end : to;
-    let count = 0;
+    const keys: string[] = [];
     const cur = new Date(s);
     while (cur <= e2) {
       const dow = cur.getUTCDay();
-      if (dow !== 0 && dow !== 6) count++;
+      if (dow !== 0 && dow !== 6) keys.push(cur.toISOString().slice(0, 10));
       cur.setUTCDate(cur.getUTCDate() + 1);
     }
-    return count;
+    return keys;
+  }
+
+  /** Arbeitstage (Mo-Fr) im Schnittmenge aus [from,to] ∩ [start,end] zählen */
+  function workDaysInMonthRange(from: Date, to: Date): number {
+    return workdayKeysInMonthRange(from, to).length;
   }
 
   // Phase 97 (D-13): the payroll export selects by the stable code. Selecting by display name
@@ -644,20 +654,65 @@ function buildDatevLodas(params: {
     }, 0);
     const workedHours = workedMinutes / 60;
 
-    // Krankheit aus Absence-Modell
-    // Phase 76.32.1 (Wave 4): a.halfDay → count 0.5 instead of full workDaysInMonthRange.
-    const sickDays = emp.absences
-      .filter((a) => a.type === "SICK")
-      .reduce(
-        (sum, a) => sum + (a.halfDay ? 0.5 : workDaysInMonthRange(a.startDate, a.endDate)),
-        0,
-      );
-    const sickChildDays = emp.absences
-      .filter((a) => a.type === "SICK_CHILD")
-      .reduce(
-        (sum, a) => sum + (a.halfDay ? 0.5 : workDaysInMonthRange(a.startDate, a.endDate)),
-        0,
-      );
+    // ── Krankheit aus LeaveRequest (Issue #210) ────────────────────────────
+    // Sickness lives in LeaveRequest; Absence.SICK/SICK_CHILD has no production writer
+    // (measured zero rows on the pseudonymised production copy, 2026-08-30) and no
+    // longer contributes here. A § 9-credited day is UNIONED into the sick day set
+    // rather than added on top of it: Section9Credit.sickRequestId is a non-null FK to
+    // the sickness LeaveRequest that produced the credit, so once the base is sourced
+    // from that same LeaveRequest, the credited day is already inside it — adding
+    // section9WorkDays again would double-count it, the exact T-104-09-PAYROLL class
+    // of defect this time on the Krank side of the ledger. An un-credited sick day that
+    // overlaps a non-sick Lohnart day (e.g. planned vacation) stays on the non-sick
+    // line: § 9 BUrlG returns the vacation day only on presentation of an ärztliches
+    // Zeugnis, so without a CONFIRMED credit the day is legally still Urlaub and must
+    // not be reported twice (would inflate total Ausfalltage beyond the workdays in
+    // the period).
+    const nonSickClaimed = new Set<string>();
+    for (const lr of emp.leaveRequests) {
+      if (lr.leaveType.code === null || isSickLeaveTypeCode(lr.leaveType.code)) continue;
+      for (const key of workdayKeysInMonthRange(lr.startDate, lr.endDate)) {
+        nonSickClaimed.add(key);
+      }
+    }
+    const section9Keys = new Set<string>();
+    for (const c of section9ByEmp?.get(emp.id) ?? []) {
+      for (const key of workdayKeysInMonthRange(c.creditedStart, c.creditedEnd)) {
+        section9Keys.add(key);
+      }
+    }
+    // A day already booked on a non-sick line blocks a sick claim — UNLESS § 9 already
+    // took it off that line, in which case the credit is the authority that moved it.
+    const blockedForSick = new Set([...nonSickClaimed].filter((key) => !section9Keys.has(key)));
+
+    // One Set shared by both sickness lines, so a day claimed by both a SICK and a
+    // contradictory SICK_CHILD row lands on exactly one line (SICK is evaluated first).
+    const sickClaimed = new Set<string>();
+    function sickDaysForCode(code: LeaveTypeCode): number {
+      let total = 0;
+      for (const lr of sortLeaveForDedup(
+        emp.leaveRequests.filter((r) => r.leaveType.code === code),
+      )) {
+        let n = 0;
+        for (const key of workdayKeysInMonthRange(lr.startDate, lr.endDate)) {
+          if (blockedForSick.has(key) || sickClaimed.has(key)) continue;
+          sickClaimed.add(key);
+          n++;
+        }
+        total += lr.halfDay ? n / 2 : n;
+      }
+      return total;
+    }
+    const sickDaysBase = sickDaysForCode("SICK");
+    const sickChildDays = sickDaysForCode("SICK_CHILD");
+    // A CONFIRMED § 9 day whose sickness request could not be read as a typed sickness
+    // row (soft-deleted, moved off APPROVED, or a pre-Phase-97 row whose code is still
+    // null) has nevertheless already been subtracted from the Urlaub line — add it back
+    // here so a day that left Urlaub can never vanish from the file. Deliberately
+    // attributed to Krank (200), not Kinderkrank (201): the sub-type is unresolvable
+    // once the sickness request itself is unreadable, and § 9 BUrlG concerns the
+    // employee's own illness, which makes Krank the correct default.
+    const section9OrphanDays = [...section9Keys].filter((key) => !sickClaimed.has(key)).length;
 
     // Abwesenheiten aus LeaveRequest (nur Arbeitstage)
     const vacationDays = daysForCode(emp, "VACATION");
@@ -668,16 +723,18 @@ function buildDatevLodas(params: {
     const maternityDays = daysForCode(emp, "MATERNITY");
     const parentalDays = daysForCode(emp, "PARENTAL");
 
-    // Phase 104 (D-30): § 9-Tage aus der Urlaubs-Lohnart heraus- und in die Krank-
-    // Lohnart hineinrechnen. Die Summe über beide Zeilen bleibt unverändert — es wird
-    // nichts erfunden und nichts verloren, nur richtig zugeordnet. Ohne diese
-    // Korrektur meldet der Export denselben Ausfalltag doppelt (T-104-09-PAYROLL).
+    // Phase 104 (D-30): § 9-Tage aus der Urlaubs-Lohnart herausrechnen — unchanged by
+    // Issue #210, the Urlaub side of the § 9 move stays literally as it was.
     const section9WorkDays = (section9ByEmp?.get(emp.id) ?? []).reduce(
       (s, c) => s + workDaysInMonthRange(c.creditedStart, c.creditedEnd),
       0,
     );
     const vacationDaysDatev = Math.max(0, vacationDays - section9WorkDays);
-    const sickDaysDatev = sickDays + section9WorkDays;
+    // Issue #210: the Krank side is no longer `+ section9WorkDays` — that was only
+    // correct while the base was the always-empty Absence source. sickDaysBase already
+    // includes every § 9-credited day whose sickness request is readable (the union
+    // above), so only the unreadable ("orphan") § 9 days are added on top.
+    const sickDaysDatev = sickDaysBase + section9OrphanDays;
 
     // DATEV-Zeilen (Format: 12 Felder, Semikolon-getrennt) — datevLine()'s own body is
     // untouched by Phase 104; only the values fed into the Urlaub/Krank calls changed.
@@ -1120,9 +1177,6 @@ export async function reportRoutes(app: FastifyInstance) {
               isInvalid: false,
             },
           },
-          absences: {
-            where: { deletedAt: null, startDate: { lte: end }, endDate: { gte: start } },
-          },
           leaveRequests: {
             where: {
               deletedAt: null,
@@ -1246,9 +1300,6 @@ export async function reportRoutes(app: FastifyInstance) {
               endTime: { not: null },
               isInvalid: false,
             },
-          },
-          absences: {
-            where: { deletedAt: null, startDate: { lte: end }, endDate: { gte: start } },
           },
           leaveRequests: {
             where: {
