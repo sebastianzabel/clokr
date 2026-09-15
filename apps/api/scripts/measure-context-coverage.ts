@@ -409,7 +409,30 @@ export function renderMarkdown(input: RenderInput): string {
 
 // ── Part B: read-only report runner (only executed when run as a script) ──────────────────────
 
-async function gatherMeta(apiRoot: string): Promise<RenderMeta> {
+/**
+ * `vitest` is a pnpm workspace devDependency, hoisted to the WORKSPACE ROOT's `node_modules/`,
+ * never to `apps/api/node_modules/` — so its version must be resolved by walking up from
+ * `apiRoot`, exactly like Node's own module resolution would, rather than assumed to sit directly
+ * under `apiRoot`.
+ */
+function resolveVitestVersion(apiRoot: string, repoRoot: string): string {
+  for (const candidate of [
+    join(apiRoot, "node_modules", "vitest", "package.json"),
+    join(repoRoot, "node_modules", "vitest", "package.json"),
+  ]) {
+    try {
+      const pkg = JSON.parse(readFileSync(candidate, "utf8")) as { version: string };
+      return pkg.version;
+    } catch {
+      continue;
+    }
+  }
+  throw new Error(
+    `measure-context-coverage: could not resolve vitest/package.json under ${apiRoot} or ${repoRoot}.`,
+  );
+}
+
+async function gatherMeta(apiRoot: string, repoRoot: string): Promise<RenderMeta> {
   const headCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: apiRoot }).toString().trim();
   const branch = execFileSync("git", ["branch", "--show-current"], { cwd: apiRoot })
     .toString()
@@ -417,9 +440,7 @@ async function gatherMeta(apiRoot: string): Promise<RenderMeta> {
   const date = new Date().toISOString();
   const nodeVersion = process.version;
 
-  const vitestPkg = JSON.parse(
-    readFileSync(join(apiRoot, "node_modules", "vitest", "package.json"), "utf8"),
-  ) as { version: string };
+  const vitestVersion = resolveVitestVersion(apiRoot, repoRoot);
 
   // Lazy, run()-only import — never at module load, per the import-safety requirement below.
   const configModule = (await import(pathToFileURL(join(apiRoot, "vitest.config.ts")).href)) as {
@@ -429,7 +450,7 @@ async function gatherMeta(apiRoot: string): Promise<RenderMeta> {
   };
   const thresholds = configModule.default.test.coverage.thresholds;
 
-  return { headCommit, branch, date, nodeVersion, vitestVersion: vitestPkg.version, thresholds };
+  return { headCommit, branch, date, nodeVersion, vitestVersion, thresholds };
 }
 
 async function run(): Promise<number> {
@@ -469,7 +490,7 @@ async function run(): Promise<number> {
   }
 
   const testCounts = readTestCounts(report, apiRoot);
-  const meta = await gatherMeta(apiRoot);
+  const meta = await gatherMeta(apiRoot, repoRoot);
 
   const totalEntry = summary.total;
   const summaryTotal = {
