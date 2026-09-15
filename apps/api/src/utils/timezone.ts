@@ -444,8 +444,9 @@ export function getDayHoursFromSchedule(schedule: Record<string, unknown>, dow: 
  * function (corrected Phase 98, Issue #98 — the previous wording here demanded a
  * `type != 'VOCATIONAL_SCHOOL'` / `source != 'PATTERN'` pre-filter that its own
  * principal caller does not apply, and has not applied since v1.8.27). This
- * function receives `from`, `to`, `tz` and `halfDay`; it never sees `type` or
- * `source` and never reads `days` — it only iterates the date range. Whether to
+ * function receives `schedule`, `from`, `to`, `tz` and `opts`
+ * (`halfDay`/`excludeHolidays`); it never sees `type` or `source` and never reads
+ * `days` — it only iterates the date range. Whether to
  * filter by type/source is the CALLER's policy, decided by the caller's own
  * semantics, not a rule this function can state once for everyone:
  *   - `closeEmployeeMonth()` deliberately passes VOCATIONAL_SCHOOL / PATTERN rows
@@ -469,6 +470,10 @@ export function getDayHoursFromSchedule(schedule: Record<string, unknown>, dow: 
  * @param to inclusive UTC end of range
  * @param tz tenant IANA timezone
  * @param opts.halfDay if true, return Math.round(rawMinutes / 2)
+ * @param opts.excludeHolidays tenant-TZ "YYYY-MM-DD" days already credited
+ *   elsewhere; they are skipped, so a holiday inside the range is deducted ONCE
+ *   (D-06/D-08). Materially changes the result — pass it whenever the caller
+ *   subtracts holiday minutes separately.
  * @returns integer minutes (Soll-reduction)
  */
 export function calcLeaveAbsenceMinutesTz(
