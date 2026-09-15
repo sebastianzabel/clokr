@@ -758,9 +758,11 @@ model RetroEntryRequest {
 // Issue #98 — the previous wording here claimed this side of the model had no code
 // path touching it at all, in either direction; that was false, in both directions,
 // as measured below):
-//   Sickness exists in two models: LeaveRequest (identified by LeaveType.code SICK /
-//   SICK_CHILD since Phase 97 — the code is the identity, the display name is
-//   renameable) and Absence (AbsenceType.SICK / SICK_CHILD).
+//   Sickness exists in two models, LeaveRequest and Absence, both identified by the same code —
+//   LeaveTypeCode.SICK / SICK_CHILD — since Phase 98b retyped Absence.type onto that one
+//   enum (see the Phase 98b paragraph below). Before that merge, Absence.type carried the same
+//   two spellings under a separate, now-removed enum, AbsenceType; LeaveRequest has used
+//   LeaveType.code (the identity; the display name is renameable) since Phase 97.
 //
 //   Writing, as measured now: the only absence.create() call sites anywhere in the
 //   repo are vocational-school-generator.ts, routes/vocational-school.ts and one
@@ -1108,13 +1110,17 @@ enum LeaveRequestStatus {
   CANCELLATION_REQUESTED
 }
 
-// Phase 97 (T2, AC-1) — die stabile, nicht übersetzte Identität einer Abwesenheitsart.
-// Die neun Werte sind wörtlich die bisherigen TYPE_CODES aus routes/leave.ts:66-76.
-// Sie werden hier NICHT umbenannt und NICHT mit AbsenceType zusammengelegt — das ist Issue #98.
-// Bewusst KEIN Auffangwert und kein Platzhalter fuer Unbekanntes: das Vokabular ist geschlossen,
-// ein unmappbarer Name ist ein Datenfehler und muss sichtbar bleiben, nicht absorbiert werden.
-// Den Auffangwert auch nicht im Kommentar beim Namen nennen — das Akzeptanzkriterium unten sucht
-// genau danach, und ein Kommentar innerhalb des Enum-Blocks wuerde es treffen.
+// Phase 97 (T2, AC-1) — the stable, untranslated identity of an absence type.
+// The first nine values are literally the previous TYPE_CODES from routes/leave.ts:66-76.
+// Phase 98b (Option A, Issue #98) merged this enum with AbsenceType: LeaveTypeCode grew from
+// nine to eleven members (the two IMPOSED codes below) and Absence.type was retyped onto it, so
+// this is now the ONE vocabulary for both requested and imposed absence types — see
+// REQUESTABLE_CODES / IMPOSED_ONLY_CODES in apps/api/src/utils/leave-type.ts for the split.
+// Deliberately NO catch-all value and no placeholder for "unknown": the vocabulary is closed, an
+// unmappable name is a data defect and must stay visible, not be silently absorbed.
+// Do not name that catch-all value in a comment near its own name either — a text-scanning gate
+// elsewhere searches for exactly that string, and a comment inside this enum block would match it
+// too.
 enum LeaveTypeCode {
   VACATION
   OVERTIME_COMP
