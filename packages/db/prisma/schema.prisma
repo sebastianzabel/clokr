@@ -1124,6 +1124,11 @@ enum LeaveTypeCode {
   EDUCATION
   MATERNITY
   PARENTAL
+  // Phase 98b (Option A, Issue #98): the two IMPOSED codes. They are declared here so the
+  // requested/imposed distinction lives in ONE vocabulary; they are excluded from the request
+  // side by REQUESTABLE_CODES in apps/api/src/utils/leave-type.ts, not by a runtime guard.
+  VOCATIONAL_SCHOOL // Berufsschule (BBiG § 15/§ 17) — imposed by the training contract, never requested
+  OTHER // pre-tracking bridge rows; see IMPOSED_ONLY_CODES in leave-type.ts for why this value is not removable
 }
 
 // Phase 76.29 — retro self-service approval flow status
