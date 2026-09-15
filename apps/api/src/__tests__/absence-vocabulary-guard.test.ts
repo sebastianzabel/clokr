@@ -29,6 +29,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, extname } from "node:path";
 import { describe, it, expect } from "vitest";
+import type { LeaveTypeCode } from "@clokr/db";
 import { REQUESTABLE_CODES, IMPOSED_ONLY_CODES, DISPLAY_NAME } from "../utils/leave-type";
 
 // __dirname is apps/api/src/__tests__ — four levels up is the repo root, same as
@@ -183,7 +184,19 @@ describe("G5 — no production or seed code writes an Absence with a requestable
   ];
   // The four ADR-requested-only codes, post-merge spellings (the `_LEAVE` suffix no longer
   // exists — SPECIAL_LEAVE/UNPAID_LEAVE were retyped to SPECIAL/UNPAID by 98b-04's migration).
-  const REQUESTED_ONLY_FOR_ABSENCE = ["SICK", "SICK_CHILD", "SPECIAL", "UNPAID"] as const;
+  //
+  // The `satisfies` anchor is load-bearing, not decoration (Phase 98b review, IN-02). The deleted
+  // guard carried it on the equivalent tuple; without it a misspelling (`"SICK_CHLID"`) compiles,
+  // the generated regex never matches anything, and the gate silently stops checking that code —
+  // a gate that passes no matter what, which is the failure mode this whole file argues against.
+  // What it still does NOT pin is the tuple's MEMBERSHIP: nothing fails if a future edit drops
+  // `"UNPAID"` from the list, only if it misspells one.
+  const REQUESTED_ONLY_FOR_ABSENCE = [
+    "SICK",
+    "SICK_CHILD",
+    "SPECIAL",
+    "UNPAID",
+  ] as const satisfies readonly LeaveTypeCode[];
 
   function scannedFiles(): string[] {
     const out: string[] = [];
