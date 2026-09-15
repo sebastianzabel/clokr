@@ -180,6 +180,14 @@ COPY --from=build /app/apps/api/ ./apps/api/
 RUN rm -f /app/apps/api/scripts/reset-test-databases.ts \
  && test ! -e /app/apps/api/scripts/reset-test-databases.ts \
  || (echo "FATAL: apps/api/scripts/reset-test-databases.ts is present in the runtime image — D-08 forbids shipping DROP-capable tooling" >&2; exit 1)
+# Test files have no business in a runtime image: they are never executed there, they are dead
+# weight, and their prose legitimately discusses the very statements the gate below scans for.
+# Removing them BEFORE the scan keeps that gate behavioural (it judges shippable scripts) instead
+# of forcing test documentation to dodge a text pattern. GH #203 hit exactly that: a test docblock
+# explaining why the drop tooling is safe tripped the gate meant to keep drop tooling out.
+RUN rm -rf /app/apps/api/scripts/__tests__ \
+ && test ! -e /app/apps/api/scripts/__tests__ \
+ || (echo "FATAL: apps/api/scripts/__tests__ is present in the runtime image" >&2; exit 1)
 # Pattern uses "DROP.DATABASE" (regex dot, not a literal space) so this gate's OWN source
 # line does not match itself once the Dockerfile is copied into the image below — the dot
 # still matches the single space every real DROP-DATABASE SQL statement uses.
