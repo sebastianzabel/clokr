@@ -791,13 +791,14 @@ model RetroEntryRequest {
 //   exclusively (both FKs below) — that part of the old paragraph was correct and
 //   stays.
 //
-//   The written correspondence between AbsenceType and LeaveTypeCode — including
-//   this SICK/SICK_CHILD identity and the SPECIAL_LEAVE<->SPECIAL /
-//   UNPAID_LEAVE<->UNPAID spelling difference — lives in
-//   apps/api/src/utils/absence-type.ts (Phase 98, Option D: the language only, two
-//   separate enums, one written mapping). Merging the two enums into one (Option A)
-//   is a deliberate follow-up phase, not an oversight — read that module first
-//   before reaching for the merge.
+//   Phase 98b (Option A, Issue #98) merged the two vocabularies: there is ONE enum,
+//   LeaveTypeCode, with eleven members. Absence.type and LeaveType.code are the same
+//   vocabulary. The requested/imposed distinction lives in two disjoint tuples over it —
+//   REQUESTABLE_CODES and IMPOSED_ONLY_CODES in apps/api/src/utils/leave-type.ts — and is
+//   enforced by the compiler (LEAVE_TYPE_DEFS is keyed by RequestableCode, so leaveTypeFields()
+//   cannot be called with an imposed code) and by the vocabulary gate under
+//   apps/api/src/__tests__/. The SPECIAL_LEAVE/UNPAID_LEAVE spellings no longer exist; those
+//   rows were retyped to SPECIAL/UNPAID by the migration.
 model Section9Credit {
   id                String               @id @default(uuid())
   employeeId        String // denormalized so tenant-scoped queries need no join
