@@ -3,6 +3,7 @@
 // and the future-source test can share the § 8 BUrlG leave check without re-implementing it.
 // No logic change from the pre-76.2 implementation.
 import type { Prisma } from "@clokr/db";
+import { DISPLAY_NAME } from "./leave-type";
 
 /** § 8 BUrlG: Prüft ob aktiver Urlaub an dem Tag vorliegt */
 export async function hasApprovedLeaveOnDate(
@@ -41,7 +42,10 @@ export async function hasApprovedLeaveOnDate(
   });
   if (absence)
     return {
-      type: absence.type === "MATERNITY" ? "Mutterschutz" : "Elternzeit",
+      // Phase 98b (D-01): the one display table over all eleven codes. The `where` above admits
+      // only MATERNITY and PARENTAL, so this is the same two answers the previous ternary gave —
+      // DISPLAY_NAME is simply exhaustive instead of implicitly two-valued.
+      type: DISPLAY_NAME[absence.type],
       status: "APPROVED" as const,
     };
 
