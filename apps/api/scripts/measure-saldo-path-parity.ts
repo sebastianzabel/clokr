@@ -43,31 +43,27 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, resolve as resolvePath } from "node:path";
 import bcrypt from "bcryptjs";
 import { assertTestDatabaseMarker } from "./test-database-guard";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// Loaded via a dynamic import assigned to a top-level `await`, deliberately NOT a static
-// `import ... from "../src/utils/test-database"` line: `apps/api/src/utils/test-database.ts`
-// itself has zero imports and no module-evaluation side effect (see that module's own header),
-// so loading it here is harmless either way — but writing it as `await import(...)` keeps this
-// file free of any top-level `import` statement reaching into `../src/*` other than this one
-// side-effect-free exception, matching the same "app-side modules reached without a static
-// `import ... from "../src/*"` line" discipline the DATABASE_URL-dependent modules below need
-// for real (#203). `createRequire` (not a bare `require`, which does not exist in an ESM module)
-// gives a synchronous load here — `resolveTargetDatabaseUrl()` below has to stay a synchronous
-// `(): URL` function (Part A, unit-testable without `await`), and this project's `tsx`/esbuild
-// transform of these scripts does not support top-level `await` (measured: it errors with
-// "Top-level await is currently not supported with the cjs output format").
-import { createRequire } from "node:module";
-const require = createRequire(import.meta.url);
-const {
+// `apps/api/src/utils/test-database.ts` itself has zero imports and no module-evaluation side
+// effect (see that module's own header) — unlike `config.ts`/`app.ts`/the routes and utils
+// listed in `run()` below, which validate the whole environment or touch Postgres at import
+// time. That is why this import is a plain static one, exactly like every other script that
+// reaches this module (`test-database-guard.ts`, `vitest.worker-setup.ts`): it needs to be
+// synchronously available before `DATABASE_URL` is assigned, for `resolveTargetDatabaseUrl()`
+// below to be a synchronous, unit-testable `(): URL` function. (A `createRequire`-based
+// synchronous dynamic load was tried instead, to keep every `../src/*` reference behind
+// `await import(...)`/`require(...)` — it broke under Vitest, whose transform does not give a
+// `require()` call inside an ESM module the same `.ts`-aware resolution `tsx`'s loader gives it,
+// so the module failed to import under `vitest run`. A plain static import is correct here.)
+import {
   assertTestDatabaseUrlShape,
   databaseNameOf,
   resolveTestNamespace,
   workerDatabaseName,
   isWorkerDatabaseName,
-} = require("../src/utils/test-database") as typeof import("../src/utils/test-database");
+} from "../src/utils/test-database";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // ── Part A: exported pure helpers (DB-free, unit-testable) ────────────────────
 
