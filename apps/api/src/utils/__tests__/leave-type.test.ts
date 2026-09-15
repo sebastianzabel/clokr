@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
-  LEAVE_TYPE_CODES,
+  REQUESTABLE_CODES,
+  IMPOSED_ONLY_CODES,
   LEAVE_TYPE_DEFS,
+  DISPLAY_NAME,
   LEAVE_TYPE_LEGACY_ALIASES,
   LEAVE_REQUEST_EMAIL_SUBJECT,
   leaveTypeFields,
@@ -16,9 +18,9 @@ import {
  * what makes "there is exactly one mapping" a check rather than a promise. Pure
  * unit test — no Prisma, no buildApp(), no database, does not require test:setup.
  */
-describe("LEAVE_TYPE_CODES", () => {
+describe("REQUESTABLE_CODES", () => {
   it("has exactly the nine codes, in the stable dropdown order", () => {
-    expect(LEAVE_TYPE_CODES).toEqual([
+    expect(REQUESTABLE_CODES).toEqual([
       "VACATION",
       "OVERTIME_COMP",
       "SPECIAL",
@@ -32,7 +34,7 @@ describe("LEAVE_TYPE_CODES", () => {
   });
 
   it("covers every key of LEAVE_TYPE_DEFS and nothing else", () => {
-    expect([...LEAVE_TYPE_CODES].sort()).toEqual(Object.keys(LEAVE_TYPE_DEFS).sort());
+    expect([...REQUESTABLE_CODES].sort()).toEqual(Object.keys(LEAVE_TYPE_DEFS).sort());
   });
 });
 
@@ -55,14 +57,14 @@ describe("LEAVE_TYPE_DEFS", () => {
   });
 
   it("marks exactly UNPAID and PARENTAL as unpaid; the other seven as paid", () => {
-    for (const code of LEAVE_TYPE_CODES) {
+    for (const code of REQUESTABLE_CODES) {
       const expected = code === "UNPAID" || code === "PARENTAL" ? false : true;
       expect(LEAVE_TYPE_DEFS[code].isPaid).toBe(expected);
     }
   });
 
   it("marks exactly SICK, SICK_CHILD and MATERNITY as not requiring approval; the other six do", () => {
-    for (const code of LEAVE_TYPE_CODES) {
+    for (const code of REQUESTABLE_CODES) {
       const expected =
         code === "SICK" || code === "SICK_CHILD" || code === "MATERNITY" ? false : true;
       expect(LEAVE_TYPE_DEFS[code].requiresApproval).toBe(expected);
@@ -162,7 +164,7 @@ describe("LEAVE_TYPE_DEFS notification copy (Issue #200)", () => {
   });
 
   it("has a non-empty notificationTitle and requestPhrase for every code (structural completeness)", () => {
-    for (const code of LEAVE_TYPE_CODES) {
+    for (const code of REQUESTABLE_CODES) {
       expect(typeof LEAVE_TYPE_DEFS[code].notificationTitle).toBe("string");
       expect(LEAVE_TYPE_DEFS[code].notificationTitle.length).toBeGreaterThan(0);
       expect(typeof LEAVE_TYPE_DEFS[code].requestPhrase).toBe("string");
@@ -178,10 +180,42 @@ describe("LEAVE_TYPE_DEFS notification copy (Issue #200)", () => {
   });
 
   it("never uses the forbidden naive one-liner form for notificationTitle", () => {
-    for (const code of LEAVE_TYPE_CODES) {
+    for (const code of REQUESTABLE_CODES) {
       expect(LEAVE_TYPE_DEFS[code].notificationTitle).not.toBe(
         `Neuer ${LEAVE_TYPE_DEFS[code].name}-Antrag`,
       );
+    }
+  });
+});
+
+describe("IMPOSED_ONLY_CODES", () => {
+  it("is exactly VOCATIONAL_SCHOOL and OTHER, in schema declaration order", () => {
+    expect(IMPOSED_ONLY_CODES).toEqual(["VOCATIONAL_SCHOOL", "OTHER"]);
+  });
+
+  it("is disjoint from REQUESTABLE_CODES", () => {
+    const requestable = new Set<string>(REQUESTABLE_CODES);
+    for (const code of IMPOSED_ONLY_CODES) {
+      expect(requestable.has(code)).toBe(false);
+    }
+  });
+});
+
+describe("DISPLAY_NAME", () => {
+  it("has eleven keys, exactly the union of REQUESTABLE_CODES and IMPOSED_ONLY_CODES", () => {
+    expect(Object.keys(DISPLAY_NAME).sort()).toEqual(
+      [...REQUESTABLE_CODES, ...IMPOSED_ONLY_CODES].sort(),
+    );
+  });
+
+  it("pins the two imposed codes' German display names", () => {
+    expect(DISPLAY_NAME.VOCATIONAL_SCHOOL).toBe("Berufsschule");
+    expect(DISPLAY_NAME.OTHER).toBe("Abwesenheit");
+  });
+
+  it("agrees with LEAVE_TYPE_DEFS for every requestable code — the two tables cannot drift", () => {
+    for (const code of REQUESTABLE_CODES) {
+      expect(DISPLAY_NAME[code]).toBe(LEAVE_TYPE_DEFS[code].name);
     }
   });
 });
@@ -192,7 +226,7 @@ describe("LEAVE_REQUEST_EMAIL_SUBJECT (Issue #200)", () => {
   });
 
   it("contains none of the nine type names — the privacy property the subject exists for", () => {
-    for (const code of LEAVE_TYPE_CODES) {
+    for (const code of REQUESTABLE_CODES) {
       expect(LEAVE_REQUEST_EMAIL_SUBJECT).not.toContain(LEAVE_TYPE_DEFS[code].name);
     }
   });

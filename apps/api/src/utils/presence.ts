@@ -1,3 +1,6 @@
+import type { LeaveTypeCode } from "@clokr/db";
+import { DISPLAY_NAME } from "./leave-type";
+
 // ── Presence State Resolver ──────────────────────────────────────────────────
 // Pure utility — no DB dependency. Operates on plain data objects.
 // Designed for unit testability (D-06, D-07).
@@ -30,15 +33,6 @@ export interface PresenceResult {
   status: PresenceStatus;
   reason: string | null;
 }
-
-// German labels for absence types
-const ABSENCE_LABELS: Record<string, string> = {
-  SICK: "Krankmeldung",
-  SICK_CHILD: "Kinderkrank",
-  MATERNITY: "Mutterschutz",
-  PARENTAL: "Elternzeit",
-  VOCATIONAL_SCHOOL: "Berufsschule",
-};
 
 /**
  * Whether a given weekday is an *obligated* workday for an employee — i.e. a day
@@ -179,7 +173,11 @@ export function resolvePresenceState(params: {
   if (absence) {
     return {
       status: "absent",
-      reason: ABSENCE_LABELS[absence.type] ?? absence.type,
+      // DISPLAY_NAME covers all eleven codes. The `??` fallback stays: PresenceAbsence.type is
+      // declared `string`, so a value the compiled table has never seen can still arrive at
+      // runtime (a $queryRaw row, a rolling deploy). Falling back to the raw code is the
+      // pre-Phase-98b behaviour and is deliberately kept.
+      reason: DISPLAY_NAME[absence.type as LeaveTypeCode] ?? absence.type,
     };
   }
 

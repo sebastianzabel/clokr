@@ -2243,6 +2243,57 @@ describe("Phase 97-05 Task 2: iCal export shows the tenant's own display name; e
     );
   });
 
+  it("GET /ical/personal: a VOCATIONAL_SCHOOL Absence is exported as SUMMARY:Berufsschule (D-04 — before Phase 98b it fell through to the generic word)", async () => {
+    const d = await seed("ic5");
+    await app.prisma.absence.create({
+      data: {
+        employeeId: d.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        source: "MANUAL",
+        startDate: new Date("2027-05-03"),
+        endDate: new Date("2027-05-03"),
+        days: 1.0,
+        createdBy: d.adminEmployee.id,
+      },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/leave/ical/personal",
+      headers: { authorization: `Bearer ${d.empToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("SUMMARY:Berufsschule");
+    expect(res.body).not.toContain("SUMMARY:Abwesenheit");
+    // ADR 0001: never use a display string as a control value — CATEGORIES carries the stable
+    // code, not the German label.
+    expect(res.body).toContain("CATEGORIES:VOCATIONAL_SCHOOL");
+  });
+
+  it("GET /ical/team: the same row carries the employee name and the real label", async () => {
+    const d = await seed("ic6");
+    await app.prisma.absence.create({
+      data: {
+        employeeId: d.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        source: "MANUAL",
+        startDate: new Date("2027-05-10"),
+        endDate: new Date("2027-05-10"),
+        days: 1.0,
+        createdBy: d.adminEmployee.id,
+      },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/leave/ical/team",
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatch(/SUMMARY:.*— Berufsschule/);
+    expect(res.body).toContain("CATEGORIES:VOCATIONAL_SCHOOL");
+  });
+
   it("GET /entitlements: only the code = VACATION row gets pro-rata reduced on exit — a SPECIAL row named 'Sonderurlaub' (containing the word) is left at full entitlement", async () => {
     const d = await seed("ic4");
     const year = 2027;

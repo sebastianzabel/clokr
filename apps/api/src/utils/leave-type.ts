@@ -14,9 +14,20 @@ import type { LeaveTypeCode } from "@clokr/db";
  * tenant may rename freely (AC-2) — never compare against it, never derive behaviour from it.
  */
 
-/** All nine codes as a tuple, for `z.enum()` and for iteration. Order is stable and load-bearing
- *  for the leave-type dropdown order in the API's Zod schema. */
-export const LEAVE_TYPE_CODES = [
+/**
+ * The nine codes a `LeaveRequest` can carry — the REQUEST side of the vocabulary. Content and
+ * order are unchanged from the pre-Phase-98b tuple this renames; the order is stable and
+ * load-bearing for the leave-type dropdown order in the API's Zod schema.
+ *
+ * Renamed, not widened, on purpose (Phase 98b, D-01). Phase 98b grows the Prisma `LeaveTypeCode`
+ * enum to eleven members by adding the two IMPOSED codes. This tuple is imported by
+ * `routes/leave.ts` as `TYPE_CODES` and fed directly into `z.enum()` at both request-body
+ * validation sites — widening it would mean a client could submit an imposed code as a
+ * `LeaveRequest.type` with no compile error and no red test. A rename breaks every import site
+ * until a human looks at it; a widened definition under the old name breaks nothing and changes
+ * everything.
+ */
+export const REQUESTABLE_CODES = [
   "VACATION",
   "OVERTIME_COMP",
   "SPECIAL",
@@ -27,6 +38,35 @@ export const LEAVE_TYPE_CODES = [
   "MATERNITY",
   "PARENTAL",
 ] as const satisfies readonly LeaveTypeCode[];
+
+/** A code that a `LeaveRequest` may carry. Today identical to `LeaveTypeCode`; from the Phase-98b
+ *  schema change onward a strict subset of it. */
+export type RequestableCode = (typeof REQUESTABLE_CODES)[number];
+
+/**
+ * The two codes that are IMPOSED, never requested — the members Phase 98b adds to the Prisma
+ * `LeaveTypeCode` enum. Order matches the schema's own declaration order.
+ *
+ * `OTHER` is NOT a dead value and is NOT removable. It has no writer anywhere in production code,
+ * which is exactly what makes it look dead. It is not: 15 production rows exist — hand-inserted
+ * pre-tracking bridge rows across 13 employees, startDate 2026-01-01 through 2026-05-26,
+ * neutralising five months of Soll. Their `days = 0.00` is misleading; the Soll credit comes from
+ * the DATE RANGE, not from `days` (`calcLeaveAbsenceMinutesTz()` in `timezone.ts` never reads
+ * `days`). Removing or renaming it changes the saldo of those 13 employees across five months,
+ * violating Issue #98's own criterion "no saldo and no leave entitlement changes". The
+ * anti-removal gate assertion lives in `apps/api/src/__tests__/absence-vocabulary-guard.test.ts`
+ * — a comment alone has already gone stale once on this vocabulary, a red test has not.
+ *
+ * `VOCATIONAL_SCHOOL` is Berufsschule (BBiG § 15/§ 17): imposed by the training contract, never
+ * requested. It is the only code the saldo calculation branches on (`close-employee-month.ts`
+ * credits it, excludes it from the day-dedup, then re-adds the precise § 15 slot credit).
+ * "Berufsschule beantragen" is factually wrong, which is why it is absent from REQUESTABLE_CODES.
+ */
+export const IMPOSED_ONLY_CODES = [
+  "VOCATIONAL_SCHOOL",
+  "OTHER",
+] as const satisfies readonly LeaveTypeCode[];
+export type ImposedOnlyCode = (typeof IMPOSED_ONLY_CODES)[number];
 
 /**
  * Code -> display name, the two policy flags a newly created row is seeded with, and the two
@@ -43,9 +83,13 @@ export const LEAVE_TYPE_CODES = [
  *
  * MATERNITY and PARENTAL are deliberately worded as a Meldung ("angemeldet"/"-Meldung"), never
  * as an Antrag ("beantragt"/"-antrag"): the issue states these are reported, not applied for.
+ *
+ * `isPaid` and `requiresApproval` exist only as columns of a `LeaveType` row, which an imposed
+ * absence never has — that is why this table is keyed by `RequestableCode` and not by the full
+ * `LeaveTypeCode` (D-01).
  */
 export const LEAVE_TYPE_DEFS: Record<
-  LeaveTypeCode,
+  RequestableCode,
   {
     name: string;
     isPaid: boolean;
@@ -120,6 +164,35 @@ export const LEAVE_TYPE_DEFS: Record<
 };
 
 /**
+ * Code -> German display name over ALL eleven codes — the one place a requestable and an imposed
+ * code share a property (D-01). Replaces `ABSENCE_LABELS` in `utils/presence.ts` and both iCal
+ * ternary chains in `routes/leave.ts`.
+ *
+ * DISPLAY TEXT ONLY (ADR 0001): never compare against a value here, never derive behaviour from
+ * one. The identity of an absence type is its code.
+ *
+ * For the nine requestable codes the value is identical to `LEAVE_TYPE_DEFS[code].name` by
+ * construction — `leave-type.test.ts` asserts that equality so the two tables cannot drift.
+ */
+export const DISPLAY_NAME: Record<LeaveTypeCode, string> = {
+  VACATION: "Urlaub",
+  OVERTIME_COMP: "Überstundenausgleich",
+  SPECIAL: "Sonderurlaub",
+  UNPAID: "Unbezahlter Urlaub",
+  SICK: "Krankmeldung",
+  SICK_CHILD: "Kinderkrank",
+  EDUCATION: "Bildungsurlaub",
+  MATERNITY: "Mutterschutz",
+  PARENTAL: "Elternzeit",
+  // D-04: before Phase 98b both iCal chains fell through to the generic word below for this
+  // value, while the dashboard already said "Berufsschule" — the app contradicted itself.
+  VOCATIONAL_SCHOOL: "Berufsschule",
+  // The generic word, and the only code for which it is the correct answer. See
+  // IMPOSED_ONLY_CODES above for why this entry may not be deleted.
+  OTHER: "Abwesenheit",
+};
+
+/**
  * The neutral email subject for a leave-request notification, uniform across all nine types
  * (Issue #200, owner decision 2026-09-15). `notify.ts` appends the brand suffix itself — do not
  * append it here.
@@ -140,7 +213,7 @@ export const LEAVE_REQUEST_EMAIL_SUBJECT = "Neue Abwesenheitsmeldung";
  * that gives a pre-phase-97 row its code once. No request handler, no report and no scheduler
  * may resolve a type through this list on the normal path.
  */
-export const LEAVE_TYPE_LEGACY_ALIASES: Partial<Record<LeaveTypeCode, readonly string[]>> = {
+export const LEAVE_TYPE_LEGACY_ALIASES: Partial<Record<RequestableCode, readonly string[]>> = {
   VACATION: ["Jahresurlaub", "Urlaub (Jahresurlaub)"],
 };
 
@@ -148,9 +221,13 @@ export const LEAVE_TYPE_LEGACY_ALIASES: Partial<Record<LeaveTypeCode, readonly s
  * Prisma `data:` fragment for a new LeaveType row. The return type requires `code` and `name`
  * together, so no caller can create a row with one and not the other — the same structural
  * pairing `invalidReasonFields()` enforces in Phase 96.
+ *
+ * The parameter is `RequestableCode`, not `LeaveTypeCode`: this function builds a `LeaveType`
+ * row, and "Berufsschule beantragen" is factually wrong — the restriction is now a compile
+ * error rather than a convention (D-01).
  */
-export function leaveTypeFields(code: LeaveTypeCode): {
-  code: LeaveTypeCode;
+export function leaveTypeFields(code: RequestableCode): {
+  code: RequestableCode;
   name: string;
   isPaid: boolean;
   requiresApproval: boolean;
@@ -174,11 +251,11 @@ export function leaveTypeFields(code: LeaveTypeCode): {
  * further-education leave type as vacation, because its German name ends in the same word
  * (D-11).
  */
-export function leaveTypeCodeForName(name: string): LeaveTypeCode | null {
-  for (const code of LEAVE_TYPE_CODES) {
+export function leaveTypeCodeForName(name: string): RequestableCode | null {
+  for (const code of REQUESTABLE_CODES) {
     if (LEAVE_TYPE_DEFS[code].name === name) return code;
   }
-  for (const code of LEAVE_TYPE_CODES) {
+  for (const code of REQUESTABLE_CODES) {
     if ((LEAVE_TYPE_LEGACY_ALIASES[code] ?? []).includes(name)) return code;
   }
   return null;

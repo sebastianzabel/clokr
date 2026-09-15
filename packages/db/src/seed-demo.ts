@@ -730,9 +730,9 @@ async function main() {
   bump("leaveRequest");
 
   // ── Absences (imposed only — Berufsschule) ──────────────────────────────────
-  // AbsenceType has no VACATION member — real vacation lives in LeaveRequest. After the move
-  // above, the only Absence rows this seed creates are VOCATIONAL_SCHOOL: Berufsschule is
-  // imposed (BBiG § 15/§ 17), not requested, so it stays on the Absence side per ADR 0001.
+  // The only Absence rows this seed creates are VOCATIONAL_SCHOOL: Berufsschule is imposed
+  // (BBiG § 15/§ 17), not requested, so it stays on the Absence side per ADR 0001. Real vacation
+  // lives in LeaveRequest.
 
   // Felix vocational-school (Berufsschule) — recurring pattern + concrete rows.
   // daysOfWeek encoding in the pattern model: 0=Mo..6=So → Thursday = 3.

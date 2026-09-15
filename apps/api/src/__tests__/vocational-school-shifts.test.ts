@@ -1,6 +1,6 @@
 // Phase 63 Plan 04 — Schichtplan integration tests (D-20).
 //
-// Covers the Availability bucket extension + classifyAbsenceType + rankAvailability:
+// Covers the Availability bucket extension + classifyLeaveTypeCode + rankAvailability:
 //   - VOCATIONAL_SCHOOL Absence -> availability bucket "vocational_school" in /shifts/week
 //   - soft-deleted BS Absence does NOT surface as "vocational_school"
 //   - shift creation on a BS cell is rejected (POST /shifts conflict path inherits D-43)

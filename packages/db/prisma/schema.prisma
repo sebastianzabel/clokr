@@ -758,9 +758,11 @@ model RetroEntryRequest {
 // Issue #98 — the previous wording here claimed this side of the model had no code
 // path touching it at all, in either direction; that was false, in both directions,
 // as measured below):
-//   Sickness exists in two models: LeaveRequest (identified by LeaveType.code SICK /
-//   SICK_CHILD since Phase 97 — the code is the identity, the display name is
-//   renameable) and Absence (AbsenceType.SICK / SICK_CHILD).
+//   Sickness exists in two models, LeaveRequest and Absence, both identified by the same code —
+//   LeaveTypeCode.SICK / SICK_CHILD — since Phase 98b retyped Absence.type onto that one
+//   enum (see the Phase 98b paragraph below). Before that merge, Absence.type carried the same
+//   two spellings under a separate, now-removed enum, AbsenceType; LeaveRequest has used
+//   LeaveType.code (the identity; the display name is renameable) since Phase 97.
 //
 //   Writing, as measured now: the only absence.create() call sites anywhere in the
 //   repo are vocational-school-generator.ts, routes/vocational-school.ts and one
@@ -768,9 +770,12 @@ model RetroEntryRequest {
 //   written Absence.SICK. Until Phase 98, though, packages/db/src/seed-demo.ts and
 //   reset-demo.ts DID create Absence rows with SICK, SICK_CHILD and SPECIAL_LEAVE
 //   (five call sites, not the single one the old wording accounted for). Phase 98
-//   moved all five into LeaveRequest; G7 in
-//   apps/api/src/__tests__/absence-type-mapping-guard.test.ts is the CI gate that
-//   keeps a seed from creating one of these types on the Absence side again.
+//   moved all five into LeaveRequest. That CI gate lives on: Phase 98b deleted the
+//   old absence-type-mapping-guard.test.ts along with the two-vocabulary module it
+//   guarded, and carried its G7 assertion into
+//   apps/api/src/__tests__/absence-vocabulary-guard.test.ts, re-aimed at the
+//   post-merge spellings. A seed creating one of these types on the Absence side
+//   still turns that gate red.
 //
 //   Reading, as measured now: until Issue #210 (PR #212), the DATEV payroll export
 //   derived its sick-day figures from Absence.type (routes/reports.ts) while the
@@ -779,10 +784,13 @@ model RetroEntryRequest {
 //   too; reports.ts still computes the Absence-side count for reference
 //   (`_sickDaysAbsence`), but that result is discarded (leading underscore) and
 //   feeds nothing further. What still reads Absence.type for SICK/SICK_CHILD today
-//   is display and presence, not payroll: the roster presence tile
-//   (routes/dashboard.ts), two identical iCal label chains (routes/leave.ts) and
-//   the presence-label map (utils/presence.ts) — all three are ALLOWED sites in
-//   leave-type-identity-guard.test.ts, named "Issue #98".
+//   is display and presence, not payroll — and Phase 98b reduced that set. The two
+//   iCal label chains (routes/leave.ts) and the presence-label map
+//   (utils/presence.ts) now resolve their text through DISPLAY_NAME instead of
+//   comparing the type themselves, so their "Issue #98" exceptions were removed
+//   from leave-type-identity-guard.test.ts. What remains is the roster presence
+//   tile (routes/dashboard.ts:1020), which branches on the type to pick a presence
+//   STATE rather than a label — a control decision, not a display string.
 //
 //   Absence.documentPath still has no writer (re-verified); its only readers
 //   remain utils/anonymize.ts and routes/employees.ts (both DSGVO deletion paths).
@@ -791,13 +799,14 @@ model RetroEntryRequest {
 //   exclusively (both FKs below) — that part of the old paragraph was correct and
 //   stays.
 //
-//   The written correspondence between AbsenceType and LeaveTypeCode — including
-//   this SICK/SICK_CHILD identity and the SPECIAL_LEAVE<->SPECIAL /
-//   UNPAID_LEAVE<->UNPAID spelling difference — lives in
-//   apps/api/src/utils/absence-type.ts (Phase 98, Option D: the language only, two
-//   separate enums, one written mapping). Merging the two enums into one (Option A)
-//   is a deliberate follow-up phase, not an oversight — read that module first
-//   before reaching for the merge.
+//   Phase 98b (Option A, Issue #98) merged the two vocabularies: there is ONE enum,
+//   LeaveTypeCode, with eleven members. Absence.type and LeaveType.code are the same
+//   vocabulary. The requested/imposed distinction lives in two disjoint tuples over it —
+//   REQUESTABLE_CODES and IMPOSED_ONLY_CODES in apps/api/src/utils/leave-type.ts — and is
+//   enforced by the compiler (LEAVE_TYPE_DEFS is keyed by RequestableCode, so leaveTypeFields()
+//   cannot be called with an imposed code) and by the vocabulary gate under
+//   apps/api/src/__tests__/. The SPECIAL_LEAVE/UNPAID_LEAVE spellings no longer exist; those
+//   rows were retyped to SPECIAL/UNPAID by the migration.
 model Section9Credit {
   id                String               @id @default(uuid())
   employeeId        String // denormalized so tenant-scoped queries need no join
@@ -849,7 +858,7 @@ model Section9Credit {
 model Absence {
   id                 String        @id @default(uuid())
   employeeId         String
-  type               AbsenceType
+  type               LeaveTypeCode
   source             AbsenceSource @default(MANUAL) // Phase 63 (D-22): PATTERN = auto-generated, MANUAL = human-created. Pre-v1.7 rows backfill to MANUAL (safe per RESEARCH A2).
   startDate          DateTime      @db.Date
   endDate            DateTime      @db.Date
@@ -1107,13 +1116,17 @@ enum LeaveRequestStatus {
   CANCELLATION_REQUESTED
 }
 
-// Phase 97 (T2, AC-1) — die stabile, nicht übersetzte Identität einer Abwesenheitsart.
-// Die neun Werte sind wörtlich die bisherigen TYPE_CODES aus routes/leave.ts:66-76.
-// Sie werden hier NICHT umbenannt und NICHT mit AbsenceType zusammengelegt — das ist Issue #98.
-// Bewusst KEIN Auffangwert und kein Platzhalter fuer Unbekanntes: das Vokabular ist geschlossen,
-// ein unmappbarer Name ist ein Datenfehler und muss sichtbar bleiben, nicht absorbiert werden.
-// Den Auffangwert auch nicht im Kommentar beim Namen nennen — das Akzeptanzkriterium unten sucht
-// genau danach, und ein Kommentar innerhalb des Enum-Blocks wuerde es treffen.
+// Phase 97 (T2, AC-1) — the stable, untranslated identity of an absence type.
+// The first nine values are literally the previous TYPE_CODES from routes/leave.ts:66-76.
+// Phase 98b (Option A, Issue #98) merged this enum with AbsenceType: LeaveTypeCode grew from
+// nine to eleven members (the two IMPOSED codes below) and Absence.type was retyped onto it, so
+// this is now the ONE vocabulary for both requested and imposed absence types — see
+// REQUESTABLE_CODES / IMPOSED_ONLY_CODES in apps/api/src/utils/leave-type.ts for the split.
+// Deliberately NO catch-all value and no placeholder for "unknown": the vocabulary is closed, an
+// unmappable name is a data defect and must stay visible, not be silently absorbed.
+// Do not name that catch-all value in a comment near its own name either — a text-scanning gate
+// elsewhere searches for exactly that string, and a comment inside this enum block would match it
+// too.
 enum LeaveTypeCode {
   VACATION
   OVERTIME_COMP
@@ -1124,6 +1137,11 @@ enum LeaveTypeCode {
   EDUCATION
   MATERNITY
   PARENTAL
+  // Phase 98b (Option A, Issue #98): the two IMPOSED codes. They are declared here so the
+  // requested/imposed distinction lives in ONE vocabulary; they are excluded from the request
+  // side by REQUESTABLE_CODES in apps/api/src/utils/leave-type.ts, not by a runtime guard.
+  VOCATIONAL_SCHOOL // Berufsschule (BBiG § 15/§ 17) — imposed by the training contract, never requested
+  OTHER // pre-tracking bridge rows; see IMPOSED_ONLY_CODES in leave-type.ts for why this value is not removable
 }
 
 // Phase 76.29 — retro self-service approval flow status
@@ -1142,17 +1160,6 @@ enum Section9CreditStatus {
   AU_PENDING
   CONFIRMED
   REJECTED
-}
-
-enum AbsenceType {
-  SICK // Krankheit
-  SICK_CHILD // Kindkrank
-  SPECIAL_LEAVE // Sonderurlaub
-  UNPAID_LEAVE // Unbezahlter Urlaub
-  MATERNITY // Mutterschutz
-  PARENTAL // Elternzeit
-  OTHER
-  VOCATIONAL_SCHOOL // Berufsschule (BBiG § 15/§ 17)
 }
 
 // Phase 63 (D-22): origin of an Absence row.

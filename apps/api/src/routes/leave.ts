@@ -32,13 +32,14 @@ import { isSickLeaveTypeCode } from "../utils/leave-type"; // Phase 97 (T2) — 
 import { karenzOverrunFromRequests, normalizeKarenzDays } from "../utils/find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
 import { CLEARED_INVALID_REASON } from "../utils/invalid-reason"; // Phase 96 (T1)
 import {
-  LEAVE_TYPE_CODES as TYPE_CODES,
+  REQUESTABLE_CODES as TYPE_CODES,
   LEAVE_TYPE_DEFS,
   LEAVE_TYPE_LEGACY_ALIASES as LEGACY_ALIASES,
   LEAVE_REQUEST_EMAIL_SUBJECT,
   leaveTypeFields,
-} from "../utils/leave-type"; // Phase 97 (T2, D-04) — the one mapping
-import type { LeaveTypeCode } from "@clokr/db";
+  DISPLAY_NAME,
+} from "../utils/leave-type"; // Phase 97 (T2, D-04) — the one mapping; DISPLAY_NAME added Phase 98b (D-04)
+import type { RequestableCode } from "../utils/leave-type"; // Phase 98b (D-01) — request-side type
 
 // Phase 104-10 — § 9 display-surface helpers (calendar/list/entitlement markers, D-28/D-29/D-31).
 
@@ -74,7 +75,11 @@ type DbClient = FastifyInstance["prisma"] | Prisma.TransactionClient;
 // Phase 97 (T2, D-04): the nine codes, their German display names and the legacy seed aliases
 // now live in ONE place, `utils/leave-type.ts`. `TYPE_CODES` / `LEGACY_ALIASES` are transitional
 // import aliases so this move touched no call site; plan 05 replaces the call sites themselves.
-type TypeCode = LeaveTypeCode;
+//
+// `RequestableCode`, not `LeaveTypeCode` (Phase 98b, D-01): `ensureLeaveType()` resolves a
+// `LeaveType` row, and a `LeaveType` row never exists for an imposed absence — every one of its
+// call sites only ever passes a requestable code.
+type TypeCode = RequestableCode;
 
 /**
  * Resolves the LeaveType row for `tenantId` / `code`, creating it when absent. Returns its id.
@@ -2507,23 +2512,13 @@ export async function leaveRoutes(app: FastifyInstance) {
       }));
 
       for (const a of absences) {
-        const summary =
-          a.type === "SICK"
-            ? "Krankmeldung"
-            : a.type === "SICK_CHILD"
-              ? "Kinderkrank"
-              : a.type === "MATERNITY"
-                ? "Mutterschutz"
-                : a.type === "PARENTAL"
-                  ? "Elternzeit"
-                  : a.type === "SPECIAL_LEAVE"
-                    ? "Sonderurlaub"
-                    : a.type === "UNPAID_LEAVE"
-                      ? "Unbezahlter Urlaub"
-                      : "Abwesenheit";
         events.push({
           uid: `absence-${a.id}@clokr`,
-          summary,
+          // Phase 98b (D-04): one display table for all eleven codes. The old six-way ternary
+          // could not name VOCATIONAL_SCHOOL or OTHER at all and fell through to the generic
+          // word, while the dashboard already said "Berufsschule" — the app contradicted itself.
+          // DISPLAY_NAME is exhaustive over LeaveTypeCode, so no fallback branch is needed.
+          summary: DISPLAY_NAME[a.type],
           dtstart: a.startDate.toISOString().split("T")[0],
           dtend: addOneDay(a.endDate.toISOString().split("T")[0]),
           description: a.note ?? undefined,
@@ -2573,23 +2568,9 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       for (const a of absences) {
         const name = `${a.employee.firstName} ${a.employee.lastName}`;
-        const summary =
-          a.type === "SICK"
-            ? "Krankmeldung"
-            : a.type === "SICK_CHILD"
-              ? "Kinderkrank"
-              : a.type === "MATERNITY"
-                ? "Mutterschutz"
-                : a.type === "PARENTAL"
-                  ? "Elternzeit"
-                  : a.type === "SPECIAL_LEAVE"
-                    ? "Sonderurlaub"
-                    : a.type === "UNPAID_LEAVE"
-                      ? "Unbezahlter Urlaub"
-                      : "Abwesenheit";
         events.push({
           uid: `absence-${a.id}@clokr`,
-          summary: `${name} \u2014 ${summary}`,
+          summary: `${name} \u2014 ${DISPLAY_NAME[a.type]}`,
           dtstart: a.startDate.toISOString().split("T")[0],
           dtend: addOneDay(a.endDate.toISOString().split("T")[0]),
           description: a.note ?? undefined,

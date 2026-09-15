@@ -173,28 +173,6 @@ const ALLOWED: AllowedEntry[] = [
     pattern: null,
     reason: "TYPE_LABELS — the same code->label display map pattern, inbox variant.",
   },
-  // leave.ts: the two iCal ternary chains key off Absence.type, not LeaveType (out of scope).
-  {
-    file: "apps/api/src/routes/leave.ts",
-    pattern:
-      /a\.type === "(SICK|SICK_CHILD|MATERNITY|PARENTAL|SPECIAL_LEAVE|UNPAID_LEAVE)"|"(Krankmeldung|Kinderkrank|Mutterschutz|Elternzeit|Sonderurlaub|Unbezahlter Urlaub|Abwesenheit)"/,
-    reason:
-      "The two iCal export ternary chains (GET /ical/personal, GET /ical/team) build a display " +
-      "SUMMARY string from the Absence model's AbsenceType field (a.type), not from LeaveType — " +
-      "out of this phase's (T2, LeaveType.code) scope. The vocabulary unification across Absence " +
-      "and LeaveType is Issue #98. Plans 02/05/09 measured these exact lines (2435-2446, " +
-      "2500-2511 at 97-09 completion).",
-  },
-  // presence.ts: ABSENCE_LABELS keys off Absence.type, a distinct model (found by Plan 09).
-  {
-    file: "apps/api/src/utils/presence.ts",
-    pattern: null,
-    reason:
-      "ABSENCE_LABELS keys off the Absence model's AbsenceType field (SICK/SICK_CHILD/MATERNITY/" +
-      "PARENTAL/VOCATIONAL_SCHOOL), a distinct model from LeaveType per ADR 0001's context " +
-      "boundaries (Absence = imposed, LeaveRequest = requested) — not a LeaveType.name " +
-      "comparison. Found and documented by Plan 09; out of scope for this phase.",
-  },
   // special-leave.ts: Swagger/OpenAPI documentation tag, never read back by code.
   {
     file: "apps/api/src/routes/special-leave.ts",
@@ -204,23 +182,13 @@ const ALLOWED: AllowedEntry[] = [
       'convention as tags: ["Mitarbeiter"] elsewhere in the codebase) — never read back by any ' +
       "code path, not a runtime comparison.",
   },
-  // leave-check.ts: control is absence.type (a code); the literal is only the display result.
-  {
-    file: "apps/api/src/utils/leave-check.ts",
-    pattern: /absence\.type === "MATERNITY" \? "Mutterschutz" : "Elternzeit"/,
-    reason:
-      "The control value is absence.type (a stable AbsenceType code); the German literal is only " +
-      "the display text returned to the caller (interpolated into a German error message by " +
-      "time-entries.ts / the clock resolver, never compared again) — same shape as the leave.ts " +
-      "iCal ternary above.",
-  },
   // MyWeekView.svelte: icon/label keyed off the stable absenceType code, not the literal.
   {
     file: "apps/web/src/lib/components/dashboard/MyWeekView.svelte",
     pattern: /day\.absenceType === "(SICK_CHILD|MATERNITY)"/,
     reason:
       "Icon/label selection keyed off the stable absenceType field, not the literal itself — the " +
-      "literal is only the ternary's display-text branch, same shape as leave-check.ts above.",
+      "literal is only the ternary's display-text branch.",
   },
 
   // ── Tracked technical debt — genuine findings from the completeness probe, reported per the ──
