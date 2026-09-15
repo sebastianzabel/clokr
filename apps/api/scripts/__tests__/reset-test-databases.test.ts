@@ -4,9 +4,16 @@
  * parameter and the two name sets (`MAIN_WORKERS`/`NS_WORKERS`) namespace-parameterised on
  * purpose — see the comment above their declaration below.
  *
- * DB-free: imports ONLY the pure exported gate functions. Conventions follow
- * scripts/__tests__/audit-saldo-chain-integrity.test.ts: describe/it shape, no mocking
- * framework, no hardcoded calendar date anywhere.
+ * DB-free: imports ONLY the pure exported gate functions. This is true only because
+ * `reset-test-databases.ts`'s trailing `main()` invocation is guarded by an
+ * `import.meta.url === pathToFileURL(process.argv[1]).href` check (GH #203) — before that guard
+ * existed, this exact import silently re-ran the real script's `main()` on every vitest run (local
+ * or CI), performing a genuine `DROP DATABASE ... WITH (FORCE)` against the live per-worker test
+ * databases mid-suite. That defect shipped with this file at Phase 106 and went undetected until
+ * 2026-09; do not remove the guard to "simplify" this import. See
+ * `scripts/__tests__/script-import-safety.test.ts` for the regression test that proves the guard
+ * holds. Conventions follow scripts/__tests__/audit-saldo-chain-integrity.test.ts: describe/it
+ * shape, no mocking framework, no hardcoded calendar date anywhere.
  */
 import { describe, it, expect } from "vitest";
 import { mayDropDatabase, mayRollbackDrop, mayPruneDatabase } from "../reset-test-databases";

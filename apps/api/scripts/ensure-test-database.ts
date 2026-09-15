@@ -45,6 +45,7 @@
  * the constants.
  */
 import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import pg from "pg";
 import {
   TEST_DATABASE_NAME,
@@ -180,7 +181,19 @@ async function main(): Promise<void> {
   process.exit(0);
 }
 
-main().catch((err) => {
-  console.error("ensure-test-database: FATAL —", err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+/**
+ * Executed ONLY when this file is run as the entry point (e.g.
+ * `tsx scripts/ensure-test-database.ts`) — never as a side effect of being IMPORTED (GH #203). No
+ * test imports this module for a helper today, but `reset-test-databases.ts` sat unguarded next to
+ * an identical top-level `main().catch(...)` for the same reason until a test file importing its
+ * pure gate functions dragged the whole module — including that unconditional call — into every
+ * vitest run, performing a REAL `CREATE DATABASE`/marker stamp mid-suite. This guard closes the
+ * identical hazard here before anyone imports this file for a helper. See
+ * `scripts/__tests__/script-import-safety.test.ts` for the regression test.
+ */
+if (import.meta.url === (process.argv[1] ? pathToFileURL(process.argv[1]).href : undefined)) {
+  main().catch((err) => {
+    console.error("ensure-test-database: FATAL —", err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}

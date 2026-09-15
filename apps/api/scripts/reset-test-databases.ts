@@ -54,6 +54,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import pg from "pg";
 import {
   TEST_DATABASE_MARKER,
@@ -556,7 +557,23 @@ async function main(): Promise<void> {
   process.exit(0);
 }
 
-main().catch((err) => {
-  console.error("reset-test-databases: FATAL —", err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+/**
+ * Executed ONLY when this file is run as the entry point (e.g.
+ * `tsx scripts/reset-test-databases.ts`) — never as a side effect of being IMPORTED (GH #203).
+ * Before this guard existed, `scripts/__tests__/reset-test-databases.test.ts` importing the pure
+ * gate functions below dragged this whole module's body — including this unconditional call — into
+ * every single vitest run, which performed a REAL `DROP DATABASE ... WITH (FORCE)` against the
+ * live per-worker test databases (`clokr_test_1`…`_N`) mid-suite. `import.meta.url` is the URL of
+ * THIS module; `process.argv[1]` is the script tsx/node was actually invoked with — they are equal
+ * only when this file is the process entry point, never when some other file (a test, another
+ * script) imports it. Verified empirically for both invocation shapes this project actually uses:
+ * `tsx scripts/reset-test-databases.ts` (direct) and a vitest worker `import`-ing this module for
+ * `mayDropDatabase`/`mayRollbackDrop`/`mayPruneDatabase` (guarded) — see
+ * `scripts/__tests__/script-import-safety.test.ts`.
+ */
+if (import.meta.url === (process.argv[1] ? pathToFileURL(process.argv[1]).href : undefined)) {
+  main().catch((err) => {
+    console.error("reset-test-databases: FATAL —", err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}
