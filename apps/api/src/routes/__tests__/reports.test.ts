@@ -4,6 +4,7 @@ import iconv from "iconv-lite";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
 import { computeOvertimeBalanceHours } from "../time-entries";
 import * as pdfUtils from "../../utils/pdf";
+import { leaveTypeFields } from "../../utils/leave-type";
 
 // Phase 97 (D-11, Task 3): the two vacation-overview PDF handlers only expose their
 // aggregated { totalDays, ... } data by feeding it into pdfkit, which compresses its
@@ -77,6 +78,26 @@ describe("Reports API", () => {
           endDate: new Date("2026-04-14"),
           days: 1,
           createdBy: datevData.adminUser.id,
+        },
+      });
+
+      // Issue #210: sickness is sourced from LeaveRequest, not the Absence row above
+      // (which is kept on purpose — it must NOT contribute to the export any more).
+      const dvSickType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: datevData.tenant.id,
+          ...leaveTypeFields("SICK"),
+          color: "#EF4444",
+        },
+      });
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: datevData.employee.id,
+          leaveTypeId: dvSickType.id,
+          startDate: new Date("2026-04-15"), // Wednesday
+          endDate: new Date("2026-04-16"), // Thursday — 2 workdays
+          days: 2,
+          status: "APPROVED",
         },
       });
 
@@ -218,33 +239,41 @@ describe("Reports API", () => {
     });
 
     it("DATEV-03a: custom Lohnartennummern from TenantConfig appear in data rows", async () => {
-      await app.prisma.tenantConfig.update({
-        where: { tenantId: datevData.tenant.id },
-        data: {
-          datevNormalstundenNr: 777,
-          datevUrlaubNr: 888,
-          datevKrankNr: 999,
-          datevSonderurlaubNr: 555,
-        },
-      });
-      const res = await app.inject({
-        method: "GET",
-        url: "/api/v1/reports/datev?year=2026&month=4",
-        headers: { authorization: `Bearer ${datevData.adminToken}` },
-      });
-      const body = iconv.decode(res.rawPayload, "win1252");
-      expect(body).toContain(";777;");
-      expect(body).toContain(";888;");
-      expect(body).toContain(";999;");
-      await app.prisma.tenantConfig.update({
-        where: { tenantId: datevData.tenant.id },
-        data: {
-          datevNormalstundenNr: 100,
-          datevUrlaubNr: 300,
-          datevKrankNr: 200,
-          datevSonderurlaubNr: 302,
-        },
-      });
+      // try/finally so an assertion failure inside this test never leaves the custom
+      // Lohnartennummern in place for DATEV-03b (test-order independence).
+      try {
+        await app.prisma.tenantConfig.update({
+          where: { tenantId: datevData.tenant.id },
+          data: {
+            datevNormalstundenNr: 777,
+            datevUrlaubNr: 888,
+            datevKrankNr: 999,
+            datevSonderurlaubNr: 555,
+          },
+        });
+        const res = await app.inject({
+          method: "GET",
+          url: "/api/v1/reports/datev?year=2026&month=4",
+          headers: { authorization: `Bearer ${datevData.adminToken}` },
+        });
+        const body = iconv.decode(res.rawPayload, "win1252");
+        expect(body).toContain(";777;");
+        expect(body).toContain(";888;");
+        expect(body).toContain(";999;");
+        // Issue #210: the 2 workdays now come from the LeaveRequest fixture added to
+        // the `dv` beforeAll above, not from the kept-but-dead Absence row.
+        expect(body).toContain(";K;999;;2,0;");
+      } finally {
+        await app.prisma.tenantConfig.update({
+          where: { tenantId: datevData.tenant.id },
+          data: {
+            datevNormalstundenNr: 100,
+            datevUrlaubNr: 300,
+            datevKrankNr: 200,
+            datevSonderurlaubNr: 302,
+          },
+        });
+      }
     });
 
     it("DATEV-03b: default Lohnartennummer 100 used with default config", async () => {
@@ -529,6 +558,297 @@ describe("Reports API", () => {
       // The 2 credited days move to Krank (field order: Ausfall, Lohnart, Stunden, Tage).
       const krankLine = lines.find((l) => l.includes(";K;200;"));
       expect(krankLine).toContain(";K;200;;2,0;");
+    });
+  });
+
+  // ── Issue #210: Krank/Kinderkrank sourced from LeaveRequest, not Absence ────────
+  // Absence.SICK / SICK_CHILD has no production writer (measured zero rows on the
+  // pseudonymised production copy, 2026-08-30) — the export must source sickness
+  // exclusively from APPROVED, non-deleted sickness LeaveRequests, and a § 9-credited
+  // day must be reported exactly once (union over day keys, never a sum).
+  describe("GET /api/v1/reports/datev — Krank/Kinderkrank aus LeaveRequest (Issue #210)", () => {
+    let d210Data: Awaited<ReturnType<typeof seedTestData>>;
+    let sickType: { id: string };
+    let sickChildType: { id: string };
+
+    beforeAll(async () => {
+      d210Data = await seedTestData(app, "d210");
+      sickType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: d210Data.tenant.id,
+          ...leaveTypeFields("SICK"),
+          color: "#EF4444",
+        },
+      });
+      sickChildType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: d210Data.tenant.id,
+          ...leaveTypeFields("SICK_CHILD"),
+          color: "#F59E0B",
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, d210Data.tenant.id);
+    });
+
+    async function datevBody210(url: string, token: string) {
+      const res = await app.inject({
+        method: "GET",
+        url,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      return iconv.decode(res.rawPayload, "win1252");
+    }
+
+    it("S210-1: an APPROVED SICK request counts its workdays; REJECTED, CANCELLED, soft-deleted and Absence.SICK rows contribute nothing", async () => {
+      // APPROVED — the sole survivor (3 workdays).
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: d210Data.employee.id,
+          leaveTypeId: sickType.id,
+          startDate: new Date("2026-06-01"), // Monday
+          endDate: new Date("2026-06-03"), // Wednesday — 3 workdays
+          days: 3,
+          status: "APPROVED",
+        },
+      });
+      // REJECTED — not counted.
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: d210Data.employee.id,
+          leaveTypeId: sickType.id,
+          startDate: new Date("2026-06-04"),
+          endDate: new Date("2026-06-05"),
+          days: 2,
+          status: "REJECTED",
+        },
+      });
+      // CANCELLED SICK_CHILD — not counted, and proves the 201 line stays absent for E1.
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: d210Data.employee.id,
+          leaveTypeId: sickChildType.id,
+          startDate: new Date("2026-06-08"),
+          endDate: new Date("2026-06-09"),
+          days: 2,
+          status: "CANCELLED",
+        },
+      });
+      // APPROVED but soft-deleted — not counted.
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: d210Data.employee.id,
+          leaveTypeId: sickType.id,
+          startDate: new Date("2026-06-11"),
+          endDate: new Date("2026-06-12"),
+          days: 2,
+          status: "APPROVED",
+          deletedAt: new Date(),
+        },
+      });
+      // Absence.SICK — the dead source, kept on purpose: must contribute nothing.
+      await app.prisma.absence.create({
+        data: {
+          employeeId: d210Data.employee.id,
+          type: "SICK",
+          startDate: new Date("2026-06-22"),
+          endDate: new Date("2026-06-26"),
+          days: 5,
+          createdBy: d210Data.adminUser.id,
+        },
+      });
+
+      const body = await datevBody210(
+        "/api/v1/reports/datev?year=2026&month=6",
+        d210Data.adminToken,
+      );
+      const lines = body
+        .split(/\r\n/)
+        .filter((l) => l.startsWith(`${d210Data.employee.employeeNumber};`));
+      const krankLines = lines.filter((l) => l.includes(";K;"));
+      expect(krankLines.length).toBe(1);
+      expect(krankLines[0]).toContain(";K;200;;3,0;");
+      expect(lines.some((l) => l.includes(";K;201;"))).toBe(false);
+    });
+
+    it("S210-2: an APPROVED SICK_CHILD request produces the Lohnart 201 line, which today is never emitted at all", async () => {
+      const employee2 = await app.prisma.employee.create({
+        data: {
+          tenantId: d210Data.tenant.id,
+          userId: (
+            await app.prisma.user.create({
+              data: {
+                email: `d210-e2-${Date.now()}@test.de`,
+                passwordHash: "DUMMY",
+                role: "EMPLOYEE",
+                isActive: true,
+              },
+            })
+          ).id,
+          employeeNumber: `D210-E2-${Date.now()}`,
+          firstName: "S210",
+          lastName: "E2",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: employee2.id,
+          leaveTypeId: sickChildType.id,
+          startDate: new Date("2026-06-08"), // Monday
+          endDate: new Date("2026-06-09"), // Tuesday — 2 workdays
+          days: 2,
+          status: "APPROVED",
+        },
+      });
+
+      const body = await datevBody210(
+        "/api/v1/reports/datev?year=2026&month=6",
+        d210Data.adminToken,
+      );
+      const lines = body.split(/\r\n/).filter((l) => l.startsWith(`${employee2.employeeNumber};`));
+      expect(lines.some((l) => l.includes(";K;201;;2,0;"))).toBe(true);
+    });
+
+    it("S210-3: a § 9-credited day is reported once via union, never added on top of the sickness request (naive addition would double-count to 8,0)", async () => {
+      const employee3 = await app.prisma.employee.create({
+        data: {
+          tenantId: d210Data.tenant.id,
+          userId: (
+            await app.prisma.user.create({
+              data: {
+                email: `d210-e3-${Date.now()}@test.de`,
+                passwordHash: "DUMMY",
+                role: "EMPLOYEE",
+                isActive: true,
+              },
+            })
+          ).id,
+          employeeNumber: `D210-E3-${Date.now()}`,
+          firstName: "S210",
+          lastName: "E3",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      const sickReq = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: employee3.id,
+          leaveTypeId: sickType.id,
+          startDate: new Date("2026-06-15"), // Monday
+          endDate: new Date("2026-06-19"), // Friday — 5 workdays
+          days: 5,
+          status: "APPROVED",
+        },
+      });
+      const vacReq = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: employee3.id,
+          leaveTypeId: d210Data.vacationType.id,
+          startDate: new Date("2026-06-17"), // Wednesday
+          endDate: new Date("2026-06-19"), // Friday — 3 workdays
+          days: 3,
+          status: "APPROVED",
+        },
+      });
+      await app.prisma.section9Credit.create({
+        data: {
+          employeeId: employee3.id,
+          sickRequestId: sickReq.id,
+          vacationRequestId: vacReq.id,
+          overlapStart: new Date("2026-06-17"),
+          overlapEnd: new Date("2026-06-19"),
+          status: "CONFIRMED",
+          creditedStart: new Date("2026-06-17"),
+          creditedEnd: new Date("2026-06-19"),
+          creditedDays: 3,
+          attestSource: "EAU",
+          attestValidFrom: new Date("2026-06-17"),
+          attestValidTo: new Date("2026-06-19"),
+          reason: "S210-3 fixture",
+        },
+      });
+
+      const body = await datevBody210(
+        "/api/v1/reports/datev?year=2026&month=6",
+        d210Data.adminToken,
+      );
+      const lines = body.split(/\r\n/).filter((l) => l.startsWith(`${employee3.employeeNumber};`));
+      // 5 workdays sick, 3 of them credited back out of Urlaub — total Ausfalltage 5,
+      // exactly the number of workdays in the period. Not 8,0 (double count via naive
+      // addition), not 3,0 (loss of the two un-credited sick days).
+      expect(lines.some((l) => l.includes(";K;200;;5,0;"))).toBe(true);
+      expect(lines.some((l) => l.includes(";U;300;"))).toBe(false);
+    });
+
+    it("S210-4: a CONFIRMED § 9 credit whose sickness request is invisible (soft-deleted) still reports its days — the orphan fallback", async () => {
+      const employee4 = await app.prisma.employee.create({
+        data: {
+          tenantId: d210Data.tenant.id,
+          userId: (
+            await app.prisma.user.create({
+              data: {
+                email: `d210-e4-${Date.now()}@test.de`,
+                passwordHash: "DUMMY",
+                role: "EMPLOYEE",
+                isActive: true,
+              },
+            })
+          ).id,
+          employeeNumber: `D210-E4-${Date.now()}`,
+          firstName: "S210",
+          lastName: "E4",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      const vacReq = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: employee4.id,
+          leaveTypeId: d210Data.vacationType.id,
+          startDate: new Date("2026-06-22"), // Monday
+          endDate: new Date("2026-06-23"), // Tuesday — 2 workdays
+          days: 2,
+          status: "APPROVED",
+        },
+      });
+      const sickReq = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: employee4.id,
+          leaveTypeId: sickType.id,
+          startDate: new Date("2026-06-22"),
+          endDate: new Date("2026-06-23"),
+          days: 2,
+          status: "APPROVED",
+          deletedAt: new Date(),
+        },
+      });
+      await app.prisma.section9Credit.create({
+        data: {
+          employeeId: employee4.id,
+          sickRequestId: sickReq.id,
+          vacationRequestId: vacReq.id,
+          overlapStart: new Date("2026-06-22"),
+          overlapEnd: new Date("2026-06-23"),
+          status: "CONFIRMED",
+          creditedStart: new Date("2026-06-22"),
+          creditedEnd: new Date("2026-06-23"),
+          creditedDays: 2,
+          attestSource: "EAU",
+          attestValidFrom: new Date("2026-06-22"),
+          attestValidTo: new Date("2026-06-23"),
+          reason: "S210-4 fixture — orphan fallback guard",
+        },
+      });
+
+      const body = await datevBody210(
+        "/api/v1/reports/datev?year=2026&month=6",
+        d210Data.adminToken,
+      );
+      const lines = body.split(/\r\n/).filter((l) => l.startsWith(`${employee4.employeeNumber};`));
+      expect(lines.some((l) => l.includes(";K;200;;2,0;"))).toBe(true);
+      expect(lines.some((l) => l.includes(";U;300;"))).toBe(false);
     });
   });
 
