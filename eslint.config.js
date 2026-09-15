@@ -62,6 +62,13 @@ export default [
       "packages/db/src/seed.ts",
       "packages/db/src/reset-demo.ts",
       "apps/api/vitest.*.ts",
+      // packages/types has no tsconfig.json of its own and isn't `include`d by any other
+      // package's tsconfig either — genuinely pre-existing, this file was touched only twice in
+      // its history (initial setup, a prettier-only pass) and never through lint-staged's
+      // type-aware eslint step until Phase 98 removed a line from it (found while executing
+      // 98-01, see 98-01-SUMMARY.md). Same "standalone, no project covers it" shape as the
+      // scripts/ ignores above.
+      "packages/types/src/**",
     ],
     languageOptions: {
       parserOptions: {
