@@ -849,7 +849,7 @@ model Section9Credit {
 model Absence {
   id                 String        @id @default(uuid())
   employeeId         String
-  type               AbsenceType
+  type               LeaveTypeCode
   source             AbsenceSource @default(MANUAL) // Phase 63 (D-22): PATTERN = auto-generated, MANUAL = human-created. Pre-v1.7 rows backfill to MANUAL (safe per RESEARCH A2).
   startDate          DateTime      @db.Date
   endDate            DateTime      @db.Date
@@ -1147,17 +1147,6 @@ enum Section9CreditStatus {
   AU_PENDING
   CONFIRMED
   REJECTED
-}
-
-enum AbsenceType {
-  SICK // Krankheit
-  SICK_CHILD // Kindkrank
-  SPECIAL_LEAVE // Sonderurlaub
-  UNPAID_LEAVE // Unbezahlter Urlaub
-  MATERNITY // Mutterschutz
-  PARENTAL // Elternzeit
-  OTHER
-  VOCATIONAL_SCHOOL // Berufsschule (BBiG § 15/§ 17)
 }
 
 // Phase 63 (D-22): origin of an Absence row.
