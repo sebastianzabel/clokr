@@ -21,7 +21,6 @@ export type FederalState =
 
 export type TimeEntrySource = "NFC" | "MOBILE" | "MANUAL" | "CORRECTION";
 export type LeaveRequestStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
-export type AbsenceType = "SICK" | "SICK_CHILD" | "SPECIAL_LEAVE" | "UNPAID_LEAVE" | "OTHER";
 export type OvertimePlanStatus = "ACTIVE" | "COMPLETED" | "CANCELLED";
 
 export interface Employee {

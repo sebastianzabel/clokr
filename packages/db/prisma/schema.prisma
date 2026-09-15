@@ -754,17 +754,50 @@ model RetroEntryRequest {
 // correction to LeaveEntitlement.usedDays, so the approved vacation request stays
 // intact for the audit trail ("no silent overwrites", CLAUDE.md).
 //
-// R8 / D-03 (documentation-only, deliberately no schema change):
-//   Sickness exists in two models today — LeaveRequest (leaveType "Krankmeldung"/
-//   "Kinderkrank") and Absence (type SICK / SICK_CHILD). The Absence side is DEAD:
-//   no code path calls absence.create() with type SICK — the only absence.create()
-//   call sites are vocational-school-generator.ts and vocational-school.ts, both of
-//   which write VOCATIONAL_SCHOOL. Absence.documentPath likewise has no writer; its
-//   only readers are utils/anonymize.ts and routes/employees.ts (DSGVO deletion).
-//   LeaveRequest is therefore the sole source of truth for sickness, and § 9
-//   references LeaveRequest exclusively (both FKs below). The dead Absence.SICK /
-//   Absence.documentPath pair is left untouched because the Berufsschule logic hangs
-//   off the same model; cleaning it up is a separate, deferred phase.
+// R8 / D-03 (documentation-only, deliberately no schema change; corrected Phase 98,
+// Issue #98 — the previous wording here claimed this side of the model had no code
+// path touching it at all, in either direction; that was false, in both directions,
+// as measured below):
+//   Sickness exists in two models: LeaveRequest (identified by LeaveType.code SICK /
+//   SICK_CHILD since Phase 97 — the code is the identity, the display name is
+//   renameable) and Absence (AbsenceType.SICK / SICK_CHILD).
+//
+//   Writing, as measured now: the only absence.create() call sites anywhere in the
+//   repo are vocational-school-generator.ts, routes/vocational-school.ts and one
+//   seed loop, and all three write VOCATIONAL_SCHOOL only — no API route has ever
+//   written Absence.SICK. Until Phase 98, though, packages/db/src/seed-demo.ts and
+//   reset-demo.ts DID create Absence rows with SICK, SICK_CHILD and SPECIAL_LEAVE
+//   (five call sites, not the single one the old wording accounted for). Phase 98
+//   moved all five into LeaveRequest; G7 in
+//   apps/api/src/__tests__/absence-type-mapping-guard.test.ts is the CI gate that
+//   keeps a seed from creating one of these types on the Absence side again.
+//
+//   Reading, as measured now: until Issue #210 (PR #212), the DATEV payroll export
+//   derived its sick-day figures from Absence.type (routes/reports.ts) while the
+//   monthly report derived them from LeaveRequest — two contradictory definitions
+//   of "sick days" in the same file. #210 moved the DATEV side onto LeaveRequest
+//   too; reports.ts still computes the Absence-side count for reference
+//   (`_sickDaysAbsence`), but that result is discarded (leading underscore) and
+//   feeds nothing further. What still reads Absence.type for SICK/SICK_CHILD today
+//   is display and presence, not payroll: the roster presence tile
+//   (routes/dashboard.ts), two identical iCal label chains (routes/leave.ts) and
+//   the presence-label map (utils/presence.ts) — all three are ALLOWED sites in
+//   leave-type-identity-guard.test.ts, named "Issue #98".
+//
+//   Absence.documentPath still has no writer (re-verified); its only readers
+//   remain utils/anonymize.ts and routes/employees.ts (both DSGVO deletion paths).
+//
+//   ADR 0001 assigns sickness to LeaveRequest, and § 9 references LeaveRequest
+//   exclusively (both FKs below) — that part of the old paragraph was correct and
+//   stays.
+//
+//   The written correspondence between AbsenceType and LeaveTypeCode — including
+//   this SICK/SICK_CHILD identity and the SPECIAL_LEAVE<->SPECIAL /
+//   UNPAID_LEAVE<->UNPAID spelling difference — lives in
+//   apps/api/src/utils/absence-type.ts (Phase 98, Option D: the language only, two
+//   separate enums, one written mapping). Merging the two enums into one (Option A)
+//   is a deliberate follow-up phase, not an oversight — read that module first
+//   before reaching for the merge.
 model Section9Credit {
   id                String               @id @default(uuid())
   employeeId        String // denormalized so tenant-scoped queries need no join

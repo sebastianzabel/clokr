@@ -352,7 +352,8 @@ async function main() {
   // Phase 97 (D-19): identity is the code, not the display name. The old key was the
   // tenant-plus-display-name compound, resolved against the legacy seed spelling of the vacation
   // type. Neither the old key name nor that spelling belongs in this comment — the acceptance
-  // criteria grep this file for both and expect zero hits.
+  // criteria grep this file for both and expect zero hits. Values mirror LEAVE_TYPE_DEFS in
+  // apps/api/src/utils/leave-type.ts.
   const leaveType = await prisma.leaveType.upsert({
     where: { tenantId_code: { tenantId: tenant.id, code: "VACATION" } },
     update: {},
@@ -363,6 +364,18 @@ async function main() {
       isPaid: true,
       requiresApproval: true,
       color: "#3B82F6",
+    },
+  });
+  const sickLeaveType = await prisma.leaveType.upsert({
+    where: { tenantId_code: { tenantId: tenant.id, code: "SICK" } },
+    update: {},
+    create: {
+      tenantId: tenant.id,
+      code: "SICK",
+      name: "Krankmeldung",
+      isPaid: true,
+      requiresApproval: false,
+      color: "#EF4444",
     },
   });
 
@@ -589,16 +602,24 @@ async function main() {
       });
     }
 
-    // Sick absences
+    // Sick leave (ADR 0001: sickness is a REQUESTED absence -> LeaveRequest, not Absence)
     for (const sick of def.sickPeriods) {
-      await prisma.absence.create({
+      await prisma.leaveRequest.create({
         data: {
           employeeId: emp.id,
-          type: "SICK",
+          leaveTypeId: sickLeaveType.id,
           startDate: parseDate(sick.startDate),
           endDate: parseDate(sick.endDate),
           days: sick.days,
-          createdBy: adminUser.id,
+          status: "APPROVED",
+          reviewedBy: adminUser.id,
+          // Reviewed on the first day of the period — a Krankmeldung is approved when it arrives.
+          // The literal 2026-01-08 that used to stand here was copied from the vacation block
+          // above, where it is correct (vacation is requested in advance); for the sick periods
+          // (2026-02-09..2026-02-20 and 2026-03-05) it produced APPROVED rows reviewed a month
+          // BEFORE they existed. Demo data only, but "Genehmigt am" is an audit-trail-shaped
+          // field in an audit-proof product and it is on screen.
+          reviewedAt: new Date(`${sick.startDate}T10:00:00.000Z`),
         },
       });
     }

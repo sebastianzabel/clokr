@@ -1,11 +1,15 @@
 import { FastifyInstance, FastifyRequest } from "fastify";
-import type { LeaveTypeCode } from "@clokr/db";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { isAvailabilityEnabled } from "../utils/tenant-availability";
 import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
 import { BS_PATTERN_ORDER_BY } from "../utils/vocational-school-pattern-order";
 import { getEffectiveBreakDuration } from "../utils/break-effective";
+import {
+  classifyLeaveTypeCode,
+  classifyAbsenceType,
+  type AvailabilityBucket,
+} from "../utils/shift-availability"; // Phase 98 (T3, plan 03) — the two classifiers' new home
 import {
   getTenantTimezone,
   weekRangeUtc,
@@ -81,70 +85,10 @@ interface CoverageInfo {
 // Phase 63 D-20 — added "vocational_school" for VOCATIONAL_SCHOOL absences. Sits
 // between "special" (rank 4, tie) and "other" semantically; rank function below
 // places it at 4 alongside "special" so sick (6) and vacation (5) still win ties.
-type Availability =
-  | "available"
-  | "vacation"
-  | "sick"
-  | "special"
-  | "vocational_school"
-  | "other"
-  | "unavailable"
-  | "preferred";
-
-/**
- * Classify a leave type into one of our availability buckets — by its stable CODE.
- *
- * Phase 97 (D-11): the previous implementation lower-cased the German display name and matched
- * substrings of it — the vacation bucket was "contains the word for leave, but not the words for
- * special or unpaid". That misclassified the further-education type as vacation, because its
- * German name ends in the same word and matches neither exclusion, and it broke entirely for a
- * tenant who renamed a type. Do not restate those substring tests here: the acceptance criteria
- * of this task and the CI gate from plan 10 both assert that no such literal survives anywhere
- * in this file.
- *
- * A null code (pre-backfill row, or one the old image wrote during a rolling deploy) falls
- * through to "other" — the same bucket an unrecognised type has always landed in.
- */
-function classifyLeaveTypeCode(code: LeaveTypeCode | null): Availability {
-  switch (code) {
-    case "VACATION":
-      return "vacation";
-    case "SICK":
-    case "SICK_CHILD":
-      return "sick";
-    case "SPECIAL":
-      return "special";
-    // EDUCATION, UNPAID, OVERTIME_COMP, MATERNITY, PARENTAL and an unset code all share the
-    // generic bucket. EDUCATION landing here instead of `vacation` is the D-11 correction.
-    // (Codes only — no German display name belongs in this file any more.)
-    default:
-      return "other";
-  }
-}
-
-/**
- * Classify an AbsenceType enum value into our availability bucket.
- */
-function classifyAbsenceType(type: string): Availability {
-  switch (type) {
-    case "SICK":
-    case "SICK_CHILD":
-      return "sick";
-    case "SPECIAL_LEAVE":
-      return "special";
-    // Phase 63 D-20 — VOCATIONAL_SCHOOL routes to its own bucket. Without this case
-    // it would fall through to "other" (rank 3), losing the lock-icon semantic in
-    // the shift planner and the dedicated badge in the frontend (Plan 05).
-    case "VOCATIONAL_SCHOOL":
-      return "vocational_school";
-    case "MATERNITY":
-    case "PARENTAL":
-    case "UNPAID_LEAVE":
-    case "OTHER":
-    default:
-      return "other";
-  }
-}
+// Phase 98 (T3, plan 03) — the "vocation" | "sick" | ... | "other" middle carried by
+// `AvailabilityBucket` moved to `utils/shift-availability.ts`, the two classifiers' new
+// home; this type just adds the two roster-state members no classifier ever produces.
+type Availability = "available" | AvailabilityBucket | "unavailable" | "preferred";
 
 /**
  * Find the most specific CoverageRule for a (template, dayOfWeek) combination.
@@ -196,7 +140,10 @@ type ConflictKind = "leave" | "absence";
 // Phase 63 D-20 — "vocational_school" added so the absence-conflict path can carry
 // the BS type through to the API response without an unsafe cast. The frontend
 // already renders unknown bucket strings as "other" (no UI changes required here).
-type ConflictType = "vacation" | "sick" | "special" | "vocational_school" | "other";
+// Phase 98 (T3, plan 03) — identical to AvailabilityBucket (utils/shift-availability.ts);
+// kept as its own alias here because ConflictType names a distinct concept (the shape of
+// findShiftConflict()'s result), not the classifier's return type.
+type ConflictType = AvailabilityBucket;
 
 interface ShiftConflict {
   kind: ConflictKind;
@@ -230,7 +177,7 @@ async function findShiftConflict(
   if (leave) {
     return {
       kind: "leave",
-      conflictType: classifyLeaveTypeCode(leave.leaveType.code) as ConflictType,
+      conflictType: classifyLeaveTypeCode(leave.leaveType.code),
       leaveRequestId: leave.id,
     };
   }
@@ -247,7 +194,7 @@ async function findShiftConflict(
   if (absence) {
     return {
       kind: "absence",
-      conflictType: classifyAbsenceType(absence.type) as ConflictType,
+      conflictType: classifyAbsenceType(absence.type),
       absenceId: absence.id,
     };
   }
