@@ -21,7 +21,7 @@
  * - a demo seed script (`packages/db/src/*.ts`) writes an `Absence` row with one of the four
  *   ADR-requested-only types again (G7 — see 98-02-PLAN.md).
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, extname } from "node:path";
 import { describe, it, expect } from "vitest";
 import {
@@ -184,12 +184,15 @@ describe("G6 — no redeclaration of the absence vocabulary", () => {
     }
     for (const root of SCAN_ROOTS) {
       const absRoot = join(REPO_ROOT, root);
-      // A scan root may not exist for every workspace layout — skip rather than throw.
-      try {
-        walk(absRoot);
-      } catch {
-        // root does not exist, ignore
-      }
+      // A scan root may not exist for every workspace layout — skip THAT case, and only that
+      // case. Every other error (a broken symlink hitting statSync, EACCES on a subdirectory, a
+      // directory removed mid-walk) must propagate: swallowing it would drop every remaining
+      // file in that root and leave `violations` empty, so the assertion below would report
+      // success on a truncated — possibly empty — scan. A gate that passes no matter what is
+      // the exact failure this phase set out to avoid; the Phase-97 sibling
+      // (leave-type-identity-guard.test.ts) deliberately has no catch here either.
+      if (!existsSync(absRoot)) continue;
+      walk(absRoot);
     }
     return out;
   }
