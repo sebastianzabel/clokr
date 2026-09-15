@@ -613,7 +613,13 @@ async function main() {
           days: sick.days,
           status: "APPROVED",
           reviewedBy: adminUser.id,
-          reviewedAt: new Date("2026-01-08T10:00:00.000Z"),
+          // Reviewed on the first day of the period — a Krankmeldung is approved when it arrives.
+          // The literal 2026-01-08 that used to stand here was copied from the vacation block
+          // above, where it is correct (vacation is requested in advance); for the sick periods
+          // (2026-02-09..2026-02-20 and 2026-03-05) it produced APPROVED rows reviewed a month
+          // BEFORE they existed. Demo data only, but "Genehmigt am" is an audit-trail-shaped
+          // field in an audit-proof product and it is on screen.
+          reviewedAt: new Date(`${sick.startDate}T10:00:00.000Z`),
         },
       });
     }

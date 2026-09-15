@@ -658,6 +658,16 @@ async function main() {
   const aylinSick = { from: d0(PY, PM, 20), to: d0(PY, PM, 22) };
   const tobiasSick = { from: d0(PY, PM, 6), to: d0(PY, PM, 6) };
 
+  // Approved the day after the period ends — but never in the future. Every date in this seed is
+  // relative to the machine clock, so `end + 1 day` for a period inside the CURRENT month lands
+  // after today whenever the seed runs early in the month (the 1st..5th), producing an APPROVED
+  // row reviewed tomorrow. Demo data only, but "Genehmigt am" is an audit-trail-shaped field in
+  // an audit-proof product and it is on screen.
+  const reviewedAtFor = (end: Date): Date => {
+    const nextDay = addDays(end, 1);
+    return nextDay > todayUTC ? todayUTC : nextDay;
+  };
+
   await prisma.leaveRequest.create({
     data: {
       employeeId: emp.aylin.empId,
@@ -669,7 +679,7 @@ async function main() {
       note: "Grippaler Infekt",
       status: "APPROVED",
       reviewedBy: adminUserId,
-      reviewedAt: addDays(aylinSick.to, 1),
+      reviewedAt: reviewedAtFor(aylinSick.to),
     },
   });
   bump("leaveRequest");
@@ -684,7 +694,7 @@ async function main() {
       note: "Krank",
       status: "APPROVED",
       reviewedBy: adminUserId,
-      reviewedAt: addDays(tobiasSick.to, 1),
+      reviewedAt: reviewedAtFor(tobiasSick.to),
     },
   });
   bump("leaveRequest");
@@ -699,7 +709,7 @@ async function main() {
       note: "Kind krank (halber Tag)",
       status: "APPROVED",
       reviewedBy: adminUserId,
-      reviewedAt: addDays(d0(Y, M, 2), 1),
+      reviewedAt: reviewedAtFor(d0(Y, M, 2)),
     },
   });
   bump("leaveRequest");
@@ -714,7 +724,7 @@ async function main() {
       note: "Umzug (Sonderurlaub)",
       status: "APPROVED",
       reviewedBy: adminUserId,
-      reviewedAt: addDays(d0(Y, M, 5), 1),
+      reviewedAt: reviewedAtFor(d0(Y, M, 5)),
     },
   });
   bump("leaveRequest");
