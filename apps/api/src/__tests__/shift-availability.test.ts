@@ -103,6 +103,24 @@ describe("the two values with no counterpart keep their own answers", () => {
   });
 });
 
+describe("an out-of-enum value degrades, it does not 500 the caller", () => {
+  it("classifyAbsenceType falls to 'other' for a value the compiled correspondence has never seen — the pre-Phase-98 `default:` behaviour, kept on purpose", () => {
+    // Stands in for the three runtime paths that bypass the compile-time exhaustiveness: a
+    // $queryRaw row, a payload cast to AbsenceType, and a rolling deploy where a migration added
+    // an enum member before the new image rolled out. Both call sites of this function sit inside
+    // the roster week build (routes/shifts.ts), so a throw here is a 500 on the whole shift
+    // planner, not one wrong cell.
+    const unknown = "MEMBER_ADDED_BY_A_LATER_MIGRATION" as AbsenceType;
+    expect(() => classifyAbsenceType(unknown)).not.toThrow();
+    expect(classifyAbsenceType(unknown)).toBe("other");
+  });
+
+  it("classifyLeaveTypeCode does the same for an unknown code (it always has — its switch ends in default)", () => {
+    const unknown = "CODE_ADDED_BY_A_LATER_MIGRATION" as LeaveTypeCode;
+    expect(classifyLeaveTypeCode(unknown)).toBe("other");
+  });
+});
+
 describe("exhaustiveness — a new enum value cannot be added without extending this test", () => {
   const EXPECTED_ABSENCE_BUCKET: Record<AbsenceType, string> = {
     SICK: "sick",

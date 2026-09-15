@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import type { AbsenceType, LeaveTypeCode } from "@clokr/db";
 import {
   ABSENCE_TYPES,
   ABSENCE_TYPE_CORRESPONDENCE,
@@ -102,6 +103,27 @@ describe("round-trip — every corresponds pair resolves back to itself in both 
       if (entry.kind !== "corresponds") continue;
       expect(leaveTypeCodeForAbsenceType(absenceTypeForLeaveTypeCode(code)!)).toBe(code);
     }
+  });
+});
+
+describe("runtime fallback — a value the compiled table has never seen", () => {
+  // The compile-time guarantee (Record<AbsenceType, ...>, parameter typed AbsenceType) is NOT
+  // what these two tests check — they check what happens when that guarantee is bypassed, which
+  // is a thing that genuinely happens in production: a $queryRaw row, a JSON payload cast to the
+  // enum type, or a rolling deploy in which a migration added an enum member before the new image
+  // rolled out. The casts below are the deliberate stand-in for those three paths. Before this
+  // was fixed, `entry.kind` on the undefined lookup threw a TypeError and the roster week
+  // endpoint 500'd; the pre-Phase-98 classifier degraded to the generic bucket instead.
+  it("leaveTypeCodeForAbsenceType returns null instead of throwing", () => {
+    const unknown = "MEMBER_ADDED_BY_A_LATER_MIGRATION" as AbsenceType;
+    expect(() => leaveTypeCodeForAbsenceType(unknown)).not.toThrow();
+    expect(leaveTypeCodeForAbsenceType(unknown)).toBeNull();
+  });
+
+  it("absenceTypeForLeaveTypeCode returns null instead of throwing (the mirror stays symmetric)", () => {
+    const unknown = "CODE_ADDED_BY_A_LATER_MIGRATION" as LeaveTypeCode;
+    expect(() => absenceTypeForLeaveTypeCode(unknown)).not.toThrow();
+    expect(absenceTypeForLeaveTypeCode(unknown)).toBeNull();
   });
 });
 

@@ -147,15 +147,36 @@ export const LEAVE_TYPE_CODE_CORRESPONDENCE: Record<LeaveTypeCode, LeaveTypeCorr
   },
 };
 
-/** `AbsenceType` -> `LeaveTypeCode`, or `null` when the type has no leave counterpart. */
+/**
+ * `AbsenceType` -> `LeaveTypeCode`, or `null` when the type has no leave counterpart.
+ *
+ * The table lookup is DEFENSIVE on purpose. `Record<AbsenceType, ...>` makes the table
+ * exhaustive at COMPILE time, and the parameter stays typed as `AbsenceType` — that guarantee is
+ * deliberately not weakened. But a value the compiler never saw can still arrive at RUNTIME: a
+ * `$queryRaw` row, a JSON payload cast to `AbsenceType`, or a rolling deploy in which a migration
+ * added an enum member before the new image rolled out. An unchecked `entry.kind` would throw
+ * `TypeError: Cannot read properties of undefined` there and take the whole caller down — the
+ * roster week endpoint would 500 instead of showing one misclassified cell. Such a value returns
+ * `null`, i.e. "no counterpart this build knows about", which is how `classifyAbsenceType`'s
+ * pre-Phase-98 `default:` branch degraded before the delegation. Pinned by the runtime-fallback
+ * tests in `__tests__/absence-type.test.ts` and `__tests__/shift-availability.test.ts`.
+ */
 export function leaveTypeCodeForAbsenceType(type: AbsenceType): LeaveTypeCode | null {
-  const entry = ABSENCE_TYPE_CORRESPONDENCE[type];
+  const entry = ABSENCE_TYPE_CORRESPONDENCE[type] as AbsenceCorrespondence | undefined;
+  if (!entry) return null;
   return entry.kind === "corresponds" ? entry.code : null;
 }
 
-/** `LeaveTypeCode` -> `AbsenceType`, or `null` when the code has no absence counterpart. */
+/**
+ * `LeaveTypeCode` -> `AbsenceType`, or `null` when the code has no absence counterpart.
+ *
+ * Defensive for the same reason as its mirror above, and deliberately kept symmetric with it: an
+ * out-of-enum value arriving at runtime degrades to `null` rather than throwing. Leaving one of
+ * the two accessors fail-loud and the other fail-soft would be a trap for the next reader.
+ */
 export function absenceTypeForLeaveTypeCode(code: LeaveTypeCode): AbsenceType | null {
-  const entry = LEAVE_TYPE_CODE_CORRESPONDENCE[code];
+  const entry = LEAVE_TYPE_CODE_CORRESPONDENCE[code] as LeaveTypeCorrespondence | undefined;
+  if (!entry) return null;
   return entry.kind === "corresponds" ? entry.type : null;
 }
 

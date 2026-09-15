@@ -72,6 +72,16 @@ export function classifyLeaveTypeCode(code: LeaveTypeCode | null): AvailabilityB
  * the reason is recorded in `ABSENCE_TYPE_CORRESPONDENCE.OTHER`). Do not "simplify" this branch
  * away.
  *
+ * Why an out-of-enum value degrades to `"other"` rather than throwing, stated here because the
+ * choice is otherwise invisible: the pre-Phase-98 implementation took a plain `string` and ended
+ * in `default: return "other"`, so anything unrecognised landed in the generic bucket. The
+ * parameter is now typed `AbsenceType` and the correspondence table is exhaustive at compile
+ * time, but a value the compiler never saw can still arrive at runtime (a `$queryRaw` row, a
+ * payload cast to `AbsenceType`, a rolling deploy where a migration added an enum member ahead of
+ * the image). `leaveTypeCodeForAbsenceType()` returns `null` for such a value instead of throwing,
+ * so it lands in `"other"` — one misclassified roster cell, not a 500 on the whole week view. This
+ * is fail-soft by decision, not by accident; `shift-availability.test.ts` pins it.
+ *
  * The behaviour is identical to the pre-Phase-98 `switch` for all eight `AbsenceType` values,
  * pinned by `apps/api/src/__tests__/shift-availability.test.ts`.
  */
