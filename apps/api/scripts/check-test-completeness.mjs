@@ -18,8 +18,8 @@
  */
 import { readFileSync } from "node:fs";
 
-const MIN_FILES = 235; // Phase 98: measured green run (235 files / 2701 passed + 3 skipped); raise when adding files
-const MIN_TESTS = 2701; // Phase 98: measured green run — the passed count; the script compares numTotalTests, which was 2704 on that run. Raise when adding tests
+const MIN_FILES = 235; // Phase 98: measured green run (235 files / 2705 passed + 3 skipped); raise when adding files
+const MIN_TESTS = 2705; // Phase 98: measured green run — the passed count; the script compares numTotalTests, which was 2708 on that run. Raise when adding tests
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
