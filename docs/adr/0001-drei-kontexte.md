@@ -60,12 +60,27 @@ Regeln. Alle drei sind hier nachweisbar erfüllt.
 
 ### Eigene Sprache
 
-Es gibt heute **zwei Vokabulare für dieselben Sachverhalte**:
+**Status: GESCHLOSSEN (Phase 98b, Issue #98 — 2026-09-15).** Es gibt seither **ein** Vokabular:
+`LeaveTypeCode` mit elf Werten. `LeaveType.code` und `Absence.type` teilen sich dieses eine Enum;
+`AbsenceType` ist gelöscht. Die Unterscheidung requested/imposed ist damit keine Frage der
+Schreibweise mehr, sondern liegt in zwei Teilmengen desselben Enums:
+`REQUESTABLE_CODES` (9 Werte) und `IMPOSED_ONLY_CODES` (`VOCATIONAL_SCHOOL`, `OTHER`) in
+`apps/api/src/utils/leave-type.ts`. Der Weg dorthin ging über zwei Schritte: Phase 98 (Option D)
+hat die Entsprechung zwischen beiden Vokabularen erst einmal aufgeschrieben und mit einem Gate
+festgenagelt, Phase 98b (Option A) hat sie anschließend zusammengeführt.
+
+**Der ursprüngliche Befund bleibt hier stehen**, weil er die Begründung des Schnitts trägt: Dass
+sich zwei Vokabulare überhaupt herausbilden konnten, ist der Beleg für die Kontextgrenze — die
+Zusammenführung räumt den Symptomcode auf, widerlegt aber die Diagnose nicht.
+
+Erhebung vom 2026-08-28 (`main` @ `263ed0aa`), heute historisch:
+
+Es gab **zwei Vokabulare für dieselben Sachverhalte**:
 
 - `TYPE_CODES` — 9 Werte, `apps/api/src/routes/leave.ts:59-70`
 - `AbsenceType` — 8 Werte, `packages/db/prisma/schema.prisma:1057`
 
-Sechs davon überlappen (SICK, SICK_CHILD, SPECIAL/SPECIAL_LEAVE, UNPAID/UNPAID_LEAVE, MATERNITY,
+Sechs davon überlappten (SICK, SICK_CHILD, SPECIAL/SPECIAL_LEAVE, UNPAID/UNPAID_LEAVE, MATERNITY,
 PARENTAL) — **ohne jede Abbildung zwischen beiden.** Zwei Vokabulare für einen Sachverhalt sind das
 klassische Anzeichen, dass zwei Kontexte in einem Modell stecken.
 
