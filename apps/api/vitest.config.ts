@@ -43,7 +43,8 @@ export default defineConfig({
       // strictly additive over what a run produced before (text, html, clover, json — measured,
       // see 113B-RESEARCH.md "Code Examples #2"). The same replace-not-append semantics apply to
       // a CLI `--coverage.reporter=` flag, which is why the reporter belongs here and never on a
-      // command line. Mirrors apps/web/vitest.config.ts.
+      // command line. apps/web/vitest.config.ts names json-summary for the same reason; its
+      // array is not identical (no clover, different order) because its default differs.
       reporter: ["text", "html", "clover", "json", "json-summary"],
       include: ["src/**/*.ts"],
       exclude: ["**/*.test.ts", "**/index.ts"],
