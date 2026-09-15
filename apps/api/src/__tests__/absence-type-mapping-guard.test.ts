@@ -17,7 +17,9 @@
  *   entry's reason is a placeholder (G2, G3),
  * - a correspondence is one-sided (G4),
  * - `AbsenceType.OTHER` is demoted from its `absence_only` pin (G5),
- * - a fourth declaration of the absence vocabulary appears anywhere in the repo (G6).
+ * - a fourth declaration of the absence vocabulary appears anywhere in the repo (G6),
+ * - a demo seed script (`packages/db/src/*.ts`) writes an `Absence` row with one of the four
+ *   ADR-requested-only types again (G7 — see 98-02-PLAN.md).
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, extname } from "node:path";
@@ -26,6 +28,7 @@ import {
   ABSENCE_TYPES,
   ABSENCE_TYPE_CORRESPONDENCE,
   LEAVE_TYPE_CODE_CORRESPONDENCE,
+  ADR_REQUESTED_ONLY_ABSENCE_TYPES,
 } from "../utils/absence-type";
 import { LEAVE_TYPE_CODES } from "../utils/leave-type";
 
@@ -210,5 +213,49 @@ describe("G6 — no redeclaration of the absence vocabulary", () => {
           'the type from "@clokr/db".'
         : "";
     expect(report).toBe("");
+  });
+});
+
+// ── G7 — no seed writes an ADR-requested-only type onto the Absence side ────────────────
+//
+// This is a TEXT scan, deliberately, not a runtime assertion. `packages/db/src/*.ts` are
+// standalone scripts run against a database with `tsx`, not importable test subjects — there is
+// no function here a test could call and inspect. The defect this prevents is someone writing the
+// literal `type: "SICK"` (or one of its three siblings) back onto a `prisma.absence.create` call;
+// a text scan catches that the moment it is written, rather than the next time somebody actually
+// runs the seed against a database and notices the wrong row show up.
+//
+// Deliberately scoped to the seed files only, not the whole repo. Three e2e fixtures
+// (`apps/e2e/tests/leave-flow.spec.ts`, `apps/e2e/tests/overtime-saldo-flow.spec.ts`,
+// `apps/e2e/fixtures/visual-seed.ts`) legitimately contain the literal `type: "SICK"` as a
+// `LeaveTypeCode` in a `POST /api/v1/leave/requests` body — a repo-wide scan would flag correct
+// code, and a gate that flags correct code gets an exception list, which is the failure mode this
+// phase is avoiding (98-RESEARCH.md §3.4, 98-02-PLAN.md <measured_baseline>).
+describe("G7 — no demo seed creates an Absence row with an ADR-requested-only type", () => {
+  const SEED_DIR = join(REPO_ROOT, "packages/db/src");
+
+  function seedFiles(): string[] {
+    return readdirSync(SEED_DIR)
+      .filter((entry) => extname(entry) === ".ts")
+      .map((entry) => join(SEED_DIR, entry));
+  }
+
+  it('`type: "<ADR-requested-only type>"` occurs in zero packages/db/src/*.ts files', () => {
+    const violations: string[] = [];
+    for (const abs of seedFiles()) {
+      const content = readFileSync(abs, "utf-8");
+      for (const type of ADR_REQUESTED_ONLY_ABSENCE_TYPES) {
+        if (content.includes(`type: "${type}"`)) {
+          violations.push(
+            `${relative(REPO_ROOT, abs)}: found literal type: "${type}". ADR 0001 assigns ` +
+              `SICK, SICK_CHILD, SPECIAL_LEAVE and UNPAID_LEAVE to LeaveRequest, not Absence — ` +
+              `seed it as an APPROVED LeaveRequest with the matching LeaveType.code, not as an ` +
+              `Absence. See ABSENCE_TYPE_CORRESPONDENCE in apps/api/src/utils/absence-type.ts ` +
+              `for the code to use.`,
+          );
+        }
+      }
+    }
+    expect(violations.join("\n")).toBe("");
   });
 });
