@@ -14,6 +14,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import iconv from "iconv-lite";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { leaveTypeFields } from "../utils/leave-type";
 import type { FastifyInstance } from "fastify";
 
 describe("DATEV export — FIRST automated coverage in its own file (Phase 104)", () => {
@@ -169,16 +170,28 @@ describe("DATEV export — FIRST automated coverage in its own file (Phase 104)"
         payload: { status: "APPROVED" },
       });
 
-      // One half-day sick Absence (D-06) — exercises dec()'s half-day rendering (Test 6).
-      await app.prisma.absence.create({
+      // One half-day sick LeaveRequest (D-06), created directly through Prisma — exercises
+      // dec()'s half-day rendering (Test 6). Issue #210: the export now sources Krank
+      // from LeaveRequest, not Absence, so this baseline fixture moves accordingly.
+      // Half-day sickness is rejected at all three API write paths (EFZG § 3/§ 4,
+      // leave.ts:402/1610/1784), so a direct-Prisma fixture is the legitimate way to
+      // stand in for a legacy row that predates that guard.
+      const sickType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: d.tenant.id,
+          ...leaveTypeFields("SICK"),
+          color: "#EF4444",
+        },
+      });
+      await app.prisma.leaveRequest.create({
         data: {
           employeeId: d.employee.id,
-          type: "SICK",
-          startDate: new Date("2026-07-15T00:00:00.000Z"),
+          leaveTypeId: sickType.id,
+          startDate: new Date("2026-07-15T00:00:00.000Z"), // Wednesday
           endDate: new Date("2026-07-15T00:00:00.000Z"),
           halfDay: true,
           days: 0.5,
-          createdBy: d.adminUser.id,
+          status: "APPROVED",
         },
       });
     });
