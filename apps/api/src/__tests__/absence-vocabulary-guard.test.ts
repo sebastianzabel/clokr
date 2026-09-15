@@ -121,7 +121,7 @@ describe("G4 — LeaveTypeCode.OTHER anti-removal pin", () => {
   });
 });
 
-// ── G5 — no demo seed creates an Absence row with a requestable-only code ────
+// ── G5 — no production or seed code writes an Absence with a requestable-only code ────
 //
 // Carried forward from the deleted guard's G7, re-aimed at the post-merge spellings. This is a
 // TEXT scan, deliberately, not a runtime assertion. `packages/db/src/*.ts` are standalone scripts
@@ -131,10 +131,24 @@ describe("G4 — LeaveTypeCode.OTHER anti-removal pin", () => {
 // scan catches that the moment it is written, rather than the next time somebody actually runs the
 // seed against a database and notices the wrong row show up.
 //
-// Deliberately scoped to the seed files only, not the whole repo. Three e2e fixtures
-// (`apps/e2e/tests/leave-flow.spec.ts`, `apps/e2e/tests/overtime-saldo-flow.spec.ts`,
-// `apps/e2e/fixtures/visual-seed.ts`) legitimately contain the literal `type: "SICK"` as a
-// `LeaveTypeCode` in a `POST /api/v1/leave/requests` body — a repo-wide scan would flag correct
+// **Scope covers PRODUCTION code, not only the seeds (Phase 98b review, WR-01).** The version of
+// this gate that shipped with 98b-05 scanned `packages/db/src` alone — but the seeds hold exactly
+// ONE `absence.create` call, and the other two live in production API code
+// (`apps/api/src/utils/vocational-school-generator.ts`, `apps/api/src/routes/vocational-school.ts`).
+// A gate aimed only at the demo seed would have watched the least important of the three writers.
+// `apps/api/src` is therefore a scan root too, `__tests__` excluded.
+//
+// Note what this does NOT do: it is still a text scan, so it does not make `Absence.type`
+// structurally unable to hold a requestable code. Before the merge the `AbsenceType` enum made
+// `absence.create({ type: "VACATION" })` impossible at the DB level; after it, `Absence.type` is
+// `LeaveTypeCode` and all eleven codes are type-valid. Closing that structurally (an `AbsenceCode`
+// subtype threaded through the three call sites) is an open design question, not something this
+// gate claims to have solved. Detection is what is here.
+//
+// Deliberately NOT repo-wide. Three e2e fixtures (`apps/e2e/tests/leave-flow.spec.ts`,
+// `apps/e2e/tests/overtime-saldo-flow.spec.ts`, `apps/e2e/fixtures/visual-seed.ts`) legitimately
+// contain the literal `type: "SICK"` as a `LeaveTypeCode` in a `POST /api/v1/leave/requests`
+// body, as do many `apps/api/src/__tests__` files — a scan that reached them would flag correct
 // code, and a gate that flags correct code gets an exception list, which is the failure mode this
 // phase is avoiding.
 //
@@ -142,8 +156,8 @@ describe("G4 — LeaveTypeCode.OTHER anti-removal pin", () => {
 // guard):
 //
 //  1. It reaches LITERAL writes only. `type: sickType` or a spread of a prepared object defeats
-//     it completely, and no amount of regex fixes that — catching those needs a type-level or
-//     runtime check, which these standalone scripts do not admit. The pattern below is quote- and
+//     it completely, and no amount of regex fixes that — catching those needs the type-level check
+//     named above, which this gate does not attempt. The pattern below is quote- and
 //     whitespace-tolerant so the SPELLING of a literal cannot slip past (`type : "SICK"`,
 //     `type:'SICK'`, `type: "SICK" satisfies LeaveTypeCode` all match); an indirection through a
 //     variable remains out of reach, by construction.
@@ -156,21 +170,49 @@ describe("G4 — LeaveTypeCode.OTHER anti-removal pin", () => {
 //     the file it was written for is worse than one that occasionally asks a human to look at a
 //     line. If this ever fires on a genuinely unrelated model, narrow it to that model — do not
 //     delete the assertion.
-describe("G5 — no demo seed creates an Absence row with a requestable-only code", () => {
-  const SEED_DIR = join(REPO_ROOT, "packages/db/src");
+describe("G5 — no production or seed code writes an Absence with a requestable-only code", () => {
+  const SCAN_ROOTS = ["packages/db/src", "apps/api/src"];
+  const EXCLUDE_DIRS = new Set(["__tests__", "node_modules", "dist", "build", "generated"]);
+  // The three `absence.create()` call sites in the repo, measured 2026-09-15. Asserted below to be
+  // inside the scanned set: a walk that silently stops reaching them would leave `violations`
+  // empty and report success on a scan that looked at nothing relevant.
+  const KNOWN_ABSENCE_WRITERS = [
+    "packages/db/src/seed-demo.ts",
+    "apps/api/src/utils/vocational-school-generator.ts",
+    "apps/api/src/routes/vocational-school.ts",
+  ];
   // The four ADR-requested-only codes, post-merge spellings (the `_LEAVE` suffix no longer
   // exists — SPECIAL_LEAVE/UNPAID_LEAVE were retyped to SPECIAL/UNPAID by 98b-04's migration).
   const REQUESTED_ONLY_FOR_ABSENCE = ["SICK", "SICK_CHILD", "SPECIAL", "UNPAID"] as const;
 
-  function seedFiles(): string[] {
-    return readdirSync(SEED_DIR)
-      .filter((entry) => extname(entry) === ".ts")
-      .map((entry) => join(SEED_DIR, entry));
+  function scannedFiles(): string[] {
+    const out: string[] = [];
+    function walk(absDir: string) {
+      for (const entry of readdirSync(absDir)) {
+        if (EXCLUDE_DIRS.has(entry)) continue;
+        const abs = join(absDir, entry);
+        if (statSync(abs).isDirectory()) walk(abs);
+        else if (extname(entry) === ".ts") out.push(abs);
+      }
+    }
+    for (const root of SCAN_ROOTS) {
+      const absRoot = join(REPO_ROOT, root);
+      // Same deliberate no-catch as G6: only a missing root is skipped, every other walk error
+      // propagates rather than truncating the scan into a vacuous pass.
+      if (!existsSync(absRoot)) continue;
+      walk(absRoot);
+    }
+    return out;
   }
 
-  it('`type: "<requestable-only code>"` occurs in zero packages/db/src/*.ts files', () => {
+  it("the scan actually reaches all three absence.create() call sites — a gate that stops looking at the files it was written for passes no matter what", () => {
+    const scanned = new Set(scannedFiles().map((abs) => relative(REPO_ROOT, abs)));
+    for (const writer of KNOWN_ABSENCE_WRITERS) expect([...scanned]).toContain(writer);
+  });
+
+  it('`type: "<requestable-only code>"` occurs in zero scanned production or seed files', () => {
     const violations: string[] = [];
-    for (const abs of seedFiles()) {
+    for (const abs of scannedFiles()) {
       const lines = readFileSync(abs, "utf-8").split("\n");
       for (const code of REQUESTED_ONLY_FOR_ABSENCE) {
         // `\btype` is case-sensitive on purpose: it must match the `type:` property and not
@@ -181,8 +223,8 @@ describe("G5 — no demo seed creates an Absence row with a requestable-only cod
           violations.push(
             `${relative(REPO_ROOT, abs)}:${i + 1}: ${line.trim()}\n` +
               `  found a literal type: "${code}". ADR 0001 assigns SICK, SICK_CHILD, SPECIAL ` +
-              `and UNPAID to LeaveRequest, not Absence — seed it as an APPROVED LeaveRequest ` +
-              `with the matching LeaveType.code, not as an Absence. See REQUESTABLE_CODES / ` +
+              `and UNPAID to LeaveRequest, not Absence — write it as a LeaveRequest with the ` +
+              `matching LeaveType.code, not as an Absence. See REQUESTABLE_CODES / ` +
               `IMPOSED_ONLY_CODES in apps/api/src/utils/leave-type.ts for the split. If this ` +
               `line belongs to a model other than Absence, see limit 2 in this block's docblock ` +
               `before touching the assertion.`,
