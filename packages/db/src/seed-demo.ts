@@ -448,7 +448,29 @@ async function main() {
       allowHalfDay: false,
     },
   });
-  bump("leaveType", 3);
+  const krankmeldung = await prisma.leaveType.create({
+    data: {
+      tenantId: tenant.id,
+      code: "SICK",
+      name: "Krankmeldung",
+      isPaid: true,
+      requiresApproval: false,
+      color: "#EF4444",
+      allowHalfDay: true,
+    },
+  });
+  const kinderkrank = await prisma.leaveType.create({
+    data: {
+      tenantId: tenant.id,
+      code: "SICK_CHILD",
+      name: "Kinderkrank",
+      isPaid: true,
+      requiresApproval: false,
+      color: "#F97316",
+      allowHalfDay: true,
+    },
+  });
+  bump("leaveType", 5);
 
   // ── SpecialLeaveRules (Admin settings richness) ────────────────────────────
   await prisma.specialLeaveRule.createMany({
@@ -628,65 +650,79 @@ async function main() {
     bump("leaveEntitlement");
   }
 
-  // ── Absences ───────────────────────────────────────────────────────────────
-  // NOTE: AbsenceType has no VACATION member — real vacation lives in LeaveRequest.
-  // The "multi-day non-sick absence" requirement is fulfilled by Mira's SPECIAL_LEAVE below.
+  // ── Sick leave & special leave (ADR 0001: requested absences -> LeaveRequest) ───────────
+  // SICK, SICK_CHILD and SPECIAL_LEAVE are REQUESTED absences and belong to LeaveRequest, not
+  // Absence — see ADR 0001 ("Absence = imposed, LeaveRequest = requested"; SICK belongs to
+  // LeaveRequest). They were previously seeded as Absence rows; moved here so the seed obeys
+  // the same rule the API enforces. Only VOCATIONAL_SCHOOL remains a genuine Absence below.
   const aylinSick = { from: d0(PY, PM, 20), to: d0(PY, PM, 22) };
   const tobiasSick = { from: d0(PY, PM, 6), to: d0(PY, PM, 6) };
 
-  await prisma.absence.create({
+  await prisma.leaveRequest.create({
     data: {
       employeeId: emp.aylin.empId,
-      type: "SICK",
-      source: "MANUAL",
+      leaveTypeId: krankmeldung.id,
       startDate: aylinSick.from,
       endDate: aylinSick.to,
       days: businessDays(aylinSick.from, aylinSick.to),
       halfDay: false,
       note: "Grippaler Infekt",
-      createdBy: adminUserId,
+      status: "APPROVED",
+      reviewedBy: adminUserId,
+      reviewedAt: addDays(aylinSick.to, 1),
     },
   });
-  await prisma.absence.create({
+  bump("leaveRequest");
+  await prisma.leaveRequest.create({
     data: {
       employeeId: emp.tobias.empId,
-      type: "SICK",
-      source: "MANUAL",
+      leaveTypeId: krankmeldung.id,
       startDate: tobiasSick.from,
       endDate: tobiasSick.to,
       days: 1,
       halfDay: false,
       note: "Krank",
-      createdBy: adminUserId,
+      status: "APPROVED",
+      reviewedBy: adminUserId,
+      reviewedAt: addDays(tobiasSick.to, 1),
     },
   });
-  await prisma.absence.create({
+  bump("leaveRequest");
+  await prisma.leaveRequest.create({
     data: {
       employeeId: emp.sara.empId,
-      type: "SICK_CHILD",
-      source: "MANUAL",
+      leaveTypeId: kinderkrank.id,
       startDate: d0(Y, M, 2),
       endDate: d0(Y, M, 2),
       days: 0.5,
       halfDay: true,
       note: "Kind krank (halber Tag)",
-      createdBy: adminUserId,
+      status: "APPROVED",
+      reviewedBy: adminUserId,
+      reviewedAt: addDays(d0(Y, M, 2), 1),
     },
   });
-  await prisma.absence.create({
+  bump("leaveRequest");
+  await prisma.leaveRequest.create({
     data: {
       employeeId: emp.mira.empId,
-      type: "SPECIAL_LEAVE",
-      source: "MANUAL",
+      leaveTypeId: sonderurlaub.id,
       startDate: d0(Y, M, 4),
       endDate: d0(Y, M, 5),
       days: businessDays(d0(Y, M, 4), d0(Y, M, 5)),
       halfDay: false,
       note: "Umzug (Sonderurlaub)",
-      createdBy: adminUserId,
+      status: "APPROVED",
+      reviewedBy: adminUserId,
+      reviewedAt: addDays(d0(Y, M, 5), 1),
     },
   });
-  bump("absence", 4);
+  bump("leaveRequest");
+
+  // ── Absences (imposed only — Berufsschule) ──────────────────────────────────
+  // AbsenceType has no VACATION member — real vacation lives in LeaveRequest. After the move
+  // above, the only Absence rows this seed creates are VOCATIONAL_SCHOOL: Berufsschule is
+  // imposed (BBiG § 15/§ 17), not requested, so it stays on the Absence side per ADR 0001.
 
   // Felix vocational-school (Berufsschule) — recurring pattern + concrete rows.
   // daysOfWeek encoding in the pattern model: 0=Mo..6=So → Thursday = 3.
