@@ -439,8 +439,30 @@ export function getDayHoursFromSchedule(schedule: Record<string, unknown>, dow: 
  *   - LeaveRequest.status IN ('APPROVED', 'CANCELLATION_REQUESTED')
  *   - LeaveRequest.deletedAt = null
  *   - Absence.deletedAt = null
- *   - Absence.type != 'VOCATIONAL_SCHOOL' (BBiG §15 — BS-Tag ist Arbeitstag)
- *   - Absence.source != 'PATTERN' (auto-generated, not an approved request)
+ *
+ * Absence TYPE and SOURCE filtering is deliberately NOT a precondition of this
+ * function (corrected Phase 98, Issue #98 — the previous wording here demanded a
+ * `type != 'VOCATIONAL_SCHOOL'` / `source != 'PATTERN'` pre-filter that its own
+ * principal caller does not apply, and has not applied since v1.8.27). This
+ * function receives `from`, `to`, `tz` and `halfDay`; it never sees `type` or
+ * `source` and never reads `days` — it only iterates the date range. Whether to
+ * filter by type/source is the CALLER's policy, decided by the caller's own
+ * semantics, not a rule this function can state once for everyone:
+ *   - `closeEmployeeMonth()` deliberately passes VOCATIONAL_SCHOOL / PATTERN rows
+ *     IN (v1.8.27 BS double-count fix): `contractSoll` (`avgWorkMinutesCore`) has
+ *     no Berufsschule awareness and already counts that day once via the average
+ *     method, so the loop subtracts that credit here and re-adds the precise
+ *     BBiG § 15 slot credit separately — each Berufsschule day's Soll ends up
+ *     credited exactly once. `isBsAbsence()` there controls only whether the row
+ *     participates in the day-level dedup (`sbClaimed`/`nsClaimed`), never whether
+ *     it is credited.
+ *   - The roster path in `routes/shifts.ts` deliberately does the opposite,
+ *     excluding VOCATIONAL_SCHOOL in its `where`, because a Berufsschule day is a
+ *     working day for the roster's Soll view, not an absence from it.
+ * A stale precondition that the principal caller violates teaches the next reader
+ * the wrong rule — do not add a type/source filter to a new caller just because
+ * this docblock once demanded one; decide it from that caller's own semantics and
+ * say which you chose and why.
  *
  * @param schedule WorkSchedule shape (type, weeklyHours, {day}Hours fields)
  * @param from inclusive UTC start of range
