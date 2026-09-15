@@ -36,6 +36,15 @@ export default defineConfig({
     setupFiles: ["./vitest.clock-setup.ts", "./vitest.worker-setup.ts"],
     coverage: {
       provider: "v8",
+      // Phase 113b (D-03/D-18): `json-summary` is what writes coverage/coverage-summary.json —
+      // the per-FILE shape scripts/measure-context-coverage.ts aggregates by context area. It is
+      // absent from Vitest's default list, and naming ANY reporter REPLACES that default rather
+      // than extending it, so the four defaults are restated verbatim here: this array is
+      // strictly additive over what a run produced before (text, html, clover, json — measured,
+      // see 113B-RESEARCH.md "Code Examples #2"). The same replace-not-append semantics apply to
+      // a CLI `--coverage.reporter=` flag, which is why the reporter belongs here and never on a
+      // command line. Mirrors apps/web/vitest.config.ts.
+      reporter: ["text", "html", "clover", "json", "json-summary"],
       include: ["src/**/*.ts"],
       exclude: ["**/*.test.ts", "**/index.ts"],
       // Thresholds enforce per DEVOPS-V8-03 (lines >= 40); baseline measured 2026-03-30: lines=41.74%, functions=41.05%, branches=28.48%
