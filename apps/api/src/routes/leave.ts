@@ -37,7 +37,8 @@ import {
   LEAVE_TYPE_LEGACY_ALIASES as LEGACY_ALIASES,
   LEAVE_REQUEST_EMAIL_SUBJECT,
   leaveTypeFields,
-} from "../utils/leave-type"; // Phase 97 (T2, D-04) — the one mapping
+  DISPLAY_NAME,
+} from "../utils/leave-type"; // Phase 97 (T2, D-04) — the one mapping; DISPLAY_NAME added Phase 98b (D-04)
 import type { RequestableCode } from "../utils/leave-type"; // Phase 98b (D-01) — request-side type
 
 // Phase 104-10 — § 9 display-surface helpers (calendar/list/entitlement markers, D-28/D-29/D-31).
@@ -2511,23 +2512,13 @@ export async function leaveRoutes(app: FastifyInstance) {
       }));
 
       for (const a of absences) {
-        const summary =
-          a.type === "SICK"
-            ? "Krankmeldung"
-            : a.type === "SICK_CHILD"
-              ? "Kinderkrank"
-              : a.type === "MATERNITY"
-                ? "Mutterschutz"
-                : a.type === "PARENTAL"
-                  ? "Elternzeit"
-                  : a.type === "SPECIAL_LEAVE"
-                    ? "Sonderurlaub"
-                    : a.type === "UNPAID_LEAVE"
-                      ? "Unbezahlter Urlaub"
-                      : "Abwesenheit";
         events.push({
           uid: `absence-${a.id}@clokr`,
-          summary,
+          // Phase 98b (D-04): one display table for all eleven codes. The old six-way ternary
+          // could not name VOCATIONAL_SCHOOL or OTHER at all and fell through to the generic
+          // word, while the dashboard already said "Berufsschule" — the app contradicted itself.
+          // DISPLAY_NAME is exhaustive over LeaveTypeCode, so no fallback branch is needed.
+          summary: DISPLAY_NAME[a.type],
           dtstart: a.startDate.toISOString().split("T")[0],
           dtend: addOneDay(a.endDate.toISOString().split("T")[0]),
           description: a.note ?? undefined,
@@ -2577,23 +2568,9 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       for (const a of absences) {
         const name = `${a.employee.firstName} ${a.employee.lastName}`;
-        const summary =
-          a.type === "SICK"
-            ? "Krankmeldung"
-            : a.type === "SICK_CHILD"
-              ? "Kinderkrank"
-              : a.type === "MATERNITY"
-                ? "Mutterschutz"
-                : a.type === "PARENTAL"
-                  ? "Elternzeit"
-                  : a.type === "SPECIAL_LEAVE"
-                    ? "Sonderurlaub"
-                    : a.type === "UNPAID_LEAVE"
-                      ? "Unbezahlter Urlaub"
-                      : "Abwesenheit";
         events.push({
           uid: `absence-${a.id}@clokr`,
-          summary: `${name} \u2014 ${summary}`,
+          summary: `${name} \u2014 ${DISPLAY_NAME[a.type]}`,
           dtstart: a.startDate.toISOString().split("T")[0],
           dtend: addOneDay(a.endDate.toISOString().split("T")[0]),
           description: a.note ?? undefined,

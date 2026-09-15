@@ -214,7 +214,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     await app.prisma.absence.create({
       data: {
         employeeId: emp.id,
-        type: "SPECIAL_LEAVE",
+        type: "SPECIAL", // Phase 98b: the old enum's SPECIAL_LEAVE value was renamed to SPECIAL
         source: "MANUAL",
         startDate: new Date("2024-02-01"),
         endDate: new Date("2024-02-29"),

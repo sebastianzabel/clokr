@@ -5,11 +5,7 @@ import { isAvailabilityEnabled } from "../utils/tenant-availability";
 import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
 import { BS_PATTERN_ORDER_BY } from "../utils/vocational-school-pattern-order";
 import { getEffectiveBreakDuration } from "../utils/break-effective";
-import {
-  classifyLeaveTypeCode,
-  classifyAbsenceType,
-  type AvailabilityBucket,
-} from "../utils/shift-availability"; // Phase 98 (T3, plan 03) — the two classifiers' new home
+import { classifyLeaveTypeCode, type AvailabilityBucket } from "../utils/shift-availability"; // Phase 98 (T3, plan 03) — the two classifiers' new home
 import {
   getTenantTimezone,
   weekRangeUtc,
@@ -194,7 +190,7 @@ async function findShiftConflict(
   if (absence) {
     return {
       kind: "absence",
-      conflictType: classifyAbsenceType(absence.type),
+      conflictType: classifyLeaveTypeCode(absence.type),
       absenceId: absence.id,
     };
   }
@@ -1097,7 +1093,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         }
       }
       for (const ab of absences) {
-        const cls = classifyAbsenceType(ab.type);
+        const cls = classifyLeaveTypeCode(ab.type);
         for (const iso of weekDays) {
           if (coversDay(ab.startDate, ab.endDate, iso)) {
             const k = keyOf(ab.employeeId, iso);
