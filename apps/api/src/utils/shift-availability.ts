@@ -40,9 +40,17 @@ export function classifyLeaveTypeCode(code: LeaveTypeCode | null): AvailabilityB
       return "sick";
     case "SPECIAL":
       return "special";
-    // EDUCATION, UNPAID, OVERTIME_COMP, MATERNITY, PARENTAL and an unset code all share the
-    // generic bucket. EDUCATION landing here instead of `vacation` is the D-11 correction.
-    // (Codes only — no German display name belongs in this file any more.)
+    // Phase 98b: VOCATIONAL_SCHOOL became a LeaveTypeCode member when the two vocabularies
+    // merged. Without this explicit case it would fall into `default` and lose the dedicated
+    // Berufsschule bucket the shift planner keys its lock icon and badge off (Phase 63, D-20) —
+    // with no compile error and no red test, because `default` swallows it. The reasoning
+    // `classifyAbsenceType`'s docblock used to give for keeping a SECOND function is the
+    // reasoning for adding this case.
+    case "VOCATIONAL_SCHOOL":
+      return "vocational_school";
+    // EDUCATION, UNPAID, OVERTIME_COMP, MATERNITY, PARENTAL, OTHER and an unset code all share
+    // the generic bucket. EDUCATION landing here instead of `vacation` is the D-11 correction;
+    // OTHER landing here is correct and deliberate, not an oversight.
     default:
       return "other";
   }

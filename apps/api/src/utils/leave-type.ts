@@ -44,6 +44,31 @@ export const REQUESTABLE_CODES = [
 export type RequestableCode = (typeof REQUESTABLE_CODES)[number];
 
 /**
+ * The two codes that are IMPOSED, never requested — the members Phase 98b adds to the Prisma
+ * `LeaveTypeCode` enum. Order matches the schema's own declaration order.
+ *
+ * `OTHER` is NOT a dead value and is NOT removable. It has no writer anywhere in production code,
+ * which is exactly what makes it look dead. It is not: 15 production rows exist — hand-inserted
+ * pre-tracking bridge rows across 13 employees, startDate 2026-01-01 through 2026-05-26,
+ * neutralising five months of Soll. Their `days = 0.00` is misleading; the Soll credit comes from
+ * the DATE RANGE, not from `days` (`calcLeaveAbsenceMinutesTz()` in `timezone.ts` never reads
+ * `days`). Removing or renaming it changes the saldo of those 13 employees across five months,
+ * violating Issue #98's own criterion "no saldo and no leave entitlement changes". The
+ * anti-removal gate assertion lives in `apps/api/src/__tests__/absence-vocabulary-guard.test.ts`
+ * — a comment alone has already gone stale once on this vocabulary, a red test has not.
+ *
+ * `VOCATIONAL_SCHOOL` is Berufsschule (BBiG § 15/§ 17): imposed by the training contract, never
+ * requested. It is the only code the saldo calculation branches on (`close-employee-month.ts`
+ * credits it, excludes it from the day-dedup, then re-adds the precise § 15 slot credit).
+ * "Berufsschule beantragen" is factually wrong, which is why it is absent from REQUESTABLE_CODES.
+ */
+export const IMPOSED_ONLY_CODES = [
+  "VOCATIONAL_SCHOOL",
+  "OTHER",
+] as const satisfies readonly LeaveTypeCode[];
+export type ImposedOnlyCode = (typeof IMPOSED_ONLY_CODES)[number];
+
+/**
  * Code -> display name, the two policy flags a newly created row is seeded with, and the two
  * notification-copy fields added for Issue #200:
  *
@@ -136,6 +161,35 @@ export const LEAVE_TYPE_DEFS: Record<
     notificationTitle: "Neue Elternzeit-Meldung",
     requestPhrase: "hat Elternzeit angemeldet",
   },
+};
+
+/**
+ * Code -> German display name over ALL eleven codes — the one place a requestable and an imposed
+ * code share a property (D-01). Replaces `ABSENCE_LABELS` in `utils/presence.ts` and both iCal
+ * ternary chains in `routes/leave.ts`.
+ *
+ * DISPLAY TEXT ONLY (ADR 0001): never compare against a value here, never derive behaviour from
+ * one. The identity of an absence type is its code.
+ *
+ * For the nine requestable codes the value is identical to `LEAVE_TYPE_DEFS[code].name` by
+ * construction — `leave-type.test.ts` asserts that equality so the two tables cannot drift.
+ */
+export const DISPLAY_NAME: Record<LeaveTypeCode, string> = {
+  VACATION: "Urlaub",
+  OVERTIME_COMP: "Überstundenausgleich",
+  SPECIAL: "Sonderurlaub",
+  UNPAID: "Unbezahlter Urlaub",
+  SICK: "Krankmeldung",
+  SICK_CHILD: "Kinderkrank",
+  EDUCATION: "Bildungsurlaub",
+  MATERNITY: "Mutterschutz",
+  PARENTAL: "Elternzeit",
+  // D-04: before Phase 98b both iCal chains fell through to the generic word below for this
+  // value, while the dashboard already said "Berufsschule" — the app contradicted itself.
+  VOCATIONAL_SCHOOL: "Berufsschule",
+  // The generic word, and the only code for which it is the correct answer. See
+  // IMPOSED_ONLY_CODES above for why this entry may not be deleted.
+  OTHER: "Abwesenheit",
 };
 
 /**

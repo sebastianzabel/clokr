@@ -1,4 +1,5 @@
 import type { AbsenceType, LeaveTypeCode } from "@clokr/db";
+import type { RequestableCode } from "./leave-type";
 
 /**
  * Phase 98 (T3, Option D) — the ONE written source for which `AbsenceType` value corresponds to
@@ -118,8 +119,16 @@ export type LeaveTypeCorrespondence =
  * Three leave-only codes, each with its reason: `VACATION`, `OVERTIME_COMP`, `EDUCATION` are
  * requested and granted from an entitlement, never imposed; `Absence` has no status and no
  * entitlement coupling, so there is no sensible imposed form of any of them.
+ *
+ * Keyed by `RequestableCode` (the nine REQUEST-side codes), not by the full `LeaveTypeCode`
+ * (Phase 98b, D-01/D-02): once `LeaveTypeCode` grows the two IMPOSED codes
+ * (`VOCATIONAL_SCHOOL`, `OTHER`), this table would otherwise need two more entries whose
+ * correspondence is meaningless — both codes are declared directly in `LeaveTypeCode` and
+ * have no separate `AbsenceType` counterpart to correspond to. This is a deliberate,
+ * temporary narrowing in a module Phase 98b's plan 04 deletes entirely (there is no
+ * remaining correspondence to write down once there is one enum) — not a design to imitate.
  */
-export const LEAVE_TYPE_CODE_CORRESPONDENCE: Record<LeaveTypeCode, LeaveTypeCorrespondence> = {
+export const LEAVE_TYPE_CODE_CORRESPONDENCE: Record<RequestableCode, LeaveTypeCorrespondence> = {
   SICK: { kind: "corresponds", type: "SICK" },
   SICK_CHILD: { kind: "corresponds", type: "SICK_CHILD" },
   SPECIAL: { kind: "corresponds", type: "SPECIAL_LEAVE" },
@@ -173,9 +182,18 @@ export function leaveTypeCodeForAbsenceType(type: AbsenceType): LeaveTypeCode | 
  * Defensive for the same reason as its mirror above, and deliberately kept symmetric with it: an
  * out-of-enum value arriving at runtime degrades to `null` rather than throwing. Leaving one of
  * the two accessors fail-loud and the other fail-soft would be a trap for the next reader.
+ *
+ * Since Phase 98b, `code` may also genuinely be one of the two IMPOSED codes
+ * (`VOCATIONAL_SCHOOL`, `OTHER`) — neither is a key of `LEAVE_TYPE_CODE_CORRESPONDENCE` any
+ * more (it is now keyed by `RequestableCode`, D-01/D-02). The `as RequestableCode` cast on the
+ * lookup key does not widen what this function accepts; it only tells the compiler what the
+ * `| undefined` fallback below already handles at runtime — an out-of-domain key produces
+ * `undefined`, exactly like the pre-existing out-of-enum case this function was written for.
  */
 export function absenceTypeForLeaveTypeCode(code: LeaveTypeCode): AbsenceType | null {
-  const entry = LEAVE_TYPE_CODE_CORRESPONDENCE[code] as LeaveTypeCorrespondence | undefined;
+  const entry = LEAVE_TYPE_CODE_CORRESPONDENCE[code as RequestableCode] as
+    | LeaveTypeCorrespondence
+    | undefined;
   if (!entry) return null;
   return entry.kind === "corresponds" ? entry.type : null;
 }

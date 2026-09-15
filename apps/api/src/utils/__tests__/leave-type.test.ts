@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   REQUESTABLE_CODES,
+  IMPOSED_ONLY_CODES,
   LEAVE_TYPE_DEFS,
+  DISPLAY_NAME,
   LEAVE_TYPE_LEGACY_ALIASES,
   LEAVE_REQUEST_EMAIL_SUBJECT,
   leaveTypeFields,
@@ -182,6 +184,38 @@ describe("LEAVE_TYPE_DEFS notification copy (Issue #200)", () => {
       expect(LEAVE_TYPE_DEFS[code].notificationTitle).not.toBe(
         `Neuer ${LEAVE_TYPE_DEFS[code].name}-Antrag`,
       );
+    }
+  });
+});
+
+describe("IMPOSED_ONLY_CODES", () => {
+  it("is exactly VOCATIONAL_SCHOOL and OTHER, in schema declaration order", () => {
+    expect(IMPOSED_ONLY_CODES).toEqual(["VOCATIONAL_SCHOOL", "OTHER"]);
+  });
+
+  it("is disjoint from REQUESTABLE_CODES", () => {
+    const requestable = new Set<string>(REQUESTABLE_CODES);
+    for (const code of IMPOSED_ONLY_CODES) {
+      expect(requestable.has(code)).toBe(false);
+    }
+  });
+});
+
+describe("DISPLAY_NAME", () => {
+  it("has eleven keys, exactly the union of REQUESTABLE_CODES and IMPOSED_ONLY_CODES", () => {
+    expect(Object.keys(DISPLAY_NAME).sort()).toEqual(
+      [...REQUESTABLE_CODES, ...IMPOSED_ONLY_CODES].sort(),
+    );
+  });
+
+  it("pins the two imposed codes' German display names", () => {
+    expect(DISPLAY_NAME.VOCATIONAL_SCHOOL).toBe("Berufsschule");
+    expect(DISPLAY_NAME.OTHER).toBe("Abwesenheit");
+  });
+
+  it("agrees with LEAVE_TYPE_DEFS for every requestable code — the two tables cannot drift", () => {
+    for (const code of REQUESTABLE_CODES) {
+      expect(DISPLAY_NAME[code]).toBe(LEAVE_TYPE_DEFS[code].name);
     }
   });
 });

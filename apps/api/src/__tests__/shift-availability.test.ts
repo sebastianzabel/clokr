@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { AbsenceType, LeaveTypeCode } from "@clokr/db";
 import { ABSENCE_TYPES, leaveTypeCodeForAbsenceType } from "../utils/absence-type";
-import { REQUESTABLE_CODES } from "../utils/leave-type";
+import { REQUESTABLE_CODES, IMPOSED_ONLY_CODES } from "../utils/leave-type";
 import { classifyAbsenceType, classifyLeaveTypeCode } from "../utils/shift-availability";
 
 /**
@@ -69,6 +69,12 @@ describe("classifyLeaveTypeCode — one expectation per LeaveTypeCode value, pin
   });
   it("null -> other", () => {
     expect(classifyLeaveTypeCode(null)).toBe("other");
+  });
+  it("VOCATIONAL_SCHOOL -> vocational_school (Phase 98b — the trap this plan defuses)", () => {
+    expect(classifyLeaveTypeCode("VOCATIONAL_SCHOOL")).toBe("vocational_school");
+  });
+  it("OTHER -> other (via the default branch, deliberately)", () => {
+    expect(classifyLeaveTypeCode("OTHER")).toBe("other");
   });
 });
 
@@ -150,10 +156,12 @@ describe("exhaustiveness — a new enum value cannot be added without extending 
     EDUCATION: "other",
     MATERNITY: "other",
     PARENTAL: "other",
+    VOCATIONAL_SCHOOL: "vocational_school",
+    OTHER: "other",
   };
 
-  it("every member of REQUESTABLE_CODES has an entry in this test's own expectation table", () => {
-    for (const code of REQUESTABLE_CODES) {
+  it("every member of the eleven-code vocabulary has an entry in this test's own expectation table", () => {
+    for (const code of [...REQUESTABLE_CODES, ...IMPOSED_ONLY_CODES]) {
       expect(EXPECTED_LEAVE_BUCKET).toHaveProperty(code);
       expect(classifyLeaveTypeCode(code)).toBe(EXPECTED_LEAVE_BUCKET[code]);
     }

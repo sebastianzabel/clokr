@@ -30,7 +30,8 @@ import {
   LEAVE_TYPE_CODE_CORRESPONDENCE,
   ADR_REQUESTED_ONLY_ABSENCE_TYPES,
 } from "../utils/absence-type";
-import { REQUESTABLE_CODES } from "../utils/leave-type";
+import { REQUESTABLE_CODES, IMPOSED_ONLY_CODES } from "../utils/leave-type";
+import type { RequestableCode } from "../utils/leave-type";
 
 // __dirname is apps/api/src/__tests__ — four levels up is the repo root, same as
 // leave-type-identity-guard.test.ts.
@@ -59,10 +60,10 @@ describe("G1 — schema enum parity", () => {
     expect(schemaMembers).toEqual(new Set(ABSENCE_TYPES));
   });
 
-  it("the parsed LeaveTypeCode enum equals REQUESTABLE_CODES exactly (9 members)", () => {
+  it("the parsed LeaveTypeCode enum equals REQUESTABLE_CODES ∪ IMPOSED_ONLY_CODES exactly (11 members)", () => {
     const schemaMembers = new Set(parseEnumMembers(schemaText, "LeaveTypeCode"));
-    expect(schemaMembers.size).toBe(9);
-    expect(schemaMembers).toEqual(new Set(REQUESTABLE_CODES));
+    expect(schemaMembers.size).toBe(11);
+    expect(schemaMembers).toEqual(new Set([...REQUESTABLE_CODES, ...IMPOSED_ONLY_CODES]));
   });
 });
 
@@ -103,8 +104,9 @@ describe("G3 — LEAVE_TYPE_CODE_CORRESPONDENCE completeness", () => {
 
   // Mirror of G2's design note: checked against the SCHEMA directly, not against
   // REQUESTABLE_CODES, for the same independence reason.
-  it("has exactly one entry per LeaveTypeCode value declared in the schema", () => {
+  it("has exactly one entry per LeaveTypeCode value declared in the schema, minus the two IMPOSED_ONLY_CODES the correspondence table no longer covers (Phase 98b, D-01/D-02)", () => {
     const schemaMembers = new Set(parseEnumMembers(schemaText, "LeaveTypeCode"));
+    for (const imposed of IMPOSED_ONLY_CODES) schemaMembers.delete(imposed);
     expect(new Set(Object.keys(LEAVE_TYPE_CODE_CORRESPONDENCE))).toEqual(schemaMembers);
   });
 
@@ -133,7 +135,11 @@ describe("G4 — every corresponds pair round-trips in both directions", () => {
     for (const type of ABSENCE_TYPES) {
       const entry = ABSENCE_TYPE_CORRESPONDENCE[type];
       if (entry.kind !== "corresponds") continue;
-      const mirror = LEAVE_TYPE_CODE_CORRESPONDENCE[entry.code];
+      // entry.code is typed LeaveTypeCode (11 values), but every "corresponds" entry in
+      // ABSENCE_TYPE_CORRESPONDENCE names one of the nine requestable codes — neither IMPOSED_ONLY
+      // code ever appears here, since G5 pins both as absence_only. The cast reflects a runtime
+      // invariant this same test enforces, not an escape from it.
+      const mirror = LEAVE_TYPE_CODE_CORRESPONDENCE[entry.code as RequestableCode];
       expect(mirror.kind).toBe("corresponds");
       expect(mirror.kind === "corresponds" ? mirror.type : null).toBe(type);
     }
