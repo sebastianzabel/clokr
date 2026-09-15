@@ -1,0 +1,34 @@
+{
+  "scenarios": {
+    "golden-azubi-jan2026": {
+      "cron": {
+        "balanceMinutes": 1104,
+        "carryOver": 1104,
+        "expectedMinutes": 8664,
+        "workedMinutes": 9768
+      },
+      "live": {
+        "balanceHours": 18.4
+      },
+      "manualClose": {
+        "balanceMinutes": 1104,
+        "carryOver": 1104,
+        "expectedMinutes": 8664,
+        "workedMinutes": 9768
+      },
+      "pureCore": {
+        "balanceMinutes": 1104,
+        "carryOver": 1104,
+        "expectedMinutes": 8664,
+        "workedMinutes": 9768
+      },
+      "recalc": {
+        "balanceMinutes": 1104,
+        "carryOver": 1104,
+        "expectedMinutes": 8664,
+        "workedMinutes": 9768
+      }
+    }
+  },
+  "schemaVersion": "113b-1"
+}
