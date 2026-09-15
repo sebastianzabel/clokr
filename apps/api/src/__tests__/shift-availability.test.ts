@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { AbsenceType, LeaveTypeCode } from "@clokr/db";
 import { ABSENCE_TYPES, leaveTypeCodeForAbsenceType } from "../utils/absence-type";
-import { LEAVE_TYPE_CODES } from "../utils/leave-type";
+import { REQUESTABLE_CODES } from "../utils/leave-type";
 import { classifyAbsenceType, classifyLeaveTypeCode } from "../utils/shift-availability";
 
 /**
@@ -152,8 +152,8 @@ describe("exhaustiveness — a new enum value cannot be added without extending 
     PARENTAL: "other",
   };
 
-  it("every member of LEAVE_TYPE_CODES has an entry in this test's own expectation table", () => {
-    for (const code of LEAVE_TYPE_CODES) {
+  it("every member of REQUESTABLE_CODES has an entry in this test's own expectation table", () => {
+    for (const code of REQUESTABLE_CODES) {
       expect(EXPECTED_LEAVE_BUCKET).toHaveProperty(code);
       expect(classifyLeaveTypeCode(code)).toBe(EXPECTED_LEAVE_BUCKET[code]);
     }

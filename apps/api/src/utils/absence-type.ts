@@ -26,7 +26,7 @@ import type { AbsenceType, LeaveTypeCode } from "@clokr/db";
  */
 
 /** All eight `AbsenceType` values as a tuple, in schema order (`schema.prisma`'s `enum
- *  AbsenceType` block). Mirrors `LEAVE_TYPE_CODES`'s shape in `leave-type.ts`. */
+ *  AbsenceType` block). Mirrors `REQUESTABLE_CODES`'s shape in `leave-type.ts`. */
 export const ABSENCE_TYPES = [
   "SICK",
   "SICK_CHILD",

@@ -30,7 +30,7 @@ import {
   LEAVE_TYPE_CODE_CORRESPONDENCE,
   ADR_REQUESTED_ONLY_ABSENCE_TYPES,
 } from "../utils/absence-type";
-import { LEAVE_TYPE_CODES } from "../utils/leave-type";
+import { REQUESTABLE_CODES } from "../utils/leave-type";
 
 // __dirname is apps/api/src/__tests__ — four levels up is the repo root, same as
 // leave-type-identity-guard.test.ts.
@@ -59,10 +59,10 @@ describe("G1 — schema enum parity", () => {
     expect(schemaMembers).toEqual(new Set(ABSENCE_TYPES));
   });
 
-  it("the parsed LeaveTypeCode enum equals LEAVE_TYPE_CODES exactly (9 members)", () => {
+  it("the parsed LeaveTypeCode enum equals REQUESTABLE_CODES exactly (9 members)", () => {
     const schemaMembers = new Set(parseEnumMembers(schemaText, "LeaveTypeCode"));
     expect(schemaMembers.size).toBe(9);
-    expect(schemaMembers).toEqual(new Set(LEAVE_TYPE_CODES));
+    expect(schemaMembers).toEqual(new Set(REQUESTABLE_CODES));
   });
 });
 
@@ -78,11 +78,11 @@ describe("G2 — ABSENCE_TYPE_CORRESPONDENCE completeness", () => {
     expect(new Set(Object.keys(ABSENCE_TYPE_CORRESPONDENCE))).toEqual(schemaMembers);
   });
 
-  it("every corresponds entry's code exists in LEAVE_TYPE_CODES", () => {
+  it("every corresponds entry's code exists in REQUESTABLE_CODES", () => {
     for (const type of ABSENCE_TYPES) {
       const entry = ABSENCE_TYPE_CORRESPONDENCE[type];
       if (entry.kind === "corresponds") {
-        expect(LEAVE_TYPE_CODES as readonly string[]).toContain(entry.code);
+        expect(REQUESTABLE_CODES as readonly string[]).toContain(entry.code);
       }
     }
   });
@@ -102,14 +102,14 @@ describe("G3 — LEAVE_TYPE_CODE_CORRESPONDENCE completeness", () => {
   const schemaText = readFileSync(SCHEMA_PATH, "utf-8");
 
   // Mirror of G2's design note: checked against the SCHEMA directly, not against
-  // LEAVE_TYPE_CODES, for the same independence reason.
+  // REQUESTABLE_CODES, for the same independence reason.
   it("has exactly one entry per LeaveTypeCode value declared in the schema", () => {
     const schemaMembers = new Set(parseEnumMembers(schemaText, "LeaveTypeCode"));
     expect(new Set(Object.keys(LEAVE_TYPE_CODE_CORRESPONDENCE))).toEqual(schemaMembers);
   });
 
   it("every corresponds entry's type exists in ABSENCE_TYPES", () => {
-    for (const code of LEAVE_TYPE_CODES) {
+    for (const code of REQUESTABLE_CODES) {
       const entry = LEAVE_TYPE_CODE_CORRESPONDENCE[code];
       if (entry.kind === "corresponds") {
         expect(ABSENCE_TYPES as readonly string[]).toContain(entry.type);
@@ -118,7 +118,7 @@ describe("G3 — LEAVE_TYPE_CODE_CORRESPONDENCE completeness", () => {
   });
 
   it("every leave_only entry's why is a real reason, not a placeholder (>= 40 chars)", () => {
-    for (const code of LEAVE_TYPE_CODES) {
+    for (const code of REQUESTABLE_CODES) {
       const entry = LEAVE_TYPE_CODE_CORRESPONDENCE[code];
       if (entry.kind === "leave_only") {
         expect(entry.why.length).toBeGreaterThanOrEqual(40);
@@ -140,7 +140,7 @@ describe("G4 — every corresponds pair round-trips in both directions", () => {
   });
 
   it("LeaveTypeCode -> AbsenceType -> LeaveTypeCode returns the original value", () => {
-    for (const code of LEAVE_TYPE_CODES) {
+    for (const code of REQUESTABLE_CODES) {
       const entry = LEAVE_TYPE_CODE_CORRESPONDENCE[code];
       if (entry.kind !== "corresponds") continue;
       const mirror = ABSENCE_TYPE_CORRESPONDENCE[entry.type];
