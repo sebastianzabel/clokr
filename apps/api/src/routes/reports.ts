@@ -723,7 +723,7 @@ function buildDatevLodas(params: {
     const maternityDays = daysForCode(emp, "MATERNITY");
     const parentalDays = daysForCode(emp, "PARENTAL");
 
-    // Phase 104 (D-30): § 9-Tage aus der Urlaubs-Lohnart herausrechnen — unchanged by
+    // Phase 104 (D-30): subtract § 9 days from the Urlaub Lohnart — unchanged by
     // Issue #210, the Urlaub side of the § 9 move stays literally as it was.
     const section9WorkDays = (section9ByEmp?.get(emp.id) ?? []).reduce(
       (s, c) => s + workDaysInMonthRange(c.creditedStart, c.creditedEnd),
