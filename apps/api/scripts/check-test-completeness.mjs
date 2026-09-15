@@ -18,8 +18,8 @@
  */
 import { readFileSync } from "node:fs";
 
-const MIN_FILES = 235; // Phase 98: measured green run (235 files / 2705 passed + 3 skipped); raise when adding files
-const MIN_TESTS = 2705; // Phase 98: measured green run — the passed count; the script compares numTotalTests, which was 2708 on that run. Raise when adding tests
+const MIN_FILES = 235; // Phase 98b: measured green run (235 files / 2684 passed + 3 skipped). Coincidentally the same file count as the Phase 98 floor it replaces — 98b-04 deleted absence-type.test.ts and absence-type-mapping-guard.test.ts (233 files), and this plan added absence-vocabulary-guard.test.ts and leave-check.test.ts (back up to 235). Raise when adding files.
+const MIN_TESTS = 2684; // Phase 98b: measured green run — the passed count; the script compares numTotalTests, which was 2687 on that run. LOWERED from 2705 because 98b-04 deleted absence-type.test.ts (14 tests) and absence-type-mapping-guard.test.ts (12 tests) — their subject (the agreement between two absence enums) no longer exists after the merge — and trimmed shift-availability.test.ts to one classifier; absence-vocabulary-guard.test.ts (9 tests) and leave-check.test.ts (3 tests), added by this plan, replace their remaining assertions. Raise when adding tests.
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
