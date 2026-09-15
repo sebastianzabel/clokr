@@ -234,6 +234,25 @@ describe("G6 — no redeclaration of the absence vocabulary", () => {
 // `LeaveTypeCode` in a `POST /api/v1/leave/requests` body — a repo-wide scan would flag correct
 // code, and a gate that flags correct code gets an exception list, which is the failure mode this
 // phase is avoiding (98-RESEARCH.md §3.4, 98-02-PLAN.md <measured_baseline>).
+//
+// Two limits of a text scan, stated rather than papered over:
+//
+//  1. It reaches LITERAL writes only. `type: sickType` or a spread of a prepared object defeats
+//     it completely, and no amount of regex fixes that — catching those needs a type-level or
+//     runtime check, which these standalone scripts do not admit (see the paragraph above). The
+//     pattern below is quote- and whitespace-tolerant so the SPELLING of a literal cannot slip
+//     past (`type : "SICK"`, `type:'SICK'`, `type: "SICK" satisfies AbsenceType` all match); an
+//     indirection through a variable remains out of reach, by construction.
+//
+//  2. It is MODEL-BLIND: it does not know which prisma model the matched literal belongs to, so
+//     it would also fire on some future non-Absence model whose `type` field happened to take one
+//     of these four values. That is accepted deliberately, because the obvious narrowing is worse:
+//     restricting the scan to files that also contain `absence.create` would, measured today, stop
+//     scanning `packages/db/src/reset-demo.ts` altogether — that file has ZERO `absence.create`
+//     calls since 98-02 moved its sickness rows to `LeaveRequest`, and it is one of the two files
+//     this gate exists to guard. A gate that silently stops looking at the file it was written for
+//     is worse than one that occasionally asks a human to look at a line. If this ever fires on a
+//     genuinely unrelated model, narrow it to that model — do not delete the assertion.
 describe("G7 — no demo seed creates an Absence row with an ADR-requested-only type", () => {
   const SEED_DIR = join(REPO_ROOT, "packages/db/src");
 
@@ -246,17 +265,23 @@ describe("G7 — no demo seed creates an Absence row with an ADR-requested-only 
   it('`type: "<ADR-requested-only type>"` occurs in zero packages/db/src/*.ts files', () => {
     const violations: string[] = [];
     for (const abs of seedFiles()) {
-      const content = readFileSync(abs, "utf-8");
+      const lines = readFileSync(abs, "utf-8").split("\n");
       for (const type of ADR_REQUESTED_ONLY_ABSENCE_TYPES) {
-        if (content.includes(`type: "${type}"`)) {
+        // `\btype` is case-sensitive on purpose: it must match the `type:` property and not
+        // `leaveType:` / `sickType:`, which name something else entirely.
+        const re = new RegExp(`\\btype\\s*:\\s*["']${type}["']`);
+        lines.forEach((line, i) => {
+          if (!re.test(line)) return;
           violations.push(
-            `${relative(REPO_ROOT, abs)}: found literal type: "${type}". ADR 0001 assigns ` +
-              `SICK, SICK_CHILD, SPECIAL_LEAVE and UNPAID_LEAVE to LeaveRequest, not Absence — ` +
-              `seed it as an APPROVED LeaveRequest with the matching LeaveType.code, not as an ` +
-              `Absence. See ABSENCE_TYPE_CORRESPONDENCE in apps/api/src/utils/absence-type.ts ` +
-              `for the code to use.`,
+            `${relative(REPO_ROOT, abs)}:${i + 1}: ${line.trim()}\n` +
+              `  found a literal type: "${type}". ADR 0001 assigns SICK, SICK_CHILD, ` +
+              `SPECIAL_LEAVE and UNPAID_LEAVE to LeaveRequest, not Absence — seed it as an ` +
+              `APPROVED LeaveRequest with the matching LeaveType.code, not as an Absence. See ` +
+              `ABSENCE_TYPE_CORRESPONDENCE in apps/api/src/utils/absence-type.ts for the code ` +
+              `to use. If this line belongs to a model other than Absence, see limit 2 in this ` +
+              `block's docblock before touching the assertion.`,
           );
-        }
+        });
       }
     }
     expect(violations.join("\n")).toBe("");
