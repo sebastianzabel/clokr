@@ -22,5 +22,11 @@
     "function": "employeeScopeWhere",
     "rules": ["F1"],
     "reason": "Plan 100B-04: a pure, side-effect-free type-mapping helper (EmployeeScope -> a Prisma 'where' fragment) with no Prisma CALL and no database client of any kind in its signature — D-07's whole point (a write silently leaving the caller's $transaction through app.prisma) cannot occur here because there is no client to call through. F1 is checked mechanically against every exported function declaration under contexts/*/facade/ regardless of whether it touches Prisma at all, so this genuinely-safe function is still visited and flagged. Scoping F1 itself to 'only functions with a db-shaped first parameter' would change lint-facade-signatures.ts, which is outside this plan's declared files_modified; a named exception is the cheaper, equally-auditable fix the plan's own Task 3 offers as the alternative."
+  },
+  {
+    "file": "apps/api/src/contexts/working-time-account/facade/overtime-account.ts",
+    "function": "hardDeleteOvertimeDataForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-06 (D-08/T-100B-25): this is a HARD delete (OvertimeAccount.deleteMany, cascading to OvertimeTransaction) invoked ONLY from platform/api/employees.ts's DELETE /:id/hard-delete sequence, whose handler validates 'id' against req.user.tenantId at its own top (employee.findUnique({ where: { id, tenantId: req.user.tenantId } }), employees.ts:1108-1111) BEFORE the hard-delete $transaction — and therefore before this function — is ever reached. Adding a tenantId parameter here would be a decorative constraint with no independent identifier to check it against (there is no second, untrusted employeeId in play), not a real tenant boundary; the real boundary is the caller's own upstream validation, named explicitly here per D-08's 'named, not uniform' rule."
   }
 ]

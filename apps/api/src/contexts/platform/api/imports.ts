@@ -10,6 +10,7 @@ import {
   validateTimeEntryInvariants,
 } from "../../time-tracking/api/time-entries";
 import { getTenantTimezone } from "../../working-time-account/timezone";
+import { createOvertimeAccount } from "../../working-time-account"; // Phase 100B Plan 06 — W13
 
 const employeeRowSchema = z.object({
   email: z.string().email(),
@@ -139,9 +140,7 @@ export async function importRoutes(app: FastifyInstance) {
               },
             });
 
-            await tx.overtimeAccount.create({
-              data: { employeeId: emp.id, balanceHours: 0 },
-            });
+            await createOvertimeAccount(tx, emp.id, req.user.tenantId);
           });
 
           results.push({ row: i + 1, status: "ok", email: data.email });

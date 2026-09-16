@@ -28,9 +28,22 @@
  * anonymisation, hard delete, and retention archival deliberately OMIT it and say so in their own
  * docblock — a blanket guard here would be an Art. 17 regression, not an improvement.
  *
- * TODO(100b-07): both re-exports below still take `app: FastifyInstance` as their first
- * parameter (`confirmed-saldo.ts:43,71`), not `db: Prisma.TransactionClient` — plan 100B-07
- * changes that. Do NOT change the signature here; `confirmed-saldo.ts` already has callers and
- * that migration is plan 07's own work, not this plan's.
+ * TODO(100b-07): the `confirmed-saldo` re-exports below still take `app: FastifyInstance` as
+ * their first parameter (`confirmed-saldo.ts:43,71`), not `db: Prisma.TransactionClient` — plan
+ * 100B-07 changes that. Do NOT change the signature here; `confirmed-saldo.ts` already has
+ * callers and that migration is plan 07's own work, not this plan's.
+ *
+ * Plan 100B-06 (Wave 3) adds the `OvertimeAccount`/`OvertimeTransaction` facade — W8–W15, all
+ * `db: Prisma.TransactionClient`-first from day one (`./facade/overtime-account.ts`).
  */
 export { getConfirmedCarryOver, getConfirmedCarryOverBulk } from "./confirmed-saldo";
+export {
+  getOvertimeAccount,
+  listOvertimeAccountsForTenant,
+  getBalances,
+  bookOvertimeCompensation,
+  reverseOvertimeCompensation,
+  createOvertimeAccount,
+  setOvertimeAccountBalance,
+  hardDeleteOvertimeDataForEmployee,
+} from "./facade/overtime-account";

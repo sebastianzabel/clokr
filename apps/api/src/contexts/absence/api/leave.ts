@@ -26,6 +26,11 @@ import { loadNegativeBalanceTolerance } from "../../working-time-account/negativ
 import { formatMinutesHM } from "../format-hm"; // Phase 100
 import { shiftNettoMinutes, sumShiftNettoMinutes } from "../../scheduling/shift-netto"; // Phase 100 (OTC-04)
 import { getShiftsInRange, flagShiftsConflictingWithLeave } from "../../scheduling"; // Phase 100B Plan 05 — S1/S2
+import {
+  getOvertimeAccount,
+  bookOvertimeCompensation,
+  reverseOvertimeCompensation,
+} from "../../working-time-account"; // Phase 100B Plan 06 — W8/W11/W12
 import { auditReasonSchema } from "../../platform/audit-reason"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
@@ -631,7 +636,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           // D-02: fail-safe applies ZERO tolerance — a broken read path must never
           // be more permissive than the normal path.
           appliedToleranceMinutes = 0;
-          const account = await app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
+          const account = await getOvertimeAccount(app.prisma, employeeId, tenantId);
           availableMinutes = account ? Math.round(Number(account.balanceHours) * 60) : 0;
         }
 
@@ -1020,37 +1025,28 @@ export async function leaveRoutes(app: FastifyInstance) {
               where: { id: existing.employeeId },
               select: { tenantId: true },
             });
+            const tenantIdForReversal = empT?.tenantId ?? "";
             const hMap = await getHolidayMap(
               app.prisma,
-              empT?.tenantId ?? "",
+              tenantIdForReversal,
               existing.startDate,
               existing.endDate,
             );
-            const [acct, hrs] = await Promise.all([
-              app.prisma.overtimeAccount.findUnique({ where: { employeeId: existing.employeeId } }),
-              getScheduledHours(
-                app.prisma,
-                existing.employeeId,
-                existing.startDate,
-                existing.endDate,
-                existing.halfDay,
-                new Set(hMap.keys()),
-              ),
-            ]);
-            if (acct && hrs > 0) {
-              await app.prisma.overtimeAccount.update({
-                where: { id: acct.id },
-                data: { balanceHours: { increment: hrs } },
-              });
-              await app.prisma.overtimeTransaction.create({
-                data: {
-                  overtimeAccountId: acct.id,
-                  hours: hrs,
-                  type: "CORRECTION",
-                  description: `Stornierung Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]}`,
-                },
-              });
-            }
+            const hrs = await getScheduledHours(
+              app.prisma,
+              existing.employeeId,
+              existing.startDate,
+              existing.endDate,
+              existing.halfDay,
+              new Set(hMap.keys()),
+            );
+            await reverseOvertimeCompensation(
+              app.prisma,
+              existing.employeeId,
+              tenantIdForReversal,
+              hrs,
+              `Stornierung Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]}`,
+            );
           }
         } else {
           // Stornierung ablehnen → zurück auf APPROVED
@@ -1207,37 +1203,28 @@ export async function leaveRoutes(app: FastifyInstance) {
             where: { id: existing.employeeId },
             select: { tenantId: true },
           });
+          const tenantIdForBooking = empTenant?.tenantId ?? "";
           const hMap = await getHolidayMap(
             app.prisma,
-            empTenant?.tenantId ?? "",
+            tenantIdForBooking,
             existing.startDate,
             existing.endDate,
           );
-          const [account, hours] = await Promise.all([
-            app.prisma.overtimeAccount.findUnique({ where: { employeeId: existing.employeeId } }),
-            getScheduledHours(
-              app.prisma,
-              existing.employeeId,
-              existing.startDate,
-              existing.endDate,
-              existing.halfDay,
-              new Set(hMap.keys()),
-            ),
-          ]);
-          if (account && hours > 0) {
-            await app.prisma.overtimeAccount.update({
-              where: { id: account.id },
-              data: { balanceHours: { decrement: hours } },
-            });
-            await app.prisma.overtimeTransaction.create({
-              data: {
-                overtimeAccountId: account.id,
-                hours: -hours,
-                type: "REDUCTION",
-                description: `Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]} – ${existing.endDate.toISOString().split("T")[0]}`,
-              },
-            });
-          }
+          const hours = await getScheduledHours(
+            app.prisma,
+            existing.employeeId,
+            existing.startDate,
+            existing.endDate,
+            existing.halfDay,
+            new Set(hMap.keys()),
+          );
+          await bookOvertimeCompensation(
+            app.prisma,
+            existing.employeeId,
+            tenantIdForBooking,
+            hours,
+            `Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]} – ${existing.endDate.toISOString().split("T")[0]}`,
+          );
         }
 
         // ── § 9 BUrlG (Phase 104, D-09): Krank-im-Urlaub-Vorgang anlegen ──────────
@@ -1871,9 +1858,6 @@ export async function leaveRoutes(app: FastifyInstance) {
             tenantId,
           );
         } else if (oldTypeCode === "OVERTIME_COMP") {
-          const acct = await tx.overtimeAccount.findUnique({
-            where: { employeeId: existing.employeeId },
-          });
           const hrs = await getScheduledHours(
             tx,
             existing.employeeId,
@@ -1882,20 +1866,13 @@ export async function leaveRoutes(app: FastifyInstance) {
             existing.halfDay,
             holidays,
           );
-          if (acct && hrs > 0) {
-            await tx.overtimeAccount.update({
-              where: { id: acct.id },
-              data: { balanceHours: { increment: hrs } },
-            });
-            await tx.overtimeTransaction.create({
-              data: {
-                overtimeAccountId: acct.id,
-                hours: hrs,
-                type: "CORRECTION",
-                description: `Korrektur Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]}`,
-              },
-            });
-          }
+          await reverseOvertimeCompensation(
+            tx,
+            existing.employeeId,
+            tenantId,
+            hrs,
+            `Korrektur Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]}`,
+          );
         }
         // SICK / SICK_CHILD / PARENTAL / MATERNITY / SPECIAL / UNPAID / EDUCATION:
         // entitlement-neutral on the reverse side (no usedDays / balance booking).
@@ -1933,9 +1910,6 @@ export async function leaveRoutes(app: FastifyInstance) {
             tenantId,
           );
         } else if (newType === "OVERTIME_COMP") {
-          const acct = await tx.overtimeAccount.findUnique({
-            where: { employeeId: existing.employeeId },
-          });
           const hrs = await getScheduledHours(
             tx,
             existing.employeeId,
@@ -1944,20 +1918,13 @@ export async function leaveRoutes(app: FastifyInstance) {
             body.halfDay,
             holidays,
           );
-          if (acct && hrs > 0) {
-            await tx.overtimeAccount.update({
-              where: { id: acct.id },
-              data: { balanceHours: { decrement: hrs } },
-            });
-            await tx.overtimeTransaction.create({
-              data: {
-                overtimeAccountId: acct.id,
-                hours: -hrs,
-                type: "REDUCTION",
-                description: `Überstundenausgleich ${start.toISOString().split("T")[0]} – ${end.toISOString().split("T")[0]}`,
-              },
-            });
-          }
+          await bookOvertimeCompensation(
+            tx,
+            existing.employeeId,
+            tenantId,
+            hrs,
+            `Überstundenausgleich ${start.toISOString().split("T")[0]} – ${end.toISOString().split("T")[0]}`,
+          );
         }
         // SICK / SICK_CHILD / PARENTAL / MATERNITY / SPECIAL / UNPAID / EDUCATION:
         // entitlement-neutral on the apply side (light).
@@ -2440,7 +2407,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       }
 
       // Fail-safe branch (live compute threw, or § 18 ArbZG-exempt employee).
-      const account = await app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
+      const account = await getOvertimeAccount(app.prisma, employeeId, req.user.tenantId);
       const balanceHours = account ? Math.round(Number(account.balanceHours) * 100) / 100 : 0;
       try {
         const confirmed = await getConfirmedCarryOver(app, employeeId);

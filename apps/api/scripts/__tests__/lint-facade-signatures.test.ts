@@ -289,7 +289,15 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // confirmed-saldo.ts's two + shifts.ts's three + availability.ts's one), 4 exception entries
   // (only the pre-existing 4 grandfathered ones — none of plan 05's 4 new functions need one),
   // 0 findings.
-  it("the real tree has exactly 8 exported facade functions today, the 4 pre-existing ones grandfathered, 0 unexcepted findings", () => {
+  //
+  // Phase 100B Plan 06 (Arbeitszeitkonto — OvertimeAccount/OvertimeTransaction) added ONE more
+  // real facade file: `contexts/working-time-account/facade/overtime-account.ts` (W8-W15 — 8
+  // exported functions: getOvertimeAccount, listOvertimeAccountsForTenant, getBalances,
+  // bookOvertimeCompensation, reverseOvertimeCompensation, createOvertimeAccount,
+  // setOvertimeAccountBalance, hardDeleteOvertimeDataForEmployee). 6 files, 16 exported functions
+  // total, 5 exception entries (the 4 pre-existing ones plus ONE new: hardDeleteOvertimeDataForEmployee's
+  // F3, D-08's "named, not uniform" — see lint-facade-signatures-exceptions.json), 0 findings.
+  it("the real tree has exactly 16 exported facade functions today, 5 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -297,6 +305,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
         "apps/api/src/contexts/platform/facade/employee-scope.ts",
         "apps/api/src/contexts/scheduling/facade/shifts.ts",
         "apps/api/src/contexts/scheduling/facade/availability.ts",
+        "apps/api/src/contexts/working-time-account/facade/overtime-account.ts",
       ].sort((a, b) => a.localeCompare(b)),
     );
 
@@ -305,7 +314,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(8);
+    expect(functions).toHaveLength(16);
 
     const rawExceptions = JSON.parse(
       readFileSync(
@@ -316,7 +325,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     const validated = validateExceptionsDocument(rawExceptions, functions);
     expect(validated.ok).toBe(true);
     if (validated.ok) {
-      expect(validated.entries).toHaveLength(4);
+      expect(validated.entries).toHaveLength(5);
       const findings = computeFindings(functions, validated.entries);
       expect(findings).toEqual([]);
     }

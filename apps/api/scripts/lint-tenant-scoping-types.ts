@@ -83,7 +83,8 @@
  * Prisma call — see the facade-rule note above), the first of the five facade directories this
  * phase introduces. Plan 05 adds the ninth: `contexts/scheduling/facade` (`Shift`/
  * `EmployeeAvailability` — S1-S4), in the SAME commit that creates the directory
- * (`MissingScopedDirError`, #229). `working-time-account` (06), `time-tracking` (08) and `absence`
+ * (`MissingScopedDirError`, #229). Plan 06 adds the tenth: `contexts/working-time-account/facade`
+ * (`OvertimeAccount`/`OvertimeTransaction` — W8-W15). `time-tracking` (08) and `absence`
  * (10) follow, one per conversion wave. No further platform entry is expected — platform
  * (Unterbau) needs no CONVERSION facade of its own for this phase's D-01 waves, because every
  * other context may already read it directly per ADR 0001; `contexts/platform/facade` exists only
@@ -99,6 +100,7 @@ export const SCOPED_DIRS = [
   "apps/api/src/contexts/scheduling/api",
   "apps/api/src/contexts/scheduling/facade",
   "apps/api/src/contexts/working-time-account/api",
+  "apps/api/src/contexts/working-time-account/facade",
   "apps/api/src/composition",
   "apps/api/src/services",
 ] as const;

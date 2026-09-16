@@ -10,6 +10,10 @@ import { normalizeMac } from "../../time-tracking/normalize-mac";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { anonymizeEmployeeData, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../anonymize";
 import {
+  createOvertimeAccount,
+  hardDeleteOvertimeDataForEmployee,
+} from "../../working-time-account"; // Phase 100B Plan 06 — W13/W15
+import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
   BREAK_MAX_OVER_6H,
@@ -433,9 +437,7 @@ export async function employeeRoutes(app: FastifyInstance) {
             },
           });
 
-          await tx.overtimeAccount.create({
-            data: { employeeId: emp.id, balanceHours: 0 },
-          });
+          await createOvertimeAccount(tx, emp.id, req.user.tenantId);
 
           // Einladung nur erstellen wenn kein Passwort gesetzt
           let token: string | null = null;
@@ -1214,7 +1216,7 @@ export async function employeeRoutes(app: FastifyInstance) {
         // Cascade-owned models (safe to delete explicitly)
         await tx.leaveEntitlement.deleteMany({ where: { employeeId: id } });
         await tx.workSchedule.deleteMany({ where: { employeeId: id } });
-        await tx.overtimeAccount.deleteMany({ where: { employeeId: id } });
+        await hardDeleteOvertimeDataForEmployee(tx, id);
         // Finally: employee and user records
         await tx.employee.delete({ where: { id } });
         await tx.user.delete({ where: { id: userId } });

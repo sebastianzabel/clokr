@@ -30,6 +30,7 @@ import {
 } from "../retro-config"; // Phase 76.29 — RETRO-01 window guard
 import { auditReasonSchema, AUDIT_REASON_REQUIRED } from "../../platform/audit-reason"; // Quick 260824-cjd
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
+import { getOvertimeAccount, setOvertimeAccountBalance } from "../../working-time-account"; // Phase 100B Plan 06 — W8/W14
 
 const nfcPunchSchema = z.object({
   nfcCardId: z.string().min(1),
@@ -467,9 +468,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
 
       const getBalance = async () => {
-        const account = await app.prisma.overtimeAccount.findFirst({
-          where: { employeeId: employee.id },
-        });
+        const account = await getOvertimeAccount(app.prisma, employee.id, employee.tenantId);
         return account ? Number(account.balanceHours) : 0;
       };
 
@@ -2996,11 +2995,20 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   const effectiveBalanceHours = await computeOvertimeBalanceHours(app, employeeId);
   if (effectiveBalanceHours === null) return; // §18-exempt — do not touch stored balance
 
-  const account = await app.prisma.overtimeAccount.upsert({
-    where: { employeeId },
-    create: { employeeId, balanceHours: effectiveBalanceHours },
-    update: { balanceHours: effectiveBalanceHours },
+  // Phase 100B Plan 06 (D-10/G4): setOvertimeAccountBalance requires a tenantId parameter for
+  // facade signature uniformity, even though this caller-facing function's own signature stays
+  // (app, employeeId) unchanged (many call sites, out of this plan's scope) — so it resolves the
+  // employee's tenantId itself, once, right before the write.
+  const emp = await app.prisma.employee.findUnique({
+    where: { id: employeeId },
+    select: { tenantId: true },
   });
+  const account = await setOvertimeAccountBalance(
+    app.prisma,
+    employeeId,
+    emp?.tenantId ?? "",
+    effectiveBalanceHours,
+  );
 
   const schedule = await getEffectiveSchedule(app, employeeId);
   const threshold = Number(schedule.overtimeThreshold);

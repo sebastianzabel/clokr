@@ -37,6 +37,11 @@ import { findMissingWorkdays } from "../contexts/working-time-account/find-missi
 import { findUnconfirmedBreakDays } from "../contexts/time-tracking/find-unconfirmed-break-days"; // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
 import { resolveMissingEntriesDays } from "../contexts/working-time-account/missing-entries-window"; // GitHub issue #141 — single source for both Karte and Cron
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
+import {
+  getOvertimeAccount,
+  listOvertimeAccountsForTenant,
+  getBalances,
+} from "../contexts/working-time-account"; // Phase 100B Plan 06 — W8/W9/W10
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -257,7 +262,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         hasClosedMonth = breakdown.hasClosedMonth;
         rosterIncomplete = breakdown.rosterIncomplete;
       } else {
-        const acct = await app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
+        const acct = await getOvertimeAccount(app.prisma, employeeId, tenantId);
         overtimeBalance = Number(acct?.balanceHours ?? 0);
         try {
           const confirmed = await getConfirmedCarryOver(app, employeeId);
@@ -759,15 +764,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
 
       // Query 1: all OvertimeAccount rows joined with employee (tenant-scoped, active only)
-      const accounts = await app.prisma.overtimeAccount.findMany({
-        where: { employee: { tenantId, exitDate: null, user: { isActive: true } } },
-        include: {
-          employee: {
-            select: { id: true, firstName: true, lastName: true, employeeNumber: true },
-          },
-        },
-        orderBy: { employee: { lastName: "asc" } },
-      });
+      const accounts = await listOvertimeAccountsForTenant(app.prisma, tenantId);
 
       const employeeIds = accounts.map((a) => a.employeeId);
 
@@ -1339,13 +1336,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       }));
 
       // Query 2: SUM(balanceHours * 60) across all active employees' OvertimeAccounts.
-      const accounts =
-        employeeIds.length === 0
-          ? []
-          : await app.prisma.overtimeAccount.findMany({
-              where: { employeeId: { in: employeeIds } },
-              select: { balanceHours: true },
-            });
+      const accounts = await getBalances(app.prisma, employeeIds, tenantId);
       const currentTeamBalanceMinutes = Math.round(
         accounts.reduce((sum, a) => sum + Number(a.balanceHours) * 60, 0),
       );

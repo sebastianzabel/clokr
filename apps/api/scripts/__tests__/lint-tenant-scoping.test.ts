@@ -441,8 +441,9 @@ beforeEach(() => {
   // "apps/api/src/contexts/absence/api" (since Phase 99b Plan 06), "apps/api/src/contexts/
   // working-time-account/api" (Phase 99b Plan 07, final shape — the former monolithic route
   // directory is gone), "apps/api/src/contexts/platform/facade" (Phase 100B Plan 04, D-10/G1,
-  // the eighth and first FACADE entry) and "apps/api/src/contexts/scheduling/facade" (Phase
-  // 100B Plan 05, the ninth) — so every fixture tree below provisions all nine up front —
+  // the eighth and first FACADE entry), "apps/api/src/contexts/scheduling/facade" (Phase
+  // 100B Plan 05, the ninth) and "apps/api/src/contexts/working-time-account/facade" (Phase
+  // 100B Plan 06, the tenth) — so every fixture tree below provisions all ten up front —
   // individual tests still only WRITE files under the one they care about, matching production
   // shape rather than working around the guard.
   fs.mkdirSync(path.join(tmpRoot, "apps/api/src/services"), { recursive: true });
@@ -466,6 +467,9 @@ beforeEach(() => {
     recursive: true,
   });
   fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/working-time-account/api"), {
+    recursive: true,
+  });
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/working-time-account/facade"), {
     recursive: true,
   });
 });
