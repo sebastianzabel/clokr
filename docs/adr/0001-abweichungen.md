@@ -186,13 +186,52 @@ Abwesenheiten unabhängig implementiert.
 
 ## Reihenfolge
 
-| #   | Punkt                                                | Schwere     | Zeitpunkt                          |
-| --- | ---------------------------------------------------- | ----------- | ---------------------------------- |
-| A   | Anzeigetexte als Steuerwerte (7 + 5 Stellen)         | hoch        | **vor** dem Kettenumbau            |
-| E   | Kontingentbuchung rechnet selbst, jahresübergreifend | mittel–hoch | vor dem Kettenumbau prüfen         |
-| C   | Kein Beschäftigungsobjekt                            | mittel      | **im** Kettenumbau                 |
-| B   | `Absence.SICK` nur im Demo-Seed, zwei Leser          | mittel      | vor der nächsten Saldo-Fehlersuche |
-| D   | Ungenutzte `TimeEntryType`-Werte                     | niedrig     | danach oder nie                    |
+| #   | Punkt                                                 | Schwere     | Zeitpunkt                          |
+| --- | ----------------------------------------------------- | ----------- | ---------------------------------- |
+| A   | Anzeigetexte als Steuerwerte (7 + 5 Stellen)          | hoch        | **vor** dem Kettenumbau            |
+| E   | Kontingentbuchung rechnet selbst, jahresübergreifend  | mittel–hoch | vor dem Kettenumbau prüfen         |
+| C   | Kein Beschäftigungsobjekt                             | mittel      | **im** Kettenumbau                 |
+| B   | `Absence.SICK` nur im Demo-Seed, zwei Leser           | mittel      | vor der nächsten Saldo-Fehlersuche |
+| D   | Ungenutzte `TimeEntryType`-Werte                      | niedrig     | danach oder nie                    |
+| F   | Zeiterfassung/Schichtplanung je in zwei Bäumen (D-17) | niedrig     | bewusst befristet, siehe unten     |
 
 Punkt A ist nicht zufällig oben: Er ist die Voraussetzung dafür, dass irgendeine der ADR-Regeln
 überhaupt überprüfbar wird.
+
+---
+
+## F — Zeiterfassung und Schichtplanung liegen je in zwei getrennten Bäumen
+
+**Schwere: niedrig. Bewusst und befristet — Phase 99b (Issue #99), erhoben 2026-09-16.**
+
+Nach Phase 99b's Kontextschnitt liegt der Kontext **Zeiterfassung** in zwei physisch getrennten
+Verzeichnissen:
+
+- `apps/api/src/contexts/zeiterfassung/` — die 14 verschobenen Routen/Utilities (Phase 99b,
+  Plan 99B-05)
+- `apps/api/src/services/clock/` — unverändert, bewegt sich in Phase 99b NICHT
+
+Ebenso **Schichtplanung**:
+
+- `apps/api/src/contexts/schichtplanung/` — die 11 verschobenen Routen/Utilities (Phase 99b,
+  Plan 99B-03)
+- `apps/api/src/services/phorest/` — unverändert, bewegt sich in Phase 99b NICHT
+
+Issue #99 nennt `services/clock/` und `services/phorest/` explizit „das Vorbild, nicht die
+Ausnahme" — sie sind bereits fachlich sauber geschnitten und dienten Phase 99b als Referenz für den
+Zuschnitt der neuen `contexts/`-Verzeichnisse. Genau deshalb wurden sie NICHT verschoben: das
+Vorbild (die Struktur, das Muster) wurde kopiert, nicht die physischen Dateien. Sie unter
+`contexts/` zu ziehen ist eigenständige Arbeit mit eigenem Risiko (Importpfade, die von
+`services/phorest/{sync-appointments,sync-shifts}.ts` und den Phorest-/Clock-Testsuiten ausgehen)
+und war ausdrücklich nicht Gegenstand dieser Phase (D-17,
+`.planning/phases/99B-t4-kontextschnitt/99B-CONTEXT.md`).
+
+**Warum dieser Eintrag existiert:** Ein unkommentierter Zwischenstand wäre die schlechtere
+Variante — die nächste Person, die `services/clock/` oder `services/phorest/` anfasst, könnte den
+Zustand für ein Versehen halten statt für Absicht. Beide Hälften sind hier benannt, damit sie
+auffindbar sind:
+
+- Zeiterfassung: `apps/api/src/contexts/zeiterfassung/` UND `apps/api/src/services/clock/`
+- Schichtplanung: `apps/api/src/contexts/schichtplanung/` UND `apps/api/src/services/phorest/`
+
+Weiteres zum Zuschnitt: `docs/context-cut-map.md` § 4 und § 7.
