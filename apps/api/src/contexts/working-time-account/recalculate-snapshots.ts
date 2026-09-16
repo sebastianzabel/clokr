@@ -24,6 +24,7 @@ import { isBridgeSnapshot } from "./saldo-snapshot-cleanup"; // 2026-08 hardenin
 import { computeInjectedDelta } from "./saldo-chain-integrity"; // Phase 98 — shared delta formula
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { isSnapshotLocked } from "./snapshot-lock"; // Phase 99 (OB-03/D-09) — immutability after lock
+import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 
 // Phase 99 (D-09) — a closed month that recalc skipped, reported so a caller can
 // surface it to a human instead of the change happening silently.
@@ -347,14 +348,13 @@ export async function recalculateSnapshots(
         select: { date: true, startTime: true, endTime: true, breakMinutes: true },
       }),
       // Shifts (SHIFT_BASED — soft-deleted shifts excluded, Phase 67.2)
-      app.prisma.shift.findMany({
-        where: {
-          employeeId,
-          date: { gte: effectiveStartForHolidayFilter, lte: monthLastDay },
-          deletedAt: null,
-        },
-        select: { date: true, startTime: true, endTime: true },
-      }),
+      // Phase 100B Plan 05 — S1, contexts/scheduling facade.
+      getShiftsInRange(
+        app.prisma,
+        { kind: "employee", employeeId, tenantId: employee.tenantId },
+        effectiveStartForHolidayFilter,
+        monthLastDay,
+      ),
       // Approved leave
       app.prisma.leaveRequest.findMany({
         where: {

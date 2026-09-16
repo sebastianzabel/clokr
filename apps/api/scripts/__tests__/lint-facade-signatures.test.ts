@@ -277,18 +277,27 @@ describe("computeFindings / formatSummary", () => {
 // ── Live tree — pins the real, currently green state ────────────────────────────────────────────
 
 describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", () => {
-  // Phase 100B Plan 04: `contexts/platform/facade/employee-scope.ts` is the first REAL file the
-  // glob (`contexts/*/facade/**/*.ts`) discovers on its own, on top of the two KNOWN_FACADE_FILES
+  // Phase 100B Plan 04: `contexts/platform/facade/employee-scope.ts` was the first REAL file the
+  // glob (`contexts/*/facade/**/*.ts`) discovered on its own, on top of the two KNOWN_FACADE_FILES
   // — measured, not guessed, exactly the "measure fresh, don't copy a stale number" discipline
-  // 100B-03-SUMMARY.md already applied to this same file's KNOWN_FACADE_FILES count. 3 files, 4
-  // exported functions (employee-scope.ts's employeeScopeWhere + leave-check.ts's one +
-  // confirmed-saldo.ts's two), 4 exception entries (all 4 grandfathered), 0 findings.
-  it("the real tree has exactly 4 exported facade functions today, all 4 grandfathered, 0 unexcepted findings", () => {
+  // 100B-03-SUMMARY.md already applied to this same file's KNOWN_FACADE_FILES count.
+  //
+  // Phase 100B Plan 05 (Schichtplanung) added TWO more real facade files:
+  // `contexts/scheduling/facade/shifts.ts` (S1/S2/S3 — 3 exported functions) and
+  // `contexts/scheduling/facade/availability.ts` (S4 — 1 exported function). 5 files, 8 exported
+  // functions total (employee-scope.ts's employeeScopeWhere + leave-check.ts's one +
+  // confirmed-saldo.ts's two + shifts.ts's three + availability.ts's one), 4 exception entries
+  // (only the pre-existing 4 grandfathered ones — none of plan 05's 4 new functions need one),
+  // 0 findings.
+  it("the real tree has exactly 8 exported facade functions today, the 4 pre-existing ones grandfathered, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
-      [...KNOWN_FACADE_FILES, "apps/api/src/contexts/platform/facade/employee-scope.ts"].sort(
-        (a, b) => a.localeCompare(b),
-      ),
+      [
+        ...KNOWN_FACADE_FILES,
+        "apps/api/src/contexts/platform/facade/employee-scope.ts",
+        "apps/api/src/contexts/scheduling/facade/shifts.ts",
+        "apps/api/src/contexts/scheduling/facade/availability.ts",
+      ].sort((a, b) => a.localeCompare(b)),
     );
 
     const functions = files.flatMap((relFile) => {
@@ -296,7 +305,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(4);
+    expect(functions).toHaveLength(8);
 
     const rawExceptions = JSON.parse(
       readFileSync(

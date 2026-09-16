@@ -13,6 +13,7 @@ import {
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { preserveIllnessDeadline } from "../../absence/illness-carryover-guard"; // Phase 104
 import { DEFAULT_MISSING_ENTRIES_DAYS } from "../../working-time-account/missing-entries-window";
+import { getShiftsInRange, cancelOrphanShifts } from "../../scheduling"; // Phase 100B Plan 05 — S1/S3
 import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
@@ -851,15 +852,12 @@ export async function settingsRoutes(app: FastifyInstance) {
             `${String(now.getDate()).padStart(2, "0")}`;
 
           // Count future shifts (today and beyond are "future" for this check)
-          const futureShifts = await app.prisma.shift.findMany({
-            where: {
-              employeeId,
-              date: { gte: new Date(todayIso) },
-              deletedAt: null, // Phase 67.2 — orphan check only sees active shifts
-            },
-            orderBy: { date: "asc" },
-            select: { id: true, date: true, startTime: true, endTime: true },
-          });
+          // Phase 100B Plan 05 — S1, contexts/scheduling facade.
+          const futureShifts = await getShiftsInRange(
+            app.prisma,
+            { kind: "employee", employeeId, tenantId: req.user.tenantId },
+            new Date(todayIso),
+          );
 
           if (futureShifts.length > 0 && !body.keepOrphanShifts && !body.cancelOrphanShifts) {
             // Neither flag set — ask the client what to do
@@ -935,8 +933,9 @@ export async function settingsRoutes(app: FastifyInstance) {
 
             // $transaction returns the created/updated schedule via Promise.
             const schedule = await app.prisma.$transaction(async (tx) => {
-              // 1. Delete all future shifts
-              await tx.shift.deleteMany({ where: { id: { in: futureShiftIds } } });
+              // 1. Delete all future shifts (Phase 100B Plan 05 — S3, contexts/scheduling
+              //    facade; `tx` is the caller's own transaction client, D-07).
+              await cancelOrphanShifts(tx, req.user.tenantId, futureShiftIds);
 
               // 2. Write the WorkSchedule change and return it so the transaction
               //    result is the schedule (TypeScript can narrow the type)

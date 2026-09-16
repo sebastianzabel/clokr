@@ -13,6 +13,7 @@ import { findMissingWorkdays } from "../../working-time-account/find-missing-wor
 import { findUnconfirmedBreakEntries } from "../find-unconfirmed-break-days";
 import { resolveMissingEntriesDays } from "../../working-time-account/missing-entries-window";
 import { invalidReasonFields } from "../invalid-reason";
+import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -665,14 +666,13 @@ export const attendanceCheckerPlugin = fp(async (app) => {
 
             let rosterDates: Set<string> | undefined;
             if (scheduleType === "SHIFT_BASED") {
-              const shifts = await app.prisma.shift.findMany({
-                where: {
-                  employeeId: emp.id,
-                  date: { gte: monthStart, lte: monthLastDay },
-                  deletedAt: null,
-                },
-                select: { date: true },
-              });
+              // Phase 100B Plan 05 — S1, contexts/scheduling facade.
+              const shifts = await getShiftsInRange(
+                app.prisma,
+                { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
+                monthStart,
+                monthLastDay,
+              );
               rosterDates = new Set(shifts.map((sh) => dateStrInTz(sh.date, tz)));
             }
 
@@ -841,14 +841,13 @@ export const attendanceCheckerPlugin = fp(async (app) => {
 
             let rosterDates: Set<string> | undefined;
             if (scheduleType === "SHIFT_BASED") {
-              const shifts = await app.prisma.shift.findMany({
-                where: {
-                  employeeId: emp.id,
-                  date: { gte: prevMonthStart, lte: prevMonthLastDay },
-                  deletedAt: null,
-                },
-                select: { date: true },
-              });
+              // Phase 100B Plan 05 — S1, contexts/scheduling facade.
+              const shifts = await getShiftsInRange(
+                app.prisma,
+                { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
+                prevMonthStart,
+                prevMonthLastDay,
+              );
               rosterDates = new Set(shifts.map((sh) => dateStrInTz(sh.date, tz)));
             }
 

@@ -29,6 +29,7 @@ import {
   computeEntryAgeInDays,
 } from "../retro-config"; // Phase 76.29 — RETRO-01 window guard
 import { auditReasonSchema, AUDIT_REASON_REQUIRED } from "../../platform/audit-reason"; // Quick 260824-cjd
+import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
 
 const nfcPunchSchema = z.object({
   nfcCardId: z.string().min(1),
@@ -2567,17 +2568,16 @@ export async function computeOvertimeBalanceBreakdown(
   const shiftRangeLastDay =
     currentMonthRange.end > rangeLastDay ? currentMonthRange.end : rangeLastDay;
 
+  // Phase 100B Plan 05 — S1, contexts/scheduling facade.
   const allShifts =
     scheduleType === "SHIFT_BASED"
-      ? await app.prisma.shift.findMany({
-          where: {
-            employeeId,
-            date: { gte: rangeFirstDay, lte: shiftRangeLastDay },
-            deletedAt: null,
-          },
-          select: { date: true, startTime: true, endTime: true },
-        })
-      : ([] as { date: Date; startTime: string; endTime: string }[]);
+      ? await getShiftsInRange(
+          app.prisma,
+          { kind: "employee", employeeId, tenantId: employee?.tenantId ?? "" },
+          rangeFirstDay,
+          shiftRangeLastDay,
+        )
+      : [];
 
   // Upper bound = shiftRangeLastDay (= full current calendar month, NOT effectiveEnd).
   // The SHIFT_BASED partial-month C_net credit (closeEmployeeMonth uses monthEnd =

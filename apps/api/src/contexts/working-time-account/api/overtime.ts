@@ -8,6 +8,7 @@ import {
   type OvertimeBalanceBreakdown,
 } from "../../time-tracking/api/time-entries";
 import { getConfirmedCarryOver } from "../confirmed-saldo"; // Phase 97-01
+import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "../timezone";
 import { getHolidays, STATE_MAP } from "../../platform/holidays";
 import { fetchCloseMonthData } from "../close-month-data"; // PERF-V1814-01
@@ -529,14 +530,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
         // For FIXED types: rosterDates not needed (findMissingWorkdays uses getDayHoursFromSchedule internally).
         let statusRosterDates: Set<string> | undefined;
         if (scheduleTypeSt === "SHIFT_BASED") {
-          const empShifts = await app.prisma.shift.findMany({
-            where: {
-              employeeId: emp.id,
-              date: { gte: monthStart, lte: monthLastDay },
-              deletedAt: null,
-            },
-            select: { date: true },
-          });
+          // Phase 100B Plan 05 — S1, contexts/scheduling facade.
+          const empShifts = await getShiftsInRange(
+            app.prisma,
+            { kind: "employee", employeeId: emp.id, tenantId },
+            monthStart,
+            monthLastDay,
+          );
           statusRosterDates = new Set(empShifts.map((sh) => dateStrInTz(sh.date, tz)));
         }
 
@@ -825,14 +825,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
           // For SHIFT_BASED: fetch rosterDates (Shift.date set) from DB — pitfall A4 fix.
           let ysRosterDates: Set<string> | undefined;
           if (scheduleTypeYs === "SHIFT_BASED") {
-            const empShiftsYs = await app.prisma.shift.findMany({
-              where: {
-                employeeId: emp.id,
-                date: { gte: ysMonthFirstDay, lte: ysMonthLastDay },
-                deletedAt: null,
-              },
-              select: { date: true },
-            });
+            // Phase 100B Plan 05 — S1, contexts/scheduling facade.
+            const empShiftsYs = await getShiftsInRange(
+              app.prisma,
+              { kind: "employee", employeeId: emp.id, tenantId },
+              ysMonthFirstDay,
+              ysMonthLastDay,
+            );
             ysRosterDates = new Set(empShiftsYs.map((sh) => dateStrInTz(sh.date, tz)));
           }
 
@@ -1145,14 +1144,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
         }),
         // Shifts (SHIFT_BASED only — also fetch for non-SHIFT to avoid a branch here;
         // closeEmployeeMonth ignores the shifts array for non-SHIFT types).
-        app.prisma.shift.findMany({
-          where: {
-            employeeId,
-            date: { gte: effectiveStart, lte: monthLastDay },
-            deletedAt: null, // Phase 67.2 — soft-deleted shifts excluded
-          },
-          select: { date: true, startTime: true, endTime: true },
-        }),
+        // Phase 100B Plan 05 — S1, contexts/scheduling facade.
+        getShiftsInRange(
+          app.prisma,
+          { kind: "employee", employeeId, tenantId: employee.tenantId },
+          effectiveStart,
+          monthLastDay,
+        ),
         // Approved leave — same filter as old inline path
         app.prisma.leaveRequest.findMany({
           where: {

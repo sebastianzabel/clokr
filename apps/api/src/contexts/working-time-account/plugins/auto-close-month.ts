@@ -10,6 +10,7 @@ import { findMissingWorkdays } from "../find-missing-workdays"; // Phase 76.26 �
 import { loadBsSlotOverrides } from "../../absence/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import { findUnconfirmedBreakDays } from "../../time-tracking/find-unconfirmed-break-days"; // Phase 92 Plan 04 — BREAK-05 single source of truth
 import { getCarryOverBase } from "../carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
+import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -355,16 +356,15 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   }
 
                   // For SHIFT_BASED: fetch rosterDates (Shift.date set) — pitfall A4 fix.
+                  // Phase 100B Plan 05 — S1, contexts/scheduling facade.
                   let rdRosterDates: Set<string> | undefined;
                   if (acmScheduleTypeSt === "SHIFT_BASED") {
-                    const empShifts = await app.prisma.shift.findMany({
-                      where: {
-                        employeeId: emp.id,
-                        date: { gte: monthFirstDay, lte: monthLastDay },
-                        deletedAt: null,
-                      },
-                      select: { date: true },
-                    });
+                    const empShifts = await getShiftsInRange(
+                      app.prisma,
+                      { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
+                      monthFirstDay,
+                      monthLastDay,
+                    );
                     rdRosterDates = new Set(empShifts.map((sh) => dateStrInTz(sh.date, tz)));
                   }
 
@@ -555,14 +555,13 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                     select: { date: true, startTime: true, endTime: true, breakMinutes: true },
                   }),
                   // Shifts (SHIFT_BASED only — also fetch for non-SHIFT; core ignores them)
-                  app.prisma.shift.findMany({
-                    where: {
-                      employeeId: emp.id,
-                      date: { gte: empEffectiveStart, lte: monthLastDay },
-                      deletedAt: null,
-                    },
-                    select: { date: true, startTime: true, endTime: true },
-                  }),
+                  // Phase 100B Plan 05 — S1, contexts/scheduling facade.
+                  getShiftsInRange(
+                    app.prisma,
+                    { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
+                    empEffectiveStart,
+                    monthLastDay,
+                  ),
                   // Approved leave
                   app.prisma.leaveRequest.findMany({
                     where: {

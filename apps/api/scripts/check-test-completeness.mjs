@@ -43,8 +43,14 @@ import { readFileSync } from "node:fs";
 // tests" in its own output) — 2895 + 16 = 2911. No other test file changed in this plan; confirmed
 // against the full-suite run's own "Test Files 252 passed (252)" / "Tests 2908 passed | 3 skipped
 // (2911)" summary.
-const MIN_FILES = 252;
-const MIN_TESTS = 2911;
+//
+// Plan 100B-05: one new test FILE
+// (src/contexts/scheduling/__tests__/facade-shifts.test.ts) — MIN_FILES rises from 252 to 253.
+// MIN_TESTS rises from 2911 to 2916: +5 test cases in that file (verified with `pnpm exec vitest
+// run src/contexts/scheduling/__tests__/facade-shifts.test.ts`, "5 tests" in its own output) —
+// 2911 + 5 = 2916. No other test file changed in this plan.
+const MIN_FILES = 253;
+const MIN_TESTS = 2916;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

@@ -181,6 +181,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   // ── schichtplanung — Shift/ShiftTemplate/CoverageRule/EmployeeShiftPattern/
   //    EmployeeAvailability/PhorestStaffMapping/PhorestSyncRun/PhorestAppointment, plus
   //    services/phorest/** (D-16 prefix rule) ────────────────────────────────────────────────
+  "src/contexts/scheduling/facade/shifts.ts": "schichtplanung", // Phase 100B Plan 05 — S1/S2/S3, Shift's only external access path
+  "src/contexts/scheduling/facade/availability.ts": "schichtplanung", // Phase 100B Plan 05 — S4, EmployeeAvailability's only external access path
   "src/contexts/scheduling/api/availability.ts": "schichtplanung", // writes EmployeeAvailability
   "src/contexts/scheduling/api/integrations.ts": "schichtplanung", // writes PhorestStaffMapping (Phorest scheduling-integration settings)
   "src/contexts/scheduling/api/shift-patterns.ts": "schichtplanung", // writes EmployeeShiftPattern

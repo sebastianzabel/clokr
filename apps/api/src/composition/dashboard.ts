@@ -36,6 +36,7 @@ import {
 import { findMissingWorkdays } from "../contexts/working-time-account/find-missing-workdays"; // Phase 111 — canonical gap detector
 import { findUnconfirmedBreakDays } from "../contexts/time-tracking/find-unconfirmed-break-days"; // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
 import { resolveMissingEntriesDays } from "../contexts/working-time-account/missing-entries-window"; // GitHub issue #141 — single source for both Karte and Cron
+import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -404,15 +405,13 @@ export async function dashboardRoutes(app: FastifyInstance) {
         select: { employeeId: true, startDate: true, endDate: true, type: true },
       });
 
-      // Schichten der Woche
-      const shifts = await app.prisma.shift.findMany({
-        where: {
-          employee: { tenantId },
-          date: { gte: weekStart, lte: weekEnd },
-          deletedAt: null, // Phase 67.2 — hide soft-deleted shifts on dashboard week
-        },
-        include: { template: { select: { name: true, color: true } } },
-      });
+      // Schichten der Woche (Phase 100B Plan 05 — S1, contexts/scheduling facade)
+      const shifts = await getShiftsInRange(
+        app.prisma,
+        { kind: "tenant", tenantId },
+        weekStart,
+        weekEnd,
+      );
 
       // Aktuelle Schedules aller MA (bulk, latest per employee)
       const allSchedules = await app.prisma.workSchedule.findMany({
@@ -949,14 +948,13 @@ export async function dashboardRoutes(app: FastifyInstance) {
       });
       // Phase 49.4 (fix): own shifts for this week so SHIFT_BASED users see the planned shift
       // time on scheduled days instead of a generic "Geplant" label.
-      const myWeekShifts = await app.prisma.shift.findMany({
-        where: {
-          employeeId,
-          date: { gte: start, lte: end },
-          deletedAt: null, // Phase 67.2 — hide soft-deleted shifts from my-week view
-        },
-        include: { template: { select: { name: true, color: true } } },
-      });
+      // Phase 100B Plan 05 — S1, contexts/scheduling facade.
+      const myWeekShifts = await getShiftsInRange(
+        app.prisma,
+        { kind: "employee", employeeId, tenantId },
+        start,
+        end,
+      );
       const scheduleType = (schedule as { type?: string } | null)?.type ?? null;
 
       const days = weekDays.map((dateStr: string) => {
@@ -1166,17 +1164,15 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
           // SHIFT_BASED obligation comes from the roster, never from {day}Hours (pitfall A4).
           // Tenant-scoped via the employee relation + soft-delete filtered (CLAUDE.md).
+          // Phase 100B Plan 05 — S1, contexts/scheduling facade.
           let openItemsRosterDates: Set<string> | undefined;
           if (openItemsScheduleType === "SHIFT_BASED") {
-            const openItemsShifts = await app.prisma.shift.findMany({
-              where: {
-                employeeId,
-                employee: { tenantId },
-                date: { gte: windowStart, lte: yesterday },
-                deletedAt: null,
-              },
-              select: { date: true },
-            });
+            const openItemsShifts = await getShiftsInRange(
+              app.prisma,
+              { kind: "employee", employeeId, tenantId },
+              windowStart,
+              yesterday,
+            );
             openItemsRosterDates = new Set(openItemsShifts.map((sh) => dateStrInTz(sh.date, tz)));
           }
 

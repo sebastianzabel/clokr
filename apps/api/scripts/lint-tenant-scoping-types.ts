@@ -3,12 +3,14 @@
  *
  * This gate prevents a NEW route (or, since Phase 100B Plan 04, a facade function a route calls)
  * from reading a client-supplied identifier into a tenant-scoped Prisma model without constraining
- * the result to the caller's own tenant. As of Phase 100B Plan 04 it walks these eight
+ * the result to the caller's own tenant. As of Phase 100B Plan 05 it walks these nine
  * directories, production code only:
  *
  *   - `apps/api/src/contexts/platform/api/`
  *   - `apps/api/src/contexts/platform/facade/` (Phase 100B Plan 04 — the first of five facade
  *     directories this phase introduces; see "The facade rule" below)
+ *   - `apps/api/src/contexts/scheduling/facade/` (Phase 100B Plan 05 — Schichtplanung's
+ *     conversion facade, `Shift`/`EmployeeAvailability`)
  *   - `apps/api/src/contexts/time-tracking/api/`
  *   - `apps/api/src/contexts/absence/api/`
  *   - `apps/api/src/contexts/scheduling/api/`
@@ -63,7 +65,8 @@
  * `platform/plugins/data-retention.ts`, `time-tracking/arbzg.ts`,
  * `working-time-account/vocational-school-saldo.ts`,
  * `working-time-account/plugins/auto-close-month.ts`) become visible for the first time once they
- * move into a facade.
+ * move into a facade. Plan 05 (Schichtplanung) is the first conversion wave to add its own facade
+ * directory alongside `contexts/platform/facade`, following exactly that one-per-wave ordering.
  *
  * This file contains ONLY types and frozen constants — no logic, no imports from the other
  * `lint-tenant-scoping-*` modules — so plans 02 (candidate selection) and 03 (verdict) can be
@@ -76,15 +79,17 @@
  * D-11: the ONLY directories this gate walks. Stated once, here, as an explicit list — matching
  * this walker's existing literal-list design; no glob support. Phase 99b Plan 07 shape: seven
  * entries; the former monolithic route directory was removed from this list because it no longer
- * exists. Phase 100B Plan 04 adds the eighth: `contexts/platform/facade` (`EmployeeScope`, no
+ * exists. Phase 100B Plan 04 added the eighth: `contexts/platform/facade` (`EmployeeScope`, no
  * Prisma call — see the facade-rule note above), the first of the five facade directories this
- * phase introduces. Four more follow, one per conversion wave, each in the SAME commit that
- * creates its directory: scheduling (05), working-time-account (06), time-tracking (08), absence
- * (10). No sixth is expected — platform (Unterbau) needs no CONVERSION facade of its own for this
- * phase's D-01 waves, because every other context may already read it directly per ADR 0001;
- * `contexts/platform/facade` exists only for this ONE shared-type module, a different purpose
- * than the other four (redirecting an existing cross-context Prisma access), not a precedent for
- * platform gaining a conversion facade too.
+ * phase introduces. Plan 05 adds the ninth: `contexts/scheduling/facade` (`Shift`/
+ * `EmployeeAvailability` — S1-S4), in the SAME commit that creates the directory
+ * (`MissingScopedDirError`, #229). `working-time-account` (06), `time-tracking` (08) and `absence`
+ * (10) follow, one per conversion wave. No further platform entry is expected — platform
+ * (Unterbau) needs no CONVERSION facade of its own for this phase's D-01 waves, because every
+ * other context may already read it directly per ADR 0001; `contexts/platform/facade` exists only
+ * for the one shared-type module, a different purpose than the other four (redirecting an
+ * existing cross-context Prisma access), not a precedent for platform gaining a conversion facade
+ * too.
  */
 export const SCOPED_DIRS = [
   "apps/api/src/contexts/platform/api",
@@ -92,6 +97,7 @@ export const SCOPED_DIRS = [
   "apps/api/src/contexts/time-tracking/api",
   "apps/api/src/contexts/absence/api",
   "apps/api/src/contexts/scheduling/api",
+  "apps/api/src/contexts/scheduling/facade",
   "apps/api/src/contexts/working-time-account/api",
   "apps/api/src/composition",
   "apps/api/src/services",

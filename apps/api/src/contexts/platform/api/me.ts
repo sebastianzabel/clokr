@@ -7,6 +7,7 @@ import {
   replaceAvailability,
 } from "../../scheduling/api/availability";
 import { isAvailabilityEnabled } from "../../scheduling/tenant-availability";
+import { getEmployeeAvailability } from "../../scheduling"; // Phase 100B Plan 05 — S4
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -230,10 +231,8 @@ export async function meRoutes(app: FastifyInstance) {
         });
       }
 
-      const entries = await app.prisma.employeeAvailability.findMany({
-        where: { employeeId },
-        orderBy: [{ date: "asc" }, { dayOfWeek: "asc" }],
-      });
+      // Phase 100B Plan 05 — S4, contexts/scheduling facade.
+      const entries = await getEmployeeAvailability(app.prisma, employeeId, req.user.tenantId);
 
       return reply.code(200).send({ entries: entries.map(formatEntry) });
     },
@@ -273,10 +272,8 @@ export async function meRoutes(app: FastifyInstance) {
         });
       }
 
-      // Audit before-snapshot
-      const oldEntries = await app.prisma.employeeAvailability.findMany({
-        where: { employeeId },
-      });
+      // Audit before-snapshot (Phase 100B Plan 05 — S4, contexts/scheduling facade)
+      const oldEntries = await getEmployeeAvailability(app.prisma, employeeId, req.user.tenantId);
 
       const created = await replaceAvailability(app, employeeId, body.entries, req.user.sub);
 

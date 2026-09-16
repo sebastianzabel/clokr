@@ -25,6 +25,7 @@ import { getConfirmedCarryOver } from "../../working-time-account/confirmed-sald
 import { loadNegativeBalanceTolerance } from "../../working-time-account/negative-balance-tolerance"; // Phase 100
 import { formatMinutesHM } from "../format-hm"; // Phase 100
 import { shiftNettoMinutes, sumShiftNettoMinutes } from "../../scheduling/shift-netto"; // Phase 100 (OTC-04)
+import { getShiftsInRange, flagShiftsConflictingWithLeave } from "../../scheduling"; // Phase 100B Plan 05 — S1/S2
 import { auditReasonSchema } from "../../platform/audit-reason"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
@@ -1420,23 +1421,17 @@ export async function leaveRoutes(app: FastifyInstance) {
         // existing shifts for this employee on overlapping dates as
         // conflictsWithLeave=true (audit-proof: never silent-delete shifts).
         // Best-effort: never roll back the approval if marking fails.
+        // Phase 100B Plan 05 — S2, contexts/scheduling facade (find + flag as ONE operation).
         try {
-          const conflictingShifts = await app.prisma.shift.findMany({
-            where: {
-              employeeId: existing.employeeId,
-              date: { gte: existing.startDate, lte: existing.endDate },
-              conflictsWithLeave: false,
-              deletedAt: null, // Phase 67.2 — leave-approval hook only flags ACTIVE shifts
-            },
-            select: { id: true, date: true, startTime: true, endTime: true, label: true },
-          });
+          const conflictingShifts = await flagShiftsConflictingWithLeave(
+            app.prisma,
+            existing.employeeId,
+            existing.employee.tenantId,
+            existing.startDate,
+            existing.endDate,
+          );
 
           if (conflictingShifts.length > 0) {
-            await app.prisma.shift.updateMany({
-              where: { id: { in: conflictingShifts.map((s) => s.id) } },
-              data: { conflictsWithLeave: true },
-            });
-
             for (const s of conflictingShifts) {
               await app
                 .audit({
@@ -3819,15 +3814,16 @@ async function getScheduledHours(
   // docblock above. Returns BEFORE the FIXED_SCHEDULE / FLEXTIME / MONTHLY_HOURS per-weekday
   // path below, which stays byte-for-byte unchanged for every other schedule type.
   if (ws?.type === "SHIFT_BASED") {
-    const shifts = await prisma.shift.findMany({
-      where: { employeeId, date: { gte: start, lte: end }, deletedAt: null },
-      select: { startTime: true, endTime: true },
-      // D-07 / WR-02 (code review): "first rostered shift" must be deterministic. `date` alone
-      // is NOT sufficient — Shift has no unique constraint on (employeeId, date), so same-day
-      // split shifts (e.g. a morning + evening shift) tie under `date` ordering, and
-      // Postgres/Prisma give no guarantee on row order among ties. `startTime` breaks that tie.
-      orderBy: [{ date: "asc" }, { startTime: "asc" }],
-    });
+    // Phase 100B Plan 05 — S1, contexts/scheduling facade. The facade's own default ordering
+    // ([{date:"asc"},{startTime:"asc"}]) IS the D-07/WR-02 determinism fix this call site
+    // originally needed ("first rostered shift" must be deterministic — `date` alone ties on
+    // same-day split shifts, `startTime` breaks the tie).
+    const shifts = await getShiftsInRange(
+      prisma,
+      { kind: "employee", employeeId, tenantId: employee?.tenantId ?? "" },
+      start,
+      end,
+    );
 
     const employeeBreakShape = {
       breakOver6hOverride: employee?.breakOver6hOverride ?? null,
@@ -3975,10 +3971,13 @@ export async function resolveLeaveDays(
     const rangeEnd = mondayOfWeekUtc(end);
     rangeEnd.setUTCDate(rangeEnd.getUTCDate() + 6);
 
-    const shifts = await prisma.shift.findMany({
-      where: { employeeId, date: { gte: rangeStart, lte: rangeEnd }, deletedAt: null },
-      select: { date: true },
-    });
+    // Phase 100B Plan 05 — S1, contexts/scheduling facade.
+    const shifts = await getShiftsInRange(
+      prisma,
+      { kind: "employee", employeeId, tenantId },
+      rangeStart,
+      rangeEnd,
+    );
 
     const rosteredDates = new Set<string>();
     const weeksWithRoster = new Set<string>();
