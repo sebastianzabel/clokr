@@ -13,6 +13,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { saldoSnapshotPeriodBounds } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 import { cleanupShiftsForBSAbsence } from "../contexts/scheduling/shift-cleanup";
 
@@ -23,9 +24,6 @@ function addDaysUtc(d: Date, days: number): Date {
   const out = new Date(d.getTime());
   out.setUTCDate(out.getUTCDate() + days);
   return out;
-}
-function monthStartUtc(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
 }
 
 // Helpers to seed a shift quickly.
@@ -194,13 +192,18 @@ describe("cleanupShiftsForBSAbsence (Phase 67.2 Plan 04)", () => {
     const future = addDaysUtc(dateOnlyUtc(now), 7);
     const shift = await seedShift(app, data.employee.id, future);
 
-    // Seed a SaldoSnapshot locking the month of `future`.
+    // Issue #241 (fifth site): periodStart/periodEnd MUST be built via saldoSnapshotPeriodBounds
+    // (the real, tenant-TZ-aware monthRangeUtc() conversion the monthly closer writes with) —
+    // a naive Date.UTC(year, month, 1) fixture agrees with a naive-comparing production bug
+    // instead of catching it, exactly the vacuous-test pattern 8326859d/840d9976 fixed at the
+    // other four sites.
+    const { start, end } = saldoSnapshotPeriodBounds(future);
     await app.prisma.saldoSnapshot.create({
       data: {
         employeeId: data.employee.id,
         periodType: "MONTHLY",
-        periodStart: monthStartUtc(future),
-        periodEnd: monthStartUtc(addDaysUtc(future, 35)),
+        periodStart: start,
+        periodEnd: end,
         workedMinutes: 0,
         expectedMinutes: 0,
         balanceMinutes: 0,
