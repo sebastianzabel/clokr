@@ -13,6 +13,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { saldoSnapshotPeriodBounds } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 import {
   runVocationalSchoolGeneration,
@@ -45,7 +46,13 @@ function toIso(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** UTC 00:00 of the 1st of `d`'s month. Mirrors the generator's own internal helper. */
+/**
+ * UTC 00:00 of the 1st of `d`'s month — a pure calendar-day boundary, used ONLY to
+ * bound `Absence.startDate` range queries below. Issue #241 (fourth site): this used
+ * to also double as the SaldoSnapshot fixture's periodStart, which does NOT match the
+ * generator's real (tenant-TZ-aware) periodStart comparison — use
+ * `saldoSnapshotPeriodBounds()` (`./test-dates`) for that instead.
+ */
 function monthStartUtc(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
 }
@@ -405,14 +412,18 @@ describe("Berufsschule — rückwirkende Musteränderungen (Phase 103, Tracer)",
     });
 
     const lockedAnchor = daysAgoUtc(40);
+    // Calendar-day bounds (pure UTC), used only to bound the later Absence.startDate
+    // query — NOT the SaldoSnapshot fixture (Issue #241, fourth site).
     const lockMonthStart = monthStartUtc(lockedAnchor);
     const lockMonthEnd = monthEndUtc(lockedAnchor);
+    const { start: snapshotPeriodStart, end: snapshotPeriodEnd } =
+      saldoSnapshotPeriodBounds(lockedAnchor);
     await app.prisma.saldoSnapshot.create({
       data: {
         employeeId: data.employee.id,
         periodType: "MONTHLY",
-        periodStart: lockMonthStart,
-        periodEnd: lockMonthEnd,
+        periodStart: snapshotPeriodStart,
+        periodEnd: snapshotPeriodEnd,
         workedMinutes: 0,
         expectedMinutes: 0,
         balanceMinutes: 0,
@@ -527,14 +538,16 @@ describe("Berufsschule — rückwirkende Musteränderungen (Phase 103, Tracer)",
 
     // Lock the month containing anchorLocked — AFTER the row already exists in it,
     // mirroring the real sequence (generated optimistically, month closes later).
-    const lockMonthStart = monthStartUtc(anchorLocked);
-    const lockMonthEnd = monthEndUtc(anchorLocked);
+    // Issue #241 (fourth site): the real tenant-TZ periodStart, matching the monthly
+    // closer — not a naive Date.UTC(y, m, 1) boundary.
+    const { start: snapshotPeriodStart, end: snapshotPeriodEnd } =
+      saldoSnapshotPeriodBounds(anchorLocked);
     await app.prisma.saldoSnapshot.create({
       data: {
         employeeId: data.employee.id,
         periodType: "MONTHLY",
-        periodStart: lockMonthStart,
-        periodEnd: lockMonthEnd,
+        periodStart: snapshotPeriodStart,
+        periodEnd: snapshotPeriodEnd,
         workedMinutes: 0,
         expectedMinutes: 0,
         balanceMinutes: 0,
@@ -861,14 +874,16 @@ describe("Berufsschule — rückwirkende Musteränderungen (Phase 103, Tracer)",
     await createSingleDayPattern(anchor);
     await createConflictingTimeEntry(anchor);
 
-    const lockMonthStart = monthStartUtc(anchor);
-    const lockMonthEnd = monthEndUtc(anchor);
+    // Issue #241 (fourth site): the real tenant-TZ periodStart, matching the monthly
+    // closer — not a naive Date.UTC(y, m, 1) boundary.
+    const { start: snapshotPeriodStart, end: snapshotPeriodEnd } =
+      saldoSnapshotPeriodBounds(anchor);
     await app.prisma.saldoSnapshot.create({
       data: {
         employeeId: data.employee.id,
         periodType: "MONTHLY",
-        periodStart: lockMonthStart,
-        periodEnd: lockMonthEnd,
+        periodStart: snapshotPeriodStart,
+        periodEnd: snapshotPeriodEnd,
         workedMinutes: 0,
         expectedMinutes: 0,
         balanceMinutes: 0,

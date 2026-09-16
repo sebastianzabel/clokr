@@ -63,8 +63,18 @@ import { readFileSync } from "node:fs";
 // The three existing tests this issue fixed (vocational-school-endpoints.test.ts x2,
 // shifts-conflicts.test.ts x1) only changed HOW their existing SaldoSnapshot fixtures are built,
 // not the test count.
+//
+// Issue #241 (fourth site — vocational-school-generator.ts's own BERSCH-09 lock-skip, the
+// same defect the three sites above already fixed): no new test FILE. MIN_FILES stays 254.
+// MIN_TESTS rises from 2928 to 2929: +1 new test case ("BERSCH-09 (Issue #241, consequence 1) —
+// a locked month at the window's OWN leading edge...") in
+// src/__tests__/vocational-school.test.ts (verified with `pnpm exec vitest run
+// src/__tests__/vocational-school.test.ts`, "26 tests" in its own output, up from 25) —
+// 2928 + 1 = 2929. Three existing tests (vocational-school.test.ts x2,
+// vocational-school-retroactive.test.ts x3) only changed HOW their SaldoSnapshot fixtures are
+// built (naive Date.UTC -> saldoSnapshotPeriodBounds()), not the test count.
 const MIN_FILES = 254;
-const MIN_TESTS = 2928;
+const MIN_TESTS = 2929;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

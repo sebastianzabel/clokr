@@ -3,12 +3,24 @@
 // Covers BERSCH-01 (pattern CRUD), BERSCH-02 (auto-generation), BERSCH-08 (manual entries
 // not overwritten), BERSCH-09 (locked months skipped).
 //
-// The generator helper uses pure UTC midnight for both Absence.startDate and the
-// SaldoSnapshot.periodStart lookup key, so the tests seed snapshots with the same
-// UTC-aligned month boundary (Date.UTC(y, m, 1)).
+// Issue #241 (fourth site): the file used to claim here that the generator uses "pure
+// UTC midnight for both Absence.startDate and the SaldoSnapshot.periodStart lookup
+// key" and seeded lock rows with a naive UTC month boundary to match. That claim was
+// false — `SaldoSnapshot.periodStart` is written by the monthly closer via the
+// tenant-TZ-aware `monthRangeUtc()`, not naive UTC midnight, so a fixture built with
+// naive `Date.UTC(y, m, 1)` merely agreed with the generator's own (buggy) naive
+// comparison instead of catching it, exactly like the three route-level gates fixed
+// in `8326859d`. BERSCH-09 lock-row fixtures below MUST be built via the shared
+// `saldoSnapshotPeriodBounds()` helper (`./test-dates`), which delegates to the real
+// `monthRangeUtc()` — never via a private naive helper.
+//
+// `monthStartUtc`/`monthEndUtc` below are kept ONLY to bound the plain calendar-day
+// range used when querying `Absence.startDate` (a pure UTC calendar date, unrelated to
+// `SaldoSnapshot.periodStart` semantics) — never for the `SaldoSnapshot` fixture itself.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { saldoSnapshotPeriodBounds } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 
 // Compute the next occurrence of a Mo-based weekday (0=Mo..6=So) strictly in the future.
@@ -640,16 +652,26 @@ describe("Berufsschule (Phase 62)", () => {
       nextMonth.setUTCDate(nextMonth.getUTCDate() + 1);
     }
     const targetTuesday = nextMonth;
+    // Calendar-day bounds (pure UTC), used only to bound the Absence.startDate query
+    // below — NOT the SaldoSnapshot fixture, which needs the real tenant-TZ periodStart.
     const lockMonthStart = monthStartUtc(targetTuesday);
     const lockMonthEnd = monthEndUtc(targetTuesday);
+    // Issue #241 (fourth site, consequence 2 — the never-matching lookup key): the
+    // REAL SaldoSnapshot.periodStart/periodEnd for this month, exactly as the monthly
+    // closer writes them. Target month is a MIDDLE-of-window month here (comfortably
+    // inside the window's naive `[gte, lte]` bulk-fetch bounds either way), so this
+    // test isolates the lockKey string-mismatch defect specifically — see the
+    // dedicated leading-edge test below for the fetch-loss defect.
+    const { start: snapshotPeriodStart, end: snapshotPeriodEnd } =
+      saldoSnapshotPeriodBounds(targetTuesday);
 
     // Seed SaldoSnapshot for the target month.
     await app.prisma.saldoSnapshot.create({
       data: {
         employeeId: data.employee.id,
         periodType: "MONTHLY",
-        periodStart: lockMonthStart,
-        periodEnd: lockMonthEnd,
+        periodStart: snapshotPeriodStart,
+        periodEnd: snapshotPeriodEnd,
         workedMinutes: 0,
         expectedMinutes: 0,
         balanceMinutes: 0,
@@ -683,6 +705,80 @@ describe("Berufsschule (Phase 62)", () => {
     expect(result.skipped.locked).toBeGreaterThan(0);
 
     // No Absence in the locked month.
+    const inLockedMonth = await app.prisma.absence.findMany({
+      where: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        startDate: { gte: lockMonthStart, lte: lockMonthEnd },
+        deletedAt: null,
+      },
+    });
+    expect(inLockedMonth).toHaveLength(0);
+  });
+
+  // Issue #241 (fourth site, consequence 1 — the leading-edge bulk-fetch loss): the
+  // above test targets a MIDDLE-of-window month, where the naive bulk-fetch bound
+  // (`gte: Date.UTC(windowStart.year, windowStart.month, 1)`) is comfortably before
+  // the real periodStart regardless of the tenant-TZ shift, so it only exercises the
+  // lockKey mismatch. This test targets the window's OWN FIRST month (an explicit
+  // `windowStart` set to the locked month itself) — the one case where the real,
+  // tenant-TZ-aware periodStart (last day of the PREVIOUS month, ~22:00 UTC for
+  // Europe/Berlin) sits strictly BEFORE the naive `gte` bound (midnight UTC of the
+  // 1st) and is dropped by the bulk `saldoSnapshot.findMany` query entirely — before
+  // any lockKey comparison even runs. Fixing only the lockKey lookup (consequence 2)
+  // would NOT make this test pass; the fetch itself must use the tenant-TZ bound too.
+  it("BERSCH-09 (Issue #241, consequence 1) — a locked month at the window's OWN leading edge is still skipped, not just a mid-window locked month", async () => {
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const nextMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 1));
+    while (nextMonth.getUTCDay() !== 2) {
+      // 2=Tuesday in JS-native
+      nextMonth.setUTCDate(nextMonth.getUTCDate() + 1);
+    }
+    const targetTuesday = nextMonth;
+    const lockMonthStart = monthStartUtc(targetTuesday);
+    const lockMonthEnd = monthEndUtc(targetTuesday);
+    const { start: snapshotPeriodStart, end: snapshotPeriodEnd } =
+      saldoSnapshotPeriodBounds(targetTuesday);
+
+    await app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId: data.employee.id,
+        periodType: "MONTHLY",
+        periodStart: snapshotPeriodStart,
+        periodEnd: snapshotPeriodEnd,
+        workedMinutes: 0,
+        expectedMinutes: 0,
+        balanceMinutes: 0,
+        carryOver: 0,
+        closedAt: new Date(),
+      },
+    });
+
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 1,
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: new Date("2020-01-01"),
+        isActive: true,
+      },
+    });
+
+    // Explicit window (Phase 103 feature) whose START is the locked month's own first
+    // claimed Tuesday — this is what makes the locked month the window's LEADING edge,
+    // not merely somewhere inside it.
+    const { runVocationalSchoolGeneration } =
+      await import("../contexts/absence/vocational-school-generator");
+    const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      windowStart: targetTuesday,
+      windowEnd: new Date(targetTuesday.getTime() + 20 * 86_400_000),
+    });
+
+    expect(result.skipped.locked).toBeGreaterThan(0);
+
     const inLockedMonth = await app.prisma.absence.findMany({
       where: {
         employeeId: data.employee.id,
@@ -733,6 +829,11 @@ describe("Berufsschule (Phase 62)", () => {
     const targetTuesday = nextMonth;
     const lockMonthStart = monthStartUtc(targetTuesday);
     const lockMonthEnd = monthEndUtc(targetTuesday);
+    // Issue #241 (fourth site) — the orphan-sweep's own lockedSet lookup (:790) has the
+    // identical lockKey-mismatch defect as the create-loop's (fixed above); the real
+    // SaldoSnapshot fixture below is what makes this test catch it.
+    const { start: snapshotPeriodStart, end: snapshotPeriodEnd } =
+      saldoSnapshotPeriodBounds(targetTuesday);
 
     const pattern = await app.prisma.employeeVocationalSchoolPattern.create({
       data: {
@@ -767,8 +868,8 @@ describe("Berufsschule (Phase 62)", () => {
       data: {
         employeeId: data.employee.id,
         periodType: "MONTHLY",
-        periodStart: lockMonthStart,
-        periodEnd: lockMonthEnd,
+        periodStart: snapshotPeriodStart,
+        periodEnd: snapshotPeriodEnd,
         workedMinutes: 0,
         expectedMinutes: 0,
         balanceMinutes: 0,
