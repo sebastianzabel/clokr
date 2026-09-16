@@ -33,12 +33,12 @@ import {
   selectDuplicateMonthLinks,
   isTrackOnlySchedule,
   monthLabelFromPeriodEnd,
-} from "../src/utils/saldo-chain-integrity";
+} from "../src/contexts/arbeitszeitkonto/saldo-chain-integrity";
 import {
   extractAuditReasons,
   classifyChainLink,
   type ClassificationResult,
-} from "../src/utils/saldo-chain-classification";
+} from "../src/contexts/arbeitszeitkonto/saldo-chain-classification";
 // Imported for its READ-ONLY schedule resolution only (same precedent as
 // set-opening-balance.ts importing updateOvertimeAccount) — the audit calls no write function.
 import { getEffectiveSchedule } from "../src/contexts/zeiterfassung/api/time-entries";

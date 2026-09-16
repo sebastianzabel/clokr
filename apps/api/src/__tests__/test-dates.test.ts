@@ -18,7 +18,7 @@ import {
   monthStartUtc,
   monthEndUtc,
 } from "./test-dates";
-import { dateStrInTz } from "../utils/timezone";
+import { dateStrInTz } from "../contexts/arbeitszeitkonto/timezone";
 import { computeRetroLimitStr } from "../contexts/zeiterfassung/retro-config";
 
 describe("test-dates helper", () => {

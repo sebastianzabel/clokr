@@ -29,7 +29,7 @@ import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
-import { resolveMissingEntriesDays } from "../utils/missing-entries-window";
+import { resolveMissingEntriesDays } from "../contexts/arbeitszeitkonto/missing-entries-window";
 import { TEST_TZ as TZ, pastDateStr, dowOf } from "./test-dates";
 
 const FEDERAL_STATE = "NIEDERSACHSEN";

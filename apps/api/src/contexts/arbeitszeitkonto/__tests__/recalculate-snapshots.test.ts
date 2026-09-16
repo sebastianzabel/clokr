@@ -10,7 +10,7 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { getTestApp, closeTestApp, cleanupTestData } from "../../__tests__/setup";
+import { getTestApp, closeTestApp, cleanupTestData } from "../../../__tests__/setup";
 import { recalculateSnapshots } from "../recalculate-snapshots";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";

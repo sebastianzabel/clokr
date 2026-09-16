@@ -15,7 +15,7 @@
  *   dateStr "2024-04-04" <  "2024-04-05" → 403 RETRO_WINDOW_EXCEEDED.
  */
 import type { FastifyInstance } from "fastify";
-import { todayInTz, dateStrInTz } from "../../utils/timezone";
+import { todayInTz, dateStrInTz } from "../arbeitszeitkonto/timezone";
 
 const DEFAULT_WINDOW_DAYS = 10;
 

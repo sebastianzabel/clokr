@@ -26,11 +26,11 @@
 
 import type { FastifyInstance } from "fastify";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
-import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
+import { getHolidays, STATE_MAP } from "../unterbau/holidays";
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { closeEmployeeMonth } from "./close-employee-month";
-import { loadBsSlotOverrides } from "../contexts/abwesenheiten/load-bs-slot-overrides";
-import { getEffectiveBreakDuration } from "../contexts/zeiterfassung/break-effective";
+import { loadBsSlotOverrides } from "../abwesenheiten/load-bs-slot-overrides";
+import { getEffectiveBreakDuration } from "../zeiterfassung/break-effective";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 

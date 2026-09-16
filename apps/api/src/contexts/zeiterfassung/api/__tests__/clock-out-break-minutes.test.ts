@@ -17,7 +17,7 @@ import {
   seedTestData,
   cleanupTestData,
 } from "../../../../__tests__/setup";
-import { getTenantTimezone, todayInTz } from "../../../../utils/timezone";
+import { getTenantTimezone, todayInTz } from "../../../arbeitszeitkonto/timezone";
 import type { FastifyInstance } from "fastify";
 
 describe("POST /:id/clock-out — breakMinutes is derived from Break rows only (Phase 129)", () => {

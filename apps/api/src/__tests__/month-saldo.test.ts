@@ -15,8 +15,8 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import { todayStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
-import { computeMonthSaldo } from "../utils/month-saldo";
-import { monthRangeUtc } from "../utils/timezone";
+import { computeMonthSaldo } from "../contexts/arbeitszeitkonto/month-saldo";
+import { monthRangeUtc } from "../contexts/arbeitszeitkonto/timezone";
 import bcrypt from "bcryptjs";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

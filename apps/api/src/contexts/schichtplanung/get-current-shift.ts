@@ -6,7 +6,7 @@
  */
 import { fromZonedTime } from "date-fns-tz";
 import type { PrismaClient } from "@clokr/db";
-import { dateStrInTz } from "../../utils/timezone";
+import { dateStrInTz } from "../arbeitszeitkonto/timezone";
 
 export interface ShiftWindow {
   shift: {

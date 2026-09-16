@@ -18,12 +18,15 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { monthRangeUtc, monthDayBounds } from "../utils/timezone";
-import { recalculateSnapshots } from "../utils/recalculate-snapshots";
+import { monthRangeUtc, monthDayBounds } from "../contexts/arbeitszeitkonto/timezone";
+import { recalculateSnapshots } from "../contexts/arbeitszeitkonto/recalculate-snapshots";
 import { updateOvertimeAccount } from "../contexts/zeiterfassung/api/time-entries";
 import bcrypt from "bcryptjs";
-import type { CloseMonthInput, CloseMonthResult } from "../utils/close-employee-month";
-import { closeEmployeeMonth } from "../utils/close-employee-month";
+import type {
+  CloseMonthInput,
+  CloseMonthResult,
+} from "../contexts/arbeitszeitkonto/close-employee-month";
+import { closeEmployeeMonth } from "../contexts/arbeitszeitkonto/close-employee-month";
 
 const TZ = "Europe/Berlin";
 

@@ -13,7 +13,7 @@ import type { FastifyInstance } from "fastify";
 import {
   countBsDaysInIsoWeek,
   getVocationalSchoolMinutesForDate,
-} from "../utils/vocational-school-saldo";
+} from "../contexts/arbeitszeitkonto/vocational-school-saldo";
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
 

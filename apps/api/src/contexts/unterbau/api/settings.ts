@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { FederalState } from "@clokr/db";
 import { encrypt } from "../../../utils/crypto";
-import { recalculateSnapshots } from "../../../utils/recalculate-snapshots";
+import { recalculateSnapshots } from "../../arbeitszeitkonto/recalculate-snapshots";
 import {
   monthFirstRefinement,
   MONTH_FIRST_ERROR,
@@ -12,7 +12,7 @@ import {
 } from "../month-first-date";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { preserveIllnessDeadline } from "../../abwesenheiten/illness-carryover-guard"; // Phase 104
-import { DEFAULT_MISSING_ENTRIES_DAYS } from "../../../utils/missing-entries-window";
+import { DEFAULT_MISSING_ENTRIES_DAYS } from "../../arbeitszeitkonto/missing-entries-window";
 import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,

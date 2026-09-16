@@ -3,7 +3,7 @@ import { z } from "zod";
 import { createHash } from "crypto";
 import { normalizeMac } from "../normalize-mac";
 import { getCurrentShift } from "../../schichtplanung/get-current-shift";
-import { getTenantTimezone, dateStrInTz } from "../../../utils/timezone";
+import { getTenantTimezone, dateStrInTz } from "../../arbeitszeitkonto/timezone";
 import { resolveClockEvent } from "../../../services/clock/resolver";
 import type { ClockEvent } from "../../../services/clock/types";
 

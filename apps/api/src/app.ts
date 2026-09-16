@@ -13,7 +13,7 @@ import { authRoutes } from "./contexts/unterbau/api/auth";
 import { employeeRoutes } from "./contexts/unterbau/api/employees";
 import { timeEntryRoutes } from "./contexts/zeiterfassung/api/time-entries";
 import { leaveRoutes } from "./contexts/abwesenheiten/api/leave";
-import { overtimeRoutes } from "./routes/overtime";
+import { overtimeRoutes } from "./contexts/arbeitszeitkonto/api/overtime";
 import { reportRoutes } from "./composition/reports";
 import { settingsRoutes } from "./contexts/unterbau/api/settings";
 import { holidayRoutes } from "./contexts/unterbau/api/holidays";
@@ -28,7 +28,7 @@ import { dataRetentionPlugin } from "./contexts/unterbau/plugins/data-retention"
 import { tokenCleanupPlugin } from "./contexts/unterbau/plugins/token-cleanup";
 import { vocationalSchoolGeneratorPlugin } from "./contexts/abwesenheiten/plugins/vocational-school-generator";
 import { schoolHolidaysSyncPlugin } from "./contexts/unterbau/plugins/school-holidays-sync";
-import { autoCloseMonthPlugin } from "./plugins/auto-close-month";
+import { autoCloseMonthPlugin } from "./contexts/arbeitszeitkonto/plugins/auto-close-month";
 import { storagePlugin } from "./contexts/unterbau/plugins/storage";
 import multipart from "@fastify/multipart";
 import { notificationRoutes } from "./contexts/unterbau/api/notifications";

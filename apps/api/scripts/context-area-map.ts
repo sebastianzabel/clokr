@@ -199,25 +199,25 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
 
   // ── arbeitszeitkonto — SaldoSnapshot/OpeningBalance/OvertimeAccount/OvertimeTransaction/
   //    OvertimePlan ─────────────────────────────────────────────────────────────────────────
-  "src/routes/overtime.ts": "arbeitszeitkonto", // writes OpeningBalance/OvertimeAccount/OvertimeTransaction/SaldoSnapshot/OvertimePlan
-  "src/plugins/auto-close-month.ts": "arbeitszeitkonto", // the cron close-path (CLAUDE.md "Saldo-Rechenpfade"); writes OvertimeAccount/SaldoSnapshot/TimeEntry
-  "src/utils/carry-over-base.ts": "arbeitszeitkonto", // OpeningBalance carry-over base
-  "src/utils/close-employee-month.ts": "arbeitszeitkonto", // pure Monatsabschluss saldo core (CLAUDE.md: "belongs to Arbeitszeitkonto and is NOT to be split")
-  "src/utils/close-month-data.ts": "arbeitszeitkonto", // data-gathering companion to close-employee-month.ts
-  "src/utils/confirmed-saldo.ts": "arbeitszeitkonto", // SaldoSnapshot confirmed-vs-forecast split (Phase 97)
-  "src/utils/find-missing-workdays.ts": "arbeitszeitkonto", // Soll-vs-Ist gap detector; 3 of 5 importers (auto-close-month/close-employee-month/overtime) are Arbeitszeitkonto's own saldo paths
-  "src/utils/missing-entries-window.ts": "arbeitszeitkonto", // window-size companion of find-missing-workdays.ts, same callers
-  "src/utils/month-saldo.ts": "arbeitszeitkonto", // core Soll-vs-Ist saldo calculation — Arbeitszeitkonto's own definition
-  "src/utils/negative-balance-tolerance.ts": "arbeitszeitkonto", // Überstundenabbau minus-hours tolerance (Phase 100)
-  "src/utils/recalculate-snapshots.ts": "arbeitszeitkonto", // SaldoSnapshot recompute across the effective range
-  "src/utils/saldo-chain-classification.ts": "arbeitszeitkonto", // SaldoSnapshot chain delta classification
-  "src/utils/saldo-chain-integrity.ts": "arbeitszeitkonto", // SaldoSnapshot chain integrity check (Phase 98)
-  "src/utils/saldo-snapshot-cleanup.ts": "arbeitszeitkonto", // writes AuditLog/SaldoSnapshot on snapshot cleanup
-  "src/utils/shift-based-saldo.ts": "arbeitszeitkonto", // SHIFT_BASED saldo calculation (113B-CONTEXT.md canonical refs: "SHIFT_BASED-Rechnung")
-  "src/utils/snapshot-lock.ts": "arbeitszeitkonto", // "is this month closed?" Monatsabschluss primitive, derived from TimeEntry.isLocked
-  "src/utils/snapshot-period.ts": "arbeitszeitkonto", // SaldoSnapshot period-boundary calculation
-  "src/utils/timezone.ts": "arbeitszeitkonto", // calcLeaveAbsenceMinutesTz() — CLAUDE.md: "belongs to Arbeitszeitkonto and is NOT to be split"
-  "src/utils/vocational-school-saldo.ts": "arbeitszeitkonto", // Berufsschule minute contribution to workedMinutes/expectedMinutes — feeds overtime.ts and auto-close-month.ts's saldo math
+  "src/contexts/arbeitszeitkonto/api/overtime.ts": "arbeitszeitkonto", // writes OpeningBalance/OvertimeAccount/OvertimeTransaction/SaldoSnapshot/OvertimePlan
+  "src/contexts/arbeitszeitkonto/plugins/auto-close-month.ts": "arbeitszeitkonto", // the cron close-path (CLAUDE.md "Saldo-Rechenpfade"); writes OvertimeAccount/SaldoSnapshot/TimeEntry
+  "src/contexts/arbeitszeitkonto/carry-over-base.ts": "arbeitszeitkonto", // OpeningBalance carry-over base
+  "src/contexts/arbeitszeitkonto/close-employee-month.ts": "arbeitszeitkonto", // pure Monatsabschluss saldo core (CLAUDE.md: "belongs to Arbeitszeitkonto and is NOT to be split")
+  "src/contexts/arbeitszeitkonto/close-month-data.ts": "arbeitszeitkonto", // data-gathering companion to close-employee-month.ts
+  "src/contexts/arbeitszeitkonto/confirmed-saldo.ts": "arbeitszeitkonto", // SaldoSnapshot confirmed-vs-forecast split (Phase 97)
+  "src/contexts/arbeitszeitkonto/find-missing-workdays.ts": "arbeitszeitkonto", // Soll-vs-Ist gap detector; 3 of 5 importers (auto-close-month/close-employee-month/overtime) are Arbeitszeitkonto's own saldo paths
+  "src/contexts/arbeitszeitkonto/missing-entries-window.ts": "arbeitszeitkonto", // window-size companion of find-missing-workdays.ts, same callers
+  "src/contexts/arbeitszeitkonto/month-saldo.ts": "arbeitszeitkonto", // core Soll-vs-Ist saldo calculation — Arbeitszeitkonto's own definition
+  "src/contexts/arbeitszeitkonto/negative-balance-tolerance.ts": "arbeitszeitkonto", // Überstundenabbau minus-hours tolerance (Phase 100)
+  "src/contexts/arbeitszeitkonto/recalculate-snapshots.ts": "arbeitszeitkonto", // SaldoSnapshot recompute across the effective range
+  "src/contexts/arbeitszeitkonto/saldo-chain-classification.ts": "arbeitszeitkonto", // SaldoSnapshot chain delta classification
+  "src/contexts/arbeitszeitkonto/saldo-chain-integrity.ts": "arbeitszeitkonto", // SaldoSnapshot chain integrity check (Phase 98)
+  "src/contexts/arbeitszeitkonto/saldo-snapshot-cleanup.ts": "arbeitszeitkonto", // writes AuditLog/SaldoSnapshot on snapshot cleanup
+  "src/contexts/arbeitszeitkonto/shift-based-saldo.ts": "arbeitszeitkonto", // SHIFT_BASED saldo calculation (113B-CONTEXT.md canonical refs: "SHIFT_BASED-Rechnung")
+  "src/contexts/arbeitszeitkonto/snapshot-lock.ts": "arbeitszeitkonto", // "is this month closed?" Monatsabschluss primitive, derived from TimeEntry.isLocked
+  "src/contexts/arbeitszeitkonto/snapshot-period.ts": "arbeitszeitkonto", // SaldoSnapshot period-boundary calculation
+  "src/contexts/arbeitszeitkonto/timezone.ts": "arbeitszeitkonto", // calcLeaveAbsenceMinutesTz() — CLAUDE.md: "belongs to Arbeitszeitkonto and is NOT to be split"
+  "src/contexts/arbeitszeitkonto/vocational-school-saldo.ts": "arbeitszeitkonto", // Berufsschule minute contribution to workedMinutes/expectedMinutes — feeds overtime.ts and auto-close-month.ts's saldo math
 };
 
 /** Explicit allowlist — the `rahmen` bucket is enumerated, never a fallthrough. */

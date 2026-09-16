@@ -38,7 +38,7 @@ import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import { monthRangeUtc, monthDayBounds } from "../utils/timezone";
+import { monthRangeUtc, monthDayBounds } from "../contexts/arbeitszeitkonto/timezone";
 import { updateOvertimeAccount } from "../contexts/zeiterfassung/api/time-entries";
 
 const TZ = "Europe/Berlin";

@@ -17,7 +17,7 @@ import {
   seedTestData,
   cleanupTestData,
 } from "../../../../__tests__/setup";
-import { todayInTz, dateStrInTz } from "../../../../utils/timezone";
+import { todayInTz, dateStrInTz } from "../../../arbeitszeitkonto/timezone";
 
 describe("POST /clock-in, /:id/clock-out, /nfc-punch — D-11 HTTP-level proof (clock-invalid-retro.route)", () => {
   let app: FastifyInstance;

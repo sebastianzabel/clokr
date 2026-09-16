@@ -22,7 +22,7 @@
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { monthRangeUtc, monthDayBounds } from "../utils/timezone";
+import { monthRangeUtc, monthDayBounds } from "../contexts/arbeitszeitkonto/timezone";
 
 const TZ = "Europe/Berlin";
 

@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { isAvailabilityEnabled } from "../tenant-availability";
-import { getVocationalSchoolMinutesForDate } from "../../../utils/vocational-school-saldo";
+import { getVocationalSchoolMinutesForDate } from "../../arbeitszeitkonto/vocational-school-saldo";
 import { BS_PATTERN_ORDER_BY } from "../../abwesenheiten/vocational-school-pattern-order";
 import { getEffectiveBreakDuration } from "../../zeiterfassung/break-effective";
 import { classifyLeaveTypeCode, type AvailabilityBucket } from "../shift-availability"; // Phase 98 (T3, plan 03) — the two classifiers' new home
@@ -12,7 +12,7 @@ import {
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
   dateStrInTz,
-} from "../../../utils/timezone";
+} from "../../arbeitszeitkonto/timezone";
 import { getHolidays, STATE_MAP } from "../../unterbau/holidays";
 import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../../unterbau/anonymize";
 import { updateOvertimeAccount } from "../../zeiterfassung/api/time-entries";

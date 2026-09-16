@@ -441,7 +441,7 @@ describe("Time Entry Validation Rules", () => {
         where: { tenantId: data.tenant.id },
       });
       const tz = tenantConfig?.timezone ?? "Europe/Berlin";
-      const { todayInTz } = await import("../../../../utils/timezone");
+      const { todayInTz } = await import("../../../arbeitszeitkonto/timezone");
       const todayDate = todayInTz(tz);
 
       const validOpenEntry = await app.prisma.timeEntry.create({

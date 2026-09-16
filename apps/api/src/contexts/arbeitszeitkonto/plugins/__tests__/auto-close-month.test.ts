@@ -23,10 +23,10 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { getTestApp, closeTestApp, cleanupTestData } from "../../__tests__/setup";
+import { getTestApp, closeTestApp, cleanupTestData } from "../../../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import { monthRangeUtc } from "../../utils/timezone";
+import { monthRangeUtc } from "../../timezone";
 
 describe("auto-close-month plugin (Phase 76.12 Plan 02) — Ø-Methode + bsAbsences invariant", () => {
   const PLUGIN_SOURCE_PATH = join(__dirname, "..", "auto-close-month.ts");

@@ -14,8 +14,11 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
-import { cleanupTzDuplicateSnapshots, SUPERSEDED_REASON } from "../utils/saldo-snapshot-cleanup";
-import { monthRangeUtc } from "../utils/timezone";
+import {
+  cleanupTzDuplicateSnapshots,
+  SUPERSEDED_REASON,
+} from "../contexts/arbeitszeitkonto/saldo-snapshot-cleanup";
+import { monthRangeUtc } from "../contexts/arbeitszeitkonto/timezone";
 
 let app: FastifyInstance;
 let data: Awaited<ReturnType<typeof seedTestData>>;

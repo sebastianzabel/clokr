@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
-import { recalculateSnapshots } from "../../utils/recalculate-snapshots";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+} from "../../../../__tests__/setup";
+import { recalculateSnapshots } from "../../recalculate-snapshots";
 import type { FastifyInstance } from "fastify";
 
 /**

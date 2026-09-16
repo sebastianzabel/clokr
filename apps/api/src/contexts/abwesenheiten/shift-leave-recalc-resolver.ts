@@ -35,8 +35,8 @@
  */
 import type { Prisma, LeaveTypeCode } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
-import { isSnapshotLocked } from "../../utils/snapshot-lock";
-import { todayInTz } from "../../utils/timezone";
+import { isSnapshotLocked } from "../arbeitszeitkonto/snapshot-lock";
+import { todayInTz } from "../arbeitszeitkonto/timezone";
 
 /**
  * Phase 107, D-16 scope decision: `daysProvisional` (D-10/D-11) and this whole feature

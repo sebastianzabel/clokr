@@ -15,7 +15,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
-import { monthRangeUtc } from "../utils/timezone";
+import { monthRangeUtc } from "../contexts/arbeitszeitkonto/timezone";
 import type { FastifyInstance } from "fastify";
 
 describe("Leave / Attest — late (post-approval, post-Monatsabschluss) recording", () => {

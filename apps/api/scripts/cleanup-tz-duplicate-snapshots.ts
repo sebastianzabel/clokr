@@ -42,7 +42,7 @@ import { parseArgs } from "node:util";
 import {
   cleanupTzDuplicateSnapshots,
   SUPERSEDED_REASON,
-} from "../src/utils/saldo-snapshot-cleanup";
+} from "../src/contexts/arbeitszeitkonto/saldo-snapshot-cleanup";
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is required");

@@ -45,7 +45,7 @@
 
 import { findMissingWorkdays, type WorkdayGap } from "./find-missing-workdays";
 import { calcShiftBasedSaldo } from "./shift-based-saldo";
-import { getEffectiveBreakDuration } from "../contexts/zeiterfassung/break-effective";
+import { getEffectiveBreakDuration } from "../zeiterfassung/break-effective";
 import {
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
@@ -58,7 +58,7 @@ import {
   buildSlotOverrideHierarchy,
   resolveBsTagSlot,
   type WeekContext,
-} from "../contexts/abwesenheiten/bs-slot-resolver";
+} from "../abwesenheiten/bs-slot-resolver";
 import {
   computeDailySollMinutes,
   normalizeUnterrichtsMinutenByDow,

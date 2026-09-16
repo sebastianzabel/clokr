@@ -24,7 +24,7 @@ import {
 import {
   getVocationalSchoolMinutesForDate,
   bsUnterrichtsMinutesByDateForIsoWeek,
-} from "../utils/vocational-school-saldo";
+} from "../contexts/arbeitszeitkonto/vocational-school-saldo";
 import { loadBsSlotOverrides } from "../contexts/abwesenheiten/load-bs-slot-overrides";
 import { checkJArbSchG } from "../contexts/abwesenheiten/jarbschg";
 import { previewVocationalSchoolGeneration } from "../contexts/abwesenheiten/vocational-school-generator";

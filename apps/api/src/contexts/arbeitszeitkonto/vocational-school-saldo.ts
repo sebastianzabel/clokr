@@ -15,12 +15,9 @@
 //   - Every Absence query MUST include deletedAt: null.
 
 import type { PrismaClient, ScheduleType } from "@clokr/db";
-import { BS_DAILY_DEFAULT_MIN } from "../contexts/abwesenheiten/vocational-school-constants.js";
-import {
-  buildSlotOverrideHierarchy,
-  resolveBsTagSlot,
-} from "../contexts/abwesenheiten/bs-slot-resolver";
-import { BS_PATTERN_ORDER_BY } from "../contexts/abwesenheiten/vocational-school-pattern-order.js";
+import { BS_DAILY_DEFAULT_MIN } from "../abwesenheiten/vocational-school-constants.js";
+import { buildSlotOverrideHierarchy, resolveBsTagSlot } from "../abwesenheiten/bs-slot-resolver";
+import { BS_PATTERN_ORDER_BY } from "../abwesenheiten/vocational-school-pattern-order.js";
 
 /**
  * Tenant-config fields this helper reads. Both are optional/nullable to fail-open

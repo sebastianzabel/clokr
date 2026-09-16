@@ -17,7 +17,7 @@ import {
   getDayHoursFromSchedule,
   iterateDaysInTz,
   timeStrInTz,
-} from "../utils/timezone";
+} from "../contexts/arbeitszeitkonto/timezone";
 import {
   resolvePresenceState,
   isObligatedWorkday,
@@ -29,10 +29,13 @@ import type {
   PresenceAbsence,
 } from "../contexts/zeiterfassung/presence";
 import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
-import { getConfirmedCarryOver, getConfirmedCarryOverBulk } from "../utils/confirmed-saldo"; // Phase 97-04
-import { findMissingWorkdays } from "../utils/find-missing-workdays"; // Phase 111 — canonical gap detector
+import {
+  getConfirmedCarryOver,
+  getConfirmedCarryOverBulk,
+} from "../contexts/arbeitszeitkonto/confirmed-saldo"; // Phase 97-04
+import { findMissingWorkdays } from "../contexts/arbeitszeitkonto/find-missing-workdays"; // Phase 111 — canonical gap detector
 import { findUnconfirmedBreakDays } from "../contexts/zeiterfassung/find-unconfirmed-break-days"; // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
-import { resolveMissingEntriesDays } from "../utils/missing-entries-window"; // GitHub issue #141 — single source for both Karte and Cron
+import { resolveMissingEntriesDays } from "../contexts/arbeitszeitkonto/missing-entries-window"; // GitHub issue #141 — single source for both Karte and Cron
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats

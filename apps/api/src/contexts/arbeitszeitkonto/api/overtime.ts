@@ -1,29 +1,29 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { requireAuth, requireRole } from "../../../middleware/auth";
 import {
   getEffectiveSchedule,
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
   type OvertimeBalanceBreakdown,
-} from "../contexts/zeiterfassung/api/time-entries";
-import { getConfirmedCarryOver } from "../utils/confirmed-saldo"; // Phase 97-01
-import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "../utils/timezone";
-import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
-import { fetchCloseMonthData } from "../utils/close-month-data"; // PERF-V1814-01
-import { periodStartWindow, isPeriodStartInMonth } from "../utils/snapshot-period";
-import { closeEmployeeMonth } from "../utils/close-employee-month"; // Phase 76.26 — shared saldo core
-import { findMissingWorkdays } from "../utils/find-missing-workdays"; // Phase 76.26 — gap detector
+} from "../../zeiterfassung/api/time-entries";
+import { getConfirmedCarryOver } from "../confirmed-saldo"; // Phase 97-01
+import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "../timezone";
+import { getHolidays, STATE_MAP } from "../../unterbau/holidays";
+import { fetchCloseMonthData } from "../close-month-data"; // PERF-V1814-01
+import { periodStartWindow, isPeriodStartInMonth } from "../snapshot-period";
+import { closeEmployeeMonth } from "../close-employee-month"; // Phase 76.26 — shared saldo core
+import { findMissingWorkdays } from "../find-missing-workdays"; // Phase 76.26 — gap detector
 import {
   unconfirmedDaysFromEntries,
   findUnconfirmedBreakDays,
-} from "../contexts/zeiterfassung/find-unconfirmed-break-days"; // Phase 92 — BREAK-05 unconfirmed Pflichtpause gate
-import { karenzOverrunFromRequests } from "../contexts/abwesenheiten/find-karenz-overrun-days"; // Phase 104 (R4/D-21) — Karenztage-Überschreitung, Hinweis only
-import { loadBsSlotOverrides } from "../contexts/abwesenheiten/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
-import { computeMonthSaldo } from "../utils/month-saldo"; // §615 Team-Zeiten display fix
-import { getCarryOverBase } from "../utils/carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
-import { recalculateSnapshots } from "../utils/recalculate-snapshots"; // Phase 99 (OB-03) — full-history re-thread
-import { resolveNegativeBalanceTolerance } from "../utils/negative-balance-tolerance"; // Phase 100 (OTC-01) — the one shared precedence chain
+} from "../../zeiterfassung/find-unconfirmed-break-days"; // Phase 92 — BREAK-05 unconfirmed Pflichtpause gate
+import { karenzOverrunFromRequests } from "../../abwesenheiten/find-karenz-overrun-days"; // Phase 104 (R4/D-21) — Karenztage-Überschreitung, Hinweis only
+import { loadBsSlotOverrides } from "../../abwesenheiten/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
+import { computeMonthSaldo } from "../month-saldo"; // §615 Team-Zeiten display fix
+import { getCarryOverBase } from "../carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
+import { recalculateSnapshots } from "../recalculate-snapshots"; // Phase 99 (OB-03) — full-history re-thread
+import { resolveNegativeBalanceTolerance } from "../negative-balance-tolerance"; // Phase 100 (OTC-01) — the one shared precedence chain
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),

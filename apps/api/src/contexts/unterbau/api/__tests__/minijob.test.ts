@@ -5,7 +5,7 @@ import {
   seedTestData,
   cleanupTestData,
 } from "../../../../__tests__/setup";
-import { calcExpectedMinutesTz } from "../../../../utils/timezone";
+import { calcExpectedMinutesTz } from "../../../arbeitszeitkonto/timezone";
 import type { FastifyInstance } from "fastify";
 
 describe("Minijob / MONTHLY_HOURS Schedule", () => {

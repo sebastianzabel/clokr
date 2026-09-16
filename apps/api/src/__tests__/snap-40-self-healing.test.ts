@@ -33,9 +33,9 @@ import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../utils/timezone";
+import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../contexts/arbeitszeitkonto/timezone";
 import { updateOvertimeAccount } from "../contexts/zeiterfassung/api/time-entries";
-import { closeEmployeeMonth } from "../utils/close-employee-month";
+import { closeEmployeeMonth } from "../contexts/arbeitszeitkonto/close-employee-month";
 import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 
 const TZ = "Europe/Berlin";

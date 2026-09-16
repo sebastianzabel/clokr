@@ -3,9 +3,9 @@ import { z } from "zod";
 import { LeaveRequestStatus, Prisma } from "@clokr/db";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { getHolidays, STATE_MAP } from "../../unterbau/holidays";
-import { getTenantTimezone, monthRangeUtc } from "../../../utils/timezone";
+import { getTenantTimezone, monthRangeUtc } from "../../arbeitszeitkonto/timezone";
 import { generateICal, addOneDay, type ICalEvent } from "../ical";
-import { recalculateSnapshots } from "../../../utils/recalculate-snapshots";
+import { recalculateSnapshots } from "../../arbeitszeitkonto/recalculate-snapshots";
 import {
   splitDaysAcrossYears,
   calculateProRataVacation,
@@ -15,14 +15,14 @@ import {
 import { selfHealUsedDays, loadVacationTypeMeta } from "../leave-self-heal";
 import { calculateWorkDays } from "../../unterbau/calculate-work-days";
 import { computeAffectedMonths } from "../correction-lock";
-import { periodStartWindow } from "../../../utils/snapshot-period";
+import { periodStartWindow } from "../../arbeitszeitkonto/snapshot-period";
 import {
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
   type OvertimeBalanceBreakdown,
 } from "../../zeiterfassung/api/time-entries";
-import { getConfirmedCarryOver } from "../../../utils/confirmed-saldo"; // Phase 97-06
-import { loadNegativeBalanceTolerance } from "../../../utils/negative-balance-tolerance"; // Phase 100
+import { getConfirmedCarryOver } from "../../arbeitszeitkonto/confirmed-saldo"; // Phase 97-06
+import { loadNegativeBalanceTolerance } from "../../arbeitszeitkonto/negative-balance-tolerance"; // Phase 100
 import { formatMinutesHM } from "../format-hm"; // Phase 100
 import { shiftNettoMinutes, sumShiftNettoMinutes } from "../../schichtplanung/shift-netto"; // Phase 100 (OTC-04)
 import { auditReasonSchema } from "../../unterbau/audit-reason"; // Quick 260824-cjd

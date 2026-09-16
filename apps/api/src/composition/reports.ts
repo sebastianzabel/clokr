@@ -10,7 +10,7 @@ import {
   getDayHoursFromSchedule,
   iterateDaysInTz,
   dateStrInTz,
-} from "../utils/timezone";
+} from "../contexts/arbeitszeitkonto/timezone";
 import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import {
   SECTION9_LEGEND,
@@ -21,7 +21,7 @@ import {
   streamVacationOverviewPdf,
 } from "./pdf";
 import { selfHealUsedDays, loadVacationTypeMeta } from "../contexts/abwesenheiten/leave-self-heal";
-import { computeMonthSaldo } from "../utils/month-saldo";
+import { computeMonthSaldo } from "../contexts/arbeitszeitkonto/month-saldo";
 import { isSickLeaveTypeCode } from "../contexts/abwesenheiten/leave-type";
 import type { LeaveTypeCode } from "@clokr/db";
 

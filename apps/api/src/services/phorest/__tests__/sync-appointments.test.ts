@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp } from "../../../__tests__/setup";
-import { todayInTz, dateStrInTz } from "../../../utils/timezone";
+import { todayInTz, dateStrInTz } from "../../../contexts/arbeitszeitkonto/timezone";
 import { syncPhorestAppointments } from "../sync-appointments";
 import {
   seedPhorestTenant,

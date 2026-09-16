@@ -6,12 +6,12 @@ import {
   dateStrInTz,
   monthRangeUtc,
   monthDayBounds,
-} from "../../../utils/timezone";
+} from "../../arbeitszeitkonto/timezone";
 import { getHolidays, STATE_MAP } from "../../unterbau/holidays";
-import { fetchCloseMonthData } from "../../../utils/close-month-data";
-import { findMissingWorkdays } from "../../../utils/find-missing-workdays";
+import { fetchCloseMonthData } from "../../arbeitszeitkonto/close-month-data";
+import { findMissingWorkdays } from "../../arbeitszeitkonto/find-missing-workdays";
 import { findUnconfirmedBreakEntries } from "../find-unconfirmed-break-days";
-import { resolveMissingEntriesDays } from "../../../utils/missing-entries-window";
+import { resolveMissingEntriesDays } from "../../arbeitszeitkonto/missing-entries-window";
 import { invalidReasonFields } from "../invalid-reason";
 
 declare module "fastify" {

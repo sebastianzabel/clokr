@@ -34,7 +34,9 @@ describe("context-area-map — fixed spot checks", () => {
   });
 
   it("close-employee-month.ts is arbeitszeitkonto", () => {
-    expect(assignContextArea("src/utils/close-employee-month.ts")).toBe("arbeitszeitkonto");
+    expect(assignContextArea("src/contexts/arbeitszeitkonto/close-employee-month.ts")).toBe(
+      "arbeitszeitkonto",
+    );
   });
 
   it("leave.ts is abwesenheiten", () => {

@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
-import { getTenantTimezone, timeStrInTz } from "../../../utils/timezone";
+import { getTenantTimezone, timeStrInTz } from "../../arbeitszeitkonto/timezone";
 
 /**
  * GET /api/v1/activity?limit=5

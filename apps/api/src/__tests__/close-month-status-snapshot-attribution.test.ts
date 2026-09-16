@@ -24,7 +24,7 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { monthRangeUtc } from "../utils/timezone";
+import { monthRangeUtc } from "../contexts/arbeitszeitkonto/timezone";
 import bcrypt from "bcryptjs";
 
 const TZ = "Europe/Berlin";

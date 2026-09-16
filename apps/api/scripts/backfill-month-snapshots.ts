@@ -28,11 +28,15 @@
  * No PII — synthetic ids and initials only in tests.
  */
 import type { FastifyInstance } from "fastify";
-import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../src/utils/timezone";
+import {
+  monthRangeUtc,
+  monthDayBounds,
+  dateStrInTz,
+} from "../src/contexts/arbeitszeitkonto/timezone";
 import { getEffectiveSchedule } from "../src/contexts/zeiterfassung/api/time-entries";
 import { getHolidays, STATE_MAP } from "../src/contexts/unterbau/holidays";
-import { periodStartWindow } from "../src/utils/snapshot-period";
-import { closeEmployeeMonth } from "../src/utils/close-employee-month";
+import { periodStartWindow } from "../src/contexts/arbeitszeitkonto/snapshot-period";
+import { closeEmployeeMonth } from "../src/contexts/arbeitszeitkonto/close-employee-month";
 import { loadBsSlotOverrides } from "../src/contexts/abwesenheiten/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 
 // ── Exported pure helpers ────────────────────────────────────────────────────

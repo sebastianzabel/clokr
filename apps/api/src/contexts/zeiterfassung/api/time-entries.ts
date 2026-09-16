@@ -14,14 +14,14 @@ import {
   monthRangeUtc,
   monthDayBounds,
   calcExpectedMinutesTz,
-} from "../../../utils/timezone";
+} from "../../arbeitszeitkonto/timezone";
 import { getHolidays, STATE_MAP } from "../../unterbau/holidays";
 import { hasApprovedLeaveOnDate } from "../../abwesenheiten/leave-check";
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { resolveClockEvent } from "../../../services/clock/resolver";
 import { resolveActor } from "../../../services/clock/audit-actor";
 import type { ClockEvent } from "../../../services/clock/types";
-import { closeEmployeeMonth } from "../../../utils/close-employee-month"; // SNAP-03 — Phase 76.27
+import { closeEmployeeMonth } from "../../arbeitszeitkonto/close-employee-month"; // SNAP-03 — Phase 76.27
 import { loadBsSlotOverrides } from "../../abwesenheiten/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import {
   getRetroEntryWindowDays,

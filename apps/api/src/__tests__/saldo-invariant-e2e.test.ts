@@ -22,9 +22,9 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { monthRangeUtc } from "../utils/timezone";
+import { monthRangeUtc } from "../contexts/arbeitszeitkonto/timezone";
 import { updateOvertimeAccount } from "../contexts/zeiterfassung/api/time-entries";
-import { recalculateSnapshots } from "../utils/recalculate-snapshots";
+import { recalculateSnapshots } from "../contexts/arbeitszeitkonto/recalculate-snapshots";
 import { getHolidays } from "../contexts/unterbau/holidays";
 
 // "Today" for every live-saldo evaluation (Berlin Jul 16 — cron grace day >= 15).

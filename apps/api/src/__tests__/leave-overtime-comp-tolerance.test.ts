@@ -22,7 +22,7 @@ import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
-import { loadNegativeBalanceTolerance } from "../utils/negative-balance-tolerance";
+import { loadNegativeBalanceTolerance } from "../contexts/arbeitszeitkonto/negative-balance-tolerance";
 
 /**
  * Next Monday at least 14 days out (UTC arithmetic; bounded holiday-advance loop;

@@ -27,7 +27,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 
 describe("OpeningBalance — partial unique index (superseded = false)", () => {
   let app: FastifyInstance;

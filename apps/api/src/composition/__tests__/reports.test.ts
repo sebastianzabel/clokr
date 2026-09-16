@@ -2088,8 +2088,10 @@ describe("Reports API", () => {
         );
         expect(row).toBeDefined();
 
-        const { closeEmployeeMonth } = await import("../../utils/close-employee-month");
-        const { monthRangeUtc, monthDayBounds } = await import("../../utils/timezone");
+        const { closeEmployeeMonth } =
+          await import("../../contexts/arbeitszeitkonto/close-employee-month");
+        const { monthRangeUtc, monthDayBounds } =
+          await import("../../contexts/arbeitszeitkonto/timezone");
         const { start, end } = monthRangeUtc(YEAR, MONTH, "Europe/Berlin");
         const { firstDay, lastDay } = monthDayBounds(start, end, "Europe/Berlin");
         const approvedLeaveRows = await app.prisma.leaveRequest.findMany({

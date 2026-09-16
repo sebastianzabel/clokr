@@ -9,7 +9,7 @@ import {
   updateOvertimeAccount,
   validateTimeEntryInvariants,
 } from "../../zeiterfassung/api/time-entries";
-import { getTenantTimezone } from "../../../utils/timezone";
+import { getTenantTimezone } from "../../arbeitszeitkonto/timezone";
 
 const employeeRowSchema = z.object({
   email: z.string().email(),

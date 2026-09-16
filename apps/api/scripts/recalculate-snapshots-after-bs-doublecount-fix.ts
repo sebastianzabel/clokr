@@ -57,9 +57,9 @@ import {
   dateStrInTz,
   monthRangeUtc,
   monthDayBounds,
-} from "../src/utils/timezone";
+} from "../src/contexts/arbeitszeitkonto/timezone";
 import { getHolidays, STATE_MAP } from "../src/contexts/unterbau/holidays";
-import { closeEmployeeMonth } from "../src/utils/close-employee-month";
+import { closeEmployeeMonth } from "../src/contexts/arbeitszeitkonto/close-employee-month";
 import { loadBsSlotOverrides } from "../src/contexts/abwesenheiten/load-bs-slot-overrides";
 
 // ── Audit constants ─────────────────────────────────────────────────────────
