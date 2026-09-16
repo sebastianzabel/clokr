@@ -34,6 +34,7 @@
   let wifiEnabled = $state(false);
   let wifiDevices = $state<MyWifiDevice[]>([]);
   let wifiLoading = $state(false);
+  let wifiLoadFailed = $state(false);
   let newMac = $state("");
   let macLabel = $state("");
   let macAdding = $state(false);
@@ -88,8 +89,12 @@
       const wifi = await getMyWifi();
       wifiEnabled = wifi.wifiPresenceEnabled;
       wifiDevices = wifi.devices;
+      wifiLoadFailed = false;
     } catch {
-      /* non-fatal: section loads empty */
+      // Non-fatal for the rest of the page, but it must not look like
+      // "opt-in is off, no devices" — that is indistinguishable from the real
+      // thing and is why #238 went unnoticed from Phase 25 until now.
+      wifiLoadFailed = true;
     }
   });
 
@@ -344,6 +349,7 @@
         role="switch"
         bind:checked={wifiEnabled}
         onchange={toggleWifi}
+        disabled={wifiLoadFailed}
       />
     </div>
     <p class="form-hint wifi-toggle-hint">
@@ -355,6 +361,13 @@
     <div class="mac-list">
       {#if wifiLoading}
         <p class="text-muted mac-list-status">Laden…</p>
+      {:else if wifiLoadFailed}
+        <div class="callout error">
+          <p>
+            Die WLAN-Einstellungen konnten nicht geladen werden. Der angezeigte Stand ist deshalb
+            nicht aussagekräftig — bitte laden Sie die Seite neu.
+          </p>
+        </div>
       {:else if wifiDevices.length === 0}
         <p class="text-muted mac-list-status">
           Noch kein Gerät eingetragen. Fügen Sie Ihre MAC-Adresse hinzu.
