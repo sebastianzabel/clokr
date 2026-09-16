@@ -227,6 +227,13 @@ jobs:
         # is caught by neither Type check API nor the test suite; without this step it rots.
         run: pnpm --filter @clokr/api run lint:import-targets
 
+      - name: Lint facade signatures (Issue #100 — D-07/G4, R1's only automated defence)
+        # A facade function taking app: FastifyInstance moves a write out of its caller's
+        # $transaction with no error — the write survives a rollback. Deliberate exceptions live
+        # in apps/api/scripts/lint-facade-signatures-exceptions.json, each with a mandatory reason
+        # the script itself validates (mirrors lint:tenant-scoping's exception mechanism).
+        run: pnpm --filter @clokr/api run lint:facade-signatures
+
       - name: Lint Web
         run: pnpm --filter @clokr/web exec eslint src/
 

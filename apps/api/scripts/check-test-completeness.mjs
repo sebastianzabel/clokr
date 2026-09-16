@@ -31,8 +31,13 @@ import { readFileSync } from "node:fs";
 // pre-change pin, CANCELLATION_REQUESTED status, branch ordering) — 2869 + 2 + 3 = 2874. Verified
 // with `pnpm exec vitest run` on each file individually ("6 tests" in both cases, up from 4 and 3
 // respectively) before the full-suite run.
-const MIN_FILES = 250;
-const MIN_TESTS = 2874;
+//
+// Plan 100B-03: one new test FILE (scripts/__tests__/lint-facade-signatures.test.ts) — MIN_FILES
+// rises from 250 to 251. MIN_TESTS rises from 2874 to 2895: +21 test cases in that file (verified
+// with `pnpm exec vitest run scripts/__tests__/lint-facade-signatures.test.ts`, "21 tests" in its
+// own output) — 2874 + 21 = 2895. No other test file changed in this plan.
+const MIN_FILES = 251;
+const MIN_TESTS = 2895;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
