@@ -6,7 +6,7 @@ import {
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
   type OvertimeBalanceBreakdown,
-} from "./time-entries";
+} from "../contexts/zeiterfassung/api/time-entries";
 import { getConfirmedCarryOver } from "../utils/confirmed-saldo"; // Phase 97-01
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "../utils/timezone";
 import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
@@ -17,7 +17,7 @@ import { findMissingWorkdays } from "../utils/find-missing-workdays"; // Phase 7
 import {
   unconfirmedDaysFromEntries,
   findUnconfirmedBreakDays,
-} from "../utils/find-unconfirmed-break-days"; // Phase 92 — BREAK-05 unconfirmed Pflichtpause gate
+} from "../contexts/zeiterfassung/find-unconfirmed-break-days"; // Phase 92 — BREAK-05 unconfirmed Pflichtpause gate
 import { karenzOverrunFromRequests } from "../utils/find-karenz-overrun-days"; // Phase 104 (R4/D-21) — Karenztage-Überschreitung, Hinweis only
 import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import { computeMonthSaldo } from "../utils/month-saldo"; // §615 Team-Zeiten display fix

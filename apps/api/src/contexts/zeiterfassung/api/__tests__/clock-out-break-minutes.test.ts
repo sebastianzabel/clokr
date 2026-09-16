@@ -11,8 +11,13 @@
 // it is the `git diff --exit-code -- apps/api/src/services/clock/` acceptance criterion on the
 // plan for this task.
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
-import { getTenantTimezone, todayInTz } from "../../utils/timezone";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+} from "../../../../__tests__/setup";
+import { getTenantTimezone, todayInTz } from "../../../../utils/timezone";
 import type { FastifyInstance } from "fastify";
 
 describe("POST /:id/clock-out — breakMinutes is derived from Break rows only (Phase 129)", () => {

@@ -4,7 +4,7 @@ import {
   getEffectiveSchedule,
   computeOvertimeBalanceBreakdown,
   type OvertimeBalanceBreakdown,
-} from "../routes/time-entries";
+} from "../contexts/zeiterfassung/api/time-entries";
 import {
   getTenantTimezone,
   todayInTz,
@@ -18,12 +18,20 @@ import {
   iterateDaysInTz,
   timeStrInTz,
 } from "../utils/timezone";
-import { resolvePresenceState, isObligatedWorkday, isDayDue } from "../utils/presence";
-import type { PresenceEntry, PresenceLeave, PresenceAbsence } from "../utils/presence";
+import {
+  resolvePresenceState,
+  isObligatedWorkday,
+  isDayDue,
+} from "../contexts/zeiterfassung/presence";
+import type {
+  PresenceEntry,
+  PresenceLeave,
+  PresenceAbsence,
+} from "../contexts/zeiterfassung/presence";
 import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import { getConfirmedCarryOver, getConfirmedCarryOverBulk } from "../utils/confirmed-saldo"; // Phase 97-04
 import { findMissingWorkdays } from "../utils/find-missing-workdays"; // Phase 111 — canonical gap detector
-import { findUnconfirmedBreakDays } from "../utils/find-unconfirmed-break-days"; // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
+import { findUnconfirmedBreakDays } from "../contexts/zeiterfassung/find-unconfirmed-break-days"; // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
 import { resolveMissingEntriesDays } from "../utils/missing-entries-window"; // GitHub issue #141 — single source for both Karte and Cron
 
 export async function dashboardRoutes(app: FastifyInstance) {

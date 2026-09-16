@@ -22,8 +22,13 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { createHash } from "crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
-import { todayStr, utcMidnight } from "../../__tests__/test-dates";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+} from "../../../../__tests__/setup";
+import { todayStr, utcMidnight } from "../../../../__tests__/test-dates";
 
 // Today's calendar day resolved in the tenant timezone (Europe/Berlin) — not raw UTC —
 // so the shift covers "now" wall-clock correctly regardless of process clock skew (#34).

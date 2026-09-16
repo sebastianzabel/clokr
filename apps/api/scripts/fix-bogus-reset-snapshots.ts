@@ -36,7 +36,7 @@ import { PrismaClient } from "@clokr/db";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import { parseArgs } from "node:util";
-import { updateOvertimeAccount } from "../src/routes/time-entries";
+import { updateOvertimeAccount } from "../src/contexts/zeiterfassung/api/time-entries";
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is required");

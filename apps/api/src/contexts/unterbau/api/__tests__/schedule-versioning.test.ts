@@ -5,7 +5,7 @@ import {
   seedTestData,
   cleanupTestData,
 } from "../../../../__tests__/setup";
-import { getEffectiveSchedule } from "../../../../routes/time-entries";
+import { getEffectiveSchedule } from "../../../zeiterfassung/api/time-entries";
 import { dbDateStr, mondayOfWeekStr } from "../../../../__tests__/test-dates";
 import type { FastifyInstance } from "fastify";
 

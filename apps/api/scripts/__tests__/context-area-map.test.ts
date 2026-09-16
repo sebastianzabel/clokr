@@ -42,7 +42,9 @@ describe("context-area-map — fixed spot checks", () => {
   });
 
   it("time-entries.ts is zeiterfassung", () => {
-    expect(assignContextArea("src/routes/time-entries.ts")).toBe("zeiterfassung");
+    expect(assignContextArea("src/contexts/zeiterfassung/api/time-entries.ts")).toBe(
+      "zeiterfassung",
+    );
   });
 
   it("app.ts is rahmen and appears in RAHMEN_FILES", () => {

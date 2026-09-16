@@ -7,7 +7,10 @@
  */
 import { describe, it, expect } from "vitest";
 import { shiftNettoMinutes, sumShiftNettoMinutes } from "../shift-netto";
-import type { BreakEmployeeShape, BreakTenantConfigShape } from "../../../utils/break-effective";
+import type {
+  BreakEmployeeShape,
+  BreakTenantConfigShape,
+} from "../../zeiterfassung/break-effective";
 
 const NO_OVERRIDE: BreakEmployeeShape = { breakOver6hOverride: null, breakOver9hOverride: null };
 const TENANT_DEFAULTS: BreakTenantConfigShape = { defaultBreakOver6h: 30, defaultBreakOver9h: 45 };

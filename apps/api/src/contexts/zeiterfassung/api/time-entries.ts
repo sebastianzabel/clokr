@@ -1,11 +1,11 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "crypto";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { requireAuth, requireRole } from "../../../middleware/auth";
 import { TimeEntrySource, Prisma } from "@clokr/db";
-import { checkArbZG } from "../utils/arbzg";
-import { checkJArbSchG } from "../utils/jarbschg";
-import { getEffectiveBreakDuration } from "../utils/break-effective";
+import { checkArbZG } from "../arbzg";
+import { checkJArbSchG } from "../../../utils/jarbschg";
+import { getEffectiveBreakDuration } from "../break-effective";
 import {
   getTenantTimezone,
   todayInTz,
@@ -14,21 +14,21 @@ import {
   monthRangeUtc,
   monthDayBounds,
   calcExpectedMinutesTz,
-} from "../utils/timezone";
-import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
-import { hasApprovedLeaveOnDate } from "../utils/leave-check";
-import { invalidReasonFields, CLEARED_INVALID_REASON } from "../utils/invalid-reason";
-import { resolveClockEvent } from "../services/clock/resolver";
-import { resolveActor } from "../services/clock/audit-actor";
-import type { ClockEvent } from "../services/clock/types";
-import { closeEmployeeMonth } from "../utils/close-employee-month"; // SNAP-03 — Phase 76.27
-import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
+} from "../../../utils/timezone";
+import { getHolidays, STATE_MAP } from "../../unterbau/holidays";
+import { hasApprovedLeaveOnDate } from "../../../utils/leave-check";
+import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
+import { resolveClockEvent } from "../../../services/clock/resolver";
+import { resolveActor } from "../../../services/clock/audit-actor";
+import type { ClockEvent } from "../../../services/clock/types";
+import { closeEmployeeMonth } from "../../../utils/close-employee-month"; // SNAP-03 — Phase 76.27
+import { loadBsSlotOverrides } from "../../../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import {
   getRetroEntryWindowDays,
   computeRetroLimitStr,
   computeEntryAgeInDays,
-} from "../utils/retro-config"; // Phase 76.29 — RETRO-01 window guard
-import { auditReasonSchema, AUDIT_REASON_REQUIRED } from "../contexts/unterbau/audit-reason"; // Quick 260824-cjd
+} from "../retro-config"; // Phase 76.29 — RETRO-01 window guard
+import { auditReasonSchema, AUDIT_REASON_REQUIRED } from "../../unterbau/audit-reason"; // Quick 260824-cjd
 
 const nfcPunchSchema = z.object({
   nfcCardId: z.string().min(1),

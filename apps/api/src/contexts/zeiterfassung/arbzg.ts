@@ -1,8 +1,11 @@
 import { PrismaClient } from "@clokr/db";
 import { fromZonedTime } from "date-fns-tz";
-import { getTenantTimezone, dateStrInTz, getDayOfWeekInTz } from "./timezone";
-import { BS_DAILY_DEFAULT_MIN } from "./vocational-school-constants";
-import { countBsDaysInIsoWeek, getVocationalSchoolMinutesForDate } from "./vocational-school-saldo";
+import { getTenantTimezone, dateStrInTz, getDayOfWeekInTz } from "../../utils/timezone";
+import { BS_DAILY_DEFAULT_MIN } from "../../utils/vocational-school-constants";
+import {
+  countBsDaysInIsoWeek,
+  getVocationalSchoolMinutesForDate,
+} from "../../utils/vocational-school-saldo";
 
 export interface ArbZGWarning {
   code:

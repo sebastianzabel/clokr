@@ -45,7 +45,7 @@
 
 import { findMissingWorkdays, type WorkdayGap } from "./find-missing-workdays";
 import { calcShiftBasedSaldo } from "./shift-based-saldo";
-import { getEffectiveBreakDuration } from "./break-effective";
+import { getEffectiveBreakDuration } from "../contexts/zeiterfassung/break-effective";
 import {
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,

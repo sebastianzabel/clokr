@@ -18,7 +18,7 @@ import {
   ARBZG_FLOOR_OVER_9H,
   BREAK_MAX_OVER_6H,
   BREAK_MAX_OVER_9H,
-} from "../../../utils/break-constants";
+} from "../../zeiterfassung/break-constants";
 import {
   BS_DAILY_MIN_BOUND,
   BS_DAILY_MAX_BOUND,

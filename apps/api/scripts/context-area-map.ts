@@ -128,25 +128,25 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────
-  "src/routes/admin-presence-sources.ts": "zeiterfassung", // writes PresenceDevice/PresenceSource
-  "src/routes/presence.ts": "zeiterfassung", // WiFi-presence-based clocking; reads PresenceDevice/PresenceSource, writes AuditLog as a side effect
-  "src/routes/retro-entry-requests.ts": "zeiterfassung", // writes RetroEntryRequest/TimeEntry
-  "src/routes/terminals.ts": "zeiterfassung", // writes TerminalApiKey
-  "src/routes/time-entries.ts": "zeiterfassung", // writes TimeEntry/Break primarily; overtimeAccount.upsert is the live-path saldo recompute side effect
-  "src/plugins/attendance-checker.ts": "zeiterfassung", // 6 of 9 cron Features (1/2/3/7/8/9) are TimeEntry/Break watchdogs and its only DB write is timeEntry.update; Features 4/5/6 (leave reminders) are the minority
+  "src/contexts/zeiterfassung/api/admin-presence-sources.ts": "zeiterfassung", // writes PresenceDevice/PresenceSource
+  "src/contexts/zeiterfassung/api/presence.ts": "zeiterfassung", // WiFi-presence-based clocking; reads PresenceDevice/PresenceSource, writes AuditLog as a side effect
+  "src/contexts/zeiterfassung/api/retro-entry-requests.ts": "zeiterfassung", // writes RetroEntryRequest/TimeEntry
+  "src/contexts/zeiterfassung/api/terminals.ts": "zeiterfassung", // writes TerminalApiKey
+  "src/contexts/zeiterfassung/api/time-entries.ts": "zeiterfassung", // writes TimeEntry/Break primarily; overtimeAccount.upsert is the live-path saldo recompute side effect
+  "src/contexts/zeiterfassung/plugins/attendance-checker.ts": "zeiterfassung", // 6 of 9 cron Features (1/2/3/7/8/9) are TimeEntry/Break watchdogs and its only DB write is timeEntry.update; Features 4/5/6 (leave reminders) are the minority
   "src/services/clock/audit-actor.ts": "zeiterfassung", // D-16 prefix rule (services/clock/**)
   "src/services/clock/consolidate.ts": "zeiterfassung", // D-16 prefix rule (services/clock/**)
   "src/services/clock/resolver.ts": "zeiterfassung", // D-16 prefix rule (services/clock/**)
   "src/services/clock/state-machine.ts": "zeiterfassung", // D-16 prefix rule (services/clock/**)
   "src/services/clock/types.ts": "zeiterfassung", // D-16 prefix rule (services/clock/**)
-  "src/utils/arbzg.ts": "zeiterfassung", // ArbZG §3/§4/§5 compliance checks over TimeEntry
-  "src/utils/break-constants.ts": "zeiterfassung", // Break-model constants
-  "src/utils/break-effective.ts": "zeiterfassung", // effective break-minutes calculation
-  "src/utils/find-unconfirmed-break-days.ts": "zeiterfassung", // AUTO/CONFIRMED/WAIVED break-status query over TimeEntry
-  "src/utils/invalid-reason.ts": "zeiterfassung", // TimeEntry.invalidReason string registry; 4 of 6 importers are Zeiterfassung
-  "src/utils/normalize-mac.ts": "zeiterfassung", // PresenceDevice MAC-address normalization
-  "src/utils/presence.ts": "zeiterfassung", // WiFi-presence detection helper feeding routes/presence.ts and the missing-entries gap detector
-  "src/utils/retro-config.ts": "zeiterfassung", // RetroEntryRequest tenant-config toggle
+  "src/contexts/zeiterfassung/arbzg.ts": "zeiterfassung", // ArbZG §3/§4/§5 compliance checks over TimeEntry
+  "src/contexts/zeiterfassung/break-constants.ts": "zeiterfassung", // Break-model constants
+  "src/contexts/zeiterfassung/break-effective.ts": "zeiterfassung", // effective break-minutes calculation
+  "src/contexts/zeiterfassung/find-unconfirmed-break-days.ts": "zeiterfassung", // AUTO/CONFIRMED/WAIVED break-status query over TimeEntry
+  "src/contexts/zeiterfassung/invalid-reason.ts": "zeiterfassung", // TimeEntry.invalidReason string registry; 4 of 6 importers are Zeiterfassung
+  "src/contexts/zeiterfassung/normalize-mac.ts": "zeiterfassung", // PresenceDevice MAC-address normalization
+  "src/contexts/zeiterfassung/presence.ts": "zeiterfassung", // WiFi-presence detection helper feeding routes/presence.ts and the missing-entries gap detector
+  "src/contexts/zeiterfassung/retro-config.ts": "zeiterfassung", // RetroEntryRequest tenant-config toggle
 
   // ── abwesenheiten — LeaveRequest/LeaveType/LeaveEntitlement/SpecialLeaveRule/Section9Credit/
   //    Absence/EmployeeVocationalSchoolPattern/CompanyShutdown/CompanyShutdownException ───────

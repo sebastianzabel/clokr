@@ -11,8 +11,13 @@
 import { createHash } from "crypto";
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
-import { todayInTz, dateStrInTz } from "../../utils/timezone";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+} from "../../../../__tests__/setup";
+import { todayInTz, dateStrInTz } from "../../../../utils/timezone";
 
 describe("POST /clock-in, /:id/clock-out, /nfc-punch — D-11 HTTP-level proof (clock-invalid-retro.route)", () => {
   let app: FastifyInstance;

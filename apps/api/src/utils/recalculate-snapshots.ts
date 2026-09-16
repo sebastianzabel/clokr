@@ -15,7 +15,7 @@
  * Live path (P4, time-entries.ts) remains for SNAP-03 (76.27).
  */
 import { FastifyInstance } from "fastify";
-import { getEffectiveSchedule } from "../routes/time-entries";
+import { getEffectiveSchedule } from "../contexts/zeiterfassung/api/time-entries";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
 import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import { closeEmployeeMonth } from "./close-employee-month"; // Phase 76.26 — shared pure saldo core

@@ -26,7 +26,7 @@
  */
 
 import type { PrismaClient } from "@clokr/db";
-import { dateStrInTz } from "./timezone";
+import { dateStrInTz } from "../../utils/timezone";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 

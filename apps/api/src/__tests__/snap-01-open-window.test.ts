@@ -39,7 +39,7 @@ import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { monthRangeUtc, monthDayBounds } from "../utils/timezone";
-import { updateOvertimeAccount } from "../routes/time-entries";
+import { updateOvertimeAccount } from "../contexts/zeiterfassung/api/time-entries";
 
 const TZ = "Europe/Berlin";
 

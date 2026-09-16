@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
-import { checkArbZG } from "../../utils/arbzg";
+import { checkArbZG } from "../arbzg";
 import type { Employee } from "@clokr/db";
 import { fromZonedTime } from "date-fns-tz";
 

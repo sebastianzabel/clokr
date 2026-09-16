@@ -23,7 +23,7 @@ import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc, monthDayBounds } from "../utils/timezone";
-import { computeOvertimeBalanceHours } from "../routes/time-entries";
+import { computeOvertimeBalanceHours } from "../contexts/zeiterfassung/api/time-entries";
 import { computeMonthSaldo } from "../utils/month-saldo";
 import bcrypt from "bcryptjs";
 

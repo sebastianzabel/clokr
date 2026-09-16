@@ -20,7 +20,7 @@ import { getTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc, monthDayBounds } from "../utils/timezone";
 import { recalculateSnapshots } from "../utils/recalculate-snapshots";
-import { updateOvertimeAccount } from "../routes/time-entries";
+import { updateOvertimeAccount } from "../contexts/zeiterfassung/api/time-entries";
 import bcrypt from "bcryptjs";
 import type { CloseMonthInput, CloseMonthResult } from "../utils/close-employee-month";
 import { closeEmployeeMonth } from "../utils/close-employee-month";

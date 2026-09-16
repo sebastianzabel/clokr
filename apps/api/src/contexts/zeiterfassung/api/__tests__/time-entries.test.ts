@@ -14,7 +14,7 @@
  * No PII — initials only (memory feedback_no_pii_in_github).
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "../../__tests__/setup";
+import { getTestApp, closeTestApp, cleanupTestData } from "../../../../__tests__/setup";
 import { updateOvertimeAccount } from "../time-entries";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";

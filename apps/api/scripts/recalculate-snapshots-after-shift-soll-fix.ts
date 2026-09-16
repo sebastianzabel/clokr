@@ -60,7 +60,7 @@ import {
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
 } from "../src/utils/timezone";
-import { getEffectiveBreakDuration } from "../src/utils/break-effective";
+import { getEffectiveBreakDuration } from "../src/contexts/zeiterfassung/break-effective";
 import {
   getVocationalSchoolMinutesForDate,
   type VocationalSchoolTenantConfig,

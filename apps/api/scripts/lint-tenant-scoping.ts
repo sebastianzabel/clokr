@@ -315,7 +315,7 @@ function printReport(result: RunLintResult): void {
         `     own column.\n` +
         `  2. Or fetch-then-compare: load the record, compare its tenantId against req.user.tenantId\n` +
         `     and return 404 BEFORE any write — the established idiom in this codebase\n` +
-        `     (see apps/api/src/routes/time-entries.ts:681-698).\n` +
+        `     (see apps/api/src/contexts/zeiterfassung/api/time-entries.ts:681-698).\n` +
         `  3. Or, if this site is genuinely tenant-safe for a reason the check cannot see, add an\n` +
         `     entry to apps/api/scripts/lint-tenant-scoping-exceptions.json (one entry per HANDLER,\n` +
         `     naming every covered call explicitly — see that file's header):\n` +

@@ -19,7 +19,7 @@ import {
   monthEndUtc,
 } from "./test-dates";
 import { dateStrInTz } from "../utils/timezone";
-import { computeRetroLimitStr } from "../utils/retro-config";
+import { computeRetroLimitStr } from "../contexts/zeiterfassung/retro-config";
 
 describe("test-dates helper", () => {
   it("TEST_TZ mirrors the tenant timezone seeded in setup.ts:61", () => {

@@ -197,7 +197,7 @@ const ALLOWED: AllowedEntry[] = [
 
   // attendance-checker.ts: checkVacationExpiry() resolves VACATION by name inside a `where`.
   {
-    file: "apps/api/src/plugins/attendance-checker.ts",
+    file: "apps/api/src/contexts/zeiterfassung/plugins/attendance-checker.ts",
     pattern: /leaveType:\s*\{\s*name:\s*"Urlaub"\s*\}/,
     reason:
       "GENUINE FINDING, not a design decision (Issue #205): checkVacationExpiry() (§ 7 BUrlG " +

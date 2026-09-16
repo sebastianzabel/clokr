@@ -5,7 +5,10 @@ import crypto from "crypto";
 import { Prisma } from "@clokr/db";
 import { fromZonedTime } from "date-fns-tz";
 import { requireRole } from "../../../middleware/auth";
-import { updateOvertimeAccount, validateTimeEntryInvariants } from "../../../routes/time-entries";
+import {
+  updateOvertimeAccount,
+  validateTimeEntryInvariants,
+} from "../../zeiterfassung/api/time-entries";
 import { getTenantTimezone } from "../../../utils/timezone";
 
 const employeeRowSchema = z.object({

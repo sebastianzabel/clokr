@@ -41,7 +41,7 @@ import {
 } from "../src/utils/saldo-chain-classification";
 // Imported for its READ-ONLY schedule resolution only (same precedent as
 // set-opening-balance.ts importing updateOvertimeAccount) — the audit calls no write function.
-import { getEffectiveSchedule } from "../src/routes/time-entries";
+import { getEffectiveSchedule } from "../src/contexts/zeiterfassung/api/time-entries";
 
 // ── Part A: exported pure helpers (DB-free, unit-testable) ────────────────────
 

@@ -4,7 +4,7 @@ import { requireAuth, requireRole } from "../../../middleware/auth";
 import { isAvailabilityEnabled } from "../tenant-availability";
 import { getVocationalSchoolMinutesForDate } from "../../../utils/vocational-school-saldo";
 import { BS_PATTERN_ORDER_BY } from "../../../utils/vocational-school-pattern-order";
-import { getEffectiveBreakDuration } from "../../../utils/break-effective";
+import { getEffectiveBreakDuration } from "../../zeiterfassung/break-effective";
 import { classifyLeaveTypeCode, type AvailabilityBucket } from "../shift-availability"; // Phase 98 (T3, plan 03) — the two classifiers' new home
 import {
   getTenantTimezone,
@@ -15,7 +15,7 @@ import {
 } from "../../../utils/timezone";
 import { getHolidays, STATE_MAP } from "../../unterbau/holidays";
 import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../../unterbau/anonymize";
-import { updateOvertimeAccount } from "../../../routes/time-entries";
+import { updateOvertimeAccount } from "../../zeiterfassung/api/time-entries";
 import { mondayOfWeekUtc } from "../../../utils/vacation-calc"; // Phase 107 (D-14) — same Monday-cutting primitive as :709-718
 import {
   recalcProvisionalLeaveForShiftChange,

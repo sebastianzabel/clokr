@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import iconv from "iconv-lite";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
-import { computeOvertimeBalanceHours } from "../../routes/time-entries";
+import { computeOvertimeBalanceHours } from "../../contexts/zeiterfassung/api/time-entries";
 import * as pdfUtils from "../pdf";
 import { leaveTypeFields } from "../../utils/leave-type";
 

@@ -54,7 +54,7 @@ import {
 } from "../src/utils/saldo-chain-classification";
 // Imported for its READ-ONLY schedule resolution only (same precedent as
 // audit-saldo-chain-integrity.ts) — this script calls no write function from it.
-import { getEffectiveSchedule } from "../src/routes/time-entries";
+import { getEffectiveSchedule } from "../src/contexts/zeiterfassung/api/time-entries";
 
 // ── Part A: exported pure helpers (DB-free, unit-testable) ────────────────────
 

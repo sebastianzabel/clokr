@@ -20,7 +20,7 @@ import {
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
   type OvertimeBalanceBreakdown,
-} from "./time-entries";
+} from "../contexts/zeiterfassung/api/time-entries";
 import { getConfirmedCarryOver } from "../utils/confirmed-saldo"; // Phase 97-06
 import { loadNegativeBalanceTolerance } from "../utils/negative-balance-tolerance"; // Phase 100
 import { formatMinutesHM } from "../utils/format-hm"; // Phase 100
@@ -30,7 +30,7 @@ import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // P
 import { findSection9Overlaps, intersectRanges } from "../utils/section9-detect"; // Phase 104-05/06
 import { isSickLeaveTypeCode } from "../utils/leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
 import { karenzOverrunFromRequests, normalizeKarenzDays } from "../utils/find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
-import { CLEARED_INVALID_REASON } from "../utils/invalid-reason"; // Phase 96 (T1)
+import { CLEARED_INVALID_REASON } from "../contexts/zeiterfassung/invalid-reason"; // Phase 96 (T1)
 import {
   REQUESTABLE_CODES as TYPE_CODES,
   LEAVE_TYPE_DEFS,

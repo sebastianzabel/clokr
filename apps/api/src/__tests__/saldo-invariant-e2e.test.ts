@@ -23,7 +23,7 @@ import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc } from "../utils/timezone";
-import { updateOvertimeAccount } from "../routes/time-entries";
+import { updateOvertimeAccount } from "../contexts/zeiterfassung/api/time-entries";
 import { recalculateSnapshots } from "../utils/recalculate-snapshots";
 import { getHolidays } from "../contexts/unterbau/holidays";
 

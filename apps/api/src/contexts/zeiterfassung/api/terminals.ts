@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash, randomBytes } from "crypto";
-import { requireRole } from "../middleware/auth";
+import { requireRole } from "../../../middleware/auth";
 
 function hashKey(key: string): string {
   return createHash("sha256").update(key).digest("hex");

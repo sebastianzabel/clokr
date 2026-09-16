@@ -539,7 +539,8 @@ export async function run(): Promise<number> {
     // any of these before step 4 would run that validation against nothing.
     const { getTestApp, cleanupTestData } = await import("../src/__tests__/setup");
     const { recalculateSnapshots } = await import("../src/utils/recalculate-snapshots");
-    const { updateOvertimeAccount } = await import("../src/routes/time-entries");
+    const { updateOvertimeAccount } =
+      await import("../src/contexts/zeiterfassung/api/time-entries");
     const { closeEmployeeMonth } = await import("../src/utils/close-employee-month");
     const { monthRangeUtc, monthDayBounds } = await import("../src/utils/timezone");
 

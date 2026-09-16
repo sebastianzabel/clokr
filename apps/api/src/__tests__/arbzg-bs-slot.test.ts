@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { checkArbZG } from "../utils/arbzg";
+import { checkArbZG } from "../contexts/zeiterfassung/arbzg";
 
 function utcDate(iso: string): Date {
   return new Date(`${iso}T00:00:00.000Z`);

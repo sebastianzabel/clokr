@@ -34,7 +34,7 @@ import type { FastifyInstance } from "fastify";
 import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../utils/timezone";
 import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import { recalculateSnapshots } from "../utils/recalculate-snapshots";
-import { updateOvertimeAccount } from "../routes/time-entries";
+import { updateOvertimeAccount } from "../contexts/zeiterfassung/api/time-entries";
 import type { CloseMonthInput } from "../utils/close-employee-month";
 import { closeEmployeeMonth } from "../utils/close-employee-month";
 import bcrypt from "bcryptjs";

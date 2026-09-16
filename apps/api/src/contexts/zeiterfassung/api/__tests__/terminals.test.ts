@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, seedTestData, cleanupTestData, closeTestApp } from "../../__tests__/setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  closeTestApp,
+} from "../../../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
 
 let app: FastifyInstance;

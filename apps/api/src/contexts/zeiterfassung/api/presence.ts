@@ -1,11 +1,11 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "crypto";
-import { normalizeMac } from "../utils/normalize-mac";
-import { getCurrentShift } from "../contexts/schichtplanung/get-current-shift";
-import { getTenantTimezone, dateStrInTz } from "../utils/timezone";
-import { resolveClockEvent } from "../services/clock/resolver";
-import type { ClockEvent } from "../services/clock/types";
+import { normalizeMac } from "../normalize-mac";
+import { getCurrentShift } from "../../schichtplanung/get-current-shift";
+import { getTenantTimezone, dateStrInTz } from "../../../utils/timezone";
+import { resolveClockEvent } from "../../../services/clock/resolver";
+import type { ClockEvent } from "../../../services/clock/types";
 
 // ── Zod schema ────────────────────────────────────────────
 const presenceEventSchema = z.object({

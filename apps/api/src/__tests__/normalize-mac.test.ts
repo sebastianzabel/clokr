@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeMac } from "../utils/normalize-mac";
+import { normalizeMac } from "../contexts/zeiterfassung/normalize-mac";
 
 describe("normalizeMac", () => {
   // happy path

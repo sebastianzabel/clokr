@@ -24,8 +24,8 @@ import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { dateStrInTz } from "../utils/timezone";
-import { computeEntryAgeInDays } from "../utils/retro-config";
-import { invalidReasonFields } from "../utils/invalid-reason";
+import { computeEntryAgeInDays } from "../contexts/zeiterfassung/retro-config";
+import { invalidReasonFields } from "../contexts/zeiterfassung/invalid-reason";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 

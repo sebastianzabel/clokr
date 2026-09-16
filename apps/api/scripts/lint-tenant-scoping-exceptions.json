@@ -181,21 +181,21 @@
     "reason": "This whole plugin only registers when ALLOW_TEST_BOOTSTRAP=true (never true on int/prod, read once at boot in config.ts) — there is no per-caller tenant to isolate against because this test-only surface's authorization model is the env flag PLUS the ^test-[a-zA-Z0-9_-]{8}$ id format gate at line 226, not req.user.tenantId. Every call listed deletes by the SAME already-format-validated tenant id, never by a value scoped to a caller's own tenant."
   },
   {
-    "file": "apps/api/src/routes/time-entries.ts",
+    "file": "apps/api/src/contexts/zeiterfassung/api/time-entries.ts",
     "handler": "POST /api/v1/time-entries/nfc-punch",
     "validatedAt": 405,
     "calls": [{ "call": "employee.findFirst", "line": 414 }],
     "reason": "This route bypasses req.user entirely by design (NFC terminal firmware auth via a raw Bearer token, not a logged-in user). The terminal's API key is authenticated by a hashed-key lookup at line 405 (terminalApiKey.findUnique({ keyHash })); employee.findFirst at line 414 scopes by apiKey.tenantId, the validated principal tenant for this request, not by req.user.tenantId."
   },
   {
-    "file": "apps/api/src/routes/time-entries.ts",
+    "file": "apps/api/src/contexts/zeiterfassung/api/time-entries.ts",
     "handler": "POST /api/v1/time-entries (manual entry)",
     "validatedAt": 1043,
     "calls": [{ "call": "retroEntryRequest.findFirst", "line": 1114 }],
     "reason": "targetEmployee (and therefore employeeId) is tenant-validated inline at line 1043 (employee.findFirst({ id: employeeId, tenantId: req.user.tenantId })); retroEntryRequest.findFirst reuses the SAME validated employeeId in its where a few lines later."
   },
   {
-    "file": "apps/api/src/routes/time-entries.ts",
+    "file": "apps/api/src/contexts/zeiterfassung/api/time-entries.ts",
     "handler": "PUT /api/v1/time-entries/:id",
     "validatedAt": 1551,
     "calls": [
@@ -206,7 +206,7 @@
     "reason": "existing (the TimeEntry) is fetch-then-compared via existing.employee.tenantId at line 1551. retroEntryRequest.findFirst at line 1685 is scoped by existing.employeeId — a field read off that already-validated row, not a client-supplied value. Both break.deleteMany calls reuse existing's own id (the entry's own primary key, validated at fetch) as timeEntryId."
   },
   {
-    "file": "apps/api/src/routes/time-entries.ts",
+    "file": "apps/api/src/contexts/zeiterfassung/api/time-entries.ts",
     "handler": "PATCH /api/v1/time-entries/:id/break-status",
     "validatedAt": 2174,
     "calls": [{ "call": "break.deleteMany", "line": 2252 }],

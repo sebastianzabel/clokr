@@ -131,7 +131,7 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       // Trigger overtime recalculation via POST time entry or direct call
       // Use the API to GET overtime which triggers update via updateOvertimeAccount
       // Actually we need to call updateOvertimeAccount — do it via the API endpoint
-      const { updateOvertimeAccount } = await import("../../../../routes/time-entries");
+      const { updateOvertimeAccount } = await import("../../../zeiterfassung/api/time-entries");
       await updateOvertimeAccount(app, data.employee.id);
 
       const overtimeRes = await app.inject({
@@ -428,7 +428,7 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       });
 
       // Trigger recalculation
-      const { updateOvertimeAccount } = await import("../../../../routes/time-entries");
+      const { updateOvertimeAccount } = await import("../../../zeiterfassung/api/time-entries");
       await updateOvertimeAccount(app, data.employee.id);
 
       const overtimeRes = await app.inject({
@@ -458,7 +458,7 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       expect(toggleRes.statusCode).toBe(200);
 
       // Trigger recalculation with toggle OFF
-      const { updateOvertimeAccount } = await import("../../../../routes/time-entries");
+      const { updateOvertimeAccount } = await import("../../../zeiterfassung/api/time-entries");
       await updateOvertimeAccount(app, data.employee.id);
 
       const overtimeRes = await app.inject({
@@ -536,7 +536,7 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       });
 
       // Trigger recalculation — must not crash
-      const { updateOvertimeAccount } = await import("../../../../routes/time-entries");
+      const { updateOvertimeAccount } = await import("../../../zeiterfassung/api/time-entries");
       await expect(updateOvertimeAccount(app, data.employee.id)).resolves.not.toThrow();
 
       const overtimeRes = await app.inject({

@@ -1,11 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+} from "../../../../__tests__/setup";
 import {
   futureDateStr,
   todayStr as sharedTodayStr,
   pastDateStr,
   utcMidnight,
-} from "../../__tests__/test-dates";
+} from "../../../../__tests__/test-dates";
 import type { FastifyInstance } from "fastify";
 
 describe("Time Entry Validation Rules", () => {
@@ -436,7 +441,7 @@ describe("Time Entry Validation Rules", () => {
         where: { tenantId: data.tenant.id },
       });
       const tz = tenantConfig?.timezone ?? "Europe/Berlin";
-      const { todayInTz } = await import("../../utils/timezone");
+      const { todayInTz } = await import("../../../../utils/timezone");
       const todayDate = todayInTz(tz);
 
       const validOpenEntry = await app.prisma.timeEntry.create({

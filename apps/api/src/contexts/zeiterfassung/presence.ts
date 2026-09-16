@@ -1,5 +1,5 @@
 import type { LeaveTypeCode } from "@clokr/db";
-import { DISPLAY_NAME } from "./leave-type";
+import { DISPLAY_NAME } from "../../utils/leave-type";
 
 // ── Presence State Resolver ──────────────────────────────────────────────────
 // Pure utility — no DB dependency. Operates on plain data objects.

@@ -29,7 +29,7 @@
  */
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../src/utils/timezone";
-import { getEffectiveSchedule } from "../src/routes/time-entries";
+import { getEffectiveSchedule } from "../src/contexts/zeiterfassung/api/time-entries";
 import { getHolidays, STATE_MAP } from "../src/contexts/unterbau/holidays";
 import { periodStartWindow } from "../src/utils/snapshot-period";
 import { closeEmployeeMonth } from "../src/utils/close-employee-month";

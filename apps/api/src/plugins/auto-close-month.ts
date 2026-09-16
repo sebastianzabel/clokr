@@ -1,14 +1,14 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../utils/timezone";
-import { getEffectiveSchedule } from "../routes/time-entries";
+import { getEffectiveSchedule } from "../contexts/zeiterfassung/api/time-entries";
 import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import { periodStartWindow } from "../utils/snapshot-period";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
 import { closeEmployeeMonth } from "../utils/close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { findMissingWorkdays } from "../utils/find-missing-workdays"; // Phase 76.26 — schedule-model-aware gap detector
 import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
-import { findUnconfirmedBreakDays } from "../utils/find-unconfirmed-break-days"; // Phase 92 Plan 04 — BREAK-05 single source of truth
+import { findUnconfirmedBreakDays } from "../contexts/zeiterfassung/find-unconfirmed-break-days"; // Phase 92 Plan 04 — BREAK-05 single source of truth
 import { getCarryOverBase } from "../utils/carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 
 declare module "fastify" {

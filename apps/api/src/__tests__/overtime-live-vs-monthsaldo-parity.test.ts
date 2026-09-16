@@ -25,7 +25,7 @@ import { monthRangeUtc, monthDayBounds } from "../utils/timezone";
 import {
   computeOvertimeBalanceHours,
   computeOvertimeBalanceBreakdown,
-} from "../routes/time-entries";
+} from "../contexts/zeiterfassung/api/time-entries";
 import { computeMonthSaldo } from "../utils/month-saldo";
 import bcrypt from "bcryptjs";
 
