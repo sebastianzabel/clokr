@@ -661,8 +661,12 @@ export async function leaveRoutes(app: FastifyInstance) {
             .code(400)
             .send({ error: "Sonderurlaub erfordert einen Anlass (specialLeaveRuleId)" });
         }
-        const rule = await app.prisma.specialLeaveRule.findUnique({
-          where: { id: body.specialLeaveRuleId },
+        // #223: SpecialLeaveRule has its own tenantId — a client-supplied
+        // specialLeaveRuleId must be scoped to the caller's tenant, otherwise a
+        // tenant could reference (and consume) another tenant's rule. findUnique
+        // cannot take a second field, hence findFirst.
+        const rule = await app.prisma.specialLeaveRule.findFirst({
+          where: { id: body.specialLeaveRuleId, tenantId },
         });
         if (!rule || !rule.isActive) {
           return reply
