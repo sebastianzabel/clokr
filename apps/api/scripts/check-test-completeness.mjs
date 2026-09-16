@@ -18,17 +18,17 @@
  */
 import { readFileSync } from "node:fs";
 
-// Re-measured 2026-09-16 on the merged tree (`pnpm --filter @clokr/api test`, one clean full run,
-// read from apps/api/vitest-report.json: testResults.length for files, numTotalTests for tests —
-// 249 files, 2836 tests, 0 failed, 3 skipped). The prior floor (241/2780, Phase 204's own branch
-// before this merge) undercounted the merged tree by 8 files: Phase 113b's characterization
-// baseline (PR #221, 5 new files: context-area-map, measure-context-coverage,
-// measure-saldo-path-parity, leave-characterization, shifts-characterization) and PR #227's three
-// tenant-scoping security tests (sec-10/11/12, fixing #223/#224/#225) both landed on main after
-// Phase 204's branch was cut, and this merge brings both in for the first time alongside Phase
-// 204's own test files (this gate's own suite plus its fixtures).
+// Re-measured 2026-09-16 on `chore/99b-kontextschnitt` @ fda0ae46, plan 99B-01 Task 1 (D-23): one
+// clean full run of `pnpm --filter @clokr/api test`, read from apps/api/vitest-report.json —
+// testResults.length for files, numTotalTests for tests — 249 files, 2839 tests, 0 failed, 3
+// skipped. MIN_FILES is UNCHANGED at 249: plan 99B-01's #229 null-guard tests (one in
+// lint-tenant-scoping-candidates.test.ts, two in lint-tenant-scoping.test.ts) were added to
+// EXISTING test files so the file count could not move (D-23 requires this — a guard with no test
+// would rest its correctness on a one-off manual demonstration). MIN_TESTS rises from 2836 to 2839,
+// exactly the 3 new test cases those guards added. Every wave 2-8 move-plan in phase 99b asserts
+// equality against THIS number, not the pre-phase 2836.
 const MIN_FILES = 249;
-const MIN_TESTS = 2836;
+const MIN_TESTS = 2839;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

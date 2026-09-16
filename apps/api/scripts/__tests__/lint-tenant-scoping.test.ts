@@ -433,6 +433,12 @@ let tmpRoot: string;
 
 beforeEach(() => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lint-tenant-scoping-cli-"));
+  // #229 Guard A: listScopedFiles now hard-errors when a SCOPED_DIRS entry does not exist on
+  // disk. The real repo always has both "apps/api/src/routes" and "apps/api/src/services", so
+  // every fixture tree below provisions both up front — individual tests still only WRITE files
+  // under the one they care about, matching production shape rather than working around the guard.
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/routes"), { recursive: true });
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/services"), { recursive: true });
 });
 
 afterEach(() => {
@@ -538,6 +544,42 @@ describe("runLint", () => {
       const result = runLint({ repoRoot: tmpRoot });
       expect(result.exitCode).toBe(0);
       expect(result.findings).toHaveLength(1);
+    } finally {
+      if (previous === undefined) delete process.env.LINT_TENANT_SCOPING_SOFT;
+      else process.env.LINT_TENANT_SCOPING_SOFT = previous;
+    }
+  });
+
+  // ── #229 Guard B: zero in-scope calls is a defect, never "all clean" — and is NOT softened ───
+
+  it("#229 Guard B: a tree with zero relevant calls returns exitCode 1 with an '0 in-scope' error", () => {
+    // Both SCOPED_DIRS exist and contain a .ts file, but it has no relevant Prisma call at all —
+    // this is the "detection found nothing because there is nothing to find" case Guard B targets,
+    // distinct from Guard A's "the directory itself does not exist" case.
+    writeFixtureTree(tmpRoot, {
+      [SCOPED_ROUTE]: "export function widgetRoutes() {}\n",
+      "apps/api/src/services/placeholder.ts": "export const noop = 1;\n",
+    });
+
+    const result = runLint({ repoRoot: tmpRoot });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.counts.inScope).toBe(0);
+    expect(result.errors.some((e) => e.includes("0 in-scope"))).toBe(true);
+  });
+
+  it("#229 Guard B: stays exitCode 1 under LINT_TENANT_SCOPING_SOFT=1 (never softened)", () => {
+    writeFixtureTree(tmpRoot, {
+      [SCOPED_ROUTE]: "export function widgetRoutes() {}\n",
+      "apps/api/src/services/placeholder.ts": "export const noop = 1;\n",
+    });
+
+    const previous = process.env.LINT_TENANT_SCOPING_SOFT;
+    process.env.LINT_TENANT_SCOPING_SOFT = "1";
+    try {
+      const result = runLint({ repoRoot: tmpRoot });
+      expect(result.exitCode).toBe(1);
+      expect(result.errors.some((e) => e.includes("0 in-scope"))).toBe(true);
     } finally {
       if (previous === undefined) delete process.env.LINT_TENANT_SCOPING_SOFT;
       else process.env.LINT_TENANT_SCOPING_SOFT = previous;

@@ -79,6 +79,7 @@ import {
   listScopedFiles,
   findPrismaCalls,
   selectCandidates,
+  MissingScopedDirError,
 } from "./lint-tenant-scoping-candidates";
 import { reachVerdict } from "./lint-tenant-scoping-verdict";
 import {
@@ -142,17 +143,41 @@ export function runLint(opts: { repoRoot: string; json?: boolean }): RunLintResu
   // Total in-scope calls (before D-14) — computed separately from selectCandidates, which already
   // returns only the post-filter candidates, so the report can show BOTH numbers (plan's <behavior>:
   // "total in-scope calls, candidates after the D-14 filter").
+  //
+  // Guard A (#229): `listScopedFiles` throws `MissingScopedDirError` when a `SCOPED_DIRS` entry
+  // does not exist on disk. Caught here and surfaced as a gate error with a readable message —
+  // same shape as the `loadExceptions` try/catch further down — rather than an unhandled stack
+  // trace. Guard A fires BEFORE Guard B (the zero-in-scope check below): a missing directory is a
+  // more specific diagnosis than an empty result, and the two must not be conflated.
   let inScope = 0;
-  for (const relPath of listScopedFiles(repoRoot)) {
-    const absPath = path.join(repoRoot, relPath);
-    const text = fs.readFileSync(absPath, "utf8");
-    const sourceFile = ts.createSourceFile(
-      absPath,
-      text,
-      ts.ScriptTarget.Latest,
-      /* setParentNodes */ true,
-    );
-    inScope += findPrismaCalls(sourceFile, relPath).length;
+  try {
+    for (const relPath of listScopedFiles(repoRoot)) {
+      const absPath = path.join(repoRoot, relPath);
+      const text = fs.readFileSync(absPath, "utf8");
+      const sourceFile = ts.createSourceFile(
+        absPath,
+        text,
+        ts.ScriptTarget.Latest,
+        /* setParentNodes */ true,
+      );
+      inScope += findPrismaCalls(sourceFile, relPath).length;
+    }
+  } catch (err) {
+    if (err instanceof MissingScopedDirError) {
+      return {
+        exitCode: 1,
+        findings: [],
+        counts: {
+          inScope: 0,
+          candidates: 0,
+          byVia: { ...EMPTY_BY_VIA },
+          excepted: 0,
+          findings: 0,
+        },
+        errors: [err.message],
+      };
+    }
+    throw err;
   }
 
   const candidates = selectCandidates(repoRoot);
@@ -214,6 +239,19 @@ export function runLint(opts: { repoRoot: string; json?: boolean }): RunLintResu
     excepted,
     findings: findings.length,
   };
+
+  // Guard B (#229): a run that finds ZERO in-scope Prisma calls is never "all clean" — either the
+  // configured SCOPED_DIRS paths no longer match the tree, or the detection itself is broken, and
+  // both are defects. Pushed into errors[], not findings[], so LINT_TENANT_SCOPING_SOFT=1 can never
+  // soften it (see this file's own header: invalid-configuration errors are never softened). Because
+  // `errors.length > 0` already forces `exitCode = 1` unconditionally below, no change to the
+  // exit-code branch itself is needed.
+  if (counts.inScope === 0) {
+    errors.push(
+      "SCOPED_DIRS produced 0 in-scope Prisma call(s). Either the configured paths no longer " +
+        "match the tree or the detection is broken — both are defects, not 'all clean' (GitHub #229).",
+    );
+  }
 
   const softMode = process.env.LINT_TENANT_SCOPING_SOFT === "1";
   let exitCode: 0 | 1 = 0;
