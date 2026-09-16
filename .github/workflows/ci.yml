@@ -210,6 +210,16 @@ jobs:
         id: lint
         run: pnpm --filter @clokr/api exec eslint src/ --no-warn-ignored
 
+      - name: Lint tenant scoping (Issue #204 — CLAUDE.md § Multi-Tenancy Convention)
+        # App-scoped to @clokr/api (D-11: apps/api/src/routes + services only), unlike the
+        # root-level lint:comment-language step below, which spans both apps. Requires the
+        # "Generate Prisma client" step above: the model classification is derived from
+        # Prisma.dmmf, never from a hand-maintained list (D-05/D-19).
+        # Unconditional on purpose — a tenant-isolation gate that a path filter can skip is not
+        # a gate. Deliberate exceptions live in apps/api/scripts/lint-tenant-scoping-exceptions.json,
+        # each with a mandatory reason the script itself validates.
+        run: pnpm --filter @clokr/api run lint:tenant-scoping
+
       - name: Lint Web
         run: pnpm --filter @clokr/web exec eslint src/
 

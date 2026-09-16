@@ -18,8 +18,17 @@
  */
 import { readFileSync } from "node:fs";
 
-const MIN_FILES = 241; // Phase 113b (T22, characterization baseline before #99): measured green run (241 files / 2733 passed + 3 skipped = 2736 total), full suite completed uninterrupted. The branch point (708ffbfa, merge-base with main) already carried 236 files against the previously recorded floor of 235 — one file of pre-existing drift from unrelated main-branch work between Phase 98b and this phase, which this raise absorbs without investigation since it is a floor and 236 > 235 never failed the gate. This phase itself added exactly 5: apps/api/scripts/__tests__/context-area-map.test.ts (113B-01), measure-saldo-path-parity.test.ts (113B-02), measure-context-coverage.test.ts (113B-04), and src/routes/__tests__/shifts-characterization.test.ts + leave-characterization.test.ts (113B-05) — 236 + 5 = 241. Raise when adding files.
-const MIN_TESTS = 2733; // Phase 113b: measured green run — the passed count; the script compares numTotalTests, which was 2736 on that run (3 pre-existing skips, unrelated to this phase). This phase's own 5 new files contribute 46 tests (17 + 12 + 11 + 3 + 3, one grep count per file above) against a delta of 48 over the previous 2685 — the remaining 2 are the same class of pre-existing drift MIN_FILES's comment names, not this phase's own tests. Raise when adding tests.
+// Re-measured 2026-09-16 on the merged tree (`pnpm --filter @clokr/api test`, one clean full run,
+// read from apps/api/vitest-report.json: testResults.length for files, numTotalTests for tests —
+// 249 files, 2836 tests, 0 failed, 3 skipped). The prior floor (241/2780, Phase 204's own branch
+// before this merge) undercounted the merged tree by 8 files: Phase 113b's characterization
+// baseline (PR #221, 5 new files: context-area-map, measure-context-coverage,
+// measure-saldo-path-parity, leave-characterization, shifts-characterization) and PR #227's three
+// tenant-scoping security tests (sec-10/11/12, fixing #223/#224/#225) both landed on main after
+// Phase 204's branch was cut, and this merge brings both in for the first time alongside Phase
+// 204's own test files (this gate's own suite plus its fixtures).
+const MIN_FILES = 249;
+const MIN_TESTS = 2836;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
@@ -64,5 +73,7 @@ if (files < MIN_FILES || tests < MIN_TESTS) {
   process.exit(1);
 }
 
-console.log(`check-test-completeness: ${files}/${MIN_FILES} files, ${tests}/${MIN_TESTS} tests — OK`);
+console.log(
+  `check-test-completeness: ${files}/${MIN_FILES} files, ${tests}/${MIN_TESTS} tests — OK`,
+);
 process.exit(0);

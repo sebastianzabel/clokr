@@ -72,3 +72,33 @@ describe.each([
     expect(clientCtor).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Phase 204 Plan 04 — `lint-tenant-scoping.ts` (GH #204) is DB-free (it touches `@clokr/db` only
+ * for the generated Prisma DMMF, never a live connection), so the `pg` mock above is irrelevant to
+ * it. It gets its own registration here rather than joining the `describe.each` table above,
+ * because its import-safety proof is different: not "no pg.Client constructed" but "no scan ran
+ * and no report was printed" — the guarded `main()` for THIS script walks the filesystem and
+ * writes to stdout, not a database.
+ */
+describe("importing lint-tenant-scoping.ts for its exports (GH #203 regression)", () => {
+  it("never scans the repository or prints a report as a side effect of import", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const previousExitCode = process.exitCode;
+    try {
+      const mod = await import("../lint-tenant-scoping");
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(typeof mod.runLint).toBe("function");
+      expect(typeof mod.formatFinding).toBe("function");
+      expect(logSpy).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(previousExitCode);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      process.exitCode = previousExitCode;
+    }
+  });
+});
