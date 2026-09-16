@@ -18,12 +18,17 @@
  */
 import { readFileSync } from "node:fs";
 
-// PLACEHOLDER after the main-merge — both numbers MUST be re-measured from one clean full run
-// before this branch is merged. Phase 204's branch measured 241/2780 without Phase 113b's five
-// files and without PR #227's three security tests; main measured 241/2733 without Phase 204's.
-// Neither figure describes the merged tree, so neither may simply be kept.
-const MIN_FILES = 241;
-const MIN_TESTS = 2780;
+// Re-measured 2026-09-16 on the merged tree (`pnpm --filter @clokr/api test`, one clean full run,
+// read from apps/api/vitest-report.json: testResults.length for files, numTotalTests for tests —
+// 249 files, 2836 tests, 0 failed, 3 skipped). The prior floor (241/2780, Phase 204's own branch
+// before this merge) undercounted the merged tree by 8 files: Phase 113b's characterization
+// baseline (PR #221, 5 new files: context-area-map, measure-context-coverage,
+// measure-saldo-path-parity, leave-characterization, shifts-characterization) and PR #227's three
+// tenant-scoping security tests (sec-10/11/12, fixing #223/#224/#225) both landed on main after
+// Phase 204's branch was cut, and this merge brings both in for the first time alongside Phase
+// 204's own test files (this gate's own suite plus its fixtures).
+const MIN_FILES = 249;
+const MIN_TESTS = 2836;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
