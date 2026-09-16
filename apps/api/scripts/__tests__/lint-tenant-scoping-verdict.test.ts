@@ -143,6 +143,37 @@ const CASES: readonly Case[] = [
     scoped: false,
     detailContains: ["no tenant scoping found"],
   },
+  // CR-01 (204-REVIEW.md): a tenant comparison that exists but never gates anything must not be
+  // accepted as fetch-then-compare.
+  {
+    file: "unused-comparison-no-gate.ts",
+    model: "leaveType",
+    method: "update",
+    scoped: false,
+    detailContains: ["no tenant scoping found"],
+  },
+  {
+    file: "non-returning-if-branch.ts",
+    model: "leaveType",
+    method: "update",
+    scoped: false,
+    detailContains: ["no tenant scoping found"],
+  },
+  // CR-02 (204-REVIEW.md): guard/identifier searches must respect function-scope boundaries.
+  {
+    file: "guard-inside-nested-closure.ts",
+    model: "coverageRule",
+    method: "update",
+    scoped: false,
+    detailContains: ["no tenant scoping found"],
+  },
+  {
+    file: "shadowed-identifier-nested-helper.ts",
+    model: "coverageRule",
+    method: "update",
+    scoped: false,
+    detailContains: ["no tenant scoping found"],
+  },
 ];
 
 describe.each(CASES)("verdict fixture: $file", (testCase) => {
