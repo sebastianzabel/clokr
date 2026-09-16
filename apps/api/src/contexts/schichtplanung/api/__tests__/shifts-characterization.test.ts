@@ -16,7 +16,12 @@
  * Verschiebung: keine Verhaltensänderung").
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+} from "../../../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
 
 /** A future business day (Mon–Fri), `offset` days out — mirrors shifts.test.ts's own

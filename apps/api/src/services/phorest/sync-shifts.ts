@@ -38,7 +38,7 @@
 import type { FastifyInstance } from "fastify";
 import { decryptSafe } from "../../utils/crypto";
 import { todayInTz, dateStrInTz } from "../../utils/timezone";
-import { applyPrepWrapup } from "../../utils/time-arithmetic";
+import { applyPrepWrapup } from "../../contexts/schichtplanung/time-arithmetic";
 import { mondayOfWeekUtc } from "../../utils/vacation-calc"; // Phase 107 (D-14) — same Monday-cutting primitive routes/shifts.ts:709-718 / affectedWeekBounds() use
 import {
   recalcProvisionalLeaveForShiftChange,

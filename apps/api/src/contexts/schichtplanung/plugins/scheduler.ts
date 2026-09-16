@@ -1,8 +1,8 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
-import { withAdvisoryLock, tenantAdvisoryKey } from "../utils/with-advisory-lock";
-import { syncPhorestShifts } from "../services/phorest/sync-shifts";
-import { syncPhorestAppointments } from "../services/phorest/sync-appointments";
+import { withAdvisoryLock, tenantAdvisoryKey } from "../../../utils/with-advisory-lock";
+import { syncPhorestShifts } from "../../../services/phorest/sync-shifts";
+import { syncPhorestAppointments } from "../../../services/phorest/sync-appointments";
 
 /**
  * Background scheduler for recurring tasks.

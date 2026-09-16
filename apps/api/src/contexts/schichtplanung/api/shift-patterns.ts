@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { requireAuth, requireRole } from "../../../middleware/auth";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 

@@ -131,7 +131,7 @@
     "reason": "employee is fetch-then-compared against req.user.tenantId at line 1178; leaveEntitlement.findUnique reuses the SAME validated employeeId in its compound-key where a few lines later (Phase 104 D-19/R9)."
   },
   {
-    "file": "apps/api/src/routes/shift-patterns.ts",
+    "file": "apps/api/src/contexts/schichtplanung/api/shift-patterns.ts",
     "handler": "PUT /api/v1/employees/:id/shift-patterns",
     "validatedAt": 75,
     "calls": [{ "call": "employeeShiftPattern.updateMany", "line": 102 }],
@@ -145,24 +145,24 @@
     "reason": "employee (and therefore id) is tenant-validated inline at line 173 (employee.findFirst({ id, tenantId: req.user.tenantId })); employeeVocationalSchoolPattern.updateMany reuses the SAME validated id as employeeId inside the replace transaction below."
   },
   {
-    "file": "apps/api/src/routes/shifts.ts",
+    "file": "apps/api/src/contexts/schichtplanung/api/shifts.ts",
     "handler": "PUT /api/v1/shifts/:id",
-    "validatedAt": 2091,
+    "validatedAt": 2096,
     "calls": [
-      { "call": "shift.findUnique", "line": 2083 },
-      { "call": "shift.update", "line": 2269 }
+      { "call": "shift.findUnique", "line": 2088 },
+      { "call": "shift.update", "line": 2274 }
     ],
-    "reason": "Shift has no tenantId of its own. The shift is first fetched by id (line 2083, unscoped by itself), then its OWNER is validated by a SECOND fetch+compare on a DERIVED field (existingOwner = employee.findUnique({ id: existing.employeeId }), compared at line 2091) BEFORE the fetched row is read or written anywhere below — including the shift.update at line 2269, which reuses the SAME id. This mirrors overtime.ts's own comment ('Shift has no tenantId of its own — go via employee')."
+    "reason": "Shift has no tenantId of its own. The shift is first fetched by id (line 2088, unscoped by itself), then its OWNER is validated by a SECOND fetch+compare on a DERIVED field (existingOwner = employee.findUnique({ id: existing.employeeId }), compared at line 2096) BEFORE the fetched row is read or written anywhere below — including the shift.update at line 2274, which reuses the SAME id. This mirrors overtime.ts's own comment ('Shift has no tenantId of its own — go via employee')."
   },
   {
-    "file": "apps/api/src/routes/shifts.ts",
+    "file": "apps/api/src/contexts/schichtplanung/api/shifts.ts",
     "handler": "DELETE /api/v1/shifts/:id",
-    "validatedAt": 3191,
+    "validatedAt": 3196,
     "calls": [
-      { "call": "shift.findUnique", "line": 3186 },
-      { "call": "shift.delete", "line": 3219 }
+      { "call": "shift.findUnique", "line": 3191 },
+      { "call": "shift.delete", "line": 3224 }
     ],
-    "reason": "Same derived-field second-hop guard as the PUT /:id handler above: the shift is fetched by id (line 3186), then existingOwner = employee.findUnique({ id: existing.employeeId }) is compared at line 3191 BEFORE the shift is read or deleted — including the shift.delete at line 3219, which reuses the SAME id."
+    "reason": "Same derived-field second-hop guard as the PUT /:id handler above: the shift is fetched by id (line 3191), then existingOwner = employee.findUnique({ id: existing.employeeId }) is compared at line 3196 BEFORE the shift is read or deleted — including the shift.delete at line 3224, which reuses the SAME id."
   },
   {
     "file": "apps/api/src/routes/test-bootstrap.ts",

@@ -1,12 +1,12 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireRole, requireAuth } from "../middleware/auth";
-import { encrypt, decryptSafe } from "../utils/crypto";
-import { withAdvisoryLock, tenantAdvisoryKey } from "../utils/with-advisory-lock";
-import { phorestFetch, PhorestApiError } from "../services/phorest/client";
-import { syncPhorestShifts } from "../services/phorest/sync-shifts";
-import { syncPhorestAppointments } from "../services/phorest/sync-appointments";
-import type { PhorestStaffItem, SyncResult } from "../services/phorest/types";
+import { requireRole, requireAuth } from "../../../middleware/auth";
+import { encrypt, decryptSafe } from "../../../utils/crypto";
+import { withAdvisoryLock, tenantAdvisoryKey } from "../../../utils/with-advisory-lock";
+import { phorestFetch, PhorestApiError } from "../../../services/phorest/client";
+import { syncPhorestShifts } from "../../../services/phorest/sync-shifts";
+import { syncPhorestAppointments } from "../../../services/phorest/sync-appointments";
+import type { PhorestStaffItem, SyncResult } from "../../../services/phorest/types";
 
 /**
  * Phorest API Integration

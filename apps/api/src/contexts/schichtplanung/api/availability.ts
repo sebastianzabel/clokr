@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireAuth } from "../middleware/auth";
-import { isAvailabilityEnabled } from "../utils/tenant-availability";
+import { requireAuth } from "../../../middleware/auth";
+import { isAvailabilityEnabled } from "../tenant-availability";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 

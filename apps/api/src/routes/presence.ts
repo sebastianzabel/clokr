@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "crypto";
 import { normalizeMac } from "../utils/normalize-mac";
-import { getCurrentShift } from "../utils/get-current-shift";
+import { getCurrentShift } from "../contexts/schichtplanung/get-current-shift";
 import { getTenantTimezone, dateStrInTz } from "../utils/timezone";
 import { resolveClockEvent } from "../services/clock/resolver";
 import type { ClockEvent } from "../services/clock/types";

@@ -180,22 +180,22 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   // ── schichtplanung — Shift/ShiftTemplate/CoverageRule/EmployeeShiftPattern/
   //    EmployeeAvailability/PhorestStaffMapping/PhorestSyncRun/PhorestAppointment, plus
   //    services/phorest/** (D-16 prefix rule) ────────────────────────────────────────────────
-  "src/routes/availability.ts": "schichtplanung", // writes EmployeeAvailability
-  "src/routes/integrations.ts": "schichtplanung", // writes PhorestStaffMapping (Phorest scheduling-integration settings)
-  "src/routes/shift-patterns.ts": "schichtplanung", // writes EmployeeShiftPattern
-  "src/routes/shifts.ts": "schichtplanung", // writes CoverageRule/ShiftTemplate/Shift
-  "src/plugins/scheduler.ts": "schichtplanung", // Phorest shift-sync cron (per apps/api ARCHITECTURE.md)
+  "src/contexts/schichtplanung/api/availability.ts": "schichtplanung", // writes EmployeeAvailability
+  "src/contexts/schichtplanung/api/integrations.ts": "schichtplanung", // writes PhorestStaffMapping (Phorest scheduling-integration settings)
+  "src/contexts/schichtplanung/api/shift-patterns.ts": "schichtplanung", // writes EmployeeShiftPattern
+  "src/contexts/schichtplanung/api/shifts.ts": "schichtplanung", // writes CoverageRule/ShiftTemplate/Shift
+  "src/contexts/schichtplanung/plugins/scheduler.ts": "schichtplanung", // Phorest shift-sync cron (per apps/api ARCHITECTURE.md)
   "src/services/phorest/__tests__/helpers.ts": "schichtplanung", // D-16 prefix rule (services/phorest/**) — matched here explicitly so the per-file count reflects the full measured set
   "src/services/phorest/client.ts": "schichtplanung", // D-16 prefix rule (services/phorest/**)
   "src/services/phorest/sync-appointments.ts": "schichtplanung", // D-16 prefix rule (services/phorest/**)
   "src/services/phorest/sync-shifts.ts": "schichtplanung", // D-16 prefix rule (services/phorest/**)
   "src/services/phorest/types.ts": "schichtplanung", // D-16 prefix rule (services/phorest/**)
-  "src/utils/get-current-shift.ts": "schichtplanung", // Shift lookup; sole importer routes/presence.ts, but the model concept is Shift itself
-  "src/utils/shift-availability.ts": "schichtplanung", // EmployeeAvailability/Shift availability checks
-  "src/utils/shift-cleanup.ts": "schichtplanung", // soft-deletes/flags Shift rows on VOCATIONAL_SCHOOL Absence creation — Shift is the model it manipulates
-  "src/utils/shift-netto.ts": "schichtplanung", // net Shift-hours calculation
-  "src/utils/tenant-availability.ts": "schichtplanung", // TenantConfig.availabilityEnabled toggle for the EmployeeAvailability feature
-  "src/utils/time-arithmetic.ts": "schichtplanung", // Phorest Vor-/Nachbereitungszeit padding, sole consumer services/phorest/sync-shifts.ts
+  "src/contexts/schichtplanung/get-current-shift.ts": "schichtplanung", // Shift lookup; sole importer routes/presence.ts, but the model concept is Shift itself
+  "src/contexts/schichtplanung/shift-availability.ts": "schichtplanung", // EmployeeAvailability/Shift availability checks
+  "src/contexts/schichtplanung/shift-cleanup.ts": "schichtplanung", // soft-deletes/flags Shift rows on VOCATIONAL_SCHOOL Absence creation — Shift is the model it manipulates
+  "src/contexts/schichtplanung/shift-netto.ts": "schichtplanung", // net Shift-hours calculation
+  "src/contexts/schichtplanung/tenant-availability.ts": "schichtplanung", // TenantConfig.availabilityEnabled toggle for the EmployeeAvailability feature
+  "src/contexts/schichtplanung/time-arithmetic.ts": "schichtplanung", // Phorest Vor-/Nachbereitungszeit padding, sole consumer services/phorest/sync-shifts.ts
 
   // ── arbeitszeitkonto — SaldoSnapshot/OpeningBalance/OvertimeAccount/OvertimeTransaction/
   //    OvertimePlan ─────────────────────────────────────────────────────────────────────────

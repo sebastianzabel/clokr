@@ -1,7 +1,18 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+} from "../../../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
-import { dbDateStr, dowOf, futureDateStr, todayStr, utcMidnight } from "../../__tests__/test-dates";
+import {
+  dbDateStr,
+  dowOf,
+  futureDateStr,
+  todayStr,
+  utcMidnight,
+} from "../../../../__tests__/test-dates";
 
 /**
  * Phase 47.4-01 — ArbZG § 3 (Tägliche Höchstarbeitszeit, hard-block)

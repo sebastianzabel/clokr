@@ -1,10 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
-import { holidayFreeMondayStr, addDaysStr, utcMidnight } from "../../__tests__/test-dates";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+} from "../../../../__tests__/setup";
+import { holidayFreeMondayStr, addDaysStr, utcMidnight } from "../../../../__tests__/test-dates";
 import type { FastifyInstance } from "fastify";
-import { closeEmployeeMonth } from "../../utils/close-employee-month";
-import { monthRangeUtc, monthDayBounds, calcExpectedMinutesTz } from "../../utils/timezone";
-import type { CloseMonthInput } from "../../utils/close-employee-month";
+import { closeEmployeeMonth } from "../../../../utils/close-employee-month";
+import { monthRangeUtc, monthDayBounds, calcExpectedMinutesTz } from "../../../../utils/timezone";
+import type { CloseMonthInput } from "../../../../utils/close-employee-month";
 
 /**
  * Phase 76.12 Plan 02 — Smoke tests for GET /api/v1/shifts/week

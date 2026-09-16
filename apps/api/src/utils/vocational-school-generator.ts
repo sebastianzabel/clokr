@@ -17,7 +17,7 @@
 import type { PrismaClient } from "@clokr/db";
 import { FederalState } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
-import { cleanupShiftsForBSAbsence } from "./shift-cleanup";
+import { cleanupShiftsForBSAbsence } from "../contexts/schichtplanung/shift-cleanup";
 import { BS_PATTERN_ORDER_BY, findAmbiguousClaimDates } from "./vocational-school-pattern-order.js";
 
 // ── Public types ─────────────────────────────────────────────────────────────

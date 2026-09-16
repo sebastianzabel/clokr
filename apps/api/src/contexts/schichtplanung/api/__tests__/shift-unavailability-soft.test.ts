@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+} from "../../../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
-import { dowOf, futureDateStr, nextWeekdayStr, todayStr } from "../../__tests__/test-dates";
+import { dowOf, futureDateStr, nextWeekdayStr, todayStr } from "../../../../__tests__/test-dates";
 
 /**
  * Phase 47.3-03 — Soft-Enforcement Override (SHIFT_CONFLICT_UNAVAILABILITY)

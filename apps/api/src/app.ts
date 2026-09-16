@@ -21,7 +21,7 @@ import { auditPlugin } from "./plugins/audit";
 import { prismaPlugin } from "./plugins/prisma";
 import { mailerPlugin } from "./plugins/mailer";
 import { notifyPlugin } from "./plugins/notify";
-import { schedulerPlugin } from "./plugins/scheduler";
+import { schedulerPlugin } from "./contexts/schichtplanung/plugins/scheduler";
 import { attendanceCheckerPlugin } from "./plugins/attendance-checker";
 import { carryoverWarningPlugin } from "./plugins/carryover-warning";
 import { dataRetentionPlugin } from "./plugins/data-retention";
@@ -37,12 +37,15 @@ import { auditLogRoutes } from "./routes/audit-logs";
 import { activityRoutes } from "./routes/activity";
 import { companyShutdownRoutes } from "./routes/company-shutdowns";
 import { dashboardRoutes } from "./composition/dashboard";
-import { shiftRoutes } from "./routes/shifts";
-import { shiftPatternRoutes, shiftPatternTenantRoutes } from "./routes/shift-patterns";
+import { shiftRoutes } from "./contexts/schichtplanung/api/shifts";
+import {
+  shiftPatternRoutes,
+  shiftPatternTenantRoutes,
+} from "./contexts/schichtplanung/api/shift-patterns";
 import { vocationalSchoolPatternRoutes } from "./routes/vocational-school-pattern";
 import { vocationalSchoolRoutes } from "./routes/vocational-school";
-import { availabilityRoutes } from "./routes/availability";
-import { integrationRoutes } from "./routes/integrations";
+import { availabilityRoutes } from "./contexts/schichtplanung/api/availability";
+import { integrationRoutes } from "./contexts/schichtplanung/api/integrations";
 import { importRoutes } from "./routes/imports";
 import { terminalRoutes } from "./routes/terminals";
 import { specialLeaveRoutes } from "./routes/special-leave";

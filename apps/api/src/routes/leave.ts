@@ -24,7 +24,7 @@ import {
 import { getConfirmedCarryOver } from "../utils/confirmed-saldo"; // Phase 97-06
 import { loadNegativeBalanceTolerance } from "../utils/negative-balance-tolerance"; // Phase 100
 import { formatMinutesHM } from "../utils/format-hm"; // Phase 100
-import { shiftNettoMinutes, sumShiftNettoMinutes } from "../utils/shift-netto"; // Phase 100 (OTC-04)
+import { shiftNettoMinutes, sumShiftNettoMinutes } from "../contexts/schichtplanung/shift-netto"; // Phase 100 (OTC-04)
 import { auditReasonSchema } from "../utils/audit-reason"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../utils/section9-detect"; // Phase 104-05/06

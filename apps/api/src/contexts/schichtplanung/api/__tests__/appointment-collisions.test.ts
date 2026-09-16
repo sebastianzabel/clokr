@@ -14,7 +14,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
+import { getTestApp, seedTestData, cleanupTestData } from "../../../../__tests__/setup";
 
 // DSGVO contract: the response envelope and each collision object carry EXACTLY these keys — nothing else.
 const ALLOWED_RESPONSE_KEYS = ["collisions", "deepLink", "total"];
