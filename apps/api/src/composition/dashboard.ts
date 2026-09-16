@@ -38,6 +38,11 @@ import { findUnconfirmedBreakDays } from "../contexts/time-tracking/find-unconfi
 import { resolveMissingEntriesDays } from "../contexts/working-time-account/missing-entries-window"; // GitHub issue #141 — single source for both Karte and Cron
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
 import {
+  getWorkedEntriesInRange,
+  getRecordedWorkEntriesInRange,
+  getInvalidEntries,
+} from "../contexts/time-tracking"; // Phase 100B Plan 08 — T2/getRecordedWorkEntriesInRange/T4
+import {
   getOvertimeAccount,
   listOvertimeAccountsForTenant,
   getBalances,
@@ -71,9 +76,14 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const { start: weekStart, end: weekEnd } = weekRangeUtc(now, tz);
 
       // ── Heute: gearbeitete Stunden ────────────────────────────────────
-      const todayEntries = await app.prisma.timeEntry.findMany({
-        where: { employeeId, deletedAt: null, date: today, type: "WORK" },
-      });
+      // Phase 100B Plan 08 (T2) — the loop below only ever sums a row when `e.endTime` is
+      // truthy, so T2's `endTime: { not: null }` DB-level filter is a proven no-op here.
+      const todayEntries = await getWorkedEntriesInRange(
+        app.prisma,
+        { kind: "employee", employeeId, tenantId },
+        today,
+        today,
+      );
 
       let todayMinutes = 0;
       for (const e of todayEntries) {
@@ -127,15 +137,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
         workedQueryEnd = weekEnd;
       }
 
-      const periodEntries = await app.prisma.timeEntry.findMany({
-        where: {
-          employeeId,
-          deletedAt: null,
-          date: { gte: workedQueryStart, lte: workedQueryEnd },
-          type: "WORK",
-          endTime: { not: null },
-        },
-      });
+      const periodEntries = await getWorkedEntriesInRange(
+        app.prisma,
+        { kind: "employee", employeeId, tenantId },
+        workedQueryStart,
+        workedQueryEnd,
+      );
 
       let periodWorkedMinutes = 0;
       for (const e of periodEntries) {
@@ -364,23 +371,16 @@ export async function dashboardRoutes(app: FastifyInstance) {
         orderBy: { lastName: "asc" },
       });
 
-      // Zeiteinträge der Woche
-      const timeEntries = await app.prisma.timeEntry.findMany({
-        where: {
-          employee: { tenantId },
-          deletedAt: null,
-          date: { gte: weekStart, lte: weekEnd },
-          type: "WORK",
-        },
-        select: {
-          employeeId: true,
-          date: true,
-          startTime: true,
-          endTime: true,
-          breakMinutes: true,
-          isInvalid: true,
-        },
-      });
+      // Zeiteinträge der Woche — OPEN (still clocked in) and INVALID rows included on purpose
+      // (Phase 100B Plan 08 — getRecordedWorkEntriesInRange, not T2): the per-day loop below
+      // needs the open row present to compute `workedMinutes` correctly (it checks `e.endTime`
+      // itself) and other call sites of this same function need `isClockedIn` detection.
+      const timeEntries = await getRecordedWorkEntriesInRange(
+        app.prisma,
+        { kind: "tenant", tenantId },
+        weekStart,
+        weekEnd,
+      );
 
       // Genehmigte Abwesenheiten (inkl. Urlaubsstornierungen) + offene Anträge (PENDING).
       // Phase 95 SHIFT-01: PENDING leave surfaces as "beantragt" instead of "–".
@@ -600,16 +600,14 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       const employeeIds = employees.map((e) => e.id);
 
-      // Bulk fetch 2 — WORK time entries for today (deletedAt: null, tenant-scoped via employee)
-      const timeEntries = await app.prisma.timeEntry.findMany({
-        where: {
-          employee: { tenantId },
-          deletedAt: null,
-          date: today,
-          type: "WORK",
-        },
-        select: { employeeId: true, endTime: true, isInvalid: true },
-      });
+      // Bulk fetch 2 — WORK time entries for today, OPEN and INVALID included (Phase 100B Plan
+      // 08 — getRecordedWorkEntriesInRange, not T2): `isClockedIn` below needs the open row.
+      const timeEntries = await getRecordedWorkEntriesInRange(
+        app.prisma,
+        { kind: "tenant", tenantId },
+        today,
+        today,
+      );
 
       // Bulk fetch 3 — leave requests covering today (APPROVED + CANCELLATION_REQUESTED)
       const leaveRequests = await app.prisma.leaveRequest.findMany({
@@ -905,9 +903,14 @@ export async function dashboardRoutes(app: FastifyInstance) {
       if (endYear !== startYear) myWeekHolidays.push(...getHolidays(endYear, myWeekStateCode));
       const myWeekHolidayMap = new Map(myWeekHolidays.map((h) => [h.date, h.name]));
 
-      const entries = await app.prisma.timeEntry.findMany({
-        where: { employeeId, deletedAt: null, type: "WORK", date: { gte: start, lte: end } },
-      });
+      // OPEN and INVALID rows included on purpose (Phase 100B Plan 08 —
+      // getRecordedWorkEntriesInRange, not T2): `isClockedIn` below needs the open row present.
+      const entries = await getRecordedWorkEntriesInRange(
+        app.prisma,
+        { kind: "employee", employeeId, tenantId },
+        start,
+        end,
+      );
 
       // Phase 49.4: leave + absence overlay for the user week-view
       const myWeekLeaves = await app.prisma.leaveRequest.findMany({
@@ -1093,16 +1096,17 @@ export async function dashboardRoutes(app: FastifyInstance) {
           select: { isTimeTrackingExempt: true, hireDate: true, exitDate: true },
         });
         if (!meEmployee?.isTimeTrackingExempt) {
-          // 1. Missing time entries (workdays without entries in the configured window)
-          const recentEntries = await app.prisma.timeEntry.findMany({
-            where: {
-              employeeId,
-              deletedAt: null,
-              type: "WORK",
-              date: { gte: windowStart, lt: today },
-            },
-            select: { date: true },
-          });
+          // 1. Missing time entries (workdays without entries in the configured window).
+          // OPEN entries included on purpose (Phase 100B Plan 08 — getRecordedWorkEntriesInRange,
+          // not T2): a day whose entry is still open (unclosed clock-in) already has a claimed
+          // entry and must NOT ALSO be flagged missing — `lt: today` (exclusive) is exactly
+          // `lte: yesterday` (inclusive) for a @db.Date column, so the window is unchanged.
+          const recentEntries = await getRecordedWorkEntriesInRange(
+            app.prisma,
+            { kind: "employee", employeeId, tenantId },
+            windowStart,
+            yesterday,
+          );
           const entryDates = new Set(recentEntries.map((e) => dateStrInTz(e.date, tz)));
 
           // Fetch holidays for the configured window (can span two years near Jan 1)
@@ -1210,10 +1214,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         pendingRequestsCount = pendingRequests.length;
 
         // 3. Invalidated time entries — leave signal also applies for exempt employees
-        const invalidEntries = await app.prisma.timeEntry.findMany({
-          where: { employeeId, deletedAt: null, isInvalid: true },
-          select: { id: true },
-        });
+        const invalidEntries = await getInvalidEntries(app.prisma, employeeId, tenantId);
         invalidEntriesCount = invalidEntries.length;
 
         // 3b. Unbestätigte Pflichtpausen (§ 4 ArbZG, BREAK-05) — Phase 126, GitHub issue #126.

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
 import { getTenantTimezone, timeStrInTz } from "../../working-time-account/timezone";
 import { getMonthlySnapshotsInRange } from "../../working-time-account"; // Phase 100B Plan 07 — W5
+import { getEntryActivityFeed } from "../../time-tracking"; // Phase 100B Plan 08 — T5
 
 /**
  * GET /api/v1/activity?limit=5
@@ -121,15 +122,13 @@ export async function activityRoutes(app: FastifyInstance) {
         // widget must render them in the tenant timezone, not UTC — otherwise a
         // Europe/Berlin tenant sees times ~1-2h too early. Use timeStrInTz.
         const tz = await getTenantTimezone(app.prisma, tenantId);
-        const entries = await app.prisma.timeEntry.findMany({
-          where: {
-            employeeId,
-            deletedAt: null,
-            createdAt: { gte: since },
-          },
-          orderBy: { createdAt: "desc" },
-          take: fetchLimit,
-        });
+        const entries = await getEntryActivityFeed(
+          app.prisma,
+          employeeId,
+          tenantId,
+          since,
+          fetchLimit,
+        );
         for (const e of entries) {
           const startHHMM = timeStrInTz(e.startTime, tz);
           items.push({

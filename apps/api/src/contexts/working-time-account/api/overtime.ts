@@ -25,6 +25,11 @@ import { computeMonthSaldo } from "../month-saldo"; // §615 Team-Zeiten display
 import { getCarryOverBase } from "../carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { recalculateSnapshots } from "../recalculate-snapshots"; // Phase 99 (OB-03) — full-history re-thread
 import { resolveNegativeBalanceTolerance } from "../negative-balance-tolerance"; // Phase 100 (OTC-01) — the one shared precedence chain
+import {
+  getValidWorkedEntriesInRange,
+  lockEntriesForMonth,
+  unlockEntriesForMonth,
+} from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7/T8
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),
@@ -1131,17 +1136,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
       // Queries are byte-identical to those in the removed inline block.
       const [closeEntries, closeShifts, closeApprovedLeave, closeAbsences] = await Promise.all([
         // WORK entries — same filter as old inline path (effectiveStart..monthLastDay)
-        app.prisma.timeEntry.findMany({
-          where: {
-            employeeId,
-            deletedAt: null,
-            date: { gte: effectiveStart, lte: monthLastDay },
-            endTime: { not: null },
-            type: "WORK",
-            isInvalid: false,
-          },
-          select: { date: true, startTime: true, endTime: true, breakMinutes: true },
-        }),
+        // Phase 100B Plan 08 — T1, contexts/time-tracking facade. THE SALDO INPUT.
+        getValidWorkedEntriesInRange(
+          app.prisma,
+          { kind: "employee", employeeId, tenantId: employee.tenantId },
+          effectiveStart,
+          monthLastDay,
+        ),
         // Shifts (SHIFT_BASED only — also fetch for non-SHIFT to avoid a branch here;
         // closeEmployeeMonth ignores the shifts array for non-SHIFT types).
         // Phase 100B Plan 05 — S1, contexts/scheduling facade.
@@ -1343,14 +1344,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
         // Lock all time entries in this month (day bounds — the timestamp lower
         // bound casts to the previous month's last day for UTC+ tenants)
-        await tx.timeEntry.updateMany({
-          where: {
-            employeeId,
-            deletedAt: null,
-            date: { gte: monthFirstDay, lte: monthLastDay },
-          },
-          data: { isLocked: true, lockedAt: new Date() },
-        });
+        // Phase 100B Plan 08 — T7, contexts/time-tracking facade.
+        await lockEntriesForMonth(tx, employeeId, employee.tenantId, monthFirstDay, monthLastDay);
 
         // PERF-V1814-02: overtimeAccount.upsert inside the same tx as snapshot + entry-lock.
         // A crash between snapshot commit and upsert can no longer leave a stale live balance.
@@ -1460,14 +1455,14 @@ export async function overtimeRoutes(app: FastifyInstance) {
           where: { id: snap.id },
           data: { superseded: true, supersededReason: reason },
         });
-        await tx.timeEntry.updateMany({
-          where: {
-            employeeId,
-            deletedAt: null,
-            date: { gte: unlockFirstDay, lte: unlockLastDay },
-          },
-          data: { isLocked: false, lockedAt: null },
-        });
+        // Phase 100B Plan 08 — T8, contexts/time-tracking facade.
+        await unlockEntriesForMonth(
+          tx,
+          employeeId,
+          employee.tenantId,
+          unlockFirstDay,
+          unlockLastDay,
+        );
 
         // D-02 / COMP-V1814-05 (audit F1): audit UNLOCK inside the same $transaction (pass tx) so a
         // rollback cannot leave the snapshot superseded without its UNLOCK audit row (or vice-versa).

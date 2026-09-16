@@ -213,7 +213,13 @@ export async function recalcProvisionalLeaveForShiftChange(
     // hand-rolled here.
 
     // write depends on the previous one's committed state within the same tx.
-    const locked = await isSnapshotLocked(tx, employeeId, candidate.startDate, candidate.endDate);
+    const locked = await isSnapshotLocked(
+      tx,
+      employeeId,
+      tenantId,
+      candidate.startDate,
+      candidate.endDate,
+    );
     if (locked) continue;
 
     // Recompute from the roster as it stands right now, inside this SAME transaction — sees

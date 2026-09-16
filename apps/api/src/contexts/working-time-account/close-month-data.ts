@@ -6,6 +6,7 @@
 // that covers the entire date range, then returns keyed Maps for O(1) in-memory lookup.
 
 import type { PrismaClient } from "@clokr/db";
+import { getWorkedEntriesInRange } from "../time-tracking"; // Phase 100B Plan 08 — T2
 
 /**
  * Bulk-fetch all data needed by the close-month status handlers for a given date range
@@ -45,21 +46,11 @@ export async function fetchCloseMonthData(
       },
     }),
 
-    // Q2: all completed WORK TimeEntries in range. Select extended (Phase 92,
-    // BREAK-05) with id + breakStatus + isLocked so the status endpoint can
-    // derive unconfirmedBreakDays from this SAME bulk fetch (N+1-safe,
-    // PERF-V1814-01 — no extra per-employee query added).
-    // CLAUDE.md Soft Delete Convention: deletedAt: null is mandatory.
-    prisma.timeEntry.findMany({
-      where: {
-        employeeId: { in: employeeIds },
-        deletedAt: null,
-        date: { gte: start, lte: end },
-        endTime: { not: null },
-        type: "WORK",
-      },
-      select: { employeeId: true, id: true, date: true, breakStatus: true, isLocked: true },
-    }),
+    // Q2: all completed WORK TimeEntries in range. Extended (Phase 92, BREAK-05) with id +
+    // breakStatus + isLocked so the status endpoint can derive unconfirmedBreakDays from this
+    // SAME bulk fetch (N+1-safe, PERF-V1814-01 — no extra per-employee query added).
+    // Phase 100B Plan 08 — T2, contexts/time-tracking facade.
+    getWorkedEntriesInRange(prisma, { kind: "employees", employeeIds, tenantId }, start, end),
 
     // Q3: all APPROVED LeaveRequests overlapping this date range. `include: { leaveType: true }`
     // added in Phase 104 (R4/D-21) so the SAME bulk-fetch also serves the Karenz-overrun

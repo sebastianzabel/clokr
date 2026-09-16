@@ -3,7 +3,7 @@
  *
  * This gate prevents a NEW route (or, since Phase 100B Plan 04, a facade function a route calls)
  * from reading a client-supplied identifier into a tenant-scoped Prisma model without constraining
- * the result to the caller's own tenant. As of Phase 100B Plan 05 it walks these nine
+ * the result to the caller's own tenant. As of Phase 100B Plan 08 it walks these eleven
  * directories, production code only:
  *
  *   - `apps/api/src/contexts/platform/api/`
@@ -12,9 +12,13 @@
  *   - `apps/api/src/contexts/scheduling/facade/` (Phase 100B Plan 05 — Schichtplanung's
  *     conversion facade, `Shift`/`EmployeeAvailability`)
  *   - `apps/api/src/contexts/time-tracking/api/`
+ *   - `apps/api/src/contexts/time-tracking/facade/` (Phase 100B Plan 08 — Zeiterfassung's
+ *     conversion facade, `TimeEntry`/`Break`)
  *   - `apps/api/src/contexts/absence/api/`
  *   - `apps/api/src/contexts/scheduling/api/`
  *   - `apps/api/src/contexts/working-time-account/api/`
+ *   - `apps/api/src/contexts/working-time-account/facade/` (Phase 100B Plan 06 — Arbeitszeitkonto's
+ *     conversion facade, `OvertimeAccount`/`OvertimeTransaction`/`SaldoSnapshot`)
  *   - `apps/api/src/composition/` (Phase 99b Plan 02 — the composition layer moved out of
  *     `routes/`; it still reads client-supplied identifiers into cross-context Prisma queries and
  *     stays in scope, see `docs/context-cut-map.md`)
@@ -84,8 +88,9 @@
  * phase introduces. Plan 05 adds the ninth: `contexts/scheduling/facade` (`Shift`/
  * `EmployeeAvailability` — S1-S4), in the SAME commit that creates the directory
  * (`MissingScopedDirError`, #229). Plan 06 adds the tenth: `contexts/working-time-account/facade`
- * (`OvertimeAccount`/`OvertimeTransaction` — W8-W15). `time-tracking` (08) and `absence`
- * (10) follow, one per conversion wave. No further platform entry is expected — platform
+ * (`OvertimeAccount`/`OvertimeTransaction` — W8-W15). Plan 08 adds the eleventh:
+ * `contexts/time-tracking/facade` (`TimeEntry`/`Break` — T1-T12/T2b/T2c). `absence`
+ * (10) follows, one per conversion wave. No further platform entry is expected — platform
  * (Unterbau) needs no CONVERSION facade of its own for this phase's D-01 waves, because every
  * other context may already read it directly per ADR 0001; `contexts/platform/facade` exists only
  * for the one shared-type module, a different purpose than the other four (redirecting an
@@ -96,6 +101,7 @@ export const SCOPED_DIRS = [
   "apps/api/src/contexts/platform/api",
   "apps/api/src/contexts/platform/facade",
   "apps/api/src/contexts/time-tracking/api",
+  "apps/api/src/contexts/time-tracking/facade",
   "apps/api/src/contexts/absence/api",
   "apps/api/src/contexts/scheduling/api",
   "apps/api/src/contexts/scheduling/facade",

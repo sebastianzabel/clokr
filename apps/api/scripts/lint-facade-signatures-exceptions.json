@@ -16,5 +16,17 @@
     "function": "hardDeleteOvertimeDataForEmployee",
     "rules": ["F3"],
     "reason": "Plan 100B-06 (D-08/T-100B-25): this is a HARD delete (OvertimeAccount.deleteMany, cascading to OvertimeTransaction) invoked ONLY from platform/api/employees.ts's DELETE /:id/hard-delete sequence, whose handler validates 'id' against req.user.tenantId at its own top (employee.findUnique({ where: { id, tenantId: req.user.tenantId } }), employees.ts:1108-1111) BEFORE the hard-delete $transaction — and therefore before this function — is ever reached. Adding a tenantId parameter here would be a decorative constraint with no independent identifier to check it against (there is no second, untrusted employeeId in play), not a real tenant boundary; the real boundary is the caller's own upstream validation, named explicitly here per D-08's 'named, not uniform' rule."
+  },
+  {
+    "file": "apps/api/src/contexts/time-tracking/facade/time-entries.ts",
+    "function": "clearEntryNotesForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-08 (D-08, T10): DSGVO Art. 17 anonymisation — clears TimeEntry.note for employeeId, deliberately with no deletedAt guard (a soft-deleted row's PII must be scrubbed too, same as every other field platform/anonymize.ts's anonymizeEmployeeData() clears) and no tenantId parameter. Its sole caller resolves and tenant-validates employeeId before this function is ever reached (employees.ts's DELETE /:id anonymization route, or the batch anonymize-dump.ts script operating on already-resolved rows); there is no second, untrusted identifier here for a tenantId parameter to constrain. Same shape as hardDeleteOvertimeDataForEmployee above."
+  },
+  {
+    "file": "apps/api/src/contexts/time-tracking/facade/time-entries.ts",
+    "function": "hardDeleteTimeDataForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-08 (D-08, T11): a HARD delete (Break.deleteMany then TimeEntry.deleteMany, the onDelete:Restrict ORDER invariant) invoked ONLY from platform/api/employees.ts's DELETE /:id/hard-delete sequence, whose handler validates 'id' against req.user.tenantId at its own top BEFORE the hard-delete $transaction — and therefore before this function — is ever reached. Identical reasoning to hardDeleteOvertimeDataForEmployee's own exception above: a tenantId parameter here would be decorative, not a real boundary."
   }
 ]

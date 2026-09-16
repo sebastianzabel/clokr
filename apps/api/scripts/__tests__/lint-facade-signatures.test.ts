@@ -302,9 +302,17 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // facade/saldo-snapshot.ts's own W2a docblock) AND removes confirmed-saldo.ts's two
   // grandfathering exceptions (converted to db: Prisma.TransactionClient, D-07) — the LAST
   // app: FastifyInstance facade in the tree.
-  // 7 files, 23 exported functions total, 3 exception entries (leave-check's F1/F3,
-  // employee-scope's F1, overtime-account's hardDeleteOvertimeDataForEmployee F3), 0 findings.
-  it("the real tree has exactly 23 exported facade functions today, 3 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  // Phase 100B Plan 08 (Wave 4) added ONE more real facade file:
+  // `contexts/time-tracking/facade/time-entries.ts` (T1-T12 plus the T2 regrouping — 14 exported
+  // functions: getValidWorkedEntriesInRange, getWorkedEntriesInRange,
+  // getRecordedWorkEntriesInRange, getClaimedEntryDatesInRange, countLockedEntries,
+  // getInvalidEntries, getEntryActivityFeed, revalidateLeaveCancellationEntries,
+  // lockEntriesForMonth, unlockEntriesForMonth, archiveEntriesBefore,
+  // clearEntryNotesForEmployee, hardDeleteTimeDataForEmployee, createImportedTimeEntry) and TWO
+  // new named F3 exceptions (clearEntryNotesForEmployee, hardDeleteTimeDataForEmployee — same
+  // shape as overtime-account.ts's hardDeleteOvertimeDataForEmployee).
+  // 8 files, 37 exported functions total, 5 exception entries, 0 findings.
+  it("the real tree has exactly 37 exported facade functions today, 5 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -312,6 +320,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
         "apps/api/src/contexts/platform/facade/employee-scope.ts",
         "apps/api/src/contexts/scheduling/facade/shifts.ts",
         "apps/api/src/contexts/scheduling/facade/availability.ts",
+        "apps/api/src/contexts/time-tracking/facade/time-entries.ts",
         "apps/api/src/contexts/working-time-account/facade/overtime-account.ts",
         "apps/api/src/contexts/working-time-account/facade/saldo-snapshot.ts",
       ].sort((a, b) => a.localeCompare(b)),
@@ -322,7 +331,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(23);
+    expect(functions).toHaveLength(37);
 
     const rawExceptions = JSON.parse(
       readFileSync(
@@ -333,7 +342,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     const validated = validateExceptionsDocument(rawExceptions, functions);
     expect(validated.ok).toBe(true);
     if (validated.ok) {
-      expect(validated.entries).toHaveLength(3);
+      expect(validated.entries).toHaveLength(5);
       const findings = computeFindings(functions, validated.entries);
       expect(findings).toEqual([]);
     }

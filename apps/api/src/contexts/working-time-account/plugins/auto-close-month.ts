@@ -11,6 +11,11 @@ import { loadBsSlotOverrides } from "../../absence/load-bs-slot-overrides"; // P
 import { findUnconfirmedBreakDays } from "../../time-tracking/find-unconfirmed-break-days"; // Phase 92 Plan 04 — BREAK-05 single source of truth
 import { getCarryOverBase } from "../carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
+import {
+  getWorkedEntriesInRange,
+  getValidWorkedEntriesInRange,
+  lockEntriesForMonth,
+} from "../../time-tracking"; // Phase 100B Plan 08 — T2/T1/T7
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -312,16 +317,13 @@ export const autoCloseMonthPlugin = fp(async (app) => {
 
                 if (!isFlexible) {
                   // Fetch entries and leave/absences for this month
-                  const rdEntries = await app.prisma.timeEntry.findMany({
-                    where: {
-                      employeeId: emp.id,
-                      deletedAt: null,
-                      date: { gte: monthStart, lte: monthEnd },
-                      endTime: { not: null },
-                      type: "WORK",
-                    },
-                    select: { date: true },
-                  });
+                  // Phase 100B Plan 08 — T2, contexts/time-tracking facade.
+                  const rdEntries = await getWorkedEntriesInRange(
+                    app.prisma,
+                    { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
+                    monthStart,
+                    monthEnd,
+                  );
                   const rdEntryDates = new Set(rdEntries.map((e) => dateStrInTz(e.date, tz)));
 
                   const rdApprovedLeave = await app.prisma.leaveRequest.findMany({
@@ -543,17 +545,13 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               const [closeEntries, closeShifts, closeApprovedLeave, closeAbsences] =
                 await Promise.all([
                   // WORK entries (effectiveStart..monthLastDay, soft-delete + isInvalid filter)
-                  app.prisma.timeEntry.findMany({
-                    where: {
-                      employeeId: emp.id,
-                      deletedAt: null,
-                      date: { gte: empEffectiveStart, lte: monthLastDay },
-                      endTime: { not: null },
-                      type: "WORK",
-                      isInvalid: false,
-                    },
-                    select: { date: true, startTime: true, endTime: true, breakMinutes: true },
-                  }),
+                  // Phase 100B Plan 08 — T1, contexts/time-tracking facade. THE SALDO INPUT.
+                  getValidWorkedEntriesInRange(
+                    app.prisma,
+                    { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
+                    empEffectiveStart,
+                    monthLastDay,
+                  ),
                   // Shifts (SHIFT_BASED only — also fetch for non-SHIFT; core ignores them)
                   // Phase 100B Plan 05 — S1, contexts/scheduling facade.
                   getShiftsInRange(
@@ -696,16 +694,10 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   },
                 });
 
-                await tx.timeEntry.updateMany({
-                  where: {
-                    employeeId: emp.id,
-                    deletedAt: null,
-                    // Day bounds (not the monthStart/monthEnd timestamps): the timestamp
-                    // lower bound casts to the previous month's last day for UTC+ tenants.
-                    date: { gte: monthFirstDay, lte: monthLastDay },
-                  },
-                  data: { isLocked: true, lockedAt: new Date() },
-                });
+                // Day bounds (not the monthStart/monthEnd timestamps): the timestamp
+                // lower bound casts to the previous month's last day for UTC+ tenants.
+                // Phase 100B Plan 08 — T7, contexts/time-tracking facade.
+                await lockEntriesForMonth(tx, emp.id, tenant.id, monthFirstDay, monthLastDay);
 
                 // PERF-V1814-02: overtimeAccount.upsert inside the same tx as snapshot + entry-lock.
                 // A crash between snapshot commit and upsert can no longer leave a stale live balance.

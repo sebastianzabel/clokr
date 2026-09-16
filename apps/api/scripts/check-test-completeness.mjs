@@ -89,8 +89,14 @@ import { readFileSync } from "node:fs";
 // 2960 + 21 = 2981. Plus the facade-parameter-resolution regression guard added to the EXISTING
 // `scripts/__tests__/lint-saldo-lock-derivation.test.ts` (no new FILE — MIN_FILES unchanged at
 // 256): +7 test cases (31 -> 38, verified the same way) — MIN_TESTS rises from 2981 to 2988.
-const MIN_FILES = 256;
-const MIN_TESTS = 2988;
+//
+// Phase 100B Plan 08 (Wave 4) — one new test FILE
+// (contexts/time-tracking/__tests__/facade-time-entries.test.ts) — MIN_FILES rises from 256 to
+// 257. MIN_TESTS rises from 2988 to 3004: +16 test cases in that new file (verified with
+// `pnpm exec vitest run .../facade-time-entries.test.ts`, "16 tests" in its own output) —
+// 2988 + 16 = 3004. No other test file's test COUNT changed in this plan.
+const MIN_FILES = 257;
+const MIN_TESTS = 3004;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

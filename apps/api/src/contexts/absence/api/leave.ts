@@ -36,7 +36,7 @@ import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 1
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
 import { isSickLeaveTypeCode } from "../leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
 import { karenzOverrunFromRequests, normalizeKarenzDays } from "../find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
-import { CLEARED_INVALID_REASON } from "../../time-tracking/invalid-reason"; // Phase 96 (T1)
+import { revalidateLeaveCancellationEntries } from "../../time-tracking"; // Phase 100B Plan 08 — T6
 import {
   REQUESTABLE_CODES as TYPE_CODES,
   LEAVE_TYPE_DEFS,
@@ -997,17 +997,14 @@ export async function leaveRoutes(app: FastifyInstance) {
           });
 
           // Revalidate time entries that were created during CANCELLATION_REQUESTED
-          await app.prisma.timeEntry.updateMany({
-            where: {
-              employeeId: existing.employeeId,
-              date: { gte: existing.startDate, lte: existing.endDate },
-              isInvalid: true,
-              invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
-              deletedAt: null, // D-08: never touch soft-deleted entries
-              isLocked: false, // D-08: never mutate locked-month entries (Revisionssicherheit)
-            },
-            data: { isInvalid: false, ...CLEARED_INVALID_REASON },
-          });
+          // Phase 100B Plan 08 — T6, contexts/time-tracking facade (H2 guard unchanged).
+          await revalidateLeaveCancellationEntries(
+            app.prisma,
+            existing.employeeId,
+            existing.employee.tenantId,
+            existing.startDate,
+            existing.endDate,
+          );
 
           const typeCode = existing.leaveType.code;
           if (typeCode === "VACATION") {
@@ -1930,19 +1927,10 @@ export async function leaveRoutes(app: FastifyInstance) {
         //    A shortened/moved leave frees days whose leave-caused invalidation must
         //    be cleared. Delta-lock already guarantees these fall in unlocked months;
         //    locked / soft-deleted entries are never touched (Revisionssicherheit).
+        // Phase 100B Plan 08 — T6, contexts/time-tracking facade (H2 guard unchanged).
         const revalidateRemoved = async (from: Date, to: Date) => {
           if (from > to) return;
-          await tx.timeEntry.updateMany({
-            where: {
-              employeeId: existing.employeeId,
-              date: { gte: from, lte: to },
-              isInvalid: true,
-              invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
-              deletedAt: null,
-              isLocked: false,
-            },
-            data: { isInvalid: false, ...CLEARED_INVALID_REASON },
-          });
+          await revalidateLeaveCancellationEntries(tx, existing.employeeId, tenantId, from, to);
         };
         const ONE_DAY_MS = 24 * 60 * 60 * 1000;
         if (start > existing.startDate) {

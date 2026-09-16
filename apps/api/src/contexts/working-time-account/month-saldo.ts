@@ -32,6 +32,7 @@ import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import { closeEmployeeMonth } from "./close-employee-month";
 import { loadBsSlotOverrides } from "../absence/load-bs-slot-overrides";
 import { getEffectiveBreakDuration } from "../time-tracking/break-effective";
+import { getValidWorkedEntriesInRange } from "../time-tracking"; // Phase 100B Plan 08 — T1
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -181,17 +182,13 @@ export async function computeMonthSaldo(
 
   // Pre-fetch all collections (mirroring overtime.ts lines 943–995)
   const [closeEntries, closeShifts, closeApprovedLeave, closeAbsences] = await Promise.all([
-    app.prisma.timeEntry.findMany({
-      where: {
-        employeeId,
-        deletedAt: null,
-        date: { gte: effectiveStart, lte: monthLastDay },
-        endTime: { not: null },
-        type: "WORK",
-        isInvalid: false,
-      },
-      select: { date: true, startTime: true, endTime: true, breakMinutes: true },
-    }),
+    // Phase 100B Plan 08 — T1, contexts/time-tracking facade. THE SALDO INPUT.
+    getValidWorkedEntriesInRange(
+      app.prisma,
+      { kind: "employee", employeeId, tenantId: employee.tenantId },
+      effectiveStart,
+      monthLastDay,
+    ),
     getShiftsInRange(
       app.prisma,
       { kind: "employee", employeeId, tenantId: employee.tenantId },

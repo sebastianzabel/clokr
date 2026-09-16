@@ -21,6 +21,7 @@ import { cleanupShiftsForBSAbsence } from "../scheduling/shift-cleanup";
 import { BS_PATTERN_ORDER_BY, findAmbiguousClaimDates } from "./vocational-school-pattern-order.js";
 import { getTenantTimezone, monthRangeUtc } from "../working-time-account/timezone";
 import { getClosedMonthsInRange } from "../working-time-account"; // Phase 100B Plan 07 — W2b
+import { getClaimedEntryDatesInRange } from "../time-tracking"; // Phase 100B Plan 08
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -325,20 +326,18 @@ async function runOrPreview(
   //      Skipped entirely when the window is forward-only (no explicit windowStart):
   //      a TimeEntry for a future date does not occur, so the cron/on-demand/preview
   //      paths take no extra query and stay behaviourally + performance-identical.
-  const conflictSet = new Set<string>();
-  if (opts.windowStart !== undefined) {
-    const conflictingEntries = await prisma.timeEntry.findMany({
-      where: {
-        employeeId: { in: employeeIds },
-        deletedAt: null,
-        date: { gte: windowStart, lte: windowEnd },
-      },
-      select: { employeeId: true, date: true },
-    });
-    for (const e of conflictingEntries) {
-      conflictSet.add(`${e.employeeId}::${toIsoDate(e.date)}`);
-    }
-  }
+  // Phase 100B Plan 08 — getClaimedEntryDatesInRange, contexts/time-tracking facade. Already
+  // returns the exact `${employeeId}::${isoDate}` composite key this file's own `toIsoDate` uses.
+  const conflictSet =
+    opts.windowStart !== undefined
+      ? await getClaimedEntryDatesInRange(
+          prisma,
+          employeeIds,
+          opts.tenantId,
+          windowStart,
+          windowEnd,
+        )
+      : new Set<string>();
   // Phase 103 Task 2 — dates where a TimeEntry conflict is deliberately overridden
   // (D-06). Built once, outside the loops.
   const overrideSet = new Set<string>(opts.overrideDates ?? []);

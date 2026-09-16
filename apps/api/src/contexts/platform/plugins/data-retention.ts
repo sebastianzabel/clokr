@@ -2,6 +2,7 @@ import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
 import { countSnapshotsBefore } from "../../working-time-account"; // Phase 100B Plan 07 — W7
+import { archiveEntriesBefore } from "../../time-tracking"; // Phase 100B Plan 08 — T9
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -67,14 +68,13 @@ export const dataRetentionPlugin = fp(async (app) => {
         }
 
         // Soft-delete time entries older than retention period
-        const archivedEntries = await app.prisma.timeEntry.updateMany({
-          where: {
-            employeeId: { in: employeeIds },
-            deletedAt: null,
-            date: { lte: cutoffDate },
-          },
-          data: { deletedAt: new Date() },
-        });
+        // Phase 100B Plan 08 — T9, contexts/time-tracking facade.
+        const archivedEntriesCount = await archiveEntriesBefore(
+          app.prisma,
+          employeeIds,
+          tenant.id,
+          cutoffDate,
+        );
 
         // Soft-delete leave requests older than retention period
         const archivedLeave = await app.prisma.leaveRequest.updateMany({
@@ -96,11 +96,11 @@ export const dataRetentionPlugin = fp(async (app) => {
           data: { deletedAt: new Date() },
         });
 
-        const total = archivedEntries.count + archivedLeave.count + archivedAbsences.count;
+        const total = archivedEntriesCount + archivedLeave.count + archivedAbsences.count;
 
         if (total > 0) {
           app.log.info(
-            `Data-Retention: Tenant ${tenant.name} — ${archivedEntries.count} Zeiteinträge, ${archivedLeave.count} Urlaubsanträge, ${archivedAbsences.count} Abwesenheiten archiviert (vor ${cutoffYear})`,
+            `Data-Retention: Tenant ${tenant.name} — ${archivedEntriesCount} Zeiteinträge, ${archivedLeave.count} Urlaubsanträge, ${archivedAbsences.count} Abwesenheiten archiviert (vor ${cutoffYear})`,
           );
 
           await app.audit({
@@ -112,7 +112,7 @@ export const dataRetentionPlugin = fp(async (app) => {
               tenantId: tenant.id,
               cutoffDate: cutoffDate.toISOString(),
               retentionYears,
-              archivedEntries: archivedEntries.count,
+              archivedEntries: archivedEntriesCount,
               archivedLeave: archivedLeave.count,
               archivedAbsences: archivedAbsences.count,
             },

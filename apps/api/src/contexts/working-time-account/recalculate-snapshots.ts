@@ -25,6 +25,7 @@ import { computeInjectedDelta } from "./saldo-chain-integrity"; // Phase 98 — 
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { isSnapshotLocked } from "./snapshot-lock"; // Phase 99 (OB-03/D-09) — immutability after lock
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
+import { getValidWorkedEntriesInRange } from "../time-tracking"; // Phase 100B Plan 08 — T1
 
 // Phase 99 (D-09) — a closed month that recalc skipped, reported so a caller can
 // surface it to a human instead of the change happening silently.
@@ -233,7 +234,15 @@ export async function recalculateSnapshots(
     // skipped and reported, never rewritten: its stored carryOver threads forward
     // unchanged (same handling as a bridge row), so the chain stays continuous and the
     // following months still recalculate correctly.
-    if (await isSnapshotLocked(app.prisma, employeeId, snapshot.periodStart, snapshot.periodEnd)) {
+    if (
+      await isSnapshotLocked(
+        app.prisma,
+        employeeId,
+        employee.tenantId,
+        snapshot.periodStart,
+        snapshot.periodEnd,
+      )
+    ) {
       lockedMonthsSkipped.push({
         snapshotId: snapshot.id,
         periodStart: snapshot.periodStart,
@@ -336,17 +345,13 @@ export async function recalculateSnapshots(
     // SHIFT_BASED: shifts also fetched for non-SHIFT; core ignores them for non-SHIFT types.
     const [closeEntries, closeShifts, closeApprovedLeave, closeAbsences] = await Promise.all([
       // WORK entries (effectiveStart..monthLastDay, soft-delete + isInvalid filter)
-      app.prisma.timeEntry.findMany({
-        where: {
-          employeeId,
-          deletedAt: null,
-          date: { gte: effectiveStartForHolidayFilter, lte: monthLastDay },
-          endTime: { not: null },
-          type: "WORK",
-          isInvalid: false,
-        },
-        select: { date: true, startTime: true, endTime: true, breakMinutes: true },
-      }),
+      // Phase 100B Plan 08 — T1, contexts/time-tracking facade. THE SALDO INPUT.
+      getValidWorkedEntriesInRange(
+        app.prisma,
+        { kind: "employee", employeeId, tenantId: employee.tenantId },
+        effectiveStartForHolidayFilter,
+        monthLastDay,
+      ),
       // Shifts (SHIFT_BASED — soft-deleted shifts excluded, Phase 67.2)
       // Phase 100B Plan 05 — S1, contexts/scheduling facade.
       getShiftsInRange(

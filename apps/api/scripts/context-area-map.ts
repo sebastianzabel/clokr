@@ -129,6 +129,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────
+  "src/contexts/time-tracking/facade/time-entries.ts": "zeiterfassung", // Phase 100B Plan 08 — T1-T12, TimeEntry/Break's only external access path
   "src/contexts/time-tracking/api/admin-presence-sources.ts": "zeiterfassung", // writes PresenceDevice/PresenceSource
   "src/contexts/time-tracking/api/presence.ts": "zeiterfassung", // WiFi-presence-based clocking; reads PresenceDevice/PresenceSource, writes AuditLog as a side effect
   "src/contexts/time-tracking/api/retro-entry-requests.ts": "zeiterfassung", // writes RetroEntryRequest/TimeEntry

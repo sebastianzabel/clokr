@@ -13,16 +13,16 @@
   },
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
-    "line": 1573,
+    "line": 1568,
     "disposition": "deferred",
     "trackedIssue": "#242",
-    "reason": "CONFIRMED unsafe — a genuine, newly-discovered instance of the Issue #241 defect class (naive UTC yearStart/yearEnd instead of a tenant-TZ-aware bound), found by this gate's own first real run. For Europe/Berlin, January's real MONTHLY periodStart falls before the naive yearStart bound and is silently excluded from the 'are all 12 months closed' count, so the manual yearly-close endpoint can never succeed. Deliberately NOT fixed in the commit that introduces this gate (GSD scope boundary: that commit's job is the fifth #241 site and this gate, not a sixth site the gate found on its own first run) — filed as #242, NOT excepted as a safety claim."
+    "reason": "CONFIRMED unsafe — a genuine, newly-discovered instance of the Issue #241 defect class (naive UTC yearStart/yearEnd instead of a tenant-TZ-aware bound), found by this gate's own first real run. For Europe/Berlin, January's real MONTHLY periodStart falls before the naive yearStart bound and is silently excluded from the 'are all 12 months closed' count, so the manual yearly-close endpoint can never succeed. Deliberately NOT fixed in the commit that introduces this gate (GSD scope boundary: that commit's job is the fifth #241 site and this gate, not a sixth site the gate found on its own first run) — filed as #242, NOT excepted as a safety claim. Line re-pointed from 1573 to 1568 in Phase 100B Plan 08: the TimeEntry findMany block immediately above this candidate (unrelated T1 saldo-input read) collapsed into a single getValidWorkedEntriesInRange() call, shrinking the file above this line by 5 — same candidate, same reasoning, not re-argued."
   },
   {
     "file": "apps/api/src/contexts/working-time-account/plugins/auto-close-month.ts",
-    "line": 779,
+    "line": 771,
     "disposition": "deferred",
     "trackedIssue": "#242",
-    "reason": "CONFIRMED unsafe — the automatic cron counterpart of the overtime.ts:1573 finding above (same naive yearStart/yearEnd, same silently-excluded January, same #242), except this one runs unattended (daily cron, no human in the loop) like #241's own fourth site. Deliberately NOT fixed in the commit that introduces this gate — filed as #242, NOT excepted as a safety claim."
+    "reason": "CONFIRMED unsafe — the automatic cron counterpart of the overtime.ts:1568 finding above (same naive yearStart/yearEnd, same silently-excluded January, same #242), except this one runs unattended (daily cron, no human in the loop) like #241's own fourth site. Deliberately NOT fixed in the commit that introduces this gate — filed as #242, NOT excepted as a safety claim. Line re-pointed from 779 to 771 in Phase 100B Plan 08: the TimeEntry findMany block above this candidate (unrelated T1 saldo-input read) and the tx.timeEntry.updateMany lock call (T7) both collapsed into single facade calls, shrinking the file above this line; same candidate, same reasoning, not re-argued."
   }
 ]

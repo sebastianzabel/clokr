@@ -4,7 +4,9 @@
     "employeeAvailability",
     "overtimeAccount",
     "overtimeTransaction",
-    "saldoSnapshot"
+    "saldoSnapshot",
+    "timeEntry",
+    "break"
   ],
   "exceptions": [
     {

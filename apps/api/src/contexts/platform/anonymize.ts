@@ -52,6 +52,7 @@
  * are expected to validate that before opening the transaction.
  */
 import type { Prisma } from "@clokr/db";
+import { clearEntryNotesForEmployee } from "../time-tracking"; // Phase 100B Plan 08 — T10
 
 /**
  * The sentinel that marks a DSGVO-anonymized Employee row (set by anonymizeEmployeeData below):
@@ -117,10 +118,8 @@ export async function anonymizeEmployeeData(opts: AnonymizeEmployeeOptions): Pro
   });
 
   // Notizen in Zeiteinträgen anonymisieren (können persönliche Daten enthalten)
-  await tx.timeEntry.updateMany({
-    where: { employeeId, note: { not: null } },
-    data: { note: null },
-  });
+  // Phase 100B Plan 08 — T10, contexts/time-tracking facade (reaches soft-deleted rows too).
+  await clearEntryNotesForEmployee(tx, employeeId);
 
   // Notizen in Urlaubsanträgen anonymisieren
   await tx.leaveRequest.updateMany({

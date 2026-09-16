@@ -50,11 +50,11 @@
   {
     "file": "apps/api/src/contexts/platform/api/employees.ts",
     "handler": "PATCH /api/v1/employees/:id",
-    "validatedAt": 523,
+    "validatedAt": 524,
     "calls": [
       {
         "call": "leaveEntitlement.findFirst",
-        "line": 607
+        "line": 608
       }
     ],
     "reason": "employee (and therefore id) is tenant-validated inline at line 523-524 (employee.findUnique({ id, tenantId: req.user.tenantId })); leaveEntitlement.findFirst reuses the SAME validated id as employeeId later in the same handler. (Line shifted +2 in Phase 100B Plan 06 by the createOvertimeAccount/hardDeleteOvertimeDataForEmployee import earlier in this file — no finding, mechanical only.)"
@@ -62,11 +62,11 @@
   {
     "file": "apps/api/src/contexts/platform/api/employees.ts",
     "handler": "POST /api/v1/employees/:id/resend-invitation",
-    "validatedAt": 918,
+    "validatedAt": 919,
     "calls": [
       {
         "call": "invitation.updateMany",
-        "line": 933
+        "line": 934
       }
     ],
     "reason": "employee is fetch-then-compared against req.user.tenantId at line 918; invitation.updateMany reuses the SAME validated id as employeeId a few lines later in the same handler, after the cross-tenant branch already returned 404. (Line shifted +2 in Phase 100B Plan 06, same import as above — no finding, mechanical only.)"
@@ -74,51 +74,43 @@
   {
     "file": "apps/api/src/contexts/platform/api/employees.ts",
     "handler": "DELETE /api/v1/employees/:id/hard-delete",
-    "validatedAt": 1110,
+    "validatedAt": 1111,
     "calls": [
       {
         "call": "auditLog.findFirst",
-        "line": 1157
-      },
-      {
-        "call": "break.deleteMany",
-        "line": 1211
-      },
-      {
-        "call": "timeEntry.deleteMany",
-        "line": 1213
+        "line": 1158
       },
       {
         "call": "leaveRequest.deleteMany",
-        "line": 1214
+        "line": 1216
       },
       {
         "call": "absence.deleteMany",
-        "line": 1215
-      },
-      {
-        "call": "leaveEntitlement.deleteMany",
         "line": 1217
       },
       {
+        "call": "leaveEntitlement.deleteMany",
+        "line": 1219
+      },
+      {
         "call": "workSchedule.deleteMany",
-        "line": 1218
+        "line": 1220
       }
     ],
-    "reason": "employee (and therefore id) is tenant-validated inline at line 1110 (employee.findUnique({ id, tenantId: req.user.tenantId })); every call listed reuses that SAME validated id as entityId/employeeId inside the one hard-delete $transaction that follows it, and none of these seven calls has any other client-suppliable input beyond id. (Lines shifted +2 in Phase 100B Plan 06, same import as above. The eighth call this entry used to list, overtimeAccount.deleteMany, is GONE from this file as of Plan 06 — it now runs inside hardDeleteOvertimeDataForEmployee(tx, id) behind the Arbeitszeitkonto facade, which the tenant-scoping gate never sees as a candidate at all here because 'employeeId' is itself a PRINCIPAL_FIELDS entry (facade parameter, G2/G3) — see 100B-06-SUMMARY.md for the full reconciliation. workSchedule.deleteMany survives in this entry because it is a platform-owned model that did not move.)"
+    "reason": "employee (and therefore id) is tenant-validated inline at line 1111 (employee.findUnique({ id, tenantId: req.user.tenantId })); every call listed reuses that SAME validated id as entityId/employeeId inside the one hard-delete $transaction that follows it, and none of these five calls has any other client-suppliable input beyond id. (Lines shifted +1 in Phase 100B Plan 08, one new import. Two more calls this entry used to list, break.deleteMany and timeEntry.deleteMany, are GONE from this file as of Plan 08 — they now run inside hardDeleteTimeDataForEmployee(tx, id) behind the Zeiterfassung facade (Break before TimeEntry, the onDelete:Restrict ordering invariant, unchanged), which the tenant-scoping gate never sees as a candidate at all here because 'employeeId' is itself a PRINCIPAL_FIELDS entry (facade parameter, G2/G3) — see 100B-08-SUMMARY.md for the full reconciliation. workSchedule.deleteMany survives in this entry because it is a platform-owned model that did not move.)"
   },
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
     "handler": "GET /api/v1/overtime/:employeeId",
-    "validatedAt": 116,
+    "validatedAt": 121,
     "calls": [
       {
         "call": "overtimeAccount.findUnique",
-        "line": 94
+        "line": 99
       },
       {
         "call": "workSchedule.findFirst",
-        "line": 104
+        "line": 109
       }
     ],
     "reason": "employeeId is fetch-then-compared via employee.tenantId at line 116 (employee is the second element of the same Promise.all([...]) array that also fetches these two, lines 92-97); both are read-only fetches whose results are only ever returned to the caller AFTER that compare gates the response with a 404, so neither call's data reaches a foreign-tenant caller."
@@ -126,15 +118,15 @@
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
     "handler": "POST /api/v1/overtime/payout",
-    "validatedAt": 288,
+    "validatedAt": 293,
     "calls": [
       {
         "call": "workSchedule.findFirst",
-        "line": 299
+        "line": 304
       },
       {
         "call": "overtimeAccount.update",
-        "line": 338
+        "line": 343
       }
     ],
     "reason": "payoutEmployee (keyed on the SAME body.employeeId) is fetch-then-compared against req.user.tenantId at line 288; both calls reuse body.employeeId after that cross-tenant branch already returned 404, and the row-lock $transaction additionally re-verifies the account exists via raw SQL before any decrement."
@@ -142,27 +134,23 @@
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
     "handler": "POST /api/v1/overtime/unlock-month",
-    "validatedAt": 1425,
+    "validatedAt": 1420,
     "calls": [
       {
         "call": "saldoSnapshot.findFirst",
-        "line": 1435
-      },
-      {
-        "call": "timeEntry.updateMany",
-        "line": 1463
+        "line": 1430
       }
     ],
-    "reason": "employee (keyed on the SAME body employeeId) is fetch-then-compared against req.user.tenantId at line 1425; both calls reuse employeeId after that cross-tenant branch already returned 404."
+    "reason": "employee (keyed on the SAME body employeeId) is fetch-then-compared against req.user.tenantId at line 1420; the remaining call reuses employeeId after that cross-tenant branch already returned 404. (Phase 100B Plan 08: the second call this entry used to list, timeEntry.updateMany, is GONE from this file — it now runs inside unlockEntriesForMonth(tx, employeeId, employee.tenantId, ...) behind the Zeiterfassung facade, which the tenant-scoping gate never sees as a candidate at all here because 'employeeId' is itself a PRINCIPAL_FIELDS entry, and the facade's own tenantId parameter is threaded through explicitly at the call site — see 100B-08-SUMMARY.md.)"
   },
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
     "handler": "POST /api/v1/overtime/close-year",
-    "validatedAt": 1543,
+    "validatedAt": 1538,
     "calls": [
       {
         "call": "saldoSnapshot.findFirst",
-        "line": 1556
+        "line": 1551
       }
     ],
     "reason": "employee (keyed on the SAME body employeeId) is fetch-then-compared against req.user.tenantId at line 1543; saldoSnapshot.findFirst reuses employeeId after that cross-tenant branch already returned 404."
@@ -170,11 +158,11 @@
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
     "handler": "POST /api/v1/overtime/opening-balance",
-    "validatedAt": 1698,
+    "validatedAt": 1693,
     "calls": [
       {
         "call": "openingBalance.findFirst",
-        "line": 1709
+        "line": 1704
       }
     ],
     "reason": "employee (keyed on the SAME body employeeId) is fetch-then-compared against req.user.tenantId at line 1698; openingBalance.findFirst reuses employeeId after that cross-tenant branch already returned 404."

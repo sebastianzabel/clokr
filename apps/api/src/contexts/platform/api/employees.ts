@@ -13,6 +13,7 @@ import {
   createOvertimeAccount,
   hardDeleteOvertimeDataForEmployee,
 } from "../../working-time-account"; // Phase 100B Plan 06 — W13/W15
+import { hardDeleteTimeDataForEmployee } from "../../time-tracking"; // Phase 100B Plan 08 — T11
 import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
@@ -1208,9 +1209,10 @@ export async function employeeRoutes(app: FastifyInstance) {
         // Fixing the cascade is orthogonal to opening balances and needs its own retention/
         // Revisionssicherheit decision (what may legally be hard-deleted after §147 AO expiry).
         // Break records (nested under TimeEntry) — delete first
-        await tx.break.deleteMany({ where: { timeEntry: { employeeId: id } } });
+        // Phase 100B Plan 08 — T11, contexts/time-tracking facade (Break before TimeEntry,
+        // the onDelete:Restrict ordering invariant, unchanged).
+        await hardDeleteTimeDataForEmployee(tx, id);
         // Restrict-protected models
-        await tx.timeEntry.deleteMany({ where: { employeeId: id } });
         await tx.leaveRequest.deleteMany({ where: { employeeId: id } });
         await tx.absence.deleteMany({ where: { employeeId: id } });
         // Cascade-owned models (safe to delete explicitly)
