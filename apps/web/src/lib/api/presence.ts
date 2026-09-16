@@ -83,7 +83,11 @@ export async function listOptedInEmployees(): Promise<OptedInEmployee[]> {
   return res.employees;
 }
 
-// ── Employee self-service: /me/wifi ────────────────────────────────────────
+// ── Employee self-service: /employees/me/wifi ──────────────────────────────
+// These four live under the EMPLOYEE prefix, not /me — employeeRoutes is
+// registered at /api/v1/employees (app.ts), and meRoutes has no wifi route.
+// They addressed /me/wifi from Phase 25 until #238; every call 404'd and the
+// settings page swallowed it, so the section looked like "opt-in is off".
 
 export interface MyWifiDevice {
   id: string;
@@ -97,19 +101,19 @@ export interface MyWifiData {
 }
 
 export async function getMyWifi(): Promise<MyWifiData> {
-  return api.get<MyWifiData>("/me/wifi");
+  return api.get<MyWifiData>("/employees/me/wifi");
 }
 
 export async function updateMyWifi(
   wifiPresenceEnabled: boolean,
 ): Promise<{ wifiPresenceEnabled: boolean }> {
-  return api.patch<{ wifiPresenceEnabled: boolean }>("/me/wifi", { wifiPresenceEnabled });
+  return api.patch<{ wifiPresenceEnabled: boolean }>("/employees/me/wifi", { wifiPresenceEnabled });
 }
 
 export async function addMyDevice(mac: string, label?: string): Promise<MyWifiDevice> {
-  return api.post<MyWifiDevice>("/me/wifi/devices", { mac, label: label ?? null });
+  return api.post<MyWifiDevice>("/employees/me/wifi/devices", { mac, label: label ?? null });
 }
 
 export async function removeMyDevice(id: string): Promise<void> {
-  await api.delete(`/me/wifi/devices/${id}`);
+  await api.delete(`/employees/me/wifi/devices/${id}`);
 }
