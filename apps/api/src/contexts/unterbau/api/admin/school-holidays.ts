@@ -12,7 +12,7 @@
 // still seed MANUAL rows directly via DB if needed.
 
 import { FastifyInstance } from "fastify";
-import { requireAuth, requireRole } from "../../middleware/auth";
+import { requireAuth, requireRole } from "../../../../middleware/auth";
 import { FederalState } from "@clokr/db";
 import { syncSchoolHolidaysForTenant } from "../../plugins/school-holidays-sync";
 

@@ -16,7 +16,7 @@ import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import { todayStr as tenantTodayStr, utcMidnight } from "./test-dates";
 import { updateOvertimeAccount } from "../routes/time-entries";
 import { monthRangeUtc, dateStrInTz } from "../utils/timezone";
-import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 

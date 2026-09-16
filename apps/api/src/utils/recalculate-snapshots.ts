@@ -17,7 +17,7 @@
 import { FastifyInstance } from "fastify";
 import { getEffectiveSchedule } from "../routes/time-entries";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
-import { getHolidays, STATE_MAP } from "./holidays";
+import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import { closeEmployeeMonth } from "./close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { loadBsSlotOverrides } from "./load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import { isBridgeSnapshot } from "./saldo-snapshot-cleanup"; // 2026-08 hardening — SNAP-04 bridge guard

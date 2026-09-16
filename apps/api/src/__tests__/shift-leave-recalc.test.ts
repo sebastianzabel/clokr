@@ -35,7 +35,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import { utcMidnight, dbDateStr, todayStr, pastDateStr, dowOf } from "./test-dates";
 import {
   resolveLeaveDays,

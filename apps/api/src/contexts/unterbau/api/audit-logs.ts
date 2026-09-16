@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireRole } from "../middleware/auth";
+import { requireRole } from "../../../middleware/auth";
 
 const querySchema = z.object({
   page: z.string().regex(/^\d+$/).optional(),

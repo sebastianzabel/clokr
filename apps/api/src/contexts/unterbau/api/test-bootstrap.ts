@@ -38,8 +38,8 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import bcrypt from "bcryptjs";
 import { createHash, randomBytes } from "crypto";
 import { z } from "zod";
-import { config } from "../config.js";
-import { leaveTypeFields } from "../utils/leave-type.js";
+import { config } from "../../../config.js";
+import { leaveTypeFields } from "../../../utils/leave-type.js";
 
 declare module "fastify" {
   interface FastifyRequest {

@@ -1,6 +1,6 @@
 [
   {
-    "file": "apps/api/src/routes/auth.ts",
+    "file": "apps/api/src/contexts/unterbau/api/auth.ts",
     "handler": "POST /api/v1/auth/login, /verify-otp, /resend-otp, /forgot-password (pre-authentication)",
     "validatedAt": null,
     "calls": [
@@ -24,21 +24,21 @@
     "reason": "shutdownId (the client-supplied :id) is tenant-validated at line 190 (companyShutdown.findFirst({ id, tenantId })). CompanyShutdownException rows only ever exist for a (shutdownId, employeeId) pair created together by the tenant-validated POST /:id/exceptions handler above (compound unique key shutdownId_employeeId, enforced at create time), so an employeeId from a different tenant can never match an existing row for this already-tenant-scoped shutdownId."
   },
   {
-    "file": "apps/api/src/routes/employees.ts",
+    "file": "apps/api/src/contexts/unterbau/api/employees.ts",
     "handler": "PATCH /api/v1/employees/:id",
     "validatedAt": 521,
     "calls": [{ "call": "leaveEntitlement.findFirst", "line": 605 }],
     "reason": "employee (and therefore id) is tenant-validated inline at line 521-522 (employee.findUnique({ id, tenantId: req.user.tenantId })); leaveEntitlement.findFirst reuses the SAME validated id as employeeId later in the same handler."
   },
   {
-    "file": "apps/api/src/routes/employees.ts",
+    "file": "apps/api/src/contexts/unterbau/api/employees.ts",
     "handler": "POST /api/v1/employees/:id/resend-invitation",
     "validatedAt": 916,
     "calls": [{ "call": "invitation.updateMany", "line": 931 }],
     "reason": "employee is fetch-then-compared against req.user.tenantId at line 916; invitation.updateMany reuses the SAME validated id as employeeId a few lines later in the same handler, after the cross-tenant branch already returned 404."
   },
   {
-    "file": "apps/api/src/routes/employees.ts",
+    "file": "apps/api/src/contexts/unterbau/api/employees.ts",
     "handler": "DELETE /api/v1/employees/:id/hard-delete",
     "validatedAt": 1108,
     "calls": [
@@ -98,14 +98,14 @@
     "reason": "employee (keyed on the SAME body employeeId) is fetch-then-compared against req.user.tenantId at line 1700; openingBalance.findFirst reuses employeeId after that cross-tenant branch already returned 404."
   },
   {
-    "file": "apps/api/src/routes/settings.ts",
+    "file": "apps/api/src/contexts/unterbau/api/settings.ts",
     "handler": "GET /api/v1/settings/work/:employeeId",
     "validatedAt": 775,
     "calls": [{ "call": "workSchedule.findFirst", "line": 788 }],
     "reason": "employee is fetch-then-compared against req.user.tenantId at line 775; workSchedule.findFirst reuses the SAME validated employeeId immediately after (Phase 100 CR-01, mirrors the PUT handler below)."
   },
   {
-    "file": "apps/api/src/routes/settings.ts",
+    "file": "apps/api/src/contexts/unterbau/api/settings.ts",
     "handler": "PUT /api/v1/settings/work/:employeeId",
     "validatedAt": 816,
     "calls": [
@@ -117,14 +117,14 @@
     "reason": "employee is fetch-then-compared against req.user.tenantId at line 816; all four workSchedule.findFirst calls reuse the SAME validated employeeId at various points later in the same handler (orphan-shift detection, existing-row lookup, prior-workDays lookup)."
   },
   {
-    "file": "apps/api/src/routes/settings.ts",
+    "file": "apps/api/src/contexts/unterbau/api/settings.ts",
     "handler": "GET /api/v1/settings/vacation/:employeeId",
     "validatedAt": 1126,
     "calls": [{ "call": "leaveEntitlement.findUnique", "line": 1148 }],
     "reason": "employee is fetch-then-compared against req.user.tenantId at line 1126; leaveEntitlement.findUnique reuses the SAME validated employeeId in its compound-key where a few lines later (Phase 104 CR-01)."
   },
   {
-    "file": "apps/api/src/routes/settings.ts",
+    "file": "apps/api/src/contexts/unterbau/api/settings.ts",
     "handler": "PUT /api/v1/settings/vacation/:employeeId",
     "validatedAt": 1178,
     "calls": [{ "call": "leaveEntitlement.findUnique", "line": 1207 }],
@@ -165,7 +165,7 @@
     "reason": "Same derived-field second-hop guard as the PUT /:id handler above: the shift is fetched by id (line 3191), then existingOwner = employee.findUnique({ id: existing.employeeId }) is compared at line 3196 BEFORE the shift is read or deleted — including the shift.delete at line 3224, which reuses the SAME id."
   },
   {
-    "file": "apps/api/src/routes/test-bootstrap.ts",
+    "file": "apps/api/src/contexts/unterbau/api/test-bootstrap.ts",
     "handler": "DELETE /api/v1/test/tenant/:id",
     "validatedAt": 226,
     "calls": [

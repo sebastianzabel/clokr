@@ -25,7 +25,7 @@ import type { FastifyInstance } from "fastify";
 import { monthRangeUtc } from "../utils/timezone";
 import { updateOvertimeAccount } from "../routes/time-entries";
 import { recalculateSnapshots } from "../utils/recalculate-snapshots";
-import { getHolidays } from "../utils/holidays";
+import { getHolidays } from "../contexts/unterbau/holidays";
 
 // "Today" for every live-saldo evaluation (Berlin Jul 16 — cron grace day >= 15).
 const FINAL_NOW = new Date("2026-07-16T10:00:00.000Z");

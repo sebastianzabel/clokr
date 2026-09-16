@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import crypto, { createHash } from "crypto";
-import { requireRole } from "../middleware/auth";
+import { requireRole } from "../../../middleware/auth";
 
 const VALID_SCOPES = [
   "read:employees",

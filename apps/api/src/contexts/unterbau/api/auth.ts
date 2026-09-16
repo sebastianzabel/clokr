@@ -3,9 +3,9 @@ import bcrypt from "bcryptjs";
 import crypto, { createHash } from "crypto";
 import { z } from "zod";
 import { Role } from "@clokr/db";
-import { JwtPayload } from "../middleware/auth";
-import { validatePassword, loadPasswordPolicy } from "../utils/password-policy";
-import { config } from "../config";
+import { JwtPayload } from "../../../middleware/auth";
+import { validatePassword, loadPasswordPolicy } from "../password-policy";
+import { config } from "../../../config";
 
 /** SHA-256 hash for tokens stored in DB (refresh tokens, reset tokens). */
 function hashToken(token: string): string {

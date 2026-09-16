@@ -1,5 +1,5 @@
 import fp from "fastify-plugin";
-import { resolveEmailPolicy } from "../utils/notification-email-policy";
+import { resolveEmailPolicy } from "../notification-email-policy";
 
 interface NotifyParams {
   userId: string;

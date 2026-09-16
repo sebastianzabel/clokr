@@ -21,7 +21,7 @@ import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import { loadNegativeBalanceTolerance } from "../utils/negative-balance-tolerance";
 
 /**

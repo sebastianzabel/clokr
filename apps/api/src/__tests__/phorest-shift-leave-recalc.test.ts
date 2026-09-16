@@ -32,7 +32,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest
 import type { FastifyInstance } from "fastify";
 import { getTestApp } from "./setup";
 import { utcMidnight, dbDateStr, todayStr, pastDateStr, dowOf } from "./test-dates";
-import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import { syncPhorestShifts } from "../services/phorest/sync-shifts";
 import * as ShiftLeaveRecalcModule from "../utils/shift-leave-recalc-resolver";
 import {

@@ -20,7 +20,7 @@ import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import { todayInTz } from "../utils/timezone";
-import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 
 const TZ = "Europe/Berlin";
 

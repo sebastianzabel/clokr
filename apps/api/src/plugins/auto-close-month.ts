@@ -2,7 +2,7 @@ import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../utils/timezone";
 import { getEffectiveSchedule } from "../routes/time-entries";
-import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import { periodStartWindow } from "../utils/snapshot-period";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
 import { closeEmployeeMonth } from "../utils/close-employee-month"; // Phase 76.26 — shared pure saldo core

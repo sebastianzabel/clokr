@@ -1,5 +1,5 @@
 import { FastifyInstance } from "fastify";
-import { loadReleaseNotes, type ReleaseNote } from "../utils/release-notes";
+import { loadReleaseNotes, type ReleaseNote } from "../../../utils/release-notes";
 
 // Phase 110 (D-04 revised / N-02): the German release notes are baked into THIS image at build
 // time (apps/api/Dockerfile copies docs/release-notes/) and read exactly once here, at module

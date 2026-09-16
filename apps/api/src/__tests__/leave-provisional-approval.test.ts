@@ -29,7 +29,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import { utcMidnight, dbDateStr, todayStr } from "./test-dates";
 
 const DAY_MS = 24 * 60 * 60 * 1000;

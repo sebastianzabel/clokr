@@ -14,9 +14,14 @@
  * Test run: pnpm --filter @clokr/api test -- schedule-type-switch-guard
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
-import { monthStartUtc } from "../../__tests__/test-dates";
-import { MODEL_SWITCH_SAME_MONTH_ERROR } from "../../utils/month-first-date";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+} from "../../../../__tests__/setup";
+import { monthStartUtc } from "../../../../__tests__/test-dates";
+import { MODEL_SWITCH_SAME_MONTH_ERROR } from "../../month-first-date";
 import type { FastifyInstance } from "fastify";
 
 // ── helpers ─────────────────────────────────────────────────────────────────

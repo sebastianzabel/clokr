@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
-import { getEffectiveSchedule } from "../time-entries";
-import { dbDateStr, mondayOfWeekStr } from "../../__tests__/test-dates";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+} from "../../../../__tests__/setup";
+import { getEffectiveSchedule } from "../../../../routes/time-entries";
+import { dbDateStr, mondayOfWeekStr } from "../../../../__tests__/test-dates";
 import type { FastifyInstance } from "fastify";
 
 describe("Work Schedule Versioning", () => {

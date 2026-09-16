@@ -18,7 +18,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import { monthStartUtc } from "./test-dates";
-import { MONTH_FIRST_ERROR } from "../utils/month-first-date";
+import { MONTH_FIRST_ERROR } from "../contexts/unterbau/month-first-date";
 import type { FastifyInstance } from "fastify";
 
 describe("WorkSchedule.validFrom month-1st enforcement (Phase 60, #220)", () => {

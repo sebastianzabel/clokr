@@ -36,7 +36,7 @@ import bcrypt from "bcryptjs";
 import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../utils/timezone";
 import { updateOvertimeAccount } from "../routes/time-entries";
 import { closeEmployeeMonth } from "../utils/close-employee-month";
-import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 
 const TZ = "Europe/Berlin";
 

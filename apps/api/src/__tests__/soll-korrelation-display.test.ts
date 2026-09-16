@@ -26,7 +26,7 @@ import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import { holidayFreeMondayStr } from "./test-dates";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import { getHolidays } from "../utils/holidays";
+import { getHolidays } from "../contexts/unterbau/holidays";
 
 const TZ = "Europe/Berlin";
 

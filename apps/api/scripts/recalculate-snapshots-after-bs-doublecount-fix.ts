@@ -58,7 +58,7 @@ import {
   monthRangeUtc,
   monthDayBounds,
 } from "../src/utils/timezone";
-import { getHolidays, STATE_MAP } from "../src/utils/holidays";
+import { getHolidays, STATE_MAP } from "../src/contexts/unterbau/holidays";
 import { closeEmployeeMonth } from "../src/utils/close-employee-month";
 import { loadBsSlotOverrides } from "../src/utils/load-bs-slot-overrides";
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { NOTIFICATION_EMAIL_POLICY } from "../utils/notification-email-policy";
+import { NOTIFICATION_EMAIL_POLICY } from "../contexts/unterbau/notification-email-policy";
 
 describe("Notifications API", () => {
   let app: FastifyInstance;

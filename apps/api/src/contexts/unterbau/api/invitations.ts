@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { createHash } from "crypto";
-import { validatePassword, loadPasswordPolicy } from "../utils/password-policy";
+import { validatePassword, loadPasswordPolicy } from "../password-policy";
 
 /** SHA-256 hash for tokens stored in DB. */
 function hashToken(token: string): string {

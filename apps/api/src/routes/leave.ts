@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { LeaveRequestStatus, Prisma } from "@clokr/db";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import { getTenantTimezone, monthRangeUtc } from "../utils/timezone";
 import { generateICal, addOneDay, type ICalEvent } from "../utils/ical";
 import { recalculateSnapshots } from "../utils/recalculate-snapshots";
@@ -13,7 +13,7 @@ import {
   countShiftBasedLeaveDays,
 } from "../utils/vacation-calc"; // Phase 107 (D-04/D-09)
 import { selfHealUsedDays, loadVacationTypeMeta } from "../utils/leave-self-heal";
-import { calculateWorkDays } from "../utils/calculate-work-days";
+import { calculateWorkDays } from "../contexts/unterbau/calculate-work-days";
 import { computeAffectedMonths } from "../utils/correction-lock";
 import { periodStartWindow } from "../utils/snapshot-period";
 import {
@@ -25,7 +25,7 @@ import { getConfirmedCarryOver } from "../utils/confirmed-saldo"; // Phase 97-06
 import { loadNegativeBalanceTolerance } from "../utils/negative-balance-tolerance"; // Phase 100
 import { formatMinutesHM } from "../utils/format-hm"; // Phase 100
 import { shiftNettoMinutes, sumShiftNettoMinutes } from "../contexts/schichtplanung/shift-netto"; // Phase 100 (OTC-04)
-import { auditReasonSchema } from "../utils/audit-reason"; // Quick 260824-cjd
+import { auditReasonSchema } from "../contexts/unterbau/audit-reason"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../utils/section9-detect"; // Phase 104-05/06
 import { isSickLeaveTypeCode } from "../utils/leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper

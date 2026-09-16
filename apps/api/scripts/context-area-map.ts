@@ -93,38 +93,38 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
 
   // ── unterbau — Tenant/TenantConfig/User/RefreshToken/OtpToken/Invitation/Employee/
   //    WorkSchedule/PublicHoliday/SchoolHolidayPeriod/AuditLog/ApiKey/Notification ────────────
-  "src/routes/activity.ts": "unterbau", // dashboard "Aktivität" widget backend; ADMIN scope is a direct AuditLog read, EMPLOYEE/MANAGER scope assembles the same kind of chronological trail from timeEntry/leaveRequest/saldoSnapshot — AuditLog's own domain generalised to the other event sources, not eligible for komposition (D-17 names only dashboard.ts/reports.ts)
-  "src/routes/api-keys.ts": "unterbau", // writes ApiKey only
-  "src/routes/audit-logs.ts": "unterbau", // reads AuditLog only
-  "src/routes/auth.ts": "unterbau", // writes OtpToken/RefreshToken/User
-  "src/routes/avatars.ts": "unterbau", // writes Employee.avatarUrl only
-  "src/routes/employees.ts": "unterbau", // writes Employee/User primarily; the tx.* deletes of Absence/Break/LeaveEntitlement/LeaveRequest/OvertimeAccount/TimeEntry/WorkSchedule are cascade cleanup ON employee delete, not this file's primary subject
-  "src/routes/holidays.ts": "unterbau", // writes PublicHoliday only
-  "src/routes/imports.ts": "unterbau", // primarily bulk employee onboarding (creates Employee/User/WorkSchedule/OvertimeAccount, all Unterbau except the Arbeitszeitkonto side-effect); the /time-entries import endpoint reuses routes/time-entries.ts's own validateTimeEntryInvariants/updateOvertimeAccount helpers rather than duplicating TimeEntry write rules
-  "src/routes/invitations.ts": "unterbau", // writes Invitation/User
-  "src/routes/me.ts": "unterbau", // writes User only
-  "src/routes/notifications.ts": "unterbau", // writes Notification only
-  "src/routes/release-notes.ts": "unterbau", // app-wide, tenant-agnostic feature with no model; under src/routes/ so cannot be rahmen (#99: no route may be a fallthrough) — Unterbau is the closest fit as the shared, context-agnostic substrate
-  "src/routes/settings.ts": "unterbau", // writes WorkSchedule/TenantConfig primarily (PUT /settings/work); tx.shift.deleteMany is a side effect of a schedule change, not the primary subject; LeaveEntitlement upsert is a bulk-apply side effect
-  "src/routes/test-bootstrap.ts": "unterbau", // full-tenant dataset reset for e2e bootstrapping; under src/routes/ so cannot be rahmen despite being test-only — Tenant is the root model a full-tenant reset operates against, no single business context owns it
-  "src/routes/admin/school-holidays.ts": "unterbau", // reads/writes SchoolHolidayPeriod (Unterbau model, matches the file name directly)
-  "src/plugins/audit.ts": "unterbau", // writes AuditLog — its own Unterbau model
-  "src/plugins/data-retention.ts": "unterbau", // annual DSGVO/legal retention job driven by TenantConfig.dataRetentionYears (Unterbau model); touches TimeEntry/LeaveRequest/Absence with equal weight (3 separate updateMany, no single primary subject) plus an AuditLog purge in the same file (unambiguously Unterbau) — no single business context owns a generic cross-context retention policy
-  "src/plugins/mailer.ts": "unterbau", // SMTP transport keyed off TenantConfig, no other model
-  "src/plugins/notify.ts": "unterbau", // writes Notification — its own Unterbau model
-  "src/plugins/prisma.ts": "unterbau", // decorates app.prisma; no model of its own, pure infra — under src/plugins/ so cannot be rahmen (#99: no plugin may be a fallthrough); Unterbau is the shared substrate every context sits on
-  "src/plugins/school-holidays-sync.ts": "unterbau", // writes SchoolHolidayPeriod
-  "src/plugins/storage.ts": "unterbau", // decorates app.storage (MinIO); no model, pure infra — same reasoning as prisma.ts
-  "src/plugins/token-cleanup.ts": "unterbau", // deletes stale OtpToken/RefreshToken
-  "src/utils/anonymize.ts": "unterbau", // DSGVO Art. 17 anonymization; primary subject is Employee+User (CLAUDE.md "DSGVO Employee Deletion"), other models' notes/documents nulled as side effects
-  "src/utils/audit-reason.ts": "unterbau", // shared "Begründung ist erforderlich" validation reused across every correction/storno field app-wide; audit-trail vocabulary, no model
-  "src/utils/calculate-work-days.ts": "unterbau", // normalizes WorkSchedule.workDays — Unterbau's own model
-  "src/utils/federal-state-iso.ts": "unterbau", // FederalState enum <-> ISO-3166-2, feeds PublicHoliday lookups (Unterbau model)
-  "src/utils/holidays.ts": "unterbau", // German public-holiday calculation — PublicHoliday is Unterbau's own model
-  "src/utils/month-first-date.ts": "unterbau", // WorkSchedule.validFrom month-1 rule — Unterbau's own model
-  "src/utils/notification-email-policy.ts": "unterbau", // per-type email-toggle registry for Notification — Unterbau's own model
-  "src/utils/password-policy.ts": "unterbau", // User/auth password rules
-  "src/utils/school-holidays-client.ts": "unterbau", // fetches SchoolHolidayPeriod data from the external OpenHolidays/schulferien-api
+  "src/contexts/unterbau/api/activity.ts": "unterbau", // dashboard "Aktivität" widget backend; ADMIN scope is a direct AuditLog read, EMPLOYEE/MANAGER scope assembles the same kind of chronological trail from timeEntry/leaveRequest/saldoSnapshot — AuditLog's own domain generalised to the other event sources, not eligible for komposition (D-17 names only dashboard.ts/reports.ts)
+  "src/contexts/unterbau/api/api-keys.ts": "unterbau", // writes ApiKey only
+  "src/contexts/unterbau/api/audit-logs.ts": "unterbau", // reads AuditLog only
+  "src/contexts/unterbau/api/auth.ts": "unterbau", // writes OtpToken/RefreshToken/User
+  "src/contexts/unterbau/api/avatars.ts": "unterbau", // writes Employee.avatarUrl only
+  "src/contexts/unterbau/api/employees.ts": "unterbau", // writes Employee/User primarily; the tx.* deletes of Absence/Break/LeaveEntitlement/LeaveRequest/OvertimeAccount/TimeEntry/WorkSchedule are cascade cleanup ON employee delete, not this file's primary subject
+  "src/contexts/unterbau/api/holidays.ts": "unterbau", // writes PublicHoliday only
+  "src/contexts/unterbau/api/imports.ts": "unterbau", // primarily bulk employee onboarding (creates Employee/User/WorkSchedule/OvertimeAccount, all Unterbau except the Arbeitszeitkonto side-effect); the /time-entries import endpoint reuses routes/time-entries.ts's own validateTimeEntryInvariants/updateOvertimeAccount helpers rather than duplicating TimeEntry write rules
+  "src/contexts/unterbau/api/invitations.ts": "unterbau", // writes Invitation/User
+  "src/contexts/unterbau/api/me.ts": "unterbau", // writes User only
+  "src/contexts/unterbau/api/notifications.ts": "unterbau", // writes Notification only
+  "src/contexts/unterbau/api/release-notes.ts": "unterbau", // app-wide, tenant-agnostic feature with no model; under src/routes/ so cannot be rahmen (#99: no route may be a fallthrough) — Unterbau is the closest fit as the shared, context-agnostic substrate
+  "src/contexts/unterbau/api/settings.ts": "unterbau", // writes WorkSchedule/TenantConfig primarily (PUT /settings/work); tx.shift.deleteMany is a side effect of a schedule change, not the primary subject; LeaveEntitlement upsert is a bulk-apply side effect
+  "src/contexts/unterbau/api/test-bootstrap.ts": "unterbau", // full-tenant dataset reset for e2e bootstrapping; under src/routes/ so cannot be rahmen despite being test-only — Tenant is the root model a full-tenant reset operates against, no single business context owns it
+  "src/contexts/unterbau/api/admin/school-holidays.ts": "unterbau", // reads/writes SchoolHolidayPeriod (Unterbau model, matches the file name directly)
+  "src/contexts/unterbau/plugins/audit.ts": "unterbau", // writes AuditLog — its own Unterbau model
+  "src/contexts/unterbau/plugins/data-retention.ts": "unterbau", // annual DSGVO/legal retention job driven by TenantConfig.dataRetentionYears (Unterbau model); touches TimeEntry/LeaveRequest/Absence with equal weight (3 separate updateMany, no single primary subject) plus an AuditLog purge in the same file (unambiguously Unterbau) — no single business context owns a generic cross-context retention policy
+  "src/contexts/unterbau/plugins/mailer.ts": "unterbau", // SMTP transport keyed off TenantConfig, no other model
+  "src/contexts/unterbau/plugins/notify.ts": "unterbau", // writes Notification — its own Unterbau model
+  "src/contexts/unterbau/plugins/prisma.ts": "unterbau", // decorates app.prisma; no model of its own, pure infra — under src/plugins/ so cannot be rahmen (#99: no plugin may be a fallthrough); Unterbau is the shared substrate every context sits on
+  "src/contexts/unterbau/plugins/school-holidays-sync.ts": "unterbau", // writes SchoolHolidayPeriod
+  "src/contexts/unterbau/plugins/storage.ts": "unterbau", // decorates app.storage (MinIO); no model, pure infra — same reasoning as prisma.ts
+  "src/contexts/unterbau/plugins/token-cleanup.ts": "unterbau", // deletes stale OtpToken/RefreshToken
+  "src/contexts/unterbau/anonymize.ts": "unterbau", // DSGVO Art. 17 anonymization; primary subject is Employee+User (CLAUDE.md "DSGVO Employee Deletion"), other models' notes/documents nulled as side effects
+  "src/contexts/unterbau/audit-reason.ts": "unterbau", // shared "Begründung ist erforderlich" validation reused across every correction/storno field app-wide; audit-trail vocabulary, no model
+  "src/contexts/unterbau/calculate-work-days.ts": "unterbau", // normalizes WorkSchedule.workDays — Unterbau's own model
+  "src/contexts/unterbau/federal-state-iso.ts": "unterbau", // FederalState enum <-> ISO-3166-2, feeds PublicHoliday lookups (Unterbau model)
+  "src/contexts/unterbau/holidays.ts": "unterbau", // German public-holiday calculation — PublicHoliday is Unterbau's own model
+  "src/contexts/unterbau/month-first-date.ts": "unterbau", // WorkSchedule.validFrom month-1 rule — Unterbau's own model
+  "src/contexts/unterbau/notification-email-policy.ts": "unterbau", // per-type email-toggle registry for Notification — Unterbau's own model
+  "src/contexts/unterbau/password-policy.ts": "unterbau", // User/auth password rules
+  "src/contexts/unterbau/school-holidays-client.ts": "unterbau", // fetches SchoolHolidayPeriod data from the external OpenHolidays/schulferien-api
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────

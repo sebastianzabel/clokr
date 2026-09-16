@@ -19,7 +19,7 @@
  * the tenant TZ).
  */
 import { todayInTz, dateStrInTz } from "../utils/timezone";
-import { getHolidays, type FederalStateCode } from "../utils/holidays";
+import { getHolidays, type FederalStateCode } from "../contexts/unterbau/holidays";
 
 /** Must mirror the tenant timezone seeded in `setup.ts:61`. */
 export const TEST_TZ = "Europe/Berlin";

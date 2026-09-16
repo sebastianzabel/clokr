@@ -9,7 +9,7 @@ import {
 } from "./time-entries";
 import { getConfirmedCarryOver } from "../utils/confirmed-saldo"; // Phase 97-01
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "../utils/timezone";
-import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import { fetchCloseMonthData } from "../utils/close-month-data"; // PERF-V1814-01
 import { periodStartWindow, isPeriodStartInMonth } from "../utils/snapshot-period";
 import { closeEmployeeMonth } from "../utils/close-employee-month"; // Phase 76.26 — shared saldo core

@@ -15,7 +15,7 @@ import {
   monthDayBounds,
   calcExpectedMinutesTz,
 } from "../utils/timezone";
-import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import { hasApprovedLeaveOnDate } from "../utils/leave-check";
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../utils/invalid-reason";
 import { resolveClockEvent } from "../services/clock/resolver";
@@ -28,7 +28,7 @@ import {
   computeRetroLimitStr,
   computeEntryAgeInDays,
 } from "../utils/retro-config"; // Phase 76.29 — RETRO-01 window guard
-import { auditReasonSchema, AUDIT_REASON_REQUIRED } from "../utils/audit-reason"; // Quick 260824-cjd
+import { auditReasonSchema, AUDIT_REASON_REQUIRED } from "../contexts/unterbau/audit-reason"; // Quick 260824-cjd
 
 const nfcPunchSchema = z.object({
   nfcCardId: z.string().min(1),

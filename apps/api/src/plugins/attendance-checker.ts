@@ -2,7 +2,7 @@ import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "../utils/timezone";
-import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import { fetchCloseMonthData } from "../utils/close-month-data";
 import { findMissingWorkdays } from "../utils/find-missing-workdays";
 import { findUnconfirmedBreakEntries } from "../utils/find-unconfirmed-break-days";

@@ -1,8 +1,8 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireAuth, requireRole } from "../middleware/auth";
-import { getHolidays, FederalStateCode, STATE_MAP } from "../utils/holidays";
-import { recalculateSnapshots } from "../utils/recalculate-snapshots";
+import { requireAuth, requireRole } from "../../../middleware/auth";
+import { getHolidays, FederalStateCode, STATE_MAP } from "../holidays";
+import { recalculateSnapshots } from "../../../utils/recalculate-snapshots";
 
 export async function holidayRoutes(app: FastifyInstance) {
   // GET /api/v1/holidays?year=2026

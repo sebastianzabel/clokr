@@ -1,5 +1,5 @@
 import { FastifyInstance } from "fastify";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth } from "../../../middleware/auth";
 
 export async function notificationRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireAuth);

@@ -1,12 +1,12 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth } from "../../../middleware/auth";
 import {
   formatEntry,
   putAvailabilitySchema,
   replaceAvailability,
-} from "../contexts/schichtplanung/api/availability";
-import { isAvailabilityEnabled } from "../contexts/schichtplanung/tenant-availability";
+} from "../../schichtplanung/api/availability";
+import { isAvailabilityEnabled } from "../../schichtplanung/tenant-availability";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 

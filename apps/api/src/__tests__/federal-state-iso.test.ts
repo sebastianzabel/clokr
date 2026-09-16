@@ -4,7 +4,7 @@ import {
   federalStateToIso,
   isoToFederalState,
   ALL_FEDERAL_STATES,
-} from "../utils/federal-state-iso";
+} from "../contexts/unterbau/federal-state-iso";
 
 describe("federal-state-iso mapping", () => {
   // Reference table of all 16 Bundesländer (ISO-3166-2:DE codes).

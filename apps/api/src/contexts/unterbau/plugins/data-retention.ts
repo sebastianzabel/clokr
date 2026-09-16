@@ -1,6 +1,6 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
-import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
+import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
 
 declare module "fastify" {
   interface FastifyInstance {

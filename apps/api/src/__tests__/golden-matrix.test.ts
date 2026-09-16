@@ -32,7 +32,7 @@ import { vi, describe, it, expect, afterAll } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../utils/timezone";
-import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import { recalculateSnapshots } from "../utils/recalculate-snapshots";
 import { updateOvertimeAccount } from "../routes/time-entries";
 import type { CloseMonthInput } from "../utils/close-employee-month";

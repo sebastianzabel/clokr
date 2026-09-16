@@ -705,7 +705,10 @@ describe("structural guard against a divergent copy (Phase 104 Plan 04, Task 4)"
   it("every carryOverDeadline writer goes through preserveIllnessDeadline (guards against a divergent copy)", () => {
     const apiSrc = join(__dirname, "..");
     const leaveTs = readFileSync(join(apiSrc, "routes", "leave.ts"), "utf-8");
-    const settingsTs = readFileSync(join(apiSrc, "routes", "settings.ts"), "utf-8");
+    const settingsTs = readFileSync(
+      join(apiSrc, "contexts", "unterbau", "api", "settings.ts"),
+      "utf-8",
+    );
 
     const leaveMatches = leaveTs.match(/preserveIllnessDeadline/g) ?? [];
     expect(

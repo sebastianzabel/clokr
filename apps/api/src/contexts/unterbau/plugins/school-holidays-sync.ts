@@ -20,12 +20,12 @@
 
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
-import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
+import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
 import type { FastifyInstance, FastifyBaseLogger } from "fastify";
 import type { PrismaClient } from "@clokr/db";
 import { FederalState } from "@clokr/db";
-import { fetchSchoolHolidays, SchoolHolidaysApiError } from "../utils/school-holidays-client";
-import { federalStateToIso } from "../utils/federal-state-iso";
+import { fetchSchoolHolidays, SchoolHolidaysApiError } from "../school-holidays-client";
+import { federalStateToIso } from "../federal-state-iso";
 
 const STALE_THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000; // 30 Tage
 

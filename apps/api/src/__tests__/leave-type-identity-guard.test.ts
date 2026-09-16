@@ -209,7 +209,7 @@ const ALLOWED: AllowedEntry[] = [
   },
   // employees.ts: the exit pro-rata vacation warning resolves VACATION by name.
   {
-    file: "apps/api/src/routes/employees.ts",
+    file: "apps/api/src/contexts/unterbau/api/employees.ts",
     pattern: /where:\s*\{\s*tenantId:\s*req\.user\.tenantId,\s*name:\s*"Urlaub"\s*\}/,
     reason:
       "GENUINE FINDING, not a design decision (Issue #205): the pro-rata vacation warning shown " +
