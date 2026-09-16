@@ -67,6 +67,50 @@ function getRootIdentifier(expr: ts.Expression): ts.Identifier | null {
   return ts.isIdentifier(current) ? current : null;
 }
 
+/**
+ * Function-scope discipline shared by every search below that must not cross a closure boundary
+ * (CR-02, 204-REVIEW.md). Mirrors `collectRequestBindings`/`findLocalConstDeclaration`'s
+ * `isRoot`-guarded walk in lint-tenant-scoping-request-bindings.ts and
+ * lint-tenant-scoping-candidates.ts respectively — deliberately the SAME discipline, not a
+ * second, independently-drifting implementation of it.
+ */
+type FunctionLike =
+  | ts.FunctionDeclaration
+  | ts.FunctionExpression
+  | ts.ArrowFunction
+  | ts.MethodDeclaration;
+
+function isFunctionLikeNode(node: ts.Node): node is FunctionLike {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node)
+  );
+}
+
+/** Nearest enclosing function-like ancestor of `node`, or `undefined` at module scope. */
+function nearestEnclosingFunction(node: ts.Node): ts.Node | undefined {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (isFunctionLikeNode(current)) return current;
+    current = current.parent;
+  }
+  return undefined;
+}
+
+/**
+ * True when `node` is textually within `handler` AND belongs to `handler`'s OWN function scope —
+ * not to a nested closure (a `.forEach()`/`.map()` callback, or a helper function declared inside
+ * `handler`) that merely happens to be textually nested inside it. Replaces the plain
+ * `isNodeWithin` span check wherever "an earlier call/guard IN THIS HANDLER" is the actual
+ * requirement (CR-02): a textual span check alone cannot tell a call in the handler's own body
+ * apart from a same-named, unrelated call in a nested closure.
+ */
+function isInSameFunctionScope(node: ts.Node, handler: ts.Node): boolean {
+  return isNodeWithin(node, handler) && nearestEnclosingFunction(node) === handler;
+}
+
 /** Extracts `{ model, method }` off a Prisma delegate call, mirroring `findPrismaCalls`'s own shape check. */
 function getCallModelAndMethod(node: ts.CallExpression): { model: string; method: string } | null {
   const methodAccess = node.expression;
@@ -383,14 +427,19 @@ function comparesVariableAgainstPrincipal(
   return sideMatch(binary.left, binary.right) ?? sideMatch(binary.right, binary.left);
 }
 
-/** Finds the nearest enclosing statement-list body a node participates in, for linear body walks. */
+/**
+ * Collects every `BinaryExpression` in `root`'s OWN function scope — never descending into a
+ * nested closure (CR-02, 204-REVIEW.md). This doc comment previously described a "linear body
+ * walk" that the implementation did not perform (IN-01); it now does.
+ */
 function collectAllBinaryComparisons(root: ts.Node): ts.BinaryExpression[] {
   const found: ts.BinaryExpression[] = [];
-  function visit(node: ts.Node): void {
+  function visit(node: ts.Node, isRoot: boolean): void {
+    if (!isRoot && isFunctionLikeNode(node)) return; // do not descend into nested closures
     if (ts.isBinaryExpression(node)) found.push(node);
-    ts.forEachChild(node, visit);
+    ts.forEachChild(node, (child) => visit(child, false));
   }
-  visit(root);
+  visit(root, true);
   return found;
 }
 
@@ -431,7 +480,7 @@ export function findScopingComparison(
     for (const discovered of allCalls) {
       if (discovered.node === judged) continue;
       if (discovered.node.getStart(sourceFile) >= judged.getStart(sourceFile)) continue; // must precede
-      if (!isNodeWithin(discovered.node, handler)) continue;
+      if (!isInSameFunctionScope(discovered.node, handler)) continue;
       if (discovered.call.model !== meta.model) continue;
       if (!FETCH_METHODS.has(discovered.call.method)) continue;
       const earlierIds = collectWhereIdentifiers(discovered.whereArg, bindings, sourceFile);
@@ -450,6 +499,10 @@ export function findScopingComparison(
     // call has no such restriction — the comparison naturally follows the fetch it validates.
     if (isMutating && comparison.getStart(sourceFile) >= judged.getStart(sourceFile)) continue;
 
+    // CR-01 (204-REVIEW.md): a comparison that exists but is never used to short-circuit
+    // execution authorises nothing — it must actually GATE, not merely be textually present.
+    if (!comparisonGates(comparison)) continue;
+
     for (const varName of candidateVars.keys()) {
       const match = comparesVariableAgainstPrincipal(comparison, varName, bindings, sourceFile);
       if (match) {
@@ -465,6 +518,91 @@ export function findScopingComparison(
   }
 
   return null;
+}
+
+/**
+ * A statement (or the sole statement of a block) that unconditionally exits control flow —
+ * `return` or `throw`. Generalizes `hasNotFoundGuard`'s `thenBranchReturns` for CR-01's gating
+ * check, which also needs to recognise a `throw`.
+ */
+function branchExits(statement: ts.Statement): boolean {
+  if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement)) return true;
+  if (ts.isBlock(statement)) {
+    return statement.statements.some((s) => ts.isReturnStatement(s) || ts.isThrowStatement(s));
+  }
+  return false;
+}
+
+/**
+ * Climbs from `comparison` through a chain of `BinaryExpression`s that all share
+ * `combinator` (`||` or `&&`), stopping at the first ancestor that either is not such a chain
+ * link, or is missing entirely — and returns the enclosing `IfStatement` only when that chain
+ * terminates EXACTLY at its condition. Measured driver: the dominant null-guard idiom in this
+ * codebase is `if (!record || record.tenantId !== req.user.tenantId) { return 404; }`
+ * (apps/api/src/routes/api-keys.ts:96, overtime.ts:1427/1513/1545/1700/1836, settings.ts:775/1521
+ * — 9 real sites) — the tenant comparison is a DISJUNCT of the `if` condition, not the condition
+ * itself, so a bare `ifStatement.expression === comparison` identity check rejects all nine as
+ * unscoped even though the guard is real and correct.
+ *
+ * Only a UNIFORM chain is accepted, deliberately: mixing combinators (`a !== b && c !== d`) would
+ * let one comparison's mismatch be masked by the other operand's value, so the gate this
+ * comparison appears to provide would not actually be guaranteed — see `comparisonGates` below
+ * for why the required combinator differs between a mismatch check and a match check.
+ */
+function findGatingIfStatement(
+  comparison: ts.BinaryExpression,
+  combinator: ts.SyntaxKind,
+): ts.IfStatement | null {
+  let node: ts.Node = comparison;
+  let parent: ts.Node | undefined = node.parent;
+  while (
+    parent &&
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === combinator &&
+    (parent.left === node || parent.right === node)
+  ) {
+    node = parent;
+    parent = node.parent;
+  }
+  if (parent && ts.isIfStatement(parent) && parent.expression === node) return parent;
+  return null;
+}
+
+/**
+ * CR-01 (204-REVIEW.md): true only when `comparison` actually GATES the code that follows it —
+ * i.e. it is the (possibly `||`/`&&`-combined) condition of an `IfStatement` whose branch that
+ * runs on a tenant MISMATCH exits unconditionally. An `if` whose mismatch branch falls through (no
+ * return/throw), or a comparison that is not an `if` condition at all (an unused boolean, a
+ * `console.warn` with no exit, a bare expression statement), never gates anything and must not be
+ * accepted as fetch-then-compare — that was exactly the false negative CR-01 reports.
+ *
+ * Handles both spellings of the idiom this codebase uses, each only through a UNIFORM combinator
+ * chain (see `findGatingIfStatement`):
+ *   - `if (a !== b) { return/throw ... }`                    (mismatch, "reject and exit")
+ *   - `if (X || a !== b) { return/throw ... }`                (mismatch, OR-combined with a guard
+ *     on another value — any disjunct being true makes the whole condition true, so `a !== b`
+ *     alone still unconditionally triggers the exit)
+ *   - `if (a === b) { ... } else { return/throw ... }`        (match, "exit unless matched")
+ *   - `if (a === b && c === d) { ... } else { return/throw }` (match, AND-combined — `a !== b`
+ *     alone makes the whole condition false, so the exit still unconditionally triggers)
+ */
+function comparisonGates(comparison: ts.BinaryExpression): boolean {
+  const isMismatch =
+    comparison.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+    comparison.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsToken;
+
+  if (isMismatch) {
+    const ifStatement = findGatingIfStatement(comparison, ts.SyntaxKind.BarBarToken);
+    return ifStatement !== null && branchExits(ifStatement.thenStatement);
+  }
+
+  // Match comparison (===/==): gates only if the ELSE branch is the one that exits.
+  const ifStatement = findGatingIfStatement(comparison, ts.SyntaxKind.AmpersandAmpersandToken);
+  return (
+    ifStatement !== null &&
+    ifStatement.elseStatement !== undefined &&
+    branchExits(ifStatement.elseStatement)
+  );
 }
 
 /** Re-extracts the `where` argument straight off a call node (candidate module already resolved it once). */
@@ -523,8 +661,12 @@ function hasNotFoundGuard(
     return false;
   }
 
-  function visit(node: ts.Node): void {
+  function visit(node: ts.Node, isRoot: boolean): void {
     if (found) return;
+    // CR-02 (204-REVIEW.md): a `return` inside a nested closure (a `.forEach()`/`.map()`
+    // callback, or a helper function declared inside `handler`) only exits THAT closure, not
+    // `handler` — it must not be mistaken for a guard on `handler`'s own control flow.
+    if (!isRoot && isFunctionLikeNode(node)) return;
     if (ts.isIfStatement(node)) {
       const pos = node.getStart();
       if (
@@ -537,10 +679,10 @@ function hasNotFoundGuard(
         return;
       }
     }
-    ts.forEachChild(node, visit);
+    ts.forEachChild(node, (child) => visit(child, false));
   }
 
-  visit(handler);
+  visit(handler, true);
   return found;
 }
 
@@ -571,7 +713,7 @@ export function findGuardFetch(
   for (const discovered of allCalls) {
     if (discovered.node === judged) continue;
     if (discovered.node.getStart(sourceFile) >= judged.getStart(sourceFile)) continue; // must precede
-    if (!isNodeWithin(discovered.node, handler)) continue;
+    if (!isInSameFunctionScope(discovered.node, handler)) continue;
     if (discovered.call.model !== meta.model) continue; // D-16/T-204-14: same model only
     if (!FETCH_METHODS.has(discovered.call.method)) continue;
 
