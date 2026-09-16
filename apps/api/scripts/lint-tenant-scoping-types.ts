@@ -2,13 +2,16 @@
  * Phase 204 Plan 01 — shared contract for the `lint:tenant-scoping` gate (GitHub Issue #204).
  *
  * This gate prevents a NEW route from reading a client-supplied identifier into a tenant-scoped
- * Prisma model without constraining the result to the caller's own tenant. It walks exactly two
+ * Prisma model without constraining the result to the caller's own tenant. It walks these
  * directories, production code only:
  *
  *   - `apps/api/src/routes/`
  *   - `apps/api/src/services/`
+ *   - `apps/api/src/composition/` (Phase 99b Plan 02 — the composition layer moved out of
+ *     `routes/`; it still reads client-supplied identifiers into cross-context Prisma queries and
+ *     stays in scope, see `docs/context-cut-map.md`)
  *
- * `SCOPED_DIRS` below is the single place those two paths are stated (D-11). `utils/` and
+ * `SCOPED_DIRS` below is the single place those paths are stated (D-11). `utils/` and
  * `plugins/` are deliberately out of scope: Prisma calls there never carry a client-supplied
  * identifier from a request, which is the precondition this gate checks for (D-12).
  *
@@ -25,8 +28,12 @@
 
 // ── Scope (D-11) ────────────────────────────────────────────────────────────────────────────
 
-/** D-11: the ONLY two directories this gate walks. Stated once, here. */
-export const SCOPED_DIRS = ["apps/api/src/routes", "apps/api/src/services"] as const;
+/** D-11: the ONLY directories this gate walks. Stated once, here. */
+export const SCOPED_DIRS = [
+  "apps/api/src/routes",
+  "apps/api/src/services",
+  "apps/api/src/composition",
+] as const;
 
 /**
  * D-15: `__tests__` is excluded EXPLICITLY, not by accident of globbing. Test fixtures build

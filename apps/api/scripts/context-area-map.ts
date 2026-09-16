@@ -87,9 +87,9 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
 
   // ── komposition — D-17: dashboard.ts/reports.ts unconditionally, plus pdf.ts (no model, no
   //    Fachregel, reports.ts's only caller) ─────────────────────────────────────────────────
-  "src/routes/dashboard.ts": "komposition", // 11 models read across contexts by design (D-17)
-  "src/routes/reports.ts": "komposition", // 7 models read across contexts by design (D-17)
-  "src/utils/pdf.ts": "komposition", // pure PDF-layout rendering of pre-computed data; sole caller is reports.ts; no Prisma access, no Fachregel
+  "src/composition/dashboard.ts": "komposition", // 11 models read across contexts by design (D-17)
+  "src/composition/reports.ts": "komposition", // 7 models read across contexts by design (D-17)
+  "src/composition/pdf.ts": "komposition", // pure PDF-layout rendering of pre-computed data; sole caller is reports.ts; no Prisma access, no Fachregel
 
   // ── unterbau — Tenant/TenantConfig/User/RefreshToken/OtpToken/Invitation/Employee/
   //    WorkSchedule/PublicHoliday/SchoolHolidayPeriod/AuditLog/ApiKey/Notification ────────────

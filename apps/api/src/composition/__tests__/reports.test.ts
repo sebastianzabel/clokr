@@ -2,8 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import iconv from "iconv-lite";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
-import { computeOvertimeBalanceHours } from "../time-entries";
-import * as pdfUtils from "../../utils/pdf";
+import { computeOvertimeBalanceHours } from "../../routes/time-entries";
+import * as pdfUtils from "../pdf";
 import { leaveTypeFields } from "../../utils/leave-type";
 
 // Phase 97 (D-11, Task 3): the two vacation-overview PDF handlers only expose their
@@ -12,8 +12,8 @@ import { leaveTypeFields } from "../../utils/leave-type";
 // are wrapped with a spy that still calls straight through to the real implementation
 // (so the actual PDF bytes returned to callers are unaffected), purely to let tests
 // inspect the `data` argument the route built.
-vi.mock("../../utils/pdf", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../utils/pdf")>();
+vi.mock("../pdf", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../pdf")>();
   return {
     ...actual,
     generateVacationOverviewPdf: vi.fn(actual.generateVacationOverviewPdf),

@@ -19,7 +19,7 @@ import {
   streamCompanyMonthlyReportPdf,
   streamLeaveListPdf,
   streamVacationOverviewPdf,
-} from "../utils/pdf";
+} from "./pdf";
 import { selfHealUsedDays, loadVacationTypeMeta } from "../utils/leave-self-heal";
 import { computeMonthSaldo } from "../utils/month-saldo";
 import { isSickLeaveTypeCode } from "../utils/leave-type";

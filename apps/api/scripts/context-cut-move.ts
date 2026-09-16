@@ -758,10 +758,15 @@ export function buildPlan(repoRoot: string, context: string): MovePlan {
         // specifier. Here it just means "not a specifier this codemod needs to touch".
         continue;
       }
-      const targetNew = moveMap.get(resolvedAbs);
-      if (!targetNew) continue; // resolves fine, but not one of THIS context's moved files
-
       const importerNew = moveMap.get(absFile) ?? absFile;
+      const targetNew = moveMap.get(resolvedAbs) ?? resolvedAbs;
+      // Neither side of this specifier is affected by THIS context's move — nothing to do. A
+      // specifier also needs rewriting when only the IMPORTER moves and the target does not (a
+      // moved file that references an as-yet-unmoved sibling loses its "same directory" relative
+      // path), not only when the target moves — that asymmetry was the bug: an unmoved target was
+      // treated as "not this context's concern" even when the importer's own directory changed.
+      if (importerNew === absFile && targetNew === resolvedAbs) continue;
+
       const importerFinalDir = path.dirname(importerNew);
       const newSpecifier = formatRewrittenSpecifier(importerFinalDir, targetNew, occ.specifier);
       if (newSpecifier === occ.specifier) continue; // depth happened to stay identical

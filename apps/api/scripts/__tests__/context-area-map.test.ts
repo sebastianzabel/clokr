@@ -24,8 +24,8 @@ const API_ROOT = join(__dirname, "..", "..");
 
 describe("context-area-map — fixed spot checks", () => {
   it("dashboard.ts and reports.ts are komposition (D-17, unconditional)", () => {
-    expect(assignContextArea("src/routes/dashboard.ts")).toBe("komposition");
-    expect(assignContextArea("src/routes/reports.ts")).toBe("komposition");
+    expect(assignContextArea("src/composition/dashboard.ts")).toBe("komposition");
+    expect(assignContextArea("src/composition/reports.ts")).toBe("komposition");
   });
 
   it("services/clock/** is zeiterfassung, services/phorest/** is schichtplanung (D-16)", () => {

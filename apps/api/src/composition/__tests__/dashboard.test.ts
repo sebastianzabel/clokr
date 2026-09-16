@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
-import { computeOvertimeBalanceHours } from "../time-entries";
+import { computeOvertimeBalanceHours } from "../../routes/time-entries";
 import type { FastifyInstance } from "fastify";
 
 /**

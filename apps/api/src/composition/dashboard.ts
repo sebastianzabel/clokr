@@ -4,7 +4,7 @@ import {
   getEffectiveSchedule,
   computeOvertimeBalanceBreakdown,
   type OvertimeBalanceBreakdown,
-} from "./time-entries";
+} from "../routes/time-entries";
 import {
   getTenantTimezone,
   todayInTz,

@@ -35,7 +35,7 @@ function fixtureSummary(): CoverageSummary {
   return {
     total: fileEntry([100, 60], [40, 20]),
     [`${API_ROOT}/src/app.ts`]: fileEntry([10, 10], [4, 4]), // rahmen
-    [`${API_ROOT}/src/routes/dashboard.ts`]: fileEntry([50, 30], [20, 10]), // komposition
+    [`${API_ROOT}/src/composition/dashboard.ts`]: fileEntry([50, 30], [20, 10]), // komposition
     [`${API_ROOT}/src/routes/time-entries.ts`]: fileEntry([40, 20], [16, 6]), // zeiterfassung
   };
 }

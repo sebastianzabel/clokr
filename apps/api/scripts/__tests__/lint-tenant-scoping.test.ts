@@ -434,11 +434,13 @@ let tmpRoot: string;
 beforeEach(() => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lint-tenant-scoping-cli-"));
   // #229 Guard A: listScopedFiles now hard-errors when a SCOPED_DIRS entry does not exist on
-  // disk. The real repo always has both "apps/api/src/routes" and "apps/api/src/services", so
-  // every fixture tree below provisions both up front — individual tests still only WRITE files
-  // under the one they care about, matching production shape rather than working around the guard.
+  // disk. The real repo always has "apps/api/src/routes", "apps/api/src/services" and (since
+  // Phase 99b Plan 02) "apps/api/src/composition", so every fixture tree below provisions all
+  // three up front — individual tests still only WRITE files under the one they care about,
+  // matching production shape rather than working around the guard.
   fs.mkdirSync(path.join(tmpRoot, "apps/api/src/routes"), { recursive: true });
   fs.mkdirSync(path.join(tmpRoot, "apps/api/src/services"), { recursive: true });
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/composition"), { recursive: true });
 });
 
 afterEach(() => {
