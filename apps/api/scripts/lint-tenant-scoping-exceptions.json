@@ -266,34 +266,34 @@
   {
     "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
     "handler": "PUT /api/v1/shifts/:id",
-    "validatedAt": 2096,
+    "validatedAt": 2097,
     "calls": [
       {
         "call": "shift.findUnique",
-        "line": 2088
+        "line": 2089
       },
       {
         "call": "shift.update",
-        "line": 2274
+        "line": 2275
       }
     ],
-    "reason": "Shift has no tenantId of its own. The shift is first fetched by id (line 2088, unscoped by itself), then its OWNER is validated by a SECOND fetch+compare on a DERIVED field (existingOwner = employee.findUnique({ id: existing.employeeId }), compared at line 2096) BEFORE the fetched row is read or written anywhere below — including the shift.update at line 2274, which reuses the SAME id. This mirrors overtime.ts's own comment ('Shift has no tenantId of its own — go via employee')."
+    "reason": "Shift has no tenantId of its own. The shift is first fetched by id (line 2089, unscoped by itself), then its OWNER is validated by a SECOND fetch+compare on a DERIVED field (existingOwner = employee.findUnique({ id: existing.employeeId }), compared at line 2097) BEFORE the fetched row is read or written anywhere below — including the shift.update at line 2275, which reuses the SAME id. This mirrors overtime.ts's own comment ('Shift has no tenantId of its own — go via employee'). (Lines shifted +1 in Issue #241 — an added `monthRangeUtc` import for the /:id/restore locked-month fix.)"
   },
   {
     "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
     "handler": "DELETE /api/v1/shifts/:id",
-    "validatedAt": 3196,
+    "validatedAt": 3197,
     "calls": [
       {
         "call": "shift.findUnique",
-        "line": 3191
+        "line": 3192
       },
       {
         "call": "shift.delete",
-        "line": 3224
+        "line": 3225
       }
     ],
-    "reason": "Same derived-field second-hop guard as the PUT /:id handler above: the shift is fetched by id (line 3191), then existingOwner = employee.findUnique({ id: existing.employeeId }) is compared at line 3196 BEFORE the shift is read or deleted — including the shift.delete at line 3224, which reuses the SAME id."
+    "reason": "Same derived-field second-hop guard as the PUT /:id handler above: the shift is fetched by id (line 3192), then existingOwner = employee.findUnique({ id: existing.employeeId }) is compared at line 3197 BEFORE the shift is read or deleted — including the shift.delete at line 3225, which reuses the SAME id. (Lines shifted +1 in Issue #241 — an added `monthRangeUtc` import for the /:id/restore locked-month fix.)"
   },
   {
     "file": "apps/api/src/contexts/platform/api/test-bootstrap.ts",

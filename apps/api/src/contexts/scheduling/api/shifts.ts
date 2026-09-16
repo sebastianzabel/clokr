@@ -12,6 +12,7 @@ import {
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
   dateStrInTz,
+  monthRangeUtc,
 } from "../../working-time-account/timezone";
 import { getHolidays, STATE_MAP } from "../../platform/holidays";
 import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../../platform/anonymize";
@@ -3334,8 +3335,15 @@ export async function shiftRoutes(app: FastifyInstance) {
       // Defensive locked-month guard (T-67.2-16). Phase 47.2 SHIFT_PAST_IMMUTABLE
       // already forbids past mutations, but a locked future month (early close
       // due to admin action) must also block restore.
-      const monthStart = new Date(
-        Date.UTC(shift.date.getUTCFullYear(), shift.date.getUTCMonth(), 1),
+      // Issue #241: compare via monthRangeUtc() — the tenant-TZ conversion the
+      // closer writes periodStart with. A naive Date.UTC(year, month, 1) missed
+      // 236 of 237 rows (Europe/Berlin sits ahead of UTC, so the written
+      // periodStart falls on the LAST day of the previous month).
+      const tenantTz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const { start: monthStart } = monthRangeUtc(
+        shift.date.getUTCFullYear(),
+        shift.date.getUTCMonth() + 1,
+        tenantTz,
       );
       const lock = await app.prisma.saldoSnapshot.findFirst({
         where: {

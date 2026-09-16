@@ -17,8 +17,9 @@ import {
   nextWeekdayStr,
   monthStartUtc,
   monthEndUtc,
+  saldoSnapshotPeriodBounds,
 } from "./test-dates";
-import { dateStrInTz } from "../contexts/working-time-account/timezone";
+import { dateStrInTz, monthRangeUtc } from "../contexts/working-time-account/timezone";
 import { computeRetroLimitStr } from "../contexts/time-tracking/retro-config";
 
 describe("test-dates helper", () => {
@@ -120,6 +121,37 @@ describe("test-dates helper", () => {
       expect(start0.getUTCDate()).toBe(1);
       expect(start1.getTime()).toBeLessThan(start0.getTime());
       expect(start0.toISOString()).not.toBe(start1.toISOString());
+    });
+  });
+
+  // Issue #241: three month-lock gates (Berufsschultag create/delete, Schicht
+  // wiederherstellen) compared SaldoSnapshot.periodStart against a naive
+  // Date.UTC(year, month, 1) instead of the real monthRangeUtc() conversion the
+  // monthly closer writes with — the gate silently never fired for 236 of 237
+  // real rows. saldoSnapshotPeriodBounds is the shared fixture helper that closes
+  // that gap in tests: it MUST delegate to monthRangeUtc, never re-derive it.
+  describe("saldoSnapshotPeriodBounds", () => {
+    it("delegates to monthRangeUtc for the calendar month containing `d` (UTC components)", () => {
+      const d = new Date(Date.UTC(2026, 5, 15)); // 2026-06-15
+      const bounds = saldoSnapshotPeriodBounds(d);
+      const expected = monthRangeUtc(2026, 6, TEST_TZ);
+      expect(bounds.start.toISOString()).toBe(expected.start.toISOString());
+      expect(bounds.end.toISOString()).toBe(expected.end.toISOString());
+    });
+
+    it("pins the exact issue #241 regression: Europe/Berlin June 2026 start falls on the LAST DAY OF MAY, not June 1", () => {
+      const d = new Date(Date.UTC(2026, 5, 15)); // 2026-06-15
+      const { start } = saldoSnapshotPeriodBounds(d, "Europe/Berlin");
+      // Naive comparison (the bug): new Date(Date.UTC(2026, 5, 1)) === "2026-06-01T00:00:00.000Z".
+      // Real comparison (the fix): tenant-local midnight of June 1st, converted to UTC.
+      expect(start.toISOString()).toBe("2026-05-31T22:00:00.000Z");
+      expect(start.toISOString()).not.toBe(new Date(Date.UTC(2026, 5, 1)).toISOString());
+    });
+
+    it("accepts an explicit tz override independent of TEST_TZ", () => {
+      const d = new Date(Date.UTC(2026, 0, 15)); // 2026-01-15, UTC tz → no offset
+      const bounds = saldoSnapshotPeriodBounds(d, "UTC");
+      expect(bounds.start.toISOString()).toBe("2026-01-01T00:00:00.000Z");
     });
   });
 

@@ -24,6 +24,7 @@ import {
   resolveRetroactiveWindow,
   type GeneratorResult,
 } from "../vocational-school-generator";
+import { getTenantTimezone, monthRangeUtc } from "../../working-time-account/timezone";
 
 const previewQuerySchema = z.object({
   weeks: z.coerce.number().int().min(1).max(26).optional(),
@@ -83,11 +84,6 @@ const retroactiveApplySchema = z.object({
     .optional()
     .nullable(),
 });
-
-// First-of-month UTC midnight — matches SaldoSnapshot.periodStart semantics.
-function monthStartUtc(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
-}
 
 // Phase 103 — the response shape used by both new retroactive endpoints when
 // resolveRetroactiveWindow() finds nothing to do (no active pattern with a past
@@ -284,8 +280,17 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
         });
       }
 
-      // (5) locked-month gate — findFirst with superseded:false (COMP-V1814-04)
-      const monthStart = monthStartUtc(dateUtc);
+      // (5) locked-month gate — findFirst with superseded:false (COMP-V1814-04).
+      // Issue #241: periodStart is written by monthRangeUtc() (tenant-local midnight
+      // of day 1, converted to UTC) — the comparison MUST use the same conversion,
+      // not a naive Date.UTC(year, month, 1), or a closed month is never found
+      // (236 of 237 rows sat on the last day of the PREVIOUS month for Europe/Berlin).
+      const tenantTz = await getTenantTimezone(app.prisma, tenantId);
+      const { start: monthStart } = monthRangeUtc(
+        dateUtc.getUTCFullYear(),
+        dateUtc.getUTCMonth() + 1,
+        tenantTz,
+      );
       const snapshot = await app.prisma.saldoSnapshot.findFirst({
         where: {
           employeeId: employee.id,
@@ -419,8 +424,15 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
       }
 
       // (6) locked-month gate — identical message + status to manual-insert's gate (5)
-      // for UI consistency. findFirst with superseded:false (COMP-V1814-04)
-      const monthStart = monthStartUtc(absence.startDate);
+      // for UI consistency. findFirst with superseded:false (COMP-V1814-04).
+      // Issue #241: compare via monthRangeUtc() — the same tenant-TZ conversion
+      // the closer writes periodStart with (see the manual-insert gate above).
+      const tenantTz = await getTenantTimezone(app.prisma, tenantId);
+      const { start: monthStart } = monthRangeUtc(
+        absence.startDate.getUTCFullYear(),
+        absence.startDate.getUTCMonth() + 1,
+        tenantTz,
+      );
       const snapshot = await app.prisma.saldoSnapshot.findFirst({
         where: {
           employeeId: absence.employeeId,

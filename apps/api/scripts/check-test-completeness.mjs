@@ -55,8 +55,16 @@ import { readFileSync } from "node:fs";
 // from 253 to 254. MIN_TESTS rises from 2916 to 2925: +9 test cases in that file (verified with
 // `pnpm exec vitest run src/contexts/working-time-account/__tests__/facade-overtime-account.test.ts`,
 // "9 tests" in its own output) — 2916 + 9 = 2925. No other test file changed in this plan.
+//
+// Issue #241: no new test FILE (src/__tests__/test-dates.test.ts already existed) — MIN_FILES
+// stays 254. MIN_TESTS rises from 2925 to 2928: +3 test cases for the new
+// `saldoSnapshotPeriodBounds` fixture helper (verified with `pnpm exec vitest run
+// src/__tests__/test-dates.test.ts`, "18 tests" in its own output, up from 15) — 2925 + 3 = 2928.
+// The three existing tests this issue fixed (vocational-school-endpoints.test.ts x2,
+// shifts-conflicts.test.ts x1) only changed HOW their existing SaldoSnapshot fixtures are built,
+// not the test count.
 const MIN_FILES = 254;
-const MIN_TESTS = 2925;
+const MIN_TESTS = 2928;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

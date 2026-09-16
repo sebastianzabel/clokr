@@ -15,17 +15,8 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { saldoSnapshotPeriodBounds } from "./test-dates";
 import type { FastifyInstance } from "fastify";
-
-// UTC 00:00 of the 1st of `d`'s month — matches SaldoSnapshot.periodStart semantics.
-function monthStartUtc(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
-}
-
-// UTC 00:00 of the last day of `d`'s month.
-function monthEndUtc(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0));
-}
 
 // YYYY-MM-DD of a Date in UTC.
 function toIsoDate(d: Date): string {
@@ -400,14 +391,17 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
   });
 
   it("POST /manual-insert returns 403 when date is in locked month", async () => {
-    // Insert SaldoSnapshot on (employeeId, MONTHLY, monthStartUtc(date))
+    // Issue #241: periodStart/periodEnd MUST be built via saldoSnapshotPeriodBounds
+    // (real monthRangeUtc() conversion) — a naive Date.UTC(year, month, 1) fixture
+    // agrees with the (now-fixed) naive comparison in the route instead of catching it.
     const targetDate = new Date(Date.UTC(2026, 9, 14)); // 2026-10-14
+    const { start, end } = saldoSnapshotPeriodBounds(targetDate);
     await app.prisma.saldoSnapshot.create({
       data: {
         employeeId: data.employee.id,
         periodType: "MONTHLY",
-        periodStart: monthStartUtc(targetDate),
-        periodEnd: monthEndUtc(targetDate),
+        periodStart: start,
+        periodEnd: end,
         workedMinutes: 0,
         expectedMinutes: 0,
         balanceMinutes: 0,
@@ -606,7 +600,10 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
     });
 
     it("returns 403 when target date is in a locked month (T-g8l-07)", async () => {
+      // Issue #241: build periodStart/periodEnd via saldoSnapshotPeriodBounds
+      // (real monthRangeUtc() conversion) — see the manual-insert lock test above.
       const date = new Date(Date.UTC(2027, 6, 21)); // 2027-07-21
+      const { start, end } = saldoSnapshotPeriodBounds(date);
       const absence = await app.prisma.absence.create({
         data: {
           employeeId: data.employee.id,
@@ -622,8 +619,8 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
         data: {
           employeeId: data.employee.id,
           periodType: "MONTHLY",
-          periodStart: monthStartUtc(date),
-          periodEnd: monthEndUtc(date),
+          periodStart: start,
+          periodEnd: end,
           workedMinutes: 0,
           expectedMinutes: 0,
           balanceMinutes: 0,
