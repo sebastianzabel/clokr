@@ -24,6 +24,7 @@
 import type { PrismaClient } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
 import { getTenantTimezone, monthRangeUtc } from "../working-time-account/timezone";
+import { getClosedMonthsForDates } from "../working-time-account"; // Phase 100B Plan 07 — W2a
 
 // app.audit signature (see plugins/audit.ts) — kept loose to match the Fastify decorator type.
 type AuditFn = FastifyInstance["audit"];
@@ -167,22 +168,18 @@ export async function cleanupShiftsForBSAbsence(
     ...new Set(shifts.map((s) => monthLockBoundUtc(s.date, tenantTz).toISOString())),
   ];
   const monthStarts = monthStartIsos.map((iso) => new Date(iso));
-  const locks = await prisma.saldoSnapshot.findMany({
-    where: {
-      employeeId: params.employeeId,
-      periodType: "MONTHLY",
-      periodStart: { in: monthStarts },
-      superseded: false,
-    },
-    select: { periodStart: true },
-  });
-  // toIsoDate(), not .toISOString(): periodStart is @db.Date, so Prisma reads a fetched row
-  // back as UTC MIDNIGHT of its calendar date — the full-precision `monthLockBoundUtc(...)`
-  // value legitimately carries a real, non-midnight time-of-day (e.g. 22:00 UTC for a
-  // Europe/Berlin June boundary) and can never full-string-equal the round-tripped row even
-  // once both sides use the correct tenant-TZ conversion. Comparing calendar dates only is
-  // what the generator's own lockKey (`toIsoDate()`) already does for the identical reason.
-  const lockedMonths = new Set(locks.map((l) => toIsoDate(l.periodStart)));
+  // Phase 100B Plan 07 (W2a, getClosedMonthsForDates) — the discrete `monthStarts` shape. The
+  // facade itself does the calendar-date-only key comparison (`toIsoDate` there, mirrored from
+  // this file's own — see this file's own `toIsoDate` docblock for why: `periodStart` is
+  // `@db.Date`, so a fetched row is UTC midnight of its calendar date, never full-string-equal to
+  // the full-precision `monthLockBoundUtc(...)` value). Composite key `${employeeId}::${isoDate}`
+  // — this file has exactly one employee, so the lookup below prefixes with it explicitly.
+  const lockedMonths = await getClosedMonthsForDates(
+    prisma,
+    [params.employeeId],
+    params.tenantId,
+    monthStarts,
+  );
 
   // (4) Walk every shift and apply the appropriate audit-proof branch.
   let futureSoftDeleted = 0;
@@ -195,7 +192,7 @@ export async function cleanupShiftsForBSAbsence(
     const monthIso = toIsoDate(monthLockBoundUtc(shift.date, tenantTz));
 
     // (4a) Locked-month: never touch — Revisionssicherheit.
-    if (lockedMonths.has(monthIso)) {
+    if (lockedMonths.has(`${params.employeeId}::${monthIso}`)) {
       lockedSkipped++;
       continue;
     }

@@ -1,15 +1,15 @@
 [
   {
-    "file": "apps/api/src/composition/dashboard.ts",
-    "line": 781,
+    "file": "apps/api/src/contexts/working-time-account/facade/saldo-snapshot.ts",
+    "line": 241,
     "disposition": "safe",
-    "reason": "sixMonthsAgo is a gte-only lower bound for a rolling 6-month TREND window feeding the dashboard's team-saldo history chart, not an exact locked-month gate. Being off by up to ~24h at the boundary (the naive UTC month-1 vs. the real tenant-TZ periodStart) shifts which month first appears in a 6-month DISPLAY window by at most one month at the very edge — a cosmetic difference with zero Revisionssicherheit/compliance consequence, unlike the five #241 sites where the same gap let a closed month's data be mutated."
+    "reason": "Phase 100B Plan 07 — this candidate moved here from composition/dashboard.ts:781 (GET /overtime-overview's own periodStart bound, before the SaldoSnapshot read was rewired behind getMonthlySnapshotsInRange, W5) and, since Plan 07's facade-parameter resolver (see this gate's own module header, 'Facade parameter resolution') traces the `from` parameter back to its real caller, resolves to the SAME 'unsafe' verdict the original site always had: dashboard.ts's `sixMonthsAgo` is a gte-only lower bound for a rolling 6-month TREND window feeding the dashboard's team-saldo history chart, not an exact locked-month gate. Being off by up to ~24h at the boundary (the naive UTC month-1 vs. the real tenant-TZ periodStart) shifts which month first appears in a 6-month DISPLAY window by at most one month at the very edge — a cosmetic difference with zero Revisionssicherheit/compliance consequence, unlike the five #241 sites where the same gap let a closed month's data be mutated. `activity.ts`'s OWN call (the sibling caller of this same function) passes no `from` at all (unbounded history) and resolves 'unknown' for that call site alone — `combine()` reports the WORST verdict across all real callers ('unsafe', from dashboard.ts), which is why this exception is still needed post-move, not because activity.ts introduced anything new."
   },
   {
-    "file": "apps/api/src/composition/dashboard.ts",
-    "line": 1327,
+    "file": "apps/api/src/contexts/working-time-account/facade/saldo-snapshot.ts",
+    "line": 295,
     "disposition": "safe",
-    "reason": "Same sixMonthsAgo variable, same rolling 6-month TREND window (this time for the team carry-over groupBy chart) as the entry above at line 781 — identical risk profile, identical reasoning: a gte-only display-window bound, not a locked-month/audit gate, so an at-most-one-month display-edge shift carries no compliance consequence."
+    "reason": "Phase 100B Plan 07 — this candidate moved here from composition/dashboard.ts:1327 (GET /overtime-trend's own periodStart bound, before the groupBy was rewired behind sumCarryOverByMonth, W6) and, via this gate's facade-parameter resolver, resolves to the SAME verdict the original site always had. Same `sixMonthsAgo` variable, same rolling 6-month TREND window (this time for the team carry-over groupBy chart) as the entry above — identical risk profile, identical reasoning: a gte-only display-window bound, not a locked-month/audit gate, so an at-most-one-month display-edge shift carries no compliance consequence."
   },
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",

@@ -6,18 +6,6 @@
     "reason": "Phase 76.2 code, predates the facade-signature convention (D-07/G4) by two milestones. F1: its first parameter is named 'prisma', not 'db' — same type (Prisma.TransactionClient), a naming-only divergence, never a FastifyInstance (F2 does not apply). F3: its 'employeeId' parameter has no sibling 'tenantId' because both of its call sites (contexts/time-tracking/api/time-entries.ts:1095 and services/clock/resolver.ts:39) already tenant-validate the employeeId before calling it — the 'where' never moved out of a route here, it was extracted FROM one in Phase 76.2, before this facade initiative existed. Renaming the parameter or threading a tenantId argument through is out of Plan 100B-03's declared file scope (does not touch leave-check.ts); the general gap this exception documents is exactly what Issue #101 (T6, CONTEXT.md canonical_refs) exists to close — 'was hier nicht sauber getrennt wird, braucht dort eine Ausnahme'."
   },
   {
-    "file": "apps/api/src/contexts/working-time-account/confirmed-saldo.ts",
-    "function": "getConfirmedCarryOver",
-    "rules": ["F1", "F2", "F3"],
-    "reason": "The documented anti-pattern this whole plan exists to forbid going forward (100B-CONTEXT.md D-07 <interfaces>: 'confirmed-saldo.ts:43 — THE ANTI-PATTERN'). Takes 'app: FastifyInstance' and reaches app.prisma directly (F1 wrong type/name, F2 FastifyInstance present) and its 'employeeId' parameter has no 'tenantId' sibling (F3) — its own docstring says 'PURE READ, no tenant argument. Callers MUST already have a tenant-scoped employeeId', which is exactly the convention F3 exists to stop being silently invisible once behind a facade. Plan 100B-07 converts this function to the db: Prisma.TransactionClient shape and removes this entry."
-  },
-  {
-    "file": "apps/api/src/contexts/working-time-account/confirmed-saldo.ts",
-    "function": "getConfirmedCarryOverBulk",
-    "rules": ["F1", "F2", "F3"],
-    "reason": "Same anti-pattern and same reasoning as getConfirmedCarryOver above, applied to the bulk sibling: 'app: FastifyInstance' first parameter (F1/F2) and an 'employeeIds' parameter with no 'tenantId' sibling (F3), documented in the same docstring as 'already tenant-scoped by the caller'. Plan 100B-07 converts this function and removes this entry."
-  },
-  {
     "file": "apps/api/src/contexts/platform/facade/employee-scope.ts",
     "function": "employeeScopeWhere",
     "rules": ["F1"],

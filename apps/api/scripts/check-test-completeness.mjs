@@ -82,8 +82,15 @@ import { readFileSync } from "node:fs";
 // own output) — 2929 + 31 = 2960. The existing `src/__tests__/shift-cleanup.test.ts` T5 test only
 // changed HOW its SaldoSnapshot fixture is built (naive Date.UTC -> saldoSnapshotPeriodBounds()),
 // not the test count.
-const MIN_FILES = 255;
-const MIN_TESTS = 2960;
+// Phase 100B Plan 07 (Wave 3, final) — one new test FILE
+// (contexts/working-time-account/__tests__/facade-saldo-snapshot.test.ts) — MIN_FILES rises
+// from 255 to 256. MIN_TESTS rises from 2960 to 2981: +21 test cases in that new file (verified
+// with `pnpm exec vitest run .../facade-saldo-snapshot.test.ts`, "21 tests" in its own output) —
+// 2960 + 21 = 2981. Plus the facade-parameter-resolution regression guard added to the EXISTING
+// `scripts/__tests__/lint-saldo-lock-derivation.test.ts` (no new FILE — MIN_FILES unchanged at
+// 256): +7 test cases (31 -> 38, verified the same way) — MIN_TESTS rises from 2981 to 2988.
+const MIN_FILES = 256;
+const MIN_TESTS = 2988;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

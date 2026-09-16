@@ -41,7 +41,9 @@ import {
   getOvertimeAccount,
   listOvertimeAccountsForTenant,
   getBalances,
-} from "../contexts/working-time-account"; // Phase 100B Plan 06 — W8/W9/W10
+  getMonthlySnapshotsInRange,
+  sumCarryOverByMonth,
+} from "../contexts/working-time-account"; // Phase 100B Plan 06 — W8/W9/W10; Plan 07 — W5/W6
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -265,7 +267,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         const acct = await getOvertimeAccount(app.prisma, employeeId, tenantId);
         overtimeBalance = Number(acct?.balanceHours ?? 0);
         try {
-          const confirmed = await getConfirmedCarryOver(app, employeeId);
+          const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, tenantId);
           confirmedMinutes = confirmed.minutes;
           hasClosedMonth = confirmed.hasClosedMonth;
         } catch (fallbackErr) {
@@ -774,21 +776,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
       sixMonthsAgo.setUTCDate(1);
       sixMonthsAgo.setUTCHours(0, 0, 0, 0);
 
-      const snapshots = await app.prisma.saldoSnapshot.findMany({
-        where: {
-          employeeId: { in: employeeIds },
-          periodType: "MONTHLY",
-          periodStart: { gte: sixMonthsAgo },
-          superseded: false,
-        },
-        orderBy: { periodStart: "asc" },
-        select: {
-          employeeId: true,
-          periodStart: true,
-          balanceMinutes: true,
-          carryOver: true,
-        },
-      });
+      const snapshots = await getMonthlySnapshotsInRange(
+        app.prisma,
+        employeeIds,
+        tenantId,
+        sixMonthsAgo,
+      );
 
       // Group snapshots by employeeId
       const snapshotsByEmp = new Map<string, typeof snapshots>();
@@ -804,7 +797,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // 97-CONTEXT's "Known N+1 risk" note). Deliberately NOT the six-month-bounded
       // `snapshots` query above: an employee whose last close predates that window would
       // falsely read as having no closed month at all if reused for this purpose.
-      const confirmedByEmp = await getConfirmedCarryOverBulk(app, employeeIds);
+      const confirmedByEmp = await getConfirmedCarryOverBulk(app.prisma, employeeIds, tenantId);
 
       // Per-employee LIVE lifetime saldo through windowEnd (today only if today has completed
       // entries, else yesterday) — SAME source of truth as the dashboard KPI + calendar header
@@ -1316,23 +1309,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const employeeIds = employees.map((e) => e.id);
 
       // Query 1: SUM(carryOver) grouped by periodStart, MONTHLY only, within 6-month window.
-      const grouped =
-        employeeIds.length === 0
-          ? []
-          : await app.prisma.saldoSnapshot.groupBy({
-              by: ["periodStart"],
-              where: {
-                employeeId: { in: employeeIds },
-                periodType: "MONTHLY",
-                periodStart: { gte: sixMonthsAgo },
-              },
-              _sum: { carryOver: true },
-              orderBy: { periodStart: "asc" },
-            });
+      const grouped = await sumCarryOverByMonth(app.prisma, employeeIds, tenantId, sixMonthsAgo);
 
       const snapshots = grouped.map((g) => ({
         month: g.periodStart.toISOString().slice(0, 10), // "YYYY-MM-DD" (always day 01)
-        teamCarryOverMinutes: g._sum.carryOver ?? 0,
+        teamCarryOverMinutes: g.carryOver,
       }));
 
       // Query 2: SUM(balanceHours * 60) across all active employees' OvertimeAccounts.

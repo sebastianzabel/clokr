@@ -15,7 +15,6 @@ import {
 import { selfHealUsedDays, loadVacationTypeMeta } from "../leave-self-heal";
 import { calculateWorkDays } from "../../platform/calculate-work-days";
 import { computeAffectedMonths } from "../correction-lock";
-import { periodStartWindow } from "../../working-time-account/snapshot-period";
 import {
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
@@ -30,7 +29,8 @@ import {
   getOvertimeAccount,
   bookOvertimeCompensation,
   reverseOvertimeCompensation,
-} from "../../working-time-account"; // Phase 100B Plan 06 — W8/W11/W12
+  isMonthClosed,
+} from "../../working-time-account"; // Phase 100B Plan 06 — W8/W11/W12; Plan 07 — W1
 import { auditReasonSchema } from "../../platform/audit-reason"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
@@ -625,7 +625,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         let availableMinutes: number;
         let appliedToleranceMinutes: number;
         try {
-          const confirmed = await getConfirmedCarryOver(app, employeeId);
+          const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, tenantId);
           appliedToleranceMinutes = toleranceMinutes;
           availableMinutes = confirmed.minutes + appliedToleranceMinutes;
         } catch (err) {
@@ -1732,16 +1732,13 @@ export async function leaveRoutes(app: FastifyInstance) {
         const tz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
         for (const { year, month } of monthsToCheck) {
           const { start: monthStart } = monthRangeUtc(year, month, tz);
-          // MONTHLY SaldoSnapshot(superseded:false) = the canonical Monatsabschluss
-          // signal (convention-robust window, see utils/snapshot-period.ts).
-          const locked = await app.prisma.saldoSnapshot.findFirst({
-            where: {
-              employeeId: existing.employeeId,
-              periodType: "MONTHLY",
-              periodStart: periodStartWindow(monthStart),
-              superseded: false,
-            },
-          });
+          // Phase 100B Plan 07 (W1, isMonthClosed) — THE canonical Monatsabschluss signal.
+          const locked = await isMonthClosed(
+            app.prisma,
+            existing.employeeId,
+            existing.employee.tenantId,
+            monthStart,
+          );
           if (locked) {
             return reply.code(409).send({ error: "Gesperrter Monat — Korrektur nicht möglich" });
           }
@@ -2410,7 +2407,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       const account = await getOvertimeAccount(app.prisma, employeeId, req.user.tenantId);
       const balanceHours = account ? Math.round(Number(account.balanceHours) * 100) / 100 : 0;
       try {
-        const confirmed = await getConfirmedCarryOver(app, employeeId);
+        const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, req.user.tenantId);
         return {
           balanceHours,
           confirmedMinutes: confirmed.minutes,

@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
 import { getTenantTimezone, timeStrInTz } from "../../working-time-account/timezone";
+import { getMonthlySnapshotsInRange } from "../../working-time-account"; // Phase 100B Plan 07 — W5
 
 /**
  * GET /api/v1/activity?limit=5
@@ -180,12 +181,14 @@ export async function activityRoutes(app: FastifyInstance) {
           });
         }
 
-        // Own monthly close snapshots
-        const snapshots = await app.prisma.saldoSnapshot.findMany({
-          where: { employeeId, periodType: "MONTHLY", superseded: false },
-          orderBy: { closedAt: "desc" },
-          take: fetchLimit,
-        });
+        // Own monthly close snapshots. Unbounded (no `from`) — this feed wants ALL of the
+        // employee's history, not a 6-month window; re-sort by closedAt desc + trim to
+        // fetchLimit in application code, reproducing the original DB-level
+        // orderBy:{closedAt:"desc"}/take:fetchLimit exactly (same top-N rows either way).
+        const snapshotRows = await getMonthlySnapshotsInRange(app.prisma, [employeeId], tenantId);
+        const snapshots = [...snapshotRows]
+          .sort((a, b) => b.closedAt.getTime() - a.closedAt.getTime())
+          .slice(0, fetchLimit);
         for (const s of snapshots) {
           const month = s.periodStart.toLocaleDateString("de-DE", {
             month: "long",

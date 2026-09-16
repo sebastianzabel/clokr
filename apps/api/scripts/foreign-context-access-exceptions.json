@@ -1,5 +1,11 @@
 {
-  "convertedModels": ["shift", "employeeAvailability", "overtimeAccount", "overtimeTransaction"],
+  "convertedModels": [
+    "shift",
+    "employeeAvailability",
+    "overtimeAccount",
+    "overtimeTransaction",
+    "saldoSnapshot"
+  ],
   "exceptions": [
     {
       "file": "apps/api/src/contexts/platform/api/test-bootstrap.ts",

@@ -25,9 +25,11 @@ import {
   MIN_REASON_LENGTH,
   analyzeFile,
   analyzeSource,
+  buildFacadeParamResolver,
   computeFindings,
   discoverSourceFiles,
   formatSummary,
+  isFacadeFilePath,
   validateExceptionsDocument,
   type Candidate,
   type SaldoLockException,
@@ -35,6 +37,16 @@ import {
 
 const API_ROOT = join(__dirname, "..", "..");
 const REPO_ROOT = join(API_ROOT, "..", "..");
+
+/** Mirrors `run()`'s own wiring exactly (module header, "Facade parameter resolution", 100B
+ * Plan 07): the resolver only applies to facade-directory files, built once per call. */
+function analyzeAllRealFiles(): Candidate[] {
+  const files = discoverSourceFiles(REPO_ROOT);
+  const resolver = buildFacadeParamResolver(REPO_ROOT, files);
+  return files.flatMap((f) =>
+    analyzeFile(join(REPO_ROOT, f), f, isFacadeFilePath(f) ? resolver : null),
+  );
+}
 
 // ── PRE_FIX_FIXTURES — one per real historical (or gate-discovered) site, ALL must be "unsafe" ──
 //
@@ -454,13 +466,188 @@ describe("computeFindings / formatSummary", () => {
   });
 });
 
+// ── buildFacadeParamResolver — the 100B Plan 07 one-hop cross-file resolution ────────────────────
+
+describe("buildFacadeParamResolver (100B Plan 07 — facade parameter resolution)", () => {
+  let tmpRoot: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "lint-saldo-lock-facade-resolver-fixture-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function writeFixture(files: Record<string, string>): string[] {
+    const facadeDir = join(tmpRoot, "apps/api/src/contexts/foo/facade");
+    const callerDir = join(tmpRoot, "apps/api/src/contexts/bar/api");
+    mkdirSync(facadeDir, { recursive: true });
+    mkdirSync(callerDir, { recursive: true });
+    for (const [relPath, content] of Object.entries(files)) {
+      const abs = join(tmpRoot, "apps/api/src", relPath);
+      mkdirSync(join(abs, ".."), { recursive: true });
+      writeFileSync(abs, content);
+    }
+    return discoverSourceFiles(tmpRoot);
+  }
+
+  it("resolves 'safe': a real caller passes a monthRangeUtc()-derived local variable", () => {
+    const files = writeFixture({
+      "contexts/foo/facade/thing.ts": `
+        export async function isMonthClosed(db: unknown, employeeId: string, tenantId: string, monthStart: Date) {
+          return db.saldoSnapshot.findFirst({
+            where: { employeeId, periodType: "MONTHLY", periodStart: monthStart, superseded: false },
+          });
+        }
+      `,
+      "contexts/bar/api/caller.ts": `
+        import { monthRangeUtc } from "../../foo/timezone";
+        async function handler(app, year, month, tz) {
+          const { start: monthStart } = monthRangeUtc(year, month, tz);
+          return isMonthClosed(app.prisma, "e1", "t1", monthStart);
+        }
+      `,
+    });
+    const resolver = buildFacadeParamResolver(tmpRoot, files);
+    const relFile = "apps/api/src/contexts/foo/facade/thing.ts";
+    const candidates = analyzeFile(join(tmpRoot, relFile), relFile, resolver);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].verdict).toBe("safe");
+  });
+
+  it("resolves 'unsafe': a real caller passes a naive new Date(Date.UTC(...))", () => {
+    const files = writeFixture({
+      "contexts/foo/facade/thing.ts": `
+        export async function isMonthClosed(db: unknown, employeeId: string, tenantId: string, monthStart: Date) {
+          return db.saldoSnapshot.findFirst({
+            where: { employeeId, periodType: "MONTHLY", periodStart: monthStart, superseded: false },
+          });
+        }
+      `,
+      "contexts/bar/api/caller.ts": `
+        async function handler(app, year, month) {
+          const monthStart = new Date(Date.UTC(year, month - 1, 1));
+          return isMonthClosed(app.prisma, "e1", "t1", monthStart);
+        }
+      `,
+    });
+    const resolver = buildFacadeParamResolver(tmpRoot, files);
+    const relFile = "apps/api/src/contexts/foo/facade/thing.ts";
+    const candidates = analyzeFile(join(tmpRoot, relFile), relFile, resolver);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].verdict).toBe("unsafe");
+  });
+
+  it("combines multiple call sites with 'worst wins': one safe caller + one unsafe caller = 'unsafe'", () => {
+    const files = writeFixture({
+      "contexts/foo/facade/thing.ts": `
+        export async function isMonthClosed(db: unknown, employeeId: string, tenantId: string, monthStart: Date) {
+          return db.saldoSnapshot.findFirst({
+            where: { employeeId, periodType: "MONTHLY", periodStart: monthStart, superseded: false },
+          });
+        }
+      `,
+      "contexts/bar/api/caller-safe.ts": `
+        import { monthRangeUtc } from "../../foo/timezone";
+        async function handlerA(app, year, month, tz) {
+          const { start: monthStart } = monthRangeUtc(year, month, tz);
+          return isMonthClosed(app.prisma, "e1", "t1", monthStart);
+        }
+      `,
+      "contexts/bar/api/caller-unsafe.ts": `
+        async function handlerB(app, year, month) {
+          const monthStart = new Date(Date.UTC(year, month - 1, 1));
+          return isMonthClosed(app.prisma, "e2", "t2", monthStart);
+        }
+      `,
+    });
+    const resolver = buildFacadeParamResolver(tmpRoot, files);
+    const relFile = "apps/api/src/contexts/foo/facade/thing.ts";
+    const candidates = analyzeFile(join(tmpRoot, relFile), relFile, resolver);
+    expect(candidates[0].verdict).toBe("unsafe");
+  });
+
+  it("resolves 'unknown' when no call site exists anywhere in the scanned tree", () => {
+    const files = writeFixture({
+      "contexts/foo/facade/thing.ts": `
+        export async function isMonthClosed(db: unknown, employeeId: string, tenantId: string, monthStart: Date) {
+          return db.saldoSnapshot.findFirst({
+            where: { employeeId, periodType: "MONTHLY", periodStart: monthStart, superseded: false },
+          });
+        }
+      `,
+      "contexts/bar/api/unrelated.ts": `export const x = 1;`,
+    });
+    const resolver = buildFacadeParamResolver(tmpRoot, files);
+    const relFile = "apps/api/src/contexts/foo/facade/thing.ts";
+    const candidates = analyzeFile(join(tmpRoot, relFile), relFile, resolver);
+    expect(candidates[0].verdict).toBe("unknown");
+  });
+
+  it("is bounded to exactly ONE hop: a caller passing its OWN unresolved parameter resolves 'unknown', not chased further", () => {
+    const files = writeFixture({
+      "contexts/foo/facade/thing.ts": `
+        export async function isMonthClosed(db: unknown, employeeId: string, tenantId: string, monthStart: Date) {
+          return db.saldoSnapshot.findFirst({
+            where: { employeeId, periodType: "MONTHLY", periodStart: monthStart, superseded: false },
+          });
+        }
+      `,
+      "contexts/bar/api/caller.ts": `
+        // 'monthStart' here is ITSELF an unresolved parameter of a non-facade function — a
+        // second hop (into THIS function's own callers) is out of scope by design.
+        async function handler(app, monthStart) {
+          return isMonthClosed(app.prisma, "e1", "t1", monthStart);
+        }
+      `,
+    });
+    const resolver = buildFacadeParamResolver(tmpRoot, files);
+    const relFile = "apps/api/src/contexts/foo/facade/thing.ts";
+    const candidates = analyzeFile(join(tmpRoot, relFile), relFile, resolver);
+    expect(candidates[0].verdict).toBe("unknown");
+  });
+
+  it("without a resolver (the default, null), the SAME facade file's candidate is 'unknown' — proving the resolver is what changes the outcome", () => {
+    const files = writeFixture({
+      "contexts/foo/facade/thing.ts": `
+        export async function isMonthClosed(db: unknown, employeeId: string, tenantId: string, monthStart: Date) {
+          return db.saldoSnapshot.findFirst({
+            where: { employeeId, periodType: "MONTHLY", periodStart: monthStart, superseded: false },
+          });
+        }
+      `,
+      "contexts/bar/api/caller.ts": `
+        import { monthRangeUtc } from "../../foo/timezone";
+        async function handler(app, year, month, tz) {
+          const { start: monthStart } = monthRangeUtc(year, month, tz);
+          return isMonthClosed(app.prisma, "e1", "t1", monthStart);
+        }
+      `,
+    });
+    const relFile = "apps/api/src/contexts/foo/facade/thing.ts";
+    const candidates = analyzeFile(join(tmpRoot, relFile), relFile); // no resolver — default null
+    expect(candidates[0].verdict).toBe("unknown");
+    void files;
+  });
+
+  it("isFacadeFilePath recognises contexts/*/facade/*.ts and rejects everything else", () => {
+    expect(isFacadeFilePath("apps/api/src/contexts/foo/facade/thing.ts")).toBe(true);
+    expect(
+      isFacadeFilePath("apps/api/src/contexts/working-time-account/facade/saldo-snapshot.ts"),
+    ).toBe(true);
+    expect(isFacadeFilePath("apps/api/src/contexts/foo/api/thing.ts")).toBe(false);
+    expect(isFacadeFilePath("apps/api/src/composition/dashboard.ts")).toBe(false);
+  });
+});
+
 // ── live tree — the real scan against the real exceptions file ─────────────────────────────────
 
 describe("live tree — real scan, real exceptions file", () => {
   it("finds at least one real candidate (sanity: the #229 guard's precondition holds today)", () => {
     const files = discoverSourceFiles(REPO_ROOT);
     expect(files.length).toBeGreaterThan(0);
-    const candidates = files.flatMap((f) => analyzeFile(join(REPO_ROOT, f), f));
+    const candidates = analyzeAllRealFiles();
     expect(candidates.length).toBeGreaterThan(0);
   });
 
@@ -468,8 +655,7 @@ describe("live tree — real scan, real exceptions file", () => {
     const exceptionsPath = join(API_ROOT, "scripts/lint-saldo-lock-derivation-exceptions.json");
     expect(existsSync(exceptionsPath)).toBe(true);
     const raw = JSON.parse(readFileSync(exceptionsPath, "utf8"));
-    const files = discoverSourceFiles(REPO_ROOT);
-    const candidates = files.flatMap((f) => analyzeFile(join(REPO_ROOT, f), f));
+    const candidates = analyzeAllRealFiles();
     const result = validateExceptionsDocument(raw, candidates);
     expect(result.ok).toBe(true);
   });
@@ -477,18 +663,33 @@ describe("live tree — real scan, real exceptions file", () => {
   it("the real live-tree scan reports 0 findings (every real 'unsafe' candidate is a named, reasoned exception)", () => {
     const exceptionsPath = join(API_ROOT, "scripts/lint-saldo-lock-derivation-exceptions.json");
     const raw = JSON.parse(readFileSync(exceptionsPath, "utf8"));
-    const files = discoverSourceFiles(REPO_ROOT);
-    const candidates = files.flatMap((f) => analyzeFile(join(REPO_ROOT, f), f));
+    const candidates = analyzeAllRealFiles();
     const validated = validateExceptionsDocument(raw, candidates);
     expect(validated.ok).toBe(true);
     if (!validated.ok) return;
     expect(computeFindings(candidates, validated.entries)).toEqual([]);
   });
 
-  it("the fifth site (shift-cleanup.ts) itself resolves 'safe' on the live tree", () => {
+  // Phase 100B Plan 07 — the fifth site's OWN query moved behind the SaldoSnapshot facade
+  // (getClosedMonthsForDates, W2a); this is no longer "the file itself resolves safe" (there is
+  // no periodStart candidate left in shift-cleanup.ts at all — the query moved) but "the facade
+  // function shift-cleanup.ts now calls resolves safe, BECAUSE this gate's facade-parameter
+  // resolver traces back into shift-cleanup.ts's own (still-correct) monthLockBoundUtc() call" —
+  // the same underlying guarantee, proven the new way the refactor requires.
+  it("the fifth site's query (now getClosedMonthsForDates, called from shift-cleanup.ts) resolves 'safe' via the facade-parameter resolver", () => {
     const relFile = "apps/api/src/contexts/scheduling/shift-cleanup.ts";
-    const candidates = analyzeFile(join(REPO_ROOT, relFile), relFile);
-    expect(candidates.length).toBeGreaterThan(0);
-    for (const c of candidates) expect(c.verdict).toBe("safe");
+    expect(
+      analyzeFile(join(REPO_ROOT, relFile), relFile).length,
+      "shift-cleanup.ts itself no longer has a periodStart candidate — the query moved behind the facade",
+    ).toBe(0);
+
+    const facadeFile = "apps/api/src/contexts/working-time-account/facade/saldo-snapshot.ts";
+    const files = discoverSourceFiles(REPO_ROOT);
+    const resolver = buildFacadeParamResolver(REPO_ROOT, files);
+    const facadeCandidates = analyzeFile(join(REPO_ROOT, facadeFile), facadeFile, resolver);
+    const getClosedMonthsForDatesCandidate = facadeCandidates.find((c) =>
+      c.snippet.includes("{ in: monthStarts }"),
+    );
+    expect(getClosedMonthsForDatesCandidate?.verdict).toBe("safe");
   });
 });

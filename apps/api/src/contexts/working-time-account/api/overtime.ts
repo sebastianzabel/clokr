@@ -169,7 +169,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
       } else {
         balance = Number(account.balanceHours);
         try {
-          const confirmed = await getConfirmedCarryOver(app, employeeId);
+          const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, employee.tenantId);
           confirmedMinutes = confirmed.minutes;
           hasClosedMonth = confirmed.hasClosedMonth;
         } catch (fallbackErr) {

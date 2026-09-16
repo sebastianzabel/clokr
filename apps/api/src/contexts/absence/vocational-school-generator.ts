@@ -20,6 +20,7 @@ import type { FastifyInstance } from "fastify";
 import { cleanupShiftsForBSAbsence } from "../scheduling/shift-cleanup";
 import { BS_PATTERN_ORDER_BY, findAmbiguousClaimDates } from "./vocational-school-pattern-order.js";
 import { getTenantTimezone, monthRangeUtc } from "../working-time-account/timezone";
+import { getClosedMonthsInRange } from "../working-time-account"; // Phase 100B Plan 07 — W2b
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -299,20 +300,15 @@ async function runOrPreview(
   //    periodStart of the window's first month, not naive Date.UTC(year, month, 1) —
   //    the real value falls on the last day of the PREVIOUS month for a tenant ahead
   //    of UTC, which sits strictly before a naive `gte` bound and was silently dropped.
-  const lockedSnapshots = await prisma.saldoSnapshot.findMany({
-    where: {
-      employeeId: { in: employeeIds },
-      periodType: "MONTHLY",
-      periodStart: {
-        gte: monthLockBoundUtc(windowStart, tenantTz),
-        lte: monthLockBoundUtc(windowEnd, tenantTz),
-      },
-      superseded: false,
-    },
-    select: { employeeId: true, periodStart: true },
-  });
-  const lockedSet = new Set<string>(
-    lockedSnapshots.map((s) => `${s.employeeId}::${toIsoDate(s.periodStart)}`),
+  // Phase 100B Plan 07 (W2b, getClosedMonthsInRange) — the range shape. Returns the composite
+  // `${employeeId}::${isoDate}` Set directly (calendar-date-only, matching this file's own
+  // `toIsoDate`-keyed lookups below unchanged).
+  const lockedSet = await getClosedMonthsInRange(
+    prisma,
+    employeeIds,
+    opts.tenantId,
+    monthLockBoundUtc(windowStart, tenantTz),
+    monthLockBoundUtc(windowEnd, tenantTz),
   );
 
   // 3.5. Phase 103 Task 2 (D-05/D-06/D-07) — Bulk-fetch non-deleted TimeEntry rows in

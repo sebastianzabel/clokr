@@ -22,6 +22,7 @@ import {
 } from "./pdf";
 import { selfHealUsedDays, loadVacationTypeMeta } from "../contexts/absence/leave-self-heal";
 import { computeMonthSaldo } from "../contexts/working-time-account/month-saldo";
+import { getMonthClosingBalance } from "../contexts/working-time-account"; // Phase 100B Plan 07 — W4
 import { isSickLeaveTypeCode } from "../contexts/absence/leave-type";
 import type { LeaveTypeCode } from "@clokr/db";
 
@@ -491,6 +492,7 @@ function computeEmployeeSummary(
 async function resolveReportOvertimeHours(
   app: FastifyInstance,
   emp: EmployeeWithIncludes,
+  tenantId: string,
   year: number,
   month: number,
   monthStart: Date,
@@ -510,19 +512,13 @@ async function resolveReportOvertimeHours(
       return { hours: 0, confirmed: false, labelled: false };
     }
 
-    // CLOSED month → immutable snapshot balance (all types).
-    const snapshot = await app.prisma.saldoSnapshot.findFirst({
-      where: {
-        employeeId: emp.id,
-        periodType: "MONTHLY",
-        periodStart: monthStart,
-        superseded: false,
-      },
-      select: { balanceMinutes: true },
-    });
-    if (snapshot) {
+    // CLOSED month → immutable snapshot balance (all types). Phase 100B Plan 07 — W4
+    // (getMonthClosingBalance); bare periodStart:monthStart comparison preserved exactly, see
+    // facade/saldo-snapshot.ts's module header on why this is NOT part of the W1 D1 decision.
+    const balanceMinutes = await getMonthClosingBalance(app.prisma, emp.id, tenantId, monthStart);
+    if (balanceMinutes !== null) {
       return {
-        hours: Math.round((snapshot.balanceMinutes / 60) * 100) / 100,
+        hours: Math.round((balanceMinutes / 60) * 100) / 100,
         confirmed: true,
         labelled: true,
       };
@@ -1430,7 +1426,15 @@ export async function reportRoutes(app: FastifyInstance) {
         hours: reportOvertimeHours,
         confirmed: reportOvertimeConfirmed,
         labelled: reportOvertimeLabelled,
-      } = await resolveReportOvertimeHours(app, emp, y, m, start, summary.overtimeHours);
+      } = await resolveReportOvertimeHours(
+        app,
+        emp,
+        req.user.tenantId,
+        y,
+        m,
+        start,
+        summary.overtimeHours,
+      );
 
       const pdfBuffer = await generateMonthlyReportPdf({
         tenantName: tenant?.name ?? "",
@@ -1545,7 +1549,15 @@ export async function reportRoutes(app: FastifyInstance) {
             hours: overtimeHours,
             confirmed: overtimeConfirmedResolved,
             labelled: overtimeLabelled,
-          } = await resolveReportOvertimeHours(app, emp, y, m, start, summary.overtimeHours);
+          } = await resolveReportOvertimeHours(
+            app,
+            emp,
+            req.user.tenantId,
+            y,
+            m,
+            start,
+            summary.overtimeHours,
+          );
           return {
             employeeName: `${emp.firstName} ${emp.lastName}`,
             employeeNumber: emp.employeeNumber,

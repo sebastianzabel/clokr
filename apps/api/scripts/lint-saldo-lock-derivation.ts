@@ -69,6 +69,36 @@
  * is not "all clean" — it is a broken gate reporting success on work it never did. See the
  * zero-candidate guard in `run()` below.
  *
+ * ── Facade parameter resolution (100B Plan 07) ────────────────────────────────────────────────
+ * Phase 100B (issue #100) puts a facade layer between a route/composition caller and Prisma. That
+ * moves a `periodStart` comparison's VALUE from a same-file local variable into a bare FACADE
+ * FUNCTION PARAMETER — invisible to the single-file rule above by construction, which would
+ * silently downgrade an already-verdicted "safe"/"unsafe" candidate to "unknown" for no reason but
+ * the refactor itself. That is not acceptable: 100B-07-PLAN.md's own checkpoint says so explicitly
+ * ("moving a lock query behind a facade must not turn a safe verdict into unknown... fix the
+ * gate's tracing, do not add an exception").
+ *
+ * The fix is a BOUNDED, ONE-HOP extension, not a general interprocedural engine (the "single-file"
+ * promise above still holds for every ordinary function): for a `periodStart` candidate inside an
+ * exported function declaration in a `contexts/*\/facade/*.ts` file (`isFacadeFilePath`), when the
+ * trace bottoms out on a bare identifier matching that function's OWN declared parameter name, the
+ * gate looks up every real call site of that function anywhere in the scanned tree
+ * (`buildFacadeParamResolver`), extracts the argument expression passed at the matching parameter
+ * position, and evaluates THAT expression using the caller's own file bindings — exactly the same
+ * `isSafeExpr` used everywhere else, just given a different file's local scope to start from. The
+ * nested evaluation runs with facade-parameter resolution turned OFF (`enclosingFacadeFn`/
+ * `resolveFacadeParam` both `null`), so an unresolved identifier at the CALLER is reported
+ * "unknown", never chased through a second facade boundary — one hop, not arbitrary depth.
+ *
+ * This is deliberately restricted to BARE identifiers matching a TOP-LEVEL parameter name of an
+ * EXPORTED function declaration in a facade file. A parameter reached only through property access
+ * on a wrapping object (e.g. a discriminated-union query parameter's `query.monthStarts`) is NOT
+ * resolved this way — which is exactly why `getClosedMonthsForDates`/`getClosedMonthsInRange` (W2a/
+ * W2b) are two separately-named functions taking bare `monthStarts`/`from`/`to` parameters, rather
+ * than one function over a `{monthStarts} | {from, to}` union: the union shape would have been
+ * invisible to this exact resolution rule, silently losing `shift-cleanup.ts`'s and
+ * `vocational-school-generator.ts`'s own pre-plan "safe" verdicts.
+ *
  * ── Exceptions ────────────────────────────────────────────────────────────────────────────────
  * Live in `lint-saldo-lock-derivation-exceptions.json`, one entry per
  * `{ file, line, disposition, reason, trackedIssue? }`, mirroring
@@ -257,6 +287,13 @@ function calleeParts(expr: ts.CallExpression): {
  * or self recursion) by returning "unknown" rather than looping forever — a same-file helper that
  * genuinely recurses is already unusual enough that "unknown" (not verified, not flagged) is the
  * honest answer, not a crash.
+ *
+ * `enclosingFacadeFn`/`resolveFacadeParam` (100B Plan 07) — see "Facade parameter resolution"
+ * in the module header: when set, an identifier that resolves to NEITHER `paramOverride` NOR a
+ * same-file `localBindings` entry is checked against the CURRENT facade function's OWN declared
+ * parameter list before giving up as "unknown". `resolveFacadeParam` is null for every ordinary
+ * (non-facade-file) analysis — this is a strictly ADDITIVE resolution path, never a replacement of
+ * the single-file rule for anything else.
  */
 function isSafeExpr(
   expr: ts.Expression,
@@ -265,9 +302,18 @@ function isSafeExpr(
     localBindings: Map<string, ts.Expression>;
     paramOverride: { name: string; verdict: Verdict } | null;
     visiting: Set<string>;
+    enclosingFacadeFn: { name: string; params: string[] } | null;
+    resolveFacadeParam: FacadeParamResolver | null;
   },
 ): Verdict {
-  const { localFunctions, localBindings, paramOverride, visiting } = ctx;
+  const {
+    localFunctions,
+    localBindings,
+    paramOverride,
+    visiting,
+    enclosingFacadeFn,
+    resolveFacadeParam,
+  } = ctx;
 
   if (ts.isParenthesizedExpression(expr)) {
     return isSafeExpr(expr.expression, ctx);
@@ -398,17 +444,72 @@ function isSafeExpr(
   if (ts.isIdentifier(expr)) {
     if (paramOverride && expr.text === paramOverride.name) return paramOverride.verdict;
     const binding = localBindings.get(expr.text);
-    if (!binding) return "unknown"; // function parameter, import binding, or truly unresolved
-    return isSafeExpr(binding, ctx);
+    if (binding) return isSafeExpr(binding, ctx);
+    if (resolveFacadeParam && enclosingFacadeFn) {
+      const paramIndex = enclosingFacadeFn.params.indexOf(expr.text);
+      if (paramIndex !== -1) {
+        return resolveFacadeParam(enclosingFacadeFn.name, paramIndex, visiting);
+      }
+    }
+    return "unknown"; // function parameter, import binding, or truly unresolved
   }
 
   return "unknown";
 }
 
+function hasExportModifier(node: ts.Node): boolean {
+  if (!ts.canHaveModifiers(node)) return false;
+  const modifiers = ts.getModifiers(node);
+  return !!modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+}
+
+/** Climbs from `node` to the nearest enclosing `export function foo(...)` declaration (a named,
+ * exported function DECLARATION only — not an arrow/expression, matching `lint-facade-signatures.ts`'s
+ * own `hasExportModifier` node shape for exactly the same reason: that is what a facade file
+ * actually contains). Returns its name and parameter names in declared order, or `null` if `node`
+ * is not inside one. */
+function findEnclosingExportedFunction(node: ts.Node): { name: string; params: string[] } | null {
+  let current: ts.Node | undefined = node;
+  while (current) {
+    if (ts.isFunctionDeclaration(current) && current.name && hasExportModifier(current)) {
+      return {
+        name: current.name.text,
+        params: current.parameters
+          .map((p) => (ts.isIdentifier(p.name) ? p.name.text : null))
+          .filter((n): n is string => n !== null),
+      };
+    }
+    current = current.parent;
+  }
+  return null;
+}
+
+/** 100B Plan 07 — see "Facade parameter resolution" in the module header. Resolves whether the
+ * argument passed for `functionName`'s `paramIndex`-th parameter, at every real call site found
+ * anywhere in the scanned tree, traces back to `monthRangeUtc()`. `visiting` is threaded through
+ * (as `"functionName#paramIndex"` keys, a different string shape than the same-file helper guard's
+ * bare function names, so the two never collide) to break a cycle. Bounded to exactly ONE hop:
+ * the nested `isSafeExpr` call this makes runs with `enclosingFacadeFn`/`resolveFacadeParam` both
+ * `null` — an unresolved identifier at the CALLER is reported "unknown", not chased through a
+ * second hop. This is a deliberate scope limit (module header), not an oversight. */
+export type FacadeParamResolver = (
+  functionName: string,
+  paramIndex: number,
+  visiting: Set<string>,
+) => Verdict;
+
 /** Every `where:`-scoped `periodStart` candidate (with a `periodType: "MONTHLY"` sibling) in
  * `sourceText`, with its computed verdict. Pure function of the text — `__tests__` drives this
- * directly against fixture strings, exactly like `lint-facade-signatures.ts`'s `analyzeSource`. */
-export function analyzeSource(sourceText: string, repoRelativePath: string): Candidate[] {
+ * directly against fixture strings, exactly like `lint-facade-signatures.ts`'s `analyzeSource`.
+ *
+ * `resolveFacadeParam` (100B Plan 07) is optional and defaults to `null` — every existing/fixture
+ * call site keeps its exact prior behaviour. `run()` supplies a real resolver, built once, only
+ * for facade-directory files (see `isFacadeFilePath` / `buildFacadeParamResolver` below). */
+export function analyzeSource(
+  sourceText: string,
+  repoRelativePath: string,
+  resolveFacadeParam: FacadeParamResolver | null = null,
+): Candidate[] {
   const sourceFile = ts.createSourceFile(
     repoRelativePath,
     sourceText,
@@ -448,6 +549,8 @@ export function analyzeSource(sourceText: string, repoRelativePath: string): Can
             localBindings,
             paramOverride: null,
             visiting: new Set(),
+            enclosingFacadeFn: resolveFacadeParam ? findEnclosingExportedFunction(node) : null,
+            resolveFacadeParam,
           });
           const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
           const snippetRaw = node.getText(sourceFile).replace(/\s+/g, " ").trim();
@@ -463,8 +566,111 @@ export function analyzeSource(sourceText: string, repoRelativePath: string): Can
   return candidates;
 }
 
-export function analyzeFile(absPath: string, repoRelativePath: string): Candidate[] {
-  return analyzeSource(readFileSync(absPath, "utf8"), repoRelativePath);
+export function analyzeFile(
+  absPath: string,
+  repoRelativePath: string,
+  resolveFacadeParam: FacadeParamResolver | null = null,
+): Candidate[] {
+  return analyzeSource(readFileSync(absPath, "utf8"), repoRelativePath, resolveFacadeParam);
+}
+
+// ── Facade parameter resolution (100B Plan 07) ───────────────────────────────────────────────────
+//
+// Moving a locked-month query behind a facade (Phase 100B, GitHub issue #100) turns its
+// `periodStart`-comparison value from a same-file local variable into a bare FACADE FUNCTION
+// parameter — invisible to the single-file analysis above by construction, which would silently
+// downgrade an already-verdicted "safe"/"unsafe" candidate to "unknown" for no reason but the
+// refactor itself (100B-07-PLAN.md's own explicit warning: "if it does, that is the gate losing
+// sight of the call — #229 one level up"). The fix is NOT to except the loss; it is to extend the
+// trace exactly one call-site hop, bounded to facade functions only (never a general
+// interprocedural engine — see `FacadeParamResolver`'s own docblock above).
+//
+// `isFacadeFilePath` mirrors `lint-tenant-scoping-types.ts`'s / `lint-facade-signatures.ts`'s own
+// recognition of the same directory shape (`contexts/<x>/facade/*.ts`) — one predicate, matching
+// an already-established pattern, not a fourth independent definition of "is this a facade".
+
+const FACADE_PATH_RE = /\/contexts\/[^/]+\/facade\//;
+
+export function isFacadeFilePath(repoRelativePath: string): boolean {
+  return FACADE_PATH_RE.test(repoRelativePath);
+}
+
+type ParsedFile = {
+  sourceFile: ts.SourceFile;
+  localFunctions: Map<string, FunctionLike>;
+  localBindings: Map<string, ts.Expression>;
+};
+
+/**
+ * Builds the resolver `run()` passes into every facade file's `analyzeFile` call. Indexes every
+ * bare-identifier call expression (`someFunction(...)`, never `obj.someFunction(...)` — facade
+ * functions are always imported as named exports and called directly, never as a method) across
+ * the WHOLE scanned tree, keyed by callee name, ONCE — so N candidates across M facade files never
+ * re-scan the tree N×M times. Each caller file is parsed at most once (`fileCache`).
+ */
+export function buildFacadeParamResolver(
+  repoRoot: string,
+  files: readonly string[],
+): FacadeParamResolver {
+  const fileCache = new Map<string, ParsedFile>();
+  function getParsedFile(relFile: string): ParsedFile {
+    let entry = fileCache.get(relFile);
+    if (!entry) {
+      const text = readFileSync(join(repoRoot, relFile), "utf8");
+      const sourceFile = ts.createSourceFile(relFile, text, ts.ScriptTarget.Latest, true);
+      entry = {
+        sourceFile,
+        localFunctions: collectLocalFunctions(sourceFile),
+        localBindings: collectLocalBindings(sourceFile),
+      };
+      fileCache.set(relFile, entry);
+    }
+    return entry;
+  }
+
+  const callSites = new Map<string, { file: string; args: ts.Expression[] }[]>();
+  for (const relFile of files) {
+    const { sourceFile } = getParsedFile(relFile);
+    function visit(node: ts.Node): void {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+        const name = node.expression.text;
+        const list = callSites.get(name) ?? [];
+        list.push({ file: relFile, args: [...node.arguments] });
+        callSites.set(name, list);
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(sourceFile);
+  }
+
+  const resolve: FacadeParamResolver = (functionName, paramIndex, visiting) => {
+    const key = `${functionName}#${paramIndex}`;
+    if (visiting.has(key)) return "unknown"; // cycle guard
+    const sites = callSites.get(functionName);
+    if (!sites || sites.length === 0) {
+      return "unknown"; // no call site found anywhere — honestly unresolved, not assumed safe
+    }
+    const nextVisiting = new Set(visiting);
+    nextVisiting.add(key);
+    const verdicts = sites.map(({ file, args }): Verdict => {
+      const arg = args[paramIndex];
+      if (!arg) return "unknown"; // this call site omitted an optional parameter entirely
+      const { localFunctions, localBindings } = getParsedFile(file);
+      // Exactly one hop (module header / FacadeParamResolver docblock): the nested evaluation
+      // runs with NO facade-param resolution of its own, so an unresolved identifier at the
+      // CALLER is "unknown", never chased through a second facade boundary.
+      return isSafeExpr(arg, {
+        localFunctions,
+        localBindings,
+        paramOverride: null,
+        visiting: new Set(),
+        enclosingFacadeFn: null,
+        resolveFacadeParam: null,
+      });
+    });
+    return combine(verdicts);
+  };
+  return resolve;
 }
 
 // ── Exceptions ────────────────────────────────────────────────────────────────────────────────
@@ -639,7 +845,15 @@ export function run(repoRoot: string): number {
     return 1;
   }
 
-  const candidates = files.flatMap((relFile) => analyzeFile(join(repoRoot, relFile), relFile));
+  // Built once, reused for every facade file — see "Facade parameter resolution" above.
+  const resolveFacadeParam = buildFacadeParamResolver(repoRoot, files);
+  const candidates = files.flatMap((relFile) =>
+    analyzeFile(
+      join(repoRoot, relFile),
+      relFile,
+      isFacadeFilePath(relFile) ? resolveFacadeParam : null,
+    ),
+  );
 
   // The #229 stance, applied to CANDIDATES, not just files: SaldoSnapshot.periodStart is a real,
   // heavily-used field (19+ files reference it today) — zero MONTHLY where-candidates found across

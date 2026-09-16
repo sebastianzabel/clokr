@@ -1,6 +1,7 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
+import { countSnapshotsBefore } from "../../working-time-account"; // Phase 100B Plan 07 — W7
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -51,12 +52,12 @@ export const dataRetentionPlugin = fp(async (app) => {
 
         // Verify snapshots exist for the cutoff period
         // We only archive if there are snapshots covering the data we're about to soft-delete
-        const snapshotCount = await app.prisma.saldoSnapshot.count({
-          where: {
-            employeeId: { in: employeeIds },
-            periodEnd: { lte: cutoffDate },
-          },
-        });
+        const snapshotCount = await countSnapshotsBefore(
+          app.prisma,
+          employeeIds,
+          tenant.id,
+          cutoffDate,
+        );
 
         if (snapshotCount === 0) {
           app.log.warn(

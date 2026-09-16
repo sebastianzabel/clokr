@@ -30,7 +30,12 @@ import {
 } from "../retro-config"; // Phase 76.29 — RETRO-01 window guard
 import { auditReasonSchema, AUDIT_REASON_REQUIRED } from "../../platform/audit-reason"; // Quick 260824-cjd
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
-import { getOvertimeAccount, setOvertimeAccountBalance } from "../../working-time-account"; // Phase 100B Plan 06 — W8/W14
+import {
+  getOvertimeAccount,
+  setOvertimeAccountBalance,
+  getConfirmedCarryOver,
+  isMonthClosed,
+} from "../../working-time-account"; // Phase 100B Plan 06 — W8/W14; Plan 07 — W3 merge, W1
 
 const nfcPunchSchema = z.object({
   nfcCardId: z.string().min(1),
@@ -335,20 +340,12 @@ export async function validateTimeEntryInvariants(
     }
   }
 
-  // 2. month-lock via SaldoSnapshot (mirror POST) — authoritative even with no entries
-  // findFirst with superseded:false (compound accessor removed, COMP-V1814-04)
+  // 2. month-lock via SaldoSnapshot (mirror POST) — authoritative even with no entries.
+  // Phase 100B Plan 07 (W1, isMonthClosed) — THE canonical Monatsabschluss signal.
   // RETRO-01 C2: lock-check runs FIRST — a locked month returns the lock message, never RETRO_WINDOW_EXCEEDED.
   const { start: lockedMonthStart } = monthRangeUtc(date.getFullYear(), date.getMonth() + 1, tz);
-  const lockedSnapshot = await app.prisma.saldoSnapshot.findFirst({
-    where: {
-      employeeId,
-      periodType: "MONTHLY",
-      periodStart: lockedMonthStart,
-      superseded: false,
-    },
-    select: { id: true },
-  });
-  if (lockedSnapshot) {
+  const monthLocked = await isMonthClosed(app.prisma, employeeId, tenantId, lockedMonthStart);
+  if (monthLocked) {
     return { error: "Monat ist abgeschlossen und kann nicht bearbeitet werden" };
   }
 
@@ -2370,11 +2367,12 @@ export async function computeOvertimeBalanceBreakdown(
 
   const tz = await getTenantTimezone(app.prisma, employee?.tenantId ?? "");
 
-  // Letzten Snapshot suchen (Basis für die Berechnung)
-  const lastSnapshot = await app.prisma.saldoSnapshot.findFirst({
-    where: { employeeId, periodType: "MONTHLY", superseded: false },
-    orderBy: { periodStart: "desc" },
-  });
+  // Find the latest closed month (basis for the computation below). Phase 100B Plan 07
+  // (W3 merge) — this used to be its own direct SaldoSnapshot query (getLatestClosedMonth);
+  // it is now the SAME call as getConfirmedCarryOver (the "Bestätigt" figure), widened to
+  // also carry periodEnd, so the two can never drift into two independently-computed answers
+  // to the same question.
+  const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, employee?.tenantId ?? "");
 
   const now = new Date();
   const todayStr = dateStrInTz(now, tz);
@@ -2386,10 +2384,10 @@ export async function computeOvertimeBalanceBreakdown(
   let rangeStart: Date;
   let snapshotCarryOver = 0;
 
-  if (lastSnapshot) {
+  if (confirmed.hasClosedMonth) {
     // Start: Tag nach dem Snapshot-Ende
-    rangeStart = new Date(lastSnapshot.periodEnd.getTime() + 86400000);
-    snapshotCarryOver = lastSnapshot.carryOver;
+    rangeStart = new Date(confirmed.periodEnd!.getTime() + 86400000);
+    snapshotCarryOver = confirmed.minutes;
   } else {
     // No non-superseded snapshot: recompute from hireDate so that reopen of the
     // only/earliest snapshot includes the full employment history (D-05 fix).
@@ -2955,7 +2953,7 @@ export async function computeOvertimeBalanceBreakdown(
   // openMonthMinutes is ALWAYS total − confirmed (a subtraction, never a second call into the
   // saldo core) — 97-CONTEXT's "one computation path" rule (Phase 98 exists precisely because a
   // value once had two owners that diverged silently; do not repeat that shape here).
-  const hasClosedMonth = lastSnapshot !== null;
+  const hasClosedMonth = confirmed.hasClosedMonth;
   // TRACK_ONLY already forces the reported total to 0 above; force BOTH split figures to 0 too
   // so a legacy non-zero snapshotCarryOver never surfaces as a phantom negative forecast
   // (naive 0 − confirmedMinutes would go negative). hasClosedMonth still reports the truth.
