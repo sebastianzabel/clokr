@@ -103,6 +103,13 @@ const CASES: readonly Case[] = [
     via: "fetch-then-compare",
   },
   {
+    file: "shape6d-promise-all-destructure.ts",
+    model: "employee",
+    method: "findUnique",
+    scoped: true,
+    via: "fetch-then-compare",
+  },
+  {
     file: "shape6c-guard-fetch.ts",
     model: "coverageRule",
     method: "update",

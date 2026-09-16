@@ -262,7 +262,38 @@ function collectWhereIdentifiers(
   return ids;
 }
 
-/** `const V = await <prismaCall>` (or without `await`) -> "V"; otherwise null. */
+/** `Promise.all(...)` — the property-access shape, not a locally reassigned alias (measured: this
+ * codebase never reassigns the global `Promise`). */
+function isPromiseAllCall(expr: ts.Node): expr is ts.CallExpression {
+  return (
+    ts.isCallExpression(expr) &&
+    ts.isPropertyAccessExpression(expr.expression) &&
+    ts.isIdentifier(expr.expression.expression) &&
+    expr.expression.expression.text === "Promise" &&
+    expr.expression.name.text === "all"
+  );
+}
+
+/**
+ * `const V = await <prismaCall>` (or without `await`) -> "V"; otherwise null.
+ *
+ * Also recognises `const [a, V] = await Promise.all([callA, judgedCall])` (D-17 checkpoint
+ * triage, Phase 204 Plan 04 — a real recognition gap, not a Shape-7 exception: this is the SAME
+ * "the judged call's own result is compared later" idiom as the plain `const V = await
+ * judgedCall` form, only spelled with `Promise.all` for concurrency. `overtime.ts:93-116`
+ * destructures `const [schedule, employee] = await Promise.all([...])` and compares `employee`
+ * against `req.user.tenantId` a few lines down — without this, that self-compare was invisible
+ * to `findScopingComparison`'s rule (a) purely because of how the two awaited fetches are spelled,
+ * not because the fetch-then-compare idiom itself was missing).
+ *
+ * Resolution walks: is `node` (optionally wrapped in its own `await`, e.g. inside a `Promise.all`
+ * array some codebases `await` per-element — not observed in this repo, but cheap to allow) an
+ * element of an `ArrayLiteralExpression` that is itself the sole argument to `Promise.all(...)`?
+ * If so, find `node`'s POSITIONAL INDEX in that array and require the SAME index in an
+ * `ArrayBindingPattern` on the enclosing `const [...] = await Promise.all([...])` declaration —
+ * position, not name, is the only thing tying an array-destructured element back to its source
+ * expression.
+ */
 function getAssignedVariableName(node: ts.CallExpression): string | null {
   let current: ts.Node = node;
   let parent: ts.Node | undefined = current.parent;
@@ -273,6 +304,54 @@ function getAssignedVariableName(node: ts.CallExpression): string | null {
   if (parent && ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
     return parent.name.text;
   }
+
+  // `Promise.all([..., node, ...])` — node (or `await node`) is an array element.
+  let element: ts.Node = current;
+  let elementParent: ts.Node | undefined = element.parent;
+  if (elementParent && ts.isAwaitExpression(elementParent)) {
+    element = elementParent;
+    elementParent = element.parent;
+  }
+  if (!elementParent || !ts.isArrayLiteralExpression(elementParent)) return null;
+
+  const index = elementParent.elements.indexOf(element as ts.Expression);
+  if (index === -1) return null;
+
+  const arrayLiteral = elementParent;
+  const promiseAllCallCandidate = arrayLiteral.parent;
+  if (
+    !promiseAllCallCandidate ||
+    !isPromiseAllCall(promiseAllCallCandidate) ||
+    promiseAllCallCandidate.arguments[0] !== arrayLiteral ||
+    promiseAllCallCandidate.arguments.length !== 1
+  ) {
+    return null;
+  }
+
+  let promiseAllExpr: ts.Node = promiseAllCallCandidate;
+  let declParent: ts.Node | undefined = promiseAllExpr.parent;
+  if (declParent && ts.isAwaitExpression(declParent)) {
+    promiseAllExpr = declParent;
+    declParent = promiseAllExpr.parent;
+  }
+
+  if (
+    !declParent ||
+    !ts.isVariableDeclaration(declParent) ||
+    !ts.isArrayBindingPattern(declParent.name)
+  ) {
+    return null;
+  }
+
+  const bindingElement = declParent.name.elements[index];
+  if (
+    bindingElement &&
+    ts.isBindingElement(bindingElement) &&
+    ts.isIdentifier(bindingElement.name)
+  ) {
+    return bindingElement.name.text;
+  }
+
   return null;
 }
 
