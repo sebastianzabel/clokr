@@ -149,20 +149,20 @@
     "handler": "PUT /api/v1/shifts/:id",
     "validatedAt": 2091,
     "calls": [
-      { "call": "shift.findUnique", "line": 2079 },
-      { "call": "shift.update", "line": 2265 }
+      { "call": "shift.findUnique", "line": 2083 },
+      { "call": "shift.update", "line": 2269 }
     ],
-    "reason": "Shift has no tenantId of its own. The shift is first fetched by id (line 2079, unscoped by itself), then its OWNER is validated by a SECOND fetch+compare on a DERIVED field (existingOwner = employee.findUnique({ id: existing.employeeId }), compared at line 2091) BEFORE the fetched row is read or written anywhere below — including the shift.update at line 2265, which reuses the SAME id. This mirrors overtime.ts's own comment ('Shift has no tenantId of its own — go via employee')."
+    "reason": "Shift has no tenantId of its own. The shift is first fetched by id (line 2083, unscoped by itself), then its OWNER is validated by a SECOND fetch+compare on a DERIVED field (existingOwner = employee.findUnique({ id: existing.employeeId }), compared at line 2091) BEFORE the fetched row is read or written anywhere below — including the shift.update at line 2269, which reuses the SAME id. This mirrors overtime.ts's own comment ('Shift has no tenantId of its own — go via employee')."
   },
   {
     "file": "apps/api/src/routes/shifts.ts",
     "handler": "DELETE /api/v1/shifts/:id",
     "validatedAt": 3191,
     "calls": [
-      { "call": "shift.findUnique", "line": 3182 },
-      { "call": "shift.delete", "line": 3215 }
+      { "call": "shift.findUnique", "line": 3186 },
+      { "call": "shift.delete", "line": 3219 }
     ],
-    "reason": "Same derived-field second-hop guard as the PUT /:id handler above: the shift is fetched by id (line 3182), then existingOwner = employee.findUnique({ id: existing.employeeId }) is compared at line 3191 BEFORE the shift is read or deleted — including the shift.delete at line 3215, which reuses the SAME id."
+    "reason": "Same derived-field second-hop guard as the PUT /:id handler above: the shift is fetched by id (line 3186), then existingOwner = employee.findUnique({ id: existing.employeeId }) is compared at line 3191 BEFORE the shift is read or deleted — including the shift.delete at line 3219, which reuses the SAME id."
   },
   {
     "file": "apps/api/src/routes/test-bootstrap.ts",
@@ -190,26 +190,26 @@
   {
     "file": "apps/api/src/routes/time-entries.ts",
     "handler": "POST /api/v1/time-entries (manual entry)",
-    "validatedAt": 1034,
-    "calls": [{ "call": "retroEntryRequest.findFirst", "line": 1105 }],
-    "reason": "targetEmployee (and therefore employeeId) is tenant-validated inline at line 1034 (employee.findFirst({ id: employeeId, tenantId: req.user.tenantId })); retroEntryRequest.findFirst reuses the SAME validated employeeId in its where a few lines later."
+    "validatedAt": 1043,
+    "calls": [{ "call": "retroEntryRequest.findFirst", "line": 1114 }],
+    "reason": "targetEmployee (and therefore employeeId) is tenant-validated inline at line 1043 (employee.findFirst({ id: employeeId, tenantId: req.user.tenantId })); retroEntryRequest.findFirst reuses the SAME validated employeeId in its where a few lines later."
   },
   {
     "file": "apps/api/src/routes/time-entries.ts",
     "handler": "PUT /api/v1/time-entries/:id",
-    "validatedAt": 1542,
+    "validatedAt": 1551,
     "calls": [
-      { "call": "retroEntryRequest.findFirst", "line": 1676 },
-      { "call": "break.deleteMany", "line": 1811 },
-      { "call": "break.deleteMany", "line": 1833 }
+      { "call": "retroEntryRequest.findFirst", "line": 1685 },
+      { "call": "break.deleteMany", "line": 1820 },
+      { "call": "break.deleteMany", "line": 1842 }
     ],
-    "reason": "existing (the TimeEntry) is fetch-then-compared via existing.employee.tenantId at line 1542. retroEntryRequest.findFirst at line 1676 is scoped by existing.employeeId — a field read off that already-validated row, not a client-supplied value. Both break.deleteMany calls reuse existing's own id (the entry's own primary key, validated at fetch) as timeEntryId."
+    "reason": "existing (the TimeEntry) is fetch-then-compared via existing.employee.tenantId at line 1551. retroEntryRequest.findFirst at line 1685 is scoped by existing.employeeId — a field read off that already-validated row, not a client-supplied value. Both break.deleteMany calls reuse existing's own id (the entry's own primary key, validated at fetch) as timeEntryId."
   },
   {
     "file": "apps/api/src/routes/time-entries.ts",
     "handler": "PATCH /api/v1/time-entries/:id/break-status",
     "validatedAt": 2174,
-    "calls": [{ "call": "break.deleteMany", "line": 2243 }],
-    "reason": "entry (the TimeEntry) is fetch-then-compared via entry.employee.tenantId at line 2174; break.deleteMany at line 2243 reuses the SAME validated id as timeEntryId later in the same handler, after the cross-tenant branch already returned 404."
+    "calls": [{ "call": "break.deleteMany", "line": 2252 }],
+    "reason": "entry (the TimeEntry) is fetch-then-compared via entry.employee.tenantId at line 2174; break.deleteMany at line 2252 reuses the SAME validated id as timeEntryId later in the same handler, after the cross-tenant branch already returned 404."
   }
 ]
