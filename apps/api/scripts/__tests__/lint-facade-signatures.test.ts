@@ -317,8 +317,18 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // deletePresenceDevice) and TWO new named F3 exceptions (getPresenceDevice,
   // deletePresenceDevice — 'employeeId' is the caller's own principal identifier, same shape as
   // clearEntryNotesForEmployee/hardDeleteTimeDataForEmployee above).
-  // 9 files, 42 exported functions total, 7 exception entries, 0 findings.
-  it("the real tree has exactly 42 exported facade functions today, 7 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  // Phase 100B Plan 10 (Wave 5, opening) added TWO more real facade files:
+  // `contexts/absence/facade/leave-types.ts` (A17-A19 — 4 exported functions: getLeaveTypeByCode,
+  // getLeaveTypeByDisplayName, listLeaveTypes, updateLeaveType) and
+  // `contexts/absence/facade/entitlements.ts` (A11-A16 plus the two H1 deviation-preserving
+  // siblings — 9 exported functions: getVacationEntitlement, listEntitlementsForYear,
+  // getEntitlementsForEmployee, getEntitlementById, getExpiringCarryOver,
+  // upsertVacationEntitlement, getVacationEntitlementByDisplayName,
+  // getVacationEntitlementsForYearByDisplayName, hardDeleteEntitlementsForEmployee) and ONE new
+  // named F3 exception (hardDeleteEntitlementsForEmployee — same shape as
+  // hardDeleteOvertimeDataForEmployee/hardDeleteTimeDataForEmployee above).
+  // 11 files, 55 exported functions total, 8 exception entries, 0 findings.
+  it("the real tree has exactly 55 exported facade functions today, 8 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -330,6 +340,8 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
         "apps/api/src/contexts/time-tracking/facade/time-entries.ts",
         "apps/api/src/contexts/working-time-account/facade/overtime-account.ts",
         "apps/api/src/contexts/working-time-account/facade/saldo-snapshot.ts",
+        "apps/api/src/contexts/absence/facade/leave-types.ts",
+        "apps/api/src/contexts/absence/facade/entitlements.ts",
       ].sort((a, b) => a.localeCompare(b)),
     );
 
@@ -338,7 +350,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(42);
+    expect(functions).toHaveLength(55);
 
     const rawExceptions = JSON.parse(
       readFileSync(
@@ -349,7 +361,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     const validated = validateExceptionsDocument(rawExceptions, functions);
     expect(validated.ok).toBe(true);
     if (validated.ok) {
-      expect(validated.entries).toHaveLength(7);
+      expect(validated.entries).toHaveLength(8);
       const findings = computeFindings(functions, validated.entries);
       expect(findings).toEqual([]);
     }

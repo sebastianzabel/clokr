@@ -19,6 +19,7 @@ import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../../platform/anonymize";
 import { updateOvertimeAccount } from "../../time-tracking/api/time-entries";
 import { isMonthClosed } from "../../working-time-account"; // Phase 100B Plan 07 — W1
 import { mondayOfWeekUtc } from "../../absence/vacation-calc"; // Phase 107 (D-14) — same Monday-cutting primitive as :709-718
+import { listLeaveTypes } from "../../absence"; // Phase 100B Plan 10 — A18
 import {
   recalcProvisionalLeaveForShiftChange,
   type RecalcDeps,
@@ -890,10 +891,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           },
           orderBy: { lastName: "asc" },
         }),
-        app.prisma.leaveType.findMany({
-          where: { tenantId },
-          select: { id: true, code: true },
-        }),
+        listLeaveTypes(app.prisma, tenantId),
         app.prisma.leaveRequest.findMany({
           where: {
             employee: { tenantId },

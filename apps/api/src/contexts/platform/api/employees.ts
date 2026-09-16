@@ -33,6 +33,10 @@ import {
   BS_BLOCK_WEEKLY_MIN_BOUND,
   BS_BLOCK_WEEKLY_MAX_BOUND,
 } from "../../absence/vocational-school-constants";
+import {
+  getVacationEntitlementByDisplayName,
+  hardDeleteEntitlementsForEmployee,
+} from "../../absence"; // Phase 100B Plan 10 — H1 sibling / F3
 
 // ── Retention constant ─────────────────────────────────────────────────────
 const DEFAULT_RETENTION_YEARS = 10;
@@ -607,28 +611,27 @@ export async function employeeRoutes(app: FastifyInstance) {
       if (effectiveExitDate !== null) {
         const exitYear = effectiveExitDate.getFullYear();
         try {
-          // Find the VACATION leave type for this tenant
-          const vacLeaveType = await app.prisma.leaveType.findFirst({
-            where: { tenantId: req.user.tenantId, name: "Urlaub" },
-          });
-          if (vacLeaveType) {
-            const entitlement = await app.prisma.leaveEntitlement.findFirst({
-              where: { employeeId: id, leaveTypeId: vacLeaveType.id, year: exitYear },
-            });
-            if (entitlement) {
-              const proRata = calculateProRataVacation(
-                Number(entitlement.totalDays),
-                exitYear,
-                effectiveExitDate,
-              );
-              const used = Number(entitlement.usedDays);
-              if (used > proRata) {
-                proRataWarning = {
-                  used,
-                  entitlement: proRata,
-                  message: `Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt (${used} Tage) als ihm anteilig zusteht (${proRata} Tage). Bitte prüfen Sie, ob eine Rückforderung nötig ist.`,
-                };
-              }
+          // Phase 100B Plan 10 (H1 deviation, preserved verbatim): resolves the "Urlaub"-NAMED
+          // leave type, not by code — see contexts/absence/facade/leave-types.ts's module header.
+          const entitlement = await getVacationEntitlementByDisplayName(
+            app.prisma,
+            id,
+            req.user.tenantId,
+            exitYear,
+          );
+          if (entitlement) {
+            const proRata = calculateProRataVacation(
+              Number(entitlement.totalDays),
+              exitYear,
+              effectiveExitDate,
+            );
+            const used = Number(entitlement.usedDays);
+            if (used > proRata) {
+              proRataWarning = {
+                used,
+                entitlement: proRata,
+                message: `Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt (${used} Tage) als ihm anteilig zusteht (${proRata} Tage). Bitte prüfen Sie, ob eine Rückforderung nötig ist.`,
+              };
             }
           }
         } catch (err) {
@@ -1223,7 +1226,8 @@ export async function employeeRoutes(app: FastifyInstance) {
         await tx.leaveRequest.deleteMany({ where: { employeeId: id } });
         await tx.absence.deleteMany({ where: { employeeId: id } });
         // Cascade-owned models (safe to delete explicitly)
-        await tx.leaveEntitlement.deleteMany({ where: { employeeId: id } });
+        // Phase 100B Plan 10 — F3, contexts/absence facade.
+        await hardDeleteEntitlementsForEmployee(tx, id);
         await tx.workSchedule.deleteMany({ where: { employeeId: id } });
         await hardDeleteOvertimeDataForEmployee(tx, id);
         // Finally: employee and user records

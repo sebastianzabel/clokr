@@ -23,6 +23,11 @@ import {
 import { selfHealUsedDays, loadVacationTypeMeta } from "../contexts/absence/leave-self-heal";
 import { computeMonthSaldo } from "../contexts/working-time-account/month-saldo";
 import { getMonthClosingBalance } from "../contexts/working-time-account"; // Phase 100B Plan 07 — W4
+import {
+  listEntitlementsForYear,
+  getExpiringCarryOver,
+  getEntitlementById,
+} from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15
 import { isSickLeaveTypeCode } from "../contexts/absence/leave-type";
 import type { LeaveTypeCode } from "@clokr/db";
 
@@ -951,16 +956,7 @@ export async function reportRoutes(app: FastifyInstance) {
       const { year } = req.query as { year: string };
       const y = parseInt(year ?? new Date().getFullYear().toString());
 
-      const entitlements = await app.prisma.leaveEntitlement.findMany({
-        where: {
-          year: y,
-          employee: { tenantId: req.user.tenantId },
-        },
-        include: {
-          employee: { select: { id: true, firstName: true, lastName: true, employeeNumber: true } },
-          leaveType: true,
-        },
-      });
+      const entitlements = await listEntitlementsForYear(app.prisma, req.user.tenantId, y);
 
       // Self-heal usedDays from Σ approved LeaveRequest.days BEFORE we shape the response.
       // Mirrors the heal that GET /entitlements/:employeeId has done since v1.4.
@@ -1020,19 +1016,7 @@ export async function reportRoutes(app: FastifyInstance) {
       const cutoff = new Date(now.getTime() + horizon * 24 * 60 * 60 * 1000);
       const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-      const entitlements = await app.prisma.leaveEntitlement.findMany({
-        where: {
-          employee: { tenantId: req.user.tenantId, exitDate: null },
-          carriedOverDays: { gt: 0 },
-          carryOverDeadline: { gt: now, lte: cutoff },
-        },
-        include: {
-          employee: {
-            select: { id: true, firstName: true, lastName: true, employeeNumber: true },
-          },
-          leaveType: { select: { id: true, name: true } },
-        },
-      });
+      const entitlements = await getExpiringCarryOver(app.prisma, req.user.tenantId, now, cutoff);
 
       // Look up the most recent CARRYOVER_WARNED audit log per entitlement,
       // so the UI can show "Letzter Hinweis" without N+1 queries.
@@ -1113,12 +1097,9 @@ export async function reportRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "entitlementId fehlt" });
       }
 
-      // Tenant scope check
-      const ent = await app.prisma.leaveEntitlement.findUnique({
-        where: { id: entitlementId },
-        include: { employee: { select: { tenantId: true } } },
-      });
-      if (!ent || ent.employee.tenantId !== req.user.tenantId) {
+      // Tenant scope check (T-100B-43: constrained IN the query, not fetch-then-compare)
+      const ent = await getEntitlementById(app.prisma, req.user.tenantId, entitlementId);
+      if (!ent) {
         return reply.code(404).send({ error: "Anspruch nicht gefunden" });
       }
 
@@ -1716,16 +1697,7 @@ export async function reportRoutes(app: FastifyInstance) {
           },
           orderBy: { lastName: "asc" },
         }),
-        app.prisma.leaveEntitlement.findMany({
-          where: {
-            year: y,
-            employee: { tenantId: req.user.tenantId },
-          },
-          include: {
-            employee: { select: { firstName: true, lastName: true, employeeNumber: true } },
-            leaveType: true,
-          },
-        }),
+        listEntitlementsForYear(app.prisma, req.user.tenantId, y),
       ]);
 
       // Build leave list data
@@ -1832,16 +1804,7 @@ export async function reportRoutes(app: FastifyInstance) {
         select: { name: true },
       });
 
-      const entitlements = await app.prisma.leaveEntitlement.findMany({
-        where: {
-          year: y,
-          employee: { tenantId: req.user.tenantId },
-        },
-        include: {
-          employee: { select: { firstName: true, lastName: true, employeeNumber: true } },
-          leaveType: true,
-        },
-      });
+      const entitlements = await listEntitlementsForYear(app.prisma, req.user.tenantId, y);
 
       // Group by employee and aggregate (VACATION entitlement only, selected by code)
       const empMap = new Map<

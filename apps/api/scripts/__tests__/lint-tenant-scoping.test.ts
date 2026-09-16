@@ -443,8 +443,9 @@ beforeEach(() => {
   // directory is gone), "apps/api/src/contexts/platform/facade" (Phase 100B Plan 04, D-10/G1,
   // the eighth and first FACADE entry), "apps/api/src/contexts/scheduling/facade" (Phase
   // 100B Plan 05, the ninth), "apps/api/src/contexts/working-time-account/facade" (Phase
-  // 100B Plan 06, the tenth) and "apps/api/src/contexts/time-tracking/facade" (Phase 100B Plan
-  // 08, the eleventh) — so every fixture tree below provisions all eleven up front —
+  // 100B Plan 06, the tenth), "apps/api/src/contexts/time-tracking/facade" (Phase 100B Plan
+  // 08, the eleventh) and "apps/api/src/contexts/absence/facade" (Phase 100B Plan 10, the
+  // twelfth) — so every fixture tree below provisions all twelve up front —
   // individual tests still only WRITE files under the one they care about, matching production
   // shape rather than working around the guard.
   fs.mkdirSync(path.join(tmpRoot, "apps/api/src/services"), { recursive: true });
@@ -474,6 +475,9 @@ beforeEach(() => {
     recursive: true,
   });
   fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/time-tracking/facade"), {
+    recursive: true,
+  });
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/absence/facade"), {
     recursive: true,
   });
 });

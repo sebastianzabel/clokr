@@ -40,5 +40,11 @@
     "function": "deletePresenceDevice",
     "rules": ["F3"],
     "reason": "Plan 100B-09 (Wave 4, closing): identical reasoning to getPresenceDevice's own exception above — 'employeeId' is the caller's own principal identifier, not a second untrusted id; the delete's 'where: { id, employeeId }' carries the real tenant-tighter boundary in the query itself (D-13 way 1', inline-principal-field), same as its sibling read."
+  },
+  {
+    "file": "apps/api/src/contexts/absence/facade/entitlements.ts",
+    "function": "hardDeleteEntitlementsForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-10 (Wave 5, D-08): a HARD delete (LeaveEntitlement.deleteMany) invoked ONLY from platform/api/employees.ts's DELETE /:id/hard-delete sequence inside its own $transaction, whose handler validates 'id' against req.user.tenantId at its own top BEFORE the hard-delete transaction — and therefore before this function — is ever reached. Same shape and reasoning as hardDeleteOvertimeDataForEmployee/hardDeleteTimeDataForEmployee above: a tenantId parameter here would be decorative, not a real boundary."
   }
 ]

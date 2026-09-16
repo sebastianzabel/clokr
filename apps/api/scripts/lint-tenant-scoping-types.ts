@@ -103,6 +103,7 @@ export const SCOPED_DIRS = [
   "apps/api/src/contexts/time-tracking/api",
   "apps/api/src/contexts/time-tracking/facade",
   "apps/api/src/contexts/absence/api",
+  "apps/api/src/contexts/absence/facade",
   "apps/api/src/contexts/scheduling/api",
   "apps/api/src/contexts/scheduling/facade",
   "apps/api/src/contexts/working-time-account/api",

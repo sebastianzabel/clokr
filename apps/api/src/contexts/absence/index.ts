@@ -15,6 +15,15 @@
  * 100B-04's tenant-gate extension. A query placed directly in this file would be invisible to
  * that gate — do not "helpfully" move one here.
  *
+ * ── Wave 5 progress (D-01: a context is either fully converted or not touched) ──────────────────
+ * Converted so far: `LeaveType` (plan 10, A17-A19) and `LeaveEntitlement` (plan 10, A11-A16 plus
+ * the two H1 deviation-preserving siblings) — grouped in `./facade/leave-types.ts` and
+ * `./facade/entitlements.ts` respectively, one file per model (separate lifecycles: entitlements
+ * are per employee and per year, leave types are tenant configuration).
+ * Still to come: `EmployeeVocationalSchoolPattern`/`Section9Credit` (plan 11), `Absence` (plan
+ * 12), `LeaveRequest` (plan 13) — each gets its OWN file under `./facade/`, exported below grouped
+ * by model, so a later plan extends this list rather than guessing at its shape.
+ *
  * D-02: a facade function expresses the QUESTION a caller asks, not the caller's `where`. Two
  * callers with the same question share one function; a caller with a special case does not get a
  * function with a passed-through `where`.
@@ -39,3 +48,26 @@
  * paths to the same function in the tree for no benefit is exactly what this plan avoids.
  */
 export { hasApprovedLeaveOnDate } from "./leave-check";
+
+// ── LeaveType (plan 10, A17-A19) ─────────────────────────────────────────────────────────────
+export {
+  getLeaveTypeByCode,
+  getLeaveTypeByDisplayName,
+  listLeaveTypes,
+  updateLeaveType,
+} from "./facade/leave-types";
+export type { UpdateLeaveTypeInput } from "./facade/leave-types";
+
+// ── LeaveEntitlement (plan 10, A11-A16 + H1 siblings) ────────────────────────────────────────
+export {
+  getVacationEntitlement,
+  listEntitlementsForYear,
+  getEntitlementsForEmployee,
+  getEntitlementById,
+  getExpiringCarryOver,
+  upsertVacationEntitlement,
+  getVacationEntitlementByDisplayName,
+  getVacationEntitlementsForYearByDisplayName,
+  hardDeleteEntitlementsForEmployee,
+} from "./facade/entitlements";
+export type { UpsertVacationEntitlementData } from "./facade/entitlements";

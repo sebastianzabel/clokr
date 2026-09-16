@@ -14,6 +14,7 @@ import { findUnconfirmedBreakEntries } from "../find-unconfirmed-break-days";
 import { resolveMissingEntriesDays } from "../../working-time-account/missing-entries-window";
 import { invalidReasonFields } from "../invalid-reason";
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
+import { getVacationEntitlementsForYearByDisplayName } from "../../absence"; // Phase 100B Plan 10 — H1 sibling
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -524,17 +525,12 @@ export const attendanceCheckerPlugin = fp(async (app) => {
           const startMonth = cfg?.vacationReminderStartMonth ?? 10;
           if (currentMonth < startMonth) continue;
 
-          // Find employees with unused vacation this year
-          const entitlements = await app.prisma.leaveEntitlement.findMany({
-            where: {
-              year: currentYear,
-              employee: { tenantId: tenant.id },
-              leaveType: { name: "Urlaub" },
-            },
-            include: {
-              employee: { select: { id: true, userId: true, firstName: true } },
-            },
-          });
+          // Find employees with unused vacation this year (H1 deviation, preserved verbatim)
+          const entitlements = await getVacationEntitlementsForYearByDisplayName(
+            app.prisma,
+            tenant.id,
+            currentYear,
+          );
 
           for (const ent of entitlements) {
             const total = Number(ent.totalDays) + Number(ent.carriedOverDays);

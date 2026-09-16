@@ -153,6 +153,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
 
   // ── abwesenheiten — LeaveRequest/LeaveType/LeaveEntitlement/SpecialLeaveRule/Section9Credit/
   //    Absence/EmployeeVocationalSchoolPattern/CompanyShutdown/CompanyShutdownException ───────
+  "src/contexts/absence/facade/leave-types.ts": "abwesenheiten", // Phase 100B Plan 10 (Wave 5) — LeaveType's only external access path
+  "src/contexts/absence/facade/entitlements.ts": "abwesenheiten", // Phase 100B Plan 10 (Wave 5) — LeaveEntitlement's only external access path
   "src/contexts/absence/api/company-shutdowns.ts": "abwesenheiten", // writes CompanyShutdown/CompanyShutdownException
   "src/contexts/absence/api/leave.ts": "abwesenheiten", // writes LeaveEntitlement/LeaveRequest/LeaveType/Section9Credit primarily; overtimeAccount/overtimeTransaction/timeEntry/shift writes are documented cross-context side effects of leave approval/cancellation
   "src/contexts/absence/api/section9-documents.ts": "abwesenheiten", // writes Section9Credit

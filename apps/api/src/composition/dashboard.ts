@@ -49,6 +49,7 @@ import {
   getMonthlySnapshotsInRange,
   sumCarryOverByMonth,
 } from "../contexts/working-time-account"; // Phase 100B Plan 06 — W8/W9/W10; Plan 07 — W5/W6
+import { getEntitlementsForEmployee } from "../contexts/absence"; // Phase 100B Plan 10 — A13
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -291,9 +292,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       // ── Resturlaub ────────────────────────────────────────────────────
       const yearNow = parseInt(dateStrInTz(now, tz).slice(0, 4));
-      const entitlements = await app.prisma.leaveEntitlement.findMany({
-        where: { employeeId, year: yearNow },
-      });
+      const entitlements = await getEntitlementsForEmployee(
+        app.prisma,
+        employeeId,
+        tenantId,
+        yearNow,
+      );
       const totalVacation = entitlements.reduce(
         (sum, e) => sum + Number(e.totalDays) + Number(e.carriedOverDays),
         0,
