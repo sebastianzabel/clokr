@@ -15,7 +15,7 @@
  *
  * Phase 126 (GitHub issue #126): the RULE for what counts as unconfirmed is no longer applied
  * here at all. The dashboard used to re-derive it client-side over a 12-MONTH window while the
- * canonical detector (apps/api/src/utils/find-unconfirmed-break-days.ts) measured the CURRENT
+ * canonical detector (apps/api/src/contexts/time-tracking/find-unconfirmed-break-days.ts) measured the CURRENT
  * MONTH with a type:"WORK" filter and a MONTHLY_HOURS/FLEXTIME exclusion — so the card demanded
  * action on days the backend does not know about. The count now arrives ready-made as
  * `unconfirmedBreakDays` on GET /api/v1/dashboard/open-items. This module is PRESENTATION ONLY:

@@ -2,7 +2,7 @@
  * Phase 104 gap closure (D-21) — presentation helpers for the § 5 EFZG Karenztage hint.
  *
  * The RULE (how many days without an Attest are an overrun) lives server-side in
- * apps/api/src/utils/find-karenz-overrun-days.ts and is deliberately NOT duplicated here:
+ * apps/api/src/contexts/absence/find-karenz-overrun-days.ts and is deliberately NOT duplicated here:
  * a client copy could drift from the legal reading. This module only counts, picks a deep-link
  * target and formats German copy.
  */
@@ -50,7 +50,7 @@ export function summarizeKarenzOverrun(
     targetRequestId: owner?.leaveRequestId ?? null,
     // Phase 113 (issue #116): deliberately NOT imperative. There is no employee-side
     // submission path anywhere in Clokr — PATCH /leave/requests/:id/attest is
-    // requireRole("ADMIN","MANAGER") (apps/api/src/routes/leave.ts:2037-2040), LeaveRequest
+    // requireRole("ADMIN","MANAGER") (apps/api/src/contexts/absence/api/leave.ts:2037-2040), LeaveRequest
     // has no documentPath, and no type="file" input for an Attest exists in the web app.
     // The previous label used the imperative »nachreichen« and so demanded an action the
     // product does not offer anywhere. State the finding instead.
@@ -78,7 +78,7 @@ export const KARENZ_NUDGE_TOOLTIP =
  * The answer to "wohin gehört das Attest?". Claim 1 is a fact about Clokr (no upload path
  * exists). Claim 2 is a fact about Clokr's data model: the finding is cleared solely by
  * `attestPresent`, which only PATCH /leave/requests/:id/attest (ADMIN/MANAGER) sets — see
- * apps/api/src/utils/find-karenz-overrun-days.ts:96-104. Neither claim guesses the tenant's
+ * apps/api/src/contexts/absence/find-karenz-overrun-days.ts:96-104. Neither claim guesses the tenant's
  * internal process.
  */
 export const KARENZ_SUBMISSION_HINT =

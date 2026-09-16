@@ -300,9 +300,9 @@ architectural change): the running local `api` docker container predates Phase 9
 refresh it — the build hangs indefinitely at `npx prisma generate` fetching `prisma@7.9.1`, which
 this sandbox has no outbound network path for. Rather than skip this step, the rehearsal called
 the exact same exported functions the route handler calls
-(`recalculateSnapshots()` from `apps/api/src/utils/recalculate-snapshots.ts`, plus an
+(`recalculateSnapshots()` from `apps/api/src/contexts/working-time-account/recalculate-snapshots.ts`, plus an
 `app.audit()` shim writing `AuditLog` with the identical shape as the real
-`apps/api/src/plugins/audit.ts` decorator) directly against CURRENT SOURCE via `tsx` — the same
+`apps/api/src/contexts/platform/plugins/audit.ts` decorator) directly against CURRENT SOURCE via `tsx` — the same
 transaction shape (supersede-then-create inside one `$transaction`) as the route, only skipping
 the HTTP/Zod/tenant-isolation wrapper, which this step is not exercising.
 

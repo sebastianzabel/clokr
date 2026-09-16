@@ -110,7 +110,7 @@
 
   // Phase 67 (BERSCH-15) — Vocational-school pattern row returned by
   // GET /api/v1/employees/:id/vocational-school-pattern
-  // Source: apps/api/src/routes/vocational-school-pattern.ts lines 62-66
+  // Source: apps/api/src/contexts/absence/api/vocational-school-pattern.ts lines 62-66
   interface VocationalSchoolPattern {
     id: string;
     employeeId: string;
@@ -184,7 +184,7 @@
 
   // Phase 67 Plan 02 (BERSCH-15) — Local editor draft. NEVER sent to the API as-is;
   // the _key field is for {#each} keyed iteration only. On Save we serialise to the
-  // API's putPatternsSchema (apps/api/src/routes/vocational-school-pattern.ts lines 10-31).
+  // API's putPatternsSchema (apps/api/src/contexts/absence/api/vocational-school-pattern.ts lines 10-31).
   //
   // Phase 67.1 (v1.7.4): `daysOfWeek: number[]` replaces single-value `dayOfWeek`.
   // The chip strip in the editor toggles set-membership; multi-select is supported.
@@ -437,7 +437,7 @@
 
   // Phase 76.36 — per-employee bsSlot* overrides (BBIG-V19-03 employee layer).
   // "" = inherit (field cleared → PATCH sends null → re-enables inheritance).
-  // Bounds mirror apps/api/src/utils/vocational-school-constants.ts.
+  // Bounds mirror apps/api/src/contexts/absence/vocational-school-constants.ts.
   const EMP_BS_DAILY_MIN = 240;
   const EMP_BS_DAILY_MAX = 600;
   const EMP_BS_BLOCK_MIN = 1200;
@@ -568,7 +568,7 @@
   );
 
   /**
-   * Pure age-at-date helper (mirrors apps/api/src/utils/jarbschg.ts ageAtDate, no date-fns dep).
+   * Pure age-at-date helper (mirrors apps/api/src/contexts/absence/jarbschg.ts ageAtDate, no date-fns dep).
    * Returns full years between birthDate and atDate. Returns NaN for invalid input.
    */
   function ageAtDate(birthDate: string | Date | null | undefined, atDate: Date): number {
@@ -865,7 +865,7 @@
   // Phase 76.36 — Persist per-employee bsSlot* overrides (BBIG-V19-03).
   // Partial PATCH: only send fields the admin explicitly touched.
   // "" → null (clear override → re-enables inheritance for that field).
-  // Bounds mirror apps/api/src/utils/vocational-school-constants.ts.
+  // Bounds mirror apps/api/src/contexts/absence/vocational-school-constants.ts.
   async function saveBsSlotEmp() {
     if (!employee) return;
     empBsSlotError = "";
@@ -1000,7 +1000,7 @@
         validFrom: new Date().toISOString().slice(0, 10), // today (D-default per CONTEXT)
         validUntil: null,
         // Phase 67.2 (Plan 05) — new-row defaults match the API Zod defaults
-        // (apps/api/src/routes/vocational-school-pattern.ts lines 52-55).
+        // (apps/api/src/contexts/absence/api/vocational-school-pattern.ts lines 52-55).
         respectSchoolHolidays: true,
         federalStateOverride: null,
         // Phase 76.37 — bsSlot* default "" = inherit (no override set on new rows).
@@ -1111,7 +1111,7 @@
     bsPatterns = bsPatterns.map((p) => (p._key === key ? { ...p, [field]: value } : p));
   }
 
-  // Bounds mirror apps/api/src/utils/vocational-school-constants.ts
+  // Bounds mirror apps/api/src/contexts/absence/vocational-school-constants.ts
   const BS_SLOT_DAILY_MIN = 240;
   const BS_SLOT_DAILY_MAX = 600;
   const BS_SLOT_BLOCK_MIN = 1200;
@@ -1133,7 +1133,7 @@
     return n;
   }
 
-  // Client-side validation mirroring apps/api/src/routes/vocational-school-pattern.ts
+  // Client-side validation mirroring apps/api/src/contexts/absence/api/vocational-school-pattern.ts
   // Returns an error string for the first invalid row, or "" if all rows pass.
   // Phase 67.1: refine on `daysOfWeek.length > 0` instead of single-value check.
   // v1.7.4 hotfix: mode-aware. 'weekly' requires daysOfWeek; 'block' requires blockWeeks + blockYear.
@@ -1378,7 +1378,7 @@
   // Phase 60 (#220) — WorkSchedule.validFrom MUST be the 1st of a calendar month.
   // Snap the user's date pick to the 1st of its month on every change so the
   // input box immediately reflects what the server will accept. The API enforces
-  // the same rule via Zod (apps/api/src/utils/month-first-date.ts).
+  // the same rule via Zod (apps/api/src/contexts/platform/month-first-date.ts).
   function snapValidFromToMonthFirst() {
     if (!eValidFrom) return; // empty input — leave alone
     // eValidFrom is "YYYY-MM-DD" from <input type="date">. Rewrite the day part.
@@ -2130,7 +2130,7 @@
             <!-- Phase 107 gap G-02 (UAT 2026-08-28) — these chips DO set workDays, just
                  indirectly: buildSchedulePayload() sends them as mondayHours…sundayHours =
                  1/0 and the server derives workDays from exactly those via
-                 normalizeWorkDays() (apps/api/src/routes/settings.ts:1034). D-26's decision
+                 normalizeWorkDays() (apps/api/src/contexts/platform/api/settings.ts:1034). D-26's decision
                  to hide the redundant NUMERIC count stands — the chips express the set
                  exactly — but its stated reason ("kennt keine Tagesziele, das Feld wäre
                  irreführend") was wrong about workDays. The write path is deliberately

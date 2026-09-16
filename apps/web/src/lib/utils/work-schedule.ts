@@ -15,7 +15,7 @@
  *         the architectural enforcement.
  *
  * Mirrors server-side semantics from
- * apps/api/src/utils/calculate-work-days.ts (normalizeWorkDays).
+ * apps/api/src/contexts/platform/calculate-work-days.ts (normalizeWorkDays).
  * Backend uses getUTCDay() because all backend Date inputs are
  * pre-canonicalized to UTC midnight; this helper uses getDay() to
  * match existing frontend convention (the calendar pages already
@@ -51,7 +51,7 @@ export interface WorkScheduleLike {
   monthlyHours?: number | string | null;
   // FLEXTIME + SHIFT_BASED weekly target (Prisma Decimal — arrives as a string
   // on the wire). Issue #164: FLEXTIME's Ø-Methode day rate is weeklyHours /
-  // contractWorkDaysPerWeek, mirroring apps/api/src/utils/timezone.ts's
+  // contractWorkDaysPerWeek, mirroring apps/api/src/contexts/working-time-account/timezone.ts's
   // avgWorkMinutesCore.
   weeklyHours?: number | string | null;
   mondayHours: number | string;
@@ -130,7 +130,7 @@ export function isWorkDay(schedule: WorkScheduleLike | null | undefined, date: D
 // MUST use the same day-membership source as isWorkDay() above: workDays when
 // non-empty, count({day}Hours > 0) otherwise. Mixing the two sources would make
 // the ratio meaningless — the server states this explicitly in
-// apps/api/src/utils/timezone.ts:268-271, which this mirrors.
+// apps/api/src/contexts/working-time-account/timezone.ts:268-271, which this mirrors.
 function contractWorkDaysPerWeek(s: WorkScheduleLike): number {
   if (hasNonEmptyWorkDays(s)) return s.workDays.length;
   return DAY_HOUR_KEYS.filter((k) => toNumber(s[k]) > 0).length;
@@ -150,10 +150,10 @@ export function getDayExpectedHours(
   // FLEXTIME (issue #164): {day}Hours is a legacy 1/0 placeholder for this type
   // (CLAUDE.md "Schedule Types"; production evidence in issue #142), so returning
   // it here produced a 1:00 h daily Soll. The server's Soll for FLEXTIME is the
-  // Ø-Methode rate — apps/api/src/utils/timezone.ts:332-334 routes FLEXTIME to
+  // Ø-Methode rate — apps/api/src/contexts/working-time-account/timezone.ts:332-334 routes FLEXTIME to
   // avgWorkMinutesCore, which is weeklyHours × 60 × workdaysInRange ÷ workDaysPerWeek
   // (BAG 9 AZR 406/17). Per day that is weeklyHours ÷ workDaysPerWeek. weeklyHours > 0
-  // is enforced for FLEXTIME on every write path (apps/api/src/routes/settings.ts:341-350);
+  // is enforced for FLEXTIME on every write path (apps/api/src/contexts/platform/api/settings.ts:341-350);
   // the <= 0 guard mirrors avgWorkMinutesCore's own defensive return for legacy rows.
   //
   // Deliberately its own branch rather than the positive `type === "FIXED_SCHEDULE"`

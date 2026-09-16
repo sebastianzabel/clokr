@@ -392,11 +392,11 @@ describe("employee form — MONTHLY_HOURS Arbeitstage (Phase 107 gap G-02)", () 
 
 // G-01/G-02 are presentation-only. The MONTHLY_HOURS chips write workDays
 // INDIRECTLY: they set mondayHours…sundayHours to 1/0, and the server derives
-// workDays from exactly those via normalizeWorkDays() (apps/api/src/routes/
-// settings.ts:1034). Changing the write path here would silently rewrite every
-// existing MONTHLY_HOURS employee's workDays — their Urlaubsverbrauch
-// (calculateWorkDays) and their Pro-Rata-Anspruch (countWorkDaysPerWeek). These
-// assertions are the guard. If one of them ever fails, the change is wrong; do
+// workDays from exactly those via normalizeWorkDays()
+// (apps/api/src/contexts/platform/api/settings.ts:1034). Changing the write path here
+// would silently rewrite every existing MONTHLY_HOURS employee's workDays — their
+// Urlaubsverbrauch (calculateWorkDays) and their Pro-Rata-Anspruch (countWorkDaysPerWeek).
+// These assertions are the guard. If one of them ever fails, the change is wrong; do
 // not relax the assertion.
 describe("employee form — schedule payload is unchanged by the G-01/G-02 presentation fix", () => {
   it("all seven day-hours ternaries in buildSchedulePayload() are byte-identical", () => {
@@ -565,7 +565,7 @@ describe("maybeWarnDivergence — divergence warning fires only for FIXED_SCHEDU
 
 // Issue #164 — FLEXTIME's daily Soll must be the server's Ø-Methode day rate
 // (weeklyHours / contractWorkDaysPerWeek), mirroring
-// apps/api/src/utils/timezone.ts:215-286 (avgWorkMinutesCore), not the legacy
+// apps/api/src/contexts/working-time-account/timezone.ts:215-286 (avgWorkMinutesCore), not the legacy
 // {day}Hours 1/0 placeholder. Prod-row repro from the issue.
 describe("getDayExpectedHours / getDayExpectedMinutes — FLEXTIME Ø-Methode (issue #164)", () => {
   it("prod-row repro: workDays=[Di..Fr], placeholder *Hours=1, weeklyHours=30 → Tuesday = 7.5h / 450min (NOT 1h / 60min)", () => {

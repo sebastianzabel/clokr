@@ -14,13 +14,13 @@
  *
  * VOCABULARY — taken from the server, not invented here:
  *
- *   server (apps/api/src/utils/presence.ts) │ this module
+ *   server (apps/api/src/contexts/time-tracking/presence.ts) │ this module
  *   ────────────────────────────────────────┼────────────
  *   "clocked_in"  (presence.ts:150)         │ "running"
  *   "present"     (presence.ts:155)         │ "finished"
  *   neither                                 │ "idle"
  *
- * `apps/api/src/routes/dashboard.ts:1009-1017` uses the same discriminator under the names
+ * `apps/api/src/composition/dashboard.ts:1009-1017` uses the same discriminator under the names
  * clocked_in / complete / partial / none. We take the server's RULE and its WORDS and apply
  * them to the response the page already has, rather than fetching a second endpoint — see
  * the phase plan: sourcing the hero card from /dashboard/my-week while the entry card keeps

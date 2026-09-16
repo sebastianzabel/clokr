@@ -940,7 +940,7 @@
 
   // Phase 96 (T1) — keyed on the backend's authoritative InvalidReasonCode
   // enum value, not on the German display text. `invalidReason` is only that
-  // code's rendered form (apps/api/src/utils/invalid-reason.ts) and is never
+  // code's rendered form (apps/api/src/contexts/time-tracking/invalid-reason.ts) and is never
   // compared here. The distinction from the OTHER isInvalid case (pending
   // leave-cancellation, LEAVE_CANCELLATION_PENDING) is enforced by two
   // distinct enum values, not by two strings that happened to differ.

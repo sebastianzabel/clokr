@@ -2,13 +2,13 @@
 
 Clokr ist als **revisionssichere** Zeiterfassung für den deutschen Rechtsraum konzipiert. Diese Seite dokumentiert alle implementierten gesetzlichen Prüfungen und Aufbewahrungsregeln.
 
-> **Status:** Stand v1.9 (aktuell 1.9.2, 2026-08-03). Geprüft gegen den Code unter `apps/api/src/utils/arbzg.ts`, `apps/api/src/utils/vacation-calc.ts`, `apps/api/src/plugins/data-retention.ts`.
+> **Status:** Stand v1.9 (aktuell 1.9.2, 2026-08-03). Geprüft gegen den Code unter `apps/api/src/contexts/time-tracking/arbzg.ts`, `apps/api/src/contexts/absence/vacation-calc.ts`, `apps/api/src/contexts/platform/plugins/data-retention.ts`.
 
 ---
 
 ## § 3 / § 4 / § 5 ArbZG — Arbeitszeitprüfungen
 
-Implementiert in [`apps/api/src/utils/arbzg.ts`](../apps/api/src/utils/arbzg.ts). Wird automatisch nach jedem TimeEntry-Insert/Update ausgeführt und liefert Warnungen an die UI zurück. Warnungen **blockieren das Speichern nicht** (Audit-Hinweis statt Hard-Block, damit Korrektur-Workflows möglich bleiben).
+Implementiert in [`apps/api/src/contexts/time-tracking/arbzg.ts`](../apps/api/src/contexts/time-tracking/arbzg.ts). Wird automatisch nach jedem TimeEntry-Insert/Update ausgeführt und liefert Warnungen an die UI zurück. Warnungen **blockieren das Speichern nicht** (Audit-Hinweis statt Hard-Block, damit Korrektur-Workflows möglich bleiben).
 
 ### Regelwerk
 
@@ -47,7 +47,7 @@ Eingefügt mittig in den Eintrag (oder zu `TenantConfig.defaultBreakStart`, fall
 
 ## § 8 BUrlG — Urlaub & Zeiterfassung
 
-Implementiert in [`apps/api/src/routes/leave.ts`](../apps/api/src/routes/leave.ts) und [`apps/api/src/utils/vacation-calc.ts`](../apps/api/src/utils/vacation-calc.ts).
+Implementiert in [`apps/api/src/contexts/absence/api/leave.ts`](../apps/api/src/contexts/absence/api/leave.ts) und [`apps/api/src/contexts/absence/vacation-calc.ts`](../apps/api/src/contexts/absence/vacation-calc.ts).
 
 ### Antrag-Status-Lebenszyklus
 
@@ -164,7 +164,7 @@ WiFi-Presence-Events ohne TimeEntry (Unknown MAC, Outside Window, No Shift, Opt-
 
 ## Audit-Trail / Revisionssicherheit
 
-Implementiert in [`apps/api/src/plugins/audit.ts`](../apps/api/src/plugins/audit.ts).
+Implementiert in [`apps/api/src/contexts/platform/plugins/audit.ts`](../apps/api/src/contexts/platform/plugins/audit.ts).
 
 ### Grundprinzipien
 
@@ -201,22 +201,22 @@ Implementiert in [`apps/api/src/plugins/audit.ts`](../apps/api/src/plugins/audit
 
 ## Code-Referenzen
 
-| Bereich                             | Datei                                                                              |
-| ----------------------------------- | ---------------------------------------------------------------------------------- |
-| ArbZG-Prüfungen                     | `apps/api/src/utils/arbzg.ts`                                                      |
-| ArbZG-Tests (33 Cases)              | `apps/api/src/routes/__tests__/arbzg.test.ts`                                      |
-| Urlaubsberechnung                   | `apps/api/src/utils/vacation-calc.ts`                                              |
-| Audit-Plugin                        | `apps/api/src/plugins/audit.ts`                                                    |
-| Data-Retention (jährlich + täglich) | `apps/api/src/plugins/data-retention.ts`                                           |
-| Auto-Break-Logik                    | `apps/api/src/routes/time-entries.ts` (Suche `autoBreakMin`)                       |
-| WiFi-Presence (Opt-In, Webhook)     | `apps/api/src/routes/presence.ts`, `apps/api/src/routes/admin-presence-sources.ts` |
-| Projektregeln                       | `CLAUDE.md` (Sektionen „Audit-Proof", „Data Retention", „ArbZG", „BUrlG")          |
+| Bereich                             | Datei                                                                                                                      |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| ArbZG-Prüfungen                     | `apps/api/src/contexts/time-tracking/arbzg.ts`                                                                             |
+| ArbZG-Tests (33 Cases)              | `apps/api/src/contexts/time-tracking/__tests__/arbzg.test.ts`                                                              |
+| Urlaubsberechnung                   | `apps/api/src/contexts/absence/vacation-calc.ts`                                                                           |
+| Audit-Plugin                        | `apps/api/src/contexts/platform/plugins/audit.ts`                                                                          |
+| Data-Retention (jährlich + täglich) | `apps/api/src/contexts/platform/plugins/data-retention.ts`                                                                 |
+| Auto-Break-Logik                    | `apps/api/src/contexts/time-tracking/api/time-entries.ts` (Suche `autoBreakMin`)                                           |
+| WiFi-Presence (Opt-In, Webhook)     | `apps/api/src/contexts/time-tracking/api/presence.ts`, `apps/api/src/contexts/time-tracking/api/admin-presence-sources.ts` |
+| Projektregeln                       | `CLAUDE.md` (Sektionen „Audit-Proof", „Data Retention", „ArbZG", „BUrlG")                                                  |
 
 ---
 
 ### Phorest-Schichtimport & §615 (v1.9)
 
-Aus Phorest importierte Schichten können den Roster-Soll um eine Vor-/Nachbereitungszeit erweitern (`TenantConfig.phorestPrepMinutes`/`phorestWrapupMinutes`, pro Mitarbeiter via `phorestPrepMinutesOverride`/`phorestWrapupMinutesOverride` überschreibbar). Dieser gepaddete Roster fließt in den SHIFT_BASED-Saldo (§615 Annahmeverzug, `apps/api/src/utils/shift-based-saldo.ts`) ein. Berufsschul-Abwesenheiten (`Absence.type = VOCATIONAL_SCHOOL`) haben Vorrang vor kollidierenden Phorest-Schichten (Schicht wird beim Import übersprungen). Der Import ist einseitig (Phorest führend); ein Rückschreiben nach Phorest findet nicht statt.
+Aus Phorest importierte Schichten können den Roster-Soll um eine Vor-/Nachbereitungszeit erweitern (`TenantConfig.phorestPrepMinutes`/`phorestWrapupMinutes`, pro Mitarbeiter via `phorestPrepMinutesOverride`/`phorestWrapupMinutesOverride` überschreibbar). Dieser gepaddete Roster fließt in den SHIFT_BASED-Saldo (§615 Annahmeverzug, `apps/api/src/contexts/working-time-account/shift-based-saldo.ts`) ein. Berufsschul-Abwesenheiten (`Absence.type = VOCATIONAL_SCHOOL`) haben Vorrang vor kollidierenden Phorest-Schichten (Schicht wird beim Import übersprungen). Der Import ist einseitig (Phorest führend); ein Rückschreiben nach Phorest findet nicht statt.
 
 ---
 

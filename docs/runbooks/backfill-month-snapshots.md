@@ -135,7 +135,7 @@ the post-apply verification in Step 5 is green.
 
 ## Step 2 — Pause / reconcile the auto-close cron
 
-The `auto-close-month` cron (`apps/api/src/plugins/auto-close-month.ts`) runs daily at **06:00**
+The `auto-close-month` cron (`apps/api/src/contexts/working-time-account/plugins/auto-close-month.ts`) runs daily at **06:00**
 for all tenants. It closes prior months using the SYSTEM actor (`closedBy: null`, AuditLog
 `newValue.origin = "SYSTEM"`) and respects the retro day-N window + `closeMonthWithGapsAllowed`
 setting.
@@ -523,7 +523,7 @@ After the post-apply verification (Step 5) passes for all affected employees:
 ## Companion documents
 
 - [`apps/api/scripts/backfill-month-snapshots.ts`](../../apps/api/scripts/backfill-month-snapshots.ts) — The script this runbook drives (Phase 76.30 Plan 00)
-- [`apps/api/src/plugins/auto-close-month.ts`](../../apps/api/src/plugins/auto-close-month.ts) — The cron to pause/reconcile during backfill
-- [`apps/api/src/routes/overtime.ts`](../../apps/api/src/routes/overtime.ts) — `unlock-month` endpoint (rollback, lines 1149–1228)
+- [`apps/api/src/contexts/working-time-account/plugins/auto-close-month.ts`](../../apps/api/src/contexts/working-time-account/plugins/auto-close-month.ts) — The cron to pause/reconcile during backfill
+- [`apps/api/src/contexts/working-time-account/api/overtime.ts`](../../apps/api/src/contexts/working-time-account/api/overtime.ts) — `unlock-month` endpoint (rollback, lines 1149–1228)
 - [`docs/prod-deploy.md`](../prod-deploy.md) — Prod deploy runbook (SSH, Docker Compose, smoke tests); see its "Post-deploy: image cleanup / disk capacity" section to reclaim disk after the deploy that ships this script
 - [`docs/int-environment.md`](../int-environment.md) — Int environment (k3s, ArgoCD, pinned tag management)

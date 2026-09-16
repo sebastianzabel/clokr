@@ -43,14 +43,14 @@ Identitätsträger** einer fachlichen Entscheidung.
 
 ### A.1 `invalidReason` als Selektor und Vergleichswert
 
-| Stelle                                                | Was passiert                                                                                      |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `apps/api/src/routes/leave.ts:884`                    | `updateMany` auf `TimeEntry` **selektiert** über `invalidReason: "Urlaubsstornierung ausstehend"` |
-| `apps/api/src/routes/leave.ts:1787`                   | dasselbe, zweiter Pfad                                                                            |
-| `apps/api/src/routes/time-entries.ts:1735`            | `existing.invalidReason === "Ausstempeln fehlt"` **steuert Verhalten**                            |
-| `apps/api/src/routes/time-entries.ts:1244, 1322`      | schreiben `"Urlaubsstornierung ausstehend"`                                                       |
-| `apps/api/src/services/clock/resolver.ts:91`          | schreibt `"Urlaubsstornierung ausstehend"`                                                        |
-| `apps/api/src/plugins/attendance-checker.ts:303, 314` | schreiben `"Ausstempeln fehlt"`                                                                   |
+| Stelle                                                                       | Was passiert                                                                                      |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `apps/api/src/contexts/absence/api/leave.ts:884`                             | `updateMany` auf `TimeEntry` **selektiert** über `invalidReason: "Urlaubsstornierung ausstehend"` |
+| `apps/api/src/contexts/absence/api/leave.ts:1787`                            | dasselbe, zweiter Pfad                                                                            |
+| `apps/api/src/contexts/time-tracking/api/time-entries.ts:1735`               | `existing.invalidReason === "Ausstempeln fehlt"` **steuert Verhalten**                            |
+| `apps/api/src/contexts/time-tracking/api/time-entries.ts:1244, 1322`         | schreiben `"Urlaubsstornierung ausstehend"`                                                       |
+| `apps/api/src/services/clock/resolver.ts:91`                                 | schreibt `"Urlaubsstornierung ausstehend"`                                                        |
+| `apps/api/src/contexts/time-tracking/plugins/attendance-checker.ts:303, 314` | schreiben `"Ausstempeln fehlt"`                                                                   |
 
 **Korrektur gegenüber dem Voranalyse-Bericht vom 2026-08-27:** Dort waren drei Stellen genannt. Es
 sind **sieben**. `resolver.ts` und `attendance-checker.ts` waren nicht erfasst — der Befund ist also
@@ -61,7 +61,7 @@ breiter, nicht schmaler.
 **Status: GESCHLOSSEN (Phase 97, T2 — 2026-09-14).** `LeaveType.code` (Enum `LeaveTypeCode`,
 `@@unique([tenantId, code])`) ist jetzt die Identität; `name` ist reiner, mandantenseitig frei
 umbenennbarer Anzeigetext. Die einzige verbliebene Code<->Name-Abbildung liegt in
-`apps/api/src/utils/leave-type.ts` (D-04). Die ursprüngliche Erhebung unten nannte fünf
+`apps/api/src/contexts/absence/leave-type.ts` (D-04). Die ursprüngliche Erhebung unten nannte fünf
 Vergleichsstellen als Beispiel — die vollständige, phasenweit gemessene Fundstelleninventur
 (Plan 97-01) waren **71 Fundstellen über 16 Dateien**, nicht fünf; alle sind auf `code`
 umgestellt, mit Ausnahme der bewusst verbliebenen Anzeigestellen und der beiden
@@ -109,10 +109,10 @@ nicht**: `packages/db/src/reset-demo.ts:589-592` legt `Absence` mit `type: "SICK
 
 Auf solche Zeilen reagieren zwei Leser gegensätzlich:
 
-| Leser                                                | Verhalten bei `Absence.SICK`                                                               |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `apps/api/src/utils/leave-check.ts:39`               | **ignoriert** sie — liest aus `Absence` nur `MATERNITY` und `PARENTAL`                     |
-| `apps/api/src/utils/close-employee-month.ts:613-639` | **kreditiert** sie — der Kommentar sagt ausdrücklich „ALL absence types are credited here" |
+| Leser                                                                        | Verhalten bei `Absence.SICK`                                                               |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `apps/api/src/contexts/absence/leave-check.ts:39`                            | **ignoriert** sie — liest aus `Absence` nur `MATERNITY` und `PARENTAL`                     |
+| `apps/api/src/contexts/working-time-account/close-employee-month.ts:613-639` | **kreditiert** sie — der Kommentar sagt ausdrücklich „ALL absence types are credited here" |
 
 Eine Demo-Krankheit senkt also das Soll, blockiert aber nicht das Stempeln; eine Produktiv-Krankheit
 läuft über `LeaveRequest` und tut beides.
@@ -235,3 +235,11 @@ auffindbar sind:
 - Schichtplanung: `apps/api/src/contexts/scheduling/` UND `apps/api/src/services/phorest/`
 
 Weiteres zum Zuschnitt: `docs/context-cut-map.md` § 4 und § 7.
+
+---
+
+**Nachtrag 2026-09-16 (Issue #233).** Phase 99b hat `routes/`, `utils/` und `plugins/` nach
+`apps/api/src/contexts/<kontext>/` bzw. `apps/api/src/composition/` verschoben. Die Pfadangaben
+in `0001-drei-kontexte.md` bleiben bewusst auf `263ed0aa` eingefroren — das ADR bezeichnet sie im
+Kopf selbst als Belege, nicht als Wegbeschreibung. Die Zuordnung alt→neu steht in
+`docs/context-cut-map.md`.

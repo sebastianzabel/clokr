@@ -183,6 +183,6 @@ multiple employees across multiple months, with no easy rollback (closed months 
 
 - Phase 76.32.1 research: `.planning/research/HALF-DAY-ABSENCE-DEFECT.md` §7 (backfill assessment)
 - Probe script: `apps/api/scripts/audit-fractional-absences.ts` (read-only, zero mutations)
-- Recompute utility: `apps/api/src/utils/recalculate-snapshots.ts`
+- Recompute utility: `apps/api/src/contexts/working-time-account/recalculate-snapshots.ts`
 - Revisionssicherheit rules: `CLAUDE.md` (Audit-Proof / Revisionssicherheit section)
 - Saldo-anomaly tracking convention: memory entry "Saldo-anomaly MA tracking"

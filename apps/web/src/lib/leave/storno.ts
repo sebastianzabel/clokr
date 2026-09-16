@@ -4,7 +4,7 @@
 // mounting a component — same convention as
 // apps/web/src/lib/components/vocational-school/retroactive.ts.
 //
-// Drives `DELETE /api/v1/leave/requests/:id` (apps/api/src/routes/leave.ts). That
+// Drives `DELETE /api/v1/leave/requests/:id` (apps/api/src/contexts/absence/api/leave.ts). That
 // endpoint already authorizes ADMIN/MANAGER for any request in their tenant and
 // already demands an audited Begründung (quick 260824-cjd) — this module only decides
 // WHEN the button appears and WHAT it says. The server remains the sole authority;

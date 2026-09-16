@@ -13,7 +13,7 @@
 
 /** The reasons a day can be reported as skipped (create side) or unremoved (removal
  * side) by the backend generator. Mirrors GeneratorResult's `details[].reason` values
- * in `apps/api/src/utils/vocational-school-generator.ts` verbatim. */
+ * in `apps/api/src/contexts/absence/vocational-school-generator.ts` verbatim. */
 export type RetroactiveReason =
   | "locked"
   | "existing"

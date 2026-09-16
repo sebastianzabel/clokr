@@ -5,7 +5,7 @@
  * /time-entries:
  *   - `?date=<day>`      — the dashboard "Pause bestätigen" nudge
  *   - `?highlight=<id>`  — the BREAK_UNCONFIRMED notification (sent since Phase 92-05,
- *                          apps/api/src/plugins/attendance-checker.ts, never read until now)
+ *                          apps/api/src/contexts/time-tracking/plugins/attendance-checker.ts, never read until now)
  *
  * WHY: the destination computed `new Date(param + "T12:00:00")` and fed the result straight into
  * date-fns `format()` and into MonthBar's `Intl.DateTimeFormat(...).format()`. Both THROW
