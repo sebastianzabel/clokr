@@ -22,6 +22,21 @@
  *  D. Absence (deletedAt: null) covering Mo-Tu → absenceMinutesByEmp[empId]
  *     === 960. Soft-deleted Absence in the same window → undefined or 0
  *     (deletedAt:null soft-delete filter).
+ *  E. Same FIXED_WEEKLY employee, 2 days (Mo+Tu) leave with status
+ *     CANCELLATION_REQUESTED → leaveMinutesByEmp[empId] === 960. Phase 100B
+ *     plan 02 (D-09): case B already pins that PENDING does NOT count; this
+ *     pins the other half of `shifts.ts:1305`'s status set — CLAUDE.md §
+ *     "Leave Cancellation Flow" step 2 says leave under cancellation "remains
+ *     active … counts for saldo" until the cancellation is itself approved.
+ *  F. Same employee, three Absence rows in the visible week: (i)
+ *     VOCATIONAL_SCHOOL Mo-Tu, (ii) an ordinary type with source: PATTERN on
+ *     We, (iii) an ordinary MANUAL-source absence Th-Fr. Only (iii) reduces
+ *     roster Soll → absenceMinutesByEmp[empId] === 960 (16h × 60). Phase 100B
+ *     plan 02 (D-09): pins `shifts.ts:1328`'s two filters
+ *     (`type: { not: "VOCATIONAL_SCHOOL" }`, `source: { not: "PATTERN" }`) —
+ *     the v1.8.27 Berufsschule double-count fix. If either filter is ever
+ *     dropped, the assertion below fails with 1920 (VOCATIONAL_SCHOOL leaks
+ *     in) or 1440 (PATTERN leaks in) instead of 960, naming which one broke.
  *
  * Issue #136 (batch C): the fixture week is additionally guaranteed
  * Feiertag-free via holidayFreeMondayStr (its doc comment already CLAIMED "no
@@ -304,6 +319,97 @@ describe("Phase 76.11 — /shifts/week emits leaveMinutesByEmp + absenceMinutesB
     const absenceMap = body.absenceMinutesByEmp as Record<string, number>;
 
     // Only the live Mo-Tu absence counts → 16h × 60 = 960 minutes.
+    expect(absenceMap[employeeId]).toBe(960);
+  });
+
+  // ── Test E: CANCELLATION_REQUESTED leave still reduces Soll (D-09/R4) ──
+  it("SOLL-V19-01 E — CANCELLATION_REQUESTED leave (Mo+Tu) → 960 minutes (leave under cancellation still counts)", async () => {
+    const employeeId = await createFixedWeeklyEmployee("E");
+
+    const monday = new Date(weekMonday + "T00:00:00Z");
+    const tuesday = new Date(weekMonday + "T00:00:00Z");
+    tuesday.setUTCDate(tuesday.getUTCDate() + 1);
+
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId,
+        leaveTypeId: vacationTypeId,
+        startDate: monday,
+        endDate: tuesday,
+        status: "CANCELLATION_REQUESTED",
+        days: 2,
+      },
+    });
+
+    const body = await getWeek();
+    const leaveMap = body.leaveMinutesByEmp as Record<string, number>;
+
+    // CLAUDE.md § "Leave Cancellation Flow" step 2: leave under cancellation
+    // "remains active … counts for saldo" until the cancellation itself is
+    // approved. If shifts.ts:1305 ever drops CANCELLATION_REQUESTED from its
+    // status set, this becomes 0 instead of 960.
+    expect(leaveMap[employeeId]).toBe(960);
+  });
+
+  // ── Test F: VOCATIONAL_SCHOOL and PATTERN-source absences do not reduce Soll (D-09) ──
+  it("SOLL-V19-01 F — VOCATIONAL_SCHOOL + PATTERN absences excluded, only the ordinary MANUAL absence counts (960 minutes)", async () => {
+    const employeeId = await createFixedWeeklyEmployee("F");
+
+    const monday = new Date(weekMonday + "T00:00:00Z");
+    const tuesday = new Date(weekMonday + "T00:00:00Z");
+    tuesday.setUTCDate(tuesday.getUTCDate() + 1);
+    const wednesday = new Date(weekMonday + "T00:00:00Z");
+    wednesday.setUTCDate(wednesday.getUTCDate() + 2);
+    const thursday = new Date(weekMonday + "T00:00:00Z");
+    thursday.setUTCDate(thursday.getUTCDate() + 3);
+    const friday = new Date(weekMonday + "T00:00:00Z");
+    friday.setUTCDate(friday.getUTCDate() + 4);
+
+    // (i) VOCATIONAL_SCHOOL Mo-Tu — BBiG § 15: BS-Tag = Arbeitstag, NOT
+    // abwesend for roster-Soll purposes (v1.8.27 double-count fix). Must NOT
+    // reduce Soll.
+    await app.prisma.absence.create({
+      data: {
+        employeeId,
+        type: "VOCATIONAL_SCHOOL",
+        startDate: monday,
+        endDate: tuesday,
+        days: 2,
+        createdBy: "SYSTEM",
+      },
+    });
+
+    // (ii) PATTERN-source absence on We — auto-generated, not an approved
+    // absence (D-09). Must NOT reduce Soll.
+    await app.prisma.absence.create({
+      data: {
+        employeeId,
+        type: "SICK",
+        source: "PATTERN",
+        startDate: wednesday,
+        endDate: wednesday,
+        days: 1,
+        createdBy: "SYSTEM",
+      },
+    });
+
+    // (iii) ordinary MANUAL-source absence Th-Fr — the only one that counts.
+    await app.prisma.absence.create({
+      data: {
+        employeeId,
+        type: "SICK",
+        startDate: thursday,
+        endDate: friday,
+        days: 2,
+        createdBy: "SYSTEM",
+      },
+    });
+
+    const body = await getWeek();
+    const absenceMap = body.absenceMinutesByEmp as Record<string, number>;
+
+    // Only (iii), Th-Fr → 16h × 60 = 960 minutes. 1920 would mean
+    // VOCATIONAL_SCHOOL leaked in; 1440 would mean PATTERN leaked in.
     expect(absenceMap[employeeId]).toBe(960);
   });
 });

@@ -24,8 +24,15 @@ import { readFileSync } from "node:fs";
 // `pnpm exec vitest run scripts/__tests__/measure-foreign-context-access.test.ts`, "30 tests" in
 // its own output). No other test file changed in this plan. Every later 100b plan asserts equality
 // against THIS number, not the pre-phase 2839.
+//
+// Plan 100B-02: no new test FILE (both edited files already existed) — MIN_FILES stays 250.
+// MIN_TESTS rises from 2869 to 2874: +2 in shift-week-leave-absence-minutes.test.ts (cases E, F)
+// and +3 in contexts/absence/__tests__/leave-check.test.ts (the LeaveRequest branch: tenant-name
+// pre-change pin, CANCELLATION_REQUESTED status, branch ordering) — 2869 + 2 + 3 = 2874. Verified
+// with `pnpm exec vitest run` on each file individually ("6 tests" in both cases, up from 4 and 3
+// respectively) before the full-suite run.
 const MIN_FILES = 250;
-const MIN_TESTS = 2869;
+const MIN_TESTS = 2874;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
