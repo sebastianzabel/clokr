@@ -37,7 +37,7 @@
   }: Props = $props();
 
   // Quick 260824-cjd: mirrors the exact German wording the API returns for a
-  // missing/blank reason (apps/api/src/utils/audit-reason.ts AUDIT_REASON_REQUIRED).
+  // missing/blank reason (apps/api/src/contexts/platform/audit-reason.ts AUDIT_REASON_REQUIRED).
   const REASON_REQUIRED = "Begründung ist erforderlich (revisionssicherheitspflichtig).";
 
   let reason = $state("");

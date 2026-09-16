@@ -6,7 +6,7 @@
 // this for v1.6. Revisit if a tenant has genuinely different defaults.
 //
 // Keep this enum in sync with prisma/schema.prisma EmployeeClassification AND
-// apps/api/src/routes/employees.ts employeeClassificationSchema.
+// apps/api/src/contexts/platform/api/employees.ts employeeClassificationSchema.
 
 export type EmployeeClassification =
   | "VOLLZEIT"

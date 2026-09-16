@@ -1055,7 +1055,7 @@
   let viewedExitDate = $state<string | null>(null);
 
   // Pro-rata Warnung: erscheint wenn Mitarbeiter exitDate hat und used > pro-rata Anspruch
-  // Inline-Berechnung (Keep in sync with apps/api/src/utils/vacation-calc.ts::calculateProRataVacation)
+  // Inline-Berechnung (Keep in sync with apps/api/src/contexts/absence/vacation-calc.ts::calculateProRataVacation)
   let proRataWarning = $derived.by(() => {
     if (!viewedExitDate) return null;
     const exit = new Date(viewedExitDate);

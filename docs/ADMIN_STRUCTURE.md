@@ -754,7 +754,7 @@ override that wins over the atomic-value test above — it is the operative form
 requirement below, and it is enforced mechanically by `pnpm --filter @clokr/web
 lint:save-pattern` (see "Enforcement" below).
 
-**Why this is the audit rule, not "audit ⇒ button" (D-06):** `apps/api/src/routes/settings.ts:677`
+**Why this is the audit rule, not "audit ⇒ button" (D-06):** `apps/api/src/contexts/platform/api/settings.ts:677`
 writes one unconditional audit row per `PUT /settings/work`, and that is exactly the endpoint
 every instant-save toggle on `admin/system` writes through. One operator action producing one
 audit row is a correct record; what would be wrong is a _chain_ of rows from a single change —
@@ -769,7 +769,7 @@ considered and rejected.
 - Anything carrying an effective date: _value and effective date are one decision and can only
   be correct together_ (N-04, D-08) — e.g. the `WorkSchedule` on `admin/employees/[id]`, which
   is additionally only legal on the 1st of a month (`MONTH_FIRST_ERROR`,
-  `apps/api/src/utils/month-first-date.ts`).
+  `apps/api/src/contexts/platform/month-first-date.ts`).
 
 **Instant-save handler shape.** `toggleWifi()`
 (`apps/web/src/routes/(app)/settings/+page.svelte:113-125`) is the reference: `await` the

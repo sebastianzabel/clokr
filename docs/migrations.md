@@ -199,7 +199,7 @@ Praktisch heisst das: **ein Merge, nicht drei.** Vor dem Merge prüfen:
 ```bash
 # muss BEIDES liefern, sonst nicht mergen:
 ls packages/db/prisma/migrations | grep leave_type_code          # die drei Ordner
-grep -c 'leaveTypeFields' apps/api/src/routes/leave.ts apps/api/src/routes/test-bootstrap.ts
+grep -c 'leaveTypeFields' apps/api/src/contexts/absence/api/leave.ts apps/api/src/contexts/platform/api/test-bootstrap.ts
 ```
 
 Liefert der zweite Befehl für eine der beiden Dateien `0`, ist der Schreibpfad noch nicht

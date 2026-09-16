@@ -9,7 +9,7 @@
    *
    * There is deliberately NO action in this panel. Clokr has no employee-side submission path
    * at all: PATCH /leave/requests/:id/attest is requireRole("ADMIN","MANAGER")
-   * (apps/api/src/routes/leave.ts:2037-2040), LeaveRequest has no documentPath, and the web
+   * (apps/api/src/contexts/absence/api/leave.ts:2037-2040), LeaveRequest has no documentPath, and the web
    * app's only three file-upload inputs are avatar, CSV import and the manager-side § 9 field.
    * Building one is Stufe 2 and is explicitly excluded from this phase. A control that 403s
    * would be worse than none — so this panel explains instead of pretending.

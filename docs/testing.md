@@ -13,14 +13,14 @@ for the full history (Phase 101, D-01/D-02).
 **Before 2026-08-21 this separation did not actually exist, silently.**
 `apps/api/.env.test` pointed `TEST_DATABASE_URL` at `.../clokr?schema=test` — the SAME
 database as dev, distinguished only by a `?schema=` query parameter. That parameter is a
-Prisma-only connection-string convention; `pg.Pool` (the driver `apps/api/src/plugins/
-prisma.ts` actually builds a connection with) does not interpret it and silently ignores
-it, so `PrismaPg` fell back to the `public` schema regardless — the same schema local dev
-uses. Every integration test run was reading and writing the dev database while `pretest`
-dutifully maintained an unrelated `test` schema that nothing ever connected to. Phase 101
-(D-01) fixed this with a genuinely separate DATABASE rather than a schema parameter, so
-there is no `search_path`/`?schema=` special case left for any future connection path to
-forget.
+Prisma-only connection-string convention; `pg.Pool` (the driver
+`apps/api/src/contexts/platform/plugins/prisma.ts` actually builds a connection with)
+does not interpret it and silently ignores it, so `PrismaPg` fell back to the `public`
+schema regardless — the same schema local dev uses. Every integration test run was
+reading and writing the dev database while `pretest` dutifully maintained an unrelated
+`test` schema that nothing ever connected to. Phase 101 (D-01) fixed this with a
+genuinely separate DATABASE rather than a schema parameter, so there is no
+`search_path`/`?schema=` special case left for any future connection path to forget.
 
 ## Running the tests
 
@@ -69,7 +69,7 @@ skipped.
 `MINIO_ENDPOINT` to `localhost` (a `??=` default, so a shell value or `.env.test` still wins), so
 no further configuration is needed — the API container's own default of `minio` is a hostname that
 only resolves inside the compose network. The `clokr` bucket is created automatically on boot by
-`apps/api/src/plugins/storage.ts`; you do not need to create it.
+`apps/api/src/contexts/platform/plugins/storage.ts`; you do not need to create it.
 
 **In CI:** `.github/workflows/ci.yml`'s `test` job starts the same MinIO image with an explicit
 `docker run … server /data` step and waits for `GET /minio/health/live` before any test runs, then
@@ -354,7 +354,7 @@ not make the suite hermetic. Be honest about what is and isn't fixed:
   suites that carried the bug.** Root cause: date helpers did LOCAL arithmetic
   (`d.setDate(d.getDate() - n)`) and then UTC formatting (`d.toISOString().split("T")[0]`),
   while the endpoints under test resolve "today" in the TENANT timezone
-  (`todayInTz`/`dateStrInTz`, `apps/api/src/utils/timezone.ts`). In that window the UTC
+  (`todayInTz`/`dateStrInTz`, `apps/api/src/contexts/working-time-account/timezone.ts`). In that window the UTC
   calendar day is still yesterday, so e.g. a 10-day retro-window helper silently computed
   an 11-day-old date and tripped `RETRO_WINDOW_EXCEEDED`. Fixed by routing every affected
   helper through `apps/api/src/__tests__/test-dates.ts` — the single, shared, tenant-TZ

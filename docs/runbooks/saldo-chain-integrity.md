@@ -23,7 +23,7 @@ names. The report is safe to paste into an issue tracker or CI log as-is.
 
 **Caveat:** the `matched="<reason>"` field on each finding echoes an operator-authored free-text
 `reason` string pulled from `AuditLog` (see the allowlist in
-`apps/api/src/utils/saldo-chain-classification.ts`). These strings are conventionally
+`apps/api/src/contexts/working-time-account/saldo-chain-classification.ts`). These strings are conventionally
 non-personal ("opening balance from old time-tracking system", "retroactive recalculation"), but
 if a future reason string ever happens to contain a name, redact it before sharing the report
 externally.
@@ -58,9 +58,9 @@ baseline has been migrated onto the Phase 99 `OpeningBalance` model — whicheve
 **How it would be scheduled** (deferred design; the infrastructure is already present, this
 phase deliberately does not build it): a `cron.schedule(...)` task registered in an `onReady`
 hook, wrapped in `withAdvisoryLock(app.prisma, ADVISORY_LOCK_KEYS.<NEW_KEY>, ...)`, following the
-existing pattern in `apps/api/src/plugins/attendance-checker.ts`, fanning out findings via
+existing pattern in `apps/api/src/contexts/time-tracking/plugins/attendance-checker.ts`, fanning out findings via
 `app.notify()` to all tenant ADMINs. Under the fail-closed email gate
-(`apps/api/src/utils/notification-email-policy.ts`), a type with no registry entry is not
+(`apps/api/src/contexts/platform/notification-email-policy.ts`), a type with no registry entry is not
 emailed at all — the "first cut" would need an explicit `never` (or `toggle`/`always`)
 entry there before it could ever reach SMTP, not merely an absent mapping. Explicitly OUT
 of scope for Phase 98.
@@ -105,7 +105,7 @@ to do about it.
   (`carryOver == carryOverIn + balanceMinutes`) held exactly. Nothing to do.
 
 - **`documented deltas`** — a deliberate injection matched the allowlist in
-  `apps/api/src/utils/saldo-chain-classification.ts`, or the link is a bridge row sitting at the
+  `apps/api/src/contexts/working-time-account/saldo-chain-classification.ts`, or the link is a bridge row sitting at the
   head of a chain. Nothing to do now — these are exactly the rows Phase 99 (`OpeningBalance`)
   migrates onto a first-class model. Note that a documented row can still have been partially
   eroded later by a different, unlogged event: check the printed `auditReasons=<n>` count and
@@ -168,7 +168,7 @@ tenant; **89** with delta `0`; exactly **6** non-zero — five bridge rows at `-
 `600`, `750` minutes and one real-activity row at `6129` (`worked = expected = 900`,
 `balance = 0`). A materially different split on the same prod dataset is a bug in the audit
 before it is a discovery. The same split is pinned as a fixture test in
-`apps/api/src/utils/__tests__/saldo-chain-integrity-calibration.test.ts`.
+`apps/api/src/contexts/working-time-account/__tests__/saldo-chain-integrity-calibration.test.ts`.
 
 > The employee figure is the one number that invites a false alarm: the script's employee counter
 > counts only employees whose chain was actually walked, and reports employees with no closed

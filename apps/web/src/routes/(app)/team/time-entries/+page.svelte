@@ -880,7 +880,7 @@
 
   // Quick 260824-cjd: a manager editing ANOTHER employee's entry is a Korrektur
   // and must supply a Begründung; editing their own entry is not (server parity —
-  // putIsCorrectionByManager in apps/api/src/routes/time-entries.ts).
+  // putIsCorrectionByManager in apps/api/src/contexts/time-tracking/api/time-entries.ts).
   let isCorrectionEdit = $derived(
     !!editEntry && selectedEmployeeId !== ($authStore.user?.employeeId ?? null),
   );

@@ -766,7 +766,7 @@
 
   // ArbZG § 4 — Auto-Pausen-Toggle (moved from /admin/vacation in v1.6.5).
   // When enabled, the time-entries pipeline deducts 30min (>6h) / 45min (>9h)
-  // breaks on clock-out (apps/api/src/routes/time-entries.ts:400,641,909).
+  // breaks on clock-out (apps/api/src/contexts/time-tracking/api/time-entries.ts:400,641,909).
   async function toggleAutoBreak() {
     // bind:checked already applied the new value — see saveHolidayDeduction (WR-02). This drives
     // the § 4 ArbZG auto-deduction, so the checkbox must never outlive a failed save. Error

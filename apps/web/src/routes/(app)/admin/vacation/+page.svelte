@@ -156,7 +156,7 @@
   let halfDayAllowed = $state(true);
   let sickSelfReport = $state(true);
   /**
-   * Mirrors normalizeKarenzDays() in apps/api/src/utils/find-karenz-overrun-days.ts:
+   * Mirrors normalizeKarenzDays() in apps/api/src/contexts/absence/find-karenz-overrun-days.ts:
    * § 5 Abs. 1 EFZG ("länger als drei Kalendertage") caps the threshold at 3; null/undefined
    * (cleared input, or a tenant that never set it) falls back to the default 3.
    */

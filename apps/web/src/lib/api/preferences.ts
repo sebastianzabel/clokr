@@ -1,6 +1,6 @@
 import { api } from "$api/client";
 
-/** Server shape — matches apps/api/src/routes/me.ts merged defaults. */
+/** Server shape — matches apps/api/src/contexts/platform/api/me.ts merged defaults. */
 export interface UiPreferences {
   skin: "editorial" | "modern";
   theme: "pflaume" | "nacht" | "wald" | "schiefer";

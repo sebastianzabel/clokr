@@ -114,7 +114,7 @@ Clokr has **three business contexts** plus a shared substrate that belongs to no
 Rules — these are directives, not preferences:
 
 - **Absence is NEVER a `TimeEntryType`.** A time entry has no "requested" status, and approved leave for next August is not a recorded period. `TimeEntryType` stays free of absence values.
-- **`calcLeaveAbsenceMinutesTz()` (`apps/api/src/utils/timezone.ts`) belongs to Arbeitszeitkonto and is NOT to be split.** It and the `sbClaimed` dedup set in `close-employee-month.ts` carry the invariant *a day reduces Soll exactly once*. Anyone wanting to split it must first prove the invariant is secured otherwise.
+- **`calcLeaveAbsenceMinutesTz()` (`apps/api/src/contexts/working-time-account/timezone.ts`) belongs to Arbeitszeitkonto and is NOT to be split.** It and the `sbClaimed` dedup set in `close-employee-month.ts` carry the invariant *a day reduces Soll exactly once*. Anyone wanting to split it must first prove the invariant is secured otherwise.
 - **`LeaveRequest` = requested absence** (status, entitlement, approver): Urlaub, Krankheit, Sonderurlaub. **`Absence` = imposed absence** (occurs, is not requested): Berufsschule, Mutterschutz, Elternzeit. `SICK` belongs to `LeaveRequest`.
 - **No foreign keys across context boundaries** — reference foreign entities by ID without a constraint. (Open conflict with the `onDelete: Restrict` compliance rule below — see ADR 0001 "Offene Fragen"; do not resolve it unilaterally.)
 - **No direct table access across contexts.** Go through the owning context's public interface.
@@ -247,7 +247,7 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   - `monthlyHours` is optional — when null/0, pure time tracking without Soll comparison
   - No daily targets, no daily +/- display in calendar
   - Holiday/absence deductions do NOT apply (flexible schedule)
-- `WorkSchedule.validFrom` MUST be the 1st of a calendar month for every contract CHANGE (PUT `/api/v1/settings/work/:employeeId` and tenant-config bulk apply). Non-1st dates are rejected with HTTP 400 + German message `"Vertragswechsel sind nur zum Monats-1. erlaubt."` (see `apps/api/src/utils/month-first-date.ts` for the canonical constant `MONTH_FIRST_ERROR`). The initial schedule on employee creation (POST `/api/v1/employees`) is exempt — `validFrom = hireDate` may be any day, because contract START is not a contract CHANGE. Existing non-1st rows (pre-Phase-60) are preserved for audit-trail purposes; surface them via `pnpm --filter @clokr/api exec tsx scripts/audit-workschedule-non-month1.ts`. See GitHub issue #220.
+- `WorkSchedule.validFrom` MUST be the 1st of a calendar month for every contract CHANGE (PUT `/api/v1/settings/work/:employeeId` and tenant-config bulk apply). Non-1st dates are rejected with HTTP 400 + German message `"Vertragswechsel sind nur zum Monats-1. erlaubt."` (see `apps/api/src/contexts/platform/month-first-date.ts` for the canonical constant `MONTH_FIRST_ERROR`). The initial schedule on employee creation (POST `/api/v1/employees`) is exempt — `validFrom = hireDate` may be any day, because contract START is not a contract CHANGE. Existing non-1st rows (pre-Phase-60) are preserved for audit-trail purposes; surface them via `pnpm --filter @clokr/api exec tsx scripts/audit-workschedule-non-month1.ts`. See GitHub issue #220.
 - **`{day}Hours` is authoritative data only for `FIXED_SCHEDULE`.** For `FLEXTIME`, `MONTHLY_HOURS`
   and `SHIFT_BASED` the seven `{day}Hours` columns are a legacy 1/0 flag rather than hours;
   `workDays` is what carries the contractual information for those types. Measured against a
@@ -264,7 +264,7 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   where the corresponding `{day}Hours` value is > 0, on every create/update path (POST
   `/api/v1/employees`, PUT `/api/v1/settings/work/:employeeId` regular + cancelOrphanShifts
   branches, PUT `/api/v1/settings/work` applyToExisting bulk-apply) via `normalizeWorkDays()` in
-  `apps/api/src/utils/calculate-work-days.ts`. **That is a write-path normalisation, not a statement
+  `apps/api/src/contexts/platform/calculate-work-days.ts`. **That is a write-path normalisation, not a statement
   about what stored rows mean.** Because its input hours are placeholders for every type except
   `FIXED_SCHEDULE`, the equality "`workDays` = days with `{day}Hours > 0`" describes reality for
   `FIXED_SCHEDULE` only. Since Phase 107 (D-02) no form write path routes `SHIFT_BASED` `workDays`
@@ -292,11 +292,11 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   `WorkSchedule.contractWorkDaysPerWeek Int?` (D-01) — not a weekday set. The concrete weekdays a
   `SHIFT_BASED` employee actually works come from the roster (`Shift`), never from `workDays`. The
   `{day}Hours` columns are placeholders and are NOT authoritative (`getScheduledHours()` in
-  `apps/api/src/routes/leave.ts`, Phase 100 / OTC-04; `apps/api/src/utils/shift-based-saldo.ts:53-57`).
+  `apps/api/src/contexts/absence/api/leave.ts`, Phase 100 / OTC-04; `apps/api/src/contexts/working-time-account/shift-based-saldo.ts:53-57`).
   Since Phase 107 (D-02) no form write path touches `workDays` for `SHIFT_BASED` any more, so no NEW
   divergence can be created; existing divergent rows are preserved and are EXPECTED findings of
   `audit-workdays-vs-day-hours.ts`, not bugs — do NOT "fix" them on sight (Phase 95b, D-01).
-- `resolveContractWorkDaysPerWeek()` in `apps/api/src/routes/leave.ts` is the ONLY place the
+- `resolveContractWorkDaysPerWeek()` in `apps/api/src/contexts/absence/api/leave.ts` is the ONLY place the
   `SHIFT_BASED` contractual-count fallback chain lives (`contractWorkDaysPerWeek` →
   `workDays.length` → `TenantConfig.defaultWorkDays.length` → `5`, Phase 107 D-04) — it mirrors
   `resolveWorkDays()`'s shape but answers a different question ("how many days" vs. "which days").
@@ -550,8 +550,8 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 ## Comments
 
 - Section separators: `// ── Section Name ──────────────────` used throughout route files and app.ts to visually separate logical blocks
-- JSDoc-style comments for utility functions that have non-obvious behavior — see `apps/api/src/utils/timezone.ts`
-- Business-rule context comments are **English** (see § Language Conventions above). `// Einladung nur erstellen wenn kein Passwort gesetzt` in `apps/api/src/routes/employees.ts` is a legacy example of the OLD, no-longer-followed pattern, not a convention to imitate — it is drift to fix on sight in that file, not here (Issue #131)
+- JSDoc-style comments for utility functions that have non-obvious behavior — see `apps/api/src/contexts/working-time-account/timezone.ts`
+- Business-rule context comments are **English** (see § Language Conventions above). `// Einladung nur erstellen wenn kein Passwort gesetzt` in `apps/api/src/contexts/platform/api/employees.ts` is a legacy example of the OLD, no-longer-followed pattern, not a convention to imitate — it is drift to fix on sight in that file, not here (Issue #131)
 - TODO comments for known future work: `// TODO(owner-gate): construct once the Phorest web-calendar URL format is pinned.`
 - Used sparingly — mainly on exported utility functions and plugin interfaces
 - Declare module augmentation blocks use JSDoc for plugin-decorated properties:
@@ -565,7 +565,7 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 - Swagger tags use German domain names: `tags: ["Mitarbeiter"]`, `tags: ["Auth"]`
 - Use `fastify-plugin` (`fp`) wrapper for plugins that decorate the app instance
 - Declare module augmentation for type safety
-- Example at `apps/api/src/plugins/audit.ts`, `apps/api/src/plugins/prisma.ts`
+- Example at `apps/api/src/contexts/platform/plugins/audit.ts`, `apps/api/src/contexts/platform/plugins/prisma.ts`
 
 ## Svelte 5 Patterns
 
@@ -685,16 +685,16 @@ finding to report (Issue #204), not an exception to add.
 ## Key Abstractions
 
 - Purpose: Encapsulate cross-cutting concerns as decoratable services on the Fastify instance
-- Examples: `apps/api/src/plugins/prisma.ts`, `apps/api/src/plugins/audit.ts`, `apps/api/src/plugins/mailer.ts`, `apps/api/src/plugins/notify.ts`, `apps/api/src/plugins/storage.ts`, `apps/api/src/plugins/scheduler.ts`
+- Examples: `apps/api/src/contexts/platform/plugins/prisma.ts`, `apps/api/src/contexts/platform/plugins/audit.ts`, `apps/api/src/contexts/platform/plugins/mailer.ts`, `apps/api/src/contexts/platform/plugins/notify.ts`, `apps/api/src/contexts/platform/plugins/storage.ts`, `apps/api/src/contexts/scheduling/plugins/scheduler.ts`
 - Pattern: Each plugin uses `fastify-plugin` (`fp()`) to register, calls `app.decorate()` to add services, and augments the `FastifyInstance` type via `declare module "fastify"`. Accessed everywhere as `app.prisma`, `app.audit()`, `app.notify()`, `app.mailer`, `app.storage`.
 - Purpose: Group related API endpoints by domain
-- Examples: `apps/api/src/routes/time-entries.ts`, `apps/api/src/routes/employees.ts`, `apps/api/src/routes/leave.ts`, `apps/api/src/routes/auth.ts`
+- Examples: `apps/api/src/contexts/time-tracking/api/time-entries.ts`, `apps/api/src/contexts/platform/api/employees.ts`, `apps/api/src/contexts/absence/api/leave.ts`, `apps/api/src/contexts/platform/api/auth.ts`
 - Pattern: Each exports an `async function xxxRoutes(app: FastifyInstance)` that registers GET/POST/PUT/DELETE handlers. Registered in `apps/api/src/app.ts` with URL prefix (e.g., `{ prefix: "/api/v1/time-entries" }`).
 - Purpose: JWT/API-key authentication and role-based authorization
 - Location: `apps/api/src/middleware/auth.ts`
 - Pattern: `requireAuth` verifies JWT or API key (`clk_` prefix). `requireRole(...roles)` combines auth + role check. Used as `preHandler` on routes.
 - Purpose: Cron-based background tasks running in the API process
-- Plugins: `apps/api/src/plugins/attendance-checker.ts` (6 cron jobs), `apps/api/src/plugins/scheduler.ts` (Phorest sync), `apps/api/src/plugins/auto-close-month.ts` (monthly close), `apps/api/src/plugins/data-retention.ts` (annual archival)
+- Plugins: `apps/api/src/contexts/time-tracking/plugins/attendance-checker.ts` (6 cron jobs), `apps/api/src/contexts/scheduling/plugins/scheduler.ts` (Phorest sync), `apps/api/src/contexts/working-time-account/plugins/auto-close-month.ts` (monthly close), `apps/api/src/contexts/platform/plugins/data-retention.ts` (annual archival)
 - Pattern: Each plugin registers cron tasks via `node-cron`, starts in `onReady` hook, stops in `onClose` hook. Tasks are tenant-aware (loop over all tenants).
 - Purpose: Typed HTTP client wrapping fetch with auth token injection and auto-refresh
 - Location: `apps/web/src/lib/api/client.ts`

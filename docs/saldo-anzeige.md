@@ -13,12 +13,12 @@ Two German UI terms, used identically everywhere they appear:
 
 - **„Bestätigt"** — the confirmed carry-over from CLOSED months. Concretely: the `carryOver` of the
   most recent non-superseded `SaldoSnapshot` with `periodType: "MONTHLY"` for the employee
-  (`getConfirmedCarryOver` / `getConfirmedCarryOverBulk` in `apps/api/src/utils/confirmed-saldo.ts`
+  (`getConfirmedCarryOver` / `getConfirmedCarryOverBulk` in `apps/api/src/contexts/working-time-account/confirmed-saldo.ts`
   — the same chain Phase 98's audit walks and verifies, so both features share one source of truth).
   Stable, legally defensible as the entitlement figure. It only moves at Monatsabschluss.
 - **„Laufender Monat (Prognose)"** — everything accrued since that last close. It is **derived by
   subtraction** (`total − confirmed`) at exactly one place
-  (`computeOvertimeBalanceBreakdown` in `apps/api/src/routes/time-entries.ts`), never computed
+  (`computeOvertimeBalanceBreakdown` in `apps/api/src/contexts/time-tracking/api/time-entries.ts`), never computed
   independently. This guarantees the two figures always sum to exactly the total the app has always
   shown, and avoids creating a second computation path for the same value — the same shape whose
   violation is why Phase 98 (saldo chain integrity audit) exists in the first place.
@@ -37,7 +37,7 @@ overtime" the way a plain `0` would.
 
 The forecast is not simply "uncertain", it moves for two distinct, opposite reasons, both rooted in
 the SHIFT_BASED roster-proration formula (`calcShiftBasedSaldo()` in
-`apps/api/src/utils/shift-based-saldo.ts` — unchanged by this phase):
+`apps/api/src/contexts/working-time-account/shift-based-saldo.ts` — unchanged by this phase):
 
 1. **Under-rostering erodes it.** When the contract's full-period Soll (`C_net`) is prorated by
    roster progress (`R_toDate / R_periodFull`) and the roster covers fewer minutes than the
@@ -88,16 +88,16 @@ intentionally the smaller, secondary one.
 
 ## PDF export and Berichte
 
-The exported Stundennachweis (single-employee and company-wide monthly PDF, `apps/api/src/routes/reports.ts`
+The exported Stundennachweis (single-employee and company-wide monthly PDF, `apps/api/src/composition/reports.ts`
 
-- `apps/api/src/utils/pdf.ts`) and the Kalender-Header/Berichte screens do **not** show the lifetime
+- `apps/api/src/composition/pdf.ts`) and the Kalender-Header/Berichte screens do **not** show the lifetime
   split described above — they show a single, MONTH-scoped Monats-Saldo
   (`GET /overtime/month-saldo/:employeeId`, `computeMonthSaldo()`), which has no lifetime counterpart
   to split against. Forcing a lifetime "Bestätigt" line into a month-scoped figure would fabricate a
   key figure that was never there. Instead, this month-scoped figure is **relabelled** using the same
   two words: a CLOSED month's value is labelled with `OVERTIME_LABEL_CONFIRMED`
   ("Überstunden (Bestätigt)"), an OPEN month's with `OVERTIME_LABEL_FORECAST`
-  ("Überstunden (Prognose)") — both exported from `apps/api/src/utils/pdf.ts` so the wording cannot
+  ("Überstunden (Prognose)") — both exported from `apps/api/src/composition/pdf.ts` so the wording cannot
   drift between the single-employee and the company generator. `resolveReportOvertimeHours` in
   `reports.ts` resolves which applies per employee per month; its `confirmed` flag is `true` only for
   the branch that found a non-superseded `SaldoSnapshot` for the exact period (the one branch whose
@@ -130,14 +130,14 @@ research conducted 2026-08-18 (Phase 97-02):
   None compares a saldo value between two points in time (day-over-day or otherwise) — the closest
   candidates are leave/break/missing-entry/retro-entry notifications, all unrelated to overtime
   balance.
-- All ten `node-cron` registrations in `apps/api/src/plugins/attendance-checker.ts` were read; their
+- All ten `node-cron` registrations in `apps/api/src/contexts/time-tracking/plugins/attendance-checker.ts` were read; their
   eleven `notify()` call sites (missing entries, clock-out reminders, break compliance, etc.) are
   unrelated to saldo comparisons.
-- `CARRYOVER_EXPIRING` (`apps/api/src/plugins/carryover-warning.ts`) is the BUrlG vacation-**day**
+- `CARRYOVER_EXPIRING` (`apps/api/src/contexts/absence/plugins/carryover-warning.ts`) is the BUrlG vacation-**day**
   expiry warning — a completely different domain (Urlaubsanspruch, not Überstunden).
 - `TenantConfig.emailOnOvertimeWarning` is a config field with **no emitter anywhere** — no code
   path constructs a notification whose type this toggle would gate. This was already documented as
-  a dead toggle in `apps/api/src/plugins/notify.ts` before this phase; Phase 97-02 added a
+  a dead toggle in `apps/api/src/contexts/platform/plugins/notify.ts` before this phase; Phase 97-02 added a
   `SALDO-DISP-08`-tagged note next to it recording this verification and pointing back to this
   document, without adding a map entry, a new notification type, or an emitter.
 
@@ -157,7 +157,7 @@ without reading code — read it before changing anything that reads or writes t
 
 Two places, resolved through a single shared precedence chain — never duplicated inline
 (`resolveNegativeBalanceTolerance` / `loadNegativeBalanceTolerance`,
-`apps/api/src/utils/negative-balance-tolerance.ts`):
+`apps/api/src/contexts/working-time-account/negative-balance-tolerance.ts`):
 
 1. **`WorkSchedule.maxNegativeBalanceMinutes`** — a per-employee override, set via
    `PUT /api/v1/settings/work/:employeeId` (Admin-Oberfläche → Mitarbeiter → Arbeitszeit → „Max.
