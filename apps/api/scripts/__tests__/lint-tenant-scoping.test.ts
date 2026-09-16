@@ -3,9 +3,9 @@
  * Task 1) and the CLI entry (`lint-tenant-scoping.ts`, Task 2).
  *
  * DB-free for the exception tests: `validateExceptions`/`matchException` take plain data, no AST,
- * no Prisma. The `runLint` tests below drive it against a TEMPORARY fixture tree written to
- * `apps/api/scripts/__tests__/fixtures/tenant-scoping/cli/` so exit codes are asserted without
- * depending on the real tree's current (and constantly evolving) finding set.
+ * no Prisma. The `runLint` tests below drive it against a TEMPORARY fixture tree written to a
+ * per-test tmpdir so exit codes are asserted without depending on the real tree's current (and
+ * constantly evolving) finding set.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
@@ -32,13 +32,22 @@ function call(overrides: Partial<PrismaCall> = {}): PrismaCall {
   };
 }
 
-// ── Task 1: exception mechanism ─────────────────────────────────────────────────────────────
+const REASON = "This model has no tenant relevance at all, confirmed against the DMMF graph.";
+
+// ── Task 1: exception mechanism (handler-grouped entries, coordinator decision on 204-04) ──────
 
 describe("exception validation (D-06)", () => {
   it("exception: rejects an entry missing a reason, naming the entry", () => {
     const findings = [call()];
     const result = validateExceptions(
-      [{ file: call().file, call: "x.findFirst", line: 1 }],
+      [
+        {
+          file: call().file,
+          handler: "GET /:id",
+          validatedAt: 1,
+          calls: [{ call: "x.findFirst", line: 1 }],
+        },
+      ],
       findings,
     );
     expect(result.ok).toBe(false);
@@ -51,7 +60,15 @@ describe("exception validation (D-06)", () => {
   it("exception: rejects an entry whose reason is empty", () => {
     const findings = [call()];
     const result = validateExceptions(
-      [{ file: call().file, call: "x.findFirst", line: 1, reason: "" }],
+      [
+        {
+          file: call().file,
+          handler: "GET /:id",
+          validatedAt: 1,
+          calls: [{ call: "x.findFirst", line: 1 }],
+          reason: "",
+        },
+      ],
       findings,
     );
     expect(result.ok).toBe(false);
@@ -60,7 +77,15 @@ describe("exception validation (D-06)", () => {
   it("exception: rejects an entry whose reason is only whitespace", () => {
     const findings = [call()];
     const result = validateExceptions(
-      [{ file: call().file, call: "x.findFirst", line: 1, reason: "   \n\t " }],
+      [
+        {
+          file: call().file,
+          handler: "GET /:id",
+          validatedAt: 1,
+          calls: [{ call: "x.findFirst", line: 1 }],
+          reason: "   \n\t ",
+        },
+      ],
       findings,
     );
     expect(result.ok).toBe(false);
@@ -69,7 +94,15 @@ describe("exception validation (D-06)", () => {
   it("exception: rejects an entry whose reason is shorter than 30 characters", () => {
     const findings = [call()];
     const result = validateExceptions(
-      [{ file: call().file, call: "x.findFirst", line: 1, reason: "too short" }],
+      [
+        {
+          file: call().file,
+          handler: "GET /:id",
+          validatedAt: 1,
+          calls: [{ call: "x.findFirst", line: 1 }],
+          reason: "too short",
+        },
+      ],
       findings,
     );
     expect(result.ok).toBe(false);
@@ -84,9 +117,10 @@ describe("exception validation (D-06)", () => {
       [
         {
           file: call().file,
-          call: "x.findFirst",
-          line: 1,
-          reason: "This model has no tenant relevance at all, confirmed against the DMMF graph.",
+          handler: "GET /:id",
+          validatedAt: 1,
+          calls: [{ call: "x.findFirst", line: 1 }],
+          reason: REASON,
         },
       ],
       findings,
@@ -94,25 +128,130 @@ describe("exception validation (D-06)", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("exception: rejects an entry missing file/call/line", () => {
+  it("exception: one entry covers MULTIPLE explicitly-named calls (the handler-grouping decision)", () => {
+    const findings = [
+      call({ line: 10, model: "break", method: "deleteMany" }),
+      call({ line: 12, model: "timeEntry", method: "deleteMany" }),
+      call({ line: 14, model: "leaveRequest", method: "deleteMany" }),
+    ];
+    const result = validateExceptions(
+      [
+        {
+          file: call().file,
+          handler: "DELETE /:id/hard-delete",
+          validatedAt: 1,
+          calls: [
+            { call: "break.deleteMany", line: 10 },
+            { call: "timeEntry.deleteMany", line: 12 },
+            { call: "leaveRequest.deleteMany", line: 14 },
+          ],
+          reason:
+            "employeeId was tenant-validated at line 1; all three deleteMany calls reuse it in the same hard-delete transaction.",
+        },
+      ],
+      findings,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.entries[0].calls).toHaveLength(3);
+    }
+  });
+
+  it("exception: a NEW, unlisted call in the same handler is NOT silently covered (AC3)", () => {
+    // Two findings exist in the same file; the entry names only ONE of them. The other must
+    // remain reportable — an entry answers exactly the calls it names, never a whole handler.
+    const findings = [
+      call({ line: 10, model: "break", method: "deleteMany" }),
+      call({ line: 12, model: "timeEntry", method: "deleteMany" }),
+    ];
+    const result = validateExceptions(
+      [
+        {
+          file: call().file,
+          handler: "DELETE /:id/hard-delete",
+          validatedAt: 1,
+          calls: [{ call: "break.deleteMany", line: 10 }],
+          reason: REASON,
+        },
+      ],
+      findings,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const uncovered = call({ line: 12, model: "timeEntry", method: "deleteMany" });
+      expect(matchException(uncovered, result.entries)).toBeNull();
+    }
+  });
+
+  it("exception: rejects an entry missing file/handler/calls", () => {
     const findings = [call()];
     const missingFile = validateExceptions(
-      [{ call: "x.findFirst", line: 1, reason: "a".repeat(40) }],
+      [
+        {
+          handler: "GET /:id",
+          validatedAt: 1,
+          calls: [{ call: "x.findFirst", line: 1 }],
+          reason: REASON,
+        },
+      ],
       findings,
     );
     expect(missingFile.ok).toBe(false);
 
-    const missingCall = validateExceptions(
-      [{ file: "a.ts", line: 1, reason: "a".repeat(40) }],
+    const missingHandler = validateExceptions(
+      [{ file: "a.ts", validatedAt: 1, calls: [{ call: "x.findFirst", line: 1 }], reason: REASON }],
       findings,
     );
-    expect(missingCall.ok).toBe(false);
+    expect(missingHandler.ok).toBe(false);
 
-    const missingLine = validateExceptions(
-      [{ file: "a.ts", call: "x.findFirst", reason: "a".repeat(40) }],
+    const missingCalls = validateExceptions(
+      [{ file: "a.ts", handler: "GET /:id", validatedAt: 1, reason: REASON }],
       findings,
     );
-    expect(missingLine.ok).toBe(false);
+    expect(missingCalls.ok).toBe(false);
+
+    const emptyCalls = validateExceptions(
+      [{ file: "a.ts", handler: "GET /:id", validatedAt: 1, calls: [], reason: REASON }],
+      findings,
+    );
+    expect(emptyCalls.ok).toBe(false);
+  });
+
+  it("exception: accepts validatedAt: null for a pre-authentication / no-tenant-check case", () => {
+    const findings = [call()];
+    const result = validateExceptions(
+      [
+        {
+          file: call().file,
+          handler: "POST /login",
+          validatedAt: null,
+          calls: [{ call: "x.findFirst", line: 1 }],
+          reason:
+            "Pre-authentication flow — req.user does not exist yet, so no tenant check applies.",
+        },
+      ],
+      findings,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("exception: rejects a non-null, non-integer, or non-positive validatedAt", () => {
+    const findings = [call()];
+    for (const bad of ["not-a-number", 0, -1, 1.5]) {
+      const result = validateExceptions(
+        [
+          {
+            file: call().file,
+            handler: "GET /:id",
+            validatedAt: bad,
+            calls: [{ call: "x.findFirst", line: 1 }],
+            reason: REASON,
+          },
+        ],
+        findings,
+      );
+      expect(result.ok).toBe(false);
+    }
   });
 
   it("exception: rejects malformed JSON payloads (not an array), never returning a silent empty list", () => {
@@ -129,8 +268,9 @@ describe("exception validation (D-06)", () => {
       [
         {
           file: "apps/api/src/routes/x.ts",
-          call: "x.findFirst",
-          line: 1,
+          handler: "GET /:id",
+          validatedAt: 1,
+          calls: [{ call: "x.findFirst", line: 1 }],
           reason: "This was tenant-safe once, but the call has since been removed from the tree.",
         },
       ],
@@ -142,14 +282,40 @@ describe("exception validation (D-06)", () => {
     }
   });
 
+  it("exception: STALE fires when only ONE of several listed calls stops matching", () => {
+    const findings = [call({ line: 10, model: "break", method: "deleteMany" })]; // timeEntry.deleteMany:12 gone
+    const result = validateExceptions(
+      [
+        {
+          file: call().file,
+          handler: "DELETE /:id/hard-delete",
+          validatedAt: 1,
+          calls: [
+            { call: "break.deleteMany", line: 10 },
+            { call: "timeEntry.deleteMany", line: 12 },
+          ],
+          reason: REASON,
+        },
+      ],
+      findings,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(
+        result.errors.some((e) => /stale/i.test(e) && e.includes("timeEntry.deleteMany:12")),
+      ).toBe(true);
+    }
+  });
+
   it("exception: rejects an entry whose file is under __tests__", () => {
     const findings = [call({ file: "apps/api/src/routes/__tests__/x.test.ts" })];
     const result = validateExceptions(
       [
         {
           file: "apps/api/src/routes/__tests__/x.test.ts",
-          call: "x.findFirst",
-          line: 1,
+          handler: "GET /:id",
+          validatedAt: 1,
+          calls: [{ call: "x.findFirst", line: 1 }],
           reason:
             "A test fixture constructs its own literal identifier, so this is not client input.",
         },
@@ -199,9 +365,10 @@ describe("matchException (exception near-miss)", () => {
   const entries: TenantScopingException[] = [
     {
       file: "apps/api/src/routes/x.ts",
-      call: "x.findFirst",
-      line: 10,
-      reason: "This model has no tenant relevance at all, confirmed against the DMMF graph.",
+      handler: "GET /:id",
+      validatedAt: 1,
+      calls: [{ call: "x.findFirst", line: 10 }],
+      reason: REASON,
     },
   ];
 
@@ -316,8 +483,9 @@ describe("runLint", () => {
     writeExceptions(tmpRoot, [
       {
         file: finding.file,
-        call: `${finding.model}.${finding.method}`,
-        line: finding.line,
+        handler: "GET /widgets/:id",
+        validatedAt: null,
+        calls: [{ call: `${finding.model}.${finding.method}`, line: finding.line }],
         reason: "This fixture models a deliberately excepted call for the runLint test itself.",
       },
     ]);
@@ -330,7 +498,15 @@ describe("runLint", () => {
 
   it("returns exit code 1 when the exceptions file has an invalid entry, even with zero findings", () => {
     writeFixtureTree(tmpRoot, { [SCOPED_ROUTE]: SCOPED_HANDLER });
-    writeExceptions(tmpRoot, [{ file: "a.ts", call: "x.findFirst", line: 1, reason: "" }]);
+    writeExceptions(tmpRoot, [
+      {
+        file: "a.ts",
+        handler: "GET /:id",
+        validatedAt: 1,
+        calls: [{ call: "x.findFirst", line: 1 }],
+        reason: "",
+      },
+    ]);
 
     const result = runLint({ repoRoot: tmpRoot });
     expect(result.exitCode).toBe(1);
@@ -342,8 +518,9 @@ describe("runLint", () => {
     writeExceptions(tmpRoot, [
       {
         file: SCOPED_ROUTE,
-        call: "widget.findFirst",
-        line: 999,
+        handler: "GET /widgets/:id",
+        validatedAt: null,
+        calls: [{ call: "widget.findFirst", line: 999 }],
         reason: "This entry deliberately points at a line that no longer has any finding on it.",
       },
     ]);

@@ -279,12 +279,14 @@ function printReport(result: RunLintResult): void {
         `     and return 404 BEFORE any write — the established idiom in this codebase\n` +
         `     (see apps/api/src/routes/time-entries.ts:681-698).\n` +
         `  3. Or, if this site is genuinely tenant-safe for a reason the check cannot see, add an\n` +
-        `     entry to apps/api/scripts/lint-tenant-scoping-exceptions.json:\n` +
-        `       { "file": "...", "call": "model.method", "line": 0, "reason": "<why this is safe>" }\n` +
+        `     entry to apps/api/scripts/lint-tenant-scoping-exceptions.json (one entry per HANDLER,\n` +
+        `     naming every covered call explicitly — see that file's header):\n` +
+        `       { "file": "...", "handler": "METHOD /path", "validatedAt": 0,\n` +
+        `         "calls": [{ "call": "model.method", "line": 0 }], "reason": "<why this is safe>" }\n` +
         `     The reason is MANDATORY and is validated by this script — an entry without one fails\n` +
-        `     the run. Do NOT add an entry to silence a finding you have not understood: per Issue\n` +
-        `     #204, a hit on a clean tree is a finding and belongs in a GitHub issue, not in this\n` +
-        `     list.\n`,
+        `     the run, and so does a call this script finds that is not named in 'calls'. Do NOT add\n` +
+        `     an entry to silence a finding you have not understood: per Issue #204, a hit on a\n` +
+        `     clean tree is a finding and belongs in a GitHub issue, not in this list.\n`,
     );
   }
 
