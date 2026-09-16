@@ -7,10 +7,10 @@ import { getTestApp, seedTestData, cleanupTestData } from "./setup";
 // freshness.
 const fetchSpy = vi.fn();
 
-vi.mock("../utils/school-holidays-client", async () => {
-  const actual = await vi.importActual<typeof import("../utils/school-holidays-client")>(
-    "../utils/school-holidays-client",
-  );
+vi.mock("../contexts/platform/school-holidays-client", async () => {
+  const actual = await vi.importActual<
+    typeof import("../contexts/platform/school-holidays-client")
+  >("../contexts/platform/school-holidays-client");
   return {
     ...actual,
     fetchSchoolHolidays: (sub: string, from: number, to: number): Promise<unknown> =>
@@ -19,8 +19,11 @@ vi.mock("../utils/school-holidays-client", async () => {
 });
 
 // Import AFTER vi.mock — synchronous import order matters.
-import { syncSchoolHolidaysForTenant, type SyncResult } from "../plugins/school-holidays-sync";
-import { SchoolHolidaysApiError } from "../utils/school-holidays-client";
+import {
+  syncSchoolHolidaysForTenant,
+  type SyncResult,
+} from "../contexts/platform/plugins/school-holidays-sync";
+import { SchoolHolidaysApiError } from "../contexts/platform/school-holidays-client";
 import { FederalState } from "@clokr/db";
 
 const BASE = "/api/v1/admin/school-holidays";

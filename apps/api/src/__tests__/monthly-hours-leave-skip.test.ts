@@ -14,8 +14,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
-import { updateOvertimeAccount } from "../routes/time-entries";
-import { dateStrInTz } from "../utils/timezone";
+import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
+import { dateStrInTz } from "../contexts/working-time-account/timezone";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 

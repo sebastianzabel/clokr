@@ -4,12 +4,13 @@
  * DB-free: fixtures under fixtures/tenant-scoping/provenance/ are parsed with
  * `ts.createSourceFile`, never executed and never type-checked, so they carry `declare const`
  * stand-ins instead of real imports. The two live-repo assertions (D-15 exclusion, the D-14
- * candidate-count band) run `listScopedFiles`/`selectCandidates` against the actual
- * `apps/api/src/routes` + `apps/api/src/services` tree, so they track real drift rather than a
+ * candidate-count band) run `listScopedFiles`/`selectCandidates` against the actual seven
+ * `SCOPED_DIRS` trees (Phase 99b Plan 07 final shape), so they track real drift rather than a
  * restatement of a fixture.
  */
 import { describe, it, expect } from "vitest";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as ts from "typescript";
 import {
@@ -17,6 +18,7 @@ import {
   findPrismaCalls,
   classifyProvenance,
   selectCandidates,
+  MissingScopedDirError,
 } from "../lint-tenant-scoping-candidates";
 import { enclosingHandler, collectRequestBindings } from "../lint-tenant-scoping-request-bindings";
 
@@ -140,6 +142,26 @@ it("D-15: listScopedFiles never returns a path under a __tests__ segment", () =>
   expect(files.length).toBeGreaterThan(20);
   const leaked = files.filter((file) => file.includes("__tests__"));
   expect(leaked).toEqual([]);
+});
+
+// ── #229 Guard A: a SCOPED_DIRS entry that points nowhere is a hard error, not a silent skip ───
+
+it("#229 Guard A: listScopedFiles throws MissingScopedDirError when a scoped dir does not exist", () => {
+  const emptyRepo = fs.mkdtempSync(path.join(os.tmpdir(), "lint-tenant-scoping-missing-dir-"));
+  try {
+    // No SCOPED_DIRS entry created under emptyRepo — every one of the seven points nowhere on
+    // this throwaway repo root.
+    expect(() => listScopedFiles(emptyRepo)).toThrowError(MissingScopedDirError);
+    try {
+      listScopedFiles(emptyRepo);
+      expect.unreachable("listScopedFiles must throw before returning");
+    } catch (err) {
+      expect(err).toBeInstanceOf(MissingScopedDirError);
+      expect((err as Error).message).toContain("apps/api/src/contexts/platform/api");
+    }
+  } finally {
+    fs.rmSync(emptyRepo, { recursive: true, force: true });
+  }
 });
 
 // ── D-14: the filter is measurably doing work on the real tree ───────────────────────────────

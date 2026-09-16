@@ -36,10 +36,14 @@ import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../utils/timezone";
-import { updateOvertimeAccount } from "../routes/time-entries";
-import { closeEmployeeMonth } from "../utils/close-employee-month";
-import { getHolidays, STATE_MAP } from "../utils/holidays";
+import {
+  monthRangeUtc,
+  monthDayBounds,
+  dateStrInTz,
+} from "../contexts/working-time-account/timezone";
+import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
+import { closeEmployeeMonth } from "../contexts/working-time-account/close-employee-month";
+import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
 
 const TZ = "Europe/Berlin";
 

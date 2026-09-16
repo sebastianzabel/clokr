@@ -1,0 +1,2670 @@
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import bcrypt from "bcryptjs";
+import iconv from "iconv-lite";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
+import { computeOvertimeBalanceHours } from "../../contexts/time-tracking/api/time-entries";
+import * as pdfUtils from "../pdf";
+import { leaveTypeFields } from "../../contexts/absence/leave-type";
+
+// Phase 97 (D-11, Task 3): the two vacation-overview PDF handlers only expose their
+// aggregated { totalDays, ... } data by feeding it into pdfkit, which compresses its
+// content streams — not observable by decoding the response body. These two functions
+// are wrapped with a spy that still calls straight through to the real implementation
+// (so the actual PDF bytes returned to callers are unaffected), purely to let tests
+// inspect the `data` argument the route built.
+vi.mock("../pdf", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../pdf")>();
+  return {
+    ...actual,
+    generateVacationOverviewPdf: vi.fn(actual.generateVacationOverviewPdf),
+    streamVacationOverviewPdf: vi.fn(actual.streamVacationOverviewPdf),
+  };
+});
+import {
+  todayStr,
+  utcMidnight,
+  dowOf,
+  monthStartUtc,
+  monthEndUtc,
+} from "../../__tests__/test-dates";
+import type { FastifyInstance } from "fastify";
+
+// Mirror of the module-private classifyOvertimeBalance thresholds in dashboard.ts (NORMAL |x|<=20,
+// ELEVATED |x|<=40, CRITICAL >40) — used to assert status is internally consistent with the LIVE
+// balanceHours the overtime-overview endpoint now returns (v1.8.24 live-through-yesterday change).
+function expectedOvertimeBand(balanceHours: number): "NORMAL" | "ELEVATED" | "CRITICAL" {
+  const abs = Math.abs(balanceHours);
+  if (abs <= 20) return "NORMAL";
+  if (abs <= 40) return "ELEVATED";
+  return "CRITICAL";
+}
+
+describe("Reports API", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "rp");
+  });
+
+  afterAll(async () => {
+    await cleanupTestData(app, data.tenant.id);
+    await closeTestApp();
+  });
+
+  // ── GET /api/v1/reports/datev (DATEV LODAS Export) ────────────────────────
+  describe("GET /api/v1/reports/datev", () => {
+    let datevData: Awaited<ReturnType<typeof seedTestData>>;
+
+    beforeAll(async () => {
+      datevData = await seedTestData(app, "dv");
+
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: datevData.employee.id,
+          date: new Date("2026-04-07"),
+          startTime: new Date("2026-04-07T07:00:00.000Z"),
+          endTime: new Date("2026-04-07T15:00:00.000Z"),
+          breakMinutes: 0,
+        },
+      });
+
+      await app.prisma.absence.create({
+        data: {
+          employeeId: datevData.employee.id,
+          type: "SICK",
+          startDate: new Date("2026-04-14"),
+          endDate: new Date("2026-04-14"),
+          days: 1,
+          createdBy: datevData.adminUser.id,
+        },
+      });
+
+      // Issue #210: sickness is sourced from LeaveRequest, not the Absence row above
+      // (which is kept on purpose — it must NOT contribute to the export any more).
+      const dvSickType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: datevData.tenant.id,
+          ...leaveTypeFields("SICK"),
+          color: "#EF4444",
+        },
+      });
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: datevData.employee.id,
+          leaveTypeId: dvSickType.id,
+          startDate: new Date("2026-04-15"), // Wednesday
+          endDate: new Date("2026-04-16"), // Thursday — 2 workdays
+          days: 2,
+          status: "APPROVED",
+        },
+      });
+
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: datevData.employee.id,
+          leaveTypeId: datevData.vacationType.id,
+          startDate: new Date("2026-04-21"),
+          endDate: new Date("2026-04-21"),
+          days: 1,
+          status: "APPROVED",
+        },
+      });
+
+      const overtimeLeaveType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: datevData.tenant.id,
+          code: "OVERTIME_COMP",
+          name: "Überstundenausgleich",
+          isPaid: true,
+          requiresApproval: false,
+          color: "#FF8C00",
+        },
+      });
+
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: datevData.employee.id,
+          leaveTypeId: overtimeLeaveType.id,
+          startDate: new Date("2026-04-28"),
+          endDate: new Date("2026-04-28"),
+          days: 1,
+          status: "APPROVED",
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, datevData.tenant.id);
+    });
+
+    it("DATEV-01a: response body contains [Allgemein], [Satzbeschreibung], [Bewegungsdaten] in order", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = iconv.decode(res.rawPayload, "win1252");
+      expect(body.indexOf("[Allgemein]")).toBeGreaterThanOrEqual(0);
+      expect(body.indexOf("[Satzbeschreibung]")).toBeGreaterThan(body.indexOf("[Allgemein]"));
+      expect(body.indexOf("[Bewegungsdaten]")).toBeGreaterThan(body.indexOf("[Satzbeschreibung]"));
+    });
+
+    it("DATEV-01b: [Allgemein] section contains required fields", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      const body = iconv.decode(res.rawPayload, "win1252");
+      expect(body).toContain("Ziel=LODAS");
+      expect(body).toContain("Version_SST=1.0");
+      expect(body).toContain("BeraterNr=0");
+      expect(body).toContain("MandantenNr=0");
+      expect(body).toContain("Datumsangaben=DDMMJJJJ");
+    });
+
+    it("DATEV-01d: [Allgemein] contains Abrechnungszeitraum=MMYYYY for the export period", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      const body = iconv.decode(res.rawPayload, "win1252");
+      expect(body).toContain("Abrechnungszeitraum=042026");
+      // Verify position: Abrechnungszeitraum line must appear inside [Allgemein] block,
+      // i.e. before [Satzbeschreibung].
+      const lines = body.split(/\r\n/);
+      const periodIdx = lines.findIndex((l: string) => l.startsWith("Abrechnungszeitraum="));
+      const satzIdx = lines.findIndex((l: string) => l === "[Satzbeschreibung]");
+      expect(periodIdx).toBeGreaterThan(0);
+      expect(satzIdx).toBeGreaterThan(periodIdx);
+    });
+
+    it("DATEV-01e: Abrechnungszeitraum zero-pads single-digit months", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=1",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      const body = iconv.decode(res.rawPayload, "win1252");
+      expect(body).toContain("Abrechnungszeitraum=012026");
+    });
+
+    it("DATEV-01c: [Satzbeschreibung] contains a row starting with '20;'", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      const body = iconv.decode(res.rawPayload, "win1252");
+      const lines = body.split(/\r\n/);
+      const satzIdx = lines.findIndex((l: string) => l === "[Satzbeschreibung]");
+      expect(satzIdx).toBeGreaterThanOrEqual(0);
+      expect(lines.slice(satzIdx + 1).some((l: string) => l.startsWith("20;"))).toBe(true);
+    });
+
+    it("DATEV-02a: response body uses CRLF line endings", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      const body = res.rawPayload;
+      for (let i = 0; i < body.length; i++) {
+        if (body[i] === 0x0a) {
+          expect(body[i - 1]).toBe(0x0d);
+        }
+      }
+    });
+
+    it("DATEV-02c: Content-Type is application/octet-stream", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      expect(res.headers["content-type"]).toBe("application/octet-stream");
+    });
+
+    it("DATEV-02d: filename ends with .txt", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      expect(res.headers["content-disposition"] as string).toContain('filename="datev-2026-4.txt"');
+    });
+
+    it("DATEV-03a: custom Lohnartennummern from TenantConfig appear in data rows", async () => {
+      // try/finally so an assertion failure inside this test never leaves the custom
+      // Lohnartennummern in place for DATEV-03b (test-order independence).
+      try {
+        await app.prisma.tenantConfig.update({
+          where: { tenantId: datevData.tenant.id },
+          data: {
+            datevNormalstundenNr: 777,
+            datevUrlaubNr: 888,
+            datevKrankNr: 999,
+            datevSonderurlaubNr: 555,
+          },
+        });
+        const res = await app.inject({
+          method: "GET",
+          url: "/api/v1/reports/datev?year=2026&month=4",
+          headers: { authorization: `Bearer ${datevData.adminToken}` },
+        });
+        const body = iconv.decode(res.rawPayload, "win1252");
+        expect(body).toContain(";777;");
+        expect(body).toContain(";888;");
+        expect(body).toContain(";999;");
+        // Issue #210: the 2 workdays now come from the LeaveRequest fixture added to
+        // the `dv` beforeAll above, not from the kept-but-dead Absence row.
+        expect(body).toContain(";K;999;;2,0;");
+      } finally {
+        await app.prisma.tenantConfig.update({
+          where: { tenantId: datevData.tenant.id },
+          data: {
+            datevNormalstundenNr: 100,
+            datevUrlaubNr: 300,
+            datevKrankNr: 200,
+            datevSonderurlaubNr: 302,
+          },
+        });
+      }
+    });
+
+    it("DATEV-03b: default Lohnartennummer 100 used with default config", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      const body = iconv.decode(res.rawPayload, "win1252");
+      expect(body).toContain(";100;");
+    });
+
+    it("DATEV-03c: hardcoded Lohnartennummer 301 (Überstundenausgleich) not overridden by config", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      const body = iconv.decode(res.rawPayload, "win1252");
+      expect(body).toContain(";301;");
+    });
+
+    // ── Permission tests (UAT-01) ──────────────────────────────────────────
+    it("DATEV-04a: MANAGER can call company-wide DATEV export", async () => {
+      const passwordHash = await bcrypt.hash("test1234", 10);
+      const managerEmail = `mgr-perm-${Date.now()}@test.de`;
+      const mgrUser = await app.prisma.user.create({
+        data: { email: managerEmail, passwordHash, role: "MANAGER", isActive: true },
+      });
+      await app.prisma.employee.create({
+        data: {
+          tenantId: datevData.tenant.id,
+          userId: mgrUser.id,
+          employeeNumber: `M-${Date.now()}`,
+          firstName: "Manager",
+          lastName: "Perm",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      const loginRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: managerEmail, password: "test1234" },
+      });
+      const { accessToken: managerToken } = JSON.parse(loginRes.body);
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["content-type"]).toBe("application/octet-stream");
+    });
+
+    it("DATEV-04b: EMPLOYEE cannot call company-wide DATEV export", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.empToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+  });
+
+  // ── Phase 97 (D-13): DATEV-LODAS Lohnart selection runs on LeaveType.code ──────
+  // Before this change, a tenant renaming its VACATION type silently returned 0 from
+  // daysForName() — and because a Lohnart line is only written when its day count is
+  // > 0, the line vanished from the export entirely. A missing leave day in a payroll
+  // file is a silent accounting error with an external recipient (the Lohnbüro).
+  describe("GET /api/v1/reports/datev — Lohnart selection on LeaveType.code (D-13)", () => {
+    let d13Data: Awaited<ReturnType<typeof seedTestData>>;
+
+    beforeAll(async () => {
+      d13Data = await seedTestData(app, "dv13");
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, d13Data.tenant.id);
+    });
+
+    async function datevBody(url: string, token: string) {
+      const res = await app.inject({
+        method: "GET",
+        url,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      return iconv.decode(res.rawPayload, "win1252");
+    }
+
+    it("D13-1: a VACATION-code row renamed to 'Erholungsurlaub' still produces a U-Lohnart line with the correct day count", async () => {
+      await app.prisma.leaveType.update({
+        where: { id: d13Data.vacationType.id },
+        data: { name: "Erholungsurlaub" },
+      });
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: d13Data.employee.id,
+          leaveTypeId: d13Data.vacationType.id,
+          startDate: new Date("2026-04-06"), // Monday
+          endDate: new Date("2026-04-08"), // Wednesday — 3 workdays
+          days: 3,
+          status: "APPROVED",
+        },
+      });
+
+      const body = await datevBody("/api/v1/reports/datev?year=2026&month=4", d13Data.adminToken);
+      const lines = body.split(/\r\n/);
+      const vacationLine = lines.find(
+        (l) => l.startsWith(`${d13Data.employee.employeeNumber};`) && l.includes(";U;300;"),
+      );
+      expect(vacationLine).toBeDefined();
+      expect(vacationLine).toContain(";3,0;");
+    });
+
+    it("D13-2: a SPECIAL-code row writes the Sonderurlaubs-Lohnart, not the Urlaubs-Lohnart, despite both names containing 'Urlaub'", async () => {
+      const specialType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: d13Data.tenant.id,
+          code: "SPECIAL",
+          name: "Sonderurlaub",
+          isPaid: true,
+          requiresApproval: true,
+          color: "#8B5CF6",
+        },
+      });
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: d13Data.employee.id,
+          leaveTypeId: specialType.id,
+          startDate: new Date("2026-04-13"), // Monday
+          endDate: new Date("2026-04-14"), // Tuesday — 2 workdays
+          days: 2,
+          status: "APPROVED",
+        },
+      });
+
+      const body = await datevBody("/api/v1/reports/datev?year=2026&month=4", d13Data.adminToken);
+      const lines = body.split(/\r\n/);
+      const specialLine = lines.find(
+        (l) => l.startsWith(`${d13Data.employee.employeeNumber};`) && l.includes(";S;302;"),
+      );
+      expect(specialLine).toBeDefined();
+      expect(specialLine).toContain(";2,0;");
+      // Not merged into the Urlaub Lohnart line from D13-1.
+      const vacationLine = lines.find(
+        (l) => l.startsWith(`${d13Data.employee.employeeNumber};`) && l.includes(";U;300;"),
+      );
+      expect(vacationLine).toContain(";3,0;");
+    });
+
+    it("D13-3: a request on a code=null row produces no Ausfall-Lohnart line and leaves the other rows unchanged", async () => {
+      const employee2 = await app.prisma.employee.create({
+        data: {
+          tenantId: d13Data.tenant.id,
+          userId: (
+            await app.prisma.user.create({
+              data: {
+                email: `d13-nullcode-${Date.now()}@test.de`,
+                passwordHash: "DUMMY",
+                role: "EMPLOYEE",
+                isActive: true,
+              },
+            })
+          ).id,
+          employeeNumber: `DV13-N-${Date.now()}`,
+          firstName: "Null",
+          lastName: "CodeTest",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      const nullCodeType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: d13Data.tenant.id,
+          code: null,
+          name: "Sonderfall ohne Code (D13)",
+          isPaid: true,
+          requiresApproval: true,
+          color: "#9CA3AF",
+        },
+      });
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: employee2.id,
+          leaveTypeId: nullCodeType.id,
+          startDate: new Date("2026-04-20"), // Monday
+          endDate: new Date("2026-04-21"), // Tuesday
+          days: 2,
+          status: "APPROVED",
+        },
+      });
+
+      const body = await datevBody("/api/v1/reports/datev?year=2026&month=4", d13Data.adminToken);
+      const lines = body.split(/\r\n/).filter((l) => l.startsWith(`${employee2.employeeNumber};`));
+      // Exactly one line for this employee: the unconditional "normal hours" row with
+      // an empty Ausfallschlüssel — no U/S/K row was written for the code=null request.
+      expect(lines.length).toBe(1);
+      expect(lines[0]).not.toMatch(/;U;|;S;|;K;/);
+
+      // The D13-1/D13-2 employee's rows are unaffected by this new, unrelated employee.
+      const otherBody = body
+        .split(/\r\n/)
+        .filter((l) => l.startsWith(`${d13Data.employee.employeeNumber};`));
+      expect(otherBody.some((l) => l.includes(";U;300;") && l.includes(";3,0;"))).toBe(true);
+      expect(otherBody.some((l) => l.includes(";S;302;") && l.includes(";2,0;"))).toBe(true);
+    });
+
+    it("D13-4 (AC-5): the § 9 Urlaub->Krank rebooking value and field order are unchanged by the code-based selection", async () => {
+      const employee3 = await app.prisma.employee.create({
+        data: {
+          tenantId: d13Data.tenant.id,
+          userId: (
+            await app.prisma.user.create({
+              data: {
+                email: `d13-s9-${Date.now()}@test.de`,
+                passwordHash: "DUMMY",
+                role: "EMPLOYEE",
+                isActive: true,
+              },
+            })
+          ).id,
+          employeeNumber: `DV13-S9-${Date.now()}`,
+          firstName: "S9",
+          lastName: "CodeTest",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      const sickType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: d13Data.tenant.id,
+          code: "SICK",
+          name: "Krankmeldung",
+          isPaid: true,
+          requiresApproval: false,
+          color: "#EF4444",
+        },
+      });
+      const vacReq = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: employee3.id,
+          leaveTypeId: d13Data.vacationType.id,
+          startDate: new Date("2026-05-04"), // Monday
+          endDate: new Date("2026-05-08"), // Friday — 5 workdays
+          days: 5,
+          status: "APPROVED",
+        },
+      });
+      const sickReq = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: employee3.id,
+          leaveTypeId: sickType.id,
+          startDate: new Date("2026-05-06"), // Wednesday
+          endDate: new Date("2026-05-07"), // Thursday — 2 workdays, overlaps the vacation
+          days: 2,
+          status: "APPROVED",
+        },
+      });
+      await app.prisma.section9Credit.create({
+        data: {
+          employeeId: employee3.id,
+          sickRequestId: sickReq.id,
+          vacationRequestId: vacReq.id,
+          overlapStart: new Date("2026-05-06"),
+          overlapEnd: new Date("2026-05-07"),
+          status: "CONFIRMED",
+          creditedStart: new Date("2026-05-06"),
+          creditedEnd: new Date("2026-05-07"),
+          creditedDays: 2,
+          attestSource: "EAU",
+          attestValidFrom: new Date("2026-05-06"),
+          attestValidTo: new Date("2026-05-07"),
+          reason: "D13-4 fixture",
+        },
+      });
+
+      const body = await datevBody("/api/v1/reports/datev?year=2026&month=5", d13Data.adminToken);
+      const lines = body.split(/\r\n/).filter((l) => l.startsWith(`${employee3.employeeNumber};`));
+      // 5-day vacation minus the 2 credited days -> 3 remain as Urlaub.
+      const vacationLine = lines.find((l) => l.includes(";U;300;"));
+      expect(vacationLine).toContain(";3,0;");
+      // The 2 credited days move to Krank (field order: Ausfall, Lohnart, Stunden, Tage).
+      const krankLine = lines.find((l) => l.includes(";K;200;"));
+      expect(krankLine).toContain(";K;200;;2,0;");
+    });
+  });
+
+  // ── Issue #210: Krank/Kinderkrank sourced from LeaveRequest, not Absence ────────
+  // Absence.SICK / SICK_CHILD has no production writer (measured zero rows on the
+  // pseudonymised production copy, 2026-08-30) — the export must source sickness
+  // exclusively from APPROVED, non-deleted sickness LeaveRequests, and a § 9-credited
+  // day must be reported exactly once (union over day keys, never a sum).
+  describe("GET /api/v1/reports/datev — Krank/Kinderkrank aus LeaveRequest (Issue #210)", () => {
+    let d210Data: Awaited<ReturnType<typeof seedTestData>>;
+    let sickType: { id: string };
+    let sickChildType: { id: string };
+
+    beforeAll(async () => {
+      d210Data = await seedTestData(app, "d210");
+      sickType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: d210Data.tenant.id,
+          ...leaveTypeFields("SICK"),
+          color: "#EF4444",
+        },
+      });
+      sickChildType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: d210Data.tenant.id,
+          ...leaveTypeFields("SICK_CHILD"),
+          color: "#F59E0B",
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, d210Data.tenant.id);
+    });
+
+    async function datevBody210(url: string, token: string) {
+      const res = await app.inject({
+        method: "GET",
+        url,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      return iconv.decode(res.rawPayload, "win1252");
+    }
+
+    it("S210-1: an APPROVED SICK request counts its workdays; REJECTED, CANCELLED, soft-deleted and Absence.SICK rows contribute nothing", async () => {
+      // APPROVED — the sole survivor (3 workdays).
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: d210Data.employee.id,
+          leaveTypeId: sickType.id,
+          startDate: new Date("2026-06-01"), // Monday
+          endDate: new Date("2026-06-03"), // Wednesday — 3 workdays
+          days: 3,
+          status: "APPROVED",
+        },
+      });
+      // REJECTED — not counted.
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: d210Data.employee.id,
+          leaveTypeId: sickType.id,
+          startDate: new Date("2026-06-04"),
+          endDate: new Date("2026-06-05"),
+          days: 2,
+          status: "REJECTED",
+        },
+      });
+      // CANCELLED SICK_CHILD — not counted, and proves the 201 line stays absent for E1.
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: d210Data.employee.id,
+          leaveTypeId: sickChildType.id,
+          startDate: new Date("2026-06-08"),
+          endDate: new Date("2026-06-09"),
+          days: 2,
+          status: "CANCELLED",
+        },
+      });
+      // APPROVED but soft-deleted — not counted.
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: d210Data.employee.id,
+          leaveTypeId: sickType.id,
+          startDate: new Date("2026-06-11"),
+          endDate: new Date("2026-06-12"),
+          days: 2,
+          status: "APPROVED",
+          deletedAt: new Date(),
+        },
+      });
+      // Absence.SICK — the dead source, kept on purpose: must contribute nothing.
+      await app.prisma.absence.create({
+        data: {
+          employeeId: d210Data.employee.id,
+          type: "SICK",
+          startDate: new Date("2026-06-22"),
+          endDate: new Date("2026-06-26"),
+          days: 5,
+          createdBy: d210Data.adminUser.id,
+        },
+      });
+
+      const body = await datevBody210(
+        "/api/v1/reports/datev?year=2026&month=6",
+        d210Data.adminToken,
+      );
+      const lines = body
+        .split(/\r\n/)
+        .filter((l) => l.startsWith(`${d210Data.employee.employeeNumber};`));
+      const krankLines = lines.filter((l) => l.includes(";K;"));
+      expect(krankLines.length).toBe(1);
+      expect(krankLines[0]).toContain(";K;200;;3,0;");
+      expect(lines.some((l) => l.includes(";K;201;"))).toBe(false);
+    });
+
+    it("S210-2: an APPROVED SICK_CHILD request produces the Lohnart 201 line, which today is never emitted at all", async () => {
+      const employee2 = await app.prisma.employee.create({
+        data: {
+          tenantId: d210Data.tenant.id,
+          userId: (
+            await app.prisma.user.create({
+              data: {
+                email: `d210-e2-${Date.now()}@test.de`,
+                passwordHash: "DUMMY",
+                role: "EMPLOYEE",
+                isActive: true,
+              },
+            })
+          ).id,
+          employeeNumber: `D210-E2-${Date.now()}`,
+          firstName: "S210",
+          lastName: "E2",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: employee2.id,
+          leaveTypeId: sickChildType.id,
+          startDate: new Date("2026-06-08"), // Monday
+          endDate: new Date("2026-06-09"), // Tuesday — 2 workdays
+          days: 2,
+          status: "APPROVED",
+        },
+      });
+
+      const body = await datevBody210(
+        "/api/v1/reports/datev?year=2026&month=6",
+        d210Data.adminToken,
+      );
+      const lines = body.split(/\r\n/).filter((l) => l.startsWith(`${employee2.employeeNumber};`));
+      expect(lines.some((l) => l.includes(";K;201;;2,0;"))).toBe(true);
+    });
+
+    it("S210-3: a § 9-credited day is reported once via union, never added on top of the sickness request (naive addition would double-count to 8,0)", async () => {
+      const employee3 = await app.prisma.employee.create({
+        data: {
+          tenantId: d210Data.tenant.id,
+          userId: (
+            await app.prisma.user.create({
+              data: {
+                email: `d210-e3-${Date.now()}@test.de`,
+                passwordHash: "DUMMY",
+                role: "EMPLOYEE",
+                isActive: true,
+              },
+            })
+          ).id,
+          employeeNumber: `D210-E3-${Date.now()}`,
+          firstName: "S210",
+          lastName: "E3",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      const sickReq = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: employee3.id,
+          leaveTypeId: sickType.id,
+          startDate: new Date("2026-06-15"), // Monday
+          endDate: new Date("2026-06-19"), // Friday — 5 workdays
+          days: 5,
+          status: "APPROVED",
+        },
+      });
+      const vacReq = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: employee3.id,
+          leaveTypeId: d210Data.vacationType.id,
+          startDate: new Date("2026-06-17"), // Wednesday
+          endDate: new Date("2026-06-19"), // Friday — 3 workdays
+          days: 3,
+          status: "APPROVED",
+        },
+      });
+      await app.prisma.section9Credit.create({
+        data: {
+          employeeId: employee3.id,
+          sickRequestId: sickReq.id,
+          vacationRequestId: vacReq.id,
+          overlapStart: new Date("2026-06-17"),
+          overlapEnd: new Date("2026-06-19"),
+          status: "CONFIRMED",
+          creditedStart: new Date("2026-06-17"),
+          creditedEnd: new Date("2026-06-19"),
+          creditedDays: 3,
+          attestSource: "EAU",
+          attestValidFrom: new Date("2026-06-17"),
+          attestValidTo: new Date("2026-06-19"),
+          reason: "S210-3 fixture",
+        },
+      });
+
+      const body = await datevBody210(
+        "/api/v1/reports/datev?year=2026&month=6",
+        d210Data.adminToken,
+      );
+      const lines = body.split(/\r\n/).filter((l) => l.startsWith(`${employee3.employeeNumber};`));
+      // 5 workdays sick, 3 of them credited back out of Urlaub — total Ausfalltage 5,
+      // exactly the number of workdays in the period. Not 8,0 (double count via naive
+      // addition), not 3,0 (loss of the two un-credited sick days).
+      expect(lines.some((l) => l.includes(";K;200;;5,0;"))).toBe(true);
+      expect(lines.some((l) => l.includes(";U;300;"))).toBe(false);
+    });
+
+    it("S210-4: a CONFIRMED § 9 credit whose sickness request is invisible (soft-deleted) still reports its days — the orphan fallback", async () => {
+      const employee4 = await app.prisma.employee.create({
+        data: {
+          tenantId: d210Data.tenant.id,
+          userId: (
+            await app.prisma.user.create({
+              data: {
+                email: `d210-e4-${Date.now()}@test.de`,
+                passwordHash: "DUMMY",
+                role: "EMPLOYEE",
+                isActive: true,
+              },
+            })
+          ).id,
+          employeeNumber: `D210-E4-${Date.now()}`,
+          firstName: "S210",
+          lastName: "E4",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      const vacReq = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: employee4.id,
+          leaveTypeId: d210Data.vacationType.id,
+          startDate: new Date("2026-06-22"), // Monday
+          endDate: new Date("2026-06-23"), // Tuesday — 2 workdays
+          days: 2,
+          status: "APPROVED",
+        },
+      });
+      const sickReq = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: employee4.id,
+          leaveTypeId: sickType.id,
+          startDate: new Date("2026-06-22"),
+          endDate: new Date("2026-06-23"),
+          days: 2,
+          status: "APPROVED",
+          deletedAt: new Date(),
+        },
+      });
+      await app.prisma.section9Credit.create({
+        data: {
+          employeeId: employee4.id,
+          sickRequestId: sickReq.id,
+          vacationRequestId: vacReq.id,
+          overlapStart: new Date("2026-06-22"),
+          overlapEnd: new Date("2026-06-23"),
+          status: "CONFIRMED",
+          creditedStart: new Date("2026-06-22"),
+          creditedEnd: new Date("2026-06-23"),
+          creditedDays: 2,
+          attestSource: "EAU",
+          attestValidFrom: new Date("2026-06-22"),
+          attestValidTo: new Date("2026-06-23"),
+          reason: "S210-4 fixture — orphan fallback guard",
+        },
+      });
+
+      const body = await datevBody210(
+        "/api/v1/reports/datev?year=2026&month=6",
+        d210Data.adminToken,
+      );
+      const lines = body.split(/\r\n/).filter((l) => l.startsWith(`${employee4.employeeNumber};`));
+      expect(lines.some((l) => l.includes(";K;200;;2,0;"))).toBe(true);
+      expect(lines.some((l) => l.includes(";U;300;"))).toBe(false);
+    });
+  });
+
+  // ── Phase 97 (D-11): both vacation-overview PDFs select by LeaveType.code ──────
+  // Before this change, both handlers summed every LeaveEntitlement whose type NAME
+  // lower-cased contained the substring "urlaub" — four of the nine canonical names
+  // (Urlaub, Sonderurlaub, Unbezahlter Urlaub, Bildungsurlaub) match that substring,
+  // so a further-education entitlement was silently added to the annual-leave figure.
+  // Deliberate, tested behaviour change: the overview now shows only the real VACATION
+  // entitlement.
+  describe("GET /api/v1/reports/vacation/pdf & /leave-overview/pdf — VACATION selected by code (D-11)", () => {
+    let d11Data: Awaited<ReturnType<typeof seedTestData>>;
+    const year = new Date().getFullYear();
+
+    beforeAll(async () => {
+      d11Data = await seedTestData(app, "d11");
+
+      const educationType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: d11Data.tenant.id,
+          code: "EDUCATION",
+          name: "Bildungsurlaub",
+          isPaid: true,
+          requiresApproval: true,
+          color: "#10B981",
+        },
+      });
+      await app.prisma.leaveEntitlement.create({
+        data: {
+          employeeId: d11Data.employee.id,
+          leaveTypeId: educationType.id,
+          year,
+          totalDays: 5,
+          usedDays: 0,
+        },
+      });
+
+      // A pre-Phase-97 style row with no code — must never contribute to the overview.
+      const nullCodeType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: d11Data.tenant.id,
+          code: null,
+          name: "Sonderfall ohne Code (D11)",
+          isPaid: true,
+          requiresApproval: true,
+          color: "#9CA3AF",
+        },
+      });
+      await app.prisma.leaveEntitlement.create({
+        data: {
+          employeeId: d11Data.employee.id,
+          leaveTypeId: nullCodeType.id,
+          year,
+          totalDays: 999,
+          usedDays: 0,
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, d11Data.tenant.id);
+    });
+
+    async function overviewRow() {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview/pdf?year=${year}`,
+        headers: { authorization: `Bearer ${d11Data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const calls = vi.mocked(pdfUtils.generateVacationOverviewPdf).mock.calls;
+      const data = calls[calls.length - 1][0];
+      return data.employees.find((e) => e.employeeNumber === d11Data.employee.employeeNumber);
+    }
+
+    async function streamedOverviewRow() {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/vacation/pdf?year=${year}`,
+        headers: { authorization: `Bearer ${d11Data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const calls = vi.mocked(pdfUtils.streamVacationOverviewPdf).mock.calls;
+      const data = calls[calls.length - 1][1];
+      return data.employees.find((e) => e.employeeNumber === d11Data.employee.employeeNumber);
+    }
+
+    it("D11-1: totalDays is 30 (VACATION only), not 35 (VACATION + EDUCATION) — /leave-overview/pdf", async () => {
+      const row = await overviewRow();
+      expect(row).toBeDefined();
+      expect(row!.totalDays).toBe(30);
+    });
+
+    it("D11-1b: the same '30 not 35' holds for /vacation/pdf's streamed overview", async () => {
+      const row = await streamedOverviewRow();
+      expect(row).toBeDefined();
+      expect(row!.totalDays).toBe(30);
+    });
+
+    it("D11-2: a VACATION-code row renamed to 'Erholungsurlaub' still appears with its correct totalDays", async () => {
+      await app.prisma.leaveType.update({
+        where: { id: d11Data.vacationType.id },
+        data: { name: "Erholungsurlaub" },
+      });
+      const row = await overviewRow();
+      expect(row).toBeDefined();
+      expect(row!.totalDays).toBe(30);
+    });
+
+    it("D11-3: a VACATION-code row renamed to 'Freizeit' (no 'urlaub' substring) now appears too — the old substring check would have dropped it", async () => {
+      await app.prisma.leaveType.update({
+        where: { id: d11Data.vacationType.id },
+        data: { name: "Freizeit" },
+      });
+      const row = await overviewRow();
+      expect(row).toBeDefined();
+      // Under the removed substring check, "Freizeit" doesn't match /urlaub/, so this
+      // entitlement would have been skipped and only the EDUCATION row ("Bildungsurlaub",
+      // which DOES match) would have been summed — totalDays would have read 5, not 30.
+      expect(row!.totalDays).toBe(30);
+    });
+
+    it("D11-4: the code=null entitlement (999 days) never contributes to totalDays", async () => {
+      const row = await overviewRow();
+      expect(row).toBeDefined();
+      expect(row!.totalDays).not.toBe(999);
+      expect(row!.totalDays).toBe(30);
+    });
+  });
+
+  describe("GET /api/v1/reports/monthly", () => {
+    it("returns 200 with expected shape for valid year/month params", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/monthly?year=2025&month=1",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.year).toBe(2025);
+      expect(body.month).toBe(1);
+      expect(Array.isArray(body.rows)).toBe(true);
+
+      // Each row must have the expected fields
+      for (const row of body.rows) {
+        expect(row).toHaveProperty("employeeId");
+        expect(row).toHaveProperty("employeeName");
+        expect(row).toHaveProperty("employeeNumber");
+        expect(typeof row.workedHours).toBe("number");
+        expect(typeof row.shouldHours).toBe("number");
+        expect(typeof row.sickDays).toBe("number");
+        expect(typeof row.vacationDays).toBe("number");
+        expect(typeof row.totalAbsenceDays).toBe("number");
+      }
+    });
+
+    it("returns 401 without auth token", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/monthly?year=2025&month=1",
+      });
+
+      expect(res.statusCode).toBe(401);
+    });
+
+    it("returns non-200 when required query params are missing", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/monthly",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+
+      // Without year/month the handler will fail (no schema validation,
+      // so Fastify returns 500 rather than 400).
+      expect(res.statusCode).not.toBe(200);
+    });
+  });
+
+  // ── GET /api/v1/reports/monthly/pdf/all ────────────────────────────────────
+  describe("GET /api/v1/reports/monthly/pdf/all", () => {
+    it("returns 200 with application/pdf for ADMIN token", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["content-type"]).toContain("application/pdf");
+      // Smoke check: actual PDF magic bytes
+      expect(res.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
+    });
+
+    it("returns 401 without auth", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1",
+      });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it("returns 403 for EMPLOYEE token", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1",
+        headers: { authorization: `Bearer ${data.empToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it("accepts role=MANAGER filter (returns 200 or 404 if no managers)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1&role=MANAGER",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      // seedTestData creates ADMIN + EMPLOYEE — no MANAGER user.
+      // The handler returns 404 "Keine Mitarbeiter gefunden" when filter yields 0.
+      expect([200, 404]).toContain(res.statusCode);
+    });
+
+    it("accepts role=EMPLOYEE filter and returns PDF with only employees", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1&role=EMPLOYEE",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["content-type"]).toContain("application/pdf");
+      expect(res.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
+    });
+
+    it("normalizes invalid role values to 'all' (no enum injection)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1&role=SUPERADMIN",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      // Should NOT crash with Prisma enum error — should be treated as "all"
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
+  // ── Tenant isolation for company PDF ──────────────────────────────────────
+  describe("Tenant isolation — /monthly/pdf/all", () => {
+    let secondTenant: Awaited<ReturnType<typeof seedTestData>>;
+
+    beforeAll(async () => {
+      secondTenant = await seedTestData(app, "rp2");
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, secondTenant.tenant.id);
+    });
+
+    it("each tenant only sees its own employees in the PDF", async () => {
+      // Tenant A request with admin A token — should succeed
+      const resA = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(resA.statusCode).toBe(200);
+
+      // Tenant B request with admin B token — should also succeed
+      const resB = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1",
+        headers: { authorization: `Bearer ${secondTenant.adminToken}` },
+      });
+      expect(resB.statusCode).toBe(200);
+
+      // Both PDFs are valid and non-empty
+      expect(resA.rawPayload.length).toBeGreaterThan(0);
+      expect(resB.rawPayload.length).toBeGreaterThan(0);
+      expect(resA.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
+      expect(resB.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
+    });
+  });
+
+  // ── GET /api/v1/reports/leave-list/pdf ────────────────────────────────────
+  describe("GET /api/v1/reports/leave-list/pdf", () => {
+    it("returns 200 with application/pdf for ADMIN token", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/leave-list/pdf?year=2025",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      // The seed has no approved leave requests — endpoint returns 200 with an empty/stub PDF
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["content-type"]).toContain("application/pdf");
+      expect(res.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
+    });
+
+    it("returns 401 without auth", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/leave-list/pdf?year=2025",
+      });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it("returns 403 for EMPLOYEE token", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/leave-list/pdf?year=2025",
+        headers: { authorization: `Bearer ${data.empToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+  });
+
+  // ── GET /api/v1/reports/monthly/pdf (PDF-04 backward compat) ───────────────
+  describe("GET /api/v1/reports/monthly/pdf (PDF-04 backward compat)", () => {
+    it("still returns a Buffer with %PDF magic bytes after layout changes", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/monthly/pdf?employeeId=${data.employee.id}&year=2025&month=1`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["content-type"]).toContain("application/pdf");
+      expect(res.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
+    });
+
+    // EMP-06: employees may download their OWN monthly PDF (self-employee check).
+    it("allows EMPLOYEE to download their OWN monthly PDF", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/monthly/pdf?employeeId=${data.employee.id}&year=2025&month=1`,
+        headers: { authorization: `Bearer ${data.empToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["content-type"]).toContain("application/pdf");
+    });
+
+    it("forbids EMPLOYEE from downloading another employee's monthly PDF", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/monthly/pdf?employeeId=${data.adminEmployee.id}&year=2025&month=1`,
+        headers: { authorization: `Bearer ${data.empToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+      const body = JSON.parse(res.body);
+      expect(body.error).toBe("Kein Zugriff");
+    });
+
+    // v1.8.24 — SHIFT_BASED monthly PDF must generate through the §615 overtime path
+    // (resolveReportOvertimeHours → computeMonthSaldo) without throwing. Regression guard for the
+    // reports.ts §615 fix (the legal Stundennachweis must use §615, not naive Ist−Soll).
+    it("generates a SHIFT_BASED employee's monthly PDF via the §615 overtime path", async () => {
+      const prisma = app.prisma;
+      const bcryptMod = await import("bcryptjs");
+      const pwHash = await bcryptMod.default.hash("test1234", 10);
+      const suffix = "sbpdf-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      const u = await prisma.user.create({
+        data: {
+          email: `${suffix}@test.de`,
+          passwordHash: pwHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const e = await prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: u.id,
+          employeeNumber: `SBPDF-${suffix}`,
+          firstName: "ShiftPdf",
+          lastName: "Employee",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await prisma.workSchedule.create({
+        data: {
+          employeeId: e.id,
+          type: "SHIFT_BASED",
+          weeklyHours: 40,
+          mondayHours: 0,
+          tuesdayHours: 0,
+          wednesdayHours: 0,
+          thursdayHours: 0,
+          fridayHours: 0,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+      await prisma.overtimeAccount.create({ data: { employeeId: e.id, balanceHours: 0 } });
+      // One shift + a completed entry in Jan 2025 so the §615 core has data to work with.
+      await prisma.shift.create({
+        data: {
+          employeeId: e.id,
+          date: new Date("2025-01-06T00:00:00Z"),
+          startTime: "08:00",
+          endTime: "16:30",
+        },
+      });
+      await prisma.timeEntry.create({
+        data: {
+          employeeId: e.id,
+          date: new Date("2025-01-06T00:00:00Z"),
+          startTime: new Date("2025-01-06T08:00:00.000Z"),
+          endTime: new Date("2025-01-06T16:30:00.000Z"),
+          breakMinutes: 30,
+          type: "WORK",
+          source: "MANUAL",
+          isInvalid: false,
+        },
+      });
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/monthly/pdf?employeeId=${e.id}&year=2025&month=1`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["content-type"]).toContain("application/pdf");
+      expect(res.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
+    });
+  });
+
+  // ── GET /api/v1/dashboard/today-attendance (RPT-03) ──────────────────────
+  describe("GET /api/v1/dashboard/today-attendance (RPT-03)", () => {
+    let attData: Awaited<ReturnType<typeof seedTestData>>;
+    let managerToken: string;
+    let empClockedIn: { id: string; employeeNumber: string };
+    let empPresent: { id: string; employeeNumber: string };
+    let empAbsentLeave: { id: string; employeeNumber: string };
+    let empAbsentSick: { id: string; employeeNumber: string };
+    let empMissing: { id: string; employeeNumber: string };
+    let empNoWorkday: { id: string; employeeNumber: string };
+
+    beforeAll(async () => {
+      attData = await seedTestData(app, "att");
+      const prisma = app.prisma;
+
+      // Create a manager user + employee in the tenant
+      const mgrPwHash = await import("bcryptjs").then((b) => b.default.hash("test1234", 10));
+      const mgrUser = await prisma.user.create({
+        data: {
+          email: `mgr-att-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "MANAGER",
+          isActive: true,
+        },
+      });
+      const mgrEmp = await prisma.employee.create({
+        data: {
+          tenantId: attData.tenant.id,
+          userId: mgrUser.id,
+          employeeNumber: `MGR-att-${Date.now()}`,
+          firstName: "Manager",
+          lastName: "Att",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await prisma.workSchedule.create({
+        data: {
+          employeeId: mgrEmp.id,
+          weeklyHours: 40,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+      await prisma.overtimeAccount.create({
+        data: { employeeId: mgrEmp.id, balanceHours: 0 },
+      });
+      const mgrLogin = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: mgrUser.email, password: "test1234" },
+      });
+      managerToken = JSON.parse(mgrLogin.body).accessToken;
+
+      // Today (tenant-TZ calendar day, UTC midnight) for entry creation
+      const todayUtc = utcMidnight(todayStr());
+
+      // Helper to create a Mon-Fri schedule for an employee
+      async function makeWorkSchedule(empId: string) {
+        await prisma.workSchedule.create({
+          data: {
+            employeeId: empId,
+            weeklyHours: 40,
+            mondayHours: 8,
+            tuesdayHours: 8,
+            wednesdayHours: 8,
+            thursdayHours: 8,
+            fridayHours: 8,
+            saturdayHours: 0,
+            sundayHours: 0,
+            validFrom: new Date("2024-01-01"),
+          },
+        });
+      }
+
+      // Case 1: clocked_in — OPEN entry today (endTime: null)
+      const empCIUser = await prisma.user.create({
+        data: {
+          email: `att-ci-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const empCIRecord = await prisma.employee.create({
+        data: {
+          tenantId: attData.tenant.id,
+          userId: empCIUser.id,
+          employeeNumber: `ATT-CI-${Date.now()}`,
+          firstName: "Clocked",
+          lastName: "In",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await makeWorkSchedule(empCIRecord.id);
+      await prisma.overtimeAccount.create({
+        data: { employeeId: empCIRecord.id, balanceHours: 0 },
+      });
+      await prisma.timeEntry.create({
+        data: {
+          employeeId: empCIRecord.id,
+          date: todayUtc,
+          startTime: new Date(todayUtc.getTime() + 7 * 3600000),
+          endTime: null, // open
+          breakMinutes: 0,
+          type: "WORK",
+        },
+      });
+      empClockedIn = { id: empCIRecord.id, employeeNumber: empCIRecord.employeeNumber };
+
+      // Case 2: present — CLOSED entry today
+      const empPUser = await prisma.user.create({
+        data: {
+          email: `att-pr-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const empPRecord = await prisma.employee.create({
+        data: {
+          tenantId: attData.tenant.id,
+          userId: empPUser.id,
+          employeeNumber: `ATT-PR-${Date.now()}`,
+          firstName: "Present",
+          lastName: "Emp",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await makeWorkSchedule(empPRecord.id);
+      await prisma.overtimeAccount.create({ data: { employeeId: empPRecord.id, balanceHours: 0 } });
+      await prisma.timeEntry.create({
+        data: {
+          employeeId: empPRecord.id,
+          date: todayUtc,
+          startTime: new Date(todayUtc.getTime() + 7 * 3600000),
+          endTime: new Date(todayUtc.getTime() + 15 * 3600000),
+          breakMinutes: 30,
+          type: "WORK",
+        },
+      });
+      empPresent = { id: empPRecord.id, employeeNumber: empPRecord.employeeNumber };
+
+      // Case 3: absent — APPROVED Urlaub leave covering today
+      const empLUser = await prisma.user.create({
+        data: {
+          email: `att-lv-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const empLRecord = await prisma.employee.create({
+        data: {
+          tenantId: attData.tenant.id,
+          userId: empLUser.id,
+          employeeNumber: `ATT-LV-${Date.now()}`,
+          firstName: "On",
+          lastName: "Leave",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await makeWorkSchedule(empLRecord.id);
+      await prisma.overtimeAccount.create({ data: { employeeId: empLRecord.id, balanceHours: 0 } });
+      await prisma.leaveRequest.create({
+        data: {
+          employeeId: empLRecord.id,
+          leaveTypeId: attData.vacationType.id,
+          startDate: todayUtc,
+          endDate: todayUtc,
+          days: 1,
+          status: "APPROVED",
+        },
+      });
+      empAbsentLeave = { id: empLRecord.id, employeeNumber: empLRecord.employeeNumber };
+
+      // Case 4: absent — SICK absence covering today
+      const empSUser = await prisma.user.create({
+        data: {
+          email: `att-sk-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const empSRecord = await prisma.employee.create({
+        data: {
+          tenantId: attData.tenant.id,
+          userId: empSUser.id,
+          employeeNumber: `ATT-SK-${Date.now()}`,
+          firstName: "Sick",
+          lastName: "Emp",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await makeWorkSchedule(empSRecord.id);
+      await prisma.overtimeAccount.create({ data: { employeeId: empSRecord.id, balanceHours: 0 } });
+      await prisma.absence.create({
+        data: {
+          employeeId: empSRecord.id,
+          type: "SICK",
+          startDate: todayUtc,
+          endDate: todayUtc,
+          days: 1,
+          createdBy: attData.adminUser.id,
+        },
+      });
+      empAbsentSick = { id: empSRecord.id, employeeNumber: empSRecord.employeeNumber };
+
+      // Case 5: missing — workday, no entries/leave/absence (Mon-Fri schedule)
+      const empMUser = await prisma.user.create({
+        data: {
+          email: `att-ms-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const empMRecord = await prisma.employee.create({
+        data: {
+          tenantId: attData.tenant.id,
+          userId: empMUser.id,
+          employeeNumber: `ATT-MS-${Date.now()}`,
+          firstName: "Missing",
+          lastName: "Emp",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await makeWorkSchedule(empMRecord.id);
+      await prisma.overtimeAccount.create({ data: { employeeId: empMRecord.id, balanceHours: 0 } });
+      empMissing = { id: empMRecord.id, employeeNumber: empMRecord.employeeNumber };
+
+      // Case 6: none — non-workday schedule (all zero hours = every day is off)
+      const empNWUser = await prisma.user.create({
+        data: {
+          email: `att-nw-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const empNWRecord = await prisma.employee.create({
+        data: {
+          tenantId: attData.tenant.id,
+          userId: empNWUser.id,
+          employeeNumber: `ATT-NW-${Date.now()}`,
+          firstName: "NonWork",
+          lastName: "Emp",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      // All-zero schedule → every day is a non-workday
+      await prisma.workSchedule.create({
+        data: {
+          employeeId: empNWRecord.id,
+          weeklyHours: 0,
+          mondayHours: 0,
+          tuesdayHours: 0,
+          wednesdayHours: 0,
+          thursdayHours: 0,
+          fridayHours: 0,
+          saturdayHours: 0,
+          sundayHours: 0,
+          workDays: [], // Phase 66 fix (failure #9): explicit empty workDays so dashboard
+          // handler computes isWorkday=false. Prisma default is [1,2,3,4,5]
+          // which contradicts the all-zero hours invariant (CLAUDE.md).
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+      await prisma.overtimeAccount.create({
+        data: { employeeId: empNWRecord.id, balanceHours: 0 },
+      });
+      empNoWorkday = { id: empNWRecord.id, employeeNumber: empNWRecord.employeeNumber };
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, attData.tenant.id);
+    });
+
+    it("Case 1: employee with open entry today has status clocked_in", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/today-attendance",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const emp = body.employees.find(
+        (e: { employeeNumber: string }) => e.employeeNumber === empClockedIn.employeeNumber,
+      );
+      expect(emp).toBeDefined();
+      expect(emp.status).toBe("clocked_in");
+    });
+
+    it("Case 2: employee with closed entry today has status present", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/today-attendance",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const emp = body.employees.find(
+        (e: { employeeNumber: string }) => e.employeeNumber === empPresent.employeeNumber,
+      );
+      expect(emp).toBeDefined();
+      expect(emp.status).toBe("present");
+    });
+
+    it("Case 3: employee with APPROVED leave today has status absent and reason matching Urlaub", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/today-attendance",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const emp = body.employees.find(
+        (e: { employeeNumber: string }) => e.employeeNumber === empAbsentLeave.employeeNumber,
+      );
+      expect(emp).toBeDefined();
+      expect(emp.status).toBe("absent");
+      expect(emp.reason).toBe("Urlaub");
+    });
+
+    it("Case 4: employee with SICK absence today has status absent and reason mentioning Krankmeldung", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/today-attendance",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const emp = body.employees.find(
+        (e: { employeeNumber: string }) => e.employeeNumber === empAbsentSick.employeeNumber,
+      );
+      expect(emp).toBeDefined();
+      expect(emp.status).toBe("absent");
+      expect(emp.reason).toContain("Krankmeldung");
+    });
+
+    it("Case 5: employee on workday with no entries or absences has status missing", async () => {
+      // Only valid for weekdays — skip on weekend. Weekday read off the tenant-TZ date
+      // string (dowOf), not local/UTC getDay(), since the endpoint resolves "today" in
+      // tenant TZ (#34).
+      const dow = dowOf(todayStr());
+      if (dow === 0 || dow === 6) {
+        // Saturday or Sunday — employee has Mon-Fri schedule → status would be "none"
+        return;
+      }
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/today-attendance",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const emp = body.employees.find(
+        (e: { employeeNumber: string }) => e.employeeNumber === empMissing.employeeNumber,
+      );
+      expect(emp).toBeDefined();
+      expect(emp.status).toBe("missing");
+    });
+
+    it("Case 6: employee with all-zero schedule has status none", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/today-attendance",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const emp = body.employees.find(
+        (e: { employeeNumber: string }) => e.employeeNumber === empNoWorkday.employeeNumber,
+      );
+      expect(emp).toBeDefined();
+      expect(emp.status).toBe("none");
+    });
+
+    it("Case 7: response.summary counts sum equals employees.length", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/today-attendance",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body).toHaveProperty("summary");
+      expect(body).toHaveProperty("employees");
+      expect(body).toHaveProperty("date");
+      const { present, absent, clockedIn, missing } = body.summary;
+      const sumCounts = (present ?? 0) + (absent ?? 0) + (clockedIn ?? 0) + (missing ?? 0);
+      // Sum of these 4 statuses should not exceed total employees (none is not in summary)
+      expect(sumCounts).toBeLessThanOrEqual(body.employees.length);
+    });
+
+    it("Case 8: EMPLOYEE role returns 403", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/today-attendance",
+        headers: { authorization: `Bearer ${attData.empToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it("Case 9: tenant isolation — admin from tenant A never sees employees from tenant B", async () => {
+      const tenantB = await seedTestData(app, "att-b");
+      try {
+        const res = await app.inject({
+          method: "GET",
+          url: "/api/v1/dashboard/today-attendance",
+          headers: { authorization: `Bearer ${attData.adminToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body);
+        const tenantBEmp = body.employees.find(
+          (e: { employeeNumber: string }) => e.employeeNumber === tenantB.employee.employeeNumber,
+        );
+        expect(tenantBEmp).toBeUndefined();
+      } finally {
+        await cleanupTestData(app, tenantB.tenant.id);
+      }
+    });
+  });
+
+  // ── halfDay weighting in monthly report (76.32.1-partA) ─────────────────
+  describe("GET /api/v1/reports/monthly — halfDay weighting", () => {
+    let hdData: Awaited<ReturnType<typeof seedTestData>>;
+    let sickLeaveTypeId: string;
+    let vacationTypeIdHd: string;
+
+    // Fixed test month: April 2026 (Mon–Fri workdays, no German public holiday issues)
+    // Mon 2026-04-06, Wed 2026-04-08, Fri 2026-04-10 are normal workdays.
+    const YEAR = 2026;
+    const MONTH = 4;
+
+    beforeAll(async () => {
+      hdData = await seedTestData(app, "hd");
+      const prisma = app.prisma;
+
+      // Create Krankmeldung leave type
+      const sickType = await prisma.leaveType.create({
+        data: {
+          tenantId: hdData.tenant.id,
+          code: "SICK",
+          name: "Krankmeldung",
+          isPaid: true,
+          requiresApproval: false,
+          color: "#FF0000",
+        },
+      });
+      sickLeaveTypeId = sickType.id;
+      vacationTypeIdHd = hdData.vacationType.id;
+
+      // Seed 3 half-day sick leave requests on Mon/Wed/Fri of the same week
+      // halfDay=true, days=0.5, startDate==endDate (single day)
+      const halfDayDates = [
+        new Date("2026-04-06"), // Monday
+        new Date("2026-04-08"), // Wednesday
+        new Date("2026-04-10"), // Friday
+      ];
+      for (const d of halfDayDates) {
+        await prisma.leaveRequest.create({
+          data: {
+            employeeId: hdData.employee.id,
+            leaveTypeId: sickLeaveTypeId,
+            startDate: d,
+            endDate: d,
+            days: 0.5,
+            halfDay: true,
+            status: "APPROVED",
+          },
+        });
+      }
+
+      // Seed 1 full-day sick leave request (regression guard: must count as 1)
+      await prisma.leaveRequest.create({
+        data: {
+          employeeId: hdData.employee.id,
+          leaveTypeId: sickLeaveTypeId,
+          startDate: new Date("2026-04-13"), // Monday next week
+          endDate: new Date("2026-04-13"),
+          days: 1,
+          halfDay: false,
+          status: "APPROVED",
+        },
+      });
+
+      // Seed 1 half-day vacation (Urlaub) to verify daysForTypeName also applies factor
+      await prisma.leaveRequest.create({
+        data: {
+          employeeId: hdData.employee.id,
+          leaveTypeId: vacationTypeIdHd,
+          startDate: new Date("2026-04-14"), // Tuesday
+          endDate: new Date("2026-04-14"),
+          days: 0.5,
+          halfDay: true,
+          status: "APPROVED",
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, hdData.tenant.id);
+    });
+
+    it("HD-01: 3 half-day sick leave requests → sickDays === 1.5 (not 3)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/monthly?employeeId=${hdData.employee.id}&year=${YEAR}&month=${MONTH}`,
+        headers: { authorization: `Bearer ${hdData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const row = body.rows.find(
+        (r: { employeeId: string }) => r.employeeId === hdData.employee.id,
+      );
+      expect(row).toBeDefined();
+      // With the bug: sickDays === 3 (each halfDay counted as 1)
+      // After fix:   sickDays === 1.5 (each halfDay counted as 0.5)
+      // The full-day sick on 2026-04-13 is also in April, so total = 1.5 + 1 = 2.5
+      expect(row.sickDays).toBe(2.5);
+      expect(row.sickDaysWithoutAttest).toBe(2.5);
+      expect(row.sickDaysWithAttest).toBe(0);
+    });
+
+    it("HD-02: shouldHours is reduced by half a daily Soll for each halfDay sick (not a full day)", async () => {
+      // Employee schedule: 8h/day Mon-Fri.
+      // April 2026 Mon-Fri workdays (excluding 2026-04-06 Mon, 2026-04-08 Wed, 2026-04-10 Fri,
+      // 2026-04-13 Mon, 2026-04-14 Tue as leave days):
+      // April has workdays: 1,2,3(Thu/Fri skipped — wait, Apr1=Wed, let's compute):
+      // 2026-04-01 Wed, 02 Thu, 03 Fri, (6 Mon, 7 Tue, 8 Wed, 9 Thu, 10 Fri),
+      // (13 Mon, 14 Tue, 15 Wed, 16 Thu, 17 Fri), (20 Mon..24 Fri), (27 Mon..30 Thu)
+      // Total workdays in April 2026: 22 days → raw Soll = 22 * 8h = 176h
+      // Absence deduction:
+      //   3 half-day sick: 3 * 4h = 12h (correct) vs 3 * 8h = 24h (bug)
+      //   1 full-day sick: 1 * 8h = 8h
+      //   1 half-day vacation: 1 * 4h = 4h (correct) vs 1 * 8h = 8h (bug)
+      // Total correct deduction: 12 + 8 + 4 = 24h → shouldHours = 176 - 24 = 152h
+      // Bug deduction: 24 + 8 + 8 = 40h → shouldHours = 176 - 40 = 136h
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/monthly?employeeId=${hdData.employee.id}&year=${YEAR}&month=${MONTH}`,
+        headers: { authorization: `Bearer ${hdData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const row = body.rows.find(
+        (r: { employeeId: string }) => r.employeeId === hdData.employee.id,
+      );
+      expect(row).toBeDefined();
+      // After fix: shouldHours === 152
+      // With bug:  shouldHours === 136
+      expect(row.shouldHours).toBe(152);
+    });
+
+    it("HD-03: regression guard — full-day sick still counts as 1 in sickDays total", async () => {
+      // We verify the full-day sick (2026-04-13) is unaffected.
+      // We only look at it by seeding a fresh tenant with just the full-day sick entry.
+      const fdData = await seedTestData(app, "hd-fd");
+      const prisma = app.prisma;
+      const fdSickType = await prisma.leaveType.create({
+        data: {
+          tenantId: fdData.tenant.id,
+          code: "SICK",
+          name: "Krankmeldung",
+          isPaid: true,
+          requiresApproval: false,
+          color: "#FF0000",
+        },
+      });
+      await prisma.leaveRequest.create({
+        data: {
+          employeeId: fdData.employee.id,
+          leaveTypeId: fdSickType.id,
+          startDate: new Date("2026-04-13"),
+          endDate: new Date("2026-04-13"),
+          days: 1,
+          halfDay: false,
+          status: "APPROVED",
+        },
+      });
+      try {
+        const res = await app.inject({
+          method: "GET",
+          url: `/api/v1/reports/monthly?employeeId=${fdData.employee.id}&year=${YEAR}&month=${MONTH}`,
+          headers: { authorization: `Bearer ${fdData.adminToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body);
+        const row = body.rows.find(
+          (r: { employeeId: string }) => r.employeeId === fdData.employee.id,
+        );
+        expect(row).toBeDefined();
+        expect(row.sickDays).toBe(1);
+      } finally {
+        await cleanupTestData(app, fdData.tenant.id);
+      }
+    });
+
+    it("HD-04: half-day vacation → vacationDays === 0.5 (not 1)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/monthly?employeeId=${hdData.employee.id}&year=${YEAR}&month=${MONTH}`,
+        headers: { authorization: `Bearer ${hdData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const row = body.rows.find(
+        (r: { employeeId: string }) => r.employeeId === hdData.employee.id,
+      );
+      expect(row).toBeDefined();
+      // After fix: vacationDays === 0.5; with bug: 1
+      expect(row.vacationDays).toBe(0.5);
+    });
+  });
+
+  // ── GET /api/v1/reports/monthly — day-based Soll dedup (Phase 104, D-15 Tier 2) ──
+  // measured against HEAD 799429c2 on 2026-08-25.
+  //
+  // Overlapping SICK-vs-VACATION LeaveRequest rows are written directly via Prisma,
+  // bypassing the leave.ts overlap guard (which plan 104-05 already opens for real
+  // § 9 traffic) — mirrors apps/api/src/__tests__/section9-soll-dedup.test.ts's
+  // approach for the Tier-1 (closeEmployeeMonth) fix this plan mirrors.
+  //
+  // Fixed test month: August 2026. Mon 3 – Fri 7 is a normal full workweek for a
+  // NIEDERSACHSEN tenant with no public holiday in range. Employee schedule (from
+  // seedTestData): 40h/week, 8h Mon-Fri. August 2026 has 21 contracted workdays
+  // (3-7, 10-14, 17-21, 24-28, 31 = 5+5+5+5+1), so rawShouldMin = 21*480 = 10080min
+  // = 168h.
+  describe("GET /api/v1/reports/monthly — day-based Soll dedup (Phase 104, D-15 Tier 2)", () => {
+    const YEAR = 2026;
+    const MONTH = 8;
+
+    async function createSickType(tenantId: string) {
+      return app.prisma.leaveType.create({
+        data: {
+          tenantId,
+          code: "SICK",
+          name: "Krankmeldung",
+          isPaid: true,
+          requiresApproval: false,
+          color: "#EF4444",
+        },
+      });
+    }
+
+    async function approvedLeave(
+      employeeId: string,
+      leaveTypeId: string,
+      startDateStr: string,
+      endDateStr: string,
+      opts?: { halfDay?: boolean },
+    ) {
+      return app.prisma.leaveRequest.create({
+        data: {
+          employeeId,
+          leaveTypeId,
+          startDate: new Date(startDateStr + "T00:00:00Z"),
+          endDate: new Date(endDateStr + "T00:00:00Z"),
+          days: 1,
+          halfDay: Boolean(opts?.halfDay),
+          status: "APPROVED",
+        },
+      });
+    }
+
+    it("Test 1: overlapping VACATION Mo-Fr + SICK Mi-Do reduces shouldHours by 5 workdays, not 7", async () => {
+      const t1 = await seedTestData(app, "d15-t1");
+      try {
+        const sickType = await createSickType(t1.tenant.id);
+        await approvedLeave(t1.employee.id, t1.vacationType.id, "2026-08-03", "2026-08-07"); // Mo-Fr
+        await approvedLeave(t1.employee.id, sickType.id, "2026-08-05", "2026-08-06"); // Mi-Do overlap
+
+        const res = await app.inject({
+          method: "GET",
+          url: `/api/v1/reports/monthly?employeeId=${t1.employee.id}&year=${YEAR}&month=${MONTH}`,
+          headers: { authorization: `Bearer ${t1.adminToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const row = JSON.parse(res.body).rows.find(
+          (r: { employeeId: string }) => r.employeeId === t1.employee.id,
+        );
+        expect(row).toBeDefined();
+        // Without the fix: shouldHours = 168 - 7*8 = 112 (Mi/Do deducted twice).
+        // With the fix:    shouldHours = 168 - 5*8 = 128 (each day counted once).
+        expect(row.shouldHours).toBe(128);
+      } finally {
+        await cleanupTestData(app, t1.tenant.id);
+      }
+    });
+
+    it("Test 2: totalAbsenceDays counts a day covered by two overlapping non-sick requests once", async () => {
+      const t2 = await seedTestData(app, "d15-t2");
+      try {
+        const sonderurlaub = await app.prisma.leaveType.create({
+          data: {
+            tenantId: t2.tenant.id,
+            code: "SPECIAL",
+            name: "Sonderurlaub",
+            isPaid: true,
+            requiresApproval: false,
+            color: "#F59E0B",
+          },
+        });
+        // Full-day Urlaub Mo-Fr (5 days) + half-day Sonderurlaub on Wed (already
+        // inside the Urlaub range) — a cross-type overlap the leave.ts guard would
+        // normally reject for two non-sick types; written directly to exercise the
+        // aggregate dedup in isolation from R1's SICK-specific exception.
+        await approvedLeave(t2.employee.id, t2.vacationType.id, "2026-08-03", "2026-08-07");
+        await approvedLeave(t2.employee.id, sonderurlaub.id, "2026-08-05", "2026-08-05", {
+          halfDay: true,
+        });
+
+        const res = await app.inject({
+          method: "GET",
+          url: `/api/v1/reports/monthly?employeeId=${t2.employee.id}&year=${YEAR}&month=${MONTH}`,
+          headers: { authorization: `Bearer ${t2.adminToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const row = JSON.parse(res.body).rows.find(
+          (r: { employeeId: string }) => r.employeeId === t2.employee.id,
+        );
+        expect(row).toBeDefined();
+        // Without the fix: totalAbsenceDays = 5 (Urlaub) + 0.5 (Sonderurlaub) = 5.5.
+        // With the fix: Wednesday is claimed once (full-day Urlaub wins per
+        // sortLeaveForDedup ordering) -> totalAbsenceDays = 5.
+        expect(row.totalAbsenceDays).toBe(5);
+        // Per-type counts are unaffected — daysForTypeName gets its OWN claim set.
+        expect(row.vacationDays).toBe(5);
+        expect(row.specialLeaveDays).toBe(0.5);
+      } finally {
+        await cleanupTestData(app, t2.tenant.id);
+      }
+    });
+
+    it("Test 3 (OPEN-01): half-day VACATION Wed overlapped by full-day SICK Wed-Thu reduces the FULL day", async () => {
+      const t3 = await seedTestData(app, "d15-t3");
+      try {
+        const sickType = await createSickType(t3.tenant.id);
+        await approvedLeave(t3.employee.id, t3.vacationType.id, "2026-08-05", "2026-08-05", {
+          halfDay: true,
+        }); // Vacation Wed half-day
+        await approvedLeave(t3.employee.id, sickType.id, "2026-08-05", "2026-08-06"); // Sick Wed-Thu full-day
+
+        const res = await app.inject({
+          method: "GET",
+          url: `/api/v1/reports/monthly?employeeId=${t3.employee.id}&year=${YEAR}&month=${MONTH}`,
+          headers: { authorization: `Bearer ${t3.adminToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const row = JSON.parse(res.body).rows.find(
+          (r: { employeeId: string }) => r.employeeId === t3.employee.id,
+        );
+        expect(row).toBeDefined();
+        // Without the fix: deduction = 4h (half Wed) + 16h (full Wed+Thu) = 20h -> 148h.
+        // With the fix: full-day SICK claims Wed+Thu first (sortLeaveForDedup: full-day
+        // before half-day) -> deduction = 16h -> shouldHours = 168 - 16 = 152.
+        expect(row.shouldHours).toBe(152);
+      } finally {
+        await cleanupTestData(app, t3.tenant.id);
+      }
+    });
+
+    it("Test 4 (parity): a month with no overlaps produces the identical shouldHours/vacationDays/totalAbsenceDays as before the fix", async () => {
+      const t4 = await seedTestData(app, "d15-t4");
+      try {
+        const sickType = await createSickType(t4.tenant.id);
+        await approvedLeave(t4.employee.id, t4.vacationType.id, "2026-08-03", "2026-08-03"); // Mon, no overlap
+        await approvedLeave(t4.employee.id, sickType.id, "2026-08-11", "2026-08-11"); // Tue, no overlap
+
+        const res = await app.inject({
+          method: "GET",
+          url: `/api/v1/reports/monthly?employeeId=${t4.employee.id}&year=${YEAR}&month=${MONTH}`,
+          headers: { authorization: `Bearer ${t4.adminToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const row = JSON.parse(res.body).rows.find(
+          (r: { employeeId: string }) => r.employeeId === t4.employee.id,
+        );
+        expect(row).toBeDefined();
+        // measured against HEAD 799429c2 on 2026-08-25 (unmodified reports.ts):
+        // rawShouldMin 10080min (168h) - 2*480min (2 non-overlapping full days) = 9120min = 152h.
+        // No two rows share a day, so the dedup mechanism is a structural no-op here —
+        // this MUST stay byte-identical to the pre-Phase-104 figure.
+        expect(row.shouldHours).toBe(152);
+        expect(row.vacationDays).toBe(1);
+        expect(row.totalAbsenceDays).toBe(1);
+        expect(row.sickDaysWithoutAttest).toBe(1);
+      } finally {
+        await cleanupTestData(app, t4.tenant.id);
+      }
+    });
+
+    it("Test 5 (agreement): the Monatsbericht's shouldHours matches closeEmployeeMonth()'s expectedMinutes for the same overlap", async () => {
+      const t5 = await seedTestData(app, "d15-t5");
+      try {
+        const sickType = await createSickType(t5.tenant.id);
+        await approvedLeave(t5.employee.id, t5.vacationType.id, "2026-08-03", "2026-08-07"); // Mo-Fr
+        await approvedLeave(t5.employee.id, sickType.id, "2026-08-05", "2026-08-06"); // Mi-Do overlap
+
+        const res = await app.inject({
+          method: "GET",
+          url: `/api/v1/reports/monthly?employeeId=${t5.employee.id}&year=${YEAR}&month=${MONTH}`,
+          headers: { authorization: `Bearer ${t5.adminToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const row = JSON.parse(res.body).rows.find(
+          (r: { employeeId: string }) => r.employeeId === t5.employee.id,
+        );
+        expect(row).toBeDefined();
+
+        const { closeEmployeeMonth } =
+          await import("../../contexts/working-time-account/close-employee-month");
+        const { monthRangeUtc, monthDayBounds } =
+          await import("../../contexts/working-time-account/timezone");
+        const { start, end } = monthRangeUtc(YEAR, MONTH, "Europe/Berlin");
+        const { firstDay, lastDay } = monthDayBounds(start, end, "Europe/Berlin");
+        const approvedLeaveRows = await app.prisma.leaveRequest.findMany({
+          where: { employeeId: t5.employee.id, status: "APPROVED", deletedAt: null },
+          select: { startDate: true, endDate: true, halfDay: true },
+        });
+        const schedule = {
+          type: "FIXED_SCHEDULE",
+          weeklyHours: 40,
+          monthlyHours: null,
+          sundayHours: 0,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+        };
+        const result = closeEmployeeMonth({
+          employeeId: t5.employee.id,
+          monthStart: start,
+          monthEnd: end,
+          monthFirstDay: firstDay,
+          monthLastDay: lastDay,
+          tz: "Europe/Berlin",
+          carryOverIn: 0,
+          schedule,
+          hireDate: new Date("2024-01-01T00:00:00Z"),
+          exitDate: null,
+          isTimeTrackingExempt: false,
+          breakOver6hOverride: null,
+          breakOver9hOverride: null,
+          entries: [],
+          shifts: [],
+          approvedLeave: approvedLeaveRows as never,
+          absences: [],
+          holidayDateStrings: new Set<string>(),
+          tenantConfig: null,
+          employeeSlots: null,
+          patternSlots: null,
+          patternUnterrichtsMinutenByDow: null,
+        } as never);
+
+        // Both the Monatsbericht (reports.ts's own Soll) and the shared saldo core
+        // (closeEmployeeMonth) must resolve the same SICK-vs-VACATION overlap to the
+        // identical Soll figure — 7680min = 128h (5 days, not 7).
+        expect(result.expectedMinutes).toBe(7680);
+        expect(row.shouldHours).toBe(128);
+      } finally {
+        await cleanupTestData(app, t5.tenant.id);
+      }
+    });
+  });
+
+  // ── GET /api/v1/reports/leave-overview — pendingDays (RPT-02) ────────────
+  describe("GET /api/v1/reports/leave-overview — pendingDays (RPT-02)", () => {
+    let pendingData: Awaited<ReturnType<typeof seedTestData>>;
+    let tenantBData: Awaited<ReturnType<typeof seedTestData>>;
+    // Raw UTC/local year is correct here (not a tenant-TZ bug, #34): the endpoint's own
+    // `?year=` fallback is the identical `new Date().getFullYear()` call, and every
+    // assertion below passes `year=${currentYear}` explicitly — self-consistent with the
+    // seeded startDate/endDate, never compared against a tenant-TZ "today".
+    const currentYear = new Date().getFullYear();
+
+    beforeAll(async () => {
+      pendingData = await seedTestData(app, "pd");
+      tenantBData = await seedTestData(app, "pd-b");
+
+      // Case 2: PENDING request with 3 days in current year for "Urlaub"
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: pendingData.employee.id,
+          leaveTypeId: pendingData.vacationType.id,
+          startDate: new Date(Date.UTC(currentYear, 5, 10)),
+          endDate: new Date(Date.UTC(currentYear, 5, 12)),
+          days: 3,
+          status: "PENDING",
+        },
+      });
+
+      // Case 3: PENDING request in a DIFFERENT year (next year) — must NOT be counted
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: pendingData.employee.id,
+          leaveTypeId: pendingData.vacationType.id,
+          startDate: new Date(Date.UTC(currentYear + 1, 0, 5)),
+          endDate: new Date(Date.UTC(currentYear + 1, 0, 7)),
+          days: 3,
+          status: "PENDING",
+        },
+      });
+
+      // Case 4: APPROVED request — must NOT be counted in pendingDays
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: pendingData.employee.id,
+          leaveTypeId: pendingData.vacationType.id,
+          startDate: new Date(Date.UTC(currentYear, 7, 1)),
+          endDate: new Date(Date.UTC(currentYear, 7, 2)),
+          days: 2,
+          status: "APPROVED",
+        },
+      });
+
+      // Case 4: CANCELLED request — must NOT be counted in pendingDays
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: pendingData.employee.id,
+          leaveTypeId: pendingData.vacationType.id,
+          startDate: new Date(Date.UTC(currentYear, 8, 1)),
+          endDate: new Date(Date.UTC(currentYear, 8, 1)),
+          days: 1,
+          status: "CANCELLED",
+        },
+      });
+
+      // Case 5: Soft-deleted PENDING request — must NOT be counted
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: pendingData.employee.id,
+          leaveTypeId: pendingData.vacationType.id,
+          startDate: new Date(Date.UTC(currentYear, 9, 1)),
+          endDate: new Date(Date.UTC(currentYear, 9, 3)),
+          days: 3,
+          status: "PENDING",
+          deletedAt: new Date(),
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, pendingData.tenant.id);
+      await cleanupTestData(app, tenantBData.tenant.id);
+    });
+
+    it("Case 1: employee with no PENDING requests returns pendingDays: 0 for the admin employee", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview?year=${currentYear}`,
+        headers: { authorization: `Bearer ${pendingData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      // adminEmployee has no leaveEntitlement seeded → no row for admin, but the main employee row should exist
+      // The main employee has pendingDays: 3 (from Case 2)
+      const empRow = body.find(
+        (r: { employee: { employeeNumber: string }; leaveType: { name: string } }) =>
+          r.employee.employeeNumber === pendingData.employee.employeeNumber &&
+          r.leaveType.name === "Urlaub",
+      );
+      expect(empRow).toBeDefined();
+      // pendingDays field MUST exist on every row
+      expect(typeof empRow.pendingDays).toBe("number");
+    });
+
+    it("Case 2: employee with one PENDING LeaveRequest (days: 3) has pendingDays: 3", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview?year=${currentYear}`,
+        headers: { authorization: `Bearer ${pendingData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const empRow = body.find(
+        (r: { employee: { employeeNumber: string }; leaveType: { name: string } }) =>
+          r.employee.employeeNumber === pendingData.employee.employeeNumber &&
+          r.leaveType.name === "Urlaub",
+      );
+      expect(empRow).toBeDefined();
+      expect(empRow.pendingDays).toBe(3);
+    });
+
+    it("Case 3: PENDING request in a different year is NOT counted in pendingDays", async () => {
+      // Request in currentYear+1 should not appear in year=currentYear query
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview?year=${currentYear}`,
+        headers: { authorization: `Bearer ${pendingData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const empRow = body.find(
+        (r: { employee: { employeeNumber: string }; leaveType: { name: string } }) =>
+          r.employee.employeeNumber === pendingData.employee.employeeNumber &&
+          r.leaveType.name === "Urlaub",
+      );
+      // pendingDays should still be 3 (only the current-year PENDING request)
+      expect(empRow.pendingDays).toBe(3);
+    });
+
+    it("Case 4: APPROVED and CANCELLED requests are NOT counted in pendingDays", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview?year=${currentYear}`,
+        headers: { authorization: `Bearer ${pendingData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const empRow = body.find(
+        (r: { employee: { employeeNumber: string }; leaveType: { name: string } }) =>
+          r.employee.employeeNumber === pendingData.employee.employeeNumber &&
+          r.leaveType.name === "Urlaub",
+      );
+      // Still 3, not 3 + 2 + 1 = 6
+      expect(empRow.pendingDays).toBe(3);
+    });
+
+    it("Case 5: soft-deleted PENDING requests are NOT counted in pendingDays", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview?year=${currentYear}`,
+        headers: { authorization: `Bearer ${pendingData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const empRow = body.find(
+        (r: { employee: { employeeNumber: string }; leaveType: { name: string } }) =>
+          r.employee.employeeNumber === pendingData.employee.employeeNumber &&
+          r.leaveType.name === "Urlaub",
+      );
+      // Still 3, not 3 + 3 (soft-deleted) = 6
+      expect(empRow.pendingDays).toBe(3);
+    });
+
+    it("Case 6: tenant isolation — tenant A admin does NOT see pendingDays from tenant B employees", async () => {
+      // Create a PENDING request for tenant B employee
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: tenantBData.employee.id,
+          leaveTypeId: tenantBData.vacationType.id,
+          startDate: new Date(Date.UTC(currentYear, 5, 10)),
+          endDate: new Date(Date.UTC(currentYear, 5, 14)),
+          days: 5,
+          status: "PENDING",
+        },
+      });
+
+      // Tenant A admin calls endpoint — should only see tenant A entitlements
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview?year=${currentYear}`,
+        headers: { authorization: `Bearer ${pendingData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+
+      // Verify tenant B employee does NOT appear in tenant A response
+      const tenantBRow = body.find(
+        (r: { employee: { employeeNumber: string } }) =>
+          r.employee.employeeNumber === tenantBData.employee.employeeNumber,
+      );
+      expect(tenantBRow).toBeUndefined();
+
+      // Verify tenant A pendingDays is still correct (3, not 3+5=8)
+      const empRow = body.find(
+        (r: { employee: { employeeNumber: string }; leaveType: { name: string } }) =>
+          r.employee.employeeNumber === pendingData.employee.employeeNumber &&
+          r.leaveType.name === "Urlaub",
+      );
+      expect(empRow.pendingDays).toBe(3);
+    });
+  });
+
+  // ── GET /api/v1/dashboard/overtime-overview (RPT-01 + SALDO-03) ──────────
+  describe("GET /api/v1/dashboard/overtime-overview (RPT-01 + SALDO-03)", () => {
+    let otData: Awaited<ReturnType<typeof seedTestData>>;
+    let ot2Data: Awaited<ReturnType<typeof seedTestData>>;
+    let managerToken: string;
+    let empNormalId: string;
+    let empElevatedId: string;
+    let tenantBEmpId: string;
+
+    beforeAll(async () => {
+      otData = await seedTestData(app, "ot");
+      ot2Data = await seedTestData(app, "ot-b");
+      const prisma = app.prisma;
+
+      // Create a manager user + employee for tenant A
+      const mgrPwHash = await import("bcryptjs").then((b) => b.default.hash("test1234", 10));
+      const mgrUser = await prisma.user.create({
+        data: {
+          email: `mgr-ot-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "MANAGER",
+          isActive: true,
+        },
+      });
+      const mgrEmp = await prisma.employee.create({
+        data: {
+          tenantId: otData.tenant.id,
+          userId: mgrUser.id,
+          employeeNumber: `MGR-OT-${Date.now()}`,
+          firstName: "Manager",
+          lastName: "OT",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await prisma.workSchedule.create({
+        data: {
+          employeeId: mgrEmp.id,
+          weeklyHours: 40,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+      await prisma.overtimeAccount.create({ data: { employeeId: mgrEmp.id, balanceHours: 0 } });
+      const mgrLogin = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: mgrUser.email, password: "test1234" },
+      });
+      managerToken = JSON.parse(mgrLogin.body).accessToken;
+
+      // Set distinct balanceHours for different status thresholds:
+      // admin employee: 5h → NORMAL (|5| <= 20)
+      // regular employee: 25h → ELEVATED (|25| in (20,40])
+      await prisma.overtimeAccount.update({
+        where: { employeeId: otData.adminEmployee.id },
+        data: { balanceHours: 5 },
+      });
+      await prisma.overtimeAccount.update({
+        where: { employeeId: otData.employee.id },
+        data: { balanceHours: 25 },
+      });
+      empNormalId = otData.adminEmployee.id;
+      empElevatedId = otData.employee.id;
+
+      // Create a CRITICAL balance employee (-50h) — new employee in tenant A
+      const critUser = await prisma.user.create({
+        data: {
+          email: `crit-ot-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const critEmp = await prisma.employee.create({
+        data: {
+          tenantId: otData.tenant.id,
+          userId: critUser.id,
+          employeeNumber: `CRIT-OT-${Date.now()}`,
+          firstName: "Critical",
+          lastName: "Worker",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await prisma.workSchedule.create({
+        data: {
+          employeeId: critEmp.id,
+          weeklyHours: 40,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+      await prisma.overtimeAccount.create({ data: { employeeId: critEmp.id, balanceHours: -50 } });
+
+      // Tenant B employee ID for cross-tenant test
+      tenantBEmpId = ot2Data.employee.id;
+
+      // Create 3 MONTHLY SaldoSnapshots within the last 6 months for empNormal
+      for (let i = 1; i <= 3; i++) {
+        const month = monthStartUtc(i);
+        const periodEnd = monthEndUtc(i);
+
+        await prisma.saldoSnapshot.create({
+          data: {
+            employeeId: empNormalId,
+            periodType: "MONTHLY",
+            periodStart: month,
+            periodEnd,
+            workedMinutes: 9600,
+            expectedMinutes: 9600,
+            balanceMinutes: i * 60, // 60, 120, 180 minutes
+            carryOver: i * 60,
+            closedAt: new Date(),
+          },
+        });
+      }
+
+      // Create one OLD snapshot (8 months ago) — must be excluded
+      const oldMonth = monthStartUtc(8);
+      const oldPeriodEnd = monthEndUtc(8);
+      await prisma.saldoSnapshot.create({
+        data: {
+          employeeId: empNormalId,
+          periodType: "MONTHLY",
+          periodStart: oldMonth,
+          periodEnd: oldPeriodEnd,
+          workedMinutes: 9600,
+          expectedMinutes: 9600,
+          balanceMinutes: 999,
+          carryOver: 999,
+          closedAt: new Date(),
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, otData.tenant.id);
+      await cleanupTestData(app, ot2Data.tenant.id);
+    });
+
+    it("Case 1: returns rows for all active employees in tenant (no tenant B leakage)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body).toHaveProperty("employees");
+      expect(Array.isArray(body.employees)).toBe(true);
+      expect(body.employees.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("Case 2: each row has id, name, employeeNumber, balanceHours, status, snapshots", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      for (const emp of body.employees) {
+        expect(emp).toHaveProperty("id");
+        expect(emp).toHaveProperty("name");
+        expect(emp).toHaveProperty("employeeNumber");
+        expect(typeof emp.balanceHours).toBe("number");
+        expect(emp).toHaveProperty("status");
+        expect(Array.isArray(emp.snapshots)).toBe(true);
+      }
+    });
+
+    it("Case 3: balanceHours is the LIVE recomputed saldo (v1.8.24), not the stale stored value", async () => {
+      // v1.8.24: overtime-overview now returns a LIVE lifetime saldo through windowEnd (today only
+      // if today has completed entries, else yesterday) via computeOvertimeBalanceHours — the SAME
+      // source of truth as the dashboard KPI + calendar header. It NO LONGER echoes the stored
+      // OvertimeAccount.balanceHours. Assert each row equals a fresh live computation (rounded).
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+
+      const normalEmp = body.employees.find((e: { id: string }) => e.id === empNormalId);
+      expect(normalEmp).toBeDefined();
+      const liveNormal = await computeOvertimeBalanceHours(app, empNormalId);
+      expect(liveNormal).not.toBeNull();
+      expect(normalEmp.balanceHours).toBe(Math.round(liveNormal as number));
+
+      const elevatedEmp = body.employees.find((e: { id: string }) => e.id === empElevatedId);
+      expect(elevatedEmp).toBeDefined();
+      const liveElevated = await computeOvertimeBalanceHours(app, empElevatedId);
+      expect(liveElevated).not.toBeNull();
+      expect(elevatedEmp.balanceHours).toBe(Math.round(liveElevated as number));
+
+      // Prove it is NOT merely echoing the deliberately-stale stored seed (5 / 25). These employees
+      // have no time entries since hireDate 2024-01-01, so the live saldo diverges from the seed.
+      expect(normalEmp.balanceHours).not.toBe(5);
+      expect(elevatedEmp.balanceHours).not.toBe(25);
+    });
+
+    it("Case 4: status is internally consistent with the LIVE balanceHours (NORMAL/ELEVATED/CRITICAL bands)", async () => {
+      // The real invariant: every row's status = classifyOvertimeBalance(balanceHours). Since the
+      // number is now live, we assert the band matches the returned number rather than a seeded value.
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.employees.length).toBeGreaterThan(0);
+      for (const emp of body.employees) {
+        expect(emp.status).toBe(expectedOvertimeBand(emp.balanceHours));
+      }
+    });
+
+    it("Case 5: employee with 3 MONTHLY snapshots in last 6 months returns snapshots.length === 3", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const normalEmp = body.employees.find((e: { id: string }) => e.id === empNormalId);
+      expect(normalEmp).toBeDefined();
+      expect(normalEmp.snapshots.length).toBe(3);
+    });
+
+    it("Case 6: each snapshot has periodStart (ISO string), balanceMinutes, carryOver", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const normalEmp = body.employees.find((e: { id: string }) => e.id === empNormalId);
+      for (const snap of normalEmp.snapshots) {
+        expect(typeof snap.periodStart).toBe("string");
+        expect(/^\d{4}-\d{2}-\d{2}$/.test(snap.periodStart)).toBe(true);
+        expect(typeof snap.balanceMinutes).toBe("number");
+        expect(typeof snap.carryOver).toBe("number");
+      }
+    });
+
+    it("Case 7: snapshots older than 6 months are excluded", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const normalEmp = body.employees.find((e: { id: string }) => e.id === empNormalId);
+      // Should only have 3 snapshots (not 4 — the 8-month-old one is excluded)
+      expect(normalEmp.snapshots.length).toBe(3);
+      // Verify balanceMinutes 999 (the old snapshot) is not present
+      const hasOldSnapshot = normalEmp.snapshots.some(
+        (s: { balanceMinutes: number }) => s.balanceMinutes === 999,
+      );
+      expect(hasOldSnapshot).toBe(false);
+    });
+
+    it("Case 8: employee with zero snapshots returns snapshots: []", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      // empElevated has no snapshots seeded → should have empty array
+      const elevatedEmp = body.employees.find((e: { id: string }) => e.id === empElevatedId);
+      expect(elevatedEmp).toBeDefined();
+      expect(elevatedEmp.snapshots).toEqual([]);
+    });
+
+    it("Case 9: tenant isolation — tenant A response does NOT include tenant B employees", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const tenantBEmp = body.employees.find((e: { id: string }) => e.id === tenantBEmpId);
+      expect(tenantBEmp).toBeUndefined();
+    });
+
+    it("Case 10: EMPLOYEE role returns 403", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${otData.empToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+  });
+});

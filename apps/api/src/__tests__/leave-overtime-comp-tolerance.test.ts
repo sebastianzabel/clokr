@@ -21,8 +21,8 @@ import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import { getHolidays, STATE_MAP } from "../utils/holidays";
-import { loadNegativeBalanceTolerance } from "../utils/negative-balance-tolerance";
+import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
+import { loadNegativeBalanceTolerance } from "../contexts/working-time-account/negative-balance-tolerance";
 
 /**
  * Next Monday at least 14 days out (UTC arithmetic; bounded holiday-advance loop;

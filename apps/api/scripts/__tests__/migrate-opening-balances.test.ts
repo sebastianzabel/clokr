@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { classifyCandidate, type ClassifyCandidateResult } from "../migrate-opening-balances";
-import type { ChainLink } from "../../src/utils/saldo-chain-integrity";
+import type { ChainLink } from "../../src/contexts/working-time-account/saldo-chain-integrity";
 
 /** Minimal ChainLink builder — every field defaultable, `rowId` and `delta` always explicit
  *  at the call site so each fixture states its point unambiguously. */

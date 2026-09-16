@@ -401,7 +401,7 @@ function writeFixtureTree(repoRoot: string, files: Record<string, string>): void
   }
 }
 
-const SCOPED_ROUTE = "apps/api/src/routes/widgets.ts";
+const SCOPED_ROUTE = "apps/api/src/contexts/working-time-account/api/widgets.ts";
 
 const SCOPED_HANDLER = `
 export async function widgetRoutes(app) {
@@ -433,6 +433,33 @@ let tmpRoot: string;
 
 beforeEach(() => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lint-tenant-scoping-cli-"));
+  // #229 Guard A: listScopedFiles now hard-errors when a SCOPED_DIRS entry does not exist on
+  // disk. The real repo always has "apps/api/src/services", "apps/api/src/composition" (since
+  // Phase 99b Plan 02), "apps/api/src/contexts/scheduling/api" (since Phase 99b Plan 04),
+  // "apps/api/src/contexts/platform/api" (since Phase 99b Plan 05),
+  // "apps/api/src/contexts/time-tracking/api" (since Phase 99b Plan 06's predecessor),
+  // "apps/api/src/contexts/absence/api" (since Phase 99b Plan 06) and, as of Phase 99b
+  // Plan 07 (final shape — the former monolithic route directory is gone),
+  // "apps/api/src/contexts/working-time-account/api", so every fixture tree below provisions all
+  // seven up front — individual tests still only WRITE files under the one they care about,
+  // matching production shape rather than working around the guard.
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/services"), { recursive: true });
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/composition"), { recursive: true });
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/scheduling/api"), {
+    recursive: true,
+  });
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/platform/api"), {
+    recursive: true,
+  });
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/time-tracking/api"), {
+    recursive: true,
+  });
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/absence/api"), {
+    recursive: true,
+  });
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/working-time-account/api"), {
+    recursive: true,
+  });
 });
 
 afterEach(() => {
@@ -538,6 +565,42 @@ describe("runLint", () => {
       const result = runLint({ repoRoot: tmpRoot });
       expect(result.exitCode).toBe(0);
       expect(result.findings).toHaveLength(1);
+    } finally {
+      if (previous === undefined) delete process.env.LINT_TENANT_SCOPING_SOFT;
+      else process.env.LINT_TENANT_SCOPING_SOFT = previous;
+    }
+  });
+
+  // ── #229 Guard B: zero in-scope calls is a defect, never "all clean" — and is NOT softened ───
+
+  it("#229 Guard B: a tree with zero relevant calls returns exitCode 1 with an '0 in-scope' error", () => {
+    // Both SCOPED_DIRS exist and contain a .ts file, but it has no relevant Prisma call at all —
+    // this is the "detection found nothing because there is nothing to find" case Guard B targets,
+    // distinct from Guard A's "the directory itself does not exist" case.
+    writeFixtureTree(tmpRoot, {
+      [SCOPED_ROUTE]: "export function widgetRoutes() {}\n",
+      "apps/api/src/services/placeholder.ts": "export const noop = 1;\n",
+    });
+
+    const result = runLint({ repoRoot: tmpRoot });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.counts.inScope).toBe(0);
+    expect(result.errors.some((e) => e.includes("0 in-scope"))).toBe(true);
+  });
+
+  it("#229 Guard B: stays exitCode 1 under LINT_TENANT_SCOPING_SOFT=1 (never softened)", () => {
+    writeFixtureTree(tmpRoot, {
+      [SCOPED_ROUTE]: "export function widgetRoutes() {}\n",
+      "apps/api/src/services/placeholder.ts": "export const noop = 1;\n",
+    });
+
+    const previous = process.env.LINT_TENANT_SCOPING_SOFT;
+    process.env.LINT_TENANT_SCOPING_SOFT = "1";
+    try {
+      const result = runLint({ repoRoot: tmpRoot });
+      expect(result.exitCode).toBe(1);
+      expect(result.errors.some((e) => e.includes("0 in-scope"))).toBe(true);
     } finally {
       if (previous === undefined) delete process.env.LINT_TENANT_SCOPING_SOFT;
       else process.env.LINT_TENANT_SCOPING_SOFT = previous;

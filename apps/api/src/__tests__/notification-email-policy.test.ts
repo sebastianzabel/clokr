@@ -14,7 +14,10 @@
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { NOTIFICATION_EMAIL_POLICY, resolveEmailPolicy } from "../utils/notification-email-policy";
+import {
+  NOTIFICATION_EMAIL_POLICY,
+  resolveEmailPolicy,
+} from "../contexts/platform/notification-email-policy";
 
 const SRC_DIR = join(__dirname, "../");
 

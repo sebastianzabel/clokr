@@ -34,7 +34,11 @@ import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import { holidayFreeMondayStr } from "./test-dates";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import { calcExpectedMinutesTz, calcLeaveAbsenceMinutesTz, weekRangeUtc } from "../utils/timezone";
+import {
+  calcExpectedMinutesTz,
+  calcLeaveAbsenceMinutesTz,
+  weekRangeUtc,
+} from "../contexts/working-time-account/timezone";
 
 const TZ = "Europe/Berlin";
 

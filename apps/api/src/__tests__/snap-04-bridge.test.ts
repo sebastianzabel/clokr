@@ -45,8 +45,12 @@ import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../utils/timezone";
-import { periodStartWindow } from "../utils/snapshot-period";
+import {
+  monthRangeUtc,
+  monthDayBounds,
+  dateStrInTz,
+} from "../contexts/working-time-account/timezone";
+import { periodStartWindow } from "../contexts/working-time-account/snapshot-period";
 
 const TZ = "Europe/Berlin";
 

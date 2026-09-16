@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
-import { runCarryoverWarningOnce } from "../plugins/carryover-warning";
+import { runCarryoverWarningOnce } from "../contexts/absence/plugins/carryover-warning";
 import type { FastifyInstance } from "fastify";
 
 const DAY_MS = 24 * 60 * 60 * 1000;

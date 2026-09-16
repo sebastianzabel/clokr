@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { LeaveTypeCode } from "@clokr/db";
-import { REQUESTABLE_CODES, IMPOSED_ONLY_CODES } from "../utils/leave-type";
-import { classifyLeaveTypeCode } from "../utils/shift-availability";
+import { REQUESTABLE_CODES, IMPOSED_ONLY_CODES } from "../contexts/absence/leave-type";
+import { classifyLeaveTypeCode } from "../contexts/scheduling/shift-availability";
 
 /**
  * Phase 98b (Option A) — pins the availability bucket for all eleven `LeaveTypeCode` values

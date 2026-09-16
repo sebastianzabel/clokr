@@ -31,7 +31,7 @@ import {
   COMPANY_PROVISIONAL_LEGEND,
   SECTION9_LEGEND,
   type CompanyMonthlyReportData,
-} from "../utils/pdf";
+} from "../composition/pdf";
 
 type CompanyRow = CompanyMonthlyReportData["rows"][number];
 

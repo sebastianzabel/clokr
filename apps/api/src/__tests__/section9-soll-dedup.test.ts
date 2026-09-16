@@ -26,9 +26,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { monthRangeUtc, monthDayBounds } from "../utils/timezone";
-import type { CloseMonthInput } from "../utils/close-employee-month";
-import { closeEmployeeMonth } from "../utils/close-employee-month";
+import { monthRangeUtc, monthDayBounds } from "../contexts/working-time-account/timezone";
+import type { CloseMonthInput } from "../contexts/working-time-account/close-employee-month";
+import { closeEmployeeMonth } from "../contexts/working-time-account/close-employee-month";
 
 const TZ = "Europe/Berlin";
 

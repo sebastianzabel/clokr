@@ -20,14 +20,14 @@ import {
   BS_PATTERN_ORDER_BY,
   findAmbiguousClaimDates,
   type PatternClaimShape,
-} from "../utils/vocational-school-pattern-order";
+} from "../contexts/absence/vocational-school-pattern-order";
 import {
   getVocationalSchoolMinutesForDate,
   bsUnterrichtsMinutesByDateForIsoWeek,
-} from "../utils/vocational-school-saldo";
-import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides";
-import { checkJArbSchG } from "../utils/jarbschg";
-import { previewVocationalSchoolGeneration } from "../utils/vocational-school-generator";
+} from "../contexts/working-time-account/vocational-school-saldo";
+import { loadBsSlotOverrides } from "../contexts/absence/load-bs-slot-overrides";
+import { checkJArbSchG } from "../contexts/absence/jarbschg";
+import { previewVocationalSchoolGeneration } from "../contexts/absence/vocational-school-generator";
 
 // ── Date helpers (dynamic — never a hardcoded absolute date reasoning about "now") ──
 

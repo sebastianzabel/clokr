@@ -22,9 +22,9 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { monthRangeUtc } from "../utils/timezone";
-import { updateOvertimeAccount } from "../routes/time-entries";
-import { recalculateSnapshots } from "../utils/recalculate-snapshots";
+import { monthRangeUtc } from "../contexts/working-time-account/timezone";
+import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
+import { recalculateSnapshots } from "../contexts/working-time-account/recalculate-snapshots";
 
 describe("auto-close-month plugin — grace period guard (D-11)", () => {
   let app: FastifyInstance;
@@ -1590,7 +1590,7 @@ describe("cron day-N window boundary (76.29-00 RED — SUPERSEDES day-15 grace)"
 
       // RED: Plan 04 isMonthPastItsWindow() returns false for day 1 → gap month DEFERRED.
       // Until Plan 04 lands: current code either closes or skips via day-15 grace.
-      const { monthRangeUtc } = await import("../utils/timezone");
+      const { monthRangeUtc } = await import("../contexts/working-time-account/timezone");
       const janRange = monthRangeUtc(2025, 1, "Europe/Berlin");
       const snap = await app.prisma.saldoSnapshot.findFirst({
         where: {
@@ -1616,7 +1616,7 @@ describe("cron day-N window boundary (76.29-00 RED — SUPERSEDES day-15 grace)"
     "day-N (2): AT-DAY-N force-close — day N of M+1, gap month, flag=true → SaldoSnapshot created",
     withGapFlag(true, async () => {
       // Clean up any snapshot from previous test
-      const { monthRangeUtc } = await import("../utils/timezone");
+      const { monthRangeUtc } = await import("../contexts/working-time-account/timezone");
       const janRange = monthRangeUtc(2025, 1, "Europe/Berlin");
       await app.prisma.saldoSnapshot.deleteMany({
         where: {
@@ -1662,7 +1662,7 @@ describe("cron day-N window boundary (76.29-00 RED — SUPERSEDES day-15 grace)"
     "day-N (3): DEFER-FOREVER — day N of M+1, gap month, flag=false → NO snapshot (defer-forever)",
     withGapFlag(false, async () => {
       // Clean up any snapshot
-      const { monthRangeUtc } = await import("../utils/timezone");
+      const { monthRangeUtc } = await import("../contexts/working-time-account/timezone");
       const janRange = monthRangeUtc(2025, 1, "Europe/Berlin");
       await app.prisma.saldoSnapshot.deleteMany({
         where: {
@@ -1717,7 +1717,7 @@ describe("cron day-N window boundary (76.29-00 RED — SUPERSEDES day-15 grace)"
 
       // RED: gap-FREE month must close immediately regardless of the day-N window.
       // (The window only defers gap months; complete months close right away.)
-      const { monthRangeUtc } = await import("../utils/timezone");
+      const { monthRangeUtc } = await import("../contexts/working-time-account/timezone");
       const janRange = monthRangeUtc(2025, 1, "Europe/Berlin");
       const snap = await app.prisma.saldoSnapshot.findFirst({
         where: {
@@ -1751,7 +1751,7 @@ describe("cron day-N window boundary (76.29-00 RED — SUPERSEDES day-15 grace)"
       }
 
       // RED: old backfill months (well past their window) must force-close immediately.
-      const { monthRangeUtc } = await import("../utils/timezone");
+      const { monthRangeUtc } = await import("../contexts/working-time-account/timezone");
       const octRange = monthRangeUtc(2024, 10, "Europe/Berlin");
       const snap = await app.prisma.saldoSnapshot.findFirst({
         where: {

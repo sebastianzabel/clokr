@@ -23,9 +23,9 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { dateStrInTz } from "../utils/timezone";
-import { computeEntryAgeInDays } from "../utils/retro-config";
-import { invalidReasonFields } from "../utils/invalid-reason";
+import { dateStrInTz } from "../contexts/working-time-account/timezone";
+import { computeEntryAgeInDays } from "../contexts/time-tracking/retro-config";
+import { invalidReasonFields } from "../contexts/time-tracking/invalid-reason";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -902,7 +902,7 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
       try {
         // Lock February 2024 via a SaldoSnapshot (superseded:false)
         const lockedDate = "2024-02-10";
-        const { monthRangeUtc } = await import("../utils/timezone");
+        const { monthRangeUtc } = await import("../contexts/working-time-account/timezone");
         const { start: lockedMonthStart } = monthRangeUtc(2024, 2, TZ);
 
         await app.prisma.saldoSnapshot.create({
@@ -1007,7 +1007,7 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
       try {
         // Create a snapshot for 2024-02 (locked month)
         const lockedDate = "2024-02-15"; // in the locked month
-        const { monthRangeUtc } = await import("../utils/timezone");
+        const { monthRangeUtc } = await import("../contexts/working-time-account/timezone");
         const { start: lockedMonthStart } = monthRangeUtc(2024, 2, TZ);
 
         // First ensure an employee exists (use existing employeeId)
@@ -1098,7 +1098,7 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
       vi.setSystemTime(FROZEN_NOW);
       try {
         // Lock January 2024 for the employee
-        const { monthRangeUtc } = await import("../utils/timezone");
+        const { monthRangeUtc } = await import("../contexts/working-time-account/timezone");
         const { start: janStart } = monthRangeUtc(2024, 1, TZ);
         const lockedDateJan = "2024-01-15"; // old AND beyond window
 

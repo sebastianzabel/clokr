@@ -12,8 +12,8 @@ import {
   ARBZG_FLOOR_OVER_9H,
   BREAK_MAX_OVER_6H,
   BREAK_MAX_OVER_9H,
-} from "../utils/break-constants";
-import { getEffectiveBreakDuration } from "../utils/break-effective";
+} from "../contexts/time-tracking/break-constants";
+import { getEffectiveBreakDuration } from "../contexts/time-tracking/break-effective";
 
 const TENANT = { defaultBreakOver6h: 30, defaultBreakOver9h: 45 };
 const NO_OVERRIDE = { breakOver6hOverride: null, breakOver9hOverride: null };

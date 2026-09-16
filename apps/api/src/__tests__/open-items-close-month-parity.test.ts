@@ -20,7 +20,7 @@ import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import { pastDateStr, dowOf, utcMidnight } from "./test-dates";
-import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
 
 describe("open-items vs close-month/status parity on a divergent workDays/{day}Hours fixture (Phase 128, D-04)", () => {
   let app: FastifyInstance;

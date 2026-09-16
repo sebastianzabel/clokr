@@ -28,12 +28,16 @@
  * No PII — synthetic ids and initials only in tests.
  */
 import type { FastifyInstance } from "fastify";
-import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../src/utils/timezone";
-import { getEffectiveSchedule } from "../src/routes/time-entries";
-import { getHolidays, STATE_MAP } from "../src/utils/holidays";
-import { periodStartWindow } from "../src/utils/snapshot-period";
-import { closeEmployeeMonth } from "../src/utils/close-employee-month";
-import { loadBsSlotOverrides } from "../src/utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
+import {
+  monthRangeUtc,
+  monthDayBounds,
+  dateStrInTz,
+} from "../src/contexts/working-time-account/timezone";
+import { getEffectiveSchedule } from "../src/contexts/time-tracking/api/time-entries";
+import { getHolidays, STATE_MAP } from "../src/contexts/platform/holidays";
+import { periodStartWindow } from "../src/contexts/working-time-account/snapshot-period";
+import { closeEmployeeMonth } from "../src/contexts/working-time-account/close-employee-month";
+import { loadBsSlotOverrides } from "../src/contexts/absence/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 
 // ── Exported pure helpers ────────────────────────────────────────────────────
 // These mirror the function-scoped helpers inside auto-close-month.ts but are

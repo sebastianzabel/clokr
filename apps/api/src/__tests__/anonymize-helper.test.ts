@@ -23,7 +23,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
-import { anonymizeEmployeeData } from "../utils/anonymize";
+import { anonymizeEmployeeData } from "../contexts/platform/anonymize";
 
 describe("anonymizeEmployeeData (helper)", () => {
   let app: FastifyInstance;
@@ -261,7 +261,7 @@ describe("anonymizeEmployeeData (helper)", () => {
     let piiRealEmail: string;
     let piiAvatarPath: string;
     let piiDocPath: string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     let deleteSpy: MockInstance;
 
     beforeAll(async () => {

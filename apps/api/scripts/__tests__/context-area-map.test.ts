@@ -24,8 +24,8 @@ const API_ROOT = join(__dirname, "..", "..");
 
 describe("context-area-map — fixed spot checks", () => {
   it("dashboard.ts and reports.ts are komposition (D-17, unconditional)", () => {
-    expect(assignContextArea("src/routes/dashboard.ts")).toBe("komposition");
-    expect(assignContextArea("src/routes/reports.ts")).toBe("komposition");
+    expect(assignContextArea("src/composition/dashboard.ts")).toBe("komposition");
+    expect(assignContextArea("src/composition/reports.ts")).toBe("komposition");
   });
 
   it("services/clock/** is zeiterfassung, services/phorest/** is schichtplanung (D-16)", () => {
@@ -34,15 +34,19 @@ describe("context-area-map — fixed spot checks", () => {
   });
 
   it("close-employee-month.ts is arbeitszeitkonto", () => {
-    expect(assignContextArea("src/utils/close-employee-month.ts")).toBe("arbeitszeitkonto");
+    expect(assignContextArea("src/contexts/working-time-account/close-employee-month.ts")).toBe(
+      "arbeitszeitkonto",
+    );
   });
 
   it("leave.ts is abwesenheiten", () => {
-    expect(assignContextArea("src/routes/leave.ts")).toBe("abwesenheiten");
+    expect(assignContextArea("src/contexts/absence/api/leave.ts")).toBe("abwesenheiten");
   });
 
   it("time-entries.ts is zeiterfassung", () => {
-    expect(assignContextArea("src/routes/time-entries.ts")).toBe("zeiterfassung");
+    expect(assignContextArea("src/contexts/time-tracking/api/time-entries.ts")).toBe(
+      "zeiterfassung",
+    );
   });
 
   it("app.ts is rahmen and appears in RAHMEN_FILES", () => {
@@ -98,10 +102,21 @@ describe("context-area-map — structural invariants", () => {
     }
   });
 
-  it("no path under src/routes/ or src/plugins/ maps to rahmen (#99: keine Restkategorie)", () => {
+  it("no path under src/contexts/*/api/ or src/contexts/*/plugins/ maps to rahmen (#99: keine Restkategorie)", () => {
+    // Phase 99b, plan 08: the original assertion here filtered CONTEXT_AREA_BY_FILE for keys
+    // starting with "src/routes/" or "src/plugins/" — both directories were removed by plan
+    // 99B-07 (see docs/context-cut-map.md §4), so CONTEXT_AREA_BY_FILE has held zero such keys
+    // since that commit. A filter over an empty subset always yields an empty result: the
+    // assertion could no longer fail, regardless of whether the underlying #99 invariant
+    // ("keine Restkategorie" — no route or plugin may be classified rahmen) still held. This
+    // rewrite targets the CURRENT location of routes and plugins (contexts/*/api/,
+    // contexts/*/plugins/) so the check has teeth again — proven by breaking it once: adding
+    // "src/contexts/absence/api/does-not-exist.ts": "rahmen" to CONTEXT_AREA_BY_FILE and
+    // re-running turned this test red with the offending path in the failure message, then the
+    // change was reverted (see 99B-08-SUMMARY.md for the verbatim transcript).
     const offenders = Object.entries(CONTEXT_AREA_BY_FILE)
       .filter(([, area]) => area === "rahmen")
-      .filter(([path]) => path.startsWith("src/routes/") || path.startsWith("src/plugins/"))
+      .filter(([path]) => /^src\/contexts\/[a-z]+\/(api|plugins)\//.test(path))
       .map(([path]) => path);
     expect(offenders).toEqual([]);
   });

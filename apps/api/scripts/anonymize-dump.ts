@@ -43,7 +43,7 @@ import { PrismaClient } from "@clokr/db";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 
-import { anonymizeEmployeeData } from "../src/utils/anonymize";
+import { anonymizeEmployeeData } from "../src/contexts/platform/anonymize";
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is required");

@@ -27,7 +27,7 @@ import {
   normalizeKarenzDays,
   MAX_KARENZ_DAYS,
   type KarenzSickRow,
-} from "../utils/find-karenz-overrun-days";
+} from "../contexts/absence/find-karenz-overrun-days";
 
 function sickRow(overrides: Partial<KarenzSickRow> = {}): KarenzSickRow {
   return {
@@ -176,7 +176,7 @@ describe("find-karenz-overrun-days — detector", () => {
 
   it("Test 9 (D-23 structural boundary): the module source contains no import statement", () => {
     const src = readFileSync(
-      join(__dirname, "..", "utils", "find-karenz-overrun-days.ts"),
+      join(__dirname, "..", "contexts", "absence", "find-karenz-overrun-days.ts"),
       "utf-8",
     );
     expect(/^\s*import\s/m.test(src)).toBe(false);

@@ -1367,12 +1367,26 @@ describe("reject and reopen — Phase 104-06 Task 2", () => {
   it("Test 6 (D-10): no scheduled job anywhere closes, expires or auto-rejects an AU_PENDING credit", async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");
-    const pluginsDir = path.resolve(__dirname, "../plugins");
-    const files = fs.readdirSync(pluginsDir).filter((f) => f.endsWith(".ts"));
-    for (const file of files) {
-      const content = fs.readFileSync(path.join(pluginsDir, file), "utf-8");
-      expect(content).not.toContain("section9Credit");
+    // Since Phase 99b Plan 07, plugins no longer live under one shared `src/plugins/` — each
+    // context owns its own `plugins/` subdirectory (D-26). Scan all five so this guard keeps
+    // covering every scheduled job in the repo, not just whichever context happens to have one
+    // named "auto-close-month".
+    const contextsDir = path.resolve(__dirname, "../contexts");
+    const contextNames = fs.readdirSync(contextsDir);
+    let scannedAtLeastOne = false;
+    for (const contextName of contextNames) {
+      const pluginsDir = path.join(contextsDir, contextName, "plugins");
+      if (!fs.existsSync(pluginsDir)) continue;
+      const files = fs
+        .readdirSync(pluginsDir)
+        .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"));
+      for (const file of files) {
+        scannedAtLeastOne = true;
+        const content = fs.readFileSync(path.join(pluginsDir, file), "utf-8");
+        expect(content).not.toContain("section9Credit");
+      }
     }
+    expect(scannedAtLeastOne).toBe(true);
   });
 });
 

@@ -146,7 +146,7 @@ const ALLOWED: AllowedEntry[] = [
 
   // leave-type.ts: the one canonical Code<->name mapping (D-04) — every literal is expected here.
   {
-    file: "apps/api/src/utils/leave-type.ts",
+    file: "apps/api/src/contexts/absence/leave-type.ts",
     pattern: null,
     reason:
       "The one canonical Code<->name mapping (D-04) — every one of the nine names, both legacy " +
@@ -175,7 +175,7 @@ const ALLOWED: AllowedEntry[] = [
   },
   // special-leave.ts: Swagger/OpenAPI documentation tag, never read back by code.
   {
-    file: "apps/api/src/routes/special-leave.ts",
+    file: "apps/api/src/contexts/absence/api/special-leave.ts",
     pattern: /tags:\s*\["Sonderurlaub"\]/,
     reason:
       "Swagger/OpenAPI documentation tag for grouping routes in the /docs UI (the same German-tag " +
@@ -197,7 +197,7 @@ const ALLOWED: AllowedEntry[] = [
 
   // attendance-checker.ts: checkVacationExpiry() resolves VACATION by name inside a `where`.
   {
-    file: "apps/api/src/plugins/attendance-checker.ts",
+    file: "apps/api/src/contexts/time-tracking/plugins/attendance-checker.ts",
     pattern: /leaveType:\s*\{\s*name:\s*"Urlaub"\s*\}/,
     reason:
       "GENUINE FINDING, not a design decision (Issue #205): checkVacationExpiry() (§ 7 BUrlG " +
@@ -209,7 +209,7 @@ const ALLOWED: AllowedEntry[] = [
   },
   // employees.ts: the exit pro-rata vacation warning resolves VACATION by name.
   {
-    file: "apps/api/src/routes/employees.ts",
+    file: "apps/api/src/contexts/platform/api/employees.ts",
     pattern: /where:\s*\{\s*tenantId:\s*req\.user\.tenantId,\s*name:\s*"Urlaub"\s*\}/,
     reason:
       "GENUINE FINDING, not a design decision (Issue #205): the pro-rata vacation warning shown " +
@@ -275,8 +275,8 @@ describe("Phase 97 (T2) — leave-type identity guard", () => {
 
   it("LEGACY_ALIASES / LEAVE_TYPE_LEGACY_ALIASES is referenced only by the backfill script, the ensureLeaveType() self-heal, and its own definition", () => {
     const permitted = new Set([
-      "apps/api/src/utils/leave-type.ts",
-      "apps/api/src/routes/leave.ts",
+      "apps/api/src/contexts/absence/leave-type.ts",
+      "apps/api/src/contexts/absence/api/leave.ts",
       "apps/api/scripts/backfill-leave-type-code.ts",
     ]);
     const files = collectFiles();
@@ -297,8 +297,8 @@ describe("Phase 97 (T2) — leave-type identity guard", () => {
 
   it("leaveTypeCodeForName (the name -> code direction) is called only by the backfill script, the ensureLeaveType() self-heal, and its own definition", () => {
     const permitted = new Set([
-      "apps/api/src/utils/leave-type.ts",
-      "apps/api/src/routes/leave.ts",
+      "apps/api/src/contexts/absence/leave-type.ts",
+      "apps/api/src/contexts/absence/api/leave.ts",
       "apps/api/scripts/backfill-leave-type-code.ts",
     ]);
     const files = collectFiles();

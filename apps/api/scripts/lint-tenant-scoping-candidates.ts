@@ -105,6 +105,23 @@ function isRelevantMethod(name: string): name is RelevantMethod {
 
 // ── File walking (D-11, D-15) ──────────────────────────────────────────────────────────────
 
+/**
+ * GitHub #229: a `SCOPED_DIRS` entry that points nowhere used to be walked as zero files, and the
+ * gate then reported "OK — no findings" with exit 0. A gate that finds nothing because it looks at
+ * nothing is indistinguishable from a clean tree. Phase 99b moves `src/routes/` away, which is
+ * exactly the trigger, so this is a hard error and never a warning.
+ */
+export class MissingScopedDirError extends Error {
+  constructor(missingDir: string) {
+    super(
+      `lint-tenant-scoping: SCOPED_DIRS entry "${missingDir}" does not exist on disk. A path ` +
+        `pointing nowhere is a defect, not "all clean" (GitHub #229) — fix it in the single place ` +
+        `SCOPED_DIRS is stated: apps/api/scripts/lint-tenant-scoping-types.ts.`,
+    );
+    this.name = "MissingScopedDirError";
+  }
+}
+
 /** D-11 + D-15: walk SCOPED_DIRS for *.ts, skipping any directory named EXCLUDED_DIR_SEGMENT. */
 export function listScopedFiles(repoRoot: string): string[] {
   const out: string[] = [];
@@ -124,7 +141,8 @@ export function listScopedFiles(repoRoot: string): string[] {
 
   for (const dir of SCOPED_DIRS) {
     const abs = path.join(repoRoot, dir);
-    if (fs.existsSync(abs)) walk(abs);
+    if (!fs.existsSync(abs)) throw new MissingScopedDirError(dir);
+    walk(abs);
   }
 
   return out.map((absPath) => path.relative(repoRoot, absPath).split(path.sep).join("/"));

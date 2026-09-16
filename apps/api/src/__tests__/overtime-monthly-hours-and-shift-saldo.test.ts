@@ -14,9 +14,9 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import { todayStr as tenantTodayStr, utcMidnight } from "./test-dates";
-import { updateOvertimeAccount } from "../routes/time-entries";
-import { monthRangeUtc, dateStrInTz } from "../utils/timezone";
-import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
+import { monthRangeUtc, dateStrInTz } from "../contexts/working-time-account/timezone";
+import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 

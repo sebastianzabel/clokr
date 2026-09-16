@@ -18,7 +18,10 @@
 // aligning with the precedence `vacation-calc.ts:countWorkDaysPerWeek()` already uses.
 
 import { describe, it, expect } from "vitest";
-import { calcExpectedMinutesTz, calcLeaveAbsenceMinutesTz } from "../utils/timezone";
+import {
+  calcExpectedMinutesTz,
+  calcLeaveAbsenceMinutesTz,
+} from "../contexts/working-time-account/timezone";
 
 const TZ = "Europe/Berlin";
 

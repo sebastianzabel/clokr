@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import { pastDateStr } from "./test-dates";
-import { invalidReasonFields } from "../utils/invalid-reason";
+import { invalidReasonFields } from "../contexts/time-tracking/invalid-reason";
 import type { FastifyInstance } from "fastify";
 
 describe("Time Entries API", () => {

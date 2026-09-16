@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { ageAtDate, checkJArbSchG } from "../utils/jarbschg";
+import { ageAtDate, checkJArbSchG } from "../contexts/absence/jarbschg";
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
 

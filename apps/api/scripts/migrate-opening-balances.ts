@@ -47,14 +47,14 @@ import {
   isTrackOnlySchedule,
   monthLabelFromPeriodEnd,
   type ChainLink,
-} from "../src/utils/saldo-chain-integrity";
+} from "../src/contexts/working-time-account/saldo-chain-integrity";
 import {
   matchDeliberateReason,
   extractAuditReasons,
-} from "../src/utils/saldo-chain-classification";
+} from "../src/contexts/working-time-account/saldo-chain-classification";
 // Imported for its READ-ONLY schedule resolution only (same precedent as
 // audit-saldo-chain-integrity.ts) — this script calls no write function from it.
-import { getEffectiveSchedule } from "../src/routes/time-entries";
+import { getEffectiveSchedule } from "../src/contexts/time-tracking/api/time-entries";
 
 // ── Part A: exported pure helpers (DB-free, unit-testable) ────────────────────
 

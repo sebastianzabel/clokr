@@ -673,7 +673,8 @@ describe("Berufsschule (Phase 62)", () => {
     // Force a longer window so the locked next-month date is in scope.
     // The route uses the tenant default (4 weeks) which may not always cover next month.
     // We can use the helper directly to set a custom window for deterministic results.
-    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const { runVocationalSchoolGeneration } =
+      await import("../contexts/absence/vocational-school-generator");
     const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
       tenantId: data.tenant.id,
       weeksAhead: 8, // 8 weeks ahead guarantees coverage of next month
@@ -744,7 +745,8 @@ describe("Berufsschule (Phase 62)", () => {
       },
     });
 
-    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const { runVocationalSchoolGeneration } =
+      await import("../contexts/absence/vocational-school-generator");
     const firstRun = await runVocationalSchoolGeneration(app.prisma, app.audit, {
       tenantId: data.tenant.id,
       weeksAhead: 8,
@@ -843,7 +845,8 @@ describe("Berufsschule (Phase 62)", () => {
       },
     });
 
-    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const { runVocationalSchoolGeneration } =
+      await import("../contexts/absence/vocational-school-generator");
     const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
       tenantId: data.tenant.id,
       weeksAhead: 4,
@@ -892,7 +895,8 @@ describe("Berufsschule (Phase 62)", () => {
       },
     });
 
-    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const { runVocationalSchoolGeneration } =
+      await import("../contexts/absence/vocational-school-generator");
     const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
       tenantId: data.tenant.id,
       weeksAhead: 4,
@@ -944,7 +948,8 @@ describe("Berufsschule (Phase 62)", () => {
       },
     });
 
-    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const { runVocationalSchoolGeneration } =
+      await import("../contexts/absence/vocational-school-generator");
     const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
       tenantId: data.tenant.id,
       weeksAhead: 4,
@@ -979,7 +984,8 @@ describe("Berufsschule (Phase 62)", () => {
     });
 
     // No SchoolHolidayPeriod rows seeded — cache is empty (e.g. sync hasn't run yet).
-    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const { runVocationalSchoolGeneration } =
+      await import("../contexts/absence/vocational-school-generator");
     const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
       tenantId: data.tenant.id,
       weeksAhead: 4,
@@ -1018,7 +1024,8 @@ describe("Berufsschule (Phase 62)", () => {
       },
     });
 
-    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const { runVocationalSchoolGeneration } =
+      await import("../contexts/absence/vocational-school-generator");
     const r1 = await runVocationalSchoolGeneration(app.prisma, app.audit, {
       tenantId: data.tenant.id,
       weeksAhead: 4,

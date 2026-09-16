@@ -57,10 +57,10 @@ import {
   dateStrInTz,
   monthRangeUtc,
   monthDayBounds,
-} from "../src/utils/timezone";
-import { getHolidays, STATE_MAP } from "../src/utils/holidays";
-import { closeEmployeeMonth } from "../src/utils/close-employee-month";
-import { loadBsSlotOverrides } from "../src/utils/load-bs-slot-overrides";
+} from "../src/contexts/working-time-account/timezone";
+import { getHolidays, STATE_MAP } from "../src/contexts/platform/holidays";
+import { closeEmployeeMonth } from "../src/contexts/working-time-account/close-employee-month";
+import { loadBsSlotOverrides } from "../src/contexts/absence/load-bs-slot-overrides";
 
 // ── Audit constants ─────────────────────────────────────────────────────────
 const RECALC_REASON = "v1.8.27 Azubi Berufsschultag Monats-Soll double-count fix (single-count)";

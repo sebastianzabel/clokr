@@ -8,7 +8,7 @@
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
-import { updateOvertimeAccount } from "../routes/time-entries";
+import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
 import { pastDateStr, dowOf, utcMidnight } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";

@@ -2,21 +2,37 @@
  * Phase 204 Plan 01 — shared contract for the `lint:tenant-scoping` gate (GitHub Issue #204).
  *
  * This gate prevents a NEW route from reading a client-supplied identifier into a tenant-scoped
- * Prisma model without constraining the result to the caller's own tenant. It walks exactly two
- * directories, production code only:
+ * Prisma model without constraining the result to the caller's own tenant. As of Phase 99b Plan 07
+ * (the last of the six context-cut moves), it walks these seven directories, production code only:
  *
- *   - `apps/api/src/routes/`
+ *   - `apps/api/src/contexts/platform/api/`
+ *   - `apps/api/src/contexts/time-tracking/api/`
+ *   - `apps/api/src/contexts/absence/api/`
+ *   - `apps/api/src/contexts/scheduling/api/`
+ *   - `apps/api/src/contexts/working-time-account/api/`
+ *   - `apps/api/src/composition/` (Phase 99b Plan 02 — the composition layer moved out of
+ *     `routes/`; it still reads client-supplied identifiers into cross-context Prisma queries and
+ *     stays in scope, see `docs/context-cut-map.md`)
  *   - `apps/api/src/services/`
  *
- * `SCOPED_DIRS` below is the single place those two paths are stated (D-11). `utils/` and
- * `plugins/` are deliberately out of scope: Prisma calls there never carry a client-supplied
- * identifier from a request, which is the precondition this gate checks for (D-12).
+ * The former monolithic route directory is GONE — every route that used to live there now lives
+ * under exactly one of the five `contexts/*\/api` directories above (#99, "keine Restkategorie").
+ * This is the exact scenario #229's `MissingScopedDirError` (`lint-tenant-scoping-candidates.ts`)
+ * exists for: before that guard, a stale entry naming that removed directory would have made
+ * `listScopedFiles` walk zero files and report "0 in-scope call(s) ... OK" with exit 0 — a
+ * clean-looking result that in fact checked nothing at all. With the guard, the same stale entry
+ * throws instead.
  *
- * `__tests__` subdirectories under either scoped directory are excluded EXPLICITLY, not by
- * accident of globbing (D-15) — see `EXCLUDED_DIR_SEGMENT`. Test fixtures construct their own
- * literal identifiers and have no client-supplied value by definition, so a correctly applied
- * D-12 filter would exclude them anyway; the exclusion is made explicit here so it cannot
- * silently drift into scope.
+ * `SCOPED_DIRS` below is the single place those paths are stated (D-11). Each context's flat
+ * (non-`api/`) files and each context's `plugins/` subdirectory are deliberately out of scope:
+ * a Prisma call there never carries a client-supplied identifier from a request, which is the
+ * precondition this gate checks for (D-12) — unchanged by where those files physically live.
+ *
+ * `__tests__` subdirectories under any scoped directory are excluded EXPLICITLY, not by accident
+ * of globbing (D-15) — see `EXCLUDED_DIR_SEGMENT`. Test fixtures construct their own literal
+ * identifiers and have no client-supplied value by definition, so a correctly applied D-12 filter
+ * would exclude them anyway; the exclusion is made explicit here so it cannot silently drift into
+ * scope.
  *
  * This file contains ONLY types and frozen constants — no logic, no imports from the other
  * `lint-tenant-scoping-*` modules — so plans 02 (candidate selection) and 03 (verdict) can be
@@ -25,14 +41,29 @@
 
 // ── Scope (D-11) ────────────────────────────────────────────────────────────────────────────
 
-/** D-11: the ONLY two directories this gate walks. Stated once, here. */
-export const SCOPED_DIRS = ["apps/api/src/routes", "apps/api/src/services"] as const;
+/**
+ * D-11: the ONLY directories this gate walks. Stated once, here, as an explicit list — matching
+ * this walker's existing literal-list design; no glob support. Final shape (Phase 99b Plan 07):
+ * seven entries; the former monolithic route directory was removed from this list because it no
+ * longer exists.
+ */
+export const SCOPED_DIRS = [
+  "apps/api/src/contexts/platform/api",
+  "apps/api/src/contexts/time-tracking/api",
+  "apps/api/src/contexts/absence/api",
+  "apps/api/src/contexts/scheduling/api",
+  "apps/api/src/contexts/working-time-account/api",
+  "apps/api/src/composition",
+  "apps/api/src/services",
+] as const;
 
 /**
  * D-15: `__tests__` is excluded EXPLICITLY, not by accident of globbing. Test fixtures build
  * their own literal identifiers and have no client-supplied value by definition (verified: zero
- * `req.params` occurrences under apps/api/src/routes/__tests__ on main @ 708ffbfa), so the D-12
- * filter would drop them anyway — the exclusion is made explicit so it cannot silently flip.
+ * `req.params` occurrences under any scoped directory's `__tests__` on main @ 708ffbfa, back
+ * when the only scoped directory with such a subtree was the former monolithic route directory),
+ * so the D-12 filter would drop them anyway — the exclusion is made explicit so it cannot
+ * silently flip.
  */
 export const EXCLUDED_DIR_SEGMENT = "__tests__";
 
@@ -58,9 +89,10 @@ export type RelevantMethod = (typeof RELEVANT_METHODS)[number];
  * CLAUDE.md § Multi-Tenancy Convention states. `employeeId` and `sub` are accepted as well
  * because they are STRICTLY TIGHTER than a tenant constraint, not looser: an Employee belongs to
  * exactly one Tenant and a User to exactly one Employee, so scoping to them cannot widen the
- * result set across a tenant boundary. Measured examples on main @ 708ffbfa:
- * apps/api/src/routes/employees.ts:1376 (`device.employeeId !== employeeId` -> 403) and
- * apps/api/src/routes/notifications.ts:28 (`where: { id, userId: req.user.sub }`).
+ * result set across a tenant boundary. Measured examples on main @ 708ffbfa (in the files that
+ * were then `employees.ts` and `notifications.ts` under the former monolithic route directory,
+ * now `apps/api/src/contexts/platform/api/{employees,notifications}.ts`):
+ * `device.employeeId !== employeeId` -> 403, and `where: { id, userId: req.user.sub }`.
  */
 export const PRINCIPAL_FIELDS = ["tenantId", "employeeId", "sub"] as const;
 export type PrincipalField = (typeof PRINCIPAL_FIELDS)[number];

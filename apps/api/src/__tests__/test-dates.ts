@@ -18,8 +18,8 @@
  * midnight — see its own comment for why that must NOT be re-projected into
  * the tenant TZ).
  */
-import { todayInTz, dateStrInTz } from "../utils/timezone";
-import { getHolidays, type FederalStateCode } from "../utils/holidays";
+import { todayInTz, dateStrInTz } from "../contexts/working-time-account/timezone";
+import { getHolidays, type FederalStateCode } from "../contexts/platform/holidays";
 
 /** Must mirror the tenant timezone seeded in `setup.ts:61`. */
 export const TEST_TZ = "Europe/Berlin";

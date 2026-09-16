@@ -17,7 +17,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
-import { recalculateSnapshots } from "../utils/recalculate-snapshots";
+import { recalculateSnapshots } from "../contexts/working-time-account/recalculate-snapshots";
 
 describe("recalculateSnapshots — atomic supersede+create (CR-01)", () => {
   let app: FastifyInstance;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isObligatedWorkday, isDayDue } from "../utils/presence";
+import { isObligatedWorkday, isDayDue } from "../contexts/time-tracking/presence";
 
 // ── isObligatedWorkday ───────────────────────────────────────────────────────
 // Schedule-type-aware per-day obligation. Only an obligated workday can ever
