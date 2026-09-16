@@ -80,7 +80,8 @@ describe("Shift-Auto-Cleanup integration (Phase 67.2 Plan 04)", () => {
       },
     });
 
-    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const { runVocationalSchoolGeneration } =
+      await import("../contexts/abwesenheiten/vocational-school-generator");
     const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
       tenantId: data.tenant.id,
       weeksAhead: 4,
@@ -114,7 +115,8 @@ describe("Shift-Auto-Cleanup integration (Phase 67.2 Plan 04)", () => {
       },
     });
 
-    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const { runVocationalSchoolGeneration } =
+      await import("../contexts/abwesenheiten/vocational-school-generator");
     await runVocationalSchoolGeneration(app.prisma, app.audit, {
       tenantId: data.tenant.id,
       weeksAhead: 4,
@@ -158,7 +160,7 @@ describe("Shift-Auto-Cleanup integration (Phase 67.2 Plan 04)", () => {
     });
 
     const { previewVocationalSchoolGeneration } =
-      await import("../utils/vocational-school-generator");
+      await import("../contexts/abwesenheiten/vocational-school-generator");
     const result = await previewVocationalSchoolGeneration(app.prisma, {
       tenantId: data.tenant.id,
       weeksAhead: 4,
@@ -200,7 +202,8 @@ describe("Shift-Auto-Cleanup integration (Phase 67.2 Plan 04)", () => {
       },
     });
 
-    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const { runVocationalSchoolGeneration } =
+      await import("../contexts/abwesenheiten/vocational-school-generator");
     await runVocationalSchoolGeneration(app.prisma, app.audit, {
       tenantId: data.tenant.id,
       weeksAhead: 4,

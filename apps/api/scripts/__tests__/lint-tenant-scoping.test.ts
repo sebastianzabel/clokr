@@ -437,9 +437,10 @@ beforeEach(() => {
   // disk. The real repo always has "apps/api/src/routes", "apps/api/src/services", (since
   // Phase 99b Plan 02) "apps/api/src/composition", (since Phase 99b Plan 03)
   // "apps/api/src/contexts/schichtplanung/api", (since Phase 99b Plan 04)
-  // "apps/api/src/contexts/unterbau/api" and (since Phase 99b Plan 05)
-  // "apps/api/src/contexts/zeiterfassung/api", so every fixture tree below provisions all six up
-  // front — individual tests still only WRITE files under the one they care about, matching
+  // "apps/api/src/contexts/unterbau/api", (since Phase 99b Plan 05)
+  // "apps/api/src/contexts/zeiterfassung/api" and (since Phase 99b Plan 06)
+  // "apps/api/src/contexts/abwesenheiten/api", so every fixture tree below provisions all seven
+  // up front — individual tests still only WRITE files under the one they care about, matching
   // production shape rather than working around the guard.
   fs.mkdirSync(path.join(tmpRoot, "apps/api/src/routes"), { recursive: true });
   fs.mkdirSync(path.join(tmpRoot, "apps/api/src/services"), { recursive: true });
@@ -451,6 +452,9 @@ beforeEach(() => {
     recursive: true,
   });
   fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/zeiterfassung/api"), {
+    recursive: true,
+  });
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/abwesenheiten/api"), {
     recursive: true,
   });
 });

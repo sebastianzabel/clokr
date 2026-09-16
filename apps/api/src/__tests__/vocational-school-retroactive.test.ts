@@ -18,7 +18,7 @@ import {
   runVocationalSchoolGeneration,
   previewVocationalSchoolGeneration,
   resolveRetroactiveWindow,
-} from "../utils/vocational-school-generator";
+} from "../contexts/abwesenheiten/vocational-school-generator";
 
 // Route paths under test (Task 2). Referenced as a template fragment rather than
 // repeated literals so there is exactly one place that would need updating if the

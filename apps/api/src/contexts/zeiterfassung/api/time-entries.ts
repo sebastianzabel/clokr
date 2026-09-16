@@ -4,7 +4,7 @@ import { createHash } from "crypto";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../arbzg";
-import { checkJArbSchG } from "../../../utils/jarbschg";
+import { checkJArbSchG } from "../../abwesenheiten/jarbschg";
 import { getEffectiveBreakDuration } from "../break-effective";
 import {
   getTenantTimezone,
@@ -16,13 +16,13 @@ import {
   calcExpectedMinutesTz,
 } from "../../../utils/timezone";
 import { getHolidays, STATE_MAP } from "../../unterbau/holidays";
-import { hasApprovedLeaveOnDate } from "../../../utils/leave-check";
+import { hasApprovedLeaveOnDate } from "../../abwesenheiten/leave-check";
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { resolveClockEvent } from "../../../services/clock/resolver";
 import { resolveActor } from "../../../services/clock/audit-actor";
 import type { ClockEvent } from "../../../services/clock/types";
 import { closeEmployeeMonth } from "../../../utils/close-employee-month"; // SNAP-03 — Phase 76.27
-import { loadBsSlotOverrides } from "../../../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
+import { loadBsSlotOverrides } from "../../abwesenheiten/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import {
   getRetroEntryWindowDays,
   computeRetroLimitStr,

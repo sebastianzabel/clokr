@@ -42,13 +42,13 @@ import {
   getHolidayMap,
   deductVacationDays,
   reverseVacationDays,
-} from "../routes/leave";
+} from "../contexts/abwesenheiten/api/leave";
 import {
   recalcProvisionalLeaveForShiftChange,
   type RecalcDeps,
   type AdjustmentRecord,
-} from "../utils/shift-leave-recalc-resolver";
-import * as ShiftLeaveRecalcModule from "../utils/shift-leave-recalc-resolver";
+} from "../contexts/abwesenheiten/shift-leave-recalc-resolver";
+import * as ShiftLeaveRecalcModule from "../contexts/abwesenheiten/shift-leave-recalc-resolver";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

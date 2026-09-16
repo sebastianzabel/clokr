@@ -395,10 +395,16 @@ describe("§ 9 BUrlG legal invariants — Phase 104-06 Task 3", () => {
   it("D-23: no import edge exists between the Karenz module and the § 9 credit path", () => {
     const apiSrc = join(__dirname, "..");
 
-    const karenzSrc = readFileSync(join(apiSrc, "utils", "find-karenz-overrun-days.ts"), "utf-8");
+    const karenzSrc = readFileSync(
+      join(apiSrc, "contexts", "abwesenheiten", "find-karenz-overrun-days.ts"),
+      "utf-8",
+    );
     expect(/^\s*import\s/m.test(karenzSrc)).toBe(false);
 
-    const section9DetectSrc = readFileSync(join(apiSrc, "utils", "section9-detect.ts"), "utf-8");
+    const section9DetectSrc = readFileSync(
+      join(apiSrc, "contexts", "abwesenheiten", "section9-detect.ts"),
+      "utf-8",
+    );
     // Non-comment lines only — the module's own header docblock deliberately NAMES the
     // Karenztage rule to document why it is never touched (same self-reference pattern as
     // find-karenz-overrun-days.ts's own header). The invariant under test is that no CODE
@@ -411,7 +417,10 @@ describe("§ 9 BUrlG legal invariants — Phase 104-06 Task 3", () => {
     expect(section9DetectCode).not.toContain("sickNoteRequiredAfterDays");
     expect(section9DetectCode.toLowerCase()).not.toContain("karenz");
 
-    const leaveSrc = readFileSync(join(apiSrc, "routes", "leave.ts"), "utf-8");
+    const leaveSrc = readFileSync(
+      join(apiSrc, "contexts", "abwesenheiten", "api", "leave.ts"),
+      "utf-8",
+    );
     const firstIdx = leaveSrc.indexOf('app.get("/section9');
     const endMarker = leaveSrc.indexOf("async function autoCarryOver");
     expect(firstIdx).toBeGreaterThan(-1);

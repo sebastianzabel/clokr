@@ -4,7 +4,7 @@ import iconv from "iconv-lite";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
 import { computeOvertimeBalanceHours } from "../../contexts/zeiterfassung/api/time-entries";
 import * as pdfUtils from "../pdf";
-import { leaveTypeFields } from "../../utils/leave-type";
+import { leaveTypeFields } from "../../contexts/abwesenheiten/leave-type";
 
 // Phase 97 (D-11, Task 3): the two vacation-overview PDF handlers only expose their
 // aggregated { totalDays, ... } data by feeding it into pdfkit, which compresses its

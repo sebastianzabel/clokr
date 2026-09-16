@@ -33,7 +33,7 @@ import { getEffectiveSchedule } from "../src/contexts/zeiterfassung/api/time-ent
 import { getHolidays, STATE_MAP } from "../src/contexts/unterbau/holidays";
 import { periodStartWindow } from "../src/utils/snapshot-period";
 import { closeEmployeeMonth } from "../src/utils/close-employee-month";
-import { loadBsSlotOverrides } from "../src/utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
+import { loadBsSlotOverrides } from "../src/contexts/abwesenheiten/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 
 // ── Exported pure helpers ────────────────────────────────────────────────────
 // These mirror the function-scoped helpers inside auto-close-month.ts but are

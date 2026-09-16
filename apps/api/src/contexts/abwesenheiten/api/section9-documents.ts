@@ -15,7 +15,7 @@
  *   - der Löschpfad (utils/anonymize.ts + routes/employees.ts) deckt diesen Ablageort mit ab
  */
 import { FastifyInstance } from "fastify";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth } from "../../../middleware/auth";
 
 /** Art. 9 DSGVO / V12: enge Allowlist. Kein SVG (aktive Inhalte), kein Office-Format. */
 const ALLOWED_TYPES: Record<string, string> = {

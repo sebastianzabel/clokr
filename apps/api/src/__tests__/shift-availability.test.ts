@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { LeaveTypeCode } from "@clokr/db";
-import { REQUESTABLE_CODES, IMPOSED_ONLY_CODES } from "../utils/leave-type";
+import { REQUESTABLE_CODES, IMPOSED_ONLY_CODES } from "../contexts/abwesenheiten/leave-type";
 import { classifyLeaveTypeCode } from "../contexts/schichtplanung/shift-availability";
 
 /**

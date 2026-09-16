@@ -16,14 +16,14 @@
 
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { requireAuth, requireRole } from "../../../middleware/auth";
 import {
   runVocationalSchoolGeneration,
   previewVocationalSchoolGeneration,
   dispatchShiftCleanupForCreatedAbsences,
   resolveRetroactiveWindow,
   type GeneratorResult,
-} from "../utils/vocational-school-generator";
+} from "../vocational-school-generator";
 
 const previewQuerySchema = z.object({
   weeks: z.coerce.number().int().min(1).max(26).optional(),

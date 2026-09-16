@@ -3,7 +3,7 @@ import { z } from "zod";
 import { fromZonedTime } from "date-fns-tz";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { checkArbZG, ArbZGWarning } from "../arbzg";
-import { checkJArbSchG } from "../../../utils/jarbschg";
+import { checkJArbSchG } from "../../abwesenheiten/jarbschg";
 import { getTenantTimezone, dateStrInTz, todayInTz } from "../../../utils/timezone";
 import { computeEntryAgeInDays } from "../retro-config";
 import { CLEARED_INVALID_REASON } from "../invalid-reason"; // Phase 96 (T1)

@@ -30,7 +30,11 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, extname } from "node:path";
 import { describe, it, expect } from "vitest";
 import type { LeaveTypeCode } from "@clokr/db";
-import { REQUESTABLE_CODES, IMPOSED_ONLY_CODES, DISPLAY_NAME } from "../utils/leave-type";
+import {
+  REQUESTABLE_CODES,
+  IMPOSED_ONLY_CODES,
+  DISPLAY_NAME,
+} from "../contexts/abwesenheiten/leave-type";
 
 // __dirname is apps/api/src/__tests__ — four levels up is the repo root, same as
 // leave-type-identity-guard.test.ts.
@@ -89,7 +93,7 @@ describe("G2 — the two tuples together cover the LeaveTypeCode enum exactly", 
 
 // ── G3 — the tuple behind z.enum() is the REQUESTABLE one ────────────────────
 describe("G3 — both request-body validators are bound to REQUESTABLE_CODES", () => {
-  const LEAVE_ROUTE = join(REPO_ROOT, "apps/api/src/routes/leave.ts");
+  const LEAVE_ROUTE = join(REPO_ROOT, "apps/api/src/contexts/abwesenheiten/api/leave.ts");
 
   // A text scan, deliberately: Zod's compiled schema is not introspectable at the
   // object-identity level, and "which symbol is actually used here" is exactly the question the
@@ -179,8 +183,8 @@ describe("G5 — no production or seed code writes an Absence with a requestable
   // empty and report success on a scan that looked at nothing relevant.
   const KNOWN_ABSENCE_WRITERS = [
     "packages/db/src/seed-demo.ts",
-    "apps/api/src/utils/vocational-school-generator.ts",
-    "apps/api/src/routes/vocational-school.ts",
+    "apps/api/src/contexts/abwesenheiten/vocational-school-generator.ts",
+    "apps/api/src/contexts/abwesenheiten/api/vocational-school.ts",
   ];
   // The four ADR-requested-only codes, post-merge spellings (the `_LEAVE` suffix no longer
   // exists — SPECIAL_LEAVE/UNPAID_LEAVE were retyped to SPECIAL/UNPAID by 98b-04's migration).

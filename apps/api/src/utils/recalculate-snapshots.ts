@@ -19,7 +19,7 @@ import { getEffectiveSchedule } from "../contexts/zeiterfassung/api/time-entries
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
 import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import { closeEmployeeMonth } from "./close-employee-month"; // Phase 76.26 — shared pure saldo core
-import { loadBsSlotOverrides } from "./load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
+import { loadBsSlotOverrides } from "../contexts/abwesenheiten/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import { isBridgeSnapshot } from "./saldo-snapshot-cleanup"; // 2026-08 hardening — SNAP-04 bridge guard
 import { computeInjectedDelta } from "./saldo-chain-integrity"; // Phase 98 — shared delta formula
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed

@@ -39,7 +39,7 @@ import bcrypt from "bcryptjs";
 import { createHash, randomBytes } from "crypto";
 import { z } from "zod";
 import { config } from "../../../config.js";
-import { leaveTypeFields } from "../../../utils/leave-type.js";
+import { leaveTypeFields } from "../../abwesenheiten/leave-type.js";
 
 declare module "fastify" {
   interface FastifyRequest {

@@ -9,8 +9,8 @@
 
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
-import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
-import { runVocationalSchoolGeneration } from "../utils/vocational-school-generator";
+import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
+import { runVocationalSchoolGeneration } from "../vocational-school-generator";
 
 declare module "fastify" {
   interface FastifyInstance {

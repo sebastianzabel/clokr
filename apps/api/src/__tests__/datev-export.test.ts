@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import iconv from "iconv-lite";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
-import { leaveTypeFields } from "../utils/leave-type";
+import { leaveTypeFields } from "../contexts/abwesenheiten/leave-type";
 import type { FastifyInstance } from "fastify";
 
 describe("DATEV export — FIRST automated coverage in its own file (Phase 104)", () => {

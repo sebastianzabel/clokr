@@ -1,36 +1,36 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { LeaveRequestStatus, Prisma } from "@clokr/db";
-import { requireAuth, requireRole } from "../middleware/auth";
-import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
-import { getTenantTimezone, monthRangeUtc } from "../utils/timezone";
-import { generateICal, addOneDay, type ICalEvent } from "../utils/ical";
-import { recalculateSnapshots } from "../utils/recalculate-snapshots";
+import { requireAuth, requireRole } from "../../../middleware/auth";
+import { getHolidays, STATE_MAP } from "../../unterbau/holidays";
+import { getTenantTimezone, monthRangeUtc } from "../../../utils/timezone";
+import { generateICal, addOneDay, type ICalEvent } from "../ical";
+import { recalculateSnapshots } from "../../../utils/recalculate-snapshots";
 import {
   splitDaysAcrossYears,
   calculateProRataVacation,
   mondayOfWeekUtc,
   countShiftBasedLeaveDays,
-} from "../utils/vacation-calc"; // Phase 107 (D-04/D-09)
-import { selfHealUsedDays, loadVacationTypeMeta } from "../utils/leave-self-heal";
-import { calculateWorkDays } from "../contexts/unterbau/calculate-work-days";
-import { computeAffectedMonths } from "../utils/correction-lock";
-import { periodStartWindow } from "../utils/snapshot-period";
+} from "../vacation-calc"; // Phase 107 (D-04/D-09)
+import { selfHealUsedDays, loadVacationTypeMeta } from "../leave-self-heal";
+import { calculateWorkDays } from "../../unterbau/calculate-work-days";
+import { computeAffectedMonths } from "../correction-lock";
+import { periodStartWindow } from "../../../utils/snapshot-period";
 import {
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
   type OvertimeBalanceBreakdown,
-} from "../contexts/zeiterfassung/api/time-entries";
-import { getConfirmedCarryOver } from "../utils/confirmed-saldo"; // Phase 97-06
-import { loadNegativeBalanceTolerance } from "../utils/negative-balance-tolerance"; // Phase 100
-import { formatMinutesHM } from "../utils/format-hm"; // Phase 100
-import { shiftNettoMinutes, sumShiftNettoMinutes } from "../contexts/schichtplanung/shift-netto"; // Phase 100 (OTC-04)
-import { auditReasonSchema } from "../contexts/unterbau/audit-reason"; // Quick 260824-cjd
-import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
-import { findSection9Overlaps, intersectRanges } from "../utils/section9-detect"; // Phase 104-05/06
-import { isSickLeaveTypeCode } from "../utils/leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
-import { karenzOverrunFromRequests, normalizeKarenzDays } from "../utils/find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
-import { CLEARED_INVALID_REASON } from "../contexts/zeiterfassung/invalid-reason"; // Phase 96 (T1)
+} from "../../zeiterfassung/api/time-entries";
+import { getConfirmedCarryOver } from "../../../utils/confirmed-saldo"; // Phase 97-06
+import { loadNegativeBalanceTolerance } from "../../../utils/negative-balance-tolerance"; // Phase 100
+import { formatMinutesHM } from "../format-hm"; // Phase 100
+import { shiftNettoMinutes, sumShiftNettoMinutes } from "../../schichtplanung/shift-netto"; // Phase 100 (OTC-04)
+import { auditReasonSchema } from "../../unterbau/audit-reason"; // Quick 260824-cjd
+import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
+import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
+import { isSickLeaveTypeCode } from "../leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
+import { karenzOverrunFromRequests, normalizeKarenzDays } from "../find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
+import { CLEARED_INVALID_REASON } from "../../zeiterfassung/invalid-reason"; // Phase 96 (T1)
 import {
   REQUESTABLE_CODES as TYPE_CODES,
   LEAVE_TYPE_DEFS,
@@ -38,8 +38,8 @@ import {
   LEAVE_REQUEST_EMAIL_SUBJECT,
   leaveTypeFields,
   DISPLAY_NAME,
-} from "../utils/leave-type"; // Phase 97 (T2, D-04) — the one mapping; DISPLAY_NAME added Phase 98b (D-04)
-import type { RequestableCode } from "../utils/leave-type"; // Phase 98b (D-01) — request-side type
+} from "../leave-type"; // Phase 97 (T2, D-04) — the one mapping; DISPLAY_NAME added Phase 98b (D-04)
+import type { RequestableCode } from "../leave-type"; // Phase 98b (D-01) — request-side type
 
 // Phase 104-10 — § 9 display-surface helpers (calendar/list/entitlement markers, D-28/D-29/D-31).
 

@@ -1,7 +1,7 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import type { FastifyInstance } from "fastify";
-import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
+import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
 
 /**
  * BUrlG § 7 Hinweispflicht (EuGH C-684/16 "Max-Planck").

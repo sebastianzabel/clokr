@@ -60,7 +60,7 @@ import {
 } from "../src/utils/timezone";
 import { getHolidays, STATE_MAP } from "../src/contexts/unterbau/holidays";
 import { closeEmployeeMonth } from "../src/utils/close-employee-month";
-import { loadBsSlotOverrides } from "../src/utils/load-bs-slot-overrides";
+import { loadBsSlotOverrides } from "../src/contexts/abwesenheiten/load-bs-slot-overrides";
 
 // ── Audit constants ─────────────────────────────────────────────────────────
 const RECALC_REASON = "v1.8.27 Azubi Berufsschultag Monats-Soll double-count fix (single-count)";

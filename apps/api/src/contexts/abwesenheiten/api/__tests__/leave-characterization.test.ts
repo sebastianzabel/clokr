@@ -16,10 +16,15 @@
  * Verschiebung: keine Verhaltensänderung").
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
-import { holidayFreeMondayStr } from "../../__tests__/test-dates";
-import { leaveTypeFields } from "../../utils/leave-type";
-import { computeOvertimeBalanceHours } from "../../contexts/zeiterfassung/api/time-entries";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+} from "../../../../__tests__/setup";
+import { holidayFreeMondayStr } from "../../../../__tests__/test-dates";
+import { leaveTypeFields } from "../../leave-type";
+import { computeOvertimeBalanceHours } from "../../../zeiterfassung/api/time-entries";
 import type { FastifyInstance } from "fastify";
 
 describe("leave.ts characterization — cancellation-approval Rückbuchung (Phase 113b)", () => {

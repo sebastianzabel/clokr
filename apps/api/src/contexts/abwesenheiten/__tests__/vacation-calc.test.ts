@@ -10,7 +10,7 @@ import {
 } from "../vacation-calc";
 // Phase 107 — single shared tenant-TZ date helper (issue #34); avoids hardcoded calendar
 // dates that expire (see project history in CLAUDE.md / docs/testing.md).
-import { mondayOfWeekStr, utcMidnight, dowOf } from "../../__tests__/test-dates";
+import { mondayOfWeekStr, utcMidnight, dowOf } from "../../../__tests__/test-dates";
 
 const fullSchedule = {
   mondayHours: 8,

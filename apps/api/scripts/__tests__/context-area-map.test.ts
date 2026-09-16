@@ -38,7 +38,7 @@ describe("context-area-map — fixed spot checks", () => {
   });
 
   it("leave.ts is abwesenheiten", () => {
-    expect(assignContextArea("src/routes/leave.ts")).toBe("abwesenheiten");
+    expect(assignContextArea("src/contexts/abwesenheiten/api/leave.ts")).toBe("abwesenheiten");
   });
 
   it("time-entries.ts is zeiterfassung", () => {

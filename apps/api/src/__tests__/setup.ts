@@ -13,7 +13,7 @@ import bcrypt from "bcryptjs";
 // seedTestData(). Adding `uiPreferences Json?` to User caused TS2883 because the
 // inferred return type implicitly references JsonValue without a local binding.
 import { Prisma } from "@clokr/db";
-import { leaveTypeFields } from "../utils/leave-type";
+import { leaveTypeFields } from "../contexts/abwesenheiten/leave-type";
 
 // Keep JsonValue reachable from this module's public types (intentional no-op type alias)
 export type _SeedJsonValue = Prisma.JsonValue;

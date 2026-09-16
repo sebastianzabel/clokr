@@ -20,7 +20,7 @@ import {
   resolveBsTagSlot,
   type SlotLayerInputs,
   type WeekContext,
-} from "../utils/bs-slot-resolver";
+} from "../contexts/abwesenheiten/bs-slot-resolver";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 

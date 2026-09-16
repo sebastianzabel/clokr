@@ -14,7 +14,7 @@
     "reason": "All six calls sit in pre-authentication flows (login, OTP verification, OTP resend, forgot-password) where req.user does not exist yet — there is no caller tenant to scope against, and the entire purpose of each call is establishing WHO the caller is before any tenant context exists. D-07 predicted this exact category."
   },
   {
-    "file": "apps/api/src/routes/company-shutdowns.ts",
+    "file": "apps/api/src/contexts/abwesenheiten/api/company-shutdowns.ts",
     "handler": "DELETE /api/v1/company-shutdowns/:id/exceptions/:employeeId",
     "validatedAt": 190,
     "calls": [
@@ -138,7 +138,7 @@
     "reason": "employee (and therefore id) is tenant-validated inline at line 75 (employee.findFirst({ id, tenantId: req.user.tenantId })); employeeShiftPattern.updateMany reuses the SAME validated id as employeeId inside the replace transaction below."
   },
   {
-    "file": "apps/api/src/routes/vocational-school-pattern.ts",
+    "file": "apps/api/src/contexts/abwesenheiten/api/vocational-school-pattern.ts",
     "handler": "PUT /api/v1/employees/:id/vocational-school-pattern",
     "validatedAt": 173,
     "calls": [{ "call": "employeeVocationalSchoolPattern.updateMany", "line": 198 }],

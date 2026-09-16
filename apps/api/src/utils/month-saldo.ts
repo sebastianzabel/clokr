@@ -29,7 +29,7 @@ import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from ".
 import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { closeEmployeeMonth } from "./close-employee-month";
-import { loadBsSlotOverrides } from "./load-bs-slot-overrides";
+import { loadBsSlotOverrides } from "../contexts/abwesenheiten/load-bs-slot-overrides";
 import { getEffectiveBreakDuration } from "../contexts/zeiterfassung/break-effective";
 
 // ── Public types ──────────────────────────────────────────────────────────────

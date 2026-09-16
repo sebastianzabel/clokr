@@ -150,32 +150,32 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
 
   // ── abwesenheiten — LeaveRequest/LeaveType/LeaveEntitlement/SpecialLeaveRule/Section9Credit/
   //    Absence/EmployeeVocationalSchoolPattern/CompanyShutdown/CompanyShutdownException ───────
-  "src/routes/company-shutdowns.ts": "abwesenheiten", // writes CompanyShutdown/CompanyShutdownException
-  "src/routes/leave.ts": "abwesenheiten", // writes LeaveEntitlement/LeaveRequest/LeaveType/Section9Credit primarily; overtimeAccount/overtimeTransaction/timeEntry/shift writes are documented cross-context side effects of leave approval/cancellation
-  "src/routes/section9-documents.ts": "abwesenheiten", // writes Section9Credit
-  "src/routes/special-leave.ts": "abwesenheiten", // writes SpecialLeaveRule
-  "src/routes/vocational-school-pattern.ts": "abwesenheiten", // writes EmployeeVocationalSchoolPattern
-  "src/routes/vocational-school.ts": "abwesenheiten", // writes Absence
-  "src/plugins/carryover-warning.ts": "abwesenheiten", // BUrlG carry-over expiry reminders over LeaveEntitlement
-  "src/plugins/vocational-school-generator.ts": "abwesenheiten", // cron wrapper around utils/vocational-school-generator.ts's Absence generation
-  "src/utils/bs-slot-resolver.ts": "abwesenheiten", // Berufsschule (VOCATIONAL_SCHOOL Absence) time-slot resolution
-  "src/utils/correction-lock.ts": "abwesenheiten", // Phase 94 manager LeaveRequest correction guard
-  "src/utils/find-karenz-overrun-days.ts": "abwesenheiten", // §5 EFZG Karenztage over LeaveRequest
-  "src/utils/format-hm.ts": "abwesenheiten", // hours:minutes display formatting; sole importer is routes/leave.ts
-  "src/utils/ical.ts": "abwesenheiten", // iCal export; sole importer is routes/leave.ts
-  "src/utils/illness-carryover-guard.ts": "abwesenheiten", // sickness/Krankheit carry-over guard over LeaveRequest
-  "src/utils/jarbschg.ts": "abwesenheiten", // JArbSchG youth-protection rules over Absence/EmployeeVocationalSchoolPattern
-  "src/utils/leave-check.ts": "abwesenheiten", // Absence/LeaveRequest overlap checks
-  "src/utils/leave-self-heal.ts": "abwesenheiten", // LeaveEntitlement/LeaveRequest/LeaveType self-heal
-  "src/utils/leave-type.ts": "abwesenheiten", // LeaveTypeCode -> German display-name registry
-  "src/utils/load-bs-slot-overrides.ts": "abwesenheiten", // EmployeeVocationalSchoolPattern slot overrides
-  "src/utils/section9-credit-days.ts": "abwesenheiten", // Section9Credit day counting
-  "src/utils/section9-detect.ts": "abwesenheiten", // § 9 BUrlG "krank im Urlaub" detection
-  "src/utils/shift-leave-recalc-resolver.ts": "abwesenheiten", // writes LeaveRequest.daysProvisional when a roster change triggers recalculation (Phase 107) — LeaveRequest is the written model even though the trigger originates in Schichtplanung
-  "src/utils/vacation-calc.ts": "abwesenheiten", // BUrlG vacation-entitlement calculation
-  "src/utils/vocational-school-constants.ts": "abwesenheiten", // Berufsschule pattern constants
-  "src/utils/vocational-school-generator.ts": "abwesenheiten", // writes Absence primarily; notification.create is a side effect
-  "src/utils/vocational-school-pattern-order.ts": "abwesenheiten", // EmployeeVocationalSchoolPattern ordering helper
+  "src/contexts/abwesenheiten/api/company-shutdowns.ts": "abwesenheiten", // writes CompanyShutdown/CompanyShutdownException
+  "src/contexts/abwesenheiten/api/leave.ts": "abwesenheiten", // writes LeaveEntitlement/LeaveRequest/LeaveType/Section9Credit primarily; overtimeAccount/overtimeTransaction/timeEntry/shift writes are documented cross-context side effects of leave approval/cancellation
+  "src/contexts/abwesenheiten/api/section9-documents.ts": "abwesenheiten", // writes Section9Credit
+  "src/contexts/abwesenheiten/api/special-leave.ts": "abwesenheiten", // writes SpecialLeaveRule
+  "src/contexts/abwesenheiten/api/vocational-school-pattern.ts": "abwesenheiten", // writes EmployeeVocationalSchoolPattern
+  "src/contexts/abwesenheiten/api/vocational-school.ts": "abwesenheiten", // writes Absence
+  "src/contexts/abwesenheiten/plugins/carryover-warning.ts": "abwesenheiten", // BUrlG carry-over expiry reminders over LeaveEntitlement
+  "src/contexts/abwesenheiten/plugins/vocational-school-generator.ts": "abwesenheiten", // cron wrapper around utils/vocational-school-generator.ts's Absence generation
+  "src/contexts/abwesenheiten/bs-slot-resolver.ts": "abwesenheiten", // Berufsschule (VOCATIONAL_SCHOOL Absence) time-slot resolution
+  "src/contexts/abwesenheiten/correction-lock.ts": "abwesenheiten", // Phase 94 manager LeaveRequest correction guard
+  "src/contexts/abwesenheiten/find-karenz-overrun-days.ts": "abwesenheiten", // §5 EFZG Karenztage over LeaveRequest
+  "src/contexts/abwesenheiten/format-hm.ts": "abwesenheiten", // hours:minutes display formatting; sole importer is routes/leave.ts
+  "src/contexts/abwesenheiten/ical.ts": "abwesenheiten", // iCal export; sole importer is routes/leave.ts
+  "src/contexts/abwesenheiten/illness-carryover-guard.ts": "abwesenheiten", // sickness/Krankheit carry-over guard over LeaveRequest
+  "src/contexts/abwesenheiten/jarbschg.ts": "abwesenheiten", // JArbSchG youth-protection rules over Absence/EmployeeVocationalSchoolPattern
+  "src/contexts/abwesenheiten/leave-check.ts": "abwesenheiten", // Absence/LeaveRequest overlap checks
+  "src/contexts/abwesenheiten/leave-self-heal.ts": "abwesenheiten", // LeaveEntitlement/LeaveRequest/LeaveType self-heal
+  "src/contexts/abwesenheiten/leave-type.ts": "abwesenheiten", // LeaveTypeCode -> German display-name registry
+  "src/contexts/abwesenheiten/load-bs-slot-overrides.ts": "abwesenheiten", // EmployeeVocationalSchoolPattern slot overrides
+  "src/contexts/abwesenheiten/section9-credit-days.ts": "abwesenheiten", // Section9Credit day counting
+  "src/contexts/abwesenheiten/section9-detect.ts": "abwesenheiten", // § 9 BUrlG "krank im Urlaub" detection
+  "src/contexts/abwesenheiten/shift-leave-recalc-resolver.ts": "abwesenheiten", // writes LeaveRequest.daysProvisional when a roster change triggers recalculation (Phase 107) — LeaveRequest is the written model even though the trigger originates in Schichtplanung
+  "src/contexts/abwesenheiten/vacation-calc.ts": "abwesenheiten", // BUrlG vacation-entitlement calculation
+  "src/contexts/abwesenheiten/vocational-school-constants.ts": "abwesenheiten", // Berufsschule pattern constants
+  "src/contexts/abwesenheiten/vocational-school-generator.ts": "abwesenheiten", // writes Absence primarily; notification.create is a side effect
+  "src/contexts/abwesenheiten/vocational-school-pattern-order.ts": "abwesenheiten", // EmployeeVocationalSchoolPattern ordering helper
 
   // ── schichtplanung — Shift/ShiftTemplate/CoverageRule/EmployeeShiftPattern/
   //    EmployeeAvailability/PhorestStaffMapping/PhorestSyncRun/PhorestAppointment, plus

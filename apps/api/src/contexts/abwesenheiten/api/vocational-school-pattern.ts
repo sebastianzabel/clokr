@@ -1,16 +1,16 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { FederalState } from "@clokr/db";
-import { requireAuth, requireRole } from "../middleware/auth";
-import { syncSchoolHolidaysForTenant } from "../contexts/unterbau/plugins/school-holidays-sync";
-import { runVocationalSchoolGeneration } from "../utils/vocational-school-generator";
-import { BS_PATTERN_ORDER_BY } from "../utils/vocational-school-pattern-order";
+import { requireAuth, requireRole } from "../../../middleware/auth";
+import { syncSchoolHolidaysForTenant } from "../../unterbau/plugins/school-holidays-sync";
+import { runVocationalSchoolGeneration } from "../vocational-school-generator";
+import { BS_PATTERN_ORDER_BY } from "../vocational-school-pattern-order";
 import {
   BS_DAILY_MIN_BOUND,
   BS_DAILY_MAX_BOUND,
   BS_BLOCK_WEEKLY_MIN_BOUND,
   BS_BLOCK_WEEKLY_MAX_BOUND,
-} from "../utils/vocational-school-constants";
+} from "../vocational-school-constants";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 

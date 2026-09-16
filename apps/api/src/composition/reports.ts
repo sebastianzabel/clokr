@@ -20,9 +20,9 @@ import {
   streamLeaveListPdf,
   streamVacationOverviewPdf,
 } from "./pdf";
-import { selfHealUsedDays, loadVacationTypeMeta } from "../utils/leave-self-heal";
+import { selfHealUsedDays, loadVacationTypeMeta } from "../contexts/abwesenheiten/leave-self-heal";
 import { computeMonthSaldo } from "../utils/month-saldo";
-import { isSickLeaveTypeCode } from "../utils/leave-type";
+import { isSickLeaveTypeCode } from "../contexts/abwesenheiten/leave-type";
 import type { LeaveTypeCode } from "@clokr/db";
 
 // ── Month name lookup ─────────────────────────────────────────────────────────
@@ -1126,7 +1126,8 @@ export async function reportRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Anspruch nicht gefunden" });
       }
 
-      const { runCarryoverWarningOnce } = await import("../plugins/carryover-warning");
+      const { runCarryoverWarningOnce } =
+        await import("../contexts/abwesenheiten/plugins/carryover-warning");
       const result = await runCarryoverWarningOnce(app, { onlyEntitlementId: entitlementId });
 
       // Audit the manual trigger separately so we can distinguish operator

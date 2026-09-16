@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { Prisma } from "@clokr/db";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { requireAuth, requireRole } from "../../../middleware/auth";
 
 const shutdownBodySchema = z.object({
   name: z.string().min(1).max(100),

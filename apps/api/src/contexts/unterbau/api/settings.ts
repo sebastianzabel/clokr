@@ -11,7 +11,7 @@ import {
   snapToMonthFirstUtc,
 } from "../month-first-date";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
-import { preserveIllnessDeadline } from "../../../utils/illness-carryover-guard"; // Phase 104
+import { preserveIllnessDeadline } from "../../abwesenheiten/illness-carryover-guard"; // Phase 104
 import { DEFAULT_MISSING_ENTRIES_DAYS } from "../../../utils/missing-entries-window";
 import {
   ARBZG_FLOOR_OVER_6H,
@@ -24,7 +24,7 @@ import {
   BS_DAILY_MAX_BOUND,
   BS_BLOCK_WEEKLY_MIN_BOUND,
   BS_BLOCK_WEEKLY_MAX_BOUND,
-} from "../../../utils/vocational-school-constants";
+} from "../../abwesenheiten/vocational-school-constants";
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 

@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { Prisma } from "@clokr/db";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { requireAuth, requireRole } from "../../../middleware/auth";
 
 /** Statutory special leave defaults per § 616 BGB / common collective agreements. */
 const STATUTORY_DEFAULTS = [

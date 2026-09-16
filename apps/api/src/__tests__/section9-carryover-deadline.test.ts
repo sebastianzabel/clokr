@@ -704,7 +704,10 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
 describe("structural guard against a divergent copy (Phase 104 Plan 04, Task 4)", () => {
   it("every carryOverDeadline writer goes through preserveIllnessDeadline (guards against a divergent copy)", () => {
     const apiSrc = join(__dirname, "..");
-    const leaveTs = readFileSync(join(apiSrc, "routes", "leave.ts"), "utf-8");
+    const leaveTs = readFileSync(
+      join(apiSrc, "contexts", "abwesenheiten", "api", "leave.ts"),
+      "utf-8",
+    );
     const settingsTs = readFileSync(
       join(apiSrc, "contexts", "unterbau", "api", "settings.ts"),
       "utf-8",
@@ -727,7 +730,7 @@ describe("structural guard against a divergent copy (Phase 104 Plan 04, Task 4)"
     const allFiles = walkTsFiles(apiSrc, true);
     const offenders: string[] = [];
     for (const file of allFiles) {
-      if (file.endsWith(join("utils", "illness-carryover-guard.ts"))) continue;
+      if (file.endsWith(join("contexts", "abwesenheiten", "illness-carryover-guard.ts"))) continue;
       const content = readFileSync(file, "utf-8");
       if (content.includes('=== "ILLNESS"')) {
         offenders.push(file);

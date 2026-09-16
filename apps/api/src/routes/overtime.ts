@@ -18,8 +18,8 @@ import {
   unconfirmedDaysFromEntries,
   findUnconfirmedBreakDays,
 } from "../contexts/zeiterfassung/find-unconfirmed-break-days"; // Phase 92 — BREAK-05 unconfirmed Pflichtpause gate
-import { karenzOverrunFromRequests } from "../utils/find-karenz-overrun-days"; // Phase 104 (R4/D-21) — Karenztage-Überschreitung, Hinweis only
-import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
+import { karenzOverrunFromRequests } from "../contexts/abwesenheiten/find-karenz-overrun-days"; // Phase 104 (R4/D-21) — Karenztage-Überschreitung, Hinweis only
+import { loadBsSlotOverrides } from "../contexts/abwesenheiten/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import { computeMonthSaldo } from "../utils/month-saldo"; // §615 Team-Zeiten display fix
 import { getCarryOverBase } from "../utils/carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { recalculateSnapshots } from "../utils/recalculate-snapshots"; // Phase 99 (OB-03) — full-history re-thread

@@ -54,7 +54,11 @@ import {
   dateStrInTz,
   iterateDaysInTz,
 } from "./timezone";
-import { buildSlotOverrideHierarchy, resolveBsTagSlot, type WeekContext } from "./bs-slot-resolver";
+import {
+  buildSlotOverrideHierarchy,
+  resolveBsTagSlot,
+  type WeekContext,
+} from "../contexts/abwesenheiten/bs-slot-resolver";
 import {
   computeDailySollMinutes,
   normalizeUnterrichtsMinutenByDow,

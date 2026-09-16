@@ -5,7 +5,7 @@ import crypto, { createHash } from "crypto";
 import { Prisma } from "@clokr/db";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { validatePassword, loadPasswordPolicy } from "../password-policy";
-import { calculateProRataVacation } from "../../../utils/vacation-calc";
+import { calculateProRataVacation } from "../../abwesenheiten/vacation-calc";
 import { normalizeMac } from "../../zeiterfassung/normalize-mac";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { anonymizeEmployeeData, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../anonymize";
@@ -20,7 +20,7 @@ import {
   BS_DAILY_MAX_BOUND,
   BS_BLOCK_WEEKLY_MIN_BOUND,
   BS_BLOCK_WEEKLY_MAX_BOUND,
-} from "../../../utils/vocational-school-constants";
+} from "../../abwesenheiten/vocational-school-constants";
 
 // ── Retention constant ─────────────────────────────────────────────────────
 const DEFAULT_RETENTION_YEARS = 10;

@@ -36,6 +36,7 @@ export const SCOPED_DIRS = [
   "apps/api/src/contexts/schichtplanung/api",
   "apps/api/src/contexts/unterbau/api",
   "apps/api/src/contexts/zeiterfassung/api",
+  "apps/api/src/contexts/abwesenheiten/api",
 ] as const;
 
 /**

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { isAvailabilityEnabled } from "../tenant-availability";
 import { getVocationalSchoolMinutesForDate } from "../../../utils/vocational-school-saldo";
-import { BS_PATTERN_ORDER_BY } from "../../../utils/vocational-school-pattern-order";
+import { BS_PATTERN_ORDER_BY } from "../../abwesenheiten/vocational-school-pattern-order";
 import { getEffectiveBreakDuration } from "../../zeiterfassung/break-effective";
 import { classifyLeaveTypeCode, type AvailabilityBucket } from "../shift-availability"; // Phase 98 (T3, plan 03) — the two classifiers' new home
 import {
@@ -16,18 +16,18 @@ import {
 import { getHolidays, STATE_MAP } from "../../unterbau/holidays";
 import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../../unterbau/anonymize";
 import { updateOvertimeAccount } from "../../zeiterfassung/api/time-entries";
-import { mondayOfWeekUtc } from "../../../utils/vacation-calc"; // Phase 107 (D-14) — same Monday-cutting primitive as :709-718
+import { mondayOfWeekUtc } from "../../abwesenheiten/vacation-calc"; // Phase 107 (D-14) — same Monday-cutting primitive as :709-718
 import {
   recalcProvisionalLeaveForShiftChange,
   type RecalcDeps,
   type AdjustmentRecord,
-} from "../../../utils/shift-leave-recalc-resolver"; // Phase 107 (D-14/D-15/D-16)
+} from "../../abwesenheiten/shift-leave-recalc-resolver"; // Phase 107 (D-14/D-15/D-16)
 import {
   resolveLeaveDays,
   getHolidayMap,
   deductVacationDays,
   reverseVacationDays,
-} from "../../../routes/leave"; // Phase 107 (D-14) — reused verbatim, see each export's own docblock note in leave.ts
+} from "../../abwesenheiten/api/leave"; // Phase 107 (D-14) — reused verbatim, see each export's own docblock note in leave.ts
 // ARBZG_MARKER_47_4_01
 
 const templateSchema = z.object({
