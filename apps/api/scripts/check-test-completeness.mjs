@@ -18,8 +18,8 @@
  */
 import { readFileSync } from "node:fs";
 
-const MIN_FILES = 235; // Phase 98b: measured green run (235 files / 2684 passed + 3 skipped). Coincidentally the same file count as the Phase 98 floor it replaces — 98b-04 deleted absence-type.test.ts and absence-type-mapping-guard.test.ts (233 files), and this plan added absence-vocabulary-guard.test.ts and leave-check.test.ts (back up to 235). Raise when adding files.
-const MIN_TESTS = 2685; // Phase 98b: measured green run — the passed count; the script compares numTotalTests, which was 2688 on that run. RAISED by one from 2684 by the 98b review fix (WR-01): absence-vocabulary-guard.test.ts gained a tenth assertion pinning that G5's file walk actually reaches all three absence.create() call sites. Nothing was removed. The 2684 it replaces was itself LOWERED from 2705 because 98b-04 deleted absence-type.test.ts (14 tests) and absence-type-mapping-guard.test.ts (12 tests) — their subject (the agreement between two absence enums) no longer exists after the merge — and trimmed shift-availability.test.ts to one classifier; absence-vocabulary-guard.test.ts (now 10 tests) and leave-check.test.ts (3 tests) replace their remaining assertions. Raise when adding tests.
+const MIN_FILES = 241; // Phase 204: measured green run (241 files / 2780 total, 2777 passed + 3 skipped, 0 failed — `pnpm --filter @clokr/api exec vitest run --coverage` against apps/api/vitest-report.json). Up from 235 (Phase 98b): plans 01-04 of this phase added 4 test files (lint-tenant-scoping.test.ts, lint-tenant-scoping-verdict.test.ts's own fixture suite, plus the candidates/request-bindings test files from plans 01-02) — see 204-01..204-04 SUMMARYs. Raise when adding files.
+const MIN_TESTS = 2780; // Phase 204: measured green run — the script compares numTotalTests, which was 2780 on that run (2777 passed, 3 skipped, 0 failed). Up from 2685 (Phase 98b) by this phase's new test files. Raise when adding tests.
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
@@ -64,5 +64,7 @@ if (files < MIN_FILES || tests < MIN_TESTS) {
   process.exit(1);
 }
 
-console.log(`check-test-completeness: ${files}/${MIN_FILES} files, ${tests}/${MIN_TESTS} tests — OK`);
+console.log(
+  `check-test-completeness: ${files}/${MIN_FILES} files, ${tests}/${MIN_TESTS} tests — OK`,
+);
 process.exit(0);

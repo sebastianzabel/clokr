@@ -7,6 +7,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "lint": "eslint src",
+    "lint:tenant-scoping": "tsx scripts/lint-tenant-scoping.ts",
     "typecheck": "tsc --noEmit",
     "test:setup": "sh -c 'CALLER_NODE_ENV=\"${NODE_ENV-}\"; set -a; . ./.env.test; set +a; if [ -n \"$CALLER_NODE_ENV\" ]; then NODE_ENV=\"$CALLER_NODE_ENV\"; export NODE_ENV; fi; CLOKR_TEST_NAMESPACE=\"$(tsx scripts/print-test-database-env.ts --namespace)\" || exit 1; export CLOKR_TEST_NAMESPACE; TEST_DATABASE_URL=\"$(tsx scripts/print-test-database-env.ts --url)\" || exit 1; export TEST_DATABASE_URL; tsx scripts/ensure-test-database.ts && DATABASE_URL=$TEST_DATABASE_URL pnpm --filter @clokr/db exec prisma migrate deploy && tsx scripts/reset-test-databases.ts'",
     "pretest": "pnpm run test:setup",
