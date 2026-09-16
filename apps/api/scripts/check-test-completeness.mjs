@@ -73,8 +73,17 @@ import { readFileSync } from "node:fs";
 // 2928 + 1 = 2929. Three existing tests (vocational-school.test.ts x2,
 // vocational-school-retroactive.test.ts x3) only changed HOW their SaldoSnapshot fixtures are
 // built (naive Date.UTC -> saldoSnapshotPeriodBounds()), not the test count.
-const MIN_FILES = 254;
-const MIN_TESTS = 2929;
+//
+// Issue #241 (fifth site — shift-cleanup.ts's own locked-month guard, the same defect the four
+// sites above already fixed — plus the gate itself, scripts/lint-saldo-lock-derivation.ts): one
+// new test FILE (scripts/__tests__/lint-saldo-lock-derivation.test.ts) — MIN_FILES rises from
+// 254 to 255. MIN_TESTS rises from 2929 to 2960: +31 test cases in that new file (verified with
+// `pnpm exec vitest run scripts/__tests__/lint-saldo-lock-derivation.test.ts`, "31 tests" in its
+// own output) — 2929 + 31 = 2960. The existing `src/__tests__/shift-cleanup.test.ts` T5 test only
+// changed HOW its SaldoSnapshot fixture is built (naive Date.UTC -> saldoSnapshotPeriodBounds()),
+// not the test count.
+const MIN_FILES = 255;
+const MIN_TESTS = 2960;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
