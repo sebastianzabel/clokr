@@ -157,6 +157,35 @@ seeded entry:
 validating check that makes the rest of the handler safe (`null` only for the pre-authentication
 category, where no tenant context exists yet at all), `calls[]` every covered call, `reason` why.
 
+**The facade rule (Phase 100b, GitHub #100, D-10).** Phase 100b puts a facade layer between a
+route and Prisma: `apps/api/src/contexts/<x>/facade/*.ts`. Adding those directories to
+`SCOPED_DIRS` alone would be decoration — a facade function has no `req`, so without G2/G3 below
+every facade call would sit "in scope but never a candidate" (counted, never judged), which is
+worse than a missing `SCOPED_DIRS` entry (that at least throws `MissingScopedDirError`, #229).
+Three additive rules make a facade module mean something to this gate:
+
+- **G1 — placement.** A facade module's Prisma calls are only ever seen at all once its context's
+  `contexts/<x>/facade` directory is added to `SCOPED_DIRS` (`lint-tenant-scoping-types.ts`). Each
+  conversion plan adds its own entry IN THE SAME COMMIT that creates the directory — `SCOPED_DIRS`
+  pointing at a directory that does not exist yet is exactly the #229 failure mode
+  (`MissingScopedDirError`), not "not yet in scope".
+- **G2 — a facade function's own parameters are client-supplied.** Inside a file matching
+  `isFacadeModulePath` (`lint-tenant-scoping-types.ts`), the enclosing EXPORTED function
+  declaration's own parameter names seed `clientSupplied` in
+  `lint-tenant-scoping-request-bindings.ts`'s `collectRequestBindings` — the same way a route
+  handler's `req.params`/`req.body` destructure would. This is not a guess: a facade exists
+  _because_ a route handed it a value that came from `req`.
+- **G3 — a `tenantId`/`employeeId`/`sub` PARAMETER is a principal field**, mapped to itself in
+  `principalFields` (the same map a route's `const tenantId = req.user.tenantId` populates) — so a
+  correctly-scoped facade function needs no exception at all, and D-13's existing "inline scoping"
+  / "inline relation filter" recognition applies to it unchanged.
+
+**How to add a justified exception for a facade function.** Same mechanism as above, one entry per
+exported facade FUNCTION rather than per route: `handler` names the function (e.g.
+`"scheduling/facade/shifts.ts:getShiftById"`), `calls[]` the covered call(s), `reason` mandatory.
+A hit on a facade function is exactly as much a finding as a hit on a route handler — see the
+D-08 guardrail above, unchanged for this new scope.
+
 ## Invocation
 
 All scripts run via `tsx` with the `apps/api` workspace:

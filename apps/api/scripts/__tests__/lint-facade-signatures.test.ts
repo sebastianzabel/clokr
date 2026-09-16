@@ -277,16 +277,26 @@ describe("computeFindings / formatSummary", () => {
 // ── Live tree — pins the real, currently green state ────────────────────────────────────────────
 
 describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", () => {
-  it("the real tree has exactly 3 exported facade functions today, all 3 grandfathered, 0 unexcepted findings", () => {
+  // Phase 100B Plan 04: `contexts/platform/facade/employee-scope.ts` is the first REAL file the
+  // glob (`contexts/*/facade/**/*.ts`) discovers on its own, on top of the two KNOWN_FACADE_FILES
+  // — measured, not guessed, exactly the "measure fresh, don't copy a stale number" discipline
+  // 100B-03-SUMMARY.md already applied to this same file's KNOWN_FACADE_FILES count. 3 files, 4
+  // exported functions (employee-scope.ts's employeeScopeWhere + leave-check.ts's one +
+  // confirmed-saldo.ts's two), 4 exception entries (all 4 grandfathered), 0 findings.
+  it("the real tree has exactly 4 exported facade functions today, all 4 grandfathered, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
-    expect(files).toEqual([...KNOWN_FACADE_FILES].sort((a, b) => a.localeCompare(b)));
+    expect(files).toEqual(
+      [...KNOWN_FACADE_FILES, "apps/api/src/contexts/platform/facade/employee-scope.ts"].sort(
+        (a, b) => a.localeCompare(b),
+      ),
+    );
 
     const functions = files.flatMap((relFile) => {
       const abs = join(REPO_ROOT, relFile);
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(3);
+    expect(functions).toHaveLength(4);
 
     const rawExceptions = JSON.parse(
       readFileSync(
@@ -297,7 +307,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     const validated = validateExceptionsDocument(rawExceptions, functions);
     expect(validated.ok).toBe(true);
     if (validated.ok) {
-      expect(validated.entries).toHaveLength(3);
+      expect(validated.entries).toHaveLength(4);
       const findings = computeFindings(functions, validated.entries);
       expect(findings).toEqual([]);
     }

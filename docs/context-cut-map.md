@@ -597,8 +597,16 @@ as-built record.
 Pure move, nothing more (D-05). Named here so the next reader recognizes each as intent, not an
 oversight left for them to clean up:
 
-- **No context facades.** No `contexts/<context>/index.ts` — that's #100. Everything a route or
-  plugin needs from another context is still imported by its concrete file path.
+- **Context facades — no longer true, superseded by Phase 100b (#100).** Each context now carries
+  exactly one `contexts/<context>/index.ts` as its public surface (D-06: what it does not export is
+  module-internal, and says so in a comment); the implementation a route or a foreign context
+  reaches through it lives under `contexts/<x>/facade/*.ts`, deliberately INSIDE the
+  `lint:tenant-scoping` gate's scope (`SCOPED_DIRS`, `apps/api/scripts/lint-tenant-scoping-types.ts`)
+  rather than excluded the way `plugins/` is — a facade Prisma call carries exactly a
+  client-supplied identifier from the route that called it, which is this gate's precondition, not
+  an exemption from it (100B Plan 04, D-10/G1-G3). Not every access has moved behind a facade yet
+  (100b converts them context by context, D-01); until a given model's conversion wave lands, its
+  cross-context reads still go by concrete file path, same as this section originally described.
 - **No machine-enforced boundaries.** Nothing stops a file in one context from importing another
   context's internals today — that's #101 (`eslint-plugin-boundaries` works on file paths, so it
   will slot in on top of this tree without another move, per D-15's finding).

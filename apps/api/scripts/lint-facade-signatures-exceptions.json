@@ -16,5 +16,11 @@
     "function": "getConfirmedCarryOverBulk",
     "rules": ["F1", "F2", "F3"],
     "reason": "Same anti-pattern and same reasoning as getConfirmedCarryOver above, applied to the bulk sibling: 'app: FastifyInstance' first parameter (F1/F2) and an 'employeeIds' parameter with no 'tenantId' sibling (F3), documented in the same docstring as 'already tenant-scoped by the caller'. Plan 100B-07 converts this function and removes this entry."
+  },
+  {
+    "file": "apps/api/src/contexts/platform/facade/employee-scope.ts",
+    "function": "employeeScopeWhere",
+    "rules": ["F1"],
+    "reason": "Plan 100B-04: a pure, side-effect-free type-mapping helper (EmployeeScope -> a Prisma 'where' fragment) with no Prisma CALL and no database client of any kind in its signature — D-07's whole point (a write silently leaving the caller's $transaction through app.prisma) cannot occur here because there is no client to call through. F1 is checked mechanically against every exported function declaration under contexts/*/facade/ regardless of whether it touches Prisma at all, so this genuinely-safe function is still visited and flagged. Scoping F1 itself to 'only functions with a db-shaped first parameter' would change lint-facade-signatures.ts, which is outside this plan's declared files_modified; a named exception is the cheaper, equally-auditable fix the plan's own Task 3 offers as the alternative."
   }
 ]
