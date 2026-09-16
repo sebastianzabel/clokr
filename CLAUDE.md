@@ -613,6 +613,20 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 - All data-access queries filter by `tenantId` from `req.user.tenantId`
 - Employee lookups always scoped to tenant
 - Tenant-specific config accessed via `TenantConfig` model
+
+### Tenant-scoping gate (Issue #204)
+
+A new route or service handler that reads a client-supplied identifier into a tenant-scoped
+Prisma model without constraining it to `req.user.tenantId` fails CI, not just review:
+
+| Source | What it governs |
+| --- | --- |
+| `apps/api/scripts/lint-tenant-scoping.ts` | The gate itself — scope, methods, and the three ways a call counts as scoped |
+| `apps/api/scripts/lint-tenant-scoping-exceptions.json` | Every deliberate exception, each with a mandatory reason |
+| `apps/api/scripts/README.md` § Lint gates | How to add a justified exception, and when NOT to |
+
+Verify with `pnpm --filter @clokr/api run lint:tenant-scoping`. A hit on a clean tree is a
+finding to report (Issue #204), not an exception to add.
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->
