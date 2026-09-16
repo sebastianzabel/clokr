@@ -1925,7 +1925,11 @@ export async function shiftRoutes(app: FastifyInstance) {
       // If templateId provided, get template defaults
       let label = body.label;
       if (body.templateId && !label) {
-        const tpl = await app.prisma.shiftTemplate.findUnique({ where: { id: body.templateId } });
+        // #224: ShiftTemplate has its own tenantId — an unscoped lookup would leak
+        // a foreign tenant's template NAME into this tenant's shift label.
+        const tpl = await app.prisma.shiftTemplate.findFirst({
+          where: { id: body.templateId, tenantId: req.user.tenantId },
+        });
         if (tpl) label = tpl.name;
       }
 

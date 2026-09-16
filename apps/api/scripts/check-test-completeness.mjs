@@ -18,8 +18,12 @@
  */
 import { readFileSync } from "node:fs";
 
-const MIN_FILES = 241; // Phase 204: measured green run (241 files / 2780 total, 2777 passed + 3 skipped, 0 failed — `pnpm --filter @clokr/api exec vitest run --coverage` against apps/api/vitest-report.json). Up from 235 (Phase 98b): plans 01-04 of this phase added 4 test files (lint-tenant-scoping.test.ts, lint-tenant-scoping-verdict.test.ts's own fixture suite, plus the candidates/request-bindings test files from plans 01-02) — see 204-01..204-04 SUMMARYs. Raise when adding files.
-const MIN_TESTS = 2780; // Phase 204: measured green run — the script compares numTotalTests, which was 2780 on that run (2777 passed, 3 skipped, 0 failed). Up from 2685 (Phase 98b) by this phase's new test files. Raise when adding tests.
+// PLACEHOLDER after the main-merge — both numbers MUST be re-measured from one clean full run
+// before this branch is merged. Phase 204's branch measured 241/2780 without Phase 113b's five
+// files and without PR #227's three security tests; main measured 241/2733 without Phase 204's.
+// Neither figure describes the merged tree, so neither may simply be kept.
+const MIN_FILES = 241;
+const MIN_TESTS = 2780;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
