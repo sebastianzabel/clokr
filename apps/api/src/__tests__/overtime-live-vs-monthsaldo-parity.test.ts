@@ -21,12 +21,12 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { monthRangeUtc, monthDayBounds } from "../contexts/arbeitszeitkonto/timezone";
+import { monthRangeUtc, monthDayBounds } from "../contexts/working-time-account/timezone";
 import {
   computeOvertimeBalanceHours,
   computeOvertimeBalanceBreakdown,
-} from "../contexts/zeiterfassung/api/time-entries";
-import { computeMonthSaldo } from "../contexts/arbeitszeitkonto/month-saldo";
+} from "../contexts/time-tracking/api/time-entries";
+import { computeMonthSaldo } from "../contexts/working-time-account/month-saldo";
 import bcrypt from "bcryptjs";
 
 const TZ = "Europe/Berlin";

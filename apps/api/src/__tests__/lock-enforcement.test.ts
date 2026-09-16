@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach, vi, beforeEach } 
 import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { recalculateSnapshots } from "../contexts/arbeitszeitkonto/recalculate-snapshots";
+import { recalculateSnapshots } from "../contexts/working-time-account/recalculate-snapshots";
 
 /**
  * Integration tests for Phase 12 lock enforcement behaviors:

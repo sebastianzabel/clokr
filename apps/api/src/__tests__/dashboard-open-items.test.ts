@@ -19,8 +19,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import { todayInTz } from "../contexts/arbeitszeitkonto/timezone";
-import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
+import { todayInTz } from "../contexts/working-time-account/timezone";
+import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
 
 const TZ = "Europe/Berlin";
 

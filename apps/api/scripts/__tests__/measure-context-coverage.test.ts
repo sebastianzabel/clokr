@@ -36,7 +36,7 @@ function fixtureSummary(): CoverageSummary {
     total: fileEntry([100, 60], [40, 20]),
     [`${API_ROOT}/src/app.ts`]: fileEntry([10, 10], [4, 4]), // rahmen
     [`${API_ROOT}/src/composition/dashboard.ts`]: fileEntry([50, 30], [20, 10]), // komposition
-    [`${API_ROOT}/src/contexts/zeiterfassung/api/time-entries.ts`]: fileEntry([40, 20], [16, 6]), // zeiterfassung
+    [`${API_ROOT}/src/contexts/time-tracking/api/time-entries.ts`]: fileEntry([40, 20], [16, 6]), // zeiterfassung
   };
 }
 
@@ -93,14 +93,14 @@ describe("measure-context-coverage — perFileCoverageRows", () => {
   it("sorts by area (CONTEXT_AREAS order) then ascending line %", () => {
     const summary: CoverageSummary = {
       total: fileEntry([10, 10], [4, 4]),
-      [`${API_ROOT}/src/contexts/zeiterfassung/api/time-entries.ts`]: fileEntry([100, 80], [10, 8]), // zeiterfassung, 80%
-      [`${API_ROOT}/src/contexts/zeiterfassung/arbzg.ts`]: fileEntry([100, 20], [10, 2]), // zeiterfassung, 20%
+      [`${API_ROOT}/src/contexts/time-tracking/api/time-entries.ts`]: fileEntry([100, 80], [10, 8]), // zeiterfassung, 80%
+      [`${API_ROOT}/src/contexts/time-tracking/arbzg.ts`]: fileEntry([100, 20], [10, 2]), // zeiterfassung, 20%
       [`${API_ROOT}/src/app.ts`]: fileEntry([100, 50], [10, 5]), // rahmen, 50%
     };
     const rows = perFileCoverageRows(summary, API_ROOT);
     expect(rows.map((r) => r.relPath)).toEqual([
-      "src/contexts/zeiterfassung/arbzg.ts", // zeiterfassung, thinnest first
-      "src/contexts/zeiterfassung/api/time-entries.ts", // zeiterfassung, then thicker
+      "src/contexts/time-tracking/arbzg.ts", // zeiterfassung, thinnest first
+      "src/contexts/time-tracking/api/time-entries.ts", // zeiterfassung, then thicker
       "src/app.ts", // rahmen, sorts after zeiterfassung per CONTEXT_AREAS order
     ]);
   });

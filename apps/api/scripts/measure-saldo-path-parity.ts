@@ -539,13 +539,13 @@ export async function run(): Promise<number> {
     // any of these before step 4 would run that validation against nothing.
     const { getTestApp, cleanupTestData } = await import("../src/__tests__/setup");
     const { recalculateSnapshots } =
-      await import("../src/contexts/arbeitszeitkonto/recalculate-snapshots");
+      await import("../src/contexts/working-time-account/recalculate-snapshots");
     const { updateOvertimeAccount } =
-      await import("../src/contexts/zeiterfassung/api/time-entries");
+      await import("../src/contexts/time-tracking/api/time-entries");
     const { closeEmployeeMonth } =
-      await import("../src/contexts/arbeitszeitkonto/close-employee-month");
+      await import("../src/contexts/working-time-account/close-employee-month");
     const { monthRangeUtc, monthDayBounds } =
-      await import("../src/contexts/arbeitszeitkonto/timezone");
+      await import("../src/contexts/working-time-account/timezone");
 
     type CloseMonthInput = Parameters<typeof closeEmployeeMonth>[0];
 

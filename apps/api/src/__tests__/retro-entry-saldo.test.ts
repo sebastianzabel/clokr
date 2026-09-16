@@ -31,7 +31,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { dateStrInTz } from "../contexts/arbeitszeitkonto/timezone";
+import { dateStrInTz } from "../contexts/working-time-account/timezone";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 

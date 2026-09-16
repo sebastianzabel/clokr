@@ -5,11 +5,11 @@
  * Prisma model without constraining the result to the caller's own tenant. As of Phase 99b Plan 07
  * (the last of the six context-cut moves), it walks these seven directories, production code only:
  *
- *   - `apps/api/src/contexts/unterbau/api/`
- *   - `apps/api/src/contexts/zeiterfassung/api/`
- *   - `apps/api/src/contexts/abwesenheiten/api/`
- *   - `apps/api/src/contexts/schichtplanung/api/`
- *   - `apps/api/src/contexts/arbeitszeitkonto/api/`
+ *   - `apps/api/src/contexts/platform/api/`
+ *   - `apps/api/src/contexts/time-tracking/api/`
+ *   - `apps/api/src/contexts/absence/api/`
+ *   - `apps/api/src/contexts/scheduling/api/`
+ *   - `apps/api/src/contexts/working-time-account/api/`
  *   - `apps/api/src/composition/` (Phase 99b Plan 02 — the composition layer moved out of
  *     `routes/`; it still reads client-supplied identifiers into cross-context Prisma queries and
  *     stays in scope, see `docs/context-cut-map.md`)
@@ -48,11 +48,11 @@
  * longer exists.
  */
 export const SCOPED_DIRS = [
-  "apps/api/src/contexts/unterbau/api",
-  "apps/api/src/contexts/zeiterfassung/api",
-  "apps/api/src/contexts/abwesenheiten/api",
-  "apps/api/src/contexts/schichtplanung/api",
-  "apps/api/src/contexts/arbeitszeitkonto/api",
+  "apps/api/src/contexts/platform/api",
+  "apps/api/src/contexts/time-tracking/api",
+  "apps/api/src/contexts/absence/api",
+  "apps/api/src/contexts/scheduling/api",
+  "apps/api/src/contexts/working-time-account/api",
   "apps/api/src/composition",
   "apps/api/src/services",
 ] as const;
@@ -91,7 +91,7 @@ export type RelevantMethod = (typeof RELEVANT_METHODS)[number];
  * exactly one Tenant and a User to exactly one Employee, so scoping to them cannot widen the
  * result set across a tenant boundary. Measured examples on main @ 708ffbfa (in the files that
  * were then `employees.ts` and `notifications.ts` under the former monolithic route directory,
- * now `apps/api/src/contexts/unterbau/api/{employees,notifications}.ts`):
+ * now `apps/api/src/contexts/platform/api/{employees,notifications}.ts`):
  * `device.employeeId !== employeeId` -> 403, and `where: { id, userId: req.user.sub }`.
  */
 export const PRINCIPAL_FIELDS = ["tenantId", "employeeId", "sub"] as const;

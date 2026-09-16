@@ -8,7 +8,7 @@
 // the sync must ignore implicit name/email matching and rely only on explicit mapping.
 
 import type { FastifyInstance } from "fastify";
-import { leaveTypeFields } from "../../../contexts/abwesenheiten/leave-type";
+import { leaveTypeFields } from "../../../contexts/absence/leave-type";
 
 export const MAPPED_STAFF_ID = "ph-staff-mapped";
 export const UNMAPPED_STAFF_ID = "ph-staff-unmapped";

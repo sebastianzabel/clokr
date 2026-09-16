@@ -207,13 +207,13 @@ Punkt A ist nicht zufällig oben: Er ist die Voraussetzung dafür, dass irgendei
 Nach Phase 99b's Kontextschnitt liegt der Kontext **Zeiterfassung** in zwei physisch getrennten
 Verzeichnissen:
 
-- `apps/api/src/contexts/zeiterfassung/` — die 14 verschobenen Routen/Utilities (Phase 99b,
+- `apps/api/src/contexts/time-tracking/` — die 14 verschobenen Routen/Utilities (Phase 99b,
   Plan 99B-05)
 - `apps/api/src/services/clock/` — unverändert, bewegt sich in Phase 99b NICHT
 
 Ebenso **Schichtplanung**:
 
-- `apps/api/src/contexts/schichtplanung/` — die 11 verschobenen Routen/Utilities (Phase 99b,
+- `apps/api/src/contexts/scheduling/` — die 11 verschobenen Routen/Utilities (Phase 99b,
   Plan 99B-03)
 - `apps/api/src/services/phorest/` — unverändert, bewegt sich in Phase 99b NICHT
 
@@ -231,7 +231,7 @@ Variante — die nächste Person, die `services/clock/` oder `services/phorest/`
 Zustand für ein Versehen halten statt für Absicht. Beide Hälften sind hier benannt, damit sie
 auffindbar sind:
 
-- Zeiterfassung: `apps/api/src/contexts/zeiterfassung/` UND `apps/api/src/services/clock/`
-- Schichtplanung: `apps/api/src/contexts/schichtplanung/` UND `apps/api/src/services/phorest/`
+- Zeiterfassung: `apps/api/src/contexts/time-tracking/` UND `apps/api/src/services/clock/`
+- Schichtplanung: `apps/api/src/contexts/scheduling/` UND `apps/api/src/services/phorest/`
 
 Weiteres zum Zuschnitt: `docs/context-cut-map.md` § 4 und § 7.

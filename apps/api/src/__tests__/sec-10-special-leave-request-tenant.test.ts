@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
 import { futureDateStr, nextWeekdayStr, dbDateStr, utcMidnight } from "./test-dates";
 
 const DAY_MS = 24 * 60 * 60 * 1000;

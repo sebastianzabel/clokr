@@ -37,20 +37,20 @@
 
 import type { FastifyInstance } from "fastify";
 import { decryptSafe } from "../../utils/crypto";
-import { todayInTz, dateStrInTz } from "../../contexts/arbeitszeitkonto/timezone";
-import { applyPrepWrapup } from "../../contexts/schichtplanung/time-arithmetic";
-import { mondayOfWeekUtc } from "../../contexts/abwesenheiten/vacation-calc"; // Phase 107 (D-14) — same Monday-cutting primitive routes/shifts.ts:709-718 / affectedWeekBounds() use
+import { todayInTz, dateStrInTz } from "../../contexts/working-time-account/timezone";
+import { applyPrepWrapup } from "../../contexts/scheduling/time-arithmetic";
+import { mondayOfWeekUtc } from "../../contexts/absence/vacation-calc"; // Phase 107 (D-14) — same Monday-cutting primitive routes/shifts.ts:709-718 / affectedWeekBounds() use
 import {
   recalcProvisionalLeaveForShiftChange,
   type RecalcDeps,
   type AdjustmentRecord,
-} from "../../contexts/abwesenheiten/shift-leave-recalc-resolver"; // Phase 107 (D-14/D-15/D-16) — the eighth write path
+} from "../../contexts/absence/shift-leave-recalc-resolver"; // Phase 107 (D-14/D-15/D-16) — the eighth write path
 import {
   resolveLeaveDays,
   getHolidayMap,
   deductVacationDays,
   reverseVacationDays,
-} from "../../contexts/abwesenheiten/api/leave"; // Phase 107 (D-14) — reused verbatim, see each export's own docblock note in leave.ts
+} from "../../contexts/absence/api/leave"; // Phase 107 (D-14) — reused verbatim, see each export's own docblock note in leave.ts
 import { phorestFetch } from "./client";
 import {
   phorestShiftKey,

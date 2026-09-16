@@ -17,14 +17,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { monthRangeUtc, monthDayBounds } from "../contexts/arbeitszeitkonto/timezone";
+import { monthRangeUtc, monthDayBounds } from "../contexts/working-time-account/timezone";
 import bcrypt from "bcryptjs";
-import type { CloseMonthInput } from "../contexts/arbeitszeitkonto/close-employee-month";
+import type { CloseMonthInput } from "../contexts/working-time-account/close-employee-month";
 import {
   closeEmployeeMonth,
   computeDailySollMinutes,
-} from "../contexts/arbeitszeitkonto/close-employee-month";
-import { getVocationalSchoolMinutesForDate } from "../contexts/arbeitszeitkonto/vocational-school-saldo";
+} from "../contexts/working-time-account/close-employee-month";
+import { getVocationalSchoolMinutesForDate } from "../contexts/working-time-account/vocational-school-saldo";
 
 const TZ = "Europe/Berlin";
 

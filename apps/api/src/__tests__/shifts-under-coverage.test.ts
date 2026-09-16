@@ -38,7 +38,7 @@ import {
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
   weekRangeUtc,
-} from "../contexts/arbeitszeitkonto/timezone";
+} from "../contexts/working-time-account/timezone";
 
 const TZ = "Europe/Berlin";
 

@@ -33,15 +33,15 @@ import {
   selectDuplicateMonthLinks,
   isTrackOnlySchedule,
   monthLabelFromPeriodEnd,
-} from "../src/contexts/arbeitszeitkonto/saldo-chain-integrity";
+} from "../src/contexts/working-time-account/saldo-chain-integrity";
 import {
   extractAuditReasons,
   classifyChainLink,
   type ClassificationResult,
-} from "../src/contexts/arbeitszeitkonto/saldo-chain-classification";
+} from "../src/contexts/working-time-account/saldo-chain-classification";
 // Imported for its READ-ONLY schedule resolution only (same precedent as
 // set-opening-balance.ts importing updateOvertimeAccount) — the audit calls no write function.
-import { getEffectiveSchedule } from "../src/contexts/zeiterfassung/api/time-entries";
+import { getEffectiveSchedule } from "../src/contexts/time-tracking/api/time-entries";
 
 // ── Part A: exported pure helpers (DB-free, unit-testable) ────────────────────
 

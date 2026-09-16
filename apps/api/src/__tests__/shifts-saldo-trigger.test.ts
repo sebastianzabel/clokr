@@ -34,7 +34,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
-import * as TimeEntriesModule from "../contexts/zeiterfassung/api/time-entries";
+import * as TimeEntriesModule from "../contexts/time-tracking/api/time-entries";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 

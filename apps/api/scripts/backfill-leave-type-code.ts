@@ -41,7 +41,7 @@ import type { LeaveTypeCode } from "@clokr/db";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import { parseArgs } from "node:util";
-import { leaveTypeCodeForName, LEAVE_TYPE_DEFS } from "../src/contexts/abwesenheiten/leave-type";
+import { leaveTypeCodeForName, LEAVE_TYPE_DEFS } from "../src/contexts/absence/leave-type";
 
 // ── Audit constants ─────────────────────────────────────────────────────────
 const BACKFILL_ACTION = "LEAVE_TYPE_CODE_BACKFILL";

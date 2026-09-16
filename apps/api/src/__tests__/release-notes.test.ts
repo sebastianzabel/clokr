@@ -52,7 +52,7 @@ describe("GET /api/v1/release-notes", () => {
 
   it("the route module makes no outbound HTTP request (AK-04/AK-05): no fetch, no https, no github.com", () => {
     const source = readFileSync(
-      resolve(__dirname, "../contexts/unterbau/api/release-notes.ts"),
+      resolve(__dirname, "../contexts/platform/api/release-notes.ts"),
       "utf-8",
     );
     expect(/fetch\(/.test(source)).toBe(false);

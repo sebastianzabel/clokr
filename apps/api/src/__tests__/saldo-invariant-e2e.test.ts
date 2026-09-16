@@ -22,10 +22,10 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { monthRangeUtc } from "../contexts/arbeitszeitkonto/timezone";
-import { updateOvertimeAccount } from "../contexts/zeiterfassung/api/time-entries";
-import { recalculateSnapshots } from "../contexts/arbeitszeitkonto/recalculate-snapshots";
-import { getHolidays } from "../contexts/unterbau/holidays";
+import { monthRangeUtc } from "../contexts/working-time-account/timezone";
+import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
+import { recalculateSnapshots } from "../contexts/working-time-account/recalculate-snapshots";
+import { getHolidays } from "../contexts/platform/holidays";
 
 // "Today" for every live-saldo evaluation (Berlin Jul 16 — cron grace day >= 15).
 const FINAL_NOW = new Date("2026-07-16T10:00:00.000Z");

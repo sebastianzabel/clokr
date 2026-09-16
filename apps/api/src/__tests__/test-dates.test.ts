@@ -18,8 +18,8 @@ import {
   monthStartUtc,
   monthEndUtc,
 } from "./test-dates";
-import { dateStrInTz } from "../contexts/arbeitszeitkonto/timezone";
-import { computeRetroLimitStr } from "../contexts/zeiterfassung/retro-config";
+import { dateStrInTz } from "../contexts/working-time-account/timezone";
+import { computeRetroLimitStr } from "../contexts/time-tracking/retro-config";
 
 describe("test-dates helper", () => {
   it("TEST_TZ mirrors the tenant timezone seeded in setup.ts:61", () => {

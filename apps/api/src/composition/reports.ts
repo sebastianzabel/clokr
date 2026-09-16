@@ -10,8 +10,8 @@ import {
   getDayHoursFromSchedule,
   iterateDaysInTz,
   dateStrInTz,
-} from "../contexts/arbeitszeitkonto/timezone";
-import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
+} from "../contexts/working-time-account/timezone";
+import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
 import {
   SECTION9_LEGEND,
   generateMonthlyReportPdf,
@@ -20,9 +20,9 @@ import {
   streamLeaveListPdf,
   streamVacationOverviewPdf,
 } from "./pdf";
-import { selfHealUsedDays, loadVacationTypeMeta } from "../contexts/abwesenheiten/leave-self-heal";
-import { computeMonthSaldo } from "../contexts/arbeitszeitkonto/month-saldo";
-import { isSickLeaveTypeCode } from "../contexts/abwesenheiten/leave-type";
+import { selfHealUsedDays, loadVacationTypeMeta } from "../contexts/absence/leave-self-heal";
+import { computeMonthSaldo } from "../contexts/working-time-account/month-saldo";
+import { isSickLeaveTypeCode } from "../contexts/absence/leave-type";
 import type { LeaveTypeCode } from "@clokr/db";
 
 // ── Month name lookup ─────────────────────────────────────────────────────────
@@ -1127,7 +1127,7 @@ export async function reportRoutes(app: FastifyInstance) {
       }
 
       const { runCarryoverWarningOnce } =
-        await import("../contexts/abwesenheiten/plugins/carryover-warning");
+        await import("../contexts/absence/plugins/carryover-warning");
       const result = await runCarryoverWarningOnce(app, { onlyEntitlementId: entitlementId });
 
       // Audit the manual trigger separately so we can distinguish operator

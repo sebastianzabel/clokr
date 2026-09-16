@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { getCurrentShift } from "../contexts/schichtplanung/get-current-shift";
+import { getCurrentShift } from "../contexts/scheduling/get-current-shift";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 

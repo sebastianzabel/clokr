@@ -11,10 +11,10 @@ import type { FastifyInstance } from "fastify";
 
 const syncSpy = vi.fn();
 
-vi.mock("../contexts/unterbau/plugins/school-holidays-sync", async () => {
+vi.mock("../contexts/platform/plugins/school-holidays-sync", async () => {
   const actual = await vi.importActual<
-    typeof import("../contexts/unterbau/plugins/school-holidays-sync")
-  >("../contexts/unterbau/plugins/school-holidays-sync");
+    typeof import("../contexts/platform/plugins/school-holidays-sync")
+  >("../contexts/platform/plugins/school-holidays-sync");
   return {
     ...actual,
     syncSchoolHolidaysForTenant: (...args: Parameters<typeof actual.syncSchoolHolidaysForTenant>) =>

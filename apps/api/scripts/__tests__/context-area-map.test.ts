@@ -34,17 +34,17 @@ describe("context-area-map — fixed spot checks", () => {
   });
 
   it("close-employee-month.ts is arbeitszeitkonto", () => {
-    expect(assignContextArea("src/contexts/arbeitszeitkonto/close-employee-month.ts")).toBe(
+    expect(assignContextArea("src/contexts/working-time-account/close-employee-month.ts")).toBe(
       "arbeitszeitkonto",
     );
   });
 
   it("leave.ts is abwesenheiten", () => {
-    expect(assignContextArea("src/contexts/abwesenheiten/api/leave.ts")).toBe("abwesenheiten");
+    expect(assignContextArea("src/contexts/absence/api/leave.ts")).toBe("abwesenheiten");
   });
 
   it("time-entries.ts is zeiterfassung", () => {
-    expect(assignContextArea("src/contexts/zeiterfassung/api/time-entries.ts")).toBe(
+    expect(assignContextArea("src/contexts/time-tracking/api/time-entries.ts")).toBe(
       "zeiterfassung",
     );
   });
@@ -111,7 +111,7 @@ describe("context-area-map — structural invariants", () => {
     // ("keine Restkategorie" — no route or plugin may be classified rahmen) still held. This
     // rewrite targets the CURRENT location of routes and plugins (contexts/*/api/,
     // contexts/*/plugins/) so the check has teeth again — proven by breaking it once: adding
-    // "src/contexts/abwesenheiten/api/does-not-exist.ts": "rahmen" to CONTEXT_AREA_BY_FILE and
+    // "src/contexts/absence/api/does-not-exist.ts": "rahmen" to CONTEXT_AREA_BY_FILE and
     // re-running turned this test red with the offending path in the failure message, then the
     // change was reverted (see 99B-08-SUMMARY.md for the verbatim transcript).
     const offenders = Object.entries(CONTEXT_AREA_BY_FILE)

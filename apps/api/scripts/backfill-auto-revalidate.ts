@@ -25,7 +25,7 @@
 import { PrismaClient } from "@clokr/db";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
-import { CLEARED_INVALID_REASON } from "../src/contexts/zeiterfassung/invalid-reason"; // Phase 96 (T1)
+import { CLEARED_INVALID_REASON } from "../src/contexts/time-tracking/invalid-reason"; // Phase 96 (T1)
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is required");

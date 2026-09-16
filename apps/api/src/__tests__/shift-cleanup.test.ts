@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { cleanupShiftsForBSAbsence } from "../contexts/schichtplanung/shift-cleanup";
+import { cleanupShiftsForBSAbsence } from "../contexts/scheduling/shift-cleanup";
 
 function dateOnlyUtc(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));

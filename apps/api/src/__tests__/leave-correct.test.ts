@@ -7,7 +7,7 @@ import {
   seedEntitlementYears,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { computeAffectedMonths } from "../contexts/abwesenheiten/correction-lock";
+import { computeAffectedMonths } from "../contexts/absence/correction-lock";
 
 /**
  * Phase 94-01 — Manager/Admin DIRECT-correction of an already-APPROVED LeaveRequest.

@@ -32,12 +32,12 @@ import {
   monthRangeUtc,
   monthDayBounds,
   dateStrInTz,
-} from "../src/contexts/arbeitszeitkonto/timezone";
-import { getEffectiveSchedule } from "../src/contexts/zeiterfassung/api/time-entries";
-import { getHolidays, STATE_MAP } from "../src/contexts/unterbau/holidays";
-import { periodStartWindow } from "../src/contexts/arbeitszeitkonto/snapshot-period";
-import { closeEmployeeMonth } from "../src/contexts/arbeitszeitkonto/close-employee-month";
-import { loadBsSlotOverrides } from "../src/contexts/abwesenheiten/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
+} from "../src/contexts/working-time-account/timezone";
+import { getEffectiveSchedule } from "../src/contexts/time-tracking/api/time-entries";
+import { getHolidays, STATE_MAP } from "../src/contexts/platform/holidays";
+import { periodStartWindow } from "../src/contexts/working-time-account/snapshot-period";
+import { closeEmployeeMonth } from "../src/contexts/working-time-account/close-employee-month";
+import { loadBsSlotOverrides } from "../src/contexts/absence/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 
 // ── Exported pure helpers ────────────────────────────────────────────────────
 // These mirror the function-scoped helpers inside auto-close-month.ts but are

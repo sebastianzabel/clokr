@@ -16,9 +16,9 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
-import { updateOvertimeAccount } from "../contexts/zeiterfassung/api/time-entries";
-import { checkArbZG } from "../contexts/zeiterfassung/arbzg";
-import { recalculateSnapshots } from "../contexts/arbeitszeitkonto/recalculate-snapshots";
+import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
+import { checkArbZG } from "../contexts/time-tracking/arbzg";
+import { recalculateSnapshots } from "../contexts/working-time-account/recalculate-snapshots";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 

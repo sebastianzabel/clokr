@@ -24,8 +24,8 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { monthRangeUtc } from "../contexts/arbeitszeitkonto/timezone";
-import { updateOvertimeAccount } from "../contexts/zeiterfassung/api/time-entries";
+import { monthRangeUtc } from "../contexts/working-time-account/timezone";
+import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
 
 const TZ = "Europe/Berlin";
 // FIXED_SCHEDULE Azubi, Mo=0, Di–Fr=9.5h. June 9 2026 is a Tuesday → daily Soll 570.

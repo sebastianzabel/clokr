@@ -42,7 +42,7 @@ import {
   getEffectiveBreakDuration,
   type BreakEmployeeShape,
   type BreakTenantConfigShape,
-} from "../src/contexts/zeiterfassung/break-effective";
+} from "../src/contexts/time-tracking/break-effective";
 
 const RECALC_REASON = "v1.8.9 SHIFT_BASED netto migration (brutto - getEffectiveBreakDuration)";
 const RECALC_ACTION = "SALDO_RECALC_AFTER_SHIFT_NETTO_FIX";

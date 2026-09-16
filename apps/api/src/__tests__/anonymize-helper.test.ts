@@ -23,7 +23,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
-import { anonymizeEmployeeData } from "../contexts/unterbau/anonymize";
+import { anonymizeEmployeeData } from "../contexts/platform/anonymize";
 
 describe("anonymizeEmployeeData (helper)", () => {
   let app: FastifyInstance;

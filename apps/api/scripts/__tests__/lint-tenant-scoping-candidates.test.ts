@@ -157,7 +157,7 @@ it("#229 Guard A: listScopedFiles throws MissingScopedDirError when a scoped dir
       expect.unreachable("listScopedFiles must throw before returning");
     } catch (err) {
       expect(err).toBeInstanceOf(MissingScopedDirError);
-      expect((err as Error).message).toContain("apps/api/src/contexts/unterbau/api");
+      expect((err as Error).message).toContain("apps/api/src/contexts/platform/api");
     }
   } finally {
     fs.rmSync(emptyRepo, { recursive: true, force: true });

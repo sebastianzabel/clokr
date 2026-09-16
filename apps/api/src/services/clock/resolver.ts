@@ -8,11 +8,11 @@ import type { ClockEvent, ClockResolution, ClockState } from "./types";
 import { decide } from "./state-machine";
 import { emitClockAudit } from "./audit-actor";
 import { consolidateSameDayEntries, calcBreakMinutesLocal } from "./consolidate";
-import { hasApprovedLeaveOnDate } from "../../contexts/abwesenheiten/leave-check";
+import { hasApprovedLeaveOnDate } from "../../contexts/absence/leave-check";
 import {
   invalidReasonFields,
   CLEARED_INVALID_REASON,
-} from "../../contexts/zeiterfassung/invalid-reason";
+} from "../../contexts/time-tracking/invalid-reason";
 
 export async function resolveClockEvent(
   app: FastifyInstance,

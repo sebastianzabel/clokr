@@ -59,13 +59,13 @@ import {
   monthDayBounds,
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
-} from "../src/contexts/arbeitszeitkonto/timezone";
-import { getEffectiveBreakDuration } from "../src/contexts/zeiterfassung/break-effective";
+} from "../src/contexts/working-time-account/timezone";
+import { getEffectiveBreakDuration } from "../src/contexts/time-tracking/break-effective";
 import {
   getVocationalSchoolMinutesForDate,
   type VocationalSchoolTenantConfig,
-} from "../src/contexts/arbeitszeitkonto/vocational-school-saldo";
-import { calcShiftBasedSaldo } from "../src/contexts/arbeitszeitkonto/shift-based-saldo";
+} from "../src/contexts/working-time-account/vocational-school-saldo";
+import { calcShiftBasedSaldo } from "../src/contexts/working-time-account/shift-based-saldo";
 
 // ── Audit constants ─────────────────────────────────────────────────────────
 const RECALC_REASON = "v1.8.16 SHIFT_BASED Model B Soll (contract-anchored, § 615 guard)";

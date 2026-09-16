@@ -31,12 +31,16 @@
 import { vi, describe, it, expect, afterAll } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../contexts/arbeitszeitkonto/timezone";
-import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
-import { recalculateSnapshots } from "../contexts/arbeitszeitkonto/recalculate-snapshots";
-import { updateOvertimeAccount } from "../contexts/zeiterfassung/api/time-entries";
-import type { CloseMonthInput } from "../contexts/arbeitszeitkonto/close-employee-month";
-import { closeEmployeeMonth } from "../contexts/arbeitszeitkonto/close-employee-month";
+import {
+  monthRangeUtc,
+  monthDayBounds,
+  dateStrInTz,
+} from "../contexts/working-time-account/timezone";
+import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
+import { recalculateSnapshots } from "../contexts/working-time-account/recalculate-snapshots";
+import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
+import type { CloseMonthInput } from "../contexts/working-time-account/close-employee-month";
+import { closeEmployeeMonth } from "../contexts/working-time-account/close-employee-month";
 import bcrypt from "bcryptjs";
 
 const TZ = "Europe/Berlin";

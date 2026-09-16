@@ -93,131 +93,131 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
 
   // ── unterbau — Tenant/TenantConfig/User/RefreshToken/OtpToken/Invitation/Employee/
   //    WorkSchedule/PublicHoliday/SchoolHolidayPeriod/AuditLog/ApiKey/Notification ────────────
-  "src/contexts/unterbau/api/activity.ts": "unterbau", // dashboard "Aktivität" widget backend; ADMIN scope is a direct AuditLog read, EMPLOYEE/MANAGER scope assembles the same kind of chronological trail from timeEntry/leaveRequest/saldoSnapshot — AuditLog's own domain generalised to the other event sources, not eligible for komposition (D-17 names only dashboard.ts/reports.ts)
-  "src/contexts/unterbau/api/api-keys.ts": "unterbau", // writes ApiKey only
-  "src/contexts/unterbau/api/audit-logs.ts": "unterbau", // reads AuditLog only
-  "src/contexts/unterbau/api/auth.ts": "unterbau", // writes OtpToken/RefreshToken/User
-  "src/contexts/unterbau/api/avatars.ts": "unterbau", // writes Employee.avatarUrl only
-  "src/contexts/unterbau/api/employees.ts": "unterbau", // writes Employee/User primarily; the tx.* deletes of Absence/Break/LeaveEntitlement/LeaveRequest/OvertimeAccount/TimeEntry/WorkSchedule are cascade cleanup ON employee delete, not this file's primary subject
-  "src/contexts/unterbau/api/holidays.ts": "unterbau", // writes PublicHoliday only
-  "src/contexts/unterbau/api/imports.ts": "unterbau", // primarily bulk employee onboarding (creates Employee/User/WorkSchedule/OvertimeAccount, all Unterbau except the Arbeitszeitkonto side-effect); the /time-entries import endpoint reuses routes/time-entries.ts's own validateTimeEntryInvariants/updateOvertimeAccount helpers rather than duplicating TimeEntry write rules
-  "src/contexts/unterbau/api/invitations.ts": "unterbau", // writes Invitation/User
-  "src/contexts/unterbau/api/me.ts": "unterbau", // writes User only
-  "src/contexts/unterbau/api/notifications.ts": "unterbau", // writes Notification only
-  "src/contexts/unterbau/api/release-notes.ts": "unterbau", // app-wide, tenant-agnostic feature with no model; under src/routes/ so cannot be rahmen (#99: no route may be a fallthrough) — Unterbau is the closest fit as the shared, context-agnostic substrate
-  "src/contexts/unterbau/api/settings.ts": "unterbau", // writes WorkSchedule/TenantConfig primarily (PUT /settings/work); tx.shift.deleteMany is a side effect of a schedule change, not the primary subject; LeaveEntitlement upsert is a bulk-apply side effect
-  "src/contexts/unterbau/api/test-bootstrap.ts": "unterbau", // full-tenant dataset reset for e2e bootstrapping; under src/routes/ so cannot be rahmen despite being test-only — Tenant is the root model a full-tenant reset operates against, no single business context owns it
-  "src/contexts/unterbau/api/admin/school-holidays.ts": "unterbau", // reads/writes SchoolHolidayPeriod (Unterbau model, matches the file name directly)
-  "src/contexts/unterbau/plugins/audit.ts": "unterbau", // writes AuditLog — its own Unterbau model
-  "src/contexts/unterbau/plugins/data-retention.ts": "unterbau", // annual DSGVO/legal retention job driven by TenantConfig.dataRetentionYears (Unterbau model); touches TimeEntry/LeaveRequest/Absence with equal weight (3 separate updateMany, no single primary subject) plus an AuditLog purge in the same file (unambiguously Unterbau) — no single business context owns a generic cross-context retention policy
-  "src/contexts/unterbau/plugins/mailer.ts": "unterbau", // SMTP transport keyed off TenantConfig, no other model
-  "src/contexts/unterbau/plugins/notify.ts": "unterbau", // writes Notification — its own Unterbau model
-  "src/contexts/unterbau/plugins/prisma.ts": "unterbau", // decorates app.prisma; no model of its own, pure infra — under src/plugins/ so cannot be rahmen (#99: no plugin may be a fallthrough); Unterbau is the shared substrate every context sits on
-  "src/contexts/unterbau/plugins/school-holidays-sync.ts": "unterbau", // writes SchoolHolidayPeriod
-  "src/contexts/unterbau/plugins/storage.ts": "unterbau", // decorates app.storage (MinIO); no model, pure infra — same reasoning as prisma.ts
-  "src/contexts/unterbau/plugins/token-cleanup.ts": "unterbau", // deletes stale OtpToken/RefreshToken
-  "src/contexts/unterbau/anonymize.ts": "unterbau", // DSGVO Art. 17 anonymization; primary subject is Employee+User (CLAUDE.md "DSGVO Employee Deletion"), other models' notes/documents nulled as side effects
-  "src/contexts/unterbau/audit-reason.ts": "unterbau", // shared "Begründung ist erforderlich" validation reused across every correction/storno field app-wide; audit-trail vocabulary, no model
-  "src/contexts/unterbau/calculate-work-days.ts": "unterbau", // normalizes WorkSchedule.workDays — Unterbau's own model
-  "src/contexts/unterbau/federal-state-iso.ts": "unterbau", // FederalState enum <-> ISO-3166-2, feeds PublicHoliday lookups (Unterbau model)
-  "src/contexts/unterbau/holidays.ts": "unterbau", // German public-holiday calculation — PublicHoliday is Unterbau's own model
-  "src/contexts/unterbau/month-first-date.ts": "unterbau", // WorkSchedule.validFrom month-1 rule — Unterbau's own model
-  "src/contexts/unterbau/notification-email-policy.ts": "unterbau", // per-type email-toggle registry for Notification — Unterbau's own model
-  "src/contexts/unterbau/password-policy.ts": "unterbau", // User/auth password rules
-  "src/contexts/unterbau/school-holidays-client.ts": "unterbau", // fetches SchoolHolidayPeriod data from the external OpenHolidays/schulferien-api
+  "src/contexts/platform/api/activity.ts": "unterbau", // dashboard "Aktivität" widget backend; ADMIN scope is a direct AuditLog read, EMPLOYEE/MANAGER scope assembles the same kind of chronological trail from timeEntry/leaveRequest/saldoSnapshot — AuditLog's own domain generalised to the other event sources, not eligible for komposition (D-17 names only dashboard.ts/reports.ts)
+  "src/contexts/platform/api/api-keys.ts": "unterbau", // writes ApiKey only
+  "src/contexts/platform/api/audit-logs.ts": "unterbau", // reads AuditLog only
+  "src/contexts/platform/api/auth.ts": "unterbau", // writes OtpToken/RefreshToken/User
+  "src/contexts/platform/api/avatars.ts": "unterbau", // writes Employee.avatarUrl only
+  "src/contexts/platform/api/employees.ts": "unterbau", // writes Employee/User primarily; the tx.* deletes of Absence/Break/LeaveEntitlement/LeaveRequest/OvertimeAccount/TimeEntry/WorkSchedule are cascade cleanup ON employee delete, not this file's primary subject
+  "src/contexts/platform/api/holidays.ts": "unterbau", // writes PublicHoliday only
+  "src/contexts/platform/api/imports.ts": "unterbau", // primarily bulk employee onboarding (creates Employee/User/WorkSchedule/OvertimeAccount, all Unterbau except the Arbeitszeitkonto side-effect); the /time-entries import endpoint reuses routes/time-entries.ts's own validateTimeEntryInvariants/updateOvertimeAccount helpers rather than duplicating TimeEntry write rules
+  "src/contexts/platform/api/invitations.ts": "unterbau", // writes Invitation/User
+  "src/contexts/platform/api/me.ts": "unterbau", // writes User only
+  "src/contexts/platform/api/notifications.ts": "unterbau", // writes Notification only
+  "src/contexts/platform/api/release-notes.ts": "unterbau", // app-wide, tenant-agnostic feature with no model; under src/routes/ so cannot be rahmen (#99: no route may be a fallthrough) — Unterbau is the closest fit as the shared, context-agnostic substrate
+  "src/contexts/platform/api/settings.ts": "unterbau", // writes WorkSchedule/TenantConfig primarily (PUT /settings/work); tx.shift.deleteMany is a side effect of a schedule change, not the primary subject; LeaveEntitlement upsert is a bulk-apply side effect
+  "src/contexts/platform/api/test-bootstrap.ts": "unterbau", // full-tenant dataset reset for e2e bootstrapping; under src/routes/ so cannot be rahmen despite being test-only — Tenant is the root model a full-tenant reset operates against, no single business context owns it
+  "src/contexts/platform/api/admin/school-holidays.ts": "unterbau", // reads/writes SchoolHolidayPeriod (Unterbau model, matches the file name directly)
+  "src/contexts/platform/plugins/audit.ts": "unterbau", // writes AuditLog — its own Unterbau model
+  "src/contexts/platform/plugins/data-retention.ts": "unterbau", // annual DSGVO/legal retention job driven by TenantConfig.dataRetentionYears (Unterbau model); touches TimeEntry/LeaveRequest/Absence with equal weight (3 separate updateMany, no single primary subject) plus an AuditLog purge in the same file (unambiguously Unterbau) — no single business context owns a generic cross-context retention policy
+  "src/contexts/platform/plugins/mailer.ts": "unterbau", // SMTP transport keyed off TenantConfig, no other model
+  "src/contexts/platform/plugins/notify.ts": "unterbau", // writes Notification — its own Unterbau model
+  "src/contexts/platform/plugins/prisma.ts": "unterbau", // decorates app.prisma; no model of its own, pure infra — under src/plugins/ so cannot be rahmen (#99: no plugin may be a fallthrough); Unterbau is the shared substrate every context sits on
+  "src/contexts/platform/plugins/school-holidays-sync.ts": "unterbau", // writes SchoolHolidayPeriod
+  "src/contexts/platform/plugins/storage.ts": "unterbau", // decorates app.storage (MinIO); no model, pure infra — same reasoning as prisma.ts
+  "src/contexts/platform/plugins/token-cleanup.ts": "unterbau", // deletes stale OtpToken/RefreshToken
+  "src/contexts/platform/anonymize.ts": "unterbau", // DSGVO Art. 17 anonymization; primary subject is Employee+User (CLAUDE.md "DSGVO Employee Deletion"), other models' notes/documents nulled as side effects
+  "src/contexts/platform/audit-reason.ts": "unterbau", // shared "Begründung ist erforderlich" validation reused across every correction/storno field app-wide; audit-trail vocabulary, no model
+  "src/contexts/platform/calculate-work-days.ts": "unterbau", // normalizes WorkSchedule.workDays — Unterbau's own model
+  "src/contexts/platform/federal-state-iso.ts": "unterbau", // FederalState enum <-> ISO-3166-2, feeds PublicHoliday lookups (Unterbau model)
+  "src/contexts/platform/holidays.ts": "unterbau", // German public-holiday calculation — PublicHoliday is Unterbau's own model
+  "src/contexts/platform/month-first-date.ts": "unterbau", // WorkSchedule.validFrom month-1 rule — Unterbau's own model
+  "src/contexts/platform/notification-email-policy.ts": "unterbau", // per-type email-toggle registry for Notification — Unterbau's own model
+  "src/contexts/platform/password-policy.ts": "unterbau", // User/auth password rules
+  "src/contexts/platform/school-holidays-client.ts": "unterbau", // fetches SchoolHolidayPeriod data from the external OpenHolidays/schulferien-api
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────
-  "src/contexts/zeiterfassung/api/admin-presence-sources.ts": "zeiterfassung", // writes PresenceDevice/PresenceSource
-  "src/contexts/zeiterfassung/api/presence.ts": "zeiterfassung", // WiFi-presence-based clocking; reads PresenceDevice/PresenceSource, writes AuditLog as a side effect
-  "src/contexts/zeiterfassung/api/retro-entry-requests.ts": "zeiterfassung", // writes RetroEntryRequest/TimeEntry
-  "src/contexts/zeiterfassung/api/terminals.ts": "zeiterfassung", // writes TerminalApiKey
-  "src/contexts/zeiterfassung/api/time-entries.ts": "zeiterfassung", // writes TimeEntry/Break primarily; overtimeAccount.upsert is the live-path saldo recompute side effect
-  "src/contexts/zeiterfassung/plugins/attendance-checker.ts": "zeiterfassung", // 6 of 9 cron Features (1/2/3/7/8/9) are TimeEntry/Break watchdogs and its only DB write is timeEntry.update; Features 4/5/6 (leave reminders) are the minority
+  "src/contexts/time-tracking/api/admin-presence-sources.ts": "zeiterfassung", // writes PresenceDevice/PresenceSource
+  "src/contexts/time-tracking/api/presence.ts": "zeiterfassung", // WiFi-presence-based clocking; reads PresenceDevice/PresenceSource, writes AuditLog as a side effect
+  "src/contexts/time-tracking/api/retro-entry-requests.ts": "zeiterfassung", // writes RetroEntryRequest/TimeEntry
+  "src/contexts/time-tracking/api/terminals.ts": "zeiterfassung", // writes TerminalApiKey
+  "src/contexts/time-tracking/api/time-entries.ts": "zeiterfassung", // writes TimeEntry/Break primarily; overtimeAccount.upsert is the live-path saldo recompute side effect
+  "src/contexts/time-tracking/plugins/attendance-checker.ts": "zeiterfassung", // 6 of 9 cron Features (1/2/3/7/8/9) are TimeEntry/Break watchdogs and its only DB write is timeEntry.update; Features 4/5/6 (leave reminders) are the minority
   "src/services/clock/audit-actor.ts": "zeiterfassung", // D-16 prefix rule (services/clock/**)
   "src/services/clock/consolidate.ts": "zeiterfassung", // D-16 prefix rule (services/clock/**)
   "src/services/clock/resolver.ts": "zeiterfassung", // D-16 prefix rule (services/clock/**)
   "src/services/clock/state-machine.ts": "zeiterfassung", // D-16 prefix rule (services/clock/**)
   "src/services/clock/types.ts": "zeiterfassung", // D-16 prefix rule (services/clock/**)
-  "src/contexts/zeiterfassung/arbzg.ts": "zeiterfassung", // ArbZG §3/§4/§5 compliance checks over TimeEntry
-  "src/contexts/zeiterfassung/break-constants.ts": "zeiterfassung", // Break-model constants
-  "src/contexts/zeiterfassung/break-effective.ts": "zeiterfassung", // effective break-minutes calculation
-  "src/contexts/zeiterfassung/find-unconfirmed-break-days.ts": "zeiterfassung", // AUTO/CONFIRMED/WAIVED break-status query over TimeEntry
-  "src/contexts/zeiterfassung/invalid-reason.ts": "zeiterfassung", // TimeEntry.invalidReason string registry; 4 of 6 importers are Zeiterfassung
-  "src/contexts/zeiterfassung/normalize-mac.ts": "zeiterfassung", // PresenceDevice MAC-address normalization
-  "src/contexts/zeiterfassung/presence.ts": "zeiterfassung", // WiFi-presence detection helper feeding routes/presence.ts and the missing-entries gap detector
-  "src/contexts/zeiterfassung/retro-config.ts": "zeiterfassung", // RetroEntryRequest tenant-config toggle
+  "src/contexts/time-tracking/arbzg.ts": "zeiterfassung", // ArbZG §3/§4/§5 compliance checks over TimeEntry
+  "src/contexts/time-tracking/break-constants.ts": "zeiterfassung", // Break-model constants
+  "src/contexts/time-tracking/break-effective.ts": "zeiterfassung", // effective break-minutes calculation
+  "src/contexts/time-tracking/find-unconfirmed-break-days.ts": "zeiterfassung", // AUTO/CONFIRMED/WAIVED break-status query over TimeEntry
+  "src/contexts/time-tracking/invalid-reason.ts": "zeiterfassung", // TimeEntry.invalidReason string registry; 4 of 6 importers are Zeiterfassung
+  "src/contexts/time-tracking/normalize-mac.ts": "zeiterfassung", // PresenceDevice MAC-address normalization
+  "src/contexts/time-tracking/presence.ts": "zeiterfassung", // WiFi-presence detection helper feeding routes/presence.ts and the missing-entries gap detector
+  "src/contexts/time-tracking/retro-config.ts": "zeiterfassung", // RetroEntryRequest tenant-config toggle
 
   // ── abwesenheiten — LeaveRequest/LeaveType/LeaveEntitlement/SpecialLeaveRule/Section9Credit/
   //    Absence/EmployeeVocationalSchoolPattern/CompanyShutdown/CompanyShutdownException ───────
-  "src/contexts/abwesenheiten/api/company-shutdowns.ts": "abwesenheiten", // writes CompanyShutdown/CompanyShutdownException
-  "src/contexts/abwesenheiten/api/leave.ts": "abwesenheiten", // writes LeaveEntitlement/LeaveRequest/LeaveType/Section9Credit primarily; overtimeAccount/overtimeTransaction/timeEntry/shift writes are documented cross-context side effects of leave approval/cancellation
-  "src/contexts/abwesenheiten/api/section9-documents.ts": "abwesenheiten", // writes Section9Credit
-  "src/contexts/abwesenheiten/api/special-leave.ts": "abwesenheiten", // writes SpecialLeaveRule
-  "src/contexts/abwesenheiten/api/vocational-school-pattern.ts": "abwesenheiten", // writes EmployeeVocationalSchoolPattern
-  "src/contexts/abwesenheiten/api/vocational-school.ts": "abwesenheiten", // writes Absence
-  "src/contexts/abwesenheiten/plugins/carryover-warning.ts": "abwesenheiten", // BUrlG carry-over expiry reminders over LeaveEntitlement
-  "src/contexts/abwesenheiten/plugins/vocational-school-generator.ts": "abwesenheiten", // cron wrapper around utils/vocational-school-generator.ts's Absence generation
-  "src/contexts/abwesenheiten/bs-slot-resolver.ts": "abwesenheiten", // Berufsschule (VOCATIONAL_SCHOOL Absence) time-slot resolution
-  "src/contexts/abwesenheiten/correction-lock.ts": "abwesenheiten", // Phase 94 manager LeaveRequest correction guard
-  "src/contexts/abwesenheiten/find-karenz-overrun-days.ts": "abwesenheiten", // §5 EFZG Karenztage over LeaveRequest
-  "src/contexts/abwesenheiten/format-hm.ts": "abwesenheiten", // hours:minutes display formatting; sole importer is routes/leave.ts
-  "src/contexts/abwesenheiten/ical.ts": "abwesenheiten", // iCal export; sole importer is routes/leave.ts
-  "src/contexts/abwesenheiten/illness-carryover-guard.ts": "abwesenheiten", // sickness/Krankheit carry-over guard over LeaveRequest
-  "src/contexts/abwesenheiten/jarbschg.ts": "abwesenheiten", // JArbSchG youth-protection rules over Absence/EmployeeVocationalSchoolPattern
-  "src/contexts/abwesenheiten/leave-check.ts": "abwesenheiten", // Absence/LeaveRequest overlap checks
-  "src/contexts/abwesenheiten/leave-self-heal.ts": "abwesenheiten", // LeaveEntitlement/LeaveRequest/LeaveType self-heal
-  "src/contexts/abwesenheiten/leave-type.ts": "abwesenheiten", // LeaveTypeCode -> German display-name registry
-  "src/contexts/abwesenheiten/load-bs-slot-overrides.ts": "abwesenheiten", // EmployeeVocationalSchoolPattern slot overrides
-  "src/contexts/abwesenheiten/section9-credit-days.ts": "abwesenheiten", // Section9Credit day counting
-  "src/contexts/abwesenheiten/section9-detect.ts": "abwesenheiten", // § 9 BUrlG "krank im Urlaub" detection
-  "src/contexts/abwesenheiten/shift-leave-recalc-resolver.ts": "abwesenheiten", // writes LeaveRequest.daysProvisional when a roster change triggers recalculation (Phase 107) — LeaveRequest is the written model even though the trigger originates in Schichtplanung
-  "src/contexts/abwesenheiten/vacation-calc.ts": "abwesenheiten", // BUrlG vacation-entitlement calculation
-  "src/contexts/abwesenheiten/vocational-school-constants.ts": "abwesenheiten", // Berufsschule pattern constants
-  "src/contexts/abwesenheiten/vocational-school-generator.ts": "abwesenheiten", // writes Absence primarily; notification.create is a side effect
-  "src/contexts/abwesenheiten/vocational-school-pattern-order.ts": "abwesenheiten", // EmployeeVocationalSchoolPattern ordering helper
+  "src/contexts/absence/api/company-shutdowns.ts": "abwesenheiten", // writes CompanyShutdown/CompanyShutdownException
+  "src/contexts/absence/api/leave.ts": "abwesenheiten", // writes LeaveEntitlement/LeaveRequest/LeaveType/Section9Credit primarily; overtimeAccount/overtimeTransaction/timeEntry/shift writes are documented cross-context side effects of leave approval/cancellation
+  "src/contexts/absence/api/section9-documents.ts": "abwesenheiten", // writes Section9Credit
+  "src/contexts/absence/api/special-leave.ts": "abwesenheiten", // writes SpecialLeaveRule
+  "src/contexts/absence/api/vocational-school-pattern.ts": "abwesenheiten", // writes EmployeeVocationalSchoolPattern
+  "src/contexts/absence/api/vocational-school.ts": "abwesenheiten", // writes Absence
+  "src/contexts/absence/plugins/carryover-warning.ts": "abwesenheiten", // BUrlG carry-over expiry reminders over LeaveEntitlement
+  "src/contexts/absence/plugins/vocational-school-generator.ts": "abwesenheiten", // cron wrapper around utils/vocational-school-generator.ts's Absence generation
+  "src/contexts/absence/bs-slot-resolver.ts": "abwesenheiten", // Berufsschule (VOCATIONAL_SCHOOL Absence) time-slot resolution
+  "src/contexts/absence/correction-lock.ts": "abwesenheiten", // Phase 94 manager LeaveRequest correction guard
+  "src/contexts/absence/find-karenz-overrun-days.ts": "abwesenheiten", // §5 EFZG Karenztage over LeaveRequest
+  "src/contexts/absence/format-hm.ts": "abwesenheiten", // hours:minutes display formatting; sole importer is routes/leave.ts
+  "src/contexts/absence/ical.ts": "abwesenheiten", // iCal export; sole importer is routes/leave.ts
+  "src/contexts/absence/illness-carryover-guard.ts": "abwesenheiten", // sickness/Krankheit carry-over guard over LeaveRequest
+  "src/contexts/absence/jarbschg.ts": "abwesenheiten", // JArbSchG youth-protection rules over Absence/EmployeeVocationalSchoolPattern
+  "src/contexts/absence/leave-check.ts": "abwesenheiten", // Absence/LeaveRequest overlap checks
+  "src/contexts/absence/leave-self-heal.ts": "abwesenheiten", // LeaveEntitlement/LeaveRequest/LeaveType self-heal
+  "src/contexts/absence/leave-type.ts": "abwesenheiten", // LeaveTypeCode -> German display-name registry
+  "src/contexts/absence/load-bs-slot-overrides.ts": "abwesenheiten", // EmployeeVocationalSchoolPattern slot overrides
+  "src/contexts/absence/section9-credit-days.ts": "abwesenheiten", // Section9Credit day counting
+  "src/contexts/absence/section9-detect.ts": "abwesenheiten", // § 9 BUrlG "krank im Urlaub" detection
+  "src/contexts/absence/shift-leave-recalc-resolver.ts": "abwesenheiten", // writes LeaveRequest.daysProvisional when a roster change triggers recalculation (Phase 107) — LeaveRequest is the written model even though the trigger originates in Schichtplanung
+  "src/contexts/absence/vacation-calc.ts": "abwesenheiten", // BUrlG vacation-entitlement calculation
+  "src/contexts/absence/vocational-school-constants.ts": "abwesenheiten", // Berufsschule pattern constants
+  "src/contexts/absence/vocational-school-generator.ts": "abwesenheiten", // writes Absence primarily; notification.create is a side effect
+  "src/contexts/absence/vocational-school-pattern-order.ts": "abwesenheiten", // EmployeeVocationalSchoolPattern ordering helper
 
   // ── schichtplanung — Shift/ShiftTemplate/CoverageRule/EmployeeShiftPattern/
   //    EmployeeAvailability/PhorestStaffMapping/PhorestSyncRun/PhorestAppointment, plus
   //    services/phorest/** (D-16 prefix rule) ────────────────────────────────────────────────
-  "src/contexts/schichtplanung/api/availability.ts": "schichtplanung", // writes EmployeeAvailability
-  "src/contexts/schichtplanung/api/integrations.ts": "schichtplanung", // writes PhorestStaffMapping (Phorest scheduling-integration settings)
-  "src/contexts/schichtplanung/api/shift-patterns.ts": "schichtplanung", // writes EmployeeShiftPattern
-  "src/contexts/schichtplanung/api/shifts.ts": "schichtplanung", // writes CoverageRule/ShiftTemplate/Shift
-  "src/contexts/schichtplanung/plugins/scheduler.ts": "schichtplanung", // Phorest shift-sync cron (per apps/api ARCHITECTURE.md)
+  "src/contexts/scheduling/api/availability.ts": "schichtplanung", // writes EmployeeAvailability
+  "src/contexts/scheduling/api/integrations.ts": "schichtplanung", // writes PhorestStaffMapping (Phorest scheduling-integration settings)
+  "src/contexts/scheduling/api/shift-patterns.ts": "schichtplanung", // writes EmployeeShiftPattern
+  "src/contexts/scheduling/api/shifts.ts": "schichtplanung", // writes CoverageRule/ShiftTemplate/Shift
+  "src/contexts/scheduling/plugins/scheduler.ts": "schichtplanung", // Phorest shift-sync cron (per apps/api ARCHITECTURE.md)
   "src/services/phorest/__tests__/helpers.ts": "schichtplanung", // D-16 prefix rule (services/phorest/**) — matched here explicitly so the per-file count reflects the full measured set
   "src/services/phorest/client.ts": "schichtplanung", // D-16 prefix rule (services/phorest/**)
   "src/services/phorest/sync-appointments.ts": "schichtplanung", // D-16 prefix rule (services/phorest/**)
   "src/services/phorest/sync-shifts.ts": "schichtplanung", // D-16 prefix rule (services/phorest/**)
   "src/services/phorest/types.ts": "schichtplanung", // D-16 prefix rule (services/phorest/**)
-  "src/contexts/schichtplanung/get-current-shift.ts": "schichtplanung", // Shift lookup; sole importer routes/presence.ts, but the model concept is Shift itself
-  "src/contexts/schichtplanung/shift-availability.ts": "schichtplanung", // EmployeeAvailability/Shift availability checks
-  "src/contexts/schichtplanung/shift-cleanup.ts": "schichtplanung", // soft-deletes/flags Shift rows on VOCATIONAL_SCHOOL Absence creation — Shift is the model it manipulates
-  "src/contexts/schichtplanung/shift-netto.ts": "schichtplanung", // net Shift-hours calculation
-  "src/contexts/schichtplanung/tenant-availability.ts": "schichtplanung", // TenantConfig.availabilityEnabled toggle for the EmployeeAvailability feature
-  "src/contexts/schichtplanung/time-arithmetic.ts": "schichtplanung", // Phorest Vor-/Nachbereitungszeit padding, sole consumer services/phorest/sync-shifts.ts
+  "src/contexts/scheduling/get-current-shift.ts": "schichtplanung", // Shift lookup; sole importer routes/presence.ts, but the model concept is Shift itself
+  "src/contexts/scheduling/shift-availability.ts": "schichtplanung", // EmployeeAvailability/Shift availability checks
+  "src/contexts/scheduling/shift-cleanup.ts": "schichtplanung", // soft-deletes/flags Shift rows on VOCATIONAL_SCHOOL Absence creation — Shift is the model it manipulates
+  "src/contexts/scheduling/shift-netto.ts": "schichtplanung", // net Shift-hours calculation
+  "src/contexts/scheduling/tenant-availability.ts": "schichtplanung", // TenantConfig.availabilityEnabled toggle for the EmployeeAvailability feature
+  "src/contexts/scheduling/time-arithmetic.ts": "schichtplanung", // Phorest Vor-/Nachbereitungszeit padding, sole consumer services/phorest/sync-shifts.ts
 
   // ── arbeitszeitkonto — SaldoSnapshot/OpeningBalance/OvertimeAccount/OvertimeTransaction/
   //    OvertimePlan ─────────────────────────────────────────────────────────────────────────
-  "src/contexts/arbeitszeitkonto/api/overtime.ts": "arbeitszeitkonto", // writes OpeningBalance/OvertimeAccount/OvertimeTransaction/SaldoSnapshot/OvertimePlan
-  "src/contexts/arbeitszeitkonto/plugins/auto-close-month.ts": "arbeitszeitkonto", // the cron close-path (CLAUDE.md "Saldo-Rechenpfade"); writes OvertimeAccount/SaldoSnapshot/TimeEntry
-  "src/contexts/arbeitszeitkonto/carry-over-base.ts": "arbeitszeitkonto", // OpeningBalance carry-over base
-  "src/contexts/arbeitszeitkonto/close-employee-month.ts": "arbeitszeitkonto", // pure Monatsabschluss saldo core (CLAUDE.md: "belongs to Arbeitszeitkonto and is NOT to be split")
-  "src/contexts/arbeitszeitkonto/close-month-data.ts": "arbeitszeitkonto", // data-gathering companion to close-employee-month.ts
-  "src/contexts/arbeitszeitkonto/confirmed-saldo.ts": "arbeitszeitkonto", // SaldoSnapshot confirmed-vs-forecast split (Phase 97)
-  "src/contexts/arbeitszeitkonto/find-missing-workdays.ts": "arbeitszeitkonto", // Soll-vs-Ist gap detector; 3 of 5 importers (auto-close-month/close-employee-month/overtime) are Arbeitszeitkonto's own saldo paths
-  "src/contexts/arbeitszeitkonto/missing-entries-window.ts": "arbeitszeitkonto", // window-size companion of find-missing-workdays.ts, same callers
-  "src/contexts/arbeitszeitkonto/month-saldo.ts": "arbeitszeitkonto", // core Soll-vs-Ist saldo calculation — Arbeitszeitkonto's own definition
-  "src/contexts/arbeitszeitkonto/negative-balance-tolerance.ts": "arbeitszeitkonto", // Überstundenabbau minus-hours tolerance (Phase 100)
-  "src/contexts/arbeitszeitkonto/recalculate-snapshots.ts": "arbeitszeitkonto", // SaldoSnapshot recompute across the effective range
-  "src/contexts/arbeitszeitkonto/saldo-chain-classification.ts": "arbeitszeitkonto", // SaldoSnapshot chain delta classification
-  "src/contexts/arbeitszeitkonto/saldo-chain-integrity.ts": "arbeitszeitkonto", // SaldoSnapshot chain integrity check (Phase 98)
-  "src/contexts/arbeitszeitkonto/saldo-snapshot-cleanup.ts": "arbeitszeitkonto", // writes AuditLog/SaldoSnapshot on snapshot cleanup
-  "src/contexts/arbeitszeitkonto/shift-based-saldo.ts": "arbeitszeitkonto", // SHIFT_BASED saldo calculation (113B-CONTEXT.md canonical refs: "SHIFT_BASED-Rechnung")
-  "src/contexts/arbeitszeitkonto/snapshot-lock.ts": "arbeitszeitkonto", // "is this month closed?" Monatsabschluss primitive, derived from TimeEntry.isLocked
-  "src/contexts/arbeitszeitkonto/snapshot-period.ts": "arbeitszeitkonto", // SaldoSnapshot period-boundary calculation
-  "src/contexts/arbeitszeitkonto/timezone.ts": "arbeitszeitkonto", // calcLeaveAbsenceMinutesTz() — CLAUDE.md: "belongs to Arbeitszeitkonto and is NOT to be split"
-  "src/contexts/arbeitszeitkonto/vocational-school-saldo.ts": "arbeitszeitkonto", // Berufsschule minute contribution to workedMinutes/expectedMinutes — feeds overtime.ts and auto-close-month.ts's saldo math
+  "src/contexts/working-time-account/api/overtime.ts": "arbeitszeitkonto", // writes OpeningBalance/OvertimeAccount/OvertimeTransaction/SaldoSnapshot/OvertimePlan
+  "src/contexts/working-time-account/plugins/auto-close-month.ts": "arbeitszeitkonto", // the cron close-path (CLAUDE.md "Saldo-Rechenpfade"); writes OvertimeAccount/SaldoSnapshot/TimeEntry
+  "src/contexts/working-time-account/carry-over-base.ts": "arbeitszeitkonto", // OpeningBalance carry-over base
+  "src/contexts/working-time-account/close-employee-month.ts": "arbeitszeitkonto", // pure Monatsabschluss saldo core (CLAUDE.md: "belongs to Arbeitszeitkonto and is NOT to be split")
+  "src/contexts/working-time-account/close-month-data.ts": "arbeitszeitkonto", // data-gathering companion to close-employee-month.ts
+  "src/contexts/working-time-account/confirmed-saldo.ts": "arbeitszeitkonto", // SaldoSnapshot confirmed-vs-forecast split (Phase 97)
+  "src/contexts/working-time-account/find-missing-workdays.ts": "arbeitszeitkonto", // Soll-vs-Ist gap detector; 3 of 5 importers (auto-close-month/close-employee-month/overtime) are Arbeitszeitkonto's own saldo paths
+  "src/contexts/working-time-account/missing-entries-window.ts": "arbeitszeitkonto", // window-size companion of find-missing-workdays.ts, same callers
+  "src/contexts/working-time-account/month-saldo.ts": "arbeitszeitkonto", // core Soll-vs-Ist saldo calculation — Arbeitszeitkonto's own definition
+  "src/contexts/working-time-account/negative-balance-tolerance.ts": "arbeitszeitkonto", // Überstundenabbau minus-hours tolerance (Phase 100)
+  "src/contexts/working-time-account/recalculate-snapshots.ts": "arbeitszeitkonto", // SaldoSnapshot recompute across the effective range
+  "src/contexts/working-time-account/saldo-chain-classification.ts": "arbeitszeitkonto", // SaldoSnapshot chain delta classification
+  "src/contexts/working-time-account/saldo-chain-integrity.ts": "arbeitszeitkonto", // SaldoSnapshot chain integrity check (Phase 98)
+  "src/contexts/working-time-account/saldo-snapshot-cleanup.ts": "arbeitszeitkonto", // writes AuditLog/SaldoSnapshot on snapshot cleanup
+  "src/contexts/working-time-account/shift-based-saldo.ts": "arbeitszeitkonto", // SHIFT_BASED saldo calculation (113B-CONTEXT.md canonical refs: "SHIFT_BASED-Rechnung")
+  "src/contexts/working-time-account/snapshot-lock.ts": "arbeitszeitkonto", // "is this month closed?" Monatsabschluss primitive, derived from TimeEntry.isLocked
+  "src/contexts/working-time-account/snapshot-period.ts": "arbeitszeitkonto", // SaldoSnapshot period-boundary calculation
+  "src/contexts/working-time-account/timezone.ts": "arbeitszeitkonto", // calcLeaveAbsenceMinutesTz() — CLAUDE.md: "belongs to Arbeitszeitkonto and is NOT to be split"
+  "src/contexts/working-time-account/vocational-school-saldo.ts": "arbeitszeitkonto", // Berufsschule minute contribution to workedMinutes/expectedMinutes — feeds overtime.ts and auto-close-month.ts's saldo math
 };
 
 /** Explicit allowlist — the `rahmen` bucket is enumerated, never a fallthrough. */

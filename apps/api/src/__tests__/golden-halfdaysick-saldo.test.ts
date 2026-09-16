@@ -88,9 +88,9 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { monthRangeUtc, monthDayBounds } from "../contexts/arbeitszeitkonto/timezone";
-import type { CloseMonthInput } from "../contexts/arbeitszeitkonto/close-employee-month";
-import { closeEmployeeMonth } from "../contexts/arbeitszeitkonto/close-employee-month";
+import { monthRangeUtc, monthDayBounds } from "../contexts/working-time-account/timezone";
+import type { CloseMonthInput } from "../contexts/working-time-account/close-employee-month";
+import { closeEmployeeMonth } from "../contexts/working-time-account/close-employee-month";
 import bcrypt from "bcryptjs";
 
 const TZ = "Europe/Berlin";

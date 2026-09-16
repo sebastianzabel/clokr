@@ -401,7 +401,7 @@ function writeFixtureTree(repoRoot: string, files: Record<string, string>): void
   }
 }
 
-const SCOPED_ROUTE = "apps/api/src/contexts/arbeitszeitkonto/api/widgets.ts";
+const SCOPED_ROUTE = "apps/api/src/contexts/working-time-account/api/widgets.ts";
 
 const SCOPED_HANDLER = `
 export async function widgetRoutes(app) {
@@ -435,29 +435,29 @@ beforeEach(() => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lint-tenant-scoping-cli-"));
   // #229 Guard A: listScopedFiles now hard-errors when a SCOPED_DIRS entry does not exist on
   // disk. The real repo always has "apps/api/src/services", "apps/api/src/composition" (since
-  // Phase 99b Plan 02), "apps/api/src/contexts/schichtplanung/api" (since Phase 99b Plan 04),
-  // "apps/api/src/contexts/unterbau/api" (since Phase 99b Plan 05),
-  // "apps/api/src/contexts/zeiterfassung/api" (since Phase 99b Plan 06's predecessor),
-  // "apps/api/src/contexts/abwesenheiten/api" (since Phase 99b Plan 06) and, as of Phase 99b
+  // Phase 99b Plan 02), "apps/api/src/contexts/scheduling/api" (since Phase 99b Plan 04),
+  // "apps/api/src/contexts/platform/api" (since Phase 99b Plan 05),
+  // "apps/api/src/contexts/time-tracking/api" (since Phase 99b Plan 06's predecessor),
+  // "apps/api/src/contexts/absence/api" (since Phase 99b Plan 06) and, as of Phase 99b
   // Plan 07 (final shape — the former monolithic route directory is gone),
-  // "apps/api/src/contexts/arbeitszeitkonto/api", so every fixture tree below provisions all
+  // "apps/api/src/contexts/working-time-account/api", so every fixture tree below provisions all
   // seven up front — individual tests still only WRITE files under the one they care about,
   // matching production shape rather than working around the guard.
   fs.mkdirSync(path.join(tmpRoot, "apps/api/src/services"), { recursive: true });
   fs.mkdirSync(path.join(tmpRoot, "apps/api/src/composition"), { recursive: true });
-  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/schichtplanung/api"), {
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/scheduling/api"), {
     recursive: true,
   });
-  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/unterbau/api"), {
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/platform/api"), {
     recursive: true,
   });
-  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/zeiterfassung/api"), {
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/time-tracking/api"), {
     recursive: true,
   });
-  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/abwesenheiten/api"), {
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/absence/api"), {
     recursive: true,
   });
-  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/arbeitszeitkonto/api"), {
+  fs.mkdirSync(path.join(tmpRoot, "apps/api/src/contexts/working-time-account/api"), {
     recursive: true,
   });
 });

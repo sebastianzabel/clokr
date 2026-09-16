@@ -20,7 +20,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import { todayInTz } from "../contexts/arbeitszeitkonto/timezone";
+import { todayInTz } from "../contexts/working-time-account/timezone";
 
 const TZ = "Europe/Berlin";
 

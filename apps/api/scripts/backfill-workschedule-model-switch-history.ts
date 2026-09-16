@@ -63,7 +63,7 @@ import { PrismaClient } from "@clokr/db";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import { parseArgs } from "node:util";
-import { normalizeWorkDays } from "../src/contexts/unterbau/calculate-work-days";
+import { normalizeWorkDays } from "../src/contexts/platform/calculate-work-days";
 
 // ── Audit constants ─────────────────────────────────────────────────────────
 const BACKFILL_ACTION = "WORKSCHEDULE_MODEL_SWITCH_BACKFILL";

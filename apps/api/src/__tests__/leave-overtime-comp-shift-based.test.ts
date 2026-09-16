@@ -21,7 +21,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
 
 /**
  * Next Monday at least `daysOut` days out (UTC arithmetic), advanced past any NI public

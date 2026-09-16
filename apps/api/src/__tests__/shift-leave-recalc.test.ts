@@ -35,20 +35,20 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
 import { utcMidnight, dbDateStr, todayStr, pastDateStr, dowOf } from "./test-dates";
 import {
   resolveLeaveDays,
   getHolidayMap,
   deductVacationDays,
   reverseVacationDays,
-} from "../contexts/abwesenheiten/api/leave";
+} from "../contexts/absence/api/leave";
 import {
   recalcProvisionalLeaveForShiftChange,
   type RecalcDeps,
   type AdjustmentRecord,
-} from "../contexts/abwesenheiten/shift-leave-recalc-resolver";
-import * as ShiftLeaveRecalcModule from "../contexts/abwesenheiten/shift-leave-recalc-resolver";
+} from "../contexts/absence/shift-leave-recalc-resolver";
+import * as ShiftLeaveRecalcModule from "../contexts/absence/shift-leave-recalc-resolver";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

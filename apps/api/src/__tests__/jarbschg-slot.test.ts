@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { checkJArbSchG } from "../contexts/abwesenheiten/jarbschg";
+import { checkJArbSchG } from "../contexts/absence/jarbschg";
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
 

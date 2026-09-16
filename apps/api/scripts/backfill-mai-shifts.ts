@@ -28,7 +28,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { updateOvertimeAccount } from "../src/contexts/zeiterfassung/api/time-entries";
+import { updateOvertimeAccount } from "../src/contexts/time-tracking/api/time-entries";
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is required");

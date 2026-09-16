@@ -396,13 +396,13 @@ describe("§ 9 BUrlG legal invariants — Phase 104-06 Task 3", () => {
     const apiSrc = join(__dirname, "..");
 
     const karenzSrc = readFileSync(
-      join(apiSrc, "contexts", "abwesenheiten", "find-karenz-overrun-days.ts"),
+      join(apiSrc, "contexts", "absence", "find-karenz-overrun-days.ts"),
       "utf-8",
     );
     expect(/^\s*import\s/m.test(karenzSrc)).toBe(false);
 
     const section9DetectSrc = readFileSync(
-      join(apiSrc, "contexts", "abwesenheiten", "section9-detect.ts"),
+      join(apiSrc, "contexts", "absence", "section9-detect.ts"),
       "utf-8",
     );
     // Non-comment lines only — the module's own header docblock deliberately NAMES the
@@ -417,10 +417,7 @@ describe("§ 9 BUrlG legal invariants — Phase 104-06 Task 3", () => {
     expect(section9DetectCode).not.toContain("sickNoteRequiredAfterDays");
     expect(section9DetectCode.toLowerCase()).not.toContain("karenz");
 
-    const leaveSrc = readFileSync(
-      join(apiSrc, "contexts", "abwesenheiten", "api", "leave.ts"),
-      "utf-8",
-    );
+    const leaveSrc = readFileSync(join(apiSrc, "contexts", "absence", "api", "leave.ts"), "utf-8");
     const firstIdx = leaveSrc.indexOf('app.get("/section9');
     const endMarker = leaveSrc.indexOf("async function autoCarryOver");
     expect(firstIdx).toBeGreaterThan(-1);

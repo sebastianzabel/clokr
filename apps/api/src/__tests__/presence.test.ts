@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolvePresenceState } from "../contexts/zeiterfassung/presence";
+import { resolvePresenceState } from "../contexts/time-tracking/presence";
 
 // Helpers
 const future = true;

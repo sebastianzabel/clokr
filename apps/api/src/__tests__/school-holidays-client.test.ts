@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   fetchSchoolHolidays,
   SchoolHolidaysApiError,
-} from "../contexts/unterbau/school-holidays-client";
+} from "../contexts/platform/school-holidays-client";
 
 // Mock global fetch — we never hit the real OpenHolidays API in unit tests.
 const originalFetch = global.fetch;

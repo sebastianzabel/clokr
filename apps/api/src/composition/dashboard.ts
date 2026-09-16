@@ -4,7 +4,7 @@ import {
   getEffectiveSchedule,
   computeOvertimeBalanceBreakdown,
   type OvertimeBalanceBreakdown,
-} from "../contexts/zeiterfassung/api/time-entries";
+} from "../contexts/time-tracking/api/time-entries";
 import {
   getTenantTimezone,
   todayInTz,
@@ -17,25 +17,25 @@ import {
   getDayHoursFromSchedule,
   iterateDaysInTz,
   timeStrInTz,
-} from "../contexts/arbeitszeitkonto/timezone";
+} from "../contexts/working-time-account/timezone";
 import {
   resolvePresenceState,
   isObligatedWorkday,
   isDayDue,
-} from "../contexts/zeiterfassung/presence";
+} from "../contexts/time-tracking/presence";
 import type {
   PresenceEntry,
   PresenceLeave,
   PresenceAbsence,
-} from "../contexts/zeiterfassung/presence";
-import { getHolidays, STATE_MAP } from "../contexts/unterbau/holidays";
+} from "../contexts/time-tracking/presence";
+import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
 import {
   getConfirmedCarryOver,
   getConfirmedCarryOverBulk,
-} from "../contexts/arbeitszeitkonto/confirmed-saldo"; // Phase 97-04
-import { findMissingWorkdays } from "../contexts/arbeitszeitkonto/find-missing-workdays"; // Phase 111 — canonical gap detector
-import { findUnconfirmedBreakDays } from "../contexts/zeiterfassung/find-unconfirmed-break-days"; // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
-import { resolveMissingEntriesDays } from "../contexts/arbeitszeitkonto/missing-entries-window"; // GitHub issue #141 — single source for both Karte and Cron
+} from "../contexts/working-time-account/confirmed-saldo"; // Phase 97-04
+import { findMissingWorkdays } from "../contexts/working-time-account/find-missing-workdays"; // Phase 111 — canonical gap detector
+import { findUnconfirmedBreakDays } from "../contexts/time-tracking/find-unconfirmed-break-days"; // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
+import { resolveMissingEntriesDays } from "../contexts/working-time-account/missing-entries-window"; // GitHub issue #141 — single source for both Karte and Cron
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
