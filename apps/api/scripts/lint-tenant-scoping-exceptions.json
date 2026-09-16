@@ -29,7 +29,7 @@
         "line": 350
       }
     ],
-    "reason": "All six calls sit in pre-authentication flows (login, OTP verification, OTP resend, forgot-password) where req.user does not exist yet — there is no caller tenant to scope against, and the entire purpose of each call is establishing WHO the caller is before any tenant context exists. D-07 predicted this exact category."
+    "reason": "All six calls sit in pre-authentication flows (login, OTP verification, OTP resend, forgot-password) where req.user does not exist yet \u2014 there is no caller tenant to scope against, and the entire purpose of each call is establishing WHO the caller is before any tenant context exists. D-07 predicted this exact category."
   },
   {
     "file": "apps/api/src/contexts/absence/api/company-shutdowns.ts",
@@ -50,54 +50,54 @@
   {
     "file": "apps/api/src/contexts/platform/api/employees.ts",
     "handler": "PATCH /api/v1/employees/:id",
-    "validatedAt": 524,
+    "validatedAt": 531,
     "calls": [
       {
         "call": "leaveEntitlement.findFirst",
-        "line": 608
+        "line": 615
       }
     ],
-    "reason": "employee (and therefore id) is tenant-validated inline at line 523-524 (employee.findUnique({ id, tenantId: req.user.tenantId })); leaveEntitlement.findFirst reuses the SAME validated id as employeeId later in the same handler. (Line shifted +2 in Phase 100B Plan 06 by the createOvertimeAccount/hardDeleteOvertimeDataForEmployee import earlier in this file — no finding, mechanical only.)"
+    "reason": "employee (and therefore id) is tenant-validated inline at line 530-531 (employee.findUnique({ id, tenantId: req.user.tenantId })); leaveEntitlement.findFirst reuses the SAME validated id as employeeId later in the same handler. (Lines shifted +7 in Phase 100B Plan 09 by the listPresenceDevices/findPresenceDeviceByMac/createPresenceDevice/getPresenceDevice/deletePresenceDevice import earlier in this file, +2 in Phase 100B Plan 06 before that \u2014 no finding, mechanical only.)"
   },
   {
     "file": "apps/api/src/contexts/platform/api/employees.ts",
     "handler": "POST /api/v1/employees/:id/resend-invitation",
-    "validatedAt": 919,
+    "validatedAt": 926,
     "calls": [
       {
         "call": "invitation.updateMany",
-        "line": 934
+        "line": 941
       }
     ],
-    "reason": "employee is fetch-then-compared against req.user.tenantId at line 918; invitation.updateMany reuses the SAME validated id as employeeId a few lines later in the same handler, after the cross-tenant branch already returned 404. (Line shifted +2 in Phase 100B Plan 06, same import as above — no finding, mechanical only.)"
+    "reason": "employee is fetch-then-compared against req.user.tenantId at line 925; invitation.updateMany reuses the SAME validated id as employeeId a few lines later in the same handler, after the cross-tenant branch already returned 404. (Lines shifted +7 in Phase 100B Plan 09, same import as above, +2 in Phase 100B Plan 06 before that \u2014 no finding, mechanical only.)"
   },
   {
     "file": "apps/api/src/contexts/platform/api/employees.ts",
     "handler": "DELETE /api/v1/employees/:id/hard-delete",
-    "validatedAt": 1111,
+    "validatedAt": 1118,
     "calls": [
       {
         "call": "auditLog.findFirst",
-        "line": 1158
+        "line": 1165
       },
       {
         "call": "leaveRequest.deleteMany",
-        "line": 1216
+        "line": 1223
       },
       {
         "call": "absence.deleteMany",
-        "line": 1217
+        "line": 1224
       },
       {
         "call": "leaveEntitlement.deleteMany",
-        "line": 1219
+        "line": 1226
       },
       {
         "call": "workSchedule.deleteMany",
-        "line": 1220
+        "line": 1227
       }
     ],
-    "reason": "employee (and therefore id) is tenant-validated inline at line 1111 (employee.findUnique({ id, tenantId: req.user.tenantId })); every call listed reuses that SAME validated id as entityId/employeeId inside the one hard-delete $transaction that follows it, and none of these five calls has any other client-suppliable input beyond id. (Lines shifted +1 in Phase 100B Plan 08, one new import. Two more calls this entry used to list, break.deleteMany and timeEntry.deleteMany, are GONE from this file as of Plan 08 — they now run inside hardDeleteTimeDataForEmployee(tx, id) behind the Zeiterfassung facade (Break before TimeEntry, the onDelete:Restrict ordering invariant, unchanged), which the tenant-scoping gate never sees as a candidate at all here because 'employeeId' is itself a PRINCIPAL_FIELDS entry (facade parameter, G2/G3) — see 100B-08-SUMMARY.md for the full reconciliation. workSchedule.deleteMany survives in this entry because it is a platform-owned model that did not move.)"
+    "reason": "employee (and therefore id) is tenant-validated inline at line 1118 (employee.findUnique({ id, tenantId: req.user.tenantId })); every call listed reuses that SAME validated id as entityId/employeeId inside the one hard-delete $transaction that follows it, and none of these five calls has any other client-suppliable input beyond id. (Lines shifted +7 in Phase 100B Plan 09's PresenceDevice facade import, +1 in Phase 100B Plan 08 before that, one new import each time. Two more calls this entry used to list, break.deleteMany and timeEntry.deleteMany, are GONE from this file as of Plan 08 \u2014 they now run inside hardDeleteTimeDataForEmployee(tx, id) behind the Zeiterfassung facade (Break before TimeEntry, the onDelete:Restrict ordering invariant, unchanged), which the tenant-scoping gate never sees as a candidate at all here because 'employeeId' is itself a PRINCIPAL_FIELDS entry (facade parameter, G2/G3) \u2014 see 100B-08-SUMMARY.md for the full reconciliation. workSchedule.deleteMany survives in this entry because it is a platform-owned model that did not move."
   },
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
@@ -141,7 +141,7 @@
         "line": 1430
       }
     ],
-    "reason": "employee (keyed on the SAME body employeeId) is fetch-then-compared against req.user.tenantId at line 1420; the remaining call reuses employeeId after that cross-tenant branch already returned 404. (Phase 100B Plan 08: the second call this entry used to list, timeEntry.updateMany, is GONE from this file — it now runs inside unlockEntriesForMonth(tx, employeeId, employee.tenantId, ...) behind the Zeiterfassung facade, which the tenant-scoping gate never sees as a candidate at all here because 'employeeId' is itself a PRINCIPAL_FIELDS entry, and the facade's own tenantId parameter is threaded through explicitly at the call site — see 100B-08-SUMMARY.md.)"
+    "reason": "employee (keyed on the SAME body employeeId) is fetch-then-compared against req.user.tenantId at line 1420; the remaining call reuses employeeId after that cross-tenant branch already returned 404. (Phase 100B Plan 08: the second call this entry used to list, timeEntry.updateMany, is GONE from this file \u2014 it now runs inside unlockEntriesForMonth(tx, employeeId, employee.tenantId, ...) behind the Zeiterfassung facade, which the tenant-scoping gate never sees as a candidate at all here because 'employeeId' is itself a PRINCIPAL_FIELDS entry, and the facade's own tenantId parameter is threaded through explicitly at the call site \u2014 see 100B-08-SUMMARY.md.)"
   },
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
@@ -265,7 +265,7 @@
         "line": 2276
       }
     ],
-    "reason": "Shift has no tenantId of its own. The shift is first fetched by id (line 2090, unscoped by itself), then its OWNER is validated by a SECOND fetch+compare on a DERIVED field (existingOwner = employee.findUnique({ id: existing.employeeId }), compared at line 2098) BEFORE the fetched row is read or written anywhere below — including the shift.update at line 2276, which reuses the SAME id. This mirrors overtime.ts's own comment ('Shift has no tenantId of its own — go via employee'). (Lines shifted +1 in Phase 100B Plan 07 — an added `isMonthClosed` import for the W1 month-lock facade rewire; on top of the earlier +1 from Issue #241's `monthRangeUtc` import.)"
+    "reason": "Shift has no tenantId of its own. The shift is first fetched by id (line 2090, unscoped by itself), then its OWNER is validated by a SECOND fetch+compare on a DERIVED field (existingOwner = employee.findUnique({ id: existing.employeeId }), compared at line 2098) BEFORE the fetched row is read or written anywhere below \u2014 including the shift.update at line 2276, which reuses the SAME id. This mirrors overtime.ts's own comment ('Shift has no tenantId of its own \u2014 go via employee'). (Lines shifted +1 in Phase 100B Plan 07 \u2014 an added `isMonthClosed` import for the W1 month-lock facade rewire; on top of the earlier +1 from Issue #241's `monthRangeUtc` import.)"
   },
   {
     "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
@@ -281,7 +281,7 @@
         "line": 3226
       }
     ],
-    "reason": "Same derived-field second-hop guard as the PUT /:id handler above: the shift is fetched by id (line 3193), then existingOwner = employee.findUnique({ id: existing.employeeId }) is compared at line 3198 BEFORE the shift is read or deleted — including the shift.delete at line 3226, which reuses the SAME id. (Lines shifted +1 in Phase 100B Plan 07 — an added `isMonthClosed` import for the W1 month-lock facade rewire; on top of the earlier +1 from Issue #241's `monthRangeUtc` import.)"
+    "reason": "Same derived-field second-hop guard as the PUT /:id handler above: the shift is fetched by id (line 3193), then existingOwner = employee.findUnique({ id: existing.employeeId }) is compared at line 3198 BEFORE the shift is read or deleted \u2014 including the shift.delete at line 3226, which reuses the SAME id. (Lines shifted +1 in Phase 100B Plan 07 \u2014 an added `isMonthClosed` import for the W1 month-lock facade rewire; on top of the earlier +1 from Issue #241's `monthRangeUtc` import.)"
   },
   {
     "file": "apps/api/src/contexts/platform/api/test-bootstrap.ts",
@@ -321,7 +321,7 @@
         "line": 277
       }
     ],
-    "reason": "This whole plugin only registers when ALLOW_TEST_BOOTSTRAP=true (never true on int/prod, read once at boot in config.ts) — there is no per-caller tenant to isolate against because this test-only surface's authorization model is the env flag PLUS the ^test-[a-zA-Z0-9_-]{8}$ id format gate at line 226, not req.user.tenantId. Every call listed deletes by the SAME already-format-validated tenant id, never by a value scoped to a caller's own tenant."
+    "reason": "This whole plugin only registers when ALLOW_TEST_BOOTSTRAP=true (never true on int/prod, read once at boot in config.ts) \u2014 there is no per-caller tenant to isolate against because this test-only surface's authorization model is the env flag PLUS the ^test-[a-zA-Z0-9_-]{8}$ id format gate at line 226, not req.user.tenantId. Every call listed deletes by the SAME already-format-validated tenant id, never by a value scoped to a caller's own tenant."
   },
   {
     "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
@@ -333,7 +333,7 @@
         "line": 413
       }
     ],
-    "reason": "This route bypasses req.user entirely by design (NFC terminal firmware auth via a raw Bearer token, not a logged-in user). The terminal's API key is authenticated by a hashed-key lookup at line 404 (terminalApiKey.findUnique({ keyHash })); employee.findFirst at line 413 scopes by apiKey.tenantId, the validated principal tenant for this request, not by req.user.tenantId. (Lines shifted -3 net in Phase 100B Plan 07: +5 from the widened working-time-account import (getConfirmedCarryOver/isMonthClosed added), -8 from collapsing validateTimeEntryInvariants's inline SaldoSnapshot month-lock query into isMonthClosed() earlier in this file — no finding, mechanical only.)"
+    "reason": "This route bypasses req.user entirely by design (NFC terminal firmware auth via a raw Bearer token, not a logged-in user). The terminal's API key is authenticated by a hashed-key lookup at line 404 (terminalApiKey.findUnique({ keyHash })); employee.findFirst at line 413 scopes by apiKey.tenantId, the validated principal tenant for this request, not by req.user.tenantId. (Lines shifted -3 net in Phase 100B Plan 07: +5 from the widened working-time-account import (getConfirmedCarryOver/isMonthClosed added), -8 from collapsing validateTimeEntryInvariants's inline SaldoSnapshot month-lock query into isMonthClosed() earlier in this file \u2014 no finding, mechanical only.)"
   },
   {
     "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
@@ -345,7 +345,7 @@
         "line": 1111
       }
     ],
-    "reason": "targetEmployee (and therefore employeeId) is tenant-validated inline at line 1040 (employee.findFirst({ id: employeeId, tenantId: req.user.tenantId })); retroEntryRequest.findFirst reuses the SAME validated employeeId in its where a few lines later. (Lines shifted -3 net in Phase 100B Plan 07, same net shift as above — no finding, mechanical only.)"
+    "reason": "targetEmployee (and therefore employeeId) is tenant-validated inline at line 1040 (employee.findFirst({ id: employeeId, tenantId: req.user.tenantId })); retroEntryRequest.findFirst reuses the SAME validated employeeId in its where a few lines later. (Lines shifted -3 net in Phase 100B Plan 07, same net shift as above \u2014 no finding, mechanical only.)"
   },
   {
     "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
@@ -365,7 +365,7 @@
         "line": 1839
       }
     ],
-    "reason": "existing (the TimeEntry) is fetch-then-compared via existing.employee.tenantId at line 1548. retroEntryRequest.findFirst at line 1682 is scoped by existing.employeeId — a field read off that already-validated row, not a client-supplied value. Both break.deleteMany calls reuse existing's own id (the entry's own primary key, validated at fetch) as timeEntryId. (Lines shifted -3 net in Phase 100B Plan 07, same net shift as above — no finding, mechanical only.)"
+    "reason": "existing (the TimeEntry) is fetch-then-compared via existing.employee.tenantId at line 1548. retroEntryRequest.findFirst at line 1682 is scoped by existing.employeeId \u2014 a field read off that already-validated row, not a client-supplied value. Both break.deleteMany calls reuse existing's own id (the entry's own primary key, validated at fetch) as timeEntryId. (Lines shifted -3 net in Phase 100B Plan 07, same net shift as above \u2014 no finding, mechanical only.)"
   },
   {
     "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
@@ -377,6 +377,6 @@
         "line": 2249
       }
     ],
-    "reason": "entry (the TimeEntry) is fetch-then-compared via entry.employee.tenantId at line 2180; break.deleteMany at line 2249 reuses the SAME validated id as timeEntryId later in the same handler, after the cross-tenant branch already returned 404. (Lines shifted -3 net in Phase 100B Plan 07, same net shift as above — no finding, mechanical only. `validatedAt` corrected to 2180, its actual pre-existing location — the prior entry's 2174 predates this plan and was already off by a few lines before this plan touched the file.)"
+    "reason": "entry (the TimeEntry) is fetch-then-compared via entry.employee.tenantId at line 2180; break.deleteMany at line 2249 reuses the SAME validated id as timeEntryId later in the same handler, after the cross-tenant branch already returned 404. (Lines shifted -3 net in Phase 100B Plan 07, same net shift as above \u2014 no finding, mechanical only. `validatedAt` corrected to 2180, its actual pre-existing location \u2014 the prior entry's 2174 predates this plan and was already off by a few lines before this plan touched the file.)"
   }
 ]

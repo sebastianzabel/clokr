@@ -22,7 +22,8 @@
  * would be a compliance regression, not an improvement.
  *
  * Wave 4 (Plan 08) — `TimeEntry`/`Break` (T1-T12, plus the T2 regrouping — see
- * `./facade/time-entries.ts`'s own module header). Plan 09 (`PresenceDevice`) still to come.
+ * `./facade/time-entries.ts`'s own module header). Wave 4 (Plan 09, closing) — `PresenceDevice`
+ * (see `./facade/presence-devices.ts`'s own module header). Zeiterfassung is converted whole.
  */
 export {
   getValidWorkedEntriesInRange,
@@ -41,3 +42,11 @@ export {
   createImportedTimeEntry,
   type ImportedTimeEntryData,
 } from "./facade/time-entries";
+export {
+  listPresenceDevices,
+  findPresenceDeviceByMac,
+  createPresenceDevice,
+  getPresenceDevice,
+  deletePresenceDevice,
+  type CreatePresenceDeviceData,
+} from "./facade/presence-devices";

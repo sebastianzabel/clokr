@@ -311,8 +311,14 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // clearEntryNotesForEmployee, hardDeleteTimeDataForEmployee, createImportedTimeEntry) and TWO
   // new named F3 exceptions (clearEntryNotesForEmployee, hardDeleteTimeDataForEmployee — same
   // shape as overtime-account.ts's hardDeleteOvertimeDataForEmployee).
-  // 8 files, 37 exported functions total, 5 exception entries, 0 findings.
-  it("the real tree has exactly 37 exported facade functions today, 5 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  // Phase 100B Plan 09 (Wave 4, closing) added ONE more real facade file:
+  // `contexts/time-tracking/facade/presence-devices.ts` (five exported functions:
+  // listPresenceDevices, findPresenceDeviceByMac, createPresenceDevice, getPresenceDevice,
+  // deletePresenceDevice) and TWO new named F3 exceptions (getPresenceDevice,
+  // deletePresenceDevice — 'employeeId' is the caller's own principal identifier, same shape as
+  // clearEntryNotesForEmployee/hardDeleteTimeDataForEmployee above).
+  // 9 files, 42 exported functions total, 7 exception entries, 0 findings.
+  it("the real tree has exactly 42 exported facade functions today, 7 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -320,6 +326,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
         "apps/api/src/contexts/platform/facade/employee-scope.ts",
         "apps/api/src/contexts/scheduling/facade/shifts.ts",
         "apps/api/src/contexts/scheduling/facade/availability.ts",
+        "apps/api/src/contexts/time-tracking/facade/presence-devices.ts",
         "apps/api/src/contexts/time-tracking/facade/time-entries.ts",
         "apps/api/src/contexts/working-time-account/facade/overtime-account.ts",
         "apps/api/src/contexts/working-time-account/facade/saldo-snapshot.ts",
@@ -331,7 +338,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(37);
+    expect(functions).toHaveLength(42);
 
     const rawExceptions = JSON.parse(
       readFileSync(
@@ -342,7 +349,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     const validated = validateExceptionsDocument(rawExceptions, functions);
     expect(validated.ok).toBe(true);
     if (validated.ok) {
-      expect(validated.entries).toHaveLength(5);
+      expect(validated.entries).toHaveLength(7);
       const findings = computeFindings(functions, validated.entries);
       expect(findings).toEqual([]);
     }

@@ -6,7 +6,8 @@
     "overtimeTransaction",
     "saldoSnapshot",
     "timeEntry",
-    "break"
+    "break",
+    "presenceDevice"
   ],
   "exceptions": [
     {

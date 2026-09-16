@@ -13,7 +13,14 @@ import {
   createOvertimeAccount,
   hardDeleteOvertimeDataForEmployee,
 } from "../../working-time-account"; // Phase 100B Plan 06 — W13/W15
-import { hardDeleteTimeDataForEmployee } from "../../time-tracking"; // Phase 100B Plan 08 — T11
+import {
+  hardDeleteTimeDataForEmployee, // Phase 100B Plan 08 — T11
+  listPresenceDevices,
+  findPresenceDeviceByMac,
+  createPresenceDevice,
+  getPresenceDevice,
+  deletePresenceDevice,
+} from "../../time-tracking"; // Phase 100B Plan 09 — PresenceDevice, wave 4 closing
 import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
@@ -1237,6 +1244,7 @@ export async function employeeRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const employeeId = req.user.employeeId;
       const tenantId = req.user.tenantId;
+      if (!employeeId) return reply.code(401).send({ error: "Nicht authentifiziert" });
 
       const employee = await app.prisma.employee.findUnique({
         where: { id: employeeId, tenantId },
@@ -1244,11 +1252,7 @@ export async function employeeRoutes(app: FastifyInstance) {
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
-      const devices = await app.prisma.presenceDevice.findMany({
-        where: { employeeId },
-        select: { id: true, mac: true, label: true, addedAt: true },
-        orderBy: { addedAt: "asc" },
-      });
+      const devices = await listPresenceDevices(app.prisma, employeeId, tenantId);
 
       return reply.send({
         wifiPresenceEnabled: employee.wifiPresenceEnabled,
@@ -1338,16 +1342,16 @@ export async function employeeRoutes(app: FastifyInstance) {
       }
 
       // Check for duplicate: unique per tenant+mac
-      const existing = await app.prisma.presenceDevice.findUnique({
-        where: { tenantId_mac: { tenantId, mac } },
-      });
+      const existing = await findPresenceDeviceByMac(app.prisma, mac, tenantId);
       if (existing) {
         return reply.code(409).send({ error: "Dieses Gerät ist bereits registriert" });
       }
 
-      const device = await app.prisma.presenceDevice.create({
-        data: { tenantId, employeeId, mac, label: body.label },
-        select: { id: true, mac: true, label: true, addedAt: true },
+      const device = await createPresenceDevice(app.prisma, {
+        tenantId,
+        employeeId,
+        mac,
+        label: body.label,
       });
 
       await app.audit({
@@ -1370,18 +1374,17 @@ export async function employeeRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { id } = deviceIdParamSchema.parse(req.params);
       const employeeId = req.user.employeeId;
+      if (!employeeId) return reply.code(401).send({ error: "Nicht authentifiziert" });
 
-      const device = await app.prisma.presenceDevice.findUnique({
-        where: { id },
-      });
+      // Own-data guard: the query itself is scoped to employeeId (Phase 100B Plan 09) — a device
+      // belonging to another employee is not found, exactly like a device that does not exist at
+      // all. See contexts/time-tracking/facade/presence-devices.ts's module header: this
+      // collapses the route's former separate 403 "Forbidden" branch into the SAME 404 "Gerät
+      // nicht gefunden" a missing device already returned, deliberately (the safer of the two).
+      const device = await getPresenceDevice(app.prisma, id, employeeId);
       if (!device) return reply.code(404).send({ error: "Gerät nicht gefunden" });
 
-      // Own-data guard: employee can only delete their own devices
-      if (device.employeeId !== employeeId) {
-        return reply.code(403).send({ error: "Forbidden" });
-      }
-
-      await app.prisma.presenceDevice.delete({ where: { id } });
+      await deletePresenceDevice(app.prisma, id, employeeId);
 
       await app.audit({
         userId: req.user.sub,

@@ -95,8 +95,16 @@ import { readFileSync } from "node:fs";
 // 257. MIN_TESTS rises from 2988 to 3004: +16 test cases in that new file (verified with
 // `pnpm exec vitest run .../facade-time-entries.test.ts`, "16 tests" in its own output) —
 // 2988 + 16 = 3004. No other test file's test COUNT changed in this plan.
-const MIN_FILES = 257;
-const MIN_TESTS = 3004;
+//
+// Phase 100B Plan 09 (Wave 4, closing) — one new test FILE
+// (contexts/time-tracking/__tests__/facade-presence-devices.test.ts) — MIN_FILES rises from 257
+// to 258. MIN_TESTS rises from 3004 to 3012: +8 test cases in that new file (verified with
+// `pnpm exec vitest run .../facade-presence-devices.test.ts`, "8 tests" in its own output) —
+// 3004 + 8 = 3012. `src/__tests__/me-wifi.test.ts`'s existing "employee cannot delete another
+// employee's device" test case gained two extra assertions (404 not 403, device-still-there) but
+// stayed ONE test case — its file's own test COUNT (17) is unchanged, so it adds nothing here.
+const MIN_FILES = 258;
+const MIN_TESTS = 3012;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
