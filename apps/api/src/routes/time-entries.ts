@@ -593,7 +593,16 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const user = req.user;
       let employeeId = body.employeeId ?? user.employeeId;
       if (body.nfcCardId) {
-        const emp = await app.prisma.employee.findUnique({ where: { nfcCardId: body.nfcCardId } });
+        // #225: nfcCardId is globally @unique, not per tenant. An unscoped lookup here
+        // acted as an existence oracle — an unknown card and a foreign tenant's real card
+        // produced two distinct error messages ("NFC Karte nicht gefunden" vs. the later
+        // cross-tenant "Mitarbeiter nicht gefunden"), letting a caller probe whether a card
+        // exists anywhere in the system. Scoping to the caller's tenant collapses both cases
+        // to the same "NFC Karte nicht gefunden" response. The later tenantId comparison
+        // below stays intact — it still guards the body.employeeId path.
+        const emp = await app.prisma.employee.findFirst({
+          where: { nfcCardId: body.nfcCardId, tenantId: req.user.tenantId },
+        });
         if (!emp) return reply.code(404).send({ error: "NFC Karte nicht gefunden" });
         employeeId = emp.id;
       }
