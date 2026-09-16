@@ -9,7 +9,9 @@
     "break",
     "presenceDevice",
     "leaveType",
-    "leaveEntitlement"
+    "leaveEntitlement",
+    "employeeVocationalSchoolPattern",
+    "section9Credit"
   ],
   "exceptions": [
     {

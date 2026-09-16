@@ -27,7 +27,8 @@ import {
   listEntitlementsForYear,
   getExpiringCarryOver,
   getEntitlementById,
-} from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15
+  getConfirmedSection9Credits,
+} from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
 import { isSickLeaveTypeCode } from "../contexts/absence/leave-type";
 import type { LeaveTypeCode } from "@clokr/db";
 
@@ -829,15 +830,7 @@ async function fetchConfirmedSection9CreditsByEmp(
   start: Date,
   end: Date,
 ): Promise<Map<string, Array<{ creditedStart: Date; creditedEnd: Date }>>> {
-  const credits = await app.prisma.section9Credit.findMany({
-    where: {
-      status: "CONFIRMED",
-      employee: { tenantId },
-      creditedStart: { lte: end },
-      creditedEnd: { gte: start },
-    },
-    select: { employeeId: true, creditedStart: true, creditedEnd: true },
-  });
+  const credits = await getConfirmedSection9Credits(app.prisma, tenantId, start, end);
   const byEmp = new Map<string, Array<{ creditedStart: Date; creditedEnd: Date }>>();
   for (const c of credits) {
     if (c.creditedStart === null || c.creditedEnd === null) continue;

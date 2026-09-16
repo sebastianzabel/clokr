@@ -3,7 +3,6 @@ import { z } from "zod";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { isAvailabilityEnabled } from "../tenant-availability";
 import { getVocationalSchoolMinutesForDate } from "../../working-time-account/vocational-school-saldo";
-import { BS_PATTERN_ORDER_BY } from "../../absence/vocational-school-pattern-order";
 import { getEffectiveBreakDuration } from "../../time-tracking/break-effective";
 import { classifyLeaveTypeCode, type AvailabilityBucket } from "../shift-availability"; // Phase 98 (T3, plan 03) — the two classifiers' new home
 import {
@@ -19,7 +18,7 @@ import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../../platform/anonymize";
 import { updateOvertimeAccount } from "../../time-tracking/api/time-entries";
 import { isMonthClosed } from "../../working-time-account"; // Phase 100B Plan 07 — W1
 import { mondayOfWeekUtc } from "../../absence/vacation-calc"; // Phase 107 (D-14) — same Monday-cutting primitive as :709-718
-import { listLeaveTypes } from "../../absence"; // Phase 100B Plan 10 — A18
+import { listLeaveTypes, listActiveBsPatternsForWeek } from "../../absence"; // Phase 100B Plan 10 — A18; Plan 11 — A21a
 import {
   recalcProvisionalLeaveForShiftChange,
   type RecalcDeps,
@@ -955,23 +954,9 @@ export async function shiftRoutes(app: FastifyInstance) {
         // this week. Used to resolve per-AZUBI `federalStateOverride` for
         // Pendler-Azubis whose BS is in a different Bundesland than the employer.
         // Non-AZUBI employees have no patterns → fall back to tenant.federalState.
-        app.prisma.employeeVocationalSchoolPattern.findMany({
-          where: {
-            employee: { tenantId },
-            isActive: true,
-            validFrom: { lte: sunday },
-            OR: [{ validUntil: null }, { validUntil: { gte: monday } }],
-          },
-          // Phase 103 — the merge below is genuinely first-wins
-          // (`if (empFederalState.has(...)) continue`); without a shared order "first"
-          // was whatever Postgres happened to return. BS_PATTERN_ORDER_BY makes the
-          // comment's documented `findFirst`-semantics claim actually true.
-          orderBy: BS_PATTERN_ORDER_BY,
-          select: {
-            employeeId: true,
-            federalStateOverride: true,
-          },
-        }),
+        // Phase 103's `orderBy: BS_PATTERN_ORDER_BY` (the merge below is genuinely
+        // first-wins) lives inside listActiveBsPatternsForWeek (Phase 100B Plan 11, A21a).
+        listActiveBsPatternsForWeek(app.prisma, tenantId, monday, sunday),
       ]);
 
       // Phase 47.3 — Narrow availability rows to [] when the feature is disabled.

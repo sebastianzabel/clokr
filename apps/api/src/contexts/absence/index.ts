@@ -16,13 +16,14 @@
  * that gate — do not "helpfully" move one here.
  *
  * ── Wave 5 progress (D-01: a context is either fully converted or not touched) ──────────────────
- * Converted so far: `LeaveType` (plan 10, A17-A19) and `LeaveEntitlement` (plan 10, A11-A16 plus
- * the two H1 deviation-preserving siblings) — grouped in `./facade/leave-types.ts` and
- * `./facade/entitlements.ts` respectively, one file per model (separate lifecycles: entitlements
- * are per employee and per year, leave types are tenant configuration).
- * Still to come: `EmployeeVocationalSchoolPattern`/`Section9Credit` (plan 11), `Absence` (plan
- * 12), `LeaveRequest` (plan 13) — each gets its OWN file under `./facade/`, exported below grouped
- * by model, so a later plan extends this list rather than guessing at its shape.
+ * Converted so far: `LeaveType` (plan 10, A17-A19), `LeaveEntitlement` (plan 10, A11-A16 plus the
+ * two H1 deviation-preserving siblings), `EmployeeVocationalSchoolPattern` (plan 11, A20/A21a/A21b)
+ * and `Section9Credit` (plan 11, A22 plus its two DSGVO compliance functions) — grouped in
+ * `./facade/leave-types.ts`, `./facade/entitlements.ts`, `./facade/vocational-school-patterns.ts`
+ * and `./facade/section9-credits.ts` respectively, one file per model.
+ * Still to come: `Absence` (plan 12), `LeaveRequest` (plan 13) — each gets its OWN file under
+ * `./facade/`, exported below grouped by model, so a later plan extends this list rather than
+ * guessing at its shape.
  *
  * D-02: a facade function expresses the QUESTION a caller asks, not the caller's `where`. Two
  * callers with the same question share one function; a caller with a special case does not get a
@@ -71,3 +72,19 @@ export {
   hardDeleteEntitlementsForEmployee,
 } from "./facade/entitlements";
 export type { UpsertVacationEntitlementData } from "./facade/entitlements";
+
+// ── EmployeeVocationalSchoolPattern (plan 11, A20/A21a/A21b) ─────────────────────────────────
+export {
+  getActiveBsPattern,
+  listActiveBsPatternsForWeek,
+  listActiveBsPatternsWithFederalStateOverride,
+} from "./facade/vocational-school-patterns";
+export type { ActiveBsPatternSlots, WeekBsPattern } from "./facade/vocational-school-patterns";
+
+// ── Section9Credit (plan 11, A22 + 2 DSGVO compliance functions) ────────────────────────────
+export {
+  getConfirmedSection9Credits,
+  getSection9DocumentPaths,
+  anonymizeSection9CreditsForEmployee,
+} from "./facade/section9-credits";
+export type { ConfirmedSection9Credit } from "./facade/section9-credits";

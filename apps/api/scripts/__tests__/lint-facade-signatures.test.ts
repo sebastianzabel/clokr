@@ -327,8 +327,15 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // getVacationEntitlementsForYearByDisplayName, hardDeleteEntitlementsForEmployee) and ONE new
   // named F3 exception (hardDeleteEntitlementsForEmployee — same shape as
   // hardDeleteOvertimeDataForEmployee/hardDeleteTimeDataForEmployee above).
-  // 11 files, 55 exported functions total, 8 exception entries, 0 findings.
-  it("the real tree has exactly 55 exported facade functions today, 8 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  // Phase 100B Plan 11 (Wave 5) added TWO new facade files
+  // (contexts/absence/facade/vocational-school-patterns.ts — getActiveBsPattern,
+  // listActiveBsPatternsForWeek, listActiveBsPatternsWithFederalStateOverride;
+  // contexts/absence/facade/section9-credits.ts — getConfirmedSection9Credits,
+  // getSection9DocumentPaths, anonymizeSection9CreditsForEmployee) and TWO new named F3
+  // exceptions (getSection9DocumentPaths, anonymizeSection9CreditsForEmployee — same shape as
+  // clearEntryNotesForEmployee/hardDeleteEntitlementsForEmployee above).
+  // 13 files, 61 exported functions total, 10 exception entries, 0 findings.
+  it("the real tree has exactly 61 exported facade functions today, 10 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -342,6 +349,8 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
         "apps/api/src/contexts/working-time-account/facade/saldo-snapshot.ts",
         "apps/api/src/contexts/absence/facade/leave-types.ts",
         "apps/api/src/contexts/absence/facade/entitlements.ts",
+        "apps/api/src/contexts/absence/facade/vocational-school-patterns.ts",
+        "apps/api/src/contexts/absence/facade/section9-credits.ts",
       ].sort((a, b) => a.localeCompare(b)),
     );
 
@@ -350,7 +359,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(55);
+    expect(functions).toHaveLength(61);
 
     const rawExceptions = JSON.parse(
       readFileSync(
@@ -361,7 +370,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     const validated = validateExceptionsDocument(rawExceptions, functions);
     expect(validated.ok).toBe(true);
     if (validated.ok) {
-      expect(validated.entries).toHaveLength(8);
+      expect(validated.entries).toHaveLength(10);
       const findings = computeFindings(functions, validated.entries);
       expect(findings).toEqual([]);
     }

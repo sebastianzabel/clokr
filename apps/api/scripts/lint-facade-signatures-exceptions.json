@@ -46,5 +46,17 @@
     "function": "hardDeleteEntitlementsForEmployee",
     "rules": ["F3"],
     "reason": "Plan 100B-10 (Wave 5, D-08): a HARD delete (LeaveEntitlement.deleteMany) invoked ONLY from platform/api/employees.ts's DELETE /:id/hard-delete sequence inside its own $transaction, whose handler validates 'id' against req.user.tenantId at its own top BEFORE the hard-delete transaction — and therefore before this function — is ever reached. Same shape and reasoning as hardDeleteOvertimeDataForEmployee/hardDeleteTimeDataForEmployee above: a tenantId parameter here would be decorative, not a real boundary."
+  },
+  {
+    "file": "apps/api/src/contexts/absence/facade/section9-credits.ts",
+    "function": "getSection9DocumentPaths",
+    "rules": ["F3"],
+    "reason": "Plan 100B-11 (Wave 5, D-08, T-100B-48/H2): DSGVO Art. 17 document-cleanup read — the documentPath of every Section9Credit for employeeId, invoked ONLY from platform/api/employees.ts's DELETE /:id (ANONYMIZE) handler BEFORE its anonymisation $transaction opens, whose handler validates 'id' against req.user.tenantId a few lines above this call (the neighbouring employee.tenantId !== req.user.tenantId check). Same shape as clearEntryNotesForEmployee/hardDeleteEntitlementsForEmployee above: a tenantId parameter here would be decorative, not a real boundary."
+  },
+  {
+    "file": "apps/api/src/contexts/absence/facade/section9-credits.ts",
+    "function": "anonymizeSection9CreditsForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-11 (Wave 5, D-08, T-100B-48): DSGVO Art. 17 anonymisation — nulls Section9Credit.documentPath/reason for employeeId inside anonymize.ts's own $transaction, invoked ONLY from anonymizeEmployeeData(), which resolves and is only ever reached after platform/api/employees.ts's DELETE /:id handler validated 'id' against req.user.tenantId BEFORE opening the transaction this function runs inside. Same shape and reasoning as clearEntryNotesForEmployee/hardDeleteOvertimeDataForEmployee/hardDeleteEntitlementsForEmployee above: a tenantId parameter here would be decorative, not a real boundary."
   }
 ]

@@ -36,7 +36,8 @@ import {
 import {
   getVacationEntitlementByDisplayName,
   hardDeleteEntitlementsForEmployee,
-} from "../../absence"; // Phase 100B Plan 10 — H1 sibling / F3
+  getSection9DocumentPaths,
+} from "../../absence"; // Phase 100B Plan 10 — H1 sibling / F3; Plan 11 — F3
 
 // ── Retention constant ─────────────────────────────────────────────────────
 const DEFAULT_RETENTION_YEARS = 10;
@@ -1008,10 +1009,7 @@ export async function employeeRoutes(app: FastifyInstance) {
       // Phase 104-07 (D-26): same pre-fetch-before-tx reasoning as absenceDocs above — a
       // paper-AU document is an Art. 9 DSGVO health datum and must be erased on Art. 17
       // deletion just as reliably as an avatar or absence document.
-      const section9Docs = await app.prisma.section9Credit.findMany({
-        where: { employeeId: id, documentPath: { not: null } },
-        select: { documentPath: true },
-      });
+      const section9Docs = await getSection9DocumentPaths(app.prisma, id);
 
       await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         await anonymizeEmployeeData({ tx, employeeId: id });

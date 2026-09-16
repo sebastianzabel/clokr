@@ -53,6 +53,7 @@
  */
 import type { Prisma } from "@clokr/db";
 import { clearEntryNotesForEmployee } from "../time-tracking"; // Phase 100B Plan 08 — T10
+import { anonymizeSection9CreditsForEmployee } from "../absence"; // Phase 100B Plan 11 — T-100B-48
 
 /**
  * The sentinel that marks a DSGVO-anonymized Employee row (set by anonymizeEmployeeData below):
@@ -139,10 +140,7 @@ export async function anonymizeEmployeeData(opts: AnonymizeEmployeeOptions): Pro
   // Die Section9Credit-ZEILEN bleiben erhalten: sie sind der Korrektureintrag, mit dem die
   // Urlaubsgutschrift rekonstruierbar bleibt (Revisionssicherheit, R7). Gelöscht wird nur,
   // was personenbezogen bzw. gesundheitsbezogen ist — documentPath und die Freitext-Begründung.
-  await tx.section9Credit.updateMany({
-    where: { employeeId },
-    data: { documentPath: null, reason: null },
-  });
+  await anonymizeSection9CreditsForEmployee(tx, employeeId);
 
   // AuditLog JSON-Felder (oldValue/newValue) für Employee- und User-Einträge redigieren.
   // Verhindert, dass Name/E-Mail in historischen JSON-Blobs erhalten bleiben (COMP-V1814-01).
