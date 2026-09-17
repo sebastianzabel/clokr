@@ -38,7 +38,7 @@ import {
   computeOvertimeBalanceBreakdown,
   type OvertimeBalanceBreakdown,
 } from "../../working-time-account"; // Phase 100B Plan 06 — W8/W11/W12; Plan 07 — W1; Phase 101B
-import { auditReasonSchema } from "../../platform/audit-reason"; // Quick 260824-cjd
+import { auditReasonSchema } from "../../platform"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
 import { isSickLeaveTypeCode } from "../leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper

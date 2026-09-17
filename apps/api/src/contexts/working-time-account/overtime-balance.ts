@@ -18,7 +18,7 @@
 import { FastifyInstance } from "fastify";
 import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1
 import { loadBsSlotOverrides } from "../absence/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
-import { getHolidays, STATE_MAP } from "../platform/holidays";
+import { getHolidays, STATE_MAP } from "../platform";
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import { closeEmployeeMonth } from "./close-employee-month"; // SNAP-03 — Phase 76.27
 import { getConfirmedCarryOver } from "./confirmed-saldo"; // Phase 97-06

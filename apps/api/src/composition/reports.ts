@@ -3,7 +3,7 @@ import PDFDocument from "pdfkit";
 import iconv from "iconv-lite";
 import { formatInTimeZone } from "date-fns-tz";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/platform";
 import {
   SECTION9_LEGEND,
   generateMonthlyReportPdf,

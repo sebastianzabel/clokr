@@ -11,7 +11,7 @@ import type {
   PresenceLeave,
   PresenceAbsence,
 } from "../contexts/time-tracking/presence";
-import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/platform";
 import { findUnconfirmedBreakDays } from "../contexts/time-tracking/find-unconfirmed-break-days"; // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
 import {

@@ -17,7 +17,7 @@ import {
   computeRetroLimitStr,
   computeEntryAgeInDays,
 } from "../retro-config"; // Phase 76.29 — RETRO-01 window guard
-import { auditReasonSchema, AUDIT_REASON_REQUIRED } from "../../platform/audit-reason"; // Quick 260824-cjd
+import { auditReasonSchema, AUDIT_REASON_REQUIRED } from "../../platform"; // Quick 260824-cjd
 import {
   getOvertimeAccount, // Phase 100B Plan 06 — W8/W14; Plan 07 — W3 merge, W1
   getTenantTimezone,

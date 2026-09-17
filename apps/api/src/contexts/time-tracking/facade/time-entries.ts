@@ -78,8 +78,7 @@
  * `auto-close-month.ts`'s own comment, not re-derived.
  */
 import type { Prisma } from "@clokr/db";
-import type { EmployeeScope } from "../../platform/facade/employee-scope";
-import { employeeScopeWhere } from "../../platform/facade/employee-scope";
+import { type EmployeeScope, employeeScopeWhere } from "../../platform";
 import { CLEARED_INVALID_REASON } from "../invalid-reason";
 
 /** `periodStart`-style calendar-date keying, mirrored (not shared) from the identical helper in

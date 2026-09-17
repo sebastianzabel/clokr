@@ -91,8 +91,7 @@
  * client.
  */
 import type { Prisma } from "@clokr/db";
-import type { EmployeeScope } from "../../platform/facade/employee-scope";
-import { employeeScopeWhere } from "../../platform/facade/employee-scope";
+import { type EmployeeScope, employeeScopeWhere } from "../../platform";
 
 /**
  * S1 — the one date-range read for `Shift`, covering all three `EmployeeScope` variants in ONE

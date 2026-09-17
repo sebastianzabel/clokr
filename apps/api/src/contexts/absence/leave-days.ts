@@ -9,8 +9,7 @@
 
 import { FastifyInstance } from "fastify";
 import { Prisma } from "@clokr/db";
-import { getHolidays, STATE_MAP } from "../platform/holidays";
-import { calculateWorkDays } from "../platform/calculate-work-days";
+import { getHolidays, STATE_MAP, calculateWorkDays } from "../platform";
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import { splitDaysAcrossYears, countShiftBasedLeaveDays, mondayOfWeekUtc } from "./vacation-calc"; // Phase 107 (D-04/D-09)
 import { preserveIllnessDeadline } from "./illness-carryover-guard"; // Phase 104

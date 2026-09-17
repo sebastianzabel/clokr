@@ -157,8 +157,7 @@
  * facade. `LeaveRequest` — 28 accesses, the largest single model — is the closing conversion.
  */
 import type { LeaveRequestStatus, LeaveTypeCode, Prisma } from "@clokr/db";
-import type { EmployeeScope } from "../../platform/facade/employee-scope";
-import { employeeScopeWhere } from "../../platform/facade/employee-scope";
+import { type EmployeeScope, employeeScopeWhere } from "../../platform";
 
 // ── A1 — the Soll-reduction set: status: "APPROVED" only ─────────────────────────────────────────
 

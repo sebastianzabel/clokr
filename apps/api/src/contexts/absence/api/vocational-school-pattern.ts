@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { FederalState } from "@clokr/db";
 import { requireAuth, requireRole } from "../../../middleware/auth";
-import { syncSchoolHolidaysForTenant } from "../../platform/plugins/school-holidays-sync";
+import { syncSchoolHolidaysForTenant } from "../../platform";
 import { runVocationalSchoolGeneration } from "../vocational-school-generator";
 import { BS_PATTERN_ORDER_BY } from "../vocational-school-pattern-order";
 import {

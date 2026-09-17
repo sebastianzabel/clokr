@@ -1,7 +1,7 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
-import { getHolidays, STATE_MAP } from "../../platform/holidays";
+import { getHolidays, STATE_MAP } from "../../platform";
 import { findUnconfirmedBreakEntries } from "../find-unconfirmed-break-days";
 import {
   getTenantTimezone,

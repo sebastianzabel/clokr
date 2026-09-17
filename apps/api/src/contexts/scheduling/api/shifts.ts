@@ -4,8 +4,7 @@ import { requireAuth, requireRole } from "../../../middleware/auth";
 import { isAvailabilityEnabled } from "../tenant-availability";
 import { getEffectiveBreakDuration } from "../../time-tracking/break-effective";
 import { classifyLeaveTypeCode, type AvailabilityBucket } from "../shift-availability"; // Phase 98 (T3, plan 03) — the two classifiers' new home
-import { getHolidays, STATE_MAP } from "../../platform/holidays";
-import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../../platform/anonymize";
+import { getHolidays, STATE_MAP, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../../platform";
 import {
   isMonthClosed, // Phase 100B Plan 07 — W1
   getVocationalSchoolMinutesForDate,
