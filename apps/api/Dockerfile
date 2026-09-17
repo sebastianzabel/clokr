@@ -206,6 +206,66 @@ COPY --from=build /app/package.json ./
 COPY --from=build /app/pnpm-workspace.yaml ./
 COPY --from=build /app/pnpm-lock.yaml ./
 
+# ── GH #213 part 2: reset-demo.ts must never ship in the runtime image ──────────────────
+# packages/db/src/reset-demo.ts hard-deletes TimeEntry/LeaveRequest/Absence/SaldoSnapshot/
+# Employee/User rows for non-admin employees, plus any OTHER tenant's employees that collide by
+# email (see the file's own header). It now refuses to run under NODE_ENV=production or without
+# CONFIRM_RESET_DEMO=yes (fix/213), but a destructive dev-only tool has no reason to be inside the
+# artifact that is deployed to production at all — same reasoning, same idiom, as the D-08
+# scripts/ removal above, just one directory over (packages/db/src/, not apps/api/scripts/,
+# which is exactly why the D-08 gate above never saw this file).
+RUN rm -f /app/packages/db/src/reset-demo.ts \
+ && test ! -e /app/packages/db/src/reset-demo.ts \
+ || (echo "FATAL: packages/db/src/reset-demo.ts is present in the runtime image — GH #213 forbids shipping this destructive dev-only tool" >&2; exit 1)
+
+# ── GH #213 part 3: behavioral gate — no self-invoking script may hard-delete an audit-relevant
+# model anywhere in the shipped source, not just under apps/api/scripts/. This is what stops the
+# NEXT reset-demo.ts: D-08 above only ever scanned apps/api/scripts/ for a literal DROP-DATABASE
+# statement, and reset-demo.ts missed it on both axes at once (wrong directory, deleteMany
+# instead of DROP DATABASE).
+#
+# "Self-invoking script" is deliberately narrow and text-based: a line starting with `main(` at
+# column 0. Every operator script in this repo ends that way (`main()`, `main().catch(...)`,
+# `void main();` — apps/api/scripts/*.ts, packages/db/src/{seed,seed-demo,reset-demo}.ts all
+# match). Route handlers and facade functions never do — they are `export async function
+# xRoutes(app)` or named exports invoked BY the Fastify app, never by a top-level self-call —
+# which is exactly why the already-reviewed, tenant-validated hard-delete call sites in
+# apps/api/src/contexts/{absence,platform,time-tracking}/... (their own docs call this the "F3
+# exception", reachable only via an authenticated, tenant-scoped hard-delete endpoint) do NOT
+# trip this gate: they are library functions, never directly executable on their own.
+#
+# Honest limits — a checker blind to a shape reports nothing, and nothing looks identical to
+# clean:
+#   - Text scan, not control-flow analysis. A script whose entrypoint is NOT a column-0 `main(`
+#     line (a top-level `await`, an IIFE, a default export a caller invokes some other way) is
+#     invisible to it.
+#   - Recognizes exactly five literal Prisma model accessors (timeEntry / leaveRequest / absence
+#     / employee / saldoSnapshot). A delete reached via `$queryRaw`/`$executeRaw`, an aliased
+#     client variable, or a NEW audit-relevant model added to the schema after this comment was
+#     written will not match until this list is updated by hand.
+#   - Does not follow imports: a script that calls out to a helper in ANOTHER file to do the
+#     deleting is invisible unless that helper file ALSO has a column-0 `main(` line (it won't,
+#     by construction, since it is by definition not the entrypoint).
+#   - A NODE_ENV/confirmation guard inside the flagged file does NOT exempt it. This gate judges
+#     shippability, not whether a guard is correct — a self-invoking hard-delete script has no
+#     business in the production artifact regardless (part 2 above).
+#   - Scans /app/apps and /app/packages (excluding node_modules/ and generated/ Prisma client
+#     output) for *.ts/*.js only. The Dockerfile that defines this gate is itself never a
+#     scan target: it has no .ts/.js extension, so the trick the D-08 gate above uses (a regex
+#     dot to dodge self-matching) has no equivalent failure mode to guard against here.
+RUN CANDIDATES=$(find /app/apps /app/packages -type f \( -name "*.ts" -o -name "*.js" \) \
+      -not -path "*/node_modules/*" -not -path "*/generated/*" \
+      -exec grep -lE '\.(timeEntry|leaveRequest|absence|employee|saldoSnapshot)\.(deleteMany|delete)\(' {} \; 2>/dev/null); \
+    HITS=""; \
+    if [ -n "$CANDIDATES" ]; then \
+      HITS=$(printf '%s\n' $CANDIDATES | xargs grep -lE '^main\(' 2>/dev/null); \
+    fi; \
+    if [ -n "$HITS" ]; then \
+      echo "FATAL: a self-invoking script (top-level 'main(' entrypoint) hard-deletes an audit-relevant model (GH #213 part 3):" >&2; \
+      echo "$HITS" >&2; \
+      exit 1; \
+    fi
+
 COPY --from=build /app/docs/release-notes/ ./docs/release-notes/
 
 # Build gate: the release-notes corpus must actually be in the image. A missing corpus would ship
