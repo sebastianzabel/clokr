@@ -16,14 +16,18 @@ import {
   calcExpectedMinutesTz,
 } from "../../working-time-account/timezone";
 import { getHolidays, STATE_MAP } from "../../platform/holidays";
-import { hasApprovedLeaveOnDate } from "../../absence/leave-check";
+import { DISPLAY_NAME } from "../../absence/leave-type"; // Phase 100b Plan 14 (D-05) — renders hasApprovedLeaveOnDate's code
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { resolveClockEvent } from "../../../services/clock/resolver";
 import { resolveActor } from "../../../services/clock/audit-actor";
 import type { ClockEvent } from "../../../services/clock/types";
 import { closeEmployeeMonth } from "../../working-time-account/close-employee-month"; // SNAP-03 — Phase 76.27
 import { loadBsSlotOverrides } from "../../absence/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
-import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1
+import {
+  getAbsencesOverlapping,
+  getApprovedLeaveOverlapping,
+  hasApprovedLeaveOnDate,
+} from "../../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1; Plan 14 — D-05 (index is the public surface, AC-1)
 import {
   getRetroEntryWindowDays,
   computeRetroLimitStr,
@@ -1092,8 +1096,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // a non-manager could set to a foreign UUID to bypass the leave block.
       const manualLeave = await hasApprovedLeaveOnDate(app.prisma, employeeId, entryDateStr);
       if (manualLeave?.status === "APPROVED") {
+        // Phase 100b Plan 14 (D-05): render the display name here, at the caller, via the ONE
+        // Phase 97/98b mapping — hasApprovedLeaveOnDate returns a stable code, never a
+        // tenant-editable display string, so this § 8 BUrlG rejection message no longer depends
+        // on a tenant setting.
         return reply.code(409).send({
-          error: `§ 8 BUrlG: An diesem Tag ist ${manualLeave.type} genehmigt. Bitte zuerst stornieren.`,
+          error: `§ 8 BUrlG: An diesem Tag ist ${DISPLAY_NAME[manualLeave.code]} genehmigt. Bitte zuerst stornieren.`,
         });
       }
 

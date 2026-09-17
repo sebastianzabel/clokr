@@ -278,57 +278,57 @@
   {
     "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
     "handler": "POST /api/v1/time-entries/nfc-punch",
-    "validatedAt": 405,
+    "validatedAt": 409,
     "calls": [
       {
         "call": "employee.findFirst",
-        "line": 414
+        "line": 418
       }
     ],
-    "reason": "This route bypasses req.user entirely by design (NFC terminal firmware auth via a raw Bearer token, not a logged-in user). The terminal's API key is authenticated by a hashed-key lookup at line 405 (terminalApiKey.findUnique({ keyHash })); employee.findFirst at line 414 scopes by apiKey.tenantId, the validated principal tenant for this request, not by req.user.tenantId. (Line shifted +1 in Phase 100B Plan 12's new import-block entry — on top of the -3 net shift Phase 100B Plan 07 already recorded here — no finding, mechanical only.)"
+    "reason": "This route bypasses req.user entirely by design (NFC terminal firmware auth via a raw Bearer token, not a logged-in user). The terminal's API key is authenticated by a hashed-key lookup at line 405 (terminalApiKey.findUnique({ keyHash })); employee.findFirst at line 414 scopes by apiKey.tenantId, the validated principal tenant for this request, not by req.user.tenantId. (Line shifted +1 in Phase 100B Plan 12's new import-block entry — on top of the -3 net shift Phase 100B Plan 07 already recorded here — no finding, mechanical only.) (Line shifted +4 in Phase 100B Plan 14 — time-entries.ts:19 lost one direct import and gained a 4-line import block; no finding, mechanical only.)"
   },
   {
     "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
     "handler": "POST /api/v1/time-entries (manual entry)",
-    "validatedAt": 1041,
+    "validatedAt": 1045,
     "calls": [
       {
         "call": "retroEntryRequest.findFirst",
-        "line": 1112
+        "line": 1120
       }
     ],
-    "reason": "targetEmployee (and therefore employeeId) is tenant-validated inline at line 1041 (employee.findFirst({ id: employeeId, tenantId: req.user.tenantId })); retroEntryRequest.findFirst reuses the SAME validated employeeId in its where a few lines later. (Line shifted +1 in Phase 100B Plan 12's new import-block entry — on top of the -3 net shift Phase 100B Plan 07 already recorded here — no finding, mechanical only.)"
+    "reason": "targetEmployee (and therefore employeeId) is tenant-validated inline at line 1041 (employee.findFirst({ id: employeeId, tenantId: req.user.tenantId })); retroEntryRequest.findFirst reuses the SAME validated employeeId in its where a few lines later. (Line shifted +1 in Phase 100B Plan 12's new import-block entry — on top of the -3 net shift Phase 100B Plan 07 already recorded here — no finding, mechanical only.) (Phase 100B Plan 14: validatedAt shifted +4 (only the import-block widening precedes it), the call itself shifted +8 (the D-05 rendering comment above the error return also precedes it); no finding, mechanical only.)"
   },
   {
     "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
     "handler": "PUT /api/v1/time-entries/:id",
-    "validatedAt": 1549,
+    "validatedAt": 1557,
     "calls": [
       {
         "call": "retroEntryRequest.findFirst",
-        "line": 1683
+        "line": 1691
       },
       {
         "call": "break.deleteMany",
-        "line": 1818
+        "line": 1826
       },
       {
         "call": "break.deleteMany",
-        "line": 1840
+        "line": 1848
       }
     ],
-    "reason": "existing (the TimeEntry) is fetch-then-compared via existing.employee.tenantId at line 1549. retroEntryRequest.findFirst at line 1683 is scoped by existing.employeeId — a field read off that already-validated row, not a client-supplied value. Both break.deleteMany calls reuse existing's own id (the entry's own primary key, validated at fetch) as timeEntryId. (Line shifted +1 in Phase 100B Plan 12's new import-block entry — on top of the -3 net shift Phase 100B Plan 07 already recorded here — no finding, mechanical only.)"
+    "reason": "existing (the TimeEntry) is fetch-then-compared via existing.employee.tenantId at line 1549. retroEntryRequest.findFirst at line 1683 is scoped by existing.employeeId — a field read off that already-validated row, not a client-supplied value. Both break.deleteMany calls reuse existing's own id (the entry's own primary key, validated at fetch) as timeEntryId. (Line shifted +1 in Phase 100B Plan 12's new import-block entry — on top of the -3 net shift Phase 100B Plan 07 already recorded here — no finding, mechanical only.) (Line shifted +8 in Phase 100B Plan 14 — a 4-line import-block widening plus a 4-line D-05 rendering comment above the error return; no finding, mechanical only.)"
   },
   {
     "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
     "handler": "PATCH /api/v1/time-entries/:id/break-status",
-    "validatedAt": 2181,
+    "validatedAt": 2189,
     "calls": [
       {
         "call": "break.deleteMany",
-        "line": 2250
+        "line": 2258
       }
     ],
-    "reason": "entry (the TimeEntry) is fetch-then-compared via entry.employee.tenantId at line 2181; break.deleteMany at line 2250 reuses the SAME validated id as timeEntryId later in the same handler, after the cross-tenant branch already returned 404. (Line shifted +1 in Phase 100B Plan 12's new import-block entry — on top of the -3 net shift Phase 100B Plan 07 already recorded here — no finding, mechanical only. `validatedAt` corrected to 2180 by an earlier plan, its actual pre-existing location before that plan's own shift.)"
+    "reason": "entry (the TimeEntry) is fetch-then-compared via entry.employee.tenantId at line 2181; break.deleteMany at line 2250 reuses the SAME validated id as timeEntryId later in the same handler, after the cross-tenant branch already returned 404. (Line shifted +1 in Phase 100B Plan 12's new import-block entry — on top of the -3 net shift Phase 100B Plan 07 already recorded here — no finding, mechanical only. `validatedAt` corrected to 2180 by an earlier plan, its actual pre-existing location before that plan's own shift.) (Line shifted +8 in Phase 100B Plan 14 — a 4-line import-block widening plus a 4-line D-05 rendering comment above the error return; no finding, mechanical only.)"
   }
 ]

@@ -127,8 +127,15 @@ import { readFileSync } from "node:fs";
 // MIN_TESTS rises from 3057 to 3076: +19 test cases in that new file (verified with
 // `pnpm exec vitest run .../facade-leave-requests.test.ts`, "19 tests" in its own output) —
 // 3057 + 19 = 3076. No other test file's test COUNT changed in this plan.
+//
+// Phase 100B Plan 14 (AC-4, closing wave 6) — no new test FILE (leave-check.test.ts already
+// existed) — MIN_FILES stays 262. MIN_TESTS rises from 3076 to 3077: the LeaveRequest branch's
+// describe block gained a fourth case (the null-LeaveType.code -> OTHER fallback) while its
+// original "tenant-editable name" case was replaced rather than added alongside — net +1 test in
+// that file (verified with `pnpm exec vitest run .../leave-check.test.ts`, "7 tests" in its own
+// output, up from 6) — 3076 + 1 = 3077.
 const MIN_FILES = 262;
-const MIN_TESTS = 3076;
+const MIN_TESTS = 3077;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

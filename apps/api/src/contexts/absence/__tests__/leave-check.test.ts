@@ -1,21 +1,25 @@
 import { describe, it, expect, vi } from "vitest";
-import type { Prisma } from "@clokr/db";
+import type { LeaveTypeCode, Prisma } from "@clokr/db";
 import { hasApprovedLeaveOnDate } from "../leave-check";
 
 /**
  * Pure unit test for `hasApprovedLeaveOnDate` — no `buildApp()`, no database, mirrors
  * `leave-type.test.ts`'s style. Covers BOTH branches of the function:
- *  - Phase 98b (D-01): the MATERNITY/PARENTAL Absence branch (`:47`) — the two DISPLAY_NAME
- *    lookups that replaced the ternary Phase 98b folded away.
- *  - Phase 100B plan 02 (D-05, D-09/R4): the LeaveRequest branch (`:28`), which today returns
- *    the tenant-EDITABLE `leaveType.name` — untested until this plan, despite being the branch
- *    D-05 changes in plan 100B-14 to return the stable `LeaveTypeCode` instead. Also pins branch
+ *  - Phase 98b (D-01): the MATERNITY/PARENTAL Absence branch (`:47`) — `Absence.type` IS already
+ *    the stable `LeaveTypeCode`, returned directly.
+ *  - Phase 100B plan 02/14 (D-05, D-09/R4): the LeaveRequest branch (`:28`) — since plan 14,
+ *    returns the stable `LeaveTypeCode` selected from `LeaveType.code`. This file's implementation
+ *    deliberately never selects `LeaveType.name` at all (AC-4) — the fixture below reflects that:
+ *    `leaveTypeCode` is the only field the stub's mocked `findFirst` resolves. Also pins branch
  *    ordering: `hasApprovedLeaveOnDate` returns early on a LeaveRequest match (`:28`), so when
  *    both a LeaveRequest and a qualifying Absence would match the same day, the LeaveRequest wins.
  */
 function stubPrisma(
   opts: {
-    leaveRequest?: { leaveTypeName: string; status: "APPROVED" | "CANCELLATION_REQUESTED" } | null;
+    leaveRequest?: {
+      leaveTypeCode: LeaveTypeCode | null;
+      status: "APPROVED" | "CANCELLATION_REQUESTED";
+    } | null;
     absenceType?: "MATERNITY" | "PARENTAL" | null;
   } = {},
 ): Prisma.TransactionClient {
@@ -26,7 +30,7 @@ function stubPrisma(
         .fn()
         .mockResolvedValue(
           leaveRequest
-            ? { leaveType: { name: leaveRequest.leaveTypeName }, status: leaveRequest.status }
+            ? { leaveType: { code: leaveRequest.leaveTypeCode }, status: leaveRequest.status }
             : null,
         ),
     },
@@ -37,22 +41,22 @@ function stubPrisma(
 }
 
 describe("hasApprovedLeaveOnDate — MATERNITY/PARENTAL Absence branch (Phase 98b, D-01)", () => {
-  it("returns 'Mutterschutz' for a MATERNITY absence row", async () => {
+  it("returns the MATERNITY code directly for a MATERNITY absence row", async () => {
     const result = await hasApprovedLeaveOnDate(
       stubPrisma({ absenceType: "MATERNITY" }),
       "emp-1",
       "2026-09-15",
     );
-    expect(result).toEqual({ type: "Mutterschutz", status: "APPROVED" });
+    expect(result).toEqual({ code: "MATERNITY", status: "APPROVED" });
   });
 
-  it("returns 'Elternzeit' for a PARENTAL absence row", async () => {
+  it("returns the PARENTAL code directly for a PARENTAL absence row", async () => {
     const result = await hasApprovedLeaveOnDate(
       stubPrisma({ absenceType: "PARENTAL" }),
       "emp-1",
       "2026-09-15",
     );
-    expect(result).toEqual({ type: "Elternzeit", status: "APPROVED" });
+    expect(result).toEqual({ code: "PARENTAL", status: "APPROVED" });
   });
 
   it("returns null when neither a LeaveRequest nor a MATERNITY/PARENTAL Absence exists", async () => {
@@ -61,35 +65,31 @@ describe("hasApprovedLeaveOnDate — MATERNITY/PARENTAL Absence branch (Phase 98
   });
 });
 
-describe("hasApprovedLeaveOnDate — LeaveRequest branch (Phase 100B plan 02, D-05 pre-change)", () => {
-  it("returns the tenant-editable leaveType.name for an APPROVED LeaveRequest — TODAY's behaviour", async () => {
-    // TODO(100b-14): D-05 changes the LeaveRequest branch (`leave-check.ts:28`) to return the
-    // stable `LeaveTypeCode` instead of this tenant-editable display name. This assertion is
-    // EXPECTED to change under that plan — it exists so the change is a visible diff on a named
-    // test, not a silent one (CONTEXT.md D-05).
+describe("hasApprovedLeaveOnDate — LeaveRequest branch (Phase 100B plan 14, D-05)", () => {
+  it("returns the stable code, sourced only from LeaveType.code — the property D-05 buys", async () => {
+    // The whole point of D-05: this function must never read LeaveType.name (a tenant-editable
+    // display string) to decide what it returns. The stub below cannot even express a "renamed"
+    // scenario any more — it only carries `code` — which is itself the proof: a renamed
+    // LeaveType.name cannot influence this branch's answer because the query never selects it.
     const result = await hasApprovedLeaveOnDate(
-      stubPrisma({
-        leaveRequest: { leaveTypeName: "Erholungsurlaub (neu)", status: "APPROVED" },
-      }),
+      stubPrisma({ leaveRequest: { leaveTypeCode: "VACATION", status: "APPROVED" } }),
       "emp-1",
       "2026-09-15",
     );
-    expect(result).toEqual({ type: "Erholungsurlaub (neu)", status: "APPROVED" });
+    expect(result).toEqual({ code: "VACATION", status: "APPROVED" });
   });
 
   it("returns status 'CANCELLATION_REQUESTED' for a LeaveRequest under cancellation (R4)", async () => {
     // services/clock/resolver.ts:39 consumes only `.status` to block clock-in during § 8 BUrlG
-    // leave; nothing pinned this at the query level before this plan (clock-in-resolver.test.ts
+    // leave; nothing pinned this at the query level before plan 02 (clock-in-resolver.test.ts
     // does not exist — RESEARCH.md's assumption A5 was wrong; presence.test.ts only tests the
     // pure resolvePresenceState with data handed to it, never this query).
     const result = await hasApprovedLeaveOnDate(
-      stubPrisma({
-        leaveRequest: { leaveTypeName: "Urlaub", status: "CANCELLATION_REQUESTED" },
-      }),
+      stubPrisma({ leaveRequest: { leaveTypeCode: "VACATION", status: "CANCELLATION_REQUESTED" } }),
       "emp-1",
       "2026-09-15",
     );
-    expect(result).toEqual({ type: "Urlaub", status: "CANCELLATION_REQUESTED" });
+    expect(result).toEqual({ code: "VACATION", status: "CANCELLATION_REQUESTED" });
   });
 
   it("prefers the LeaveRequest branch over a matching MATERNITY Absence on the same day (branch ordering)", async () => {
@@ -98,12 +98,27 @@ describe("hasApprovedLeaveOnDate — LeaveRequest branch (Phase 100B plan 02, D-
     // LeaveRequest answer wins and the Absence branch is never reached.
     const result = await hasApprovedLeaveOnDate(
       stubPrisma({
-        leaveRequest: { leaveTypeName: "Urlaub", status: "APPROVED" },
+        leaveRequest: { leaveTypeCode: "VACATION", status: "APPROVED" },
         absenceType: "MATERNITY",
       }),
       "emp-1",
       "2026-09-15",
     );
-    expect(result).toEqual({ type: "Urlaub", status: "APPROVED" });
+    expect(result).toEqual({ code: "VACATION", status: "APPROVED" });
+  });
+
+  it("falls back to the generic OTHER code when LeaveType.code is null, rather than crashing or reading .name", async () => {
+    // LeaveType.code is nullable in the schema until the Phase 97/98b post-rollout sweep's SET NOT
+    // NULL lands (schema.prisma:612-613). Checked against the dev database on 2026-09-17: 5/5 rows
+    // already carry a code — this path is defensive, not observed in production today. It does
+    // NOT fall back to resolving the code from the row's name: `leave-type.ts`'s
+    // `leaveTypeCodeForName()` is backfill-only and may not be called from a request handler, and
+    // this function is called from two of them.
+    const result = await hasApprovedLeaveOnDate(
+      stubPrisma({ leaveRequest: { leaveTypeCode: null, status: "APPROVED" } }),
+      "emp-1",
+      "2026-09-15",
+    );
+    expect(result).toEqual({ code: "OTHER", status: "APPROVED" });
   });
 });

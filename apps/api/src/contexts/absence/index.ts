@@ -35,22 +35,24 @@
  *
  * D-07: every facade function's first parameter is `db: Prisma.TransactionClient`, never
  * `app: FastifyInstance` — `hasApprovedLeaveOnDate` below already has this shape
- * (`leave-check.ts:10`, parameter named `prisma`) and is already called both with `app.prisma`
- * (`contexts/time-tracking/api/time-entries.ts:1095`) and with a `tx`
- * (`services/clock/resolver.ts:39`); it is the pattern every later facade function in this
+ * (`leave-check.ts:18`, parameter named `prisma`) and is called both with `app.prisma`
+ * (`contexts/time-tracking/api/time-entries.ts`) and with a `tx`
+ * (`services/clock/resolver.ts`); it is the pattern every later facade function in this
  * context copies. `apps/api/scripts/lint-facade-signatures.ts` (plan 03) enforces this
  * mechanically.
  *
  * D-08: the soft-delete guard is NOT applied uniformly across this surface. Reading functions
  * carry `deletedAt: null` (as `hasApprovedLeaveOnDate` already does). The named compliance
- * functions this context will expose later (DSGVO Art. 17 anonymisation support, hard-delete
- * support, retention archival support) deliberately OMIT it and say so in their own docblock — a
- * blanket guard here would be an Art. 17 regression, not an improvement: a deleted employee's
- * leave rows must still be reachable for the anonymisation pass to null out their notes.
+ * functions this context exposes (DSGVO Art. 17 anonymisation support, hard-delete support,
+ * retention archival support) deliberately OMIT it and say so in their own docblock — a blanket
+ * guard here would be an Art. 17 regression, not an improvement: a deleted employee's leave rows
+ * must still be reachable for the anonymisation pass to null out their notes.
  *
- * Callers keep importing `../../absence/leave-check` directly for now — rewiring `time-entries.ts`
- * and `resolver.ts` to this index is wave 5's work (plan 100B-13), not this plan's. Two import
- * paths to the same function in the tree for no benefit is exactly what this plan avoids.
+ * Plan 100B-14 (AC-4, D-05): `hasApprovedLeaveOnDate` returns a stable `LeaveTypeCode`, never a
+ * display string — see `leave-check.ts`'s own header. Both of its two callers
+ * (`time-entries.ts`, `services/clock/resolver.ts`) were rewired in the same plan to import it
+ * from this index rather than the concrete file, so AC-1's "the index IS the public surface" is
+ * true for this function too — no second import path to the same function survives in the tree.
  */
 export { hasApprovedLeaveOnDate } from "./leave-check";
 

@@ -8,7 +8,7 @@ import type { ClockEvent, ClockResolution, ClockState } from "./types";
 import { decide } from "./state-machine";
 import { emitClockAudit } from "./audit-actor";
 import { consolidateSameDayEntries, calcBreakMinutesLocal } from "./consolidate";
-import { hasApprovedLeaveOnDate } from "../../contexts/absence/leave-check";
+import { hasApprovedLeaveOnDate } from "../../contexts/absence"; // Phase 100b Plan 14 (AC-1) — index is the public surface
 import {
   invalidReasonFields,
   CLEARED_INVALID_REASON,
