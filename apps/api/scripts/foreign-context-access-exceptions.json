@@ -104,21 +104,7 @@
           "line": 332
         }
       ],
-      "reason": "D-03 (Phase 100b): this route resets a single test-only tenant's full dataset for e2e bootstrapping. The 17 deleteMany calls (lines 242-277) are the teardown: giving every context its own destructive resetForTests() on its PERMANENT public surface would be the worse trade in an audit-proof system, so this direct-access path is excepted instead of facaded. The route is gated behind ALLOW_TEST_BOOTSTRAP, never registers on int or prod, and its teardown only ever matches tenant IDs of the form ^test-[a-zA-Z0-9_-]{8}$, so the exception exists for something that is not reachable in a real environment at all. The 4 create calls (overtimeAccount:173, leaveType:180, leaveEntitlement:188, terminalApiKey:332) are seeding calls for the same test-only bootstrap route and are excepted on the same grounds; terminalApiKey.create at line 332 is a separate seeding block outside the teardown handler proper but serves the identical test-bootstrap purpose. Lines shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context absence/leave-type import, E-8) — no finding, mechanical only."
-    },
-    {
-      "file": "apps/api/src/contexts/working-time-account/overtime-balance.ts",
-      "calls": [
-        {
-          "call": "timeEntry.count",
-          "line": 125
-        },
-        {
-          "call": "timeEntry.findMany",
-          "line": 139
-        }
-      ],
-      "reason": "Phase 101B (Issue #101): computeOvertimeBalanceBreakdown's hasTodayEntries cutoff check and its worked-minutes-since-snapshot read were moved verbatim, unedited, out of time-tracking/api/time-entries.ts into this file, per the owner's own Nebenbefund decision that the whole overtime-balance closure belongs in working-time-account on domain grounds (101B-ZYKLEN-BEFUND.md §4) — measured cycle-neutral, not measured against this Phase-100b gate. Before the move these two calls sat IN the time-tracking area, so they were never foreign; the move itself, not a behaviour change, is what turns them foreign. `time-tracking/facade/time-entries.ts` has no existing function shaped like either query (todayEntries-count-as-cutoff-decider; date-ranged WORK-type sum), and this plan's own non-negotiable is a byte-for-byte relocation (verbatim diff proved in the plan's SUMMARY) — writing a new facade function and rewiring these two call sites is a real, valid follow-up but is a rewrite, which this plan is not authorised to do. Tracked as a residual driver alongside the ones 101B-ZYKLEN-BEFUND.md §7 already hands to ADR 0001 Eintrag H (Block-2, #102-#104)."
+      "reason": "D-03 (Phase 100b): this route resets a single test-only tenant's full dataset for e2e bootstrapping. The 17 deleteMany calls (lines 242-277) are the teardown: giving every context its own destructive resetForTests() on its PERMANENT public surface would be the worse trade in an audit-proof system, so this direct-access path is excepted instead of facaded. The route is gated behind ALLOW_TEST_BOOTSTRAP, never registers on int or prod, and its teardown only ever matches tenant IDs of the form ^test-[a-zA-Z0-9_-]{8}$, so the exception exists for something that is not reachable in a real environment at all. The 4 create calls (overtimeAccount:173, leaveType:180, leaveEntitlement:188, terminalApiKey:332) are seeding calls for the same test-only bootstrap route and are excepted on the same grounds; terminalApiKey.create at line 332 is a separate seeding block outside the teardown handler proper but serves the identical test-bootstrap purpose. Lines shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context absence/leave-type import, E-8) \u2014 no finding, mechanical only."
     }
   ]
 }

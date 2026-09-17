@@ -6,6 +6,14 @@
 //
 // getEffectiveSchedule is imported from ../time-tracking/entry-invariants rather than defined
 // here — "which schedule applies to this employee on this day" is a Zeiterfassung question.
+//
+// Follow-up fix (Phase 101B): the move above turned the two TimeEntry reads inline in
+// computeOvertimeBalanceBreakdown (the "has today's entries" cutoff check and the worked-minutes
+// read) into a cross-context Prisma access — TimeEntry is owned by time-tracking. Both are now
+// routed through time-tracking's own `getValidWorkedEntriesInRange` facade export (T1, "the saldo
+// input" — see `time-tracking/facade/time-entries.ts`), the exact same read three other
+// working-time-account call sites already use (month-saldo.ts, recalculate-snapshots.ts,
+// auto-close-month.ts, overtime.ts). No `foreign-context-access-exceptions.json` entry needed.
 
 import { FastifyInstance } from "fastify";
 import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1
@@ -24,6 +32,7 @@ import {
 import { setOvertimeAccountBalance } from "./facade/overtime-account";
 import { getEffectiveBreakDuration } from "../time-tracking/break-effective";
 import { getEffectiveSchedule } from "../time-tracking/entry-invariants";
+import { getValidWorkedEntriesInRange } from "../time-tracking"; // Phase 100B Plan 08 — T1
 
 // ── Hilfsfunktion: Überstundensaldo berechnen (snapshot-basiert, TZ-aware) ────
 // Nutzt den letzten SaldoSnapshot als Basis und rechnet nur den offenen Zeitraum
@@ -121,31 +130,33 @@ export async function computeOvertimeBalanceBreakdown(
     rangeStart = hireDateNorm ?? new Date(0); // epoch fallback if hireDate is null
   }
 
-  // Determine cutoff: include today only if entries exist
-  const hasTodayEntries = await app.prisma.timeEntry.count({
-    where: {
-      employeeId,
-      deletedAt: null,
-      date: todayDate,
-      endTime: { not: null },
-      type: "WORK",
-      isInvalid: false,
-    },
-  });
-  const cutoffDate = hasTodayEntries > 0 ? todayDate : yesterdayDate;
+  // Determine cutoff: include today only if entries exist.
+  // Routed through time-tracking's T1 facade read (see file header follow-up-fix note): its
+  // `where` is byte-identical to the former inline query, and a single-day [todayDate, todayDate]
+  // range is equivalent to the former exact-date match for a @db.Date column.
+  const employeeScope = {
+    kind: "employee" as const,
+    employeeId,
+    tenantId: employee?.tenantId ?? "",
+  };
+  const todayValidEntries = await getValidWorkedEntriesInRange(
+    app.prisma,
+    employeeScope,
+    todayDate,
+    todayDate,
+  );
+  const cutoffDate = todayValidEntries.length > 0 ? todayDate : yesterdayDate;
   const effectiveEnd = cutoffDate < rangeStart ? rangeStart : cutoffDate;
 
-  // Worked minutes since snapshot (or month start)
-  const entries = await app.prisma.timeEntry.findMany({
-    where: {
-      employeeId,
-      deletedAt: null,
-      date: { gte: rangeStart, lte: effectiveEnd },
-      endTime: { not: null },
-      type: "WORK",
-      isInvalid: false,
-    },
-  });
+  // Worked minutes since snapshot (or month start). Same T1 facade read — every downstream use of
+  // `entries` in this file only reads `date`/`startTime`/`endTime`/`breakMinutes`, exactly the
+  // fields T1's `select` returns.
+  const entries = await getValidWorkedEntriesInRange(
+    app.prisma,
+    employeeScope,
+    rangeStart,
+    effectiveEnd,
+  );
 
   const workedMinutes = entries.reduce((sum, e) => {
     if (!e.endTime) return sum;
