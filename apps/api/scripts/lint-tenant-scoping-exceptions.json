@@ -206,34 +206,34 @@
   {
     "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
     "handler": "PUT /api/v1/shifts/:id",
-    "validatedAt": 2056,
+    "validatedAt": 2055,
     "calls": [
       {
         "call": "shift.findUnique",
-        "line": 2044
+        "line": 2043
       },
       {
         "call": "shift.update",
-        "line": 2235
+        "line": 2234
       }
     ],
-    "reason": "Shift has no tenantId of its own. The shift is first fetched by id (line 2044, unscoped by itself), then its OWNER is validated by a SECOND fetch+compare on a DERIVED field (existingOwner = employee.findUnique({ id: existing.employeeId }), compared at line 2056) BEFORE the fetched row is read or written anywhere below — including the shift.update at line 2235, which reuses the SAME id. This mirrors overtime.ts's own comment ('Shift has no tenantId of its own — go via employee'). (Lines shifted -21 net in Phase 100B Plan 13: findShiftConflict's leaveRequest.findFirst collapsing into getApprovedLeaveOverlapping(...) plus the A1/A2 rewires further up the file (shifts.ts:901→getApprovedLeaveOverlapping, 1272→getActiveLeaveOverlapping). On top of the -8 net shift Phase 100B Plan 12 already recorded here, the -15 net shift Phase 100B Plan 11, the -2 net shift Phase 100B Plan 10, the earlier +1 from Phase 100B Plan 07's `isMonthClosed` import and the +1 from Issue #241's `monthRangeUtc` import.)"
+    "reason": "Shift has no tenantId of its own. The shift is first fetched by id (line 2043, unscoped by itself), then its OWNER is validated by a SECOND fetch+compare on a DERIVED field (existingOwner = employee.findUnique({ id: existing.employeeId }), compared at line 2055) BEFORE the fetched row is read or written anywhere below — including the shift.update at line 2234, which reuses the SAME id. This mirrors overtime.ts's own comment ('Shift has no tenantId of its own — go via employee'). (Lines shifted -1 net in Phase 101B Plan 07: the platform/holidays + platform/anonymize import pair merged into one platform/index.ts import. On top of the -21 net shift Phase 100B Plan 13, the -8 net shift Phase 100B Plan 12, the -15 net shift Phase 100B Plan 11, the -2 net shift Phase 100B Plan 10, the earlier +1 from Phase 100B Plan 07's `isMonthClosed` import and the +1 from Issue #241's `monthRangeUtc` import.)"
   },
   {
     "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
     "handler": "DELETE /api/v1/shifts/:id",
-    "validatedAt": 3145,
+    "validatedAt": 3144,
     "calls": [
       {
         "call": "shift.findUnique",
-        "line": 3136
+        "line": 3135
       },
       {
         "call": "shift.delete",
-        "line": 3169
+        "line": 3168
       }
     ],
-    "reason": "Same derived-field second-hop guard as the PUT /:id handler above: the shift is fetched by id (line 3136), then existingOwner = employee.findUnique({ id: existing.employeeId }) is compared at line 3145 BEFORE the shift is read or deleted — including the shift.delete at line 3169, which reuses the SAME id. (Lines shifted -33 net in Phase 100B Plan 13, upstream of this handler: findShiftConflict's leaveRequest.findFirst collapse plus the A1 rewires at shifts.ts:2444/2792 and the A2 rewire at shifts.ts:1272, all above this handler. On top of the -20 net shift Phase 100B Plan 12 already recorded here — no finding, mechanical only.)"
+    "reason": "Same derived-field second-hop guard as the PUT /:id handler above: the shift is fetched by id (line 3135), then existingOwner = employee.findUnique({ id: existing.employeeId }) is compared at line 3144 BEFORE the shift is read or deleted — including the shift.delete at line 3168, which reuses the SAME id. (Lines shifted -1 net in Phase 101B Plan 07: the platform/holidays + platform/anonymize import pair merged into one platform/index.ts import, upstream of this handler. On top of the -33 net shift Phase 100B Plan 13, the -20 net shift Phase 100B Plan 12 already recorded here — no finding, mechanical only.)"
   },
   {
     "file": "apps/api/src/contexts/platform/api/test-bootstrap.ts",
