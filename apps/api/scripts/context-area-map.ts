@@ -122,6 +122,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/anonymize.ts": "unterbau", // DSGVO Art. 17 anonymization; primary subject is Employee+User (CLAUDE.md "DSGVO Employee Deletion"), other models' notes/documents nulled as side effects
   "src/contexts/platform/audit-reason.ts": "unterbau", // shared "Begründung ist erforderlich" validation reused across every correction/storno field app-wide; audit-trail vocabulary, no model
   "src/contexts/platform/calculate-work-days.ts": "unterbau", // normalizes WorkSchedule.workDays — Unterbau's own model
+  "src/contexts/platform/employee-anonymization-filter.ts": "unterbau", // Phase 101B (Issue #101) — lifted out of anonymize.ts; Employee is Unterbau's own model, same as anonymize.ts above
   "src/contexts/platform/federal-state-iso.ts": "unterbau", // FederalState enum <-> ISO-3166-2, feeds PublicHoliday lookups (Unterbau model)
   "src/contexts/platform/holidays.ts": "unterbau", // German public-holiday calculation — PublicHoliday is Unterbau's own model
   "src/contexts/platform/month-first-date.ts": "unterbau", // WorkSchedule.validFrom month-1 rule — Unterbau's own model
@@ -148,6 +149,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/arbzg.ts": "zeiterfassung", // ArbZG §3/§4/§5 compliance checks over TimeEntry
   "src/contexts/time-tracking/break-constants.ts": "zeiterfassung", // Break-model constants
   "src/contexts/time-tracking/break-effective.ts": "zeiterfassung", // effective break-minutes calculation
+  "src/contexts/time-tracking/entry-invariants.ts": "zeiterfassung", // Phase 101B (Issue #101) — lifted out of api/time-entries.ts; one-per-day/overlap/month-lock/retro-window invariants + effective-schedule resolution over TimeEntry
   "src/contexts/time-tracking/find-unconfirmed-break-days.ts": "zeiterfassung", // AUTO/CONFIRMED/WAIVED break-status query over TimeEntry
   "src/contexts/time-tracking/invalid-reason.ts": "zeiterfassung", // TimeEntry.invalidReason string registry; 4 of 6 importers are Zeiterfassung
   "src/contexts/time-tracking/normalize-mac.ts": "zeiterfassung", // PresenceDevice MAC-address normalization
@@ -179,6 +181,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/illness-carryover-guard.ts": "abwesenheiten", // sickness/Krankheit carry-over guard over LeaveRequest
   "src/contexts/absence/jarbschg.ts": "abwesenheiten", // JArbSchG youth-protection rules over Absence/EmployeeVocationalSchoolPattern
   "src/contexts/absence/leave-check.ts": "abwesenheiten", // Absence/LeaveRequest overlap checks
+  "src/contexts/absence/leave-days.ts": "abwesenheiten", // Phase 101B (Issue #101) — lifted out of api/leave.ts; writes LeaveEntitlement (deduct/reverse/carry-over) primarily, same subject as leave.ts above
   "src/contexts/absence/leave-self-heal.ts": "abwesenheiten", // LeaveEntitlement/LeaveRequest/LeaveType self-heal
   "src/contexts/absence/leave-type.ts": "abwesenheiten", // LeaveTypeCode -> German display-name registry
   "src/contexts/absence/load-bs-slot-overrides.ts": "abwesenheiten", // EmployeeVocationalSchoolPattern slot overrides
@@ -227,6 +230,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/working-time-account/missing-entries-window.ts": "arbeitszeitkonto", // window-size companion of find-missing-workdays.ts, same callers
   "src/contexts/working-time-account/month-saldo.ts": "arbeitszeitkonto", // core Soll-vs-Ist saldo calculation — Arbeitszeitkonto's own definition
   "src/contexts/working-time-account/negative-balance-tolerance.ts": "arbeitszeitkonto", // Überstundenabbau minus-hours tolerance (Phase 100)
+  "src/contexts/working-time-account/overtime-balance.ts": "arbeitszeitkonto", // Phase 101B (Issue #101) — lifted out of time-tracking/api/time-entries.ts (owner's Nebenbefund); writes/computes OvertimeAccount balance, Arbeitszeitkonto's own subject
   "src/contexts/working-time-account/recalculate-snapshots.ts": "arbeitszeitkonto", // SaldoSnapshot recompute across the effective range
   "src/contexts/working-time-account/saldo-chain-classification.ts": "arbeitszeitkonto", // SaldoSnapshot chain delta classification
   "src/contexts/working-time-account/saldo-chain-integrity.ts": "arbeitszeitkonto", // SaldoSnapshot chain integrity check (Phase 98)
