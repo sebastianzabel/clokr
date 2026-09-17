@@ -2,7 +2,7 @@
 
 Clokr ist als **revisionssichere** Zeiterfassung für den deutschen Rechtsraum konzipiert. Diese Seite dokumentiert alle implementierten gesetzlichen Prüfungen und Aufbewahrungsregeln.
 
-> **Status:** Stand v1.9 (aktuell 1.9.2, 2026-08-03). Geprüft gegen den Code unter `apps/api/src/contexts/time-tracking/arbzg.ts`, `apps/api/src/contexts/absence/vacation-calc.ts`, `apps/api/src/contexts/platform/plugins/data-retention.ts`.
+> **Status:** Stand v1.9 (aktuell 1.9.2, 2026-08-03). Geprüft gegen den Code unter `apps/api/src/contexts/time-tracking/arbzg.ts`, `apps/api/src/contexts/absence/vacation-calc.ts`, `apps/api/src/composition/data-retention.ts`.
 
 ---
 
@@ -207,7 +207,7 @@ Implementiert in [`apps/api/src/contexts/platform/plugins/audit.ts`](../apps/api
 | ArbZG-Tests (33 Cases)              | `apps/api/src/contexts/time-tracking/__tests__/arbzg.test.ts`                                                              |
 | Urlaubsberechnung                   | `apps/api/src/contexts/absence/vacation-calc.ts`                                                                           |
 | Audit-Plugin                        | `apps/api/src/contexts/platform/plugins/audit.ts`                                                                          |
-| Data-Retention (jährlich + täglich) | `apps/api/src/contexts/platform/plugins/data-retention.ts`                                                                 |
+| Data-Retention (jährlich + täglich) | `apps/api/src/composition/data-retention.ts`                                                                               |
 | Auto-Break-Logik                    | `apps/api/src/contexts/time-tracking/api/time-entries.ts` (Suche `autoBreakMin`)                                           |
 | WiFi-Presence (Opt-In, Webhook)     | `apps/api/src/contexts/time-tracking/api/presence.ts`, `apps/api/src/contexts/time-tracking/api/admin-presence-sources.ts` |
 | Projektregeln                       | `CLAUDE.md` (Sektionen „Audit-Proof", „Data Retention", „ArbZG", „BUrlG")                                                  |
