@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { getHolidays, FederalStateCode, STATE_MAP } from "../holidays";
+// eslint-disable-next-line no-restricted-imports -- E-1: creating a holiday loops over every employee and calls the saldo recalculation directly. Disappears in Block 2 (#102-#104), where a holiday-created event replaces the direct call. ADR 0001 Eintrag H.
 import { recalculateSnapshots } from "../../working-time-account/recalculate-snapshots";
 
 export async function holidayRoutes(app: FastifyInstance) {

@@ -39,6 +39,7 @@ import bcrypt from "bcryptjs";
 import { createHash, randomBytes } from "crypto";
 import { z } from "zod";
 import { config } from "../../../config.js";
+// eslint-disable-next-line no-restricted-imports -- E-8: test-fixture route only, never registered on int or prod. Permanent named exception — same precedent as Phase 100b's D-03 for this same file. ADR 0001 Eintrag H.
 import { leaveTypeFields } from "../../absence/leave-type.js";
 
 declare module "fastify" {

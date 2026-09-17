@@ -5,10 +5,12 @@ import crypto from "crypto";
 import { Prisma } from "@clokr/db";
 import { fromZonedTime } from "date-fns-tz";
 import { requireRole } from "../../../middleware/auth";
+// eslint-disable-next-line no-restricted-imports -- E-2: the importer writes directly into time-tracking and working-time-account. Disappears in Block 2 (#102-#104). ADR 0001 Eintrag H.
 import {
   updateOvertimeAccount,
   validateTimeEntryInvariants,
 } from "../../time-tracking/api/time-entries";
+// eslint-disable-next-line no-restricted-imports -- E-2: the importer writes directly into time-tracking and working-time-account. Disappears in Block 2 (#102-#104). ADR 0001 Eintrag H.
 import { getTenantTimezone } from "../../working-time-account/timezone";
 import { createOvertimeAccount } from "../../working-time-account"; // Phase 100B Plan 06 — W13
 import { createImportedTimeEntry } from "../../time-tracking"; // Phase 100B Plan 08 — T12
