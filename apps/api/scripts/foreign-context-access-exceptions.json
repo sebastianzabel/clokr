@@ -19,29 +19,92 @@
     {
       "file": "apps/api/src/contexts/platform/api/test-bootstrap.ts",
       "calls": [
-        { "call": "overtimeAccount.create", "line": 172 },
-        { "call": "leaveType.create", "line": 179 },
-        { "call": "leaveEntitlement.create", "line": 187 },
-        { "call": "employeeAvailability.deleteMany", "line": 241 },
-        { "call": "employeeShiftPattern.deleteMany", "line": 244 },
-        { "call": "employeeVocationalSchoolPattern.deleteMany", "line": 247 },
-        { "call": "shift.deleteMany", "line": 250 },
-        { "call": "absence.deleteMany", "line": 251 },
-        { "call": "leaveRequest.deleteMany", "line": 252 },
-        { "call": "leaveEntitlement.deleteMany", "line": 253 },
-        { "call": "saldoSnapshot.deleteMany", "line": 256 },
-        { "call": "timeEntry.deleteMany", "line": 257 },
-        { "call": "overtimeTransaction.deleteMany", "line": 258 },
-        { "call": "overtimeAccount.deleteMany", "line": 261 },
-        { "call": "overtimePlan.deleteMany", "line": 264 },
-        { "call": "leaveType.deleteMany", "line": 271 },
-        { "call": "coverageRule.deleteMany", "line": 273 },
-        { "call": "shiftTemplate.deleteMany", "line": 274 },
-        { "call": "companyShutdown.deleteMany", "line": 275 },
-        { "call": "terminalApiKey.deleteMany", "line": 276 },
-        { "call": "terminalApiKey.create", "line": 331 }
+        {
+          "call": "overtimeAccount.create",
+          "line": 173
+        },
+        {
+          "call": "leaveType.create",
+          "line": 180
+        },
+        {
+          "call": "leaveEntitlement.create",
+          "line": 188
+        },
+        {
+          "call": "employeeAvailability.deleteMany",
+          "line": 242
+        },
+        {
+          "call": "employeeShiftPattern.deleteMany",
+          "line": 245
+        },
+        {
+          "call": "employeeVocationalSchoolPattern.deleteMany",
+          "line": 248
+        },
+        {
+          "call": "shift.deleteMany",
+          "line": 251
+        },
+        {
+          "call": "absence.deleteMany",
+          "line": 252
+        },
+        {
+          "call": "leaveRequest.deleteMany",
+          "line": 253
+        },
+        {
+          "call": "leaveEntitlement.deleteMany",
+          "line": 254
+        },
+        {
+          "call": "saldoSnapshot.deleteMany",
+          "line": 257
+        },
+        {
+          "call": "timeEntry.deleteMany",
+          "line": 258
+        },
+        {
+          "call": "overtimeTransaction.deleteMany",
+          "line": 259
+        },
+        {
+          "call": "overtimeAccount.deleteMany",
+          "line": 262
+        },
+        {
+          "call": "overtimePlan.deleteMany",
+          "line": 265
+        },
+        {
+          "call": "leaveType.deleteMany",
+          "line": 272
+        },
+        {
+          "call": "coverageRule.deleteMany",
+          "line": 274
+        },
+        {
+          "call": "shiftTemplate.deleteMany",
+          "line": 275
+        },
+        {
+          "call": "companyShutdown.deleteMany",
+          "line": 276
+        },
+        {
+          "call": "terminalApiKey.deleteMany",
+          "line": 277
+        },
+        {
+          "call": "terminalApiKey.create",
+          "line": 332
+        }
       ],
-      "reason": "D-03 (Phase 100b): this route resets a single test-only tenant's full dataset for e2e bootstrapping. The 17 deleteMany calls (lines 241-276) are the teardown: giving every context its own destructive resetForTests() on its PERMANENT public surface would be the worse trade in an audit-proof system, so this direct-access path is excepted instead of facaded. The route is gated behind ALLOW_TEST_BOOTSTRAP, never registers on int or prod, and its teardown only ever matches tenant IDs of the form ^test-[a-zA-Z0-9_-]{8}$, so the exception exists for something that is not reachable in a real environment at all. The 4 create calls (overtimeAccount:172, leaveType:179, leaveEntitlement:187, terminalApiKey:331) are seeding calls for the same test-only bootstrap route and are excepted on the same grounds; terminalApiKey.create at line 331 is a separate seeding block outside the teardown handler proper but serves the identical test-bootstrap purpose."
+      "reason": "D-03 (Phase 100b): this route resets a single test-only tenant's full dataset for e2e bootstrapping. The 17 deleteMany calls (lines 242-277) are the teardown: giving every context its own destructive resetForTests() on its PERMANENT public surface would be the worse trade in an audit-proof system, so this direct-access path is excepted instead of facaded. The route is gated behind ALLOW_TEST_BOOTSTRAP, never registers on int or prod, and its teardown only ever matches tenant IDs of the form ^test-[a-zA-Z0-9_-]{8}$, so the exception exists for something that is not reachable in a real environment at all. The 4 create calls (overtimeAccount:173, leaveType:180, leaveEntitlement:188, terminalApiKey:332) are seeding calls for the same test-only bootstrap route and are excepted on the same grounds; terminalApiKey.create at line 332 is a separate seeding block outside the teardown handler proper but serves the identical test-bootstrap purpose. Lines shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context absence/leave-type import, E-8) \u2014 no finding, mechanical only."
     }
   ]
 }

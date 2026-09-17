@@ -41,7 +41,7 @@ import {
   getEffectiveBreakDuration,
   type BreakEmployeeShape,
   type BreakTenantConfigShape,
-} from "../time-tracking/break-effective";
+} from "../time-tracking"; // Phase 101B (Issue #101, wave 8)
 
 /** Parse "HH:mm" into minutes since 00:00 (mirrors month-saldo.ts's hmToMin). */
 function hmToMin(hm: string): number {

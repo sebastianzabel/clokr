@@ -1,12 +1,17 @@
 import { PrismaClient } from "@clokr/db";
 import { fromZonedTime } from "date-fns-tz";
-import { getTenantTimezone, dateStrInTz, getDayOfWeekInTz } from "../working-time-account/timezone";
-import { BS_DAILY_DEFAULT_MIN } from "../absence/vocational-school-constants";
 import {
+  getTenantTimezone,
+  dateStrInTz,
+  getDayOfWeekInTz,
   countBsDaysInIsoWeek,
   getVocationalSchoolMinutesForDate,
-} from "../working-time-account/vocational-school-saldo";
-import { hasVocationalSchoolDay, getVocationalSchoolDays } from "../absence"; // Phase 100B Plan 12 — A6
+} from "../working-time-account"; // Phase 101B
+import {
+  hasVocationalSchoolDay, // Phase 100B Plan 12 — A6
+  getVocationalSchoolDays, // Phase 100B Plan 12 — A6
+  BS_DAILY_DEFAULT_MIN,
+} from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports
 
 export interface ArbZGWarning {
   code:

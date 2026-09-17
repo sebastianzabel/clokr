@@ -31,9 +31,9 @@
  */
 
 import { getDayHoursFromSchedule, getDayOfWeekInTz, dateStrInTz } from "./timezone";
-// presence.ts is import-free and pure (no Prisma, no DB, no async) — importing it here
-// does not break this file's own purity contract (Phase 128, D-01).
-import { isObligatedWorkday } from "../time-tracking/presence";
+// presence.ts (isObligatedWorkday's home) is import-free and pure (no Prisma, no DB, no async) —
+// importing it here does not break this file's own purity contract (Phase 128, D-01).
+import { isObligatedWorkday } from "../time-tracking"; // Phase 101B (Issue #101, wave 8)
 
 // ── Public types ──────────────────────────────────────────────────────────────
 

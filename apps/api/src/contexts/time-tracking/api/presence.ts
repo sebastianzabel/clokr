@@ -2,8 +2,8 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "crypto";
 import { normalizeMac } from "../normalize-mac";
-import { getCurrentShift } from "../../scheduling/get-current-shift";
-import { getTenantTimezone, dateStrInTz } from "../../working-time-account/timezone";
+import { getCurrentShift } from "../../scheduling"; // Phase 101B (Issue #101, wave 9)
+import { getTenantTimezone, dateStrInTz } from "../../working-time-account"; // Phase 101B
 import { resolveClockEvent } from "../../../services/clock/resolver";
 import type { ClockEvent } from "../../../services/clock/types";
 

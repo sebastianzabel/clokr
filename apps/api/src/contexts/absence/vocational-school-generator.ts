@@ -17,10 +17,13 @@
 import type { PrismaClient } from "@clokr/db";
 import { FederalState } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
-import { cleanupShiftsForBSAbsence } from "../scheduling/shift-cleanup";
+import { cleanupShiftsForBSAbsence } from "../scheduling"; // Phase 101B (Issue #101, wave 9)
 import { BS_PATTERN_ORDER_BY, findAmbiguousClaimDates } from "./vocational-school-pattern-order.js";
-import { getTenantTimezone, monthRangeUtc } from "../working-time-account/timezone";
-import { getClosedMonthsInRange } from "../working-time-account"; // Phase 100B Plan 07 — W2b
+import {
+  getClosedMonthsInRange, // Phase 100B Plan 07 — W2b
+  getTenantTimezone,
+  monthRangeUtc,
+} from "../working-time-account"; // Phase 101B
 import { getClaimedEntryDatesInRange } from "../time-tracking"; // Phase 100B Plan 08
 
 // ── Public types ─────────────────────────────────────────────────────────────

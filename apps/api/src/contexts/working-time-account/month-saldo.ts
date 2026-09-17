@@ -26,14 +26,16 @@
 
 import type { FastifyInstance } from "fastify";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
-import { getHolidays, STATE_MAP } from "../platform/holidays";
+import { getHolidays, STATE_MAP } from "../platform";
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import { closeEmployeeMonth } from "./close-employee-month";
-import { loadBsSlotOverrides } from "../absence/load-bs-slot-overrides";
-import { getEffectiveBreakDuration } from "../time-tracking/break-effective";
-import { getValidWorkedEntriesInRange } from "../time-tracking"; // Phase 100B Plan 08 — T1
-import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1
+import { getValidWorkedEntriesInRange, getEffectiveBreakDuration } from "../time-tracking"; // Phase 100B Plan 08 — T1; Phase 101B wave 8 merged in
+import {
+  getAbsencesOverlapping, // Phase 100B Plan 12 — A4
+  getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
+  loadBsSlotOverrides,
+} from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports
 
 // ── Public types ──────────────────────────────────────────────────────────────
 

@@ -5,6 +5,7 @@ import crypto, { createHash } from "crypto";
 import { Prisma } from "@clokr/db";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { validatePassword, loadPasswordPolicy } from "../password-policy";
+// eslint-disable-next-line no-restricted-imports -- E-4: creating an employee computes the pro-rata leave entitlement through a display-name lookup as a side effect. Disappears in Block 2 via employee-created/employee-changed events. ADR 0001 Eintrag H.
 import { calculateProRataVacation } from "../../absence/vacation-calc";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { anonymizeEmployeeData, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../anonymize";

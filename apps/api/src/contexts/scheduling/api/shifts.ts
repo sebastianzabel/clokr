@@ -2,22 +2,20 @@ import { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { isAvailabilityEnabled } from "../tenant-availability";
-import { getVocationalSchoolMinutesForDate } from "../../working-time-account/vocational-school-saldo";
-import { getEffectiveBreakDuration } from "../../time-tracking/break-effective";
+import { getEffectiveBreakDuration } from "../../time-tracking"; // Phase 101B (Issue #101, wave 8)
 import { classifyLeaveTypeCode, type AvailabilityBucket } from "../shift-availability"; // Phase 98 (T3, plan 03) — the two classifiers' new home
+import { getHolidays, STATE_MAP, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../../platform";
 import {
+  isMonthClosed, // Phase 100B Plan 07 — W1
+  getVocationalSchoolMinutesForDate,
   getTenantTimezone,
   weekRangeUtc,
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
   dateStrInTz,
   monthRangeUtc,
-} from "../../working-time-account/timezone";
-import { getHolidays, STATE_MAP } from "../../platform/holidays";
-import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../../platform/anonymize";
-import { updateOvertimeAccount } from "../../time-tracking/api/time-entries";
-import { isMonthClosed } from "../../working-time-account"; // Phase 100B Plan 07 — W1
-import { mondayOfWeekUtc } from "../../absence/vacation-calc"; // Phase 107 (D-14) — same Monday-cutting primitive as :709-718
+  updateOvertimeAccount,
+} from "../../working-time-account"; // Phase 101B
 import {
   listLeaveTypes, // Phase 100B Plan 10 — A18
   listActiveBsPatternsForWeek, // Phase 100B Plan 11 — A21a
@@ -25,18 +23,15 @@ import {
   getRosterSollAbsencesOverlapping, // Phase 100B Plan 12 — A5 (D-09, NEVER merge with A4)
   getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
   getActiveLeaveOverlapping, // Phase 100B Plan 13 — A2
-} from "../../absence";
-import {
+  mondayOfWeekUtc, // Phase 107 (D-14) — same Monday-cutting primitive as :709-718
   recalcProvisionalLeaveForShiftChange,
   type RecalcDeps,
   type AdjustmentRecord,
-} from "../../absence/shift-leave-recalc-resolver"; // Phase 107 (D-14/D-15/D-16)
-import {
   resolveLeaveDays,
   getHolidayMap,
   deductVacationDays,
   reverseVacationDays,
-} from "../../absence/api/leave"; // Phase 107 (D-14) — reused verbatim, see each export's own docblock note in leave.ts
+} from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from three deep imports
 // ARBZG_MARKER_47_4_01
 
 const templateSchema = z.object({

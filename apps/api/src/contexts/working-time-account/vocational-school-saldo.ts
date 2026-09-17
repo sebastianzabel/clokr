@@ -15,13 +15,14 @@
 //   - Every Absence query MUST include deletedAt: null.
 
 import type { PrismaClient, ScheduleType } from "@clokr/db";
-import { BS_DAILY_DEFAULT_MIN } from "../absence/vocational-school-constants.js";
-import { buildSlotOverrideHierarchy, resolveBsTagSlot } from "../absence/bs-slot-resolver";
 import {
   getActiveBsPattern, // Phase 100B Plan 11 — A20
   getVocationalSchoolDays, // Phase 100B Plan 12 — A6
   hasVocationalSchoolDay, // Phase 100B Plan 12 — A6's R-B single-day sibling
-} from "../absence";
+  BS_DAILY_DEFAULT_MIN,
+  buildSlotOverrideHierarchy,
+  resolveBsTagSlot,
+} from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports
 
 /**
  * Tenant-config fields this helper reads. Both are optional/nullable to fail-open

@@ -63,4 +63,52 @@ export {
 // ── Missing-entries-window default (issue #246, E-6) ─────────────────────────────────────────
 // Declared public: a constant carries no query semantics, no soft-delete guard, no tenant scope
 // — the number itself IS the invariant, so a value re-export needs no facade function around it.
-export { DEFAULT_MISSING_ENTRIES_DAYS } from "./missing-entries-window";
+export { DEFAULT_MISSING_ENTRIES_DAYS, resolveMissingEntriesDays } from "./missing-entries-window";
+
+// ── Phase 101B (Issue #101, AC-2) ────────────────────────────────────────────────────────────
+// Declared public because a caller outside this context already depended on them. These are
+// re-exports of existing modules, not new facade functions: this file remains a PURE re-export
+// surface with no Prisma call (see this file's own docblock — it sits outside SCOPED_DIRS, so a
+// query placed here would be invisible to the tenant-scoping gate).
+export {
+  calcExpectedMinutesTz,
+  calcLeaveAbsenceMinutesTz,
+  dateStrInTz,
+  getDayHoursFromSchedule,
+  getDayOfWeekInTz,
+  getTenantTimezone,
+  iterateDaysInTz,
+  monthDayBounds,
+  monthRangeUtc,
+  timeStrInTz,
+  todayInTz,
+  weekRangeUtc,
+} from "./timezone";
+export { recalculateSnapshots } from "./recalculate-snapshots";
+export {
+  bsUnterrichtsMinutesByDateForIsoWeek,
+  computeDailySollMinutes,
+  countBsDaysInIsoWeek,
+  getVocationalSchoolMinutesForDate,
+  sortedBsDatesInIsoWeek,
+} from "./vocational-school-saldo";
+export { findMissingWorkdays } from "./find-missing-workdays";
+export { computeMonthSaldo } from "./month-saldo";
+export { loadNegativeBalanceTolerance } from "./negative-balance-tolerance";
+export { isSnapshotLocked } from "./snapshot-lock";
+export { closeEmployeeMonth } from "./close-employee-month";
+export { fetchCloseMonthData } from "./close-month-data";
+// Phase 101B plan 04 moved these here out of time-tracking/api/time-entries.ts (Arbeitszeitkonto
+// subject matter in a Zeiterfassung route file — owner Nebenbefund, measured cycle-neutral).
+// `computeOvertimeBalanceHours` stayed off this surface through waves 5-8 deliberately (no
+// production caller outside time-entries.ts's own forwarding re-export needed it yet) — wave 9
+// (Issue #101, the phase's closing wave) closes that loop: time-entries.ts's own forwarding
+// import is itself a real, extant cross-context need (time-tracking consuming
+// working-time-account), so it now goes through this index like its two siblings, and the last
+// deep import in the tree disappears rather than becoming a seventh register exception.
+export {
+  updateOvertimeAccount,
+  computeOvertimeBalanceBreakdown,
+  computeOvertimeBalanceHours,
+} from "./overtime-balance";
+export type { OvertimeBalanceBreakdown } from "./overtime-balance";

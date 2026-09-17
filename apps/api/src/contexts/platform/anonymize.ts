@@ -56,22 +56,14 @@ import { clearEntryNotesForEmployee } from "../time-tracking"; // Phase 100B Pla
 import { anonymizeSection9CreditsForEmployee } from "../absence"; // Phase 100B Plan 11 — T-100B-48
 import { anonymizeAbsencesForEmployee } from "../absence"; // Phase 100B Plan 12 — F3
 import { anonymizeLeaveRequestsForEmployee } from "../absence"; // Phase 100B Plan 13 — F3
-
-/**
- * The sentinel that marks a DSGVO-anonymized Employee row (set by anonymizeEmployeeData below):
- * firstName === "Gelöscht" AND lastName startsWith "GELÖSCHT-". Centralized here so every list
- * query that must hide anonymized employees uses the exact same predicate (single source of truth).
- * GET /employees/:id (audit view) is intentionally NOT filtered — anonymized rows stay resolvable by
- * UUID for audit-trail traceability.
- */
-export const ANONYMIZED_EMPLOYEE_WHERE = {
-  AND: [{ firstName: "Gelöscht" }, { lastName: { startsWith: "GELÖSCHT-" } }],
-} satisfies Prisma.EmployeeWhereInput;
-
-/** Negation to splice into a list query's `where` to EXCLUDE anonymized employees. */
-export const NOT_ANONYMIZED_EMPLOYEE_WHERE = {
-  NOT: ANONYMIZED_EMPLOYEE_WHERE,
-} satisfies Prisma.EmployeeWhereInput;
+// Phase 101B (Issue #101, Nachtrag 2026-09-17): the two sentinel `where` fragments lifted out of
+// this file into ./employee-anonymization-filter.ts — re-exported below (unchanged) so
+// scheduling/api/shifts.ts and ./api/employees.ts (neither touched by this plan) keep resolving
+// them from this same path until a later wave converts them to import from platform/index.ts.
+export {
+  ANONYMIZED_EMPLOYEE_WHERE,
+  NOT_ANONYMIZED_EMPLOYEE_WHERE,
+} from "./employee-anonymization-filter";
 
 export interface AnonymizeEmployeeOptions {
   tx: Prisma.TransactionClient;

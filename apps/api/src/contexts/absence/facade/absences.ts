@@ -125,8 +125,7 @@
  * {tenantId}` defence-in-depth a proven no-op rather than a new constraint.
  */
 import type { LeaveTypeCode, AbsenceSource, Prisma } from "@clokr/db";
-import type { EmployeeScope } from "../../platform/facade/employee-scope";
-import { employeeScopeWhere } from "../../platform/facade/employee-scope";
+import { type EmployeeScope, employeeScopeWhere } from "../../platform";
 
 // ── A4 — the general overlap read, every type/source, deletedAt-filtered ────────────────────────
 

@@ -446,3 +446,126 @@ Preis ist bewusst in Kauf genommen, nicht übersehen. Beide Entscheidungen sind 
 Kommentar auf Issue #101 hinterlegt; Issue #246 selbst ist mit dieser Umsetzung geschlossen.
 
 Weiteres: `docs/context-cut-map.md` § 8.
+
+### Nachtrag (Phase 101B, Issue #101, 2026-09-17): die Grenze ist mechanisch
+
+**Was zuvor Konvention war, ist jetzt Code.** Diese Phase (101B) baute die maschinelle
+Durchsetzung, die dieser Eintrag seit seiner ersten Fassung als Ziel nennt: `no-restricted-imports`
+(ein eingebautes ESLint-Rule, keine neue Abhängigkeit, D-02) mit fünf Konfigurationsblöcken —
+einem pro Kontext — in `eslint.boundaries.mjs`, importiert von der echten `eslint.config.js`. Das
+Glob-Muster ist `**/<name>/**`, bewusst NICHT `**/contexts/<name>/**` — der Grund in einem Satz:
+die meisten kontextübergreifenden Importe in diesem Baum wiederholen das `contexts/`-Segment im
+Pfad nie (eine Datei in `scheduling` schreibt `from "../../absence"`, nie eine Form mit dem
+Segmentnamen davor). Das ist der Satz, der eine spätere „Aufräum"-Änderung der Regel verhindert —
+das längere, korrekter aussehende Glob würde kompilieren, einen `app.ts`-förmigen Testfall
+bestehen und dabei die Mehrheit der echten Verstöße stillschweigend übersehen.
+
+**Was es gekostet hat, gemessen.** Vor Phase 101B: **150** tiefe produktionsseitige
+kontextübergreifende Importe. Danach: **51** — 45 in `app.ts` (Kompositionswurzel-Ausnahme) plus
+6 einzeln begründete Registereinträge. **99 umgestellt über fünf Kontext-Wellen**
+(working-time-account 34, platform 23, absence 23, time-tracking 16, scheduling 3), plus vier
+§8.3-Umlenkungen und ein Restfall, der in dieser letzten Welle geschlossen wurde — durchweg über
+benannte, aus Blattmodulen gespeiste Re-Exporte auf den fünf `index.ts`-Dateien, nie über eine
+Routendatei. Rund **30 neue benannte Re-Exporte** entstanden dabei auf diesen fünf Oberflächen.
+
+**Das Register, aufgefrischt.** Die Tabelle oben (E-1..E-5, E-7, E-8) bleibt unverändert stehen.
+Neu ist die Aussage, welche Einträge einen mechanischen Marker im Code tragen und welche nicht:
+E-1, E-2 (beide Importzeilen), E-3, E-4 und E-8 tragen jeweils einen inline
+`eslint-disable-next-line no-restricted-imports`-Kommentar, dessen Existenz und Zuordnung
+`apps/api/scripts/measure-context-boundary-imports.ts` bidirektional gegen
+`apps/api/scripts/context-boundary-import-exceptions.json` prüft (ein Eintrag ohne Kommentar
+ODER ein Kommentar ohne Eintrag ist ein Fund). **E-5 und E-7 tragen KEINEN solchen Kommentar** —
+beide Importzeilen laufen bereits durch ein `index.ts` (`platform/anonymize.ts` importiert die
+vier Fach-Kontexte über deren öffentliche Oberfläche, nicht tief), sodass die Regel sie strukturell
+nie als tiefen Import sieht. Für diese beiden bleibt **das Register selbst**, nicht die Regel, die
+einzige Aufzeichnung.
+
+**Frage 2 aus „Was #101 noch entscheiden muss" bleibt ausdrücklich offen.** Ob E-5 eine dauerhafte,
+begründete Ausnahme bleibt oder in Block 2 zu einem `employee-erased`-Ereignis wird, entscheidet
+diese Phase NICHT — dieselbe Empfehlung (dauerhaft-und-begründet) steht weiterhin unwidersprochen,
+aber unentschieden. Das ausdrücklich so festzuhalten statt es aussehen zu lassen, als sei es mit
+der übrigen Umsetzung miterledigt worden, ist der Punkt dieses Absatzes.
+
+**Die benannte Lücke: dynamische `import()`.** `no-restricted-imports` sieht strukturell keine
+dynamischen Imports — ESLint löst dort keinen Modul-Spezifizierer auf. Die eine produktionsseitige
+Instanz (`src/composition/reports.ts:1090` → `absence/plugins/carryover-warning.ts`, Phase
+101B-01s Baseline) wurde in Welle 07 (absence) auf einen statischen Import umgestellt, nicht als
+Ausnahme registriert — das Register zählt deshalb weiterhin sechs Klassen, keine siebte für diesen
+Fall. `measure-context-boundary-imports.ts --forms` hält die Größe dieser Lücke fest, damit sie nie
+stillschweigend wächst — es zählt die Formen des ARBEITSVORRATS, und der ist am Phasenende 0, also
+druckt das Werkzeug heute nichts. **Das ist die Prüfung, nicht ihr Fehlen:** taucht dort je wieder
+eine `dynamic-import`-Zeile auf, ist ein Import entstanden, den die ESLint-Regel konstruktionsbedingt
+nicht sehen kann. (Eine frühere Fassung dieses Absatzes nannte hier `from 51` als aktuelle Ausgabe.
+Das reproduziert nicht — 51 ist die Zahl der AUSGENOMMENEN Importe, nicht der gedruckten Formen.
+Korrigiert beim Zielabgleich der Phase, aus demselben Grund, aus dem die drei Zahlkorrekturen oben
+ausgeschrieben stehen: eine Doku mit einer Zahl, die sich nicht nachrechnen lässt, bringt ihrer
+nächsten Leserin bei, den übrigen Zahlen ebenfalls zu misstrauen.)
+
+**Die Herauslösung (Owner-Entscheidung Q1 = Option D, 2026-09-17).** Acht kontextübergreifend
+genutzte Helfer sind aus `absence/api/leave.ts` und `time-tracking/api/time-entries.ts` in
+Blattmodule gewandert (`absence/leave-days.ts`, `time-tracking/entry-invariants.ts`,
+`working-time-account/overtime-balance.ts`) — plus die sieben gleichdatei-internen Helfer, die
+sie mitziehen. Kein `index.ts` re-exportiert eine Routendatei. Zwei Symbole haben dabei den
+Kontext gewechselt (`updateOvertimeAccount`, `computeOvertimeBalanceBreakdown` →
+Arbeitszeitkonto), weil sie fachlich dort hingehören; die Messung zeigte, dass die Platzierung
+zyklenneutral ist, die Entscheidung fiel also fachlich, nicht graphentheoretisch. Ein drittes
+Symbol (`computeOvertimeBalanceHours`) blieb bis zur letzten Welle bewusst außerhalb der
+öffentlichen Oberfläche — Welle 09 (die abschließende Welle) schloss auch diese letzte Lücke: die
+eigene Weiterleitung von `time-tracking/api/time-entries.ts` war selbst ein echter, heute
+bestehender kontextübergreifender Bedarf, also wurde sie über `working-time-account/index.ts`
+geführt statt als siebter Registereintrag verbucht.
+
+**Der Zyklus — und dass er NICHT auf 0 ging.** Vorher azyklisch. Form C naiv 29 Module, Option D
+27, Option D plus das `NOT_ANONYMIZED_EMPLOYEE_WHERE`-Blatt 21 (`platform` verlässt dabei die
+Komponente) — die vom Owner am 2026-09-17 akzeptierte Zahl, ausdrücklich als Projektion vor jeder
+realen Umstellung. Die real gemessene Endzahl nach Abschluss aller fünf Wellen ist **22, nicht 21**
+— siehe die dritte Korrektur unten. Die Resttreiber, real gemessen (nicht aus der Simulation
+übernommen) und keiner davon ein Routenmodul:
+
+| Kante                                                                    | tragende Datei(en)                                                                                                                                                                                                    | Status                       |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `absence -> working-time-account`                                        | `absence/shift-leave-recalc-resolver.ts`                                                                                                                                                                              | Block-2-Kandidat (#102-#104) |
+| `absence -> scheduling`, `absence -> platform`                           | `absence/leave-days.ts` (eines der beiden neuen Blätter aus der Herauslösung)                                                                                                                                         | Block-2-Kandidat (#102-#104) |
+| `working-time-account -> {absence, platform, scheduling, time-tracking}` | `working-time-account/overtime-balance.ts` (das zweite der beiden neuen Blätter)                                                                                                                                      | Block-2-Kandidat (#102-#104) |
+| `time-tracking -> absence`                                               | `time-tracking/presence.ts`                                                                                                                                                                                           | Block-2-Kandidat (#102-#104) |
+| `time-tracking -> working-time-account`                                  | `time-tracking/find-unconfirmed-break-days.ts` UND `time-tracking/entry-invariants.ts` (sechster, durch die reale Herauslösung entstandener zweiter Träger derselben Kantenrichtung — kein siebter Fachkopplungsfall) | Block-2-Kandidat (#102-#104) |
+| `scheduling -> time-tracking`                                            | `scheduling/shift-netto.ts`                                                                                                                                                                                           | Block-2-Kandidat (#102-#104) |
+| `scheduling -> working-time-account`                                     | `scheduling/shift-cleanup.ts`                                                                                                                                                                                         | Block-2-Kandidat (#102-#104) |
+
+Jede dieser Kanten ist eine echte, wechselseitige Fachkopplung (Berufsschule/BS-Slot, Schicht/Soll,
+Pause/Saldo, Überstundenberechnung, die alle vier Geschwisterkontexte erreicht) — Block-2-Material
+(#102-#104, Ereignis-Architektur), keine Platzierungsfrage, die diese Phase noch hätte lösen können.
+
+**Drei Korrekturen, offen ausgesprochen**, im Ton dieses Eintrags:
+
+1. **Form Cs Begründung „keine Routenmodule in die `index.ts`" trug nur für die ~45
+   Routen-Registrierer in `app.ts`.** Zwei Routen-MODULE (nicht Routen-Registrierer) exportierten
+   kontextübergreifende Helfer — `absence/api/leave.ts` und `time-tracking/api/time-entries.ts` —
+   genau deshalb die Herauslösung in eigene Blattmodule.
+2. **Die erste Zyklenprojektion nannte 49 Module.** Das war falsch — die Simulation schob
+   `app.ts`s 45 ausgenommene tiefe Importe in die Re-Export-Menge, als gäbe es die
+   Kompositionswurzel-Ausnahme nicht. Korrigiert sind es **29** (Form C naiv).
+3. **Die als angenommen geführte Restzyklen-Zahl war 20, dann 21, und ist real gemessen 22.** Der
+   Owner bestätigte am 2026-09-17 auf Issue #101 die Korrektur von 20 auf **21** — diese Zahl war
+   selbst eine Projektion (`--project all --extract-sim`), gemessen VOR jeder realen Umstellung, mit
+   der ausdrücklichen Einschränkung (101B-ZYKLEN-BEFUND.md §8.4), dass sie nicht als Ersatz für die
+   reale Pro-Welle-Messung gelten darf. Die reale, kumulative Messung am Ende jeder Welle blieb
+   durchgehend einen Schritt über der Projektion (Welle 05: 8 real vs. 6 projiziert; Welle 07/08: 17
+   real vs. 15/16 projiziert) — Ursache in jedem Fall dieselbe (§2a): die Simulation modellierte
+   `time-tracking/entry-invariants.ts` und das Overtime-Blatt als EIN gemeinsames Blatt, während die
+   reale, vom Owner selbst benannte Umbauform ZWEI daraus machte, und das zweite Blatt trägt eine
+   eigene, unabhängige Kante in den Zyklus. Diese Differenz wurde nie aufgeholt — sie lief bis zum
+   Schluss durch und landet in der letzten Welle bei **22 statt 21**. Der stehende CI-Gate misst
+   deshalb den REALEN, gemessenen Wert (`--cycles --check 22`), nicht die Projektion — dieselbe
+   Regel, die die gesamte Phase seit §8.4 befolgt: nachmessen, nicht übernehmen. Ein Dokument, das
+   eine überholte Zahl stillschweigend fallen lässt, lehrt die nächste Leserin, seinen Zahlen zu
+   misstrauen — deshalb stehen alle drei Korrekturen hier, nicht nur die ersten zwei.
+
+`__tests__`-Verzeichnisse bleiben außerhalb dieser Regel (Owner-Entscheidung #246) — die 191 tiefen
+Importe dort sind gemessen, benannt und unverändert, damit ein späteres Ticket sie nicht neu
+entdecken muss.
+
+Weiteres: `.planning/phases/101B-.../101B-WORKLIST.md` §14 (die Wellen-für-Welle-Messung),
+`.planning/phases/101B-.../101B-ZYKLEN-BEFUND.md` (der volle Befund inkl. §2a/§7),
+`apps/api/scripts/README.md` § Lint gates (die neue Gate-Dokumentation), Issue #101 (Owner-Kommentare
+und der Abschlusskommentar dieser Phase).

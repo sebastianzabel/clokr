@@ -34,7 +34,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
-import * as TimeEntriesModule from "../contexts/time-tracking/api/time-entries";
+import * as WorkingTimeAccountModule from "../contexts/working-time-account";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 
@@ -388,12 +388,16 @@ describe("Phase 76.5 — Shift CRUD triggers OvertimeAccount recompute (SALDO-V1
     const empB = await createShiftEmployee("fail-b");
 
     // Spy on updateOvertimeAccount. Throw for empA, no-op for empB.
-    // Note: shifts.ts imports updateOvertimeAccount directly from
-    // "./time-entries". The ESM live-binding means the route reads through
-    // the same TimeEntriesModule namespace — so vi.spyOn on the namespace
+    // Note: shifts.ts imports updateOvertimeAccount from
+    // "../../working-time-account" (Phase 101B plan 06 — the pair moved to
+    // working-time-account/overtime-balance.ts and this context's index now
+    // re-exports it directly; shifts.ts no longer goes through
+    // time-tracking/api/time-entries.ts's own forwarding re-export for this
+    // symbol). The live-binding means the route reads through the same
+    // WorkingTimeAccountModule namespace — so vi.spyOn on the namespace
     // export DOES intercept the route's call site.
     const spy = vi
-      .spyOn(TimeEntriesModule, "updateOvertimeAccount")
+      .spyOn(WorkingTimeAccountModule, "updateOvertimeAccount")
       .mockImplementation(async (_app: FastifyInstance, employeeId: string) => {
         if (employeeId === empA) {
           throw new Error("Injected recompute failure for empA");

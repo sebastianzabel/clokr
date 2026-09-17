@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { FederalState } from "@clokr/db";
 import { encrypt } from "../../../utils/crypto";
+// eslint-disable-next-line no-restricted-imports -- E-3: PUT /settings/work/:employeeId triggers saldo recalculation and shift cancellation as side effects of a contract change — same defect class as E-1. Disappears in Block 2 via a schedule-changed event. ADR 0001 Eintrag H.
 import { recalculateSnapshots } from "../../working-time-account/recalculate-snapshots";
 import {
   monthFirstRefinement,

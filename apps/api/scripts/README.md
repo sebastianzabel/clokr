@@ -250,6 +250,64 @@ foreign access on a converted model means the conversion was bypassed, not that 
 case was found. The one standing exception (`apps/api/src/contexts/platform/api/test-bootstrap.ts`,
 21 calls, D-03) is test-only infrastructure gated off int/prod, not a production code path.
 
+### `measure-context-boundary-imports.ts` (Issue #101 — AC-1/AC-2/AC-5, the import-specifier sibling of the gate above)
+
+Walks `apps/api/src` production code (never `__tests__/` or `*.test.ts` — Owner decision #246) and
+finds every relative import specifier that reaches into a FOREIGN context's internals — a
+specifier matching `**/<context>/**` but not `**/<context>/index` — for each of the five ADR 0001
+contexts (`platform`, `time-tracking`, `absence`, `scheduling`, `working-time-account`). Where
+`measure-foreign-context-access.ts` counts a foreign Prisma CALL, this script counts a foreign
+IMPORT SPECIFIER — the two are siblings, not duplicates: a context can import a foreign helper
+function without ever touching Prisma directly, and this gate is the one that catches that shape.
+The same tool also builds the production import graph (`--cycles`) and can PROJECT what that graph
+would look like under a not-yet-built extraction (`--project`/`--extract-sim`/`--paths` — used
+during this phase's planning, not part of the standing CI gate).
+
+Seven flags, one script:
+
+- `--check <n>` — equality gate on the current WORKLOAD (excepted imports subtracted). Standing
+  value: **0**.
+- `--rows` — every workload row, one per `file:line | form | fromArea | targetModule | {symbols}`.
+- `--by-target` — workload grouped by target context, with file counts.
+- `--forms` — the `from`/`dynamic-import` split (the identity `workload == from + dynamic-import`
+  is this tool's own internal cross-check).
+- `--predict <context>` — before converting a context, shows what its own `index.ts` would need to
+  re-export and the resulting `lint:import-targets` delta.
+- `--cycles [--check <n>]` — counts modules/components in an import CYCLE in the REAL graph
+  (`--paths` additionally prints one witness path per still-reachable ordered pair). Standing
+  value: **22** (see the next paragraph).
+- `--project <contexts>|all [--extract-sim <scenario>]` — projects the graph as if the named
+  contexts were already fully converted, optionally simulating a not-yet-real extraction shape.
+  Planning-only; the standing CI gate never passes `--project`.
+
+**The cycle count is measured, not assumed, and it stayed one module above every projection that
+predicted it.** Before this phase the production import graph was acyclic. Routing every
+cross-context import through five `index.ts` files creates a real cycle — ADR 0001 Eintrag H's
+Phase 101B Nachtrag has the full account, including why the owner-accepted projection (21) and the
+real, measured end state (22) differ by one, and why that is a recorded finding rather than a
+number to silently adopt or silently ignore. The CI gate asserts the REAL number
+(`--cycles --check 22`), never a projection.
+
+- **Run locally:** `pnpm --filter @clokr/api exec tsx scripts/measure-context-boundary-imports.ts
+[--check <n>] [--rows] [--by-target] [--forms] [--predict <context>] [--cycles [--check <n>]
+[--paths]] [--project <contexts> [--extract-sim <scenario>]]`
+- **Runs in CI as:** two steps, `Measure context-boundary imports` (`--check 0`) and
+  `Check context import cycles` (`--cycles --check 22`), both in `.github/workflows/ci.yml`,
+  immediately after `Measure cross-context Prisma access`
+
+**How to add a justified exception.** Exceptions live in
+`apps/api/scripts/context-boundary-import-exceptions.json` — one object per exception, each
+carrying `id`, `file`, `specifier`, `reason` (mechanically required to be >= 30 characters —
+long enough to say more than "needed it"), `disappearsIn` (a concrete disappearance point, never
+"someday"), and `register` (which ADR entry owns the reasoning). The one `wholeFile: true` entry
+(`app.ts`, the composition root) instead carries `expectedCount`, checked by equality — a 46th deep
+import from `app.ts` is a finding, not an automatic pass. The script validates parity in BOTH
+directions between this file and the inline `eslint-disable-next-line no-restricted-imports`
+comments in the source: a comment with no matching entry, or an entry with no matching comment,
+both fail the run. **When NOT to add one:** a hit on a clean tree (workload 0) is a finding to
+report on Issue #101's Block-2 follow-ups (#102-#104), not an exception to add — the six entries
+that exist today are exactly the ones ADR 0001 Eintrag H names, no more.
+
 ### `lint-saldo-lock-derivation.ts` (Issue #241/#242)
 
 A static AST interpreter that walks every `SaldoSnapshot.periodStart` comparison carrying a sibling

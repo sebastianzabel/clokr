@@ -118,6 +118,12 @@ Rules — these are directives, not preferences:
 - **`LeaveRequest` = requested absence** (status, entitlement, approver): Urlaub, Krankheit, Sonderurlaub. **`Absence` = imposed absence** (occurs, is not requested): Berufsschule, Mutterschutz, Elternzeit. `SICK` belongs to `LeaveRequest`.
 - **No foreign keys across context boundaries** — reference foreign entities by ID without a constraint. (Open conflict with the `onDelete: Restrict` compliance rule below — see ADR 0001 "Offene Fragen"; do not resolve it unilaterally.)
 - **No direct table access across contexts.** Go through the owning context's public interface.
+  **Mechanically enforced (Phase 101B, Issue #101):** `eslint.boundaries.mjs`'s `no-restricted-imports`
+  blocks fail the build (CI and pre-commit) on a deep import into a foreign context's internals —
+  the only legal way in is `contexts/<name>/index.ts`. The composition root (`app.ts`) and six
+  individually reasoned, dated exceptions (`apps/api/scripts/context-boundary-import-exceptions.json`)
+  are named in `docs/adr/0001-abweichungen.md` Eintrag H; a new one is a finding to report, not a
+  step to take.
 - **Never use a new display string as a control value.** No `x === "Ausstempeln fehlt"`, no lookup by `leaveType.name`. Existing occurrences are documented deviations, not precedent.
 - **No generalization on spec.** No plugin system, no generic extension mechanism, no abstraction layer without a concrete second use case. Extensibility gets generalized when the fourth context is built — not before.
 - **When unsure which context a new feature belongs to: ask.** Do not guess.
@@ -296,7 +302,7 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   Since Phase 107 (D-02) no form write path touches `workDays` for `SHIFT_BASED` any more, so no NEW
   divergence can be created; existing divergent rows are preserved and are EXPECTED findings of
   `audit-workdays-vs-day-hours.ts`, not bugs — do NOT "fix" them on sight (Phase 95b, D-01).
-- `resolveContractWorkDaysPerWeek()` in `apps/api/src/contexts/absence/api/leave.ts` is the ONLY place the
+- `resolveContractWorkDaysPerWeek()` in `apps/api/src/contexts/absence/leave-days.ts` is the ONLY place the
   `SHIFT_BASED` contractual-count fallback chain lives (`contractWorkDaysPerWeek` →
   `workDays.length` → `TenantConfig.defaultWorkDays.length` → `5`, Phase 107 D-04) — it mirrors
   `resolveWorkDays()`'s shape but answers a different question ("how many days" vs. "which days").

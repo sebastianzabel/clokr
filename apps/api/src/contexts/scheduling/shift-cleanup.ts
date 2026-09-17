@@ -23,8 +23,11 @@
 
 import type { PrismaClient } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
-import { getTenantTimezone, monthRangeUtc } from "../working-time-account/timezone";
-import { getClosedMonthsForDates } from "../working-time-account"; // Phase 100B Plan 07 — W2a
+import {
+  getClosedMonthsForDates, // Phase 100B Plan 07 — W2a
+  getTenantTimezone,
+  monthRangeUtc,
+} from "../working-time-account"; // Phase 101B
 
 // app.audit signature (see plugins/audit.ts) — kept loose to match the Fastify decorator type.
 type AuditFn = FastifyInstance["audit"];

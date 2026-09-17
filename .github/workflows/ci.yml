@@ -243,6 +243,32 @@ jobs:
         # apps/api/scripts/foreign-context-access-exceptions.json.
         run: pnpm --filter @clokr/api exec tsx scripts/measure-foreign-context-access.ts --check 0
 
+      - name: Measure context-boundary imports (Issue #101 — AC-1/AC-2/AC-5, the standing boundary gate)
+        # The import-specifier sibling of the Prisma-call gate above: every cross-context import in
+        # apps/api/src production code goes through the owning context's index.ts. Unconditional on
+        # purpose — a boundary gate a path filter can skip is not a gate. The only permitted
+        # exceptions live in apps/api/scripts/context-boundary-import-exceptions.json: app.ts as the
+        # named composition root (count checked by equality), and the six ADR 0001 Eintrag H sites
+        # E-1..E-4 and E-8, each with a mandatory reason and a disappearance point the script itself
+        # validates. The script also enforces parity in both directions between those entries and the
+        # inline eslint-disable comments, so an unregistered exception fails here rather than in review.
+        # It additionally counts dynamic import(), which no-restricted-imports structurally cannot see.
+        run: pnpm --filter @clokr/api exec tsx scripts/measure-context-boundary-imports.ts --check 0
+
+      - name: Check context import cycles (Issue #101 — D-08)
+        # Cycles are measured, not assumed. Before this phase the production import graph was
+        # acyclic; routing every cross-context import through the five index.ts files creates a
+        # measured, predicted cycle (see the phase's ZYKLEN-BEFUND). The gate is EQUALITY against
+        # that predicted number, never "exit 1 on any cycle": a predicted cycle must pass, an
+        # unpredicted change must fail. 22, not the owner's originally-accepted 21 — the real,
+        # measured end-state graph came in one module higher than the projection for the same
+        # already-documented reason wave 08 first measured (ZYKLEN-BEFUND.md §2a/§7,
+        # 101B-WORKLIST.md §14): the simulation modeled one shared overtime/schedule leaf where
+        # the real extraction (owner-directed) created two, and the second leaf carries its own
+        # independent edge back into the cycle. Recorded, not silently adopted — see ADR 0001
+        # Eintrag H's Nachtrag for Phase 101B.
+        run: pnpm --filter @clokr/api exec tsx scripts/measure-context-boundary-imports.ts --cycles --check 22
+
       - name: Lint saldo-lock periodStart derivation (Issue #241 — five sites found by hand)
         # A periodType:"MONTHLY" SaldoSnapshot where-comparison on periodStart whose value does
         # not trace back to monthRangeUtc() is the exact defect class of #241 (three route gates

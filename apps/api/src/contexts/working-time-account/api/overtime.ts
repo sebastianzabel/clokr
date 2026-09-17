@@ -2,25 +2,18 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import {
-  getEffectiveSchedule,
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
   type OvertimeBalanceBreakdown,
-} from "../../time-tracking/api/time-entries";
+} from "../overtime-balance"; // Phase 101B — same-context sibling now that the pair moved here
 import { getConfirmedCarryOver } from "../confirmed-saldo"; // Phase 97-01
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "../timezone";
-import { getHolidays, STATE_MAP } from "../../platform/holidays";
+import { getHolidays, STATE_MAP } from "../../platform";
 import { fetchCloseMonthData } from "../close-month-data"; // PERF-V1814-01
 import { periodStartWindow, isPeriodStartInMonth } from "../snapshot-period";
 import { closeEmployeeMonth } from "../close-employee-month"; // Phase 76.26 — shared saldo core
 import { findMissingWorkdays } from "../find-missing-workdays"; // Phase 76.26 — gap detector
-import {
-  unconfirmedDaysFromEntries,
-  findUnconfirmedBreakDays,
-} from "../../time-tracking/find-unconfirmed-break-days"; // Phase 92 — BREAK-05 unconfirmed Pflichtpause gate
-import { karenzOverrunFromRequests } from "../../absence/find-karenz-overrun-days"; // Phase 104 (R4/D-21) — Karenztage-Überschreitung, Hinweis only
-import { loadBsSlotOverrides } from "../../absence/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import { computeMonthSaldo } from "../month-saldo"; // §615 Team-Zeiten display fix
 import { getCarryOverBase } from "../carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { recalculateSnapshots } from "../recalculate-snapshots"; // Phase 99 (OB-03) — full-history re-thread
@@ -29,8 +22,16 @@ import {
   getValidWorkedEntriesInRange,
   lockEntriesForMonth,
   unlockEntriesForMonth,
-} from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7/T8
-import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1
+  getEffectiveSchedule,
+  unconfirmedDaysFromEntries,
+  findUnconfirmedBreakDays,
+} from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7/T8; Phase 101B wave 8 merged in
+import {
+  getAbsencesOverlapping, // Phase 100B Plan 12 — A4
+  getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
+  karenzOverrunFromRequests, // Phase 104 (R4/D-21) — Karenztage-Überschreitung, Hinweis only
+  loadBsSlotOverrides, // Phase 76.31 — D-06 slot overrides
+} from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from three deep imports
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),

@@ -1,11 +1,26 @@
 import { FastifyInstance } from "fastify";
 import { requireAuth, requireRole } from "../middleware/auth";
+import { getHolidays, STATE_MAP } from "../contexts/platform";
+import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
 import {
+  getWorkedEntriesInRange,
+  getRecordedWorkEntriesInRange,
+  getInvalidEntries,
   getEffectiveSchedule,
-  computeOvertimeBalanceBreakdown,
-  type OvertimeBalanceBreakdown,
-} from "../contexts/time-tracking/api/time-entries";
+  resolvePresenceState,
+  isObligatedWorkday,
+  isDayDue,
+  findUnconfirmedBreakDays, // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
+  type PresenceEntry,
+  type PresenceLeave,
+  type PresenceAbsence,
+} from "../contexts/time-tracking"; // Phase 100B Plan 08 — T2/getRecordedWorkEntriesInRange/T4
 import {
+  getOvertimeAccount,
+  listOvertimeAccountsForTenant,
+  getBalances,
+  getMonthlySnapshotsInRange,
+  sumCarryOverByMonth,
   getTenantTimezone,
   todayInTz,
   dateStrInTz,
@@ -17,38 +32,13 @@ import {
   getDayHoursFromSchedule,
   iterateDaysInTz,
   timeStrInTz,
-} from "../contexts/working-time-account/timezone";
-import {
-  resolvePresenceState,
-  isObligatedWorkday,
-  isDayDue,
-} from "../contexts/time-tracking/presence";
-import type {
-  PresenceEntry,
-  PresenceLeave,
-  PresenceAbsence,
-} from "../contexts/time-tracking/presence";
-import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
-import {
   getConfirmedCarryOver,
   getConfirmedCarryOverBulk,
-} from "../contexts/working-time-account/confirmed-saldo"; // Phase 97-04
-import { findMissingWorkdays } from "../contexts/working-time-account/find-missing-workdays"; // Phase 111 — canonical gap detector
-import { findUnconfirmedBreakDays } from "../contexts/time-tracking/find-unconfirmed-break-days"; // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
-import { resolveMissingEntriesDays } from "../contexts/working-time-account/missing-entries-window"; // GitHub issue #141 — single source for both Karte and Cron
-import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
-import {
-  getWorkedEntriesInRange,
-  getRecordedWorkEntriesInRange,
-  getInvalidEntries,
-} from "../contexts/time-tracking"; // Phase 100B Plan 08 — T2/getRecordedWorkEntriesInRange/T4
-import {
-  getOvertimeAccount,
-  listOvertimeAccountsForTenant,
-  getBalances,
-  getMonthlySnapshotsInRange,
-  sumCarryOverByMonth,
-} from "../contexts/working-time-account"; // Phase 100B Plan 06 — W8/W9/W10; Plan 07 — W5/W6
+  findMissingWorkdays,
+  resolveMissingEntriesDays,
+  computeOvertimeBalanceBreakdown,
+  type OvertimeBalanceBreakdown,
+} from "../contexts/working-time-account"; // Phase 100B Plan 06 — W8/W9/W10; Plan 07 — W5/W6; Phase 101B
 import {
   getEntitlementsForEmployee, // Phase 100B Plan 10 — A13
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4

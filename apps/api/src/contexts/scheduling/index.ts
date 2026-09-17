@@ -35,3 +35,11 @@ export {
   cancelOrphanShifts,
 } from "./facade/shifts";
 export { getEmployeeAvailability } from "./facade/availability";
+
+// Phase 101B (Issue #101, wave 9 — the phase's closing wave) — declared public because a caller
+// outside this context already depended on them (absence/api/leave.ts,
+// absence/vocational-school-generator.ts, time-tracking/api/presence.ts). Re-exports of existing
+// leaf modules, not new facade functions: this file remains a PURE re-export surface, unchanged.
+export { shiftNettoMinutes, sumShiftNettoMinutes } from "./shift-netto";
+export { cleanupShiftsForBSAbsence } from "./shift-cleanup";
+export { getCurrentShift } from "./get-current-shift";

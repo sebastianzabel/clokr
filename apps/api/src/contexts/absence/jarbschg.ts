@@ -33,7 +33,7 @@ import {
   sortedBsDatesInIsoWeek,
   computeDailySollMinutes,
   bsUnterrichtsMinutesByDateForIsoWeek,
-} from "../working-time-account/vocational-school-saldo.js";
+} from "../working-time-account"; // Phase 101B
 import { BS_PATTERN_ORDER_BY } from "./vocational-school-pattern-order.js";
 
 // ── Public types ─────────────────────────────────────────────────────────────

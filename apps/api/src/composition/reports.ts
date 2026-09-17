@@ -3,15 +3,7 @@ import PDFDocument from "pdfkit";
 import iconv from "iconv-lite";
 import { formatInTimeZone } from "date-fns-tz";
 import { requireAuth, requireRole } from "../middleware/auth";
-import {
-  getTenantTimezone,
-  monthRangeUtc,
-  getDayOfWeekInTz,
-  getDayHoursFromSchedule,
-  iterateDaysInTz,
-  dateStrInTz,
-} from "../contexts/working-time-account/timezone";
-import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
+import { getHolidays, STATE_MAP } from "../contexts/platform";
 import {
   SECTION9_LEGEND,
   generateMonthlyReportPdf,
@@ -20,17 +12,27 @@ import {
   streamLeaveListPdf,
   streamVacationOverviewPdf,
 } from "./pdf";
-import { selfHealUsedDays, loadVacationTypeMeta } from "../contexts/absence/leave-self-heal";
-import { computeMonthSaldo } from "../contexts/working-time-account/month-saldo";
-import { getMonthClosingBalance } from "../contexts/working-time-account"; // Phase 100B Plan 07 — W4
+import {
+  getMonthClosingBalance, // Phase 100B Plan 07 — W4
+  getTenantTimezone,
+  monthRangeUtc,
+  getDayOfWeekInTz,
+  getDayHoursFromSchedule,
+  iterateDaysInTz,
+  dateStrInTz,
+  computeMonthSaldo,
+} from "../contexts/working-time-account"; // Phase 101B
 import {
   listEntitlementsForYear,
   getExpiringCarryOver,
   getEntitlementById,
   getConfirmedSection9Credits,
   getPendingLeaveDaysInYear, // Phase 100B Plan 13 — A7c
+  selfHealUsedDays,
+  loadVacationTypeMeta,
+  isSickLeaveTypeCode,
+  runCarryoverWarningOnce, // Phase 101B (Issue #101, wave 7) — was `await import(...)`, see :1090
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
-import { isSickLeaveTypeCode } from "../contexts/absence/leave-type";
 import type { LeaveTypeCode } from "@clokr/db";
 
 // ── Month name lookup ─────────────────────────────────────────────────────────
@@ -1086,8 +1088,6 @@ export async function reportRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Anspruch nicht gefunden" });
       }
 
-      const { runCarryoverWarningOnce } =
-        await import("../contexts/absence/plugins/carryover-warning");
       const result = await runCarryoverWarningOnce(app, { onlyEntitlementId: entitlementId });
 
       // Audit the manual trigger separately so we can distinguish operator

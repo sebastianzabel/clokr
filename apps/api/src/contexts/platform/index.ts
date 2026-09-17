@@ -8,12 +8,15 @@
  * needs a new question answered gets a new named export, never a reach-around import of an
  * internal module.
  *
- * Empty today (`export {}` below), and it CARRIES NO FACADE OF ITS OWN — unlike the other four
- * contexts, Unterbau (Tenant/Employee/User and the rest of the shared substrate) is readable from
- * every context per ADR 0001: it is the ground every context stands on, not a peer context another
- * peer must go through a facade to reach. This file exists purely so all five contexts have
- * exactly one `index.ts` (AC-1) and carry the same D-06 comment — not because a Prisma-call
- * boundary is being drawn here the way it is for the other four.
+ * Phase 101B Plan 07 (Issue #101, AC-2) gave this file its first real exports: these ten symbols
+ * from six modules are exactly what every other context was already deep-importing before this
+ * wave, named here instead of reached around. This still does NOT make Unterbau a facade context
+ * like the other four — unlike them, Unterbau (Tenant/Employee/User and the rest of the shared
+ * substrate) is readable from every context per ADR 0001: it is the ground every context stands
+ * on, not a peer context another peer must go through a facade to reach. The re-exports below are
+ * plain module re-exports of pre-existing helpers, not new facade functions —
+ * `facade/employee-scope.ts` predates this file's first export and answers the same tenant-scope
+ * question it always has; nothing here creates a new Prisma-backed surface.
  *
  * Should a genuine Unterbau facade need to exist later (a compliance-only surface, say), it would
  * live in `./facade/` like the others, never directly in this file — this file is a PURE
@@ -27,5 +30,17 @@
  * Prisma.TransactionClient` as the first parameter, and a non-uniform soft-delete guard (reading
  * functions carry `deletedAt: null`; named compliance functions — DSGVO Art. 17 anonymisation,
  * hard delete, retention archival — deliberately omit it and say so in their own docblock).
+ *
+ * NOT_ANONYMIZED_EMPLOYEE_WHERE is re-exported from ./employee-anonymization-filter (plan 04's
+ * leaf, zero foreign imports) rather than from ./anonymize, precisely so this index does NOT
+ * transitively reach ../time-tracking or ../absence through it. anonymize.ts itself is unchanged
+ * and still imports both, for its actual anonymisation functions (E-5, DSGVO Art. 17) — ADR 0001
+ * Eintrag H explains why anonymize.ts stays in the Unterbau rather than moving to composition/.
  */
-export {};
+export { getHolidays, STATE_MAP } from "./holidays";
+export { employeeScopeWhere } from "./facade/employee-scope";
+export type { EmployeeScope } from "./facade/employee-scope";
+export { auditReasonSchema, AUDIT_REASON_REQUIRED } from "./audit-reason";
+export { calculateWorkDays } from "./calculate-work-days";
+export { syncSchoolHolidaysForTenant } from "./plugins/school-holidays-sync";
+export { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "./employee-anonymization-filter";

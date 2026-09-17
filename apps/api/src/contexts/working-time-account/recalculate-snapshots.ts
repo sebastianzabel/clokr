@@ -15,18 +15,20 @@
  * Live path (P4, time-entries.ts) remains for SNAP-03 (76.27).
  */
 import { FastifyInstance } from "fastify";
-import { getEffectiveSchedule } from "../time-tracking/api/time-entries";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
-import { getHolidays, STATE_MAP } from "../platform/holidays";
+import { getHolidays, STATE_MAP } from "../platform";
 import { closeEmployeeMonth } from "./close-employee-month"; // Phase 76.26 — shared pure saldo core
-import { loadBsSlotOverrides } from "../absence/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import { isBridgeSnapshot } from "./saldo-snapshot-cleanup"; // 2026-08 hardening — SNAP-04 bridge guard
 import { computeInjectedDelta } from "./saldo-chain-integrity"; // Phase 98 — shared delta formula
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { isSnapshotLocked } from "./snapshot-lock"; // Phase 99 (OB-03/D-09) — immutability after lock
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
-import { getValidWorkedEntriesInRange } from "../time-tracking"; // Phase 100B Plan 08 — T1
-import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1
+import { getValidWorkedEntriesInRange, getEffectiveSchedule } from "../time-tracking"; // Phase 100B Plan 08 — T1; Phase 101B wave 8 merged in
+import {
+  getAbsencesOverlapping, // Phase 100B Plan 12 — A4
+  getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
+  loadBsSlotOverrides, // Phase 76.31 — D-06 slot overrides
+} from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports
 
 // Phase 99 (D-09) — a closed month that recalc skipped, reported so a caller can
 // surface it to a human instead of the change happening silently.
