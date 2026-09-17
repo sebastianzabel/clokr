@@ -12,19 +12,13 @@ import {
   createOvertimeAccount,
   hardDeleteOvertimeDataForEmployee,
 } from "../../working-time-account"; // Phase 100B Plan 06 — W13/W15
-import { hardDeleteTimeDataForEmployee } from "../../time-tracking"; // Phase 100B Plan 08 — T11
 import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
   BREAK_MAX_OVER_6H,
   BREAK_MAX_OVER_9H,
-} from "../../time-tracking/break-constants";
-import {
-  BS_DAILY_MIN_BOUND,
-  BS_DAILY_MAX_BOUND,
-  BS_BLOCK_WEEKLY_MIN_BOUND,
-  BS_BLOCK_WEEKLY_MAX_BOUND,
-} from "../../absence/vocational-school-constants";
+  hardDeleteTimeDataForEmployee,
+} from "../../time-tracking"; // Phase 100B Plan 08 — T11; issue #246, E-6
 import {
   getVacationEntitlementByDisplayName,
   hardDeleteEntitlementsForEmployee,
@@ -32,7 +26,11 @@ import {
   getAbsenceDocumentPaths,
   hardDeleteAbsencesForEmployee,
   hardDeleteLeaveRequestsForEmployee,
-} from "../../absence"; // Phase 100B Plan 10 — H1 sibling / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3
+  BS_DAILY_MIN_BOUND,
+  BS_DAILY_MAX_BOUND,
+  BS_BLOCK_WEEKLY_MIN_BOUND,
+  BS_BLOCK_WEEKLY_MAX_BOUND,
+} from "../../absence"; // Phase 100B Plan 10 — H1 sibling / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6
 
 // ── Retention constant ─────────────────────────────────────────────────────
 const DEFAULT_RETENTION_YEARS = 10;

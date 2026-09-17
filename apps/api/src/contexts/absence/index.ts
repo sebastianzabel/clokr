@@ -138,3 +138,13 @@ export {
   archiveAbsencesBefore,
 } from "./facade/absences";
 export type { OverlappingAbsence, RosterSollAbsence, VocationalSchoolDay } from "./facade/absences";
+
+// ── JArbSchG §9 Berufsschule bound values (issue #246, E-6) ──────────────────────────────────
+// Declared public: a constant carries no query semantics, no soft-delete guard, no tenant scope
+// — the number itself IS the invariant, so a value re-export needs no facade function around it.
+export {
+  BS_DAILY_MIN_BOUND,
+  BS_DAILY_MAX_BOUND,
+  BS_BLOCK_WEEKLY_MIN_BOUND,
+  BS_BLOCK_WEEKLY_MAX_BOUND,
+} from "./vocational-school-constants";

@@ -59,3 +59,8 @@ export {
   type MonthlySnapshotRow,
   type CarryOverByMonth,
 } from "./facade/saldo-snapshot";
+
+// ── Missing-entries-window default (issue #246, E-6) ─────────────────────────────────────────
+// Declared public: a constant carries no query semantics, no soft-delete guard, no tenant scope
+// — the number itself IS the invariant, so a value re-export needs no facade function around it.
+export { DEFAULT_MISSING_ENTRIES_DAYS } from "./missing-entries-window";
