@@ -30,6 +30,7 @@ import {
   lockEntriesForMonth,
   unlockEntriesForMonth,
 } from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7/T8
+import { getAbsencesOverlapping } from "../../absence"; // Phase 100B Plan 12 — A4
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),
@@ -1164,23 +1165,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
           select: { startDate: true, endDate: true, halfDay: true },
         }),
         // Absences — same filter as old inline path
-        app.prisma.absence.findMany({
-          where: {
-            employeeId,
-            deletedAt: null,
-            startDate: { lte: monthEnd },
-            endDate: { gte: effectiveStart },
-          },
-          select: {
-            startDate: true,
-            endDate: true,
-            type: true,
-            source: true,
-            halfDay: true,
-            // Phase 76.38 (D-11) — per-day Unterrichtszeit for duration-based BS slot.
-            unterrichtsMinutes: true,
-          },
-        }),
+        // Phase 100B Plan 12 — A4, contexts/absence facade. THE SALDO INPUT.
+        getAbsencesOverlapping(
+          app.prisma,
+          { kind: "employee", employeeId, tenantId: employee.tenantId },
+          effectiveStart,
+          monthEnd,
+        ),
       ]);
 
       // Get previous month's carry-over (unchanged from old path at :1254–1263)

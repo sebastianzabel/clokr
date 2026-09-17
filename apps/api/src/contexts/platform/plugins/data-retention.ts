@@ -3,6 +3,7 @@ import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
 import { countSnapshotsBefore } from "../../working-time-account"; // Phase 100B Plan 07 — W7
 import { archiveEntriesBefore } from "../../time-tracking"; // Phase 100B Plan 08 — T9
+import { archiveAbsencesBefore } from "../../absence"; // Phase 100B Plan 12
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -87,20 +88,19 @@ export const dataRetentionPlugin = fp(async (app) => {
         });
 
         // Soft-delete absences older than retention period
-        const archivedAbsences = await app.prisma.absence.updateMany({
-          where: {
-            employeeId: { in: employeeIds },
-            deletedAt: null,
-            endDate: { lte: cutoffDate },
-          },
-          data: { deletedAt: new Date() },
-        });
+        // Phase 100B Plan 12 — contexts/absence facade.
+        const archivedAbsencesCount = await archiveAbsencesBefore(
+          app.prisma,
+          employeeIds,
+          tenant.id,
+          cutoffDate,
+        );
 
-        const total = archivedEntriesCount + archivedLeave.count + archivedAbsences.count;
+        const total = archivedEntriesCount + archivedLeave.count + archivedAbsencesCount;
 
         if (total > 0) {
           app.log.info(
-            `Data-Retention: Tenant ${tenant.name} — ${archivedEntriesCount} Zeiteinträge, ${archivedLeave.count} Urlaubsanträge, ${archivedAbsences.count} Abwesenheiten archiviert (vor ${cutoffYear})`,
+            `Data-Retention: Tenant ${tenant.name} — ${archivedEntriesCount} Zeiteinträge, ${archivedLeave.count} Urlaubsanträge, ${archivedAbsencesCount} Abwesenheiten archiviert (vor ${cutoffYear})`,
           );
 
           await app.audit({
@@ -114,7 +114,7 @@ export const dataRetentionPlugin = fp(async (app) => {
               retentionYears,
               archivedEntries: archivedEntriesCount,
               archivedLeave: archivedLeave.count,
-              archivedAbsences: archivedAbsences.count,
+              archivedAbsences: archivedAbsencesCount,
             },
           });
         } else {

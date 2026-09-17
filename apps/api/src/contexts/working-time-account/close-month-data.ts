@@ -7,6 +7,7 @@
 
 import type { PrismaClient } from "@clokr/db";
 import { getWorkedEntriesInRange } from "../time-tracking"; // Phase 100B Plan 08 — T2
+import { getAbsencesOverlapping } from "../absence"; // Phase 100B Plan 12 — A4
 
 /**
  * Bulk-fetch all data needed by the close-month status handlers for a given date range
@@ -69,15 +70,8 @@ export async function fetchCloseMonthData(
     }),
 
     // Q4: all Absences overlapping this date range.
-    // CLAUDE.md Soft Delete Convention: deletedAt: null is mandatory.
-    prisma.absence.findMany({
-      where: {
-        employeeId: { in: employeeIds },
-        deletedAt: null,
-        startDate: { lte: end },
-        endDate: { gte: start },
-      },
-    }),
+    // Phase 100B Plan 12 — A4, contexts/absence facade.
+    getAbsencesOverlapping(prisma, { kind: "employees", employeeIds, tenantId }, start, end),
 
     // Q5: all tenant-specific DB PublicHolidays in range (tenant-wide, not per-employee).
     prisma.publicHoliday.findMany({

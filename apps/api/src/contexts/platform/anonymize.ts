@@ -54,6 +54,7 @@
 import type { Prisma } from "@clokr/db";
 import { clearEntryNotesForEmployee } from "../time-tracking"; // Phase 100B Plan 08 — T10
 import { anonymizeSection9CreditsForEmployee } from "../absence"; // Phase 100B Plan 11 — T-100B-48
+import { anonymizeAbsencesForEmployee } from "../absence"; // Phase 100B Plan 12 — F3
 
 /**
  * The sentinel that marks a DSGVO-anonymized Employee row (set by anonymizeEmployeeData below):
@@ -129,10 +130,8 @@ export async function anonymizeEmployeeData(opts: AnonymizeEmployeeOptions): Pro
   });
 
   // Notizen in Abwesenheiten anonymisieren + Dokument-Pfad entfernen
-  await tx.absence.updateMany({
-    where: { employeeId },
-    data: { note: null, documentPath: null },
-  });
+  // Phase 100B Plan 12 — F3, contexts/absence facade.
+  await anonymizeAbsencesForEmployee(tx, employeeId);
 
   // Phase 104 (D-26): Papier-AU zu § 9-BUrlG-Vorgängen ist ein Gesundheitsdatum nach Art. 9
   // DSGVO. Der Zeiger darauf wird gelöscht; das MinIO-Objekt selbst löscht der Aufrufer NACH

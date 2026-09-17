@@ -115,8 +115,14 @@ import { readFileSync } from "node:fs";
 // 259 to 260. MIN_TESTS rises from 3035 to 3044: +9 test cases in that new file (verified with
 // `pnpm exec vitest run .../facade-vocational-school-patterns.test.ts`, "9 tests" in its own
 // output) — 3035 + 9 = 3044. No other test file's test COUNT changed in this plan.
-const MIN_FILES = 260;
-const MIN_TESTS = 3044;
+//
+// Phase 100B Plan 12 (Wave 5, closing model) — one new test FILE
+// (contexts/absence/__tests__/facade-absences.test.ts) — MIN_FILES rises from 260 to 261.
+// MIN_TESTS rises from 3044 to 3057: +13 test cases in that new file (verified with
+// `pnpm exec vitest run .../facade-absences.test.ts`, "13 tests" in its own output) —
+// 3044 + 13 = 3057. No other test file's test COUNT changed in this plan.
+const MIN_FILES = 261;
+const MIN_TESTS = 3057;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

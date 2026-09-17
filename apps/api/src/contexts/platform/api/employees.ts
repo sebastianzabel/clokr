@@ -37,7 +37,9 @@ import {
   getVacationEntitlementByDisplayName,
   hardDeleteEntitlementsForEmployee,
   getSection9DocumentPaths,
-} from "../../absence"; // Phase 100B Plan 10 — H1 sibling / F3; Plan 11 — F3
+  getAbsenceDocumentPaths,
+  hardDeleteAbsencesForEmployee,
+} from "../../absence"; // Phase 100B Plan 10 — H1 sibling / F3; Plan 11 — F3; Plan 12 — F3
 
 // ── Retention constant ─────────────────────────────────────────────────────
 const DEFAULT_RETENTION_YEARS = 10;
@@ -1002,10 +1004,8 @@ export async function employeeRoutes(app: FastifyInstance) {
       // inside the tx; after commit those paths are gone from Postgres).
       // MinIO deletes MUST happen AFTER the tx commits — MinIO is not transactional with
       // Postgres. A rolled-back tx must not have deleted the actual files.
-      const absenceDocs = await app.prisma.absence.findMany({
-        where: { employeeId: id, documentPath: { not: null } },
-        select: { documentPath: true },
-      });
+      // Phase 100B Plan 12 — F3, contexts/absence facade.
+      const absenceDocs = await getAbsenceDocumentPaths(app.prisma, id);
       // Phase 104-07 (D-26): same pre-fetch-before-tx reasoning as absenceDocs above — a
       // paper-AU document is an Art. 9 DSGVO health datum and must be erased on Art. 17
       // deletion just as reliably as an avatar or absence document.
@@ -1222,7 +1222,8 @@ export async function employeeRoutes(app: FastifyInstance) {
         await hardDeleteTimeDataForEmployee(tx, id);
         // Restrict-protected models
         await tx.leaveRequest.deleteMany({ where: { employeeId: id } });
-        await tx.absence.deleteMany({ where: { employeeId: id } });
+        // Phase 100B Plan 12 — F3, contexts/absence facade (IN PLACE, H5 ordering unchanged).
+        await hardDeleteAbsencesForEmployee(tx, id);
         // Cascade-owned models (safe to delete explicitly)
         // Phase 100B Plan 10 — F3, contexts/absence facade.
         await hardDeleteEntitlementsForEmployee(tx, id);

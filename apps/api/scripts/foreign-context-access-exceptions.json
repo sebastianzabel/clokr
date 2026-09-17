@@ -11,7 +11,8 @@
     "leaveType",
     "leaveEntitlement",
     "employeeVocationalSchoolPattern",
-    "section9Credit"
+    "section9Credit",
+    "absence"
   ],
   "exceptions": [
     {

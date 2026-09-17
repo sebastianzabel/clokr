@@ -58,5 +58,23 @@
     "function": "anonymizeSection9CreditsForEmployee",
     "rules": ["F3"],
     "reason": "Plan 100B-11 (Wave 5, D-08, T-100B-48): DSGVO Art. 17 anonymisation — nulls Section9Credit.documentPath/reason for employeeId inside anonymize.ts's own $transaction, invoked ONLY from anonymizeEmployeeData(), which resolves and is only ever reached after platform/api/employees.ts's DELETE /:id handler validated 'id' against req.user.tenantId BEFORE opening the transaction this function runs inside. Same shape and reasoning as clearEntryNotesForEmployee/hardDeleteOvertimeDataForEmployee/hardDeleteEntitlementsForEmployee above: a tenantId parameter here would be decorative, not a real boundary."
+  },
+  {
+    "file": "apps/api/src/contexts/absence/facade/absences.ts",
+    "function": "getAbsenceDocumentPaths",
+    "rules": ["F3"],
+    "reason": "Plan 100B-12 (D-08): DSGVO Art. 17 pre-fetch of every non-null Absence.documentPath for employeeId, deliberately with no deletedAt guard (a soft-deleted row's document must still be found and deleted from MinIO) and no tenantId parameter. Its sole caller (platform/api/employees.ts's DELETE /:id ANONYMIZE handler) already validates id against req.user.tenantId before this function is ever reached, before the anonymisation $transaction even opens (MinIO deletes must happen after commit). Same shape as getSection9DocumentPaths (plan 11)."
+  },
+  {
+    "file": "apps/api/src/contexts/absence/facade/absences.ts",
+    "function": "anonymizeAbsencesForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-12 (D-08): DSGVO Art. 17 anonymisation — nulls Absence.note and Absence.documentPath for employeeId, deliberately with no deletedAt guard (a soft-deleted row's PII must be scrubbed too, same as every other field platform/anonymize.ts's anonymizeEmployeeData() clears) and no tenantId parameter. Its sole caller resolves and tenant-validates employeeId before this function is ever reached (employees.ts's DELETE /:id anonymization route, inside its own $transaction). Same shape as clearEntryNotesForEmployee (plan 08)."
+  },
+  {
+    "file": "apps/api/src/contexts/absence/facade/absences.ts",
+    "function": "hardDeleteAbsencesForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-12 (D-08, H5): a HARD delete (Absence.deleteMany) invoked ONLY from platform/api/employees.ts's DELETE /:id/hard-delete sequence inside its own $transaction, whose handler validates id against req.user.tenantId at its own top BEFORE this transaction — and therefore before this function — is ever reached. Called IN PLACE in the existing onDelete:Restrict ORDER (Break -> TimeEntry -> LeaveRequest -> Absence -> ...), unchanged. Same shape as hardDeleteEntitlementsForEmployee (plan 10) and hardDeleteOvertimeDataForEmployee (plan 06)."
   }
 ]

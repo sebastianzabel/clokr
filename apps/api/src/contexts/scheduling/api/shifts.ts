@@ -18,7 +18,12 @@ import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../../platform/anonymize";
 import { updateOvertimeAccount } from "../../time-tracking/api/time-entries";
 import { isMonthClosed } from "../../working-time-account"; // Phase 100B Plan 07 — W1
 import { mondayOfWeekUtc } from "../../absence/vacation-calc"; // Phase 107 (D-14) — same Monday-cutting primitive as :709-718
-import { listLeaveTypes, listActiveBsPatternsForWeek } from "../../absence"; // Phase 100B Plan 10 — A18; Plan 11 — A21a
+import {
+  listLeaveTypes, // Phase 100B Plan 10 — A18
+  listActiveBsPatternsForWeek, // Phase 100B Plan 11 — A21a
+  getAbsencesOverlapping, // Phase 100B Plan 12 — A4
+  getRosterSollAbsencesOverlapping, // Phase 100B Plan 12 — A5 (D-09, NEVER merge with A4)
+} from "../../absence";
 import {
   recalcProvisionalLeaveForShiftChange,
   type RecalcDeps,
@@ -162,6 +167,7 @@ interface ShiftConflict {
 async function findShiftConflict(
   prisma: import("@clokr/db").PrismaClient,
   employeeId: string,
+  tenantId: string,
   isoDate: string,
 ): Promise<ShiftConflict | null> {
   const day = new Date(isoDate + "T00:00:00Z");
@@ -185,15 +191,16 @@ async function findShiftConflict(
     };
   }
 
-  // Then check Absence
-  const absence = await prisma.absence.findFirst({
-    where: {
-      employeeId,
-      deletedAt: null,
-      startDate: { lte: day },
-      endDate: { gte: day },
-    },
-  });
+  // Then check Absence — Phase 100B Plan 12 (A4), contexts/absence facade. `tenantId` threaded
+  // in purely to satisfy EmployeeScope's "every variant carries tenantId" contract (D-10); both
+  // call sites already validate `employeeId` against `req.user.tenantId` upstream, so this is a
+  // proven no-op, not a behaviour change.
+  const [absence] = await getAbsencesOverlapping(
+    prisma,
+    { kind: "employee", employeeId, tenantId },
+    day,
+    day,
+  );
   if (absence) {
     return {
       kind: "absence",
@@ -906,20 +913,8 @@ export async function shiftRoutes(app: FastifyInstance) {
             endDate: true,
           },
         }),
-        app.prisma.absence.findMany({
-          where: {
-            employee: { tenantId },
-            deletedAt: null,
-            startDate: { lte: sunday },
-            endDate: { gte: monday },
-          },
-          select: {
-            employeeId: true,
-            type: true,
-            startDate: true,
-            endDate: true,
-          },
-        }),
+        // Phase 100B Plan 12 — A4, contexts/absence facade.
+        getAbsencesOverlapping(app.prisma, { kind: "tenant", tenantId }, monday, sunday),
         app.prisma.coverageRule.findMany({
           where: { tenantId },
           select: {
@@ -1310,22 +1305,14 @@ export async function shiftRoutes(app: FastifyInstance) {
       // is visible in code review. The general `absences` array loaded at L809
       // remains UNFILTERED for the availability/calendar display — there a BS
       // day MUST still show as "absent".
-      const absencesForSoll = await app.prisma.absence.findMany({
-        where: {
-          employee: { tenantId },
-          deletedAt: null,
-          type: { not: "VOCATIONAL_SCHOOL" },
-          source: { not: "PATTERN" },
-          startDate: { lte: sunday },
-          endDate: { gte: monday },
-        },
-        select: {
-          employeeId: true,
-          startDate: true,
-          endDate: true,
-          halfDay: true,
-        },
-      });
+      // Phase 100B Plan 12 — A5, contexts/absence facade (D-09: NEVER merge with A4/
+      // getAbsencesOverlapping above — see that function's own module header).
+      const absencesForSoll = await getRosterSollAbsencesOverlapping(
+        app.prisma,
+        tenantId,
+        monday,
+        sunday,
+      );
 
       // Per-employee schedule index for O(1) lookup.
       const scheduleByEmp = new Map<string, Record<string, unknown>>();
@@ -1881,7 +1868,12 @@ export async function shiftRoutes(app: FastifyInstance) {
       }
 
       // Conflict-check unless force=true
-      const conflict = await findShiftConflict(app.prisma, body.employeeId, body.date);
+      const conflict = await findShiftConflict(
+        app.prisma,
+        body.employeeId,
+        req.user.tenantId,
+        body.date,
+      );
       if (conflict && !force) {
         const isLeave = conflict.kind === "leave";
         return reply.code(409).send({
@@ -2207,7 +2199,12 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
       }
 
-      const conflict = await findShiftConflict(app.prisma, effEmployeeId, effDateIso);
+      const conflict = await findShiftConflict(
+        app.prisma,
+        effEmployeeId,
+        req.user.tenantId,
+        effDateIso,
+      );
       if (conflict && !force) {
         const isLeave = conflict.kind === "leave";
         return reply.code(409).send({
@@ -2471,15 +2468,13 @@ export async function shiftRoutes(app: FastifyInstance) {
               leaveTypeId: true,
             },
           }),
-          app.prisma.absence.findMany({
-            where: {
-              employee: { tenantId },
-              deletedAt: null,
-              startDate: { lte: weekEndDate },
-              endDate: { gte: weekStartDate },
-            },
-            select: { id: true, employeeId: true, startDate: true, endDate: true, type: true },
-          }),
+          // Phase 100B Plan 12 — A4, contexts/absence facade.
+          getAbsencesOverlapping(
+            app.prisma,
+            { kind: "tenant", tenantId },
+            weekStartDate,
+            weekEndDate,
+          ),
           app.prisma.shift.findMany({
             where: {
               employee: { tenantId },
@@ -2824,15 +2819,13 @@ export async function shiftRoutes(app: FastifyInstance) {
             },
             select: { id: true, employeeId: true, startDate: true, endDate: true },
           }),
-          app.prisma.absence.findMany({
-            where: {
-              employee: { tenantId },
-              deletedAt: null,
-              startDate: { lte: targetEndDate },
-              endDate: { gte: targetStartDate },
-            },
-            select: { id: true, employeeId: true, startDate: true, endDate: true },
-          }),
+          // Phase 100B Plan 12 — A4, contexts/absence facade.
+          getAbsencesOverlapping(
+            app.prisma,
+            { kind: "tenant", tenantId },
+            targetStartDate,
+            targetEndDate,
+          ),
           app.prisma.shift.findMany({
             where: {
               employee: { tenantId },

@@ -51,6 +51,7 @@ import {
   deductVacationDays,
   reverseVacationDays,
 } from "../../contexts/absence/api/leave"; // Phase 107 (D-14) — reused verbatim, see each export's own docblock note in leave.ts
+import { getVocationalSchoolDays } from "../../contexts/absence"; // Phase 100B Plan 12 — A6
 import { phorestFetch } from "./client";
 import {
   phorestShiftKey,
@@ -382,15 +383,13 @@ export async function syncPhorestShifts(
     // mapped employees in the window in ONE query (mirrors vocational-school-generator.ts's
     // bulk-fetch idiom), then look up per-slot via a Set — never a per-slot query inside the loop.
     const mappedEmployeeIds = [...new Set(mappingRows.map((r) => r.employeeId))];
-    const bsAbsences = await app.prisma.absence.findMany({
-      where: {
-        employeeId: { in: mappedEmployeeIds },
-        type: "VOCATIONAL_SCHOOL",
-        deletedAt: null,
-        startDate: { gte: windowStartDate, lte: windowEndDate },
-      },
-      select: { employeeId: true, startDate: true },
-    });
+    // Phase 100B Plan 12 — A6, contexts/absence facade.
+    const bsAbsences = await getVocationalSchoolDays(
+      app.prisma,
+      { kind: "employees", employeeIds: mappedEmployeeIds, tenantId },
+      windowStartDate,
+      windowEndDate,
+    );
     const bsSet = new Set(
       bsAbsences.map((a) => `${a.employeeId}|${a.startDate.toISOString().slice(0, 10)}`),
     );

@@ -33,6 +33,7 @@ import { closeEmployeeMonth } from "./close-employee-month";
 import { loadBsSlotOverrides } from "../absence/load-bs-slot-overrides";
 import { getEffectiveBreakDuration } from "../time-tracking/break-effective";
 import { getValidWorkedEntriesInRange } from "../time-tracking"; // Phase 100B Plan 08 — T1
+import { getAbsencesOverlapping } from "../absence"; // Phase 100B Plan 12 — A4
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -205,22 +206,13 @@ export async function computeMonthSaldo(
       },
       select: { startDate: true, endDate: true, halfDay: true },
     }),
-    app.prisma.absence.findMany({
-      where: {
-        employeeId,
-        deletedAt: null,
-        startDate: { lte: monthEnd },
-        endDate: { gte: effectiveStart },
-      },
-      select: {
-        startDate: true,
-        endDate: true,
-        type: true,
-        source: true,
-        halfDay: true,
-        unterrichtsMinutes: true,
-      },
-    }),
+    // Phase 100B Plan 12 — A4, contexts/absence facade. THE SALDO INPUT.
+    getAbsencesOverlapping(
+      app.prisma,
+      { kind: "employee", employeeId, tenantId: employee.tenantId },
+      effectiveStart,
+      monthEnd,
+    ),
   ]);
 
   // Previous month carry-over (last non-superseded MONTHLY snapshot before monthStart)

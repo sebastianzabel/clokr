@@ -21,7 +21,9 @@
  * and `Section9Credit` (plan 11, A22 plus its two DSGVO compliance functions) — grouped in
  * `./facade/leave-types.ts`, `./facade/entitlements.ts`, `./facade/vocational-school-patterns.ts`
  * and `./facade/section9-credits.ts` respectively, one file per model.
- * Still to come: `Absence` (plan 12), `LeaveRequest` (plan 13) — each gets its OWN file under
+ * Plan 12 adds `Absence` (A4/A5/A6 plus the three compliance functions, `./facade/absences.ts`) —
+ * D-09's A4/A5 split is the single highest-consequence grouping decision in the phase; see that
+ * file's own module header. Still to come: `LeaveRequest` (plan 13) — gets its OWN file under
  * `./facade/`, exported below grouped by model, so a later plan extends this list rather than
  * guessing at its shape.
  *
@@ -88,3 +90,16 @@ export {
   anonymizeSection9CreditsForEmployee,
 } from "./facade/section9-credits";
 export type { ConfirmedSection9Credit } from "./facade/section9-credits";
+
+// ── Absence (plan 12, A4/A5/A6 + 3 compliance functions — D-09's A4/A5 split, see the file) ──
+export {
+  getAbsencesOverlapping,
+  getRosterSollAbsencesOverlapping,
+  getVocationalSchoolDays,
+  hasVocationalSchoolDay,
+  getAbsenceDocumentPaths,
+  anonymizeAbsencesForEmployee,
+  hardDeleteAbsencesForEmployee,
+  archiveAbsencesBefore,
+} from "./facade/absences";
+export type { OverlappingAbsence, RosterSollAbsence, VocationalSchoolDay } from "./facade/absences";

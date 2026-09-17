@@ -16,6 +16,7 @@ import {
   getValidWorkedEntriesInRange,
   lockEntriesForMonth,
 } from "../../time-tracking"; // Phase 100B Plan 08 — T2/T1/T7
+import { getAbsencesOverlapping } from "../../absence"; // Phase 100B Plan 12 — A4
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -336,15 +337,13 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                     },
                     select: { startDate: true, endDate: true, halfDay: true },
                   });
-                  const rdAbsences = await app.prisma.absence.findMany({
-                    where: {
-                      employeeId: emp.id,
-                      deletedAt: null,
-                      startDate: { lte: monthEnd },
-                      endDate: { gte: monthStart },
-                    },
-                    select: { startDate: true, endDate: true, halfDay: true },
-                  });
+                  // Phase 100B Plan 12 — A4, contexts/absence facade.
+                  const rdAbsences = await getAbsencesOverlapping(
+                    app.prisma,
+                    { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
+                    monthStart,
+                    monthEnd,
+                  );
 
                   // Pre-compute holiday date strings for this specific month
                   const monthHolidayDateStrings = new Set<string>(
@@ -572,23 +571,13 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                     select: { startDate: true, endDate: true, halfDay: true },
                   }),
                   // All absences (including VOCATIONAL_SCHOOL — BS-doubling handled in core)
-                  app.prisma.absence.findMany({
-                    where: {
-                      employeeId: emp.id,
-                      deletedAt: null,
-                      startDate: { lte: monthEnd },
-                      endDate: { gte: empEffectiveStart },
-                    },
-                    select: {
-                      startDate: true,
-                      endDate: true,
-                      type: true,
-                      source: true,
-                      halfDay: true,
-                      // Phase 76.38 (D-11) — per-day Unterrichtszeit for duration-based BS slot.
-                      unterrichtsMinutes: true,
-                    },
-                  }),
+                  // Phase 100B Plan 12 — A4, contexts/absence facade. THE SALDO INPUT.
+                  getAbsencesOverlapping(
+                    app.prisma,
+                    { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
+                    empEffectiveStart,
+                    monthEnd,
+                  ),
                 ]);
 
               // Phase 76.31 (D-06): load Employee + active-Pattern bsSlot* overrides.

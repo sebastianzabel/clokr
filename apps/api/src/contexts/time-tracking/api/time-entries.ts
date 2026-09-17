@@ -23,6 +23,7 @@ import { resolveActor } from "../../../services/clock/audit-actor";
 import type { ClockEvent } from "../../../services/clock/types";
 import { closeEmployeeMonth } from "../../working-time-account/close-employee-month"; // SNAP-03 — Phase 76.27
 import { loadBsSlotOverrides } from "../../absence/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
+import { getAbsencesOverlapping } from "../../absence"; // Phase 100B Plan 12 — A4
 import {
   getRetroEntryWindowDays,
   computeRetroLimitStr,
@@ -2596,14 +2597,13 @@ export async function computeOvertimeBalanceBreakdown(
     },
   });
 
-  const allAbsences = await app.prisma.absence.findMany({
-    where: {
-      employeeId,
-      deletedAt: null,
-      startDate: { lte: shiftRangeLastDay },
-      endDate: { gte: rangeStart },
-    },
-  });
+  // Phase 100B Plan 12 — A4, contexts/absence facade.
+  const allAbsences = await getAbsencesOverlapping(
+    app.prisma,
+    { kind: "employee", employeeId, tenantId: employee?.tenantId ?? "" },
+    rangeStart,
+    shiftRangeLastDay,
+  );
 
   // Build a full-range holidayDateStrings Set covering all years in [rangeStart, effectiveEnd].
   // (Already computed above as holidayDateStrSet — reuse it directly for closeEmployeeMonth calls.)
