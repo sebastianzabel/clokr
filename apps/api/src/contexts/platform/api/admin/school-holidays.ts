@@ -15,6 +15,7 @@ import { FastifyInstance } from "fastify";
 import { requireAuth, requireRole } from "../../../../middleware/auth";
 import { FederalState } from "@clokr/db";
 import { syncSchoolHolidaysForTenant } from "../../plugins/school-holidays-sync";
+import { listActiveBsPatternsWithFederalStateOverride } from "../../../absence"; // Phase 100B Plan 11 — A21b
 
 export async function adminSchoolHolidaysRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireAuth);
@@ -53,14 +54,7 @@ export async function adminSchoolHolidaysRoutes(app: FastifyInstance) {
 
       // Collect ALL federal states the tenant needs: tenant default +
       // every Pattern.federalStateOverride that is non-null and active.
-      const overrides = await app.prisma.employeeVocationalSchoolPattern.findMany({
-        where: {
-          isActive: true,
-          employee: { tenantId: tenant.id },
-          federalStateOverride: { not: null },
-        },
-        select: { federalStateOverride: true },
-      });
+      const overrides = await listActiveBsPatternsWithFederalStateOverride(app.prisma, tenant.id);
 
       const needed = new Set<FederalState>([tenant.federalState]);
       for (const o of overrides) {

@@ -28,9 +28,12 @@ import type { FastifyInstance } from "fastify";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
 import { getHolidays, STATE_MAP } from "../platform/holidays";
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
+import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import { closeEmployeeMonth } from "./close-employee-month";
 import { loadBsSlotOverrides } from "../absence/load-bs-slot-overrides";
 import { getEffectiveBreakDuration } from "../time-tracking/break-effective";
+import { getValidWorkedEntriesInRange } from "../time-tracking"; // Phase 100B Plan 08 — T1
+import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -180,51 +183,33 @@ export async function computeMonthSaldo(
 
   // Pre-fetch all collections (mirroring overtime.ts lines 943–995)
   const [closeEntries, closeShifts, closeApprovedLeave, closeAbsences] = await Promise.all([
-    app.prisma.timeEntry.findMany({
-      where: {
-        employeeId,
-        deletedAt: null,
-        date: { gte: effectiveStart, lte: monthLastDay },
-        endTime: { not: null },
-        type: "WORK",
-        isInvalid: false,
-      },
-      select: { date: true, startTime: true, endTime: true, breakMinutes: true },
-    }),
-    app.prisma.shift.findMany({
-      where: {
-        employeeId,
-        date: { gte: effectiveStart, lte: monthLastDay },
-        deletedAt: null,
-      },
-      select: { date: true, startTime: true, endTime: true },
-    }),
-    app.prisma.leaveRequest.findMany({
-      where: {
-        employeeId,
-        deletedAt: null,
-        status: "APPROVED",
-        startDate: { lte: monthEnd },
-        endDate: { gte: monthStart },
-      },
-      select: { startDate: true, endDate: true, halfDay: true },
-    }),
-    app.prisma.absence.findMany({
-      where: {
-        employeeId,
-        deletedAt: null,
-        startDate: { lte: monthEnd },
-        endDate: { gte: effectiveStart },
-      },
-      select: {
-        startDate: true,
-        endDate: true,
-        type: true,
-        source: true,
-        halfDay: true,
-        unterrichtsMinutes: true,
-      },
-    }),
+    // Phase 100B Plan 08 — T1, contexts/time-tracking facade. THE SALDO INPUT.
+    getValidWorkedEntriesInRange(
+      app.prisma,
+      { kind: "employee", employeeId, tenantId: employee.tenantId },
+      effectiveStart,
+      monthLastDay,
+    ),
+    getShiftsInRange(
+      app.prisma,
+      { kind: "employee", employeeId, tenantId: employee.tenantId },
+      effectiveStart,
+      monthLastDay,
+    ),
+    // Phase 100B Plan 13 — A1, contexts/absence facade. THE SALDO INPUT.
+    getApprovedLeaveOverlapping(
+      app.prisma,
+      { kind: "employee", employeeId, tenantId: employee.tenantId },
+      monthStart,
+      monthEnd,
+    ),
+    // Phase 100B Plan 12 — A4, contexts/absence facade. THE SALDO INPUT.
+    getAbsencesOverlapping(
+      app.prisma,
+      { kind: "employee", employeeId, tenantId: employee.tenantId },
+      effectiveStart,
+      monthEnd,
+    ),
   ]);
 
   // Previous month carry-over (last non-superseded MONTHLY snapshot before monthStart)

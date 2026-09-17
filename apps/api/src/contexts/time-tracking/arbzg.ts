@@ -6,6 +6,7 @@ import {
   countBsDaysInIsoWeek,
   getVocationalSchoolMinutesForDate,
 } from "../working-time-account/vocational-school-saldo";
+import { hasVocationalSchoolDay, getVocationalSchoolDays } from "../absence"; // Phase 100B Plan 12 — A6
 
 export interface ArbZGWarning {
   code:
@@ -102,18 +103,13 @@ export async function checkArbZG(
 
   // Phase 63 — Is the changed date itself a BS day? Looked up once and reused by
   // the §3 daily mixed-day branch + §5 rest-period BS-end heuristic.
-  const dayRangeStart = new Date(dateStr + "T00:00:00.000Z");
-  const dayRangeEnd = new Date(dateStr + "T23:59:59.999Z");
-  const bsAbsenceToday = await prisma.absence.findFirst({
-    where: {
-      employeeId,
-      deletedAt: null, // CLAUDE.md soft-delete rule
-      type: "VOCATIONAL_SCHOOL",
-      startDate: { lte: dayRangeEnd },
-      endDate: { gte: dayRangeStart },
-    },
-    select: { id: true, startDate: true },
-  });
+  // Phase 100B Plan 12 — A6's R-B single-day sibling, contexts/absence facade.
+  const bsAbsenceToday = await hasVocationalSchoolDay(
+    prisma,
+    employeeId,
+    employee.tenantId,
+    changedDate,
+  );
   // Phase 76.31-05 (D-08 FULL) — the §3 daily 10h check must count the REAL slot-
   // resolved BS minutes, not a flat 480. A LONG day is 9.5h (570 min); counting it
   // as 480 under-warns on the 10h cap (RESEARCH R5). The resolver returns 0 when no
@@ -328,16 +324,13 @@ export async function checkArbZG(
   // per-date amount used by the §3 daily check AND the saldo math — so a LONG day
   // counts 570 min (9.5h), a block week auto-caps via blockWeekMinutes/N, and the
   // 48h weekly cap reflects the real credited load (RESEARCH R5). Soft-delete-aware.
-  const bsWeekRows = await prisma.absence.findMany({
-    where: {
-      employeeId,
-      deletedAt: null, // CLAUDE.md soft-delete rule
-      type: "VOCATIONAL_SCHOOL",
-      startDate: { gte: monday, lte: sunday },
-    },
-    select: { startDate: true },
-    orderBy: { startDate: "asc" },
-  });
+  // Phase 100B Plan 12 — A6, contexts/absence facade.
+  const bsWeekRows = await getVocationalSchoolDays(
+    prisma,
+    { kind: "employee", employeeId, tenantId: employee.tenantId },
+    monday,
+    sunday,
+  );
   const bsWeekDateStrs = Array.from(
     new Set(bsWeekRows.map((r) => r.startDate.toISOString().slice(0, 10))),
   );
@@ -394,15 +387,13 @@ export async function checkArbZG(
     // block weeks here because the 24-week denominator (144 Werktage) is so
     // large that block-week capping vs. uncapped contribution makes a
     // negligible difference (max delta over 24 weeks ≈ a few minutes/Werktag).
-    const bsAvgAbsences = await prisma.absence.findMany({
-      where: {
-        employeeId,
-        deletedAt: null, // CLAUDE.md soft-delete rule
-        type: "VOCATIONAL_SCHOOL",
-        startDate: { gte: windowStart, lte: changedDate },
-      },
-      select: { startDate: true },
-    });
+    // Phase 100B Plan 12 — A6, contexts/absence facade.
+    const bsAvgAbsences = await getVocationalSchoolDays(
+      prisma,
+      { kind: "employee", employeeId, tenantId: employee.tenantId },
+      windowStart,
+      changedDate,
+    );
     const bsDistinctDaysInWindow = new Set(
       bsAvgAbsences.map((a) => a.startDate.toISOString().slice(0, 10)),
     ).size;

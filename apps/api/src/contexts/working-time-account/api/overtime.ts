@@ -8,6 +8,7 @@ import {
   type OvertimeBalanceBreakdown,
 } from "../../time-tracking/api/time-entries";
 import { getConfirmedCarryOver } from "../confirmed-saldo"; // Phase 97-01
+import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "../timezone";
 import { getHolidays, STATE_MAP } from "../../platform/holidays";
 import { fetchCloseMonthData } from "../close-month-data"; // PERF-V1814-01
@@ -24,6 +25,12 @@ import { computeMonthSaldo } from "../month-saldo"; // §615 Team-Zeiten display
 import { getCarryOverBase } from "../carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { recalculateSnapshots } from "../recalculate-snapshots"; // Phase 99 (OB-03) — full-history re-thread
 import { resolveNegativeBalanceTolerance } from "../negative-balance-tolerance"; // Phase 100 (OTC-01) — the one shared precedence chain
+import {
+  getValidWorkedEntriesInRange,
+  lockEntriesForMonth,
+  unlockEntriesForMonth,
+} from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7/T8
+import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),
@@ -168,7 +175,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
       } else {
         balance = Number(account.balanceHours);
         try {
-          const confirmed = await getConfirmedCarryOver(app, employeeId);
+          const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, employee.tenantId);
           confirmedMinutes = confirmed.minutes;
           hasClosedMonth = confirmed.hasClosedMonth;
         } catch (fallbackErr) {
@@ -529,14 +536,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
         // For FIXED types: rosterDates not needed (findMissingWorkdays uses getDayHoursFromSchedule internally).
         let statusRosterDates: Set<string> | undefined;
         if (scheduleTypeSt === "SHIFT_BASED") {
-          const empShifts = await app.prisma.shift.findMany({
-            where: {
-              employeeId: emp.id,
-              date: { gte: monthStart, lte: monthLastDay },
-              deletedAt: null,
-            },
-            select: { date: true },
-          });
+          // Phase 100B Plan 05 — S1, contexts/scheduling facade.
+          const empShifts = await getShiftsInRange(
+            app.prisma,
+            { kind: "employee", employeeId: emp.id, tenantId },
+            monthStart,
+            monthLastDay,
+          );
           statusRosterDates = new Set(empShifts.map((sh) => dateStrInTz(sh.date, tz)));
         }
 
@@ -825,14 +831,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
           // For SHIFT_BASED: fetch rosterDates (Shift.date set) from DB — pitfall A4 fix.
           let ysRosterDates: Set<string> | undefined;
           if (scheduleTypeYs === "SHIFT_BASED") {
-            const empShiftsYs = await app.prisma.shift.findMany({
-              where: {
-                employeeId: emp.id,
-                date: { gte: ysMonthFirstDay, lte: ysMonthLastDay },
-                deletedAt: null,
-              },
-              select: { date: true },
-            });
+            // Phase 100B Plan 05 — S1, contexts/scheduling facade.
+            const empShiftsYs = await getShiftsInRange(
+              app.prisma,
+              { kind: "employee", employeeId: emp.id, tenantId },
+              ysMonthFirstDay,
+              ysMonthLastDay,
+            );
             ysRosterDates = new Set(empShiftsYs.map((sh) => dateStrInTz(sh.date, tz)));
           }
 
@@ -1132,56 +1137,38 @@ export async function overtimeRoutes(app: FastifyInstance) {
       // Queries are byte-identical to those in the removed inline block.
       const [closeEntries, closeShifts, closeApprovedLeave, closeAbsences] = await Promise.all([
         // WORK entries — same filter as old inline path (effectiveStart..monthLastDay)
-        app.prisma.timeEntry.findMany({
-          where: {
-            employeeId,
-            deletedAt: null,
-            date: { gte: effectiveStart, lte: monthLastDay },
-            endTime: { not: null },
-            type: "WORK",
-            isInvalid: false,
-          },
-          select: { date: true, startTime: true, endTime: true, breakMinutes: true },
-        }),
+        // Phase 100B Plan 08 — T1, contexts/time-tracking facade. THE SALDO INPUT.
+        getValidWorkedEntriesInRange(
+          app.prisma,
+          { kind: "employee", employeeId, tenantId: employee.tenantId },
+          effectiveStart,
+          monthLastDay,
+        ),
         // Shifts (SHIFT_BASED only — also fetch for non-SHIFT to avoid a branch here;
         // closeEmployeeMonth ignores the shifts array for non-SHIFT types).
-        app.prisma.shift.findMany({
-          where: {
-            employeeId,
-            date: { gte: effectiveStart, lte: monthLastDay },
-            deletedAt: null, // Phase 67.2 — soft-deleted shifts excluded
-          },
-          select: { date: true, startTime: true, endTime: true },
-        }),
+        // Phase 100B Plan 05 — S1, contexts/scheduling facade.
+        getShiftsInRange(
+          app.prisma,
+          { kind: "employee", employeeId, tenantId: employee.tenantId },
+          effectiveStart,
+          monthLastDay,
+        ),
         // Approved leave — same filter as old inline path
-        app.prisma.leaveRequest.findMany({
-          where: {
-            employeeId,
-            deletedAt: null,
-            status: "APPROVED",
-            startDate: { lte: monthEnd },
-            endDate: { gte: monthStart },
-          },
-          select: { startDate: true, endDate: true, halfDay: true },
-        }),
+        // Phase 100B Plan 13 — A1, contexts/absence facade.
+        getApprovedLeaveOverlapping(
+          app.prisma,
+          { kind: "employee", employeeId, tenantId: employee.tenantId },
+          monthStart,
+          monthEnd,
+        ),
         // Absences — same filter as old inline path
-        app.prisma.absence.findMany({
-          where: {
-            employeeId,
-            deletedAt: null,
-            startDate: { lte: monthEnd },
-            endDate: { gte: effectiveStart },
-          },
-          select: {
-            startDate: true,
-            endDate: true,
-            type: true,
-            source: true,
-            halfDay: true,
-            // Phase 76.38 (D-11) — per-day Unterrichtszeit for duration-based BS slot.
-            unterrichtsMinutes: true,
-          },
-        }),
+        // Phase 100B Plan 12 — A4, contexts/absence facade. THE SALDO INPUT.
+        getAbsencesOverlapping(
+          app.prisma,
+          { kind: "employee", employeeId, tenantId: employee.tenantId },
+          effectiveStart,
+          monthEnd,
+        ),
       ]);
 
       // Get previous month's carry-over (unchanged from old path at :1254–1263)
@@ -1345,14 +1332,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
         // Lock all time entries in this month (day bounds — the timestamp lower
         // bound casts to the previous month's last day for UTC+ tenants)
-        await tx.timeEntry.updateMany({
-          where: {
-            employeeId,
-            deletedAt: null,
-            date: { gte: monthFirstDay, lte: monthLastDay },
-          },
-          data: { isLocked: true, lockedAt: new Date() },
-        });
+        // Phase 100B Plan 08 — T7, contexts/time-tracking facade.
+        await lockEntriesForMonth(tx, employeeId, employee.tenantId, monthFirstDay, monthLastDay);
 
         // PERF-V1814-02: overtimeAccount.upsert inside the same tx as snapshot + entry-lock.
         // A crash between snapshot commit and upsert can no longer leave a stale live balance.
@@ -1462,14 +1443,14 @@ export async function overtimeRoutes(app: FastifyInstance) {
           where: { id: snap.id },
           data: { superseded: true, supersededReason: reason },
         });
-        await tx.timeEntry.updateMany({
-          where: {
-            employeeId,
-            deletedAt: null,
-            date: { gte: unlockFirstDay, lte: unlockLastDay },
-          },
-          data: { isLocked: false, lockedAt: null },
-        });
+        // Phase 100B Plan 08 — T8, contexts/time-tracking facade.
+        await unlockEntriesForMonth(
+          tx,
+          employeeId,
+          employee.tenantId,
+          unlockFirstDay,
+          unlockLastDay,
+        );
 
         // D-02 / COMP-V1814-05 (audit F1): audit UNLOCK inside the same $transaction (pass tx) so a
         // rollback cannot leave the snapshot superseded without its UNLOCK audit row (or vice-versa).

@@ -8,6 +8,12 @@
  * actually tenant-scoped — that is plan 03's job (`Verdict` / `ScopedVia` in
  * lint-tenant-scoping-types.ts). This module only decides candidacy.
  *
+ * `selectCandidates` below computes `isFacadeModulePath(relPath)` once per file and passes it to
+ * `collectRequestBindings` (100B Plan 04, D-10/G2) — a facade module's own function parameters
+ * seed the same `clientSupplied`/`principalFields` bindings a route's `req.params`/`req.user`
+ * would. See `lint-tenant-scoping-request-bindings.ts`'s header for the full contract; this
+ * module's only job is to compute the boolean and pass it through unchanged.
+ *
  * ── Why the filter runs first (D-14) ──────────────────────────────────────────────────────
  * Measured on `main` at `708ffbfa` with a throwaway probe (production code, `__tests__`
  * excluded): 475 raw calls on the 8 `RELEVANT_METHODS` collapse to roughly 211 candidates
@@ -68,7 +74,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as ts from "typescript";
-import { SCOPED_DIRS, EXCLUDED_DIR_SEGMENT, RELEVANT_METHODS } from "./lint-tenant-scoping-types";
+import {
+  SCOPED_DIRS,
+  EXCLUDED_DIR_SEGMENT,
+  RELEVANT_METHODS,
+  isFacadeModulePath,
+} from "./lint-tenant-scoping-types";
 import type {
   PrismaCall,
   RequestBindings,
@@ -465,9 +476,10 @@ export function selectCandidates(repoRoot: string): Candidate[] {
       /* setParentNodes */ true,
     );
 
+    const isFacade = isFacadeModulePath(relPath);
     for (const { call, node, whereArg } of findPrismaCalls(sourceFile, relPath)) {
       const handler = enclosingHandler(node, sourceFile);
-      const bindings = collectRequestBindings(handler, sourceFile);
+      const bindings = collectRequestBindings(handler, sourceFile, isFacade);
       const provenance = classifyProvenance(whereArg, bindings, sourceFile);
       if (provenance.clientSupplied) {
         candidates.push({ call, node, whereArg, sourceFile, handler, bindings, provenance });

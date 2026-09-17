@@ -11,6 +11,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { saldoSnapshotPeriodBounds } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 
 function isoDate(d: Date): string {
@@ -27,9 +28,6 @@ function pastDate(daysAgo = 7): Date {
   d.setUTCHours(0, 0, 0, 0);
   d.setUTCDate(d.getUTCDate() - daysAgo);
   return d;
-}
-function monthStartUtc(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
 }
 
 describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
@@ -213,7 +211,11 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
 
   it("POST /shifts/:id/restore on locked-month shift returns 422", async () => {
     // Place the shift in a month with an existing SaldoSnapshot (locked).
+    // Issue #241: periodStart/periodEnd MUST be built via saldoSnapshotPeriodBounds
+    // (real monthRangeUtc() conversion) — a naive Date.UTC(year, month, 1) fixture
+    // agrees with the (now-fixed) naive comparison in the route instead of catching it.
     const lockedDate = new Date(Date.UTC(2024, 5, 15)); // June 2024
+    const { start, end } = saldoSnapshotPeriodBounds(lockedDate);
     const shift = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
@@ -228,8 +230,8 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
       data: {
         employeeId: data.employee.id,
         periodType: "MONTHLY",
-        periodStart: monthStartUtc(lockedDate),
-        periodEnd: new Date(Date.UTC(2024, 6, 0)),
+        periodStart: start,
+        periodEnd: end,
         workedMinutes: 0,
         expectedMinutes: 0,
         balanceMinutes: 0,

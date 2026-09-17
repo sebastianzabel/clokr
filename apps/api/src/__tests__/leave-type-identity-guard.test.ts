@@ -195,26 +195,36 @@ const ALLOWED: AllowedEntry[] = [
   // ── plan's "melden, nicht fixen" instruction (same methodology as this plan's own Task 2)   ──
   // ── for a Nebenbefund outside the current plan's files_modified. See Issue #205.            ──
 
-  // attendance-checker.ts: checkVacationExpiry() resolves VACATION by name inside a `where`.
+  // entitlements.ts: checkVacationExpiry() (attendance-checker.ts) resolves VACATION by name
+  // inside a `where` — same finding, relocated by Phase 100B Plan 10 (H1).
   {
-    file: "apps/api/src/contexts/time-tracking/plugins/attendance-checker.ts",
+    file: "apps/api/src/contexts/absence/facade/entitlements.ts",
     pattern: /leaveType:\s*\{\s*name:\s*"Urlaub"\s*\}/,
     reason:
-      "GENUINE FINDING, not a design decision (Issue #205): checkVacationExpiry() (§ 7 BUrlG " +
-      "expiry-reminder cron) resolves the VACATION LeaveType by name inside a `where` filter. A " +
-      "tenant rename silently stops the legally-required reminder for that tenant. Outside this " +
-      "plan's files_modified (only the guard test, docs/migrations.md, docs/adr/0001-abweichungen" +
-      ".md) — not fixed here, same reasoning as D-17 for Issue #196 (mixing an unrelated fix into " +
-      "this plan makes both harder to review). Tracked, not silently accepted.",
+      "GENUINE FINDING, not a design decision (Issue #205, ongoing under #100/#101): " +
+      "getVacationEntitlementsForYearByDisplayName() — the facade function Phase 100B Plan 10 " +
+      "extracted verbatim from attendance-checker.ts's checkVacationExpiry() (§ 7 BUrlG " +
+      "expiry-reminder cron) — resolves the VACATION LeaveType by name inside a `where` filter. " +
+      "A tenant rename silently stops the legally-required reminder for that tenant. D-13 forbids " +
+      "fixing it opportunistically inside a conversion plan; Plan 10 preserved the behaviour " +
+      "verbatim (naming the function explicitly rather than routing it through the code-based " +
+      "lookup) and filed the pre-existing deviation against #100/#101 with file:line evidence — " +
+      "same reasoning as D-17 for Issue #196. Tracked, not silently accepted.",
   },
-  // employees.ts: the exit pro-rata vacation warning resolves VACATION by name.
+  // entitlements.ts: the exit pro-rata vacation warning (employees.ts) resolves VACATION by
+  // name — same finding, relocated by Phase 100B Plan 10 (H1). Not pattern-matched here: the
+  // literal is now a plain getLeaveTypeByDisplayName(db, tenantId, "Urlaub") call ARGUMENT, not
+  // a `where`-filter object literal, so isControlUse() no longer classifies it as control use at
+  // all — this entry exists for documentation accuracy (pointing at the new location), not
+  // because a hit needs excepting.
   {
-    file: "apps/api/src/contexts/platform/api/employees.ts",
-    pattern: /where:\s*\{\s*tenantId:\s*req\.user\.tenantId,\s*name:\s*"Urlaub"\s*\}/,
+    file: "apps/api/src/contexts/absence/facade/entitlements.ts",
+    pattern: /getLeaveTypeByDisplayName\(db, tenantId, "Urlaub"\)/,
     reason:
-      "GENUINE FINDING, not a design decision (Issue #205): the pro-rata vacation warning shown " +
-      "when an employee's exitDate is set resolves the VACATION LeaveType by name. Same class of " +
-      "bug and same reasoning for not fixing inline as attendance-checker.ts above.",
+      "GENUINE FINDING, not a design decision (Issue #205, ongoing under #100/#101): " +
+      "getVacationEntitlementByDisplayName() — extracted verbatim from employees.ts's pro-rata " +
+      "vacation warning shown when an employee's exitDate is set — resolves VACATION by name. " +
+      "Same class of bug and same reasoning for not fixing inline as the entry above.",
   },
   // dashboard/+page.svelte: day.reason (= LeaveType.name for APPROVED leave) is compared directly.
   {

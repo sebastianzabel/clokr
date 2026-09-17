@@ -2,6 +2,13 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
 import { getTenantTimezone, timeStrInTz } from "../../working-time-account/timezone";
+import { getMonthlySnapshotsInRange } from "../../working-time-account"; // Phase 100B Plan 07 — W5
+import { getEntryActivityFeed } from "../../time-tracking"; // Phase 100B Plan 08 — T5
+import {
+  getOwnLeaveActivity, // Phase 100B Plan 13 — A10a
+  getReviewedLeaveActivity, // Phase 100B Plan 13 — A10b
+  getTeamLeaveSubmissions, // Phase 100B Plan 13 — A10c
+} from "../../absence";
 
 /**
  * GET /api/v1/activity?limit=5
@@ -120,15 +127,13 @@ export async function activityRoutes(app: FastifyInstance) {
         // widget must render them in the tenant timezone, not UTC — otherwise a
         // Europe/Berlin tenant sees times ~1-2h too early. Use timeStrInTz.
         const tz = await getTenantTimezone(app.prisma, tenantId);
-        const entries = await app.prisma.timeEntry.findMany({
-          where: {
-            employeeId,
-            deletedAt: null,
-            createdAt: { gte: since },
-          },
-          orderBy: { createdAt: "desc" },
-          take: fetchLimit,
-        });
+        const entries = await getEntryActivityFeed(
+          app.prisma,
+          employeeId,
+          tenantId,
+          since,
+          fetchLimit,
+        );
         for (const e of entries) {
           const startHHMM = timeStrInTz(e.startTime, tz);
           items.push({
@@ -144,12 +149,8 @@ export async function activityRoutes(app: FastifyInstance) {
         }
 
         // Own leave requests (recent status changes)
-        const myLeaves = await app.prisma.leaveRequest.findMany({
-          where: { employeeId, deletedAt: null },
-          orderBy: { updatedAt: "desc" },
-          take: fetchLimit,
-          include: { leaveType: { select: { name: true } } },
-        });
+        // Phase 100B Plan 13 — A10a, contexts/absence facade.
+        const myLeaves = await getOwnLeaveActivity(app.prisma, employeeId, tenantId, fetchLimit);
         for (const lr of myLeaves) {
           const typeName = lr.leaveType?.name ?? "Urlaub";
           let what: string;
@@ -180,12 +181,14 @@ export async function activityRoutes(app: FastifyInstance) {
           });
         }
 
-        // Own monthly close snapshots
-        const snapshots = await app.prisma.saldoSnapshot.findMany({
-          where: { employeeId, periodType: "MONTHLY", superseded: false },
-          orderBy: { closedAt: "desc" },
-          take: fetchLimit,
-        });
+        // Own monthly close snapshots. Unbounded (no `from`) — this feed wants ALL of the
+        // employee's history, not a 6-month window; re-sort by closedAt desc + trim to
+        // fetchLimit in application code, reproducing the original DB-level
+        // orderBy:{closedAt:"desc"}/take:fetchLimit exactly (same top-N rows either way).
+        const snapshotRows = await getMonthlySnapshotsInRange(app.prisma, [employeeId], tenantId);
+        const snapshots = [...snapshotRows]
+          .sort((a, b) => b.closedAt.getTime() - a.closedAt.getTime())
+          .slice(0, fetchLimit);
         for (const s of snapshots) {
           const month = s.periodStart.toLocaleDateString("de-DE", {
             month: "long",
@@ -205,25 +208,8 @@ export async function activityRoutes(app: FastifyInstance) {
       // ── MANAGER: also include team events in tenant ──────────────────────
       if (role === "MANAGER") {
         // Leave approvals / rejections this manager performed
-        const myReviews = await app.prisma.leaveRequest.findMany({
-          where: {
-            reviewedBy: userId,
-            deletedAt: null,
-            status: { in: ["APPROVED", "REJECTED"] },
-            // Defense in depth (CLAUDE.md § Multi-Tenancy Convention): also
-            // scope by tenant on the related employee. Today reviewedBy is
-            // already tenant-bound by the regular review flow, but guarding
-            // here prevents an impersonation bug elsewhere from leaking
-            // cross-tenant review rows through this read.
-            employee: { tenantId },
-          },
-          orderBy: { reviewedAt: "desc" },
-          take: fetchLimit,
-          include: {
-            leaveType: { select: { name: true } },
-            employee: { select: { firstName: true, lastName: true } },
-          },
-        });
+        // Phase 100B Plan 13 — A10b, contexts/absence facade (tenant defense-in-depth built in).
+        const myReviews = await getReviewedLeaveActivity(app.prisma, userId, tenantId, fetchLimit);
         for (const lr of myReviews) {
           if (!lr.reviewedAt) continue;
           const empName = `${lr.employee.firstName} ${lr.employee.lastName}`.trim();
@@ -239,19 +225,13 @@ export async function activityRoutes(app: FastifyInstance) {
         }
 
         // Recent team leave submissions (tenant-wide)
-        const teamLeaves = await app.prisma.leaveRequest.findMany({
-          where: {
-            deletedAt: null,
-            employee: { tenantId },
-            employeeId: employeeId ? { not: employeeId } : undefined,
-          },
-          orderBy: { createdAt: "desc" },
-          take: fetchLimit,
-          include: {
-            leaveType: { select: { name: true } },
-            employee: { select: { firstName: true, lastName: true } },
-          },
-        });
+        // Phase 100B Plan 13 — A10c, contexts/absence facade.
+        const teamLeaves = await getTeamLeaveSubmissions(
+          app.prisma,
+          tenantId,
+          employeeId ?? undefined,
+          fetchLimit,
+        );
         for (const lr of teamLeaves) {
           const empName = `${lr.employee.firstName} ${lr.employee.lastName}`.trim();
           const typeName = lr.leaveType?.name ?? "Urlaub";

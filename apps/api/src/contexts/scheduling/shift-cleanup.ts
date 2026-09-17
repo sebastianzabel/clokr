@@ -23,6 +23,8 @@
 
 import type { PrismaClient } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
+import { getTenantTimezone, monthRangeUtc } from "../working-time-account/timezone";
+import { getClosedMonthsForDates } from "../working-time-account"; // Phase 100B Plan 07 — W2a
 
 // app.audit signature (see plugins/audit.ts) — kept loose to match the Fastify decorator type.
 type AuditFn = FastifyInstance["audit"];
@@ -57,8 +59,45 @@ function dateOnlyUtc(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 }
 
-function monthStartUtc(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+/**
+ * The real `SaldoSnapshot.periodStart` for the calendar month containing `d`, in the
+ * tenant timezone.
+ *
+ * Issue #241 (fifth site): this file used to have its own `monthStartUtc()`, structurally
+ * identical to the naive helper removed from the three route-level sites in `8326859d` and
+ * the auto-generator's own copy fixed in `840d9976` — `new Date(Date.UTC(year, month, 1))`,
+ * compared directly against the STORED `periodStart` (`:122-128` built `monthStarts` from
+ * this naive value and filtered `periodStart: { in: monthStarts }`; `:143` looked up with the
+ * same naive value against a `Set` built from the STORED, `monthRangeUtc()`-written
+ * `periodStart`). For a tenant ahead of UTC (Europe/Berlin) the real value falls on the LAST
+ * DAY OF THE PREVIOUS month, so neither comparison could ever match — this automatic
+ * (non-route, no-human-in-the-loop) cleanup soft-deleted shifts inside locked months. See the
+ * generator's own `monthLockBoundUtc()` (`../absence/vocational-school-generator.ts`) for the
+ * identical defect and fix shape; not shared as one exported helper on purpose — each caller
+ * already has its own tenantId in scope and a second file importing a third module's private
+ * helper is not an improvement over two one-line functions.
+ */
+function monthLockBoundUtc(d: Date, tz: string): Date {
+  return monthRangeUtc(d.getUTCFullYear(), d.getUTCMonth() + 1, tz).start;
+}
+
+/**
+ * "YYYY-MM-DD" of `d`'s UTC calendar date — used ONLY for the in-memory `lockedMonths` lookup
+ * key below, never for the Prisma `where` fetch itself (that one compares the real `Date`
+ * against the `@db.Date` column and is correct at the SQL level regardless of time-of-day).
+ *
+ * `periodStart` is `@db.Date` (see `packages/db/prisma/schema.prisma`): Postgres stores and
+ * Prisma reads it back as UTC MIDNIGHT of its calendar date, discarding whatever time-of-day the
+ * write carried. `monthLockBoundUtc()` above legitimately carries a REAL, non-midnight
+ * time-of-day (e.g. `2030-05-31T22:00:00.000Z` for June/Europe-Berlin) — comparing its FULL
+ * `.toISOString()` against a row read back from the DB (`2030-05-31T00:00:00.000Z`) can never
+ * match even after the tenant-TZ fix, which is exactly what an earlier version of this fix
+ * (caught by this file's own T5 test, RED against it) got wrong. Slicing to the calendar-date
+ * component before comparing is what `vocational-school-generator.ts`'s own lockKey
+ * (`toIsoDate()`) already does for the identical reason — mirrored here, not re-invented.
+ */
+function toIsoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -119,18 +158,28 @@ export async function cleanupShiftsForBSAbsence(
   // (3) Locked-month guard — fetch SaldoSnapshots for every month the affected
   //     shifts touch and skip those shifts. Defensive against the rare case
   //     where a future shift falls into a manually-locked month.
-  const monthStartIsos = [...new Set(shifts.map((s) => monthStartUtc(s.date).toISOString()))];
+  //     Issue #241 (fifth site): both the `gte`/`in` fetch bound and the per-shift lookup
+  //     key below MUST use the tenant-TZ-aware periodStart (monthLockBoundUtc, which
+  //     delegates to monthRangeUtc) — the SAME conversion the monthly closer writes
+  //     periodStart with. A naive Date.UTC(year, month, 1) never matched a real row for a
+  //     tenant ahead of UTC (Europe/Berlin), so this guard never actually fired.
+  const tenantTz = await getTenantTimezone(prisma, params.tenantId);
+  const monthStartIsos = [
+    ...new Set(shifts.map((s) => monthLockBoundUtc(s.date, tenantTz).toISOString())),
+  ];
   const monthStarts = monthStartIsos.map((iso) => new Date(iso));
-  const locks = await prisma.saldoSnapshot.findMany({
-    where: {
-      employeeId: params.employeeId,
-      periodType: "MONTHLY",
-      periodStart: { in: monthStarts },
-      superseded: false,
-    },
-    select: { periodStart: true },
-  });
-  const lockedMonths = new Set(locks.map((l) => l.periodStart.toISOString()));
+  // Phase 100B Plan 07 (W2a, getClosedMonthsForDates) — the discrete `monthStarts` shape. The
+  // facade itself does the calendar-date-only key comparison (`toIsoDate` there, mirrored from
+  // this file's own — see this file's own `toIsoDate` docblock for why: `periodStart` is
+  // `@db.Date`, so a fetched row is UTC midnight of its calendar date, never full-string-equal to
+  // the full-precision `monthLockBoundUtc(...)` value). Composite key `${employeeId}::${isoDate}`
+  // — this file has exactly one employee, so the lookup below prefixes with it explicitly.
+  const lockedMonths = await getClosedMonthsForDates(
+    prisma,
+    [params.employeeId],
+    params.tenantId,
+    monthStarts,
+  );
 
   // (4) Walk every shift and apply the appropriate audit-proof branch.
   let futureSoftDeleted = 0;
@@ -140,10 +189,10 @@ export async function cleanupShiftsForBSAbsence(
 
   for (const shift of shifts) {
     const shiftDate = dateOnlyUtc(shift.date);
-    const monthIso = monthStartUtc(shift.date).toISOString();
+    const monthIso = toIsoDate(monthLockBoundUtc(shift.date, tenantTz));
 
     // (4a) Locked-month: never touch — Revisionssicherheit.
-    if (lockedMonths.has(monthIso)) {
+    if (lockedMonths.has(`${params.employeeId}::${monthIso}`)) {
       lockedSkipped++;
       continue;
     }

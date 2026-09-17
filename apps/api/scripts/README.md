@@ -157,6 +157,127 @@ seeded entry:
 validating check that makes the rest of the handler safe (`null` only for the pre-authentication
 category, where no tenant context exists yet at all), `calls[]` every covered call, `reason` why.
 
+**The facade rule (Phase 100b, GitHub #100, D-10).** Phase 100b puts a facade layer between a
+route and Prisma: `apps/api/src/contexts/<x>/facade/*.ts`. Adding those directories to
+`SCOPED_DIRS` alone would be decoration — a facade function has no `req`, so without G2/G3 below
+every facade call would sit "in scope but never a candidate" (counted, never judged), which is
+worse than a missing `SCOPED_DIRS` entry (that at least throws `MissingScopedDirError`, #229).
+Three additive rules make a facade module mean something to this gate:
+
+- **G1 — placement.** A facade module's Prisma calls are only ever seen at all once its context's
+  `contexts/<x>/facade` directory is added to `SCOPED_DIRS` (`lint-tenant-scoping-types.ts`). Each
+  conversion plan adds its own entry IN THE SAME COMMIT that creates the directory — `SCOPED_DIRS`
+  pointing at a directory that does not exist yet is exactly the #229 failure mode
+  (`MissingScopedDirError`), not "not yet in scope".
+- **G2 — a facade function's own parameters are client-supplied.** Inside a file matching
+  `isFacadeModulePath` (`lint-tenant-scoping-types.ts`), the enclosing EXPORTED function
+  declaration's own parameter names seed `clientSupplied` in
+  `lint-tenant-scoping-request-bindings.ts`'s `collectRequestBindings` — the same way a route
+  handler's `req.params`/`req.body` destructure would. This is not a guess: a facade exists
+  _because_ a route handed it a value that came from `req`.
+- **G3 — a `tenantId`/`employeeId`/`sub` PARAMETER is a principal field**, mapped to itself in
+  `principalFields` (the same map a route's `const tenantId = req.user.tenantId` populates) — so a
+  correctly-scoped facade function needs no exception at all, and D-13's existing "inline scoping"
+  / "inline relation filter" recognition applies to it unchanged.
+
+**How to add a justified exception for a facade function.** Same mechanism as above, one entry per
+exported facade FUNCTION rather than per route: `handler` names the function (e.g.
+`"scheduling/facade/shifts.ts:getShiftById"`), `calls[]` the covered call(s), `reason` mandatory.
+A hit on a facade function is exactly as much a finding as a hit on a route handler — see the
+D-08 guardrail above, unchanged for this new scope.
+
+### `lint-facade-signatures.ts` (Issue #100, D-07/G4)
+
+Enforces the shape every `contexts/<x>/facade/*.ts` function must have, mechanically. The
+mechanism it protects against (R1, the sharpest risk of the whole facade phase): a facade function
+that takes `app: FastifyInstance` and reads `app.prisma` internally silently leaves the CALLER's
+`$transaction` — a write inside it survives a rollback, with no error anywhere. Proven once, not
+just asserted: plan 06's rollback test, run against a deliberately `app`-typed version of
+`bookOvertimeCompensation`, produced `expected -5 to be +0` — a write that should have rolled back
+did not.
+
+Three checks, run against every EXPORTED function declaration under `contexts/*/facade/` (AST-based,
+TypeScript compiler API — not a source regex):
+
+- **F1** — the first parameter must be literally `db: Prisma.TransactionClient` (name AND type).
+- **F2** — no parameter anywhere in the signature may be `FastifyInstance`/`FastifyRequest`/
+  `FastifyReply` — the mechanism named above.
+- **F3** — a `*Id`/`*Ids`-shaped parameter (excluding the literal `tenantId`/`id`) requires a
+  sibling `tenantId` parameter (G4) — without it, the tenant-scoping gate above cannot judge the
+  call once it moves behind a facade (#229's failure mode arriving by a different road).
+
+- **Run locally:** `pnpm --filter @clokr/api run lint:facade-signatures`
+- **Runs in CI as:** the `Lint facade signatures` step in `.github/workflows/ci.yml`, immediately
+  after `Lint import targets`
+
+**How to add a justified exception.** Exceptions live in
+`apps/api/scripts/lint-facade-signatures-exceptions.json`, one entry per FUNCTION:
+`{ file, function, rules: ["F1"|"F2"|"F3", ...], reason }` — `rules` is an array because a single
+grandfathered function commonly violates more than one rule at once (one reasoned sentence covers
+the whole shape). Every seeded entry today is one of two shapes: a function that predates this
+convention by two milestones (`hasApprovedLeaveOnDate`, Phase 76.2) or a DSGVO/hard-delete
+compliance function whose sole identifier IS the tenant boundary already (F3 only — see the D-08
+compliance functions across plans 06/08/10/11/12/13 for the pattern). **When NOT to add one:** a
+facade function that genuinely CAN take `db: Prisma.TransactionClient` and genuinely CAN thread a
+`tenantId` — the exception exists for a documented, load-bearing reason a reader can check, not for
+convenience.
+
+### `measure-foreign-context-access.ts` (Issue #100, AC-3 — the boundary-completeness counter)
+
+Walks `contexts/`, `composition/` and `services/` under `apps/api/src`, matches ANY
+`<dotted-receiver>.<model>.<op>(` (receiver-agnostic — `app.prisma`, `tx`, `prisma`, anything
+alike, never pinned to a literal string) against the schema's `MODEL_OWNER` table, computes AREA
+per ADR 0001 entry F (`services/clock` → Zeiterfassung, `services/phorest` → Schichtplanung — a
+context's OWN model is never a foreign access, even from its second physical tree), and reports
+WORKLOAD = a foreign access to a model owned by a DIFFERENT context, minus named exceptions.
+
+Phase 100b's own claim, made checkable rather than merely stated: the workload was 169 at Plan 01
+and is 0 as of Plan 13 — `--check 0` is the standing CI gate from Plan 14 onward.
+
+- **Run locally:** `pnpm --filter @clokr/api exec tsx scripts/measure-foreign-context-access.ts
+[--check <n>] [--rows] [--by-model]`
+- **Runs in CI as:** the `Measure cross-context Prisma access` step in `.github/workflows/ci.yml`,
+  immediately after `Lint facade signatures`, asserting `--check 0`
+
+**How to add a justified exception.** Exceptions live in
+`apps/api/scripts/foreign-context-access-exceptions.json` — an OBJECT, not a bare array
+(`{ convertedModels: string[], exceptions: [...] }`), because this gate carries a second concept
+sibling gates do not: `convertedModels` names every model that has ALREADY been converted whole —
+once a model is listed there, ANY future direct access to it (even one this script's own
+`MODEL_OWNER` table would otherwise judge foreign) is a hard error, not a candidate for a new
+exception entry. **When NOT to add an exception:** almost never, now that the count is 0 — a new
+foreign access on a converted model means the conversion was bypassed, not that a new grandfather
+case was found. The one standing exception (`apps/api/src/contexts/platform/api/test-bootstrap.ts`,
+21 calls, D-03) is test-only infrastructure gated off int/prod, not a production code path.
+
+### `lint-saldo-lock-derivation.ts` (Issue #241/#242)
+
+A static AST interpreter that walks every `SaldoSnapshot.periodStart` comparison carrying a sibling
+`periodType: "MONTHLY"` and asks whether the compared value traces back — through local variable
+bindings, `.start`/`.end` property access, `.map()`, `new Set(...)`, and same-file helper function
+bodies, including one bounded cross-file hop into a `contexts/*/facade/*.ts` function's own
+parameter (added by Phase 100b Plan 07, so a refactor that moves a `periodStart` comparison behind
+a facade cannot silently downgrade the gate's own verdict on it) — to an actual call to
+`monthRangeUtc()`. Three-way verdict: `"safe"` / `"unsafe"` (a finding) / `"unknown"` (the trace
+crosses a boundary this single-file gate genuinely cannot resolve — reported explicitly, never
+silently counted as a pass). `YEARLY` comparisons are out of scope on purpose (a different,
+self-consistent naive-UTC convention `auto-close-month.ts` uses deliberately).
+
+- **Run locally:** `pnpm --filter @clokr/api run lint:saldo-lock-derivation`
+- **Runs in CI as:** the `Lint saldo-lock periodStart derivation` step in
+  `.github/workflows/ci.yml`, after `Measure cross-context Prisma access`
+
+**How to add a justified exception.** Exceptions live in
+`apps/api/scripts/lint-saldo-lock-derivation-exceptions.json`, each carrying a `disposition` field
+this gate's schema adds beyond the sibling gates' shape: `"safe"` (genuinely reviewed and correct —
+e.g. `dashboard.ts`'s rolling 6-month trend chart, where a TZ-boundary miss shifts a display window
+by at most one month with zero Revisionssicherheit consequence) or `"deferred"` (a CONFIRMED,
+real bug — Issue #242's naive UTC year boundary — deliberately NOT fixed by the commit that
+introduces or extends this gate, tracked by a `trackedIssue`, printed in its own section on every
+run so a clean gate can never be misread as "0 known bugs"). **When NOT to add a `"safe"`
+exception:** if you have not actually traced the value to `monthRangeUtc()` by hand — a `"safe"`
+entry is a claim the script itself no longer checks for you.
+
 ## Invocation
 
 All scripts run via `tsx` with the `apps/api` workspace:

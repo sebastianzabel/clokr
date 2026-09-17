@@ -597,11 +597,59 @@ as-built record.
 Pure move, nothing more (D-05). Named here so the next reader recognizes each as intent, not an
 oversight left for them to clean up:
 
-- **No context facades.** No `contexts/<context>/index.ts` — that's #100. Everything a route or
-  plugin needs from another context is still imported by its concrete file path.
-- **No machine-enforced boundaries.** Nothing stops a file in one context from importing another
-  context's internals today — that's #101 (`eslint-plugin-boundaries` works on file paths, so it
-  will slot in on top of this tree without another move, per D-15's finding).
+- **Context facades — no longer true, DONE as of Phase 100b (#100), closed 2026-09-17.** Each
+  context now carries exactly one `contexts/<context>/index.ts` as its public surface (D-06: what
+  it does not export is module-internal, and says so in a comment); the implementation a route or
+  a foreign context reaches through it lives under `contexts/<x>/facade/*.ts`.
+
+  **The placement rule, stated once:** `contexts/<x>/index.ts` is the public surface — a pure
+  re-export, no Prisma call, no logic — and `contexts/<x>/facade/*.ts` is the implementation, which
+  is deliberately INSIDE the `lint:tenant-scoping` gate's scope (`SCOPED_DIRS`,
+  `apps/api/scripts/lint-tenant-scoping-types.ts`) rather than excluded the way `plugins/` is: a
+  facade Prisma call carries exactly a client-supplied identifier from the route that called it,
+  which is this gate's precondition, not an exemption from it (100B Plan 04, D-10/G1-G3). A new
+  cross-context query goes in `facade/`, never in `index.ts` — a query placed in the index would be
+  invisible to that gate.
+
+  `SCOPED_DIRS` reached its final, 12-entry shape in this phase: the original 7 (`platform`,
+  `time-tracking`, `absence`, `scheduling`, `working-time-account` `api/` dirs, plus `composition`
+  and `services`), each paired with its own `facade/` sibling added in the wave that first needed
+  it (`platform/facade` — plan 04; `scheduling/facade` — plan 05; `working-time-account/facade` —
+  plan 06; `time-tracking/facade` — plan 08; `absence/facade` — plan 10).
+
+  Every one of the phase's originally-measured 169 direct cross-context Prisma accesses now goes
+  through a facade — `measure:context-access --check 0` exits 0 and `--rows` prints nothing,
+  wired into CI (Phase 100b Plan 14) as a standing gate, not a moving target. Four control
+  additions came with it: the `lint:tenant-scoping` gate extended to see and judge a Prisma call
+  inside a facade module (G1/G2/G3, plan 04), plus three wholly new gates —
+  `lint:facade-signatures` (D-07: every facade function's first parameter is
+  `db: Prisma.TransactionClient`, never `app: FastifyInstance`, plan 03), `measure:context-access`
+  itself (the boundary-completeness counter, plan 01), and `lint:saldo-lock-derivation` (Issue
+  #241's periodStart-derivation gate, landed mid-phase alongside the `fix(241)` commits on this
+  same branch).
+
+  What this phase deliberately did NOT convert: the DSGVO Art. 17 sweeps' 21 direct calls in
+  `contexts/platform/api/test-bootstrap.ts` (D-03, a named exception — test-only infrastructure,
+  gated off int/prod); `contexts/working-time-account/confirmed-saldo.ts` stayed at its
+  pre-existing flat path rather than moving into `facade/` (plan 07); `services/clock/` and
+  `services/phorest/` were not folded into `contexts/` (D-17 below, unchanged by this phase) — the
+  two genuine crossings out of `services/` (`services/phorest/sync-shifts.ts`) are now the ONLY
+  ones, `measure:context-access --rows` under `services/` is empty.
+
+- **No machine-enforced boundaries — still open, this is #101's job.** Nothing stops a file in one
+  context from importing another context's INTERNAL module (anything not exported from its
+  `index.ts`) today — the facade makes the public surface explicit, it does not yet make bypassing
+  it impossible. `eslint-plugin-boundaries` works on file paths, so it will slot in on top of this
+  tree without another move (D-15's finding). What it inherits from 100b: a tree where the
+  cross-context Prisma access is already zero, but the Unterbau (`contexts/platform/`) itself
+  still imports OTHER contexts in nine files (`anonymize.ts`, `plugins/data-retention.ts`,
+  `api/holidays.ts`, `api/employees.ts`, `api/activity.ts`, `api/settings.ts`, `api/me.ts`,
+  `api/imports.ts`, `api/admin/school-holidays.ts`) — every import in those nine files already
+  goes through a facade/index, so the ACCESS is safe, but the DIRECTION (Unterbau depending on a
+  business context) is exactly what #101's planned AC3 ("Unterbau darf keine Business-Kontexte
+  importieren") forbids. #101 cannot land AC3 as written without also resolving this — either by
+  reclassifying which context truly owns each of these nine call sites, or by revising AC3 itself;
+  that decision was explicitly left to #101, not made here (D-13, no opportunistic redesign).
 - **No inner layering beyond the obvious.** `domain/`, `application/`, `infrastructure/`, `events/`
   — the target picture issue #99 sketches — were NOT created. Only the two splits that were
   unambiguous (a route → `api/`, a plugin → `plugins/`) were made; everything else lies flat in the

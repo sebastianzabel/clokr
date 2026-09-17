@@ -15,7 +15,6 @@ import {
 import { selfHealUsedDays, loadVacationTypeMeta } from "../leave-self-heal";
 import { calculateWorkDays } from "../../platform/calculate-work-days";
 import { computeAffectedMonths } from "../correction-lock";
-import { periodStartWindow } from "../../working-time-account/snapshot-period";
 import {
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
@@ -25,12 +24,19 @@ import { getConfirmedCarryOver } from "../../working-time-account/confirmed-sald
 import { loadNegativeBalanceTolerance } from "../../working-time-account/negative-balance-tolerance"; // Phase 100
 import { formatMinutesHM } from "../format-hm"; // Phase 100
 import { shiftNettoMinutes, sumShiftNettoMinutes } from "../../scheduling/shift-netto"; // Phase 100 (OTC-04)
+import { getShiftsInRange, flagShiftsConflictingWithLeave } from "../../scheduling"; // Phase 100B Plan 05 — S1/S2
+import {
+  getOvertimeAccount,
+  bookOvertimeCompensation,
+  reverseOvertimeCompensation,
+  isMonthClosed,
+} from "../../working-time-account"; // Phase 100B Plan 06 — W8/W11/W12; Plan 07 — W1
 import { auditReasonSchema } from "../../platform/audit-reason"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
 import { isSickLeaveTypeCode } from "../leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
 import { karenzOverrunFromRequests, normalizeKarenzDays } from "../find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
-import { CLEARED_INVALID_REASON } from "../../time-tracking/invalid-reason"; // Phase 96 (T1)
+import { revalidateLeaveCancellationEntries } from "../../time-tracking"; // Phase 100B Plan 08 — T6
 import {
   REQUESTABLE_CODES as TYPE_CODES,
   LEAVE_TYPE_DEFS,
@@ -619,7 +625,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         let availableMinutes: number;
         let appliedToleranceMinutes: number;
         try {
-          const confirmed = await getConfirmedCarryOver(app, employeeId);
+          const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, tenantId);
           appliedToleranceMinutes = toleranceMinutes;
           availableMinutes = confirmed.minutes + appliedToleranceMinutes;
         } catch (err) {
@@ -630,7 +636,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           // D-02: fail-safe applies ZERO tolerance — a broken read path must never
           // be more permissive than the normal path.
           appliedToleranceMinutes = 0;
-          const account = await app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
+          const account = await getOvertimeAccount(app.prisma, employeeId, tenantId);
           availableMinutes = account ? Math.round(Number(account.balanceHours) * 60) : 0;
         }
 
@@ -991,17 +997,14 @@ export async function leaveRoutes(app: FastifyInstance) {
           });
 
           // Revalidate time entries that were created during CANCELLATION_REQUESTED
-          await app.prisma.timeEntry.updateMany({
-            where: {
-              employeeId: existing.employeeId,
-              date: { gte: existing.startDate, lte: existing.endDate },
-              isInvalid: true,
-              invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
-              deletedAt: null, // D-08: never touch soft-deleted entries
-              isLocked: false, // D-08: never mutate locked-month entries (Revisionssicherheit)
-            },
-            data: { isInvalid: false, ...CLEARED_INVALID_REASON },
-          });
+          // Phase 100B Plan 08 — T6, contexts/time-tracking facade (H2 guard unchanged).
+          await revalidateLeaveCancellationEntries(
+            app.prisma,
+            existing.employeeId,
+            existing.employee.tenantId,
+            existing.startDate,
+            existing.endDate,
+          );
 
           const typeCode = existing.leaveType.code;
           if (typeCode === "VACATION") {
@@ -1019,37 +1022,28 @@ export async function leaveRoutes(app: FastifyInstance) {
               where: { id: existing.employeeId },
               select: { tenantId: true },
             });
+            const tenantIdForReversal = empT?.tenantId ?? "";
             const hMap = await getHolidayMap(
               app.prisma,
-              empT?.tenantId ?? "",
+              tenantIdForReversal,
               existing.startDate,
               existing.endDate,
             );
-            const [acct, hrs] = await Promise.all([
-              app.prisma.overtimeAccount.findUnique({ where: { employeeId: existing.employeeId } }),
-              getScheduledHours(
-                app.prisma,
-                existing.employeeId,
-                existing.startDate,
-                existing.endDate,
-                existing.halfDay,
-                new Set(hMap.keys()),
-              ),
-            ]);
-            if (acct && hrs > 0) {
-              await app.prisma.overtimeAccount.update({
-                where: { id: acct.id },
-                data: { balanceHours: { increment: hrs } },
-              });
-              await app.prisma.overtimeTransaction.create({
-                data: {
-                  overtimeAccountId: acct.id,
-                  hours: hrs,
-                  type: "CORRECTION",
-                  description: `Stornierung Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]}`,
-                },
-              });
-            }
+            const hrs = await getScheduledHours(
+              app.prisma,
+              existing.employeeId,
+              existing.startDate,
+              existing.endDate,
+              existing.halfDay,
+              new Set(hMap.keys()),
+            );
+            await reverseOvertimeCompensation(
+              app.prisma,
+              existing.employeeId,
+              tenantIdForReversal,
+              hrs,
+              `Stornierung Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]}`,
+            );
           }
         } else {
           // Stornierung ablehnen → zurück auf APPROVED
@@ -1206,37 +1200,28 @@ export async function leaveRoutes(app: FastifyInstance) {
             where: { id: existing.employeeId },
             select: { tenantId: true },
           });
+          const tenantIdForBooking = empTenant?.tenantId ?? "";
           const hMap = await getHolidayMap(
             app.prisma,
-            empTenant?.tenantId ?? "",
+            tenantIdForBooking,
             existing.startDate,
             existing.endDate,
           );
-          const [account, hours] = await Promise.all([
-            app.prisma.overtimeAccount.findUnique({ where: { employeeId: existing.employeeId } }),
-            getScheduledHours(
-              app.prisma,
-              existing.employeeId,
-              existing.startDate,
-              existing.endDate,
-              existing.halfDay,
-              new Set(hMap.keys()),
-            ),
-          ]);
-          if (account && hours > 0) {
-            await app.prisma.overtimeAccount.update({
-              where: { id: account.id },
-              data: { balanceHours: { decrement: hours } },
-            });
-            await app.prisma.overtimeTransaction.create({
-              data: {
-                overtimeAccountId: account.id,
-                hours: -hours,
-                type: "REDUCTION",
-                description: `Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]} – ${existing.endDate.toISOString().split("T")[0]}`,
-              },
-            });
-          }
+          const hours = await getScheduledHours(
+            app.prisma,
+            existing.employeeId,
+            existing.startDate,
+            existing.endDate,
+            existing.halfDay,
+            new Set(hMap.keys()),
+          );
+          await bookOvertimeCompensation(
+            app.prisma,
+            existing.employeeId,
+            tenantIdForBooking,
+            hours,
+            `Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]} – ${existing.endDate.toISOString().split("T")[0]}`,
+          );
         }
 
         // ── § 9 BUrlG (Phase 104, D-09): Krank-im-Urlaub-Vorgang anlegen ──────────
@@ -1420,23 +1405,17 @@ export async function leaveRoutes(app: FastifyInstance) {
         // existing shifts for this employee on overlapping dates as
         // conflictsWithLeave=true (audit-proof: never silent-delete shifts).
         // Best-effort: never roll back the approval if marking fails.
+        // Phase 100B Plan 05 — S2, contexts/scheduling facade (find + flag as ONE operation).
         try {
-          const conflictingShifts = await app.prisma.shift.findMany({
-            where: {
-              employeeId: existing.employeeId,
-              date: { gte: existing.startDate, lte: existing.endDate },
-              conflictsWithLeave: false,
-              deletedAt: null, // Phase 67.2 — leave-approval hook only flags ACTIVE shifts
-            },
-            select: { id: true, date: true, startTime: true, endTime: true, label: true },
-          });
+          const conflictingShifts = await flagShiftsConflictingWithLeave(
+            app.prisma,
+            existing.employeeId,
+            existing.employee.tenantId,
+            existing.startDate,
+            existing.endDate,
+          );
 
           if (conflictingShifts.length > 0) {
-            await app.prisma.shift.updateMany({
-              where: { id: { in: conflictingShifts.map((s) => s.id) } },
-              data: { conflictsWithLeave: true },
-            });
-
             for (const s of conflictingShifts) {
               await app
                 .audit({
@@ -1750,16 +1729,13 @@ export async function leaveRoutes(app: FastifyInstance) {
         const tz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
         for (const { year, month } of monthsToCheck) {
           const { start: monthStart } = monthRangeUtc(year, month, tz);
-          // MONTHLY SaldoSnapshot(superseded:false) = the canonical Monatsabschluss
-          // signal (convention-robust window, see utils/snapshot-period.ts).
-          const locked = await app.prisma.saldoSnapshot.findFirst({
-            where: {
-              employeeId: existing.employeeId,
-              periodType: "MONTHLY",
-              periodStart: periodStartWindow(monthStart),
-              superseded: false,
-            },
-          });
+          // Phase 100B Plan 07 (W1, isMonthClosed) — THE canonical Monatsabschluss signal.
+          const locked = await isMonthClosed(
+            app.prisma,
+            existing.employeeId,
+            existing.employee.tenantId,
+            monthStart,
+          );
           if (locked) {
             return reply.code(409).send({ error: "Gesperrter Monat — Korrektur nicht möglich" });
           }
@@ -1876,9 +1852,6 @@ export async function leaveRoutes(app: FastifyInstance) {
             tenantId,
           );
         } else if (oldTypeCode === "OVERTIME_COMP") {
-          const acct = await tx.overtimeAccount.findUnique({
-            where: { employeeId: existing.employeeId },
-          });
           const hrs = await getScheduledHours(
             tx,
             existing.employeeId,
@@ -1887,20 +1860,13 @@ export async function leaveRoutes(app: FastifyInstance) {
             existing.halfDay,
             holidays,
           );
-          if (acct && hrs > 0) {
-            await tx.overtimeAccount.update({
-              where: { id: acct.id },
-              data: { balanceHours: { increment: hrs } },
-            });
-            await tx.overtimeTransaction.create({
-              data: {
-                overtimeAccountId: acct.id,
-                hours: hrs,
-                type: "CORRECTION",
-                description: `Korrektur Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]}`,
-              },
-            });
-          }
+          await reverseOvertimeCompensation(
+            tx,
+            existing.employeeId,
+            tenantId,
+            hrs,
+            `Korrektur Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]}`,
+          );
         }
         // SICK / SICK_CHILD / PARENTAL / MATERNITY / SPECIAL / UNPAID / EDUCATION:
         // entitlement-neutral on the reverse side (no usedDays / balance booking).
@@ -1938,9 +1904,6 @@ export async function leaveRoutes(app: FastifyInstance) {
             tenantId,
           );
         } else if (newType === "OVERTIME_COMP") {
-          const acct = await tx.overtimeAccount.findUnique({
-            where: { employeeId: existing.employeeId },
-          });
           const hrs = await getScheduledHours(
             tx,
             existing.employeeId,
@@ -1949,20 +1912,13 @@ export async function leaveRoutes(app: FastifyInstance) {
             body.halfDay,
             holidays,
           );
-          if (acct && hrs > 0) {
-            await tx.overtimeAccount.update({
-              where: { id: acct.id },
-              data: { balanceHours: { decrement: hrs } },
-            });
-            await tx.overtimeTransaction.create({
-              data: {
-                overtimeAccountId: acct.id,
-                hours: -hrs,
-                type: "REDUCTION",
-                description: `Überstundenausgleich ${start.toISOString().split("T")[0]} – ${end.toISOString().split("T")[0]}`,
-              },
-            });
-          }
+          await bookOvertimeCompensation(
+            tx,
+            existing.employeeId,
+            tenantId,
+            hrs,
+            `Überstundenausgleich ${start.toISOString().split("T")[0]} – ${end.toISOString().split("T")[0]}`,
+          );
         }
         // SICK / SICK_CHILD / PARENTAL / MATERNITY / SPECIAL / UNPAID / EDUCATION:
         // entitlement-neutral on the apply side (light).
@@ -1971,19 +1927,10 @@ export async function leaveRoutes(app: FastifyInstance) {
         //    A shortened/moved leave frees days whose leave-caused invalidation must
         //    be cleared. Delta-lock already guarantees these fall in unlocked months;
         //    locked / soft-deleted entries are never touched (Revisionssicherheit).
+        // Phase 100B Plan 08 — T6, contexts/time-tracking facade (H2 guard unchanged).
         const revalidateRemoved = async (from: Date, to: Date) => {
           if (from > to) return;
-          await tx.timeEntry.updateMany({
-            where: {
-              employeeId: existing.employeeId,
-              date: { gte: from, lte: to },
-              isInvalid: true,
-              invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
-              deletedAt: null,
-              isLocked: false,
-            },
-            data: { isInvalid: false, ...CLEARED_INVALID_REASON },
-          });
+          await revalidateLeaveCancellationEntries(tx, existing.employeeId, tenantId, from, to);
         };
         const ONE_DAY_MS = 24 * 60 * 60 * 1000;
         if (start > existing.startDate) {
@@ -2445,10 +2392,10 @@ export async function leaveRoutes(app: FastifyInstance) {
       }
 
       // Fail-safe branch (live compute threw, or § 18 ArbZG-exempt employee).
-      const account = await app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
+      const account = await getOvertimeAccount(app.prisma, employeeId, req.user.tenantId);
       const balanceHours = account ? Math.round(Number(account.balanceHours) * 100) / 100 : 0;
       try {
-        const confirmed = await getConfirmedCarryOver(app, employeeId);
+        const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, req.user.tenantId);
         return {
           balanceHours,
           confirmedMinutes: confirmed.minutes,
@@ -3819,15 +3766,16 @@ async function getScheduledHours(
   // docblock above. Returns BEFORE the FIXED_SCHEDULE / FLEXTIME / MONTHLY_HOURS per-weekday
   // path below, which stays byte-for-byte unchanged for every other schedule type.
   if (ws?.type === "SHIFT_BASED") {
-    const shifts = await prisma.shift.findMany({
-      where: { employeeId, date: { gte: start, lte: end }, deletedAt: null },
-      select: { startTime: true, endTime: true },
-      // D-07 / WR-02 (code review): "first rostered shift" must be deterministic. `date` alone
-      // is NOT sufficient — Shift has no unique constraint on (employeeId, date), so same-day
-      // split shifts (e.g. a morning + evening shift) tie under `date` ordering, and
-      // Postgres/Prisma give no guarantee on row order among ties. `startTime` breaks that tie.
-      orderBy: [{ date: "asc" }, { startTime: "asc" }],
-    });
+    // Phase 100B Plan 05 — S1, contexts/scheduling facade. The facade's own default ordering
+    // ([{date:"asc"},{startTime:"asc"}]) IS the D-07/WR-02 determinism fix this call site
+    // originally needed ("first rostered shift" must be deterministic — `date` alone ties on
+    // same-day split shifts, `startTime` breaks the tie).
+    const shifts = await getShiftsInRange(
+      prisma,
+      { kind: "employee", employeeId, tenantId: employee?.tenantId ?? "" },
+      start,
+      end,
+    );
 
     const employeeBreakShape = {
       breakOver6hOverride: employee?.breakOver6hOverride ?? null,
@@ -3975,10 +3923,13 @@ export async function resolveLeaveDays(
     const rangeEnd = mondayOfWeekUtc(end);
     rangeEnd.setUTCDate(rangeEnd.getUTCDate() + 6);
 
-    const shifts = await prisma.shift.findMany({
-      where: { employeeId, date: { gte: rangeStart, lte: rangeEnd }, deletedAt: null },
-      select: { date: true },
-    });
+    // Phase 100B Plan 05 — S1, contexts/scheduling facade.
+    const shifts = await getShiftsInRange(
+      prisma,
+      { kind: "employee", employeeId, tenantId },
+      rangeStart,
+      rangeEnd,
+    );
 
     const rosteredDates = new Set<string>();
     const weeksWithRoster = new Set<string>();

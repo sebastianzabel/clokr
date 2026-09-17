@@ -16,7 +16,7 @@ import {
   calcExpectedMinutesTz,
 } from "../../working-time-account/timezone";
 import { getHolidays, STATE_MAP } from "../../platform/holidays";
-import { hasApprovedLeaveOnDate } from "../../absence/leave-check";
+import { DISPLAY_NAME } from "../../absence/leave-type"; // Phase 100b Plan 14 (D-05) — renders hasApprovedLeaveOnDate's code
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { resolveClockEvent } from "../../../services/clock/resolver";
 import { resolveActor } from "../../../services/clock/audit-actor";
@@ -24,11 +24,23 @@ import type { ClockEvent } from "../../../services/clock/types";
 import { closeEmployeeMonth } from "../../working-time-account/close-employee-month"; // SNAP-03 — Phase 76.27
 import { loadBsSlotOverrides } from "../../absence/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import {
+  getAbsencesOverlapping,
+  getApprovedLeaveOverlapping,
+  hasApprovedLeaveOnDate,
+} from "../../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1; Plan 14 — D-05 (index is the public surface, AC-1)
+import {
   getRetroEntryWindowDays,
   computeRetroLimitStr,
   computeEntryAgeInDays,
 } from "../retro-config"; // Phase 76.29 — RETRO-01 window guard
 import { auditReasonSchema, AUDIT_REASON_REQUIRED } from "../../platform/audit-reason"; // Quick 260824-cjd
+import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
+import {
+  getOvertimeAccount,
+  setOvertimeAccountBalance,
+  getConfirmedCarryOver,
+  isMonthClosed,
+} from "../../working-time-account"; // Phase 100B Plan 06 — W8/W14; Plan 07 — W3 merge, W1
 
 const nfcPunchSchema = z.object({
   nfcCardId: z.string().min(1),
@@ -333,20 +345,12 @@ export async function validateTimeEntryInvariants(
     }
   }
 
-  // 2. month-lock via SaldoSnapshot (mirror POST) — authoritative even with no entries
-  // findFirst with superseded:false (compound accessor removed, COMP-V1814-04)
+  // 2. month-lock via SaldoSnapshot (mirror POST) — authoritative even with no entries.
+  // Phase 100B Plan 07 (W1, isMonthClosed) — THE canonical Monatsabschluss signal.
   // RETRO-01 C2: lock-check runs FIRST — a locked month returns the lock message, never RETRO_WINDOW_EXCEEDED.
   const { start: lockedMonthStart } = monthRangeUtc(date.getFullYear(), date.getMonth() + 1, tz);
-  const lockedSnapshot = await app.prisma.saldoSnapshot.findFirst({
-    where: {
-      employeeId,
-      periodType: "MONTHLY",
-      periodStart: lockedMonthStart,
-      superseded: false,
-    },
-    select: { id: true },
-  });
-  if (lockedSnapshot) {
+  const monthLocked = await isMonthClosed(app.prisma, employeeId, tenantId, lockedMonthStart);
+  if (monthLocked) {
     return { error: "Monat ist abgeschlossen und kann nicht bearbeitet werden" };
   }
 
@@ -466,9 +470,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
 
       const getBalance = async () => {
-        const account = await app.prisma.overtimeAccount.findFirst({
-          where: { employeeId: employee.id },
-        });
+        const account = await getOvertimeAccount(app.prisma, employee.id, employee.tenantId);
         return account ? Number(account.balanceHours) : 0;
       };
 
@@ -1094,8 +1096,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // a non-manager could set to a foreign UUID to bypass the leave block.
       const manualLeave = await hasApprovedLeaveOnDate(app.prisma, employeeId, entryDateStr);
       if (manualLeave?.status === "APPROVED") {
+        // Phase 100b Plan 14 (D-05): render the display name here, at the caller, via the ONE
+        // Phase 97/98b mapping — hasApprovedLeaveOnDate returns a stable code, never a
+        // tenant-editable display string, so this § 8 BUrlG rejection message no longer depends
+        // on a tenant setting.
         return reply.code(409).send({
-          error: `§ 8 BUrlG: An diesem Tag ist ${manualLeave.type} genehmigt. Bitte zuerst stornieren.`,
+          error: `§ 8 BUrlG: An diesem Tag ist ${DISPLAY_NAME[manualLeave.code]} genehmigt. Bitte zuerst stornieren.`,
         });
       }
 
@@ -2370,11 +2376,12 @@ export async function computeOvertimeBalanceBreakdown(
 
   const tz = await getTenantTimezone(app.prisma, employee?.tenantId ?? "");
 
-  // Letzten Snapshot suchen (Basis für die Berechnung)
-  const lastSnapshot = await app.prisma.saldoSnapshot.findFirst({
-    where: { employeeId, periodType: "MONTHLY", superseded: false },
-    orderBy: { periodStart: "desc" },
-  });
+  // Find the latest closed month (basis for the computation below). Phase 100B Plan 07
+  // (W3 merge) — this used to be its own direct SaldoSnapshot query (getLatestClosedMonth);
+  // it is now the SAME call as getConfirmedCarryOver (the "Bestätigt" figure), widened to
+  // also carry periodEnd, so the two can never drift into two independently-computed answers
+  // to the same question.
+  const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, employee?.tenantId ?? "");
 
   const now = new Date();
   const todayStr = dateStrInTz(now, tz);
@@ -2386,10 +2393,10 @@ export async function computeOvertimeBalanceBreakdown(
   let rangeStart: Date;
   let snapshotCarryOver = 0;
 
-  if (lastSnapshot) {
+  if (confirmed.hasClosedMonth) {
     // Start: Tag nach dem Snapshot-Ende
-    rangeStart = new Date(lastSnapshot.periodEnd.getTime() + 86400000);
-    snapshotCarryOver = lastSnapshot.carryOver;
+    rangeStart = new Date(confirmed.periodEnd!.getTime() + 86400000);
+    snapshotCarryOver = confirmed.minutes;
   } else {
     // No non-superseded snapshot: recompute from hireDate so that reopen of the
     // only/earliest snapshot includes the full employment history (D-05 fix).
@@ -2567,17 +2574,16 @@ export async function computeOvertimeBalanceBreakdown(
   const shiftRangeLastDay =
     currentMonthRange.end > rangeLastDay ? currentMonthRange.end : rangeLastDay;
 
+  // Phase 100B Plan 05 — S1, contexts/scheduling facade.
   const allShifts =
     scheduleType === "SHIFT_BASED"
-      ? await app.prisma.shift.findMany({
-          where: {
-            employeeId,
-            date: { gte: rangeFirstDay, lte: shiftRangeLastDay },
-            deletedAt: null,
-          },
-          select: { date: true, startTime: true, endTime: true },
-        })
-      : ([] as { date: Date; startTime: string; endTime: string }[]);
+      ? await getShiftsInRange(
+          app.prisma,
+          { kind: "employee", employeeId, tenantId: employee?.tenantId ?? "" },
+          rangeFirstDay,
+          shiftRangeLastDay,
+        )
+      : [];
 
   // Upper bound = shiftRangeLastDay (= full current calendar month, NOT effectiveEnd).
   // The SHIFT_BASED partial-month C_net credit (closeEmployeeMonth uses monthEnd =
@@ -2589,24 +2595,21 @@ export async function computeOvertimeBalanceBreakdown(
   // fetches the FULL month). This mirrors the shiftRangeLastDay widening above (Bug 5); the
   // leave/absence fetch was left at effectiveEnd — that asymmetry is the divergence root cause.
   // Non-SHIFT partial (monthEnd = effectiveEnd) ignores the extra rows (out of window) → no-op.
-  const allApprovedLeave = await app.prisma.leaveRequest.findMany({
-    where: {
-      employeeId,
-      deletedAt: null,
-      status: "APPROVED",
-      startDate: { lte: shiftRangeLastDay },
-      endDate: { gte: rangeStart },
-    },
-  });
+  // Phase 100B Plan 13 — A1, contexts/absence facade.
+  const allApprovedLeave = await getApprovedLeaveOverlapping(
+    app.prisma,
+    { kind: "employee", employeeId, tenantId: employee?.tenantId ?? "" },
+    rangeStart,
+    shiftRangeLastDay,
+  );
 
-  const allAbsences = await app.prisma.absence.findMany({
-    where: {
-      employeeId,
-      deletedAt: null,
-      startDate: { lte: shiftRangeLastDay },
-      endDate: { gte: rangeStart },
-    },
-  });
+  // Phase 100B Plan 12 — A4, contexts/absence facade.
+  const allAbsences = await getAbsencesOverlapping(
+    app.prisma,
+    { kind: "employee", employeeId, tenantId: employee?.tenantId ?? "" },
+    rangeStart,
+    shiftRangeLastDay,
+  );
 
   // Build a full-range holidayDateStrings Set covering all years in [rangeStart, effectiveEnd].
   // (Already computed above as holidayDateStrSet — reuse it directly for closeEmployeeMonth calls.)
@@ -2956,7 +2959,7 @@ export async function computeOvertimeBalanceBreakdown(
   // openMonthMinutes is ALWAYS total − confirmed (a subtraction, never a second call into the
   // saldo core) — 97-CONTEXT's "one computation path" rule (Phase 98 exists precisely because a
   // value once had two owners that diverged silently; do not repeat that shape here).
-  const hasClosedMonth = lastSnapshot !== null;
+  const hasClosedMonth = confirmed.hasClosedMonth;
   // TRACK_ONLY already forces the reported total to 0 above; force BOTH split figures to 0 too
   // so a legacy non-zero snapshotCarryOver never surfaces as a phantom negative forecast
   // (naive 0 − confirmedMinutes would go negative). hasClosedMonth still reports the truth.
@@ -2996,11 +2999,20 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   const effectiveBalanceHours = await computeOvertimeBalanceHours(app, employeeId);
   if (effectiveBalanceHours === null) return; // §18-exempt — do not touch stored balance
 
-  const account = await app.prisma.overtimeAccount.upsert({
-    where: { employeeId },
-    create: { employeeId, balanceHours: effectiveBalanceHours },
-    update: { balanceHours: effectiveBalanceHours },
+  // Phase 100B Plan 06 (D-10/G4): setOvertimeAccountBalance requires a tenantId parameter for
+  // facade signature uniformity, even though this caller-facing function's own signature stays
+  // (app, employeeId) unchanged (many call sites, out of this plan's scope) — so it resolves the
+  // employee's tenantId itself, once, right before the write.
+  const emp = await app.prisma.employee.findUnique({
+    where: { id: employeeId },
+    select: { tenantId: true },
   });
+  const account = await setOvertimeAccountBalance(
+    app.prisma,
+    employeeId,
+    emp?.tenantId ?? "",
+    effectiveBalanceHours,
+  );
 
   const schedule = await getEffectiveSchedule(app, employeeId);
   const threshold = Number(schedule.overtimeThreshold);

@@ -10,6 +10,18 @@ import { normalizeMac } from "../../time-tracking/normalize-mac";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { anonymizeEmployeeData, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../anonymize";
 import {
+  createOvertimeAccount,
+  hardDeleteOvertimeDataForEmployee,
+} from "../../working-time-account"; // Phase 100B Plan 06 — W13/W15
+import {
+  hardDeleteTimeDataForEmployee, // Phase 100B Plan 08 — T11
+  listPresenceDevices,
+  findPresenceDeviceByMac,
+  createPresenceDevice,
+  getPresenceDevice,
+  deletePresenceDevice,
+} from "../../time-tracking"; // Phase 100B Plan 09 — PresenceDevice, wave 4 closing
+import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
   BREAK_MAX_OVER_6H,
@@ -21,6 +33,14 @@ import {
   BS_BLOCK_WEEKLY_MIN_BOUND,
   BS_BLOCK_WEEKLY_MAX_BOUND,
 } from "../../absence/vocational-school-constants";
+import {
+  getVacationEntitlementByDisplayName,
+  hardDeleteEntitlementsForEmployee,
+  getSection9DocumentPaths,
+  getAbsenceDocumentPaths,
+  hardDeleteAbsencesForEmployee,
+  hardDeleteLeaveRequestsForEmployee,
+} from "../../absence"; // Phase 100B Plan 10 — H1 sibling / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3
 
 // ── Retention constant ─────────────────────────────────────────────────────
 const DEFAULT_RETENTION_YEARS = 10;
@@ -433,9 +453,7 @@ export async function employeeRoutes(app: FastifyInstance) {
             },
           });
 
-          await tx.overtimeAccount.create({
-            data: { employeeId: emp.id, balanceHours: 0 },
-          });
+          await createOvertimeAccount(tx, emp.id, req.user.tenantId);
 
           // Einladung nur erstellen wenn kein Passwort gesetzt
           let token: string | null = null;
@@ -597,28 +615,27 @@ export async function employeeRoutes(app: FastifyInstance) {
       if (effectiveExitDate !== null) {
         const exitYear = effectiveExitDate.getFullYear();
         try {
-          // Find the VACATION leave type for this tenant
-          const vacLeaveType = await app.prisma.leaveType.findFirst({
-            where: { tenantId: req.user.tenantId, name: "Urlaub" },
-          });
-          if (vacLeaveType) {
-            const entitlement = await app.prisma.leaveEntitlement.findFirst({
-              where: { employeeId: id, leaveTypeId: vacLeaveType.id, year: exitYear },
-            });
-            if (entitlement) {
-              const proRata = calculateProRataVacation(
-                Number(entitlement.totalDays),
-                exitYear,
-                effectiveExitDate,
-              );
-              const used = Number(entitlement.usedDays);
-              if (used > proRata) {
-                proRataWarning = {
-                  used,
-                  entitlement: proRata,
-                  message: `Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt (${used} Tage) als ihm anteilig zusteht (${proRata} Tage). Bitte prüfen Sie, ob eine Rückforderung nötig ist.`,
-                };
-              }
+          // Phase 100B Plan 10 (H1 deviation, preserved verbatim): resolves the "Urlaub"-NAMED
+          // leave type, not by code — see contexts/absence/facade/leave-types.ts's module header.
+          const entitlement = await getVacationEntitlementByDisplayName(
+            app.prisma,
+            id,
+            req.user.tenantId,
+            exitYear,
+          );
+          if (entitlement) {
+            const proRata = calculateProRataVacation(
+              Number(entitlement.totalDays),
+              exitYear,
+              effectiveExitDate,
+            );
+            const used = Number(entitlement.usedDays);
+            if (used > proRata) {
+              proRataWarning = {
+                used,
+                entitlement: proRata,
+                message: `Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt (${used} Tage) als ihm anteilig zusteht (${proRata} Tage). Bitte prüfen Sie, ob eine Rückforderung nötig ist.`,
+              };
             }
           }
         } catch (err) {
@@ -988,17 +1005,12 @@ export async function employeeRoutes(app: FastifyInstance) {
       // inside the tx; after commit those paths are gone from Postgres).
       // MinIO deletes MUST happen AFTER the tx commits — MinIO is not transactional with
       // Postgres. A rolled-back tx must not have deleted the actual files.
-      const absenceDocs = await app.prisma.absence.findMany({
-        where: { employeeId: id, documentPath: { not: null } },
-        select: { documentPath: true },
-      });
+      // Phase 100B Plan 12 — F3, contexts/absence facade.
+      const absenceDocs = await getAbsenceDocumentPaths(app.prisma, id);
       // Phase 104-07 (D-26): same pre-fetch-before-tx reasoning as absenceDocs above — a
       // paper-AU document is an Art. 9 DSGVO health datum and must be erased on Art. 17
       // deletion just as reliably as an avatar or absence document.
-      const section9Docs = await app.prisma.section9Credit.findMany({
-        where: { employeeId: id, documentPath: { not: null } },
-        select: { documentPath: true },
-      });
+      const section9Docs = await getSection9DocumentPaths(app.prisma, id);
 
       await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         await anonymizeEmployeeData({ tx, employeeId: id });
@@ -1206,15 +1218,19 @@ export async function employeeRoutes(app: FastifyInstance) {
         // Fixing the cascade is orthogonal to opening balances and needs its own retention/
         // Revisionssicherheit decision (what may legally be hard-deleted after §147 AO expiry).
         // Break records (nested under TimeEntry) — delete first
-        await tx.break.deleteMany({ where: { timeEntry: { employeeId: id } } });
+        // Phase 100B Plan 08 — T11, contexts/time-tracking facade (Break before TimeEntry,
+        // the onDelete:Restrict ordering invariant, unchanged).
+        await hardDeleteTimeDataForEmployee(tx, id);
         // Restrict-protected models
-        await tx.timeEntry.deleteMany({ where: { employeeId: id } });
-        await tx.leaveRequest.deleteMany({ where: { employeeId: id } });
-        await tx.absence.deleteMany({ where: { employeeId: id } });
+        // Phase 100B Plan 13 — F3, contexts/absence facade (IN PLACE, ordering unchanged).
+        await hardDeleteLeaveRequestsForEmployee(tx, id);
+        // Phase 100B Plan 12 — F3, contexts/absence facade (IN PLACE, H5 ordering unchanged).
+        await hardDeleteAbsencesForEmployee(tx, id);
         // Cascade-owned models (safe to delete explicitly)
-        await tx.leaveEntitlement.deleteMany({ where: { employeeId: id } });
+        // Phase 100B Plan 10 — F3, contexts/absence facade.
+        await hardDeleteEntitlementsForEmployee(tx, id);
         await tx.workSchedule.deleteMany({ where: { employeeId: id } });
-        await tx.overtimeAccount.deleteMany({ where: { employeeId: id } });
+        await hardDeleteOvertimeDataForEmployee(tx, id);
         // Finally: employee and user records
         await tx.employee.delete({ where: { id } });
         await tx.user.delete({ where: { id: userId } });
@@ -1233,6 +1249,7 @@ export async function employeeRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const employeeId = req.user.employeeId;
       const tenantId = req.user.tenantId;
+      if (!employeeId) return reply.code(401).send({ error: "Nicht authentifiziert" });
 
       const employee = await app.prisma.employee.findUnique({
         where: { id: employeeId, tenantId },
@@ -1240,11 +1257,7 @@ export async function employeeRoutes(app: FastifyInstance) {
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
-      const devices = await app.prisma.presenceDevice.findMany({
-        where: { employeeId },
-        select: { id: true, mac: true, label: true, addedAt: true },
-        orderBy: { addedAt: "asc" },
-      });
+      const devices = await listPresenceDevices(app.prisma, employeeId, tenantId);
 
       return reply.send({
         wifiPresenceEnabled: employee.wifiPresenceEnabled,
@@ -1334,16 +1347,16 @@ export async function employeeRoutes(app: FastifyInstance) {
       }
 
       // Check for duplicate: unique per tenant+mac
-      const existing = await app.prisma.presenceDevice.findUnique({
-        where: { tenantId_mac: { tenantId, mac } },
-      });
+      const existing = await findPresenceDeviceByMac(app.prisma, mac, tenantId);
       if (existing) {
         return reply.code(409).send({ error: "Dieses Gerät ist bereits registriert" });
       }
 
-      const device = await app.prisma.presenceDevice.create({
-        data: { tenantId, employeeId, mac, label: body.label },
-        select: { id: true, mac: true, label: true, addedAt: true },
+      const device = await createPresenceDevice(app.prisma, {
+        tenantId,
+        employeeId,
+        mac,
+        label: body.label,
       });
 
       await app.audit({
@@ -1366,18 +1379,17 @@ export async function employeeRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { id } = deviceIdParamSchema.parse(req.params);
       const employeeId = req.user.employeeId;
+      if (!employeeId) return reply.code(401).send({ error: "Nicht authentifiziert" });
 
-      const device = await app.prisma.presenceDevice.findUnique({
-        where: { id },
-      });
+      // Own-data guard: the query itself is scoped to employeeId (Phase 100B Plan 09) — a device
+      // belonging to another employee is not found, exactly like a device that does not exist at
+      // all. See contexts/time-tracking/facade/presence-devices.ts's module header: this
+      // collapses the route's former separate 403 "Forbidden" branch into the SAME 404 "Gerät
+      // nicht gefunden" a missing device already returned, deliberately (the safer of the two).
+      const device = await getPresenceDevice(app.prisma, id, employeeId);
       if (!device) return reply.code(404).send({ error: "Gerät nicht gefunden" });
 
-      // Own-data guard: employee can only delete their own devices
-      if (device.employeeId !== employeeId) {
-        return reply.code(403).send({ error: "Forbidden" });
-      }
-
-      await app.prisma.presenceDevice.delete({ where: { id } });
+      await deletePresenceDevice(app.prisma, id, employeeId);
 
       await app.audit({
         userId: req.user.sub,

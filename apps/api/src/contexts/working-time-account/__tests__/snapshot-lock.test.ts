@@ -4,53 +4,62 @@
  * scripts/recalculate-snapshots-after-soll-fix.ts before that file is deleted in
  * Plan 05).
  *
- * Pure unit test against a hand-rolled recording stub reader — no getTestApp(), no
+ * Pure unit test against a hand-rolled recording stub — no getTestApp(), no
  * database connection, must run in milliseconds.
+ *
+ * Phase 100B Plan 08 (T3): `isSnapshotLocked` now delegates to the `contexts/time-tracking`
+ * facade's `countLockedEntries`, which requires a real `Prisma.TransactionClient` (D-07) rather
+ * than the old duck-typed `TimeEntryLockReader`. The stub below is cast to that type instead of
+ * relying on structural assignability — it stays DB-free (no Postgres connection, just a mocked
+ * `count()`), only the TypeScript escape hatch changed.
  *
  * No PII — no fixture data beyond synthetic ids/dates.
  */
 import { describe, it, expect, vi } from "vitest";
-import { isSnapshotLocked, type TimeEntryLockReader } from "../snapshot-lock";
+import type { Prisma } from "@clokr/db";
+import { isSnapshotLocked } from "../snapshot-lock";
 
 function makeStub(countResult: number): {
-  reader: TimeEntryLockReader;
+  db: Prisma.TransactionClient;
   count: ReturnType<typeof vi.fn>;
 } {
   const count = vi.fn().mockResolvedValue(countResult);
   return {
-    reader: { timeEntry: { count } },
+    db: { timeEntry: { count } } as unknown as Prisma.TransactionClient,
     count,
   };
 }
 
 describe("isSnapshotLocked — TimeEntry-derived lock signal (DB-free)", () => {
+  const tenantId = "tenant-1";
   const periodStart = new Date("2026-09-01T00:00:00Z");
   const periodEnd = new Date("2026-09-30T23:59:59.999Z");
 
   it("Test 1: at least one non-deleted TimeEntry with isLocked:true in the period → returns true", async () => {
-    const { reader } = makeStub(1);
+    const { db } = makeStub(1);
 
-    const result = await isSnapshotLocked(reader, "emp-1", periodStart, periodEnd);
+    const result = await isSnapshotLocked(db, "emp-1", tenantId, periodStart, periodEnd);
 
     expect(result).toBe(true);
   });
 
   it("Test 2: zero matching entries → returns false", async () => {
-    const { reader } = makeStub(0);
+    const { db } = makeStub(0);
 
-    const result = await isSnapshotLocked(reader, "emp-2", periodStart, periodEnd);
+    const result = await isSnapshotLocked(db, "emp-2", tenantId, periodStart, periodEnd);
 
     expect(result).toBe(false);
   });
 
-  it("Test 3: the where clause includes deletedAt:null, isLocked:true and the date range — soft-deleted entries never fake a lock", async () => {
-    const { reader, count } = makeStub(0);
+  it("Test 3: the where clause includes deletedAt:null, isLocked:true, the tenant, and the date range — soft-deleted entries never fake a lock", async () => {
+    const { db, count } = makeStub(0);
 
-    await isSnapshotLocked(reader, "emp-3", periodStart, periodEnd);
+    await isSnapshotLocked(db, "emp-3", tenantId, periodStart, periodEnd);
 
     expect(count).toHaveBeenCalledWith({
       where: {
         employeeId: "emp-3",
+        employee: { tenantId },
         deletedAt: null,
         date: { gte: periodStart, lte: periodEnd },
         isLocked: true,
@@ -59,9 +68,9 @@ describe("isSnapshotLocked — TimeEntry-derived lock signal (DB-free)", () => {
   });
 
   it("Test 4 (documented limitation, pinned): a period with NO time entries at all returns false — 'locked' is TimeEntry-derived, not a SaldoSnapshot column", async () => {
-    const { reader } = makeStub(0);
+    const { db } = makeStub(0);
 
-    const result = await isSnapshotLocked(reader, "emp-4", periodStart, periodEnd);
+    const result = await isSnapshotLocked(db, "emp-4", tenantId, periodStart, periodEnd);
 
     expect(result).toBe(false);
   });

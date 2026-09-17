@@ -17,7 +17,11 @@
 import type { PrismaClient, ScheduleType } from "@clokr/db";
 import { BS_DAILY_DEFAULT_MIN } from "../absence/vocational-school-constants.js";
 import { buildSlotOverrideHierarchy, resolveBsTagSlot } from "../absence/bs-slot-resolver";
-import { BS_PATTERN_ORDER_BY } from "../absence/vocational-school-pattern-order.js";
+import {
+  getActiveBsPattern, // Phase 100B Plan 11 — A20
+  getVocationalSchoolDays, // Phase 100B Plan 12 — A6
+  hasVocationalSchoolDay, // Phase 100B Plan 12 — A6's R-B single-day sibling
+} from "../absence";
 
 /**
  * Tenant-config fields this helper reads. Both are optional/nullable to fail-open
@@ -124,16 +128,25 @@ export async function countBsDaysInIsoWeek(
   dateInWeek: Date,
 ): Promise<number> {
   const { monday, nextMonday } = isoWeekBoundsUtc(dateInWeek);
+  const sunday = new Date(nextMonday.getTime() - 24 * 60 * 60 * 1000);
 
-  const rows = await prisma.absence.findMany({
-    where: {
-      employeeId,
-      deletedAt: null, // CLAUDE.md soft-delete rule
-      type: "VOCATIONAL_SCHOOL",
-      startDate: { gte: monday, lt: nextMonday },
-    },
-    select: { startDate: true },
+  // tenantId is resolved here (not threaded as a new public parameter — this function's own
+  // external caller, arbzg.ts, has one to hand, but this file's own test suite calls it directly
+  // without one, and `employee` is a platform/Unterbau model, never a FOREIGN access regardless of
+  // which context reads it) — same minimal-blast-radius pattern as A20's `getActiveBsPattern`
+  // callers in this SAME file (Plan 11).
+  const employeeForTenant = await prisma.employee.findFirst({
+    where: { id: employeeId },
+    select: { tenantId: true },
   });
+
+  // Phase 100B Plan 12 — A6, contexts/absence facade.
+  const rows = await getVocationalSchoolDays(
+    prisma,
+    { kind: "employee", employeeId, tenantId: employeeForTenant?.tenantId ?? "" },
+    monday,
+    sunday,
+  );
   // Defensive de-dupe by ISO date string. The Phase 62 generator emits exactly one row
   // per BS day, but Absence has no @@unique on (employeeId, startDate) alone (only with
   // `type` — Phase 63-01), so we de-dupe defensively here.
@@ -171,17 +184,28 @@ export async function getVocationalSchoolMinutesForDate(
     scheduleType?: ScheduleType | string | null;
   },
 ): Promise<number> {
-  const { start, next } = dateRangeUtc(date);
+  const { start } = dateRangeUtc(date);
 
-  const bs = await prisma.absence.findFirst({
-    where: {
-      employeeId,
-      deletedAt: null, // CLAUDE.md soft-delete rule
-      type: "VOCATIONAL_SCHOOL",
-      startDate: { gte: start, lt: next },
+  // tenantId is read here (not threaded as a new public parameter — no caller of this
+  // exported function currently has one readily to hand without its own lookup, and
+  // `employee` is a platform/Unterbau model, never a FOREIGN access regardless of which
+  // context reads it) so that the A20 facade call further below AND the A6 existence check
+  // right below it can each prove their own tenant scope. Reordered to run BEFORE the `bs`
+  // existence check (Phase 100B Plan 12) — the only behaviour difference is one extra query
+  // in the early-return ("no BS day") path, never a correctness change.
+  const employeeSlots = await prisma.employee.findFirst({
+    where: { id: employeeId },
+    select: {
+      tenantId: true,
+      bsSlotFirstLongDayMinutes: true,
+      bsSlotSecondLongDayMinutes: true,
+      bsSlotShortDayMinutes: true,
+      bsSlotBlockWeekMinutes: true,
     },
-    select: { id: true },
   });
+
+  // Phase 100B Plan 12 — A6's R-B single-day sibling, contexts/absence facade.
+  const bs = await hasVocationalSchoolDay(prisma, employeeId, employeeSlots?.tenantId ?? "", date);
   if (!bs) return 0;
 
   // ── Phase 76.31: slot-aware amount resolution (D-06 4-layer bsSlot* hierarchy) ──
@@ -192,34 +216,17 @@ export async function getVocationalSchoolMinutesForDate(
   // provided, dailySollMinutes falls back to BS_DAILY_DEFAULT_MIN (480), preserving the
   // legacy pauschal behavior for callers that have not yet threaded a schedule.
 
-  const employeeSlots = await prisma.employee.findFirst({
-    where: { id: employeeId },
-    select: {
-      bsSlotFirstLongDayMinutes: true,
-      bsSlotSecondLongDayMinutes: true,
-      bsSlotShortDayMinutes: true,
-      bsSlotBlockWeekMinutes: true,
-    },
-  });
-
   // Active BS pattern covering `date` (isActive + validFrom/validUntil window). If 0
-  // rows → pattern=null (delegate to the TenantConfig layer).
+  // rows → pattern=null (delegate to the TenantConfig layer). Phase 100B Plan 11 (A20) —
+  // the isActive/validFrom/validUntil window AND the BS_PATTERN_ORDER_BY determinism rule
+  // now live once in contexts/absence/facade/vocational-school-patterns.ts.
   const { start: dayStart } = dateRangeUtc(date);
-  const patternSlots = await prisma.employeeVocationalSchoolPattern.findFirst({
-    where: {
-      employeeId,
-      isActive: true,
-      validFrom: { lte: dayStart },
-      OR: [{ validUntil: null }, { validUntil: { gte: dayStart } }],
-    },
-    orderBy: BS_PATTERN_ORDER_BY,
-    select: {
-      bsSlotFirstLongDayMinutes: true,
-      bsSlotSecondLongDayMinutes: true,
-      bsSlotShortDayMinutes: true,
-      bsSlotBlockWeekMinutes: true,
-    },
-  });
+  const patternSlots = await getActiveBsPattern(
+    prisma,
+    employeeId,
+    employeeSlots?.tenantId ?? "",
+    dayStart,
+  );
 
   const dailySollMinutes = opts?.schedule
     ? computeDailySollMinutes(opts.schedule)
@@ -281,16 +288,24 @@ export async function sortedBsDatesInIsoWeek(
   dateInWeek: Date,
 ): Promise<string[]> {
   const { monday, nextMonday } = isoWeekBoundsUtc(dateInWeek);
-  const rows = await prisma.absence.findMany({
-    where: {
-      employeeId,
-      deletedAt: null, // CLAUDE.md soft-delete rule
-      type: "VOCATIONAL_SCHOOL",
-      startDate: { gte: monday, lt: nextMonday },
-    },
-    orderBy: { startDate: "asc" },
-    select: { startDate: true },
+  const sunday = new Date(nextMonday.getTime() - 24 * 60 * 60 * 1000);
+
+  // tenantId resolved via its own small `employee` lookup (never a FOREIGN access) rather than a
+  // new public parameter — this function's own external callers (`getVocationalSchoolMinutesForDate`
+  // above, `jarbschg.ts`) do not currently have a tenantId threaded to them either (same pattern
+  // as A20's callers in this file, Plan 11).
+  const employeeForTenant = await prisma.employee.findFirst({
+    where: { id: employeeId },
+    select: { tenantId: true },
   });
+
+  // Phase 100B Plan 12 — A6, contexts/absence facade.
+  const rows = await getVocationalSchoolDays(
+    prisma,
+    { kind: "employee", employeeId, tenantId: employeeForTenant?.tenantId ?? "" },
+    monday,
+    sunday,
+  );
   const uniq = new Set(rows.map((r) => r.startDate.toISOString().slice(0, 10)));
   return Array.from(uniq).sort();
 }
@@ -315,29 +330,33 @@ export async function bsUnterrichtsMinutesByDateForIsoWeek(
   dateInWeek: Date,
 ): Promise<Record<string, number | null>> {
   const { monday, nextMonday } = isoWeekBoundsUtc(dateInWeek);
+  const sunday = new Date(nextMonday.getTime() - 24 * 60 * 60 * 1000);
 
-  const rows = await prisma.absence.findMany({
-    where: {
-      employeeId,
-      deletedAt: null, // CLAUDE.md soft-delete rule
-      type: "VOCATIONAL_SCHOOL",
-      startDate: { gte: monday, lt: nextMonday },
-    },
-    orderBy: { startDate: "asc" },
-    select: { startDate: true, unterrichtsMinutes: true },
+  // tenantId is resolved via its own small `employee` lookup (never a FOREIGN access) rather than
+  // a new public parameter, since this function's own external caller (`jarbschg.ts`) does not
+  // currently have a tenantId threaded to it either (Plan 11) — reused below for BOTH the A20
+  // pattern lookup and the A6 absence read (Phase 100B Plan 12), one query, two consumers.
+  const employeeForTenant = await prisma.employee.findFirst({
+    where: { id: employeeId },
+    select: { tenantId: true },
   });
+
+  // Phase 100B Plan 12 — A6, contexts/absence facade.
+  const rows = await getVocationalSchoolDays(
+    prisma,
+    { kind: "employee", employeeId, tenantId: employeeForTenant?.tenantId ?? "" },
+    monday,
+    sunday,
+  );
 
   // Active pattern covering the week's Monday → per-DOW Unterrichtszeit fallback.
-  const pattern = await prisma.employeeVocationalSchoolPattern.findFirst({
-    where: {
-      employeeId,
-      isActive: true,
-      validFrom: { lte: monday },
-      OR: [{ validUntil: null }, { validUntil: { gte: monday } }],
-    },
-    orderBy: BS_PATTERN_ORDER_BY,
-    select: { unterrichtsMinutenByDow: true },
-  });
+  // Phase 100B Plan 11 (A20) — same shared facade call as getVocationalSchoolMinutesForDate above.
+  const pattern = await getActiveBsPattern(
+    prisma,
+    employeeId,
+    employeeForTenant?.tenantId ?? "",
+    monday,
+  );
   const dowMap = normalizeUnterrichtsMinutenByDow(pattern?.unterrichtsMinutenByDow);
 
   const out: Record<string, number | null> = {};

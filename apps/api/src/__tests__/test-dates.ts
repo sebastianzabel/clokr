@@ -18,7 +18,7 @@
  * midnight — see its own comment for why that must NOT be re-projected into
  * the tenant TZ).
  */
-import { todayInTz, dateStrInTz } from "../contexts/working-time-account/timezone";
+import { todayInTz, dateStrInTz, monthRangeUtc } from "../contexts/working-time-account/timezone";
 import { getHolidays, type FederalStateCode } from "../contexts/platform/holidays";
 
 /** Must mirror the tenant timezone seeded in `setup.ts:61`. */
@@ -143,6 +143,31 @@ export function monthStartUtc(monthsAgo: number, tz: string = TEST_TZ): Date {
 export function monthEndUtc(monthsAgo: number, tz: string = TEST_TZ): Date {
   const [y, m] = todayStr(tz).split("-").map(Number);
   return new Date(Date.UTC(y, m - monthsAgo, 0));
+}
+
+/**
+ * The real `SaldoSnapshot.periodStart`/`periodEnd` bounds for the calendar month
+ * containing `d`, computed the SAME way the monthly closer writes them
+ * (`monthRangeUtc()` in `../contexts/working-time-account/timezone.ts`): tenant-local
+ * midnight of day 1 (and tenant-local 23:59:59.999 of the last day), converted to UTC.
+ *
+ * Issue #241: a lock-row fixture built with naive `Date.UTC(year, month, 1)` instead
+ * agrees with a naive-comparing production bug rather than catching it — 236 of 237
+ * real `SaldoSnapshot` rows land on the LAST DAY OF THE PREVIOUS MONTH for any tenant
+ * ahead of UTC (Europe/Berlin), because tenant-local midnight of the 1st is still
+ * "yesterday" in UTC. Any test asserting a month-lock gate MUST build its
+ * `SaldoSnapshot` via this helper, not via `Date.UTC(...)` — that is the whole
+ * difference between a real regression test and a vacuous one here.
+ *
+ * `d`'s UTC year/month select the target month (mirrors how production reads a
+ * `@db.Date` calendar value — `getUTCFullYear`/`getUTCMonth`, never the tenant-TZ
+ * projection of that instant, which would be a second, wrong conversion).
+ */
+export function saldoSnapshotPeriodBounds(
+  d: Date,
+  tz: string = TEST_TZ,
+): { start: Date; end: Date } {
+  return monthRangeUtc(d.getUTCFullYear(), d.getUTCMonth() + 1, tz);
 }
 
 /** `dateStr` shifted by `n` whole calendar days (may be negative). */

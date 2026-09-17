@@ -24,6 +24,8 @@ import {
   resolveRetroactiveWindow,
   type GeneratorResult,
 } from "../vocational-school-generator";
+import { getTenantTimezone, monthRangeUtc } from "../../working-time-account/timezone";
+import { isMonthClosed } from "../../working-time-account"; // Phase 100B Plan 07 — W1
 
 const previewQuerySchema = z.object({
   weeks: z.coerce.number().int().min(1).max(26).optional(),
@@ -83,11 +85,6 @@ const retroactiveApplySchema = z.object({
     .optional()
     .nullable(),
 });
-
-// First-of-month UTC midnight — matches SaldoSnapshot.periodStart semantics.
-function monthStartUtc(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
-}
 
 // Phase 103 — the response shape used by both new retroactive endpoints when
 // resolveRetroactiveWindow() finds nothing to do (no active pattern with a past
@@ -284,18 +281,16 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
         });
       }
 
-      // (5) locked-month gate — findFirst with superseded:false (COMP-V1814-04)
-      const monthStart = monthStartUtc(dateUtc);
-      const snapshot = await app.prisma.saldoSnapshot.findFirst({
-        where: {
-          employeeId: employee.id,
-          periodType: "MONTHLY",
-          periodStart: monthStart,
-          superseded: false,
-        },
-        select: { id: true },
-      });
-      if (snapshot) {
+      // (5) locked-month gate — Phase 100B Plan 07 (W1, isMonthClosed), THE canonical
+      // Monatsabschluss signal.
+      const tenantTz = await getTenantTimezone(app.prisma, tenantId);
+      const { start: monthStart } = monthRangeUtc(
+        dateUtc.getUTCFullYear(),
+        dateUtc.getUTCMonth() + 1,
+        tenantTz,
+      );
+      const locked = await isMonthClosed(app.prisma, employee.id, tenantId, monthStart);
+      if (locked) {
         return reply.code(403).send({
           error: "Monat ist abgeschlossen und kann nicht bearbeitet werden.",
         });
@@ -419,18 +414,15 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
       }
 
       // (6) locked-month gate — identical message + status to manual-insert's gate (5)
-      // for UI consistency. findFirst with superseded:false (COMP-V1814-04)
-      const monthStart = monthStartUtc(absence.startDate);
-      const snapshot = await app.prisma.saldoSnapshot.findFirst({
-        where: {
-          employeeId: absence.employeeId,
-          periodType: "MONTHLY",
-          periodStart: monthStart,
-          superseded: false,
-        },
-        select: { id: true },
-      });
-      if (snapshot) {
+      // for UI consistency. Phase 100B Plan 07 (W1, isMonthClosed).
+      const tenantTz = await getTenantTimezone(app.prisma, tenantId);
+      const { start: monthStart } = monthRangeUtc(
+        absence.startDate.getUTCFullYear(),
+        absence.startDate.getUTCMonth() + 1,
+        tenantTz,
+      );
+      const locked = await isMonthClosed(app.prisma, absence.employeeId, tenantId, monthStart);
+      if (locked) {
         return reply.code(403).send({
           error: "Monat ist abgeschlossen und kann nicht bearbeitet werden.",
         });

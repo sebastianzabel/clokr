@@ -6,6 +6,8 @@
 // that covers the entire date range, then returns keyed Maps for O(1) in-memory lookup.
 
 import type { PrismaClient } from "@clokr/db";
+import { getWorkedEntriesInRange } from "../time-tracking"; // Phase 100B Plan 08 — T2
+import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1
 
 /**
  * Bulk-fetch all data needed by the close-month status handlers for a given date range
@@ -45,48 +47,22 @@ export async function fetchCloseMonthData(
       },
     }),
 
-    // Q2: all completed WORK TimeEntries in range. Select extended (Phase 92,
-    // BREAK-05) with id + breakStatus + isLocked so the status endpoint can
-    // derive unconfirmedBreakDays from this SAME bulk fetch (N+1-safe,
-    // PERF-V1814-01 — no extra per-employee query added).
-    // CLAUDE.md Soft Delete Convention: deletedAt: null is mandatory.
-    prisma.timeEntry.findMany({
-      where: {
-        employeeId: { in: employeeIds },
-        deletedAt: null,
-        date: { gte: start, lte: end },
-        endTime: { not: null },
-        type: "WORK",
-      },
-      select: { employeeId: true, id: true, date: true, breakStatus: true, isLocked: true },
-    }),
+    // Q2: all completed WORK TimeEntries in range. Extended (Phase 92, BREAK-05) with id +
+    // breakStatus + isLocked so the status endpoint can derive unconfirmedBreakDays from this
+    // SAME bulk fetch (N+1-safe, PERF-V1814-01 — no extra per-employee query added).
+    // Phase 100B Plan 08 — T2, contexts/time-tracking facade.
+    getWorkedEntriesInRange(prisma, { kind: "employees", employeeIds, tenantId }, start, end),
 
-    // Q3: all APPROVED LeaveRequests overlapping this date range. `include: { leaveType: true }`
-    // added in Phase 104 (R4/D-21) so the SAME bulk-fetch also serves the Karenz-overrun
-    // detector (leaveType.code) — a second leaveRequest.findMany here would double-count
-    // against overtime-perf-n1.test.ts's per-model ≤1 assertion.
-    // CLAUDE.md Soft Delete Convention: deletedAt: null is mandatory.
-    prisma.leaveRequest.findMany({
-      where: {
-        employeeId: { in: employeeIds },
-        deletedAt: null,
-        status: "APPROVED",
-        startDate: { lte: end },
-        endDate: { gte: start },
-      },
-      include: { leaveType: true },
-    }),
+    // Q3: all APPROVED LeaveRequests overlapping this date range. A1's select already carries
+    // leaveType.code (added in Phase 104, R4/D-21) so the SAME bulk-fetch also serves the
+    // Karenz-overrun detector — a second leaveRequest query here would double-count against
+    // overtime-perf-n1.test.ts's per-model ≤1 assertion.
+    // Phase 100B Plan 13 — A1, contexts/absence facade.
+    getApprovedLeaveOverlapping(prisma, { kind: "employees", employeeIds, tenantId }, start, end),
 
     // Q4: all Absences overlapping this date range.
-    // CLAUDE.md Soft Delete Convention: deletedAt: null is mandatory.
-    prisma.absence.findMany({
-      where: {
-        employeeId: { in: employeeIds },
-        deletedAt: null,
-        startDate: { lte: end },
-        endDate: { gte: start },
-      },
-    }),
+    // Phase 100B Plan 12 — A4, contexts/absence facade.
+    getAbsencesOverlapping(prisma, { kind: "employees", employeeIds, tenantId }, start, end),
 
     // Q5: all tenant-specific DB PublicHolidays in range (tenant-wide, not per-employee).
     prisma.publicHoliday.findMany({

@@ -19,6 +19,9 @@ import { FederalState } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
 import { cleanupShiftsForBSAbsence } from "../scheduling/shift-cleanup";
 import { BS_PATTERN_ORDER_BY, findAmbiguousClaimDates } from "./vocational-school-pattern-order.js";
+import { getTenantTimezone, monthRangeUtc } from "../working-time-account/timezone";
+import { getClosedMonthsInRange } from "../working-time-account"; // Phase 100B Plan 07 — W2b
+import { getClaimedEntryDatesInRange } from "../time-tracking"; // Phase 100B Plan 08
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -119,11 +122,24 @@ function addDaysUtc(d: Date, days: number): Date {
 }
 
 /**
- * Return the UTC date for the 1st of `d`'s month at 00:00:00.000Z.
- * Used to match SaldoSnapshot.periodStart (which is the month boundary).
+ * The real `SaldoSnapshot.periodStart` for the calendar month containing `d`, in the
+ * tenant timezone.
+ *
+ * Issue #241 (fourth site): this function used to return naive `Date.UTC(year, month,
+ * 1)` with a docblock claiming that "matches SaldoSnapshot.periodStart (which is the
+ * month boundary)" — it does not. `periodStart` is written by the monthly closer via
+ * `monthRangeUtc()` (`../working-time-account/timezone.ts`): tenant-local midnight of
+ * day 1, converted to UTC. For any tenant ahead of UTC (Europe/Berlin) that real value
+ * falls on the LAST DAY OF THE PREVIOUS month, never on naive `Date.UTC(year, month,
+ * 1)`. Comparing the two broke BERSCH-09 in two independent ways: the bulk-fetch
+ * window below lost the window's leading-edge month (the real row sits before the
+ * naive `gte` bound), and the per-date lock-key lookup could never match at all (the
+ * two ISO date strings are never equal). The three route-level month-lock gates had
+ * the identical defect, fixed in `8326859d`; this is the same defect in the
+ * auto-generator's own lock-skip, not a distinct one.
  */
-function monthStartUtc(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+function monthLockBoundUtc(d: Date, tz: string): Date {
+  return monthRangeUtc(d.getUTCFullYear(), d.getUTCMonth() + 1, tz).start;
 }
 
 /**
@@ -259,6 +275,11 @@ async function runOrPreview(
     select: { id: true, federalState: true },
   });
 
+  // Issue #241 (fourth site) — the tenant timezone `monthLockBoundUtc()` needs below
+  // to derive the real `SaldoSnapshot.periodStart` boundary, matching how the monthly
+  // closer writes it (`monthRangeUtc()`). Cached 5 min by `getTenantTimezone` itself.
+  const tenantTz = await getTenantTimezone(prisma, opts.tenantId);
+
   // 2. Bulk-fetch existing Absences in the window for these tenants' employees (idempotency).
   //    Build a set keyed by "employeeId::YYYY-MM-DD" for O(1) lookups.
   const employeeIds = Array.from(new Set(patterns.map((p) => p.employeeId)));
@@ -275,18 +296,20 @@ async function runOrPreview(
   );
 
   // 3. Bulk-fetch SaldoSnapshots whose periodStart falls in the window's month range.
-  //    Locked months are identified by (employeeId, MONTHLY, monthStartUtc(date)).
-  const lockedSnapshots = await prisma.saldoSnapshot.findMany({
-    where: {
-      employeeId: { in: employeeIds },
-      periodType: "MONTHLY",
-      periodStart: { gte: monthStartUtc(windowStart), lte: monthStartUtc(windowEnd) },
-      superseded: false,
-    },
-    select: { employeeId: true, periodStart: true },
-  });
-  const lockedSet = new Set<string>(
-    lockedSnapshots.map((s) => `${s.employeeId}::${toIsoDate(s.periodStart)}`),
+  //    Locked months are identified by (employeeId, MONTHLY, monthLockBoundUtc(date)).
+  //    Issue #241 (fourth site): the `gte` bound MUST be the real tenant-TZ-aware
+  //    periodStart of the window's first month, not naive Date.UTC(year, month, 1) —
+  //    the real value falls on the last day of the PREVIOUS month for a tenant ahead
+  //    of UTC, which sits strictly before a naive `gte` bound and was silently dropped.
+  // Phase 100B Plan 07 (W2b, getClosedMonthsInRange) — the range shape. Returns the composite
+  // `${employeeId}::${isoDate}` Set directly (calendar-date-only, matching this file's own
+  // `toIsoDate`-keyed lookups below unchanged).
+  const lockedSet = await getClosedMonthsInRange(
+    prisma,
+    employeeIds,
+    opts.tenantId,
+    monthLockBoundUtc(windowStart, tenantTz),
+    monthLockBoundUtc(windowEnd, tenantTz),
   );
 
   // 3.5. Phase 103 Task 2 (D-05/D-06/D-07) — Bulk-fetch non-deleted TimeEntry rows in
@@ -303,20 +326,18 @@ async function runOrPreview(
   //      Skipped entirely when the window is forward-only (no explicit windowStart):
   //      a TimeEntry for a future date does not occur, so the cron/on-demand/preview
   //      paths take no extra query and stay behaviourally + performance-identical.
-  const conflictSet = new Set<string>();
-  if (opts.windowStart !== undefined) {
-    const conflictingEntries = await prisma.timeEntry.findMany({
-      where: {
-        employeeId: { in: employeeIds },
-        deletedAt: null,
-        date: { gte: windowStart, lte: windowEnd },
-      },
-      select: { employeeId: true, date: true },
-    });
-    for (const e of conflictingEntries) {
-      conflictSet.add(`${e.employeeId}::${toIsoDate(e.date)}`);
-    }
-  }
+  // Phase 100B Plan 08 — getClaimedEntryDatesInRange, contexts/time-tracking facade. Already
+  // returns the exact `${employeeId}::${isoDate}` composite key this file's own `toIsoDate` uses.
+  const conflictSet =
+    opts.windowStart !== undefined
+      ? await getClaimedEntryDatesInRange(
+          prisma,
+          employeeIds,
+          opts.tenantId,
+          windowStart,
+          windowEnd,
+        )
+      : new Set<string>();
   // Phase 103 Task 2 — dates where a TimeEntry conflict is deliberately overridden
   // (D-06). Built once, outside the loops.
   const overrideSet = new Set<string>(opts.overrideDates ?? []);
@@ -521,7 +542,7 @@ async function runOrPreview(
         continue;
       }
       // Locked month (BERSCH-09)
-      const lockKey = `${employee.id}::${toIsoDate(monthStartUtc(date))}`;
+      const lockKey = `${employee.id}::${toIsoDate(monthLockBoundUtc(date, tenantTz))}`;
       if (lockedSet.has(lockKey)) {
         result.skipped.locked++;
         if (opts.dryRun) {
@@ -773,7 +794,7 @@ async function runOrPreview(
       // is what made D-04's "Juli ist abgeschlossen — 2 Tage bleiben unverändert"
       // uncomputable. Kept as its own counter (removalLocked), not folded into the
       // create-side `locked` counter — the wizard sums them client-side.
-      const lockKey = `${a.employeeId}::${toIsoDate(monthStartUtc(a.startDate))}`;
+      const lockKey = `${a.employeeId}::${toIsoDate(monthLockBoundUtc(a.startDate, tenantTz))}`;
       if (lockedSet.has(lockKey)) {
         result.skipped.removalLocked++;
         if (opts.dryRun) {

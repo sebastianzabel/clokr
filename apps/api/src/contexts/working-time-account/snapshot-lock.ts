@@ -16,26 +16,29 @@
  * find `isLocked: true` on). This is recorded honestly rather than worked around —
  * inventing a second definition of "locked" here (e.g. a snapshot-level flag) would
  * be exactly the kind of divergence Phase 98 spent a phase eliminating.
+ *
+ * Phase 100B Plan 08 (T3): the `TimeEntry.count` this predicate reads is a foreign access from
+ * `working-time-account` into Zeiterfassung's own model — it now goes through
+ * `contexts/time-tracking`'s `countLockedEntries(db, employeeId, tenantId, from, to)` facade
+ * function instead of a direct `prisma.timeEntry.count`. `tenantId` is a NEW required parameter
+ * (D-10/G4): both of this function's 2 callers already have it in scope before calling
+ * (`shift-leave-recalc-resolver.ts`'s own `tenantId` parameter; `recalculate-snapshots.ts`'s
+ * `employee.tenantId`, fetched immediately before). The generic `TimeEntryLockReader` duck type
+ * is gone — `countLockedEntries` requires a real `Prisma.TransactionClient` (D-07), so
+ * `__tests__/snapshot-lock.test.ts`'s DB-free mock now casts its stub reader to that type instead
+ * of relying on structural typing; it stays DB-free (no real Postgres connection), only the
+ * TypeScript escape hatch changed.
  */
-export type TimeEntryLockReader = {
-  timeEntry: {
-    count(args: { where: Record<string, unknown> }): Promise<number>;
-  };
-};
+import type { Prisma } from "@clokr/db";
+import { countLockedEntries } from "../time-tracking"; // Phase 100B Plan 08 — T3
 
 export async function isSnapshotLocked(
-  prisma: TimeEntryLockReader,
+  db: Prisma.TransactionClient,
   employeeId: string,
+  tenantId: string,
   periodStart: Date,
   periodEnd: Date,
 ): Promise<boolean> {
-  const lockedCount = await prisma.timeEntry.count({
-    where: {
-      employeeId,
-      deletedAt: null,
-      date: { gte: periodStart, lte: periodEnd },
-      isLocked: true,
-    },
-  });
+  const lockedCount = await countLockedEntries(db, employeeId, tenantId, periodStart, periodEnd);
   return lockedCount > 0;
 }

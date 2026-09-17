@@ -10,6 +10,8 @@ import {
   validateTimeEntryInvariants,
 } from "../../time-tracking/api/time-entries";
 import { getTenantTimezone } from "../../working-time-account/timezone";
+import { createOvertimeAccount } from "../../working-time-account"; // Phase 100B Plan 06 — W13
+import { createImportedTimeEntry } from "../../time-tracking"; // Phase 100B Plan 08 — T12
 
 const employeeRowSchema = z.object({
   email: z.string().email(),
@@ -139,9 +141,7 @@ export async function importRoutes(app: FastifyInstance) {
               },
             });
 
-            await tx.overtimeAccount.create({
-              data: { employeeId: emp.id, balanceHours: 0 },
-            });
+            await createOvertimeAccount(tx, emp.id, req.user.tenantId);
           });
 
           results.push({ row: i + 1, status: "ok", email: data.email });
@@ -237,17 +237,14 @@ export async function importRoutes(app: FastifyInstance) {
           });
           if (invariantError) throw new Error(invariantError.error);
 
-          const created = await app.prisma.timeEntry.create({
-            data: {
-              employeeId,
-              date: new Date(dateStr),
-              startTime,
-              endTime,
-              breakMinutes: data.breakMinutes,
-              note: data.note || null,
-              type: "WORK",
-              source: "MANUAL",
-            },
+          // Phase 100B Plan 08 — T12, contexts/time-tracking facade.
+          const created = await createImportedTimeEntry(app.prisma, {
+            employeeId,
+            date: new Date(dateStr),
+            startTime,
+            endTime,
+            breakMinutes: data.breakMinutes,
+            note: data.note || null,
           });
 
           // Per-entry audit (Revisionssicherheit) — one AuditLog row per imported entry,

@@ -102,7 +102,7 @@ describe("context-area-map — structural invariants", () => {
     }
   });
 
-  it("no path under src/contexts/*/api/ or src/contexts/*/plugins/ maps to rahmen (#99: keine Restkategorie)", () => {
+  it("no path under src/contexts/*/api/, .../plugins/ or .../facade/ maps to rahmen (#99: keine Restkategorie)", () => {
     // Phase 99b, plan 08: the original assertion here filtered CONTEXT_AREA_BY_FILE for keys
     // starting with "src/routes/" or "src/plugins/" — both directories were removed by plan
     // 99B-07 (see docs/context-cut-map.md §4), so CONTEXT_AREA_BY_FILE has held zero such keys
@@ -114,9 +114,33 @@ describe("context-area-map — structural invariants", () => {
     // "src/contexts/absence/api/does-not-exist.ts": "rahmen" to CONTEXT_AREA_BY_FILE and
     // re-running turned this test red with the offending path in the failure message, then the
     // change was reverted (see 99B-08-SUMMARY.md for the verbatim transcript).
+    //
+    // Phase 100B plan 03 — THIRD recurrence of the exact same defect class (GitHub #235), on the
+    // exact file #235 was filed about. `[a-z]+` does not match a hyphen. Commit `325f2d39`
+    // ("chore(99b-09): rename context directories to English (D-27/D-28)") renamed the context
+    // directories, and two of the five now contain hyphens — `time-tracking` and
+    // `working-time-account`. The assertion above went blind to BOTH of them (every plugin under
+    // Arbeitszeitkonto included) without ever going red, because a filter that silently matches
+    // fewer paths still returns `[]` just as happily as one that matches all of them. Measured
+    // path by path on `18468ed5`, before this fix:
+    //
+    //   true   src/contexts/absence/api/leave.ts
+    //   false  src/contexts/time-tracking/api/time-entries.ts          <-- blind
+    //   false  src/contexts/working-time-account/plugins/auto-close-month.ts   <-- blind
+    //   true   src/contexts/scheduling/api/shifts.ts
+    //   true   src/contexts/platform/api/employees.ts
+    //
+    // Fixed here by widening the character class to `[a-z-]+` (all five contexts now match) and by
+    // adding `facade` to the subdirectory alternation, since plan 100B-03 (D-07) makes `facade/`
+    // the third kind of directory routes/plugins reasoning applies to — a facade module owns
+    // queries against its own context's models and can never be `rahmen` either. Proven by TWO
+    // poison entries this time, not one, because the earlier "prove it once" fix (99B-08) itself
+    // picked a context without a hyphen (`absence`) and so did not actually prove the hyphen case
+    // — see 100B-03-SUMMARY.md for both verbatim transcripts (`working-time-account/plugins/` and
+    // `scheduling/facade/`), each reverted and `git diff`-confirmed clean before the next.
     const offenders = Object.entries(CONTEXT_AREA_BY_FILE)
       .filter(([, area]) => area === "rahmen")
-      .filter(([path]) => /^src\/contexts\/[a-z]+\/(api|plugins)\//.test(path))
+      .filter(([path]) => /^src\/contexts\/[a-z-]+\/(api|plugins|facade)\//.test(path))
       .map(([path]) => path);
     expect(offenders).toEqual([]);
   });

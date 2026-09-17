@@ -52,6 +52,10 @@
  * are expected to validate that before opening the transaction.
  */
 import type { Prisma } from "@clokr/db";
+import { clearEntryNotesForEmployee } from "../time-tracking"; // Phase 100B Plan 08 — T10
+import { anonymizeSection9CreditsForEmployee } from "../absence"; // Phase 100B Plan 11 — T-100B-48
+import { anonymizeAbsencesForEmployee } from "../absence"; // Phase 100B Plan 12 — F3
+import { anonymizeLeaveRequestsForEmployee } from "../absence"; // Phase 100B Plan 13 — F3
 
 /**
  * The sentinel that marks a DSGVO-anonymized Employee row (set by anonymizeEmployeeData below):
@@ -117,22 +121,16 @@ export async function anonymizeEmployeeData(opts: AnonymizeEmployeeOptions): Pro
   });
 
   // Notizen in Zeiteinträgen anonymisieren (können persönliche Daten enthalten)
-  await tx.timeEntry.updateMany({
-    where: { employeeId, note: { not: null } },
-    data: { note: null },
-  });
+  // Phase 100B Plan 08 — T10, contexts/time-tracking facade (reaches soft-deleted rows too).
+  await clearEntryNotesForEmployee(tx, employeeId);
 
   // Notizen in Urlaubsanträgen anonymisieren
-  await tx.leaveRequest.updateMany({
-    where: { employeeId, note: { not: null } },
-    data: { note: null },
-  });
+  // Phase 100B Plan 13 — F3, contexts/absence facade.
+  await anonymizeLeaveRequestsForEmployee(tx, employeeId);
 
   // Notizen in Abwesenheiten anonymisieren + Dokument-Pfad entfernen
-  await tx.absence.updateMany({
-    where: { employeeId },
-    data: { note: null, documentPath: null },
-  });
+  // Phase 100B Plan 12 — F3, contexts/absence facade.
+  await anonymizeAbsencesForEmployee(tx, employeeId);
 
   // Phase 104 (D-26): Papier-AU zu § 9-BUrlG-Vorgängen ist ein Gesundheitsdatum nach Art. 9
   // DSGVO. Der Zeiger darauf wird gelöscht; das MinIO-Objekt selbst löscht der Aufrufer NACH
@@ -140,10 +138,7 @@ export async function anonymizeEmployeeData(opts: AnonymizeEmployeeOptions): Pro
   // Die Section9Credit-ZEILEN bleiben erhalten: sie sind der Korrektureintrag, mit dem die
   // Urlaubsgutschrift rekonstruierbar bleibt (Revisionssicherheit, R7). Gelöscht wird nur,
   // was personenbezogen bzw. gesundheitsbezogen ist — documentPath und die Freitext-Begründung.
-  await tx.section9Credit.updateMany({
-    where: { employeeId },
-    data: { documentPath: null, reason: null },
-  });
+  await anonymizeSection9CreditsForEmployee(tx, employeeId);
 
   // AuditLog JSON-Felder (oldValue/newValue) für Employee- und User-Einträge redigieren.
   // Verhindert, dass Name/E-Mail in historischen JSON-Blobs erhalten bleiben (COMP-V1814-01).

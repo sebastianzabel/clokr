@@ -1,0 +1,92 @@
+[
+  {
+    "file": "apps/api/src/contexts/absence/leave-check.ts",
+    "function": "hasApprovedLeaveOnDate",
+    "rules": ["F1", "F3"],
+    "reason": "Phase 76.2 code, predates the facade-signature convention (D-07/G4) by two milestones. F1: its first parameter is named 'prisma', not 'db' — same type (Prisma.TransactionClient), a naming-only divergence, never a FastifyInstance (F2 does not apply). F3: its 'employeeId' parameter has no sibling 'tenantId' because both of its call sites (contexts/time-tracking/api/time-entries.ts:1095 and services/clock/resolver.ts:39) already tenant-validate the employeeId before calling it — the 'where' never moved out of a route here, it was extracted FROM one in Phase 76.2, before this facade initiative existed. Renaming the parameter or threading a tenantId argument through is out of Plan 100B-03's declared file scope (does not touch leave-check.ts); the general gap this exception documents is exactly what Issue #101 (T6, CONTEXT.md canonical_refs) exists to close — 'was hier nicht sauber getrennt wird, braucht dort eine Ausnahme'."
+  },
+  {
+    "file": "apps/api/src/contexts/platform/facade/employee-scope.ts",
+    "function": "employeeScopeWhere",
+    "rules": ["F1"],
+    "reason": "Plan 100B-04: a pure, side-effect-free type-mapping helper (EmployeeScope -> a Prisma 'where' fragment) with no Prisma CALL and no database client of any kind in its signature — D-07's whole point (a write silently leaving the caller's $transaction through app.prisma) cannot occur here because there is no client to call through. F1 is checked mechanically against every exported function declaration under contexts/*/facade/ regardless of whether it touches Prisma at all, so this genuinely-safe function is still visited and flagged. Scoping F1 itself to 'only functions with a db-shaped first parameter' would change lint-facade-signatures.ts, which is outside this plan's declared files_modified; a named exception is the cheaper, equally-auditable fix the plan's own Task 3 offers as the alternative."
+  },
+  {
+    "file": "apps/api/src/contexts/working-time-account/facade/overtime-account.ts",
+    "function": "hardDeleteOvertimeDataForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-06 (D-08/T-100B-25): this is a HARD delete (OvertimeAccount.deleteMany, cascading to OvertimeTransaction) invoked ONLY from platform/api/employees.ts's DELETE /:id/hard-delete sequence, whose handler validates 'id' against req.user.tenantId at its own top (employee.findUnique({ where: { id, tenantId: req.user.tenantId } }), employees.ts:1108-1111) BEFORE the hard-delete $transaction — and therefore before this function — is ever reached. Adding a tenantId parameter here would be a decorative constraint with no independent identifier to check it against (there is no second, untrusted employeeId in play), not a real tenant boundary; the real boundary is the caller's own upstream validation, named explicitly here per D-08's 'named, not uniform' rule."
+  },
+  {
+    "file": "apps/api/src/contexts/time-tracking/facade/time-entries.ts",
+    "function": "clearEntryNotesForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-08 (D-08, T10): DSGVO Art. 17 anonymisation — clears TimeEntry.note for employeeId, deliberately with no deletedAt guard (a soft-deleted row's PII must be scrubbed too, same as every other field platform/anonymize.ts's anonymizeEmployeeData() clears) and no tenantId parameter. Its sole caller resolves and tenant-validates employeeId before this function is ever reached (employees.ts's DELETE /:id anonymization route, or the batch anonymize-dump.ts script operating on already-resolved rows); there is no second, untrusted identifier here for a tenantId parameter to constrain. Same shape as hardDeleteOvertimeDataForEmployee above."
+  },
+  {
+    "file": "apps/api/src/contexts/time-tracking/facade/time-entries.ts",
+    "function": "hardDeleteTimeDataForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-08 (D-08, T11): a HARD delete (Break.deleteMany then TimeEntry.deleteMany, the onDelete:Restrict ORDER invariant) invoked ONLY from platform/api/employees.ts's DELETE /:id/hard-delete sequence, whose handler validates 'id' against req.user.tenantId at its own top BEFORE the hard-delete $transaction — and therefore before this function — is ever reached. Identical reasoning to hardDeleteOvertimeDataForEmployee's own exception above: a tenantId parameter here would be decorative, not a real boundary."
+  },
+  {
+    "file": "apps/api/src/contexts/time-tracking/facade/presence-devices.ts",
+    "function": "getPresenceDevice",
+    "rules": ["F3"],
+    "reason": "Plan 100B-09 (Wave 4, closing): 'employeeId' here is the CALLER's OWN identifier (req.user.employeeId from the JWT, already tenant-validated by auth), not a second, untrusted client-supplied id needing its own tenantId sibling to be checked against — this is the same 'own-data, principal-field-scoped' shape 100B-CONTEXT.md's call_sites section documents for this exact pair. A tenantId parameter would be decorative: employeeId is strictly tighter than tenantId (PRINCIPAL_FIELDS, lint-tenant-scoping-types.ts) and the lint:tenant-scoping gate already recognises the where's own 'id, employeeId' filter as inline-principal-field without one."
+  },
+  {
+    "file": "apps/api/src/contexts/time-tracking/facade/presence-devices.ts",
+    "function": "deletePresenceDevice",
+    "rules": ["F3"],
+    "reason": "Plan 100B-09 (Wave 4, closing): identical reasoning to getPresenceDevice's own exception above — 'employeeId' is the caller's own principal identifier, not a second untrusted id; the delete's 'where: { id, employeeId }' carries the real tenant-tighter boundary in the query itself (D-13 way 1', inline-principal-field), same as its sibling read."
+  },
+  {
+    "file": "apps/api/src/contexts/absence/facade/entitlements.ts",
+    "function": "hardDeleteEntitlementsForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-10 (Wave 5, D-08): a HARD delete (LeaveEntitlement.deleteMany) invoked ONLY from platform/api/employees.ts's DELETE /:id/hard-delete sequence inside its own $transaction, whose handler validates 'id' against req.user.tenantId at its own top BEFORE the hard-delete transaction — and therefore before this function — is ever reached. Same shape and reasoning as hardDeleteOvertimeDataForEmployee/hardDeleteTimeDataForEmployee above: a tenantId parameter here would be decorative, not a real boundary."
+  },
+  {
+    "file": "apps/api/src/contexts/absence/facade/section9-credits.ts",
+    "function": "getSection9DocumentPaths",
+    "rules": ["F3"],
+    "reason": "Plan 100B-11 (Wave 5, D-08, T-100B-48/H2): DSGVO Art. 17 document-cleanup read — the documentPath of every Section9Credit for employeeId, invoked ONLY from platform/api/employees.ts's DELETE /:id (ANONYMIZE) handler BEFORE its anonymisation $transaction opens, whose handler validates 'id' against req.user.tenantId a few lines above this call (the neighbouring employee.tenantId !== req.user.tenantId check). Same shape as clearEntryNotesForEmployee/hardDeleteEntitlementsForEmployee above: a tenantId parameter here would be decorative, not a real boundary."
+  },
+  {
+    "file": "apps/api/src/contexts/absence/facade/section9-credits.ts",
+    "function": "anonymizeSection9CreditsForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-11 (Wave 5, D-08, T-100B-48): DSGVO Art. 17 anonymisation — nulls Section9Credit.documentPath/reason for employeeId inside anonymize.ts's own $transaction, invoked ONLY from anonymizeEmployeeData(), which resolves and is only ever reached after platform/api/employees.ts's DELETE /:id handler validated 'id' against req.user.tenantId BEFORE opening the transaction this function runs inside. Same shape and reasoning as clearEntryNotesForEmployee/hardDeleteOvertimeDataForEmployee/hardDeleteEntitlementsForEmployee above: a tenantId parameter here would be decorative, not a real boundary."
+  },
+  {
+    "file": "apps/api/src/contexts/absence/facade/absences.ts",
+    "function": "getAbsenceDocumentPaths",
+    "rules": ["F3"],
+    "reason": "Plan 100B-12 (D-08): DSGVO Art. 17 pre-fetch of every non-null Absence.documentPath for employeeId, deliberately with no deletedAt guard (a soft-deleted row's document must still be found and deleted from MinIO) and no tenantId parameter. Its sole caller (platform/api/employees.ts's DELETE /:id ANONYMIZE handler) already validates id against req.user.tenantId before this function is ever reached, before the anonymisation $transaction even opens (MinIO deletes must happen after commit). Same shape as getSection9DocumentPaths (plan 11)."
+  },
+  {
+    "file": "apps/api/src/contexts/absence/facade/absences.ts",
+    "function": "anonymizeAbsencesForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-12 (D-08): DSGVO Art. 17 anonymisation — nulls Absence.note and Absence.documentPath for employeeId, deliberately with no deletedAt guard (a soft-deleted row's PII must be scrubbed too, same as every other field platform/anonymize.ts's anonymizeEmployeeData() clears) and no tenantId parameter. Its sole caller resolves and tenant-validates employeeId before this function is ever reached (employees.ts's DELETE /:id anonymization route, inside its own $transaction). Same shape as clearEntryNotesForEmployee (plan 08)."
+  },
+  {
+    "file": "apps/api/src/contexts/absence/facade/absences.ts",
+    "function": "hardDeleteAbsencesForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-12 (D-08, H5): a HARD delete (Absence.deleteMany) invoked ONLY from platform/api/employees.ts's DELETE /:id/hard-delete sequence inside its own $transaction, whose handler validates id against req.user.tenantId at its own top BEFORE this transaction — and therefore before this function — is ever reached. Called IN PLACE in the existing onDelete:Restrict ORDER (Break -> TimeEntry -> LeaveRequest -> Absence -> ...), unchanged. Same shape as hardDeleteEntitlementsForEmployee (plan 10) and hardDeleteOvertimeDataForEmployee (plan 06)."
+  },
+  {
+    "file": "apps/api/src/contexts/absence/facade/leave-requests.ts",
+    "function": "anonymizeLeaveRequestsForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-13 (Wave 5, LAST conversion plan, D-08): DSGVO Art. 17 anonymisation — nulls LeaveRequest.note for employeeId, deliberately with no deletedAt guard (a soft-deleted row's PII must be scrubbed too, same as every other field platform/anonymize.ts's anonymizeEmployeeData() clears) and no tenantId parameter. Its sole caller resolves and tenant-validates employeeId before this function is ever reached (anonymize.ts's anonymizeEmployeeData(), reached only after employees.ts's DELETE /:id handler validated id against req.user.tenantId). Same shape as anonymizeAbsencesForEmployee (plan 12)."
+  },
+  {
+    "file": "apps/api/src/contexts/absence/facade/leave-requests.ts",
+    "function": "hardDeleteLeaveRequestsForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-13 (Wave 5, LAST conversion plan, D-08): a HARD delete (LeaveRequest.deleteMany) invoked ONLY from platform/api/employees.ts's DELETE /:id/hard-delete sequence inside its own $transaction, whose handler validates id against req.user.tenantId at its own top BEFORE this transaction — and therefore before this function — is ever reached. Called IN PLACE in the existing onDelete:Restrict ORDER, unchanged. Same shape as hardDeleteAbsencesForEmployee (plan 12) and hardDeleteEntitlementsForEmployee (plan 10)."
+  }
+]

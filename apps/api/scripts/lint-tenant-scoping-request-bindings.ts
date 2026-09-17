@@ -43,6 +43,27 @@
  *   - One-hop propagation: `const x = <alreadyClientSupplied>.<prop>` or
  *     `const x = <alreadyClientSupplied>`. No deeper data-flow — one hop is what
  *     204-RESEARCH.md's §Client-Supplied Identifier Idiom measured; more would be speculation.
+ *
+ * ── The facade-parameter contract (100B Plan 04, D-10, G2/G3) ─────────────────────────────────
+ * Inside a facade module (`lint-tenant-scoping-types.ts`'s `isFacadeModulePath`) a Prisma call has
+ * no `req` to trace provenance from: `enclosingHandler` falls back to the OUTERMOST function-like
+ * ancestor, which for a top-level `export async function foo(db, ...) {...}` facade function IS
+ * that function itself (mirrors `lint-facade-signatures.ts`'s own `hasExportModifier` check on
+ * exactly the same node shape). Its own declared parameters are what a route handed it — the
+ * contract a facade exists to embody, not a guess about it — so they seed `clientSupplied`
+ * (G2) the exact same way `req.params`/`req.body` seed it for a route handler, and a parameter
+ * named `tenantId`/`employeeId`/`sub` (`PRINCIPAL_FIELDS`) seeds `principalFields` (G3) the exact
+ * same way `const tenantId = req.user.tenantId` would. This is deliberately implemented by
+ * POPULATING `principalFields`/`clientSupplied` here, not by adding a facade branch to
+ * `isPrincipalExpression` below — a bare identifier bound to a principal field is already a
+ * recognised shape that function handles, so a facade parameter named `tenantId` needs no second,
+ * parallel recognition path to be judged correctly.
+ *
+ * Only an EXPORTED function DECLARATION qualifies — a non-exported helper inside a facade file, or
+ * an arrow function, is not itself the public surface a route calls and carries no such contract.
+ * G2/G3 only ADD bindings; they never remove or override what the ordinary `req`-based walk below
+ * would find, so a facade module with a (forbidden, `lint-facade-signatures` F2) `req` parameter
+ * keeps the existing precedence unchanged.
  */
 import * as ts from "typescript";
 import type { RequestBindings, PrincipalField } from "./lint-tenant-scoping-types";
@@ -56,6 +77,12 @@ function isRequestIdentifier(node: ts.Node): node is ts.Identifier {
 
 function isPrincipalFieldName(name: string): name is PrincipalField {
   return (PRINCIPAL_FIELDS as readonly string[]).includes(name);
+}
+
+function hasExportModifier(node: ts.Node): boolean {
+  if (!ts.canHaveModifiers(node)) return false;
+  const modifiers = ts.getModifiers(node);
+  return !!modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
 }
 
 type FunctionLike =
@@ -185,11 +212,52 @@ function getFunctionBody(fn: ts.Node): ts.Node | undefined {
   return undefined;
 }
 
-/** Collects, for ONE function scope, every name that came from the request. */
-export function collectRequestBindings(fn: ts.Node, _sourceFile: ts.SourceFile): RequestBindings {
+/**
+ * G2/G3 (100B Plan 04, D-10): seeds `clientSupplied`/`principalFields` from the enclosing
+ * EXPORTED function declaration's own parameter list, when `fn` is a facade module's function.
+ * A parameter named `tenantId`/`employeeId`/`sub` maps to ITSELF as the principal field it holds
+ * — literally `principalFields.set("tenantId", "tenantId")` — which is exactly what
+ * `isPrincipalExpression`'s existing bare-identifier branch
+ * (`bindings.principalFields.get(expr.text)`) already recognises; every other parameter is a
+ * client-supplied identifier by the facade contract (G2). See the module header for why this is
+ * additive-only and requires an EXPORTED function DECLARATION, not any function-like node.
+ */
+function seedFacadeParameterBindings(
+  fn: ts.Node,
+  clientSupplied: Set<string>,
+  principalFields: Map<string, PrincipalField>,
+): void {
+  if (!ts.isFunctionDeclaration(fn) || !fn.name || !hasExportModifier(fn)) return;
+  for (const param of fn.parameters) {
+    if (!ts.isIdentifier(param.name)) continue;
+    const name = param.name.text;
+    if (isPrincipalFieldName(name)) {
+      principalFields.set(name, name);
+    } else {
+      clientSupplied.add(name);
+    }
+  }
+}
+
+/**
+ * Collects, for ONE function scope, every name that came from the request — PLUS, when
+ * `isFacadeModule` is true, every name that came from a facade function's own parameter list
+ * (G2/G3, see the module header and `seedFacadeParameterBindings`). `isFacadeModule` defaults to
+ * `false` so every existing call site (route/service files, `isFacadeModulePath` false) is
+ * bit-for-bit unaffected.
+ */
+export function collectRequestBindings(
+  fn: ts.Node,
+  _sourceFile: ts.SourceFile,
+  isFacadeModule = false,
+): RequestBindings {
   const clientSupplied = new Set<string>();
   const principalObjects = new Set<string>();
   const principalFields = new Map<string, PrincipalField>();
+
+  if (isFacadeModule) {
+    seedFacadeParameterBindings(fn, clientSupplied, principalFields);
+  }
 
   function isClientSuppliedExpr(expr: ts.Expression): boolean {
     if (ts.isIdentifier(expr)) return clientSupplied.has(expr.text);

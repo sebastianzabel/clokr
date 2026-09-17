@@ -1,6 +1,9 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
+import { countSnapshotsBefore } from "../../working-time-account"; // Phase 100B Plan 07 — W7
+import { archiveEntriesBefore } from "../../time-tracking"; // Phase 100B Plan 08 — T9
+import { archiveAbsencesBefore, archiveLeaveRequestsBefore } from "../../absence"; // Phase 100B Plan 12; Plan 13
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -51,12 +54,12 @@ export const dataRetentionPlugin = fp(async (app) => {
 
         // Verify snapshots exist for the cutoff period
         // We only archive if there are snapshots covering the data we're about to soft-delete
-        const snapshotCount = await app.prisma.saldoSnapshot.count({
-          where: {
-            employeeId: { in: employeeIds },
-            periodEnd: { lte: cutoffDate },
-          },
-        });
+        const snapshotCount = await countSnapshotsBefore(
+          app.prisma,
+          employeeIds,
+          tenant.id,
+          cutoffDate,
+        );
 
         if (snapshotCount === 0) {
           app.log.warn(
@@ -66,40 +69,37 @@ export const dataRetentionPlugin = fp(async (app) => {
         }
 
         // Soft-delete time entries older than retention period
-        const archivedEntries = await app.prisma.timeEntry.updateMany({
-          where: {
-            employeeId: { in: employeeIds },
-            deletedAt: null,
-            date: { lte: cutoffDate },
-          },
-          data: { deletedAt: new Date() },
-        });
+        // Phase 100B Plan 08 — T9, contexts/time-tracking facade.
+        const archivedEntriesCount = await archiveEntriesBefore(
+          app.prisma,
+          employeeIds,
+          tenant.id,
+          cutoffDate,
+        );
 
         // Soft-delete leave requests older than retention period
-        const archivedLeave = await app.prisma.leaveRequest.updateMany({
-          where: {
-            employeeId: { in: employeeIds },
-            deletedAt: null,
-            endDate: { lte: cutoffDate },
-          },
-          data: { deletedAt: new Date() },
-        });
+        // Phase 100B Plan 13 — contexts/absence facade.
+        const archivedLeaveCount = await archiveLeaveRequestsBefore(
+          app.prisma,
+          employeeIds,
+          tenant.id,
+          cutoffDate,
+        );
 
         // Soft-delete absences older than retention period
-        const archivedAbsences = await app.prisma.absence.updateMany({
-          where: {
-            employeeId: { in: employeeIds },
-            deletedAt: null,
-            endDate: { lte: cutoffDate },
-          },
-          data: { deletedAt: new Date() },
-        });
+        // Phase 100B Plan 12 — contexts/absence facade.
+        const archivedAbsencesCount = await archiveAbsencesBefore(
+          app.prisma,
+          employeeIds,
+          tenant.id,
+          cutoffDate,
+        );
 
-        const total = archivedEntries.count + archivedLeave.count + archivedAbsences.count;
+        const total = archivedEntriesCount + archivedLeaveCount + archivedAbsencesCount;
 
         if (total > 0) {
           app.log.info(
-            `Data-Retention: Tenant ${tenant.name} — ${archivedEntries.count} Zeiteinträge, ${archivedLeave.count} Urlaubsanträge, ${archivedAbsences.count} Abwesenheiten archiviert (vor ${cutoffYear})`,
+            `Data-Retention: Tenant ${tenant.name} — ${archivedEntriesCount} Zeiteinträge, ${archivedLeaveCount} Urlaubsanträge, ${archivedAbsencesCount} Abwesenheiten archiviert (vor ${cutoffYear})`,
           );
 
           await app.audit({
@@ -111,9 +111,9 @@ export const dataRetentionPlugin = fp(async (app) => {
               tenantId: tenant.id,
               cutoffDate: cutoffDate.toISOString(),
               retentionYears,
-              archivedEntries: archivedEntries.count,
-              archivedLeave: archivedLeave.count,
-              archivedAbsences: archivedAbsences.count,
+              archivedEntries: archivedEntriesCount,
+              archivedLeave: archivedLeaveCount,
+              archivedAbsences: archivedAbsencesCount,
             },
           });
         } else {

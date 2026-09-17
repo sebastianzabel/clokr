@@ -13,6 +13,12 @@ import { findMissingWorkdays } from "../../working-time-account/find-missing-wor
 import { findUnconfirmedBreakEntries } from "../find-unconfirmed-break-days";
 import { resolveMissingEntriesDays } from "../../working-time-account/missing-entries-window";
 import { invalidReasonFields } from "../invalid-reason";
+import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
+import {
+  getVacationEntitlementsForYearByDisplayName, // Phase 100B Plan 10 — H1 sibling
+  getStalePendingLeaveRequestsForReminder, // Phase 100B Plan 13 — A7b
+  getLeaveStartingInWindow, // Phase 100B Plan 13 — A9
+} from "../../absence";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -381,18 +387,12 @@ export const attendanceCheckerPlugin = fp(async (app) => {
           const thresholdHours = cfg.reminderPendingLeaveHours ?? 48;
           const cutoff = new Date(Date.now() - thresholdHours * 60 * 60 * 1000);
 
-          const pendingRequests = await app.prisma.leaveRequest.findMany({
-            where: {
-              deletedAt: null,
-              status: "PENDING",
-              createdAt: { lt: cutoff },
-              employee: { tenantId: tenant.id },
-            },
-            include: {
-              employee: { select: { firstName: true, lastName: true } },
-              leaveType: { select: { name: true } },
-            },
-          });
+          // Phase 100B Plan 13 — A7b, contexts/absence facade.
+          const pendingRequests = await getStalePendingLeaveRequestsForReminder(
+            app.prisma,
+            tenant.id,
+            cutoff,
+          );
 
           if (pendingRequests.length === 0) continue;
 
@@ -459,18 +459,8 @@ export const attendanceCheckerPlugin = fp(async (app) => {
           const targetDate = new Date(today);
           targetDate.setDate(targetDate.getDate() + daysAhead);
 
-          const upcoming = await app.prisma.leaveRequest.findMany({
-            where: {
-              deletedAt: null,
-              status: "APPROVED",
-              startDate: { gte: today, lte: targetDate },
-              employee: { tenantId: tenant.id },
-            },
-            include: {
-              employee: { select: { userId: true, firstName: true } },
-              leaveType: { select: { name: true } },
-            },
-          });
+          // Phase 100B Plan 13 — A9, contexts/absence facade.
+          const upcoming = await getLeaveStartingInWindow(app.prisma, tenant.id, today, targetDate);
 
           for (const req of upcoming) {
             const startStr = req.startDate.toLocaleDateString("de-DE", {
@@ -523,17 +513,12 @@ export const attendanceCheckerPlugin = fp(async (app) => {
           const startMonth = cfg?.vacationReminderStartMonth ?? 10;
           if (currentMonth < startMonth) continue;
 
-          // Find employees with unused vacation this year
-          const entitlements = await app.prisma.leaveEntitlement.findMany({
-            where: {
-              year: currentYear,
-              employee: { tenantId: tenant.id },
-              leaveType: { name: "Urlaub" },
-            },
-            include: {
-              employee: { select: { id: true, userId: true, firstName: true } },
-            },
-          });
+          // Find employees with unused vacation this year (H1 deviation, preserved verbatim)
+          const entitlements = await getVacationEntitlementsForYearByDisplayName(
+            app.prisma,
+            tenant.id,
+            currentYear,
+          );
 
           for (const ent of entitlements) {
             const total = Number(ent.totalDays) + Number(ent.carriedOverDays);
@@ -665,14 +650,13 @@ export const attendanceCheckerPlugin = fp(async (app) => {
 
             let rosterDates: Set<string> | undefined;
             if (scheduleType === "SHIFT_BASED") {
-              const shifts = await app.prisma.shift.findMany({
-                where: {
-                  employeeId: emp.id,
-                  date: { gte: monthStart, lte: monthLastDay },
-                  deletedAt: null,
-                },
-                select: { date: true },
-              });
+              // Phase 100B Plan 05 — S1, contexts/scheduling facade.
+              const shifts = await getShiftsInRange(
+                app.prisma,
+                { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
+                monthStart,
+                monthLastDay,
+              );
               rosterDates = new Set(shifts.map((sh) => dateStrInTz(sh.date, tz)));
             }
 
@@ -841,14 +825,13 @@ export const attendanceCheckerPlugin = fp(async (app) => {
 
             let rosterDates: Set<string> | undefined;
             if (scheduleType === "SHIFT_BASED") {
-              const shifts = await app.prisma.shift.findMany({
-                where: {
-                  employeeId: emp.id,
-                  date: { gte: prevMonthStart, lte: prevMonthLastDay },
-                  deletedAt: null,
-                },
-                select: { date: true },
-              });
+              // Phase 100B Plan 05 — S1, contexts/scheduling facade.
+              const shifts = await getShiftsInRange(
+                app.prisma,
+                { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
+                prevMonthStart,
+                prevMonthLastDay,
+              );
               rosterDates = new Set(shifts.map((sh) => dateStrInTz(sh.date, tz)));
             }
 

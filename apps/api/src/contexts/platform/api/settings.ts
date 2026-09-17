@@ -13,6 +13,7 @@ import {
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { preserveIllnessDeadline } from "../../absence/illness-carryover-guard"; // Phase 104
 import { DEFAULT_MISSING_ENTRIES_DAYS } from "../../working-time-account/missing-entries-window";
+import { getShiftsInRange, cancelOrphanShifts } from "../../scheduling"; // Phase 100B Plan 05 — S1/S3
 import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
@@ -25,6 +26,12 @@ import {
   BS_BLOCK_WEEKLY_MIN_BOUND,
   BS_BLOCK_WEEKLY_MAX_BOUND,
 } from "../../absence/vocational-school-constants";
+import {
+  getVacationEntitlement,
+  upsertVacationEntitlement,
+  listLeaveTypes,
+  updateLeaveType,
+} from "../../absence"; // Phase 100B Plan 10 — A11/A16/A18/A19
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
@@ -851,15 +858,12 @@ export async function settingsRoutes(app: FastifyInstance) {
             `${String(now.getDate()).padStart(2, "0")}`;
 
           // Count future shifts (today and beyond are "future" for this check)
-          const futureShifts = await app.prisma.shift.findMany({
-            where: {
-              employeeId,
-              date: { gte: new Date(todayIso) },
-              deletedAt: null, // Phase 67.2 — orphan check only sees active shifts
-            },
-            orderBy: { date: "asc" },
-            select: { id: true, date: true, startTime: true, endTime: true },
-          });
+          // Phase 100B Plan 05 — S1, contexts/scheduling facade.
+          const futureShifts = await getShiftsInRange(
+            app.prisma,
+            { kind: "employee", employeeId, tenantId: req.user.tenantId },
+            new Date(todayIso),
+          );
 
           if (futureShifts.length > 0 && !body.keepOrphanShifts && !body.cancelOrphanShifts) {
             // Neither flag set — ask the client what to do
@@ -935,8 +939,9 @@ export async function settingsRoutes(app: FastifyInstance) {
 
             // $transaction returns the created/updated schedule via Promise.
             const schedule = await app.prisma.$transaction(async (tx) => {
-              // 1. Delete all future shifts
-              await tx.shift.deleteMany({ where: { id: { in: futureShiftIds } } });
+              // 1. Delete all future shifts (Phase 100B Plan 05 — S3, contexts/scheduling
+              //    facade; `tx` is the caller's own transaction client, D-07).
+              await cancelOrphanShifts(tx, req.user.tenantId, futureShiftIds);
 
               // 2. Write the WorkSchedule change and return it so the transaction
               //    result is the schedule (TypeScript can narrow the type)
@@ -1139,19 +1144,14 @@ export async function settingsRoutes(app: FastifyInstance) {
       // @@unique([tenantId, code]) makes the ambiguity it worked around structurally impossible.
       // Do not name that module here: this plan asserts repo-wide that no reference to it
       // survives, and a comment counts as a reference.
-      const vacationType = await app.prisma.leaveType.findUnique({
-        where: { tenantId_code: { tenantId: employee.tenantId, code: "VACATION" } },
-        select: { id: true, name: true },
-      });
-      if (!vacationType) return reply.code(404).send({ error: "Urlaubstyp nicht konfiguriert" });
-
-      const entitlement = await app.prisma.leaveEntitlement.findUnique({
-        where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId: vacationType.id, year } },
-      });
+      // Phase 100B Plan 10 (A11): resolves the VACATION type AND the entitlement in one call.
+      const result = await getVacationEntitlement(app.prisma, employeeId, employee.tenantId, year);
+      if (!result) return reply.code(404).send({ error: "Urlaubstyp nicht konfiguriert" });
+      const { leaveTypeId, entitlement } = result;
 
       return {
         year,
-        leaveTypeId: vacationType.id,
+        leaveTypeId,
         totalDays: entitlement ? Number(entitlement.totalDays) : null,
         usedDays: entitlement ? Number(entitlement.usedDays) : 0,
         carriedOverDays: entitlement ? Number(entitlement.carriedOverDays) : 0,
@@ -1191,12 +1191,8 @@ export async function settingsRoutes(app: FastifyInstance) {
       // @@unique([tenantId, code]) makes the ambiguity it worked around structurally impossible.
       // Do not name that module here: this plan asserts repo-wide that no reference to it
       // survives, and a comment counts as a reference.
-      const vacationType = await app.prisma.leaveType.findUnique({
-        where: { tenantId_code: { tenantId: employee.tenantId, code: "VACATION" } },
-        select: { id: true, name: true },
-      });
-      if (!vacationType) return reply.code(404).send({ error: "Urlaubstyp nicht konfiguriert" });
-
+      // Phase 100B Plan 10 (A11): resolves the VACATION type AND the entitlement in one call.
+      //
       // Phase 104 (D-19 / R9): this endpoint is the THIRD writer of carryOverDeadline. An omitted
       // or null field previously became `null` unconditionally, which silently discards the
       // extended EuGH KHS C-214/10 deadline that a § 9 BUrlG credit sets on this exact row
@@ -1204,15 +1200,14 @@ export async function settingsRoutes(app: FastifyInstance) {
       // The admin form round-trips the loaded value, so the UI does not trigger it today — but a
       // direct API call, a bulk-setup script or a future UI change does, and nothing in the audit
       // trail would distinguish that from a routine update.
-      const existing = await app.prisma.leaveEntitlement.findUnique({
-        where: {
-          employeeId_leaveTypeId_year: {
-            employeeId,
-            leaveTypeId: vacationType.id,
-            year: body.year,
-          },
-        },
-      });
+      const result = await getVacationEntitlement(
+        app.prisma,
+        employeeId,
+        employee.tenantId,
+        body.year,
+      );
+      if (!result) return reply.code(404).send({ error: "Urlaubstyp nicht konfiguriert" });
+      const { entitlement: existing } = result;
       const illnessProtected = preserveIllnessDeadline(existing);
       const requestedDeadline = body.carryOverDeadline ? new Date(body.carryOverDeadline) : null;
 
@@ -1236,17 +1231,16 @@ export async function settingsRoutes(app: FastifyInstance) {
         carryOverDeadline: nextDeadline,
       };
 
-      const entitlement = await app.prisma.leaveEntitlement.upsert({
-        where: {
-          employeeId_leaveTypeId_year: {
-            employeeId,
-            leaveTypeId: vacationType.id,
-            year: body.year,
-          },
-        },
-        update: data,
-        create: { employeeId, leaveTypeId: vacationType.id, year: body.year, ...data },
-      });
+      // Phase 100B Plan 10 (A16): re-resolves the VACATION type by code (a cheap, indexed
+      // lookup) rather than threading leaveTypeId through — matches the facade's own signature.
+      const entitlement = await upsertVacationEntitlement(
+        app.prisma,
+        employeeId,
+        employee.tenantId,
+        body.year,
+        data,
+      );
+      if (!entitlement) return reply.code(404).send({ error: "Urlaubstyp nicht konfiguriert" });
 
       await app.audit({
         userId: req.user.sub,
@@ -1570,11 +1564,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req) => {
-      const tenantId = req.user.tenantId;
-      const types = await app.prisma.leaveType.findMany({
-        where: { tenantId },
-        orderBy: { name: "asc" },
-      });
+      const types = await listLeaveTypes(app.prisma, req.user.tenantId);
       return types;
     },
   });
@@ -1599,15 +1589,11 @@ export async function settingsRoutes(app: FastifyInstance) {
       // no tenant-membership oracle. No extra CROSS_TENANT_ACCESS_DENIED audit here:
       // this mirrors the established sibling guard (GET /special-leave/rules/:id),
       // and the row itself stays untouched by a rejected request either way.
-      const existing = await app.prisma.leaveType.findFirst({
-        where: { id, tenantId: req.user.tenantId },
-      });
-      if (!existing) return reply.code(404).send({ error: "Abwesenheitstyp nicht gefunden" });
-
-      const updated = await app.prisma.leaveType.update({
-        where: { id },
-        data: body,
-      });
+      // Phase 100B Plan 10 (A19, H3): both the guard-fetch AND the update below now carry
+      // tenantId in their OWN where — a query-level proof, not a handler-level one.
+      const result = await updateLeaveType(app.prisma, req.user.tenantId, id, body);
+      if (!result) return reply.code(404).send({ error: "Abwesenheitstyp nicht gefunden" });
+      const { existing, updated } = result;
 
       await app.audit({
         userId: req.user.sub,

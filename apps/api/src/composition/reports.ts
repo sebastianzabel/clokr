@@ -22,6 +22,14 @@ import {
 } from "./pdf";
 import { selfHealUsedDays, loadVacationTypeMeta } from "../contexts/absence/leave-self-heal";
 import { computeMonthSaldo } from "../contexts/working-time-account/month-saldo";
+import { getMonthClosingBalance } from "../contexts/working-time-account"; // Phase 100B Plan 07 — W4
+import {
+  listEntitlementsForYear,
+  getExpiringCarryOver,
+  getEntitlementById,
+  getConfirmedSection9Credits,
+  getPendingLeaveDaysInYear, // Phase 100B Plan 13 — A7c
+} from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
 import { isSickLeaveTypeCode } from "../contexts/absence/leave-type";
 import type { LeaveTypeCode } from "@clokr/db";
 
@@ -491,6 +499,7 @@ function computeEmployeeSummary(
 async function resolveReportOvertimeHours(
   app: FastifyInstance,
   emp: EmployeeWithIncludes,
+  tenantId: string,
   year: number,
   month: number,
   monthStart: Date,
@@ -510,19 +519,13 @@ async function resolveReportOvertimeHours(
       return { hours: 0, confirmed: false, labelled: false };
     }
 
-    // CLOSED month → immutable snapshot balance (all types).
-    const snapshot = await app.prisma.saldoSnapshot.findFirst({
-      where: {
-        employeeId: emp.id,
-        periodType: "MONTHLY",
-        periodStart: monthStart,
-        superseded: false,
-      },
-      select: { balanceMinutes: true },
-    });
-    if (snapshot) {
+    // CLOSED month → immutable snapshot balance (all types). Phase 100B Plan 07 — W4
+    // (getMonthClosingBalance); bare periodStart:monthStart comparison preserved exactly, see
+    // facade/saldo-snapshot.ts's module header on why this is NOT part of the W1 D1 decision.
+    const balanceMinutes = await getMonthClosingBalance(app.prisma, emp.id, tenantId, monthStart);
+    if (balanceMinutes !== null) {
       return {
-        hours: Math.round((snapshot.balanceMinutes / 60) * 100) / 100,
+        hours: Math.round((balanceMinutes / 60) * 100) / 100,
         confirmed: true,
         labelled: true,
       };
@@ -828,15 +831,7 @@ async function fetchConfirmedSection9CreditsByEmp(
   start: Date,
   end: Date,
 ): Promise<Map<string, Array<{ creditedStart: Date; creditedEnd: Date }>>> {
-  const credits = await app.prisma.section9Credit.findMany({
-    where: {
-      status: "CONFIRMED",
-      employee: { tenantId },
-      creditedStart: { lte: end },
-      creditedEnd: { gte: start },
-    },
-    select: { employeeId: true, creditedStart: true, creditedEnd: true },
-  });
+  const credits = await getConfirmedSection9Credits(app.prisma, tenantId, start, end);
   const byEmp = new Map<string, Array<{ creditedStart: Date; creditedEnd: Date }>>();
   for (const c of credits) {
     if (c.creditedStart === null || c.creditedEnd === null) continue;
@@ -955,16 +950,7 @@ export async function reportRoutes(app: FastifyInstance) {
       const { year } = req.query as { year: string };
       const y = parseInt(year ?? new Date().getFullYear().toString());
 
-      const entitlements = await app.prisma.leaveEntitlement.findMany({
-        where: {
-          year: y,
-          employee: { tenantId: req.user.tenantId },
-        },
-        include: {
-          employee: { select: { id: true, firstName: true, lastName: true, employeeNumber: true } },
-          leaveType: true,
-        },
-      });
+      const entitlements = await listEntitlementsForYear(app.prisma, req.user.tenantId, y);
 
       // Self-heal usedDays from Σ approved LeaveRequest.days BEFORE we shape the response.
       // Mirrors the heal that GET /entitlements/:employeeId has done since v1.4.
@@ -973,19 +959,8 @@ export async function reportRoutes(app: FastifyInstance) {
       await selfHealUsedDays(app.prisma, entitlements, vacMeta);
 
       // Bulk fetch PENDING leave requests for the same year + tenant (NO per-entitlement loop)
-      const pending = await app.prisma.leaveRequest.findMany({
-        where: {
-          employee: { tenantId: req.user.tenantId },
-          status: "PENDING",
-          deletedAt: null,
-          // Filter by year: only requests whose startDate falls within year y
-          startDate: {
-            gte: new Date(Date.UTC(y, 0, 1)),
-            lt: new Date(Date.UTC(y + 1, 0, 1)),
-          },
-        },
-        select: { employeeId: true, leaveTypeId: true, days: true },
-      });
+      // Phase 100B Plan 13 — A7c, contexts/absence facade.
+      const pending = await getPendingLeaveDaysInYear(app.prisma, req.user.tenantId, y);
 
       // Build a lookup map keyed by "employeeId:leaveTypeId" → summed pending days
       const pendingMap = new Map<string, number>();
@@ -1024,19 +999,7 @@ export async function reportRoutes(app: FastifyInstance) {
       const cutoff = new Date(now.getTime() + horizon * 24 * 60 * 60 * 1000);
       const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-      const entitlements = await app.prisma.leaveEntitlement.findMany({
-        where: {
-          employee: { tenantId: req.user.tenantId, exitDate: null },
-          carriedOverDays: { gt: 0 },
-          carryOverDeadline: { gt: now, lte: cutoff },
-        },
-        include: {
-          employee: {
-            select: { id: true, firstName: true, lastName: true, employeeNumber: true },
-          },
-          leaveType: { select: { id: true, name: true } },
-        },
-      });
+      const entitlements = await getExpiringCarryOver(app.prisma, req.user.tenantId, now, cutoff);
 
       // Look up the most recent CARRYOVER_WARNED audit log per entitlement,
       // so the UI can show "Letzter Hinweis" without N+1 queries.
@@ -1117,12 +1080,9 @@ export async function reportRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "entitlementId fehlt" });
       }
 
-      // Tenant scope check
-      const ent = await app.prisma.leaveEntitlement.findUnique({
-        where: { id: entitlementId },
-        include: { employee: { select: { tenantId: true } } },
-      });
-      if (!ent || ent.employee.tenantId !== req.user.tenantId) {
+      // Tenant scope check (T-100B-43: constrained IN the query, not fetch-then-compare)
+      const ent = await getEntitlementById(app.prisma, req.user.tenantId, entitlementId);
+      if (!ent) {
         return reply.code(404).send({ error: "Anspruch nicht gefunden" });
       }
 
@@ -1430,7 +1390,15 @@ export async function reportRoutes(app: FastifyInstance) {
         hours: reportOvertimeHours,
         confirmed: reportOvertimeConfirmed,
         labelled: reportOvertimeLabelled,
-      } = await resolveReportOvertimeHours(app, emp, y, m, start, summary.overtimeHours);
+      } = await resolveReportOvertimeHours(
+        app,
+        emp,
+        req.user.tenantId,
+        y,
+        m,
+        start,
+        summary.overtimeHours,
+      );
 
       const pdfBuffer = await generateMonthlyReportPdf({
         tenantName: tenant?.name ?? "",
@@ -1545,7 +1513,15 @@ export async function reportRoutes(app: FastifyInstance) {
             hours: overtimeHours,
             confirmed: overtimeConfirmedResolved,
             labelled: overtimeLabelled,
-          } = await resolveReportOvertimeHours(app, emp, y, m, start, summary.overtimeHours);
+          } = await resolveReportOvertimeHours(
+            app,
+            emp,
+            req.user.tenantId,
+            y,
+            m,
+            start,
+            summary.overtimeHours,
+          );
           return {
             employeeName: `${emp.firstName} ${emp.lastName}`,
             employeeNumber: emp.employeeNumber,
@@ -1704,16 +1680,7 @@ export async function reportRoutes(app: FastifyInstance) {
           },
           orderBy: { lastName: "asc" },
         }),
-        app.prisma.leaveEntitlement.findMany({
-          where: {
-            year: y,
-            employee: { tenantId: req.user.tenantId },
-          },
-          include: {
-            employee: { select: { firstName: true, lastName: true, employeeNumber: true } },
-            leaveType: true,
-          },
-        }),
+        listEntitlementsForYear(app.prisma, req.user.tenantId, y),
       ]);
 
       // Build leave list data
@@ -1820,16 +1787,7 @@ export async function reportRoutes(app: FastifyInstance) {
         select: { name: true },
       });
 
-      const entitlements = await app.prisma.leaveEntitlement.findMany({
-        where: {
-          year: y,
-          employee: { tenantId: req.user.tenantId },
-        },
-        include: {
-          employee: { select: { firstName: true, lastName: true, employeeNumber: true } },
-          leaveType: true,
-        },
-      });
+      const entitlements = await listEntitlementsForYear(app.prisma, req.user.tenantId, y);
 
       // Group by employee and aggregate (VACATION entitlement only, selected by code)
       const empMap = new Map<

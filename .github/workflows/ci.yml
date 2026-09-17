@@ -227,6 +227,32 @@ jobs:
         # is caught by neither Type check API nor the test suite; without this step it rots.
         run: pnpm --filter @clokr/api run lint:import-targets
 
+      - name: Lint facade signatures (Issue #100 — D-07/G4, R1's only automated defence)
+        # A facade function taking app: FastifyInstance moves a write out of its caller's
+        # $transaction with no error — the write survives a rollback. Deliberate exceptions live
+        # in apps/api/scripts/lint-facade-signatures-exceptions.json, each with a mandatory reason
+        # the script itself validates (mirrors lint:tenant-scoping's exception mechanism).
+        run: pnpm --filter @clokr/api run lint:facade-signatures
+
+      - name: Measure cross-context Prisma access (Issue #100 — AC-3, the standing boundary gate)
+        # Every one of the phase's originally-measured 169 direct cross-context Prisma accesses
+        # now goes through the owning context's facade — this is the standing claim, not a moving
+        # target: from here, `--check 0` failing with a named file:line is what makes #101's job
+        # smaller, since every access it would otherwise have to except is already gone.
+        # Deliberate exceptions (test-bootstrap.ts's 21 calls, D-03) live in
+        # apps/api/scripts/foreign-context-access-exceptions.json.
+        run: pnpm --filter @clokr/api exec tsx scripts/measure-foreign-context-access.ts --check 0
+
+      - name: Lint saldo-lock periodStart derivation (Issue #241 — five sites found by hand)
+        # A periodType:"MONTHLY" SaldoSnapshot where-comparison on periodStart whose value does
+        # not trace back to monthRangeUtc() is the exact defect class of #241 (three route gates
+        # in 8326859d, the auto-generator in 840d9976, this shift-cleanup helper in the same
+        # commit as this gate) — each found by a human reading code, one at a time. Deliberate
+        # exceptions (both genuinely-safe AND confirmed-but-deferred findings, see the module
+        # header) live in apps/api/scripts/lint-saldo-lock-derivation-exceptions.json, each with a
+        # mandatory reason the script itself validates.
+        run: pnpm --filter @clokr/api run lint:saldo-lock-derivation
+
       - name: Lint Web
         run: pnpm --filter @clokr/web exec eslint src/
 

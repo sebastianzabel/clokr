@@ -1,15 +1,24 @@
 /**
  * Phase 204 Plan 01 — shared contract for the `lint:tenant-scoping` gate (GitHub Issue #204).
  *
- * This gate prevents a NEW route from reading a client-supplied identifier into a tenant-scoped
- * Prisma model without constraining the result to the caller's own tenant. As of Phase 99b Plan 07
- * (the last of the six context-cut moves), it walks these seven directories, production code only:
+ * This gate prevents a NEW route (or, since Phase 100B Plan 04, a facade function a route calls)
+ * from reading a client-supplied identifier into a tenant-scoped Prisma model without constraining
+ * the result to the caller's own tenant. As of Phase 100B Plan 08 it walks these eleven
+ * directories, production code only:
  *
  *   - `apps/api/src/contexts/platform/api/`
+ *   - `apps/api/src/contexts/platform/facade/` (Phase 100B Plan 04 — the first of five facade
+ *     directories this phase introduces; see "The facade rule" below)
+ *   - `apps/api/src/contexts/scheduling/facade/` (Phase 100B Plan 05 — Schichtplanung's
+ *     conversion facade, `Shift`/`EmployeeAvailability`)
  *   - `apps/api/src/contexts/time-tracking/api/`
+ *   - `apps/api/src/contexts/time-tracking/facade/` (Phase 100B Plan 08 — Zeiterfassung's
+ *     conversion facade, `TimeEntry`/`Break`)
  *   - `apps/api/src/contexts/absence/api/`
  *   - `apps/api/src/contexts/scheduling/api/`
  *   - `apps/api/src/contexts/working-time-account/api/`
+ *   - `apps/api/src/contexts/working-time-account/facade/` (Phase 100B Plan 06 — Arbeitszeitkonto's
+ *     conversion facade, `OvertimeAccount`/`OvertimeTransaction`/`SaldoSnapshot`)
  *   - `apps/api/src/composition/` (Phase 99b Plan 02 — the composition layer moved out of
  *     `routes/`; it still reads client-supplied identifiers into cross-context Prisma queries and
  *     stays in scope, see `docs/context-cut-map.md`)
@@ -34,6 +43,35 @@
  * would exclude them anyway; the exclusion is made explicit here so it cannot silently drift into
  * scope.
  *
+ * ── The facade rule (100B Plan 04, D-10) ──────────────────────────────────────────────────────
+ * Phase 100b (issue #100) puts a facade layer between a route and Prisma: each context's
+ * implementation modules live at `apps/api/src/contexts/<x>/facade/*.ts`. `isFacadeModulePath`
+ * below recognises that shape — ONE predicate, stated once, so no second definition of "is this a
+ * facade module" can drift out of sync with this one (mirrors `lint-facade-signatures.ts`'s own
+ * single-shape recognition of the same directories).
+ *
+ * A facade module is deliberately walked FROM INSIDE scope, not excluded the way `plugins/` is:
+ * this is the opposite precondition from `plugins/`'s. A facade Prisma call carries EXACTLY a
+ * client-supplied identifier from a request — that is the entire reason a facade exists, a route
+ * calls it with a value that came from `req`. Excluding facades the way `plugins/` is excluded
+ * would silently remove the gate's ability to see the very calls this phase moves behind them
+ * (100B-RESEARCH.md §4.2: adding the directory to `SCOPED_DIRS` alone raises `in-scope` but leaves
+ * `candidates` at zero forever, because a facade function has no `req` — worse than #229, which at
+ * least had a null guard). G2/G3 in `lint-tenant-scoping-request-bindings.ts` are what make a
+ * facade module's own judgement possible once it is in scope; `SCOPED_DIRS` itself only decides
+ * whether the gate walks the file at all. Each conversion plan adds its own context's facade
+ * directory to `SCOPED_DIRS` in the SAME commit that creates the directory (`MissingScopedDirError`
+ * guards a listed-but-missing entry, #229) — `apps/api/src/contexts/platform/facade` is the first
+ * (plan 04, `EmployeeScope`; no Prisma call in it, so the gate's numbers do not move); scheduling
+ * (05), working-time-account (06), time-tracking (08) and absence (10) follow, one per wave.
+ * Placing the facade inside the gate's scope is a net COVERAGE GAIN, not just damage control: 12
+ * relevant-method calls that sit today outside every `SCOPED_DIRS` entry (`platform/anonymize.ts`,
+ * `platform/plugins/data-retention.ts`, `time-tracking/arbzg.ts`,
+ * `working-time-account/vocational-school-saldo.ts`,
+ * `working-time-account/plugins/auto-close-month.ts`) become visible for the first time once they
+ * move into a facade. Plan 05 (Schichtplanung) is the first conversion wave to add its own facade
+ * directory alongside `contexts/platform/facade`, following exactly that one-per-wave ordering.
+ *
  * This file contains ONLY types and frozen constants — no logic, no imports from the other
  * `lint-tenant-scoping-*` modules — so plans 02 (candidate selection) and 03 (verdict) can be
  * written against it in parallel.
@@ -43,19 +81,49 @@
 
 /**
  * D-11: the ONLY directories this gate walks. Stated once, here, as an explicit list — matching
- * this walker's existing literal-list design; no glob support. Final shape (Phase 99b Plan 07):
- * seven entries; the former monolithic route directory was removed from this list because it no
- * longer exists.
+ * this walker's existing literal-list design; no glob support. Phase 99b Plan 07 shape: seven
+ * entries; the former monolithic route directory was removed from this list because it no longer
+ * exists. Phase 100B Plan 04 added the eighth: `contexts/platform/facade` (`EmployeeScope`, no
+ * Prisma call — see the facade-rule note above), the first of the five facade directories this
+ * phase introduces. Plan 05 adds the ninth: `contexts/scheduling/facade` (`Shift`/
+ * `EmployeeAvailability` — S1-S4), in the SAME commit that creates the directory
+ * (`MissingScopedDirError`, #229). Plan 06 adds the tenth: `contexts/working-time-account/facade`
+ * (`OvertimeAccount`/`OvertimeTransaction` — W8-W15). Plan 08 adds the eleventh:
+ * `contexts/time-tracking/facade` (`TimeEntry`/`Break` — T1-T12/T2b/T2c). `absence`
+ * (10) follows, one per conversion wave. No further platform entry is expected — platform
+ * (Unterbau) needs no CONVERSION facade of its own for this phase's D-01 waves, because every
+ * other context may already read it directly per ADR 0001; `contexts/platform/facade` exists only
+ * for the one shared-type module, a different purpose than the other four (redirecting an
+ * existing cross-context Prisma access), not a precedent for platform gaining a conversion facade
+ * too.
  */
 export const SCOPED_DIRS = [
   "apps/api/src/contexts/platform/api",
+  "apps/api/src/contexts/platform/facade",
   "apps/api/src/contexts/time-tracking/api",
+  "apps/api/src/contexts/time-tracking/facade",
   "apps/api/src/contexts/absence/api",
+  "apps/api/src/contexts/absence/facade",
   "apps/api/src/contexts/scheduling/api",
+  "apps/api/src/contexts/scheduling/facade",
   "apps/api/src/contexts/working-time-account/api",
+  "apps/api/src/contexts/working-time-account/facade",
   "apps/api/src/composition",
   "apps/api/src/services",
 ] as const;
+
+/**
+ * 100B Plan 04, D-10/G1: does `repoRelativePath` sit under a context's facade directory
+ * (`apps/api/src/contexts/<x>/facade/`)? ONE predicate, stated once — no reader of
+ * `lint-tenant-scoping-candidates.ts` or `lint-tenant-scoping-request-bindings.ts` may rebuild
+ * this shape inline. `[a-z][a-z-]*` allows a hyphenated context name (`working-time-account`,
+ * `time-tracking`) — the same gap `context-area-map.test.ts`'s rahmen guard was blind to until
+ * Phase 100B Plan 03 fixed it (GitHub #240); this predicate is written against that lesson from
+ * the start, not repaired into it later.
+ */
+export function isFacadeModulePath(repoRelativePath: string): boolean {
+  return /^apps\/api\/src\/contexts\/[a-z][a-z-]*\/facade\//.test(repoRelativePath);
+}
 
 /**
  * D-15: `__tests__` is excluded EXPLICITLY, not by accident of globbing. Test fixtures build

@@ -245,7 +245,7 @@ describe("Employee self-service WiFi API", () => {
   // ── DELETE /me/wifi/devices/:id — own-data guard ──────────────────────────
 
   describe("DELETE /me/wifi/devices/:id — own-data guard", () => {
-    it("employee cannot delete another employee's device → 403", async () => {
+    it("employee cannot delete another employee's device → 404 (Phase 100B Plan 09: the facade's getPresenceDevice/deletePresenceDevice constrain on employeeId IN THE QUERY, so a device belonging to another employee is indistinguishable from one that does not exist — a deliberate, safe-direction collapse of the former separate 403 branch into the same 404 a missing device already returned; see contexts/time-tracking/facade/presence-devices.ts's module header)", async () => {
       // Create a second employee in the same tenant via admin
       const uid = Date.now().toString(36);
       const createRes = await app.inject({
@@ -284,14 +284,28 @@ describe("Employee self-service WiFi API", () => {
       expect(deviceRes.statusCode).toBe(201);
       const emp2DeviceId = JSON.parse(deviceRes.body).id;
 
-      // First employee tries to delete second employee's device → 403
+      // First employee tries to delete second employee's device → 404 (not 403 — see this
+      // test's own name/comment for why).
       const deleteRes = await app.inject({
         method: "DELETE",
         url: `/api/v1/employees/me/wifi/devices/${emp2DeviceId}`,
         headers: { authorization: `Bearer ${data.empToken}` },
       });
 
-      expect(deleteRes.statusCode).toBe(403);
+      expect(deleteRes.statusCode).toBe(404);
+      expect(JSON.parse(deleteRes.body).error).toBe("Gerät nicht gefunden");
+
+      // The device must still exist — the scoped query refused to touch it, it did not
+      // silently delete the wrong row.
+      const secondEmployeeDevices = await app.inject({
+        method: "GET",
+        url: "/api/v1/employees/me/wifi",
+        headers: { authorization: `Bearer ${emp2Token}` },
+      });
+      const stillThere = JSON.parse(secondEmployeeDevices.body).devices.find(
+        (d: { id: string }) => d.id === emp2DeviceId,
+      );
+      expect(stillThere).toBeDefined();
     });
 
     it("employee can delete their own device → 204", async () => {
