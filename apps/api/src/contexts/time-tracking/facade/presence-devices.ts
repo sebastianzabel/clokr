@@ -12,10 +12,12 @@
  * not. `apps/api/scripts/lint-facade-signatures.ts` enforces this mechanically (F1/F2).
  *
  * This is the smallest conversion unit in the whole phase — five accesses, one file
- * (`contexts/platform/api/employees.ts`), because the ENTIRE `/api/v1/employees/me/wifi`
- * PresenceDevice CRUD lives inside an Unterbau route file (a misplaced route group, filed as a
- * GitHub issue per D-13 rather than moved — see this plan's own SUMMARY). Five call sites become
- * five facade functions, not because the domain has five questions.
+ * (at the time, `contexts/platform/api/employees.ts`), because the ENTIRE `/api/v1/employees/me/wifi`
+ * PresenceDevice CRUD lived inside an Unterbau route file (a misplaced route group, filed as a
+ * GitHub issue per D-13 rather than moved here — see this plan's own SUMMARY). Phase 243 Plan 02
+ * (B2) later moved that route group to `contexts/time-tracking/api/employee-wifi.ts`, resolving
+ * the misplacement this note originally just recorded; the URL is unchanged. Five call sites
+ * become five facade functions, not because the domain has five questions.
  *
  * ── The `getPresenceDevice`/`deletePresenceDevice` pair — the one behaviour-relevant decision in
  *    this file ──────────────────────────────────────────────────────────────────────────────────

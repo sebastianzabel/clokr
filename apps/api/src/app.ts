@@ -11,6 +11,7 @@ import swaggerUi from "@fastify/swagger-ui";
 import { config } from "./config";
 import { authRoutes } from "./contexts/platform/api/auth";
 import { employeeRoutes } from "./contexts/platform/api/employees";
+import { employeeWifiRoutes } from "./contexts/time-tracking/api/employee-wifi"; // Phase 243 Plan 02 (B2)
 import { timeEntryRoutes } from "./contexts/time-tracking/api/time-entries";
 import { leaveRoutes } from "./contexts/absence/api/leave";
 import { overtimeRoutes } from "./contexts/working-time-account/api/overtime";
@@ -299,6 +300,10 @@ export async function buildApp() {
   // Phase 46 — employee availability declarations live under the employees namespace
   // (GET/PUT /api/v1/employees/:id/availability)
   await app.register(availabilityRoutes, { prefix: "/api/v1/employees" });
+  // Phase 243 Plan 02 (B2) — WiFi self-service (PresenceDevice, Zeiterfassung) routes kept
+  // under the employees namespace (GET/PATCH /api/v1/employees/me/wifi, POST
+  // /api/v1/employees/me/wifi/devices, DELETE /api/v1/employees/me/wifi/devices/:id)
+  await app.register(employeeWifiRoutes, { prefix: "/api/v1/employees" });
   await app.register(integrationRoutes, { prefix: "/api/v1/integrations" });
   await app.register(importRoutes, { prefix: "/api/v1/imports" });
   await app.register(terminalRoutes, { prefix: "/api/v1/terminals" });
