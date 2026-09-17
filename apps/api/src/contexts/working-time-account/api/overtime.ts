@@ -19,8 +19,6 @@ import {
   unconfirmedDaysFromEntries,
   findUnconfirmedBreakDays,
 } from "../../time-tracking/find-unconfirmed-break-days"; // Phase 92 — BREAK-05 unconfirmed Pflichtpause gate
-import { karenzOverrunFromRequests } from "../../absence/find-karenz-overrun-days"; // Phase 104 (R4/D-21) — Karenztage-Überschreitung, Hinweis only
-import { loadBsSlotOverrides } from "../../absence/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import { computeMonthSaldo } from "../month-saldo"; // §615 Team-Zeiten display fix
 import { getCarryOverBase } from "../carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { recalculateSnapshots } from "../recalculate-snapshots"; // Phase 99 (OB-03) — full-history re-thread
@@ -30,7 +28,12 @@ import {
   lockEntriesForMonth,
   unlockEntriesForMonth,
 } from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7/T8
-import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1
+import {
+  getAbsencesOverlapping, // Phase 100B Plan 12 — A4
+  getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
+  karenzOverrunFromRequests, // Phase 104 (R4/D-21) — Karenztage-Überschreitung, Hinweis only
+  loadBsSlotOverrides, // Phase 76.31 — D-06 slot overrides
+} from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from three deep imports
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),

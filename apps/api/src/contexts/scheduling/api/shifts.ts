@@ -16,7 +16,6 @@ import {
   monthRangeUtc,
   updateOvertimeAccount,
 } from "../../working-time-account"; // Phase 101B
-import { mondayOfWeekUtc } from "../../absence/vacation-calc"; // Phase 107 (D-14) — same Monday-cutting primitive as :709-718
 import {
   listLeaveTypes, // Phase 100B Plan 10 — A18
   listActiveBsPatternsForWeek, // Phase 100B Plan 11 — A21a
@@ -24,18 +23,15 @@ import {
   getRosterSollAbsencesOverlapping, // Phase 100B Plan 12 — A5 (D-09, NEVER merge with A4)
   getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
   getActiveLeaveOverlapping, // Phase 100B Plan 13 — A2
-} from "../../absence";
-import {
+  mondayOfWeekUtc, // Phase 107 (D-14) — same Monday-cutting primitive as :709-718
   recalcProvisionalLeaveForShiftChange,
   type RecalcDeps,
   type AdjustmentRecord,
-} from "../../absence/shift-leave-recalc-resolver"; // Phase 107 (D-14/D-15/D-16)
-import {
   resolveLeaveDays,
   getHolidayMap,
   deductVacationDays,
   reverseVacationDays,
-} from "../../absence/api/leave"; // Phase 107 (D-14) — reused verbatim, see each export's own docblock note in leave.ts
+} from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from three deep imports
 // ARBZG_MARKER_47_4_01
 
 const templateSchema = z.object({

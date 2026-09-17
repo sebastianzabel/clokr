@@ -39,19 +39,18 @@ import type { FastifyInstance } from "fastify";
 import { decryptSafe } from "../../utils/crypto";
 import { todayInTz, dateStrInTz } from "../../contexts/working-time-account"; // Phase 101B
 import { applyPrepWrapup } from "../../contexts/scheduling/time-arithmetic";
-import { mondayOfWeekUtc } from "../../contexts/absence/vacation-calc"; // Phase 107 (D-14) — same Monday-cutting primitive routes/shifts.ts:709-718 / affectedWeekBounds() use
 import {
-  recalcProvisionalLeaveForShiftChange,
+  getVocationalSchoolDays, // Phase 100B Plan 12 — A6
+  getPendingLeaveForShiftProtection, // Phase 100B Plan 13 — shift-protection (H5)
+  mondayOfWeekUtc, // Phase 107 (D-14) — same Monday-cutting primitive routes/shifts.ts:709-718 / affectedWeekBounds() use
+  recalcProvisionalLeaveForShiftChange, // Phase 107 (D-14/D-15/D-16) — the eighth write path
   type RecalcDeps,
   type AdjustmentRecord,
-} from "../../contexts/absence/shift-leave-recalc-resolver"; // Phase 107 (D-14/D-15/D-16) — the eighth write path
-import {
   resolveLeaveDays,
   getHolidayMap,
   deductVacationDays,
   reverseVacationDays,
-} from "../../contexts/absence/api/leave"; // Phase 107 (D-14) — reused verbatim, see each export's own docblock note in leave.ts
-import { getVocationalSchoolDays, getPendingLeaveForShiftProtection } from "../../contexts/absence"; // Phase 100B Plan 12 — A6; Plan 13 — shift-protection (H5)
+} from "../../contexts/absence"; // Phase 101B (Issue #101, wave 7) — merged from four deep imports
 import { phorestFetch } from "./client";
 import {
   phorestShiftKey,

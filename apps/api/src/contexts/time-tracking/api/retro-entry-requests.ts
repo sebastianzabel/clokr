@@ -3,7 +3,7 @@ import { z } from "zod";
 import { fromZonedTime } from "date-fns-tz";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { checkArbZG, ArbZGWarning } from "../arbzg";
-import { checkJArbSchG } from "../../absence/jarbschg";
+import { checkJArbSchG } from "../../absence"; // Phase 101B (Issue #101, wave 7)
 import { getTenantTimezone, dateStrInTz, todayInTz } from "../../working-time-account"; // Phase 101B
 import { computeEntryAgeInDays } from "../retro-config";
 import { CLEARED_INVALID_REASON } from "../invalid-reason"; // Phase 96 (T1)

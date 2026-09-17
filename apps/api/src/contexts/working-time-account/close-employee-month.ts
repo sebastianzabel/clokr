@@ -54,11 +54,7 @@ import {
   dateStrInTz,
   iterateDaysInTz,
 } from "./timezone";
-import {
-  buildSlotOverrideHierarchy,
-  resolveBsTagSlot,
-  type WeekContext,
-} from "../absence/bs-slot-resolver";
+import { buildSlotOverrideHierarchy, resolveBsTagSlot, type WeekContext } from "../absence"; // Phase 101B (Issue #101, wave 7)
 import {
   computeDailySollMinutes,
   normalizeUnterrichtsMinutenByDow,

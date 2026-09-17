@@ -4,14 +4,16 @@ import { createHash } from "crypto";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../arbzg";
-import { checkJArbSchG } from "../../absence/jarbschg";
 import { getEffectiveBreakDuration } from "../break-effective";
-import { DISPLAY_NAME } from "../../absence/leave-type"; // Phase 100b Plan 14 (D-05) — renders hasApprovedLeaveOnDate's code
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { resolveClockEvent } from "../../../services/clock/resolver";
 import { resolveActor } from "../../../services/clock/audit-actor";
 import type { ClockEvent } from "../../../services/clock/types";
-import { hasApprovedLeaveOnDate } from "../../absence"; // Phase 100B Plan 14 — D-05 (index is the public surface, AC-1)
+import {
+  hasApprovedLeaveOnDate, // Phase 100B Plan 14 — D-05 (index is the public surface, AC-1)
+  checkJArbSchG,
+  DISPLAY_NAME, // Phase 100b Plan 14 (D-05) — renders hasApprovedLeaveOnDate's code
+} from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports
 import {
   getRetroEntryWindowDays,
   computeRetroLimitStr,

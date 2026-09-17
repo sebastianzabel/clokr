@@ -16,8 +16,11 @@
 // auto-close-month.ts, overtime.ts). No `foreign-context-access-exceptions.json` entry needed.
 
 import { FastifyInstance } from "fastify";
-import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1
-import { loadBsSlotOverrides } from "../absence/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
+import {
+  getAbsencesOverlapping, // Phase 100B Plan 12 — A4
+  getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
+  loadBsSlotOverrides, // Phase 76.31 — D-06 slot overrides
+} from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports (plan-04 carry-over row)
 import { getHolidays, STATE_MAP } from "../platform";
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import { closeEmployeeMonth } from "./close-employee-month"; // SNAP-03 — Phase 76.27

@@ -1,5 +1,5 @@
 import type { LeaveTypeCode } from "@clokr/db";
-import { DISPLAY_NAME } from "../absence/leave-type";
+import { DISPLAY_NAME } from "../absence"; // Phase 101B (Issue #101, wave 7)
 
 // ── Presence State Resolver ──────────────────────────────────────────────────
 // Pure utility — no DB dependency. Operates on plain data objects.
