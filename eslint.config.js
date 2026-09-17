@@ -4,6 +4,7 @@ import eslintConfigPrettier from "eslint-config-prettier";
 import sveltePlugin from "eslint-plugin-svelte";
 import svelteParser from "svelte-eslint-parser";
 import globals from "globals";
+import { boundaryConfigs } from "./eslint.boundaries.mjs";
 
 export default [
   eslint.configs.recommended,
@@ -89,4 +90,10 @@ export default [
       "no-empty": "warn",
     },
   },
+  // Phase 101B (Issue #101, T6) — ADR 0001 context-boundary enforcement. Severity is "warn" from
+  // Wave 0 (D-12): the rule exists and reports its full, real violation count from the moment it's
+  // written, so there is never a stretch where it is green only because nothing has been converted
+  // yet. Plan 09 flips this single argument to "error" once every context's conversion is done —
+  // this line, not a preference, is what makes that severity temporary rather than permanent.
+  ...boundaryConfigs("warn"),
 ];
