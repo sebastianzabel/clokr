@@ -16,6 +16,7 @@
  * classifier puts a row in the wrong bucket (project memory: "Discriminator-Swap macht Tests
  * still wertlos").
  */
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -27,9 +28,11 @@ import {
   findImportCycles,
   isBoundaryContext,
   scanApiRoot,
+  scanDisableComments,
   shortestPath,
   validateExceptionsDocument,
   type BoundaryImport,
+  type DisableCommentMap,
   type ExceptionsDocument,
   type ExtractionSpec,
 } from "../measure-context-boundary-imports";
@@ -40,6 +43,26 @@ const FIXTURE_ROOT = join(__dirname, "fixtures", "boundary-imports");
 // house form's own `scanApiRoot(apiSrcRoot)` pattern (measure-foreign-context-access.ts's
 // `scanSrcTree`).
 const scan = scanApiRoot(FIXTURE_ROOT);
+
+// Computed once — the fixture tree's own disable-comment scan (EVERY comment anywhere under the
+// fixture tree, exactly like the real CLI scans EVERY comment under apps/api/src). A "register-
+// parity" test that wants to assert on a SPECIFIC site's parity, without also being answerable for
+// every OTHER disable comment the fixture tree happens to carry, narrows this down via
+// `disableCommentsFor(...)` below — mirroring how a real per-site register entry is judged only
+// against its own file, never against the whole tree's unrelated comments.
+const disableComments = scanDisableComments(FIXTURE_ROOT);
+
+/** `disableComments`, filtered down to only the named files — so a register-parity test can
+ * assert about ONE fixture file's disable comment(s) without also having to register every OTHER
+ * disable comment elsewhere in the shared fixture tree. */
+function disableCommentsFor(...files: string[]): DisableCommentMap {
+  const filtered: DisableCommentMap = new Map();
+  for (const f of files) {
+    const byLine = disableComments.get(f);
+    if (byLine) filtered.set(f, byLine);
+  }
+  return filtered;
+}
 
 function rowsFrom(fromArea: string, target: string): BoundaryImport[] {
   return scan.deepImports.filter((r) => r.fromArea === fromArea && r.target === target);
@@ -94,7 +117,12 @@ describe("every context name, both directions", () => {
   });
 
   it("platform -> working-time-account (hyphenated name as TARGET)", () => {
-    const rows = rowsFrom("platform", "working-time-account");
+    // platform/disable-parity.ts (Plan 05, Task 2's own register-parity fixture) ALSO targets
+    // working-time-account/deep.ts — scope to platform/deep.ts's own "from" row, same pattern the
+    // "platform -> absence" case above already uses for the same reason.
+    const rows = rowsFrom("platform", "working-time-account").filter(
+      (r) => r.file === "src/contexts/platform/deep.ts",
+    );
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       fromArea: "platform",
@@ -608,5 +636,320 @@ describe("buildProjectedGraph with an ExtractionSpec", () => {
     expect(graph.get("src/contexts/absence/index.ts")?.has("src/contexts/absence/deep.ts")).toBe(
       false,
     );
+  });
+});
+
+// ── Register-parity check (Plan 05, Task 2, AC-5) — the bidirectional lock ─────────────────────
+//
+// Exercised against the fixture tree's own `disable-parity.ts` (one single-line + one multi-line
+// "from" import, each preceded by a correctly-shaped disable comment) and
+// `wholefile-with-disable.ts` (a file a test marks `wholeFile: true` while it still, wrongly,
+// carries a disable comment). `disableComments` is an OPTIONAL 3rd argument to
+// `validateExceptionsDocument` — every describe block ABOVE this one calls it with only two
+// arguments and is therefore completely unaffected by everything below (Plan 05's own "extend, do
+// not fork" instruction).
+
+describe("register-parity (disableComments) — Plan 05, Task 2", () => {
+  const REASON = "This reason is deliberately long enough to pass the length check for the test.";
+
+  function perSite(id: string, file: string, specifier: string) {
+    return { id, file, specifier, reason: REASON, disappearsIn: "Never — test fixture." };
+  }
+
+  it("a per-site entry backed by a correctly-shaped disable comment (single-line import) is accepted", () => {
+    const raw = {
+      registerSource: "test",
+      exceptions: [
+        perSite("E-DP1", "src/contexts/platform/disable-parity.ts", "../absence/deep"),
+        perSite("E-DP2", "src/contexts/platform/disable-parity.ts", "../working-time-account/deep"),
+      ],
+    };
+    const result = validateExceptionsDocument(
+      raw,
+      scan.deepImports,
+      disableCommentsFor("src/contexts/platform/disable-parity.ts"),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("a multi-line import's disable comment is matched at the DECLARATION's start line, not the specifier's line", () => {
+    // The bug this guards: `no-restricted-imports` reports at the ImportDeclaration's START line,
+    // several lines ABOVE a multi-line specifier — matching against the specifier's OWN line (as
+    // `BoundaryImport.line` does, deliberately, for symbol-map lookups) would place the disable
+    // comment where it suppresses nothing, exactly Plan 05's own `<interfaces>` warning for the
+    // real `imports.ts` E-2a site.
+    const row = scan.deepImports.find(
+      (r) =>
+        r.file === "src/contexts/platform/disable-parity.ts" &&
+        r.specifier === "../working-time-account/deep",
+    );
+    expect(row?.line).toBe(21); // the "} from ..." line
+    expect(row?.declarationLine).toBe(18); // the "import {" line — one below the E-DP2 comment
+  });
+
+  it("a registered entry with NO matching disable comment fails: 'has no eslint-disable'", () => {
+    // platform/deep.ts genuinely deep-imports "../absence/deep" (the D-07 cross-context matrix
+    // fixture used throughout this file) but carries no disable comment anywhere — a per-site
+    // entry naming it is unbacked.
+    const raw = {
+      registerSource: "test",
+      exceptions: [perSite("E-unbacked", "src/contexts/platform/deep.ts", "../absence/deep")],
+    };
+    const result = validateExceptionsDocument(
+      raw,
+      scan.deepImports,
+      disableCommentsFor("src/contexts/platform/deep.ts"),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.includes("has no eslint-disable"))).toBe(true);
+    }
+  });
+
+  it("a disable comment with no matching entry fails: 'undocumented exception' (direction B)", () => {
+    // Only E-DP1 is registered; E-DP2's real, on-disk disable comment is left unclaimed — this is
+    // the exact rot AC-5 exists to catch: an eslint-disable nobody entered in the register.
+    const raw = {
+      registerSource: "test",
+      exceptions: [perSite("E-DP1", "src/contexts/platform/disable-parity.ts", "../absence/deep")],
+    };
+    const result = validateExceptionsDocument(
+      raw,
+      scan.deepImports,
+      disableCommentsFor("src/contexts/platform/disable-parity.ts"),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(
+        result.errors.some(
+          (e) => e.includes("undocumented exception") && e.includes("disable-parity.ts:18"),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("a disable comment whose id does not match the registered entry's id fails", () => {
+    const raw = {
+      registerSource: "test",
+      exceptions: [
+        perSite("E-WRONG-ID", "src/contexts/platform/disable-parity.ts", "../absence/deep"),
+        perSite("E-DP2", "src/contexts/platform/disable-parity.ts", "../working-time-account/deep"),
+      ],
+    };
+    const result = validateExceptionsDocument(
+      raw,
+      scan.deepImports,
+      disableCommentsFor("src/contexts/platform/disable-parity.ts"),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.includes("carries id") && e.includes("E-DP1"))).toBe(true);
+    }
+  });
+
+  it("a wholeFile entry whose file still carries a disable comment fails", () => {
+    const raw = {
+      registerSource: "test",
+      exceptions: [
+        {
+          id: "wf-test",
+          file: "src/contexts/platform/wholefile-with-disable.ts",
+          wholeFile: true,
+          expectedCount: 1,
+          reason: REASON,
+          disappearsIn: "Never — test fixture.",
+        },
+      ],
+    };
+    const result = validateExceptionsDocument(
+      raw,
+      scan.deepImports,
+      disableCommentsFor("src/contexts/platform/wholefile-with-disable.ts"),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(
+        result.errors.some((e) => e.includes("never inline") || e.includes("flat config")),
+      ).toBe(true);
+    }
+  });
+
+  it("omitting disableComments entirely skips all parity checks (backward compatibility)", () => {
+    // The SAME entry that fails above (no disable comment anywhere) is accepted when the optional
+    // 3rd argument is omitted — every pre-existing test earlier in this file relies on exactly
+    // this not changing.
+    const raw = {
+      registerSource: "test",
+      exceptions: [perSite("E-unbacked", "src/contexts/platform/deep.ts", "../absence/deep")],
+    };
+    const result = validateExceptionsDocument(raw, scan.deepImports);
+    expect(result.ok).toBe(true);
+  });
+});
+
+// ── Per-site entry optional fields: 'symbols' and 'register' (Plan 05, Task 2's own JSON shape) ─
+
+describe("per-site entry optional fields (symbols, register)", () => {
+  const REASON = "This reason is deliberately long enough to pass the length check for the test.";
+
+  it("accepts a per-site entry carrying both 'symbols' and 'register'", () => {
+    const raw = {
+      registerSource: "test",
+      exceptions: [
+        {
+          id: "E-with-extras",
+          file: "src/contexts/platform/deep.ts",
+          specifier: "../absence/deep",
+          symbols: ["absenceDeepThing"],
+          reason: REASON,
+          disappearsIn: "Never — test fixture.",
+          register: "docs/adr/0001-abweichungen.md Eintrag H",
+        },
+      ],
+    };
+    const result = validateExceptionsDocument(raw, scan.deepImports);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.doc.exceptions[0]).toMatchObject({
+        symbols: ["absenceDeepThing"],
+        register: "docs/adr/0001-abweichungen.md Eintrag H",
+      });
+    }
+  });
+
+  it("rejects a 'symbols' array containing a non-string or empty-string element", () => {
+    const raw = {
+      registerSource: "test",
+      exceptions: [
+        {
+          id: "E-bad-symbols",
+          file: "src/contexts/platform/deep.ts",
+          specifier: "../absence/deep",
+          symbols: ["ok", ""],
+          reason: REASON,
+          disappearsIn: "Never.",
+        },
+      ],
+    };
+    const result = validateExceptionsDocument(raw, scan.deepImports);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects an empty-string 'register'", () => {
+    const raw = {
+      registerSource: "test",
+      exceptions: [
+        {
+          id: "E-bad-register",
+          file: "src/contexts/platform/deep.ts",
+          specifier: "../absence/deep",
+          register: "   ",
+          reason: REASON,
+          disappearsIn: "Never.",
+        },
+      ],
+    };
+    const result = validateExceptionsDocument(raw, scan.deepImports);
+    expect(result.ok).toBe(false);
+  });
+});
+
+// ── The SET pin against ADR 0001 Eintrag H (D-05) — a TEST, not tool logic ──────────────────────
+//
+// Deliberately asserts against the REAL, on-disk `context-boundary-import-exceptions.json` — not
+// the fixture tree above. The tool's own job (already covered by `validateExceptionsDocument`) is
+// SHAPE and PARITY; this test's job is that the SET the real register carries is exactly ADR 0001
+// Eintrag H's six deep-Unterbau sites, transcribed here by hand from the ADR. A new exception
+// nobody entered in the ADR turns THIS test red — the whole point of AC-5 (D-05).
+
+describe("the real exceptions file's SET matches ADR 0001 Eintrag H exactly", () => {
+  // Transcribed from docs/adr/0001-abweichungen.md Eintrag H's own register table (also quoted in
+  // Plan 05's own <interfaces>). Order-independent — compared as a SET below, never by array order.
+  const ADR_EINTRAG_H_DEEP_SITES = [
+    {
+      id: "E-1",
+      file: "src/contexts/platform/api/holidays.ts",
+      specifier: "../../working-time-account/recalculate-snapshots",
+    },
+    {
+      id: "E-2",
+      file: "src/contexts/platform/api/imports.ts",
+      specifier: "../../time-tracking/api/time-entries",
+    },
+    {
+      id: "E-2",
+      file: "src/contexts/platform/api/imports.ts",
+      specifier: "../../working-time-account/timezone",
+    },
+    {
+      id: "E-3",
+      file: "src/contexts/platform/api/settings.ts",
+      specifier: "../../working-time-account/recalculate-snapshots",
+    },
+    {
+      id: "E-4",
+      file: "src/contexts/platform/api/employees.ts",
+      specifier: "../../absence/vacation-calc",
+    },
+    {
+      id: "E-8",
+      file: "src/contexts/platform/api/test-bootstrap.ts",
+      specifier: "../../absence/leave-type.js",
+    },
+  ];
+
+  const REAL_EXCEPTIONS_PATH = join(__dirname, "..", "context-boundary-import-exceptions.json");
+  const real = JSON.parse(readFileSync(REAL_EXCEPTIONS_PATH, "utf8")) as {
+    exceptions: Array<{ id: string; file: string; specifier?: string; wholeFile?: true }>;
+  };
+  const perSiteEntries = real.exceptions.filter((e) => e.wholeFile !== true);
+
+  function sortKey(e: { id: string; file: string; specifier?: string }): string {
+    return `${e.id}::${e.file}::${e.specifier}`;
+  }
+
+  it("carries exactly the six ADR-named sites — no extra, none missing", () => {
+    const actual = perSiteEntries
+      .map((e) => ({ id: e.id, file: e.file, specifier: e.specifier }))
+      .sort((a, b) => sortKey(a).localeCompare(sortKey(b)));
+    const expected = [...ADR_EINTRAG_H_DEEP_SITES].sort((a, b) =>
+      sortKey(a).localeCompare(sortKey(b)),
+    );
+    expect(actual).toEqual(expected);
+  });
+
+  it("names exactly six per-site entries plus the one composition-root wholeFile entry", () => {
+    expect(perSiteEntries).toHaveLength(6);
+    expect(real.exceptions).toHaveLength(7);
+  });
+
+  it("E-5 and E-7 appear in NEITHER the ADR pin list NOR the real register", () => {
+    // Every one of their import lines already goes through an index.ts (plan 03 § 4, owner answer
+    // to Q2, 2026-09-17, "Nachtrag zur Zyklenmessung") — the rule never sees them as a deep
+    // import at all, so no inline marker and no register entry is owed for either.
+    const ids = new Set(real.exceptions.map((e) => e.id));
+    expect(ids.has("E-5")).toBe(false);
+    expect(ids.has("E-7")).toBe(false);
+    expect(ADR_EINTRAG_H_DEEP_SITES.some((e) => e.id === "E-5" || e.id === "E-7")).toBe(false);
+  });
+
+  it("the real register validates cleanly against the real tree, in both parity directions", () => {
+    const apiRoot = join(__dirname, "..", "..");
+    const realScan = scanApiRoot(apiRoot);
+    const realDisableComments = scanDisableComments(apiRoot);
+    const result = validateExceptionsDocument(real, realScan.deepImports, realDisableComments);
+    expect(result.ok).toBe(true);
+  });
+
+  it("the real tree's workload is exactly 102 — this plan's own ledger value (101B-WORKLIST.md § 8.5)", () => {
+    const apiRoot = join(__dirname, "..", "..");
+    const realScan = scanApiRoot(apiRoot);
+    const realDisableComments = scanDisableComments(apiRoot);
+    const validated = validateExceptionsDocument(real, realScan.deepImports, realDisableComments);
+    expect(validated.ok).toBe(true);
+    if (validated.ok) {
+      const { workload } = computeWorkload(realScan.deepImports, validated.doc);
+      expect(workload.length).toBe(102);
+    }
   });
 });

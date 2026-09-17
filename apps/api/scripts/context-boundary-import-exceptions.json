@@ -8,6 +8,60 @@
       "expectedCount": 45,
       "reason": "Composition root. Owner decision 2026-09-17 (Form C, CONTEXT.md D-01): app.ts registers every route module of every context; routing them through the five index.ts would force ~70 re-exports including every route registrar and turn import cycles into a real question. Named as ONE exception, not as a bucket.",
       "disappearsIn": "Never by design — app.ts is the composition root. Re-open only if the routing shape itself changes."
+    },
+    {
+      "id": "E-1",
+      "file": "src/contexts/platform/api/holidays.ts",
+      "specifier": "../../working-time-account/recalculate-snapshots",
+      "symbols": ["recalculateSnapshots"],
+      "reason": "Creating a holiday loops over every employee and calls the saldo recalculation directly — a cross-context side-effect call, not a placement question.",
+      "disappearsIn": "Block 2 (#102-#104) — a holiday-created event replaces the direct call.",
+      "register": "docs/adr/0001-abweichungen.md Eintrag H"
+    },
+    {
+      "id": "E-2",
+      "file": "src/contexts/platform/api/imports.ts",
+      "specifier": "../../time-tracking/api/time-entries",
+      "symbols": ["updateOvertimeAccount", "validateTimeEntryInvariants"],
+      "reason": "The importer writes directly into time-tracking and working-time-account — the bulk-import route bypasses both contexts' own facades.",
+      "disappearsIn": "Block 2 (#102-#104).",
+      "register": "docs/adr/0001-abweichungen.md Eintrag H"
+    },
+    {
+      "id": "E-2",
+      "file": "src/contexts/platform/api/imports.ts",
+      "specifier": "../../working-time-account/timezone",
+      "symbols": ["getTenantTimezone"],
+      "reason": "The importer writes directly into time-tracking and working-time-account — the bulk-import route bypasses both contexts' own facades.",
+      "disappearsIn": "Block 2 (#102-#104).",
+      "register": "docs/adr/0001-abweichungen.md Eintrag H"
+    },
+    {
+      "id": "E-3",
+      "file": "src/contexts/platform/api/settings.ts",
+      "specifier": "../../working-time-account/recalculate-snapshots",
+      "symbols": ["recalculateSnapshots"],
+      "reason": "PUT /settings/work/:employeeId triggers saldo recalculation as a side effect of a contract change — same defect class as E-1.",
+      "disappearsIn": "Block 2 — a schedule-changed event replaces the direct call.",
+      "register": "docs/adr/0001-abweichungen.md Eintrag H"
+    },
+    {
+      "id": "E-4",
+      "file": "src/contexts/platform/api/employees.ts",
+      "specifier": "../../absence/vacation-calc",
+      "symbols": ["calculateProRataVacation"],
+      "reason": "Creating an employee computes the pro-rata leave entitlement through a display-name lookup as a side effect.",
+      "disappearsIn": "Block 2 — employee-created/employee-changed events replace the direct call.",
+      "register": "docs/adr/0001-abweichungen.md Eintrag H"
+    },
+    {
+      "id": "E-8",
+      "file": "src/contexts/platform/api/test-bootstrap.ts",
+      "specifier": "../../absence/leave-type.js",
+      "symbols": ["leaveTypeFields"],
+      "reason": "Test-fixture route only, never registered on int or prod — same precedent as Phase 100b's D-03 for this same file.",
+      "disappearsIn": "Permanent, named exception — this route never ships.",
+      "register": "docs/adr/0001-abweichungen.md Eintrag H"
     }
   ]
 }

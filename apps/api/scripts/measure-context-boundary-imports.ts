@@ -250,6 +250,39 @@ function buildSymbolsMap(sourceFile: ts.SourceFile): Map<string, string[]> {
   return map;
 }
 
+/**
+ * Maps `${specifierLine}::${specifier}` (of a "from"-form ImportDeclaration only — this is what
+ * `no-restricted-imports` actually reports against) to the ImportDeclaration's own START line.
+ * For a single-line `import { a } from "../x"` this equals the specifier's line; for a multi-line
+ * `import {\n  a,\n} from "../x"` it does NOT — ESLint's `no-restricted-imports` reports at the
+ * declaration's start, several lines ABOVE the specifier text (Plan 05's own `<interfaces>`,
+ * verified live against `platform/api/imports.ts`'s E-2a site). Plan 05 (Task 2, AC-5) needs this
+ * distinct line to know exactly where an `eslint-disable-next-line` must sit — one line above THIS
+ * one, never above the specifier's own line.
+ */
+function buildImportDeclarationStartLineMap(sourceFile: ts.SourceFile): Map<string, number> {
+  const map = new Map<string, number>();
+
+  function lineOf(node: ts.Node): number {
+    return sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+  }
+
+  function visit(node: ts.Node): void {
+    if (
+      ts.isImportDeclaration(node) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteral(node.moduleSpecifier)
+    ) {
+      const key = `${lineOf(node.moduleSpecifier)}::${node.moduleSpecifier.text}`;
+      map.set(key, lineOf(node));
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return map;
+}
+
 // ── The row shape and the scan itself ───────────────────────────────────────────────────────────
 
 export interface BoundaryImport {
@@ -265,6 +298,14 @@ export interface BoundaryImport {
   targetModule: string;
   /** Named bindings pulled by this import; `[]` for a dynamic import / vi.mock / typeof-import. */
   symbols: string[];
+  /**
+   * The line `eslint-disable-next-line no-restricted-imports` must sit ONE ABOVE, to actually
+   * suppress this row (Plan 05, AC-5 parity). Equals `line` for a single-line "from" import and
+   * for every non-"from" form (dynamic-import/vi.mock/typeof-import have no separate declaration
+   * line to speak of); differs from `line` for a multi-line "from" import, where the specifier
+   * sits several lines below the ImportDeclaration's own start.
+   */
+  declarationLine: number;
 }
 
 export interface BoundaryScan {
@@ -293,6 +334,7 @@ export function scanApiRoot(apiRoot: string): BoundaryScan {
     const text = readFileSync(absFile, "utf8");
     const sourceFile = ts.createSourceFile(absFile, text, ts.ScriptTarget.Latest, true);
     const symbolsMap = buildSymbolsMap(sourceFile);
+    const declarationLineMap = buildImportDeclarationStartLineMap(sourceFile);
     const occurrences = extractSpecifiers(sourceFile, relFile);
 
     for (const occ of occurrences) {
@@ -317,6 +359,8 @@ export function scanApiRoot(apiRoot: string): BoundaryScan {
 
       const key = `${occ.line}::${occ.specifier}`;
       const symbols = occ.form === "from" ? (symbolsMap.get(key) ?? []) : [];
+      const declarationLine =
+        occ.form === "from" ? (declarationLineMap.get(key) ?? occ.line) : occ.line;
       deepImports.push({
         file: relFile,
         line: occ.line,
@@ -326,11 +370,65 @@ export function scanApiRoot(apiRoot: string): BoundaryScan {
         target: targetSeg,
         targetModule,
         symbols,
+        declarationLine,
       });
     }
   }
 
   return { deepImports, indexImportsByFile };
+}
+
+// ── Disable-comment scan (Plan 05, Task 2 — the parity check's other half) ──────────────────────
+//
+// `no-restricted-imports` reports at the ImportDeclaration's START line (see `BoundaryImport
+// .declarationLine`'s own docblock), so the `eslint-disable-next-line` that suppresses it sits ONE
+// LINE ABOVE that — i.e. at `declarationLine - 1`. This scan finds every such comment (matched on
+// TEXT, not AST — a disable directive is a comment, not a syntax node ts-morph would see) and
+// records the line it SUPPRESSES (`declarationLine`, not the comment's own line), so it can be
+// compared directly against `BoundaryImport.declarationLine` without an off-by-one at every call
+// site. The trailing `-- E-N:` id is captured too (D-04's shape); a disable comment written WITHOUT
+// one still counts as "found" (empty-string id), so it fails parity as a genuine mismatch rather
+// than silently vanishing from the scan.
+
+/** file -> (line the comment SUPPRESSES -> the `E-N` id found in its `-- E-N:` trailer, or `""`
+ * if the comment has no such trailer at all). */
+export type DisableCommentMap = Map<string, Map<number, string>>;
+
+// The `//.*?` prefix (rather than `//\s*`) is deliberate: it also matches a test fixture's
+// `// FIXTURE-MARKER eslint-disable-next-line …` comments (scripts/__tests__/fixtures/
+// boundary-imports/…/disable-parity.ts), which prefix the real directive keyword on purpose so
+// real ESLint does NOT recognize them as an actual directive and therefore never strips them as
+// "unused" via `eslint --fix` — this fixture path sits outside the boundary rule's own `files`
+// glob (apps/api/src/**), so an UNPREFIXED disable-next-line comment there would always be
+// "unused" and get silently deleted by lint-staged's autofix (found live: the first version of
+// this fixture lost both its comments AND its multi-line import layout to exactly that autofix).
+// A real production comment (always unprefixed, immediately after `//`) matches either way.
+const DISABLE_COMMENT_PATTERN =
+  /\/\/.*?\beslint-disable-next-line\s+no-restricted-imports\b(?:.*?--\s*(E-[A-Za-z0-9]+):)?/;
+
+/**
+ * Scans every production file (same `discoverProductionFiles` scope as `scanApiRoot` — `__tests__`
+ * and `*.test.ts` excluded, Owner decision #246) for `eslint-disable-next-line
+ * no-restricted-imports` comments, keyed by the line each one SUPPRESSES (its own line + 1).
+ */
+export function scanDisableComments(apiRoot: string): DisableCommentMap {
+  const result: DisableCommentMap = new Map();
+  for (const relFile of discoverProductionFiles(apiRoot)) {
+    const absFile = join(apiRoot, relFile);
+    const lines = readFileSync(absFile, "utf8").split("\n");
+    let byLine: Map<number, string> | undefined;
+    lines.forEach((lineText, idx) => {
+      const match = DISABLE_COMMENT_PATTERN.exec(lineText);
+      if (!match) return;
+      if (!byLine) {
+        byLine = new Map();
+        result.set(relFile, byLine);
+      }
+      const suppressedLine = idx + 2; // idx is 0-based (comment's own 1-based line = idx+1)
+      byLine.set(suppressedLine, match[1] ?? "");
+    });
+  }
+  return result;
 }
 
 // ── Exceptions file (D-04: two kinds), validated like foreign-context-access-exceptions.json ────
@@ -352,8 +450,15 @@ export interface PerSiteException {
   id: string;
   file: string;
   specifier: string;
+  /** The symbols this site pulls — documentation only, not mechanically checked against the
+   * matched deep import's own `symbols` (a name can be renamed at the import site without
+   * changing what makes the exception necessary). */
+  symbols?: string[];
   reason: string;
   disappearsIn: string;
+  /** Where this exception is transcribed for a human reader, e.g. "docs/adr/0001-abweichungen.md
+   * Eintrag H" — documentation only, not mechanically checked. */
+  register?: string;
 }
 
 export type BoundaryException = WholeFileException | PerSiteException;
@@ -375,7 +480,15 @@ const WHOLE_FILE_KEYS = new Set([
   "reason",
   "disappearsIn",
 ]);
-const PER_SITE_KEYS = new Set(["id", "file", "specifier", "reason", "disappearsIn"]);
+const PER_SITE_KEYS = new Set([
+  "id",
+  "file",
+  "specifier",
+  "symbols",
+  "reason",
+  "disappearsIn",
+  "register",
+]);
 
 /**
  * Validates a raw (untyped) exceptions document against the CURRENT deep-import set — structural
@@ -385,10 +498,25 @@ const PER_SITE_KEYS = new Set(["id", "file", "specifier", "reason", "disappearsI
  * one — this equality check IS the staleness check for this kind); a per-site entry is stale if
  * no current deep import matches its `file` + `specifier` exactly (the call may have moved or
  * been fixed).
+ *
+ * `disableComments` (Plan 05, Task 2, AC-5) is OPTIONAL and extends the checks above with the
+ * bidirectional register-parity lock, when supplied:
+ *   (A) every per-site entry must have a matching `eslint-disable-next-line no-restricted-imports
+ *       -- <id>:` comment at its matched deep import's `declarationLine - 1`, carrying THAT SAME
+ *       id — an entry with no comment, or a comment with a different id, is a finding;
+ *   (B) every such comment found anywhere under `apps/api/src/**` (`__tests__`/`*.test.ts`
+ *       excluded, Owner decision #246) must be claimed by exactly one per-site entry from (A) —
+ *       an unclaimed comment is an UNDOCUMENTED exception, the exact rot AC-5 exists to catch;
+ *   (C) a `wholeFile` entry's own file must carry NO such comment at all — that exception lives in
+ *       the flat config (`eslint.boundaries.mjs`), never inline.
+ * Omitted (as most of this file's own pre-existing tests still call it), only the ORIGINAL shape
+ * and staleness checks run — this keeps every caller that predates Plan 05 unchanged, per the
+ * plan's own "extend, do not fork" instruction.
  */
 export function validateExceptionsDocument(
   raw: unknown,
   deepImports: readonly BoundaryImport[],
+  disableComments?: DisableCommentMap,
 ): { ok: true; doc: ExceptionsDocument } | { ok: false; errors: string[] } {
   const errors: string[] = [];
 
@@ -409,7 +537,15 @@ export function validateExceptionsDocument(
     countByFile.set(d.file, (countByFile.get(d.file) ?? 0) + 1);
   }
   const deepByFileAndSpecifier = new Set<string>();
-  for (const d of deepImports) deepByFileAndSpecifier.add(`${d.file}::${d.specifier}`);
+  const deepRowByFileAndSpecifier = new Map<string, BoundaryImport>();
+  for (const d of deepImports) {
+    deepByFileAndSpecifier.add(`${d.file}::${d.specifier}`);
+    deepRowByFileAndSpecifier.set(`${d.file}::${d.specifier}`, d);
+  }
+
+  /** `${file}::${declarationLine}` pairs claimed by a valid per-site entry — direction (B)'s job is
+   * to flag every disable comment NOT in this set once every entry has been processed. */
+  const claimedDisableLines = new Set<string>();
 
   const validEntries: BoundaryException[] = [];
 
@@ -470,6 +606,18 @@ export function validateExceptionsDocument(
         );
         return;
       }
+      if (disableComments) {
+        const byLine = disableComments.get(file);
+        if (byLine && byLine.size > 0) {
+          errors.push(
+            `${label}: a wholeFile entry's exception lives in the flat config ` +
+              `(eslint.boundaries.mjs), never inline — but ${file} carries ${byLine.size} ` +
+              `eslint-disable-next-line no-restricted-imports comment(s) at line(s) ` +
+              `${[...byLine.keys()].sort((a, b) => a - b).join(", ")}`,
+          );
+          return;
+        }
+      }
       validEntries.push({
         id,
         file,
@@ -490,22 +638,75 @@ export function validateExceptionsDocument(
       errors.push(`${label}: unknown key(s) on a per-site entry: ${unknownKeys.join(", ")}`);
       return;
     }
+    if (
+      entry.symbols !== undefined &&
+      (!Array.isArray(entry.symbols) ||
+        entry.symbols.some((s) => typeof s !== "string" || s.length === 0))
+    ) {
+      errors.push(`${label}: 'symbols', if present, must be an array of non-empty strings`);
+      return;
+    }
+    if (
+      entry.register !== undefined &&
+      (typeof entry.register !== "string" || entry.register.trim().length === 0)
+    ) {
+      errors.push(`${label}: 'register', if present, must be a non-empty string`);
+      return;
+    }
     const specifier = entry.specifier;
-    if (!deepByFileAndSpecifier.has(`${file}::${specifier}`)) {
+    const matchedRow = deepRowByFileAndSpecifier.get(`${file}::${specifier}`);
+    if (!matchedRow) {
       errors.push(
         `${label}: STALE — no current deep import in ${file} matches specifier "${specifier}"; ` +
           `it may have moved or been fixed — update or remove it`,
       );
       return;
     }
+    if (disableComments) {
+      const declarationLine = matchedRow.declarationLine;
+      const foundId = disableComments.get(file)?.get(declarationLine);
+      if (foundId === undefined) {
+        errors.push(
+          `${label}: registered exception ${id} has no eslint-disable at ${file}:${declarationLine} ` +
+            `— every register entry must be backed by an inline ` +
+            `'eslint-disable-next-line no-restricted-imports -- ${id}: …' comment`,
+        );
+        return;
+      }
+      if (foundId !== id) {
+        errors.push(
+          `${label}: the eslint-disable-next-line at ${file}:${declarationLine} carries id ` +
+            `"${foundId || "(none)"}", but the registered entry's id is "${id}" — the disable ` +
+            `comment's E-N id must equal the entry's id`,
+        );
+        return;
+      }
+      claimedDisableLines.add(`${file}::${declarationLine}`);
+    }
     validEntries.push({
       id,
       file,
       specifier,
+      ...(entry.symbols !== undefined ? { symbols: entry.symbols as string[] } : {}),
       reason: reason.trim(),
       disappearsIn: disappearsIn.trim(),
+      ...(entry.register !== undefined ? { register: (entry.register as string).trim() } : {}),
     });
   });
+
+  if (disableComments) {
+    for (const [file, byLine] of disableComments) {
+      for (const [line, foundId] of byLine) {
+        if (!claimedDisableLines.has(`${file}::${line}`)) {
+          errors.push(
+            `undocumented exception at ${file}:${line} — an eslint-disable-next-line ` +
+              `no-restricted-imports comment (id "${foundId || "(none)"}") with no matching entry ` +
+              `in ${EXCEPTIONS_FILE}`,
+          );
+        }
+      }
+    }
+  }
 
   if (errors.length > 0) return { ok: false, errors };
 
@@ -718,7 +919,11 @@ export function buildProjectedGraph(
   let doc = opts.exceptionsDoc;
   if (!doc) {
     const repoRoot = join(apiRoot, "..", "..");
-    const validated = validateExceptionsDocument(loadExceptionsRaw(repoRoot), scan.deepImports);
+    const validated = validateExceptionsDocument(
+      loadExceptionsRaw(repoRoot),
+      scan.deepImports,
+      scanDisableComments(apiRoot),
+    );
     if (!validated.ok) {
       throw new Error(
         `buildProjectedGraph: ${EXCEPTIONS_FILE} is invalid: ${validated.errors.join("; ")}`,
@@ -1013,7 +1218,7 @@ function run(repoRoot: string, argv: string[]): number {
   const scan = scanApiRoot(apiRoot);
 
   const raw = loadExceptionsRaw(repoRoot);
-  const validated = validateExceptionsDocument(raw, scan.deepImports);
+  const validated = validateExceptionsDocument(raw, scan.deepImports, scanDisableComments(apiRoot));
   if (!validated.ok) {
     console.error(`measure-context-boundary-imports: ${EXCEPTIONS_FILE} is invalid:`);
     for (const e of validated.errors) console.error(`  - ${e}`);
