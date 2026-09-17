@@ -14,7 +14,11 @@ import { findUnconfirmedBreakEntries } from "../find-unconfirmed-break-days";
 import { resolveMissingEntriesDays } from "../../working-time-account/missing-entries-window";
 import { invalidReasonFields } from "../invalid-reason";
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
-import { getVacationEntitlementsForYearByDisplayName } from "../../absence"; // Phase 100B Plan 10 — H1 sibling
+import {
+  getVacationEntitlementsForYearByDisplayName, // Phase 100B Plan 10 — H1 sibling
+  getStalePendingLeaveRequestsForReminder, // Phase 100B Plan 13 — A7b
+  getLeaveStartingInWindow, // Phase 100B Plan 13 — A9
+} from "../../absence";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -383,18 +387,12 @@ export const attendanceCheckerPlugin = fp(async (app) => {
           const thresholdHours = cfg.reminderPendingLeaveHours ?? 48;
           const cutoff = new Date(Date.now() - thresholdHours * 60 * 60 * 1000);
 
-          const pendingRequests = await app.prisma.leaveRequest.findMany({
-            where: {
-              deletedAt: null,
-              status: "PENDING",
-              createdAt: { lt: cutoff },
-              employee: { tenantId: tenant.id },
-            },
-            include: {
-              employee: { select: { firstName: true, lastName: true } },
-              leaveType: { select: { name: true } },
-            },
-          });
+          // Phase 100B Plan 13 — A7b, contexts/absence facade.
+          const pendingRequests = await getStalePendingLeaveRequestsForReminder(
+            app.prisma,
+            tenant.id,
+            cutoff,
+          );
 
           if (pendingRequests.length === 0) continue;
 
@@ -461,18 +459,8 @@ export const attendanceCheckerPlugin = fp(async (app) => {
           const targetDate = new Date(today);
           targetDate.setDate(targetDate.getDate() + daysAhead);
 
-          const upcoming = await app.prisma.leaveRequest.findMany({
-            where: {
-              deletedAt: null,
-              status: "APPROVED",
-              startDate: { gte: today, lte: targetDate },
-              employee: { tenantId: tenant.id },
-            },
-            include: {
-              employee: { select: { userId: true, firstName: true } },
-              leaveType: { select: { name: true } },
-            },
-          });
+          // Phase 100B Plan 13 — A9, contexts/absence facade.
+          const upcoming = await getLeaveStartingInWindow(app.prisma, tenant.id, today, targetDate);
 
           for (const req of upcoming) {
             const startStr = req.startDate.toLocaleDateString("de-DE", {

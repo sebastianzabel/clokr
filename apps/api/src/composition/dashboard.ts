@@ -49,7 +49,15 @@ import {
   getMonthlySnapshotsInRange,
   sumCarryOverByMonth,
 } from "../contexts/working-time-account"; // Phase 100B Plan 06 — W8/W9/W10; Plan 07 — W5/W6
-import { getEntitlementsForEmployee, getAbsencesOverlapping } from "../contexts/absence"; // Phase 100B Plan 10 — A13; Plan 12 — A4
+import {
+  getEntitlementsForEmployee, // Phase 100B Plan 10 — A13
+  getAbsencesOverlapping, // Phase 100B Plan 12 — A4
+  getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
+  getActiveLeaveOverlapping, // Phase 100B Plan 13 — A2
+  getCalendarLeaveOverlapping, // Phase 100B Plan 13 — A3
+  getOwnPendingLeaveRequests, // Phase 100B Plan 13 — A7a
+  countPendingApprovals, // Phase 100B Plan 13 — A8
+} from "../contexts/absence";
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -388,22 +396,13 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       // Genehmigte Abwesenheiten (inkl. Urlaubsstornierungen) + offene Anträge (PENDING).
       // Phase 95 SHIFT-01: PENDING leave surfaces as "beantragt" instead of "–".
-      const leaveRequests = await app.prisma.leaveRequest.findMany({
-        where: {
-          employee: { tenantId },
-          deletedAt: null, // D-09: exclude soft-deleted leave from calendar/dashboard reads
-          status: { in: ["APPROVED", "CANCELLATION_REQUESTED", "PENDING"] },
-          startDate: { lte: weekEnd },
-          endDate: { gte: weekStart },
-        },
-        select: {
-          employeeId: true,
-          startDate: true,
-          endDate: true,
-          status: true,
-          leaveType: { select: { name: true } },
-        },
-      });
+      // Phase 100B Plan 13 — A3, contexts/absence facade.
+      const leaveRequests = await getCalendarLeaveOverlapping(
+        app.prisma,
+        { kind: "tenant", tenantId },
+        weekStart,
+        weekEnd,
+      );
 
       // Krankheiten
       // Phase 100B Plan 12 — A4, contexts/absence facade.
@@ -612,20 +611,13 @@ export async function dashboardRoutes(app: FastifyInstance) {
       );
 
       // Bulk fetch 3 — leave requests covering today (APPROVED + CANCELLATION_REQUESTED)
-      const leaveRequests = await app.prisma.leaveRequest.findMany({
-        where: {
-          employee: { tenantId },
-          status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
-          startDate: { lte: today },
-          endDate: { gte: today },
-          deletedAt: null,
-        },
-        select: {
-          employeeId: true,
-          status: true,
-          leaveType: { select: { name: true } },
-        },
-      });
+      // Phase 100B Plan 13 — A2, contexts/absence facade.
+      const leaveRequests = await getActiveLeaveOverlapping(
+        app.prisma,
+        { kind: "tenant", tenantId },
+        today,
+        today,
+      );
 
       // Bulk fetch 4 — absences covering today (deletedAt: null, tenant-scoped)
       // Phase 100B Plan 12 — A4, contexts/absence facade.
@@ -913,23 +905,14 @@ export async function dashboardRoutes(app: FastifyInstance) {
       );
 
       // Phase 49.4: leave + absence overlay for the user week-view
-      const myWeekLeaves = await app.prisma.leaveRequest.findMany({
-        where: {
-          employeeId,
-          deletedAt: null, // D-09: exclude soft-deleted leave from calendar/dashboard reads
-          // Phase 95 SHIFT-01: include PENDING so an open request shows "beantragt".
-          status: { in: ["APPROVED", "CANCELLATION_REQUESTED", "PENDING"] },
-          startDate: { lte: end },
-          endDate: { gte: start },
-        },
-        // `status` is required for the inline "requested" vs "leave" branch below.
-        select: {
-          startDate: true,
-          endDate: true,
-          status: true,
-          leaveType: { select: { name: true } },
-        },
-      });
+      // Phase 95 SHIFT-01: include PENDING so an open request shows "beantragt".
+      // Phase 100B Plan 13 — A3, contexts/absence facade.
+      const myWeekLeaves = await getCalendarLeaveOverlapping(
+        app.prisma,
+        { kind: "employee", employeeId, tenantId },
+        start,
+        end,
+      );
       // Phase 100B Plan 12 — A4, contexts/absence facade.
       const myWeekAbsences = await getAbsencesOverlapping(
         app.prisma,
@@ -1125,16 +1108,13 @@ export async function dashboardRoutes(app: FastifyInstance) {
           // Approved leave + Absences in the configured window cover the day too
           // (mirrors overtime.ts close-month/status logic — a day is only "missing"
           // if no entry, no holiday, no leave, no absence covers it)
-          const approvedLeaveInWindow = await app.prisma.leaveRequest.findMany({
-            where: {
-              employeeId,
-              deletedAt: null,
-              status: "APPROVED",
-              startDate: { lte: today },
-              endDate: { gte: windowStart },
-            },
-            select: { startDate: true, endDate: true, halfDay: true },
-          });
+          // Phase 100B Plan 13 — A1, contexts/absence facade.
+          const approvedLeaveInWindow = await getApprovedLeaveOverlapping(
+            app.prisma,
+            { kind: "employee", employeeId, tenantId },
+            windowStart,
+            today,
+          );
           // Phase 100B Plan 12 — A4, contexts/absence facade.
           const absencesInWindow = await getAbsencesOverlapping(
             app.prisma,
@@ -1203,10 +1183,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
         }
 
         // 2. Own pending leave requests — BUrlG still applies for exempt employees
-        const pendingRequests = await app.prisma.leaveRequest.findMany({
-          where: { employeeId, deletedAt: null, status: "PENDING" },
-          select: { id: true },
-        });
+        // Phase 100B Plan 13 — A7a, contexts/absence facade.
+        const pendingRequests = await getOwnPendingLeaveRequests(app.prisma, employeeId, tenantId);
         pendingRequestsCount = pendingRequests.length;
 
         // 3. Invalidated time entries — leave signal also applies for exempt employees
@@ -1255,15 +1233,13 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // 4. Team-wide pending approvals (only for managers/admins)
       let pendingApprovalsCount = 0;
       if (isManager) {
-        pendingApprovalsCount = await app.prisma.leaveRequest.count({
-          where: {
-            employee: { tenantId },
-            deletedAt: null,
-            status: { in: ["PENDING", "CANCELLATION_REQUESTED"] },
-            // Exclude own requests so they don't double-count with pendingRequests
-            ...(employeeId ? { employeeId: { not: employeeId } } : {}),
-          },
-        });
+        // Phase 100B Plan 13 — A8, contexts/absence facade. Exclude own requests so they don't
+        // double-count with pendingRequests.
+        pendingApprovalsCount = await countPendingApprovals(
+          app.prisma,
+          tenantId,
+          employeeId ?? undefined,
+        );
       }
 
       // unconfirmedBreakDays is deliberately NOT summed into `total`. `total` is the Phase-111

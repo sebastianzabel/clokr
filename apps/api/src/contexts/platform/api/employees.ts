@@ -39,7 +39,8 @@ import {
   getSection9DocumentPaths,
   getAbsenceDocumentPaths,
   hardDeleteAbsencesForEmployee,
-} from "../../absence"; // Phase 100B Plan 10 — H1 sibling / F3; Plan 11 — F3; Plan 12 — F3
+  hardDeleteLeaveRequestsForEmployee,
+} from "../../absence"; // Phase 100B Plan 10 — H1 sibling / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3
 
 // ── Retention constant ─────────────────────────────────────────────────────
 const DEFAULT_RETENTION_YEARS = 10;
@@ -1221,7 +1222,8 @@ export async function employeeRoutes(app: FastifyInstance) {
         // the onDelete:Restrict ordering invariant, unchanged).
         await hardDeleteTimeDataForEmployee(tx, id);
         // Restrict-protected models
-        await tx.leaveRequest.deleteMany({ where: { employeeId: id } });
+        // Phase 100B Plan 13 — F3, contexts/absence facade (IN PLACE, ordering unchanged).
+        await hardDeleteLeaveRequestsForEmployee(tx, id);
         // Phase 100B Plan 12 — F3, contexts/absence facade (IN PLACE, H5 ordering unchanged).
         await hardDeleteAbsencesForEmployee(tx, id);
         // Cascade-owned models (safe to delete explicitly)

@@ -23,7 +23,7 @@ import { resolveActor } from "../../../services/clock/audit-actor";
 import type { ClockEvent } from "../../../services/clock/types";
 import { closeEmployeeMonth } from "../../working-time-account/close-employee-month"; // SNAP-03 — Phase 76.27
 import { loadBsSlotOverrides } from "../../absence/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
-import { getAbsencesOverlapping } from "../../absence"; // Phase 100B Plan 12 — A4
+import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1
 import {
   getRetroEntryWindowDays,
   computeRetroLimitStr,
@@ -2587,15 +2587,13 @@ export async function computeOvertimeBalanceBreakdown(
   // fetches the FULL month). This mirrors the shiftRangeLastDay widening above (Bug 5); the
   // leave/absence fetch was left at effectiveEnd — that asymmetry is the divergence root cause.
   // Non-SHIFT partial (monthEnd = effectiveEnd) ignores the extra rows (out of window) → no-op.
-  const allApprovedLeave = await app.prisma.leaveRequest.findMany({
-    where: {
-      employeeId,
-      deletedAt: null,
-      status: "APPROVED",
-      startDate: { lte: shiftRangeLastDay },
-      endDate: { gte: rangeStart },
-    },
-  });
+  // Phase 100B Plan 13 — A1, contexts/absence facade.
+  const allApprovedLeave = await getApprovedLeaveOverlapping(
+    app.prisma,
+    { kind: "employee", employeeId, tenantId: employee?.tenantId ?? "" },
+    rangeStart,
+    shiftRangeLastDay,
+  );
 
   // Phase 100B Plan 12 — A4, contexts/absence facade.
   const allAbsences = await getAbsencesOverlapping(

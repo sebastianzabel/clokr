@@ -51,7 +51,7 @@ import {
   deductVacationDays,
   reverseVacationDays,
 } from "../../contexts/absence/api/leave"; // Phase 107 (D-14) — reused verbatim, see each export's own docblock note in leave.ts
-import { getVocationalSchoolDays } from "../../contexts/absence"; // Phase 100B Plan 12 — A6
+import { getVocationalSchoolDays, getPendingLeaveForShiftProtection } from "../../contexts/absence"; // Phase 100B Plan 12 — A6; Plan 13 — shift-protection (H5)
 import { phorestFetch } from "./client";
 import {
   phorestShiftKey,
@@ -403,16 +403,14 @@ export async function syncPhorestShifts(
     // leave day has NO fresh Phorest slot (the person is off in the rota, so the per-slot loop
     // below never visits it). The set MUST therefore be built STANDALONE from the DB here and
     // expanded PER-DAY, clipped to the window — never populated inside the per-slot workTimes loop.
-    const pendingLeaves = await app.prisma.leaveRequest.findMany({
-      where: {
-        employeeId: { in: mappedEmployeeIds }, // tenant-scoped (T-95-01): only mapped employees
-        deletedAt: null, // soft-delete rule (CLAUDE.md) — a soft-deleted leave never protects (T-95-02)
-        status: { in: ["PENDING", "CANCELLATION_REQUESTED"] }, // NOT APPROVED/REJECTED/CANCELLED (locked)
-        startDate: { lte: windowEndDate },
-        endDate: { gte: windowStartDate }, // range overlaps the forward sync window
-      },
-      select: { employeeId: true, startDate: true, endDate: true },
-    });
+    // Phase 100B Plan 13 — getPendingLeaveForShiftProtection, contexts/absence facade (H5, the
+    // last genuine boundary crossing out of services/).
+    const pendingLeaves = await getPendingLeaveForShiftProtection(
+      app.prisma,
+      { kind: "employees", employeeIds: mappedEmployeeIds, tenantId },
+      windowStartDate,
+      windowEndDate,
+    );
     const pendingLeaveDays = new Set<string>();
     for (const lr of pendingLeaves) {
       // Clip the leave range to [windowStartDate, windowEndDate], iterate per UTC day (startDate/

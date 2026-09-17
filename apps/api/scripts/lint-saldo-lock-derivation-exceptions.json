@@ -13,16 +13,16 @@
   },
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
-    "line": 1559,
+    "line": 1556,
     "disposition": "deferred",
     "trackedIssue": "#242",
-    "reason": "CONFIRMED unsafe — a genuine, newly-discovered instance of the Issue #241 defect class (naive UTC yearStart/yearEnd instead of a tenant-TZ-aware bound), found by this gate's own first real run. For Europe/Berlin, January's real MONTHLY periodStart falls before the naive yearStart bound and is silently excluded from the 'are all 12 months closed' count, so the manual yearly-close endpoint can never succeed. Deliberately NOT fixed in the commit that introduces this gate (GSD scope boundary: that commit's job is the fifth #241 site and this gate, not a sixth site the gate found on its own first run) — filed as #242, NOT excepted as a safety claim. Line re-pointed from 1568 to 1559 in Phase 100B Plan 12: an earlier route handler's absence.findMany [18-line inline query] collapsed into getAbsencesOverlapping(...) [8 lines], net -10, plus the +1 import-block line above it — same candidate, same reasoning, not re-argued."
+    "reason": "CONFIRMED unsafe — a genuine, newly-discovered instance of the Issue #241 defect class (naive UTC yearStart/yearEnd instead of a tenant-TZ-aware bound), found by this gate's own first real run. For Europe/Berlin, January's real MONTHLY periodStart falls before the naive yearStart bound and is silently excluded from the 'are all 12 months closed' count, so the manual yearly-close endpoint can never succeed. Deliberately NOT fixed in the commit that introduces this gate (GSD scope boundary: that commit's job is the fifth #241 site and this gate, not a sixth site the gate found on its own first run) — filed as #242, NOT excepted as a safety claim. Line re-pointed from 1559 to 1556 in Phase 100B Plan 13: an earlier route handler's leaveRequest.findMany [10-line inline query] collapsed into getApprovedLeaveOverlapping(...) [7 lines], net -3 — same candidate, same reasoning, not re-argued. On top of the -10 net shift Phase 100B Plan 12 already recorded here (1568 -> 1559)."
   },
   {
     "file": "apps/api/src/contexts/working-time-account/plugins/auto-close-month.ts",
-    "line": 760,
+    "line": 754,
     "disposition": "deferred",
     "trackedIssue": "#242",
-    "reason": "CONFIRMED unsafe — the automatic cron counterpart of the overtime.ts:1559 finding above (same naive yearStart/yearEnd, same silently-excluded January, same #242), except this one runs unattended (daily cron, no human in the loop) like #241's own fourth site. Deliberately NOT fixed in the commit that introduces this gate — filed as #242, NOT excepted as a safety claim. Line re-pointed from 771 to 760 in Phase 100B Plan 12: two earlier absence.findMany call sites in this same cron loop (the gap-detection rdAbsences read and the close-month closeAbsences saldo-input read) each collapsed into a getAbsencesOverlapping(...) call, net -3 and -11 respectively, plus the +1 import-block line above them — same candidate, same reasoning, not re-argued."
+    "reason": "CONFIRMED unsafe — the automatic cron counterpart of the overtime.ts:1559 finding above (same naive yearStart/yearEnd, same silently-excluded January, same #242), except this one runs unattended (daily cron, no human in the loop) like #241's own fourth site. Deliberately NOT fixed in the commit that introduces this gate — filed as #242, NOT excepted as a safety claim. Line re-pointed from 760 to 754 in Phase 100B Plan 13: two earlier leaveRequest.findMany call sites in this same cron loop (the gap-detection rdApprovedLeave read and the close-month closeApprovedLeave saldo-input read) collapsed into getApprovedLeaveOverlapping(...) calls, net -3 and -2 respectively — same candidate, same reasoning, not re-argued. On top of the -11 net shift Phase 100B Plan 12 already recorded here (771 -> 760)."
   }
 ]

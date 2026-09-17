@@ -26,7 +26,7 @@ import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — sh
 import { isSnapshotLocked } from "./snapshot-lock"; // Phase 99 (OB-03/D-09) — immutability after lock
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import { getValidWorkedEntriesInRange } from "../time-tracking"; // Phase 100B Plan 08 — T1
-import { getAbsencesOverlapping } from "../absence"; // Phase 100B Plan 12 — A4
+import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1
 
 // Phase 99 (D-09) — a closed month that recalc skipped, reported so a caller can
 // surface it to a human instead of the change happening silently.
@@ -362,16 +362,13 @@ export async function recalculateSnapshots(
         monthLastDay,
       ),
       // Approved leave
-      app.prisma.leaveRequest.findMany({
-        where: {
-          employeeId,
-          deletedAt: null, // required by soft-delete convention
-          status: "APPROVED",
-          startDate: { lte: monthEnd },
-          endDate: { gte: monthStart },
-        },
-        select: { startDate: true, endDate: true, halfDay: true },
-      }),
+      // Phase 100B Plan 13 — A1, contexts/absence facade. THE SALDO INPUT.
+      getApprovedLeaveOverlapping(
+        app.prisma,
+        { kind: "employee", employeeId, tenantId: employee.tenantId },
+        monthStart,
+        monthEnd,
+      ),
       // All absences (including VOCATIONAL_SCHOOL — BS-doubling handled in closeEmployeeMonth core).
       // Phase 63: const bsAbsences = await app.prisma.absence.findMany (type:"VOCATIONAL_SCHOOL")
       // is now inside closeEmployeeMonth via the full absences array (all types included).

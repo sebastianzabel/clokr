@@ -3,7 +3,7 @@ import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
 import { countSnapshotsBefore } from "../../working-time-account"; // Phase 100B Plan 07 — W7
 import { archiveEntriesBefore } from "../../time-tracking"; // Phase 100B Plan 08 — T9
-import { archiveAbsencesBefore } from "../../absence"; // Phase 100B Plan 12
+import { archiveAbsencesBefore, archiveLeaveRequestsBefore } from "../../absence"; // Phase 100B Plan 12; Plan 13
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -78,14 +78,13 @@ export const dataRetentionPlugin = fp(async (app) => {
         );
 
         // Soft-delete leave requests older than retention period
-        const archivedLeave = await app.prisma.leaveRequest.updateMany({
-          where: {
-            employeeId: { in: employeeIds },
-            deletedAt: null,
-            endDate: { lte: cutoffDate },
-          },
-          data: { deletedAt: new Date() },
-        });
+        // Phase 100B Plan 13 — contexts/absence facade.
+        const archivedLeaveCount = await archiveLeaveRequestsBefore(
+          app.prisma,
+          employeeIds,
+          tenant.id,
+          cutoffDate,
+        );
 
         // Soft-delete absences older than retention period
         // Phase 100B Plan 12 — contexts/absence facade.
@@ -96,11 +95,11 @@ export const dataRetentionPlugin = fp(async (app) => {
           cutoffDate,
         );
 
-        const total = archivedEntriesCount + archivedLeave.count + archivedAbsencesCount;
+        const total = archivedEntriesCount + archivedLeaveCount + archivedAbsencesCount;
 
         if (total > 0) {
           app.log.info(
-            `Data-Retention: Tenant ${tenant.name} — ${archivedEntriesCount} Zeiteinträge, ${archivedLeave.count} Urlaubsanträge, ${archivedAbsencesCount} Abwesenheiten archiviert (vor ${cutoffYear})`,
+            `Data-Retention: Tenant ${tenant.name} — ${archivedEntriesCount} Zeiteinträge, ${archivedLeaveCount} Urlaubsanträge, ${archivedAbsencesCount} Abwesenheiten archiviert (vor ${cutoffYear})`,
           );
 
           await app.audit({
@@ -113,7 +112,7 @@ export const dataRetentionPlugin = fp(async (app) => {
               cutoffDate: cutoffDate.toISOString(),
               retentionYears,
               archivedEntries: archivedEntriesCount,
-              archivedLeave: archivedLeave.count,
+              archivedLeave: archivedLeaveCount,
               archivedAbsences: archivedAbsencesCount,
             },
           });

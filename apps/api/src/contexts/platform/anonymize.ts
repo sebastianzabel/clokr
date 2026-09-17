@@ -55,6 +55,7 @@ import type { Prisma } from "@clokr/db";
 import { clearEntryNotesForEmployee } from "../time-tracking"; // Phase 100B Plan 08 — T10
 import { anonymizeSection9CreditsForEmployee } from "../absence"; // Phase 100B Plan 11 — T-100B-48
 import { anonymizeAbsencesForEmployee } from "../absence"; // Phase 100B Plan 12 — F3
+import { anonymizeLeaveRequestsForEmployee } from "../absence"; // Phase 100B Plan 13 — F3
 
 /**
  * The sentinel that marks a DSGVO-anonymized Employee row (set by anonymizeEmployeeData below):
@@ -124,10 +125,8 @@ export async function anonymizeEmployeeData(opts: AnonymizeEmployeeOptions): Pro
   await clearEntryNotesForEmployee(tx, employeeId);
 
   // Notizen in Urlaubsanträgen anonymisieren
-  await tx.leaveRequest.updateMany({
-    where: { employeeId, note: { not: null } },
-    data: { note: null },
-  });
+  // Phase 100B Plan 13 — F3, contexts/absence facade.
+  await anonymizeLeaveRequestsForEmployee(tx, employeeId);
 
   // Notizen in Abwesenheiten anonymisieren + Dokument-Pfad entfernen
   // Phase 100B Plan 12 — F3, contexts/absence facade.

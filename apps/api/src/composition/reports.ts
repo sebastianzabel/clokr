@@ -28,6 +28,7 @@ import {
   getExpiringCarryOver,
   getEntitlementById,
   getConfirmedSection9Credits,
+  getPendingLeaveDaysInYear, // Phase 100B Plan 13 — A7c
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
 import { isSickLeaveTypeCode } from "../contexts/absence/leave-type";
 import type { LeaveTypeCode } from "@clokr/db";
@@ -958,19 +959,8 @@ export async function reportRoutes(app: FastifyInstance) {
       await selfHealUsedDays(app.prisma, entitlements, vacMeta);
 
       // Bulk fetch PENDING leave requests for the same year + tenant (NO per-entitlement loop)
-      const pending = await app.prisma.leaveRequest.findMany({
-        where: {
-          employee: { tenantId: req.user.tenantId },
-          status: "PENDING",
-          deletedAt: null,
-          // Filter by year: only requests whose startDate falls within year y
-          startDate: {
-            gte: new Date(Date.UTC(y, 0, 1)),
-            lt: new Date(Date.UTC(y + 1, 0, 1)),
-          },
-        },
-        select: { employeeId: true, leaveTypeId: true, days: true },
-      });
+      // Phase 100B Plan 13 — A7c, contexts/absence facade.
+      const pending = await getPendingLeaveDaysInYear(app.prisma, req.user.tenantId, y);
 
       // Build a lookup map keyed by "employeeId:leaveTypeId" → summed pending days
       const pendingMap = new Map<string, number>();

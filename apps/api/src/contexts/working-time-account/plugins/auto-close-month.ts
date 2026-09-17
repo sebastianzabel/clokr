@@ -16,7 +16,7 @@ import {
   getValidWorkedEntriesInRange,
   lockEntriesForMonth,
 } from "../../time-tracking"; // Phase 100B Plan 08 — T2/T1/T7
-import { getAbsencesOverlapping } from "../../absence"; // Phase 100B Plan 12 — A4
+import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -327,16 +327,13 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   );
                   const rdEntryDates = new Set(rdEntries.map((e) => dateStrInTz(e.date, tz)));
 
-                  const rdApprovedLeave = await app.prisma.leaveRequest.findMany({
-                    where: {
-                      employeeId: emp.id,
-                      deletedAt: null,
-                      status: "APPROVED",
-                      startDate: { lte: monthEnd },
-                      endDate: { gte: monthStart },
-                    },
-                    select: { startDate: true, endDate: true, halfDay: true },
-                  });
+                  // Phase 100B Plan 13 — A1, contexts/absence facade.
+                  const rdApprovedLeave = await getApprovedLeaveOverlapping(
+                    app.prisma,
+                    { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
+                    monthStart,
+                    monthEnd,
+                  );
                   // Phase 100B Plan 12 — A4, contexts/absence facade.
                   const rdAbsences = await getAbsencesOverlapping(
                     app.prisma,
@@ -560,16 +557,13 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                     monthLastDay,
                   ),
                   // Approved leave
-                  app.prisma.leaveRequest.findMany({
-                    where: {
-                      employeeId: emp.id,
-                      deletedAt: null,
-                      status: "APPROVED",
-                      startDate: { lte: monthEnd },
-                      endDate: { gte: monthStart },
-                    },
-                    select: { startDate: true, endDate: true, halfDay: true },
-                  }),
+                  // Phase 100B Plan 13 — A1, contexts/absence facade. THE SALDO INPUT.
+                  getApprovedLeaveOverlapping(
+                    app.prisma,
+                    { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
+                    monthStart,
+                    monthEnd,
+                  ),
                   // All absences (including VOCATIONAL_SCHOOL — BS-doubling handled in core)
                   // Phase 100B Plan 12 — A4, contexts/absence facade. THE SALDO INPUT.
                   getAbsencesOverlapping(

@@ -30,7 +30,7 @@ import {
   lockEntriesForMonth,
   unlockEntriesForMonth,
 } from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7/T8
-import { getAbsencesOverlapping } from "../../absence"; // Phase 100B Plan 12 — A4
+import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),
@@ -1154,16 +1154,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
           monthLastDay,
         ),
         // Approved leave — same filter as old inline path
-        app.prisma.leaveRequest.findMany({
-          where: {
-            employeeId,
-            deletedAt: null,
-            status: "APPROVED",
-            startDate: { lte: monthEnd },
-            endDate: { gte: monthStart },
-          },
-          select: { startDate: true, endDate: true, halfDay: true },
-        }),
+        // Phase 100B Plan 13 — A1, contexts/absence facade.
+        getApprovedLeaveOverlapping(
+          app.prisma,
+          { kind: "employee", employeeId, tenantId: employee.tenantId },
+          monthStart,
+          monthEnd,
+        ),
         // Absences — same filter as old inline path
         // Phase 100B Plan 12 — A4, contexts/absence facade. THE SALDO INPUT.
         getAbsencesOverlapping(
