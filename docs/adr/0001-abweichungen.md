@@ -491,8 +491,15 @@ dynamischen Imports — ESLint löst dort keinen Modul-Spezifizierer auf. Die ei
 Instanz (`src/composition/reports.ts:1090` → `absence/plugins/carryover-warning.ts`, Phase
 101B-01s Baseline) wurde in Welle 07 (absence) auf einen statischen Import umgestellt, nicht als
 Ausnahme registriert — das Register zählt deshalb weiterhin sechs Klassen, keine siebte für diesen
-Fall. `measure-context-boundary-imports.ts --forms` hält die Größe dieser Lücke als gedruckte Zahl
-fest (aktuell: `from 51`, keine `dynamic-import`-Zeile), damit sie nie stillschweigend wächst.
+Fall. `measure-context-boundary-imports.ts --forms` hält die Größe dieser Lücke fest, damit sie nie
+stillschweigend wächst — es zählt die Formen des ARBEITSVORRATS, und der ist am Phasenende 0, also
+druckt das Werkzeug heute nichts. **Das ist die Prüfung, nicht ihr Fehlen:** taucht dort je wieder
+eine `dynamic-import`-Zeile auf, ist ein Import entstanden, den die ESLint-Regel konstruktionsbedingt
+nicht sehen kann. (Eine frühere Fassung dieses Absatzes nannte hier `from 51` als aktuelle Ausgabe.
+Das reproduziert nicht — 51 ist die Zahl der AUSGENOMMENEN Importe, nicht der gedruckten Formen.
+Korrigiert beim Zielabgleich der Phase, aus demselben Grund, aus dem die drei Zahlkorrekturen oben
+ausgeschrieben stehen: eine Doku mit einer Zahl, die sich nicht nachrechnen lässt, bringt ihrer
+nächsten Leserin bei, den übrigen Zahlen ebenfalls zu misstrauen.)
 
 **Die Herauslösung (Owner-Entscheidung Q1 = Option D, 2026-09-17).** Acht kontextübergreifend
 genutzte Helfer sind aus `absence/api/leave.ts` und `time-tracking/api/time-entries.ts` in
