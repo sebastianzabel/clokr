@@ -49,9 +49,10 @@ type WhereClause = Record<string, unknown>;
  * operator throws instead of being silently ignored, so a future query shape can't quietly
  * recreate the same vacuity one level down (Issue #216, T-216-02).
  */
-function matchesWhere(row: Record<string, unknown>, where: WhereClause): boolean {
+function matchesWhere<T extends object>(row: T, where: WhereClause): boolean {
+  const record = row as unknown as Record<string, unknown>;
   return Object.entries(where).every(([field, condition]) => {
-    const value = row[field];
+    const value = record[field];
     if (condition instanceof Date)
       return value instanceof Date && value.getTime() === condition.getTime();
     if (condition === null || typeof condition !== "object") return value === condition;
