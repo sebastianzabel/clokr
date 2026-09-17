@@ -7,6 +7,13 @@ export default defineConfig({
     environment: "node",
     root: "./",
     include: ["src/**/*.test.ts", "scripts/**/*.test.ts"],
+    // Phase 101B: scripts/__tests__/fixtures/ holds INPUT DATA for the boundary-import measuring
+    // tool, not tests. One fixture is deliberately named `x.test.ts` and placed under a nested
+    // `__tests__/` directory, because the tool must be proven to SKIP exactly that shape (owner
+    // decision #246: `__tests__` stays outside the boundary rule). The name is load-bearing for the
+    // fixture's purpose, so it cannot be renamed away -- the exclusion belongs here instead.
+    // Without it vitest collects the fixture and fails the whole run with "No test suite found".
+    exclude: ["**/node_modules/**", "**/dist/**", "scripts/__tests__/fixtures/**"],
     // Phase 106 (D-01/D-02): every worker owns its own database (clokr_test_<VITEST_POOL_ID>,
     // cloned from the migrated clokr_test template by scripts/reset-test-databases.ts), so the
     // "integration tests share a DB" reason for running sequentially no longer exists.
