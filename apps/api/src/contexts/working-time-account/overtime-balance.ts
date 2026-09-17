@@ -4,8 +4,9 @@
 // was measured to be cycle-neutral (101B-ZYKLEN-BEFUND.md §4) and is made on domain grounds, not
 // graph grounds. The bodies are unchanged — this was a relocation, not a rewrite.
 //
-// getEffectiveSchedule is imported from ../time-tracking/entry-invariants rather than defined
-// here — "which schedule applies to this employee on this day" is a Zeiterfassung question.
+// getEffectiveSchedule is imported from ../time-tracking (defined in entry-invariants.ts, the
+// leaf, not defined here) — "which schedule applies to this employee on this day" is a
+// Zeiterfassung question.
 //
 // Follow-up fix (Phase 101B): the move above turned the two TimeEntry reads inline in
 // computeOvertimeBalanceBreakdown (the "has today's entries" cutoff check and the worked-minutes
@@ -33,9 +34,11 @@ import {
   calcExpectedMinutesTz,
 } from "./timezone";
 import { setOvertimeAccountBalance } from "./facade/overtime-account";
-import { getEffectiveBreakDuration } from "../time-tracking/break-effective";
-import { getEffectiveSchedule } from "../time-tracking/entry-invariants";
-import { getValidWorkedEntriesInRange } from "../time-tracking"; // Phase 100B Plan 08 — T1
+import {
+  getValidWorkedEntriesInRange, // Phase 100B Plan 08 — T1
+  getEffectiveBreakDuration,
+  getEffectiveSchedule,
+} from "../time-tracking"; // Phase 101B (Issue #101, wave 8) — merged from three deep imports (plan-04 carry-over)
 
 // ── Hilfsfunktion: Überstundensaldo berechnen (snapshot-basiert, TZ-aware) ────
 // Nutzt den letzten SaldoSnapshot als Basis und rechnet nur den offenen Zeitraum

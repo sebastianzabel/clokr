@@ -1,23 +1,19 @@
 import { FastifyInstance } from "fastify";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { getEffectiveSchedule } from "../contexts/time-tracking/api/time-entries";
-import {
-  resolvePresenceState,
-  isObligatedWorkday,
-  isDayDue,
-} from "../contexts/time-tracking/presence";
-import type {
-  PresenceEntry,
-  PresenceLeave,
-  PresenceAbsence,
-} from "../contexts/time-tracking/presence";
 import { getHolidays, STATE_MAP } from "../contexts/platform";
-import { findUnconfirmedBreakDays } from "../contexts/time-tracking/find-unconfirmed-break-days"; // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
 import {
   getWorkedEntriesInRange,
   getRecordedWorkEntriesInRange,
   getInvalidEntries,
+  getEffectiveSchedule,
+  resolvePresenceState,
+  isObligatedWorkday,
+  isDayDue,
+  findUnconfirmedBreakDays, // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
+  type PresenceEntry,
+  type PresenceLeave,
+  type PresenceAbsence,
 } from "../contexts/time-tracking"; // Phase 100B Plan 08 — T2/getRecordedWorkEntriesInRange/T4
 import {
   getOvertimeAccount,

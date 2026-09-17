@@ -1,20 +1,20 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../timezone";
-import { getEffectiveSchedule } from "../../time-tracking/api/time-entries";
 import { getHolidays, STATE_MAP } from "../../platform";
 import { periodStartWindow } from "../snapshot-period";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
 import { closeEmployeeMonth } from "../close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { findMissingWorkdays } from "../find-missing-workdays"; // Phase 76.26 — schedule-model-aware gap detector
-import { findUnconfirmedBreakDays } from "../../time-tracking/find-unconfirmed-break-days"; // Phase 92 Plan 04 — BREAK-05 single source of truth
 import { getCarryOverBase } from "../carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
 import {
   getWorkedEntriesInRange,
   getValidWorkedEntriesInRange,
   lockEntriesForMonth,
-} from "../../time-tracking"; // Phase 100B Plan 08 — T2/T1/T7
+  getEffectiveSchedule,
+  findUnconfirmedBreakDays, // Phase 92 Plan 04 — BREAK-05 single source of truth
+} from "../../time-tracking"; // Phase 100B Plan 08 — T2/T1/T7; Phase 101B wave 8 merged in
 import {
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
   getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1

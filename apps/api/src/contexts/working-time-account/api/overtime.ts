@@ -1,7 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../../../middleware/auth";
-import { getEffectiveSchedule } from "../../time-tracking/api/time-entries";
 import {
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
@@ -15,10 +14,6 @@ import { fetchCloseMonthData } from "../close-month-data"; // PERF-V1814-01
 import { periodStartWindow, isPeriodStartInMonth } from "../snapshot-period";
 import { closeEmployeeMonth } from "../close-employee-month"; // Phase 76.26 — shared saldo core
 import { findMissingWorkdays } from "../find-missing-workdays"; // Phase 76.26 — gap detector
-import {
-  unconfirmedDaysFromEntries,
-  findUnconfirmedBreakDays,
-} from "../../time-tracking/find-unconfirmed-break-days"; // Phase 92 — BREAK-05 unconfirmed Pflichtpause gate
 import { computeMonthSaldo } from "../month-saldo"; // §615 Team-Zeiten display fix
 import { getCarryOverBase } from "../carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { recalculateSnapshots } from "../recalculate-snapshots"; // Phase 99 (OB-03) — full-history re-thread
@@ -27,7 +22,10 @@ import {
   getValidWorkedEntriesInRange,
   lockEntriesForMonth,
   unlockEntriesForMonth,
-} from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7/T8
+  getEffectiveSchedule,
+  unconfirmedDaysFromEntries,
+  findUnconfirmedBreakDays,
+} from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7/T8; Phase 101B wave 8 merged in
 import {
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
   getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1

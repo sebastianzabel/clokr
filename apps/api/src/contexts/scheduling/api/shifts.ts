@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { isAvailabilityEnabled } from "../tenant-availability";
-import { getEffectiveBreakDuration } from "../../time-tracking/break-effective";
+import { getEffectiveBreakDuration } from "../../time-tracking"; // Phase 101B (Issue #101, wave 8)
 import { classifyLeaveTypeCode, type AvailabilityBucket } from "../shift-availability"; // Phase 98 (T3, plan 03) — the two classifiers' new home
 import { getHolidays, STATE_MAP, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../../platform";
 import {

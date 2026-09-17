@@ -15,7 +15,6 @@
  * Live path (P4, time-entries.ts) remains for SNAP-03 (76.27).
  */
 import { FastifyInstance } from "fastify";
-import { getEffectiveSchedule } from "../time-tracking/api/time-entries";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
 import { getHolidays, STATE_MAP } from "../platform";
 import { closeEmployeeMonth } from "./close-employee-month"; // Phase 76.26 — shared pure saldo core
@@ -24,7 +23,7 @@ import { computeInjectedDelta } from "./saldo-chain-integrity"; // Phase 98 — 
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { isSnapshotLocked } from "./snapshot-lock"; // Phase 99 (OB-03/D-09) — immutability after lock
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
-import { getValidWorkedEntriesInRange } from "../time-tracking"; // Phase 100B Plan 08 — T1
+import { getValidWorkedEntriesInRange, getEffectiveSchedule } from "../time-tracking"; // Phase 100B Plan 08 — T1; Phase 101B wave 8 merged in
 import {
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
   getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1

@@ -45,7 +45,7 @@
 
 import { findMissingWorkdays, type WorkdayGap } from "./find-missing-workdays";
 import { calcShiftBasedSaldo } from "./shift-based-saldo";
-import { getEffectiveBreakDuration } from "../time-tracking/break-effective";
+import { getEffectiveBreakDuration } from "../time-tracking"; // Phase 101B (Issue #101, wave 8)
 import {
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
