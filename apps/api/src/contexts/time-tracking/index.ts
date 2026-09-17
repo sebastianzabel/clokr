@@ -50,3 +50,13 @@ export {
   deletePresenceDevice,
   type CreatePresenceDeviceData,
 } from "./facade/presence-devices";
+
+// ── ArbZG §4 break-constant values (issue #246, E-6) ─────────────────────────────────────────
+// Declared public: a constant carries no query semantics, no soft-delete guard, no tenant scope
+// — the number itself IS the invariant, so a value re-export needs no facade function around it.
+export {
+  ARBZG_FLOOR_OVER_6H,
+  ARBZG_FLOOR_OVER_9H,
+  BREAK_MAX_OVER_6H,
+  BREAK_MAX_OVER_9H,
+} from "./break-constants";

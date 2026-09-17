@@ -11,20 +11,20 @@ import {
   snapToMonthFirstUtc,
 } from "../month-first-date";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
-import { DEFAULT_MISSING_ENTRIES_DAYS } from "../../working-time-account/missing-entries-window";
+import { DEFAULT_MISSING_ENTRIES_DAYS } from "../../working-time-account"; // issue #246, E-6
 import { getShiftsInRange, cancelOrphanShifts } from "../../scheduling"; // Phase 100B Plan 05 — S1/S3
 import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
   BREAK_MAX_OVER_6H,
   BREAK_MAX_OVER_9H,
-} from "../../time-tracking/break-constants";
+} from "../../time-tracking"; // issue #246, E-6
 import {
   BS_DAILY_MIN_BOUND,
   BS_DAILY_MAX_BOUND,
   BS_BLOCK_WEEKLY_MIN_BOUND,
   BS_BLOCK_WEEKLY_MAX_BOUND,
-} from "../../absence/vocational-school-constants";
+} from "../../absence"; // issue #246, E-6
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
