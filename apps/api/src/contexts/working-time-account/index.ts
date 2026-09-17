@@ -100,5 +100,15 @@ export { closeEmployeeMonth } from "./close-employee-month";
 export { fetchCloseMonthData } from "./close-month-data";
 // Phase 101B plan 04 moved these here out of time-tracking/api/time-entries.ts (Arbeitszeitkonto
 // subject matter in a Zeiterfassung route file — owner Nebenbefund, measured cycle-neutral).
-export { updateOvertimeAccount, computeOvertimeBalanceBreakdown } from "./overtime-balance";
+// `computeOvertimeBalanceHours` stayed off this surface through waves 5-8 deliberately (no
+// production caller outside time-entries.ts's own forwarding re-export needed it yet) — wave 9
+// (Issue #101, the phase's closing wave) closes that loop: time-entries.ts's own forwarding
+// import is itself a real, extant cross-context need (time-tracking consuming
+// working-time-account), so it now goes through this index like its two siblings, and the last
+// deep import in the tree disappears rather than becoming a seventh register exception.
+export {
+  updateOvertimeAccount,
+  computeOvertimeBalanceBreakdown,
+  computeOvertimeBalanceHours,
+} from "./overtime-balance";
 export type { OvertimeBalanceBreakdown } from "./overtime-balance";
