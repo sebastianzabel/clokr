@@ -5,8 +5,19 @@
  * and creates 5 realistic employees with time entries, leave requests,
  * and absences from 2026-01-01 through 2026-04-10 (last workday).
  *
+ * Hard-deletes TimeEntry/LeaveRequest/Absence/SaldoSnapshot/Employee/User rows for every
+ * non-admin employee, AND (:397-412) for any OTHER tenant whose employees collide by email —
+ * exactly the models CLAUDE.md § Audit-Proof forbids hard-deleting. This is a development-only
+ * reset tool, never a production maintenance script (GH #213). The refusal gate below is a
+ * module-level check (not inside main()) so it runs before any Prisma/pg call is even
+ * constructed, and it does NOT live behind an --confirm argv flag the way
+ * apps/api/scripts/reset-test-databases.ts does — an accidental bare invocation against a
+ * production DATABASE_URL must fail immediately, not require the caller to have additionally
+ * forgotten a flag.
+ *
  * Run:
  *   DATABASE_URL="postgresql://clokr:password@localhost:5432/clokr" \
+ *   CONFIRM_RESET_DEMO=yes \
  *   pnpm --filter @clokr/db tsx src/reset-demo.ts
  */
 
@@ -14,6 +25,35 @@ import { PrismaClient } from "../generated/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import bcrypt from "bcryptjs";
+
+function fatal(message: string): never {
+  console.error(message);
+  process.exit(1);
+}
+
+// ── Refusal gate (GH #213) — evaluated at import time, before the pool/client below ever
+// opens a connection or issues a query. Two independent conditions, both required:
+//   1. NODE_ENV must not be "production" — this is a development-only reset tool.
+//   2. CONFIRM_RESET_DEMO=yes must be set explicitly — a bare accidental invocation (e.g. a
+//      copy-pasted command missing the env var) must not silently wipe non-admin data.
+// Mirrors the NODE_ENV check in apps/api/scripts/reset-test-databases.ts; does not reuse its
+// --confirm argv pattern because that script's confirm flag only gates its OPT-IN
+// --prune-orphans path, while this script's destructive behavior is its ONLY path.
+if (process.env.NODE_ENV === "production") {
+  fatal(
+    'reset-demo: REFUSED — NODE_ENV is "production". This script hard-deletes TimeEntry, ' +
+      "LeaveRequest, Absence, SaldoSnapshot and Employee rows (see the file header) and must " +
+      "never run against production data (CLAUDE.md § Audit-Proof forbids hard-deleting these " +
+      "models).",
+  );
+}
+if (process.env.CONFIRM_RESET_DEMO !== "yes") {
+  fatal(
+    "reset-demo: REFUSED — missing confirmation. This script deletes ALL non-admin employees " +
+      "(and their time entries, leave requests, absences, saldo snapshots) plus any other " +
+      "tenant's employees that collide by email. Re-run with CONFIRM_RESET_DEMO=yes to proceed.",
+  );
+}
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool as any);
