@@ -1,0 +1,13 @@
+{
+  "registerSource": "docs/adr/0001-abweichungen.md Eintrag H",
+  "exceptions": [
+    {
+      "id": "composition-root",
+      "file": "src/app.ts",
+      "wholeFile": true,
+      "expectedCount": 45,
+      "reason": "Composition root. Owner decision 2026-09-17 (Form C, CONTEXT.md D-01): app.ts registers every route module of every context; routing them through the five index.ts would force ~70 re-exports including every route registrar and turn import cycles into a real question. Named as ONE exception, not as a bucket.",
+      "disappearsIn": "Never by design — app.ts is the composition root. Re-open only if the routing shape itself changes."
+    }
+  ]
+}
