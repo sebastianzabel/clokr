@@ -24,8 +24,11 @@ import {
   resolveRetroactiveWindow,
   type GeneratorResult,
 } from "../vocational-school-generator";
-import { getTenantTimezone, monthRangeUtc } from "../../working-time-account/timezone";
-import { isMonthClosed } from "../../working-time-account"; // Phase 100B Plan 07 — W1
+import {
+  isMonthClosed, // Phase 100B Plan 07 — W1
+  getTenantTimezone,
+  monthRangeUtc,
+} from "../../working-time-account"; // Phase 101B
 
 const previewQuerySchema = z.object({
   weeks: z.coerce.number().int().min(1).max(26).optional(),

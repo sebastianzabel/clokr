@@ -2,9 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { LeaveRequestStatus, Prisma } from "@clokr/db";
 import { requireAuth, requireRole } from "../../../middleware/auth";
-import { getTenantTimezone, monthRangeUtc } from "../../working-time-account/timezone";
 import { generateICal, addOneDay, type ICalEvent } from "../ical";
-import { recalculateSnapshots } from "../../working-time-account/recalculate-snapshots";
 import { splitDaysAcrossYears, calculateProRataVacation } from "../vacation-calc"; // Phase 107 (D-04/D-09)
 import { selfHealUsedDays, loadVacationTypeMeta } from "../leave-self-heal";
 import { computeAffectedMonths } from "../correction-lock";
@@ -23,13 +21,6 @@ import {
   resolveWorkDays,
   recalculateCarryOver,
 } from "../leave-days";
-import {
-  updateOvertimeAccount,
-  computeOvertimeBalanceBreakdown,
-  type OvertimeBalanceBreakdown,
-} from "../../time-tracking/api/time-entries";
-import { getConfirmedCarryOver } from "../../working-time-account/confirmed-saldo"; // Phase 97-06
-import { loadNegativeBalanceTolerance } from "../../working-time-account/negative-balance-tolerance"; // Phase 100
 import { formatMinutesHM } from "../format-hm"; // Phase 100
 import { shiftNettoMinutes, sumShiftNettoMinutes } from "../../scheduling/shift-netto"; // Phase 100 (OTC-04)
 import { getShiftsInRange, flagShiftsConflictingWithLeave } from "../../scheduling"; // Phase 100B Plan 05 — S1/S2
@@ -38,7 +29,15 @@ import {
   bookOvertimeCompensation,
   reverseOvertimeCompensation,
   isMonthClosed,
-} from "../../working-time-account"; // Phase 100B Plan 06 — W8/W11/W12; Plan 07 — W1
+  getTenantTimezone,
+  monthRangeUtc,
+  recalculateSnapshots,
+  getConfirmedCarryOver,
+  loadNegativeBalanceTolerance,
+  updateOvertimeAccount,
+  computeOvertimeBalanceBreakdown,
+  type OvertimeBalanceBreakdown,
+} from "../../working-time-account"; // Phase 100B Plan 06 — W8/W11/W12; Plan 07 — W1; Phase 101B
 import { auditReasonSchema } from "../../platform/audit-reason"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06

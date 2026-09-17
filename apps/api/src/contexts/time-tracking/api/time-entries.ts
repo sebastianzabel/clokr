@@ -6,13 +6,6 @@ import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../arbzg";
 import { checkJArbSchG } from "../../absence/jarbschg";
 import { getEffectiveBreakDuration } from "../break-effective";
-import {
-  getTenantTimezone,
-  todayInTz,
-  dateStrInTz,
-  timeStrInTz,
-  monthRangeUtc,
-} from "../../working-time-account/timezone";
 import { DISPLAY_NAME } from "../../absence/leave-type"; // Phase 100b Plan 14 (D-05) — renders hasApprovedLeaveOnDate's code
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { resolveClockEvent } from "../../../services/clock/resolver";
@@ -25,7 +18,17 @@ import {
   computeEntryAgeInDays,
 } from "../retro-config"; // Phase 76.29 — RETRO-01 window guard
 import { auditReasonSchema, AUDIT_REASON_REQUIRED } from "../../platform/audit-reason"; // Quick 260824-cjd
-import { getOvertimeAccount } from "../../working-time-account"; // Phase 100B Plan 06 — W8/W14; Plan 07 — W3 merge, W1
+import {
+  getOvertimeAccount, // Phase 100B Plan 06 — W8/W14; Plan 07 — W3 merge, W1
+  getTenantTimezone,
+  todayInTz,
+  dateStrInTz,
+  timeStrInTz,
+  monthRangeUtc,
+  updateOvertimeAccount,
+  computeOvertimeBalanceBreakdown,
+  type OvertimeBalanceBreakdown,
+} from "../../working-time-account"; // Phase 101B
 // Phase 101B (Issue #101, D-11 Welle time-tracking): checkOverlap/checkOneEntryPerDay/
 // validateTimeEntryInvariants/getEffectiveSchedule lifted out of this file into
 // ../entry-invariants.ts; the overtime pair lifted into working-time-account/overtime-balance.ts.
@@ -38,12 +41,7 @@ import {
   validateTimeEntryInvariants,
   getEffectiveSchedule,
 } from "../entry-invariants";
-import {
-  updateOvertimeAccount,
-  computeOvertimeBalanceBreakdown,
-  computeOvertimeBalanceHours,
-  type OvertimeBalanceBreakdown,
-} from "../../working-time-account/overtime-balance";
+import { computeOvertimeBalanceHours } from "../../working-time-account/overtime-balance"; // Phase 101B — not on the public surface (no external caller needs it), stays deep
 
 export { validateTimeEntryInvariants, getEffectiveSchedule };
 export { updateOvertimeAccount, computeOvertimeBalanceBreakdown, computeOvertimeBalanceHours };

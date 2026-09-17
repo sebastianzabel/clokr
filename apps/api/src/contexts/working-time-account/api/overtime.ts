@@ -1,12 +1,12 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../../../middleware/auth";
+import { getEffectiveSchedule } from "../../time-tracking/api/time-entries";
 import {
-  getEffectiveSchedule,
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
   type OvertimeBalanceBreakdown,
-} from "../../time-tracking/api/time-entries";
+} from "../overtime-balance"; // Phase 101B — same-context sibling now that the pair moved here
 import { getConfirmedCarryOver } from "../confirmed-saldo"; // Phase 97-01
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "../timezone";

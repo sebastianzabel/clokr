@@ -1,11 +1,13 @@
 import { PrismaClient } from "@clokr/db";
 import { fromZonedTime } from "date-fns-tz";
-import { getTenantTimezone, dateStrInTz, getDayOfWeekInTz } from "../working-time-account/timezone";
 import { BS_DAILY_DEFAULT_MIN } from "../absence/vocational-school-constants";
 import {
+  getTenantTimezone,
+  dateStrInTz,
+  getDayOfWeekInTz,
   countBsDaysInIsoWeek,
   getVocationalSchoolMinutesForDate,
-} from "../working-time-account/vocational-school-saldo";
+} from "../working-time-account"; // Phase 101B
 import { hasVocationalSchoolDay, getVocationalSchoolDays } from "../absence"; // Phase 100B Plan 12 — A6
 
 export interface ArbZGWarning {

@@ -26,7 +26,7 @@
  */
 
 import type { PrismaClient } from "@clokr/db";
-import { dateStrInTz } from "../working-time-account/timezone";
+import { dateStrInTz } from "../working-time-account"; // Phase 101B
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
