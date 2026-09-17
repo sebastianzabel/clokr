@@ -71,12 +71,31 @@
  *                         `lint:import-targets`'s specifier count under the wave's merge rule (one
  *                         import statement per (file, target) pair, merged into an existing index
  *                         import when the file already has one).
+ *   --cycles             Import-cycle check (Plan 03, D-08). Over the REAL graph by default; add
+ *                         `--project <ctx>[,<ctx>...]` (or `all`) to run it over the PROJECTED
+ *                         graph instead — the graph as it would look after the named contexts
+ *                         convert (every workload deep import into that context becomes an
+ *                         `A -> index.ts` + `index.ts -> deepFile` pair; an EXCEPTED deep import
+ *                         stays deep and gets no re-export edge at all — see the module docblock's
+ *                         "correction you must not repeat"). Add `--extract-sim <name>` (one of
+ *                         `none`, `option-d-tt`, `option-d-wta`, `option-d-tt+anon`,
+ *                         `option-d-wta+anon`) to additionally simulate lifting the eight
+ *                         cross-context-consumed symbols out of the two route files into leaf
+ *                         modules (Option D). Prints
+ *                         `cycles: <k> component(s), <m> module(s) in cycles`, each component's
+ *                         members, and which `contexts/*\/index.ts` files sit inside it. Combine
+ *                         with `--check <n>` to gate by EQUALITY on `<m>` (never "exit 1 on any
+ *                         cycle" — a PREDICTED cycle count must be able to pass). Combine with
+ *                         `--paths` to print the shortest `index -> ... -> index` path for every
+ *                         still-mutually-reachable ordered context pair — this is what turns "a
+ *                         cycle remains" into "this module carries it".
  *
  * Exit codes:
- *   0 — summary/--rows/--by-target/--forms/--predict printed, or --check matched
+ *   0 — summary/--rows/--by-target/--forms/--predict/--cycles printed, or --check matched
  *   1 — the exceptions file is invalid (bad shape, short/missing reason, stale entry, count
- *       mismatch on a wholeFile entry), an unknown target was passed to --predict, or --check did
- *       not match
+ *       mismatch on a wholeFile entry), an unknown target was passed to --predict, an unknown
+ *       context was passed to --project, an unknown scenario was passed to --extract-sim, or
+ *       --check did not match
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
@@ -606,6 +625,387 @@ export function predict(
   };
 }
 
+// ── Cycle detection (Plan 03, D-08) ─────────────────────────────────────────────────────────────
+
+/**
+ * `src/contexts/<ctx>/index.ts`, repo-relative-to-`apps/api` — the graph-node convention every
+ * function below shares with `BoundaryImport.file`/`.target`.
+ */
+function contextIndexPath(ctx: BoundaryContext): string {
+  return `src/contexts/${ctx}/index.ts`;
+}
+
+/**
+ * The REAL production import graph today: every production `.ts` file under `apiRoot/src`
+ * (`__tests__`/`*.test.ts` excluded, same scope as `scanApiRoot`) as a node, with an edge to every
+ * OTHER file it resolves a relative specifier to — any of the four forms, via the same
+ * `extractSpecifiers`/`resolveSpecifier` primitives `scanApiRoot` uses, but UNFILTERED by context:
+ * this graph includes same-context edges and already-legal index-import edges too, because a
+ * cycle can be completed by either kind (a foreign index re-exporting a file that itself imports
+ * something — legally — back into the first context). `apps/api/scripts/**` is out of scope
+ * (D-06's own scope) — only `apiRoot/src` is walked.
+ */
+export function buildModuleGraph(apiRoot: string): Map<string, Set<string>> {
+  const graph = new Map<string, Set<string>>();
+  for (const relFile of discoverProductionFiles(apiRoot)) {
+    const absFile = join(apiRoot, relFile);
+    const text = readFileSync(absFile, "utf8");
+    const sourceFile = ts.createSourceFile(absFile, text, ts.ScriptTarget.Latest, true);
+    const edges = graph.get(relFile) ?? new Set<string>();
+    for (const occ of extractSpecifiers(sourceFile, relFile)) {
+      const resolved = resolveSpecifier(absFile, occ.specifier);
+      if (!resolved) continue; // unresolvable specifiers are lint:import-targets's problem
+      const resolvedRel = relative(apiRoot, resolved).split(sep).join("/");
+      if (!resolvedRel.startsWith("src/")) continue; // outside production src — not a graph node
+      if (resolvedRel === relFile) continue; // no self-loop from resolving to one's own file
+      edges.add(resolvedRel);
+    }
+    graph.set(relFile, edges);
+  }
+  return graph;
+}
+
+/**
+ * One simulated code move: `from` (a real file) stops being an `index.ts`'s re-export source for
+ * the named `symbols` (or ALL of `from`'s deep-imported symbols, if `symbols` is omitted); `leaf`
+ * (a synthetic path — need not exist on disk) takes its place. `leaf`'s OWN context — the path
+ * segment right after `src/contexts/` — is that leaf's placement, which may differ from `from`'s
+ * owning context (this is how the overtime leaf's placement, time-tracking vs
+ * working-time-account, is expressed: same `from`, same `symbols`, different `leaf` path).
+ * `crossContextTargets` are the FOREIGN contexts the extracted body still reaches — turned into
+ * `leaf -> <ctx>/index.ts` edges, never edges to a deep file (new code follows AC-2 too).
+ */
+export interface ExtractionSpec {
+  from: string;
+  leaf: string;
+  crossContextTargets: readonly BoundaryContext[];
+  /** Restrict this spec to a subset of `from`'s deep-imported symbols. Omit to claim all of them.
+   * Needed because a single import statement can pull a symbol destined for ONE leaf and a symbol
+   * destined for ANOTHER (`working-time-account/api/overtime.ts` imports both a schedule symbol
+   * and an overtime symbol from the same `time-entries.ts` line under Option D). */
+  symbols?: readonly string[];
+}
+
+export interface ProjectOptions {
+  extract?: readonly ExtractionSpec[];
+  /** Pre-validated exceptions document to honour. Defaults to loading + validating the real
+   * `context-boundary-import-exceptions.json` (CLI use) — a fixture-tree caller supplies a
+   * synthetic document instead, since a fixture tree has no matching exceptions file on disk. */
+  exceptionsDoc?: ExceptionsDocument;
+}
+
+/**
+ * The graph as it will look after `contexts` are CONVERTED. For every workload deep-import row
+ * whose TARGET is one of `contexts`: the importer's edge to the deep file is replaced by an edge
+ * to the target context's `index.ts`, and `index.ts` gets a re-export edge to the deep file — UNLESS
+ * the row is EXCEPTED (per `exceptionsDoc`), in which case it is skipped entirely: the importer's
+ * original edge is left untouched and NO re-export edge is created. Getting this wrong — routing
+ * an excepted deep import through the index anyway — is the exact mistake the first hand-simulation
+ * made: it forced `app.ts`'s 45 exempt deep imports into the re-export set and reported 49 modules
+ * in cycles where the correct figure is 29 (see the module docblock).
+ *
+ * `opts.extract` additionally replaces a named "from" file's re-export edge with one or more leaf
+ * edges (Option D) — see `ExtractionSpec`'s own docblock.
+ */
+export function buildProjectedGraph(
+  apiRoot: string,
+  contexts: readonly BoundaryContext[],
+  opts: ProjectOptions = {},
+): Map<string, Set<string>> {
+  const graph = buildModuleGraph(apiRoot);
+  const scan = scanApiRoot(apiRoot);
+
+  let doc = opts.exceptionsDoc;
+  if (!doc) {
+    const repoRoot = join(apiRoot, "..", "..");
+    const validated = validateExceptionsDocument(loadExceptionsRaw(repoRoot), scan.deepImports);
+    if (!validated.ok) {
+      throw new Error(
+        `buildProjectedGraph: ${EXCEPTIONS_FILE} is invalid: ${validated.errors.join("; ")}`,
+      );
+    }
+    doc = validated.doc;
+  }
+
+  const contextSet = new Set(contexts);
+
+  const specsByFrom = new Map<string, ExtractionSpec[]>();
+  for (const spec of opts.extract ?? []) {
+    const list = specsByFrom.get(spec.from) ?? [];
+    list.push(spec);
+    specsByFrom.set(spec.from, list);
+  }
+
+  function addEdge(from: string, to: string): void {
+    const set = graph.get(from) ?? new Set<string>();
+    set.add(to);
+    graph.set(from, set);
+  }
+
+  for (const row of scan.deepImports) {
+    if (!contextSet.has(row.target)) continue;
+    if (isExcepted(row, doc)) continue; // stays deep — the regression test's whole point
+
+    const targetFile = `src/contexts/${row.target}/${row.targetModule}`;
+    graph.get(row.file)?.delete(targetFile);
+
+    const specs = specsByFrom.get(targetFile);
+    if (!specs || specs.length === 0) {
+      const targetIndex = contextIndexPath(row.target);
+      addEdge(row.file, targetIndex);
+      addEdge(targetIndex, targetFile);
+      continue;
+    }
+
+    // Split the row's symbols across whichever spec(s) claim them. A spec's LEAF may live in a
+    // DIFFERENT context than `row.target` (Option D's placement move) — the IMPORTER routes
+    // straight to the LEAF's OWN context index, never to the symbol's original owning context,
+    // because that is what a real caller does once the function has physically moved (see the
+    // module docblock's `platform/api/imports.ts` example). Anything left unclaimed falls back
+    // to a direct re-export of the original file, so an uncovered symbol stays VISIBLE in the
+    // graph rather than silently vanishing.
+    const claimed = new Set<string>();
+    let coveredEverything = false; // a claims-everything spec matched — no fallback, ever,
+    // regardless of row.symbols content (a dynamic import / vi.mock / typeof-import row always
+    // has symbols === [], which must NOT be mistaken for "nothing claimed" when the whole FILE
+    // moved into the leaf)
+    for (const spec of specs) {
+      const claimsEverything = !spec.symbols;
+      const matches = claimsEverything || row.symbols.some((s) => spec.symbols!.includes(s));
+      if (!matches) continue;
+      if (claimsEverything) coveredEverything = true;
+      for (const s of spec.symbols ?? row.symbols) claimed.add(s);
+      const leafContext = spec.leaf.split("/")[2] as BoundaryContext;
+      const leafIndex = contextIndexPath(leafContext);
+      addEdge(row.file, leafIndex);
+      addEdge(leafIndex, spec.leaf);
+      for (const foreign of spec.crossContextTargets) addEdge(spec.leaf, contextIndexPath(foreign));
+    }
+    const uncovered = row.symbols.filter((s) => !claimed.has(s));
+    if (!coveredEverything && (uncovered.length > 0 || row.symbols.length === 0)) {
+      const targetIndex = contextIndexPath(row.target);
+      addEdge(row.file, targetIndex);
+      addEdge(targetIndex, targetFile);
+    }
+  }
+
+  return graph;
+}
+
+/** Tarjan's algorithm. Returns only components of size > 1 (an acyclic graph returns `[]`),
+ * largest first, each component's own members sorted for stable output. */
+export function findImportCycles(graph: Map<string, Set<string>>): string[][] {
+  let counter = 0;
+  const indices = new Map<string, number>();
+  const lowlink = new Map<string, number>();
+  const onStack = new Set<string>();
+  const stack: string[] = [];
+  const components: string[][] = [];
+
+  function strongConnect(v: string): void {
+    indices.set(v, counter);
+    lowlink.set(v, counter);
+    counter++;
+    stack.push(v);
+    onStack.add(v);
+
+    for (const w of graph.get(v) ?? []) {
+      if (!indices.has(w)) {
+        strongConnect(w);
+        lowlink.set(v, Math.min(lowlink.get(v)!, lowlink.get(w)!));
+      } else if (onStack.has(w)) {
+        lowlink.set(v, Math.min(lowlink.get(v)!, indices.get(w)!));
+      }
+    }
+
+    if (lowlink.get(v) === indices.get(v)) {
+      const component: string[] = [];
+      let w: string;
+      do {
+        w = stack.pop()!;
+        onStack.delete(w);
+        component.push(w);
+      } while (w !== v);
+      if (component.length > 1) components.push(component.sort());
+    }
+  }
+
+  for (const node of graph.keys()) {
+    if (!indices.has(node)) strongConnect(node);
+  }
+
+  return components.sort((a, b) => b.length - a.length || a[0].localeCompare(b[0]));
+}
+
+/** Modules in components of size > 1 — `findImportCycles` already filters to those, so this is
+ * their combined size. A separate function per D-08's own CLI shape (`--cycles` prints it). */
+export function cycleModuleCount(components: readonly string[][]): number {
+  return components.filter((c) => c.length > 1).reduce((sum, c) => sum + c.length, 0);
+}
+
+/** Breadth-first shortest path from `from` to `to` (inclusive of both ends), or `null` if `to` is
+ * unreachable. Used by `--paths` to name the module CARRYING a residual cross-context edge. */
+export function shortestPath(
+  graph: Map<string, Set<string>>,
+  from: string,
+  to: string,
+): string[] | null {
+  if (from === to) return [from];
+  const visited = new Set<string>([from]);
+  const parent = new Map<string, string>();
+  const queue: string[] = [from];
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    for (const next of graph.get(cur) ?? []) {
+      if (visited.has(next)) continue;
+      visited.add(next);
+      parent.set(next, cur);
+      if (next === to) {
+        const path: string[] = [to];
+        let p = cur;
+        while (p !== from) {
+          path.unshift(p);
+          p = parent.get(p)!;
+        }
+        path.unshift(from);
+        return path;
+      }
+      queue.push(next);
+    }
+  }
+  return null;
+}
+
+export function renderCycleComponents(components: readonly string[][]): string {
+  return components
+    .map((c, i) => {
+      const indexFiles = c.filter((f) => f.endsWith("/index.ts"));
+      const lines = [`  component ${i + 1} (${c.length} module(s)):`, ...c.map((f) => `    ${f}`)];
+      lines.push(
+        `    index.ts files inside: ${indexFiles.length > 0 ? indexFiles.join(", ") : "(none)"}`,
+      );
+      return lines.join("\n");
+    })
+    .join("\n");
+}
+
+/** For every ordered pair of `contexts`, the shortest `index -> ... -> index` path — one line per
+ * still-mutually-reachable pair. This is `--paths`'s whole point: naming which module carries a
+ * residual edge, not merely that one exists. */
+export function renderReachablePaths(
+  graph: Map<string, Set<string>>,
+  contexts: readonly BoundaryContext[],
+): string {
+  const lines: string[] = [];
+  for (const a of contexts) {
+    for (const b of contexts) {
+      if (a === b) continue;
+      const path = shortestPath(graph, contextIndexPath(a), contextIndexPath(b));
+      if (path) lines.push(`${a} -> ${b}: ${path.join(" -> ")}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+// ── Named extraction scenarios (Option D) — literal table, reproducible by `--extract-sim` ─────
+//
+// The two route files' full cross-context closure, verified against the source (101B-WORKLIST.md
+// §4, cross-checked against apps/api/src/contexts/absence/api/leave.ts and
+// apps/api/src/contexts/time-tracking/api/time-entries.ts directly). `time-tracking/api/
+// time-entries.ts` is split into TWO leaves, not one — this is the owner's own explicit design
+// (GitHub Issue #101, "Nachtrag zur Zyklenmessung", "Zwei Funde" #2: "`validateTimeEntryInvariants`
+// braucht nur das Arbeitszeitkonto; `computeOvertimeBalanceBreakdown` erreicht vier fremde
+// Kontexte. Ein gemeinsames Modul zöge die ganze Überstunden-Hülle in jeden Konsumenten der reinen
+// Invariantenprüfung." — a single combined leaf would drag the whole overtime shell into every
+// caller of the pure invariant check). A one-leaf simplification was tried first here and
+// discarded: it reproduces the pinned 26/20 exactly, but only by NOT modelling this owner-mandated
+// split — see 101B-ZYKLEN-BEFUND.md §2a for the full finding this produced (27/21, not 26/20).
+//   absence/api/leave.ts:      resolveLeaveDays, getHolidayMap, deductVacationDays,
+//                              reverseVacationDays  (need: platform, scheduling)
+//   time-tracking/api/time-entries.ts, LEAF 1 (schedule helpers, never moves):
+//                              getEffectiveSchedule (need: none), validateTimeEntryInvariants
+//                              (need: working-time-account)
+//   time-tracking/api/time-entries.ts, LEAF 2 (the overtime leaf, placement C vs D):
+//                              updateOvertimeAccount (need: working-time-account),
+//                              computeOvertimeBalanceBreakdown (need: absence, platform,
+//                              scheduling, working-time-account, and time-tracking's own
+//                              break-effective.ts if the leaf moves OUT of time-tracking)
+
+const ABSENCE_LEAVE_DAYS_LEAF: ExtractionSpec = {
+  from: "src/contexts/absence/api/leave.ts",
+  leaf: "src/contexts/absence/leave-days.ts",
+  symbols: ["resolveLeaveDays", "getHolidayMap", "deductVacationDays", "reverseVacationDays"],
+  crossContextTargets: ["platform", "scheduling"],
+};
+
+/** LEAF 1: the schedule-helpers leaf. Never moves — the owner's "Zwei Funde" #2 only discusses
+ * moving THE OVERTIME PAIR; this leaf stays in time-tracking under every scenario. */
+const TIME_TRACKING_SCHEDULE_LEAF: ExtractionSpec = {
+  from: "src/contexts/time-tracking/api/time-entries.ts",
+  leaf: "src/contexts/time-tracking/schedule-helpers.ts",
+  symbols: ["getEffectiveSchedule", "validateTimeEntryInvariants"],
+  crossContextTargets: ["working-time-account"],
+};
+
+/** LEAF 2, placement C (§4): the overtime leaf stays in time-tracking. `type
+ * OvertimeBalanceBreakdown` travels with `computeOvertimeBalanceBreakdown` (its return type,
+ * re-exported alongside it at every one of its three call sites, 101B-WORKLIST.md §3
+ * "time-tracking" rows); leaving it uncovered would fall back to a direct re-export of
+ * `api/time-entries.ts`, silently un-doing the extraction it is supposed to simulate. */
+const OVERTIME_LEAF_TT: ExtractionSpec = {
+  from: "src/contexts/time-tracking/api/time-entries.ts",
+  leaf: "src/contexts/time-tracking/overtime-leaf.ts",
+  symbols: [
+    "updateOvertimeAccount",
+    "computeOvertimeBalanceBreakdown",
+    "type OvertimeBalanceBreakdown",
+  ],
+  crossContextTargets: ["absence", "platform", "scheduling", "working-time-account"],
+};
+
+/** LEAF 2, placement D (recommended, §4): the overtime leaf moves to working-time-account —
+ * time-tracking becomes a FOREIGN target now (`break-effective.ts`), working-time-account is the
+ * leaf's own context (removed from its own cross-context-target list). */
+const OVERTIME_LEAF_WTA: ExtractionSpec = {
+  from: "src/contexts/time-tracking/api/time-entries.ts",
+  leaf: "src/contexts/working-time-account/overtime-leaf.ts",
+  symbols: [
+    "updateOvertimeAccount",
+    "computeOvertimeBalanceBreakdown",
+    "type OvertimeBalanceBreakdown",
+  ],
+  crossContextTargets: ["absence", "platform", "scheduling", "time-tracking"],
+};
+
+/** The "+anon" leaf (variants E/F): NOT_ANONYMIZED_EMPLOYEE_WHERE is a bare constant — moving it
+ * into its own leaf gives it ZERO outgoing edges, instead of dragging in anonymize.ts's own real
+ * (and entirely legal) imports of `../time-tracking` and `../absence` — those two edges are
+ * exactly what pulls `platform` into the cyclic component under variants C/D. */
+const PLATFORM_ANONYMIZE_LEAF: ExtractionSpec = {
+  from: "src/contexts/platform/anonymize.ts",
+  leaf: "src/contexts/platform/anonymize-leaf.ts",
+  symbols: ["NOT_ANONYMIZED_EMPLOYEE_WHERE"],
+  crossContextTargets: [],
+};
+
+export const EXTRACT_SCENARIOS: Record<string, readonly ExtractionSpec[]> = {
+  none: [],
+  "option-d-tt": [ABSENCE_LEAVE_DAYS_LEAF, TIME_TRACKING_SCHEDULE_LEAF, OVERTIME_LEAF_TT],
+  "option-d-wta": [ABSENCE_LEAVE_DAYS_LEAF, TIME_TRACKING_SCHEDULE_LEAF, OVERTIME_LEAF_WTA],
+  "option-d-tt+anon": [
+    ABSENCE_LEAVE_DAYS_LEAF,
+    TIME_TRACKING_SCHEDULE_LEAF,
+    OVERTIME_LEAF_TT,
+    PLATFORM_ANONYMIZE_LEAF,
+  ],
+  "option-d-wta+anon": [
+    ABSENCE_LEAVE_DAYS_LEAF,
+    TIME_TRACKING_SCHEDULE_LEAF,
+    OVERTIME_LEAF_WTA,
+    PLATFORM_ANONYMIZE_LEAF,
+  ],
+};
+
 // ── Part B: CLI entry point ──────────────────────────────────────────────────────────────────────
 
 function run(repoRoot: string, argv: string[]): number {
@@ -633,6 +1033,69 @@ function run(repoRoot: string, argv: string[]): number {
     console.log(renderForms(result));
     return 0;
   }
+
+  if (argv.includes("--cycles")) {
+    let contextsForPaths: BoundaryContext[] = [...BOUNDARY_CONTEXTS];
+    let graph: Map<string, Set<string>>;
+
+    const projectIdx = argv.indexOf("--project");
+    if (projectIdx !== -1) {
+      const spec = argv[projectIdx + 1] ?? "";
+      const requested = spec === "all" ? [...BOUNDARY_CONTEXTS] : spec.split(",").filter(Boolean);
+      for (const c of requested) {
+        if (!isBoundaryContext(c)) {
+          console.error(`measure-context-boundary-imports: unknown --project context "${c}"`);
+          return 1;
+        }
+      }
+      contextsForPaths = requested as BoundaryContext[];
+
+      const extractIdx = argv.indexOf("--extract-sim");
+      const scenarioName = extractIdx !== -1 ? (argv[extractIdx + 1] ?? "") : "none";
+      const extract = EXTRACT_SCENARIOS[scenarioName];
+      if (!extract) {
+        console.error(
+          `measure-context-boundary-imports: unknown --extract-sim scenario "${scenarioName}" ` +
+            `(known: ${Object.keys(EXTRACT_SCENARIOS).join(", ")})`,
+        );
+        return 1;
+      }
+      graph = buildProjectedGraph(apiRoot, contextsForPaths, { extract });
+    } else {
+      graph = buildModuleGraph(apiRoot);
+    }
+
+    const components = findImportCycles(graph);
+    const moduleCount = cycleModuleCount(components);
+    console.log(
+      `[measure:boundary-imports] cycles: ${components.length} component(s), ${moduleCount} ` +
+        `module(s) in cycles`,
+    );
+    if (components.length > 0) console.log(renderCycleComponents(components));
+
+    if (argv.includes("--paths")) {
+      const pathsOutput = renderReachablePaths(graph, contextsForPaths);
+      console.log(pathsOutput.length > 0 ? pathsOutput : "(no ordered pair still reachable)");
+    }
+
+    const cyclesCheckIdx = argv.indexOf("--check");
+    if (cyclesCheckIdx !== -1) {
+      const expected = Number(argv[cyclesCheckIdx + 1]);
+      if (!Number.isInteger(expected)) {
+        console.error(`measure-context-boundary-imports: --check requires an integer argument`);
+        return 1;
+      }
+      if (moduleCount === expected) return 0;
+      console.error(
+        `measure-context-boundary-imports: --cycles --check ${expected} FAILED — actual is ` +
+          `${moduleCount} module(s) in cycles (${moduleCount > expected ? "+" : ""}` +
+          `${moduleCount - expected}).`,
+      );
+      return 1;
+    }
+    return 0;
+  }
+
   const predictIdx = argv.indexOf("--predict");
   if (predictIdx !== -1) {
     const context = argv[predictIdx + 1];

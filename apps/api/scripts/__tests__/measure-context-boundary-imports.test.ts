@@ -20,12 +20,18 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   BOUNDARY_CONTEXTS,
+  buildModuleGraph,
+  buildProjectedGraph,
   computeWorkload,
+  cycleModuleCount,
+  findImportCycles,
   isBoundaryContext,
   scanApiRoot,
+  shortestPath,
   validateExceptionsDocument,
   type BoundaryImport,
   type ExceptionsDocument,
+  type ExtractionSpec,
 } from "../measure-context-boundary-imports";
 
 const FIXTURE_ROOT = join(__dirname, "fixtures", "boundary-imports");
@@ -383,5 +389,224 @@ describe("--check is equality, not a floor", () => {
     expect(workload.length).not.toBe(n - 1);
     expect(workload.length).not.toBe(n + 1);
     expect(workload.length).toBe(n);
+  });
+});
+
+// ── Cycle detection (Plan 03, D-08) — pure-graph behavior ───────────────────────────────────────
+
+describe("findImportCycles — pure graph behavior", () => {
+  it("an acyclic graph returns []", () => {
+    const graph = new Map<string, Set<string>>([
+      ["a", new Set(["b"])],
+      ["b", new Set(["c"])],
+      ["c", new Set()],
+    ]);
+    expect(findImportCycles(graph)).toEqual([]);
+  });
+
+  it("a -> b -> a returns one component of size 2", () => {
+    const graph = new Map<string, Set<string>>([
+      ["a", new Set(["b"])],
+      ["b", new Set(["a"])],
+    ]);
+    const components = findImportCycles(graph);
+    expect(components).toHaveLength(1);
+    expect(components[0].sort()).toEqual(["a", "b"]);
+  });
+
+  it("a -> b -> c -> a plus an unrelated d -> e is exactly one component of size 3", () => {
+    const graph = new Map<string, Set<string>>([
+      ["a", new Set(["b"])],
+      ["b", new Set(["c"])],
+      ["c", new Set(["a"])],
+      ["d", new Set(["e"])],
+      ["e", new Set()],
+    ]);
+    const components = findImportCycles(graph);
+    expect(components).toHaveLength(1);
+    expect(components[0].sort()).toEqual(["a", "b", "c"]);
+  });
+
+  it("cycleModuleCount sums only components of size > 1", () => {
+    expect(
+      cycleModuleCount([
+        ["a", "b"],
+        ["c", "d", "e"],
+      ]),
+    ).toBe(5);
+    expect(cycleModuleCount([])).toBe(0);
+  });
+
+  it("shortestPath finds the direct edge, the longer path, and null when unreachable", () => {
+    const graph = new Map<string, Set<string>>([
+      ["a", new Set(["b"])],
+      ["b", new Set(["c"])],
+      ["c", new Set()],
+      ["z", new Set()],
+    ]);
+    expect(shortestPath(graph, "a", "b")).toEqual(["a", "b"]);
+    expect(shortestPath(graph, "a", "c")).toEqual(["a", "b", "c"]);
+    expect(shortestPath(graph, "a", "z")).toBeNull();
+  });
+
+  it("--cycles --check is equality, not a floor: the module count matches neither n-1 nor n+1", () => {
+    const graph = new Map<string, Set<string>>([
+      ["a", new Set(["b"])],
+      ["b", new Set(["c"])],
+      ["c", new Set(["a"])],
+    ]);
+    const n = cycleModuleCount(findImportCycles(graph));
+    expect(n).not.toBe(n - 1);
+    expect(n).not.toBe(n + 1);
+    expect(n).toBe(3);
+  });
+});
+
+// ── buildModuleGraph — real fixture files, end-to-end with findImportCycles ─────────────────────
+
+describe("buildModuleGraph over the real fixture tree", () => {
+  it("finds the existing deep.ts <-> deep.ts mutual cycle across all five contexts", () => {
+    // The fixture's own D-07 cross-context matrix (absence/deep.ts, platform/deep.ts,
+    // scheduling/deep.ts, time-tracking/deep.ts, working-time-account/deep.ts) is ALREADY a
+    // mutually-reachable ring by construction (D-07's "every context both directions") — this is
+    // a real cyclic case found in real files, not a hand-built one.
+    const graph = buildModuleGraph(FIXTURE_ROOT);
+    const components = findImportCycles(graph);
+    expect(components).toHaveLength(1);
+    expect(components[0]).toEqual(
+      [
+        "src/contexts/absence/deep.ts",
+        "src/contexts/platform/deep.ts",
+        "src/contexts/scheduling/deep.ts",
+        "src/contexts/time-tracking/deep.ts",
+        "src/contexts/working-time-account/deep.ts",
+      ].sort(),
+    );
+  });
+
+  it("the fixture's index.ts files are NOT part of that cycle (they carry no edges yet)", () => {
+    const graph = buildModuleGraph(FIXTURE_ROOT);
+    const components = findImportCycles(graph);
+    const allMembers = components.flat();
+    for (const ctx of BOUNDARY_CONTEXTS) {
+      expect(allMembers).not.toContain(`src/contexts/${ctx}/index.ts`);
+    }
+  });
+});
+
+// ── buildProjectedGraph — the -20 regression test (exceptions honoured) ─────────────────────────
+
+describe("buildProjectedGraph honours the exceptions document (the -20 regression test)", () => {
+  // src/app.ts's ONLY deep import in the fixture tree is this one, into src/contexts/absence/
+  // app-only.ts — nothing else in the fixture touches that file. This isolates the assertion:
+  // if the exception is honoured, NEITHER edge below can exist for any other reason.
+  const exceptingDoc: ExceptionsDocument = {
+    registerSource: "test",
+    exceptions: [
+      {
+        id: "composition-root",
+        file: "src/app.ts",
+        wholeFile: true,
+        expectedCount: 1,
+        reason: "Fixture stand-in for the real composition-root exception (D-01/Form C).",
+        disappearsIn: "Never by design — mirrors the real app.ts exception.",
+      },
+    ],
+  };
+  const ignoringDoc: ExceptionsDocument = { registerSource: "test", exceptions: [] };
+
+  it("an excepted deep import creates NO re-export edge, and the importer's own edge is untouched", () => {
+    const graph = buildProjectedGraph(FIXTURE_ROOT, ["absence"], { exceptionsDoc: exceptingDoc });
+    expect(graph.get("src/app.ts")?.has("src/contexts/absence/app-only.ts")).toBe(true);
+    expect(graph.get("src/app.ts")?.has("src/contexts/absence/index.ts")).toBe(false);
+    expect(
+      graph.get("src/contexts/absence/index.ts")?.has("src/contexts/absence/app-only.ts"),
+    ).toBe(false);
+  });
+
+  it("REGRESSION: ignoring the exceptions document (as the first hand-simulation did) DOES create both edges — proving the exclusion above is load-bearing, not incidental", () => {
+    const graph = buildProjectedGraph(FIXTURE_ROOT, ["absence"], { exceptionsDoc: ignoringDoc });
+    expect(graph.get("src/app.ts")?.has("src/contexts/absence/index.ts")).toBe(true);
+    expect(
+      graph.get("src/contexts/absence/index.ts")?.has("src/contexts/absence/app-only.ts"),
+    ).toBe(true);
+  });
+});
+
+// ── buildProjectedGraph — extraction (Option D simulation) ──────────────────────────────────────
+
+describe("buildProjectedGraph with an ExtractionSpec", () => {
+  const emptyExceptionsDoc: ExceptionsDocument = { registerSource: "test", exceptions: [] };
+
+  it("replaces the 'from' file's re-export edge with the leaf's own out-edges, leaving every other edge alone", () => {
+    const extract: ExtractionSpec[] = [
+      {
+        from: "src/contexts/absence/deep.ts",
+        leaf: "src/contexts/absence/synthetic-leaf.ts",
+        crossContextTargets: ["scheduling"],
+      },
+    ];
+    const graph = buildProjectedGraph(FIXTURE_ROOT, ["absence"], {
+      extract,
+      exceptionsDoc: emptyExceptionsDoc,
+    });
+
+    // The re-export source is replaced: absence/index.ts points at the LEAF, never at deep.ts.
+    expect(graph.get("src/contexts/absence/index.ts")?.has("src/contexts/absence/deep.ts")).toBe(
+      false,
+    );
+    expect(
+      graph.get("src/contexts/absence/index.ts")?.has("src/contexts/absence/synthetic-leaf.ts"),
+    ).toBe(true);
+    // The leaf's own out-edges are exactly the supplied crossContextTargets.
+    expect(
+      graph.get("src/contexts/absence/synthetic-leaf.ts")?.has("src/contexts/scheduling/index.ts"),
+    ).toBe(true);
+    // Every importer of the extracted file is rerouted through the index, same as an
+    // un-extracted target — the extraction only changes WHAT the index points to.
+    expect(graph.get("src/contexts/platform/deep.ts")?.has("src/contexts/absence/index.ts")).toBe(
+      true,
+    );
+    // An UNRELATED edge (scheduling -> absence, via scheduling/deep.ts) is left alone.
+    expect(graph.get("src/contexts/scheduling/deep.ts")?.has("src/contexts/absence/index.ts")).toBe(
+      true,
+    );
+  });
+
+  it("routes the IMPORTER straight to the leaf's OWN placement context, not the symbol's original owning context", () => {
+    // The bug this guards: an earlier version of buildProjectedGraph always routed importers to
+    // `row.target`'s index even when the leaf's own path named a DIFFERENT context — silently
+    // undoing Option D's placement moves (the overtime leaf placed in working-time-account never
+    // actually left time-tracking's index in the graph). Caught live before this plan's own
+    // Task 3 gate ran, by exactly this kind of cross-context placement test.
+    const extract: ExtractionSpec[] = [
+      {
+        from: "src/contexts/absence/deep.ts",
+        leaf: "src/contexts/working-time-account/synthetic-leaf.ts",
+        crossContextTargets: ["scheduling"],
+      },
+    ];
+    const graph = buildProjectedGraph(FIXTURE_ROOT, ["absence"], {
+      extract,
+      exceptionsDoc: emptyExceptionsDoc,
+    });
+
+    // The importer routes to working-time-account's index — where the leaf NOW lives — not to
+    // absence's index, even though the deep import's ORIGINAL target context was absence.
+    expect(
+      graph.get("src/contexts/platform/deep.ts")?.has("src/contexts/working-time-account/index.ts"),
+    ).toBe(true);
+    expect(graph.get("src/contexts/platform/deep.ts")?.has("src/contexts/absence/index.ts")).toBe(
+      false,
+    );
+    // absence/index.ts gets NO new edge at all from this row — the function moved out entirely.
+    expect(
+      graph
+        .get("src/contexts/absence/index.ts")
+        ?.has("src/contexts/working-time-account/synthetic-leaf.ts"),
+    ).toBe(false);
+    expect(graph.get("src/contexts/absence/index.ts")?.has("src/contexts/absence/deep.ts")).toBe(
+      false,
+    );
   });
 });
