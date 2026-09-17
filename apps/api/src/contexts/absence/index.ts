@@ -147,4 +147,41 @@ export {
   BS_DAILY_MAX_BOUND,
   BS_BLOCK_WEEKLY_MIN_BOUND,
   BS_BLOCK_WEEKLY_MAX_BOUND,
+  BS_DAILY_DEFAULT_MIN, // Phase 101B (Issue #101, wave 7) — added alongside the bound constants
 } from "./vocational-school-constants";
+
+// ── Phase 101B (Issue #101, wave 7) — the remaining absence-context deep imports ─────────────
+// widened onto this surface so no production file outside `contexts/absence` reaches into a
+// leaf module directly any more, except the two permanent register sites (E-4, E-8; see
+// `apps/api/scripts/context-boundary-import-exceptions.json`).
+export { loadBsSlotOverrides } from "./load-bs-slot-overrides";
+export { DISPLAY_NAME, isSickLeaveTypeCode } from "./leave-type";
+export { mondayOfWeekUtc } from "./vacation-calc";
+export { recalcProvisionalLeaveForShiftChange } from "./shift-leave-recalc-resolver";
+export type { RecalcDeps, AdjustmentRecord } from "./shift-leave-recalc-resolver";
+// resolveLeaveDays/getHolidayMap/deductVacationDays/reverseVacationDays are DEFINED in
+// ./leave-days (the leaf plan 04 lifted them into) — sourced from there, never from
+// ./api/leave, so this index never has to publish a route module's whole import set.
+export {
+  resolveLeaveDays,
+  getHolidayMap,
+  deductVacationDays,
+  reverseVacationDays,
+} from "./leave-days";
+export { checkJArbSchG } from "./jarbschg";
+export { buildSlotOverrideHierarchy, resolveBsTagSlot } from "./bs-slot-resolver";
+export type { WeekContext } from "./bs-slot-resolver";
+export { selfHealUsedDays, loadVacationTypeMeta } from "./leave-self-heal";
+export { karenzOverrunFromRequests } from "./find-karenz-overrun-days";
+// Closes the one production dynamic import() no-restricted-imports cannot see
+// (composition/reports.ts previously did `await import("./plugins/carryover-warning")`).
+// carryoverWarningPlugin from the same module is already registered from app.ts at boot,
+// so the module is loaded eagerly in every running process regardless — nothing here needed
+// the lazy form, so it becomes a plain static import like everything else on this surface.
+export { runCarryoverWarningOnce } from "./plugins/carryover-warning";
+
+// Two more symbols from ./leave-type and ./vacation-calc are deliberately NOT re-exported here:
+// their only foreign callers are the two permanent register sites (E-8: platform's test
+// bootstrap helper, E-4: platform's employee-creation route). Widening this surface to cover
+// them would silently dissolve those register entries — see
+// apps/api/scripts/context-boundary-import-exceptions.json for E-4/E-8's own reasons.

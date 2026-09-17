@@ -12,7 +12,6 @@ import {
   streamLeaveListPdf,
   streamVacationOverviewPdf,
 } from "./pdf";
-import { selfHealUsedDays, loadVacationTypeMeta } from "../contexts/absence/leave-self-heal";
 import {
   getMonthClosingBalance, // Phase 100B Plan 07 — W4
   getTenantTimezone,
@@ -29,8 +28,11 @@ import {
   getEntitlementById,
   getConfirmedSection9Credits,
   getPendingLeaveDaysInYear, // Phase 100B Plan 13 — A7c
+  selfHealUsedDays,
+  loadVacationTypeMeta,
+  isSickLeaveTypeCode,
+  runCarryoverWarningOnce, // Phase 101B (Issue #101, wave 7) — was `await import(...)`, see :1090
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
-import { isSickLeaveTypeCode } from "../contexts/absence/leave-type";
 import type { LeaveTypeCode } from "@clokr/db";
 
 // ── Month name lookup ─────────────────────────────────────────────────────────
@@ -1086,8 +1088,6 @@ export async function reportRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Anspruch nicht gefunden" });
       }
 
-      const { runCarryoverWarningOnce } =
-        await import("../contexts/absence/plugins/carryover-warning");
       const result = await runCarryoverWarningOnce(app, { onlyEntitlementId: entitlementId });
 
       // Audit the manual trigger separately so we can distinguish operator
