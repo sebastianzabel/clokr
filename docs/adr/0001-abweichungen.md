@@ -290,3 +290,110 @@ vollständige Konvertierung aus — die drei bewusst NICHT konvertierten Stellen
 eigenen Index, die Übergangsbäume aus Eintrag F, die Test-Bootstrap-Ausnahme) sind hier benannt,
 damit niemand sie für eine vergessene Aufräumarbeit hält. Weiteres: `docs/context-cut-map.md` § 7,
 `.planning/phases/100B-t5-fassade/100B-14-SUMMARY.md`.
+
+---
+
+## H — Routen und Querschnittsmodule in den richtigen Kontext (Phase 243, Issue #243), das Ausnahmeregister für #101
+
+**Schwere: informativ. Vorbedingung für #101 — abgeschlossen, 2026-09-17.**
+
+### Was verschoben wurde und warum
+
+Issue #243 sortierte den Befund, dass der Unterbau vier Fach-Kontexte importiert, in drei Klassen.
+Die Planung hat die Klasseneinteilung geprüft und zwei Punkte korrigiert (siehe die
+Ticket-Kommentare selbst). Am Ende bewegt: Klasse A (kompositionsartige Dateien) und Klasse B
+(fremde Routengruppen). Kriterium für A: die Datei besitzt kein eigenes Modell, trägt keine
+Fachregel und aggregiert über mehrere Kontexte hinweg — genau die Aufgabenbeschreibung der
+Kompositionsschicht (`dashboard.ts`, `reports.ts`, `pdf.ts`). Kriterium für B: eine Routengruppe,
+deren fachliches Subjekt ein anderer Kontext besitzt, gehört in dessen Verzeichnis, unabhängig
+davon, unter welchem URL-Präfix sie historisch registriert wurde.
+
+Bewegt (`docs/context-cut-map.md` § 8 nennt die elf Routen im Detail): `activity.ts` und
+`data-retention.ts` (Klasse A, `git mv` nach `composition/`); die Abwesenheiten-Settings-Routen,
+die `/employees/me/wifi`-Routen und die `/me/availability`-Route (Klasse B, in je eine neue Datei
+im zuständigen Kontext ausgelagert). Alle URLs unverändert — bewiesen durch
+`apps/api/baselines/route-surface.txt`, eingefroren VOR der ersten Verschiebung und über die ganze
+Phase kein zweites Mal beschrieben.
+
+### Was bewusst NICHT verschoben wurde, damit es nicht wie ein Versehen aussieht
+
+- **`anonymize.ts` bleibt im Unterbau.** Es ist kein Blatt — `contexts/platform/api/employees.ts:11`
+  und `contexts/scheduling/api/shifts.ts:17` importieren daraus. Es nach `composition/` zu ziehen,
+  würde die erste Kante von `contexts/` nach `composition/` schaffen; heute importiert **kein**
+  Kontext aus `composition/`. Das wäre für #101 eine schlechtere Regel als die, die es ersetzen
+  soll. Seine eigene, dokumentierte Zuständigkeit (Employee+User, `context-area-map.ts:120`) sagt
+  ohnehin Unterbau, nicht Komposition. Gemessener Gate-Preis einer testweisen Verschiebung:
+  `lint:tenant-scoping` in-scope stiege 478→487 — neun Aufrufe, die keinen `req`-gebundenen
+  Bezeichner tragen, würden dauerhaft in einem Gate sichtbar, dessen Kandidatenregeln genau darauf
+  aufbauen.
+- **Die drei geteilten Konstanten-Module** (`break-constants.ts`, `vocational-school-constants.ts`,
+  `missing-entries-window.ts`) — siehe E-6 unten und die separate Owner-Entscheidung in
+  `.planning/phases/243-.../243-04-SUMMARY.md`.
+- **`holidays.ts` und `imports.ts`** rufen einen Fach-Kontext für einen Seiteneffekt auf
+  (Saldo-Neuberechnung, Zeiterfassungs-Schreibzugriffe). Das ist Block 2s Job (#102–#104), nicht
+  eine Platzierungsfrage — siehe E-1/E-2 unten.
+
+### Das Ausnahmeregister für #101 (E-1..E-8)
+
+Gemessen nach Abschluss dieser Phase: **7 Dateien / 22 Importe** verbleiben unter
+`contexts/platform/`. Jeder Eintrag unten ist einzeln benannt und begründet, wie #101s AC5 es
+verlangt ("befristete, einzeln begründete Ausnahmen — keine pauschale Ausnahmeliste").
+
+| ID      | Wo                                                                                                                                                                                 | Importe                                                                                                                                                                                                                                         | Warum                                                                                                                                                                                                                                                                                                                                                                                 | Wo es verschwindet                                                                                                                                                                                                                                                                                                        |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **E-1** | `platform/api/holidays.ts:5`                                                                                                                                                       | 1 — `recalculateSnapshots`                                                                                                                                                                                                                      | Anlegen eines Feiertags schleift über alle Mitarbeiter und ruft die Saldo-Neuberechnung direkt auf                                                                                                                                                                                                                                                                                    | **Block 2 (#102–#104)** — ein `holiday-created`-Ereignis ersetzt den Direktaufruf                                                                                                                                                                                                                                         |
+| **E-2** | `platform/api/imports.ts:11-14`                                                                                                                                                    | 4                                                                                                                                                                                                                                               | der Importer schreibt direkt in `time-tracking` und `working-time-account`                                                                                                                                                                                                                                                                                                            | **Block 2 (#102–#104)**                                                                                                                                                                                                                                                                                                   |
+| **E-3** | `platform/api/settings.ts:6,15`                                                                                                                                                    | 2 — `recalculateSnapshots`, `getShiftsInRange`/`cancelOrphanShifts`                                                                                                                                                                             | `PUT /settings/work/:employeeId` löst Saldo-Neuberechnung und Schicht-Stornierung als Seiteneffekte eines Vertragswechsels aus                                                                                                                                                                                                                                                        | **Block 2** — dieselbe Fehlerklasse wie E-1, ein `schedule-changed`-Ereignis                                                                                                                                                                                                                                              |
+| **E-4** | `platform/api/employees.ts` — Aufrufe bei `:448` (`createOvertimeAccount`), `:612`/`:619` (`getVacationEntitlementByDisplayName`/`calculateProRataVacation`); Importzeilen `:8,14` | 3 Aufrufe (dieselben zwei Importe wie E-5 — `createOvertimeAccount` und `hardDeleteOvertimeDataForEmployee` teilen sich einen Import in Zeile 14)                                                                                               | Mitarbeiter anlegen erzeugt das Überstundenkonto (`:448`) und berechnet beim Austritt den Pro-rata-Anspruch über eine Anzeigenamen-Suche (`:612`/`:619`) als Seiteneffekt                                                                                                                                                                                                             | **Block 2** — `employee-created`/`employee-changed`-Ereignisse                                                                                                                                                                                                                                                            |
+| **E-5** | `platform/anonymize.ts:55-58` + `platform/api/employees.ts` — Aufrufe bei `:1001,1005,1203,1206,1208,1211,1213`; Importzeilen `:14,15,35`                                          | 4 + 7 (`hardDeleteOvertimeDataForEmployee`, `hardDeleteTimeDataForEmployee`, `getAbsenceDocumentPaths`, `getSection9DocumentPaths`, `hardDeleteLeaveRequestsForEmployee`, `hardDeleteAbsencesForEmployee`, `hardDeleteEntitlementsForEmployee`) | DSGVO-Art.-17-Löschung muss jeden Kontext erreichen; das fachliche Subjekt ist Employee+User (siehe oben)                                                                                                                                                                                                                                                                             | **verschwindet nicht durch Verschieben.** Entweder dauerhafte, begründete Ausnahme, oder ein `employee-erased`-Ereignis in Block 2. #101 muss wählen; diese Phase empfiehlt dauerhaft-und-begründet, weil eine über ein Ereignis verteilte Löschung genau die eine Stelle verliert, die heute die Vollständigkeit beweist |
+| **E-6** | `settings.ts:14,21,27` + `employees.ts:21,27`                                                                                                                                      | 5                                                                                                                                                                                                                                               | drei **reine Werte**-Module, deren Konstanten die Validierungsgrenzen Unterbau-eigener Spalten sind: `time-tracking/break-constants.ts` (ArbZG-§4-Grenzwerte, `settings.ts:21`/`employees.ts:21`), `absence/vocational-school-constants.ts` (`settings.ts:27`/`employees.ts:27`), `working-time-account/missing-entries-window.ts` (`DEFAULT_MISSING_ENTRIES_DAYS`, `settings.ts:14`) | **offen — siehe Owner-Entscheidung unten.** Keine Route, kein Ereignis; eine Eigentumsfrage                                                                                                                                                                                                                               |
+| **E-7** | `platform/api/admin/school-holidays.ts:18`                                                                                                                                         | 1 — `listActiveBsPatternsWithFederalStateOverride`                                                                                                                                                                                              | `POST /admin/school-holidays/refresh` muss wissen, welche Bundesländer zu synchronisieren sind, was von den BS-Mustern des Abwesenheiten-Kontexts abhängt                                                                                                                                                                                                                             | **offen** — ein echter kontextübergreifender LESE-Zugriff für einen Unterbau-eigenen Cache. Kandidat für Block 2 (Query-seitiges Ereignis/Projektion) oder ein eigenes Ticket                                                                                                                                             |
+| **E-8** | `platform/api/test-bootstrap.ts:42`                                                                                                                                                | 1 — `leaveTypeFields`                                                                                                                                                                                                                           | reine Test-Fixture-Route, auf int/prod nicht registriert                                                                                                                                                                                                                                                                                                                              | **dauerhafte, benannte Ausnahme** — dasselbe Präzedens wie Phase 100b's D-03 für dieselbe Datei (Eintrag G oben)                                                                                                                                                                                                          |
+
+**Zeilenabgleich gegen die 22 gemessenen Importe.** E-4 und E-5 teilen sich EINE Importzeile
+(`employees.ts:14`, `createOvertimeAccount` UND `hardDeleteOvertimeDataForEmployee` aus demselben
+`from "../../working-time-account"`-Block) — die Spalten "Aufrufe" zählen deshalb FUNKTIONEN, nicht
+Importzeilen, und E-4s 3 / E-5s 7 dürfen nicht addiert werden, um auf die Importzeilenzahl zu
+schließen. Auf Importzeilen-Ebene (die Einheit, die die 22 aus P1 zählt): E-1=1, E-2=4, E-3=2,
+E-4∪E-5 in `employees.ts`=4 (Zeilen 8, 14, 15, 35), E-6=5, E-7=1, E-8=1 → 18, plus `anonymize.ts`s
+4 Zeilen (Teil von E-5) → **22**. Deckt sich exakt mit P1s Messung.
+
+**E-6 verdient eine echte Antwort, keinen Eintrag.** Fünf Importe holen ausschließlich **Werte**
+(Konstanten) — keinen Datenzugriff, kein Verhalten. `import { BREAK_MIN_MINUTES }` überschreitet
+keine Datenzugriffsgrenze im Sinne dieses ADRs. Ob ADR 0001s Grenze (Regel 4: "kein direkter
+Fremdzugriff") das trotzdem verbietet, ist eine offene Frage, keine Formalie — #101s Lint muss
+wissen, ob es das flaggen soll. Diese Phase beantwortet sie nicht selbst (Eigentumsfrage, nicht
+Platzierungsfrage — siehe die Owner-Entscheidung in `243-04-SUMMARY.md`).
+
+**Ob #101s Lint auch `__tests__` erfasst, ist offen.** Zwei Testdateien unter
+`contexts/platform/api/__tests__/` importieren fremde Kontexte (`minijob.test.ts:8` →
+`working-time-account/timezone`, `schedule-versioning.test.ts:8` →
+`time-tracking/api/time-entries`). Diese Phase bewegt sie nicht — sie testen Routen, die im
+Unterbau bleiben. Empfehlung: #101s Boundary-Lint sollte `__tests__`-Verzeichnisse NICHT erfassen,
+aus demselben Grund wie `lint:tenant-scoping`s `SCOPED_DIRS` nur `api/`-Verzeichnisse zählt — ein
+Test importiert das, was er prüft, das ist keine Laufzeit-Abhängigkeit der Produktionsschicht.
+#101 muss diese Empfehlung explizit bestätigen oder verwerfen, nicht stillschweigend übernehmen.
+
+### Die Korrektur, offen ausgesprochen
+
+Eintrag Gs Schlusssatz sagt: der Unterbau importiere aus fremden Kontexten in neun Dateien, und die
+Entscheidung liege bei #101. Dieser Eintrag ersetzt diesen Satz: der gemessene Wert auf
+`fcf7c432` (Phase 100b gemerged) war **zehn Dateien / 35 Importe** (Issue #243s zweiter Kommentar
+maß 34, korrigiert auf 35 in der Planung — die abweichende Neben-Datei war ein Zählfehler, nicht
+ein Substanzbefund), Phase 243 entfernte drei Dateien und dreizehn Importe, und **sieben Dateien /
+22 Importe** verbleiben. Issue #243s eigener Kommentar sagte "#101 nach #243 mit genau zwei
+dokumentierten Ausnahmen erfüllbar" voraus; die gemessene Antwort sind **acht** benannte Klassen.
+Ein ADR, das eine überholte Zahl stillschweigend fallen lässt, lehrt die nächste Leserin, seinen
+Zahlen zu misstrauen — deshalb steht das hier so ausdrücklich.
+
+### Was #101 noch entscheiden muss
+
+1. Ob die Grenzregel `contexts/platform/api/__tests__/` erfasst (zwei Dateien, oben genannt) —
+   diese Phase empfiehlt Nein, entscheidet es aber nicht.
+2. Ob E-5 eine dauerhafte, begründete Ausnahme bleibt oder ein `employee-erased`-Ereignis in
+   Block 2 wird — diese Phase empfiehlt dauerhaft-und-begründet.
+3. Wer die drei Konstanten-Module aus E-6 besitzt — siehe die Owner-Entscheidung, aufgezeichnet in
+   `.planning/phases/243-routen-in-den-richtigen-kontext/243-04-SUMMARY.md` und als Kommentar auf
+   Issue #243 (`.planning/` ist nicht eingecheckt, der Issue-Kommentar ist die dauerhafte Kopie).
+
+Weiteres: `docs/context-cut-map.md` § 8.

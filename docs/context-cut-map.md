@@ -71,6 +71,12 @@ subdirectory resolves the collision without touching either name.
 
 ## 2. The mapping
 
+**A later phase moved five more files — see §8.** Phase 99b's 159-file move (this section) is not
+the tree's final state; Phase 243 (Issue #243, 2026-09-17) moved two composition leaves and carved
+three route groups out of the Unterbau, using the same tooling and the same `git mv` discipline.
+This section's tables are left exactly as 99b wrote them — editing them would make the document
+disagree with its own history.
+
 The machine-readable source of truth is `apps/api/scripts/context-area-map.ts`
 (`CONTEXT_AREA_BY_FILE`), exhaustiveness-tested by
 `apps/api/scripts/__tests__/context-area-map.test.ts` — every one of the 109 non-test files that
@@ -665,3 +671,103 @@ oversight left for them to clean up:
   are filed as a follow-up issue (99B-08, Task 2e) rather than fixed here, to keep this phase's own
   diff a pure move end to end; `CLAUDE.md`'s own edits additionally needed the project owner's
   sign-off (99B-08, Task 3), since it is the project's governing document.
+
+---
+
+## 8. Phase 243 (Issue #243) — five more files, the Unterbau importing context files
+
+Phase 243 (2026-09-17) is the same kind of work as Phase 99b — "the file lies in the wrong
+layer" — one order of magnitude smaller (five files, not 159), using the tooling 99b built
+(`lint:import-targets`, `context-area-map.ts`, `measure-foreign-context-access.ts`) and the same
+`git mv` discipline. Its trigger was Issue #101's third acceptance criterion ("the Unterbau
+imports no context"), which Phase 100b's facade work made measurable for the first time: closing
+every direct cross-context Prisma access left the Unterbau's own IMPORT DIRECTION — files under
+`contexts/platform/` importing from `absence`/`time-tracking`/`scheduling`/`working-time-account`
+— as the one thing still open (ADR `0001-abweichungen.md` entry G).
+
+### The eleven route moves
+
+Ten routes changed the file that registers them; one route (`GET /api/v1/activity`) changed only
+the file it lives in (no URL change anywhere). Two are `git mv` renames; three are new files
+carved out of an existing one, named for their source:
+
+| Class          | Route(s)                                                                                                                        | From                                          | To                                                  |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | --------------------------------------------------- |
+| A (rename)     | _(no routes — cron plugin)_ `data-retention.ts`                                                                                 | `contexts/platform/plugins/data-retention.ts` | `composition/data-retention.ts`                     |
+| A (rename)     | `GET /api/v1/activity`                                                                                                          | `contexts/platform/api/activity.ts`           | `composition/activity.ts`                           |
+| B1 (carve-out) | `GET/PUT /api/v1/settings/vacation/:employeeId`, `GET /api/v1/settings/leave-types`, `PUT /api/v1/settings/leave-types/:id`     | `contexts/platform/api/settings.ts`           | `contexts/absence/api/leave-settings.ts` (new)      |
+| B2 (carve-out) | `GET/PATCH /api/v1/employees/me/wifi`, `POST /api/v1/employees/me/wifi/devices`, `DELETE /api/v1/employees/me/wifi/devices/:id` | `contexts/platform/api/employees.ts`          | `contexts/time-tracking/api/employee-wifi.ts` (new) |
+| B3 (carve-out) | `GET/PUT /api/v1/me/availability`                                                                                               | `contexts/platform/api/me.ts`                 | `contexts/scheduling/api/me-availability.ts` (new)  |
+
+Every moved route keeps its original URL prefix, registered as an ADDITIONAL `app.register(...)`
+call under that same prefix — not a new pattern; `app.ts` already registered three separate
+plugins under one prefix before this phase (`shiftPatternRoutes`, `vocationalSchoolPatternRoutes`,
+`availabilityRoutes`, all under `/api/v1/employees`). Verified for each B group that no
+plugin-level `app.addHook` was silently lost in the split: `me-availability.ts` deliberately became
+a NEW SIBLING file rather than folding into `availabilityRoutes`, because that existing file
+carries exactly such a hook and the two moved routes must not inherit it.
+
+**Deliberately NOT moved:** `anonymize.ts` (it is not a leaf — imported by
+`contexts/platform/api/employees.ts` and `contexts/scheduling/api/shifts.ts`; moving it would
+create the tree's first `contexts/` → `composition/` edge, a strictly worse rule for the next
+reader than the one it replaces), the three shared constant modules (an ownership question, not a
+placement one — see the ADR entry below), and `api/holidays.ts`/`api/imports.ts` (they call a
+foreign context for a side effect that should be an event — Block 2's job, not a move).
+
+### The one addition to §1's placement rule: composition stays FLAT
+
+**`composition/` never grows an `api/` or `plugins/` subdirectory**, even though its two new files
+(`activity.ts`, a route; `data-retention.ts`, a plugin) are exactly the two kinds of file that get
+their own subdirectory inside a context. Four reasons, in order of weight:
+
+1. §1's rule for this layer already says "composition (owns no model, carries no Fachregel) →
+   `apps/api/src/composition/<name>.ts` **(flat)**" — this phase followed the written rule rather
+   than inventing a second one.
+2. The precedent already includes routes lying flat: `composition/dashboard.ts` and
+   `composition/reports.ts` are both Fastify route modules and both sit flat next to `pdf.ts`,
+   which is neither a route nor a plugin. The layer was already mixed by design before this phase.
+3. The only reason 99b ever created a subdirectory inside a context was a **basename collision**
+   (§1's `plugins/vocational-school-generator.ts` vs `vocational-school-generator.ts` example).
+   There is no collision here — `activity.ts` and `data-retention.ts` do not collide with
+   `dashboard.ts`/`reports.ts`/`pdf.ts`.
+4. ADR 0001: "Keine Generalisierung auf Vorrat." Mirroring the contexts' `api/`+`plugins/` shape
+   into a five-file directory would be structure built for symmetry alone; composition already
+   deliberately differs from the contexts in another way (no `index.ts`, entry G above).
+
+The next person adding a sixth file to `composition/` should NOT create `composition/api/` on the
+assumption that symmetry with `contexts/` was intended — it was considered and rejected, for the
+four reasons above.
+
+### Tool-sync checklist actually exercised
+
+Re-derived for this phase (§5's list, six artefacts):
+
+| Artefact                                                                            | What moved for this phase                                                                                                                                                                      | What was deliberately unaffected                                                                                                                                                         |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `context-area-map.ts` `CONTEXT_AREA_BY_FILE`                                        | five new/re-keyed entries (two re-keyed `unterbau`→`komposition`, three new for the carved-out files)                                                                                          | —                                                                                                                                                                                        |
+| `context-area-map.test.ts`                                                          | the rahmen-Restkategorie filter widened to also cover `src/composition/`, proven non-vacuous with a poison entry before this phase's own new composition files could have gone unnoticed by it | —                                                                                                                                                                                        |
+| `lint-tenant-scoping-exceptions.json`                                               | four entries' `validatedAt`/`calls[].line` recomputed after the settings.ts/employees.ts cuts                                                                                                  | —                                                                                                                                                                                        |
+| `lint-comment-language-baseline.json`                                               | zero entries touched — none of the moved comments matched a baselined key                                                                                                                      | the baseline count (224) is unchanged, `New: 0` throughout                                                                                                                               |
+| `check-test-completeness.mjs` `MIN_FILES`/`MIN_TESTS`                               | raised once, 262→263 files / 3077→3080 tests, for the one new test file this phase adds (`route-surface.test.ts`)                                                                              | no test file was moved (D-10)                                                                                                                                                            |
+| `measure-saldo-path-parity.ts`'s five dynamic `import()`s                           | **none** — none of its five string-literal paths names a file this phase touches                                                                                                               | verified byte-identical against the baseline at the end of every wave                                                                                                                    |
+| `lint-tenant-scoping-types.ts` `SCOPED_DIRS`                                        | **no entry disappeared** — `contexts/platform/api` survives (files remain there), `contexts/platform/plugins` was never a listed entry                                                         | the #229 `MissingScopedDirError` guard was still triggered deliberately (a temporary non-existent path), not skipped, because the phase's own risk profile doesn't naturally exercise it |
+| `lint-facade-signatures-exceptions.json` / `foreign-context-access-exceptions.json` | no entry — every exception in both files names a call site or file that stays where it is                                                                                                      | —                                                                                                                                                                                        |
+
+### The correction to `context-area-map.ts:96`
+
+Before this phase, that file's comment argued `activity.ts` was "nicht geeignet für komposition
+(D-17 nennt nur dashboard.ts/reports.ts)". This phase overrules it and rewrites the comment: D-17
+was an **enumeration**, not a criterion — and the same file already goes beyond it for `pdf.ts`
+("no model, no Fachregel"), i.e. the criterion this document's §1 states is already the operative
+rule in that very file. Applied to `activity.ts`: its ADMIN branch reads `AuditLog` (platform-owned)
+and its EMPLOYEE/MANAGER branch assembles a feed from `timeEntry`, `leaveRequest` and
+`saldoSnapshot` — three contexts' models, none of which it owns, all reached through facades.
+Owns no model, carries no Fachregel, aggregates across contexts: that is the composition layer's
+job description, and `activity.ts` meets it.
+
+### What #101 inherits
+
+After this phase, `contexts/platform/` still imports business contexts in **7 files / 22
+imports** — down from 10 files / 35 imports before the phase started. Every remaining import is
+individually named and justified as exception E-1 through E-8 in
+`docs/adr/0001-abweichungen.md` entry H, which this section points to rather than duplicating.
