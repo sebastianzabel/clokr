@@ -134,5 +134,21 @@ export function boundaryConfigs(severity) {
       files: ["apps/api/src/app.ts"],
       rules: { "no-restricted-imports": "off" },
     },
+    // 8. Plan 05 (Task 3, AC-5) — a stale exception, mechanically. `reportUnusedDisableDirectives`
+    // already defaults to "warn" in this flat config and no lint invocation passes
+    // --max-warnings, so today it would never fail a gate: a disable comment whose import was
+    // later fixed (or moved) is a stale exception with a reason nobody can falsify, and it would
+    // sit there silently. Raised to "error", SCOPED to apps/api/src: unscoped it breaks apps/web
+    // on a pre-existing unused `no-var` disable in src/lib/components/layout/Topbar.svelte:40,
+    // which is Issue #112's tree, not this phase's (RESEARCH.md "Pitfall 3", measured live —
+    // apps/web's own eslint output is byte-identical before and after this block, Plan 05's own
+    // <verify>). This complements the register-parity check in
+    // measure-context-boundary-imports.ts; it does not replace it — parity catches an
+    // UNREGISTERED exception, this catches a STALE one.
+    {
+      files: ["apps/api/src/**/*.ts"],
+      ignores: BOUNDARY_IGNORES,
+      linterOptions: { reportUnusedDisableDirectives: "error" },
+    },
   ];
 }
