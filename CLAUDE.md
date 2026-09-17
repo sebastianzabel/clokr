@@ -296,7 +296,7 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   Since Phase 107 (D-02) no form write path touches `workDays` for `SHIFT_BASED` any more, so no NEW
   divergence can be created; existing divergent rows are preserved and are EXPECTED findings of
   `audit-workdays-vs-day-hours.ts`, not bugs — do NOT "fix" them on sight (Phase 95b, D-01).
-- `resolveContractWorkDaysPerWeek()` in `apps/api/src/contexts/absence/api/leave.ts` is the ONLY place the
+- `resolveContractWorkDaysPerWeek()` in `apps/api/src/contexts/absence/leave-days.ts` is the ONLY place the
   `SHIFT_BASED` contractual-count fallback chain lives (`contractWorkDaysPerWeek` →
   `workDays.length` → `TenantConfig.defaultWorkDays.length` → `5`, Phase 107 D-04) — it mirrors
   `resolveWorkDays()`'s shape but answers a different question ("how many days" vs. "which days").
