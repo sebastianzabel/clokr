@@ -17,7 +17,7 @@
 import type { PrismaClient } from "@clokr/db";
 import { FederalState } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
-import { cleanupShiftsForBSAbsence } from "../scheduling/shift-cleanup";
+import { cleanupShiftsForBSAbsence } from "../scheduling"; // Phase 101B (Issue #101, wave 9)
 import { BS_PATTERN_ORDER_BY, findAmbiguousClaimDates } from "./vocational-school-pattern-order.js";
 import {
   getClosedMonthsInRange, // Phase 100B Plan 07 — W2b

@@ -22,8 +22,12 @@ import {
   recalculateCarryOver,
 } from "../leave-days";
 import { formatMinutesHM } from "../format-hm"; // Phase 100
-import { shiftNettoMinutes, sumShiftNettoMinutes } from "../../scheduling/shift-netto"; // Phase 100 (OTC-04)
-import { getShiftsInRange, flagShiftsConflictingWithLeave } from "../../scheduling"; // Phase 100B Plan 05 — S1/S2
+import {
+  shiftNettoMinutes, // Phase 100 (OTC-04)
+  getShiftsInRange, // Phase 100B Plan 05 — S1/S2
+  flagShiftsConflictingWithLeave, // Phase 100B Plan 05 — S1/S2
+  sumShiftNettoMinutes, // Phase 100 (OTC-04)
+} from "../../scheduling"; // Phase 101B (Issue #101, wave 9) — merged from two deep imports
 import {
   getOvertimeAccount,
   bookOvertimeCompensation,

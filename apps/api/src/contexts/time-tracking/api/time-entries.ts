@@ -29,6 +29,7 @@ import {
   monthRangeUtc,
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
+  computeOvertimeBalanceHours, // Phase 101B (Issue #101, wave 9) — merged in, closing the loop wave 05 deliberately left open
   type OvertimeBalanceBreakdown,
 } from "../../working-time-account"; // Phase 101B
 // Phase 101B (Issue #101, D-11 Welle time-tracking): checkOverlap/checkOneEntryPerDay/
@@ -43,7 +44,6 @@ import {
   validateTimeEntryInvariants,
   getEffectiveSchedule,
 } from "../entry-invariants";
-import { computeOvertimeBalanceHours } from "../../working-time-account/overtime-balance"; // Phase 101B — not on the public surface (no external caller needs it), stays deep
 
 export { validateTimeEntryInvariants, getEffectiveSchedule };
 export { updateOvertimeAccount, computeOvertimeBalanceBreakdown, computeOvertimeBalanceHours };
