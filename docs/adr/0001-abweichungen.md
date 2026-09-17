@@ -243,3 +243,50 @@ Weiteres zum Zuschnitt: `docs/context-cut-map.md` § 4 und § 7.
 in `0001-drei-kontexte.md` bleiben bewusst auf `263ed0aa` eingefroren — das ADR bezeichnet sie im
 Kopf selbst als Belege, nicht als Wegbeschreibung. Die Zuordnung alt→neu steht in
 `docs/context-cut-map.md`.
+
+---
+
+## G — Fassaden geschlossen (Phase 100b, Issue #100), was dabei bewusst NICHT geschah
+
+**Schwere: informativ. Abgeschlossen — Phase 100b, erhoben 2026-09-17.**
+
+Regel 3 des ADR („kein direkter Tabellenzugriff auf fremde Schemas") ist ab Phase 100b eine
+messbare Tatsache, nicht mehr eine Absicht: `measure:context-access --check 0` läuft in der CI und
+zählt null direkte Fremdzugriffe unter `contexts/`, `composition/` und `services/` — gemessen
+gegen die 169 zu Phasenbeginn (Plan 01), abgebaut Welle für Welle bis auf null (Plan 13).
+
+**Was bewusst NICHT geschah, damit die nächste Person es nicht für ein Versehen hält:**
+
+- **`composition/` und `services/` tragen keine eigene `index.ts`.** Beide sind laut ADR 0001
+  Konsumenten der Fassaden, nicht Träger eigener Modelle — eine eigene öffentliche Fläche für
+  Verzeichnisse, die selbst keine Daten besitzen, wäre eine Fassade ohne Eigentümer.
+- **`services/clock/` und `services/phorest/` wurden NICHT konvertiert** — sie bleiben der in
+  Eintrag F beschriebene, bewusst befristete Übergangszustand. Phase 100b hat lediglich die zwei
+  verbliebenen echten Grenzübertritte AUS `services/` (beide in
+  `services/phorest/sync-shifts.ts`) auf Fassadenaufrufe umgestellt; `services/clock/`s eigene
+  Modellzugriffe (`timeEntry`) sind laut Eintrag F kein Grenzübertritt und wurden nicht angefasst.
+  Eine Ausnahme: `services/clock/resolver.ts` importiert `hasApprovedLeaveOnDate` seit Plan 14 über
+  `contexts/absence` statt über die konkrete Datei — eine reine Importpfad-Änderung ohne
+  Verhaltensänderung (AC-1), kein Grenzübertritt, der eine Fassade gebraucht hätte, da die
+  aufgerufene Funktion selbst schon eine war.
+- **`test-bootstrap.ts`s 21 Zugriffe bleiben eine benannte, begründete Ausnahme** (D-03), keine
+  Fassade — die Route ist auf int/prod nicht registriert, eine destruktive `resetForTests()` auf
+  der dauerhaften öffentlichen Fläche jedes Kontexts wäre der schlechtere Tausch.
+- **Die im falschen Kontext liegenden Routen wurden verschoben, nicht in eine Fassade gepresst.**
+  Wo eine Fassaden-Zählung während der Konversion auffällig machte, dass eine Route eigentlich zu
+  einem anderen Kontext gehört (Abwesenheiten-CRUD in `settings.ts`/`employees.ts`, 15 Zugriffe;
+  `PresenceDevice`-CRUD in `employees.ts`, 5 Zugriffe), wurde das als Fund dokumentiert und als
+  Issue #243 abgelegt (D-13) — nicht bei Gelegenheit verschoben.
+
+**Was #101 aus Phase 100b erbt, aber noch nicht kann:** der Unterbau
+(`apps/api/src/contexts/platform/`) importiert selbst neun Dateien lang aus fremden
+Fach-Kontexten (`docs/context-cut-map.md` § 7 nennt sie einzeln) — jeder dieser Zugriffe läuft
+bereits über eine Fassade/einen Index, ist also sicher, aber die Importrichtung ist genau das, was
+#101s geplantes AC3 verbietet. Diese Entscheidung liegt bei #101, nicht hier (D-13, keine
+Neugestaltung nebenbei).
+
+**Warum dieser Eintrag existiert:** Ein geschlossenes Kapitel ohne Protokoll sieht rückblickend wie
+vollständige Konvertierung aus — die drei bewusst NICHT konvertierten Stellen (Komposition ohne
+eigenen Index, die Übergangsbäume aus Eintrag F, die Test-Bootstrap-Ausnahme) sind hier benannt,
+damit niemand sie für eine vergessene Aufräumarbeit hält. Weiteres: `docs/context-cut-map.md` § 7,
+`.planning/phases/100B-t5-fassade/100B-14-SUMMARY.md`.

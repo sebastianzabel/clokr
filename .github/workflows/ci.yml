@@ -234,6 +234,15 @@ jobs:
         # the script itself validates (mirrors lint:tenant-scoping's exception mechanism).
         run: pnpm --filter @clokr/api run lint:facade-signatures
 
+      - name: Measure cross-context Prisma access (Issue #100 — AC-3, the standing boundary gate)
+        # Every one of the phase's originally-measured 169 direct cross-context Prisma accesses
+        # now goes through the owning context's facade — this is the standing claim, not a moving
+        # target: from here, `--check 0` failing with a named file:line is what makes #101's job
+        # smaller, since every access it would otherwise have to except is already gone.
+        # Deliberate exceptions (test-bootstrap.ts's 21 calls, D-03) live in
+        # apps/api/scripts/foreign-context-access-exceptions.json.
+        run: pnpm --filter @clokr/api exec tsx scripts/measure-foreign-context-access.ts --check 0
+
       - name: Lint saldo-lock periodStart derivation (Issue #241 — five sites found by hand)
         # A periodType:"MONTHLY" SaldoSnapshot where-comparison on periodStart whose value does
         # not trace back to monthRangeUtc() is the exact defect class of #241 (three route gates
