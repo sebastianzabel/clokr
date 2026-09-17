@@ -941,7 +941,7 @@ describe("the real exceptions file's SET matches ADR 0001 Eintrag H exactly", ()
     expect(result.ok).toBe(true);
   });
 
-  it("the real tree's workload is exactly 43 — Phase 101B plan 07's own measured value (101B-07-SUMMARY.md; the plan's own ledger projected 44, see its Findings section)", () => {
+  it("the real tree's workload is exactly 20 — Phase 101B plan 08's own measured value (101B-08-SUMMARY.md; the plan's own ledger projected 21, see its Findings section)", () => {
     const apiRoot = join(__dirname, "..", "..");
     const realScan = scanApiRoot(apiRoot);
     const realDisableComments = scanDisableComments(apiRoot);
@@ -949,7 +949,7 @@ describe("the real exceptions file's SET matches ADR 0001 Eintrag H exactly", ()
     expect(validated.ok).toBe(true);
     if (validated.ok) {
       const { workload } = computeWorkload(realScan.deepImports, validated.doc);
-      expect(workload.length).toBe(43);
+      expect(workload.length).toBe(20);
     }
   });
 });
