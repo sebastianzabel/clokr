@@ -193,7 +193,13 @@ function buildSymbolsMap(sourceFile: ts.SourceFile): Map<string, string[]> {
       node.moduleSpecifier &&
       ts.isStringLiteral(node.moduleSpecifier)
     ) {
-      const key = `${lineOf(node)}::${node.moduleSpecifier.text}`;
+      // Keyed by the SPECIFIER's own line, not the declaration's start line — a multi-line
+      // `import {\n  a,\n  b,\n} from "../x"` has its moduleSpecifier several lines below
+      // `node.getStart()`, and extractSpecifiers() (check-import-targets.ts) keys its own
+      // occurrences by the specifier's line too. Using the declaration's start line here would
+      // silently miss every multi-line import — found live against contexts/scheduling/api/
+      // shifts.ts:39, which resolved with an empty `symbols` array before this fix.
+      const key = `${lineOf(node.moduleSpecifier)}::${node.moduleSpecifier.text}`;
       const symbols: string[] = [];
       const clause = node.importClause;
       if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
@@ -207,7 +213,7 @@ function buildSymbolsMap(sourceFile: ts.SourceFile): Map<string, string[]> {
       node.moduleSpecifier &&
       ts.isStringLiteral(node.moduleSpecifier)
     ) {
-      const key = `${lineOf(node)}::${node.moduleSpecifier.text}`;
+      const key = `${lineOf(node.moduleSpecifier)}::${node.moduleSpecifier.text}`;
       let symbols: string[];
       if (node.exportClause && ts.isNamedExports(node.exportClause)) {
         symbols = node.exportClause.elements.map((el) =>
