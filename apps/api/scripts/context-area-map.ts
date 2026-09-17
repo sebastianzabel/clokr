@@ -108,7 +108,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/api/me.ts": "unterbau", // writes User only
   "src/contexts/platform/api/notifications.ts": "unterbau", // writes Notification only
   "src/contexts/platform/api/release-notes.ts": "unterbau", // app-wide, tenant-agnostic feature with no model; under src/routes/ so cannot be rahmen (#99: no route may be a fallthrough) — Unterbau is the closest fit as the shared, context-agnostic substrate
-  "src/contexts/platform/api/settings.ts": "unterbau", // writes WorkSchedule/TenantConfig primarily (PUT /settings/work); tx.shift.deleteMany is a side effect of a schedule change, not the primary subject; LeaveEntitlement upsert is a bulk-apply side effect
+  "src/contexts/platform/api/settings.ts": "unterbau", // writes WorkSchedule/TenantConfig primarily (PUT /settings/work); tx.shift.deleteMany is a side effect of a schedule change, not the primary subject. Phase 243 Plan 02 (B1) moved the LeaveEntitlement/LeaveType routes out to contexts/absence/api/leave-settings.ts, so that clause no longer applies here
   "src/contexts/platform/api/test-bootstrap.ts": "unterbau", // full-tenant dataset reset for e2e bootstrapping; under src/routes/ so cannot be rahmen despite being test-only — Tenant is the root model a full-tenant reset operates against, no single business context owns it
   "src/contexts/platform/api/admin/school-holidays.ts": "unterbau", // reads/writes SchoolHolidayPeriod (Unterbau model, matches the file name directly)
   "src/contexts/platform/plugins/audit.ts": "unterbau", // writes AuditLog — its own Unterbau model
@@ -162,6 +162,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/facade/absences.ts": "abwesenheiten", // Phase 100B Plan 12 (Wave 5, closing model) — Absence's only external access path
   "src/contexts/absence/facade/leave-requests.ts": "abwesenheiten", // Phase 100B Plan 13 (Wave 5, LAST conversion plan) — LeaveRequest's only external access path
   "src/contexts/absence/api/company-shutdowns.ts": "abwesenheiten", // writes CompanyShutdown/CompanyShutdownException
+  "src/contexts/absence/api/leave-settings.ts": "abwesenheiten", // Phase 243 Plan 02 (B1) — moved from contexts/platform/api/settings.ts: writes LeaveEntitlement/LeaveType under the /settings URL prefix, which is a UI grouping, not a context boundary
   "src/contexts/absence/api/leave.ts": "abwesenheiten", // writes LeaveEntitlement/LeaveRequest/LeaveType/Section9Credit primarily; overtimeAccount/overtimeTransaction/timeEntry/shift writes are documented cross-context side effects of leave approval/cancellation
   "src/contexts/absence/api/section9-documents.ts": "abwesenheiten", // writes Section9Credit
   "src/contexts/absence/api/special-leave.ts": "abwesenheiten", // writes SpecialLeaveRule

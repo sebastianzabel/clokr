@@ -16,6 +16,7 @@ import { leaveRoutes } from "./contexts/absence/api/leave";
 import { overtimeRoutes } from "./contexts/working-time-account/api/overtime";
 import { reportRoutes } from "./composition/reports";
 import { settingsRoutes } from "./contexts/platform/api/settings";
+import { leaveSettingsRoutes } from "./contexts/absence/api/leave-settings"; // Phase 243 Plan 02 (B1)
 import { holidayRoutes } from "./contexts/platform/api/holidays";
 import { auditPlugin } from "./contexts/platform/plugins/audit";
 import { prismaPlugin } from "./contexts/platform/plugins/prisma";
@@ -274,6 +275,10 @@ export async function buildApp() {
   await app.register(overtimeRoutes, { prefix: "/api/v1/overtime" });
   await app.register(reportRoutes, { prefix: "/api/v1/reports" });
   await app.register(settingsRoutes, { prefix: "/api/v1/settings" });
+  // Phase 243 Plan 02 (B1) — Abwesenheiten routes kept under the /settings prefix:
+  // GET/PUT /api/v1/settings/vacation/:employeeId, GET /api/v1/settings/leave-types,
+  // PUT /api/v1/settings/leave-types/:id
+  await app.register(leaveSettingsRoutes, { prefix: "/api/v1/settings" });
   await app.register(holidayRoutes, { prefix: "/api/v1/holidays" });
   await app.register(invitationRoutes, { prefix: "/api/v1/invitations" });
   await app.register(auditLogRoutes, { prefix: "/api/v1/audit-logs" });

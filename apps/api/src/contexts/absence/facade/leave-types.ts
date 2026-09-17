@@ -33,7 +33,8 @@
  * plan's SUMMARY for the issue number.
  *
  * ── H3 — {@link updateLeaveType} collapses a handler-level guard into a query-level proof ──────
- * `platform/api/settings.ts`'s `PUT /leave-types/:id` used to run a tenant-scoped guard-fetch
+ * `leave-settings.ts`'s `PUT /leave-types/:id` (moved from `platform/api/settings.ts` by Phase
+ * 243 Plan 02 — B1; the URL is unchanged) used to run a tenant-scoped guard-fetch
  * (`findFirst({ id, tenantId })`) followed by an UNGUARDED `update({ id })` that relied on the
  * guard already having run. Both queries below carry `tenantId` in their OWN `where` — the second
  * query no longer depends on the first having executed correctly; it is independently safe. The
@@ -78,7 +79,7 @@ export async function getLeaveTypeByDisplayName(
 // ── A18 — tenant-wide listing ────────────────────────────────────────────────────────────────
 
 /**
- * A18 — every `LeaveType` for `tenantId`, ordered by display name. Sites: `settings.ts`'s
+ * A18 — every `LeaveType` for `tenantId`, ordered by display name. Sites: `leave-settings.ts`'s
  * `GET /leave-types` (full admin listing) and `scheduling/api/shifts.ts`'s roster read (which only
  * consumes `id`/`code` off the same rows — a wider `select` than one caller needs is not a `where`
  * divergence, so one function serves both; R-C's caution is about row-SET divergence, not

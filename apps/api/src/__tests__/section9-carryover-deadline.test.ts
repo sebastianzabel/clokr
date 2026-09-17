@@ -9,7 +9,8 @@
  *
  *   1. `recalculateCarryOver` (leave.ts) — runs after every booking/cancellation
  *   2. `autoCarryOver` (leave.ts) — runs on every GET /entitlements/:employeeId
- *   3. `PUT /api/v1/settings/vacation/:employeeId` (settings.ts) — admin entitlement save
+ *   3. `PUT /api/v1/settings/vacation/:employeeId` (leave-settings.ts, moved from settings.ts
+ *      by Phase 243 Plan 02 — B1; the URL is unchanged) — admin entitlement save
  *
  * All three now consult the single shared predicate `preserveIllnessDeadline`
  * (utils/illness-carryover-guard.ts). This file pins that an ILLNESS-protected deadline
@@ -705,8 +706,11 @@ describe("structural guard against a divergent copy (Phase 104 Plan 04, Task 4)"
   it("every carryOverDeadline writer goes through preserveIllnessDeadline (guards against a divergent copy)", () => {
     const apiSrc = join(__dirname, "..");
     const leaveTs = readFileSync(join(apiSrc, "contexts", "absence", "api", "leave.ts"), "utf-8");
-    const settingsTs = readFileSync(
-      join(apiSrc, "contexts", "platform", "api", "settings.ts"),
+    // Phase 243 Plan 02 (B1): the PUT /settings/vacation/:employeeId writer moved from
+    // contexts/platform/api/settings.ts to contexts/absence/api/leave-settings.ts. The URL
+    // and the predicate call are unchanged — only the file (and its owning context) moved.
+    const leaveSettingsTs = readFileSync(
+      join(apiSrc, "contexts", "absence", "api", "leave-settings.ts"),
       "utf-8",
     );
 
@@ -716,10 +720,10 @@ describe("structural guard against a divergent copy (Phase 104 Plan 04, Task 4)"
       "leave.ts must reference preserveIllnessDeadline at least twice (both writers)",
     ).toBeGreaterThanOrEqual(2);
 
-    const settingsMatches = settingsTs.match(/preserveIllnessDeadline/g) ?? [];
+    const leaveSettingsMatches = leaveSettingsTs.match(/preserveIllnessDeadline/g) ?? [];
     expect(
-      settingsMatches.length,
-      "settings.ts must reference preserveIllnessDeadline at least once",
+      leaveSettingsMatches.length,
+      "leave-settings.ts must reference preserveIllnessDeadline at least once",
     ).toBeGreaterThanOrEqual(1);
 
     // No file under apps/api/src outside utils/illness-carryover-guard.ts and __tests__/
