@@ -90,10 +90,14 @@ export default [
       "no-empty": "warn",
     },
   },
-  // Phase 101B (Issue #101, T6) — ADR 0001 context-boundary enforcement. Severity is "warn" from
-  // Wave 0 (D-12): the rule exists and reports its full, real violation count from the moment it's
-  // written, so there is never a stretch where it is green only because nothing has been converted
-  // yet. Plan 09 flips this single argument to "error" once every context's conversion is done —
-  // this line, not a preference, is what makes that severity temporary rather than permanent.
-  ...boundaryConfigs("warn"),
+  // Phase 101B (Issue #101, T6) — ADR 0001 context-boundary enforcement. Severity was "warn" from
+  // Wave 0 through Wave 8 (D-12): the rule existed and reported its full, real violation count
+  // from the moment it was written, so there was never a stretch where it was green only because
+  // nothing had been converted yet. Plan 10 (Wave 9, the phase's closing wave) flips this single
+  // argument to "error" now that every context's conversion is done and the measured workload is
+  // 0 — from here, crossing the boundary FAILS the build (`Lint API` in CI, `lint-staged` in the
+  // pre-commit hook), it does not merely warn. `scripts/__tests__/boundary-rule.test.mjs`'s own
+  // "shipped severity" test asserts this literal string, so a future one-word downgrade back to
+  // "warn" turns `pnpm run test:scripts` red rather than silently re-opening the boundary.
+  ...boundaryConfigs("error"),
 ];

@@ -10,11 +10,13 @@
  * (`include: ["scripts/**\/*.test.mjs"]`) already collects and runs files here as
  * `pnpm run test:scripts` (`.github/workflows/ci.yml`'s existing "Lint API"-adjacent step).
  *
- * Severity used in THIS test's own baseConfig is always `"error"`, even though the severity
- * shipped in `eslint.config.js` at this point in the phase is `"warn"` (D-12). This test asserts
- * the RULE's matching behaviour — which specifiers get caught, which stay silent, what the
- * message says — not the current phase-wide severity. Plan 09's `"warn"` -> `"error"` flip must
- * not be able to make this file pass for a new, accidental reason.
+ * Severity used in THIS test's own baseConfig is always `"error"`, regardless of what
+ * `eslint.config.js` itself currently ships (D-12). This test asserts the RULE's matching
+ * behaviour — which specifiers get caught, which stay silent, what the message says — not the
+ * current phase-wide severity, so a change to the shipped severity cannot make THIS file pass or
+ * fail for the wrong reason. The "shipped severity pin" describe block below is the one place in
+ * this file that DOES import the real `eslint.config.js` and pins its actual, current severity
+ * (T-101B-35): a future one-word downgrade back to `"warn"` is caught there, not here.
  *
  * D-07 (the reason this file is this shape, not a smaller one): "context-area-map.test.ts"'s own
  * red-proof once picked `absence/...`, the one context WITHOUT a hyphen, and thereby proved only
@@ -34,6 +36,11 @@ import {
   boundaryMessage,
   deepPattern,
 } from "../../eslint.boundaries.mjs";
+// The REAL, shipped config — not a re-declared copy. Used ONLY by the "shipped severity pin"
+// describe block below (T-101B-35); every other describe block in this file imports the rule
+// definitions directly, at a fixed "error" severity, to test matching behaviour independent of
+// whatever severity is currently shipped.
+import realEslintConfig from "../../eslint.config.js";
 
 // Always "error" here — see file header. `eslint.config.js` itself decides the shipped severity.
 const eslint = new ESLint({
@@ -314,5 +321,38 @@ describe("anti-tidy pin: the glob shape itself (RESEARCH.md finding 6 / non-nego
   it("deepPattern('absence').group[0] specifically is NOT '**/contexts/absence/**' (the exact anti-pattern named in RESEARCH.md)", () => {
     expect(deepPattern("absence").group[0]).not.toBe("**/contexts/absence/**");
     expect(deepPattern("absence").group[0]).toBe("**/absence/**");
+  });
+});
+
+describe("shipped severity pin (T-101B-35, Phase 101B Plan 10) — the REAL eslint.config.js, not a re-declared copy", () => {
+  // Filters the ACTUAL, imported config array for every block this rule appears in, rather than
+  // re-deriving them from BOUNDARY_CONTEXTS — a test that rebuilds the block list itself could
+  // stay green even if eslint.config.js stopped importing boundaryConfigs() altogether.
+  const boundaryBlocks = realEslintConfig.filter(
+    (block) =>
+      block.rules && Object.prototype.hasOwnProperty.call(block.rules, "no-restricted-imports"),
+  );
+
+  const isAppTsBlock = (block) =>
+    Array.isArray(block.files) && block.files.length === 1 && block.files[0] === "apps/api/src/app.ts";
+
+  it("finds exactly the six per-area severity blocks plus the one app.ts override — seven total", () => {
+    expect(boundaryBlocks).toHaveLength(7);
+  });
+
+  it('every no-restricted-imports entry OUTSIDE app.ts is "error", never "warn"', () => {
+    const nonAppTsBlocks = boundaryBlocks.filter((block) => !isAppTsBlock(block));
+    expect(nonAppTsBlocks).toHaveLength(6);
+    for (const block of nonAppTsBlocks) {
+      const entry = block.rules["no-restricted-imports"];
+      expect(Array.isArray(entry)).toBe(true);
+      expect(entry[0]).toBe("error");
+    }
+  });
+
+  it('the app.ts composition-root override is literally "off", not merely absent', () => {
+    const appTsBlock = boundaryBlocks.find(isAppTsBlock);
+    expect(appTsBlock).toBeTruthy();
+    expect(appTsBlock.rules["no-restricted-imports"]).toBe("off");
   });
 });
