@@ -102,7 +102,7 @@ describe("context-area-map — structural invariants", () => {
     }
   });
 
-  it("no path under src/contexts/*/api/, .../plugins/ or .../facade/ maps to rahmen (#99: keine Restkategorie)", () => {
+  it("no path under src/contexts/*/api/, .../plugins/, .../facade/ or src/composition/ maps to rahmen (#99: keine Restkategorie)", () => {
     // Phase 99b, plan 08: the original assertion here filtered CONTEXT_AREA_BY_FILE for keys
     // starting with "src/routes/" or "src/plugins/" — both directories were removed by plan
     // 99B-07 (see docs/context-cut-map.md §4), so CONTEXT_AREA_BY_FILE has held zero such keys
@@ -138,9 +138,24 @@ describe("context-area-map — structural invariants", () => {
     // picked a context without a hyphen (`absence`) and so did not actually prove the hyphen case
     // — see 100B-03-SUMMARY.md for both verbatim transcripts (`working-time-account/plugins/` and
     // `scheduling/facade/`), each reverted and `git diff`-confirmed clean before the next.
+    //
+    // Phase 243 plan 01 — FOURTH recurrence of the exact same defect class (#235/#240 family),
+    // caught BEFORE going vacuous this time rather than after. This filter never covered
+    // `src/composition/` at all — not a regression, an original gap — and plan 243-01 is the
+    // first plan to add files there since this assertion existed. `composition/` is exactly as
+    // eligible for a `rahmen` mis-mapping as `contexts/*/api/`: a composition module owns no
+    // model of its own (that is its whole definition, D-17/D-13), which is precisely the property
+    // that makes `rahmen` look tempting to a future editor who has not read this file's header.
+    // Widened the alternation to also match `src/composition/`. Proven non-vacuous the same way
+    // as every prior recurrence: a poison entry
+    // (`"src/composition/does-not-exist.ts": "rahmen"`) was added to CONTEXT_AREA_BY_FILE, this
+    // single test was run, the failure named the poison path, then the entry was reverted and the
+    // revert confirmed with `git diff` — see 243-01-SUMMARY.md for the verbatim transcript.
     const offenders = Object.entries(CONTEXT_AREA_BY_FILE)
       .filter(([, area]) => area === "rahmen")
-      .filter(([path]) => /^src\/contexts\/[a-z-]+\/(api|plugins|facade)\//.test(path))
+      .filter(([path]) =>
+        /^(src\/contexts\/[a-z-]+\/(api|plugins|facade)|src\/composition)\//.test(path),
+      )
       .map(([path]) => path);
     expect(offenders).toEqual([]);
   });

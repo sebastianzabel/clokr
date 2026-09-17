@@ -16,7 +16,8 @@
  * See `leave-types.ts`'s own module header (H1) for the full reasoning. In short:
  * {@link getVacationEntitlement} and {@link upsertVacationEntitlement} resolve the VACATION type
  * by its stable CODE (`leave-types.ts`'s `getLeaveTypeByCode`) — the correct shape, used by
- * `platform/api/settings.ts`'s GET/PUT `/vacation/:employeeId`. {@link
+ * `leave-settings.ts`'s GET/PUT `/vacation/:employeeId` (moved from `platform/api/settings.ts`
+ * by Phase 243 Plan 02 — B1; the URL is unchanged). {@link
  * getVacationEntitlementByDisplayName} and {@link getVacationEntitlementsForYearByDisplayName}
  * preserve the two PRE-EXISTING name-based lookups verbatim (`platform/api/employees.ts`'s
  * pro-rata-exit warning, `time-tracking/plugins/attendance-checker.ts`'s § 7 BUrlG reminder) —
@@ -50,7 +51,7 @@ import { getLeaveTypeByCode, getLeaveTypeByDisplayName } from "./leave-types";
  * `employeeId_leaveTypeId_year`. Returns `null` when the tenant has no VACATION type configured
  * (the caller's existing "Urlaubstyp nicht konfiguriert" 404); otherwise `entitlement` is `null`
  * when none exists yet for `year` (the caller's existing "no entitlement row yet" branch).
- * Sites: `settings.ts`'s GET and PUT `/vacation/:employeeId`.
+ * Sites: `leave-settings.ts`'s GET and PUT `/vacation/:employeeId`.
  */
 export async function getVacationEntitlement(
   db: Prisma.TransactionClient,
@@ -166,7 +167,7 @@ export interface UpsertVacationEntitlementData {
  * A16 — resolves the VACATION `LeaveType` for `tenantId` (by code, same as A11), then upserts the
  * entitlement keyed by `employeeId_leaveTypeId_year`. Returns `null` in the (practically
  * unreachable, since the caller already ran A11 first in the same handler) case where the tenant
- * has no VACATION type configured. Site: `settings.ts`'s `PUT /vacation/:employeeId`.
+ * has no VACATION type configured. Site: `leave-settings.ts`'s `PUT /vacation/:employeeId`.
  */
 export async function upsertVacationEntitlement(
   db: Prisma.TransactionClient,

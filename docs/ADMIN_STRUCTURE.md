@@ -754,7 +754,7 @@ override that wins over the atomic-value test above — it is the operative form
 requirement below, and it is enforced mechanically by `pnpm --filter @clokr/web
 lint:save-pattern` (see "Enforcement" below).
 
-**Why this is the audit rule, not "audit ⇒ button" (D-06):** `apps/api/src/contexts/platform/api/settings.ts:677`
+**Why this is the audit rule, not "audit ⇒ button" (D-06):** `apps/api/src/contexts/platform/api/settings.ts:663`
 writes one unconditional audit row per `PUT /settings/work`, and that is exactly the endpoint
 every instant-save toggle on `admin/system` writes through. One operator action producing one
 audit row is a correct record; what would be wrong is a _chain_ of rows from a single change —

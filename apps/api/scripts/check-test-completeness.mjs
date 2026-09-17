@@ -134,8 +134,13 @@ import { readFileSync } from "node:fs";
 // original "tenant-editable name" case was replaced rather than added alongside — net +1 test in
 // that file (verified with `pnpm exec vitest run .../leave-check.test.ts`, "7 tests" in its own
 // output, up from 6) — 3076 + 1 = 3077.
-const MIN_FILES = 262;
-const MIN_TESTS = 3077;
+//
+// Plan 243-01 (Wave 1, task 1) — one new test FILE (src/__tests__/route-surface.test.ts) —
+// MIN_FILES rises from 262 to 263. MIN_TESTS rises from 3077 to 3080: +3 test cases in that new
+// file (verified with `pnpm exec vitest run src/__tests__/route-surface.test.ts`, "3 tests" in
+// its own output) — 3077 + 3 = 3080. No other test file's test COUNT changed in this plan.
+const MIN_FILES = 263;
+const MIN_TESTS = 3080;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

@@ -1,14 +1,14 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireAuth } from "../../../middleware/auth";
-import { getTenantTimezone, timeStrInTz } from "../../working-time-account/timezone";
-import { getMonthlySnapshotsInRange } from "../../working-time-account"; // Phase 100B Plan 07 — W5
-import { getEntryActivityFeed } from "../../time-tracking"; // Phase 100B Plan 08 — T5
+import { requireAuth } from "../middleware/auth";
+import { getTenantTimezone, timeStrInTz } from "../contexts/working-time-account/timezone";
+import { getMonthlySnapshotsInRange } from "../contexts/working-time-account"; // Phase 100B Plan 07 — W5
+import { getEntryActivityFeed } from "../contexts/time-tracking"; // Phase 100B Plan 08 — T5
 import {
   getOwnLeaveActivity, // Phase 100B Plan 13 — A10a
   getReviewedLeaveActivity, // Phase 100B Plan 13 — A10b
   getTeamLeaveSubmissions, // Phase 100B Plan 13 — A10c
-} from "../../absence";
+} from "../contexts/absence";
 
 /**
  * GET /api/v1/activity?limit=5

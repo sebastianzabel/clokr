@@ -86,14 +86,17 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/__tests__/test-dates.ts": "rahmen", // test-only date helpers, no model
 
   // ── komposition — D-17: dashboard.ts/reports.ts unconditionally, plus pdf.ts (no model, no
-  //    Fachregel, reports.ts's only caller) ─────────────────────────────────────────────────
+  //    Fachregel, reports.ts's only caller); Phase 243 (D-01/D-13) adds activity.ts and
+  //    data-retention.ts, both leaves imported only by app.ts, both owning no model of their
+  //    own ─────────────────────────────────────────────────────────────────────────────────
   "src/composition/dashboard.ts": "komposition", // 11 models read across contexts by design (D-17)
   "src/composition/reports.ts": "komposition", // 7 models read across contexts by design (D-17)
   "src/composition/pdf.ts": "komposition", // pure PDF-layout rendering of pre-computed data; sole caller is reports.ts; no Prisma access, no Fachregel
+  "src/composition/activity.ts": "komposition", // dashboard "Aktivität" widget backend; ADMIN branch reads AuditLog (platform-owned), EMPLOYEE/MANAGER branch aggregates timeEntry/leaveRequest/saldoSnapshot through facades (Phase 243 D-13, overruling this file's earlier D-17-as-enumeration argument: D-17 was an enumeration, not a criterion — the operative rule is "owns no model, carries no Fachregel", already applied to pdf.ts above; activity.ts owns no model and aggregates across three contexts' facades, so it fits the same bucket)
+  "src/composition/data-retention.ts": "komposition", // annual DSGVO/legal retention job driven by TenantConfig.dataRetentionYears; touches TimeEntry/LeaveRequest/Absence with equal weight (3 separate updateMany, no single primary subject) plus an AuditLog purge — no single business context owns a generic cross-context retention policy (Phase 243 D-01/D-13: same substance as the prior unterbau reasoning, verdict changed to komposition, which is what "no context owns it" actually describes)
 
   // ── unterbau — Tenant/TenantConfig/User/RefreshToken/OtpToken/Invitation/Employee/
   //    WorkSchedule/PublicHoliday/SchoolHolidayPeriod/AuditLog/ApiKey/Notification ────────────
-  "src/contexts/platform/api/activity.ts": "unterbau", // dashboard "Aktivität" widget backend; ADMIN scope is a direct AuditLog read, EMPLOYEE/MANAGER scope assembles the same kind of chronological trail from timeEntry/leaveRequest/saldoSnapshot — AuditLog's own domain generalised to the other event sources, not eligible for komposition (D-17 names only dashboard.ts/reports.ts)
   "src/contexts/platform/api/api-keys.ts": "unterbau", // writes ApiKey only
   "src/contexts/platform/api/audit-logs.ts": "unterbau", // reads AuditLog only
   "src/contexts/platform/api/auth.ts": "unterbau", // writes OtpToken/RefreshToken/User
@@ -105,11 +108,10 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/api/me.ts": "unterbau", // writes User only
   "src/contexts/platform/api/notifications.ts": "unterbau", // writes Notification only
   "src/contexts/platform/api/release-notes.ts": "unterbau", // app-wide, tenant-agnostic feature with no model; under src/routes/ so cannot be rahmen (#99: no route may be a fallthrough) — Unterbau is the closest fit as the shared, context-agnostic substrate
-  "src/contexts/platform/api/settings.ts": "unterbau", // writes WorkSchedule/TenantConfig primarily (PUT /settings/work); tx.shift.deleteMany is a side effect of a schedule change, not the primary subject; LeaveEntitlement upsert is a bulk-apply side effect
+  "src/contexts/platform/api/settings.ts": "unterbau", // writes WorkSchedule/TenantConfig primarily (PUT /settings/work); tx.shift.deleteMany is a side effect of a schedule change, not the primary subject. Phase 243 Plan 02 (B1) moved the LeaveEntitlement/LeaveType routes out to contexts/absence/api/leave-settings.ts, so that clause no longer applies here
   "src/contexts/platform/api/test-bootstrap.ts": "unterbau", // full-tenant dataset reset for e2e bootstrapping; under src/routes/ so cannot be rahmen despite being test-only — Tenant is the root model a full-tenant reset operates against, no single business context owns it
   "src/contexts/platform/api/admin/school-holidays.ts": "unterbau", // reads/writes SchoolHolidayPeriod (Unterbau model, matches the file name directly)
   "src/contexts/platform/plugins/audit.ts": "unterbau", // writes AuditLog — its own Unterbau model
-  "src/contexts/platform/plugins/data-retention.ts": "unterbau", // annual DSGVO/legal retention job driven by TenantConfig.dataRetentionYears (Unterbau model); touches TimeEntry/LeaveRequest/Absence with equal weight (3 separate updateMany, no single primary subject) plus an AuditLog purge in the same file (unambiguously Unterbau) — no single business context owns a generic cross-context retention policy
   "src/contexts/platform/plugins/mailer.ts": "unterbau", // SMTP transport keyed off TenantConfig, no other model
   "src/contexts/platform/plugins/notify.ts": "unterbau", // writes Notification — its own Unterbau model
   "src/contexts/platform/plugins/prisma.ts": "unterbau", // decorates app.prisma; no model of its own, pure infra — under src/plugins/ so cannot be rahmen (#99: no plugin may be a fallthrough); Unterbau is the shared substrate every context sits on
@@ -132,6 +134,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/facade/time-entries.ts": "zeiterfassung", // Phase 100B Plan 08 — T1-T12, TimeEntry/Break's only external access path
   "src/contexts/time-tracking/facade/presence-devices.ts": "zeiterfassung", // Phase 100B Plan 09 (Wave 4, closing) — PresenceDevice's only external access path
   "src/contexts/time-tracking/api/admin-presence-sources.ts": "zeiterfassung", // writes PresenceDevice/PresenceSource
+  "src/contexts/time-tracking/api/employee-wifi.ts": "zeiterfassung", // Phase 243 Plan 02 (B2) — moved from contexts/platform/api/employees.ts: PresenceDevice is a Zeiterfassung model; the /employees URL prefix is a namespace, not an owner
   "src/contexts/time-tracking/api/presence.ts": "zeiterfassung", // WiFi-presence-based clocking; reads PresenceDevice/PresenceSource, writes AuditLog as a side effect
   "src/contexts/time-tracking/api/retro-entry-requests.ts": "zeiterfassung", // writes RetroEntryRequest/TimeEntry
   "src/contexts/time-tracking/api/terminals.ts": "zeiterfassung", // writes TerminalApiKey
@@ -160,6 +163,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/facade/absences.ts": "abwesenheiten", // Phase 100B Plan 12 (Wave 5, closing model) — Absence's only external access path
   "src/contexts/absence/facade/leave-requests.ts": "abwesenheiten", // Phase 100B Plan 13 (Wave 5, LAST conversion plan) — LeaveRequest's only external access path
   "src/contexts/absence/api/company-shutdowns.ts": "abwesenheiten", // writes CompanyShutdown/CompanyShutdownException
+  "src/contexts/absence/api/leave-settings.ts": "abwesenheiten", // Phase 243 Plan 02 (B1) — moved from contexts/platform/api/settings.ts: writes LeaveEntitlement/LeaveType under the /settings URL prefix, which is a UI grouping, not a context boundary
   "src/contexts/absence/api/leave.ts": "abwesenheiten", // writes LeaveEntitlement/LeaveRequest/LeaveType/Section9Credit primarily; overtimeAccount/overtimeTransaction/timeEntry/shift writes are documented cross-context side effects of leave approval/cancellation
   "src/contexts/absence/api/section9-documents.ts": "abwesenheiten", // writes Section9Credit
   "src/contexts/absence/api/special-leave.ts": "abwesenheiten", // writes SpecialLeaveRule
@@ -192,6 +196,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/scheduling/facade/shifts.ts": "schichtplanung", // Phase 100B Plan 05 — S1/S2/S3, Shift's only external access path
   "src/contexts/scheduling/facade/availability.ts": "schichtplanung", // Phase 100B Plan 05 — S4, EmployeeAvailability's only external access path
   "src/contexts/scheduling/api/availability.ts": "schichtplanung", // writes EmployeeAvailability
+  "src/contexts/scheduling/api/me-availability.ts": "schichtplanung", // Phase 243 Plan 02 (B3) — moved from contexts/platform/api/me.ts: the caller's own EmployeeAvailability, resolved from JWT.employeeId; the /me URL prefix is a UI grouping, not a context boundary
   "src/contexts/scheduling/api/integrations.ts": "schichtplanung", // writes PhorestStaffMapping (Phorest scheduling-integration settings)
   "src/contexts/scheduling/api/shift-patterns.ts": "schichtplanung", // writes EmployeeShiftPattern
   "src/contexts/scheduling/api/shifts.ts": "schichtplanung", // writes CoverageRule/ShiftTemplate/Shift

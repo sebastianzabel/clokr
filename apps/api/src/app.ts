@@ -11,11 +11,13 @@ import swaggerUi from "@fastify/swagger-ui";
 import { config } from "./config";
 import { authRoutes } from "./contexts/platform/api/auth";
 import { employeeRoutes } from "./contexts/platform/api/employees";
+import { employeeWifiRoutes } from "./contexts/time-tracking/api/employee-wifi"; // Phase 243 Plan 02 (B2)
 import { timeEntryRoutes } from "./contexts/time-tracking/api/time-entries";
 import { leaveRoutes } from "./contexts/absence/api/leave";
 import { overtimeRoutes } from "./contexts/working-time-account/api/overtime";
 import { reportRoutes } from "./composition/reports";
 import { settingsRoutes } from "./contexts/platform/api/settings";
+import { leaveSettingsRoutes } from "./contexts/absence/api/leave-settings"; // Phase 243 Plan 02 (B1)
 import { holidayRoutes } from "./contexts/platform/api/holidays";
 import { auditPlugin } from "./contexts/platform/plugins/audit";
 import { prismaPlugin } from "./contexts/platform/plugins/prisma";
@@ -24,7 +26,7 @@ import { notifyPlugin } from "./contexts/platform/plugins/notify";
 import { schedulerPlugin } from "./contexts/scheduling/plugins/scheduler";
 import { attendanceCheckerPlugin } from "./contexts/time-tracking/plugins/attendance-checker";
 import { carryoverWarningPlugin } from "./contexts/absence/plugins/carryover-warning";
-import { dataRetentionPlugin } from "./contexts/platform/plugins/data-retention";
+import { dataRetentionPlugin } from "./composition/data-retention";
 import { tokenCleanupPlugin } from "./contexts/platform/plugins/token-cleanup";
 import { vocationalSchoolGeneratorPlugin } from "./contexts/absence/plugins/vocational-school-generator";
 import { schoolHolidaysSyncPlugin } from "./contexts/platform/plugins/school-holidays-sync";
@@ -34,7 +36,7 @@ import multipart from "@fastify/multipart";
 import { notificationRoutes } from "./contexts/platform/api/notifications";
 import { invitationRoutes } from "./contexts/platform/api/invitations";
 import { auditLogRoutes } from "./contexts/platform/api/audit-logs";
-import { activityRoutes } from "./contexts/platform/api/activity";
+import { activityRoutes } from "./composition/activity";
 import { companyShutdownRoutes } from "./contexts/absence/api/company-shutdowns";
 import { dashboardRoutes } from "./composition/dashboard";
 import { shiftRoutes } from "./contexts/scheduling/api/shifts";
@@ -56,6 +58,7 @@ import { presenceRoutes } from "./contexts/time-tracking/api/presence";
 import { adminPresenceSourcesRoutes } from "./contexts/time-tracking/api/admin-presence-sources";
 import { adminSchoolHolidaysRoutes } from "./contexts/platform/api/admin/school-holidays";
 import { meRoutes } from "./contexts/platform/api/me";
+import { meAvailabilityRoutes } from "./contexts/scheduling/api/me-availability"; // Phase 243 Plan 02 (B3)
 import { releaseNotesRoutes } from "./contexts/platform/api/release-notes";
 import { testBootstrapRoutes } from "./contexts/platform/api/test-bootstrap";
 import { retroEntryRequestRoutes } from "./contexts/time-tracking/api/retro-entry-requests";
@@ -274,6 +277,10 @@ export async function buildApp() {
   await app.register(overtimeRoutes, { prefix: "/api/v1/overtime" });
   await app.register(reportRoutes, { prefix: "/api/v1/reports" });
   await app.register(settingsRoutes, { prefix: "/api/v1/settings" });
+  // Phase 243 Plan 02 (B1) — Abwesenheiten routes kept under the /settings prefix:
+  // GET/PUT /api/v1/settings/vacation/:employeeId, GET /api/v1/settings/leave-types,
+  // PUT /api/v1/settings/leave-types/:id
+  await app.register(leaveSettingsRoutes, { prefix: "/api/v1/settings" });
   await app.register(holidayRoutes, { prefix: "/api/v1/holidays" });
   await app.register(invitationRoutes, { prefix: "/api/v1/invitations" });
   await app.register(auditLogRoutes, { prefix: "/api/v1/audit-logs" });
@@ -294,6 +301,10 @@ export async function buildApp() {
   // Phase 46 — employee availability declarations live under the employees namespace
   // (GET/PUT /api/v1/employees/:id/availability)
   await app.register(availabilityRoutes, { prefix: "/api/v1/employees" });
+  // Phase 243 Plan 02 (B2) — WiFi self-service (PresenceDevice, Zeiterfassung) routes kept
+  // under the employees namespace (GET/PATCH /api/v1/employees/me/wifi, POST
+  // /api/v1/employees/me/wifi/devices, DELETE /api/v1/employees/me/wifi/devices/:id)
+  await app.register(employeeWifiRoutes, { prefix: "/api/v1/employees" });
   await app.register(integrationRoutes, { prefix: "/api/v1/integrations" });
   await app.register(importRoutes, { prefix: "/api/v1/imports" });
   await app.register(terminalRoutes, { prefix: "/api/v1/terminals" });
@@ -308,6 +319,10 @@ export async function buildApp() {
   await app.register(adminPresenceSourcesRoutes, { prefix: "/api/v1/admin/presence-sources" });
   await app.register(adminSchoolHolidaysRoutes, { prefix: "/api/v1/admin/school-holidays" });
   await app.register(meRoutes, { prefix: "/api/v1/me" });
+  // Phase 243 Plan 02 (B3) — the caller's own availability, kept under the /me prefix
+  // (GET/PUT /api/v1/me/availability); sibling to availabilityRoutes's
+  // /employees/:id/availability above.
+  await app.register(meAvailabilityRoutes, { prefix: "/api/v1/me" });
   // Phase 110 (D-04/N-06): baked release notes, public GET, no requireAuth.
   await app.register(releaseNotesRoutes, { prefix: "/api/v1" });
 

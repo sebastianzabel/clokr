@@ -1,9 +1,9 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
-import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
-import { countSnapshotsBefore } from "../../working-time-account"; // Phase 100B Plan 07 — W7
-import { archiveEntriesBefore } from "../../time-tracking"; // Phase 100B Plan 08 — T9
-import { archiveAbsencesBefore, archiveLeaveRequestsBefore } from "../../absence"; // Phase 100B Plan 12; Plan 13
+import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
+import { countSnapshotsBefore } from "../contexts/working-time-account"; // Phase 100B Plan 07 — W7
+import { archiveEntriesBefore } from "../contexts/time-tracking"; // Phase 100B Plan 08 — T9
+import { archiveAbsencesBefore, archiveLeaveRequestsBefore } from "../contexts/absence"; // Phase 100B Plan 12; Plan 13
 
 declare module "fastify" {
   interface FastifyInstance {
