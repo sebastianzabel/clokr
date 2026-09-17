@@ -11,6 +11,7 @@
     "lint:import-targets": "tsx scripts/check-import-targets.ts",
     "lint:facade-signatures": "tsx scripts/lint-facade-signatures.ts",
     "lint:saldo-lock-derivation": "tsx scripts/lint-saldo-lock-derivation.ts",
+    "lint:guard-vacuity": "tsx scripts/lint-guard-vacuity.ts",
     "measure:context-access": "tsx scripts/measure-foreign-context-access.ts",
     "measure:boundary-imports": "tsx scripts/measure-context-boundary-imports.ts",
     "typecheck": "tsc --noEmit",
