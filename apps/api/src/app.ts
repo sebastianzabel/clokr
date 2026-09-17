@@ -58,6 +58,7 @@ import { presenceRoutes } from "./contexts/time-tracking/api/presence";
 import { adminPresenceSourcesRoutes } from "./contexts/time-tracking/api/admin-presence-sources";
 import { adminSchoolHolidaysRoutes } from "./contexts/platform/api/admin/school-holidays";
 import { meRoutes } from "./contexts/platform/api/me";
+import { meAvailabilityRoutes } from "./contexts/scheduling/api/me-availability"; // Phase 243 Plan 02 (B3)
 import { releaseNotesRoutes } from "./contexts/platform/api/release-notes";
 import { testBootstrapRoutes } from "./contexts/platform/api/test-bootstrap";
 import { retroEntryRequestRoutes } from "./contexts/time-tracking/api/retro-entry-requests";
@@ -318,6 +319,10 @@ export async function buildApp() {
   await app.register(adminPresenceSourcesRoutes, { prefix: "/api/v1/admin/presence-sources" });
   await app.register(adminSchoolHolidaysRoutes, { prefix: "/api/v1/admin/school-holidays" });
   await app.register(meRoutes, { prefix: "/api/v1/me" });
+  // Phase 243 Plan 02 (B3) — the caller's own availability, kept under the /me prefix
+  // (GET/PUT /api/v1/me/availability); sibling to availabilityRoutes's
+  // /employees/:id/availability above.
+  await app.register(meAvailabilityRoutes, { prefix: "/api/v1/me" });
   // Phase 110 (D-04/N-06): baked release notes, public GET, no requireAuth.
   await app.register(releaseNotesRoutes, { prefix: "/api/v1" });
 

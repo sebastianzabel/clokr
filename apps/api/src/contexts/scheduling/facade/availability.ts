@@ -1,17 +1,19 @@
 /**
  * Phase 100B Plan 05 (Wave 2) — Schichtplanung's `EmployeeAvailability`-model facade.
  *
- * S4 — the two `me.ts` sites (`:233` GET, `:277` the PUT handler's before-audit snapshot) both ask
- * the same question ("this employee's availability rows") and share one function; the GET adds an
- * `orderBy` the PUT snapshot doesn't need, which is R-C's INCIDENTAL case (both reads returned the
- * SAME set of rows either way, ordering has no bearing on the audit `oldValue` JSON the PUT site
- * builds from it) — applying the ordering uniformly is the same safe-default choice `getShiftsInRange`
- * makes for S1.
+ * S4 — the two `me-availability.ts` sites (`:57` GET, `:98` the PUT handler's before-audit
+ * snapshot; moved from `me.ts` by Phase 243 Plan 02 — B3, same lines relative to their handlers)
+ * both ask the same question ("this employee's availability rows") and share one function; the
+ * GET adds an `orderBy` the PUT snapshot doesn't need, which is R-C's INCIDENTAL case (both reads
+ * returned the SAME set of rows either way, ordering has no bearing on the audit `oldValue` JSON
+ * the PUT site builds from it) — applying the ordering uniformly is the same safe-default choice
+ * `getShiftsInRange` makes for S1.
  *
- * Tenant: today, neither `me.ts:233` nor `:277` filters `employeeAvailability` by tenant at all —
- * both rely solely on `employeeId`. Both call sites tenant-validate `employeeId` immediately before
- * calling (`app.prisma.employee.findFirst({ where: { id: employeeId, tenantId: req.user.tenantId } })`,
- * `me.ts:210-217` for GET, `me.ts:255-260` for PUT) and 404 before this point if that check fails.
+ * Tenant: today, neither `me-availability.ts:57` nor `:98` filters `employeeAvailability` by
+ * tenant at all — both rely solely on `employeeId`. Both call sites tenant-validate `employeeId`
+ * immediately before calling (`app.prisma.employee.findFirst({ where: { id: employeeId, tenantId:
+ * req.user.tenantId } })`, `me-availability.ts:32-39` for GET, `me-availability.ts:77-82` for PUT)
+ * and 404 before this point if that check fails.
  * Adding `employee: { tenantId }` here is therefore the same proven-no-op class of change S2/S3
  * document, not a new risk — and it removes what would otherwise be a `*Id` parameter
  * (`lint-facade-signatures.ts` F3/G4) with a declared-but-unused `tenantId` sibling.
