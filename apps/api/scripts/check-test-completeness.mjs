@@ -139,8 +139,30 @@ import { readFileSync } from "node:fs";
 // MIN_FILES rises from 262 to 263. MIN_TESTS rises from 3077 to 3080: +3 test cases in that new
 // file (verified with `pnpm exec vitest run src/__tests__/route-surface.test.ts`, "3 tests" in
 // its own output) — 3077 + 3 = 3080. No other test file's test COUNT changed in this plan.
-const MIN_FILES = 263;
-const MIN_TESTS = 3080;
+//
+// Plan 235-01 (Wave 1, task 3) — FINDING before the bump: this file's own constants (263/3080,
+// last touched by Plan 243-01) were ALREADY STALE at Phase 235's start (`main @ 83077d15`), before
+// this plan changed anything. `83077d15` is Phase 101B's own closing merge commit (10 plan waves,
+// ending 101B-10) and it added `scripts/__tests__/measure-context-boundary-imports.test.ts` plus
+// many new test cases in existing files across those 10 waves, without ANY of them bumping this
+// floor's constants — no trail entry for "101B" exists above this one. Because this gate is a
+// LOWER bound (`files < MIN_FILES || tests < MIN_TESTS`), the stale 263/3080 floor kept passing
+// trivially throughout the whole phase; nothing broke, but the floor verified less than it
+// appeared to, silently, for ten plan waves — the same drift class this phase (235) exists to stop
+// happening on the guards that walk the source tree. This gate does not (it reads a JSON report,
+// not the tree), so it is outside the AST classifier's scope, but the SAME discipline applies:
+// measure, don't inherit. Cross-validated three ways before touching the constants: (1) a full
+// `pnpm --filter @clokr/api test` run on this plan's own HEAD reported "Test Files 265 passed
+// (265)" / "Tests 3163 passed | 3 skipped (3166)"; (2) this plan's own new file
+// (scripts/__tests__/lint-guard-vacuity-detect.test.ts) is the ONLY test file this plan added, with
+// "20 tests" in its own single-file run, so the PRE-task state is arithmetically 265-1=264 files,
+// 3166-20=3146 tests; (3) `.planning/STATE.md:54` independently records Phase 101B-10's own closing
+// full-suite run as "264 files / 3143 passed / 3 skipped" — 3143+3=3146, matching (2) exactly.
+// MIN_FILES therefore rises from the MEASURED 264 (not the stale 263) to 265. MIN_TESTS rises from
+// the MEASURED 3146 (not the stale 3080) to 3166 — 3146 + 20 = 3166, matching the full-suite run's
+// own totals in (1) exactly.
+const MIN_FILES = 265;
+const MIN_TESTS = 3166;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

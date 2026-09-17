@@ -69,3 +69,69 @@ describe.each(FIXTURE_MATRIX)(
     });
   },
 );
+
+// ── Task 3: the INPUT-set-vs-OUTPUT-set distinction (RESEARCH.md §2), pinned inline ─────────────
+//
+// These three cases are written directly here, not as fixtures, because they are a MINIMAL PAIR:
+// the only difference between the first two is one extra line, and the third is the real shape
+// of this repo's own check-import-targets.ts -- read from disk, not reproduced as a fixture, so a
+// future refactor of that file cannot silently stop being covered by this pin.
+
+describe("input-set vs output-set (D-02's load-bearing distinction)", () => {
+  it('a walk whose ONLY assertion targets the OUTPUT set (`expect(violations).toEqual([])`) is inputProof "none"', () => {
+    const src = `
+      import { readdirSync } from "node:fs";
+      export function check(dir) {
+        const files = readdirSync(dir);
+        const violations = files.filter((f) => f.includes("bad"));
+        expect(violations).toEqual([]);
+      }
+    `;
+    const result = classifyGuardFile("inline-output-only.ts", src);
+    expect(result.walks).toBe(true);
+    expect(result.asserts).toBe(true);
+    expect(result.inputProof).toBe("none");
+  });
+
+  it('the SAME file plus `expect(files.length).toBeGreaterThan(0)` becomes inputProof "length"', () => {
+    const src = `
+      import { readdirSync } from "node:fs";
+      export function check(dir) {
+        const files = readdirSync(dir);
+        const violations = files.filter((f) => f.includes("bad"));
+        expect(files.length).toBeGreaterThan(0);
+        expect(violations).toEqual([]);
+      }
+    `;
+    const result = classifyGuardFile("inline-output-and-input.ts", src);
+    expect(result.inputProof).toBe("length");
+  });
+
+  it('check-import-targets.ts\'s real success shape (`if (unresolved.length === 0)`) is inputProof "none" -- unresolved is the OUTPUT set', () => {
+    const path = join(__dirname, "../check-import-targets.ts");
+    const result = classifyGuardFile(path, readFileSync(path, "utf8"));
+    expect(result.walks).toBe(true);
+    expect(result.asserts).toBe(true);
+    expect(result.inputProof).toBe("none");
+  });
+});
+
+// ── Task 3: the two REAL files this module must classify correctly, not only fixture copies ─────
+
+describe("real-file classification (not a fixture stand-in)", () => {
+  it("section9-credit.test.ts's scannedAtLeastOne idiom classifies as flag-inner in its ORIGINAL file", () => {
+    const path = join(__dirname, "../../src/__tests__/section9-credit.test.ts");
+    const result = classifyGuardFile(path, readFileSync(path, "utf8"));
+    expect(result.walks).toBe(true);
+    expect(result.asserts).toBe(true);
+    expect(result.inputProof).toBe("flag-inner");
+  });
+
+  it("check-import-targets.ts classifies walks=true, asserts=true, inputProof=none", () => {
+    const path = join(__dirname, "../check-import-targets.ts");
+    const result = classifyGuardFile(path, readFileSync(path, "utf8"));
+    expect(result.walks).toBe(true);
+    expect(result.asserts).toBe(true);
+    expect(result.inputProof).toBe("none");
+  });
+});
