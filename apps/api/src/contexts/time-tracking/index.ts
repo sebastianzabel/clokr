@@ -60,3 +60,28 @@ export {
   BREAK_MAX_OVER_6H,
   BREAK_MAX_OVER_9H,
 } from "./break-constants";
+
+// ── Phase 101B (Issue #101, wave 8) — the remaining time-tracking deep imports widened onto ────
+// this surface so no production file outside `contexts/time-tracking` reaches into a leaf module
+// directly any more, except the one permanent register site (E-2; see
+// `apps/api/scripts/context-boundary-import-exceptions.json`).
+//
+// getEffectiveSchedule is DEFINED in ./entry-invariants (the leaf plan 04 lifted it into) —
+// sourced from there, never from ./api/time-entries, so this index never has to publish a route
+// module's whole import set.
+export { getEffectiveSchedule } from "./entry-invariants";
+export { getEffectiveBreakDuration } from "./break-effective";
+export type { BreakEmployeeShape, BreakTenantConfigShape } from "./break-effective";
+export { resolvePresenceState, isObligatedWorkday, isDayDue } from "./presence";
+export type { PresenceEntry, PresenceLeave, PresenceAbsence } from "./presence";
+export {
+  findUnconfirmedBreakDays,
+  unconfirmedDaysFromEntries,
+} from "./find-unconfirmed-break-days";
+
+// validateTimeEntryInvariants is deliberately NOT exported here. Its only caller outside this
+// context is platform/api/imports.ts, which is E-2 in ADR 0001 Eintrag H — the importer writing
+// directly into time-tracking, a defect Block 2 (#102-#104) replaces with an event. Exporting it
+// would make that import legal and would delete the only mechanical marker the defect has.
+// This surface publishes ./entry-invariants, a leaf module, never ./api/time-entries — Phase 101B
+// plan 04 lifted these helpers out of the route file for exactly that reason.
