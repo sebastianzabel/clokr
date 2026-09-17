@@ -15,17 +15,19 @@
  * 100B-04's tenant-gate extension. A query placed directly in this file would be invisible to
  * that gate — do not "helpfully" move one here.
  *
- * ── Wave 5 progress (D-01: a context is either fully converted or not touched) ──────────────────
- * Converted so far: `LeaveType` (plan 10, A17-A19), `LeaveEntitlement` (plan 10, A11-A16 plus the
- * two H1 deviation-preserving siblings), `EmployeeVocationalSchoolPattern` (plan 11, A20/A21a/A21b)
- * and `Section9Credit` (plan 11, A22 plus its two DSGVO compliance functions) — grouped in
- * `./facade/leave-types.ts`, `./facade/entitlements.ts`, `./facade/vocational-school-patterns.ts`
- * and `./facade/section9-credits.ts` respectively, one file per model.
- * Plan 12 adds `Absence` (A4/A5/A6 plus the three compliance functions, `./facade/absences.ts`) —
- * D-09's A4/A5 split is the single highest-consequence grouping decision in the phase; see that
- * file's own module header. Still to come: `LeaveRequest` (plan 13) — gets its OWN file under
- * `./facade/`, exported below grouped by model, so a later plan extends this list rather than
- * guessing at its shape.
+ * ── Wave 5 progress (D-01: a context is either fully converted or not touched) — CLOSED ─────────
+ * Converted: `LeaveType` (plan 10, A17-A19), `LeaveEntitlement` (plan 10, A11-A16 plus the two H1
+ * deviation-preserving siblings), `EmployeeVocationalSchoolPattern` (plan 11, A20/A21a/A21b),
+ * `Section9Credit` (plan 11, A22 plus its two DSGVO compliance functions), `Absence` (plan 12,
+ * A4/A5/A6 plus three compliance functions — D-09's A4/A5 split is the single highest-consequence
+ * grouping decision in the phase; see `./facade/absences.ts`'s own module header) and, closing the
+ * wave and the phase's whole conversion effort, `LeaveRequest` (plan 13, A1-A3/A7-A10/A9 plus the
+ * shift-protection read and three compliance functions — A1/A2/A3's three-status-set split is the
+ * SECOND highest-consequence grouping decision in the phase; see `./facade/leave-requests.ts`'s
+ * own module header). Grouped one file per model under `./facade/`.
+ *
+ * With this plan, `measure:context-access --check 0` exits 0 and `--rows` prints nothing — every
+ * cross-context Prisma access measured in this phase now goes through a facade.
  *
  * D-02: a facade function expresses the QUESTION a caller asks, not the caller's `where`. Two
  * callers with the same question share one function; a caller with a special case does not get a
@@ -51,6 +53,37 @@
  * paths to the same function in the tree for no benefit is exactly what this plan avoids.
  */
 export { hasApprovedLeaveOnDate } from "./leave-check";
+
+// ── LeaveRequest (plan 13, A1-A3/A7-A10/A9 + shift-protection + 3 compliance — closing model) ──
+export {
+  getApprovedLeaveOverlapping,
+  getActiveLeaveOverlapping,
+  getCalendarLeaveOverlapping,
+  getOwnPendingLeaveRequests,
+  getStalePendingLeaveRequestsForReminder,
+  getPendingLeaveDaysInYear,
+  countPendingApprovals,
+  getLeaveStartingInWindow,
+  getOwnLeaveActivity,
+  getReviewedLeaveActivity,
+  getTeamLeaveSubmissions,
+  getPendingLeaveForShiftProtection,
+  anonymizeLeaveRequestsForEmployee,
+  hardDeleteLeaveRequestsForEmployee,
+  archiveLeaveRequestsBefore,
+} from "./facade/leave-requests";
+export type {
+  ApprovedLeaveOverlap,
+  ActiveLeaveOverlap,
+  CalendarLeaveOverlap,
+  StalePendingLeaveRequestForReminder,
+  PendingLeaveDaysInYear,
+  UpcomingApprovedLeave,
+  OwnLeaveActivityItem,
+  ReviewedLeaveActivityItem,
+  TeamLeaveSubmissionItem,
+  PendingLeaveForShiftProtection,
+} from "./facade/leave-requests";
 
 // ── LeaveType (plan 10, A17-A19) ─────────────────────────────────────────────────────────────
 export {

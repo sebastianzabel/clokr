@@ -76,5 +76,17 @@
     "function": "hardDeleteAbsencesForEmployee",
     "rules": ["F3"],
     "reason": "Plan 100B-12 (D-08, H5): a HARD delete (Absence.deleteMany) invoked ONLY from platform/api/employees.ts's DELETE /:id/hard-delete sequence inside its own $transaction, whose handler validates id against req.user.tenantId at its own top BEFORE this transaction — and therefore before this function — is ever reached. Called IN PLACE in the existing onDelete:Restrict ORDER (Break -> TimeEntry -> LeaveRequest -> Absence -> ...), unchanged. Same shape as hardDeleteEntitlementsForEmployee (plan 10) and hardDeleteOvertimeDataForEmployee (plan 06)."
+  },
+  {
+    "file": "apps/api/src/contexts/absence/facade/leave-requests.ts",
+    "function": "anonymizeLeaveRequestsForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-13 (Wave 5, LAST conversion plan, D-08): DSGVO Art. 17 anonymisation — nulls LeaveRequest.note for employeeId, deliberately with no deletedAt guard (a soft-deleted row's PII must be scrubbed too, same as every other field platform/anonymize.ts's anonymizeEmployeeData() clears) and no tenantId parameter. Its sole caller resolves and tenant-validates employeeId before this function is ever reached (anonymize.ts's anonymizeEmployeeData(), reached only after employees.ts's DELETE /:id handler validated id against req.user.tenantId). Same shape as anonymizeAbsencesForEmployee (plan 12)."
+  },
+  {
+    "file": "apps/api/src/contexts/absence/facade/leave-requests.ts",
+    "function": "hardDeleteLeaveRequestsForEmployee",
+    "rules": ["F3"],
+    "reason": "Plan 100B-13 (Wave 5, LAST conversion plan, D-08): a HARD delete (LeaveRequest.deleteMany) invoked ONLY from platform/api/employees.ts's DELETE /:id/hard-delete sequence inside its own $transaction, whose handler validates id against req.user.tenantId at its own top BEFORE this transaction — and therefore before this function — is ever reached. Called IN PLACE in the existing onDelete:Restrict ORDER, unchanged. Same shape as hardDeleteAbsencesForEmployee (plan 12) and hardDeleteEntitlementsForEmployee (plan 10)."
   }
 ]
