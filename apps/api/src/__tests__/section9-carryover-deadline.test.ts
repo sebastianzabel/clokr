@@ -729,6 +729,13 @@ describe("structural guard against a divergent copy (Phase 104 Plan 04, Task 4)"
     // No file under apps/api/src outside utils/illness-carryover-guard.ts and __tests__/
     // may contain a divergent inline copy of the predicate.
     const allFiles = walkTsFiles(apiSrc, true);
+    // 235-BEFUND-B.md #4: `offenders` below is the OUTPUT set (expected empty on a healthy
+    // tree) — proving IT non-empty would be backwards. This proves the WALKED (input) set is
+    // non-empty instead, so an emptied/renamed apps/api/src cannot pass this guard vacuously.
+    expect(
+      allFiles.length,
+      "no .ts file scanned under apps/api/src — the source tree moved or emptied",
+    ).toBeGreaterThan(0);
     const offenders: string[] = [];
     for (const file of allFiles) {
       if (file.endsWith(join("contexts", "absence", "illness-carryover-guard.ts"))) continue;
