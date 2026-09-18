@@ -633,6 +633,22 @@ Prisma model without constraining it to `req.user.tenantId` fails CI, not just r
 
 Verify with `pnpm --filter @clokr/api run lint:tenant-scoping`. A hit on a clean tree is a
 finding to report (Issue #204), not an exception to add.
+
+### Anti-vacuity gate (Issues #235/#240/#245)
+
+A file that walks the source tree and asserts on the result without proving the walked set was
+non-empty fails CI and `.husky/pre-commit`, not just review — a moved or emptied directory must
+turn the gate red, never let it report success having checked nothing:
+
+| Source | What it governs |
+| --- | --- |
+| `apps/api/scripts/lint-guard-vacuity.ts` | The gate itself — the AST classifier, `--check`/`--scope`/`--rows` |
+| `apps/api/scripts/lint-guard-vacuity-exceptions.json` | Every deliberate exception, each with a mandatory reason |
+| `apps/api/scripts/README.md` § Lint gates | How to add a justified exception, and when NOT to |
+| `docs/adr/0001-abweichungen.md` Eintrag I | The as-built outcome, the exception register, and what this gate structurally cannot see |
+
+Verify with `pnpm --filter @clokr/api exec tsx scripts/lint-guard-vacuity.ts --check 0`. A hit on a
+clean tree is a finding to report, not an exception to add.
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->
