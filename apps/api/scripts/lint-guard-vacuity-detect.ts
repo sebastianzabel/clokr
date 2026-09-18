@@ -144,8 +144,26 @@ const BARE_CP_COMMAND_RE = /^(find|grep|ls|rg)$/;
  * enough to make either file's own empty-abort classifier-visible, because the `.toString()` link
  * in `execSync(...).toString().split("\n").filter(...).map(...)` broke the chain one step before
  * reaching the recognised walk call). Preserves the same "derived-ness" as every other entry here
- * — the string IS the walked result, merely in its text form, not a new, independent value. */
-const CHAIN_METHODS = new Set(["filter", "map", "flatMap", "sort", "concat", "split", "toString"]);
+ * — the string IS the walked result, merely in its text form, not a new, independent value.
+ *
+ * WR-03 (235-REVIEW.md) addition: `trim` — this list has already been extended once this phase
+ * by hitting a real file (`toString`, above), not by being exhaustive by construction; `trim` is
+ * the closest-adjacent, most-plausible next miss given that precedent (very commonly chained
+ * right after `.toString()` and before `.split("\n")`, to drop a trailing empty line). Every
+ * entry here preserves the same "derived-ness" property: the result is still the SAME walked
+ * value, merely trimmed/split/mapped, never a new, independent one. Not exhaustive by design —
+ * this list is extended when a real file's chain breaks derivation one link short, same as
+ * `toString` was, not widened speculatively ahead of a real shape. */
+const CHAIN_METHODS = new Set([
+  "filter",
+  "map",
+  "flatMap",
+  "sort",
+  "concat",
+  "split",
+  "toString",
+  "trim",
+]);
 
 /** WR-02 adjacent gap (235-REVIEW.md), found while closing WR-02: unlike `execSync`, which
  * returns the process output directly, `spawnSync`'s return value is a RESULT OBJECT — its
