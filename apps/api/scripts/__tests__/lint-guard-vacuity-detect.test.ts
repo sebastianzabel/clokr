@@ -9,6 +9,16 @@
  * pins one classification class, including both D-03 directions (a comment that describes a walk
  * primitive; a string literal containing "//" that hides a real one on the next line) and the
  * `walkChain(rows)` false-friend that produced 3 of the phase's starting 29 -> 26 correction.
+ *
+ * Two rows added in Plan 235-02, during baseline verification against the REAL tree (not
+ * hypothetical — both fixtures reproduce a real file's exact idiom that this classifier
+ * originally misclassified as vacuous): `guarded-contains-assert.ts` pins the `"contains"`
+ * proof kind (`expect([...x]).toContain(y)`, `absence-vocabulary-guard.test.ts`'s real shape) and
+ * `chained-call-on-walk-containing-fn.ts` pins that `isWalkDerivedExpr`'s chain-method branch
+ * recurses into a receiver that is a direct call to a walk-CONTAINING function, not only a raw
+ * walk-primitive call (`section9-model.test.ts`'s real `walk(dir).filter(...)` shape). Both were
+ * found by running the built tool over the real tree and manually verifying real files the tool
+ * reported as vacuous — never invented against a hypothetical.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -38,6 +48,13 @@ const FIXTURE_MATRIX: MatrixRow[] = [
   { file: "walker-without-assertion.ts", walks: true, asserts: false, inputProof: "none" },
   { file: "shadowed-readdir-binding.ts", walks: false, asserts: true, inputProof: "none" },
   { file: "namespace-import-walk.ts", walks: true, asserts: true, inputProof: "length" },
+  { file: "guarded-contains-assert.ts", walks: true, asserts: true, inputProof: "contains" },
+  {
+    file: "chained-call-on-walk-containing-fn.ts",
+    walks: true,
+    asserts: true,
+    inputProof: "length",
+  },
 ];
 
 function loadFixture(file: string): { path: string; text: string } {
@@ -46,8 +63,8 @@ function loadFixture(file: string): { path: string; text: string } {
 }
 
 describe("FIXTURE_MATRIX completeness (D-07: red proof over the WHOLE set)", () => {
-  it("has exactly 13 rows", () => {
-    expect(FIXTURE_MATRIX.length).toBe(13);
+  it("has exactly 15 rows", () => {
+    expect(FIXTURE_MATRIX.length).toBe(15);
   });
 
   it("matches the fixture directory exactly — both directions, no orphan, no missing", () => {

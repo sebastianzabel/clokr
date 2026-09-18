@@ -73,6 +73,24 @@
  * binder pass this module does not need for its actual job — noted so a future reader does not
  * mistake the simplification for an oversight.
  *
+ * ── PLAN 235-02 EXTENSIONS (baseline verification against the REAL tree, not a fixture) ─────────
+ * Two gaps in this module surfaced only once its CLI (plan 235-02) ran over every real file and
+ * the RESULT was checked by hand against 2-3 files the tool reported vacuous — exactly the
+ * "an idiom used once is a blind spot, not a rule" risk RESEARCH.md's own §2 flags for the
+ * `scannedAtLeastOne` precedent:
+ *   1. `"contains"` input-proof shape — `expect([...walkDerivedSet]).toContain(knownMember)`
+ *      (`absence-vocabulary-guard.test.ts`'s real idiom). A set containing a specific known member
+ *      cannot be empty; this is at least as strong a proof as `.length > 0`, and was previously
+ *      unrecognised — the file classified `inputProof: "none"` despite genuinely proving its walk
+ *      non-empty.
+ *   2. `isWalkDerivedExpr`'s chain-method branch (`.filter`/`.map`/…) now also recurses into a
+ *      receiver that is a DIRECT CALL to a walk-CONTAINING function (`walk(dir).filter(...)`,
+ *      `section9-model.test.ts`'s real idiom) — previously it only recognised a receiver that was
+ *      itself a raw walk-primitive call or another chain link, so `walk(dir).filter(...)` fell
+ *      through to `return false` and the genuine `.length > 0` proof one line later was
+ *      misclassified as absent. Both fixtures reproduce the real file's exact shape, not a
+ *      hypothetical (`guarded-contains-assert.ts`, `chained-call-on-walk-containing-fn.ts`).
+ *
  * ── Flags ────────────────────────────────────────────────────────────────────────────────────────
  *   (none — this module exports pure classification only. The CLI, the repo-wide scan and the
  *   `--check <n>` gate are plan 235-02's job, built ON TOP of `classifyGuardFile`.)
@@ -282,27 +300,35 @@ function findWalkSites(sourceFile: ts.SourceFile, bindings: Map<string, Binding>
 // ── Part D: walk-derived bindings (D-05 propagation: direct, chained, recursive-helper, transitive)
 
 /** `expr` resolves — directly or through an allowed chain (`.filter/.map/.flatMap/.sort/.concat/
- * .split`, `Array.from(...)`, `new Set(...)`) — to a walk-primitive call or an already-derived
- * identifier. */
+ * .split`, `Array.from(...)`, `new Set(...)`), or through a call to a walk-CONTAINING same-file
+ * function (Plan 235-02, baseline-verification finding: `new Set(scannedFiles().map(...))` in
+ * `absence-vocabulary-guard.test.ts` — a walk-containing function's result wrapped in a chain
+ * BEFORE being handed to `new Set(...)`, one level deeper than the outer fixed-point loop's own
+ * "direct call as the whole initializer" check alone can see) — to a walk-primitive call or an
+ * already-derived identifier. */
 function isWalkDerivedExpr(
   expr: ts.Expression,
   walkCalls: ReadonlySet<ts.CallExpression>,
   derived: ReadonlySet<string>,
+  walkContainingFns: ReadonlySet<string>,
 ): boolean {
   if (ts.isParenthesizedExpression(expr)) {
-    return isWalkDerivedExpr(expr.expression, walkCalls, derived);
+    return isWalkDerivedExpr(expr.expression, walkCalls, derived, walkContainingFns);
   }
   if (ts.isCallExpression(expr)) {
     if (walkCalls.has(expr)) return true;
+    if (ts.isIdentifier(expr.expression) && walkContainingFns.has(expr.expression.text)) {
+      return true;
+    }
     if (ts.isPropertyAccessExpression(expr.expression)) {
       const name = expr.expression.name.text;
       const receiver = expr.expression.expression;
       if (CHAIN_METHODS.has(name)) {
-        return isWalkDerivedExpr(receiver, walkCalls, derived);
+        return isWalkDerivedExpr(receiver, walkCalls, derived, walkContainingFns);
       }
       if (name === "from" && ts.isIdentifier(receiver) && receiver.text === "Array") {
         const arg = expr.arguments[0];
-        return !!arg && isWalkDerivedExpr(arg, walkCalls, derived);
+        return !!arg && isWalkDerivedExpr(arg, walkCalls, derived, walkContainingFns);
       }
     }
     return false;
@@ -313,7 +339,7 @@ function isWalkDerivedExpr(
     expr.expression.text === "Set"
   ) {
     const arg = expr.arguments?.[0];
-    return !!arg && isWalkDerivedExpr(arg, walkCalls, derived);
+    return !!arg && isWalkDerivedExpr(arg, walkCalls, derived, walkContainingFns);
   }
   if (ts.isIdentifier(expr)) {
     return derived.has(expr.text);
@@ -397,7 +423,7 @@ function computeWalkContainingFunctions(
 function computeWalkDerivedNames(
   sourceFile: ts.SourceFile,
   walkCalls: ReadonlySet<ts.CallExpression>,
-): Set<string> {
+): { derived: Set<string>; walkContainingFns: Set<string> } {
   const derived = new Set<string>();
   const namedFunctions = collectNamedFunctions(sourceFile);
   const walkContainingFns = computeWalkContainingFunctions(namedFunctions, walkCalls);
@@ -429,7 +455,13 @@ function computeWalkDerivedNames(
       if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
         if (!derived.has(node.name.text)) {
           const init = node.initializer;
-          const viaExpr = isWalkDerivedExpr(init, walkCalls, derived);
+          // `isWalkDerivedExpr` itself now recognises a direct call to a walk-containing function
+          // ANYWHERE in the expression tree (including nested inside a chain, e.g.
+          // `new Set(scannedFiles().map(...))`), so the "whole initializer IS a direct call"
+          // check below is a subset of what `isWalkDerivedExpr` already covers — kept anyway as
+          // the minimal, easy-to-verify base case a reader can check without following the
+          // recursion.
+          const viaExpr = isWalkDerivedExpr(init, walkCalls, derived, walkContainingFns);
           const viaCall =
             !viaExpr &&
             ts.isCallExpression(init) &&
@@ -445,7 +477,7 @@ function computeWalkDerivedNames(
     })(sourceFile);
   }
 
-  return derived;
+  return { derived, walkContainingFns };
 }
 
 /** Every local identifier that resolves — directly, through an allowed method chain, through a
@@ -455,7 +487,7 @@ function computeWalkDerivedNames(
 export function collectWalkDerivedBindings(sourceFile: ts.SourceFile): Set<string> {
   const bindings = collectBindings(sourceFile);
   const walkCalls = new Set(findWalkSites(sourceFile, bindings).map((s) => s.node));
-  return computeWalkDerivedNames(sourceFile, walkCalls);
+  return computeWalkDerivedNames(sourceFile, walkCalls).derived;
 }
 
 // ── Part E: assertion sites ────────────────────────────────────────────────────────────────────
@@ -652,6 +684,51 @@ function matchLengthProof(
   return hits;
 }
 
+/** `expr` resolves to a walk-derived binding for `.toContain(...)` purposes: either a bare
+ * identifier in `derived`, or the single-spread array literal `[...x]` with `x` in `derived` — the
+ * shape a `Set<string>` walk-derived accumulator takes when spread into an array so `toContain`
+ * can be called on it (`Set` itself has no `.toContain` matcher in this repo's assertion library).
+ * Found live (Plan 235-02, baseline verification against the real tree, not a fixture): a walk
+ * that proves reaching specific, individually-named members is at least as strong a non-emptiness
+ * proof as `length > 0` — a set that CONTAINS a known member cannot be empty. */
+function walkDerivedContainsSubject(
+  expr: ts.Expression,
+  derived: ReadonlySet<string>,
+): string | null {
+  if (ts.isIdentifier(expr)) return derived.has(expr.text) ? expr.text : null;
+  if (ts.isArrayLiteralExpression(expr) && expr.elements.length === 1) {
+    const el = expr.elements[0];
+    if (
+      ts.isSpreadElement(el) &&
+      ts.isIdentifier(el.expression) &&
+      derived.has(el.expression.text)
+    ) {
+      return el.expression.text;
+    }
+  }
+  return null;
+}
+
+/** The `"contains"` shape: `expect(<walkDerived>).toContain(<anything>)` (never `.not.toContain`,
+ * which proves nothing about non-emptiness — it could hold on an empty set too). */
+function matchContainsProof(
+  sourceFile: ts.SourceFile,
+  expectSites: { node: ts.CallExpression }[],
+  derived: ReadonlySet<string>,
+): ProofSite[] {
+  const hits: ProofSite[] = [];
+  for (const { node } of expectSites) {
+    const subjectExpr = node.arguments[0];
+    if (!subjectExpr) continue;
+    const { properties, finalCall } = getExpectChain(node);
+    if (!finalCall) continue;
+    if (properties.includes("not") || properties[properties.length - 1] !== "toContain") continue;
+    const subject = walkDerivedContainsSubject(subjectExpr, derived);
+    if (subject) hits.push({ line: lineOf(sourceFile, node), subject });
+  }
+  return hits;
+}
+
 /** The `"empty-abort"` shape: `if (<walkDerived>.length/.size === 0 | < 1 | !<...>.length) { throw
  * | process.exit(<non-zero>) | process.exitCode = <non-zero> }`. */
 function matchEmptyAbortProof(
@@ -779,11 +856,15 @@ function matchFlagProof(
   sourceFile: ts.SourceFile,
   walkCalls: ReadonlySet<ts.CallExpression>,
   derived: ReadonlySet<string>,
+  walkContainingFns: ReadonlySet<string>,
 ): { hits: ProofSite[]; kind: "flag-inner" | "flag-outer" | null } {
   const flags = collectFalseFlags(sourceFile);
   const allLoops: LoopNode[] = [];
   (function collect(node: ts.Node): void {
-    if (isLoopNode(node) && isWalkDerivedExpr(node.expression, walkCalls, derived)) {
+    if (
+      isLoopNode(node) &&
+      isWalkDerivedExpr(node.expression, walkCalls, derived, walkContainingFns)
+    ) {
       allLoops.push(node);
     }
     ts.forEachChild(node, collect);
@@ -823,7 +904,13 @@ function matchFlagProof(
 
 // ── Part G: the public classifier ─────────────────────────────────────────────────────────────
 
-export type InputProofKind = "none" | "length" | "flag-inner" | "flag-outer" | "empty-abort";
+export type InputProofKind =
+  | "none"
+  | "length"
+  | "contains"
+  | "flag-inner"
+  | "flag-outer"
+  | "empty-abort";
 
 export interface GuardClassification {
   file: string;
@@ -844,7 +931,7 @@ export function classifyGuardFile(filePath: string, text: string): GuardClassifi
   const bindings = collectBindings(sourceFile);
   const walkCallInfos = findWalkSites(sourceFile, bindings);
   const walkCalls = new Set(walkCallInfos.map((w) => w.node));
-  const derived = computeWalkDerivedNames(sourceFile, walkCalls);
+  const { derived, walkContainingFns } = computeWalkDerivedNames(sourceFile, walkCalls);
   const assertSitesInternal = findAssertSites(sourceFile);
   const expectSites = assertSitesInternal
     .filter((s): s is AssertSiteInternal & { node: ts.CallExpression } => s.kind === "expect")
@@ -858,15 +945,21 @@ export function classifyGuardFile(filePath: string, text: string): GuardClassifi
     inputProof = "length";
     inputProofSites = lengthHits;
   } else {
-    const abortHits = matchEmptyAbortProof(sourceFile, derived);
-    if (abortHits.length > 0) {
-      inputProof = "empty-abort";
-      inputProofSites = abortHits;
+    const containsHits = matchContainsProof(sourceFile, expectSites, derived);
+    if (containsHits.length > 0) {
+      inputProof = "contains";
+      inputProofSites = containsHits;
     } else {
-      const flagResult = matchFlagProof(sourceFile, walkCalls, derived);
-      if (flagResult.kind) {
-        inputProof = flagResult.kind;
-        inputProofSites = flagResult.hits;
+      const abortHits = matchEmptyAbortProof(sourceFile, derived);
+      if (abortHits.length > 0) {
+        inputProof = "empty-abort";
+        inputProofSites = abortHits;
+      } else {
+        const flagResult = matchFlagProof(sourceFile, walkCalls, derived, walkContainingFns);
+        if (flagResult.kind) {
+          inputProof = flagResult.kind;
+          inputProofSites = flagResult.hits;
+        }
       }
     }
   }
