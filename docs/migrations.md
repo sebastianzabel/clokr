@@ -246,6 +246,14 @@ Rückfrage an den Betreiber, kein Fall für einen Ersatzcode.
 
 **5. `SET NOT NULL` — eigener, SPÄTERER Release. Nicht in diesem Branch anlegen.**
 
+> **Rollout-Reihenfolge, nicht nur Zeitpunkt (Owner-Entscheidung 2026-09-18).** Die Vorbedingung
+> nennt eine **Version**: das Release mit Phase 97 ist **v1.11.0**. prod wird deshalb NICHT von
+> v1.10.x direkt auf v1.11.1 gezogen, sondern der Reihe nach — erst v1.11.0 (dort den
+> Nachlauf-Sweep fahren und seine Ausgabe festhalten), dann v1.11.1. Ein Versionssprung würde
+> diese Vorbedingung dauerhaft unerfüllbar machen, weil das Release, das sie erfüllt, auf prod nie
+> als ausgelieferter Zustand existiert hätte. Siehe `docs/release-process.md`
+> § „Upgrade path: do not skip a version on prod". Verfolgt als GitHub-Issue #206.
+
 (Schritte 0-4 stehen oben; Schritt 0 ist die Rollout-Einheit R1 — Migration und Schreibpfad in
 EINEM Merge.)
 
