@@ -426,7 +426,9 @@ export function findCommentLanguageViolations(source, file) {
 }
 
 // ── File walking ─────────────────────────────────────────────────────────────────────────
-function listSourceFiles(dir, exts) {
+// Exported (Group E, #235 Plan 07) so scripts/__tests__/lint-comment-language.test.mjs can drive
+// it over a genuinely empty directory directly, without going through main()'s process.exit().
+export function listSourceFiles(dir, exts) {
   const abs = resolve(repoRoot, dir);
   if (!existsSync(abs)) return [];
   const out = [];
@@ -459,14 +461,32 @@ function writeBaseline(keys) {
   writeFileSync(BASELINE_FILE, JSON.stringify([...keys].sort(), null, 2) + "\n");
 }
 
-function main() {
+// `scopesOverride` (Group E, #235 Plan 07) lets scripts/__tests__/lint-comment-language.test.mjs
+// drive the real abort path (mocking process.exit) over a genuinely empty directory without
+// scanning the real apps/api/src or apps/web/src. Production invocation (`main()`, no args, at
+// the bottom of this file) always uses the real SCOPES.
+export function main(scopesOverride) {
+  const scopes = scopesOverride ?? SCOPES;
   const updateBaseline = process.argv.includes("--update-baseline");
 
   const violations = [];
   const perApp = {};
-  for (const { app, dir, exts } of SCOPES) {
+  for (const { app, dir, exts } of scopes) {
+    const files = listSourceFiles(dir, exts);
+    // Empty-abort (D-02/#235 Group E): TWO independent scan roots, and a silently-empty HALF is
+    // exactly the half-blind hazard D-05 class (d) describes — the OTHER root's real violation
+    // count can keep the aggregate total looking healthy while this one found nothing. Abort if
+    // EITHER root yields zero files, checked and named individually here, not only if the
+    // combined total across both roots is zero.
+    if (files.length === 0) {
+      console.error(
+        `[lint:comment-language] scanned 0 file(s) under ${dir} (${app}) — the scan root moved ` +
+          `or the filter matched nothing. This is a failure, not a clean result.`,
+      );
+      process.exit(1);
+    }
     perApp[app] = 0;
-    for (const file of listSourceFiles(dir, exts)) {
+    for (const file of files) {
       const rel = relative(repoRoot, file);
       const source = readFileSync(file, "utf8");
       const fileViolations = findCommentLanguageViolations(source, rel);

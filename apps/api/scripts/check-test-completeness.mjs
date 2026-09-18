@@ -229,8 +229,32 @@ import { readFileSync } from "node:fs";
 // passing after Task 3 plus the harness generalisation — a clean +4 end to end, matching this bump
 // exactly. 3193 + 4 = 3197, matching a fresh full-suite run's own "Test Files 266 passed (266)" /
 // "Tests 3194 passed | 3 skipped (3197)" totals exactly.
+// Plan 235-07 (Wave 4, 2026-09-18) — no new apps/api test FILE: `apps/web/scripts/lint-ui.mjs`,
+// `lint-ui-classes.mjs`, `lint-save-pattern.mjs` and root `scripts/lint-comment-language.mjs` are
+// all `.mjs` tools, not `.test.ts` files, and the NEW test cases this plan added
+// (`scripts/__tests__/lint-comment-language.test.mjs`, +4 cases) live at repo ROOT, run via
+// `pnpm test:scripts`, entirely outside this apps/api vitest instance (same reasoning as Plan
+// 235-06's note re: `apps/web/src/__tests__`) — MIN_FILES stays 266. `235-BASELINE.md`'s own
+// "Zusammenfassung für Pläne 03-09" table names Group E as 2 vacuous guards
+// (`apps/web/scripts/lint-save-pattern.mjs`, `scripts/lint-comment-language.mjs`), not 4 — the
+// other two `.mjs` tools this plan also fixed are NOT classified as guards at all by
+// `lint-guard-vacuity`'s own AST classifier (a real, separately-documented blind spot: their
+// `execSync(\`find '${scope}' ...\`)` calls use a template literal WITH substitutions, which
+// `ts.isStringLiteralLike` does not recognise — see `235-BEFUND-E.md` Finding 0), so fixing them
+// moves no `--check` number and adds no generated case here.
+// **Finding, per this phase's own standing rule (equality targets come from the baseline, not
+// plan prose):** `235-07-PLAN.md`'s own `<verification>` section states "the generated whole-set
+// red proof grew by exactly four" — that number is copy-paste residue from Plan 235-04's SUMMARY
+// (which DID grow by 4) and disagrees with `235-BASELINE.md`'s Group E count of 2. The baseline
+// wins: measured directly, `pnpm --filter @clokr/api exec vitest run
+// scripts/__tests__/lint-guard-vacuity.test.ts` reports 29 tests on this plan's own starting HEAD
+// `6d74bbe1`, 31 after (Task 2 flips `lint-save-pattern.mjs`, Task 3 flips
+// `scripts/lint-comment-language.mjs`) — a clean **+2**, matching Group E's baseline count exactly,
+// not +4. MIN_TESTS rises from 3197 to 3199. 3197 + 2 = 3199, matching a fresh full-suite run's
+// own "Test Files 266 passed (266)" totals exactly (see this plan's own SUMMARY for the verbatim
+// "Tests N passed | 3 skipped (3199)" line).
 const MIN_FILES = 266;
-const MIN_TESTS = 3197;
+const MIN_TESTS = 3199;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

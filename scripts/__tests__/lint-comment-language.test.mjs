@@ -5,12 +5,18 @@
 // vitest config can run a plain node-environment script test without borrowing the other
 // app's setup). Never run under apps/api's vitest — that instance owns the shared test
 // database and may be mid-run for another agent.
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   classifyComment,
   extractComments,
   extractSvelteComments,
   findCommentLanguageViolations,
+  listSourceFiles,
+  main,
   STOPWORD_THRESHOLD,
   STOPWORDS,
 } from "../lint-comment-language.mjs";
@@ -216,5 +222,85 @@ describe("findCommentLanguageViolations (full pipeline)", () => {
       "apps/web/src/routes/foo/+page.svelte",
     );
     expect(violations).toHaveLength(1);
+  });
+});
+
+// ── Empty-abort (D-02/#235 Group E, Plan 07) ──────────────────────────────────────────────
+// A .mjs lint tool that finds zero files to scan must exit 1 with a message naming the roots
+// it walked, instead of silently printing OK — this pins that behaviour so it cannot later be
+// removed without a test going red. `main`'s `scopesOverride` parameter exists ONLY so this
+// suite can drive the real abort path (with process.exit mocked) over a genuinely empty
+// directory, without scanning the real apps/api/src or apps/web/src.
+describe("listSourceFiles — the scan-list function the abort is built on", () => {
+  it("returns an empty array (not throwing) for a genuinely empty directory", () => {
+    const emptyDir = mkdtempSync(join(tmpdir(), "lint-comment-language-empty-"));
+    try {
+      expect(listSourceFiles(emptyDir, [".ts"])).toEqual([]);
+    } finally {
+      rmSync(emptyDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("main() empty-abort — both scan roots, and either one alone", () => {
+  let emptyDir;
+  let exitSpy;
+  let errSpy;
+  let logSpy;
+
+  afterEach(() => {
+    exitSpy?.mockRestore();
+    errSpy?.mockRestore();
+    logSpy?.mockRestore();
+    if (emptyDir) rmSync(emptyDir, { recursive: true, force: true });
+    emptyDir = undefined;
+  });
+
+  /** Mocks process.exit to throw instead of killing the vitest worker — the standard pattern
+   * for asserting a process.exit(N) call without actually exiting. */
+  function mockExit() {
+    exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`__PROCESS_EXIT_${code}__`);
+    });
+    errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  }
+
+  it("aborts with exit 1, naming the empty root, when the ONLY scope is empty", () => {
+    emptyDir = mkdtempSync(join(tmpdir(), "lint-comment-language-empty-"));
+    mockExit();
+
+    expect(() => main([{ app: "apps/api", dir: emptyDir, exts: [".ts"] }])).toThrow(
+      "__PROCESS_EXIT_1__",
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errSpy.mock.calls.some(([msg]) => msg.includes(emptyDir))).toBe(true);
+    expect(errSpy.mock.calls.some(([msg]) => msg.includes("apps/api"))).toBe(true);
+  });
+
+  it("aborts when the SECOND scope is empty even though the FIRST is genuinely populated — " +
+    "proves the check runs per-root, not only on the combined total", () => {
+    emptyDir = mkdtempSync(join(tmpdir(), "lint-comment-language-empty-"));
+    mockExit();
+
+    expect(() =>
+      main([
+        { app: "apps/api", dir: "apps/api/src", exts: [".ts"] },
+        { app: "apps/web", dir: emptyDir, exts: [".ts", ".svelte"] },
+      ]),
+    ).toThrow("__PROCESS_EXIT_1__");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    // The FIRST (real, populated) scope must not itself have triggered the abort — only the
+    // second (empty) one did. Confirmed by the message naming apps/web's empty dir, not apps/api.
+    expect(errSpy.mock.calls.some(([msg]) => msg.includes(emptyDir))).toBe(true);
+    expect(errSpy.mock.calls.some(([msg]) => msg.includes("apps/web"))).toBe(true);
+  });
+
+  it("does NOT abort when both real scan roots are used (sanity: the abort is not always-on)", () => {
+    mockExit();
+    // A real, non-empty run must complete normally — main() only throws via the mocked exit if
+    // it actually calls process.exit(1), which a healthy scan never does.
+    expect(() => main()).not.toThrow();
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 });
