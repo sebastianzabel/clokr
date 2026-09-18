@@ -400,6 +400,44 @@ function walkTsFiles(dir: string, apiSrcRoot: string, out: string[]): void {
 }
 
 /**
+ * The files `scanSrcTree` would walk, WITHOUT reading their content — reporting only, the
+ * accesses computation (`scanSrcTree` below) is untouched by this addition (235-08, D-02's own
+ * input/output-conflation pitfall 3: a workload of 0 must be distinguishable, from the tool's own
+ * output, from a scan that found no FILES at all). Walks the same `SCAN_ROOTS` with the same
+ * `walkTsFiles` primitive `scanSrcTree` uses, so the two counts can never structurally diverge.
+ * Returns the FILE SET itself (not merely its count) so `run()`'s own `<x>.length === 0` check is
+ * the classifier's recognised `"empty-abort"` shape (`lint-guard-vacuity-detect.ts`'s
+ * `matchEmptyAbortProof` — the proof has to sit on the walk-derived binding's own `.length`,
+ * never on a number computed one indirection away from it).
+ */
+export function discoverScannedFiles(apiSrcRoot: string): string[] {
+  const out: string[] = [];
+  for (const rootName of SCAN_ROOTS) {
+    const rootDir = join(apiSrcRoot, rootName);
+    try {
+      if (!statSync(rootDir).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    walkTsFiles(rootDir, apiSrcRoot, out);
+  }
+  return out;
+}
+
+/**
+ * The empty-abort message for a 0-scanned-file scan. Pure and exported so it is pinnable without
+ * a real filesystem walk. Names every one of `SCAN_ROOTS` under `apiSrcRoot`, mirroring
+ * `check-import-targets.ts`'s own empty-abort message shape (235-05/D-02).
+ */
+export function emptyScanAbortMessage(apiSrcRoot: string): string {
+  const roots = SCAN_ROOTS.map((r) => join(apiSrcRoot, r)).join(", ");
+  return (
+    `measure-foreign-context-access: scanned 0 file(s) under ${roots} — a scan root moved or ` +
+    `the extension filter matched nothing. This is a failure, not a clean result.`
+  );
+}
+
+/**
  * Walks `apps/api/src/{contexts,composition,services}/**\/*.ts` (measurement authority rule 1),
  * skipping `__tests__/` and `*.test.ts`, and returns every Access found. `apiSrcRoot` is the
  * absolute path to `apps/api/src` (or, in a test, a fixture directory laid out the same way).
@@ -617,13 +655,21 @@ export function computeWorkload(
   return { workload, excepted };
 }
 
-export function summaryLine(result: WorkloadResult): string {
+/**
+ * `scannedFiles` is optional (235-08, D-02 pitfall 3): when given, it prefixes the line with the
+ * size of the SCANNED set, kept visibly separate from `${files} file(s)` (the WORKLOAD set,
+ * i.e. files WITH a foreign access) — two different sets, so a workload of 0 never looks like a
+ * scan of 0. Omitted, the line is byte-identical to its pre-235-08 form (the format this tool's
+ * own pinning test locks down).
+ */
+export function summaryLine(result: WorkloadResult, scannedFiles?: number): string {
   const files = new Set(result.workload.map((a) => a.file)).size;
   const read = result.workload.filter((a) => isReadOp(a.op)).length;
   const write = result.workload.filter((a) => isWriteOp(a.op)).length;
+  const scannedPrefix = scannedFiles === undefined ? "" : `${scannedFiles} file(s) scanned; `;
   return (
-    `[measure:context-access] ${result.workload.length} foreign access(es) in ${files} file(s) ` +
-    `— ${read} read / ${write} write; ${result.excepted.length} excepted.`
+    `[measure:context-access] ${scannedPrefix}${result.workload.length} foreign access(es) in ` +
+    `${files} file(s) — ${read} read / ${write} write; ${result.excepted.length} excepted.`
   );
 }
 
@@ -654,6 +700,20 @@ export function renderByModel(result: WorkloadResult): string {
 
 function run(repoRoot: string, argv: string[]): number {
   const apiSrcRoot = join(repoRoot, "apps/api/src");
+
+  // Empty-abort (235-08, D-02 pitfall 3): the workload computation and its numbers are untouched
+  // below — this proof goes on the SCANNED set, checked before scanSrcTree ever runs, never on the
+  // workload/accesses count (which correctly wants to stay 0 on a healthy tree). `process.exitCode`
+  // set explicitly alongside the `return 1` (same classifier-visibility shape as A2's
+  // lint-saldo-lock-derivation.ts fix): the CLI entry already wraps this in
+  // `process.exit(run(...))`, so the real exit code was never in question.
+  const scannedFiles = discoverScannedFiles(apiSrcRoot);
+  if (scannedFiles.length === 0) {
+    console.error(emptyScanAbortMessage(apiSrcRoot));
+    process.exitCode = 1;
+    return 1;
+  }
+
   const accesses = scanSrcTree(apiSrcRoot);
 
   const raw = loadExceptionsRaw(repoRoot);
@@ -681,7 +741,7 @@ function run(repoRoot: string, argv: string[]): number {
       console.error(`measure-foreign-context-access: --check requires an integer argument`);
       return 1;
     }
-    console.log(summaryLine(result));
+    console.log(summaryLine(result, scannedFiles.length));
     if (result.workload.length === expected) {
       return 0;
     }
@@ -695,7 +755,7 @@ function run(repoRoot: string, argv: string[]): number {
     return 1;
   }
 
-  console.log(summaryLine(result));
+  console.log(summaryLine(result, scannedFiles.length));
   return 0;
 }
 

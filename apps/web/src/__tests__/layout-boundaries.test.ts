@@ -35,6 +35,14 @@ const BOUNDARY = readRouteFile(
   "src/lib/components/ui/ErrorBoundary.svelte",
 );
 
+// Phase 235 (Group D, D-02/D-05) — proves the walked SET (.svelte files under src/routes/), not
+// the derived COUNT the sole caller below asserts on. Set in the FILE branch (specifically the
+// .svelte branch, since that is the actual set this guard's match runs over), never the
+// directory branch, so a route tree with subdirectories but no .svelte files still reports false
+// — a directory can exist while its file filter yields nothing (section9-credit.test.ts:1375-1389
+// is the idiom this generalises).
+let scannedAtLeastOneFile = false;
+
 function countErrorBoundaryOccurrences(dir: string): number {
   let count = 0;
   for (const entry of readdirSync(dir)) {
@@ -43,6 +51,7 @@ function countErrorBoundaryOccurrences(dir: string): number {
     if (stat.isDirectory()) {
       count += countErrorBoundaryOccurrences(full);
     } else if (entry.endsWith(".svelte")) {
+      scannedAtLeastOneFile = true;
       const contents = readFileSync(full, "utf8");
       const matches = contents.match(/<ErrorBoundary/g);
       if (matches) count += matches.length;
@@ -102,6 +111,10 @@ describe("layout boundary placement (Issue #127, D-01/D-02/D-03)", () => {
       }
     })();
     expect(countErrorBoundaryOccurrences(routesDir)).toBe(2);
+    expect(
+      scannedAtLeastOneFile,
+      "no .svelte file scanned under src/routes — the routes directory moved or emptied",
+    ).toBe(true);
   });
 
   it("D-02: the view and app message titles in ErrorBoundary.svelte are different strings, not the same message twice", () => {

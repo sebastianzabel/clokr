@@ -257,7 +257,12 @@ describe("D-12 — guard registration on admin/availability/[employeeId]", () =>
     }
 
     const files = adminPageFiles();
-    expect(files.length).toBeGreaterThan(1);
+    // Phase 235 (Group D, D-02/D-05) — non-emptiness on the walked set itself, distinct from the
+    // "exactly one hit" assertion below on the FILTERED (output) set.
+    expect(
+      files.length,
+      "no admin page scanned — src/routes/(app)/admin moved or emptied",
+    ).toBeGreaterThan(0);
     const hits = files.filter((f) =>
       readFileSync(f, "utf8").includes('markUnsaved("admin-availability-detail"'),
     );

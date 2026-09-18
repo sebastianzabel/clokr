@@ -9,4 +9,13 @@ pnpm --filter @clokr/web lint:ui-classes || exit 1
 # style: directive, auth pages whitelisted in lint-ui.mjs).
 pnpm --filter @clokr/web lint:ui --staged || exit 1
 
+# One-shot lint-guard-vacuity (Phase 235-09, Issues #235/#240/#245). Full-repo, not staged-only —
+# lint-staged's *.{ts,js,svelte} glob does not match .mjs at all, and four of the guards this gate
+# proves are .mjs files. ~1.8s measured on this machine for the tool alone (`time pnpm --filter
+# @clokr/api exec tsx scripts/lint-guard-vacuity.ts --check 0`, this plan's own re-measurement —
+# plan 02's SUMMARY never recorded a number for this to cite, so this is measured fresh, not
+# inherited); see ADR 0001 Eintrag I for the full accounting and the checkpoint transcript for the
+# whole-hook cost the owner accepted.
+pnpm --filter @clokr/api exec tsx scripts/lint-guard-vacuity.ts --check 0 || exit 1
+
 pnpm exec lint-staged

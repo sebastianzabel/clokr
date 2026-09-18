@@ -179,6 +179,23 @@ export function discoverProductionFiles(apiRoot: string): string[] {
   return out.sort();
 }
 
+/**
+ * The empty-abort message for a 0-scanned-file walk — reporting only (235-08, D-02 pitfall 3), the
+ * workload and cycle computations downstream of `discoverProductionFiles` are untouched by this
+ * addition. Pure and exported so it is pinnable without a real filesystem walk; the message shape
+ * mirrors `check-import-targets.ts`'s own empty-abort (235-05/D-02). Applies uniformly to every
+ * invocation mode of this tool's `run()` (`--check`, `--rows`, `--by-target`, `--forms`,
+ * `--predict` AND `--cycles`) — `--cycles`'s own graph walk (`buildModuleGraph`) walks the
+ * identical `apiRoot/src` tree, so a scan root that moved would silently zero BOTH standing gates,
+ * not just one.
+ */
+export function emptyScanAbortMessage(apiRoot: string): string {
+  return (
+    `measure-context-boundary-imports: scanned 0 file(s) under ${join(apiRoot, "src")} — a scan ` +
+    `root moved or the extension filter matched nothing. This is a failure, not a clean result.`
+  );
+}
+
 // ── Symbol extraction (D-06's row shape) ────────────────────────────────────────────────────────
 
 /** `propertyName ?? name`, prefixed `"type "` when the element or the whole clause is type-only. */
@@ -745,10 +762,21 @@ export function computeWorkload(
 
 // ── Rendering ────────────────────────────────────────────────────────────────────────────────────
 
-export function summaryLine(deepTotal: number, result: WorkloadResult): string {
+/**
+ * `scannedFiles` is optional (235-08, D-02 pitfall 3): when given, it prefixes the line with the
+ * size of the SCANNED set, kept visibly separate from `deepTotal`/`workload` (both derived from
+ * classifying what was found, never the scan itself) — a workload of 0 must never look, from this
+ * line alone, like a scan of 0 files. Omitted, the line is byte-identical to its pre-235-08 form.
+ */
+export function summaryLine(
+  deepTotal: number,
+  result: WorkloadResult,
+  scannedFiles?: number,
+): string {
+  const scannedPrefix = scannedFiles === undefined ? "" : `${scannedFiles} file(s) scanned, `;
   return (
-    `[measure:boundary-imports] ${deepTotal} deep import(s) total, workload ${result.workload.length} ` +
-    `(${result.excepted.length} excepted).`
+    `[measure:boundary-imports] ${scannedPrefix}${deepTotal} deep import(s) total, workload ` +
+    `${result.workload.length} (${result.excepted.length} excepted).`
   );
 }
 
@@ -1215,6 +1243,19 @@ export const EXTRACT_SCENARIOS: Record<string, readonly ExtractionSpec[]> = {
 
 function run(repoRoot: string, argv: string[]): number {
   const apiRoot = join(repoRoot, "apps/api");
+
+  // Empty-abort (235-08, D-02 pitfall 3): checked before ANY branch below — workload and cycle
+  // computations further down are untouched by this addition, the proof goes on the SCANNED set.
+  // `process.exitCode` set explicitly alongside the `return 1` (same classifier-visibility shape
+  // as A2's lint-saldo-lock-derivation.ts fix): the CLI entry already wraps this in
+  // `process.exit(run(...))`, so the real exit code was never in question.
+  const scannedFiles = discoverProductionFiles(apiRoot);
+  if (scannedFiles.length === 0) {
+    console.error(emptyScanAbortMessage(apiRoot));
+    process.exitCode = 1;
+    return 1;
+  }
+
   const scan = scanApiRoot(apiRoot);
 
   const raw = loadExceptionsRaw(repoRoot);
@@ -1325,7 +1366,7 @@ function run(repoRoot: string, argv: string[]): number {
       console.error(`measure-context-boundary-imports: --check requires an integer argument`);
       return 1;
     }
-    console.log(summaryLine(scan.deepImports.length, result));
+    console.log(summaryLine(scan.deepImports.length, result, scannedFiles.length));
     if (result.workload.length === expected) return 0;
     const delta = result.workload.length - expected;
     console.error(
@@ -1337,7 +1378,7 @@ function run(repoRoot: string, argv: string[]): number {
     return 1;
   }
 
-  console.log(summaryLine(scan.deepImports.length, result));
+  console.log(summaryLine(scan.deepImports.length, result, scannedFiles.length));
   return 0;
 }
 

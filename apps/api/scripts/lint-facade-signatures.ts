@@ -11,11 +11,14 @@
  *
  * ── Scope ──────────────────────────────────────────────────────────────────────────────────────
  * Every `.ts` file under `apps/api/src/contexts/*\/facade/` (skip `__tests__/`, skip `*.test.ts`),
- * PLUS the two already-public de-facto facades named explicitly in `KNOWN_FACADE_FILES`. Today the
- * glob matches nothing at all — `KNOWN_FACADE_FILES` is what keeps this linter from walking zero
- * files and reporting OK, the exact shape of #229 (see the zero-file guard in `run()` below). Each
- * conversion plan (100B-05 onward) adds its own new `facade/` files, which the glob then covers
- * automatically without a code change here.
+ * PLUS the two already-public de-facto facades named explicitly in `KNOWN_FACADE_FILES`. At the
+ * time this module was written the glob matched nothing at all — `KNOWN_FACADE_FILES` is what
+ * kept this linter from walking zero files and reporting OK, the exact shape of #229 (see the
+ * zero-file guard in `run()` below). Phase 100B's own conversion plans (05 onward) have since
+ * populated it: 13 real `facade/` files exist today (235-05 sweep, `discoverFacadeFiles(repoRoot,
+ * [])` on the real tree), so `KNOWN_FACADE_FILES` is no longer the ONLY thing keeping the walk
+ * non-empty — the zero-file guard stays as defence-in-depth for the (now less likely, but not
+ * impossible) case where every real `facade/` directory is ever removed at once.
  *
  * ── Rules, checked per EXPORTED function declaration (AST via `typescript`, not a source regex —
  *    the same approach `check-import-targets.ts` and `lint-tenant-scoping-candidates.ts` use) ────
@@ -428,26 +431,42 @@ export function formatSummary(
   );
 }
 
+/** Wraps `discoverFacadeFiles`, converting a thrown error into `null` and printing it — used ONLY
+ * so `run()`'s own `const files = ...` is a DIRECT call to a same-file, walk-containing function
+ * (235-05/D-02: `lint-guard-vacuity`'s classifier only recognises a variable DECLARED-with-init
+ * from such a call, not a `let`-then-reassign-in-a-try/catch, which is what this file had before
+ * and which the zero-file guard below could not be recognised as proving). Behaviour is
+ * unchanged: same error message, same `run()` early-return-1. */
+function discoverFacadeFilesOrNull(repoRoot: string): string[] | null {
+  try {
+    return discoverFacadeFiles(repoRoot);
+  } catch (err) {
+    console.error(`lint-facade-signatures: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
 // ── CLI entry point ───────────────────────────────────────────────────────────────────────────
 
 export function run(repoRoot: string): number {
-  let files: string[];
-  try {
-    files = discoverFacadeFiles(repoRoot);
-  } catch (err) {
-    console.error(`lint-facade-signatures: ${err instanceof Error ? err.message : String(err)}`);
-    return 1;
-  }
+  const files = discoverFacadeFilesOrNull(repoRoot);
+  if (files === null) return 1;
 
   // Zero-file guard (#229): a linter that walks zero files and reports OK is not "all clean" — it
   // is a defect. KNOWN_FACADE_FILES keeps this from being true today; if it were ever emptied
-  // without a real facade/ directory existing yet, this must fail loudly, not silently pass.
+  // without a real facade/ directory existing yet, this must fail loudly, not silently pass. The
+  // proof is on the INPUT set (files discovered), never on any downstream findings set — this
+  // gate correctly wants 0 findings on a healthy tree. `process.exitCode` is set explicitly here
+  // (235-05/D-02), not only via this function's own `return 1` + the caller's `process.exit(run(...))`
+  // — a future caller of `run()` that does not wrap it in `process.exit()` must still see the
+  // failure reflected in the process's own exit code.
   if (files.length === 0) {
     console.error(
       "lint-facade-signatures: 0 facade file(s) found under apps/api/src/contexts/*/facade/ and " +
         "KNOWN_FACADE_FILES is empty. A linter that walks zero files and reports OK is #229 " +
         "verbatim — add a real facade/ file or restore a KNOWN_FACADE_FILES entry.",
     );
+    process.exitCode = 1;
     return 1;
   }
 

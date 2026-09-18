@@ -227,6 +227,21 @@ function main(): void {
   const apiRoot = resolveApiRoot();
   const list = process.argv.includes("--list");
 
+  // Empty-abort (235-05/D-02): `discoverCheckedFiles` returning nothing means a walk root moved
+  // or the extension filter matched nothing — that is a failure, not "0 specifiers, all resolved".
+  // The proof goes on the INPUT set (files scanned), never on the OUTPUT set (unresolved
+  // specifiers), which correctly wants to stay empty on a healthy tree.
+  const checkedFiles = discoverCheckedFiles(apiRoot);
+  if (checkedFiles.length === 0) {
+    console.error(
+      `[lint:import-targets] scanned 0 file(s) under ${path.join(apiRoot, "src")}, ` +
+        `${path.join(apiRoot, "scripts")} or ${path.join(apiRoot, "vitest*.ts")} — a scan root ` +
+        `moved or the extension filter matched nothing. This is a failure, not a clean result.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   if (list) {
     const all = collectAllOccurrences(apiRoot);
     for (const o of all) {

@@ -87,6 +87,20 @@ function listSvelteFiles(scope) {
     .map((f) => resolve(repoRoot, f));
 }
 
+/** All `.svelte` files across every SCOPES entry, combined. A named function calling
+ * `listSvelteFiles` directly (rather than `SCOPES.flatMap(...)`), so the walk-derivation the
+ * empty-abort below needs is a plain direct call, not a chain over a non-derived receiver
+ * (235-08, mirroring lint-save-pattern.mjs's own listAllSvelteFiles() — the classifier's chain-
+ * method resolution only checks a `.flatMap()`'s RECEIVER, SCOPES, which is never itself derived;
+ * it does not look inside the callback body). */
+function listAllSvelteFiles() {
+  const out = [];
+  for (const scope of SCOPES) {
+    out.push(...listSvelteFiles(scope));
+  }
+  return out;
+}
+
 /**
  * Extract every class token emitted by a Svelte file.
  *
@@ -210,24 +224,32 @@ function loadGlobalClasses() {
   return out;
 }
 
+// Build the file list first (SCOPES above), abort on empty, THEN run the content check over it —
+// this is what makes the empty case a hard failure instead of a silent "0 miss(es)" success.
+const files = listAllSvelteFiles();
+if (files.length === 0) {
+  console.error(
+    `[lint:ui-classes] scanned 0 file(s) under ${SCOPES.join(", ")} — the scan root moved or ` +
+      `the filter matched nothing. This is a failure, not a clean result.`,
+  );
+  process.exit(1);
+}
+
 const global = loadGlobalClasses();
 const misses = [];
 let totalEmitted = 0;
-let totalFiles = 0;
+const totalFiles = files.length;
 
-for (const scope of SCOPES) {
-  for (const file of listSvelteFiles(scope)) {
-    totalFiles += 1;
-    const content = readFileSync(file, "utf8");
-    const emitted = extractEmittedClasses(content);
-    const scoped = extractScopedClasses(content);
-    for (const cls of emitted) {
-      totalEmitted += 1;
-      if (global.has(cls)) continue;
-      if (scoped.has(cls)) continue;
-      if (WHITELIST.has(cls)) continue;
-      misses.push({ file, cls });
-    }
+for (const file of files) {
+  const content = readFileSync(file, "utf8");
+  const emitted = extractEmittedClasses(content);
+  const scoped = extractScopedClasses(content);
+  for (const cls of emitted) {
+    totalEmitted += 1;
+    if (global.has(cls)) continue;
+    if (scoped.has(cls)) continue;
+    if (WHITELIST.has(cls)) continue;
+    misses.push({ file, cls });
   }
 }
 

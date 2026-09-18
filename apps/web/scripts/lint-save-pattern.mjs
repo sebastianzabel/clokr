@@ -195,18 +195,40 @@ function listSvelteFiles(scope) {
   return out;
 }
 
+/** All `.svelte` files across every SCOPES entry, combined. A named function calling
+ * `listSvelteFiles` directly (rather than `SCOPES.flatMap(...)`) so the walk-derivation this
+ * binding needs is a plain direct call, not a chain over a non-derived receiver.
+ * @returns {string[]} */
+function listAllSvelteFiles() {
+  /** @type {string[]} */
+  const out = [];
+  for (const scope of SCOPES) {
+    out.push(...listSvelteFiles(scope));
+  }
+  return out;
+}
+
 function main() {
+  // Build the file list first (SCOPES above), abort on empty, THEN run the content check over
+  // it — this is what makes the empty case a hard failure instead of a silent "0 violation(s)"
+  // success.
+  const files = listAllSvelteFiles();
+  if (files.length === 0) {
+    console.error(
+      `[lint:save-pattern] scanned 0 file(s) under ${SCOPES.join(", ")} — the scan root moved ` +
+        `or the filter matched nothing. This is a failure, not a clean result.`,
+    );
+    process.exit(1);
+  }
+
   /** @type {{ file: string, type: string, handler: string, rule: "a" | "b" }[]} */
   const violations = [];
-  let totalFiles = 0;
+  const totalFiles = files.length;
 
-  for (const scope of SCOPES) {
-    for (const file of listSvelteFiles(scope)) {
-      totalFiles += 1;
-      const source = readFileSync(file, "utf8");
-      const rel = relative(repoRoot, file);
-      violations.push(...findSavePatternViolations(source, rel));
-    }
+  for (const file of files) {
+    const source = readFileSync(file, "utf8");
+    const rel = relative(repoRoot, file);
+    violations.push(...findSavePatternViolations(source, rel));
   }
 
   if (violations.length > 0) {
