@@ -69,6 +69,13 @@ describe("FIXTURE_MATRIX completeness (D-07: red proof over the WHOLE set)", () 
 
   it("matches the fixture directory exactly — both directions, no orphan, no missing", () => {
     const onDisk = readdirSync(FIXTURES_DIR).sort();
+    // Phase 235 (D-02/AC-4, this plan's own Group A sweep — see 235-BASELINE.md's note that this
+    // file is part of Group A): without this, the equality below could pass on two empty sets if
+    // fixtures/guard-vacuity/ ever moved or emptied at the same time FIXTURE_MATRIX did.
+    expect(
+      onDisk.length,
+      "no guard-vacuity fixture found — fixtures/guard-vacuity/ moved or emptied",
+    ).toBeGreaterThan(0);
     const inMatrix = FIXTURE_MATRIX.map((r) => r.file).sort();
     expect(onDisk).toEqual(inMatrix);
   });

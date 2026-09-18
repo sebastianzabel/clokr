@@ -172,8 +172,24 @@ import { readFileSync } from "node:fs";
 // baseline-verifying against the real tree (`guarded-contains-assert.ts`,
 // `chained-call-on-walk-containing-fn.ts`). 3166 + 16 + 2 = 3184, matching a fresh full-suite run's
 // own "Test Files 266 passed (266)" / "Tests 3181 passed | 3 skipped (3184)" totals exactly.
+//
+// Plan 235-03 (Wave 3, 2026-09-18) — no new test FILE (all five touched files already existed) —
+// MIN_FILES stays 266. MIN_TESTS rises from 3184 to 3189: this plan retrofitted Group A's five
+// vacuous guards with a non-empty input-set proof each (`context-area-map.test.ts`,
+// `lint-guard-vacuity-detect.test.ts`, `lint-tenant-scoping-candidates.test.ts`, `-facade.test.ts`,
+// `-verdict.test.ts`) — none of the five edits added a new `it()` block, so none of them
+// contributes here directly (each per-file count is unchanged: 17/22/11/16/19 tests, all verified
+// individually with `pnpm exec vitest run <file>`). The +5 comes entirely from
+// `scripts/__tests__/lint-guard-vacuity.test.ts`'s OWN generated whole-set red proof
+// (`describe.each(provedGuards())`, plan 235-02): it reads the REAL tree, so it grows by exactly
+// one generated test case per guard this plan flips from vacuous to proved — 4 proved guards
+// before this plan, 9 after (verified with `pnpm exec vitest run
+// scripts/__tests__/lint-guard-vacuity.test.ts` at three points: 16 tests on the pre-plan HEAD
+// `6697cedc`, 17 after this plan's context-area-map.test.ts fix alone, 21 after all five fixes —
+// a clean +5, matching this bump exactly). 3184 + 5 = 3189, matching a fresh full-suite run's own
+// "Test Files 266 passed (266)" / "Tests 3186 passed | 3 skipped (3189)" totals exactly.
 const MIN_FILES = 266;
-const MIN_TESTS = 3184;
+const MIN_TESTS = 3189;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

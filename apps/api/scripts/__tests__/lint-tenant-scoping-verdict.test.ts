@@ -200,6 +200,12 @@ it("every verdict fixture file is accounted for by exactly one CASES row", () =>
     .readdirSync(FIXTURES_DIR)
     .filter((entry) => entry.endsWith(".ts"))
     .sort();
+  // Phase 235 (D-02/AC-4): without this, the equality below could pass on two empty sets if
+  // fixtures/tenant-scoping/verdict/ ever moved or emptied at the same time CASES did.
+  expect(
+    fixtureFiles.length,
+    "no verdict fixture file found — fixtures/tenant-scoping/verdict/ moved or emptied",
+  ).toBeGreaterThan(0);
   const casedFiles = [...new Set(CASES.map((c) => c.file))].sort();
   expect(fixtureFiles).toEqual(casedFiles);
 });
