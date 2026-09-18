@@ -20,7 +20,7 @@ import {
   UnmappedAreaError,
   areaForRelPath,
   computeWorkload,
-  countScannedFiles,
+  discoverScannedFiles,
   emptyScanAbortMessage,
   extractCallsFromContent,
   isExcepted,
@@ -245,26 +245,21 @@ describe("scanSrcTree — non-vacuity", () => {
 
 // ── Empty-scan reporting and abort (235-08, D-02 pitfall 3) ─────────────────────────────────
 
-describe("countScannedFiles / emptyScanAbortMessage — 235-08", () => {
-  it("counts 0 for a fresh, empty fixture root (none of contexts/composition/services exists)", () => {
-    expect(countScannedFiles(tmpRoot)).toBe(0);
+describe("discoverScannedFiles / emptyScanAbortMessage — 235-08", () => {
+  it("returns [] for a fresh, empty fixture root (none of contexts/composition/services exists)", () => {
+    expect(discoverScannedFiles(tmpRoot)).toEqual([]);
   });
 
-  it("counts every file scanSrcTree would walk — non-zero once a real production file exists", () => {
+  it("returns every file scanSrcTree would walk — non-empty once a real production file exists", () => {
     writeFixture(
       "contexts/absence/api/leave.ts",
       "export async function noop(app: FastifyInstance) {\n  return null;\n}\n",
     );
-    expect(countScannedFiles(tmpRoot)).toBe(1);
+    expect(discoverScannedFiles(tmpRoot)).toEqual(["contexts/absence/api/leave.ts"]);
   });
 
-  it("emptyScanAbortMessage returns null once at least one file is scanned", () => {
-    expect(emptyScanAbortMessage(tmpRoot, 1)).toBeNull();
-  });
-
-  it("emptyScanAbortMessage names all three SCAN_ROOTS under the given root when scannedFiles is 0", () => {
-    const msg = emptyScanAbortMessage(tmpRoot, 0);
-    expect(msg).not.toBeNull();
+  it("emptyScanAbortMessage names all three SCAN_ROOTS under the given root", () => {
+    const msg = emptyScanAbortMessage(tmpRoot);
     expect(msg).toContain("scanned 0 file(s) under");
     expect(msg).toContain(join(tmpRoot, "contexts"));
     expect(msg).toContain(join(tmpRoot, "composition"));

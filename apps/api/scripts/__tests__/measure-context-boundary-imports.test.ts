@@ -448,13 +448,8 @@ describe("discoverProductionFiles / emptyScanAbortMessage / summaryLine — 235-
     expect(discoverProductionFiles(FIXTURE_ROOT).length).toBeGreaterThan(0);
   });
 
-  it("emptyScanAbortMessage returns null once at least one file is scanned", () => {
-    expect(emptyScanAbortMessage(emptyRoot, 1)).toBeNull();
-  });
-
-  it("emptyScanAbortMessage names apiRoot/src and the failure phrasing when scannedFiles is 0", () => {
-    const msg = emptyScanAbortMessage(emptyRoot, 0);
-    expect(msg).not.toBeNull();
+  it("emptyScanAbortMessage names apiRoot/src and the failure phrasing", () => {
+    const msg = emptyScanAbortMessage(emptyRoot);
     expect(msg).toContain("scanned 0 file(s) under");
     expect(msg).toContain(join(emptyRoot, "src"));
     expect(msg).toContain("This is a failure, not a clean result.");

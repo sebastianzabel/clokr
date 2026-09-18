@@ -180,17 +180,16 @@ export function discoverProductionFiles(apiRoot: string): string[] {
 }
 
 /**
- * The empty-abort message for a 0-scanned-file walk, or `null` when `scannedFiles > 0` — reporting
- * only (235-08, D-02 pitfall 3), the workload and cycle computations downstream of
- * `discoverProductionFiles` are untouched by this addition. Pure and exported so it is pinnable
- * without a real filesystem walk; the message shape mirrors `check-import-targets.ts`'s own
- * empty-abort (235-05/D-02). Applies uniformly to every invocation mode of this tool's `run()`
- * (`--check`, `--rows`, `--by-target`, `--forms`, `--predict` AND `--cycles`) — `--cycles`'s own
- * graph walk (`buildModuleGraph`) walks the identical `apiRoot/src` tree, so a scan root that moved
- * would silently zero BOTH standing gates, not just one.
+ * The empty-abort message for a 0-scanned-file walk — reporting only (235-08, D-02 pitfall 3), the
+ * workload and cycle computations downstream of `discoverProductionFiles` are untouched by this
+ * addition. Pure and exported so it is pinnable without a real filesystem walk; the message shape
+ * mirrors `check-import-targets.ts`'s own empty-abort (235-05/D-02). Applies uniformly to every
+ * invocation mode of this tool's `run()` (`--check`, `--rows`, `--by-target`, `--forms`,
+ * `--predict` AND `--cycles`) — `--cycles`'s own graph walk (`buildModuleGraph`) walks the
+ * identical `apiRoot/src` tree, so a scan root that moved would silently zero BOTH standing gates,
+ * not just one.
  */
-export function emptyScanAbortMessage(apiRoot: string, scannedFiles: number): string | null {
-  if (scannedFiles > 0) return null;
+export function emptyScanAbortMessage(apiRoot: string): string {
   return (
     `measure-context-boundary-imports: scanned 0 file(s) under ${join(apiRoot, "src")} — a scan ` +
     `root moved or the extension filter matched nothing. This is a failure, not a clean result.`
@@ -1247,10 +1246,13 @@ function run(repoRoot: string, argv: string[]): number {
 
   // Empty-abort (235-08, D-02 pitfall 3): checked before ANY branch below — workload and cycle
   // computations further down are untouched by this addition, the proof goes on the SCANNED set.
-  const scannedFiles = discoverProductionFiles(apiRoot).length;
-  const abortMessage = emptyScanAbortMessage(apiRoot, scannedFiles);
-  if (abortMessage) {
-    console.error(abortMessage);
+  // `process.exitCode` set explicitly alongside the `return 1` (same classifier-visibility shape
+  // as A2's lint-saldo-lock-derivation.ts fix): the CLI entry already wraps this in
+  // `process.exit(run(...))`, so the real exit code was never in question.
+  const scannedFiles = discoverProductionFiles(apiRoot);
+  if (scannedFiles.length === 0) {
+    console.error(emptyScanAbortMessage(apiRoot));
+    process.exitCode = 1;
     return 1;
   }
 
@@ -1364,7 +1366,7 @@ function run(repoRoot: string, argv: string[]): number {
       console.error(`measure-context-boundary-imports: --check requires an integer argument`);
       return 1;
     }
-    console.log(summaryLine(scan.deepImports.length, result, scannedFiles));
+    console.log(summaryLine(scan.deepImports.length, result, scannedFiles.length));
     if (result.workload.length === expected) return 0;
     const delta = result.workload.length - expected;
     console.error(
@@ -1376,7 +1378,7 @@ function run(repoRoot: string, argv: string[]): number {
     return 1;
   }
 
-  console.log(summaryLine(scan.deepImports.length, result, scannedFiles));
+  console.log(summaryLine(scan.deepImports.length, result, scannedFiles.length));
   return 0;
 }
 

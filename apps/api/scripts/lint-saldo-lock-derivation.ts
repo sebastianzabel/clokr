@@ -842,6 +842,14 @@ export function run(repoRoot: string): number {
       "lint-saldo-lock-derivation: 0 source file(s) found under apps/api/src — a linter that " +
         "walks zero files and reports OK is #229 verbatim.",
     );
+    // `process.exitCode` set explicitly (235-08/A2, the SAME classifier-visibility fix
+    // lint-facade-signatures.ts's structurally identical gap got in 235-05): this `return 1` is
+    // already correctly wired via the CLI entry's `process.exit(run(repoRoot))` below, so the
+    // REAL exit code was never wrong — only `lint-guard-vacuity`'s classifier, which recognises
+    // `throw`/`process.exit(<n>)`/`process.exitCode = <n>` but not a plain `return <n>`, could not
+    // see this proof existed. Zero behavior change; the file-set proof itself (`235-BASELINE.md`
+    // § A2) was already correct before this line was added.
+    process.exitCode = 1;
     return 1;
   }
 

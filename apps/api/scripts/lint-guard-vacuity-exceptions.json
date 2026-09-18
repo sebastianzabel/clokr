@@ -1,4 +1,11 @@
 {
   "registerSource": "docs/adr/0001-abweichungen.md Eintrag I",
-  "exceptions": []
+  "exceptions": [
+    {
+      "id": "release-notes-fail-silent-boot-contract",
+      "file": "apps/api/src/utils/release-notes.ts",
+      "reason": "A3 (235-BEFUND-C.md, decided by Plan 05, implemented by Plan 08). loadReleaseNotes()'s walk (readdirSync at line 256) is wrapped in try/catch and NEVER throws by its own documented contract (line 244: \"Never throws. Returns [] on any failure.\") — this function runs at API module init, so a throw there would prevent the whole API process from starting; an empty-abort would be actively wrong, not merely unwanted. The three throws the classifier found (lines 135/140/146) live in a separate, code-path-unconnected function (parseReleaseNote, per-file markdown validation), which is why the file-level classification still reads asserts:true despite loadReleaseNotes's own fail-silent guarantee. Confirmed via `.github/workflows/*.yml` grep that this module is not invoked by any workflow — it is production runtime code (serves the in-app What's-New dialog), not a standing CI lint gate, outside D-02's actual target even though it shares the walk+assert AST shape. The real defect surface (an empty/missing docs/release-notes/ directory in the real repo) is already covered on the test side: release-notes.test.ts's corpusFiles proof (Group B, closed by Plan 04) fails loudly in CI if the real corpus directory the shipped image bakes in ever goes missing or empty.",
+      "disappearsIn": "Never by design — the fail-silent contract is a correctness requirement (API must always boot), not a gap this register expects to close. Would only be revisited if loadReleaseNotes's own boot-time contract were deliberately changed, which is an architectural decision outside this phase's scope."
+    }
+  ]
 }
