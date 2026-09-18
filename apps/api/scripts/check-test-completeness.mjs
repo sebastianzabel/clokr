@@ -161,8 +161,19 @@ import { readFileSync } from "node:fs";
 // MIN_FILES therefore rises from the MEASURED 264 (not the stale 263) to 265. MIN_TESTS rises from
 // the MEASURED 3146 (not the stale 3080) to 3166 — 3146 + 20 = 3166, matching the full-suite run's
 // own totals in (1) exactly.
-const MIN_FILES = 265;
-const MIN_TESTS = 3166;
+//
+// Plan 235-02 (Wave 2) — one new test FILE (scripts/__tests__/lint-guard-vacuity.test.ts) —
+// MIN_FILES rises from 265 to 266. MIN_TESTS rises from 3166 to 3184: +16 test cases in that new
+// file (verified with `pnpm exec vitest run scripts/__tests__/lint-guard-vacuity.test.ts`, "16
+// tests" in its own output) PLUS +2 test cases in the EXISTING
+// scripts/__tests__/lint-guard-vacuity-detect.test.ts (20 -> 22, verified with `pnpm exec vitest
+// run scripts/__tests__/lint-guard-vacuity-detect.test.ts`, "22 tests" in its own output, up from
+// plan 235-01's 20) — the two fixtures this plan added to pin the classifier gaps it found while
+// baseline-verifying against the real tree (`guarded-contains-assert.ts`,
+// `chained-call-on-walk-containing-fn.ts`). 3166 + 16 + 2 = 3184, matching a fresh full-suite run's
+// own "Test Files 266 passed (266)" / "Tests 3181 passed | 3 skipped (3184)" totals exactly.
+const MIN_FILES = 266;
+const MIN_TESTS = 3184;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
