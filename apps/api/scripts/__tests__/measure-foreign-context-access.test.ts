@@ -20,6 +20,8 @@ import {
   UnmappedAreaError,
   areaForRelPath,
   computeWorkload,
+  countScannedFiles,
+  emptyScanAbortMessage,
   extractCallsFromContent,
   isExcepted,
   isForeign,
@@ -241,6 +243,36 @@ describe("scanSrcTree — non-vacuity", () => {
   });
 });
 
+// ── Empty-scan reporting and abort (235-08, D-02 pitfall 3) ─────────────────────────────────
+
+describe("countScannedFiles / emptyScanAbortMessage — 235-08", () => {
+  it("counts 0 for a fresh, empty fixture root (none of contexts/composition/services exists)", () => {
+    expect(countScannedFiles(tmpRoot)).toBe(0);
+  });
+
+  it("counts every file scanSrcTree would walk — non-zero once a real production file exists", () => {
+    writeFixture(
+      "contexts/absence/api/leave.ts",
+      "export async function noop(app: FastifyInstance) {\n  return null;\n}\n",
+    );
+    expect(countScannedFiles(tmpRoot)).toBe(1);
+  });
+
+  it("emptyScanAbortMessage returns null once at least one file is scanned", () => {
+    expect(emptyScanAbortMessage(tmpRoot, 1)).toBeNull();
+  });
+
+  it("emptyScanAbortMessage names all three SCAN_ROOTS under the given root when scannedFiles is 0", () => {
+    const msg = emptyScanAbortMessage(tmpRoot, 0);
+    expect(msg).not.toBeNull();
+    expect(msg).toContain("scanned 0 file(s) under");
+    expect(msg).toContain(join(tmpRoot, "contexts"));
+    expect(msg).toContain(join(tmpRoot, "composition"));
+    expect(msg).toContain(join(tmpRoot, "services"));
+    expect(msg).toContain("This is a failure, not a clean result.");
+  });
+});
+
 // ── Exceptions document validation (T-100B-01) ───────────────────────────────────────────────
 
 const FOREIGN_ACCESS: Access = {
@@ -370,6 +402,14 @@ describe("computeWorkload / isExcepted / summaryLine", () => {
     const result = computeWorkload([FOREIGN_ACCESS], doc);
     expect(summaryLine(result)).toBe(
       "[measure:context-access] 1 foreign access(es) in 1 file(s) — 0 read / 1 write; 0 excepted.",
+    );
+  });
+
+  it("summaryLine prefixes the scanned-file count when given (235-08) — the scanned set stays visibly separate from the workload-file set", () => {
+    const doc: ExceptionsDocument = { convertedModels: [], exceptions: [] };
+    const result = computeWorkload([FOREIGN_ACCESS], doc);
+    expect(summaryLine(result, 139)).toBe(
+      "[measure:context-access] 139 file(s) scanned; 1 foreign access(es) in 1 file(s) — 0 read / 1 write; 0 excepted.",
     );
   });
 });

@@ -16,20 +16,24 @@
  * classifier puts a row in the wrong bucket (project memory: "Discriminator-Swap macht Tests
  * still wertlos").
  */
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   BOUNDARY_CONTEXTS,
   buildModuleGraph,
   buildProjectedGraph,
   computeWorkload,
   cycleModuleCount,
+  discoverProductionFiles,
+  emptyScanAbortMessage,
   findImportCycles,
   isBoundaryContext,
   scanApiRoot,
   scanDisableComments,
   shortestPath,
+  summaryLine,
   validateExceptionsDocument,
   type BoundaryImport,
   type DisableCommentMap,
@@ -417,6 +421,53 @@ describe("--check is equality, not a floor", () => {
     expect(workload.length).not.toBe(n - 1);
     expect(workload.length).not.toBe(n + 1);
     expect(workload.length).toBe(n);
+  });
+});
+
+// ── Empty-scan reporting and abort (235-08, D-02 pitfall 3) ─────────────────────────────────
+
+describe("discoverProductionFiles / emptyScanAbortMessage / summaryLine — 235-08", () => {
+  let emptyRoot: string;
+
+  beforeEach(() => {
+    emptyRoot = mkdtempSync(join(tmpdir(), "measure-context-boundary-imports-empty-"));
+    // apiRoot/src must EXIST (an absent root is a different failure mode, ENOENT, not this gate's
+    // concern) but contain nothing — the genuinely-empty-walk case this abort protects against.
+    mkdirSync(join(emptyRoot, "src"), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(emptyRoot, { recursive: true, force: true });
+  });
+
+  it("discoverProductionFiles returns [] for an existing-but-empty src root", () => {
+    expect(discoverProductionFiles(emptyRoot)).toEqual([]);
+  });
+
+  it("discoverProductionFiles is non-empty over the real fixture tree (the set FIXTURE_ROOT uses)", () => {
+    expect(discoverProductionFiles(FIXTURE_ROOT).length).toBeGreaterThan(0);
+  });
+
+  it("emptyScanAbortMessage returns null once at least one file is scanned", () => {
+    expect(emptyScanAbortMessage(emptyRoot, 1)).toBeNull();
+  });
+
+  it("emptyScanAbortMessage names apiRoot/src and the failure phrasing when scannedFiles is 0", () => {
+    const msg = emptyScanAbortMessage(emptyRoot, 0);
+    expect(msg).not.toBeNull();
+    expect(msg).toContain("scanned 0 file(s) under");
+    expect(msg).toContain(join(emptyRoot, "src"));
+    expect(msg).toContain("This is a failure, not a clean result.");
+  });
+
+  it("summaryLine prefixes the scanned-file count when given, keeping it visibly separate from workload/deepTotal", () => {
+    const emptyDoc: ExceptionsDocument = { registerSource: "test", exceptions: [] };
+    const result = computeWorkload(scan.deepImports, emptyDoc);
+    const without = summaryLine(scan.deepImports.length, result);
+    expect(without.startsWith("[measure:boundary-imports] ")).toBe(true);
+    const unprefixedTail = without.slice("[measure:boundary-imports] ".length);
+    const withScan = summaryLine(scan.deepImports.length, result, 147);
+    expect(withScan).toBe(`[measure:boundary-imports] 147 file(s) scanned, ${unprefixedTail}`);
   });
 });
 
