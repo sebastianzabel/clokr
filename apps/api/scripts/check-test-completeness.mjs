@@ -188,8 +188,23 @@ import { readFileSync } from "node:fs";
 // `6697cedc`, 17 after this plan's context-area-map.test.ts fix alone, 21 after all five fixes —
 // a clean +5, matching this bump exactly). 3184 + 5 = 3189, matching a fresh full-suite run's own
 // "Test Files 266 passed (266)" / "Tests 3186 passed | 3 skipped (3189)" totals exactly.
+// Plan 235-06 (Wave 3, 2026-09-18) — no new test FILE, and all four touched files live under
+// apps/web/src/__tests__, OUTSIDE this apps/api suite entirely — MIN_FILES stays 266. MIN_TESTS
+// rises from 3189 to 3193: this plan retrofitted Group D's four vacuous guards
+// (`layout-boundaries.test.ts`, `admin-unsaved-registry.test.ts`,
+// `admin-vacation-save-wiring.test.ts`, `admin-availability-detail-save-wiring.test.ts`, all
+// apps/web files, none counted by THIS floor) with a non-empty input-set proof each — the +4 comes
+// entirely, again, from `scripts/__tests__/lint-guard-vacuity.test.ts`'s own generated whole-set
+// red proof (`describe.each(provedGuards())`, plan 235-02): it reads the REAL tree repo-wide, not
+// only apps/api, so proving four apps/web guards non-vacuous still grows this apps/api test file's
+// own case count by exactly one generated case per guard flipped from vacuous to proved — 21 tests
+// in that file on the pre-plan HEAD `03897c1c` (verified: `pnpm exec vitest run
+// scripts/__tests__/lint-guard-vacuity.test.ts` reports "21 tests" with this plan's four edits
+// stashed out), 25 after (same command, same file, edits restored) — a clean +4, matching this
+// bump exactly. 3189 + 4 = 3193, matching a fresh full-suite run's own "Test Files 266 passed
+// (266)" / "Tests 3190 passed | 3 skipped (3193)" totals exactly.
 const MIN_FILES = 266;
-const MIN_TESTS = 3189;
+const MIN_TESTS = 3193;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
