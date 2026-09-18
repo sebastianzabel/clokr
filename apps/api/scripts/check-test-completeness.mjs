@@ -349,8 +349,24 @@ import { readFileSync } from "node:fs";
 //     tests.
 // 3220 + 1 = 3221, matching a fresh full-suite run's own totals exactly. MIN_FILES unchanged at
 // 266 (no new test FILE — the new file is fixture data, parsed, never collected as a test file).
+//
+// WR-02 (235-REVIEW.md, review dated 2026-09-18): `lint-guard-vacuity-detect.ts`'s
+// `isCpCommandWalk` now also recognises `spawnSync`'s two-argument, shell-injection-safe calling
+// form (`spawnSync("find", [scope, "-type", "f"])`, command and args passed SEPARATELY, unlike
+// `execSync`'s single-string form) — plus an adjacent gap found while pinning it: `spawnSync`'s
+// return value is a RESULT OBJECT, not the output directly, so its `.stdout`/`.stderr` property
+// access needed its own case in `isWalkDerivedExpr` too, or the call-site fix alone would leave
+// every idiomatic `spawnSync` guard permanently unable to prove its own non-emptiness. No LIVE
+// guard in the tree uses `spawnSync` at all (confirmed: repo-wide `lint-guard-vacuity.ts`
+// unchanged at `577 file(s) scanned, 29 guard(s), 0 vacuous, 1 excepted`) — a latent,
+// future-facing gap, not a live vacuous guard.
+//   - `lint-guard-vacuity-detect.test.ts`: +1 new fixture-matrix row
+//     (`spawnsync-find-args-array-walk.mjs`, modelled on the review's own owner-approved
+//     reproduction transcript verbatim, including its `.stdout` access): 24 -> 25 tests.
+// 3221 + 1 = 3222, matching a fresh full-suite run's own totals exactly. MIN_FILES unchanged at
+// 266 (no new test FILE — the new file is fixture data, parsed, never collected as a test file).
 const MIN_FILES = 266;
-const MIN_TESTS = 3221;
+const MIN_TESTS = 3222;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

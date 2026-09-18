@@ -129,6 +129,15 @@ const ALLOWED_NAMES: Record<ModuleGroup, ReadonlySet<string>> = {
  * rev-parse HEAD")` is a shell-out, not a walk. */
 const CP_COMMAND_RE = /(^|[\s|(])(find|grep|ls|rg)\s/;
 
+/** WR-02 (235-REVIEW.md): `spawnSync`'s idiomatic — and shell-injection-safe — calling form
+ * passes the command and its arguments SEPARATELY: `spawnSync("find", [scope, "-type", "f"])`.
+ * `CP_COMMAND_RE` requires a trailing `\s` after the matched command word, so a bare command
+ * string with nothing else in it (no embedded arguments, unlike `execSync`'s single-string form)
+ * never matches. This is that bare-command check, used only alongside a second, separate
+ * arguments array (see `isCpCommandWalk` below) — never used standalone, since a lone command
+ * word with no args array present is not itself proof of anything. */
+const BARE_CP_COMMAND_RE = /^(find|grep|ls|rg)$/;
+
 /** 235-08 addition: `toString` — `execSync(...).toString()` is the standard way to turn its
  * Buffer result into text before splitting it (both `lint-ui.mjs` and `lint-ui-classes.mjs` do
  * exactly this, found while closing Finding 0 above — the TemplateExpression fix alone was not
@@ -137,6 +146,16 @@ const CP_COMMAND_RE = /(^|[\s|(])(find|grep|ls|rg)\s/;
  * reaching the recognised walk call). Preserves the same "derived-ness" as every other entry here
  * — the string IS the walked result, merely in its text form, not a new, independent value. */
 const CHAIN_METHODS = new Set(["filter", "map", "flatMap", "sort", "concat", "split", "toString"]);
+
+/** WR-02 adjacent gap (235-REVIEW.md), found while closing WR-02: unlike `execSync`, which
+ * returns the process output directly, `spawnSync`'s return value is a RESULT OBJECT — its
+ * `.stdout`/`.stderr` properties hold the actual output, exactly the shape the review's own
+ * reproduction transcript uses (`res.stdout.toString().split(...)`, `res` being `spawnSync(...)`'s
+ * own return value). Property access is not a method call, so `CHAIN_METHODS` (which only ever
+ * recurses through a CALL's receiver) cannot cover it — this needed its own case in
+ * `isWalkDerivedExpr` below, or the spawnSync call-site fix alone would leave every idiomatic
+ * `spawnSync` guard permanently unable to prove its own non-emptiness. */
+const SPAWN_RESULT_PROPERTIES = new Set(["stdout", "stderr"]);
 
 function moduleGroupOf(specifierText: string): ModuleGroup | null {
   if (FS_MODULES.has(specifierText)) return "fs-sync";
@@ -262,10 +281,23 @@ function lineOf(sourceFile: ts.SourceFile, node: ts.Node): number {
  * there in every real shape this repo uses (`find '<path>' ...`), never inside a substitution
  * itself, so the head alone is the right (and only) place to look; nothing about the trailing
  * dynamic segments is a command name to match against.
+ *
+ * WR-02 (235-REVIEW.md) addition: `spawnSync("find", [scope, "-type", "f"])` — the command and
+ * its arguments passed as two SEPARATE call arguments, `spawnSync`'s idiomatic, shell-injection-
+ * safe form. `arg` here is only ever `args[0]`; the second, separate arguments array is checked
+ * by the caller (`args[1]` must be present) before this bare-word match is trusted, so a lone
+ * `spawnSync("find")` with no second argument is not treated as a walk on this string alone.
  */
-function isCpCommandWalk(arg: ts.Expression | undefined): boolean {
+function isCpCommandWalk(
+  arg: ts.Expression | undefined,
+  primitiveName?: string,
+  hasArgsArray?: boolean,
+): boolean {
   if (!arg) return false;
-  if (ts.isStringLiteralLike(arg)) return CP_COMMAND_RE.test(arg.text);
+  if (ts.isStringLiteralLike(arg)) {
+    if (CP_COMMAND_RE.test(arg.text)) return true;
+    return primitiveName === "spawnSync" && !!hasArgsArray && BARE_CP_COMMAND_RE.test(arg.text);
+  }
   if (ts.isTemplateExpression(arg)) return CP_COMMAND_RE.test(arg.head.text);
   return false;
 }
@@ -298,7 +330,9 @@ function findWalkSites(sourceFile: ts.SourceFile, bindings: Map<string, Binding>
         if (binding?.kind === "named" && binding.sourceName) {
           const isCandidate = ALLOWED_NAMES[binding.group].has(binding.sourceName);
           const isWalk =
-            isCandidate && (binding.group !== "cp" || isCpCommandWalk(node.arguments[0]));
+            isCandidate &&
+            (binding.group !== "cp" ||
+              isCpCommandWalk(node.arguments[0], binding.sourceName, !!node.arguments[1]));
           if (isWalk) {
             sites.push({
               node,
@@ -314,7 +348,9 @@ function findWalkSites(sourceFile: ts.SourceFile, bindings: Map<string, Binding>
         if (ts.isIdentifier(receiver)) {
           const binding = bindings.get(receiver.text);
           if (binding?.kind === "namespace" && ALLOWED_NAMES[binding.group].has(prop)) {
-            const isWalk = binding.group !== "cp" || isCpCommandWalk(node.arguments[0]);
+            const isWalk =
+              binding.group !== "cp" ||
+              isCpCommandWalk(node.arguments[0], prop, !!node.arguments[1]);
             if (isWalk) {
               sites.push({
                 node,
@@ -380,6 +416,9 @@ function isWalkDerivedExpr(
   }
   if (ts.isIdentifier(expr)) {
     return derived.has(expr.text);
+  }
+  if (ts.isPropertyAccessExpression(expr) && SPAWN_RESULT_PROPERTIES.has(expr.name.text)) {
+    return isWalkDerivedExpr(expr.expression, walkCalls, derived, walkContainingFns);
   }
   return false;
 }
