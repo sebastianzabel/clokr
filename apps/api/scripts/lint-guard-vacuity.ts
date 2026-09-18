@@ -421,7 +421,32 @@ function summaryLine(report: GuardReport): string {
   );
 }
 
-function run(repoRoot: string, argv: string[]): number {
+/**
+ * Pure equality check (D-08): `ok` iff `report.vacuous.length === expected` EXACTLY — a decrease
+ * is exactly as much a mismatch as an increase, and `message` says so on failure, together with
+ * the full vacuous file list (never only the delta), so the next reader can see WHICH guard
+ * changed rather than only THAT one did (T-235-05). Exported and tested directly (both directions)
+ * independent of argv parsing.
+ */
+export function evaluateCheck(
+  report: GuardReport,
+  expected: number,
+): { ok: boolean; message: string } {
+  if (report.vacuous.length === expected) {
+    return { ok: true, message: `--check ${expected} OK — ${summaryLine(report)}` };
+  }
+  const delta = report.vacuous.length - expected;
+  return {
+    ok: false,
+    message:
+      `--check ${expected} FAILED — actual vacuous count is ${report.vacuous.length} ` +
+      `(${delta > 0 ? "+" : ""}${delta}). A DECREASE is as much a mismatch as an increase — do ` +
+      `not move this number without knowing which file changed. Vacuous file(s):\n` +
+      report.vacuous.map((r) => r.file).join("\n"),
+  };
+}
+
+export function run(repoRoot: string, argv: string[]): number {
   const scope = readFlagValue(argv, "--scope");
   const files = discoverCandidateFiles(repoRoot, scope);
 
@@ -480,18 +505,12 @@ function run(repoRoot: string, argv: string[]): number {
       console.error(`lint-guard-vacuity: --check requires an integer argument`);
       return 1;
     }
-    if (report.vacuous.length === expected) {
-      console.log(`lint-guard-vacuity: --check ${expected} OK — ${summaryLine(report)}`);
+    const { ok, message } = evaluateCheck(report, expected);
+    if (ok) {
+      console.log(`lint-guard-vacuity: ${message}`);
       return 0;
     }
-    const delta = report.vacuous.length - expected;
-    console.error(
-      `lint-guard-vacuity: --check ${expected} FAILED — actual vacuous count is ` +
-        `${report.vacuous.length} (${delta > 0 ? "+" : ""}${delta}). A DECREASE is as much a ` +
-        `mismatch as an increase — do not move this number without knowing which file changed. ` +
-        `Vacuous file(s):\n` +
-        report.vacuous.map((r) => r.file).join("\n"),
-    );
+    console.error(`lint-guard-vacuity: ${message}`);
     return 1;
   }
 
