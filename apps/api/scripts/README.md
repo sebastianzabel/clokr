@@ -27,6 +27,7 @@ classified by lifecycle.
 | check-test-completeness.mjs                    | 2026-08-26 | D-09 hard floor over the vitest JSON reporter output (`apps/api/vitest-report.json`); exits non-zero if collected files/tests fall below `MIN_FILES`/`MIN_TESTS`, or if the report is missing/unparseable — protects R6 against parallelisation silently collecting fewer files                                                                                                                                                                                                                                 | Test infrastructure (Phase 106)               |
 | backfill-leave-type-code.ts                    | 2026-09-14 | Gives every pre-Phase-97 `LeaveType` row its stable `code`, including legacy-alias names (`Jahresurlaub` → `VACATION`); no catch-all code, unmappable names are reported under `unmapped`; dry-run default, `--apply` opt-in, `--tenant-id`/`--all-tenants` required; doubles as the repeatable post-rollout sweep for the rolling-deploy window (its selection is `code IS NULL`, so re-running after a full rollout is safe) — see `docs/migrations.md` § "Phase 97 — LeaveType.code (Rollout-Reihenfolge)"   | Migration artifact (Phase 97) + Operator tool |
 | lint-tenant-scoping.ts                         | 2026-09-16 | CI/local gate: fails on a NEW route or service handler that reads a client-supplied identifier into a tenant-scoped Prisma model without a tenant constraint (see § Lint gates below). Composed of five sibling modules — `lint-tenant-scoping-types.ts`, `-model-graph.ts`, `-request-bindings.ts`, `-candidates.ts`, `-verdict.ts` (analysis) plus `-exceptions.ts` (the named-exception mechanism) — grouped as one row because they have no independent invocation; see each file's own header for its part | Lint gate (Phase 204)                         |
+| lint-guard-vacuity.ts                          | 2026-09-18 | CI/local/pre-commit gate: fails a file that walks the source tree and asserts on the result without proving the walked set non-empty (see § Lint gates below). AST classification lives in the sibling `lint-guard-vacuity-detect.ts`; exceptions in `lint-guard-vacuity-exceptions.json`                                                                                                                                                                                                                       | Lint gate (Phase 235, Issues #235/#240/#245)  |
 
 ## Migration artifacts
 
@@ -342,6 +343,43 @@ introduces or extends this gate, tracked by a `trackedIssue`, printed in its own
 run so a clean gate can never be misread as "0 known bugs"). **When NOT to add a `"safe"`
 exception:** if you have not actually traced the value to `monthRangeUtc()` by hand — a `"safe"`
 entry is a claim the script itself no longer checks for you.
+
+### `lint-guard-vacuity.ts` (Issues #235/#240/#245)
+
+Enforces one narrow, mechanical rule: a file that walks the source tree (`readdirSync`,
+`opendirSync`, `globSync`, `readdir`, `glob`, `execSync`/`spawnSync` with `find`/`grep`/`ls`/`rg`,
+`import.meta.glob`) and then asserts on the result (`throw`, `expect`, `process.exit(<nonzero>)`,
+`process.exitCode = <nonzero>`) must also prove that the walked set was non-empty before trusting
+the assertion — otherwise a moved or emptied directory makes the walk return `[]`, every
+downstream check runs zero times, and the gate reports success having checked nothing. This is the
+defect family #235, #240 and #245 each independently rediscovered (four recurrences total). AST
+classification (never a name/regex heuristic — #240's own first measurement made that mistake in
+the other direction, matching `walkSaldoChain` in three files with no fs primitive at all) lives in
+the sibling module `lint-guard-vacuity-detect.ts`.
+
+- **Run locally:** `pnpm --filter @clokr/api exec tsx scripts/lint-guard-vacuity.ts [--check <n>]
+[--rows] [--guards] [--scope <prefix>] [--json]`
+- **Runs in CI as:** the `Lint guard vacuity` step in `.github/workflows/ci.yml`, immediately after
+  `Check context import cycles`, asserting `--check 0`
+- **Runs in `.husky/pre-commit` as:** a full-repo (not staged-only) invocation above
+  `pnpm exec lint-staged` — `lint-staged`'s `*.{ts,js,svelte}` glob does not match `.mjs` at all,
+  and four of the 29 guards this gate proves are `.mjs` files
+
+**A hit on a clean tree is a FINDING, not an exception candidate.** The same house rule
+`lint-tenant-scoping.ts` states above: understand WHY the walked set can legitimately be empty
+before reaching for the exception register — adding an entry to make the run green without that
+understanding is how a gate becomes decoration.
+
+**How to add a justified exception.** Exceptions live in
+`apps/api/scripts/lint-guard-vacuity-exceptions.json`, one entry per FILE:
+`{ id, file, reason, disappearsIn }` — `reason` and `disappearsIn` are both mandatory and
+mechanically validated; `disappearsIn` states a concrete disappearance point or explicitly
+`"Never by design"` with the correctness argument for why (see the one seeded entry,
+`release-notes.ts`, whose fail-silent contract is required for the API process to boot at all — an
+empty-abort there would be actively wrong, not merely unwanted). The register currently holds
+exactly one entry; growth beyond low single digits means the detection is wrong, not the guards.
+Full accounting of the phase's outcome, every exception and the named limits of what this gate
+structurally cannot see: `docs/adr/0001-abweichungen.md` Eintrag I.
 
 ## Invocation
 
