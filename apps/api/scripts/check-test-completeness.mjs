@@ -253,8 +253,26 @@ import { readFileSync } from "node:fs";
 // not +4. MIN_TESTS rises from 3197 to 3199. 3197 + 2 = 3199, matching a fresh full-suite run's
 // own "Test Files 266 passed (266)" totals exactly (see this plan's own SUMMARY for the verbatim
 // "Tests N passed | 3 skipped (3199)" line).
+// Plan 235-05 (Wave 5, 2026-09-18) — no new test FILE: this plan retrofitted an empty-abort into
+// four Group-C scanning gates (`check-import-targets.ts`, `context-area-map.ts`,
+// `lint-facade-signatures.ts`, `lint-tenant-scoping-candidates.ts`, the latter also wiring a new
+// error class through `lint-tenant-scoping.ts`), and adjusted two PRE-EXISTING pinning tests in
+// `scripts/__tests__/lint-guard-vacuity-detect.test.ts` (their expected `inputProof` for
+// `check-import-targets.ts` flips from "none" to "empty-abort", reflecting the fix — no new
+// `it()` block, an existing one's assertion value changed). MIN_FILES stays 266. The whole delta
+// traces, as in every prior wave, to `lint-guard-vacuity.test.ts`'s own generated whole-set red
+// proof (`describe.each(provedGuards())`), which reads the real tree and grows by one case per
+// guard flipped vacuous -> proved: measured directly, `pnpm --filter @clokr/api exec vitest run
+// scripts/__tests__/lint-guard-vacuity.test.ts` reports 31 tests at this plan's own starting HEAD
+// `8c5c4adf`, 35 after Task 2 (four guards flip: check-import-targets.ts, context-area-map.ts,
+// lint-facade-signatures.ts, lint-tenant-scoping-candidates.ts) — a clean **+4**, matching
+// `235-BASELINE.md`'s Group C count of 8 vacuous exactly HALVED by this plan (the other 4 —
+// lint-saldo-lock-derivation.ts, measure-context-boundary-imports.ts,
+// measure-foreign-context-access.ts, release-notes.ts — are Plan 08's). MIN_TESTS rises from 3199
+// to 3203. 3199 + 4 = 3203, matching a fresh full-suite run's own "Test Files 266 passed (266)" /
+// "Tests 3200 passed | 3 skipped (3203)" totals exactly.
 const MIN_FILES = 266;
-const MIN_TESTS = 3199;
+const MIN_TESTS = 3203;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

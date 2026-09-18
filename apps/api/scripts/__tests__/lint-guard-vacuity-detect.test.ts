@@ -131,13 +131,22 @@ describe("input-set vs output-set (D-02's load-bearing distinction)", () => {
     expect(result.inputProof).toBe("length");
   });
 
-  it('check-import-targets.ts\'s real success shape (`if (unresolved.length === 0)`) is inputProof "none" -- unresolved is the OUTPUT set', () => {
-    const path = join(__dirname, "../check-import-targets.ts");
-    const result = classifyGuardFile(path, readFileSync(path, "utf8"));
-    expect(result.walks).toBe(true);
-    expect(result.asserts).toBe(true);
-    expect(result.inputProof).toBe("none");
-  });
+  it(
+    "check-import-targets.ts's OUTPUT-only success line (`if (unresolved.length === 0)`) is " +
+      "still not itself an input proof -- but 235-05 (D-02) added a genuine one on the walked " +
+      "FILE set (`discoverCheckedFiles(apiRoot).length === 0`), so the file's OVERALL " +
+      'classification is now "empty-abort", not "none". This test used to pin this real file as ' +
+      "a live example of an output-only success line with no input proof at all (see git " +
+      "history before 235-05 for that shape) -- it now pins the FIXED shape, so a future " +
+      "regression that silently drops the empty-abort is still caught.",
+    () => {
+      const path = join(__dirname, "../check-import-targets.ts");
+      const result = classifyGuardFile(path, readFileSync(path, "utf8"));
+      expect(result.walks).toBe(true);
+      expect(result.asserts).toBe(true);
+      expect(result.inputProof).toBe("empty-abort");
+    },
+  );
 });
 
 // ── Task 3: the two REAL files this module must classify correctly, not only fixture copies ─────
@@ -151,11 +160,16 @@ describe("real-file classification (not a fixture stand-in)", () => {
     expect(result.inputProof).toBe("flag-inner");
   });
 
-  it("check-import-targets.ts classifies walks=true, asserts=true, inputProof=none", () => {
-    const path = join(__dirname, "../check-import-targets.ts");
-    const result = classifyGuardFile(path, readFileSync(path, "utf8"));
-    expect(result.walks).toBe(true);
-    expect(result.asserts).toBe(true);
-    expect(result.inputProof).toBe("none");
-  });
+  it(
+    "check-import-targets.ts classifies walks=true, asserts=true, inputProof=empty-abort " +
+      "(235-05/D-02 added the empty-abort; this file used to be a real vacuous example before " +
+      "that plan closed it)",
+    () => {
+      const path = join(__dirname, "../check-import-targets.ts");
+      const result = classifyGuardFile(path, readFileSync(path, "utf8"));
+      expect(result.walks).toBe(true);
+      expect(result.asserts).toBe(true);
+      expect(result.inputProof).toBe("empty-abort");
+    },
+  );
 });

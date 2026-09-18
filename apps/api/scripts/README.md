@@ -127,6 +127,13 @@ scoped are stated once in `lint-tenant-scoping.ts`'s own header and in
 - **Runs in CI as:** the `Lint tenant scoping` step in `.github/workflows/ci.yml`, immediately
   after `Lint API`
 
+**Two zero-file guards, not one (235-05/D-02).** `listScopedFiles` throws `MissingScopedDirError`
+when a `SCOPED_DIRS` entry does not exist on disk (#229, pre-existing) and
+`NoScopedFilesFoundError` when every entry EXISTS but the COMBINED walk across all of them still
+found 0 `.ts` files (#229's same stance, one layer earlier than the pre-existing "0 in-scope
+calls" check below it). Both fire before any candidate/finding count is computed and both are
+surfaced as a gate `error`, never softened by `LINT_TENANT_SCOPING_SOFT`.
+
 **A hit on a clean tree is a FINDING, not an exception candidate.** Per Issue #204 (D-08): file a
 GitHub issue and leave the handler alone. Only add an exception entry once you have actually
 understood WHY the site is safe and can write that reason down — adding an entry to make the run

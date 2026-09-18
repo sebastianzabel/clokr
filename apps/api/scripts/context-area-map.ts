@@ -283,6 +283,7 @@ export function assignContextArea(relPath: string): ContextArea {
  */
 export function coveredSourceFiles(apiRoot: string): string[] {
   const results: string[] = [];
+  const srcRoot = join(apiRoot, "src");
 
   function walk(dir: string) {
     for (const entry of readdirSync(dir)) {
@@ -300,6 +301,18 @@ export function coveredSourceFiles(apiRoot: string): string[] {
     }
   }
 
-  walk(join(apiRoot, "src"));
+  walk(srcRoot);
+
+  // Empty-abort (235-05/D-02): a linter/coverage-mapper that walked zero files and returned an
+  // empty list would let every downstream reader (measure-context-coverage.ts, the exhaustiveness
+  // test) look "clean" for the wrong reason — nothing to be unmapped. The proof is on the INPUT
+  // set (files walked), never on any downstream filtered/classified set.
+  if (results.length === 0) {
+    throw new Error(
+      `context-area-map: scanned 0 file(s) under ${srcRoot} — the source tree moved or the ` +
+        `extension filter matched nothing. This is a failure, not a clean result.`,
+    );
+  }
+
   return results.sort();
 }

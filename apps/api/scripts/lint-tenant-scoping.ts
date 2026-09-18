@@ -80,6 +80,7 @@ import {
   findPrismaCalls,
   selectCandidates,
   MissingScopedDirError,
+  NoScopedFilesFoundError,
 } from "./lint-tenant-scoping-candidates";
 import { reachVerdict } from "./lint-tenant-scoping-verdict";
 import {
@@ -145,10 +146,12 @@ export function runLint(opts: { repoRoot: string; json?: boolean }): RunLintResu
   // "total in-scope calls, candidates after the D-14 filter").
   //
   // Guard A (#229): `listScopedFiles` throws `MissingScopedDirError` when a `SCOPED_DIRS` entry
-  // does not exist on disk. Caught here and surfaced as a gate error with a readable message —
-  // same shape as the `loadExceptions` try/catch further down — rather than an unhandled stack
-  // trace. Guard A fires BEFORE Guard B (the zero-in-scope check below): a missing directory is a
-  // more specific diagnosis than an empty result, and the two must not be conflated.
+  // does not exist on disk, or `NoScopedFilesFoundError` (235-05/D-02) when every entry exists but
+  // the combined walk still found 0 `.ts` files. Caught here and surfaced as a gate error with a
+  // readable message — same shape as the `loadExceptions` try/catch further down — rather than an
+  // unhandled stack trace. Both fire BEFORE Guard B (the zero-in-scope-CALLS check below): a
+  // missing directory or an empty walked FILE set is a more specific diagnosis than a downstream
+  // empty CALL count, and the three must not be conflated.
   let inScope = 0;
   try {
     for (const relPath of listScopedFiles(repoRoot)) {
@@ -163,7 +166,7 @@ export function runLint(opts: { repoRoot: string; json?: boolean }): RunLintResu
       inScope += findPrismaCalls(sourceFile, relPath).length;
     }
   } catch (err) {
-    if (err instanceof MissingScopedDirError) {
+    if (err instanceof MissingScopedDirError || err instanceof NoScopedFilesFoundError) {
       return {
         exitCode: 1,
         findings: [],
