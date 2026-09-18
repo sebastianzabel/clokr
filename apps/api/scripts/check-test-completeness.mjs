@@ -337,8 +337,20 @@ import { readFileSync } from "node:fs";
 // 1 + 2 = 3. 3217 + 3 = 3220, matching a fresh full-suite run's own "Test Files 266 passed (266)"
 // / "Tests 3217 passed | 3 skipped (3220)" totals exactly. Repo-wide `lint-guard-vacuity.ts`
 // (no --scope): guard count rises 27 -> 29 (both newly-visible guards), vacuous stays at 0.
+//
+// WR-01 (235-REVIEW.md, review dated 2026-09-18): `lint-guard-vacuity-detect.ts`'s
+// `registerNamedImport` closed a default-import blind spot (`import fs from "node:fs"`, no
+// `namedBindings` at all, so the old early-return never even registered the binding). No LIVE
+// guard in the tree uses this shape (confirmed: repo-wide `lint-guard-vacuity.ts` unchanged at
+// `577 file(s) scanned, 29 guard(s), 0 vacuous, 1 excepted`) — a latent, future-facing gap, not a
+// live vacuous guard.
+//   - `lint-guard-vacuity-detect.test.ts`: +1 new fixture-matrix row (`default-import-walk.ts`,
+//     modelled on the review's own owner-approved reproduction transcript verbatim): 23 -> 24
+//     tests.
+// 3220 + 1 = 3221, matching a fresh full-suite run's own totals exactly. MIN_FILES unchanged at
+// 266 (no new test FILE — the new file is fixture data, parsed, never collected as a test file).
 const MIN_FILES = 266;
-const MIN_TESTS = 3220;
+const MIN_TESTS = 3221;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

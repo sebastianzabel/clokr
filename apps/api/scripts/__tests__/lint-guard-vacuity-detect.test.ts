@@ -61,6 +61,7 @@ const FIXTURE_MATRIX: MatrixRow[] = [
     asserts: true,
     inputProof: "empty-abort",
   },
+  { file: "default-import-walk.ts", walks: true, asserts: true, inputProof: "empty-abort" },
 ];
 
 function loadFixture(file: string): { path: string; text: string } {
@@ -69,8 +70,8 @@ function loadFixture(file: string): { path: string; text: string } {
 }
 
 describe("FIXTURE_MATRIX completeness (D-07: red proof over the WHOLE set)", () => {
-  it("has exactly 16 rows", () => {
-    expect(FIXTURE_MATRIX.length).toBe(16);
+  it("has exactly 17 rows", () => {
+    expect(FIXTURE_MATRIX.length).toBe(17);
   });
 
   it("matches the fixture directory exactly — both directions, no orphan, no missing", () => {

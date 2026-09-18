@@ -170,7 +170,21 @@ function collectBindings(sourceFile: ts.SourceFile): Map<string, Binding> {
 
   function registerNamedImport(importClause: ts.ImportClause | undefined, moduleText: string) {
     const group = moduleGroupOf(moduleText);
-    if (!group || !importClause?.namedBindings) return;
+    if (!group || !importClause) return;
+    if (importClause.name) {
+      // WR-01 (235-REVIEW.md): `import fs from "node:fs"` (a default import) has no
+      // `namedBindings` at all — `importClause.namedBindings` is `undefined` for this shape, so
+      // the old early-return before this check never even registered `fs`. Node's CJS interop
+      // (this repo's tsconfig sets `esModuleInterop`) makes a default import of `node:fs`/
+      // `node:child_process` behave identically to a namespace import for property-access
+      // purposes, so it is tracked the same way.
+      bindings.set(importClause.name.text, {
+        kind: "namespace",
+        group,
+        label: `${moduleText} default import`,
+      });
+    }
+    if (!importClause.namedBindings) return;
     if (ts.isNamedImports(importClause.namedBindings)) {
       for (const el of importClause.namedBindings.elements) {
         const importedName = (el.propertyName ?? el.name).text;
