@@ -18,6 +18,21 @@
  *      `provedGuards()` non-emptiness assertion below exists so THIS red proof cannot recur that
  *      failure mode in the one file whose entire job is preventing it.
  *
+ *      Plan 235-04 finding: a single FILE can carry more than one structurally independent
+ *      walk-and-proof (`absence-vocabulary-guard.test.ts`'s G5 `scannedFiles()`/"contains" and G6
+ *      `collectFiles()`/"length" after that plan's retrofit, two unrelated walked sets in the same
+ *      file). `classifyGuardFile` reports only ONE winning shape per file (length checked before
+ *      contains before empty-abort before flag — see its Part G priority chain), so a single-shot
+ *      deletion of that winning shape's lines can uncover a SECOND, still-intact proof elsewhere in
+ *      the same file and leave the guard correctly classified as still proved — which is not a
+ *      vacuity, it is the file legitimately having two independent guards against two independent
+ *      walks. `deleteEveryProofUntilVacuous` below re-classifies after each deletion and deletes
+ *      whatever proof shape newly becomes the winner, repeating until either no proof remains
+ *      (`"none"`) or a deletion makes no further progress (a safety bound against an infinite
+ *      loop, never expected to trip on real files) — so the assertion this test makes is now "no
+ *      combination of this file's own proof mechanisms is left standing", not "the one shape the
+ *      classifier happened to report first is gone".
+ *
  * DB-free, disk-write-free: every case here either uses synthetic in-memory data or reads real
  * files without ever writing to them — `git status --porcelain` stays clean after this suite runs.
  */
@@ -250,6 +265,33 @@ function deleteLines(text: string, lines: readonly number[]): string {
     .join("\n");
 }
 
+/** Repeatedly deletes whichever proof shape `classifyGuardFile` currently reports for `file`,
+ * re-classifying after each deletion, until either no proof remains (`"none"`) or a deletion makes
+ * no further progress (Plan 235-04 finding: a file can carry more than one independent
+ * walk-and-proof, so a single deletion can uncover a second, still-intact proof elsewhere in the
+ * same file — see this file's own docblock, item 3). The 20-iteration bound is generous headroom
+ * over any real file's proof count (every file measured so far carries at most two independent
+ * proofs) and exists only so a genuine bug here fails loudly instead of hanging. */
+function deleteEveryProofUntilVacuous(
+  file: string,
+  text: string,
+  classification: GuardClassification,
+): GuardClassification {
+  let currentText = text;
+  let current = classification;
+  const seenLineSets = new Set<string>();
+  for (let i = 0; i < 20 && current.inputProof !== "none"; i++) {
+    const lines = current.inputProofSites.map((s) => s.line);
+    if (lines.length === 0) break;
+    const key = [...lines].sort((a, b) => a - b).join(",");
+    if (seenLineSets.has(key)) break; // no progress — stop rather than loop forever
+    seenLineSets.add(key);
+    currentText = deleteLines(currentText, lines);
+    current = classifyGuardFile(file, currentText);
+  }
+  return current;
+}
+
 describe("provedGuards() non-emptiness — the red proof must not itself go vacuous", () => {
   it("finds at least one proved guard in the real tree", () => {
     expect(provedGuards().length).toBeGreaterThan(0);
@@ -259,15 +301,17 @@ describe("provedGuards() non-emptiness — the red proof must not itself go vacu
 describe.each(provedGuards())(
   "whole-set red proof: removing the input proof flips $file to vacuous",
   ({ file, text, classification }) => {
-    it(`classifies input-proof:none after deleting inputProofSites line(s)`, () => {
+    it(`classifies input-proof:none after deleting every independent inputProofSites shape`, () => {
       const lines = classification.inputProofSites.map((s) => s.line);
       expect(
         lines.length,
         `${file} has inputProof !== "none" but no inputProofSites`,
       ).toBeGreaterThan(0);
-      const modified = deleteLines(text, lines);
-      const result = classifyGuardFile(file, modified);
-      expect(result.inputProof, `${file} still proves non-emptiness after deletion`).toBe("none");
+      const result = deleteEveryProofUntilVacuous(file, text, classification);
+      expect(
+        result.inputProof,
+        `${file} still proves non-emptiness after deleting every independent proof shape found`,
+      ).toBe("none");
     });
   },
 );

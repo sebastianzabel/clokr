@@ -203,8 +203,34 @@ import { readFileSync } from "node:fs";
 // stashed out), 25 after (same command, same file, edits restored) — a clean +4, matching this
 // bump exactly. 3189 + 4 = 3193, matching a fresh full-suite run's own "Test Files 266 passed
 // (266)" / "Tests 3190 passed | 3 skipped (3193)" totals exactly.
+// Plan 235-04 (Wave 4, 2026-09-18) — no new test FILE (all five touched apps/api files already
+// existed: `absence-vocabulary-guard.test.ts`, `leave-type-identity-guard.test.ts`,
+// `notification-email-policy.test.ts`, `section9-carryover-deadline.test.ts`,
+// `release-notes.test.ts`) — MIN_FILES stays 266. Each of the five gained a non-empty input-set
+// proof, but none of the five edits added a new `it()`/`it.each()` block (verified: `grep -c`
+// against each file's pre-plan HEAD `b7e65ecb` copy — identical it()-declaration counts before and
+// after, for all five). MIN_TESTS rises from 3193 to 3197: the +4 comes entirely, again, from
+// `scripts/__tests__/lint-guard-vacuity.test.ts`'s own generated whole-set red proof
+// (`describe.each(provedGuards())`, plan 235-02) — four of this plan's five guards flip from
+// vacuous to proved (`leave-type-identity-guard.test.ts`, `section9-carryover-deadline.test.ts`,
+// `notification-email-policy.test.ts`, `release-notes.test.ts`; `absence-vocabulary-guard.test.ts`
+// was ALREADY proved before this plan and contributes no new generated case). This plan ALSO
+// generalised that red proof itself (`deleteEveryProofUntilVacuous`, same file): retrofitting
+// `absence-vocabulary-guard.test.ts` gave it TWO independent, structurally unrelated proofs in the
+// same file (G5's pre-existing "contains" and this plan's new G6 "length"), and the classifier's
+// per-file, single-winning-shape report meant the old single-shot-deletion version of this red
+// proof could delete the reported winner and still find the OTHER proof standing — correctly
+// proved, incorrectly read as a broken red proof. The generalisation does not add a test CASE, only
+// changes what one existing generated case does, so it is not part of this +4. Measured at three
+// points, `pnpm exec vitest run scripts/__tests__/lint-guard-vacuity.test.ts`: 25 tests on the true
+// pre-plan HEAD `b7e65ecb` (all three plan-04-touched files AND the harness reverted to that
+// commit's content), 27 tests (1 failing — the absence-vocabulary-guard.test.ts multi-proof case
+// above) after this plan's Task 2 alone (committed, harness not yet generalised), 29 tests all
+// passing after Task 3 plus the harness generalisation — a clean +4 end to end, matching this bump
+// exactly. 3193 + 4 = 3197, matching a fresh full-suite run's own "Test Files 266 passed (266)" /
+// "Tests 3194 passed | 3 skipped (3197)" totals exactly.
 const MIN_FILES = 266;
-const MIN_TESTS = 3193;
+const MIN_TESTS = 3197;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
