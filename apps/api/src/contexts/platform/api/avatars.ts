@@ -23,9 +23,12 @@ export async function avatarRoutes(app: FastifyInstance) {
       const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
-      // Tenant scope: copied verbatim from GET /:employeeId below — an ADMIN/MANAGER
-      // self-check above only guards EMPLOYEE callers, so ADMIN/MANAGER still need
-      // this explicit tenant comparison.
+      // Tenant scope: the isSelf/isManager check above only guards EMPLOYEE callers, so
+      // ADMIN/MANAGER still need this explicit tenant comparison. Unlike GET and DELETE
+      // (both fixed in phase 258), this branch is a plain 403 and still carries the same
+      // untreated employee-existence oracle as those two did before the fix — an ADMIN/
+      // MANAGER can distinguish "exists in another tenant" (403) from "exists nowhere"
+      // (404 above). Deliberately NOT fixed here: tracked as GitHub Issue #259.
       if (employee.tenantId !== req.user.tenantId) {
         return reply.code(403).send({ error: "Keine Berechtigung" });
       }
@@ -133,16 +136,34 @@ export async function avatarRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Keine Berechtigung" });
       }
 
-      const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
-      if (!employee?.avatarPath) {
-        return reply.code(404).send({ error: "Kein Avatar vorhanden" });
+      // Same T-100-09 guard as GET above: the 404 body is IDENTICAL to the genuine
+      // not-found branch, so this endpoint cannot be used as a tenant-membership oracle.
+      // The isSelf/isManager check further up stays where it is — it is existence-
+      // independent and therefore not an oracle; this guard is what an ADMIN/MANAGER of a
+      // FOREIGN tenant runs into.
+      const employee = await app.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { tenantId: true, avatarPath: true },
+      });
+      if (!employee || employee.tenantId !== req.user.tenantId) {
+        if (employee) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "CROSS_TENANT_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+        }
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
-      // Tenant scope: copied verbatim from GET /:employeeId above — an ADMIN/MANAGER
-      // self-check above only guards EMPLOYEE callers, so ADMIN/MANAGER still need
-      // this explicit tenant comparison.
-      if (employee.tenantId !== req.user.tenantId) {
-        return reply.code(403).send({ error: "Keine Berechtigung" });
+      // Unlike GET, DELETE keeps the 404 here: "nothing to delete" really is a failed
+      // request, and no display path calls this on every page load (phase 258, D-01 applies
+      // to GET only). Reaching this line already proves the caller is in the right tenant,
+      // so a distinguishable body here crosses no boundary.
+      if (!employee.avatarPath) {
+        return reply.code(404).send({ error: "Kein Avatar vorhanden" });
       }
 
       try {
