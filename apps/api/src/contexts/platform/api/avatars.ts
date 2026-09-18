@@ -76,14 +76,37 @@ export async function avatarRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { employeeId } = req.params as { employeeId: string };
 
-      const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
-      if (!employee?.avatarPath) {
-        return reply.code(404).send({ error: "Kein Avatar vorhanden" });
+      // Phase 258 — tenant isolation guard in the established T-100-09 shape (canonical
+      // instance: contexts/platform/api/settings.ts:758-780). The 404 body is IDENTICAL to
+      // the genuine not-found branch so this endpoint cannot be used as a tenant-membership
+      // oracle: a foreign tenant's real employee and an id that exists nowhere are
+      // indistinguishable to the caller. A 403 here would BE the oracle — it would say
+      // "this id exists, just not here" — and this route has no role gate (requireAuth
+      // only), so any authenticated employee could probe with it. The attempt is not lost:
+      // it is recorded in the audit log via app.audit() below, where it belongs.
+      const employee = await app.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { tenantId: true, avatarPath: true },
+      });
+      if (!employee || employee.tenantId !== req.user.tenantId) {
+        if (employee) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "CROSS_TENANT_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+        }
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
-      // Tenant scope: only users in the same tenant may access the avatar
-      if (employee.tenantId !== req.user.tenantId) {
-        return reply.code(403).send({ error: "Keine Berechtigung" });
+      // "No avatar stored" is a normal business state, not a failed resource access — a 404
+      // here is indistinguishable from the genuine storage failure below (phase 258, D-01).
+      // No response body: 204 has none by definition, which is why this one route departs
+      // from the house `reply.code(XXX).send({ error: "…" })` shape.
+      if (!employee.avatarPath) {
+        return reply.code(204).send();
       }
 
       try {
