@@ -2699,7 +2699,9 @@
     gap: 0.2rem;
     padding: 2px 0.4rem;
     border-radius: 4px;
-    color: white;
+    /* Fallback only. The live value arrives per bar via style:color={_vis.textColor},
+       which resolves a --leave-type-*-text token (Phase 257, D-12). */
+    color: #ffffff;
     font-size: 0.75rem;
     line-height: 1.4;
     overflow: hidden;
@@ -2723,9 +2725,8 @@
     height: 22px;
   }
   .cal-chip--pending {
-    outline: 1.5px dashed rgba(255, 255, 255, 0.7);
+    outline: 1.5px dashed currentColor;
     outline-offset: -2px;
-    opacity: 0.9;
   }
   .cal-chip-name {
     font-weight: 600;
@@ -2736,7 +2737,6 @@
   }
   .cal-chip-type {
     font-size: 0.6875rem;
-    opacity: 0.85;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
