@@ -304,9 +304,41 @@ import { readFileSync } from "node:fs";
 //     `validateExceptionsDocument`: 38 -> 41 tests (+3, on top of the +3 above).
 // 4 + 4 + 6 = 14. 3203 + 14 = 3217, matching a fresh full-suite run's own "Test Files 266 passed
 // (266)" / "Tests 3214 passed | 3 skipped (3217)" totals exactly (measured at this plan's own
-// finishing point, `pnpm --filter @clokr/api exec vitest run`).
+// first finishing point, `pnpm --filter @clokr/api exec vitest run`).
+//
+// Plan 235-08, continued (coordinator-flagged: the owner-approved classifier blind-spot fix from
+// the plan's own `<additional_scope_owner_approved>` block had not yet been applied) — no new
+// test FILE (`lint-guard-vacuity-detect.test.ts` already existed; the new fixture
+// `execsync-find-template-literal-walk.mjs` is a FIXTURE, not a test file, and is not itself
+// collected by vitest). MIN_FILES stays 266. MIN_TESTS rises from 3217 to 3220 (+3), derived
+// per-file, each measured directly:
+//   - `lint-guard-vacuity-detect.ts`'s `isCpCommandWalk` taught to recognise a
+//     `ts.TemplateExpression` (a template literal WITH substitutions) whose HEAD text matches
+//     `CP_COMMAND_RE` — `235-BEFUND-E.md` "Finding 0": `ts.isStringLiteralLike` accepts a
+//     `NoSubstitutionTemplateLiteral` but not a `TemplateExpression`, so
+//     `` execSync(`find '${scope}' ...`) `` (both `apps/web/scripts/lint-ui.mjs` and
+//     `lint-ui-classes.mjs`'s real shape) was architecturally invisible. Closing only that gap was
+//     NOT enough on its own: both real files' `.length === 0` empty-abort still stayed classifier-
+//     invisible, because the `.toString()` link in
+//     `execSync(...).toString().split(...).filter(...).map(...)` broke `isWalkDerivedExpr`'s
+//     chain-derivation one step before reaching the now-recognised walk call — `CHAIN_METHODS`
+//     gained `"toString"` to close that second, immediately-adjacent gap.
+//   - `lint-guard-vacuity-detect.test.ts`: +1 new fixture-matrix row
+//     (`execsync-find-template-literal-walk.mjs`, modelled on the EXACT shape of the two real
+//     files, per this phase's own precedent of pinning against a real form, never a hypothetical
+//     example — same discipline Plan 02 used for its own two detection-gap fixtures): 22 -> 23
+//     tests.
+//   - `lint-guard-vacuity.test.ts`: no file edit — its own generated whole-set red proof
+//     (`describe.each(provedGuards())`) grows by one case per NEWLY-detected real guard: both
+//     `lint-ui.mjs` and `lint-ui-classes.mjs` flip `walks:false` -> `walks:true,
+//     inputProof:"empty-abort"` the instant the classifier can see them (both already carried a
+//     correct, plan-235-07-hardened empty-abort — this was purely a classifier-visibility gap, not
+//     a source defect): 41 -> 43 tests (+2).
+// 1 + 2 = 3. 3217 + 3 = 3220, matching a fresh full-suite run's own "Test Files 266 passed (266)"
+// / "Tests 3217 passed | 3 skipped (3220)" totals exactly. Repo-wide `lint-guard-vacuity.ts`
+// (no --scope): guard count rises 27 -> 29 (both newly-visible guards), vacuous stays at 0.
 const MIN_FILES = 266;
-const MIN_TESTS = 3217;
+const MIN_TESTS = 3220;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

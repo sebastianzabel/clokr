@@ -129,7 +129,14 @@ const ALLOWED_NAMES: Record<ModuleGroup, ReadonlySet<string>> = {
  * rev-parse HEAD")` is a shell-out, not a walk. */
 const CP_COMMAND_RE = /(^|[\s|(])(find|grep|ls|rg)\s/;
 
-const CHAIN_METHODS = new Set(["filter", "map", "flatMap", "sort", "concat", "split"]);
+/** 235-08 addition: `toString` — `execSync(...).toString()` is the standard way to turn its
+ * Buffer result into text before splitting it (both `lint-ui.mjs` and `lint-ui-classes.mjs` do
+ * exactly this, found while closing Finding 0 above — the TemplateExpression fix alone was not
+ * enough to make either file's own empty-abort classifier-visible, because the `.toString()` link
+ * in `execSync(...).toString().split("\n").filter(...).map(...)` broke the chain one step before
+ * reaching the recognised walk call). Preserves the same "derived-ness" as every other entry here
+ * — the string IS the walked result, merely in its text form, not a new, independent value. */
+const CHAIN_METHODS = new Set(["filter", "map", "flatMap", "sort", "concat", "split", "toString"]);
 
 function moduleGroupOf(specifierText: string): ModuleGroup | null {
   if (FS_MODULES.has(specifierText)) return "fs-sync";
@@ -229,8 +236,24 @@ function lineOf(sourceFile: ts.SourceFile, node: ts.Node): number {
   return sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
 }
 
+/**
+ * 235-08 (owner-approved addition, `235-BEFUND-E.md` "Finding 0"): `ts.isStringLiteralLike`
+ * recognises a plain `StringLiteral` and a `NoSubstitutionTemplateLiteral`, but NOT a
+ * `TemplateExpression` — a template literal that contains at least one `${…}` substitution, which
+ * has no `.text` property at all. `apps/web/scripts/lint-ui.mjs`/`lint-ui-classes.mjs` both shell
+ * out via `` execSync(`find '${scope}' ...`) `` — exactly that shape — and were therefore
+ * architecturally invisible to this classifier (`walks: false`) despite a real, live `find` call.
+ * Matched against the template's own HEAD (the literal text before the first substitution, e.g.
+ * `"find '"` for `` `find '${scope}' -type f -name '*${ext}'` ``) — the command name always sits
+ * there in every real shape this repo uses (`find '<path>' ...`), never inside a substitution
+ * itself, so the head alone is the right (and only) place to look; nothing about the trailing
+ * dynamic segments is a command name to match against.
+ */
 function isCpCommandWalk(arg: ts.Expression | undefined): boolean {
-  return !!arg && ts.isStringLiteralLike(arg) && CP_COMMAND_RE.test(arg.text);
+  if (!arg) return false;
+  if (ts.isStringLiteralLike(arg)) return CP_COMMAND_RE.test(arg.text);
+  if (ts.isTemplateExpression(arg)) return CP_COMMAND_RE.test(arg.head.text);
+  return false;
 }
 
 /** `import.meta.glob(...)` — not found in this repo today (RESEARCH.md §1), but the one shape

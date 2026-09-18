@@ -55,6 +55,12 @@ const FIXTURE_MATRIX: MatrixRow[] = [
     asserts: true,
     inputProof: "length",
   },
+  {
+    file: "execsync-find-template-literal-walk.mjs",
+    walks: true,
+    asserts: true,
+    inputProof: "empty-abort",
+  },
 ];
 
 function loadFixture(file: string): { path: string; text: string } {
@@ -63,8 +69,8 @@ function loadFixture(file: string): { path: string; text: string } {
 }
 
 describe("FIXTURE_MATRIX completeness (D-07: red proof over the WHOLE set)", () => {
-  it("has exactly 15 rows", () => {
-    expect(FIXTURE_MATRIX.length).toBe(15);
+  it("has exactly 16 rows", () => {
+    expect(FIXTURE_MATRIX.length).toBe(16);
   });
 
   it("matches the fixture directory exactly — both directions, no orphan, no missing", () => {

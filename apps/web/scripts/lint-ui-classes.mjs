@@ -87,6 +87,20 @@ function listSvelteFiles(scope) {
     .map((f) => resolve(repoRoot, f));
 }
 
+/** All `.svelte` files across every SCOPES entry, combined. A named function calling
+ * `listSvelteFiles` directly (rather than `SCOPES.flatMap(...)`), so the walk-derivation the
+ * empty-abort below needs is a plain direct call, not a chain over a non-derived receiver
+ * (235-08, mirroring lint-save-pattern.mjs's own listAllSvelteFiles() — the classifier's chain-
+ * method resolution only checks a `.flatMap()`'s RECEIVER, SCOPES, which is never itself derived;
+ * it does not look inside the callback body). */
+function listAllSvelteFiles() {
+  const out = [];
+  for (const scope of SCOPES) {
+    out.push(...listSvelteFiles(scope));
+  }
+  return out;
+}
+
 /**
  * Extract every class token emitted by a Svelte file.
  *
@@ -212,7 +226,7 @@ function loadGlobalClasses() {
 
 // Build the file list first (SCOPES above), abort on empty, THEN run the content check over it —
 // this is what makes the empty case a hard failure instead of a silent "0 miss(es)" success.
-const files = SCOPES.flatMap((scope) => listSvelteFiles(scope));
+const files = listAllSvelteFiles();
 if (files.length === 0) {
   console.error(
     `[lint:ui-classes] scanned 0 file(s) under ${SCOPES.join(", ")} — the scan root moved or ` +
