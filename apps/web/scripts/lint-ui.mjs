@@ -54,10 +54,23 @@ function listFiles(scope, ext = ".svelte") {
   const out = execSync(`find '${scope}' -type f -name '*${ext}'`, {
     cwd: repoRoot,
   }).toString();
-  return out
+  const files = out
     .split("\n")
     .filter(Boolean)
     .map((f) => resolve(repoRoot, f));
+  // Empty-abort (D-02/#235 Group E, full-sweep mode ONLY): --staged mode is deliberately exempt
+  // above (an empty staged-file set is the common, correct case — most commits touch no .svelte
+  // file at all; aborting there would block every non-frontend commit, see .husky/pre-commit).
+  // A full sweep finding zero files means the scan root moved or the filter matched nothing —
+  // that is a failure, not a clean result, and this is CI's own gate (ci.yml, no --staged).
+  if (files.length === 0) {
+    console.error(
+      `[lint:ui] scanned 0 file(s) under ${scope} (full sweep, ext ${ext}) — the scan root moved ` +
+        `or the filter matched nothing. This is a failure, not a clean result.`,
+    );
+    process.exit(1);
+  }
+  return files;
 }
 
 const violations = [];
