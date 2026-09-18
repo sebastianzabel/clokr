@@ -207,10 +207,19 @@ describe("context-area-map — exhaustiveness over the real, measured file set",
     );
   });
 
-  it("coveredSourceFiles() reproduces the measured 124-file set (sanity check, not a hardcoded expectation source)", () => {
+  it("coveredSourceFiles() reproduces an independently re-derived file count (sanity check, not a hardcoded expectation source)", () => {
     // Cross-checks against the shell command the plan's <action> step names
     // (`find src -name '*.ts' ! -name '*.test.ts' ! -name 'index.ts' | wc -l`), independent of
     // this file's own walk implementation.
+    //
+    // The title used to name the measured file count directly — issue #245, the fourth recurrence
+    // of the #235/#240 defect family: the real count had already drifted twice by the time #245
+    // was filed, and drifted again by the time this fix landed. The test's own BODY was never the
+    // bug — the two-implementation cross-check below is unchanged and still catches a real
+    // divergence. Only the NAME contradicted the docblock two lines above it, which already
+    // disclaims being "a hardcoded expectation source". The number is removed rather than bumped:
+    // a fresh hardcoded number in the title would only postpone the same drift to whichever reader
+    // trusts a title over the code beneath it next.
     const files: string[] = [];
     function walk(dir: string) {
       for (const entry of readdirSync(dir)) {
@@ -226,6 +235,18 @@ describe("context-area-map — exhaustiveness over the real, measured file set",
       }
     }
     walk(join(API_ROOT, "src"));
-    expect(coveredSourceFiles(API_ROOT).length).toBe(files.length);
+    // Both sides of the cross-check below are independently walk-derived. Without these two
+    // assertions the comparison could pass on two empty sets at once (the walk root moved on
+    // both implementations simultaneously) — the exact shared-blind-spot shape #245 itself names,
+    // and the same shape D-07/#240 warns a non-vacuity proof must not leave uncovered.
+    expect(files.length, "the in-test walk found no files — the walk root moved").toBeGreaterThan(
+      0,
+    );
+    const covered = coveredSourceFiles(API_ROOT);
+    expect(
+      covered.length,
+      "coveredSourceFiles() found no files — its walk root moved",
+    ).toBeGreaterThan(0);
+    expect(covered.length).toBe(files.length);
   });
 });

@@ -294,6 +294,14 @@ describe("G6 — no redeclaration of the LeaveTypeCode vocabulary", () => {
 
   it("declares the LeaveTypeCode vocabulary exactly once — the Prisma enum aside", () => {
     const files = collectFiles();
+    // 235-BEFUND-B.md #1: G6's collectFiles() is a SEPARATE walk from G5's scannedFiles() above
+    // — G5's own "contains" proof (this file's own reference idiom, D-06) covers only its own
+    // walked set, not this one. Without this, an emptied apps/api/src / apps/web/src /
+    // packages/types/src / packages/db/src would leave `violations` at [] and this test green.
+    expect(
+      files.length,
+      "no file scanned under apps/api/src, apps/web/src, packages/types/src or packages/db/src — one of the four roots moved or emptied",
+    ).toBeGreaterThan(0);
     const violations: string[] = [];
     for (const abs of files) {
       const content = readFileSync(abs, "utf-8");

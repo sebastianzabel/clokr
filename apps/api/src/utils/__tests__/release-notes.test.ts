@@ -228,6 +228,14 @@ const corpusFiles = readdirSync(RELEASE_NOTES_DIR).filter((f) => /^v\d+\.\d+\.\d
 
 describe("release-notes corpus (AK-16 backfill)", () => {
   it("finds at least 22 real corpus files to sweep", () => {
+    // 235-BEFUND-B.md #5: a companion, machine-recognised non-emptiness proof — see
+    // lint-guard-vacuity-detect.ts's matchLengthProof, which only recognises `toBeGreaterThan(0)`,
+    // not `toBeGreaterThanOrEqual(22)`. Added alongside, not replacing: 22 is the stronger,
+    // deliberately chosen invariant and stays.
+    expect(
+      corpusFiles.length,
+      "docs/release-notes/ is empty or moved — the cross-check has nothing to compare against",
+    ).toBeGreaterThan(0);
     expect(corpusFiles.length).toBeGreaterThanOrEqual(22);
   });
 

@@ -269,6 +269,21 @@ jobs:
         # Eintrag H's Nachtrag for Phase 101B.
         run: pnpm --filter @clokr/api exec tsx scripts/measure-context-boundary-imports.ts --cycles --check 22
 
+      - name: Lint guard vacuity (Issues #235/#240/#245 — AC-2/AC-5, the standing anti-vacuity gate)
+        # A file that walks the source tree and asserts on the result — every lint gate above this
+        # line included — must prove the walked set was non-empty, or its own "OK" is
+        # indistinguishable from a silently disarmed check (#235's fourth recurrence, the same
+        # defect family this file's other boundary gates exist to catch, aimed at THEM this time).
+        # Unconditional, no path filter: a gate a path filter can skip is not a gate. `--check <n>`
+        # is EQUALITY in both directions — a decrease is as much a mismatch as an increase, never
+        # free progress to accept without asking why. Deliberate exceptions (currently 1,
+        # release-notes.ts's documented API-must-boot fail-silent contract) live in
+        # apps/api/scripts/lint-guard-vacuity-exceptions.json, each with a mandatory reason. The
+        # sentence that matters most: the check is on the INPUT set (files walked), never on the
+        # OUTPUT set (violations found), which nearly every one of these gates correctly wants
+        # empty — see ADR 0001 Eintrag I.
+        run: pnpm --filter @clokr/api exec tsx scripts/lint-guard-vacuity.ts --check 0
+
       - name: Lint saldo-lock periodStart derivation (Issue #241 — five sites found by hand)
         # A periodType:"MONTHLY" SaldoSnapshot where-comparison on periodStart whose value does
         # not trace back to monthRangeUtc() is the exact defect class of #241 (three route gates

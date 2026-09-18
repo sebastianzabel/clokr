@@ -107,6 +107,16 @@ const ALL_PAGES = adminPages();
 const ALL_PAGE_KEYS = ALL_PAGES.map(relKey);
 
 describe("every admin page is accounted for", () => {
+  // Phase 235 (Group D, D-02/D-05) — without this, every test below would pass trivially on two
+  // empty sets (ALL_PAGE_KEYS = []) if src/routes/(app)/admin ever moved or emptied, transplanting
+  // this file's own founding case (#35/#127) into itself.
+  it("scanned at least one admin page", () => {
+    expect(
+      ALL_PAGES.length,
+      "no admin page scanned — src/routes/(app)/admin moved or emptied",
+    ).toBeGreaterThan(0);
+  });
+
   it("no admin page is missing from the ledger", () => {
     const missing = ALL_PAGE_KEYS.filter((k) => !(k in REGISTERED) && !(k in EXCLUDED));
     expect(

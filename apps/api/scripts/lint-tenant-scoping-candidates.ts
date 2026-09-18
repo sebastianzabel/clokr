@@ -133,6 +133,27 @@ export class MissingScopedDirError extends Error {
   }
 }
 
+/**
+ * 235-05/D-02: distinct from `MissingScopedDirError` — every `SCOPED_DIRS` entry EXISTS (that is
+ * `MissingScopedDirError`'s own precondition), but the combined walk across all of them still
+ * produced zero `.ts` files (every entry is empty, or contains only `__tests__`/non-`.ts`
+ * content). `lint-tenant-scoping.ts`'s own `runLint` already refuses to report "0 finding(s)" on
+ * 0 in-scope Prisma CALLS (its own Guard B, #229) — this is the same #229 stance one layer
+ * earlier, on the walked FILE set itself, which is what actually makes the distinction between
+ * "no candidate reached a client-supplied identifier" (a real, expected 0 today) and "nothing was
+ * ever scanned" (a defect) mechanically checkable, not just plausible from Guard B's downstream 0.
+ */
+export class NoScopedFilesFoundError extends Error {
+  constructor(scopedDirs: readonly string[]) {
+    super(
+      `lint-tenant-scoping: scanned 0 .ts file(s) across all of SCOPED_DIRS (${scopedDirs.join(", ")}) ` +
+        `— every entry exists but the combined walk found nothing. A gate that finds nothing ` +
+        `because it looked at nothing is indistinguishable from a clean tree (GitHub #229).`,
+    );
+    this.name = "NoScopedFilesFoundError";
+  }
+}
+
 /** D-11 + D-15: walk SCOPED_DIRS for *.ts, skipping any directory named EXCLUDED_DIR_SEGMENT. */
 export function listScopedFiles(repoRoot: string): string[] {
   const out: string[] = [];
@@ -155,6 +176,10 @@ export function listScopedFiles(repoRoot: string): string[] {
     if (!fs.existsSync(abs)) throw new MissingScopedDirError(dir);
     walk(abs);
   }
+
+  // Empty-abort (235-05/D-02), on the INPUT set (files walked), distinct from `runLint`'s existing
+  // Guard B (0 in-scope CALLS — an output-adjacent count derived from parsing each file's AST).
+  if (out.length === 0) throw new NoScopedFilesFoundError(SCOPED_DIRS);
 
   return out.map((absPath) => path.relative(repoRoot, absPath).split(path.sep).join("/"));
 }

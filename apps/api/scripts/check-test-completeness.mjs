@@ -139,8 +139,234 @@ import { readFileSync } from "node:fs";
 // MIN_FILES rises from 262 to 263. MIN_TESTS rises from 3077 to 3080: +3 test cases in that new
 // file (verified with `pnpm exec vitest run src/__tests__/route-surface.test.ts`, "3 tests" in
 // its own output) — 3077 + 3 = 3080. No other test file's test COUNT changed in this plan.
-const MIN_FILES = 263;
-const MIN_TESTS = 3080;
+//
+// Plan 235-01 (Wave 1, task 3) — FINDING before the bump: this file's own constants (263/3080,
+// last touched by Plan 243-01) were ALREADY STALE at Phase 235's start (`main @ 83077d15`), before
+// this plan changed anything. `83077d15` is Phase 101B's own closing merge commit (10 plan waves,
+// ending 101B-10) and it added `scripts/__tests__/measure-context-boundary-imports.test.ts` plus
+// many new test cases in existing files across those 10 waves, without ANY of them bumping this
+// floor's constants — no trail entry for "101B" exists above this one. Because this gate is a
+// LOWER bound (`files < MIN_FILES || tests < MIN_TESTS`), the stale 263/3080 floor kept passing
+// trivially throughout the whole phase; nothing broke, but the floor verified less than it
+// appeared to, silently, for ten plan waves — the same drift class this phase (235) exists to stop
+// happening on the guards that walk the source tree. This gate does not (it reads a JSON report,
+// not the tree), so it is outside the AST classifier's scope, but the SAME discipline applies:
+// measure, don't inherit. Cross-validated three ways before touching the constants: (1) a full
+// `pnpm --filter @clokr/api test` run on this plan's own HEAD reported "Test Files 265 passed
+// (265)" / "Tests 3163 passed | 3 skipped (3166)"; (2) this plan's own new file
+// (scripts/__tests__/lint-guard-vacuity-detect.test.ts) is the ONLY test file this plan added, with
+// "20 tests" in its own single-file run, so the PRE-task state is arithmetically 265-1=264 files,
+// 3166-20=3146 tests; (3) `.planning/STATE.md:54` independently records Phase 101B-10's own closing
+// full-suite run as "264 files / 3143 passed / 3 skipped" — 3143+3=3146, matching (2) exactly.
+// MIN_FILES therefore rises from the MEASURED 264 (not the stale 263) to 265. MIN_TESTS rises from
+// the MEASURED 3146 (not the stale 3080) to 3166 — 3146 + 20 = 3166, matching the full-suite run's
+// own totals in (1) exactly.
+//
+// Plan 235-02 (Wave 2) — one new test FILE (scripts/__tests__/lint-guard-vacuity.test.ts) —
+// MIN_FILES rises from 265 to 266. MIN_TESTS rises from 3166 to 3184: +16 test cases in that new
+// file (verified with `pnpm exec vitest run scripts/__tests__/lint-guard-vacuity.test.ts`, "16
+// tests" in its own output) PLUS +2 test cases in the EXISTING
+// scripts/__tests__/lint-guard-vacuity-detect.test.ts (20 -> 22, verified with `pnpm exec vitest
+// run scripts/__tests__/lint-guard-vacuity-detect.test.ts`, "22 tests" in its own output, up from
+// plan 235-01's 20) — the two fixtures this plan added to pin the classifier gaps it found while
+// baseline-verifying against the real tree (`guarded-contains-assert.ts`,
+// `chained-call-on-walk-containing-fn.ts`). 3166 + 16 + 2 = 3184, matching a fresh full-suite run's
+// own "Test Files 266 passed (266)" / "Tests 3181 passed | 3 skipped (3184)" totals exactly.
+//
+// Plan 235-03 (Wave 3, 2026-09-18) — no new test FILE (all five touched files already existed) —
+// MIN_FILES stays 266. MIN_TESTS rises from 3184 to 3189: this plan retrofitted Group A's five
+// vacuous guards with a non-empty input-set proof each (`context-area-map.test.ts`,
+// `lint-guard-vacuity-detect.test.ts`, `lint-tenant-scoping-candidates.test.ts`, `-facade.test.ts`,
+// `-verdict.test.ts`) — none of the five edits added a new `it()` block, so none of them
+// contributes here directly (each per-file count is unchanged: 17/22/11/16/19 tests, all verified
+// individually with `pnpm exec vitest run <file>`). The +5 comes entirely from
+// `scripts/__tests__/lint-guard-vacuity.test.ts`'s OWN generated whole-set red proof
+// (`describe.each(provedGuards())`, plan 235-02): it reads the REAL tree, so it grows by exactly
+// one generated test case per guard this plan flips from vacuous to proved — 4 proved guards
+// before this plan, 9 after (verified with `pnpm exec vitest run
+// scripts/__tests__/lint-guard-vacuity.test.ts` at three points: 16 tests on the pre-plan HEAD
+// `6697cedc`, 17 after this plan's context-area-map.test.ts fix alone, 21 after all five fixes —
+// a clean +5, matching this bump exactly). 3184 + 5 = 3189, matching a fresh full-suite run's own
+// "Test Files 266 passed (266)" / "Tests 3186 passed | 3 skipped (3189)" totals exactly.
+// Plan 235-06 (Wave 3, 2026-09-18) — no new test FILE, and all four touched files live under
+// apps/web/src/__tests__, OUTSIDE this apps/api suite entirely — MIN_FILES stays 266. MIN_TESTS
+// rises from 3189 to 3193: this plan retrofitted Group D's four vacuous guards
+// (`layout-boundaries.test.ts`, `admin-unsaved-registry.test.ts`,
+// `admin-vacation-save-wiring.test.ts`, `admin-availability-detail-save-wiring.test.ts`, all
+// apps/web files, none counted by THIS floor) with a non-empty input-set proof each — the +4 comes
+// entirely, again, from `scripts/__tests__/lint-guard-vacuity.test.ts`'s own generated whole-set
+// red proof (`describe.each(provedGuards())`, plan 235-02): it reads the REAL tree repo-wide, not
+// only apps/api, so proving four apps/web guards non-vacuous still grows this apps/api test file's
+// own case count by exactly one generated case per guard flipped from vacuous to proved — 21 tests
+// in that file on the pre-plan HEAD `03897c1c` (verified: `pnpm exec vitest run
+// scripts/__tests__/lint-guard-vacuity.test.ts` reports "21 tests" with this plan's four edits
+// stashed out), 25 after (same command, same file, edits restored) — a clean +4, matching this
+// bump exactly. 3189 + 4 = 3193, matching a fresh full-suite run's own "Test Files 266 passed
+// (266)" / "Tests 3190 passed | 3 skipped (3193)" totals exactly.
+// Plan 235-04 (Wave 4, 2026-09-18) — no new test FILE (all five touched apps/api files already
+// existed: `absence-vocabulary-guard.test.ts`, `leave-type-identity-guard.test.ts`,
+// `notification-email-policy.test.ts`, `section9-carryover-deadline.test.ts`,
+// `release-notes.test.ts`) — MIN_FILES stays 266. Each of the five gained a non-empty input-set
+// proof, but none of the five edits added a new `it()`/`it.each()` block (verified: `grep -c`
+// against each file's pre-plan HEAD `b7e65ecb` copy — identical it()-declaration counts before and
+// after, for all five). MIN_TESTS rises from 3193 to 3197: the +4 comes entirely, again, from
+// `scripts/__tests__/lint-guard-vacuity.test.ts`'s own generated whole-set red proof
+// (`describe.each(provedGuards())`, plan 235-02) — four of this plan's five guards flip from
+// vacuous to proved (`leave-type-identity-guard.test.ts`, `section9-carryover-deadline.test.ts`,
+// `notification-email-policy.test.ts`, `release-notes.test.ts`; `absence-vocabulary-guard.test.ts`
+// was ALREADY proved before this plan and contributes no new generated case). This plan ALSO
+// generalised that red proof itself (`deleteEveryProofUntilVacuous`, same file): retrofitting
+// `absence-vocabulary-guard.test.ts` gave it TWO independent, structurally unrelated proofs in the
+// same file (G5's pre-existing "contains" and this plan's new G6 "length"), and the classifier's
+// per-file, single-winning-shape report meant the old single-shot-deletion version of this red
+// proof could delete the reported winner and still find the OTHER proof standing — correctly
+// proved, incorrectly read as a broken red proof. The generalisation does not add a test CASE, only
+// changes what one existing generated case does, so it is not part of this +4. Measured at three
+// points, `pnpm exec vitest run scripts/__tests__/lint-guard-vacuity.test.ts`: 25 tests on the true
+// pre-plan HEAD `b7e65ecb` (all three plan-04-touched files AND the harness reverted to that
+// commit's content), 27 tests (1 failing — the absence-vocabulary-guard.test.ts multi-proof case
+// above) after this plan's Task 2 alone (committed, harness not yet generalised), 29 tests all
+// passing after Task 3 plus the harness generalisation — a clean +4 end to end, matching this bump
+// exactly. 3193 + 4 = 3197, matching a fresh full-suite run's own "Test Files 266 passed (266)" /
+// "Tests 3194 passed | 3 skipped (3197)" totals exactly.
+// Plan 235-07 (Wave 4, 2026-09-18) — no new apps/api test FILE: `apps/web/scripts/lint-ui.mjs`,
+// `lint-ui-classes.mjs`, `lint-save-pattern.mjs` and root `scripts/lint-comment-language.mjs` are
+// all `.mjs` tools, not `.test.ts` files, and the NEW test cases this plan added
+// (`scripts/__tests__/lint-comment-language.test.mjs`, +4 cases) live at repo ROOT, run via
+// `pnpm test:scripts`, entirely outside this apps/api vitest instance (same reasoning as Plan
+// 235-06's note re: `apps/web/src/__tests__`) — MIN_FILES stays 266. `235-BASELINE.md`'s own
+// "Zusammenfassung für Pläne 03-09" table names Group E as 2 vacuous guards
+// (`apps/web/scripts/lint-save-pattern.mjs`, `scripts/lint-comment-language.mjs`), not 4 — the
+// other two `.mjs` tools this plan also fixed are NOT classified as guards at all by
+// `lint-guard-vacuity`'s own AST classifier (a real, separately-documented blind spot: their
+// `execSync(\`find '${scope}' ...\`)` calls use a template literal WITH substitutions, which
+// `ts.isStringLiteralLike` does not recognise — see `235-BEFUND-E.md` Finding 0), so fixing them
+// moves no `--check` number and adds no generated case here.
+// **Finding, per this phase's own standing rule (equality targets come from the baseline, not
+// plan prose):** `235-07-PLAN.md`'s own `<verification>` section states "the generated whole-set
+// red proof grew by exactly four" — that number is copy-paste residue from Plan 235-04's SUMMARY
+// (which DID grow by 4) and disagrees with `235-BASELINE.md`'s Group E count of 2. The baseline
+// wins: measured directly, `pnpm --filter @clokr/api exec vitest run
+// scripts/__tests__/lint-guard-vacuity.test.ts` reports 29 tests on this plan's own starting HEAD
+// `6d74bbe1`, 31 after (Task 2 flips `lint-save-pattern.mjs`, Task 3 flips
+// `scripts/lint-comment-language.mjs`) — a clean **+2**, matching Group E's baseline count exactly,
+// not +4. MIN_TESTS rises from 3197 to 3199. 3197 + 2 = 3199, matching a fresh full-suite run's
+// own "Test Files 266 passed (266)" totals exactly (see this plan's own SUMMARY for the verbatim
+// "Tests N passed | 3 skipped (3199)" line).
+// Plan 235-05 (Wave 5, 2026-09-18) — no new test FILE: this plan retrofitted an empty-abort into
+// four Group-C scanning gates (`check-import-targets.ts`, `context-area-map.ts`,
+// `lint-facade-signatures.ts`, `lint-tenant-scoping-candidates.ts`, the latter also wiring a new
+// error class through `lint-tenant-scoping.ts`), and adjusted two PRE-EXISTING pinning tests in
+// `scripts/__tests__/lint-guard-vacuity-detect.test.ts` (their expected `inputProof` for
+// `check-import-targets.ts` flips from "none" to "empty-abort", reflecting the fix — no new
+// `it()` block, an existing one's assertion value changed). MIN_FILES stays 266. The whole delta
+// traces, as in every prior wave, to `lint-guard-vacuity.test.ts`'s own generated whole-set red
+// proof (`describe.each(provedGuards())`), which reads the real tree and grows by one case per
+// guard flipped vacuous -> proved: measured directly, `pnpm --filter @clokr/api exec vitest run
+// scripts/__tests__/lint-guard-vacuity.test.ts` reports 31 tests at this plan's own starting HEAD
+// `8c5c4adf`, 35 after Task 2 (four guards flip: check-import-targets.ts, context-area-map.ts,
+// lint-facade-signatures.ts, lint-tenant-scoping-candidates.ts) — a clean **+4**, matching
+// `235-BASELINE.md`'s Group C count of 8 vacuous exactly HALVED by this plan (the other 4 —
+// lint-saldo-lock-derivation.ts, measure-context-boundary-imports.ts,
+// measure-foreign-context-access.ts, release-notes.ts — are Plan 08's). MIN_TESTS rises from 3199
+// to 3203. 3199 + 4 = 3203, matching a fresh full-suite run's own "Test Files 266 passed (266)" /
+// "Tests 3200 passed | 3 skipped (3203)" totals exactly.
+// Plan 235-08 (Wave 6, 2026-09-18) — closes Group C's second half (the two standing boundary
+// gates + A2/A3): no new test FILE (`measure-context-boundary-imports.test.ts`,
+// `measure-foreign-context-access.test.ts` and `lint-guard-vacuity.test.ts` all already existed).
+// MIN_FILES stays 266. MIN_TESTS rises from 3203 to 3217, derived per-file, each measured
+// directly with `pnpm --filter @clokr/api exec vitest run <file>`:
+//   - measure-foreign-context-access.test.ts: 30 -> 34 tests (+4) — 3 new cases pinning
+//     discoverScannedFiles()/emptyScanAbortMessage() plus 1 new case pinning summaryLine's
+//     scanned-count prefix (a 4th case from Task 1's first draft was folded into the
+//     emptyScanAbortMessage naming-assertion case during Task 2's signature simplification).
+//   - measure-context-boundary-imports.test.ts: 60 -> 64 tests (+4) — same shape: 3 cases for
+//     discoverProductionFiles()/emptyScanAbortMessage(), 1 for summaryLine's scanned-count prefix.
+//   - lint-guard-vacuity.test.ts: +6 total, two sources. (1) Its OWN generated whole-set red proof
+//     (`describe.each(provedGuards())`, plan 235-02) reads the REAL tree and grows by one case per
+//     guard whose `inputProof` flips from "none" to a proved shape: 35 tests at this plan's own
+//     post-Task-1 HEAD `6aae86e7` (measured before Task 2's classifier-visibility fixes), 38 after
+//     Task 2 — +3, matching the three files whose OWN input-proof flipped
+//     (lint-saldo-lock-derivation.ts, measure-context-boundary-imports.ts,
+//     measure-foreign-context-access.ts; release-notes.ts/A3 does NOT add a case here — its
+//     verdict moves vacuous -> excepted via the exceptions register, but its own `inputProof`
+//     classification stays "none", so the generated proof never sees it). (2) A Rule-1/3 bug fix
+//     to `lint-guard-vacuity.ts` itself, found while verifying Task 3's own `--scope
+//     apps/api/scripts --check <n>` acceptance criterion: `validateExceptionsDocument` validated
+//     EVERY exception entry against the CURRENT --scope's own (necessarily narrower) `allFiles`,
+//     so A3's release-notes.ts entry (apps/api/src/utils) made `--scope apps/api/scripts` fail
+//     outright the moment the register stopped being empty — a scope that structurally can never
+//     contain a file from a different root. Fixed by threading an optional `scope` parameter
+//     through and skipping (not erroring on) an out-of-scope entry entirely; the file itself was
+//     outside this plan's `files_modified`, but the fix is required for Task 3's own acceptance
+//     criteria to pass at all, and is a blocking-bug fix per this project's deviation rules, not
+//     an architectural change. 3 new hand-written cases pin it directly against
+//     `validateExceptionsDocument`: 38 -> 41 tests (+3, on top of the +3 above).
+// 4 + 4 + 6 = 14. 3203 + 14 = 3217, matching a fresh full-suite run's own "Test Files 266 passed
+// (266)" / "Tests 3214 passed | 3 skipped (3217)" totals exactly (measured at this plan's own
+// first finishing point, `pnpm --filter @clokr/api exec vitest run`).
+//
+// Plan 235-08, continued (coordinator-flagged: the owner-approved classifier blind-spot fix from
+// the plan's own `<additional_scope_owner_approved>` block had not yet been applied) — no new
+// test FILE (`lint-guard-vacuity-detect.test.ts` already existed; the new fixture
+// `execsync-find-template-literal-walk.mjs` is a FIXTURE, not a test file, and is not itself
+// collected by vitest). MIN_FILES stays 266. MIN_TESTS rises from 3217 to 3220 (+3), derived
+// per-file, each measured directly:
+//   - `lint-guard-vacuity-detect.ts`'s `isCpCommandWalk` taught to recognise a
+//     `ts.TemplateExpression` (a template literal WITH substitutions) whose HEAD text matches
+//     `CP_COMMAND_RE` — `235-BEFUND-E.md` "Finding 0": `ts.isStringLiteralLike` accepts a
+//     `NoSubstitutionTemplateLiteral` but not a `TemplateExpression`, so
+//     `` execSync(`find '${scope}' ...`) `` (both `apps/web/scripts/lint-ui.mjs` and
+//     `lint-ui-classes.mjs`'s real shape) was architecturally invisible. Closing only that gap was
+//     NOT enough on its own: both real files' `.length === 0` empty-abort still stayed classifier-
+//     invisible, because the `.toString()` link in
+//     `execSync(...).toString().split(...).filter(...).map(...)` broke `isWalkDerivedExpr`'s
+//     chain-derivation one step before reaching the now-recognised walk call — `CHAIN_METHODS`
+//     gained `"toString"` to close that second, immediately-adjacent gap.
+//   - `lint-guard-vacuity-detect.test.ts`: +1 new fixture-matrix row
+//     (`execsync-find-template-literal-walk.mjs`, modelled on the EXACT shape of the two real
+//     files, per this phase's own precedent of pinning against a real form, never a hypothetical
+//     example — same discipline Plan 02 used for its own two detection-gap fixtures): 22 -> 23
+//     tests.
+//   - `lint-guard-vacuity.test.ts`: no file edit — its own generated whole-set red proof
+//     (`describe.each(provedGuards())`) grows by one case per NEWLY-detected real guard: both
+//     `lint-ui.mjs` and `lint-ui-classes.mjs` flip `walks:false` -> `walks:true,
+//     inputProof:"empty-abort"` the instant the classifier can see them (both already carried a
+//     correct, plan-235-07-hardened empty-abort — this was purely a classifier-visibility gap, not
+//     a source defect): 41 -> 43 tests (+2).
+// 1 + 2 = 3. 3217 + 3 = 3220, matching a fresh full-suite run's own "Test Files 266 passed (266)"
+// / "Tests 3217 passed | 3 skipped (3220)" totals exactly. Repo-wide `lint-guard-vacuity.ts`
+// (no --scope): guard count rises 27 -> 29 (both newly-visible guards), vacuous stays at 0.
+//
+// WR-01 (235-REVIEW.md, review dated 2026-09-18): `lint-guard-vacuity-detect.ts`'s
+// `registerNamedImport` closed a default-import blind spot (`import fs from "node:fs"`, no
+// `namedBindings` at all, so the old early-return never even registered the binding). No LIVE
+// guard in the tree uses this shape (confirmed: repo-wide `lint-guard-vacuity.ts` unchanged at
+// `577 file(s) scanned, 29 guard(s), 0 vacuous, 1 excepted`) — a latent, future-facing gap, not a
+// live vacuous guard.
+//   - `lint-guard-vacuity-detect.test.ts`: +1 new fixture-matrix row (`default-import-walk.ts`,
+//     modelled on the review's own owner-approved reproduction transcript verbatim): 23 -> 24
+//     tests.
+// 3220 + 1 = 3221, matching a fresh full-suite run's own totals exactly. MIN_FILES unchanged at
+// 266 (no new test FILE — the new file is fixture data, parsed, never collected as a test file).
+//
+// WR-02 (235-REVIEW.md, review dated 2026-09-18): `lint-guard-vacuity-detect.ts`'s
+// `isCpCommandWalk` now also recognises `spawnSync`'s two-argument, shell-injection-safe calling
+// form (`spawnSync("find", [scope, "-type", "f"])`, command and args passed SEPARATELY, unlike
+// `execSync`'s single-string form) — plus an adjacent gap found while pinning it: `spawnSync`'s
+// return value is a RESULT OBJECT, not the output directly, so its `.stdout`/`.stderr` property
+// access needed its own case in `isWalkDerivedExpr` too, or the call-site fix alone would leave
+// every idiomatic `spawnSync` guard permanently unable to prove its own non-emptiness. No LIVE
+// guard in the tree uses `spawnSync` at all (confirmed: repo-wide `lint-guard-vacuity.ts`
+// unchanged at `577 file(s) scanned, 29 guard(s), 0 vacuous, 1 excepted`) — a latent,
+// future-facing gap, not a live vacuous guard.
+//   - `lint-guard-vacuity-detect.test.ts`: +1 new fixture-matrix row
+//     (`spawnsync-find-args-array-walk.mjs`, modelled on the review's own owner-approved
+//     reproduction transcript verbatim, including its `.stdout` access): 24 -> 25 tests.
+// 3221 + 1 = 3222, matching a fresh full-suite run's own totals exactly. MIN_FILES unchanged at
+// 266 (no new test FILE — the new file is fixture data, parsed, never collected as a test file).
+const MIN_FILES = 266;
+const MIN_TESTS = 3222;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

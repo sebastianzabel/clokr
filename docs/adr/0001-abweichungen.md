@@ -569,3 +569,200 @@ Weiteres: `.planning/phases/101B-.../101B-WORKLIST.md` §14 (die Wellen-für-Wel
 `.planning/phases/101B-.../101B-ZYKLEN-BEFUND.md` (der volle Befund inkl. §2a/§7),
 `apps/api/scripts/README.md` § Lint gates (die neue Gate-Dokumentation), Issue #101 (Owner-Kommentare
 und der Abschlusskommentar dieser Phase).
+
+## I — Vakuosität von Riegeln maschinell verboten (Phase 235, Issues #235/#240/#245)
+
+**Eintrag I, im Ton und in der Form von Eintrag H (Phase 101B).** Warum dieser Eintrag existiert: #235, #240 und #245 beschreiben dieselbe Fehlerfamilie aus drei
+Richtungen, mit **vier** realen Wiederholungen — die dritte ausgerechnet auf der Datei, um die das
+erste Ticket ging. Derselbe Zug wie #101 (Eintrag H): eine Konvention durch Mechanik ersetzen, statt
+ein fünftes Erinnerungsticket zu schreiben. Ein geschlossenes Kapitel ohne Protokoll sieht
+rückblickend wie ein Kapitel aus, das nie stattgefunden hat.
+
+### Was gebaut wurde
+
+Ein AST-Klassifikator (`apps/api/scripts/lint-guard-vacuity-detect.ts`), der über echte TypeScript-
+Binding-Auflösung — nie über einen Namens- oder Regex-Heuristik — erkennt, ob eine Datei den
+Quellbaum über eines von sieben fs-Primitiven walkt (`readdirSync`, `opendirSync`, `globSync`,
+`readdir`, `glob`, `execSync`/`spawnSync` mit `find`/`grep`/`ls`/`rg`, `import.meta.glob`) und auf
+dem Ergebnis zusichert (`throw`, `expect`, `process.exit(<ungleich 0>)`,
+`process.exitCode = <ungleich 0>`), UND ob diese Zusicherung durch einen Nicht-Leer-Beweis auf der
+GEWALKTEN Menge selbst gedeckt ist — nie auf der Ausgabemenge (den Verstößen), die fast jedes dieser
+Gates korrekterweise leer sehen will. Das CLI (`lint-guard-vacuity.ts`, `--rows`/`--guards`/
+`--check <n>`/`--scope <prefix>`/`--json`) und das Ausnahmeregister
+(`lint-guard-vacuity-exceptions.json`, ein Eintrag pro Datei mit Pflichtfeldern `reason` und
+`disappearsIn`) sind Geschwister derselben Idee wie Eintrag H's `context-boundary-import-exceptions.json`.
+Beide Durchsetzungspfade sind jetzt Mechanik, nicht mehr Konvention: ein neuer, unconditional CI-
+Schritt (`Lint guard vacuity`, `.github/workflows/ci.yml`, unmittelbar nach `Check context import
+cycles`) und eine dritte volle-Repo-Zeile in `.husky/pre-commit`, beide `--check 0`, beide durch
+einen absichtlichen Verstoß rot bewiesen und zurückgenommen, nicht aus der Konfiguration angenommen
+(Plan 235-09, Task 1 — die zwei Transkripte stehen in `235-09-SUMMARY.md`).
+
+### Warum ein Skript und keine ESLint-Regel
+
+Drei gemessene Gründe, nicht behauptete:
+
+1. **`eslint src/` erreicht `scripts/` nie.** Sowohl `apps/api/package.json`s `"lint"`-Skript als
+   auch der CI-Schritt `Lint API` (`.github/workflows/ci.yml:211`) rufen wörtlich
+   `eslint src/ --no-warn-ignored` auf — `apps/api/scripts/` und `apps/web/scripts/` liegen
+   außerhalb des übergebenen Pfads, unabhängig von jeder `ignores`-Konfiguration.
+2. **Die Flat-Config schließt beide Apps' `scripts/**`zusätzlich explizit aus** — der
+Typ-bewusste`files: ["**/*.ts"]`-Block in der Wurzel-`eslint.config.js`trägt`ignores: ["apps/web/scripts/**", "apps/api/scripts/**", ...]`mit derselben Begründung wie die
+bereits dort dokumentierten`packages/types/src/\*\*`-Zeilen: kein `tsconfig.json`-Projekt deckt
+diese Bäume ab. Selbst ein künftiger `eslint .`-Aufruf würde diese Dateien also weiterhin
+   überspringen, ohne dass jemand die Zeile bewusst gelesen haben müsste.
+3. **`lint-staged`s Glob (`*.{ts,js,svelte}`, Wurzel-`package.json`) trifft `.mjs` überhaupt
+   nicht** — vier der 29 Riegel, die dieses Gate beweist (`lint-ui.mjs`, `lint-ui-classes.mjs`,
+   `lint-save-pattern.mjs`, `scripts/lint-comment-language.mjs`), sind `.mjs`-Dateien. Eine ESLint-
+   Regel, die nur über `lint-staged` liefe, würde diese vier strukturell nie erreichen.
+4. **#101s eigene Regel schließt `__tests__` bewusst aus** (Owner-Entscheidung #246,
+   `eslint.boundaries.mjs:42-45`, `BOUNDARY_IGNORES = ["**/__tests__/**", "**/*.test.ts"]`) — und
+   genau dort liegt die Mehrheit dieser Riegel: 12 der 30 Befunde in `235-BEFUND.md` (Gruppen A und
+   B) sind `*.test.ts`-Dateien.
+
+Das ist der Absatz, der eine spätere „Aufräum"-Änderung verhindert, die dieses Gate in ESLint
+faltet und dabei zwei Drittel seines Anwendungsbereichs (Skripte, Tests) stillschweigend verliert —
+dieselbe Funktion, die Eintrag H's Glob-Absatz für `no-restricted-imports` bereits erfüllt.
+
+### Was es gekostet hat, gemessen
+
+**29 Riegel gesamt** (gemessen am Phasenende, `577 file(s) scanned`), verteilt über fünf Gruppen —
+A (`apps/api/scripts/__tests__/`, 5), B (`apps/api/src/**/__tests__/`, 7), C
+(`apps/api/scripts/*.ts` + `apps/api/src/utils/*.ts`, non-test, 9), D (`apps/web/src/__tests__/`,
+4), E (vier `.mjs`-Werkzeuge, 4 geprüft — siehe die 27→29-Korrektur unten für den Grund, warum nur 2
+davon zu Phasenbeginn als Riegel sichtbar waren). Ausgangslage: 23 von 27 gemessen vakuos (85%),
+`235-BASELINE.md`, Plan 02. Endzustand: **0 vakuos, 1 begründete Ausnahme, 29 Riegel** — jeder
+einzelne entweder maschinell nachgerüstet oder mit einer individuell begründeten Ausnahme versehen.
+`235-BEFUND.md` (Plan 09, die konsolidierte Fassung der fünf Gruppen-Befunde) zählt **30 Funde**
+gegen die 29 Riegel (ein Riegel, `absence-vocabulary-guard.test.ts`, trug zwei unabhängige,
+strukturell getrennte Funde — G5 bereits bewiesen, G6 eine echte Lücke): **26 behoben**, **1
+ausgenommen**, **3 benannt, aber nicht geschlossen** (siehe „Die benannte Grenze" unten). Jede
+Gruppe erreichte `--scope <prefix> --check 0` durch Gleichheit, nicht durch Beobachtung — pro
+Gruppen-SUMMARY re-gemessen an ihrem eigenen Ausgangspunkt, nie aus dem Plantext übernommen (die
+phaseneigene Regel, die die 235-PLANKORREKTUR unten selbst erzwungen hat).
+
+`check-test-completeness.mjs`s Testfloor stieg über die neun Wellen von **266/3184** (Plan-02-Start)
+auf **266/3220** — jede einzelne Erhöhung aus einem gemessenen Vorher/Nachher-Lauf hergeleitet, nie
+geschätzt, mit einer dokumentierten Korrektur unterwegs (Plan 07: die eigene `<verification>`-Zeile
+verlangte „+4", tatsächlich waren es gemessen +2 — Copy-Paste-Rest aus Plan 04, korrigiert gegen die
+Baseline statt stillschweigend übernommen).
+
+### Das Ausnahmeregister
+
+Eine Zeile, `apps/api/scripts/lint-guard-vacuity-exceptions.json`:
+
+| `id`                                      | `file`                                    | Grund (gekürzt)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `disappearsIn`                                                                                                                                                                                                                                                                                     |
+| ----------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `release-notes-fail-silent-boot-contract` | `apps/api/src/utils/release-notes.ts:256` | `loadReleaseNotes()`s Walk ist per dokumentiertem Vertrag fail-silent ("Never throws. Returns [] on any failure.") — dieser Vertrag existiert, weil die Funktion beim API-Modul-Init läuft: ein `throw` dort verhindert, dass der API-Prozess überhaupt startet. Ein Leer-Abbruch wäre hier aktiv FALSCH, nicht nur unerwünscht. Die drei `throw`s, die der Klassifikator fand, liegen in einer separaten, pfadgetrennten Funktion (`parseReleaseNote`, Markdown-Validierung pro Datei). Der reale Schutz (ein leeres/fehlendes `docs/release-notes/`-Verzeichnis im echten Repo) liegt bereits auf der Testseite: `release-notes.test.ts`s `corpusFiles`-Beweis schlägt laut fehl, falls das im Image gebackene Korpus je verschwindet. | „Never by design" — der Fail-Silent-Vertrag ist eine Korrektheitsanforderung (die API muss immer starten), keine Lücke, die dieses Register schließen will; nur eine bewusste Vertragsänderung an `loadReleaseNotes` könnte das ändern, eine architektonische Entscheidung außerhalb dieser Phase. |
+
+Ein Register mit genau einem Eintrag ist ein Ergebnis, kein Zufall — die Phase hat sich selbst die
+Regel gesetzt, dass ein Wachstum über niedrige einstellige Zahlen ein Halt-Signal ist ("die
+Erkennung ist falsch, nicht die Riegel"), und sie nie erreicht.
+
+### Die benannte Grenze
+
+Was dieses Gate strukturell nicht sehen kann — benannt, nicht implizit gelassen, dieselbe Bewegung,
+die Eintrag H für dynamische `import()` macht:
+
+- **Ein Riegel, der den Baum NICHT walkt.** Eine reine Verhaltenszusicherung ohne fs-Primitiv kann
+  durch ein verschwundenes Verzeichnis nicht entwaffnet werden, weil sie nie von einem Verzeichnis
+  abhing — dieses Gate hat dafür nichts zu prüfen, und das ist korrekt, keine Lücke.
+- **Vakuosität durch Stub/Mock** (die `#216`-Familie) — ein Test, der `vi.mock()` über die reale
+  Implementierung legt und dadurch prüft, dass sein eigener Mock sich selbst gleicht, statt
+  irgendetwas Echtes zu berühren. Ein anderer Fehlermechanismus als "leerer Walk", außerhalb dieses
+  Klassifikators.
+- **Generierter Code** — ein Walk über ein Verzeichnis, das ein Build-Schritt füllt, kann diesem
+  Gate zufolge "beweisen", nicht-leer zu sein, obwohl der Build-Schritt selbst leise fehlgeschlagen
+  sein könnte; das Gate sieht nur den Dateibaum zum Prüfzeitpunkt, nie die Kette, die ihn erzeugte.
+- **Zwei echte, benannte Restlücken innerhalb des Klassifikators selbst**, aus `235-BEFUND.md`
+  #13/#18: `check-import-targets.ts`s `.ts`-only-Filter würde eine `.mjs`-Datei unter einer
+  gewalkten Wurzel unsichtbar machen (heute harmlos — keine existiert); `lint-tenant-scoping-
+candidates.ts`s `extractWhereArgument` hat keinen `ts.isSpreadAssignment`-Zweig beim Auffinden des
+  `where:`-Schlüssels selbst, sodass ein `findFirst({ ...ganzesObjektViaSpread })` durchrutscht statt
+  laut `<unresolved>` zu melden — nicht live im Baum gefunden (per Grep bestätigt), aber ein
+  inhaltlicher, kein Vakuositäts-Defekt, als Issue-Kandidat benannt, nicht eingereicht.
+- **Vakuosität in einer PLAN- oder DOKUMENT-Datei, nicht in Quelltext.** Kein Quellbaum-Gate erreicht
+  `.planning/`-Prosa — diese Phase demonstrierte das an sich selbst: `235-PLANKORREKTUR.md` (Befund
+  vor Ausführungsbeginn) fand eine ungeprüfte Zahl (`lint:import-targets` als `1095` geplant, real
+  `1074` bzw. `1079` an Plan 03s Start — aus einem STATE.md-Zwischenstand einer ANDEREN, längst
+  abgeschlossenen Phase geerbt, nie selbst ausgeführt), eine grob geschätzte Dateizahl (`~330` geplant,
+  real `620`), und vier ins Leere zeigende Zeilenverweise. `lint-guard-vacuity` hätte keinen dieser
+  sechs Befunde gefunden — es prüft Quelltext-Riegel, keine Plandokumente. Das ist die ehrliche
+  Grenze dieser Phase: Vakuosität in der Planung bleibt eine Frage der Prüfung durch einen zweiten
+  Leser, nicht der Mechanik. Hier hat genau das funktioniert — der Plan-Checker fand den Befund vor
+  Ausführungsbeginn, nicht danach.
+
+### Die Korrekturen, offen ausgesprochen
+
+**29 → 26 → 27 → 29, die Riegel-Gesamtzahl selbst.** CONTEXT.mds Erstmessung klassifizierte über ein
+Namensmuster (`walk*(`) und traf damit `walkSaldoChain(rows)` in drei Dateien
+(`audit-saldo-chain-integrity.ts` und beide `saldo-chain-integrity*.test.ts`) — reine
+Speicher-Walker über DB-Zeilen, kein einziger `readdirSync`/`globSync`/`execSync` darin. Drei
+Fehlalarme derselben Fehlerfamilie, nur in die andere Richtung: ein Prüfer, der zu VIEL trifft, ist
+so wertlos wie einer, der zu wenig trifft — der Grund, warum diese Phase von Anfang an eine
+AST-Erkennung über die echten fs-Primitive verlangt (AC-1), keine Namensheuristik. Die ROADMAP
+korrigierte auf **26**. `235-BASELINE.md` (Plan 02) maß am selben Punkt neu und fand **27**, nicht
+26 — nachgerechnet, nicht übernommen: zwei neue, dieser Phase selbst gehörende Dateien
+(`lint-guard-vacuity.ts`, `lint-guard-vacuity-detect.test.ts`) plus **25 vorbestehende** ergeben 27;
+eine dateigenaue Rekonstruktion der ursprünglichen 26 war aus den verfügbaren Aufzeichnungen NICHT
+möglich (`CONTEXT.md` nennt seine Liste explizit eine „Auswahl", keine vollständige Aufzählung) —
+ein Delta von −1 zu den behaupteten 26, dokumentiert statt angeglichen. Plan 08s Addendum (Finding
+0, ein Koordinator-Hinweis fing es auf, bevor der Plan als abgeschlossen gemeldet wurde) schloss
+eine echte Erkennungslücke des Klassifikators selbst: `isCpCommandWalk` erkannte
+`ts.isStringLiteralLike`, aber keine `ts.TemplateExpression` (ein Template-Literal MIT `${…}`-
+Substitution) — genau die Form, die `lint-ui.mjs` und `lint-ui-classes.mjs` für ihren
+``execSync(`find '${scope}' ...`)``-Aufruf benutzen. Beide waren dem Klassifikator architektonisch
+unsichtbar (`walks: false`), nicht bloß als vakuos fehlklassifiziert. Der Fix hob 27 auf **29** —
+beide neu sichtbaren Riegel landen als BEWIESEN, nicht vakuos (Plan 07 hatte sie bereits mit einem
+Leer-Abbruch gehärtet, nur sichtbar wurden sie erst hier). Ab hier zählt die gemessene 29, keine der
+Vorgängerzahlen.
+
+**Die Planungskorrektur (`235-PLANKORREKTUR.md`, Befund des Plan-Checkers vor Ausführungsbeginn).**
+Eine Phase, die Prüfern vorwirft, auf ungeprüften Zahlen zu ruhen, tat dasselbe in ihrer eigenen
+Planung, zweimal: `lint:import-targets` stand an sieben Stellen (`235-01-PLAN.md` ×4,
+`235-05-PLAN.md` ×3) als `1095` — nicht erfunden, sondern aus `STATE.md`s Protokoll für Phase 101B
+Plan 04 geerbt, ein Zwischenstand mitten in einer damals noch sechs Wellen laufenden Phase, ohne den
+Befehl je selbst auszuführen. Real gemessen: `1074` (dann `1079` ab Plan 03, durch die Phase eigene
+vier neuen relativen Importe verschoben). Wörtlich das Muster aus #245: eine Zahl, die einmal
+stimmte, still aufgehört hat zu stimmen, und weiterhin geprüft aussieht. Zweitens: eine
+Kostenaussage in zwei Threat-Model-Zeilen nannte „~330 Dateien" für den AST-Durchlauf — real `620`
+(Faktor 2 daneben). Die Behebung war beide Male NICHT der Zahlentausch (das behebt die Instanz und
+lässt die Fehlerklasse stehen), sondern die Form: keine stehende Zahl mehr im Plantext, jede
+Gleichheitsprüfung liest aus `235-BASELINE.md` § Standing gates oder der SUMMARY der Welle, die den
+Wert selbst gemessen hat. Ein mechanischer Vollständigkeitsnachweis (alle Ziffernfolgen aller acht
+Pläne extrahiert, 1065 Vorkommen, 95 distinkte Tokens, 60 davon ≥10 einzeln disponiert) fand
+zusätzlich vier ins Leere zeigende Zeilenverweise, behoben durch Symbol-Anker statt Zeilennummern.
+
+**Weitere, kleinere Korrekturen, von den fünf Gruppen-SUMMARYs festgehalten:** Gruppe A war laut
+`235-BASELINE.md` fünf Dateien, das Planfrontmatter von Plan 03 nannte nur vier (fehlte:
+`lint-guard-vacuity-detect.test.ts`, dieser Phase eigene Welle-1-Testdatei) — die Baseline-Liste
+galt, nicht das Frontmatter, und die fünfte Datei wurde mitgenommen. Gruppe E war laut Instrument
+zwei Dateien, nicht die vier im Planfrontmatter genannten (Finding 0, oben). Ein `let`-then-
+reassign-Muster (`lint-facade-signatures.ts`, dann `lint-saldo-lock-derivation.ts`) verbarg einen
+bereits korrekten Leer-Abbruch vor dem Klassifikator — kein Vakuositätsdefekt der Datei, sondern
+eine Erkennungslücke, in beiden Fällen mit derselben Einzeiler-Umstellung behoben. Eine echte,
+vorher latente Kreuz-Scope-Validierungslücke in `lint-guard-vacuity.ts` selbst (der Werkzeug-Bug,
+nicht Riegel-Befund, siehe `235-BEFUND.md`) wurde erst sichtbar, als A3s Ausnahmeeintrag zum ersten
+Mal einen `--scope`-Lauf traf, dessen Wurzel den Eintrag nicht enthielt — gefunden und behoben unter
+Regel 1/3, nicht als eigene Welle geplant.
+
+### Was weitergereicht wird
+
+Drei benannte, nicht geschlossene Restlücken (`235-BEFUND.md` #13, #18, plus die generischen
+Grenzen oben) — keine davon live im Baum gefunden, alle als Fund benannt statt stillschweigend
+übernommen oder verschwiegen:
+
+- `check-import-targets.ts`s `.ts`-only-Walk-Filter (real aber harmlos heute) — kein Issue eröffnet,
+  Behebung wäre eine unverwandte Erweiterung des Erweiterungsfilters, kein Vakuositätsdefekt.
+- `lint-tenant-scoping-candidates.ts`s `extractWhereArgument`, fehlender
+  `ts.isSpreadAssignment`-Zweig beim `where:`-Schlüssel selbst — ein inhaltlicher, kein
+  Vakuositätsdefekt; Issue-Kandidat, noch nicht eingereicht.
+- Die generischen Klassen-Grenzen oben (Stub/Mock-Vakuosität, generierter Code, Plan-Vakuosität)
+  gehören keiner einzelnen Datei — sie sind Eigenschaften des Mechanismus selbst, für die nächste
+  Phase, die eine dieser Formen antrifft, nicht für einen GitHub-Issue-Tracker.
+
+#235, #240 und #245 werden mit einem deutschen, PII-freien Kommentar geschlossen, der auf diesen
+Eintrag und `235-BEFUND.md` verweist (Plan 235-09, Task 3). Weiteres:
+`.planning/phases/235-vakuositaet-von-riegeln-maschinell-verbieten/235-BEFUND.md` (die konsolidierte
+Fundtabelle), `235-BASELINE.md` (die Ausgangsmessung), `235-PLANKORREKTUR.md` (die
+Planungskorrektur), `apps/api/scripts/README.md` § Lint gates (die neue Gate-Dokumentation),
+`CLAUDE.md` § Multi-Tenancy Convention (der Verweis-Eintrag für Leser ohne `.planning/`-Zugriff).
