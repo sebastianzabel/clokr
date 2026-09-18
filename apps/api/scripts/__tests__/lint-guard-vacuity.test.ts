@@ -156,6 +156,55 @@ describe("validateExceptionsDocument", () => {
       expect(result.doc.exceptions).toHaveLength(1);
     }
   });
+
+  // ── scope filter (235-08) — an exception entry outside the CURRENT --scope must not fail a
+  // scoped run just because that scope's own allFiles never contains a file from a different root
+  // (the register's first entry, release-notes.ts under apps/api/src/utils, broke
+  // `--scope apps/api/scripts --check <n>` outright the moment it landed, before this fix). ────
+
+  it("skips an out-of-scope entry entirely when scope is given — no 'does not exist' error", () => {
+    const raw = {
+      registerSource: "test",
+      exceptions: [
+        {
+          id: "e1",
+          file: "other/root/file.ts", // NOT in allFiles at all — would normally fail existence
+          reason: LONG_REASON,
+          disappearsIn: "never",
+        },
+      ],
+    };
+    const result = validateExceptionsDocument(raw, vacuousFiles, allFiles, "some/vacuous");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.doc.exceptions).toHaveLength(0);
+    }
+  });
+
+  it("still validates an entry that IS inside the given scope", () => {
+    const raw = {
+      registerSource: "test",
+      exceptions: [
+        { id: "e1", file: "some/vacuous/file.ts", reason: LONG_REASON, disappearsIn: "never" },
+      ],
+    };
+    const result = validateExceptionsDocument(raw, vacuousFiles, allFiles, "some/vacuous");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.doc.exceptions).toHaveLength(1);
+    }
+  });
+
+  it("without scope (undefined), an out-of-scope-shaped file still fails as before (no silent behavior change for the unscoped/standing run)", () => {
+    const raw = {
+      registerSource: "test",
+      exceptions: [
+        { id: "e1", file: "no/such/file.ts", reason: LONG_REASON, disappearsIn: "never" },
+      ],
+    };
+    const result = validateExceptionsDocument(raw, vacuousFiles, allFiles);
+    expect(result.ok).toBe(false);
+  });
 });
 
 // ── 2. evaluateCheck — equality in BOTH directions, against a SYNTHETIC report ──────────────────

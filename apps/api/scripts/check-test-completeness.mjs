@@ -271,8 +271,42 @@ import { readFileSync } from "node:fs";
 // measure-foreign-context-access.ts, release-notes.ts — are Plan 08's). MIN_TESTS rises from 3199
 // to 3203. 3199 + 4 = 3203, matching a fresh full-suite run's own "Test Files 266 passed (266)" /
 // "Tests 3200 passed | 3 skipped (3203)" totals exactly.
+// Plan 235-08 (Wave 6, 2026-09-18) — closes Group C's second half (the two standing boundary
+// gates + A2/A3): no new test FILE (`measure-context-boundary-imports.test.ts`,
+// `measure-foreign-context-access.test.ts` and `lint-guard-vacuity.test.ts` all already existed).
+// MIN_FILES stays 266. MIN_TESTS rises from 3203 to 3217, derived per-file, each measured
+// directly with `pnpm --filter @clokr/api exec vitest run <file>`:
+//   - measure-foreign-context-access.test.ts: 30 -> 34 tests (+4) — 3 new cases pinning
+//     discoverScannedFiles()/emptyScanAbortMessage() plus 1 new case pinning summaryLine's
+//     scanned-count prefix (a 4th case from Task 1's first draft was folded into the
+//     emptyScanAbortMessage naming-assertion case during Task 2's signature simplification).
+//   - measure-context-boundary-imports.test.ts: 60 -> 64 tests (+4) — same shape: 3 cases for
+//     discoverProductionFiles()/emptyScanAbortMessage(), 1 for summaryLine's scanned-count prefix.
+//   - lint-guard-vacuity.test.ts: +6 total, two sources. (1) Its OWN generated whole-set red proof
+//     (`describe.each(provedGuards())`, plan 235-02) reads the REAL tree and grows by one case per
+//     guard whose `inputProof` flips from "none" to a proved shape: 35 tests at this plan's own
+//     post-Task-1 HEAD `6aae86e7` (measured before Task 2's classifier-visibility fixes), 38 after
+//     Task 2 — +3, matching the three files whose OWN input-proof flipped
+//     (lint-saldo-lock-derivation.ts, measure-context-boundary-imports.ts,
+//     measure-foreign-context-access.ts; release-notes.ts/A3 does NOT add a case here — its
+//     verdict moves vacuous -> excepted via the exceptions register, but its own `inputProof`
+//     classification stays "none", so the generated proof never sees it). (2) A Rule-1/3 bug fix
+//     to `lint-guard-vacuity.ts` itself, found while verifying Task 3's own `--scope
+//     apps/api/scripts --check <n>` acceptance criterion: `validateExceptionsDocument` validated
+//     EVERY exception entry against the CURRENT --scope's own (necessarily narrower) `allFiles`,
+//     so A3's release-notes.ts entry (apps/api/src/utils) made `--scope apps/api/scripts` fail
+//     outright the moment the register stopped being empty — a scope that structurally can never
+//     contain a file from a different root. Fixed by threading an optional `scope` parameter
+//     through and skipping (not erroring on) an out-of-scope entry entirely; the file itself was
+//     outside this plan's `files_modified`, but the fix is required for Task 3's own acceptance
+//     criteria to pass at all, and is a blocking-bug fix per this project's deviation rules, not
+//     an architectural change. 3 new hand-written cases pin it directly against
+//     `validateExceptionsDocument`: 38 -> 41 tests (+3, on top of the +3 above).
+// 4 + 4 + 6 = 14. 3203 + 14 = 3217, matching a fresh full-suite run's own "Test Files 266 passed
+// (266)" / "Tests 3214 passed | 3 skipped (3217)" totals exactly (measured at this plan's own
+// finishing point, `pnpm --filter @clokr/api exec vitest run`).
 const MIN_FILES = 266;
-const MIN_TESTS = 3203;
+const MIN_TESTS = 3217;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

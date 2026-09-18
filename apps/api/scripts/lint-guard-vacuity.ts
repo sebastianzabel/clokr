@@ -232,10 +232,24 @@ export function loadExceptionsRaw(repoRoot: string): unknown {
  *     asserted on but is no longer vacuous — the guard got fixed) FAILS as STALE
  * Fails CLOSED: any error means `{ ok: false }` and the caller must not proceed to counting.
  */
+/**
+ * `scope`, when given, restricts VALIDATION (not just discovery — `run()`'s `--scope` flag feeds
+ * the SAME value here) to exception entries whose `file` falls under it. An entry for a file
+ * OUTSIDE the current scope is skipped entirely — no existence/staleness/shape check, and it is
+ * dropped from the returned `doc.exceptions` — rather than failing with "does not exist among
+ * discovered candidate files" (235-08: the register's first entry, `release-notes.ts` under
+ * `apps/api/src/utils`, made `--scope apps/api/scripts --check <n>` fail outright the moment the
+ * register stopped being empty, because that scope's own `allFiles` naturally never contains a
+ * file from a different root). A scoped run answering "does apps/api/scripts@this exception
+ * disappear/exist correctly" is not the right place to also adjudicate an entry that belongs to an
+ * entirely different scope; the UNSCOPED run (`lint-guard-vacuity.ts`, no `--scope`) still
+ * validates every entry against the full candidate set, so nothing escapes validation permanently.
+ */
 export function validateExceptionsDocument(
   raw: unknown,
   vacuousFiles: readonly string[],
   allFiles: readonly string[],
+  scope?: string,
 ): { ok: true; doc: ExceptionsDocument } | { ok: false; errors: string[] } {
   const errors: string[] = [];
 
@@ -261,6 +275,12 @@ export function validateExceptionsDocument(
 
     if (!isRecord(entry)) {
       errors.push(`${label}: entry is not an object`);
+      return;
+    }
+
+    // Scope filter (235-08) — BEFORE any other check: an entry for a file outside the current
+    // `--scope` is simply not this run's concern, skipped silently (not an error, not counted).
+    if (scope && typeof entry.file === "string" && !entry.file.startsWith(scope)) {
       return;
     }
 
@@ -470,7 +490,7 @@ export function run(repoRoot: string, argv: string[]): number {
     .map((c) => c.file);
 
   const raw = loadExceptionsRaw(repoRoot);
-  const validated = validateExceptionsDocument(raw, vacuousCandidates, files);
+  const validated = validateExceptionsDocument(raw, vacuousCandidates, files, scope);
   if (!validated.ok) {
     console.error(`lint-guard-vacuity: ${EXCEPTIONS_FILE} is invalid:`);
     for (const e of validated.errors) console.error(`  - ${e}`);
