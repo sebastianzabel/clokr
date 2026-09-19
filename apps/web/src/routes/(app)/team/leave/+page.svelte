@@ -26,14 +26,14 @@
     canSeeLeaveType,
     resolveChipVisual,
     LEAVE_TYPE_OPTIONS,
-    type LeaveTypeCode,
+    type CalendarTypeCode,
   } from "$lib/leave/team-calendar-visibility"; // Phase 257
   import { resolveAdjustmentBadge, type LastDaysAdjustment } from "$lib/leave/vacation-balance"; // Phase 107-07
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
   // Phase 257: the union now lives with the colour/label table it belongs to.
-  type TypeCode = LeaveTypeCode;
+  type TypeCode = CalendarTypeCode;
 
   interface LeaveRequest {
     id: string;

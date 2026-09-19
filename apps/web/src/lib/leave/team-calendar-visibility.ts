@@ -19,9 +19,25 @@
  * this module is the display half of it, not its only line of defence.
  */
 
-/** Every leave-type code the team calendar can paint. Mirrors the `TypeCode` union that used to
- *  be declared inline in the route file. */
-export type LeaveTypeCode =
+/**
+ * Every code the team calendar can paint a bar for.
+ *
+ * **This is NOT the `LeaveTypeCode` enum. It was named that until #269, and it was never the
+ * same set.** It omits two enum members the calendar never paints
+ * (`VOCATIONAL_SCHOOL`, `OTHER`) and adds one that is not a leave type at all: `HOLIDAY` comes
+ * from the holiday calendar, not from a request, and exists here only so a public holiday can be
+ * given a colour by the same lookup.
+ *
+ * Carrying the enum's name while denoting a different set is what put `main` red after #264:
+ * `absence-vocabulary-guard.test.ts` reads that name as "this claims to be the vocabulary" and
+ * fails a second declaration of it. The web tree cannot import the real enum — `apps/web`'s
+ * image may not contain `packages/db` (`apps/web/Dockerfile`'s `test ! -e /app/packages/db`
+ * gate) — so the right answer is not to import it but to stop claiming to be it.
+ *
+ * The relationship that DOES matter is still enforced: G7 in that guard asserts every member
+ * here except `HOLIDAY` is a real enum member, so a typo or an invented code fails the build.
+ */
+export type CalendarTypeCode =
   | "VACATION"
   | "OVERTIME_COMP"
   | "SPECIAL"
@@ -34,7 +50,7 @@ export type LeaveTypeCode =
   | "PARENTAL";
 
 export interface LeaveTypeEntry {
-  code: LeaveTypeCode;
+  code: CalendarTypeCode;
   /** German display label. Display only — never a control value (CLAUDE.md § Context Boundaries). */
   label: string;
   /** v1.5 fill token in apps/web/src/tokens.css. The matching foreground token is this name
@@ -99,7 +115,7 @@ const FALLBACK_VAR = "--leave-type-default";
 /** The neutral word an EMPLOYEE sees on a colleague's bar. German, user-facing. */
 export const NEUTRAL_CHIP_LABEL = "abwesend";
 
-function entryFor(code: LeaveTypeCode): LeaveTypeEntry | undefined {
+function entryFor(code: CalendarTypeCode): LeaveTypeEntry | undefined {
   return LEAVE_TYPES.find((t) => t.code === code);
 }
 
@@ -140,7 +156,7 @@ export interface ChipVisual {
 
 /** The subset of `CalEntry` this decision needs. */
 export interface ChipEntry {
-  typeCode: LeaveTypeCode | null;
+  typeCode: CalendarTypeCode | null;
   typeName: string | null;
   status: string;
   isOwn: boolean;
