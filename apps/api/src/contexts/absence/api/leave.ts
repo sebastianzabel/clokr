@@ -941,7 +941,10 @@ export async function leaveRoutes(app: FastifyInstance) {
           deletedAt: null,
           employee: { tenantId: req.user.tenantId },
           employeeId: { not: req.user.employeeId ?? "" },
-          status: { in: ["PENDING", "APPROVED"] },
+          // Phase 262 (D-05): APPROVED only — a colleague's not-yet-approved request no longer
+          // reaches a caller who cannot approve it. All three consumers filtered to APPROVED
+          // client-side already, so the unfiltered PENDING rows had no legitimate reader.
+          status: { in: ["APPROVED"] },
           startDate: { lte: end },
           endDate: { gte: start },
         },
@@ -952,11 +955,18 @@ export async function leaveRoutes(app: FastifyInstance) {
         orderBy: { startDate: "asc" },
       });
 
+      // Phase 262 (D-01/D-02/D-06): the same visibility decision /calendar uses, asked once per
+      // request rather than per row. `isOwn` is hard-coded `false` here — the `where` above
+      // already excludes the caller's own entries (`employeeId: { not: ... }`), so the isOwn
+      // branch is structurally dead on this endpoint; forcing it to `false` keeps the masking
+      // fail-safe (if that exclusion were ever removed, this would over-mask, never under-mask).
+      const canSeeType = canSeeLeaveType(false, req.user.role);
+
       return rows.map((r) => ({
         id: r.id,
         employeeName: `${r.employee.firstName} ${r.employee.lastName}`,
-        typeCode: r.leaveType.code,
-        typeName: r.leaveType.name,
+        typeCode: canSeeType ? r.leaveType.code : null,
+        typeName: canSeeType ? r.leaveType.name : null,
         startDate: r.startDate.toISOString().split("T")[0],
         endDate: r.endDate.toISOString().split("T")[0],
         status: r.status,
