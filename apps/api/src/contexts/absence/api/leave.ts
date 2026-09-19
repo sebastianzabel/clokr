@@ -332,6 +332,26 @@ function formatDateDe(d: Date): string {
   return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`;
 }
 
+/**
+ * The ONE visibility decision behind an absence TYPE, shared by GET /overlap and GET /calendar
+ * (Phase 262, GitHub issue #262, D-06): may this viewer learn `typeCode`/`typeName` (and, for
+ * /calendar, `section9`/`section9Days`) for this entry, or must it be masked to `null`?
+ *
+ * The role comparison is exact and case-sensitive on purpose — mirrors the reasoning in
+ * `apps/web/src/lib/leave/team-calendar-visibility.ts`'s `canSeeLeaveType` (Phase 257, D-06 in
+ * 262-CONTEXT.md): the JWT carries the Prisma `Role` enum verbatim (`ADMIN` | `MANAGER` |
+ * `EMPLOYEE`), and a relaxed comparison (`toUpperCase()`, `includes()`) would let an unexpected
+ * value through on the PERMISSIVE side — the side that leaks.
+ *
+ * Deliberately module-private, NOT exported via `contexts/absence/index.ts`: no caller outside
+ * this file exists yet (D-15b). GitHub issue #267 (`GET /shifts/week`'s ungated "sick" bucket)
+ * is the case that would change that — making it public is issue #267's first task, not this
+ * one's, per "no generalization on spec" (ADR 0001).
+ */
+function canSeeLeaveType(isOwn: boolean, role: string | null | undefined): boolean {
+  return isOwn === true || role === "MANAGER" || role === "ADMIN";
+}
+
 export async function leaveRoutes(app: FastifyInstance) {
   // ── POST /requests  – Antrag stellen ────────────────────────────────────
   app.post("/requests", {
@@ -2191,8 +2211,6 @@ export async function leaveRoutes(app: FastifyInstance) {
         getHolidayMap(app.prisma, req.user.tenantId, start, end),
       ]);
 
-      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
-
       // Phase 104-10 (D-28/D-29): bulk-load § 9 credits overlapping the visible month — ONE
       // query, scoped to the tenant, so the per-row masking below never needs a query inside
       // `.map()`.
@@ -2247,7 +2265,7 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const leaveEntries = rows.map((r) => {
         const isOwn = r.employee.userId === req.user.sub;
-        const showDetails = isOwn || isManager;
+        const showDetails = canSeeLeaveType(isOwn, req.user.role);
         return {
           id: r.id,
           isOwn,
