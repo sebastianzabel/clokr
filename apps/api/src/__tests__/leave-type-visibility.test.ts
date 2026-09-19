@@ -332,4 +332,73 @@ describe("Leave type visibility — /overlap and /calendar answer the same quest
       expect(aRow?.employeeName).toBe(`${data.employee.firstName} ${data.employee.lastName}`);
     });
   });
+
+  // The block below pins /calendar's ALREADY-correct role masking as a regression guard. This
+  // handler is the correct neighbour D-07 extracts its decision from — nothing here should ever
+  // turn red by itself; a red result in THIS block would mean the fixture is wrong, not the
+  // handler. Its mutation proof (D-24, Fall B — proving these assertions would actually catch a
+  // silently-broken extraction, not just today's already-true value) is deferred to Plan 262-02
+  // Task 1: it can only be exercised meaningfully at the ONE place the decision lives after the
+  // extraction, not against this handler's inline `showDetails` expression here.
+  describe("GET /leave/calendar — dieselbe Entscheidung, Regressionsriegel", () => {
+    type CalendarRow = {
+      id: string;
+      isOwn: boolean;
+      typeCode: string | null;
+      typeName: string | null;
+      section9: string | null;
+      section9Days: string[];
+    };
+
+    async function calendar(year: number, month: number, token: string): Promise<CalendarRow[]> {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/leave/calendar?year=${year}&month=${month}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const rows = JSON.parse(res.body) as CalendarRow[];
+      return rows.filter((r) => !r.id.startsWith("holiday-"));
+    }
+
+    it("EMPLOYEE sees a foreign entry with typeCode, typeName, section9 all null and an empty section9Days", async () => {
+      const rows = await calendar(TARGET_YEAR, TARGET_MONTH, data.empToken);
+      expect(rows.length).toBeGreaterThan(0); // D-25: guard before indexing
+      const row = rows.find((r) => r.id === sickRequestId);
+      expect(row).toBeDefined();
+      expect(row?.typeCode).toBeNull();
+      expect(row?.typeName).toBeNull();
+      expect(row?.section9).toBeNull();
+      expect(row?.section9Days).toEqual([]);
+    });
+
+    it("EMPLOYEE sees their own entry unmasked via the isOwn branch", async () => {
+      const rows = await calendar(TARGET_YEAR, TARGET_MONTH, data.empToken);
+      expect(rows.length).toBeGreaterThan(0);
+      const row = rows.find((r) => r.id === employeeOwnVacationId);
+      expect(row).toBeDefined();
+      expect(row?.isOwn).toBe(true);
+      expect(row?.typeCode).toBe("VACATION");
+    });
+
+    it("MANAGER sees the foreign entry's real type and its § 9 marker", async () => {
+      const rows = await calendar(TARGET_YEAR, TARGET_MONTH, managerToken);
+      expect(rows.length).toBeGreaterThan(0);
+      const row = rows.find((r) => r.id === sickRequestId);
+      expect(row).toBeDefined();
+      expect(row?.typeCode).toBe("SICK");
+      expect(row?.section9).toBe("AU_PENDING");
+      expect(row?.section9Days.length).toBeGreaterThan(0);
+    });
+
+    it("ADMIN sees the foreign entry's real type and its § 9 marker", async () => {
+      const rows = await calendar(TARGET_YEAR, TARGET_MONTH, data.adminToken);
+      expect(rows.length).toBeGreaterThan(0);
+      const row = rows.find((r) => r.id === sickRequestId);
+      expect(row).toBeDefined();
+      expect(row?.typeCode).toBe("SICK");
+      expect(row?.section9).toBe("AU_PENDING");
+      expect(row?.section9Days.length).toBeGreaterThan(0);
+    });
+  });
 });
