@@ -8,17 +8,36 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { dowOf, futureDateStr, nextWeekdayStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 
-function tomorrowIso(): string {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+/**
+ * The next date on which a shift may actually be created (#271).
+ *
+ * This used to be a plain "tomorrow", which is a date bomb: `TenantConfig.storeHours` defaults to
+ * Sunday CLOSED (`packages/db/prisma/schema.prisma`, day 6 of the 0=Mo..6=So array), `seedTestData()`
+ * does not override it, and `POST`/`PUT /api/v1/shifts` answers 409 "Schicht ... ausserhalb der
+ * Oeffnungszeiten - Geschaeft geschlossen" for a closed day. So these tests failed every Saturday
+ * and passed on the other six days, which is why CI went red while every local re-run looked fine.
+ *
+ * `nextWeekdayStr` skips Saturday as well. That is deliberate: the store default has Saturday open,
+ * but a tenant config in a future fixture may not, and none of these tests is about opening hours.
+ */
+function nextOpenDayIso(): string {
+  return nextWeekdayStr(futureDateStr(1));
 }
 
 const TENANT_B_TEMPLATE_NAME = "Sec11 TenantB Geheimvorlage";
 
 describe("POST /api/v1/shifts — ShiftTemplate label tenant isolation (#224)", () => {
+  // #271: the property this file silently depended on for years, now re-proved on every run.
+  // A shift may not be created on a store-closed day, and the store default closes Sunday — so a
+  // date that drifts onto one turns every assertion below into a 409 that says nothing about
+  // tenant isolation. Same guard idiom as shift-arbzg.test.ts (GH #136/#167).
+  it("the shift date lands on a day the store is open (guards against the Sunday date bomb)", () => {
+    expect(nextOpenDayIso() > new Date().toISOString().slice(0, 10)).toBe(true);
+    expect([1, 2, 3, 4, 5]).toContain(dowOf(nextOpenDayIso()));
+  });
   let app: FastifyInstance;
   let tenantA: Awaited<ReturnType<typeof seedTestData>>;
   let tenantB: Awaited<ReturnType<typeof seedTestData>>;
@@ -73,7 +92,7 @@ describe("POST /api/v1/shifts — ShiftTemplate label tenant isolation (#224)", 
       payload: {
         employeeId: tenantA.employee.id,
         templateId: tenantBTemplateId,
-        date: tomorrowIso(),
+        date: nextOpenDayIso(),
         startTime: "09:00",
         endTime: "17:00",
       },
@@ -105,7 +124,7 @@ describe("POST /api/v1/shifts — ShiftTemplate label tenant isolation (#224)", 
       payload: {
         employeeId: tenantB.employee.id,
         templateId: tenantBTemplateId,
-        date: tomorrowIso(),
+        date: nextOpenDayIso(),
         startTime: "09:00",
         endTime: "17:00",
       },
