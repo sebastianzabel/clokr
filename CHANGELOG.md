@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.12.0](https://github.com/sebastianzabel/clokr/compare/v1.11.0...v1.12.0) (2026-09-19)
+
+
+### Features
+
+* **257-01:** add shared team-calendar leave-type visibility module ([082baf3](https://github.com/sebastianzabel/clokr/commit/082baf3db70eafe43ed5582b1c4f2d6775ac0b55))
+
+
+### Bug Fixes
+
+* **257-02:** route team-calendar bars and legend through the one shared visibility decision ([ebf6a9d](https://github.com/sebastianzabel/clokr/commit/ebf6a9d9a16008a727eb69e8eb9d0d7f59c3d9be))
+* **257-03:** declare per-token WCAG AA foreground colours for absence-bar labels ([2c05b50](https://github.com/sebastianzabel/clokr/commit/2c05b5000e0a90f0b08839c970541298166a4f2d))
+* **257:** Abwesenheitsart im Team-Kalender für Manager/Admin, ehrliche Legende, lesbare Beschriftung ([fba90b1](https://github.com/sebastianzabel/clokr/commit/fba90b10769453dfacdc0961aa5285d0a04e2aa6))
+
 ## [1.11.0](https://github.com/sebastianzabel/clokr/compare/v1.10.1...v1.11.0) (2026-09-18)
 
 
