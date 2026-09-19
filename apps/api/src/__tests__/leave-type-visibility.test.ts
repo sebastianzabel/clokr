@@ -227,4 +227,109 @@ describe("Leave type visibility — /overlap and /calendar answer the same quest
       expect(row?.section9Days.length).toBeGreaterThan(0);
     });
   });
+
+  describe("GET /leave/overlap — Rollenmaskierung", () => {
+    type OverlapRow = {
+      id: string;
+      employeeName: string;
+      // The TARGET shape after D-01, not today's shape — today both fields are always the real
+      // (non-null) string. Typing them `string | null` here is a claim about what the endpoint
+      // SHOULD return, not a runtime check; the claim is enforced by the assertions below, not
+      // by this type.
+      typeCode: string | null;
+      typeName: string | null;
+      startDate: string;
+      endDate: string;
+      status: string;
+    };
+
+    async function overlap(token: string): Promise<OverlapRow[]> {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/leave/overlap?startDate=${WINDOW_START}&endDate=${WINDOW_END}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      return JSON.parse(res.body) as OverlapRow[];
+    }
+
+    it("D-18: EMPLOYEE gets neither typeCode nor typeName for a foreign entry", async () => {
+      const rows = await overlap(data.empToken);
+      expect(rows.length).toBeGreaterThan(0); // D-25: guard before indexing
+      const row = rows.find((r) => r.id === sickRequestId);
+      expect(row).toBeDefined();
+      expect(row?.typeCode).toBeNull();
+      expect(row?.typeName).toBeNull();
+    });
+
+    it("D-19: MANAGER sees the real type for a foreign entry", async () => {
+      const rows = await overlap(managerToken);
+      expect(rows.length).toBeGreaterThan(0);
+      const row = rows.find((r) => r.id === sickRequestId);
+      expect(row).toBeDefined();
+      expect(row?.typeCode).toBe("SICK");
+    });
+
+    it("D-19: ADMIN sees the real type for a foreign entry (own-entry exclusion, D-02, means ADMIN's own SICK row from Task 1 is structurally absent here — this checks the OTHER foreign entry, EMPLOYEE's vacation)", async () => {
+      const rows = await overlap(data.adminToken);
+      expect(rows.length).toBeGreaterThan(0);
+      const row = rows.find((r) => r.id === employeeOwnVacationId);
+      expect(row).toBeDefined();
+      expect(row?.typeCode).toBe("VACATION");
+    });
+
+    it("D-21: no caller receives their own entry back", async () => {
+      const employeeRows = await overlap(data.empToken);
+      expect(employeeRows.length).toBeGreaterThan(0);
+      expect(employeeRows.find((r) => r.id === employeeOwnVacationId)).toBeUndefined();
+
+      const adminRows = await overlap(data.adminToken);
+      expect(adminRows.length).toBeGreaterThan(0);
+      expect(adminRows.find((r) => r.id === sickRequestId)).toBeUndefined();
+      expect(adminRows.find((r) => r.id === overlappingVacationId)).toBeUndefined();
+    });
+
+    it("D-22: the masked fields stay present on the row, just null (not omitted)", async () => {
+      const rows = await overlap(data.empToken);
+      expect(rows.length).toBeGreaterThan(0);
+      const row = rows.find((r) => r.id === sickRequestId);
+      expect(row).toBeDefined();
+      expect("typeCode" in (row as OverlapRow)).toBe(true);
+      expect("typeName" in (row as OverlapRow)).toBe(true);
+      expect(row?.typeCode).toBeNull();
+      expect(row?.typeName).toBeNull();
+    });
+
+    it("D-23: no returned entry has status PENDING, and the PENDING request's id appears in none of the three responses", async () => {
+      const employeeRows = await overlap(data.empToken);
+      const managerRows = await overlap(managerToken);
+      const adminRows = await overlap(data.adminToken);
+      for (const rows of [employeeRows, managerRows, adminRows]) {
+        expect(rows.length).toBeGreaterThan(0);
+        expect(rows.some((r) => r.status === "PENDING")).toBe(false);
+        expect(rows.find((r) => r.id === pendingSickRequestId)).toBeUndefined();
+      }
+    });
+
+    it("D-03: employeeName stays the full name for every role", async () => {
+      const employeeRows = await overlap(data.empToken);
+      const eRow = employeeRows.find((r) => r.id === sickRequestId);
+      expect(eRow).toBeDefined();
+      expect(eRow?.employeeName).toBe(
+        `${data.adminEmployee.firstName} ${data.adminEmployee.lastName}`,
+      );
+
+      const managerRows = await overlap(managerToken);
+      const mRow = managerRows.find((r) => r.id === sickRequestId);
+      expect(mRow).toBeDefined();
+      expect(mRow?.employeeName).toBe(
+        `${data.adminEmployee.firstName} ${data.adminEmployee.lastName}`,
+      );
+
+      const adminRows = await overlap(data.adminToken);
+      const aRow = adminRows.find((r) => r.id === employeeOwnVacationId);
+      expect(aRow).toBeDefined();
+      expect(aRow?.employeeName).toBe(`${data.employee.firstName} ${data.employee.lastName}`);
+    });
+  });
 });
