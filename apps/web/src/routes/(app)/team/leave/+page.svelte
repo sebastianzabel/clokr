@@ -22,21 +22,18 @@
     stornoSuccessToast,
     type StornoKind,
   } from "$lib/leave/storno"; // Quick 260824-ef6
+  import {
+    canSeeLeaveType,
+    resolveChipVisual,
+    LEAVE_TYPE_OPTIONS,
+    type LeaveTypeCode,
+  } from "$lib/leave/team-calendar-visibility"; // Phase 257
   import { resolveAdjustmentBadge, type LastDaysAdjustment } from "$lib/leave/vacation-balance"; // Phase 107-07
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
-  type TypeCode =
-    | "VACATION"
-    | "OVERTIME_COMP"
-    | "SPECIAL"
-    | "UNPAID"
-    | "SICK"
-    | "SICK_CHILD"
-    | "EDUCATION"
-    | "HOLIDAY"
-    | "MATERNITY"
-    | "PARENTAL";
+  // Phase 257: the union now lives with the colour/label table it belongs to.
+  type TypeCode = LeaveTypeCode;
 
   interface LeaveRequest {
     id: string;
@@ -71,20 +68,8 @@
   }
 
   // ── Konstanten ────────────────────────────────────────────────────────────
-  const TYPE_OPTIONS: { code: TypeCode; label: string }[] = [
-    { code: "VACATION", label: "Urlaub" },
-    { code: "OVERTIME_COMP", label: "Überstundenausgleich" },
-    { code: "SPECIAL", label: "Sonderurlaub" },
-    { code: "EDUCATION", label: "Bildungsurlaub" },
-    { code: "SICK", label: "Krankmeldung" },
-    { code: "SICK_CHILD", label: "Kinderkrank" },
-    { code: "UNPAID", label: "Unbezahlter Urlaub" },
-    { code: "MATERNITY", label: "Mutterschutz" },
-    { code: "PARENTAL", label: "Elternzeit" },
-  ];
-
   function typeName(code: TypeCode): string {
-    return TYPE_OPTIONS.find((t) => t.code === code)?.label ?? code;
+    return LEAVE_TYPE_OPTIONS.find((t) => t.code === code)?.label ?? code;
   }
 
   const SICK_CODES: TypeCode[] = ["SICK", "SICK_CHILD"];
@@ -513,25 +498,6 @@
     "November",
     "Dezember",
   ];
-
-  // Typ → Hintergrundfarbe (approved=satt, pending=heller)
-  function typeColor(code: TypeCode | null, status: Status, isOwn: boolean): string {
-    if (!isOwn || !code)
-      return status === "APPROVED" ? "var(--leave-type-absent)" : "var(--leave-type-absent-muted)";
-    const colors: Record<TypeCode, string> = {
-      VACATION: "var(--leave-type-vacation)",
-      OVERTIME_COMP: "var(--leave-type-overtime)",
-      SPECIAL: "var(--leave-type-special)",
-      EDUCATION: "var(--leave-type-education)",
-      SICK: "var(--leave-type-sick)",
-      SICK_CHILD: "var(--leave-type-sick-child)",
-      UNPAID: "var(--leave-type-unpaid)",
-      HOLIDAY: "var(--leave-type-holiday)",
-      MATERNITY: "var(--leave-type-maternity)",
-      PARENTAL: "var(--leave-type-parental)",
-    };
-    return colors[code] ?? "var(--leave-type-default)";
-  }
 
   // ── Laden ─────────────────────────────────────────────────────────────────
   async function loadData() {
@@ -1322,6 +1288,7 @@
                   {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
                   {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
                   {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
+                  {@const _vis = resolveChipVisual(e, $authStore.user?.role)}
                   <div
                     class="cal-chip"
                     class:cal-chip--bar-start={_isBarStart && !_isBarEnd}
@@ -1330,18 +1297,15 @@
                     class:cal-chip--pending={e.status === "PENDING" ||
                       e.status === "CANCELLATION_REQUESTED"}
                     class:cal-chip--own={e.isOwn}
-                    style:background={typeColor(e.typeCode, e.status, e.isOwn)}
-                    title="{e.firstName} {e.lastName}{e.isOwn && e.typeName
-                      ? ' · ' + e.typeName
+                    style:background={_vis.background}
+                    style:color={_vis.textColor}
+                    title="{e.firstName} {e.lastName}{_vis.typeLabel
+                      ? ' · ' + _vis.typeLabel
                       : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
                   >
                     {#if _showLabel}
                       <span class="cal-chip-name">{e.firstName}</span>
-                      {#if e.isOwn && e.typeName}
-                        <span class="cal-chip-type">{e.typeName}</span>
-                      {:else}
-                        <span class="cal-chip-type">abwesend</span>
-                      {/if}
+                      <span class="cal-chip-type">{_vis.chipLabel}</span>
                     {/if}
                   </div>
                 {:else}
@@ -1354,30 +1318,17 @@
       </div>
     {/if}
 
-    <!-- Legende -->
+    <!-- Legend — shows only what this viewer's calendar can actually contain (Phase 257, D-05).
+         An EMPLOYEE never sees a colleague's type, so the type dots would promise colours that
+         never appear for them. -->
     <div class="cal-legend">
-      <span class="legend-item"
-        ><span class="legend-dot" style:background="var(--leave-type-vacation)"></span>Urlaub</span
-      >
-      <span class="legend-item"
-        ><span class="legend-dot" style:background="var(--leave-type-overtime)"
-        ></span>ÜSt-Ausgleich</span
-      >
-      <span class="legend-item"
-        ><span class="legend-dot" style:background="var(--leave-type-sick)"></span>Krank</span
-      >
-      <span class="legend-item"
-        ><span class="legend-dot" style:background="var(--leave-type-sick-child)"
-        ></span>Kinderkrank</span
-      >
-      <span class="legend-item"
-        ><span class="legend-dot" style:background="var(--leave-type-special)"
-        ></span>Sonderurlaub</span
-      >
-      <span class="legend-item"
-        ><span class="legend-dot" style:background="var(--leave-type-education)"
-        ></span>Bildungsurlaub</span
-      >
+      {#if canSeeLeaveType(false, $authStore.user?.role)}
+        {#each LEAVE_TYPE_OPTIONS as t (t.code)}
+          <span class="legend-item"
+            ><span class="legend-dot" style:background="var({t.colorVar})"></span>{t.label}</span
+          >
+        {/each}
+      {/if}
       <span class="legend-item"
         ><span class="legend-dot" style:background="var(--leave-type-absent)"></span>Abwesend</span
       >
@@ -1472,7 +1423,7 @@
         aria-label="Nach Art filtern"
       >
         <option value="">Alle Arten</option>
-        {#each TYPE_OPTIONS as t (t.code)}
+        {#each LEAVE_TYPE_OPTIONS as t (t.code)}
           <option value={t.code}>{t.label}</option>
         {/each}
       </select>
@@ -1899,7 +1850,7 @@
       <div class="form-group">
         <label class="form-label" for="correct-type">Art</label>
         <select id="correct-type" class="form-input" bind:value={correctType}>
-          {#each TYPE_OPTIONS as opt (opt.code)}
+          {#each LEAVE_TYPE_OPTIONS as opt (opt.code)}
             <option value={opt.code}>{opt.label}</option>
           {/each}
         </select>
@@ -2049,7 +2000,7 @@
       <div class="form-group">
         <label class="form-label" for="create-type">Art</label>
         <select id="create-type" class="form-input" bind:value={createForm.type} required>
-          {#each TYPE_OPTIONS as opt (opt.code)}
+          {#each LEAVE_TYPE_OPTIONS as opt (opt.code)}
             <option value={opt.code}>{opt.label}</option>
           {/each}
         </select>
@@ -2748,7 +2699,9 @@
     gap: 0.2rem;
     padding: 2px 0.4rem;
     border-radius: 4px;
-    color: white;
+    /* Fallback only. The live value arrives per bar via style:color={_vis.textColor},
+       which resolves a --leave-type-*-text token (Phase 257, D-12). */
+    color: #ffffff;
     font-size: 0.75rem;
     line-height: 1.4;
     overflow: hidden;
@@ -2772,9 +2725,8 @@
     height: 22px;
   }
   .cal-chip--pending {
-    outline: 1.5px dashed rgba(255, 255, 255, 0.7);
+    outline: 1.5px dashed currentColor;
     outline-offset: -2px;
-    opacity: 0.9;
   }
   .cal-chip-name {
     font-weight: 600;
@@ -2785,7 +2737,6 @@
   }
   .cal-chip-type {
     font-size: 0.6875rem;
-    opacity: 0.85;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

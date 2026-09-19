@@ -160,6 +160,26 @@ html[data-mode="dark"] {
   --leave-type-absent: #475569; /* slate — Abwesend (APPROVED) */
   --leave-type-absent-muted: #94a3b8; /* light slate — Abwesend (PENDING) */
   --leave-type-default: #6b7280; /* gray — Fallback */
+
+  /* Foreground colours for text sitting ON a --leave-type-* fill (Phase 257, D-12).
+     Each is whichever of #ffffff / #0f172a scores higher against the fill above, measured with
+     the WCAG 2.x formula; all clear 4.5:1. These are for `color:` only — the fills above stay
+     the background everywhere, including the .cal-abs-* color-mix cell tints in app.css, which
+     is why the fills were not darkened instead. Pinned by
+     apps/web/src/__tests__/leave-chip-contrast.test.ts. */
+  --leave-type-vacation-text: #0f172a; /* 6.52:1 */
+  --leave-type-sick-text: #0f172a; /* 5.60:1 */
+  --leave-type-sick-child-text: #0f172a; /* 5.02:1 */
+  --leave-type-special-text: #ffffff; /* 6.29:1 */
+  --leave-type-overtime-text: #0f172a; /* 4.85:1 */
+  --leave-type-education-text: #ffffff; /* 5.17:1 */
+  --leave-type-unpaid-text: #ffffff; /* 4.83:1 */
+  --leave-type-holiday-text: #ffffff; /* 5.70:1 */
+  --leave-type-maternity-text: #ffffff; /* 4.60:1 */
+  --leave-type-parental-text: #ffffff; /* 6.04:1 */
+  --leave-type-absent-text: #ffffff; /* 7.58:1 */
+  --leave-type-absent-muted-text: #0f172a; /* 6.96:1 */
+  --leave-type-default-text: #ffffff; /* 4.83:1 */
 }
 
 [data-theme="nacht"] {
@@ -222,6 +242,26 @@ html[data-mode="dark"] {
   --leave-type-absent: #cbd5e1;
   --leave-type-absent-muted: #64748b;
   --leave-type-default: #9ca3af;
+
+  /* Foreground colours for text sitting ON a --leave-type-* fill (Phase 257, D-12).
+     Each is whichever of #ffffff / #0f172a scores higher against the fill above, measured with
+     the WCAG 2.x formula; all clear 4.5:1. These are for `color:` only — the fills above stay
+     the background everywhere, including the .cal-abs-* color-mix cell tints in app.css, which
+     is why the fills were not darkened instead. Pinned by
+     apps/web/src/__tests__/leave-chip-contrast.test.ts. */
+  --leave-type-vacation-text: #0f172a; /* 8.51:1 */
+  --leave-type-sick-text: #0f172a; /* 10.69:1 */
+  --leave-type-sick-child-text: #0f172a; /* 7.89:1 */
+  --leave-type-special-text: #0f172a; /* 5.98:1 */
+  --leave-type-overtime-text: #0f172a; /* 9.88:1 */
+  --leave-type-education-text: #0f172a; /* 7.02:1 */
+  --leave-type-unpaid-text: #0f172a; /* 7.03:1 */
+  --leave-type-holiday-text: #0f172a; /* 6.56:1 */
+  --leave-type-maternity-text: #0f172a; /* 6.74:1 */
+  --leave-type-parental-text: #0f172a; /* 9.84:1 */
+  --leave-type-absent-text: #0f172a; /* 12.02:1 */
+  --leave-type-absent-muted-text: #ffffff; /* 4.76:1 */
+  --leave-type-default-text: #0f172a; /* 7.03:1 */
 }
 
 [data-density="compact"] {
