@@ -26,8 +26,9 @@
     canSeeLeaveType,
     resolveChipVisual,
     LEAVE_TYPE_OPTIONS,
+    NEUTRAL_CHIP_LABEL,
     type LeaveTypeCode,
-  } from "$lib/leave/team-calendar-visibility"; // Phase 257
+  } from "$lib/leave/team-calendar-visibility"; // Phase 257, Phase 262
   import { resolveAdjustmentBadge, type LastDaysAdjustment } from "$lib/leave/vacation-balance"; // Phase 107-07
 
   // ── Typen ─────────────────────────────────────────────────────────────────
@@ -58,10 +59,13 @@
     lastDaysAdjustment?: LastDaysAdjustment | null;
   }
 
+  // typeCode/typeName are null when the server masks this caller from the absence type
+  // (Phase 262, D-01) — not a data error. Render a fallback for null, never "fix" it away.
   interface OverlapEntry {
     id: string;
     employeeName: string;
-    typeName: string;
+    typeCode: string | null;
+    typeName: string | null;
     startDate: string;
     endDate: string;
     status: Status;
@@ -1738,7 +1742,7 @@
             {#each reviewOverlap.filter((o) => o.status === "APPROVED") as o (o.id)}
               <div class="overlap-row">
                 <span class="overlap-name">{o.employeeName}</span>
-                <span class="overlap-type">abwesend</span>
+                <span class="overlap-type">{o.typeName ?? NEUTRAL_CHIP_LABEL}</span>
                 <span class="overlap-dates">{fmtDate(o.startDate)} – {fmtDate(o.endDate)}</span>
               </div>
             {/each}
