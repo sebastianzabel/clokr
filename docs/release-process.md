@@ -219,6 +219,40 @@ Steps 1-7 above produce and publish the image. They do **not** deploy it. Two ma
 `selfHeal: true`; an imperative image change is reverted within seconds and the rollout silently
 goes back to the pinned tag. The homelab repo is the only durable path.
 
+## Upgrade path: do not skip a version on prod
+
+int follows `main` continuously, so it sees every release. **prod does not** — it is pinned by
+hand, and it is therefore possible to jump it from `vX.Y.Z` straight to `vX.Y.Z+2`, skipping the
+release in between. Do not. Deploy prod through each released version in order.
+
+**This is not a style preference. Some tickets carry a precondition that names a release.**
+The canonical case is `docs/migrations.md` § "Phase 97 — LeaveType.code (Rollout-Reihenfolge)"
+step 5: the `SET NOT NULL` migration may only be created _after_ the release containing Phase 97
+(**v1.11.0**) is fully rolled out on int **and prod**, and after the follow-up sweep
+(`backfill-leave-type-code.ts --all-tenants --apply`) has run. Skipping v1.11.0 on prod would leave
+that precondition permanently unmeetable, because the release that satisfies it would never have
+existed on prod as a deployed state — only as a commit inside a later image.
+
+The concrete ordering agreed for this line (owner, 2026-09-18):
+
+| Step | Environment | Version     | Why it cannot be merged with the next step                                                        |
+| ---- | ----------- | ----------- | ------------------------------------------------------------------------------------------------- |
+| 1    | prod        | **v1.11.0** | Satisfies the Phase 97 precondition. Run the backfill sweep here, on prod, and record its output. |
+| 2    | prod        | **v1.11.1** | Only after step 1 is deployed AND the sweep has run.                                              |
+
+A migration whose precondition names a version is a **rollout-order dependency**, not a
+documentation footnote. Before pinning prod to a new tag, check whether any ticket in the skipped
+range names the version you are about to jump over. GitHub issue #206 is the live example.
+
+### Why a skip is tempting, and why it still fails
+
+The intermediate release's code IS inside the later image — nothing is missing from the binary.
+What is missing is the _deployed state_: the window in which the old schema and the new writers
+coexisted on real data long enough for a backfill to see and fix every row. `SET NOT NULL`
+validates by full table scan and has no `NOT VALID` escape hatch for a column constraint, so a
+single row the sweep never saw turns the next deploy red — either the old pod 500s, or the new
+pod's `migrate deploy` aborts and the pod never becomes healthy.
+
 ## Ordering rule: bump before tag
 
 The version is baked into the image at build time from `package.json`
