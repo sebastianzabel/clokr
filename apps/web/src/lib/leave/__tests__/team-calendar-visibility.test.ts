@@ -16,8 +16,10 @@ import {
   LEAVE_TYPES,
   LEAVE_TYPE_OPTIONS,
   NEUTRAL_CHIP_LABEL,
+  SICK_CODES,
   type ChipEntry,
 } from "../team-calendar-visibility";
+import { showsBurlgSection7Notice } from "../leave-review";
 
 // ── Table 1: canSeeLeaveType(isOwn, role) over roles x ownership ──────────────
 describe("canSeeLeaveType", () => {
@@ -155,4 +157,27 @@ describe("LEAVE_TYPES", () => {
       expect(type.colorVar.startsWith("--leave-type-")).toBe(true);
     }
   });
+});
+
+// Phase 255 (GitHub issue #255) — SICK_CODES hoisted here from team/leave/+page.svelte's local
+// constant so /inbox (which never had it) can share it too. This group ADDS to the file; nothing
+// above is rewritten.
+describe("SICK_CODES", () => {
+  it("has exactly two members, both real vocabulary codes", () => {
+    expect(SICK_CODES.length).toBe(2);
+    const allCodes = LEAVE_TYPES.map((t) => t.code);
+    for (const code of SICK_CODES) {
+      expect(allCodes).toContain(code);
+    }
+  });
+
+  it(
+    "is disjoint from the BUrlG § 7 notice gate — expressed against the function, not the " +
+      "string literal 'VACATION', so this stays true if the § 7 set ever changes again",
+    () => {
+      for (const code of SICK_CODES) {
+        expect(showsBurlgSection7Notice(code)).toBe(false);
+      }
+    },
+  );
 });
