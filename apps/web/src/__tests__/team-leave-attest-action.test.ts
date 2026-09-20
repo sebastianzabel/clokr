@@ -26,6 +26,12 @@ const PAGE = readRouteFile(
   "../routes/(app)/team/leave/+page.svelte",
   "src/routes/(app)/team/leave/+page.svelte",
 );
+// Phase 255 (GitHub issue #255), Plan 03 — the review flow's own /attest call (runReview's) moved
+// into this shared component; the page now keeps only submitAttest's standalone-dialog call.
+const COMPONENT = readRouteFile(
+  "../lib/components/leave/LeaveReviewDialog.svelte",
+  "src/lib/components/leave/LeaveReviewDialog.svelte",
+);
 
 describe("team leave page — Attest row action + dedicated dialog (Phase 201)", () => {
   it("Test 1: an Attest button, gated on SICK_CODES + APPROVED, renders in the action cell", () => {
@@ -44,8 +50,13 @@ describe("team leave page — Attest row action + dedicated dialog (Phase 201)",
     expect(PAGE).toContain('{req.attestPresent ? "Attest ändern" : "Attest erfassen"}');
   });
 
-  it("Test 3: exactly TWO /attest PATCH call sites exist — runReview's and submitAttest's — and submitAttest carries no /correct and no reason/Begründung field", () => {
-    expect((PAGE.match(/\/attest`/g) ?? []).length).toBe(2);
+  it("Test 3: exactly ONE /attest PATCH call site remains on the page — submitAttest's — with the review flow's own call now living in the shared component; submitAttest carries no /correct and no reason/Begründung field", () => {
+    // Phase 255: runReview's /attest call moved into LeaveReviewDialog.svelte. A bare
+    // `toBe(1)` on the page alone would also be true if submitAttest's call had vanished
+    // entirely rather than moved — the second assertion against COMPONENT is the positive
+    // neighbour that rules that out (D-12).
+    expect((PAGE.match(/\/attest`/g) ?? []).length).toBe(1);
+    expect((COMPONENT.match(/\/attest`/g) ?? []).length).toBe(1);
     const submitAttestMatch = PAGE.match(/async function submitAttest\(\)[\s\S]*?\n {2}}/);
     expect(submitAttestMatch).not.toBeNull();
     const submitAttestBody = submitAttestMatch![0];
@@ -59,12 +70,15 @@ describe("team leave page — Attest row action + dedicated dialog (Phase 201)",
   });
 
   it("Test 5: runReview's D-02 comment survives verbatim — the new action does not move that call", () => {
-    // The comment is WRAPPED across two source lines between "call" and "to"
-    // (team/leave/+page.svelte:~727-728 at planning time). Assert each line's fragment
-    // separately — a contiguous "…this call to the…" substring does NOT exist in the file
-    // and would make this test permanently red. Do not reflow the comment to suit the
-    // assertion.
-    expect(PAGE).toContain("never wire this call");
-    expect(PAGE).toContain("to the § 9 confirm flow");
+    // Phase 255: runReview itself moved into LeaveReviewDialog.svelte, taking its D-02 comment
+    // with it — this assertion now runs against the component, not the page.
+    // The comment is WRAPPED across two source lines, and the wrap point shifted one word
+    // compared to team/leave/+page.svelte's former copy (LeaveReviewDialog.svelte:187-188 as of
+    // Phase 255 Plan 03: "…never wire this call to the" / "§ 9 confirm flow."). Assert each
+    // line's fragment separately — a contiguous "…call to the § 9 confirm flow…" substring does
+    // NOT exist in the file and would make this test permanently red. Do not reflow the comment
+    // to suit the assertion.
+    expect(COMPONENT).toContain("never wire this call to the");
+    expect(COMPONENT).toContain("§ 9 confirm flow");
   });
 });

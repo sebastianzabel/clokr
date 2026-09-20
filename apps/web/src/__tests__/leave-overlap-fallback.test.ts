@@ -38,6 +38,17 @@ const TEAM_LEAVE_PAGE = readRouteFile(
   "../routes/(app)/team/leave/+page.svelte",
   "src/routes/(app)/team/leave/+page.svelte",
 );
+// Phase 255 (GitHub issue #255), Plan 03 — /team/leave's review dialog, including its overlap
+// panel, moved into this shared component; the two positive assertions that used to live in the
+// "team/leave" describe group below now live in the "LeaveReviewDialog.svelte" group instead.
+const COMPONENT = readRouteFile(
+  "../lib/components/leave/LeaveReviewDialog.svelte",
+  "src/lib/components/leave/LeaveReviewDialog.svelte",
+);
+// The shared data shapes both /team/leave and /inbox rely on for the review dialog. The
+// `interface OverlapEntry` assertion that used to run against team/leave's own (now-deleted)
+// copy targets `LeaveOverlapEntry` here instead — its single, stable home (Phase 255).
+const CONTRACT = readRouteFile("../lib/leave/leave-review.ts", "src/lib/leave/leave-review.ts");
 
 /** Occurrences of the bare word "abwesend" in the raw source. `NEUTRAL_CHIP_LABEL` as an
  *  identifier does not itself contain the substring, so this counts literal German text only. */
@@ -113,31 +124,51 @@ describe("inbox/+page.svelte — review dialog's overlap chip (D-11)", () => {
 
 describe("team/leave/+page.svelte — manager review modal's overlap panel (D-11b)", () => {
   it("Test 0: the page source actually loaded", () => {
-    expect(TEAM_LEAVE_PAGE.length).toBeGreaterThan(90_000); // ~97 KB as of Phase 262 Plan 03
-    expect(TEAM_LEAVE_PAGE).toContain("overlap-title");
-    expect(TEAM_LEAVE_PAGE).toContain("Kolleg:innen im gleichen Zeitraum");
+    // Phase 255 Plan 03: the review dialog markup and mutation moved into
+    // LeaveReviewDialog.svelte, shrinking the page from ~97 KB to ~83.5 KB. The floor sits at
+    // least 10 KB below the measured value (85_460 bytes on 2026-09-20) so it does not become a
+    // time bomb on ordinary future edits.
+    expect(TEAM_LEAVE_PAGE.length).toBeGreaterThan(75_000); // ~83.5 KB as of Phase 255 Plan 03
   });
 
-  it("extends the existing Phase 257 import line with NEUTRAL_CHIP_LABEL (D-13)", () => {
-    expect(TEAM_LEAVE_PAGE).toContain('from "$lib/leave/team-calendar-visibility"');
-    expect(TEAM_LEAVE_PAGE).toContain("NEUTRAL_CHIP_LABEL");
+  it("delegates the review dialog to the shared component and keeps no stray literal", () => {
+    // A bare `expect(abwesendCount(TEAM_LEAVE_PAGE)).toBe(0)` would also be true if the page
+    // rendered nothing at all — pairing it with the positive assertion that the shared component
+    // IS wired in closes that vacuity hole (CONTEXT.md D-12, same class as #203/#235 and the
+    // Phase 96 discriminator-swap trap).
+    expect(TEAM_LEAVE_PAGE).toContain("<LeaveReviewDialog");
+    expect(abwesendCount(TEAM_LEAVE_PAGE)).toBe(0);
+  });
+});
+
+describe("LeaveReviewDialog.svelte — the shared review dialog's overlap panel (Phase 255)", () => {
+  it("Test 0: the component source actually loaded", () => {
+    expect(COMPONENT.length).toBeGreaterThan(6_000); // ~18.6 KB as of Phase 255 Plan 03
+    expect(COMPONENT).toContain("overlap-title");
+    expect(COMPONENT).toContain("Kolleg:innen im gleichen Zeitraum");
+  });
+
+  it("imports NEUTRAL_CHIP_LABEL from the shared module (D-13)", () => {
+    expect(COMPONENT).toContain('from "$lib/leave/team-calendar-visibility"');
+    expect(COMPONENT).toContain("NEUTRAL_CHIP_LABEL");
   });
 
   it("the overlap row falls back on the null-ness of typeName, not on the string (D-12)", () => {
-    expect(TEAM_LEAVE_PAGE).toContain("{o.typeName ?? NEUTRAL_CHIP_LABEL}");
+    expect(COMPONENT).toContain("{o.typeName ?? NEUTRAL_CHIP_LABEL}");
   });
 
-  it("OverlapEntry declares typeName and typeCode as nullable", () => {
-    const start = TEAM_LEAVE_PAGE.indexOf("interface OverlapEntry");
-    const end = TEAM_LEAVE_PAGE.indexOf("}", start);
-    const iface = TEAM_LEAVE_PAGE.slice(start, end);
+  it("LeaveOverlapEntry declares typeName and typeCode as nullable", () => {
+    // Phase 255: this assertion used to run against team/leave's own `interface OverlapEntry`,
+    // deleted in Plan 03 Task 1. The shape now has one stable home in leave-review.ts.
+    const start = CONTRACT.indexOf("interface LeaveOverlapEntry");
+    const end = CONTRACT.indexOf("}", start);
+    const iface = CONTRACT.slice(start, end);
     expect(iface).toContain("typeName: string | null");
     expect(iface).toContain("typeCode: string | null");
   });
 
   it('"abwesend" survives exactly once: the empty-state sentence', () => {
-    // ":1735" "Niemand sonst abwesend ✓" — kept verbatim, see <scope_boundary>.
-    expect(abwesendCount(TEAM_LEAVE_PAGE)).toBe(1);
+    expect(abwesendCount(COMPONENT)).toBe(1);
   });
 });
 
@@ -146,6 +177,9 @@ describe("cross-cutting — the display string never becomes a control value (D-
     ["leave/+page.svelte", LEAVE_PAGE],
     ["inbox/+page.svelte", INBOX_PAGE],
     ["team/leave/+page.svelte", TEAM_LEAVE_PAGE],
+    // Phase 255: the overlap panel's markup lives here now — without this entry, the "never a
+    // control value" direction would stop checking the file the code actually moved to.
+    ["lib/components/leave/LeaveReviewDialog.svelte", COMPONENT],
   ];
 
   it.each(PAGES)('%s never compares against the string "abwesend"', (_name, src) => {
@@ -155,7 +189,7 @@ describe("cross-cutting — the display string never becomes a control value (D-
   });
 
   it("the fixture set is not empty (anti-vacuity, CLAUDE.md § Anti-vacuity gate)", () => {
-    expect(PAGES.length).toBe(3);
+    expect(PAGES.length).toBe(4);
   });
 });
 
