@@ -2074,50 +2074,6 @@
     margin: 0;
   }
 
-  /* ── Overlap ──────────────────────────────────────────────────────── */
-  .overlap-box {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    padding: 0.875rem 1rem;
-  }
-  .overlap-title {
-    font-size: 0.8125rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    margin: 0 0 0.5rem;
-  }
-  .overlap-empty {
-    font-size: 0.9375rem;
-    margin: 0;
-  }
-  .overlap-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-  .overlap-row {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-    font-size: 0.9375rem;
-  }
-  .overlap-name {
-    font-weight: 600;
-  }
-  .overlap-type {
-    color: var(--text-muted);
-    font-size: 0.875rem;
-  }
-  .overlap-dates {
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
-    margin-left: auto;
-  }
-
   /* ── Attest ───────────────────────────────────────────────────────── */
   .attest-dates {
     display: flex;
@@ -2294,12 +2250,10 @@
   .attest-date-input {
     max-width: 160px;
   }
+  /* Shared with the § 9 confirm modal, the correction modal and the standalone Attest modal —
+     NOT exclusive to the review dialog, which moved to LeaveReviewDialog.svelte (Phase 255). */
   .review-error {
     margin-top: 0.75rem;
-  }
-  .self-approval-note {
-    font-size: 0.875rem;
-    margin: 0 auto 0 0;
   }
   .attest-period {
     margin: 0 0 0.75rem;
@@ -2309,6 +2263,8 @@
   }
 
   /* ── Review Grid ──────────────────────────────────────────────────── */
+  /* Shared with the § 9 confirm modal, the correction modal and the standalone Attest modal —
+     NOT exclusive to the review dialog, which moved to LeaveReviewDialog.svelte (Phase 255). */
   .review-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -2322,9 +2278,6 @@
     display: flex;
     flex-direction: column;
     gap: 0.125rem;
-  }
-  .review-field--full {
-    grid-column: 1 / -1;
   }
   .review-label {
     font-size: 0.75rem;
@@ -2468,6 +2421,8 @@
     margin-left: 0.25rem;
     font-size: 0.75rem;
   }
+  /* Shared with the § 9 confirm modal, the correction modal and the standalone Attest modal —
+     NOT exclusive to the review dialog, which moved to LeaveReviewDialog.svelte (Phase 255). */
   .review-section {
     margin-top: 1.25rem;
   }
@@ -2539,9 +2494,6 @@
     }
     .pending-info {
       gap: 0.5rem;
-    }
-    .overlap-dates {
-      margin-left: 0;
     }
     .cal-chip-type {
       display: none;
