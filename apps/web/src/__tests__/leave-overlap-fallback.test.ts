@@ -91,34 +91,22 @@ describe("leave/+page.svelte — request form's overlap panel (D-10)", () => {
   });
 });
 
-describe("inbox/+page.svelte — review dialog's overlap chip (D-11)", () => {
+describe("inbox/+page.svelte — review dialog delegated to the shared component (Phase 255)", () => {
   it("Test 0: the page source actually loaded", () => {
-    expect(INBOX_PAGE.length).toBeGreaterThan(30_000); // ~38 KB as of Phase 262 Plan 03
-    expect(INBOX_PAGE).toContain("overlap-title");
-    expect(INBOX_PAGE).toContain("Kolleg:innen im gleichen Zeitraum");
+    // Phase 255 Plan 04: the review dialog markup and mutation moved into
+    // LeaveReviewDialog.svelte, shrinking the page from ~38 KB to ~32 KB. The floor sits at
+    // least 5 KB below the measured value (32_828 bytes on 2026-09-20) so it does not become a
+    // time bomb on ordinary future edits.
+    expect(INBOX_PAGE.length).toBeGreaterThan(27_000); // ~32 KB as of Phase 255 Plan 04
   });
 
-  it("imports NEUTRAL_CHIP_LABEL from the shared module (D-13)", () => {
-    expect(INBOX_PAGE).toContain('from "$lib/leave/team-calendar-visibility"');
-    expect(INBOX_PAGE).toContain("NEUTRAL_CHIP_LABEL");
-  });
-
-  it("the chip falls back on the null-ness of typeName, not on the string (D-12)", () => {
-    expect(INBOX_PAGE).toContain("{o.typeName ?? NEUTRAL_CHIP_LABEL}");
-  });
-
-  it("OverlapEntry declares typeName and typeCode as nullable", () => {
-    const start = INBOX_PAGE.indexOf("interface OverlapEntry");
-    const end = INBOX_PAGE.indexOf("}", start);
-    const iface = INBOX_PAGE.slice(start, end);
-    expect(iface).toContain("typeName: string | null");
-    expect(iface).toContain("typeCode: string | null");
-  });
-
-  it('"abwesend" survives exactly once: the empty-state sentence', () => {
-    // ":872" "Niemand sonst abwesend ✓" — kept verbatim, see <scope_boundary>. This page has no
-    // second calendar-chip use of the word, unlike leave/+page.svelte.
-    expect(abwesendCount(INBOX_PAGE)).toBe(1);
+  it("delegates the review dialog to the shared component and keeps no stray literal", () => {
+    // A bare `expect(abwesendCount(INBOX_PAGE)).toBe(0)` would also be true if the page rendered
+    // nothing at all — pairing it with the positive assertion that the shared component IS wired
+    // in closes that vacuity hole (CONTEXT.md D-12, same class as #203/#235 and the Phase 96
+    // discriminator-swap trap).
+    expect(INBOX_PAGE).toContain("<LeaveReviewDialog");
+    expect(abwesendCount(INBOX_PAGE)).toBe(0);
   });
 });
 
