@@ -816,6 +816,8 @@
   }
 
   /* ── Modal body helpers ───────────────────────────────────────────────── */
+  /* Shared with the retro-entry review dialog (out of scope, Issue #255) — the absence */
+  /* review dialog moved to LeaveReviewDialog.svelte, these did NOT become dead CSS. */
   .mini-stat-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -825,9 +827,6 @@
     border-radius: var(--r-md);
     border: 1px solid var(--border);
   }
-  .mini-stat-value-md {
-    font-size: 16px;
-  }
 
   @media (max-width: 560px) {
     .mini-stat-grid {
@@ -835,6 +834,8 @@
     }
   }
 
+  /* Shared with the retro-entry review dialog (out of scope, Issue #255) — the absence */
+  /* review dialog moved to LeaveReviewDialog.svelte, these did NOT become dead CSS. */
   .note-block {
     background: var(--bg-subtle);
     border: 1px solid var(--border);
@@ -869,47 +870,9 @@
     min-width: 100px;
   }
 
-  /* ── Overlap section ──────────────────────────────────────────────────── */
-  .overlap-block {
-    border-top: 1px solid var(--border);
-    padding-top: 14px;
-  }
-  .overlap-title {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--text-faint);
-    margin-bottom: 10px;
-  }
-  .overlap-empty {
-    font-size: 13.5px;
-    color: var(--text-muted);
-  }
-  .overlap-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .overlap-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-    font-size: 13px;
-  }
-  .overlap-name {
-    font-weight: 600;
-    color: var(--text);
-  }
-  .overlap-dates {
-    margin-left: auto;
-    font-variant-numeric: tabular-nums;
-    color: var(--text-muted);
-    font-size: 12.5px;
-  }
-
   /* ── Review note input ────────────────────────────────────────────────── */
+  /* Shared with the retro-entry review dialog (out of scope, Issue #255) — the absence */
+  /* review dialog moved to LeaveReviewDialog.svelte, these did NOT become dead CSS. */
   .review-note-field {
     display: flex;
     flex-direction: column;
@@ -939,6 +902,8 @@
     border-color: var(--brand);
   }
 
+  /* Shared with the retro-entry review dialog (out of scope, Issue #255) — the absence */
+  /* review dialog moved to LeaveReviewDialog.svelte, these did NOT become dead CSS. */
   .footer-note {
     font-size: 12.5px;
     color: var(--text-muted);
