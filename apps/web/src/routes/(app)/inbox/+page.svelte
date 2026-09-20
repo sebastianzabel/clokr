@@ -11,22 +11,14 @@
   import ApprovalRow from "$components/ui/ApprovalRow.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
-  import { NEUTRAL_CHIP_LABEL } from "$lib/leave/team-calendar-visibility"; // Phase 262
+  import { LEAVE_TYPE_OPTIONS, type CalendarTypeCode } from "$lib/leave/team-calendar-visibility"; // Phase 262, Phase 255
+  import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
 
   // ── Types ────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
 
-  type TypeCode =
-    | "VACATION"
-    | "OVERTIME_COMP"
-    | "SPECIAL"
-    | "UNPAID"
-    | "SICK"
-    | "SICK_CHILD"
-    | "EDUCATION"
-    | "HOLIDAY"
-    | "MATERNITY"
-    | "PARENTAL";
+  // Phase 255: the union now lives with the colour/label table it belongs to.
+  type TypeCode = CalendarTypeCode;
 
   interface LeaveRequest {
     id: string;
@@ -42,18 +34,9 @@
     note: string | null;
     reviewNote: string | null;
     createdAt: string;
-  }
-
-  // typeCode/typeName are null when the server masks this caller from the absence type
-  // (Phase 262, D-01) — not a data error. Render a fallback for null, never "fix" it away.
-  interface OverlapEntry {
-    id: string;
-    employeeName: string;
-    typeCode: string | null;
-    typeName: string | null;
-    startDate: string;
-    endDate: string;
-    status: Status;
+    attestPresent: boolean;
+    attestValidFrom: string | null;
+    attestValidTo: string | null;
   }
 
   type TabKey = "open" | "approved" | "rejected" | "all";
@@ -79,21 +62,13 @@
 
   type RetroTabKey = "open" | "approved" | "rejected" | "all";
 
-  const TYPE_LABELS: Record<TypeCode, string> = {
-    VACATION: "Urlaub",
-    OVERTIME_COMP: "Überstundenausgleich",
-    SPECIAL: "Sonderurlaub",
-    EDUCATION: "Bildungsurlaub",
-    SICK: "Krankmeldung",
-    SICK_CHILD: "Kinderkrank",
-    UNPAID: "Unbezahlter Urlaub",
-    HOLIDAY: "Feiertag",
-    MATERNITY: "Mutterschutz",
-    PARENTAL: "Elternzeit",
-  };
-
-  function typeLabel(code: TypeCode): string {
-    return TYPE_LABELS[code] ?? code;
+  // LEAVE_TYPE_OPTIONS has no HOLIDAY entry (it is the nine-element set of types a
+  // LeaveRequest can actually carry — team-calendar-visibility.ts:106-108). typeName("HOLIDAY")
+  // would fall back to the raw code, but LeaveRequest.typeCode can never be HOLIDAY — that value
+  // exists only in CalendarTypeCode, for calendar holiday colouring (CONTEXT <deferred>,
+  // RESEARCH § Vocabulary Duplication). Measured gap, not a bug.
+  function typeName(code: TypeCode): string {
+    return LEAVE_TYPE_OPTIONS.find((t) => t.code === code)?.label ?? code;
   }
 
   // ── State ────────────────────────────────────────────────────────────────
@@ -102,14 +77,11 @@
   let error = $state("");
   let tab: TabKey = $state("open");
 
-  // Detail modal — Modal primitive owns Escape/backdrop/focus-trap.
+  // Detail modal — Phase 255: markup and mutation now live in the shared LeaveReviewDialog
+  // component; the page only keeps the two pieces of state that select which request is
+  // under review.
   let detailRequest: LeaveRequest | null = $state(null);
   let detailOpen = $state(false);
-  let detailOverlap: OverlapEntry[] = $state([]);
-  let detailLoadingOverlap = $state(false);
-  let reviewNote = $state("");
-  let reviewSaving = $state(false);
-  let reviewError = $state("");
 
   // ── RetroEntryRequest state ──────────────────────────────────────────────
   let retroRequests: RetroEntryRequest[] = $state([]);
@@ -206,60 +178,14 @@
   let kpiRejected = $derived(rejectedRequests.length);
 
   // ── Detail modal ─────────────────────────────────────────────────────────
-  async function openDetail(req: LeaveRequest) {
+  function openDetail(req: LeaveRequest) {
     detailRequest = req;
     detailOpen = true;
-    reviewNote = "";
-    reviewError = "";
-    detailOverlap = [];
-    detailLoadingOverlap = true;
-    try {
-      detailOverlap = await api.get<OverlapEntry[]>(
-        `/leave/overlap?startDate=${req.startDate}&endDate=${req.endDate}`,
-      );
-    } catch {
-      detailOverlap = [];
-    } finally {
-      detailLoadingOverlap = false;
-    }
-  }
-
-  function closeDetail() {
-    if (reviewSaving) return;
-    detailOpen = false;
-    detailRequest = null;
-    reviewError = "";
-  }
-
-  async function submitReview(status: "APPROVED" | "REJECTED") {
-    if (!detailRequest) return;
-    reviewSaving = true;
-    reviewError = "";
-    try {
-      await api.patch(`/leave/requests/${detailRequest.id}/review`, {
-        status,
-        reviewNote: reviewNote || null,
-      });
-      detailOpen = false;
-      detailRequest = null;
-      await loadRequests();
-    } catch (e: unknown) {
-      const apiErr = e as { data?: { error?: string }; message?: string };
-      reviewError = apiErr?.data?.error ?? apiErr?.message ?? "Fehler";
-    } finally {
-      reviewSaving = false;
-    }
-  }
-
-  function isSelfApproval(req: LeaveRequest): boolean {
-    return req.employeeId === $authStore.user?.employeeId;
   }
 
   function isRetroSelfApproval(req: RetroEntryRequest): boolean {
     return req.employeeId === $authStore.user?.employeeId;
   }
-
-  let approvedOverlap = $derived(detailOverlap.filter((o) => o.status === "APPROVED"));
 
   // ── Retro derived: filtered lists + KPI ──────────────────────────────────
   let retroOpenRequests = $derived(retroRequests.filter((r) => r.status === "PENDING"));
@@ -508,7 +434,7 @@
         onclick={() => openDetail(req)}
       >
         {#snippet metaContent()}
-          <span class="chip chip-brand">{typeLabel(req.typeCode)}</span>
+          <span class="chip chip-brand">{typeName(req.typeCode)}</span>
           {#if req.status === "CANCELLATION_REQUESTED"}
             <span class="chip chip-warn">Stornierung beantragt</span>
           {:else if req.status === "PENDING"}
@@ -536,7 +462,7 @@
               class="btn btn-primary sm"
               onclick={(e) => {
                 e.stopPropagation();
-                void openDetail(req);
+                openDetail(req);
               }}
             >
               Prüfen
@@ -546,7 +472,7 @@
               class="btn btn-ghost sm"
               onclick={(e) => {
                 e.stopPropagation();
-                void openDetail(req);
+                openDetail(req);
               }}>Details</button
             >
           {/if}
@@ -833,118 +759,13 @@
   </Modal>
 {/if}
 
-<!-- ── Leave detail modal ─────────────────────────────────────────────── -->
-{#if detailRequest}
-  <Modal
-    bind:open={detailOpen}
-    eyebrow={detailRequest.status === "CANCELLATION_REQUESTED"
-      ? "Stornierung prüfen"
-      : "Antrag prüfen"}
-    title={`${detailRequest.employee.firstName} ${detailRequest.employee.lastName}`}
-  >
-    <!-- Antragsdetails als MiniStats -->
-    <div class="mini-stat-grid">
-      <div class="mini-stat">
-        <span class="label">Art</span>
-        <span class="value">{typeLabel(detailRequest.typeCode)}</span>
-      </div>
-      <div class="mini-stat">
-        <span class="label">Zeitraum</span>
-        <span class="value mini-stat-value-md">
-          {fmtDate(detailRequest.startDate)} – {fmtDate(detailRequest.endDate)}
-        </span>
-      </div>
-      <div class="mini-stat">
-        <span class="label">Umfang</span>
-        <span class="value">{daysLabel(Number(detailRequest.days), detailRequest.halfDay)}</span>
-      </div>
-    </div>
-
-    {#if detailRequest.note}
-      <div class="note-block">
-        <div class="note-label">Anmerkung Mitarbeiter</div>
-        <div class="note-text">„{detailRequest.note}"</div>
-      </div>
-    {/if}
-
-    <!-- Team overlap -->
-    <div class="overlap-block">
-      <div class="overlap-title">Kolleg:innen im gleichen Zeitraum</div>
-      {#if detailLoadingOverlap}
-        <div class="overlap-empty">Lädt…</div>
-      {:else if approvedOverlap.length === 0}
-        <div class="overlap-empty">Niemand sonst abwesend ✓</div>
-      {:else}
-        <div class="overlap-list">
-          {#each approvedOverlap as o (o.id)}
-            <div class="overlap-row">
-              <span class="overlap-name">{o.employeeName}</span>
-              <span class="chip">{o.typeName ?? NEUTRAL_CHIP_LABEL}</span>
-              <span class="overlap-dates">
-                {fmtDate(o.startDate)} – {fmtDate(o.endDate)}
-              </span>
-            </div>
-          {/each}
-        </div>
-      {/if}
-    </div>
-
-    <!-- BUrlG § 7 callout -->
-    <div class="callout">
-      <span class="ico" aria-hidden="true">⚖</span>
-      <p>
-        <b>BUrlG § 7:</b> Urlaubsantrag muss zeitnah entschieden werden — gewährter Urlaub muss im laufenden
-        Jahr gewährt werden, andernfalls verfällt er gem. § 7 Abs. 3 zum 31.03. des Folgejahres.
-      </p>
-    </div>
-
-    <!-- Review note -->
-    <div class="review-note-field">
-      <label class="review-note-label" for="inbox-review-note">Anmerkung (optional)</label>
-      <input
-        id="inbox-review-note"
-        type="text"
-        class="review-note-input"
-        bind:value={reviewNote}
-        placeholder="Grund für Ablehnung o.ä."
-      />
-    </div>
-
-    {#if reviewError}
-      <div class="callout error" role="alert">
-        <span class="ico">⚠</span>
-        <p>{reviewError}</p>
-      </div>
-    {/if}
-
-    {#snippet footer()}
-      <button class="btn btn-ghost" onclick={closeDetail} disabled={reviewSaving}>
-        Abbrechen
-      </button>
-      <span class="spacer"></span>
-      {#if isSelfApproval(detailRequest)}
-        <span class="footer-note"> Eigene Anträge können nicht selbst genehmigt werden. </span>
-      {:else if detailRequest.status === "PENDING" || detailRequest.status === "CANCELLATION_REQUESTED"}
-        <button
-          class="btn btn-danger"
-          onclick={() => submitReview("REJECTED")}
-          disabled={reviewSaving}
-        >
-          {reviewSaving ? "…" : "Ablehnen"}
-        </button>
-        <button
-          class="btn btn-primary"
-          onclick={() => submitReview("APPROVED")}
-          disabled={reviewSaving}
-        >
-          {reviewSaving ? "…" : "Genehmigen"}
-        </button>
-      {:else}
-        <span class="footer-note">Antrag bereits entschieden.</span>
-      {/if}
-    {/snippet}
-  </Modal>
-{/if}
+<!-- ── Leave detail modal (Phase 255: the shared LeaveReviewDialog component) ──────── -->
+<LeaveReviewDialog
+  bind:open={detailOpen}
+  request={detailRequest}
+  currentEmployeeId={$authStore.user?.employeeId ?? null}
+  onReviewed={loadRequests}
+/>
 
 <style>
   /* ── KPI row ──────────────────────────────────────────────────────────── */
