@@ -6,6 +6,7 @@ import {
   seedTestData,
   cleanupTestData,
 } from "../../../../__tests__/setup";
+import { futureDateStr, nextWeekdayStr, dowOf } from "../../../../__tests__/test-dates";
 import type { FastifyInstance } from "fastify";
 
 /**
@@ -323,5 +324,135 @@ describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
     expect(employeeBId).toBeTruthy();
     expect(employeeCId).toBeTruthy();
     expect(templateId).toBeTruthy();
+  });
+
+  // ── #267, D-04/D-09 — own shift vs. earliest tenant shift ─────────────────
+  //
+  // The dashboard bug (267-RESEARCH.md § 1): apps/web/.../dashboard/+page.svelte:405-406
+  // reads GET /shifts/week (tenant-wide, sorted by date then startTime, NOT by
+  // employee) and takes `shifts.filter((s) => s.date.startsWith(today))[0]` as
+  // "todayShift" — the EARLIEST shift in the tenant that day, not the caller's own.
+  // GET /shifts/my-week already filters correctly on employeeId server-side.
+  //
+  // D-09 requires TWO people on the SAME day with the foreign shift starting
+  // EARLIER than the caller's own — a single-employee fixture would pass against
+  // the broken dashboard expression too and prove nothing.
+  describe("GET /api/v1/shifts/my-week — own shift vs. earliest tenant shift (#267, D-04/D-09)", () => {
+    // Deliberately outside the existing fixture's week (MONDAY_ISO/WEDNESDAY_ISO)
+    // so none of the six tests above are affected.
+    const LATE_DAY_ISO = nextWeekdayStr(futureDateStr(1));
+
+    beforeAll(async () => {
+      const prisma = app.prisma;
+      // Employee B (foreign): earlier shift, same day.
+      await prisma.shift.create({
+        data: {
+          employeeId: employeeBId,
+          date: new Date(LATE_DAY_ISO + "T00:00:00Z"),
+          startTime: "08:00",
+          endTime: "12:00",
+          label: "Fremde Fruehschicht",
+        },
+      });
+      // Employee A (caller): later shift, same day.
+      await prisma.shift.create({
+        data: {
+          employeeId: employeeAId,
+          date: new Date(LATE_DAY_ISO + "T00:00:00Z"),
+          startTime: "14:00",
+          endTime: "18:00",
+          label: "Eigene Spaetschicht",
+        },
+      });
+    });
+
+    it("fixture guard: target day is a weekday, and the foreign shift is genuinely earlier (#271, D-09)", async () => {
+      const dow = dowOf(LATE_DAY_ISO);
+      expect([1, 2, 3, 4, 5]).toContain(dow);
+
+      const dayShifts = await app.prisma.shift.findMany({
+        where: {
+          date: new Date(LATE_DAY_ISO + "T00:00:00Z"),
+          employeeId: { in: [employeeAId, employeeBId] },
+        },
+      });
+      expect(dayShifts).toHaveLength(2);
+
+      const foreign = dayShifts.find((s) => s.employeeId === employeeBId);
+      const own = dayShifts.find((s) => s.employeeId === employeeAId);
+      expect(foreign).toBeTruthy();
+      expect(own).toBeTruthy();
+      // If this ordering were lost, the next test could pass against the BROKEN
+      // dashboard expression too — the foreign shift MUST start earlier, or this
+      // fixture proves nothing about D-09.
+      expect(foreign!.startTime < own!.startTime).toBe(true);
+    });
+
+    it("GET /my-week returns the caller's OWN shift, not the foreign earlier one", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/shifts/my-week?date=${LATE_DAY_ISO}`,
+        headers: { authorization: `Bearer ${tokenA}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      const day = body.days.find((d: { date: string }) => d.date === LATE_DAY_ISO);
+
+      expect(day.ownShifts).toHaveLength(1);
+      expect(day.ownShifts[0].startTime).toBe("14:00");
+      expect(day.ownShifts[0].endTime).toBe("18:00");
+      expect(day.ownShifts[0].label).toBe("Eigene Spaetschicht");
+
+      // The foreign shift is genuinely PRESENT in the response (as a colleague),
+      // it just did not land in ownShifts — that combination is the proof.
+      expect(day.colleagues).toHaveLength(1);
+      expect(day.colleagues[0].startTime).toBe("08:00");
+      expect(day.colleagues[0].firstName).toBe("Bea");
+    });
+
+    it("the old dashboard expression (GET /week, earliest-in-tenant) returns the FOREIGN shift — living proof for D-05", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/shifts/week?date=${LATE_DAY_ISO}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+
+      // Rebuilt verbatim from dashboard/+page.svelte:405-406 (267-RESEARCH.md § 1):
+      // no employeeId filter, just a date-prefix match, then take the first
+      // (earliest-sorted) entry — reproducing the exact reported defect. This stays
+      // a living assertion instead of a comment, because a comment about a fixed
+      // defect can silently go stale — an assertion cannot.
+      const myShifts = body.shifts.filter((s: { date: string }) => s.date.startsWith(LATE_DAY_ISO));
+      const todayShift = myShifts.length > 0 ? myShifts[0] : null;
+
+      expect(todayShift).toBeTruthy();
+      expect(todayShift.startTime).toBe("08:00");
+      expect(todayShift.startTime).not.toBe("14:00");
+    });
+
+    it("GET /week already carries the foreign row itself — server-side scoping is the only fix, not a client filter", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/shifts/week?date=${LATE_DAY_ISO}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      const dayShifts = body.shifts.filter((s: { date: string }) =>
+        s.date.startsWith(LATE_DAY_ISO),
+      );
+
+      // /week ships employeeId per row — the caller COULD filter client-side, but
+      // that would only fix the display bug (D-04/D-05), never the tenant-wide
+      // data-disclosure part of the finding (D-06); server-side scoping is the
+      // only place that actually restricts what goes over the wire.
+      const foreignRow = dayShifts.find(
+        (s: { employeeId?: string }) => !!s.employeeId && s.employeeId !== employeeAId,
+      );
+      expect(foreignRow).toBeTruthy();
+      expect(foreignRow.employeeId).toBe(employeeBId);
+    });
   });
 });

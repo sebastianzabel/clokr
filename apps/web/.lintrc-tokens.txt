@@ -73,3 +73,12 @@ var(--gray-
 #
 # Modals, scrims, popovers, empty-state text and other non-card surfaces are
 # exempt — they are not part of the density-aware card surface system.
+
+# === FOREGROUND vs FILL: --leave-type-* (Phase 257, D-12) ===
+# `--leave-type-<x>` is a FILL. It is the background of an absence bar, a legend dot, and a
+# color-mix() calendar-cell tint (app.css .cal-abs-*). Never change one of those values to fix
+# text contrast — five other surfaces depend on them.
+# `--leave-type-<x>-text` is the FOREGROUND partner. Use it for `color:` only, never as a
+# background/border-color/fill. Every fill has exactly one partner, in both modes; adding a new
+# leave type means adding both.
+# Enforced by apps/web/src/__tests__/leave-chip-contrast.test.ts (>= 4.5:1, recomputed).

@@ -213,11 +213,14 @@
     teamWeek ? teamWeek.team.slice((teamPage - 1) * teamPageSize, teamPage * teamPageSize) : [],
   );
   let weekOffset = $state(0);
+  // Phase 267 (#267, D-04): shaped after `GET /shifts/my-week`'s `ownShifts[]`, which is already
+  // narrowed to the caller server-side. The former `template: { name, color }` is gone — /my-week
+  // returns `templateName`/`templateColor` flat, and the markup below renders only label,
+  // startTime and endTime anyway.
   let todayShift: {
     startTime: string;
     endTime: string;
     label: string | null;
-    template: { name: string; color: string } | null;
   } | null = $state(null);
 
   // Next personal absence
@@ -392,18 +395,29 @@
       // and should not surface in the employee's own dashboard.
       if (stats?.scheduleType === "SHIFT_BASED") {
         try {
-          const shiftData = await api.get<{
-            weekDays: string[];
-            shifts: Array<{
+          // Phase 267 (#267, D-04/D-05): this used to read the tenant-wide week endpoint, which
+          // answers with EVERY employee's shifts ordered by date then startTime — so `[0]` picked
+          // the earliest shift of the day in the salon rather than the caller's own. Live repro:
+          // a user whose shift ran 14:00–18:00 was shown a colleague's 08:00–12:00 one.
+          // `GET /shifts/my-week` has answered exactly this question since Phase 49; `ownShifts`
+          // is narrowed to the caller server-side, so there is nothing left to filter here.
+          // `days[].date` is a plain ISO day, hence `===` and not `startsWith`.
+          // Note: MyShiftsWeek.svelte fetches the same endpoint for the week strip below, so the
+          // page requests it twice. Left as-is deliberately — merging the two is a restructuring
+          // of the dashboard's data loading, not part of this fix.
+          const myWeek = await api.get<{
+            weekStart: string;
+            days: Array<{
               date: string;
-              startTime: string;
-              endTime: string;
-              label: string | null;
-              template: { name: string; color: string } | null;
+              ownShifts: Array<{
+                startTime: string;
+                endTime: string;
+                label: string | null;
+              }>;
             }>;
-          }>(`/shifts/week?date=${today}`);
-          const myShifts = shiftData.shifts.filter((s) => s.date.startsWith(today));
-          todayShift = myShifts.length > 0 ? myShifts[0] : null;
+          }>(`/shifts/my-week?date=${today}`);
+          const ownToday = myWeek.days.find((d) => d.date === today)?.ownShifts ?? [];
+          todayShift = ownToday.length > 0 ? ownToday[0] : null;
         } catch (err) {
           console.error("Failed to load today's shift:", err);
           todayShift = null;

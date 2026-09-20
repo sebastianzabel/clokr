@@ -316,8 +316,68 @@ describe("G6 — no redeclaration of the LeaveTypeCode vocabulary", () => {
       violations.length > 0
         ? violations.join("\n") +
           "\n\nThe vocabulary has exactly one declaration, the Prisma enum; import " +
-          'the type from "@clokr/db".'
+          'the type from "@clokr/db".\n' +
+          "If the type you are declaring is NOT that set — a display vocabulary with its own\n" +
+          "members, say — give it its own name and let G7 tie it to the enum instead (#269)."
         : "";
     expect(report).toBe("");
+  });
+});
+
+// ── G7 — the calendar display vocabulary stays tied to the enum ──────────────
+describe("G7 — CalendarTypeCode invents no codes", () => {
+  /**
+   * `apps/web/src/lib/leave/team-calendar-visibility.ts` declares `CalendarTypeCode`: the set of
+   * codes the team calendar can paint. It is deliberately NOT `LeaveTypeCode` — it drops members
+   * the calendar never paints and adds `HOLIDAY`, which is not a leave type at all — so G6 above
+   * correctly does not treat it as a redeclaration (#269).
+   *
+   * The web tree cannot import the real enum: `apps/web`'s image may not contain `packages/db`
+   * (`apps/web/Dockerfile` carries an explicit `test ! -e /app/packages/db` gate), and routing it
+   * through `@clokr/types` would drag the generated Prisma client into the web typecheck and trip
+   * that same gate. So the link between the two vocabularies cannot be the type system, and this
+   * assertion is what is left: every member except the documented synthetic ones must be a real
+   * enum member. A typo, a renamed enum member, or an invented code fails here.
+   *
+   * What this deliberately does NOT assert is completeness — the calendar is allowed to ignore
+   * enum members it never paints, which is the entire reason the two sets differ.
+   */
+  const CALENDAR_VISIBILITY = join(REPO_ROOT, "apps/web/src/lib/leave/team-calendar-visibility.ts");
+  /** Codes that exist in the calendar vocabulary but are not leave types. Adding to this list is
+   *  a decision, not a fix: each entry here is a code the enum can never validate. */
+  const SYNTHETIC_CODES = new Set(["HOLIDAY"]);
+
+  it("every CalendarTypeCode member except the documented synthetic ones is a real LeaveTypeCode", () => {
+    expect(
+      existsSync(CALENDAR_VISIBILITY),
+      `${relative(REPO_ROOT, CALENDAR_VISIBILITY)} is gone — if the calendar vocabulary moved, move this assertion with it instead of deleting it`,
+    ).toBe(true);
+
+    const src = readFileSync(CALENDAR_VISIBILITY, "utf-8");
+    const decl = src.match(/export type CalendarTypeCode\s*=([\s\S]*?);/);
+    expect(
+      decl,
+      "no `export type CalendarTypeCode = …` declaration found — a rename must carry this guard with it",
+    ).not.toBeNull();
+
+    const declared = [...decl![1].matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]);
+    // Anti-vacuity (CLAUDE.md § Anti-vacuity gate): an unparsed or emptied declaration would
+    // leave `declared` at [] and make every assertion below trivially true.
+    expect(declared.length, "parsed zero members out of CalendarTypeCode").toBeGreaterThan(0);
+
+    const schemaMembers = parseEnumMembers(readFileSync(SCHEMA_PATH, "utf-8"), "LeaveTypeCode");
+    const invented = declared.filter((c) => !SYNTHETIC_CODES.has(c) && !schemaMembers.includes(c));
+    expect(
+      invented,
+      `CalendarTypeCode contains ${invented.join(", ")}, which the LeaveTypeCode enum does not declare. Either it is a typo, or the enum member was renamed and this list was not.`,
+    ).toEqual([]);
+
+    // The synthetic list must stay honest too: a code listed as synthetic that IS in the enum
+    // would silently exempt a real member from the check above.
+    const notActuallySynthetic = [...SYNTHETIC_CODES].filter((c) => schemaMembers.includes(c));
+    expect(
+      notActuallySynthetic,
+      `${notActuallySynthetic.join(", ")} is listed as synthetic but exists in the enum — drop it from SYNTHETIC_CODES so it is checked`,
+    ).toEqual([]);
   });
 });
