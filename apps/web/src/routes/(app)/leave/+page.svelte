@@ -42,6 +42,7 @@
     vacationCardLabel,
   } from "$lib/leave/vacation-summary";
   import { SICK_TYPE_CODES } from "$lib/leave/leave-kind"; // Phase 201 (Issue #201, B)
+  import { NEUTRAL_CHIP_LABEL } from "$lib/leave/team-calendar-visibility"; // Phase 262
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -83,10 +84,13 @@
     lastDaysAdjustment?: LastDaysAdjustment | null;
   }
 
+  // typeCode/typeName are null when the server masks this caller from the absence type
+  // (Phase 262, D-01) — not a data error. Render a fallback for null, never "fix" it away.
   interface OverlapEntry {
     id: string;
     employeeName: string;
-    typeName: string;
+    typeCode: string | null;
+    typeName: string | null;
     startDate: string;
     endDate: string;
     status: Status;
@@ -1631,7 +1635,7 @@
                   {#each overlapEntries.filter((o) => o.status === "APPROVED") as o (o.id)}
                     <div class="overlap-row">
                       <span class="overlap-name">{o.employeeName}</span>
-                      <span class="overlap-type">abwesend</span>
+                      <span class="overlap-type">{o.typeName ?? NEUTRAL_CHIP_LABEL}</span>
                       <span class="overlap-dates"
                         >{fmtDate(o.startDate)} – {fmtDate(o.endDate)}</span
                       >

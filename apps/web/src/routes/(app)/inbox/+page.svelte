@@ -11,6 +11,7 @@
   import ApprovalRow from "$components/ui/ApprovalRow.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
+  import { NEUTRAL_CHIP_LABEL } from "$lib/leave/team-calendar-visibility"; // Phase 262
 
   // ── Types ────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -43,10 +44,13 @@
     createdAt: string;
   }
 
+  // typeCode/typeName are null when the server masks this caller from the absence type
+  // (Phase 262, D-01) — not a data error. Render a fallback for null, never "fix" it away.
   interface OverlapEntry {
     id: string;
     employeeName: string;
-    typeName: string;
+    typeCode: string | null;
+    typeName: string | null;
     startDate: string;
     endDate: string;
     status: Status;
@@ -875,7 +879,7 @@
           {#each approvedOverlap as o (o.id)}
             <div class="overlap-row">
               <span class="overlap-name">{o.employeeName}</span>
-              <span class="chip">{o.typeName}</span>
+              <span class="chip">{o.typeName ?? NEUTRAL_CHIP_LABEL}</span>
               <span class="overlap-dates">
                 {fmtDate(o.startDate)} – {fmtDate(o.endDate)}
               </span>

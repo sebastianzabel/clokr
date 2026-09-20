@@ -332,6 +332,26 @@ function formatDateDe(d: Date): string {
   return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`;
 }
 
+/**
+ * The ONE visibility decision behind an absence TYPE, shared by GET /overlap and GET /calendar
+ * (Phase 262, GitHub issue #262, D-06): may this viewer learn `typeCode`/`typeName` (and, for
+ * /calendar, `section9`/`section9Days`) for this entry, or must it be masked to `null`?
+ *
+ * The role comparison is exact and case-sensitive on purpose — mirrors the reasoning in
+ * `apps/web/src/lib/leave/team-calendar-visibility.ts`'s `canSeeLeaveType` (Phase 257, D-06 in
+ * 262-CONTEXT.md): the JWT carries the Prisma `Role` enum verbatim (`ADMIN` | `MANAGER` |
+ * `EMPLOYEE`), and a relaxed comparison (`toUpperCase()`, `includes()`) would let an unexpected
+ * value through on the PERMISSIVE side — the side that leaks.
+ *
+ * Deliberately module-private, NOT exported via `contexts/absence/index.ts`: no caller outside
+ * this file exists yet (D-15b). GitHub issue #267 (`GET /shifts/week`'s ungated "sick" bucket)
+ * is the case that would change that — making it public is issue #267's first task, not this
+ * one's, per "no generalization on spec" (ADR 0001).
+ */
+function canSeeLeaveType(isOwn: boolean, role: string | null | undefined): boolean {
+  return isOwn === true || role === "MANAGER" || role === "ADMIN";
+}
+
 export async function leaveRoutes(app: FastifyInstance) {
   // ── POST /requests  – Antrag stellen ────────────────────────────────────
   app.post("/requests", {
@@ -921,7 +941,10 @@ export async function leaveRoutes(app: FastifyInstance) {
           deletedAt: null,
           employee: { tenantId: req.user.tenantId },
           employeeId: { not: req.user.employeeId ?? "" },
-          status: { in: ["PENDING", "APPROVED"] },
+          // Phase 262 (D-05): APPROVED only — a colleague's not-yet-approved request no longer
+          // reaches a caller who cannot approve it. All three consumers filtered to APPROVED
+          // client-side already, so the unfiltered PENDING rows had no legitimate reader.
+          status: { in: ["APPROVED"] },
           startDate: { lte: end },
           endDate: { gte: start },
         },
@@ -932,11 +955,18 @@ export async function leaveRoutes(app: FastifyInstance) {
         orderBy: { startDate: "asc" },
       });
 
+      // Phase 262 (D-01/D-02/D-06): the same visibility decision /calendar uses, asked once per
+      // request rather than per row. `isOwn` is hard-coded `false` here — the `where` above
+      // already excludes the caller's own entries (`employeeId: { not: ... }`), so the isOwn
+      // branch is structurally dead on this endpoint; forcing it to `false` keeps the masking
+      // fail-safe (if that exclusion were ever removed, this would over-mask, never under-mask).
+      const canSeeType = canSeeLeaveType(false, req.user.role);
+
       return rows.map((r) => ({
         id: r.id,
         employeeName: `${r.employee.firstName} ${r.employee.lastName}`,
-        typeCode: r.leaveType.code,
-        typeName: r.leaveType.name,
+        typeCode: canSeeType ? r.leaveType.code : null,
+        typeName: canSeeType ? r.leaveType.name : null,
         startDate: r.startDate.toISOString().split("T")[0],
         endDate: r.endDate.toISOString().split("T")[0],
         status: r.status,
@@ -2191,8 +2221,6 @@ export async function leaveRoutes(app: FastifyInstance) {
         getHolidayMap(app.prisma, req.user.tenantId, start, end),
       ]);
 
-      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
-
       // Phase 104-10 (D-28/D-29): bulk-load § 9 credits overlapping the visible month — ONE
       // query, scoped to the tenant, so the per-row masking below never needs a query inside
       // `.map()`.
@@ -2247,7 +2275,7 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const leaveEntries = rows.map((r) => {
         const isOwn = r.employee.userId === req.user.sub;
-        const showDetails = isOwn || isManager;
+        const showDetails = canSeeLeaveType(isOwn, req.user.role);
         return {
           id: r.id,
           isOwn,
