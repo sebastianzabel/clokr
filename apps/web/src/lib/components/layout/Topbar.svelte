@@ -6,6 +6,7 @@
   import { avatarVersion } from "$stores/avatar";
   import { clearUnsaved } from "$stores/unsaved";
   import { api } from "$api/client";
+  import { fetchAvatarObjectUrl } from "$api/avatar";
   import LanguageToggle from "$lib/components/ui/LanguageToggle.svelte";
 
   interface Props {
@@ -32,20 +33,23 @@
     }
 
     let objectUrl: string | null = null;
-    fetch(`/api/v1/avatars/${empId}?v=${cacheBust}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-cache",
-    })
-      .then((r) => (r.ok ? r.blob() : null))
-      .then((blob) => {
-        if (blob) {
-          objectUrl = URL.createObjectURL(blob);
-          avatarSrc = objectUrl;
-        }
-      })
-      .catch(() => {});
+    let cancelled = false;
+    fetchAvatarObjectUrl(empId, token, cacheBust).then((url) => {
+      // The effect can re-run (or the component unmount) before this resolves — in that
+      // case the cleanup below has already run with objectUrl still null, so revoke here
+      // instead of leaking the URL that arrived too late.
+      if (cancelled) {
+        if (url) URL.revokeObjectURL(url);
+        return;
+      }
+      objectUrl = url;
+      // null is assigned deliberately: after bumpAvatarVersion() on a DELETE the server
+      // answers 204, and the previously shown avatar must disappear rather than linger.
+      avatarSrc = url;
+    });
 
     return () => {
+      cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   });

@@ -465,11 +465,14 @@
     line-height: 1;
     font-variant-numeric: tabular-nums;
   }
+  /* --good-text/--bad-text, not --good/--bad: those two are not redeclared in dark mode and
+     land at 2.70:1 / 2.62:1 on --bg-card. Same defect class Phase 97 fixed on the roster badge
+     below. */
   .saldo__confirmed-value--good {
-    color: var(--good);
+    color: var(--good-text);
   }
   .saldo__confirmed-value--bad {
-    color: var(--bad);
+    color: var(--bad-text);
   }
   .saldo__confirmed-value--neutral {
     color: var(--text);
@@ -635,7 +638,7 @@
     display: flex;
     align-items: center;
     gap: var(--s-2);
-    color: var(--bad);
+    color: var(--bad-text);
     font-size: 14px;
   }
   .saldo__subline {

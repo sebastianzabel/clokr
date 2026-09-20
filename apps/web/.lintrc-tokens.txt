@@ -48,6 +48,15 @@ var(--gray-
 # --gray-500, --gray-600 → --text-muted
 # --gray-700..900        → --text
 
+# === FOREGROUND vs FILL (Phase 258, D-05c) ===
+# --good / --bad are FILL colours (background, border, dot). They are deliberately NOT
+# redeclared under [data-mode="dark"], because they carry white text there
+# (.btn-danger, .tab-badge — app.css:400 / :999): white on #b42318 is 6.57:1, white on a
+# brightened #f87171 would be 2.77:1.
+# For TEXT use --good-text / --bad-text, which ARE dark-mode aware.
+#   color: var(--bad)        → color: var(--bad-text)
+#   background: var(--bad)   → unchanged
+
 # === DENSITY RULE (Phase 33-02, I18N-03) ===
 # Outer card padding MUST use `var(--pad-card)` so the density toggle affects it.
 # Interior spacing (gaps, header/body/foot padding INSIDE a card) uses `var(--s-*)`.

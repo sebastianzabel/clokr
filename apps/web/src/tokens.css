@@ -113,6 +113,14 @@ html[data-mode="dark"] {
   --bad-soft: rgba(180, 35, 24, 0.1);
   --star: #f59e0b;
 
+  /* Foreground-only variants of --good/--bad. Identical to --good/--bad in light mode, so
+     nothing changes here; the dark block below brightens them for text on --bg-card. They
+     exist as separate tokens because --good/--bad are ALSO used as backgrounds under white
+     text (.btn-danger, .tab-badge, app.css:400/999) — brightening those would break
+     white-on-red. Use these two for `color:`; keep the fill tokens above for backgrounds. */
+  --good-text: #2d6a4f;
+  --bad-text: #b42318;
+
   /* quick 260820-elk — Soll/Ist bar deficit hatch. The ONLY two colours in variant 1c
      with no existing token equivalent. Derived from --bad (#b42318) rather than a new
      hue so the deficit reads as the same "you are behind" signal as .mstat-value.neg. */
@@ -215,6 +223,15 @@ html[data-mode="dark"] {
   --good-soft: rgba(82, 183, 136, 0.16);
   --warn-soft: rgba(245, 158, 11, 0.16);
   --bad-soft: rgba(248, 113, 113, 0.14);
+
+  /* Phase 258 (D-05c) — --good/--bad are tuned for a white background and are NOT
+     redeclared in dark mode (they are background fills under white text). Their text
+     variants are: #2d6a4f on --bg-card #1f1827 measures 2.70:1 and #b42318 measures 2.62:1,
+     below WCAG's 3:1 large-text and 4.5:1 normal-text floors. The base colours below are the
+     ones this block already uses for --good-soft (#52b788) and --bad-soft (#f87171), so no
+     new hue enters the palette. Computed: 6.97:1 and 6.23:1 on #1f1827. */
+  --good-text: #52b788;
+  --bad-text: #f87171;
 
   /* quick 260820-elk — dark-mode hatch override. --bad itself is NOT re-declared in
      dark mode, so the light-mode hatch would be near-invisible on --bg-card: #1f1827.
