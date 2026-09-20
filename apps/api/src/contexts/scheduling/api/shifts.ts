@@ -773,8 +773,24 @@ export async function shiftRoutes(app: FastifyInstance) {
 
   // GET /week?date=YYYY-MM-DD — get all shifts for the week containing the date,
   // enriched with per-(employee × day) availability and per-day coverage stats.
+  //
+  // Threat coverage:
+  //   T-267-01 (Info Leak):    the response carries the `availability` bucket — "sick" is a
+  //     health datum under Art. 9 GDPR — for EVERY employee of the tenant to ANY authenticated
+  //     caller. GitHub Issue #267.
+  //   T-267-03 (Elevation):    requireRole("ADMIN", "MANAGER") makes the check server-side; the
+  //     `/shifts` and `/admin/shifts` pages only gated client-side before this
+  //     (shifts/+page.svelte:477-481, admin/shifts/+page.svelte:64-71) — defense in depth, no
+  //     behavior change for them.
+  //   T-267-09 (Tampering):    the gate covers the WHOLE endpoint, not one field — the #267
+  //     field sweep found every one of the eleven response fields (names, employeeNumber,
+  //     classification, contractSollMinutesByEmp, vocationalSchoolMinutesByEmp, …) to be
+  //     personnel or scheduling data; a second, role-conditional omit branch in the handler body
+  //     would be dead code no test could ever reach. The dashboard, the caller that made this
+  //     visible, now fetches its own shift via GET /my-week instead (Plan 04).
   app.get("/week", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req) => {
       // Phase 47.1 verify-check (2026-05-20): GET /week resolver merges APPROVED LeaveRequest
       // (deletedAt: null) + non-deleted Absence + EmployeeAvailability into availability map.
