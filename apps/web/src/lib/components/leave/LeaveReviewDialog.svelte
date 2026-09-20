@@ -72,15 +72,16 @@
   let collisionSummary = $state<CollisionSummary | null>(null);
   let pendingApprove = $state<{ id: string; typeCode: CalendarTypeCode } | null>(null);
 
-  // Modal.svelte sets `open = false` directly on Escape/backdrop with no callback of its own (see
-  // that component's doc comment). We observe the open transition ourselves instead — the
-  // established idiom, verbatim shape from ConfirmDialog.svelte:49-72 and
-  // RetroactiveBSWizard.svelte:52,69-74 — to (re)initialise on every false→true transition and
-  // fetch the overlap list the component now owns (D-01: neither page had another consumer of
-  // this fetch).
-  let prevOpen = $state(open);
+  // Re-initialise whenever the dialog is open with a request to show — including the very first
+  // mount with `open: true` already set, which is how every mounted test in this file renders the
+  // component (there is no earlier `false` state to transition FROM in that case). The idiom is
+  // the simpler of the two shapes RetroactiveBSWizard.svelte uses (`:52-61`, `if (open) { … }`,
+  // not its OTHER `prevOpen`-gated effect at `:69-74`): that second shape exists there only to
+  // fire an `onClose` callback on the close transition specifically, which this component does
+  // not need (D-02 — neither caller reacts to a dismiss). Modal.svelte sets `open = false` on
+  // Escape/backdrop directly with no callback of its own; nothing here needs to observe that.
   $effect(() => {
-    if (!prevOpen && open && request) {
+    if (open && request) {
       note = "";
       error = "";
       overlap = [];
@@ -102,7 +103,6 @@
           loadingOverlap = false;
         });
     }
-    prevOpen = open;
   });
 
   // ── Helpers ──────────────────────────────────────────────────────────────
