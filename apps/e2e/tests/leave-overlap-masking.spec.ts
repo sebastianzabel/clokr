@@ -248,7 +248,11 @@ test.describe("Phase 262 — /leave/overlap masks the absence type over the wire
 
     expect(rows.some((r) => r.typeCode === ABSENCE_TYPE)).toBe(true);
 
-    const type = page.locator(".overlap-row .overlap-type").first();
+    // Phase 255 (D-21): since both review strecken now render the same shared
+    // LeaveReviewDialog.svelte, the absence type uses the global .chip recipe on both — the
+    // former .overlap-type vs .chip divergence between /team/leave and /inbox is exactly the
+    // drift this phase removes.
+    const type = page.locator(".overlap-row .chip").first();
     await expect(type).toHaveText(ABSENCE_LABEL);
     await expect(type).not.toHaveText("abwesend");
   });

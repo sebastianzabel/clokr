@@ -26,10 +26,11 @@
     canSeeLeaveType,
     resolveChipVisual,
     LEAVE_TYPE_OPTIONS,
-    NEUTRAL_CHIP_LABEL,
+    SICK_CODES,
     type CalendarTypeCode,
   } from "$lib/leave/team-calendar-visibility"; // Phase 257, Phase 262, #269
   import { resolveAdjustmentBadge, type LastDaysAdjustment } from "$lib/leave/vacation-balance"; // Phase 107-07
+  import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -59,24 +60,10 @@
     lastDaysAdjustment?: LastDaysAdjustment | null;
   }
 
-  // typeCode/typeName are null when the server masks this caller from the absence type
-  // (Phase 262, D-01) — not a data error. Render a fallback for null, never "fix" it away.
-  interface OverlapEntry {
-    id: string;
-    employeeName: string;
-    typeCode: string | null;
-    typeName: string | null;
-    startDate: string;
-    endDate: string;
-    status: Status;
-  }
-
   // ── Konstanten ────────────────────────────────────────────────────────────
   function typeName(code: TypeCode): string {
     return LEAVE_TYPE_OPTIONS.find((t) => t.code === code)?.label ?? code;
   }
-
-  const SICK_CODES: TypeCode[] = ["SICK", "SICK_CHILD"];
 
   interface Employee {
     id: string;
@@ -91,18 +78,11 @@
   let loading = $state(true);
   let error = $state("");
 
-  // Review-Modal (Modal primitive owns Escape/backdrop/focus-trap)
+  // Review-Modal (Modal primitive owns Escape/backdrop/focus-trap) — Phase 255: markup and
+  // mutation now live in the shared LeaveReviewDialog component; the page only keeps the two
+  // pieces of state that select which request is under review.
   let reviewModal: LeaveRequest | null = $state(null);
   let reviewOpen = $state(false);
-  let reviewOverlap: OverlapEntry[] = $state([]);
-  let reviewNote = $state("");
-  let reviewSaving = $state(false);
-  let reviewError = $state("");
-
-  // Attest-State im Review-Modal
-  let reviewAttestPresent = $state(false);
-  let reviewAttestFrom = $state("");
-  let reviewAttestTo = $state("");
 
   // Korrektur-Modal (EDIT-05): Manager korrigiert einen bereits GENEHMIGTEN Antrag
   let correctModal: LeaveRequest | null = $state(null);
@@ -559,27 +539,11 @@
   });
 
   // ── Review-Modal ──────────────────────────────────────────────────────────
-  async function openReview(req: LeaveRequest) {
+  // Phase 255: the shared LeaveReviewDialog component owns the overlap fetch, the Attest
+  // prefill and the mutation itself — the page only selects which request is under review.
+  function openReview(req: LeaveRequest) {
     reviewModal = req;
     reviewOpen = true;
-    reviewNote = "";
-    reviewError = "";
-    reviewOverlap = [];
-    reviewAttestPresent = req.attestPresent ?? false;
-    reviewAttestFrom = req.attestValidFrom ?? "";
-    reviewAttestTo = req.attestValidTo ?? "";
-    try {
-      reviewOverlap = await api.get<OverlapEntry[]>(
-        `/leave/overlap?startDate=${req.startDate}&endDate=${req.endDate}`,
-      );
-    } catch {
-      /* ignore */
-    }
-  }
-
-  function closeReview() {
-    reviewOpen = false;
-    reviewModal = null;
   }
 
   // ── Korrektur-Modal (EDIT-05) ─────────────────────────────────────────────
@@ -684,93 +648,6 @@
       attestError = e instanceof Error ? e.message : "Fehler";
     } finally {
       attestSaving = false;
-    }
-  }
-
-  // ── Phase 87: appointment-collision warn-and-confirm on APPROVE ────────────
-  // The review Modal is already open on approve, so we SEQUENCE dialogs (never
-  // stack two scrims — Pitfall 5 / T-87-08): close the review Modal first, then
-  // open the collision ConfirmDialog whose confirm runs the APPROVED mutation.
-  let approveCollisionOpen = $state(false);
-  let approveCollisionSummary = $state<CollisionSummary | null>(null);
-  let pendingApprove = $state<{ id: string; typeCode: TypeCode } | null>(null);
-
-  async function submitReview(status: "APPROVED" | "REJECTED") {
-    if (!reviewModal) return;
-    // Pre-check only a genuine leave APPROVAL. A CANCELLATION_REQUESTED review
-    // shares this "APPROVED" path, but approving a cancellation makes the
-    // employee present again — booked appointments are a reason TO cancel, not a
-    // risk of proceeding — so the collision warning would be semantically
-    // inverted and is skipped. Reject is never gated either.
-    if (status === "APPROVED" && reviewModal.status !== "CANCELLATION_REQUESTED") {
-      const summary = await checkAppointmentCollisions({
-        employeeId: reviewModal.employeeId,
-        from: reviewModal.startDate,
-        to: reviewModal.endDate,
-      });
-      if (summary && summary.total > 0) {
-        pendingApprove = { id: reviewModal.id, typeCode: reviewModal.typeCode };
-        approveCollisionSummary = summary;
-        // Close the review Modal so exactly ONE scrim is live.
-        reviewOpen = false;
-        reviewModal = null;
-        approveCollisionOpen = true;
-        return;
-      }
-      if (summary === null) {
-        // Fail-open: proceed with the approval, surface a non-blocking notice.
-        toasts.error(COLLISION_UNAVAILABLE_TOAST);
-      }
-    }
-    await runReview(status, { id: reviewModal.id, typeCode: reviewModal.typeCode });
-  }
-
-  // Confirm handler for the collision dialog on the approve path. Throws on
-  // failure so the ConfirmDialog stays open (its documented contract).
-  async function confirmApproveWithCollisions() {
-    if (!pendingApprove) return;
-    const ok = await runReview("APPROVED", pendingApprove);
-    if (!ok) throw new Error("Genehmigung fehlgeschlagen");
-  }
-
-  // Shared review mutation. Returns true on success, false on failure (so the
-  // collision-confirm path can decide whether to keep its dialog open).
-  async function runReview(
-    status: "APPROVED" | "REJECTED",
-    ctx: { id: string; typeCode: TypeCode },
-  ): Promise<boolean> {
-    reviewSaving = true;
-    reviewError = "";
-    try {
-      await api.patch(`/leave/requests/${ctx.id}/review`, {
-        status,
-        reviewNote: reviewNote || null,
-      });
-      if (SICK_CODES.includes(ctx.typeCode)) {
-        // D-02 (Phase 104-10): deliberately left untouched — this is the pre-existing,
-        // consequence-free display toggle on legacy data of unknown quality. The § 9
-        // credit fires ONLY from the "AU liegt vor" dialog below; never wire this call
-        // to the § 9 confirm flow.
-        await api.patch(`/leave/requests/${ctx.id}/attest`, {
-          attestPresent: reviewAttestPresent,
-          attestValidFrom: reviewAttestPresent && reviewAttestFrom ? reviewAttestFrom : null,
-          attestValidTo: reviewAttestPresent && reviewAttestTo ? reviewAttestTo : null,
-        });
-      }
-      reviewOpen = false;
-      reviewModal = null;
-      pendingApprove = null;
-      await Promise.all([loadData(), loadCalendar()]);
-      return true;
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Fehler";
-      reviewError = msg;
-      // If the review Modal was already closed (collision-confirm path), the
-      // inline error is not visible — surface it via a toast instead.
-      if (!reviewModal) toasts.error(msg);
-      return false;
-    } finally {
-      reviewSaving = false;
     }
   }
 
@@ -1673,173 +1550,15 @@
   {/if}
 {/if}
 
-<!-- ── Review-Modal ─────────────────────────────────────────────────────────── -->
-<!-- Phase 73-04 testid strategy:
-     - When the request is a regular APPROVAL/REJECTION → testids use the
-       `leave-approval-modal-*` prefix.
-     - When the request is a CANCELLATION_REQUESTED review → testids use the
-       `leave-cancel-approval-modal-*` prefix (matches CLAUDE.md leave-cancellation
-       flow contract). The same component renders both states because the
-       multi-step flow is owned by the same modal in this codebase. -->
-{#if reviewModal}
-  <Modal
-    bind:open={reviewOpen}
-    eyebrow={reviewModal.status === "CANCELLATION_REQUESTED" ? "Stornierung" : "Antrag"}
-    title={reviewModal.status === "CANCELLATION_REQUESTED"
-      ? "Stornierungsantrag prüfen"
-      : "Antrag prüfen"}
-  >
-    <div
-      data-testid={reviewModal.status === "CANCELLATION_REQUESTED"
-        ? "leave-cancel-approval-modal"
-        : "leave-approval-modal"}
-      style="display: contents"
-    >
-      <!-- Antrag-Details -->
-      <div
-        class="review-grid"
-        data-testid={reviewModal.status === "CANCELLATION_REQUESTED"
-          ? "leave-cancel-approval-modal-summary"
-          : "leave-approval-modal-summary"}
-      >
-        <div class="review-field">
-          <span class="review-label">Mitarbeiter</span>
-          <span class="review-value"
-            >{reviewModal.employee.firstName} {reviewModal.employee.lastName}</span
-          >
-        </div>
-        <div class="review-field">
-          <span class="review-label">Art</span>
-          <span class="review-value">{typeName(reviewModal.typeCode)}</span>
-        </div>
-        <div class="review-field">
-          <span class="review-label">Zeitraum</span>
-          <span class="review-value font-mono"
-            >{fmtDate(reviewModal.startDate)} – {fmtDate(reviewModal.endDate)}</span
-          >
-        </div>
-        <div class="review-field">
-          <span class="review-label">Umfang</span>
-          <span class="review-value"
-            >{daysLabel(Number(reviewModal.days), reviewModal.halfDay)}</span
-          >
-        </div>
-        {#if reviewModal.note}
-          <div class="review-field review-field--full">
-            <span class="review-label">Anmerkung Mitarbeiter</span>
-            <span class="review-value">„{reviewModal.note}"</span>
-          </div>
-        {/if}
-      </div>
-
-      <!-- Parallele Abwesenheiten -->
-      <div class="overlap-box review-section">
-        <p class="overlap-title">Kolleg:innen im gleichen Zeitraum</p>
-        {#if reviewOverlap.filter((o) => o.status === "APPROVED").length === 0}
-          <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
-        {:else}
-          <div class="overlap-list">
-            {#each reviewOverlap.filter((o) => o.status === "APPROVED") as o (o.id)}
-              <div class="overlap-row">
-                <span class="overlap-name">{o.employeeName}</span>
-                <span class="overlap-type">{o.typeName ?? NEUTRAL_CHIP_LABEL}</span>
-                <span class="overlap-dates">{fmtDate(o.startDate)} – {fmtDate(o.endDate)}</span>
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
-
-      <!-- Attest (nur für Krankmeldungen) -->
-      {#if SICK_CODES.includes(reviewModal.typeCode)}
-        <div class="review-section">
-          <AttestFields
-            bind:present={reviewAttestPresent}
-            bind:validFrom={reviewAttestFrom}
-            bind:validTo={reviewAttestTo}
-            idPrefix="r"
-          />
-        </div>
-      {/if}
-
-      <!-- Review-Notiz -->
-      <div class="form-group review-section">
-        <label class="form-label" for="review-note">Anmerkung (optional)</label>
-        <input
-          id="review-note"
-          data-testid={reviewModal.status === "CANCELLATION_REQUESTED"
-            ? "leave-cancel-approval-modal-reason"
-            : "leave-approval-modal-reason"}
-          type="text"
-          bind:value={reviewNote}
-          class="form-input"
-          placeholder="Grund für Ablehnung o.ä."
-        />
-      </div>
-
-      {#if reviewError}
-        <div class="alert alert-error review-error" role="alert">
-          <span>⚠</span><span>{reviewError}</span>
-        </div>
-      {/if}
-    </div>
-    <!-- /leave-approval-modal body wrapper -->
-
-    {#snippet footer()}
-      <button
-        data-testid={reviewModal!.status === "CANCELLATION_REQUESTED"
-          ? "leave-cancel-approval-modal-close"
-          : "leave-approval-modal-close"}
-        class="btn btn-ghost"
-        onclick={closeReview}
-        disabled={reviewSaving}
-      >
-        Abbrechen
-      </button>
-      {#if reviewModal!.employeeId !== $authStore.user?.employeeId}
-        {#if reviewModal!.status === "CANCELLATION_REQUESTED"}
-          <button
-            data-testid="leave-cancel-approval-modal-reject"
-            class="btn btn-ghost"
-            onclick={() => submitReview("REJECTED")}
-            disabled={reviewSaving}
-          >
-            {reviewSaving ? "…" : "Stornierung ablehnen"}
-          </button>
-          <button
-            data-testid="leave-cancel-approval-modal-approve"
-            class="btn btn-danger"
-            onclick={() => submitReview("APPROVED")}
-            disabled={reviewSaving}
-          >
-            {reviewSaving ? "…" : "Stornierung genehmigen"}
-          </button>
-        {:else}
-          <button
-            data-testid="leave-approval-modal-reject"
-            class="btn btn-danger"
-            onclick={() => submitReview("REJECTED")}
-            disabled={reviewSaving}
-          >
-            {reviewSaving ? "…" : "Ablehnen"}
-          </button>
-          <button
-            data-testid="leave-approval-modal-approve"
-            class="btn btn-primary"
-            onclick={() => submitReview("APPROVED")}
-            disabled={reviewSaving}
-          >
-            {reviewSaving ? "…" : "Genehmigen"}
-          </button>
-        {/if}
-      {:else}
-        <p class="text-muted self-approval-note" data-testid="leave-approval-modal-self-block">
-          Eigene Anträge können nicht selbst genehmigt werden.
-        </p>
-      {/if}
-    {/snippet}
-  </Modal>
-{/if}
+<!-- ── Review-Modal (Phase 255: the shared LeaveReviewDialog component) ──────── -->
+<LeaveReviewDialog
+  bind:open={reviewOpen}
+  request={reviewModal}
+  currentEmployeeId={$authStore.user?.employeeId ?? null}
+  onReviewed={async () => {
+    await Promise.all([loadData(), loadCalendar()]);
+  }}
+/>
 
 <!-- ── Korrektur-Modal: Genehmigten Antrag korrigieren (EDIT-05) ─────────── -->
 {#if correctModal}
@@ -2073,21 +1792,6 @@
       </button>
     {/snippet}
   </Modal>
-{/if}
-
-<!-- ── Phase 87: Terminkollision-Warnung (Genehmigen) ─────────────────────── -->
-{#if approveCollisionSummary}
-  <ConfirmDialog
-    bind:open={approveCollisionOpen}
-    title="Kundentermine im Zeitraum gebucht"
-    confirmLabel="Trotzdem fortfahren"
-    cancelLabel="Abbrechen"
-    onConfirm={confirmApproveWithCollisions}
-  >
-    {#snippet body()}
-      <CollisionWarnBody summary={approveCollisionSummary} variant="range" />
-    {/snippet}
-  </ConfirmDialog>
 {/if}
 
 <!-- ── Phase 87: Terminkollision-Warnung (Abwesenheit anlegen) ────────────── -->
@@ -2370,50 +2074,6 @@
     margin: 0;
   }
 
-  /* ── Overlap ──────────────────────────────────────────────────────── */
-  .overlap-box {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    padding: 0.875rem 1rem;
-  }
-  .overlap-title {
-    font-size: 0.8125rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    margin: 0 0 0.5rem;
-  }
-  .overlap-empty {
-    font-size: 0.9375rem;
-    margin: 0;
-  }
-  .overlap-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-  .overlap-row {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-    font-size: 0.9375rem;
-  }
-  .overlap-name {
-    font-weight: 600;
-  }
-  .overlap-type {
-    color: var(--text-muted);
-    font-size: 0.875rem;
-  }
-  .overlap-dates {
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
-    margin-left: auto;
-  }
-
   /* ── Attest ───────────────────────────────────────────────────────── */
   .attest-dates {
     display: flex;
@@ -2590,12 +2250,10 @@
   .attest-date-input {
     max-width: 160px;
   }
+  /* Shared with the § 9 confirm modal, the correction modal and the standalone Attest modal —
+     NOT exclusive to the review dialog, which moved to LeaveReviewDialog.svelte (Phase 255). */
   .review-error {
     margin-top: 0.75rem;
-  }
-  .self-approval-note {
-    font-size: 0.875rem;
-    margin: 0 auto 0 0;
   }
   .attest-period {
     margin: 0 0 0.75rem;
@@ -2605,6 +2263,8 @@
   }
 
   /* ── Review Grid ──────────────────────────────────────────────────── */
+  /* Shared with the § 9 confirm modal, the correction modal and the standalone Attest modal —
+     NOT exclusive to the review dialog, which moved to LeaveReviewDialog.svelte (Phase 255). */
   .review-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -2618,9 +2278,6 @@
     display: flex;
     flex-direction: column;
     gap: 0.125rem;
-  }
-  .review-field--full {
-    grid-column: 1 / -1;
   }
   .review-label {
     font-size: 0.75rem;
@@ -2764,6 +2421,8 @@
     margin-left: 0.25rem;
     font-size: 0.75rem;
   }
+  /* Shared with the § 9 confirm modal, the correction modal and the standalone Attest modal —
+     NOT exclusive to the review dialog, which moved to LeaveReviewDialog.svelte (Phase 255). */
   .review-section {
     margin-top: 1.25rem;
   }
@@ -2835,9 +2494,6 @@
     }
     .pending-info {
       gap: 0.5rem;
-    }
-    .overlap-dates {
-      margin-left: 0;
     }
     .cal-chip-type {
       display: none;

@@ -115,6 +115,9 @@ const FALLBACK_VAR = "--leave-type-default";
 /** The neutral word an EMPLOYEE sees on a colleague's bar. German, user-facing. */
 export const NEUTRAL_CHIP_LABEL = "abwesend";
 
+/** The two sickness codes. Gates the Attest section (Phase 201) and the half-day block. */
+export const SICK_CODES: readonly CalendarTypeCode[] = ["SICK", "SICK_CHILD"];
+
 function entryFor(code: CalendarTypeCode): LeaveTypeEntry | undefined {
   return LEAVE_TYPES.find((t) => t.code === code);
 }
