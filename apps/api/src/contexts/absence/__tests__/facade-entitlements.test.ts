@@ -316,25 +316,39 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
       expect(found?.employeeId).toBe(data.employee.id);
     });
 
-    it("getVacationEntitlementByDisplayName returns null once the type is renamed away from 'Urlaub'", async () => {
+    it("the vacation entitlement is still found after the tenant renames the VACATION type (Issue #205, finding 2)", async () => {
       await app.prisma.leaveType.update({
         where: { id: data.vacationType.id },
         data: { name: "Jahresurlaub (umbenannt)" },
       });
       try {
-        const found = await getVacationEntitlementByDisplayName(
+        const found = await getVacationEntitlement(
           app.prisma,
           data.employee.id,
           data.tenant.id,
           year,
         );
-        expect(found).toBeNull();
+        expect(found).not.toBeNull();
+        expect(found?.entitlement).not.toBeNull();
+        expect(found?.entitlement?.employeeId).toBe(data.employee.id);
       } finally {
         await app.prisma.leaveType.update({
           where: { id: data.vacationType.id },
           data: { name: "Urlaub" },
         });
       }
+    });
+
+    it("the vacation entitlement is found the same way when the tenant never renamed the type (AK-5 twin)", async () => {
+      const found = await getVacationEntitlement(
+        app.prisma,
+        data.employee.id,
+        data.tenant.id,
+        year,
+      );
+      expect(found).not.toBeNull();
+      expect(found?.entitlement).not.toBeNull();
+      expect(found?.entitlement?.employeeId).toBe(data.employee.id);
     });
 
     it("getVacationEntitlementsForYearByDisplayName is tenant-wide and name-filtered", async () => {
