@@ -561,10 +561,19 @@ genuinely empty database, never a leftover one from a previous run.
 `apps/api/scripts/lint-e2e-spec-registry.json` is the checked-in, per-file answer for every one
 of the 24 files under `apps/e2e/tests/*.spec.ts`: `in-ci` (currently 5 — the three `e2e-ci`
 files above plus `axe-scan.spec.ts` and `visual.spec.ts`, each already running via their own
-dedicated CI job), `später-seed` (needs the seeded admin's `storageState`, not yet wired to this
-stack) or `später-datum` (breaks on a measured, named cause — a tightened `hireDate` validation,
-a tightened password policy, UI/testid drift, and others). A CI/pre-commit gate
-(`apps/api/scripts/lint-e2e-spec-registry.ts`) fails the build if any spec file is missing an
-entry, if an entry points at a file that no longer exists, or if a file that a CI-invoked
-Playwright project actually runs is not categorised `in-ci`. See
+dedicated CI job), `später-seed` (authenticates via the seeded admin's `storageState`, not yet
+wired to this stack) or `später-datum` (breaks on a measured, named cause — a tightened
+`hireDate` validation, a tightened password policy, UI/testid drift, and others). A
+CI/pre-commit gate (`apps/api/scripts/lint-e2e-spec-registry.ts`) fails the build if any spec
+file is missing an entry, if an entry points at a file that no longer exists, or if a file that
+a CI-invoked Playwright project actually runs is not categorised `in-ci`. See
 `apps/api/scripts/README.md` § Lint gates.
+
+**A later, one-off measurement (GitHub issue #281) ran all 24 files against this stack once via
+`desktop-chrome`/`mobile-chrome`/`tablet`** (Playwright's own full, `setup`-dependent projects,
+not the `e2e-ci` selection above) and found the `später-seed` category's stated blocker does not
+fully hold: two of its six files ran to completion with the seeded admin's `storageState` in
+place and failed for an unrelated, unmeasured reason instead. The register's `reason` field is
+each file's REASON FOR NOT BEING IN `e2e-ci` at the time it was written, not a live guarantee of
+what breaks it — issue #281 carries the measured, per-file detail; this document does not repeat
+it.
