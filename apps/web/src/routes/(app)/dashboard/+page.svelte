@@ -116,6 +116,11 @@
       | "holiday";
     workedHours: number;
     reason: string | null;
+    // Additive, rename-stable companions to `reason` (Issue #205, finding 3): leaveTypeCode
+    // comes from a tenant-renamable LeaveRequest, absenceType from the stable Absence path.
+    // Icon selection compares these, never `reason` — see the branch chain below.
+    leaveTypeCode: string | null;
+    absenceType: string | null;
     shift?: { startTime: string; endTime: string; label: string | null; color: string | null };
     isWorkday?: boolean;
     expectedHours?: number;
@@ -1802,16 +1807,16 @@
                       {:else if day.status === "absent"}
                         <span
                           class="cell-badge cell-badge--absent"
-                          class:cell-badge--bs={day.reason === "Berufsschule"}
+                          class:cell-badge--bs={day.absenceType === "VOCATIONAL_SCHOOL"}
                           title={day.reason ?? "Abwesend"}
                         >
-                          {#if day.reason === "Krankmeldung" || day.reason === "Kinderkrank"}
+                          {#if day.leaveTypeCode === "SICK" || day.absenceType === "SICK" || day.leaveTypeCode === "SICK_CHILD" || day.absenceType === "SICK_CHILD"}
                             <Icon name="medical" size={14} title={day.reason ?? "Krank"} />
-                          {:else if day.reason === "Mutterschutz"}
+                          {:else if day.leaveTypeCode === "MATERNITY" || day.absenceType === "MATERNITY"}
                             <Icon name="heart" size={14} title="Mutterschutz" />
-                          {:else if day.reason === "Elternzeit"}
+                          {:else if day.leaveTypeCode === "PARENTAL" || day.absenceType === "PARENTAL"}
                             <Icon name="users" size={14} title="Elternzeit" />
-                          {:else if day.reason === "Berufsschule"}
+                          {:else if day.absenceType === "VOCATIONAL_SCHOOL"}
                             <Icon name="graduation-cap" size={14} title="Berufsschule" />
                           {:else}
                             <Icon name="umbrella" size={14} title={day.reason ?? "Urlaub"} />
