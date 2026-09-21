@@ -284,6 +284,19 @@ jobs:
         # empty — see ADR 0001 Eintrag I.
         run: pnpm --filter @clokr/api exec tsx scripts/lint-guard-vacuity.ts --check 0
 
+      - name: Lint e2e spec registry (Issue #275 — D-07, every apps/e2e/tests/*.spec.ts file must have exactly one register entry)
+        # 22 of 24 e2e spec files ran nowhere — neither in CI nor locally — with no checked-in
+        # record anywhere of when a given file was even meant to run. Every spec file now carries
+        # exactly one entry in apps/api/scripts/lint-e2e-spec-registry.json (category `in-ci` /
+        # `später-datum` / `später-seed`, plus a mandatory written reason); this gate fails the
+        # build the instant that completeness is no longer true — a new spec file with no entry,
+        # a register entry pointing at a file that no longer exists, or an `in-ci` entry the
+        # e2e-ci/axe-scan/visual Playwright projects do not actually run (the concrete sub-case
+        # that produced Issue #275: a file believed to run in CI that no project executed). The
+        # check is on the INPUT set (spec files discovered), same discipline as the gate above.
+        # There is no "exception" concept here — every file gets exactly one category, never zero.
+        run: pnpm --filter @clokr/api exec tsx scripts/lint-e2e-spec-registry.ts --check
+
       - name: Lint saldo-lock periodStart derivation (Issue #241 — five sites found by hand)
         # A periodType:"MONTHLY" SaldoSnapshot where-comparison on periodStart whose value does
         # not trace back to monthRangeUtc() is the exact defect class of #241 (three route gates

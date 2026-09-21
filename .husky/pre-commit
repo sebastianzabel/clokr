@@ -18,4 +18,12 @@ pnpm --filter @clokr/web lint:ui --staged || exit 1
 # whole-hook cost the owner accepted.
 pnpm --filter @clokr/api exec tsx scripts/lint-guard-vacuity.ts --check 0 || exit 1
 
+# One-shot lint:e2e-spec-registry (Phase 275 Plan 04, Issue #275, D-07). Full-repo, not
+# staged-only — a commit adding one new apps/e2e/tests/*.spec.ts file still needs the gate to see
+# the FULL directory listing, which a staged-files-only invocation structurally cannot do (same
+# reasoning as the lint-guard-vacuity line above). ~0.5s measured on this machine for the tool
+# alone (`time pnpm --filter @clokr/api exec tsx scripts/lint-e2e-spec-registry.ts --check`,
+# averaged over 3 runs, this plan's own measurement).
+pnpm --filter @clokr/api exec tsx scripts/lint-e2e-spec-registry.ts --check || exit 1
+
 pnpm exec lint-staged
