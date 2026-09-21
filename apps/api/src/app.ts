@@ -31,6 +31,7 @@ import { tokenCleanupPlugin } from "./contexts/platform/plugins/token-cleanup";
 import { vocationalSchoolGeneratorPlugin } from "./contexts/absence/plugins/vocational-school-generator";
 import { schoolHolidaysSyncPlugin } from "./contexts/platform/plugins/school-holidays-sync";
 import { autoCloseMonthPlugin } from "./contexts/working-time-account/plugins/auto-close-month";
+import { deferredMonthCloseReminderPlugin } from "./contexts/working-time-account/plugins/deferred-month-close-reminder";
 import { storagePlugin } from "./contexts/platform/plugins/storage";
 import multipart from "@fastify/multipart";
 import { notificationRoutes } from "./contexts/platform/api/notifications";
@@ -265,6 +266,7 @@ export async function buildApp() {
   await app.register(vocationalSchoolGeneratorPlugin);
   await app.register(schoolHolidaysSyncPlugin);
   await app.register(autoCloseMonthPlugin);
+  await app.register(deferredMonthCloseReminderPlugin);
   await app.register(multipart, { limits: { fileSize: 2 * 1024 * 1024 } });
   await app.register(storagePlugin);
 

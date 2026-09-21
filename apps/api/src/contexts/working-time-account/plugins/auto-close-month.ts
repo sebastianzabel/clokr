@@ -5,16 +5,29 @@ import { getHolidays, STATE_MAP } from "../../platform";
 import { periodStartWindow } from "../snapshot-period";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared pure saldo core
-import { findMissingWorkdays } from "../find-missing-workdays"; // Phase 76.26 — schedule-model-aware gap detector
+import { detectMonthGaps } from "../month-gap-check"; // Phase 292 (#292) — the shared gap definition
+import {
+  MONTH_CLOSE_DEFERRAL_RELATED_TYPE,
+  blockedSetFingerprint,
+  monthCloseDeepLink,
+  monthLabelDe,
+  oldestMonth,
+} from "../month-close-notification"; // Phase 292 (#292) — shared naming/linking/dedup
+import {
+  DEFAULT_RETRO_ENTRY_WINDOW_DAYS,
+  buildMonthRange,
+  computeFirstOpenMonth,
+  computePrevMonthInLoop,
+  isMonthPastItsWindow,
+} from "../month-close-window"; // Phase 292 (#292) — shared with deferred-month-close.ts
 import { getCarryOverBase } from "../carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
 import {
-  getWorkedEntriesInRange,
   getValidWorkedEntriesInRange,
   lockEntriesForMonth,
   getEffectiveSchedule,
   findUnconfirmedBreakDays, // Phase 92 Plan 04 — BREAK-05 single source of truth
-} from "../../time-tracking"; // Phase 100B Plan 08 — T2/T1/T7; Phase 101B wave 8 merged in
+} from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7; Phase 101B wave 8 merged in
 import {
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
   getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
@@ -58,125 +71,12 @@ export const autoCloseMonthPlugin = fp(async (app) => {
   const tasks: ScheduledTask[] = [];
 
   // ── Month-step helpers ────────────────────────────────────────────────────────
-
-  /**
-   * Compute the previous month (with year wrap: Jan → Dec of prior year).
-   * Used inside the backward loop to step between months.
-   */
-  function computePrevMonthInLoop(month: number, year: number): { month: number; year: number } {
-    if (month === 1) return { month: 12, year: year - 1 };
-    return { month: month - 1, year };
-  }
-
-  /**
-   * Build an ordered list of { year, month } keys from firstOpen to ceiling (both inclusive),
-   * oldest-first. Returns empty if firstOpen > ceiling.
-   *
-   * The loop iterates by stepping month+1 and wrapping Dec→Jan. This handles cross-year
-   * ranges without any special-casing at the call site.
-   */
-  function buildMonthRange(
-    firstOpen: { year: number; month: number },
-    ceiling: { year: number; month: number },
-  ): Array<{ year: number; month: number }> {
-    const result: Array<{ year: number; month: number }> = [];
-    let cur = { ...firstOpen };
-    // Safety: max 60 months to prevent runaway loops
-    let guard = 0;
-    while (guard++ < 60) {
-      // Stop if cur > ceiling
-      if (cur.year > ceiling.year || (cur.year === ceiling.year && cur.month > ceiling.month)) {
-        break;
-      }
-      result.push({ ...cur });
-      // Advance to next month
-      if (cur.month === 12) {
-        cur = { year: cur.year + 1, month: 1 };
-      } else {
-        cur = { year: cur.year, month: cur.month + 1 };
-      }
-    }
-    return result;
-  }
-
-  /**
-   * Compute the first open month for an employee: max(hireMonth, lastSnapshotMonth+1).
-   * Returns null if the employee has no hire date (shouldn't happen in practice).
-   */
-  function computeFirstOpenMonth(
-    hireDate: Date,
-    lastSnap: { periodStart: Date } | null,
-    tz: string,
-  ): { year: number; month: number } | null {
-    // TZ-normalize hireDate to get the calendar month in tenant timezone
-    const hireDateStr = dateStrInTz(hireDate, tz);
-    const [hireYearStr, hireMonthStr] = hireDateStr.split("-");
-    const hireYear = parseInt(hireYearStr, 10);
-    const hireMonth = parseInt(hireMonthStr, 10); // 1-based
-
-    if (lastSnap === null) {
-      // No prior snapshot → start from hire month
-      return { year: hireYear, month: hireMonth };
-    }
-
-    // lastSnap.periodStart is a @db.Date — extract year and month from it.
-    // The periodStart may be TZ-converted (e.g. 2026-05-31 for June/Berlin) or
-    // UTC-naive (2026-06-01). Use the UTC date part and add 2 days then extract month
-    // to handle the TZ-shifted case — but more robustly, use the actual monthRangeUtc
-    // window convention (the periodStart's UTC date is ≤ the nominal month start).
-    // Since lastSnap is the newest active snapshot (found by orderBy:desc), its periodStart
-    // tells us which calendar month was last closed. The next open month = that month + 1.
-    const psDate = lastSnap.periodStart;
-    const psMidMonthDate = new Date(psDate.getTime() + 15 * 24 * 60 * 60 * 1000); // +15d → definitely in the correct month
-    const psMidMonthStr = dateStrInTz(psMidMonthDate, tz);
-    const [snapYearStr, snapMonthStr] = psMidMonthStr.split("-");
-    const snapYear = parseInt(snapYearStr, 10);
-    const snapMonth = parseInt(snapMonthStr, 10); // 1-based
-
-    // Next open month = snapMonth + 1 (with year wrap)
-    let nextYear = snapYear;
-    let nextMonth = snapMonth + 1;
-    if (nextMonth === 13) {
-      nextMonth = 1;
-      nextYear += 1;
-    }
-
-    // Return max(hireMonth, nextMonth) in chronological order
-    if (nextYear > hireYear || (nextYear === hireYear && nextMonth >= hireMonth)) {
-      return { year: nextYear, month: nextMonth };
-    }
-    return { year: hireYear, month: hireMonth };
-  }
-
-  /**
-   * Returns true when today (in the given tenant timezone) is AT or AFTER day N of month M+1
-   * (the "window close" date for month M). Returns false while employees can still self-service.
-   *
-   * Decision matrix:
-   *   - today is still in month M or earlier → false (window not yet open)
-   *   - today is in month M+1 and todayDay < retroWindowDays → false (within window)
-   *   - today is in month M+1 and todayDay >= retroWindowDays → true (at/after day N)
-   *   - today is after month M+1 → true (long past window; old backfill)
-   *
-   * Handles Dec→Jan year rollover for M+1. Uses tenant-TZ dateStrInTz — never UTC math.
-   */
-  function isMonthPastItsWindow(
-    monthYear: number,
-    monthNum: number,
-    tz: string,
-    retroWindowDays: number,
-  ): boolean {
-    const todayStr = dateStrInTz(new Date(), tz); // YYYY-MM-DD in tenant TZ
-    const ty = parseInt(todayStr.slice(0, 4), 10);
-    const tm = parseInt(todayStr.slice(5, 7), 10);
-    const td = parseInt(todayStr.slice(8, 10), 10);
-    const wm = monthNum === 12 ? 1 : monthNum + 1; // window-close month (M+1)
-    const wy = monthNum === 12 ? monthYear + 1 : monthYear;
-    if (ty < wy) return false; // today is before M+1 → still within window
-    if (ty === wy && tm < wm) return false; // today is still in M or earlier → within window
-    if (ty === wy && tm === wm) return td >= retroWindowDays; // in M+1: check day N
-    return true; // today is after M+1 → long past window
-  }
+  //
+  // Phase 292 (GitHub issue #292): `computePrevMonthInLoop`, `buildMonthRange`,
+  // `computeFirstOpenMonth` and `isMonthPastItsWindow` moved to `../month-close-window.ts`.
+  // They are now shared with `../deferred-month-close.ts`, which has to decide which months are
+  // past their window using EXACTLY this arithmetic — a second derivation would report a
+  // deferral this loop does not have, or miss one it does.
 
   async function tryAutoCloseMonth() {
     const now = new Date();
@@ -218,10 +118,23 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           },
         });
 
-        // Get managers for notifications
-        const managers = employees.filter(
-          (e) => e.user.role === "ADMIN" || e.user.role === "MANAGER",
-        );
+        // Get managers for notifications.
+        //
+        // Phase 292 (GitHub issue #292): this used to be `employees.filter(role is ADMIN/MANAGER)`
+        // — and `employees` above is filtered by `isTimeTrackingExempt: false`, because that is
+        // the right filter for deciding WHOSE month to close. It is the wrong filter for deciding
+        // WHO to tell. A § 18 ArbZG-exempt owner or manager — the normal shape for the person who
+        // actually runs the Monatsabschluss — was silently not a recipient, so on such a tenant
+        // the "Monatsabschluss nicht möglich" notification was written for nobody at all. Measured
+        // while building the test fixture for #292: with an exempt ADMIN as the only manager, zero
+        // notifications were created. Recipients are therefore selected by ROLE only.
+        const managers = await app.prisma.employee.findMany({
+          where: {
+            tenantId: tenant.id,
+            user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+          },
+          include: { user: true },
+        });
 
         const missing: {
           employee: (typeof employees)[0];
@@ -310,102 +223,41 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               if (emp.hireDate > monthEnd) continue;
 
               // ── Per-month gap readiness check ──────────────────────────────────
-              // Re-uses the same findMissingWorkdays logic as before, scoped to THIS month.
-              // D-01: MONTHLY_HOURS and FLEXTIME have no daily gap rule.
+              // Phase 292 (GitHub issue #292): the fetch + findMissingWorkdays body moved to
+              // `../month-gap-check.ts`. `detectMonthGaps()` is now the ONE definition of "gap"
+              // that this loop and the deferral escalation (`../deferred-month-close.ts`) share —
+              // see its docblock for what counts, in particular that an entry without a clock-out
+              // is NOT an entry here and its day therefore IS a gap.
               const scheduleForMonth = emp.workSchedules.find((ws) => ws.validFrom <= monthEnd);
 
               if (scheduleForMonth) {
-                const acmScheduleTypeSt = String(scheduleForMonth.type);
-                const isFlexible =
-                  acmScheduleTypeSt === "MONTHLY_HOURS" || acmScheduleTypeSt === "FLEXTIME";
+                const gapCheck = await detectMonthGaps(app.prisma, {
+                  tenantId: tenant.id,
+                  employeeId: emp.id,
+                  hireDate: emp.hireDate,
+                  schedule: scheduleForMonth as unknown as Record<string, unknown>,
+                  month: monthKey,
+                  tz,
+                  stateCode: acmStateCode,
+                });
 
-                if (!isFlexible) {
-                  // Fetch entries and leave/absences for this month
-                  // Phase 100B Plan 08 — T2, contexts/time-tracking facade.
-                  const rdEntries = await getWorkedEntriesInRange(
-                    app.prisma,
-                    { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
-                    monthStart,
-                    monthEnd,
-                  );
-                  const rdEntryDates = new Set(rdEntries.map((e) => dateStrInTz(e.date, tz)));
-
-                  // Phase 100B Plan 13 — A1, contexts/absence facade.
-                  const rdApprovedLeave = await getApprovedLeaveOverlapping(
-                    app.prisma,
-                    { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
-                    monthStart,
-                    monthEnd,
-                  );
-                  // Phase 100B Plan 12 — A4, contexts/absence facade.
-                  const rdAbsences = await getAbsencesOverlapping(
-                    app.prisma,
-                    { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
-                    monthStart,
-                    monthEnd,
-                  );
-
-                  // Pre-compute holiday date strings for this specific month
-                  const monthHolidayDateStrings = new Set<string>(
-                    getHolidays(monthKey.year, acmStateCode).map((h) => h.date),
-                  );
-                  const monthDbHolidays = await app.prisma.publicHoliday.findMany({
-                    where: { tenantId: tenant.id, date: { gte: monthStart, lte: monthEnd } },
-                  });
-                  for (const h of monthDbHolidays) {
-                    monthHolidayDateStrings.add(dateStrInTz(h.date, tz));
-                  }
-
-                  // For SHIFT_BASED: fetch rosterDates (Shift.date set) — pitfall A4 fix.
-                  // Phase 100B Plan 05 — S1, contexts/scheduling facade.
-                  let rdRosterDates: Set<string> | undefined;
-                  if (acmScheduleTypeSt === "SHIFT_BASED") {
-                    const empShifts = await getShiftsInRange(
-                      app.prisma,
-                      { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
-                      monthFirstDay,
-                      monthLastDay,
-                    );
-                    rdRosterDates = new Set(empShifts.map((sh) => dateStrInTz(sh.date, tz)));
-                  }
-
-                  // effectiveStart = max(hireDate, monthFirstDay) — TZ-normalised (CLOSE-04).
-                  const rdHireDateNorm = new Date(dateStrInTz(emp.hireDate, tz) + "T00:00:00Z");
-                  const rdEffectiveStart =
-                    rdHireDateNorm > monthFirstDay ? rdHireDateNorm : monthFirstDay;
-
-                  const rdGapResult = findMissingWorkdays({
-                    schedule: scheduleForMonth as Record<string, unknown>,
-                    effectiveStart: rdEffectiveStart,
-                    effectiveEnd: monthLastDay,
-                    tz,
-                    entryDates: rdEntryDates,
-                    approvedLeave: rdApprovedLeave.map((lr) => ({
-                      startDate: lr.startDate,
-                      endDate: lr.endDate,
-                      halfDay: Boolean(lr.halfDay),
-                    })),
-                    absences: rdAbsences.map((ab) => ({
-                      startDate: ab.startDate,
-                      endDate: ab.endDate,
-                      halfDay: ab.halfDay,
-                    })),
-                    holidayDateStrings: monthHolidayDateStrings,
-                    rosterDates: rdRosterDates,
-                  });
-
-                  const missingDates = rdGapResult.gaps.map((g) => g.date);
+                // gapRuleApplies === false for MONTHLY_HOURS / FLEXTIME (D-01) — such an
+                // employee can never be gap-blocked, whatever their entries look like.
+                if (gapCheck.gapRuleApplies) {
+                  const missingDates = gapCheck.gapDates;
 
                   if (missingDates.length > 0) {
                     // Phase 76.29 Plan 04 — Variante A (Tag-N-Fenster):
                     // Read real typed TenantConfig fields (column added by Plan 01).
-                    const retroWindowDays = tenant.config?.retroEntryWindowDays ?? 10;
+                    const retroWindowDays =
+                      tenant.config?.retroEntryWindowDays ?? DEFAULT_RETRO_ENTRY_WINDOW_DAYS;
                     const closeAllowed = tenant.config?.closeMonthWithGapsAllowed ?? true;
                     const pastWindow = isMonthPastItsWindow(
                       monthKey.year,
                       monthKey.month,
                       tz,
                       retroWindowDays,
+                      now,
                     );
 
                     if (!pastWindow) {
@@ -869,17 +721,43 @@ export const autoCloseMonthPlugin = fp(async (app) => {
             return `${name} (${m.month}/${m.year}): ${dates}`;
           });
 
-          const monthName = new Date(
-            `${prevYear}-${String(prevMonth).padStart(2, "0")}-15`,
-          ).toLocaleDateString("de-DE", { month: "long", year: "numeric" });
+          // Phase 292 (GitHub issue #292): name and link the OLDEST blocked month, not the
+          // ceiling month of the backfill range. See month-close-notification.ts — the old title
+          // reported `prevMonth`, which for a months-old deferral is a month that closed fine.
+          const blockedMonth = oldestMonth(missing.map((m) => ({ year: m.year, month: m.month })));
+          const monthName = monthLabelDe(blockedMonth);
+          const link = monthCloseDeepLink(blockedMonth);
+
+          // Phase 292: one notification per CHANGE of the blocked set, not one per run. The
+          // recurring duty belongs to the weekly MONTH_CLOSE_DEFERRED escalation
+          // (plugins/deferred-month-close-reminder.ts) — repeating an identical message every
+          // morning is what made this state invisible in the first place.
+          const fingerprint = blockedSetFingerprint(
+            missing.map((m) => ({ employeeId: m.employee.id, year: m.year, month: m.month })),
+          );
 
           for (const mgr of managers) {
+            const alreadyOpen = await app.prisma.notification.findFirst({
+              where: {
+                userId: mgr.user.id,
+                type: "MONTH_CLOSE_BLOCKED",
+                relatedType: MONTH_CLOSE_DEFERRAL_RELATED_TYPE,
+                relatedId: fingerprint,
+                dismissedAt: null,
+              },
+              select: { id: true },
+            });
+            if (alreadyOpen) continue;
+
             await app.notify({
               userId: mgr.user.id,
               type: "MONTH_CLOSE_BLOCKED",
               title: `Monatsabschluss ${monthName} nicht möglich`,
               message: `Fehlende Zeiteinträge:\n${lines.join("\n")}`,
-              link: "/admin/month-close",
+              link,
+              tenantId: tenant.id,
+              relatedType: MONTH_CLOSE_DEFERRAL_RELATED_TYPE,
+              relatedId: fingerprint,
             });
           }
 
