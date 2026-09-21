@@ -750,11 +750,24 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               // Check all 12 months are closed
               const yearStart = new Date(`${prevYear}-01-01T00:00:00Z`);
               const yearEnd = new Date(`${prevYear}-12-31T23:59:59Z`);
+
+              // MONTHLY read filter ONLY — tenant-TZ-aware (Issue #242). yearStart/yearEnd
+              // above stay naive UTC on purpose: they are the STORED identity of the YEARLY
+              // snapshot written below AND the value the idempotency guard a few lines up
+              // (:741-744) searches for. Unifying the two (the ticket's literal proposal)
+              // would write future YEARLY rows at a different instant, the guard would stop
+              // matching them, and an already-closed year could be closed a second time —
+              // unattended, per employee (CLAUDE.md § Audit-Proof / Revisionssicherheit).
+              // For a Europe/Berlin tenant, MONTHLY periodStart is the tenant-local month
+              // start, e.g. January's is stored as `${prevYear - 1}-12-31` — before the
+              // naive yearStart above, so the naive filter silently dropped January.
+              const { start: monthlyRangeStart } = monthRangeUtc(prevYear, 1, tz);
+              const { end: monthlyRangeEnd } = monthRangeUtc(prevYear, 12, tz);
               const monthSnapshots = await app.prisma.saldoSnapshot.findMany({
                 where: {
                   employeeId: emp.id,
                   periodType: "MONTHLY",
-                  periodStart: { gte: yearStart, lte: yearEnd },
+                  periodStart: { gte: monthlyRangeStart, lte: monthlyRangeEnd },
                   superseded: false,
                 },
                 orderBy: { periodStart: "asc" },

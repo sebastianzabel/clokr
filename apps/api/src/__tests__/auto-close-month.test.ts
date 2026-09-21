@@ -1042,21 +1042,42 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
      * Seed MONTHLY SaldoSnapshots for the given employee for each month in `months`.
      * Uses monthRangeUtc with Europe/Berlin so periodStart matches exactly what
      * tryAutoCloseMonth() expects for the findFirst({ employeeId, periodType, periodStart, superseded:false }) lookup.
+     *
+     * `opts.valuesFor` (#242) lets a caller assign a DISTINGUISHABLE workedMinutes/
+     * expectedMinutes/carryOver triple per month. Without this, every seeded month is
+     * identical (the pre-#242 default below), so a filter that silently drops one month
+     * changes nothing observable — "which months were aggregated" is only testable when
+     * a missing or extra month provably changes the sum. Optional and defaulted to the
+     * original placeholder values so the two existing callers are unaffected.
      */
-    async function seedMonthlySnapshots(employeeId: string, year: number, months: number[]) {
+    async function seedMonthlySnapshots(
+      employeeId: string,
+      year: number,
+      months: number[],
+      opts?: {
+        valuesFor?: (month: number) => {
+          workedMinutes: number;
+          expectedMinutes: number;
+          carryOver: number;
+        };
+      },
+    ) {
       const tz = "Europe/Berlin";
       for (const month of months) {
         const { start, end } = monthRangeUtc(year, month, tz);
+        const values = opts?.valuesFor
+          ? opts.valuesFor(month)
+          : { workedMinutes: 8 * 60 * 21, expectedMinutes: 8 * 60 * 21, carryOver: 0 }; // placeholder: 21 working days × 8h
         await app.prisma.saldoSnapshot.create({
           data: {
             employeeId,
             periodType: "MONTHLY",
             periodStart: start,
             periodEnd: end,
-            workedMinutes: 8 * 60 * 21, // placeholder: 21 working days × 8h
-            expectedMinutes: 8 * 60 * 21,
+            workedMinutes: values.workedMinutes,
+            expectedMinutes: values.expectedMinutes,
             balanceMinutes: 0,
-            carryOver: 0,
+            carryOver: values.carryOver,
             closedAt: new Date(),
             closedBy: "test-system",
             superseded: false,
@@ -1096,14 +1117,31 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     });
 
     it("edge cases — full-year hire still needs all months", async () => {
-      // Sanity check: full-year employee with only 11 closed months must NOT get a
-      // YEARLY snapshot (regardless of hireDate-aware fix). This ensures the fix
-      // doesn't accidentally lower the bar for full-year employees.
+      // Sanity check: a full-year employee with a genuinely missing month must NOT get a
+      // YEARLY snapshot. This ensures the fix doesn't accidentally lower the bar for
+      // full-year employees.
+      //
+      // Issue #242: this test used to seed months 1-11 and was green for the WRONG reason.
+      // With the naive UTC year window, January's tenant-local periodStart (stored as
+      // `2023-12-31` for Europe/Berlin) fell outside the range, so only TEN rows were
+      // counted, not eleven. Once #242 made the range tenant-TZ-aware, eleven were counted
+      // AND the monthly loop in the same run closed the missing December itself -> twelve,
+      // and the YEARLY snapshot was created. The assertion below is unchanged; only the
+      // fixture is re-founded so the situation it claims to test actually occurs: the
+      // missing month sits in the MIDDLE of the year, where the monthly loop cannot reach
+      // it. See the seeding comment below.
       const tenant = await createEdgeTenant("fyr");
       const { empId, userId } = await createEdgeEmployee(tenant.id, new Date("2024-01-01"));
 
-      // Seed only 11 months — December 2024 intentionally missing.
-      await seedMonthlySnapshots(empId, 2024, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+      // Seed eleven months with a gap in the MIDDLE — June 2024 missing, December present.
+      //
+      // The gap must not be a trailing one. The monthly loop closes every open month from
+      // the first gap up to prevMonth (buildMonthRange, :78-90), so any missing November or
+      // December is filled during the very same run and the set reaches twelve. Because
+      // computeFirstOpenMonth() starts from the LAST snapshot, a mid-year gap is invisible
+      // to that loop: firstOpen becomes January 2025, which is past the December 2024
+      // ceiling, so nothing is closed and June stays missing.
+      await seedMonthlySnapshots(empId, 2024, [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]);
 
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date("2025-01-16T06:00:00.000Z"));
@@ -1114,12 +1152,132 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
         const yearly = await app.prisma.saldoSnapshot.findFirst({
           where: { employeeId: empId, periodType: "YEARLY", superseded: false },
         });
-        // 11 months < expectedMonths=12 → no YEARLY snapshot yet
+        // 11 closed months, June still missing → 11 < expectedMonths=12 → no YEARLY yet
         expect(yearly).toBeNull();
       } finally {
         vi.useRealTimers();
         await cleanupTestData(app, tenant.id);
       }
+    });
+
+    describe("Jahresabschluss — Mandanten-Zeitzone (#242)", () => {
+      // Per-month values that are DISTINGUISHABLE (see seedMonthlySnapshots' opts.valuesFor
+      // docblock above): a missing OR an extra month changes the aggregated sum, which is
+      // what makes "which months were counted" observable at all. Arbitrary but deterministic.
+      const valuesForMonth = (month: number) => ({
+        workedMinutes: 10_000 + month,
+        expectedMinutes: 10_000 + month,
+        carryOver: month * 100,
+      });
+
+      // Shared fixture: a fresh Europe/Berlin tenant + employee hired at the start of `year`,
+      // with all twelve months of `year` seeded with distinguishable values, system time moved
+      // to January 16 of `year + 1` (the cron's own "run the year-close block" condition —
+      // prevMonth === 12). Each test owns its own tenant/timers; nothing is shared ACROSS tests.
+      async function seedFullYearAndAdvanceClock(suffix: string) {
+        // The test year is read from the REAL clock, before vi.useFakeTimers() below — a
+        // hardcoded year is a time bomb once it expires (docs/testing.md, project history on
+        // stale fixed-date fixtures).
+        const year = new Date().getUTCFullYear() - 1;
+
+        const tenant = await createEdgeTenant(suffix);
+        const { empId, userId } = await createEdgeEmployee(
+          tenant.id,
+          new Date(`${year}-01-01T00:00:00Z`),
+        );
+
+        await seedMonthlySnapshots(empId, year, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], {
+          valuesFor: valuesForMonth,
+        });
+
+        vi.useFakeTimers({ toFake: ["Date"] }); // NOT toFake:"all" — full fake-timer mode kills
+        // the Postgres pool keepalive (RESEARCH.md). NOT CLOKR_TEST_FAKE_CLOCK either — that can
+        // only shift the wall-clock time WITHIN today, which is structurally incapable of a
+        // year rollover (docs/testing.md § Reproducing year-rollover date bugs).
+        vi.setSystemTime(new Date(`${year + 1}-01-16T06:00:00.000Z`));
+
+        return { year, tenant, empId, userId };
+      }
+
+      it("counts all twelve months of a Europe/Berlin tenant — January AND December", async () => {
+        const { year, tenant, empId } = await seedFullYearAndAdvanceClock("tz1");
+        try {
+          await app.tryAutoCloseMonth();
+
+          const yearly = await app.prisma.saldoSnapshot.findFirst({
+            where: { employeeId: empId, periodType: "YEARLY", superseded: false },
+          });
+
+          // HEUTE rot: the naive UTC yearStart/yearEnd filter excludes January (its
+          // periodStart, ${year}-12-31 in the DB for a Europe/Berlin tenant, is stored
+          // BEFORE the naive lower bound) → 11 months < expectedMonths=12 → no YEARLY
+          // snapshot is ever created → this is null.
+          expect(yearly).not.toBeNull();
+
+          const expectedWorkedSum = Array.from({ length: 12 }, (_, i) => i + 1).reduce(
+            (sum, m) => sum + valuesForMonth(m).workedMinutes,
+            0,
+          );
+          // All twelve months must be aggregated — January AND December.
+          expect(yearly!.workedMinutes).toBe(expectedWorkedSum);
+          // carryOver is threaded from the DECEMBER snapshot specifically.
+          expect(yearly!.carryOver).toBe(valuesForMonth(12).carryOver);
+
+          // D-01 guard (bar of the same assertion as the dedicated "stays naive" test
+          // below, repeated here so this test's own red output shows the full picture):
+          // the STORED periodStart of the YEARLY snapshot stays the naive UTC year
+          // boundary on purpose — Issue #242, CONTEXT D-01.
+          expect(yearly!.periodStart.toISOString().slice(0, 10)).toBe(`${year}-01-01`);
+        } finally {
+          vi.useRealTimers();
+          await cleanupTestData(app, tenant.id);
+        }
+      });
+
+      it("keeps the YEARLY snapshot's stored periodStart naive UTC (D-01 guard)", async () => {
+        const { year, tenant, empId } = await seedFullYearAndAdvanceClock("tz2");
+        try {
+          await app.tryAutoCloseMonth();
+
+          const yearly = await app.prisma.saldoSnapshot.findFirst({
+            where: { employeeId: empId, periodType: "YEARLY", superseded: false },
+          });
+          expect(yearly).not.toBeNull();
+
+          // This is the assertion that the D-01 separation exists to protect. Whoever
+          // makes yearStart itself tenant-TZ-aware (the ticket's literal proposal) gets
+          // `${year - 1}-12-31` here instead of `${year}-01-01`, and a red test — because
+          // that also moves the value the idempotency guard a few lines below
+          // `auto-close-month.ts:742` searches for, letting an already-closed year be
+          // closed a second time, unattended (CLAUDE.md § Audit-Proof, Issue #242).
+          expect(yearly!.periodStart.toISOString().slice(0, 10)).toBe(`${year}-01-01`);
+        } finally {
+          vi.useRealTimers();
+          await cleanupTestData(app, tenant.id);
+        }
+      });
+
+      it("does not create a second YEARLY snapshot on a second cron run (idempotency guard)", async () => {
+        const { tenant, empId } = await seedFullYearAndAdvanceClock("tz3");
+        try {
+          // Today this is red for the WRONG reason: the first run creates no YEARLY
+          // snapshot at all (11 < 12 months found), so the count after two runs is 0,
+          // not 1 — `0 !== 1` fails the same way `1 !== 1` would once the filter is
+          // fixed. Its real assertion (the guard finds and skips an EXISTING snapshot on
+          // the second run) only becomes meaningful after Task 2's fix makes the first
+          // run succeed. Recorded here per the plan (D-01/D-05) rather than left silent.
+          await app.tryAutoCloseMonth();
+          await app.tryAutoCloseMonth();
+
+          const yearlyCount = await app.prisma.saldoSnapshot.count({
+            where: { employeeId: empId, periodType: "YEARLY", superseded: false },
+          });
+          expect(yearlyCount).toBe(1);
+        } finally {
+          vi.useRealTimers();
+          await cleanupTestData(app, tenant.id);
+        }
+      });
     });
   });
 });

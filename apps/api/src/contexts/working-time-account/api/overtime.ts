@@ -1528,6 +1528,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
+      const tz = await getTenantTimezone(app.prisma, employee.tenantId);
+
       // Year range
       const yearStart = new Date(`${year}-01-01T00:00:00Z`);
       const yearEnd = new Date(`${year}-12-31T23:59:59Z`);
@@ -1550,30 +1552,58 @@ export async function overtimeRoutes(app: FastifyInstance) {
       }
 
       // Check all 12 months are closed
+      //
+      // MONTHLY read filter ONLY — tenant-TZ-aware (Issue #242). yearStart/yearEnd above stay
+      // naive UTC on purpose: they are the STORED identity of the YEARLY snapshot written below
+      // AND the value the idempotency guard a few lines up (:1544) searches for. Unifying the
+      // two (the ticket's literal proposal) would write future YEARLY rows at a different
+      // instant, the guard would stop matching them, and an already-closed year could be closed
+      // a second time — unattended (CLAUDE.md § Audit-Proof / Revisionssicherheit). For a
+      // Europe/Berlin tenant, MONTHLY periodStart is the tenant-local month start, e.g.
+      // January's is stored as `${year - 1}-12-31` — before the naive yearStart above, so the
+      // naive filter silently dropped January.
+      const { start: monthlyRangeStart } = monthRangeUtc(year, 1, tz);
+      const { end: monthlyRangeEnd } = monthRangeUtc(year, 12, tz);
       const monthSnapshots = await app.prisma.saldoSnapshot.findMany({
         where: {
           employeeId,
           periodType: "MONTHLY",
-          periodStart: { gte: yearStart, lte: yearEnd },
+          periodStart: { gte: monthlyRangeStart, lte: monthlyRangeEnd },
           superseded: false,
         },
         orderBy: { periodStart: "asc" },
       });
 
-      if (monthSnapshots.length < 12) {
-        const closedMonths = monthSnapshots.map((s) => new Date(s.periodStart).getUTCMonth() + 1);
-        const missing = Array.from({ length: 12 }, (_, i) => i + 1).filter(
-          (m) => !closedMonths.includes(m),
-        );
+      // Assign each of the twelve calendar months its own snapshot in the tenant timezone,
+      // rather than deriving the month number from the stored periodStart with getUTCMonth().
+      // The stored periodStart of a MONTHLY snapshot is tenant-local midnight converted to UTC,
+      // so for a tenant ahead of UTC it lands in the PREVIOUS month — getUTCMonth() + 1 named
+      // every month one too low and reported a missing January as "Fehlend: 12" (Issue #242).
+      // isPeriodStartInMonth covers both storage conventions found in production (TZ-converted
+      // and naive) and is robust against the @db.Date truncation; no hand-rolled UTC-offset
+      // arithmetic (CONTEXT D-03).
+      const monthsOfYear = Array.from({ length: 12 }, (_, i) => i + 1).map((month) => ({
+        month,
+        snapshot:
+          monthSnapshots.find((s) =>
+            isPeriodStartInMonth(s.periodStart, monthRangeUtc(year, month, tz).start),
+          ) ?? null,
+      }));
+      const missing = monthsOfYear.filter((m) => m.snapshot === null).map((m) => m.month);
+      if (missing.length > 0) {
         return reply.code(400).send({
           error: `Nicht alle Monate abgeschlossen. Fehlend: ${missing.join(", ")}`,
         });
       }
+      // Exactly the twelve month-assigned snapshots — NOT the raw query result, which may also
+      // contain a following year's already-closed January (its periodStart passes the same
+      // naive-or-TZ-aware range filter; Issue #242 Test 4).
+      const yearMonthSnapshots = monthsOfYear.map((m) => m.snapshot!);
 
       // Calculate yearly totals from monthly snapshots
-      const yearWorked = monthSnapshots.reduce((s, m) => s + m.workedMinutes, 0);
-      const yearExpected = monthSnapshots.reduce((s, m) => s + m.expectedMinutes, 0);
-      const yearBalance = monthSnapshots.reduce((s, m) => s + m.balanceMinutes, 0);
+      const yearWorked = yearMonthSnapshots.reduce((s, m) => s + m.workedMinutes, 0);
+      const yearExpected = yearMonthSnapshots.reduce((s, m) => s + m.expectedMinutes, 0);
+      const yearBalance = yearMonthSnapshots.reduce((s, m) => s + m.balanceMinutes, 0);
 
       // Last month's carryOver = cumulative balance through year-end
       //
@@ -1588,7 +1618,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
       // or, worse, incorrectly re-apply it if some future refactor ever loosened the "only at
       // the head" rule. The opening balance therefore reaches the yearly figure transitively
       // through the monthly chain it aggregates, never directly.
-      const decemberSnapshot = monthSnapshots[monthSnapshots.length - 1];
+      const decemberSnapshot = yearMonthSnapshots[11];
       const finalCarryOver = decemberSnapshot.carryOver;
 
       // Apply carry-over rules from tenant config
