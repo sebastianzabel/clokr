@@ -1,9 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import iconv from "iconv-lite";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  configureDatevKanzlei,
+} from "../../__tests__/setup";
 import { computeOvertimeBalanceHours } from "../../contexts/time-tracking/api/time-entries";
 import * as pdfUtils from "../pdf";
+import { DATEV_BWD_SATZ_ID } from "../reports";
 import { leaveTypeFields } from "../../contexts/absence/leave-type";
 
 // Phase 97 (D-11, Task 3): the two vacation-overview PDF handlers only expose their
@@ -59,6 +66,7 @@ describe("Reports API", () => {
 
     beforeAll(async () => {
       datevData = await seedTestData(app, "dv");
+      await configureDatevKanzlei(app, datevData.tenant.id);
 
       await app.prisma.timeEntry.create({
         data: {
@@ -161,8 +169,10 @@ describe("Reports API", () => {
       const body = iconv.decode(res.rawPayload, "win1252");
       expect(body).toContain("Ziel=LODAS");
       expect(body).toContain("Version_SST=1.0");
-      expect(body).toContain("BeraterNr=0");
-      expect(body).toContain("MandantenNr=0");
+      // Issue #256 (Befund 3): the pair configured by this fixture's
+      // configureDatevKanzlei() call, not the old hardcoded 0/0.
+      expect(body).toContain("BeraterNr=28547");
+      expect(body).toContain("MandantenNr=90909");
       expect(body).toContain("Datumsangaben=DDMMJJJJ");
     });
 
@@ -349,6 +359,7 @@ describe("Reports API", () => {
 
     beforeAll(async () => {
       d13Data = await seedTestData(app, "dv13");
+      await configureDatevKanzlei(app, d13Data.tenant.id);
     });
 
     afterAll(async () => {
@@ -384,7 +395,9 @@ describe("Reports API", () => {
       const body = await datevBody("/api/v1/reports/datev?year=2026&month=4", d13Data.adminToken);
       const lines = body.split(/\r\n/);
       const vacationLine = lines.find(
-        (l) => l.startsWith(`${d13Data.employee.employeeNumber};`) && l.includes(";U;300;"),
+        (l) =>
+          l.startsWith(`${DATEV_BWD_SATZ_ID};${d13Data.employee.employeeNumber};`) &&
+          l.includes(";U;300;"),
       );
       expect(vacationLine).toBeDefined();
       expect(vacationLine).toContain(";3,0;");
@@ -415,13 +428,17 @@ describe("Reports API", () => {
       const body = await datevBody("/api/v1/reports/datev?year=2026&month=4", d13Data.adminToken);
       const lines = body.split(/\r\n/);
       const specialLine = lines.find(
-        (l) => l.startsWith(`${d13Data.employee.employeeNumber};`) && l.includes(";S;302;"),
+        (l) =>
+          l.startsWith(`${DATEV_BWD_SATZ_ID};${d13Data.employee.employeeNumber};`) &&
+          l.includes(";S;302;"),
       );
       expect(specialLine).toBeDefined();
       expect(specialLine).toContain(";2,0;");
       // Not merged into the Urlaub Lohnart line from D13-1.
       const vacationLine = lines.find(
-        (l) => l.startsWith(`${d13Data.employee.employeeNumber};`) && l.includes(";U;300;"),
+        (l) =>
+          l.startsWith(`${DATEV_BWD_SATZ_ID};${d13Data.employee.employeeNumber};`) &&
+          l.includes(";U;300;"),
       );
       expect(vacationLine).toContain(";3,0;");
     });
@@ -468,7 +485,9 @@ describe("Reports API", () => {
       });
 
       const body = await datevBody("/api/v1/reports/datev?year=2026&month=4", d13Data.adminToken);
-      const lines = body.split(/\r\n/).filter((l) => l.startsWith(`${employee2.employeeNumber};`));
+      const lines = body
+        .split(/\r\n/)
+        .filter((l) => l.startsWith(`${DATEV_BWD_SATZ_ID};${employee2.employeeNumber};`));
       // Exactly one line for this employee: the unconditional "normal hours" row with
       // an empty Ausfallschlüssel — no U/S/K row was written for the code=null request.
       expect(lines.length).toBe(1);
@@ -477,7 +496,7 @@ describe("Reports API", () => {
       // The D13-1/D13-2 employee's rows are unaffected by this new, unrelated employee.
       const otherBody = body
         .split(/\r\n/)
-        .filter((l) => l.startsWith(`${d13Data.employee.employeeNumber};`));
+        .filter((l) => l.startsWith(`${DATEV_BWD_SATZ_ID};${d13Data.employee.employeeNumber};`));
       expect(otherBody.some((l) => l.includes(";U;300;") && l.includes(";3,0;"))).toBe(true);
       expect(otherBody.some((l) => l.includes(";S;302;") && l.includes(";2,0;"))).toBe(true);
     });
@@ -551,7 +570,9 @@ describe("Reports API", () => {
       });
 
       const body = await datevBody("/api/v1/reports/datev?year=2026&month=5", d13Data.adminToken);
-      const lines = body.split(/\r\n/).filter((l) => l.startsWith(`${employee3.employeeNumber};`));
+      const lines = body
+        .split(/\r\n/)
+        .filter((l) => l.startsWith(`${DATEV_BWD_SATZ_ID};${employee3.employeeNumber};`));
       // 5-day vacation minus the 2 credited days -> 3 remain as Urlaub.
       const vacationLine = lines.find((l) => l.includes(";U;300;"));
       expect(vacationLine).toContain(";3,0;");
@@ -573,6 +594,7 @@ describe("Reports API", () => {
 
     beforeAll(async () => {
       d210Data = await seedTestData(app, "d210");
+      await configureDatevKanzlei(app, d210Data.tenant.id);
       sickType = await app.prisma.leaveType.create({
         data: {
           tenantId: d210Data.tenant.id,
@@ -667,7 +689,7 @@ describe("Reports API", () => {
       );
       const lines = body
         .split(/\r\n/)
-        .filter((l) => l.startsWith(`${d210Data.employee.employeeNumber};`));
+        .filter((l) => l.startsWith(`${DATEV_BWD_SATZ_ID};${d210Data.employee.employeeNumber};`));
       const krankLines = lines.filter((l) => l.includes(";K;"));
       expect(krankLines.length).toBe(1);
       expect(krankLines[0]).toContain(";K;200;;3,0;");
@@ -709,7 +731,9 @@ describe("Reports API", () => {
         "/api/v1/reports/datev?year=2026&month=6",
         d210Data.adminToken,
       );
-      const lines = body.split(/\r\n/).filter((l) => l.startsWith(`${employee2.employeeNumber};`));
+      const lines = body
+        .split(/\r\n/)
+        .filter((l) => l.startsWith(`${DATEV_BWD_SATZ_ID};${employee2.employeeNumber};`));
       expect(lines.some((l) => l.includes(";K;201;;2,0;"))).toBe(true);
     });
 
@@ -775,7 +799,9 @@ describe("Reports API", () => {
         "/api/v1/reports/datev?year=2026&month=6",
         d210Data.adminToken,
       );
-      const lines = body.split(/\r\n/).filter((l) => l.startsWith(`${employee3.employeeNumber};`));
+      const lines = body
+        .split(/\r\n/)
+        .filter((l) => l.startsWith(`${DATEV_BWD_SATZ_ID};${employee3.employeeNumber};`));
       // 5 workdays sick, 3 of them credited back out of Urlaub — total Ausfalltage 5,
       // exactly the number of workdays in the period. Not 8,0 (double count via naive
       // addition), not 3,0 (loss of the two un-credited sick days).
@@ -846,7 +872,9 @@ describe("Reports API", () => {
         "/api/v1/reports/datev?year=2026&month=6",
         d210Data.adminToken,
       );
-      const lines = body.split(/\r\n/).filter((l) => l.startsWith(`${employee4.employeeNumber};`));
+      const lines = body
+        .split(/\r\n/)
+        .filter((l) => l.startsWith(`${DATEV_BWD_SATZ_ID};${employee4.employeeNumber};`));
       expect(lines.some((l) => l.includes(";K;200;;2,0;"))).toBe(true);
       expect(lines.some((l) => l.includes(";U;300;"))).toBe(false);
     });

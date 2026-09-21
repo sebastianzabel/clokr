@@ -146,38 +146,38 @@
   {
     "file": "apps/api/src/contexts/platform/api/settings.ts",
     "handler": "GET /api/v1/settings/work/:employeeId",
-    "validatedAt": 868,
+    "validatedAt": 882,
     "calls": [
       {
         "call": "workSchedule.findFirst",
-        "line": 881
+        "line": 895
       }
     ],
-    "reason": "Lines shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context working-time-account/recalculate-snapshots import, E-3) — no finding, mechanical only. employee is fetch-then-compared against req.user.tenantId at line 769; workSchedule.findFirst reuses the SAME validated employeeId immediately after (Phase 100 CR-01, mirrors the PUT handler below). Lines shifted -14 in Phase 243 Plan 02 Task 1's removal of the Abwesenheiten route blocks above (two import blocks, the vacationEntitlementSchema, and the two moved route bodies) plus one prettier-collapsed blank line left behind by the schema removal — no finding, mechanical only. (Previously shifted +6 in Phase 100B Plan 10's new import block.) Lines shifted +99 in issue #148 (the security-settings schema, defaults and projectSecuritySettings() hoisted to module scope above settingsRoutes so the audit row's oldValue can no longer list fewer fields than the request writes) — no finding, mechanical only."
+    "reason": "Lines shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context working-time-account/recalculate-snapshots import, E-3) — no finding, mechanical only. employee is fetch-then-compared against req.user.tenantId at line 783; workSchedule.findFirst reuses the SAME validated employeeId immediately after (Phase 100 CR-01, mirrors the PUT handler below). Lines shifted -14 in Phase 243 Plan 02 Task 1's removal of the Abwesenheiten route blocks above (two import blocks, the vacationEntitlementSchema, and the two moved route bodies) plus one prettier-collapsed blank line left behind by the schema removal — no finding, mechanical only. (Previously shifted +6 in Phase 100B Plan 10's new import block.) Lines shifted +99 in issue #148 (the security-settings schema, defaults and projectSecuritySettings() hoisted to module scope above settingsRoutes so the audit row's oldValue can no longer list fewer fields than the request writes) — no finding, mechanical only. Lines shifted +14 in issue #256 (Befund 3): the datevBeraterNr/datevMandantenNr Zod fields and their explanatory comment were added to tenantConfigSchema above this handler — no finding, mechanical only."
   },
   {
     "file": "apps/api/src/contexts/platform/api/settings.ts",
     "handler": "PUT /api/v1/settings/work/:employeeId",
-    "validatedAt": 909,
+    "validatedAt": 923,
     "calls": [
       {
         "call": "workSchedule.findFirst",
-        "line": 930
+        "line": 944
       },
       {
         "call": "workSchedule.findFirst",
-        "line": 1013
+        "line": 1027
       },
       {
         "call": "workSchedule.findFirst",
-        "line": 1087
+        "line": 1101
       },
       {
         "call": "workSchedule.findFirst",
-        "line": 1116
+        "line": 1130
       }
     ],
-    "reason": "Lines shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context working-time-account/recalculate-snapshots import, E-3) — no finding, mechanical only. employee is fetch-then-compared against req.user.tenantId at line 810; all four workSchedule.findFirst calls reuse the SAME validated employeeId at various points later in the same handler (orphan-shift detection, existing-row lookup, prior-workDays lookup). Lines shifted -14 in Phase 243 Plan 02 Task 1's removal of the Abwesenheiten route blocks above (two import blocks, the vacationEntitlementSchema, and the two moved route bodies) plus one prettier-collapsed blank line left behind by the schema removal — no finding, mechanical only. (Previously shifted +6 in Phase 100B Plan 10's new import block.) Lines shifted +99 in issue #148 (the security-settings schema, defaults and projectSecuritySettings() hoisted to module scope above settingsRoutes so the audit row's oldValue can no longer list fewer fields than the request writes) — no finding, mechanical only."
+    "reason": "Lines shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context working-time-account/recalculate-snapshots import, E-3) — no finding, mechanical only. employee is fetch-then-compared against req.user.tenantId at line 824; all four workSchedule.findFirst calls reuse the SAME validated employeeId at various points later in the same handler (orphan-shift detection, existing-row lookup, prior-workDays lookup). Lines shifted -14 in Phase 243 Plan 02 Task 1's removal of the Abwesenheiten route blocks above (two import blocks, the vacationEntitlementSchema, and the two moved route bodies) plus one prettier-collapsed blank line left behind by the schema removal — no finding, mechanical only. (Previously shifted +6 in Phase 100B Plan 10's new import block.) Lines shifted +99 in issue #148 (the security-settings schema, defaults and projectSecuritySettings() hoisted to module scope above settingsRoutes so the audit row's oldValue can no longer list fewer fields than the request writes) — no finding, mechanical only. Lines shifted +14 in issue #256 (Befund 3): the datevBeraterNr/datevMandantenNr Zod fields and their explanatory comment were added to tenantConfigSchema above this handler — no finding, mechanical only."
   },
   {
     "file": "apps/api/src/contexts/scheduling/api/shift-patterns.ts",

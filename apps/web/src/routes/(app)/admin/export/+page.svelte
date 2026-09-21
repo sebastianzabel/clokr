@@ -12,7 +12,7 @@
   // ── Tabs (Phase 58: separate "run an export" from "configure Lohnarten") ───
   const TABS = [
     { id: "export", label: "Export erstellen" },
-    { id: "konfiguration", label: "Lohnartennummern" },
+    { id: "konfiguration", label: "Konfiguration" },
   ];
   let activeTab = $state<string>("export");
 
@@ -26,12 +26,18 @@
     datevUrlaubNr?: number;
     datevKrankNr?: number;
     datevSonderurlaubNr?: number;
+    // Issue #256 (Befund 3) — no default: null means "not configured", and the export
+    // refuses to run rather than shipping the old hardcoded 0/0.
+    datevBeraterNr?: number | null;
+    datevMandantenNr?: number | null;
     [k: string]: unknown;
   }
   let datevNormalstundenNr = $state(100);
   let datevUrlaubNr = $state(300);
   let datevKrankNr = $state(200);
   let datevSonderurlaubNr = $state(302);
+  let datevBeraterNr = $state<number | null>(null);
+  let datevMandantenNr = $state<number | null>(null);
   let datevSaving = $state(false);
   let datevSaved = $state(false);
   let datevError = $state("");
@@ -45,7 +51,20 @@
 
   let datevSnapshot = $state("");
   let datevDirty = $derived(
-    snap(datevNormalstundenNr, datevUrlaubNr, datevKrankNr, datevSonderurlaubNr) !== datevSnapshot,
+    snap(
+      datevBeraterNr,
+      datevMandantenNr,
+      datevNormalstundenNr,
+      datevUrlaubNr,
+      datevKrankNr,
+      datevSonderurlaubNr,
+    ) !== datevSnapshot,
+  );
+
+  // Issue #256 (Befund 3): the export is refused (HTTP 409) while either number is unset.
+  // Say so up front instead of letting the operator discover it at download time.
+  let kanzleiMissing = $derived(
+    snapshotsReady && (datevBeraterNr == null || datevMandantenNr == null),
   );
 
   // Gate the registration on "the baseline has been taken" (WR-01). loadDatev swallows its error
@@ -66,8 +85,19 @@
       datevUrlaubNr = Number(cfg.datevUrlaubNr ?? 300);
       datevKrankNr = Number(cfg.datevKrankNr ?? 200);
       datevSonderurlaubNr = Number(cfg.datevSonderurlaubNr ?? 302);
+      // `?? null` rather than Number(): Number(null) is 0, which is exactly the
+      // unusable placeholder Issue #256 removed.
+      datevBeraterNr = typeof cfg.datevBeraterNr === "number" ? cfg.datevBeraterNr : null;
+      datevMandantenNr = typeof cfg.datevMandantenNr === "number" ? cfg.datevMandantenNr : null;
       _gOtherFields = cfg as Record<string, unknown>;
-      datevSnapshot = snap(datevNormalstundenNr, datevUrlaubNr, datevKrankNr, datevSonderurlaubNr);
+      datevSnapshot = snap(
+        datevBeraterNr,
+        datevMandantenNr,
+        datevNormalstundenNr,
+        datevUrlaubNr,
+        datevKrankNr,
+        datevSonderurlaubNr,
+      );
       snapshotsReady = true;
     } catch {
       // non-blocking: keep defaults
@@ -86,9 +116,21 @@
         datevUrlaubNr,
         datevKrankNr,
         datevSonderurlaubNr,
+        // `?? null` keeps a cleared input an explicit "not configured" — the API accepts
+        // null for these two (CLAUDE.md's Zod .optional()/.nullable() gotcha).
+        datevBeraterNr: datevBeraterNr ?? null,
+        datevMandantenNr: datevMandantenNr ?? null,
       });
       datevSaved = true;
-      datevSnapshot = snap(datevNormalstundenNr, datevUrlaubNr, datevKrankNr, datevSonderurlaubNr); // Phase 109 — section is clean again
+      // Phase 109 — section is clean again
+      datevSnapshot = snap(
+        datevBeraterNr,
+        datevMandantenNr,
+        datevNormalstundenNr,
+        datevUrlaubNr,
+        datevKrankNr,
+        datevSonderurlaubNr,
+      );
       setTimeout(() => (datevSaved = false), 3000);
     } catch (e: unknown) {
       datevError = e instanceof Error ? e.message : "Fehler";
@@ -113,9 +155,12 @@
   let period = $state(periods[0].value);
   const selectedPeriod = $derived(periods.find((p) => p.value === period) ?? periods[0]);
 
-  // Configuration fields (display only — values stored in TenantConfig; v1.5 surfaces them for review)
-  let advisorNumber = $state("71034");
-  let clientNumber = $state("3082");
+  // Display-only export parameter — never persisted, a label on this one download.
+  // Issue #256 (Befund 3): two further inputs used to sit here, styled and labelled like
+  // the Berater- und Mandantennummer but initialised from hardcoded literals and wired to
+  // nothing. They were removed, not kept: the real, TenantConfig-backed pair now lives in
+  // the Konfiguration tab, and two editable fields of the same name with different
+  // behaviour on one page would be worse than the bug this ticket started from.
   let taxOffice = $state("Steuerkanzlei · Standardberater");
 
   // Step indicator: period (0) → employees (1) → format (2) → generate (3)
@@ -138,7 +183,19 @@
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         },
       );
-      if (!res.ok) throw new Error(`Export fehlgeschlagen (${res.status})`);
+      if (!res.ok) {
+        // Issue #256: a 409 carries a German explanation (missing Berater-/Mandantennummer).
+        // Showing "Export fehlgeschlagen (409)" instead would hide the one thing the
+        // operator needs to know.
+        let message = `Export fehlgeschlagen (${res.status})`;
+        try {
+          const payload = (await res.json()) as { error?: string };
+          if (payload?.error) message = payload.error;
+        } catch {
+          // non-JSON body: keep the status-code fallback
+        }
+        throw new Error(message);
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -177,8 +234,8 @@
   {#snippet form()}
     {#if activeTab === "konfiguration"}
       <Section
-        title="Lohnartennummern"
-        sub="Zuordnung der DATEV-LODAS-Lohnarten — wirkt sich auf alle generierten Exporte aus."
+        title="Berater-, Mandanten- und Lohnartennummern"
+        sub="Pflichtangaben und Lohnart-Zuordnung für DATEV LODAS — wirkt sich auf alle generierten Exporte aus."
         dirty={datevDirty}
       >
         {#if datevError}
@@ -193,6 +250,38 @@
         {/if}
 
         <div class="lohnart-grid">
+          <div class="form-group">
+            <label class="form-label" for="datev-berater">Berater-Nr.</label>
+            <input
+              id="datev-berater"
+              type="number"
+              min="1"
+              max="9999999"
+              step="1"
+              bind:value={datevBeraterNr}
+              class="form-input"
+            />
+            <p class="form-hint">
+              Nummer der Steuerkanzlei im <span translate="no">DATEV</span>-Kopf. Ohne sie wird der
+              Export abgelehnt.
+            </p>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="datev-mandant">Mandanten-Nr.</label>
+            <input
+              id="datev-mandant"
+              type="number"
+              min="1"
+              max="99999"
+              step="1"
+              bind:value={datevMandantenNr}
+              class="form-input"
+            />
+            <p class="form-hint">
+              Nummer dieses Mandanten bei der Kanzlei. Ohne sie lässt sich die Datei keinem
+              Mandanten zuordnen.
+            </p>
+          </div>
           <div class="form-group">
             <label class="form-label" for="datev-normal">Normalstunden</label>
             <input
@@ -261,11 +350,20 @@
       <div class="export-grid">
         <!-- Configure (col-7) -->
         <div class="col-7">
-          <!-- No `dirty=` prop here on purpose: advisorNumber/clientNumber/taxOffice/period/
+          <!-- No `dirty=` prop here on purpose: taxOffice/period/
                format are parameters of a single download, never persisted (Phase 109, D-01) — an
                "unsaved" marker for them would be noise, and a navigation guard would train the
                operator to click through the dialog. -->
           <Section title="Export konfigurieren" sub="Format · Zeitraum · Empfänger">
+            {#if kanzleiMissing}
+              <div class="alert alert-error" role="alert">
+                <span>⚠</span>
+                <span>
+                  Berater- und Mandantennummer fehlen. Der <span translate="no">DATEV</span>-Export
+                  wird abgelehnt, bis beide im Reiter „Konfiguration“ hinterlegt sind.
+                </span>
+              </div>
+            {/if}
             <div class="field field-format">
               <span class="field-label">Format</span>
               <div class="format-picker">
@@ -309,16 +407,6 @@
                 </select>
               </label>
               <label class="field">
-                <span class="field-label">Berater-Nr.</span>
-                <input class="input tabular" bind:value={advisorNumber} />
-              </label>
-            </div>
-            <div class="field-row">
-              <label class="field">
-                <span class="field-label">Mandanten-Nr.</span>
-                <input class="input tabular" bind:value={clientNumber} />
-              </label>
-              <label class="field">
                 <span class="field-label">Beratungsbüro</span>
                 <input class="input" bind:value={taxOffice} />
               </label>
@@ -344,12 +432,13 @@
         <div class="col-5">
           <Section title="Vorschau" sub="DATEV-LODAS · {selectedPeriod.label}">
             <pre class="csv-preview"><span class="csv-section">[Allgemein]</span>
-Beraternummer;{advisorNumber}
-Mandantennummer;{clientNumber}
-Abrechnungsmonat;{selectedPeriod.value.replace("-", "")}
+Ziel=LODAS
+BeraterNr={datevBeraterNr ?? "— nicht hinterlegt —"}
+MandantenNr={datevMandantenNr ?? "— nicht hinterlegt —"}
+Abrechnungszeitraum={String(selectedPeriod.month).padStart(2, "0")}{selectedPeriod.year}
 
-<span class="csv-section">[Lohn-Daten]</span>
-PersNr;Name;StundenSoll;StundenIst;Urlaub;Krank;Mehrarbeit
+<span class="csv-section">[Bewegungsdaten]</span>
+20;PersNr;Name;Datum;Ausfall;Lohnart;Stunden;Tage;…
 … wird beim Export erzeugt</pre>
             <p class="foot-meta preview-note">
               Schreibgeschützte Vorschau — Signatur wird beim Export erzeugt.
