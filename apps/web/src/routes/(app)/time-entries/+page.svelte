@@ -1954,7 +1954,10 @@
                 <th>Pause</th>
                 <th>Netto</th>
                 {#if isShiftBased && monthSaldo}
-                  <th title="Kumulierter Gesamtsaldo bis zu diesem Tag (§615)">Gesamtsaldo</th>
+                  <th
+                    title="Kumulierter Saldo seit dem letzten Monatsabschluss bis zu diesem Tag (§615). Nicht abgeschlossene Vormonate sind darin nicht enthalten — den Gesamt-Saldo zeigt die Kachel „Konto“."
+                    >Saldo seit Abschluss</th
+                  >
                 {/if}
                 <th>Quelle</th>
                 <th>Notiz</th>
