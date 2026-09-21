@@ -460,4 +460,38 @@ describe("attendance-checker — Feature 6: vacation-expiry reminder (§ 7 BUrlG
     const notifsAfterSecondCall = await getVacationExpiryNotifs(app, seed.empUser.id);
     expect(notifsAfterSecondCall).toHaveLength(1);
   });
+
+  it("fires exactly one VACATION_EXPIRY notification after the VACATION type is renamed away from 'Urlaub' (AK-1, Issue #205 finding 1)", async () => {
+    const seed = await seedIsolatedTenant(app, "f6-renamed");
+    tenantIds.push(seed.tenant.id);
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-15T09:00:00.000Z"));
+    const year = new Date().getFullYear();
+
+    const leaveType = await app.prisma.leaveType.create({
+      data: { tenantId: seed.tenant.id, ...leaveTypeFields("VACATION"), color: "#3B82F6" },
+    });
+    // Rename away from the default display name "Urlaub" — `code` stays "VACATION".
+    await app.prisma.leaveType.update({
+      where: { id: leaveType.id },
+      data: { name: "Jahresurlaub (umbenannt)" },
+    });
+    await app.prisma.leaveEntitlement.create({
+      data: {
+        employeeId: seed.employee.id,
+        leaveTypeId: leaveType.id,
+        year,
+        totalDays: 30,
+        usedDays: 5,
+        carriedOverDays: 0,
+      },
+    });
+
+    await app.tryVacationExpiry();
+
+    const notifs = await getVacationExpiryNotifs(app, seed.empUser.id);
+    expect(notifs).toHaveLength(1);
+    expect(notifs[0].type).toBe("VACATION_EXPIRY");
+  });
 });
