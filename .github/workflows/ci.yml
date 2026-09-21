@@ -298,7 +298,17 @@ jobs:
         # matched no path in the `api` filter, went green, and turned main red on the next commit
         # that did touch apps/api. A gate whose TRIGGER is narrower than its SCOPE is a gate with
         # a hole in it.
-        run: pnpm --filter @clokr/api exec vitest run scripts/__tests__/lint-guard-vacuity.test.ts
+        #
+        # PR #297: it runs through the ROOT config, not `--filter @clokr/api`. Making the step
+        # unconditional while it still ran on apps/api's vitest instance left an unconditional
+        # gate standing on a CONDITIONAL precondition: that instance's globalSetup demands the
+        # shared test databases, which are provisioned by a step gated on
+        # `steps.changes.outputs.api == 'true'` (below). The first web-only PR after #290 died
+        # here with `database "clokr_test" does not exist` — the mirror image of the very hole
+        # #290 closed. The test is DB-free by construction (pure AST classifier, repo root from
+        # `import.meta.url`), so the fix is to drop the precondition, not to widen the filter:
+        # no postgres and no API suite on a web-only change. See vitest.config.mjs.
+        run: pnpm exec vitest run --config vitest.config.mjs apps/api/scripts/__tests__/lint-guard-vacuity.test.ts
 
       - name: Lint e2e spec registry (Issue #275 — D-07, every apps/e2e/tests/*.spec.ts file must have exactly one register entry)
         # 22 of 24 e2e spec files ran nowhere — neither in CI nor locally — with no checked-in
