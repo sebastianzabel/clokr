@@ -29,19 +29,41 @@ import {
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
+/**
+ * A `Decimal` column round-tripped through this API's own GET.
+ *
+ * Prisma serialises `Decimal` as a STRING in JSON, so `GET /settings/work` answers
+ * `"defaultWeeklyHours": "40.00"` — while this PUT schema declared `z.number()`. The admin forms
+ * echo the whole config back on save (apps/web/.../admin/export sends
+ * `{ ..._gOtherFields, datev… }`, where `_gOtherFields` is the untouched GET response), so the
+ * API rejected its own output: ten Decimal columns at once, reported as a single bare
+ * "Validierungsfehler" on a page that displays none of them.
+ *
+ * Accepting the string form is the narrow fix — it makes "read the config, send it back
+ * unchanged" a property the API guarantees, which is the shape every settings form uses. The
+ * pattern is deliberately strict (optional sign, digits, optional decimal part): unlike
+ * `z.coerce.number()` it does not turn `true` into 1, `null` into 0, or `""` into 0, and any
+ * bound declared after it still applies to the parsed number.
+ */
+const decimalFromApi = (schema: z.ZodType<number>) =>
+  z.preprocess(
+    (v) => (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v.trim()) ? Number(v) : v),
+    schema,
+  );
+
 const tenantConfigSchema = z
   .object({
     tenantName: z.string().min(1).max(200).optional(),
     applyToExisting: z.boolean().optional(), // Auf bestehende MA ohne manuelle Änderung anwenden
-    defaultWeeklyHours: z.number().min(1).max(60).optional(),
-    defaultMondayHours: z.number().min(0).max(24).optional(),
-    defaultTuesdayHours: z.number().min(0).max(24).optional(),
-    defaultWednesdayHours: z.number().min(0).max(24).optional(),
-    defaultThursdayHours: z.number().min(0).max(24).optional(),
-    defaultFridayHours: z.number().min(0).max(24).optional(),
-    defaultSaturdayHours: z.number().min(0).max(24).optional(),
-    defaultSundayHours: z.number().min(0).max(24).optional(),
-    overtimeThreshold: z.number().min(1).max(500).optional(),
+    defaultWeeklyHours: decimalFromApi(z.number().min(1).max(60)).optional(),
+    defaultMondayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+    defaultTuesdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+    defaultWednesdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+    defaultThursdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+    defaultFridayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+    defaultSaturdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+    defaultSundayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+    overtimeThreshold: decimalFromApi(z.number().min(1).max(500)).optional(),
     allowOvertimePayout: z.boolean().optional(),
     federalState: z
       .string()
@@ -49,7 +71,7 @@ const tenantConfigSchema = z
       .optional(),
     carryOverDeadlineDay: z.number().int().min(1).max(31).optional(),
     carryOverDeadlineMonth: z.number().int().min(1).max(12).optional(),
-    defaultVacationDays: z.number().min(0.5).max(365).multipleOf(0.5).optional(),
+    defaultVacationDays: decimalFromApi(z.number().min(0.5).max(365).multipleOf(0.5)).optional(),
     timezone: z.string().min(1).max(100).optional(),
     arbzgEnabled: z.boolean().optional(),
     // Phase 47.3 — Verfügbarkeits-System toggle (default true, feature-on)
@@ -66,7 +88,14 @@ const tenantConfigSchema = z
     // Heiligabend/Silvester
     christmasEveRule: z.enum(["NORMAL", "HALF_DAY", "FULL_DAY_OFF"]).optional(),
     newYearsEveRule: z.enum(["NORMAL", "HALF_DAY", "FULL_DAY_OFF"]).optional(),
-    holidayRulesValidFromYear: z.number().int().min(2020).max(2100).optional(),
+    // `.nullable()` as well as `.optional()`: the column is nullable and the admin forms echo
+    // the WHOLE config back on save (e.g. admin/export sends `{ ..._gOtherFields, datev… }`),
+    // so an unset year arrives as an explicit `null`. With `.optional()` alone that null made
+    // the entire PUT fail as a bare "Validierungsfehler" — on a page that does not even show
+    // this field, which is why it read as "entering the DATEV numbers is broken". This was the
+    // only one of the 23 nullable TenantConfig columns still missing it (measured against
+    // schema.prisma, not assumed). See CLAUDE.md § Zod .optional() vs .nullable().
+    holidayRulesValidFromYear: z.number().int().min(2020).max(2100).nullable().optional(),
     // Leave config
     vacationLeadTimeDays: z.number().int().min(0).max(365).optional(),
     vacationMaxAdvanceMonths: z.number().int().min(0).max(24).optional(),
