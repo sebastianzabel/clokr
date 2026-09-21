@@ -34,6 +34,9 @@ declare module "fastify" {
     /** Phase 92-05 (BREAK-06): exposed for integration tests — invokes the
      *  unconfirmed-break employee nudge scan without cron/advisory-lock. */
     tryBreakUnconfirmedNudge: () => Promise<void>;
+    /** Phase 205 Plan 02 (Issue #205, finding 1): exposed for integration tests — invokes the
+     *  § 7 BUrlG / EuGH C-684/16 vacation-expiry scan without cron/advisory-lock. */
+    tryVacationExpiry: () => Promise<void>;
   }
 }
 
@@ -1034,6 +1037,11 @@ export const attendanceCheckerPlugin = fp(async (app) => {
   // Phase 92-05 (BREAK-06): expose the unconfirmed-break nudge scan for test invocability.
   // Pattern mirrors tryEndOfMonthGapReminder above.
   app.decorate("tryBreakUnconfirmedNudge", checkUnconfirmedBreaks);
+
+  // Phase 205 Plan 02 (Issue #205, finding 1): expose the § 7 BUrlG vacation-expiry scan for
+  // test invocability — it had none before this plan. Pattern mirrors tryEndOfMonthGapReminder
+  // above.
+  app.decorate("tryVacationExpiry", checkVacationExpiry);
 
   app.addHook("onReady", async () => {
     try {

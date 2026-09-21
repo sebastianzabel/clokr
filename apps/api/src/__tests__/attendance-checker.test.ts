@@ -18,6 +18,7 @@ import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
+import { leaveTypeFields } from "../contexts/absence/leave-type";
 
 // ── Seed helpers ──────────────────────────────────────────────────────────────
 
@@ -127,6 +128,14 @@ async function getGapEmployeeNotifs(app: FastifyInstance, userId: string) {
 async function getGapManagerNotifs(app: FastifyInstance, userId: string) {
   return app.prisma.notification.findMany({
     where: { userId, type: "GAP_WARNING_MANAGER" },
+    orderBy: { createdAt: "asc" },
+  });
+}
+
+/** Collect VACATION_EXPIRY notifications for a given userId. */
+async function getVacationExpiryNotifs(app: FastifyInstance, userId: string) {
+  return app.prisma.notification.findMany({
+    where: { userId, type: "VACATION_EXPIRY" },
     orderBy: { createdAt: "asc" },
   });
 }
@@ -387,5 +396,68 @@ describe("attendance-checker — Feature 8: beginning-of-month manager gap remin
 
     const notifs = await getGapManagerNotifs(app, seed.mgrUser.id);
     expect(notifs).toHaveLength(0);
+  });
+});
+
+describe("attendance-checker — Feature 6: vacation-expiry reminder (§ 7 BUrlG, Issue #205 finding 1)", () => {
+  let app: FastifyInstance;
+  const tenantIds: string[] = [];
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  afterAll(async () => {
+    for (const id of tenantIds) {
+      try {
+        await cleanupTestData(app, id);
+      } catch (err) {
+        console.error(`Cleanup failed for tenant ${id}:`, err);
+      }
+    }
+    await closeTestApp();
+  });
+
+  it("fires exactly one VACATION_EXPIRY notification for an un-renamed VACATION type, and dedups on a repeat call in the same month (AK-5 baseline, pre-fix run)", async () => {
+    const seed = await seedIsolatedTenant(app, "f6-baseline");
+    tenantIds.push(seed.tenant.id);
+
+    // Fake clock FIRST — the entitlement's `year` below must be derived from it, not hardcoded,
+    // or a mismatch between the two would silently make the scan find nothing for the wrong
+    // reason. November exercises the "Dringend" urgency branch without the December edge.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-15T09:00:00.000Z"));
+    const year = new Date().getFullYear();
+
+    const leaveType = await app.prisma.leaveType.create({
+      data: { tenantId: seed.tenant.id, ...leaveTypeFields("VACATION"), color: "#3B82F6" },
+    });
+    await app.prisma.leaveEntitlement.create({
+      data: {
+        employeeId: seed.employee.id,
+        leaveTypeId: leaveType.id,
+        year,
+        totalDays: 30,
+        usedDays: 5,
+        carriedOverDays: 0,
+      },
+    });
+
+    await app.tryVacationExpiry();
+
+    const notifs = await getVacationExpiryNotifs(app, seed.empUser.id);
+    expect(notifs).toHaveLength(1);
+    expect(notifs[0].type).toBe("VACATION_EXPIRY");
+
+    // Dedup control: a second call in the same fake month must not add a second notification —
+    // otherwise the assertion above would be satisfied by "notifications get written no matter
+    // what", not by the reminder's actual once-per-month dedup.
+    await app.tryVacationExpiry();
+    const notifsAfterSecondCall = await getVacationExpiryNotifs(app, seed.empUser.id);
+    expect(notifsAfterSecondCall).toHaveLength(1);
   });
 });
