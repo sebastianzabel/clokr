@@ -1,6 +1,9 @@
 /**
  * Phase 100B Plan 10 (Wave 5, opening) — focused integration test for the Abwesenheiten
- * `LeaveType`/`LeaveEntitlement` facade (A11-A19 plus the two H1 deviation-preserving siblings).
+ * `LeaveType`/`LeaveEntitlement` facade (A11-A19 plus the remaining H1 deviation-preserving
+ * sibling). Phase 205 Plan 01 (Issue #205, finding 2) deleted the two name-based lookups this
+ * file used to cover, once their only caller was rerouted to the code-based
+ * `getVacationEntitlement` (A11) — their coverage below was replaced accordingly, not removed.
  *
  * `seedTestData()` already provisions one `LeaveType` (`vacationType`, code `VACATION`, name
  * "Urlaub" via `leaveTypeFields("VACATION")`) and one `LeaveEntitlement` row for the current
@@ -16,7 +19,6 @@ import {
 } from "../../../__tests__/setup";
 import {
   getLeaveTypeByCode,
-  getLeaveTypeByDisplayName,
   listLeaveTypes,
   updateLeaveType,
   getVacationEntitlement,
@@ -25,7 +27,6 @@ import {
   getEntitlementById,
   getExpiringCarryOver,
   upsertVacationEntitlement,
-  getVacationEntitlementByDisplayName,
   getVacationEntitlementsForYearByDisplayName,
   hardDeleteEntitlementsForEmployee,
 } from "../index";
@@ -67,29 +68,6 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
     it("returns null for a code the tenant has no row for", async () => {
       const found = await getLeaveTypeByCode(app.prisma, data.tenant.id, "SPECIAL");
       expect(found).toBeNull();
-    });
-  });
-
-  describe("getLeaveTypeByDisplayName (H1)", () => {
-    it("finds the seeded type by its display name 'Urlaub'", async () => {
-      const found = await getLeaveTypeByDisplayName(app.prisma, data.tenant.id, "Urlaub");
-      expect(found?.id).toBe(data.vacationType.id);
-    });
-
-    it("returns null once the tenant renames the display name away from 'Urlaub' — the H1 deviation, reproduced not fixed", async () => {
-      await app.prisma.leaveType.update({
-        where: { id: data.vacationType.id },
-        data: { name: "Jahresurlaub (umbenannt)" },
-      });
-      try {
-        const found = await getLeaveTypeByDisplayName(app.prisma, data.tenant.id, "Urlaub");
-        expect(found).toBeNull();
-      } finally {
-        await app.prisma.leaveType.update({
-          where: { id: data.vacationType.id },
-          data: { name: "Urlaub" },
-        });
-      }
     });
   });
 
@@ -305,17 +283,7 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
     });
   });
 
-  describe("getVacationEntitlementByDisplayName / getVacationEntitlementsForYearByDisplayName (H1)", () => {
-    it("getVacationEntitlementByDisplayName finds the entitlement via the 'Urlaub'-named type", async () => {
-      const found = await getVacationEntitlementByDisplayName(
-        app.prisma,
-        data.employee.id,
-        data.tenant.id,
-        year,
-      );
-      expect(found?.employeeId).toBe(data.employee.id);
-    });
-
+  describe("getVacationEntitlement rename-proof (Issue #205, finding 2) / getVacationEntitlementsForYearByDisplayName (H1)", () => {
     it("the vacation entitlement is still found after the tenant renames the VACATION type (Issue #205, finding 2)", async () => {
       await app.prisma.leaveType.update({
         where: { id: data.vacationType.id },

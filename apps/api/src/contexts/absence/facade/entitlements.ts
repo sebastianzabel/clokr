@@ -12,16 +12,18 @@
  * because every vacation-entitlement lookup resolves the VACATION `LeaveType` first and keys the
  * entitlement by `employeeId_leaveTypeId_year` — see {@link getVacationEntitlement}.
  *
- * ── A11/A16 vs the two `getVacationEntitlement*ByDisplayName` siblings ──────────────────────────
+ * ── A11/A16 vs the remaining name-based sibling below ────────────────────────────────────────
  * See `leave-types.ts`'s own module header (H1) for the full reasoning. In short:
  * {@link getVacationEntitlement} and {@link upsertVacationEntitlement} resolve the VACATION type
  * by its stable CODE (`leave-types.ts`'s `getLeaveTypeByCode`) — the correct shape, used by
  * `leave-settings.ts`'s GET/PUT `/vacation/:employeeId` (moved from `platform/api/settings.ts`
- * by Phase 243 Plan 02 — B1; the URL is unchanged). {@link
- * getVacationEntitlementByDisplayName} and {@link getVacationEntitlementsForYearByDisplayName}
- * preserve the two PRE-EXISTING name-based lookups verbatim (`platform/api/employees.ts`'s
- * pro-rata-exit warning, `time-tracking/plugins/attendance-checker.ts`'s § 7 BUrlG reminder) —
- * D-13, not fixed here, filed as an issue.
+ * by Phase 243 Plan 02 — B1; the URL is unchanged). `platform/api/employees.ts`'s pro-rata-exit
+ * warning is rerouted to {@link getVacationEntitlement} as of Issue #205 (Phase 205 Plan 01,
+ * finding 2) — its previous name-based facade function, and the display-name lookup it alone
+ * depended on, are both deleted (zero remaining callers, verified by full-repo grep).
+ * {@link getVacationEntitlementsForYearByDisplayName} still preserves the remaining PRE-EXISTING
+ * name-based lookup verbatim (`time-tracking/plugins/attendance-checker.ts`'s § 7 BUrlG reminder)
+ * — closed separately by Phase 205 Plan 02.
  *
  * ── A12 vs A13 vs A15 — three separately-named reads, not one parameterised query (R-B) ────────
  * {@link listEntitlementsForYear} (tenant-wide, by year), {@link getEntitlementsForEmployee}
@@ -42,7 +44,7 @@
  * not re-derived.
  */
 import type { LeaveEntitlement, Prisma } from "@clokr/db";
-import { getLeaveTypeByCode, getLeaveTypeByDisplayName } from "./leave-types";
+import { getLeaveTypeByCode } from "./leave-types";
 
 // ── A11 — the vacation entitlement, resolved by code ────────────────────────────────────────
 
@@ -188,27 +190,7 @@ export async function upsertVacationEntitlement(
   });
 }
 
-// ── H1 deviation-preserving siblings (leave-types.ts's getLeaveTypeByDisplayName) ───────────────
-
-/**
- * H1 — preserves `platform/api/employees.ts`'s pro-rata-exit warning verbatim: resolve the
- * "Urlaub"-NAMED `LeaveType` (NOT by code — see `leave-types.ts`'s module header), then the
- * entitlement for `employeeId`/`year`. Returns `null` when no type is named "Urlaub" for this
- * tenant OR no entitlement row exists yet — both cases the caller already treats as "skip the
- * warning", so collapsing them here changes nothing observable.
- */
-export async function getVacationEntitlementByDisplayName(
-  db: Prisma.TransactionClient,
-  employeeId: string,
-  tenantId: string,
-  year: number,
-): Promise<LeaveEntitlement | null> {
-  const vacationType = await getLeaveTypeByDisplayName(db, tenantId, "Urlaub");
-  if (!vacationType) return null;
-  return db.leaveEntitlement.findFirst({
-    where: { employeeId, leaveTypeId: vacationType.id, year },
-  });
-}
+// ── H1 deviation-preserving sibling, remaining after Issue #205 finding 2's cleanup ─────────────
 
 /**
  * H1 — preserves `attendance-checker.ts`'s § 7 BUrlG expiry-reminder query verbatim: every
