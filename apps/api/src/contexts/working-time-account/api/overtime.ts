@@ -12,7 +12,7 @@ import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from ".
 import { getHolidays, STATE_MAP } from "../../platform";
 import { fetchCloseMonthData } from "../close-month-data"; // PERF-V1814-01
 import { periodStartWindow, isPeriodStartInMonth } from "../snapshot-period";
-import { closeEmployeeMonth } from "../close-employee-month"; // Phase 76.26 — shared saldo core
+import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared saldo core
 import { findMissingWorkdays } from "../find-missing-workdays"; // Phase 76.26 — gap detector
 import { computeMonthSaldo } from "../month-saldo"; // §615 Team-Zeiten display fix
 import { getCarryOverBase } from "../carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
@@ -1217,11 +1217,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
           startTime: sh.startTime,
           endTime: sh.endTime,
         })),
-        approvedLeave: closeApprovedLeave.map((lr) => ({
-          startDate: lr.startDate,
-          endDate: lr.endDate,
-          halfDay: Boolean(lr.halfDay),
-        })),
+        // Issue #220: the shared mapper also derives isOvertimeCompensation from
+        // LeaveType.code — never inline it, see toCloseMonthApprovedLeave's doc block.
+        approvedLeave: toCloseMonthApprovedLeave(closeApprovedLeave),
         absences: closeAbsences.map((ab) => ({
           startDate: ab.startDate,
           endDate: ab.endDate,

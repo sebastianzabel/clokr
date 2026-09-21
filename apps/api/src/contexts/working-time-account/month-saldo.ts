@@ -29,7 +29,7 @@ import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from ".
 import { getHolidays, STATE_MAP } from "../platform";
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
-import { closeEmployeeMonth } from "./close-employee-month";
+import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "./close-employee-month";
 import { getValidWorkedEntriesInRange, getEffectiveBreakDuration } from "../time-tracking"; // Phase 100B Plan 08 — T1; Phase 101B wave 8 merged in
 import {
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
@@ -276,11 +276,9 @@ export async function computeMonthSaldo(
       startTime: sh.startTime,
       endTime: sh.endTime,
     })),
-    approvedLeave: closeApprovedLeave.map((lr) => ({
-      startDate: lr.startDate,
-      endDate: lr.endDate,
-      halfDay: Boolean(lr.halfDay),
-    })),
+    // Issue #220: the shared mapper also derives isOvertimeCompensation from
+    // LeaveType.code — never inline it, see toCloseMonthApprovedLeave's doc block.
+    approvedLeave: toCloseMonthApprovedLeave(closeApprovedLeave),
     absences: closeAbsences.map((ab) => ({
       startDate: ab.startDate,
       endDate: ab.endDate,

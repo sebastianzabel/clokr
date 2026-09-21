@@ -4,7 +4,7 @@ import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../timezone";
 import { getHolidays, STATE_MAP } from "../../platform";
 import { periodStartWindow } from "../snapshot-period";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
-import { closeEmployeeMonth } from "../close-employee-month"; // Phase 76.26 — shared pure saldo core
+import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { findMissingWorkdays } from "../find-missing-workdays"; // Phase 76.26 — schedule-model-aware gap detector
 import { getCarryOverBase } from "../carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
@@ -607,11 +607,9 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   startTime: sh.startTime,
                   endTime: sh.endTime,
                 })),
-                approvedLeave: closeApprovedLeave.map((lr) => ({
-                  startDate: lr.startDate,
-                  endDate: lr.endDate,
-                  halfDay: Boolean(lr.halfDay),
-                })),
+                // Issue #220: the shared mapper also derives isOvertimeCompensation from
+                // LeaveType.code — never inline it, see toCloseMonthApprovedLeave's doc block.
+                approvedLeave: toCloseMonthApprovedLeave(closeApprovedLeave),
                 absences: closeAbsences.map((ab) => ({
                   startDate: ab.startDate,
                   endDate: ab.endDate,
