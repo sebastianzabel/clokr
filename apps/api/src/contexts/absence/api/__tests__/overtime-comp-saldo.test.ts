@@ -356,7 +356,7 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
     ).toBeCloseTo(8, H);
   });
 
-  it("SHIFT_BASED CHARACTERIZATION (pre-existing, NOT fixed here): the journal row is the ROSTER netto while the saldo withdrawal is the Ø-Methode day — the two disagree (#220 follow-up)", async () => {
+  it("SHIFT_BASED CHARACTERIZATION (pre-existing, NOT fixed here): the journal row is the ROSTER netto while the saldo withdrawal is the Ø-Methode day — the two disagree (#220 follow-up, issue #293)", async () => {
     // Two different answers to "how long is this day?" meet here, and neither is wrong on its
     // own terms:
     //   - the OvertimeTransaction amount comes from getScheduledHours() (leave.ts), which for
@@ -366,8 +366,8 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
     //     the day's Soll credit, which is exactly what #220 requires it to be.
     // For an under-rostered day the journal therefore books less than the account loses.
     // This is the pre-existing two-Soll-concepts question, not a regression introduced by #220's
-    // fix, and it is filed separately. Pinned here so the size of the gap is a measured number
-    // rather than an argument.
+    // fix, and it is filed separately as issue #293. Pinned here so the size of the gap is a
+    // measured number rather than an argument.
     const n = ++fixtureCounter;
     const s = `${Date.now().toString(36)}-sb${n}`;
     const user = await app.prisma.user.create({

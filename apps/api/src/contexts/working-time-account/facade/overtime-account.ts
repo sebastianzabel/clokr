@@ -54,6 +54,9 @@
  * functions write. Since #220 the recompute carries the withdrawal (model B — see
  * `close-employee-month.ts`'s "Überstundenausgleich" header note), so journal and balance agree.
  *
+ * The remaining open question here is atomicity, not correctness: `updateOvertimeAccount()` still
+ * runs outside any transaction and its caller swallows its failure — tracked as issue #294.
+ *
  * These two functions were NOT changed by that fix and must not be: for `isTimeTrackingExempt`
  * (§ 18) employees `computeOvertimeBalanceBreakdown()` returns null and `updateOvertimeAccount()`
  * leaves the stored value alone, which makes the manual booking here the ONLY effective writer on
