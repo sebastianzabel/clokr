@@ -5,7 +5,6 @@
   import { authStore } from "$stores/auth";
   import { tenantFeatures } from "$stores/tenant-features";
   import { clearUnsaved, hasUnsaved } from "$stores/unsaved";
-  import { clientLogger } from "$lib/utils/logger";
   import Sidebar from "$lib/components/layout/Sidebar.svelte";
   import Topbar from "$lib/components/layout/Topbar.svelte";
   import BottomTabBar from "$lib/components/layout/BottomTabBar.svelte";
@@ -151,8 +150,8 @@
     const storedTimeout = localStorage.getItem("clokr_session_timeout");
     if (storedTimeout) sessionTimeoutMs = parseInt(storedTimeout) * 60 * 1000;
 
-    // Install client error logging
-    clientLogger.install();
+    // Client error logging is installed by the ROOT layout (src/routes/+layout.svelte)
+    // so the (auth) pages are covered too — see issue #149.
 
     // Hydrate tenant feature flags once per (app) session. Used by Sidebar +
     // BottomTabBar + admin pages to conditionally render feature-gated nav.
