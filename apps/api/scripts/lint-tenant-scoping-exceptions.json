@@ -126,22 +126,22 @@
     "calls": [
       {
         "call": "saldoSnapshot.findFirst",
-        "line": 1540
+        "line": 1542
       }
     ],
-    "reason": "employee (keyed on the SAME body employeeId) is fetch-then-compared against req.user.tenantId at line 1527; saldoSnapshot.findFirst reuses employeeId after that cross-tenant branch already returned 404. Line shifted -2 in Phase 101B Plan 09 (wave 8), same import-block merge noted on the GET :employeeId entry above — mechanical only. On top of the +3 shift in Phase 101B Plan 08, same import-block merge noted on the GET :employeeId entry above — mechanical only. Lines shifted -3 in Phase 100B Plan 13 (same earlier-route-handler leaveRequest.findMany-to-facade collapse noted on the unlock-month entry above), on top of the -9 net shift Phase 100B Plan 12 already recorded here — mechanical only, no finding."
+    "reason": "employee (keyed on the SAME body employeeId) is fetch-then-compared against req.user.tenantId at line 1527; saldoSnapshot.findFirst reuses employeeId after that cross-tenant branch already returned 404. Line shifted +2 in Phase 242 Plan 01 (wave 1): the tenant-TZ-aware MONTHLY-filter fix inserted a `getTenantTimezone` call between the employee check and this findFirst — mechanical only, no finding. Line shifted -2 in Phase 101B Plan 09 (wave 8), same import-block merge noted on the GET :employeeId entry above — mechanical only. On top of the +3 shift in Phase 101B Plan 08, same import-block merge noted on the GET :employeeId entry above — mechanical only. Lines shifted -3 in Phase 100B Plan 13 (same earlier-route-handler leaveRequest.findMany-to-facade collapse noted on the unlock-month entry above), on top of the -9 net shift Phase 100B Plan 12 already recorded here — mechanical only, no finding."
   },
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
     "handler": "POST /api/v1/overtime/opening-balance",
-    "validatedAt": 1682,
+    "validatedAt": 1712,
     "calls": [
       {
         "call": "openingBalance.findFirst",
-        "line": 1693
+        "line": 1723
       }
     ],
-    "reason": "employee (keyed on the SAME body employeeId) is fetch-then-compared against req.user.tenantId at line 1682; openingBalance.findFirst reuses employeeId after that cross-tenant branch already returned 404. Line shifted -2 in Phase 101B Plan 09 (wave 8), same import-block merge noted on the GET :employeeId entry above — mechanical only. On top of the +3 shift in Phase 101B Plan 08, same import-block merge noted on the GET :employeeId entry above — mechanical only. Lines shifted -3 in Phase 100B Plan 13 (same earlier-route-handler leaveRequest.findMany-to-facade collapse noted on the unlock-month entry above), on top of the -9 net shift Phase 100B Plan 12 already recorded here — mechanical only, no finding."
+    "reason": "employee (keyed on the SAME body employeeId) is fetch-then-compared against req.user.tenantId at line 1712; openingBalance.findFirst reuses employeeId after that cross-tenant branch already returned 404. Lines shifted +30 in Phase 242 Plan 02 (wave 2): the tenant-TZ-aware month-window and month-number-assignment fix for POST /close-year (the handler immediately above this one in the same file) added that much code above this handler — mechanical only, no finding. Line shifted -2 in Phase 101B Plan 09 (wave 8), same import-block merge noted on the GET :employeeId entry above — mechanical only. On top of the +3 shift in Phase 101B Plan 08, same import-block merge noted on the GET :employeeId entry above — mechanical only. Lines shifted -3 in Phase 100B Plan 13 (same earlier-route-handler leaveRequest.findMany-to-facade collapse noted on the unlock-month entry above), on top of the -9 net shift Phase 100B Plan 12 already recorded here — mechanical only, no finding."
   },
   {
     "file": "apps/api/src/contexts/platform/api/settings.ts",
