@@ -10,12 +10,5 @@
     "line": 295,
     "disposition": "safe",
     "reason": "Phase 100B Plan 07 — this candidate moved here from composition/dashboard.ts:1327 (GET /overtime-trend's own periodStart bound, before the groupBy was rewired behind sumCarryOverByMonth, W6) and, via this gate's facade-parameter resolver, resolves to the SAME verdict the original site always had. Same `sixMonthsAgo` variable, same rolling 6-month TREND window (this time for the team carry-over groupBy chart) as the entry above — identical risk profile, identical reasoning: a gte-only display-window bound, not a locked-month/audit gate, so an at-most-one-month display-edge shift carries no compliance consequence."
-  },
-  {
-    "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
-    "line": 1557,
-    "disposition": "deferred",
-    "trackedIssue": "#242",
-    "reason": "CONFIRMED unsafe — a genuine, newly-discovered instance of the Issue #241 defect class (naive UTC yearStart/yearEnd instead of a tenant-TZ-aware bound), found by this gate's own first real run. For Europe/Berlin, January's real MONTHLY periodStart falls before the naive yearStart bound and is silently excluded from the 'are all 12 months closed' count, so the manual yearly-close endpoint can never succeed. Deliberately NOT fixed in the commit that introduces this gate (GSD scope boundary: that commit's job is the fifth #241 site and this gate, not a sixth site the gate found on its own first run) — filed as #242, NOT excepted as a safety claim. Line re-pointed -2 in Phase 101B Plan 09 (wave 8): the deep getEffectiveSchedule import (its own line) and the 4-line unconfirmedDaysFromEntries/findUnconfirmedBreakDays deep-import block both merged into the existing time-tracking-index import (net 1 line removed then 3 names added to that block) — mechanical only, same candidate, not re-argued. Line re-pointed +3 in Phase 101B Plan 08: two separate deep absence imports [karenzOverrunFromRequests, loadBsSlotOverrides] removed and merged as extra names into the existing absence-index import — mechanical only, same candidate, not re-argued. Line re-pointed from 1559 to 1556 in Phase 100B Plan 13: an earlier route handler's leaveRequest.findMany [10-line inline query] collapsed into getApprovedLeaveOverlapping(...) [7 lines], net -3 — same candidate, same reasoning, not re-argued. On top of the -10 net shift Phase 100B Plan 12 already recorded here (1568 -> 1559)."
   }
 ]
