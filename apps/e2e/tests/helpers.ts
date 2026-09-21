@@ -1,8 +1,13 @@
 import { Page, expect } from "@playwright/test";
+import { ADMIN_EMAIL, ADMIN_PASSWORD } from "../../../packages/db/src/seed-credentials";
 
+// Phase 275 (D-03, GitHub #275): built from the single shared credentials module instead of a
+// process.env override. The override path is dropped without replacement — a stale, gitignored
+// local apps/e2e/.env carrying an out-of-sync placeholder used to silently steer every local run
+// at a password the seeded database never set.
 export const TEST_ADMIN = {
-  email: process.env.TEST_ADMIN_EMAIL || "admin@clokr.de",
-  password: process.env.TEST_ADMIN_PASSWORD || "admin1234",
+  email: ADMIN_EMAIL,
+  password: ADMIN_PASSWORD,
 };
 
 export async function login(page: Page, email: string, password: string) {
