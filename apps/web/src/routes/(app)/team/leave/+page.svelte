@@ -2570,7 +2570,9 @@
       position: absolute;
       inset: 0;
       z-index: 2;
-      align-items: flex-end;
+      /* Top-right: the day number occupies the top-left and the bars start below it, so this is
+         the one corner of the cell that never has a bar under it. */
+      align-items: flex-start;
       justify-content: flex-end;
       /* The target is the whole cell: at least 86px tall (the `.cal-cell` recipe in app.css) and
          one full calendar column wide — ≥ 44px down to a 360px viewport. Narrower than that, the
