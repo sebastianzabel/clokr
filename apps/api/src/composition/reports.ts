@@ -554,6 +554,13 @@ async function resolveReportOvertimeHours(
 }
 
 // ── buildDatevLodas ───────────────────────────────────────────────────────────
+// Issue #256 (Befund 1): the LODAS record id of the Bewegungsdaten record type. It is
+// declared once in [Satzbeschreibung] and repeated as the FIRST field of every data row
+// that belongs to that record type — a LODAS data row starts with the id of its record,
+// not with its first payload value. Exported here for the regression test that pins the
+// declaration and the data rows to the same value.
+export const DATEV_BWD_SATZ_ID = 20;
+
 // Shared utility — produces a CP1252-encoded Buffer containing a valid DATEV LODAS
 // TXT file (three INI sections: [Allgemein], [Satzbeschreibung], [Bewegungsdaten]).
 // Used by both the company-wide GET /datev and the per-employee GET /datev/employee.
@@ -629,7 +636,16 @@ function buildDatevLodas(params: {
       .reduce((sum, lr) => sum + workDaysInMonthRange(lr.startDate, lr.endDate), 0);
   }
 
-  /** DATEV-Zeile: 12 Felder, leere Felder = Semikolon */
+  /**
+   * DATEV-Zeile: Satz-ID + 12 Werte, leere Felder = Semikolon.
+   *
+   * Issue #256 (Befund 1): the leading Satz-ID is what binds a data row to its record
+   * declaration in [Satzbeschreibung]. Without it the row still carried the right NUMBER
+   * of values (12 names / 12 values), so nothing ever complained -- the values were simply
+   * anchored one field too far left, which only becomes visible when the file is opened as
+   * a table next to its own header. Declaration and data rows are now emitted from the ONE
+   * DATEV_BWD_SATZ_ID constant, so the two cannot drift apart again.
+   */
   function datevLine(
     pn: string,
     name: string,
@@ -639,7 +655,7 @@ function buildDatevLodas(params: {
     stunden: number,
     tage: number,
   ): string {
-    return `${pn};${name};${datum};${ausfall};${lohnart};${stunden > 0 ? dec(stunden) : ""};${tage > 0 ? dec(tage, 1) : ""};;;;;`;
+    return `${DATEV_BWD_SATZ_ID};${pn};${name};${datum};${ausfall};${lohnart};${stunden > 0 ? dec(stunden) : ""};${tage > 0 ? dec(tage, 1) : ""};;;;;`;
   }
 
   for (const emp of employees) {
@@ -741,7 +757,7 @@ function buildDatevLodas(params: {
     // above), so only the unreadable ("orphan") § 9 days are added on top.
     const sickDaysDatev = sickDaysBase + section9OrphanDays;
 
-    // DATEV-Zeilen (Format: 12 Felder, Semikolon-getrennt) — datevLine()'s own body is
+    // DATEV-Zeilen (Format: Satz-ID + 12 Werte, Semikolon-getrennt) — datevLine()'s own body is
     // untouched by Phase 104; only the values fed into the Urlaub/Krank calls changed.
     lines.push(datevLine(pn, name, datum, "", lna.normal, workedHours, 0));
     if (sickDaysDatev > 0) lines.push(datevLine(pn, name, datum, "K", lna.krank, 0, sickDaysDatev));
@@ -760,10 +776,11 @@ function buildDatevLodas(params: {
   // ── DATEV LODAS ASCII-Import Format ──────────────────────────────────────
   // Produces a CP1252-encoded .txt file with three INI sections:
   //   [Allgemein]        – Ziel=LODAS, Version_SST=1.0, BeraterNr=0, MandantenNr=0, Datumsangaben=DDMMJJJJ
-  //   [Satzbeschreibung] – describes the 12-field semicolon format of Bewegungsdaten rows
+  //   [Satzbeschreibung] – declares the Satz-ID and the 12 fields of a Bewegungsdaten row
   //   [Bewegungsdaten]   – actual employee rows
   //
-  // 12 Felder pro Datenzeile, Semikolon-getrennt, Dezimal-Komma, CRLF line endings.
+  // Each data row: the Satz-ID (Issue #256) followed by 12 values, semicolon-separated,
+  // decimal comma, CRLF line endings.
   // Ausfallschlüssel: U=Urlaub, K=Krank, S=Sonderurlaub, (leer)=Arbeit
   const iniHeader = [
     "[Allgemein]",
@@ -775,7 +792,7 @@ function buildDatevLodas(params: {
     `Abrechnungszeitraum=${String(m).padStart(2, "0")}${y}`,
     "",
     "[Satzbeschreibung]",
-    "20;u_lod_bwd_buchung_kst;pnr#bwd;name#bwd;datum#bwd;ausfallkennzeichen#bwd;u_lod_lna_nr#bwd;stunden#bwd;tage#bwd;betrag#bwd;faktor#bwd;kuerzung#bwd;kostenstelle#bwd;kostentraeger#bwd",
+    `${DATEV_BWD_SATZ_ID};u_lod_bwd_buchung_kst;pnr#bwd;name#bwd;datum#bwd;ausfallkennzeichen#bwd;u_lod_lna_nr#bwd;stunden#bwd;tage#bwd;betrag#bwd;faktor#bwd;kuerzung#bwd;kostenstelle#bwd;kostentraeger#bwd`,
     "",
     "[Bewegungsdaten]",
   ].join(CRLF);

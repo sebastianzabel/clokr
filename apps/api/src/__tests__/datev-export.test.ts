@@ -15,7 +15,18 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import iconv from "iconv-lite";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
+import { DATEV_BWD_SATZ_ID } from "../composition/reports";
 import type { FastifyInstance } from "fastify";
+
+// Issue #256 (Befund 1): a Bewegungsdaten row is the Satz-ID followed by the 12 values
+// declared in [Satzbeschreibung] — 13 fields in total. Named offsets instead of bare
+// indices, so the next shift of the row shape breaks a name, not a silent off-by-one.
+const F_SATZ_ID = 0;
+const F_AUSFALL = 4;
+const F_LOHNART = 5;
+const F_STUNDEN = 6;
+const F_TAGE = 7;
+const DATA_ROW_FIELDS = 13;
 
 describe("DATEV export — FIRST automated coverage in its own file (Phase 104)", () => {
   let app: FastifyInstance;
@@ -111,14 +122,13 @@ describe("DATEV export — FIRST automated coverage in its own file (Phase 104)"
         .split("\r\n")
         .filter((l) => l.trim().length > 0);
 
-      const urlaubRow = rows.find((r) => r.includes(";U;") && r.split(";")[4] === "300");
-      const krankRow = rows.find((r) => r.includes(";K;") && r.split(";")[4] === "200");
+      const urlaubRow = rows.find((r) => r.includes(";U;") && r.split(";")[F_LOHNART] === "300");
+      const krankRow = rows.find((r) => r.includes(";K;") && r.split(";")[F_LOHNART] === "200");
       expect(urlaubRow).toBeDefined();
       expect(krankRow).toBeDefined();
 
-      // Field 7 (index 6) is `tage`.
-      const urlaubTage = Number(urlaubRow!.split(";")[6].replace(",", "."));
-      const krankTage = Number(krankRow!.split(";")[6].replace(",", "."));
+      const urlaubTage = Number(urlaubRow!.split(";")[F_TAGE].replace(",", "."));
+      const krankTage = Number(krankRow!.split(";")[F_TAGE].replace(",", "."));
       // Without the fix: urlaubTage=5, krankTage=0 (the credited days double-booked
       // under Urlaub only). With the fix: 5-2=3 and 0+2=2 — the sum is conserved.
       expect(urlaubTage).toBe(3);
@@ -228,21 +238,20 @@ describe("DATEV export — FIRST automated coverage in its own file (Phase 104)"
         .split("\r\n")
         .filter((l) => l.trim().length > 0);
 
-      // Every data row has exactly 12 semicolon-separated fields.
+      // Every data row has exactly 13 semicolon-separated fields: Satz-ID + 12 values.
       for (const r of rows) {
-        expect(r.split(";").length).toBe(12);
+        expect(r.split(";").length).toBe(DATA_ROW_FIELDS);
       }
 
-      const normalRow = rows.find((r) => r.split(";")[4] === "111");
-      const urlaubRow = rows.find((r) => r.split(";")[4] === "222");
+      const normalRow = rows.find((r) => r.split(";")[F_LOHNART] === "111");
+      const urlaubRow = rows.find((r) => r.split(";")[F_LOHNART] === "222");
       expect(normalRow).toBeDefined();
       expect(urlaubRow).toBeDefined();
-      // Field 6 (index 5) is `stunden`; the Normalstunden line carries 8.5h worked.
-      expect(normalRow!.split(";")[5]).toBe("8,50");
+      expect(normalRow!.split(";")[F_STUNDEN]).toBe("8,50");
       // Krankheit Lohnart 333 carries the half-day sick Absence (0.5 tage).
-      const krankRow = rows.find((r) => r.split(";")[4] === "333");
+      const krankRow = rows.find((r) => r.split(";")[F_LOHNART] === "333");
       expect(krankRow).toBeDefined();
-      expect(krankRow!.split(";")[6]).toBe("0,5");
+      expect(krankRow!.split(";")[F_TAGE]).toBe("0,5");
     });
 
     it("Test 5: an employee with no absences at all produces only the Normalstunden line", async () => {
@@ -271,8 +280,8 @@ describe("DATEV export — FIRST automated coverage in its own file (Phase 104)"
           .filter((l) => l.trim().length > 0);
 
         expect(rows.length).toBe(1);
-        expect(rows[0].split(";")[3]).toBe(""); // no Ausfallkennzeichen
-        expect(rows[0].split(";")[6]).toBe(""); // no tage
+        expect(rows[0].split(";")[F_AUSFALL]).toBe(""); // no Ausfallkennzeichen
+        expect(rows[0].split(";")[F_TAGE]).toBe(""); // no tage
       } finally {
         await cleanupTestData(app, bare.tenant.id);
       }
@@ -292,12 +301,56 @@ describe("DATEV export — FIRST automated coverage in its own file (Phase 104)"
         .split("\r\n")
         .filter((l) => l.trim().length > 0);
       for (const r of rows) {
-        const [, , , , , stunden, tage] = r.split(";");
+        const fields = r.split(";");
+        const stunden = fields[F_STUNDEN];
+        const tage = fields[F_TAGE];
         if (stunden) expect(stunden).not.toContain(".");
         if (tage) expect(tage).not.toContain(".");
       }
-      const krankRow = rows.find((r) => r.split(";")[4] === "333");
-      expect(krankRow!.split(";")[6]).toBe("0,5");
+      const krankRow = rows.find((r) => r.split(";")[F_LOHNART] === "333");
+      expect(krankRow!.split(";")[F_TAGE]).toBe("0,5");
+    });
+
+    // ── Issue #256, Befund 1 ─────────────────────────────────────────────────
+    it("Test 7 (#256-01): every Bewegungsdaten row starts with the Satz-ID declared in [Satzbeschreibung]", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/datev/employee?employeeId=${d.employee.id}&year=2026&month=7`,
+        headers: { authorization: `Bearer ${d.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = iconv.decode(res.rawPayload, "win1252");
+
+      const satzLine = body
+        .split("[Satzbeschreibung]")[1]
+        .split("\r\n")
+        .find((l) => l.trim().length > 0);
+      expect(satzLine).toBeDefined();
+
+      // The declaration is: <Satz-ID>;<Satzname>;<field name>… — everything after the
+      // first two fields names ONE value of a data row of that record type.
+      const satzFields = satzLine!.split(";");
+      expect(satzFields[F_SATZ_ID]).toBe(String(DATEV_BWD_SATZ_ID));
+      const declaredValueCount = satzFields.length - 2;
+
+      const rows = body
+        .split("[Bewegungsdaten]")[1]
+        .split("\r\n")
+        .filter((l) => l.trim().length > 0);
+      // Guard against a vacuous pass: this fixture has worked hours, Urlaub and Krank,
+      // so it MUST produce rows. An empty export would otherwise satisfy every
+      // assertion in the loop below without checking anything (Issues #235/#240/#245).
+      expect(rows.length).toBeGreaterThan(0);
+
+      for (const r of rows) {
+        const fields = r.split(";");
+        // Before the fix the row began with the Personalnummer, so this was the
+        // employeeNumber, never "20".
+        expect(fields[F_SATZ_ID]).toBe(String(DATEV_BWD_SATZ_ID));
+        // …and the row carried 12 fields, one short of Satz-ID + 12 declared values,
+        // which is exactly why every value sat one column left of its own header.
+        expect(fields.length).toBe(1 + declaredValueCount);
+      }
     });
   });
 });
