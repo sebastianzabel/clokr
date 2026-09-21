@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from "$api/client";
+  import { page } from "$app/stores";
   import Modal from "$components/ui/Modal.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
   import ToolPage from "$lib/components/admin/ToolPage.svelte";
@@ -45,6 +46,26 @@
     employees: EmployeeStatus[];
   }
 
+  /** Phase 292 (issue #292) — GET /overtime/close-month/deferred. */
+  interface DeferredEmployee {
+    employeeId: string;
+    employeeName: string;
+    oldestOpenMonth: { year: number; month: number };
+    monthsBehind: number;
+    reason: "GAPS" | "UNCONFIRMED_BREAKS" | "UNKNOWN";
+    gapDates: string[];
+    gapCount: number;
+  }
+
+  interface DeferredState {
+    employeeCount: number;
+    oldestOpenMonth: { year: number; month: number } | null;
+    monthsBehind: number;
+    gapCount: number;
+    severity: "NONE" | "INFO" | "WARNING" | "CRITICAL";
+    employees: DeferredEmployee[];
+  }
+
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentDay = now.getDate();
@@ -61,6 +82,40 @@
   let monthStatuses: MonthStatus[] = $state([]);
   let loaded = $state(false);
   let earliestYear = $state(currentYear);
+
+  // Phase 292 (issue #292): the deferred-Monatsabschluss state, shown as a banner on the page
+  // an admin opens for exactly this question. Before this, a month that the auto-closer had
+  // permanently deferred was visible nowhere — one had to already suspect the right month and
+  // pick it from the year list to see anything at all.
+  let deferred = $state<DeferredState | null>(null);
+
+  const MONTH_NAMES_DE = [
+    "Januar",
+    "Februar",
+    "März",
+    "April",
+    "Mai",
+    "Juni",
+    "Juli",
+    "August",
+    "September",
+    "Oktober",
+    "November",
+    "Dezember",
+  ];
+
+  function monthLabel(m: { year: number; month: number } | null): string {
+    if (!m) return "";
+    return `${MONTH_NAMES_DE[m.month - 1]} ${m.year}`;
+  }
+
+  let deferredCalloutClass = $derived(
+    deferred?.severity === "CRITICAL"
+      ? "callout error"
+      : deferred?.severity === "INFO"
+        ? "callout brand"
+        : "callout",
+  );
 
   // Expanded month detail
   let expandedMonth = $state<number | null>(null);
@@ -272,6 +327,26 @@
 
   function onYearChange() {
     loadYearStatus();
+  }
+
+  async function loadDeferred() {
+    try {
+      deferred = await api.get<DeferredState>("/overtime/close-month/deferred?detailed=true");
+    } catch {
+      // A failing side-panel must never take the page down — the year list is the primary view.
+      deferred = null;
+    }
+  }
+
+  /** Jump straight to the oldest month that is still open, and expand it. */
+  async function openOldestDeferredMonth() {
+    const target = deferred?.oldestOpenMonth;
+    if (!target) return;
+    if (selectedYear !== target.year) {
+      selectedYear = target.year;
+      await loadYearStatus();
+    }
+    await toggleMonthDetail(target.month);
   }
 
   async function toggleMonthDetail(month: number) {
@@ -498,7 +573,21 @@
     return name;
   }
 
-  loadYearStatus();
+  // Phase 292 (issue #292): deep link from the Monatsabschluss notifications
+  // (/admin/month-close?year=2026&month=5). The message names the blocked month; this is what
+  // makes the link land on it instead of on the current year with nothing expanded.
+  const deepLinkYear = Number($page.url.searchParams.get("year"));
+  const deepLinkMonth = Number($page.url.searchParams.get("month"));
+  const hasDeepLinkYear =
+    Number.isInteger(deepLinkYear) && deepLinkYear >= 2000 && deepLinkYear <= 2999;
+  const hasDeepLinkMonth =
+    Number.isInteger(deepLinkMonth) && deepLinkMonth >= 1 && deepLinkMonth <= 12;
+  if (hasDeepLinkYear) selectedYear = deepLinkYear;
+
+  loadDeferred();
+  loadYearStatus().then(() => {
+    if (hasDeepLinkMonth) void toggleMonthDetail(deepLinkMonth);
+  });
 </script>
 
 <svelte:head><title>Monatsabschluss – Clokr</title></svelte:head>
@@ -560,6 +649,51 @@
           {/if}
         </div>
       </Section>
+
+      {#if deferred && deferred.employeeCount > 0}
+        <div class={deferredCalloutClass} role="status" data-testid="month-close-deferred">
+          <div>
+            <b>
+              {deferred.severity === "CRITICAL" ? "Dringend: " : ""}Monatsabschluss überfällig
+            </b>
+            <p>
+              {deferred.employeeCount === 1
+                ? "1 Mitarbeiter hat"
+                : `${deferred.employeeCount} Mitarbeiter haben`}
+              einen offenen Monatsabschluss. Ältester offener Monat:
+              <b>{monthLabel(deferred.oldestOpenMonth)}</b>
+              ({deferred.monthsBehind === 1 ? "1 Monat" : `${deferred.monthsBehind} Monate`} Rückstand).
+              {#if deferred.gapCount > 0}
+                {deferred.gapCount === 1
+                  ? "1 fehlender Tageseintrag blockiert"
+                  : `${deferred.gapCount} fehlende Tageseinträge blockieren`} den Abschluss.
+              {/if}
+            </p>
+            <ul class="deferred-list">
+              {#each deferred.employees.slice(0, 8) as e (e.employeeId)}
+                <li>
+                  {e.employeeName} – offen seit {monthLabel(e.oldestOpenMonth)}
+                  {#if e.gapCount > 0}
+                    · fehlende Tage: {e.gapDates.join(", ")}
+                  {:else}
+                    · keine Tageslücken gefunden
+                  {/if}
+                </li>
+              {/each}
+              {#if deferred.employees.length > 8}
+                <li>… und {deferred.employees.length - 8} weitere.</li>
+              {/if}
+            </ul>
+            <button
+              class="btn btn-secondary"
+              onclick={openOldestDeferredMonth}
+              data-testid="month-close-deferred-jump"
+            >
+              {monthLabel(deferred.oldestOpenMonth)} öffnen
+            </button>
+          </div>
+        </div>
+      {/if}
 
       {#if error}
         <div class="callout error" role="alert">
@@ -910,6 +1044,17 @@
 </div>
 
 <style>
+  /* Phase 292 (issue #292) — the per-employee lines inside the deferred-Monatsabschluss
+     callout. Inherits the callout's own colour; only the list reset and spacing live here. */
+  .deferred-list {
+    margin: 8px 0 12px;
+    padding-left: 18px;
+    line-height: 1.55;
+  }
+  .deferred-list li {
+    color: inherit;
+  }
+
   /* ─── Controls ──────────────────────────────────────── */
   .ma-controls {
     display: flex;

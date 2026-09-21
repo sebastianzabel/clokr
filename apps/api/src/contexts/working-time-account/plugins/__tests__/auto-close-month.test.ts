@@ -51,8 +51,17 @@ describe("auto-close-month plugin (Phase 76.12 Plan 02) — Ø-Methode + bsAbsen
   it("D-14: leave-reduce uses calcLeaveAbsenceMinutesTz with halfDay propagation", () => {
     // Phase 76.26: calcLeaveAbsenceMinutesTz moved into closeEmployeeMonth().
     // The plugin passes halfDay via the approvedLeave array to the core.
-    // Verify that halfDay is correctly mapped to the closeEmployeeMonth() call.
-    expect(pluginSource).toMatch(/halfDay: Boolean\(lr\.halfDay\)/);
+    //
+    // Phase 292 (GitHub issue #292): the plugin's own `halfDay: Boolean(lr.halfDay)` mapping
+    // was the GAP-READINESS one, and that whole block moved into ../../month-gap-check.ts so the
+    // cron and the deferral escalation read one definition of "gap". The invariant is unchanged
+    // and is asserted where it now lives; on the CLOSE path the plugin routes approved leave
+    // through toCloseMonthApprovedLeave(), which carries halfDay itself (issue #220).
+    const gapCheckSource = readFileSync(join(__dirname, "..", "..", "month-gap-check.ts"), "utf-8");
+    expect(gapCheckSource.length).toBeGreaterThan(500); // the file was really read
+    expect(gapCheckSource).toMatch(/halfDay: Boolean\(lr\.halfDay\)/);
+    expect(pluginSource).toMatch(/detectMonthGaps\(/);
+    expect(pluginSource).toMatch(/toCloseMonthApprovedLeave\(/);
   });
 
   // ── Structural invariant (Phase 99, OB-02): getCarryOverBase() rewired at EXACTLY ONE site ──

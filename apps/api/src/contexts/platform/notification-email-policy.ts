@@ -51,6 +51,10 @@ const TOGGLE_ENTRIES: Record<string, EmailPolicy> = {
   BREAK_COMPLIANCE_ALERT:  { email: "toggle", field: "emailOnMissingEntries" }, // Phase 92 (BREAK-06)
   CLOCK_OUT_REMINDER:      { email: "toggle", field: "emailOnClockOutReminder" },
   MONTH_CLOSE_BLOCKED:     { email: "toggle", field: "emailOnMonthClose" }, // auto-close-month.ts
+  // Phase 292 (#292): the weekly escalation for a Monatsabschluss that STAYS deferred. Same
+  // subject, same toggle as MONTH_CLOSE_BLOCKED — a tenant that switched Monatsabschluss mails
+  // off has decided that for this subject, and a second column would only split the decision.
+  MONTH_CLOSE_DEFERRED:    { email: "toggle", field: "emailOnMonthClose" }, // deferred-month-close-reminder.ts
   // Phase 107 (D-19): a roster change recomputed an APPROVED provisional VACATION request's
   // consumption. emailOnLeaveDecision is the closest existing toggle (this adjusts an already
   // approved leave decision) — reusing it avoids adding a third leave-email column.
