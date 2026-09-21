@@ -2,15 +2,16 @@ import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
 /**
- * a11y gate for Phase 70 (DEVOPS-V8-05), made real by Phase 275 / Issue #275 (D-08).
- * Scoped to the LOGIN page only (public, no auth) — full authenticated-page
- * coverage requires the docker-compose webServer: from Phase 73.
+ * a11y gate for Phase 70 (DEVOPS-V8-05), made real and blocking by Phase 275 /
+ * Issue #275 (D-08). Scoped to the LOGIN page only (public, no auth) — full
+ * authenticated-page coverage requires the docker-compose webServer: from
+ * Phase 73, and remains open (not scheduled).
  *
- * This assertion CAN fail (`toEqual([])`). The `axe-scan` CI job itself remains
- * `continue-on-error: true` (`.github/workflows/ci.yml:602`) — a failure here is
- * visible in the job log and run summary, but does not turn the PR check red.
- * That gap was raised to the owner as Phase 275 Plan 02's checkpoint; do not read
- * a green PR check as proof this spec passed.
+ * This assertion CAN fail (`toEqual([])`), and a failure DOES block the PR:
+ * the `axe-scan` CI job's `continue-on-error: true` was removed in the same
+ * phase (`.github/workflows/ci.yml`) — an owner-approved second deliberate
+ * exception to this phase's "do not repair specs" scope fence, made because
+ * the measured `/login` violation count was 0 (blocking costs nothing today).
  */
 test.describe("axe a11y scan — public pages", () => {
   test("login page has no WCAG 2 A/AA violations", async ({ page }) => {

@@ -596,11 +596,13 @@ jobs:
           temporaryPublicStorage: true
           configPath: .github/lighthouserc.json
 
-  # ── Axe a11y scan (DEVOPS-V8-05, advisory in Phase 70) ───────────────
-  # Phase 73 will upgrade to blocking + extend to authenticated pages.
+  # ── Axe a11y scan (DEVOPS-V8-05) ──────────────────────────────────────
+  # Blocking as of Phase 275 (Issue #275, D-08): the assertion in
+  # axe-scan.spec.ts was made real (toEqual([])) and continue-on-error
+  # removed, both in the same phase. Scans the public /login page only;
+  # extending to authenticated pages remains open, not scheduled.
   axe-scan:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
 
