@@ -318,12 +318,14 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // deletePresenceDevice — 'employeeId' is the caller's own principal identifier, same shape as
   // clearEntryNotesForEmployee/hardDeleteTimeDataForEmployee above).
   // Phase 100B Plan 10 (Wave 5, opening) added TWO more real facade files:
-  // `contexts/absence/facade/leave-types.ts` (A17-A19 — 4 exported functions: getLeaveTypeByCode,
-  // getLeaveTypeByDisplayName, listLeaveTypes, updateLeaveType) and
+  // `contexts/absence/facade/leave-types.ts` (A17-A19 — originally 4 exported functions;
+  // getLeaveTypeByDisplayName was deleted in Phase 205, leaving getLeaveTypeByCode,
+  // listLeaveTypes, updateLeaveType) and
   // `contexts/absence/facade/entitlements.ts` (A11-A16 plus the two H1 deviation-preserving
-  // siblings — 9 exported functions: getVacationEntitlement, listEntitlementsForYear,
-  // getEntitlementsForEmployee, getEntitlementById, getExpiringCarryOver,
-  // upsertVacationEntitlement, getVacationEntitlementByDisplayName,
+  // siblings — originally 9 exported functions; getVacationEntitlementByDisplayName was deleted
+  // in Phase 205 (its sole caller now resolves by code), leaving getVacationEntitlement,
+  // listEntitlementsForYear, getEntitlementsForEmployee, getEntitlementById,
+  // getExpiringCarryOver, upsertVacationEntitlement,
   // getVacationEntitlementsForYearByDisplayName, hardDeleteEntitlementsForEmployee) and ONE new
   // named F3 exception (hardDeleteEntitlementsForEmployee — same shape as
   // hardDeleteOvertimeDataForEmployee/hardDeleteTimeDataForEmployee above).
@@ -355,8 +357,15 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // same shape as anonymizeAbsencesForEmployee/hardDeleteAbsencesForEmployee above;
   // archiveLeaveRequestsBefore needs none, its tenantId parameter satisfies F3 directly, same as
   // archiveAbsencesBefore).
-  // 15 files, 84 exported functions total, 15 exception entries, 0 findings.
-  it("the real tree has exactly 84 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  // 15 files, 82 exported functions total, 15 exception entries, 0 findings.
+  //
+  // 84 -> 82 in Phase 205 (GitHub #205): getVacationEntitlementByDisplayName and
+  // getLeaveTypeByDisplayName were DELETED, not renamed. Both resolved a LeaveType through its
+  // tenant-editable display name; their only callers now go through the code-based
+  // getVacationEntitlement / getLeaveTypeByCode, so both were left without a caller and removed.
+  // This golden number is a tripwire, so it is updated only when the tree legitimately changed —
+  // here it did, and the deletion is the point of that phase rather than a side effect.
+  it("the real tree has exactly 82 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -382,7 +391,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(84);
+    expect(functions).toHaveLength(82);
 
     const rawExceptions = JSON.parse(
       readFileSync(
