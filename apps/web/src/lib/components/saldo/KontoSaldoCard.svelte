@@ -23,6 +23,11 @@
   // using CONTEXT's locked vocabulary ("Gesamt-Saldo" / "Bestätigt" · "inkl. laufendem
   // Monat"). `SaldoAnzeige.svelte` is NOT imported and NOT modified — no new props, no
   // `:global()` overrides, no row-hiding CSS.
+  //
+  // Issue #291 (2026-09-21) — the two figures and the vocabulary above are unchanged, but their
+  // WEIGHTING is not: the headline is now the lifetime total and "Bestätigt" is the row beneath
+  // it, the reverse of the original arrangement. See `totalMin` below for the measurement that
+  // forced it.
   import Card from "$components/ui/Card.svelte";
   import { fmtBalance, fmtMin } from "$lib/utils/format-minutes";
 
@@ -53,48 +58,62 @@
 
   const isSplit = $derived(confirmedMinutes !== undefined);
 
-  // The confirmed (or, in legacy fallback, the plain lifetime) figure, in minutes.
-  const figureMin = $derived(
-    isSplit ? (confirmedMinutes ?? 0) : totalHours !== null ? Math.round(totalHours * 60) : null,
+  // ── The headline figure: the LIFETIME saldo ──────────────────────────────────
+  // Issue #291 — this used to be `confirmedMinutes`, i.e. the closed-month carry-over. That is
+  // a correct number, but a wrong headline: `confirmedMinutes` is 0 for as long as no month has
+  // been closed, so a card titled "Gesamt-Saldo" announced "±0:00" for an employee whose actual
+  // saldo was −70:12 (measured on a production tenant, 2026-09-21). The longer the close chain
+  // stalls, the more reassuring the card looked — the failure was self-concealing. The Phase 97
+  // confirmed/forecast SPLIT is untouched and still shown; only the WEIGHTING changes: the total
+  // leads, the confirmed portion follows as a row (see `confirmedText` below).
+  //
+  // Source of the total: in split mode the two integer-minute parts are added, because
+  // `openMonthMinutes` is DERIVED server-side as `total − confirmed`
+  // (overtime-balance.ts) — their sum is the same total without a float round-trip through
+  // `totalHours`. Outside split mode there are no parts, so `totalHours` is used directly, which
+  // is exactly what this card rendered before Phase 97 and still renders for legacy call sites.
+  const totalMin = $derived(
+    isSplit && openMonthMinutes !== undefined && openMonthMinutes !== null
+      ? (confirmedMinutes ?? 0) + openMonthMinutes
+      : totalHours !== null
+        ? Math.round(totalHours * 60)
+        : null,
   );
   // 260820-elk follow-up (coordinator-measured deviation #3) — this headline figure ALWAYS
   // carries a sign character per the design handoff README's Formatierung/Accessibility
   // rules ("Vorzeichen immer als Zeichen ausschreiben (− / + / ±), nicht nur farblich"), so
   // exact zero renders "±0:00" here — a DELIBERATELY different zero convention from
   // MonatSaldoCard's month figure (which stays locked to bare "0:00", see format-minutes.ts).
-  const figureText = $derived(figureMin === null ? "—" : fmtBalance(figureMin));
-
-  // Still used for the CAPTION distinction only ("noch kein Monatsabschluss" vs "Bestätigt")
-  // — a brand-new hire whose first month hasn't closed yet gets a different caption, but (per
-  // the coordinator's fix) NOT a different colour tone any more; --text-faint is reserved for
-  // day numbers without values, not for a real, just-not-yet-meaningful saldo figure.
-  const isNewHireZero = $derived(isSplit && figureMin === 0 && !hasClosedMonth);
+  const figureText = $derived(totalMin === null ? "—" : fmtBalance(totalMin));
   const tone = $derived.by(() => {
-    if (figureMin === null) return "neutral";
-    if (figureMin === 0) return "muted";
-    if (figureMin > 0) return "good";
+    if (totalMin === null) return "neutral";
+    if (totalMin === 0) return "muted";
+    if (totalMin > 0) return "good";
     return "bad";
   });
 
-  const openMonthAvailable = $derived(openMonthMinutes !== undefined && openMonthMinutes !== null);
-  // quick 20260825-konto-saldo-gesamt — the row labelled "inkl. laufendem Monat" now shows the
-  // TOTAL (Bestätigt + laufender Monat), not the open month's own contribution. Owner override of
-  // 97-CONTEXT's split-only presentation, decided on user feedback: showing the open month alone
-  // under an "inkl." label read as a wrong grand total, and contradicted the calendar's last cell
-  // (which already renders the cumulative lifetime figure — e.g. +14:35 while this card said +8:06).
-  // The headline stays "Bestätigt" and keeps its visual primacy, so 97-CONTEXT's core intent —
-  // the confirmed figure leads, the forecast never looks claimable on its own — is preserved.
-  const openMonthTotalMin = $derived((figureMin ?? 0) + (openMonthMinutes ?? 0));
-  const openMonthText = $derived(openMonthAvailable ? fmtBalance(openMonthTotalMin) : "—");
-  // 260820-elk follow-up (coordinator-measured deviation #2) — the row VALUE must read as a
-  // figure (size + sign colour), not as quiet as its own label.
-  const openMonthTone = $derived.by(() => {
-    if (!openMonthAvailable) return "muted";
-    const v = openMonthTotalMin;
-    if (v > 0) return "good";
-    if (v < 0) return "bad";
+  // ── The confirmed portion: same datum, demoted to a row ──────────────────────
+  const confirmedMin = $derived(isSplit ? (confirmedMinutes ?? 0) : null);
+  const confirmedText = $derived(confirmedMin === null ? "—" : fmtBalance(confirmedMin));
+  // Distinguishes "nothing confirmed because nothing was ever closed" (a brand-new hire) from
+  // "confirmed and it happens to be zero". Per the coordinator's earlier fix this changes the
+  // LABEL only, never the colour tone; --text-faint stays reserved for day numbers without
+  // values, not for a real, just-not-yet-meaningful saldo figure.
+  const isNewHireZero = $derived(isSplit && confirmedMin === 0 && !hasClosedMonth);
+  const confirmedTone = $derived.by(() => {
+    if (confirmedMin === null) return "muted";
+    if (confirmedMin > 0) return "good";
+    if (confirmedMin < 0) return "bad";
     return "muted";
   });
+
+  // ── The marker for the state issue #291 was filed about ──────────────────────
+  // Nothing confirmed, yet the account is not empty: every minute of this saldo sits in months
+  // that were never closed. That is always a missing-Monatsabschluss condition — it is the only
+  // way the two can hold at once — and it is exactly the state that used to read as "ausgeglichen".
+  const missingMonthClose = $derived(
+    isSplit && confirmedMin === 0 && totalMin !== null && totalMin !== 0,
+  );
 </script>
 
 <Card class="ksc-card" style="background: var(--bg-subtle)">
@@ -133,16 +152,30 @@
         </div>
       {/if}
       {#if isSplit}
+        <!-- Issue #291 — the caption now qualifies the HEADLINE (which is the lifetime
+             total), so it carries the "inkl. laufendem Monat" wording the row below used
+             to carry, including the roster-incomplete qualifier. -->
         <div class="ksc-caption">
-          {isNewHireZero ? "noch kein Monatsabschluss" : "Bestätigt"}
+          inkl. laufendem Monat{#if rosterIncomplete}
+            &nbsp;· Restmonat unverplant{/if}
         </div>
+        <!-- Issue #291 — the state the ticket was filed about: nothing confirmed while the
+             account is not empty. Deliberately rendered ABOVE the divider, i.e. attached to
+             the headline it qualifies, not to the "Bestätigt" row. Reuses the global
+             .badge/.badge-yellow recipe from app.css, the same one the tolerance badge
+             above already uses — no new badge styling. -->
+        {#if missingMonthClose}
+          <div class="ksc-missing-close">
+            <span class="badge badge-yellow">Monatsabschlüsse fehlen</span>
+            <span class="ksc-missing-close-hint">Saldo vollständig unbestätigt</span>
+          </div>
+        {/if}
         <div class="ksc-divider"></div>
         <div class="ksc-row">
           <span class="ksc-row-label"
-            >inkl. laufendem Monat{#if rosterIncomplete}
-              &nbsp;· Restmonat unverplant{/if}</span
+            >{isNewHireZero ? "noch kein Monatsabschluss" : "Bestätigt"}</span
           >
-          <span class="ksc-row-value ksc-row-value--{openMonthTone}">{openMonthText}</span>
+          <span class="ksc-row-value ksc-row-value--{confirmedTone}">{confirmedText}</span>
         </div>
       {/if}
     {/if}
@@ -221,6 +254,33 @@
      radius (would repaint every --warn consumer app-wide). Light mode is unaffected —
      .badge-yellow's global color: var(--warn) (app.css) still applies there unchanged. */
   :global([data-mode="dark"]) .ksc-tolerance-warn .badge-yellow {
+    color: var(--text);
+  }
+
+  /* Issue #291 — missing-Monatsabschluss marker. Same shape as .ksc-tolerance-warn above
+     (flex row, global .badge.badge-yellow pill + a muted hint); no font declarations of its
+     own beyond the hint, and no new colour tokens. */
+  .ksc-missing-close {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    margin-top: var(--s-3);
+    flex-wrap: wrap;
+  }
+
+  .ksc-missing-close-hint {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+  }
+
+  /* Issue #291 — dark-mode contrast fallback, deliberately a SEPARATE rule from the
+     .ksc-tolerance-warn one above rather than a shared selector list: that rule's exact text
+     is pinned by KontoSaldoCard.test.ts, and folding a second selector into it would silently
+     unpin the measurement trail documented there. Same measured problem and same remedy —
+     --warn on the composited dark-mode --warn-soft background is 2.73:1 (fails WCAG AA), so
+     the badge switches to color: var(--text) (11.64:1). Scoped to this one badge; the --warn
+     token itself stays untouched. */
+  :global([data-mode="dark"]) .ksc-missing-close .badge-yellow {
     color: var(--text);
   }
 
