@@ -28,6 +28,15 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    // Matches apps/api/vitest.config.ts:26. Vitest's 5s default is not enough for the
+    // guard-vacuity classifier test included below: its `describe.each(provedGuards())` cases
+    // read a guard file and re-run the AST classifier over it up to 20 times (once per
+    // independent proof shape it deletes), and `provedGuards()` itself first walks the whole
+    // source tree. Locally that is ~3.3s of test time for the file; the CI runner is slower and
+    // blew the 5s default on the first run after the move (PR #297), which looked like a
+    // failure of the move rather than of the clock. Named here rather than per-test so the two
+    // vitest instances that run this same file agree on its budget.
+    testTimeout: 30000,
     include: [
       "scripts/**/*.test.mjs",
       // See the PR #297 paragraph above — DB-free by construction, kept off apps/api's
