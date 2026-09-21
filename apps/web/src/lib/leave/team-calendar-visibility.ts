@@ -191,3 +191,54 @@ export function resolveChipVisual(entry: ChipEntry, role: string | null | undefi
     chipLabel: label,
   };
 }
+
+/** The subset of `CalEntry` the tapped-day detail sheet needs on top of `ChipEntry`. */
+export interface DayDetailEntry extends ChipEntry {
+  id: string;
+  firstName: string;
+  lastName: string;
+}
+
+/** One line of the tapped-day detail sheet. */
+export interface DayDetailRow {
+  id: string;
+  /** Full employee name — the sheet has room for it, unlike the bar. */
+  name: string;
+  /** The absence type in PLAIN TEXT, or the neutral word when this viewer must not learn it. */
+  typeLabel: string;
+  /** Renders the "ausstehend" marker — same condition as `.cal-chip--pending` on the bar. */
+  isPending: boolean;
+  /** Fill of the row's colour swatch — ties the line back to the bar the finger hit. */
+  background: string;
+  /** Foreground paired with `background`, for anything drawn on the swatch. */
+  textColor: string;
+}
+
+/**
+ * The tapped day's absences as plain-text lines (GitHub issue #265).
+ *
+ * Below 700px the bar's type label is hidden, which left the type distinguishable by COLOUR
+ * ALONE (WCAG 1.4.1) — `title` is the only other carrier and a finger cannot reach it. This is
+ * the text a tap reveals instead.
+ *
+ * It derives every line through `resolveChipVisual`, so the #257 role rule holds here by
+ * construction rather than by a second, copied check: an EMPLOYEE looking at a colleague gets
+ * `NEUTRAL_CHIP_LABEL`, never "Krankmeldung" or "Kinderkrank". A detail sheet with its own role
+ * check would be the D-10 defect again, one screen further in.
+ */
+export function resolveDayDetailRows(
+  entries: readonly DayDetailEntry[],
+  role: string | null | undefined,
+): DayDetailRow[] {
+  return entries.map((entry) => {
+    const visual = resolveChipVisual(entry, role);
+    return {
+      id: entry.id,
+      name: `${entry.firstName} ${entry.lastName}`.trim(),
+      typeLabel: visual.chipLabel,
+      isPending: entry.status === "PENDING" || entry.status === "CANCELLATION_REQUESTED",
+      background: visual.background,
+      textColor: visual.textColor,
+    };
+  });
+}
