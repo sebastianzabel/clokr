@@ -246,6 +246,26 @@ export async function seedTestData(testApp: FastifyInstance, suffix = "") {
 }
 
 /**
+ * Issue #256 (Befund 3): the DATEV export refuses to build a file without a
+ * Berater-/Mandantennummer (HTTP 409, DATEV_KANZLEI_MISSING_ERROR).
+ *
+ * `seedTestData` deliberately leaves both columns null — "not configured" is exactly the
+ * state that guard exists for, and a seed that quietly pre-filled them would make the
+ * guard impossible to test. Every fixture that wants a SUCCESSFUL export therefore says
+ * so explicitly, through this helper.
+ */
+export async function configureDatevKanzlei(
+  testApp: FastifyInstance,
+  tenantId: string,
+  values: { beraterNr: number; mandantenNr: number } = { beraterNr: 28547, mandantenNr: 90909 },
+) {
+  await testApp.prisma.tenantConfig.update({
+    where: { tenantId },
+    data: { datevBeraterNr: values.beraterNr, datevMandantenNr: values.mandantenNr },
+  });
+}
+
+/**
  * Idempotently ensure a `LeaveEntitlement` row exists for `employeeId` /
  * `leaveTypeId` for every year in `years`, in addition to whatever
  * `seedTestData` already provisioned for the live (or offset) current year.
