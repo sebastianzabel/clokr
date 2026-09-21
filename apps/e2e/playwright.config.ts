@@ -21,8 +21,7 @@ const CI = !!process.env.CI;
 // PLAYWRIGHT_BASE_URL is the canonical env var (used by Phase 70 CI axe-scan job).
 // BASE_URL is kept for backwards compatibility with existing local workflows.
 // Default to http://localhost:3001 (Phase 73-07 docker-compose.test.yml web service).
-const BASE_URL =
-  process.env.PLAYWRIGHT_BASE_URL || process.env.BASE_URL || "http://localhost:3001";
+const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || process.env.BASE_URL || "http://localhost:3001";
 
 // D-08: 4 workers on CI (GitHub Actions standard runner is 4 cores),
 // half the cores locally so the developer keeps a usable machine.
@@ -72,8 +71,7 @@ export default defineConfig({
   webServer: webServerDisabled
     ? undefined
     : {
-        command:
-          "docker compose -f ../../docker-compose.test.yml up --wait --quiet-pull",
+        command: "docker compose -f ../../docker-compose.test.yml up --wait --quiet-pull",
         url: HEALTH_URL,
         reuseExistingServer: !CI,
         timeout: 180_000,
@@ -159,6 +157,39 @@ export default defineConfig({
       // namespace emails by tenantId so workers can run in parallel.
       fullyParallel: false,
       workers: 1,
+    },
+    {
+      // Phase 275 (Issue #275, D-04/D-06) — the "in-ci" register category.
+      //
+      // D-06 originally picked four date-free files by inspection. The first honest run
+      // (this plan, measured against the seeded stack) showed three of those four are
+      // stale (see apps/api/scripts/lint-e2e-spec-registry.json, plan 275-04, for the
+      // full per-file reasons) and dropped them per D-06's own fallback rule — try the
+      // next-lowest-date-reference candidate, never repair. The full named fallback list
+      // was exhausted; two more candidates came back clean. Final selection (3 files):
+      //   - functional.spec.ts        (0 date refs  — one of D-06's original four)
+      //   - bs-pattern-retroactive.spec.ts (6 date refs — fallback list)
+      //   - leave-flow.spec.ts        (7 date refs  — fallback list)
+      // All three needed the What's-New-drawer fixture fix (apps/e2e/fixtures/tenant.ts)
+      // to pass — see that file's header comment for the named scope-fence exception.
+      // The full per-file registry this allowlist must stay consistent with lives in
+      // `apps/api/scripts/lint-e2e-spec-registry.json` (plan 275-04).
+      //
+      // This is the ONLY place the CI selection is listed — do not add files here
+      // without also updating that registry, and do not let the CI job pass a file
+      // list of its own (D-04: one visible place, cannot grow silently).
+      name: "e2e-ci",
+      testMatch: [
+        /functional\.spec\.ts/,
+        /bs-pattern-retroactive\.spec\.ts/,
+        /leave-flow\.spec\.ts/,
+      ],
+      use: {
+        ...devices["Desktop Chrome"],
+      },
+      // No `dependencies: ["setup"]` (D-04) — these specs authenticate via the tenant
+      // fixture's own bootstrap-tenant call (apps/e2e/fixtures/tenant.ts), not via
+      // storageState, so they don't need the seeded admin user auth.setup.ts logs in.
     },
   ],
 });
