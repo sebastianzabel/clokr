@@ -2,7 +2,9 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
 import { computeOvertimeBalanceHours } from "../../contexts/time-tracking/api/time-entries";
+import { leaveTypeFields } from "../../contexts/absence/leave-type";
 import type { FastifyInstance } from "fastify";
+import type { Employee } from "@clokr/db";
 
 /**
  * Phase 49.1-03 — GET /api/v1/dashboard scheduleType field
@@ -532,5 +534,164 @@ describe("dashboard APPROVED wins over PENDING on overlap (Phase 95 SHIFT-01)", 
     const body = res.json();
     expect(body.days.every((d: { status: string }) => d.status !== "requested")).toBe(true);
     expect(body.days.some((d: { status: string }) => d.status === "leave")).toBe(true);
+  });
+});
+
+/**
+ * Issue #205, finding 3 — `GET /team-week` gains additive, rename-stable `leaveTypeCode` /
+ * `absenceType` fields alongside the existing display `reason` (D-02). Covers:
+ *   - AK-5 twin: an un-renamed SICK LeaveType resolves `leaveTypeCode` and `reason` correctly.
+ *   - AK-3a/AK-6: after the SAME LeaveType is renamed, `leaveTypeCode` stays "SICK" (stable) while
+ *     `reason` tracks the new display name (additive — nothing was replaced).
+ *   - Imposed absence: an `Absence(MATERNITY)` day (a SEPARATE employee, so it cannot collide with
+ *     the LeaveRequest-based SICK case) carries `absenceType`, a null `leaveTypeCode`, and the
+ *     stable `DISPLAY_NAME` reason — the exact regression this plan's two-field design prevents.
+ *   - Role gate: an EMPLOYEE token is rejected with 403 — the standing proof behind T-205-01's
+ *     "accept" disposition in this plan's threat model.
+ *
+ * Dates are deliberately NOT hardcoded to a calendar day (the time-bomb class documented in
+ * `docs/testing.md`/repo memory): the leave/absence ranges span well beyond the returned week on
+ * both sides, and the day under test is located by searching for the first `status === "absent"`
+ * entry.
+ */
+describe("dashboard /team-week leaveTypeCode/absenceType (Issue #205, finding 3)", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+  let sickType: { id: string };
+  let employeeMaternity: Employee;
+
+  // Spans well before/after any returned week regardless of tenant timezone or today's weekday.
+  const rangeStart = new Date(Date.now() - 30 * 86400000);
+  const rangeEnd = new Date(Date.now() + 30 * 86400000);
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "dashboard-leavetype-code");
+    const prisma = app.prisma;
+    const tenantId = data.tenant.id;
+    const suffix = "ltc-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+    // Only VACATION is seeded by seedTestData, so SICK cannot collide on
+    // @@unique([tenantId, code]).
+    sickType = await prisma.leaveType.create({
+      data: { tenantId, ...leaveTypeFields("SICK"), color: "#EF4444" },
+    });
+
+    await prisma.leaveRequest.create({
+      data: {
+        employeeId: data.employee.id,
+        leaveTypeId: sickType.id,
+        startDate: rangeStart,
+        endDate: rangeEnd,
+        days: 5,
+        status: "APPROVED",
+      },
+    });
+
+    // A second employee, so the Absence(MATERNITY) case cannot collide with the
+    // LeaveRequest-based SICK case above on the same employee/day.
+    const passwordHash = await bcrypt.hash("test1234", 10);
+    const userMaternity = await prisma.user.create({
+      data: {
+        email: `maternity-${suffix}@test.de`,
+        passwordHash,
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    employeeMaternity = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: userMaternity.id,
+        employeeNumber: `MAT-${suffix}`,
+        firstName: "Maternity",
+        lastName: "Test",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    await prisma.absence.create({
+      data: {
+        employeeId: employeeMaternity.id,
+        type: "MATERNITY",
+        startDate: rangeStart,
+        endDate: rangeEnd,
+        days: 5,
+        createdBy: data.adminUser.id,
+      },
+    });
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  it("AK-5 twin: un-renamed SICK type resolves leaveTypeCode 'SICK' and reason 'Krankmeldung'", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/dashboard/team-week",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    const emp = body.team.find((m: { id: string }) => m.id === data.employee.id);
+    expect(emp).toBeDefined();
+    const absentDay = emp.days.find((d: { status: string }) => d.status === "absent");
+    expect(absentDay).toBeDefined();
+    expect(absentDay.leaveTypeCode).toBe("SICK");
+    expect(absentDay.reason).toBe("Krankmeldung");
+  });
+
+  it("AK-3a/AK-6: after renaming the SICK type, leaveTypeCode stays 'SICK' while reason tracks the NEW display name (additive, not replaced)", async () => {
+    await app.prisma.leaveType.update({
+      where: { id: sickType.id },
+      data: { name: "Grippewelle (umbenannt)" },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/dashboard/team-week",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    const emp = body.team.find((m: { id: string }) => m.id === data.employee.id);
+    expect(emp).toBeDefined();
+    const absentDay = emp.days.find((d: { status: string }) => d.status === "absent");
+    expect(absentDay).toBeDefined();
+    // Stable across the rename — this is the actual defect this plan fixes.
+    expect(absentDay.leaveTypeCode).toBe("SICK");
+    // Additive, not replacing: reason still tracks the (now renamed) display text.
+    expect(absentDay.reason).toBe("Grippewelle (umbenannt)");
+  });
+
+  it("an Absence(MATERNITY) day carries absenceType, a null leaveTypeCode, and the stable display reason", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/dashboard/team-week",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    const emp = body.team.find((m: { id: string }) => m.id === employeeMaternity.id);
+    expect(emp).toBeDefined();
+    const absentDay = emp.days.find((d: { status: string }) => d.status === "absent");
+    expect(absentDay).toBeDefined();
+    expect(absentDay.absenceType).toBe("MATERNITY");
+    expect(absentDay.leaveTypeCode).toBeNull();
+    expect(absentDay.reason).toBe("Mutterschutz");
+  });
+
+  it("rejects an EMPLOYEE token with 403 (T-205-01's accept disposition, made falsifiable)", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/dashboard/team-week",
+      headers: { authorization: `Bearer ${data.empToken}` },
+    });
+    expect(res.statusCode).toBe(403);
   });
 });

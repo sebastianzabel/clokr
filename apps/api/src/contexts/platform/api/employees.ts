@@ -5,7 +5,7 @@ import crypto, { createHash } from "crypto";
 import { Prisma } from "@clokr/db";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { validatePassword, loadPasswordPolicy } from "../password-policy";
-// eslint-disable-next-line no-restricted-imports -- E-4: creating an employee computes the pro-rata leave entitlement through a display-name lookup as a side effect. Disappears in Block 2 via employee-created/employee-changed events. ADR 0001 Eintrag H.
+// eslint-disable-next-line no-restricted-imports -- E-4: creating an employee computes the pro-rata leave entitlement as a side effect. Disappears in Block 2 via employee-created/employee-changed events. ADR 0001 Eintrag H.
 import { calculateProRataVacation } from "../../absence/vacation-calc";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { anonymizeEmployeeData, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../anonymize";
@@ -21,7 +21,7 @@ import {
   hardDeleteTimeDataForEmployee,
 } from "../../time-tracking"; // Phase 100B Plan 08 — T11; issue #246, E-6
 import {
-  getVacationEntitlementByDisplayName,
+  getVacationEntitlement,
   hardDeleteEntitlementsForEmployee,
   getSection9DocumentPaths,
   getAbsenceDocumentPaths,
@@ -31,7 +31,7 @@ import {
   BS_DAILY_MAX_BOUND,
   BS_BLOCK_WEEKLY_MIN_BOUND,
   BS_BLOCK_WEEKLY_MAX_BOUND,
-} from "../../absence"; // Phase 100B Plan 10 — H1 sibling / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6
+} from "../../absence"; // Phase 100B Plan 10 — A11 (Issue #205 reroute) / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6
 
 // ── Retention constant ─────────────────────────────────────────────────────
 const DEFAULT_RETENTION_YEARS = 10;
@@ -606,14 +606,16 @@ export async function employeeRoutes(app: FastifyInstance) {
       if (effectiveExitDate !== null) {
         const exitYear = effectiveExitDate.getFullYear();
         try {
-          // Phase 100B Plan 10 (H1 deviation, preserved verbatim): resolves the "Urlaub"-NAMED
-          // leave type, not by code — see contexts/absence/facade/leave-types.ts's module header.
-          const entitlement = await getVacationEntitlementByDisplayName(
+          // Issue #205, finding 2: resolves the VACATION leave type by its stable code (A11),
+          // not by its tenant-editable display name — a renamed "Urlaub" type no longer silently
+          // loses this warning.
+          const vacation = await getVacationEntitlement(
             app.prisma,
             id,
             req.user.tenantId,
             exitYear,
           );
+          const entitlement = vacation?.entitlement ?? null;
           if (entitlement) {
             const proRata = calculateProRataVacation(
               Number(entitlement.totalDays),

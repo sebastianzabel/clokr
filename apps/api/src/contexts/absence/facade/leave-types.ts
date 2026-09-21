@@ -10,27 +10,23 @@
  * assignable to it, so the SAME function runs whether the caller is inside a `$transaction` or
  * not. `apps/api/scripts/lint-facade-signatures.ts` enforces this mechanically (F1/F2).
  *
- * ── H1 — a display string as a control value, twice, PRE-EXISTING and NOT fixed here ──────────
+ * ── H1 — a display string as a control value, PRE-EXISTING, ONE of two sites closed here ───────
  * `LeaveType.name` is tenant-EDITABLE (CLAUDE.md § Context Boundaries: "never compare against
  * [a display name], never derive behaviour from it" — `leave-type.ts`'s own module header states
- * the same rule). Two call sites this plan converts violate it today:
- * `platform/api/employees.ts`'s pro-rata-Urlaub exit warning (`leaveType.findFirst({ name:
- * "Urlaub" })`) and `time-tracking/plugins/attendance-checker.ts`'s § 7 BUrlG expiry reminder
- * (`leaveEntitlement.findMany({ leaveType: { name: "Urlaub" } })`). Renaming "Urlaub" in the admin
- * UI silently breaks both.
+ * the same rule). Phase 100B Plan 10 identified two call sites violating it: `platform/api/
+ * employees.ts`'s pro-rata-Urlaub exit warning (`leaveType.findFirst({ name: "Urlaub" })`) and
+ * `time-tracking/plugins/attendance-checker.ts`'s § 7 BUrlG expiry reminder
+ * (`leaveEntitlement.findMany({ leaveType: { name: "Urlaub" } })`) — filed as Issue #205.
  *
- * D-13 forbids fixing a pre-existing deviation opportunistically inside a conversion plan. The
- * resolution here is NOT to prove code/name equivalence and route both sites through
- * {@link getLeaveTypeByCode}: this plan measured it against the dev database (one tenant, one
- * `LeaveType` row per code, `by_code_id === by_name_id`) and judged that measurement too thin to
- * stand on — a single-tenant sample proves nothing about a tenant that HAS renamed "Urlaub", which
- * is exactly the scenario the deviation exists to describe. Instead, {@link getLeaveTypeByCode}
- * (the stable, code-based lookup — the correct shape for every NEW caller) and
- * {@link getLeaveTypeByDisplayName} (the deviation, preserved verbatim, used ONLY by the two named
- * sites above via `entitlements.ts`'s `getVacationEntitlementByDisplayName` /
- * `getVacationEntitlementsForYearByDisplayName`) are two separate, explicitly named functions.
- * Filed as a GitHub issue linked to #100/#101 and `docs/adr/0001-abweichungen.md` § A.2 — see this
- * plan's SUMMARY for the issue number.
+ * Issue #205 (Phase 205 Plan 01, finding 2) closes the pro-rata-exit site: its caller is rerouted
+ * to `entitlements.ts`'s code-based {@link getLeaveTypeByCode} (via {@link getVacationEntitlement}).
+ * The name-based `LeaveType` lookup that site alone depended on is deleted along with it — zero
+ * remaining callers, verified by full-repo grep.
+ *
+ * The § 7 BUrlG reminder site is closed separately, by Phase 205 Plan 02: `entitlements.ts`'s
+ * name-based lookup was renamed in place to {@link getVacationEntitlementsForYearByCode} and its
+ * `where` now filters on `LeaveType.code`, rather than being deleted, since no existing code-based
+ * function returns its tenant-wide, per-year, `{employeeId, userId, firstName}` shape.
  *
  * ── H3 — {@link updateLeaveType} collapses a handler-level guard into a query-level proof ──────
  * `leave-settings.ts`'s `PUT /leave-types/:id` (moved from `platform/api/settings.ts` by Phase
@@ -59,21 +55,6 @@ export async function getLeaveTypeByCode(
     where: { tenantId_code: { tenantId, code } },
     select: { id: true, name: true },
   });
-}
-
-/**
- * H1 — the PRE-EXISTING display-name lookup, preserved verbatim. **Never call this for new code.**
- * `LeaveType.name` is tenant-editable; a tenant that renames "Urlaub" makes this return `null` for
- * a type that still exists under a different display name. Used only by
- * `entitlements.ts`'s `getVacationEntitlementByDisplayName` (the `platform/api/employees.ts`
- * pro-rata-exit site).
- */
-export async function getLeaveTypeByDisplayName(
-  db: Prisma.TransactionClient,
-  tenantId: string,
-  name: string,
-): Promise<LeaveType | null> {
-  return db.leaveType.findFirst({ where: { tenantId, name } });
 }
 
 // ── A18 — tenant-wide listing ────────────────────────────────────────────────────────────────

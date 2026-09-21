@@ -318,13 +318,18 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // deletePresenceDevice — 'employeeId' is the caller's own principal identifier, same shape as
   // clearEntryNotesForEmployee/hardDeleteTimeDataForEmployee above).
   // Phase 100B Plan 10 (Wave 5, opening) added TWO more real facade files:
-  // `contexts/absence/facade/leave-types.ts` (A17-A19 — 4 exported functions: getLeaveTypeByCode,
-  // getLeaveTypeByDisplayName, listLeaveTypes, updateLeaveType) and
-  // `contexts/absence/facade/entitlements.ts` (A11-A16 plus the two H1 deviation-preserving
-  // siblings — 9 exported functions: getVacationEntitlement, listEntitlementsForYear,
-  // getEntitlementsForEmployee, getEntitlementById, getExpiringCarryOver,
-  // upsertVacationEntitlement, getVacationEntitlementByDisplayName,
-  // getVacationEntitlementsForYearByDisplayName, hardDeleteEntitlementsForEmployee) and ONE new
+  // `contexts/absence/facade/leave-types.ts` (A17-A19 — originally 4 exported functions; its
+  // display-name-based sibling was deleted in Phase 205 Plan 01 (zero remaining callers once the
+  // pro-rata-exit site was rerouted to the code-based lookup), leaving getLeaveTypeByCode,
+  // listLeaveTypes, updateLeaveType) and
+  // `contexts/absence/facade/entitlements.ts` (A11-A16 plus the two originally display-name-based
+  // siblings — originally 9 exported functions; the pro-rata-exit sibling was deleted in Phase 205
+  // Plan 01 (its sole caller now resolves by code), and the § 7 BUrlG expiry-reminder sibling was
+  // renamed in place to getVacationEntitlementsForYearByCode by Phase 205 Plan 02 (its `where` now
+  // filters on LeaveType.code, not LeaveType.name — the rename does not change the count), leaving
+  // getVacationEntitlement, listEntitlementsForYear, getEntitlementsForEmployee,
+  // getEntitlementById, getExpiringCarryOver, upsertVacationEntitlement,
+  // getVacationEntitlementsForYearByCode, hardDeleteEntitlementsForEmployee) and ONE new
   // named F3 exception (hardDeleteEntitlementsForEmployee — same shape as
   // hardDeleteOvertimeDataForEmployee/hardDeleteTimeDataForEmployee above).
   // Phase 100B Plan 11 (Wave 5) added TWO new facade files
@@ -355,8 +360,18 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // same shape as anonymizeAbsencesForEmployee/hardDeleteAbsencesForEmployee above;
   // archiveLeaveRequestsBefore needs none, its tenantId parameter satisfies F3 directly, same as
   // archiveAbsencesBefore).
-  // 15 files, 84 exported functions total, 15 exception entries, 0 findings.
-  it("the real tree has exactly 84 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  // 15 files, 82 exported functions total, 15 exception entries, 0 findings.
+  //
+  // 84 -> 82 in Phase 205 Plan 01 (Issue #205): the pro-rata-exit and updateLeaveType-adjacent
+  // display-name-based siblings in entitlements.ts and leave-types.ts were DELETED, not renamed.
+  // Both resolved a LeaveType through its tenant-editable display name; their only callers now go
+  // through the code-based getVacationEntitlement / getLeaveTypeByCode, so both were left without
+  // a caller and removed. Count unchanged (still 82) after Phase 205 Plan 02's rename of the
+  // remaining sibling to getVacationEntitlementsForYearByCode — a rename keeps the count, only a
+  // delete or an add changes it. This golden number is a tripwire, so it is updated only when the
+  // tree legitimately changed — here it did, and the deletion is the point of that phase rather
+  // than a side effect.
+  it("the real tree has exactly 82 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -382,7 +397,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(84);
+    expect(functions).toHaveLength(82);
 
     const rawExceptions = JSON.parse(
       readFileSync(

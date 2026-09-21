@@ -190,55 +190,6 @@ const ALLOWED: AllowedEntry[] = [
       "Icon/label selection keyed off the stable absenceType field, not the literal itself — the " +
       "literal is only the ternary's display-text branch.",
   },
-
-  // ── Tracked technical debt — genuine findings from the completeness probe, reported per the ──
-  // ── plan's "melden, nicht fixen" instruction (same methodology as this plan's own Task 2)   ──
-  // ── for a Nebenbefund outside the current plan's files_modified. See Issue #205.            ──
-
-  // entitlements.ts: checkVacationExpiry() (attendance-checker.ts) resolves VACATION by name
-  // inside a `where` — same finding, relocated by Phase 100B Plan 10 (H1).
-  {
-    file: "apps/api/src/contexts/absence/facade/entitlements.ts",
-    pattern: /leaveType:\s*\{\s*name:\s*"Urlaub"\s*\}/,
-    reason:
-      "GENUINE FINDING, not a design decision (Issue #205, ongoing under #100/#101): " +
-      "getVacationEntitlementsForYearByDisplayName() — the facade function Phase 100B Plan 10 " +
-      "extracted verbatim from attendance-checker.ts's checkVacationExpiry() (§ 7 BUrlG " +
-      "expiry-reminder cron) — resolves the VACATION LeaveType by name inside a `where` filter. " +
-      "A tenant rename silently stops the legally-required reminder for that tenant. D-13 forbids " +
-      "fixing it opportunistically inside a conversion plan; Plan 10 preserved the behaviour " +
-      "verbatim (naming the function explicitly rather than routing it through the code-based " +
-      "lookup) and filed the pre-existing deviation against #100/#101 with file:line evidence — " +
-      "same reasoning as D-17 for Issue #196. Tracked, not silently accepted.",
-  },
-  // entitlements.ts: the exit pro-rata vacation warning (employees.ts) resolves VACATION by
-  // name — same finding, relocated by Phase 100B Plan 10 (H1). Not pattern-matched here: the
-  // literal is now a plain getLeaveTypeByDisplayName(db, tenantId, "Urlaub") call ARGUMENT, not
-  // a `where`-filter object literal, so isControlUse() no longer classifies it as control use at
-  // all — this entry exists for documentation accuracy (pointing at the new location), not
-  // because a hit needs excepting.
-  {
-    file: "apps/api/src/contexts/absence/facade/entitlements.ts",
-    pattern: /getLeaveTypeByDisplayName\(db, tenantId, "Urlaub"\)/,
-    reason:
-      "GENUINE FINDING, not a design decision (Issue #205, ongoing under #100/#101): " +
-      "getVacationEntitlementByDisplayName() — extracted verbatim from employees.ts's pro-rata " +
-      "vacation warning shown when an employee's exitDate is set — resolves VACATION by name. " +
-      "Same class of bug and same reasoning for not fixing inline as the entry above.",
-  },
-  // dashboard/+page.svelte: day.reason (= LeaveType.name for APPROVED leave) is compared directly.
-  {
-    file: "apps/web/src/routes/(app)/dashboard/+page.svelte",
-    pattern: /day\.reason === "(Krankmeldung|Kinderkrank|Mutterschutz|Elternzeit)"/,
-    reason:
-      "GENUINE FINDING, not a design decision (Issue #205): day.reason is leave.leaveTypeName " +
-      "(LeaveType.name) for an APPROVED leave, per resolvePresenceState() in " +
-      "apps/api/src/utils/presence.ts — comparing it directly against these four literals is " +
-      "exactly the defect class this phase removes elsewhere. A tenant rename makes the icon " +
-      "silently fall back to the vacation/umbrella branch. Display-only impact (no data " +
-      "integrity issue), but a proper fix needs a new leaveTypeCode field threaded through the " +
-      "/dashboard API response — out of this plan's scope. Not fixed here; tracked in Issue #205.",
-  },
 ];
 
 function isAllowed(hit: LiteralHit): boolean {
@@ -333,5 +284,33 @@ describe("Phase 97 (T2) — leave-type identity guard", () => {
       });
     }
     expect(violations).toEqual([]);
+  });
+
+  // Phase 205 Plan 04: closes the vacuity gap deferred-items.md recorded against 205-01/205-03 —
+  // an ALLOWED entry whose pattern matches nothing in the live tree was previously never even
+  // consulted by isAllowed() (it only fires when a literal hit needs excusing), so a fix that made
+  // an entry's underlying code disappear left the entry itself undetected as dead. A `pattern: null`
+  // entry is checked for its file still existing under one of the scan roots; a regex entry is
+  // checked against the raw file content (not the isControlUse()-filtered hit list, precisely
+  // because a dead entry's whole point is that no hit is produced there any more).
+  it("every ALLOWED entry still matches something in the current tree (an entry matching nothing is dead exception debt, not a documented exception)", () => {
+    const files = collectFiles();
+    const dead: string[] = [];
+    for (const entry of ALLOWED) {
+      if (entry.pattern === null) {
+        if (!files.some((f) => repoRel(f) === entry.file)) {
+          dead.push(`${entry.file}: whole-file exception, but the file is not under any scan root`);
+        }
+        continue;
+      }
+      const matches = files.some((abs) => {
+        if (repoRel(abs) !== entry.file) return false;
+        return entry.pattern!.test(readFileSync(abs, "utf-8"));
+      });
+      if (!matches) {
+        dead.push(`${entry.file}: pattern ${entry.pattern} matches nothing in the current tree`);
+      }
+    }
+    expect(dead).toEqual([]);
   });
 });
