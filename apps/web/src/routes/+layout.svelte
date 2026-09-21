@@ -15,12 +15,22 @@
   import "$lib/i18n";
   import Toast from "$lib/components/ui/Toast.svelte";
   import ErrorBoundary from "$lib/components/ui/ErrorBoundary.svelte";
+  import { onMount } from "svelte";
+  import { clientLogger } from "$lib/utils/logger";
 
   interface Props {
     children?: import("svelte").Snippet;
   }
 
   let { children }: Props = $props();
+
+  // Global error handlers belong in the ROOT layout (issue #149): installing them in
+  // `(app)/+layout.svelte` left every `(auth)` page — login, OTP, invitation, password
+  // reset — without a `window.onerror` / `unhandledrejection` handler. `install()` is
+  // idempotent, so an extra call from a nested layout stays harmless.
+  onMount(() => {
+    clientLogger.install();
+  });
 </script>
 
 <ErrorBoundary scope="app">
