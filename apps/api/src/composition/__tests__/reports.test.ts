@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import iconv from "iconv-lite";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  configureDatevKanzlei,
+} from "../../__tests__/setup";
 import { computeOvertimeBalanceHours } from "../../contexts/time-tracking/api/time-entries";
 import * as pdfUtils from "../pdf";
 import { DATEV_BWD_SATZ_ID } from "../reports";
@@ -60,6 +66,7 @@ describe("Reports API", () => {
 
     beforeAll(async () => {
       datevData = await seedTestData(app, "dv");
+      await configureDatevKanzlei(app, datevData.tenant.id);
 
       await app.prisma.timeEntry.create({
         data: {
@@ -162,8 +169,10 @@ describe("Reports API", () => {
       const body = iconv.decode(res.rawPayload, "win1252");
       expect(body).toContain("Ziel=LODAS");
       expect(body).toContain("Version_SST=1.0");
-      expect(body).toContain("BeraterNr=0");
-      expect(body).toContain("MandantenNr=0");
+      // Issue #256 (Befund 3): the pair configured by this fixture's
+      // configureDatevKanzlei() call, not the old hardcoded 0/0.
+      expect(body).toContain("BeraterNr=28547");
+      expect(body).toContain("MandantenNr=90909");
       expect(body).toContain("Datumsangaben=DDMMJJJJ");
     });
 
@@ -350,6 +359,7 @@ describe("Reports API", () => {
 
     beforeAll(async () => {
       d13Data = await seedTestData(app, "dv13");
+      await configureDatevKanzlei(app, d13Data.tenant.id);
     });
 
     afterAll(async () => {
@@ -584,6 +594,7 @@ describe("Reports API", () => {
 
     beforeAll(async () => {
       d210Data = await seedTestData(app, "d210");
+      await configureDatevKanzlei(app, d210Data.tenant.id);
       sickType = await app.prisma.leaveType.create({
         data: {
           tenantId: d210Data.tenant.id,

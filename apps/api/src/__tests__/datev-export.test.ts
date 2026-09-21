@@ -13,7 +13,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import iconv from "iconv-lite";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  configureDatevKanzlei,
+} from "./setup";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import { DATEV_BWD_SATZ_ID } from "../composition/reports";
 import type { FastifyInstance } from "fastify";
@@ -46,6 +52,7 @@ describe("DATEV export — FIRST automated coverage in its own file (Phase 104)"
 
     beforeAll(async () => {
       d = await seedTestData(app, "datev-s9");
+      await configureDatevKanzlei(app, d.tenant.id);
     });
 
     afterAll(async () => {
@@ -144,6 +151,7 @@ describe("DATEV export — FIRST automated coverage in its own file (Phase 104)"
 
     beforeAll(async () => {
       d = await seedTestData(app, "datev-baseline");
+      await configureDatevKanzlei(app, d.tenant.id);
 
       await app.prisma.tenantConfig.update({
         where: { tenantId: d.tenant.id },
@@ -257,6 +265,7 @@ describe("DATEV export — FIRST automated coverage in its own file (Phase 104)"
 
     it("Test 5: an employee with no absences at all produces only the Normalstunden line", async () => {
       const bare = await seedTestData(app, "datev-bare");
+      await configureDatevKanzlei(app, bare.tenant.id);
       try {
         await app.prisma.timeEntry.create({
           data: {
@@ -419,6 +428,7 @@ describe("Personenkreis nach dem Abrechnungszeitraum (#256-02)", () => {
   beforeAll(async () => {
     app = await getTestApp();
     d = await seedTestData(app, "datev-256-2");
+    await configureDatevKanzlei(app, d.tenant.id);
     exitedAfterPeriod = await addEmployee({
       label: "exit-sep",
       hireDate: new Date("2024-01-01T00:00:00.000Z"),
@@ -533,5 +543,161 @@ describe("Personenkreis nach dem Abrechnungszeitraum (#256-02)", () => {
     // Exactly the two negative controls above, counted by their reason.
     expect(v.skippedAlreadyLeft).toBe(1);
     expect(v.skippedNotYetHired).toBe(1);
+  });
+});
+
+// ── Issue #256, Befund 3 ───────────────────────────────────────────────────────
+// BeraterNr and MandantenNr were literal zeros in the [Allgemein] header and had no
+// field in the schema at all. A file that names advisor 0 / client 0 cannot be assigned
+// to a Mandant — it looked finished and was not importable.
+describe("Berater- und Mandantennummer pro Mandant (#256-03)", () => {
+  let app: FastifyInstance;
+  let d: Awaited<ReturnType<typeof seedTestData>>;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    d = await seedTestData(app, "datev-256-3");
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, d.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  async function exportJuly(token = d.adminToken) {
+    return app.inject({
+      method: "GET",
+      url: "/api/v1/reports/datev?year=2026&month=7",
+      headers: { authorization: `Bearer ${token}` },
+    });
+  }
+
+  it("#256-03a: an unconfigured tenant gets a 409 with a German message, never a file with zeros", async () => {
+    const cfg = await app.prisma.tenantConfig.findUniqueOrThrow({
+      where: { tenantId: d.tenant.id },
+    });
+    // The fixture's precondition, asserted rather than assumed: both really are unset.
+    expect(cfg.datevBeraterNr).toBeNull();
+    expect(cfg.datevMandantenNr).toBeNull();
+
+    const res = await exportJuly();
+    expect(res.statusCode).toBe(409);
+    const err = JSON.parse(res.body).error as string;
+    expect(err).toContain("Berater- und Mandantennummer");
+    // And emphatically NOT the old behaviour: a 200 whose header reads 0/0.
+    expect(res.headers["content-type"]).not.toBe("application/octet-stream");
+  });
+
+  it("#256-03b: the per-employee export refuses on the same grounds", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/reports/datev/employee?employeeId=${d.employee.id}&year=2026&month=7`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(res.statusCode).toBe(409);
+  });
+
+  it("#256-03c: half a configuration is still no configuration", async () => {
+    await app.prisma.tenantConfig.update({
+      where: { tenantId: d.tenant.id },
+      data: { datevBeraterNr: 28547, datevMandantenNr: null },
+    });
+    expect((await exportJuly()).statusCode).toBe(409);
+
+    await app.prisma.tenantConfig.update({
+      where: { tenantId: d.tenant.id },
+      data: { datevBeraterNr: null, datevMandantenNr: 90909 },
+    });
+    expect((await exportJuly()).statusCode).toBe(409);
+  });
+
+  it("#256-03d: the configured pair reaches the [Allgemein] header verbatim", async () => {
+    await configureDatevKanzlei(app, d.tenant.id, { beraterNr: 1234567, mandantenNr: 54321 });
+
+    const res = await exportJuly();
+    expect(res.statusCode).toBe(200);
+    const body = iconv.decode(res.rawPayload, "win1252");
+    const header = body.split("[Satzbeschreibung]")[0];
+    expect(header).toContain("BeraterNr=1234567");
+    expect(header).toContain("MandantenNr=54321");
+    // The literal the fix replaces must be gone — `BeraterNr=0` would still satisfy a
+    // naive `toContain("BeraterNr=")`.
+    expect(header).not.toContain("BeraterNr=0");
+    expect(header).not.toContain("MandantenNr=0");
+  });
+
+  it("#256-03e: a second tenant's numbers are its own — the pair is per Mandant", async () => {
+    const other = await seedTestData(app, "datev-256-3b");
+    try {
+      await configureDatevKanzlei(app, other.tenant.id, { beraterNr: 7654321, mandantenNr: 12345 });
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=7",
+        headers: { authorization: `Bearer ${other.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const header = iconv.decode(res.rawPayload, "win1252").split("[Satzbeschreibung]")[0];
+      expect(header).toContain("BeraterNr=7654321");
+      expect(header).toContain("MandantenNr=12345");
+      // …and emphatically not the first tenant's, which is still 1234567/54321.
+      expect(header).not.toContain("BeraterNr=1234567");
+    } finally {
+      await cleanupTestData(app, other.tenant.id);
+    }
+  });
+
+  it("#256-03f: PUT /settings/work persists the pair and rejects out-of-range values", async () => {
+    const ok = await app.inject({
+      method: "PUT",
+      url: "/api/v1/settings/work",
+      headers: { authorization: `Bearer ${d.adminToken}` },
+      payload: { datevBeraterNr: 28547, datevMandantenNr: 90909 },
+    });
+    expect(ok.statusCode).toBe(200);
+    const cfg = await app.prisma.tenantConfig.findUniqueOrThrow({
+      where: { tenantId: d.tenant.id },
+    });
+    expect(cfg.datevBeraterNr).toBe(28547);
+    expect(cfg.datevMandantenNr).toBe(90909);
+
+    // DATEV's own field widths: Beraternummer 7 digits, Mandantennummer 5.
+    const tooWide = await app.inject({
+      method: "PUT",
+      url: "/api/v1/settings/work",
+      headers: { authorization: `Bearer ${d.adminToken}` },
+      payload: { datevMandantenNr: 123456 },
+    });
+    expect(tooWide.statusCode).toBe(400);
+
+    // An explicit null is a clear ("not configured"), not a bare Validierungsfehler —
+    // the Clokr admin forms send `x ? x : null` (CLAUDE.md's Zod gotcha).
+    const cleared = await app.inject({
+      method: "PUT",
+      url: "/api/v1/settings/work",
+      headers: { authorization: `Bearer ${d.adminToken}` },
+      payload: { datevBeraterNr: null, datevMandantenNr: null },
+    });
+    expect(cleared.statusCode).toBe(200);
+    const after = await app.prisma.tenantConfig.findUniqueOrThrow({
+      where: { tenantId: d.tenant.id },
+    });
+    expect(after.datevBeraterNr).toBeNull();
+    expect(after.datevMandantenNr).toBeNull();
+  });
+
+  it("#256-03g: GET /settings/work exposes the pair so the admin form can show it", async () => {
+    await configureDatevKanzlei(app, d.tenant.id, { beraterNr: 28547, mandantenNr: 90909 });
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/settings/work",
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const cfg = JSON.parse(res.body) as Record<string, unknown>;
+    expect(cfg.datevBeraterNr).toBe(28547);
+    expect(cfg.datevMandantenNr).toBe(90909);
   });
 });

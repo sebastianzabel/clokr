@@ -106,6 +106,16 @@ const tenantConfigSchema = z
     datevUrlaubNr: z.number().int().min(1).max(9999).optional(),
     datevKrankNr: z.number().int().min(1).max(9999).optional(),
     datevSonderurlaubNr: z.number().int().min(1).max(9999).optional(),
+    // Issue #256 (Befund 3) — the BeraterNr/MandantenNr pair of the DATEV [Allgemein] header.
+    // `.nullable()` as well as `.optional()`: the Clokr admin forms send `x ? x : null`
+    // and a cleared number input yields null via Svelte's bind:value — with `.optional()`
+    // alone that null is a bare "Validierungsfehler" for the WHOLE page (CLAUDE.md's Zod
+    // gotcha). The columns are nullable, so null passes straight through and means
+    // "not configured", which the export refuses to guess around.
+    // Upper bounds follow DATEV's own field widths: Beraternummer 7 digits,
+    // Mandantennummer 5 digits.
+    datevBeraterNr: z.number().int().min(1).max(9999999).nullable().optional(),
+    datevMandantenNr: z.number().int().min(1).max(99999).nullable().optional(),
     // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
     monthlyHoursHolidayDeduction: z.boolean().optional(),
     // Ladenöffnungszeiten (Phase 42) — 7 entries Mo-So
@@ -427,6 +437,10 @@ export async function settingsRoutes(app: FastifyInstance) {
         datevUrlaubNr: 300,
         datevKrankNr: 200,
         datevSonderurlaubNr: 302,
+        // Issue #256 (Befund 3): no default — an unset Berater-/Mandantennummer must stay
+        // visibly unset so the export can refuse, not silently become a usable-looking 0.
+        datevBeraterNr: null,
+        datevMandantenNr: null,
         monthlyHoursHolidayDeduction: false,
         dataRetentionYears: 10,
         carryoverWarningEnabled: true,

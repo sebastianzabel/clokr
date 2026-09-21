@@ -6,15 +6,21 @@
 // established `readRouteFile` shape this file follows).
 //
 // What this pins (T-109-38):
-// - D-01: `saveDatev` (the "Lohnartennummern" section) writes only via its section button.
-// - The `_gOtherFields` spread plus the exact four `datev*` payload keys is the known N-09
-//   lost-update spread, deliberately NOT touched by this phase — the test pins it so plan
-//   109-13 neither widens nor removes it.
+// - D-01: `saveDatev` (the DATEV configuration section) writes only via its section button.
+// - The `_gOtherFields` spread plus the exact `datev*` payload keys is the known N-09
+//   lost-update spread, deliberately NOT touched by this phase — the test pins it so a later
+//   plan neither widens nor removes it accidentally.
 // - `saveDatev` is a provable no-op after a failed `loadDatev` (`if (!_gOtherFields) return;`) —
 //   this is the WR-01 shape plan 109-13 must gate `snapshotsReady` around.
-// - `advisorNumber`/`clientNumber`/`taxOffice` are never persisted — they are download
-//   parameters, not settings — so plan 109-13 must NOT put a `dirty=` marker on that Section.
+// - `taxOffice` is never persisted — it is a download parameter, not a setting — so no
+//   `dirty=` marker belongs on that Section.
 // - AK-02: no text/number input on this page carries an inline write handler.
+//
+// Issue #256 (Befund 3) widened the payload from four keys to six: Berater- and
+// Mandantennummer became TenantConfig-backed settings and joined the same button-gated
+// section, which is why the censuses below read six. The former `advisorNumber` /
+// `clientNumber` inputs were decoration with hardcoded literals that reached no export —
+// they were removed rather than left next to the two fields that now do work.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -118,9 +124,16 @@ describe("saveDatev payload census", () => {
     const objectSrc = body.slice(openBrace + 1, closeBrace);
     const datevKeys = objectSrc.match(/datev[A-Za-z]+/g) ?? [];
     const distinctDatevKeys = new Set(datevKeys);
-    expect(distinctDatevKeys.size).toBe(4);
+    expect(distinctDatevKeys.size).toBe(6);
     expect(distinctDatevKeys).toEqual(
-      new Set(["datevNormalstundenNr", "datevUrlaubNr", "datevKrankNr", "datevSonderurlaubNr"]),
+      new Set([
+        "datevNormalstundenNr",
+        "datevUrlaubNr",
+        "datevKrankNr",
+        "datevSonderurlaubNr",
+        "datevBeraterNr",
+        "datevMandantenNr",
+      ]),
     );
   });
 });
@@ -140,7 +153,10 @@ describe("saveDatev is a no-op after a failed load", () => {
 });
 
 describe("export parameters are never persisted — no marker for them", () => {
-  const EXPORT_PARAMS = ["advisorNumber", "clientNumber", "taxOffice"] as const;
+  // Issue #256: `advisorNumber`/`clientNumber` are gone — they masqueraded as the
+  // Berater-/Mandantennummer while reaching no export. `taxOffice` is the one remaining
+  // label-on-this-download parameter.
+  const EXPORT_PARAMS = ["taxOffice"] as const;
 
   it.each(EXPORT_PARAMS)("%s never appears in a saveDatev write body", (name) => {
     expect(fnBody("async function saveDatev")).not.toContain(name);
@@ -166,6 +182,14 @@ describe("export parameters are never persisted — no marker for them", () => {
     expect(PAGE).toMatch(new RegExp(`let ${name} = \\$state\\(`));
   });
 
+  // Issue #256: the two removed decoy inputs must not come back.
+  it.each(["advisorNumber", "clientNumber"] as const)(
+    "%s no longer exists anywhere on the page",
+    (name) => {
+      expect(PAGE).not.toContain(name);
+    },
+  );
+
   // these are parameters of one download, not settings — plan 109-13 must NOT put a `dirty=`
   // prop on the "Export konfigurieren" Section.
 });
@@ -177,10 +201,11 @@ describe("AK-02", () => {
 });
 
 describe("D-11/D-12 — unsaved marker and guard registration on admin/export", () => {
-  it("datevDirty is $derived(snap(...)) with exactly the four datev* variables", () => {
+  it("datevDirty is $derived(snap(...)) with exactly the six datev* variables", () => {
     const start = PAGE.indexOf("let datevDirty = $derived(");
     expect(start).toBeGreaterThan(-1);
-    const end = PAGE.indexOf(");", start);
+    const end = PAGE.indexOf("!== datevSnapshot", start);
+    expect(end).toBeGreaterThan(start);
     const slice = PAGE.slice(start, end);
     expect(slice).toMatch(/\$derived\(\s*snap\(/);
     for (const v of [
@@ -188,6 +213,8 @@ describe("D-11/D-12 — unsaved marker and guard registration on admin/export", 
       "datevUrlaubNr",
       "datevKrankNr",
       "datevSonderurlaubNr",
+      "datevBeraterNr",
+      "datevMandantenNr",
     ]) {
       expect(slice).toContain(v);
     }
@@ -209,7 +236,9 @@ describe("D-11/D-12 — unsaved marker and guard registration on admin/export", 
   it("the export parameters get no marker — exactly one dirty={ prop, on Lohnartennummern", () => {
     const matches = PAGE.match(/dirty=\{/g) ?? [];
     expect(matches).toHaveLength(1);
-    const lohnartStart = PAGE.indexOf('<Section\n        title="Lohnartennummern"');
+    const lohnartStart = PAGE.indexOf(
+      '<Section\n        title="Berater-, Mandanten- und Lohnartennummern"',
+    );
     expect(lohnartStart).toBeGreaterThan(-1);
     const lohnartEnd = PAGE.indexOf("</Section>", lohnartStart);
     const dirtyIdx = PAGE.indexOf("dirty={");
@@ -230,11 +259,16 @@ describe("D-11/D-12 — unsaved marker and guard registration on admin/export", 
     const datevKeys = new Set(body.match(/datev[A-Za-z]+/g) ?? []);
     expect(
       [...datevKeys].filter((k) =>
-        ["datevNormalstundenNr", "datevUrlaubNr", "datevKrankNr", "datevSonderurlaubNr"].includes(
-          k,
-        ),
+        [
+          "datevNormalstundenNr",
+          "datevUrlaubNr",
+          "datevKrankNr",
+          "datevSonderurlaubNr",
+          "datevBeraterNr",
+          "datevMandantenNr",
+        ].includes(k),
       ),
-    ).toHaveLength(4);
+    ).toHaveLength(6);
   });
 
   it("T-109-24 — no datevSnapshot = snap( assignment is inside a finally block", () => {

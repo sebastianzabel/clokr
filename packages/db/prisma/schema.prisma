@@ -198,6 +198,13 @@ model TenantConfig {
   datevUrlaubNr                     Int      @default(300)
   datevKrankNr                      Int      @default(200)
   datevSonderurlaubNr               Int      @default(302)
+  // Issue #256 (Befund 3) — the BeraterNr/MandantenNr pair of the DATEV [Allgemein] header.
+  // Nullable ON PURPOSE: there is no sensible default, and the hardcoded `0` this replaces
+  // is precisely the unusable placeholder that made the file unassignable to a client.
+  // null = "not configured yet", and the DATEV export then refuses to run (HTTP 409)
+  // rather than shipping a file no payroll office can import.
+  datevBeraterNr                    Int?
+  datevMandantenNr                  Int?
   // FLEXTIME Kernarbeitszeit-Defaults (Phase 49.2) — pre-fill suggestion for new FLEXTIME employees
   defaultCoreStart                  String?  @db.VarChar(5) // HH:MM, optional tenant default
   defaultCoreEnd                    String?  @db.VarChar(5) // HH:MM, optional tenant default

@@ -583,6 +583,27 @@ export function datevPayrollPeriodEmployeeFilter(start: Date, end: Date) {
   };
 }
 
+// ── DATEV Berater-/Mandantennummer ───────────────────────────────────────────
+/**
+ * Issue #256 (Befund 3): the [Allgemein] header's BeraterNr/MandantenNr identify the
+ * tax office and the client the file belongs to. Both were literal `0`, and the schema
+ * had no field to put anything else in — so every export named client 0 of advisor 0.
+ *
+ * They are configured per tenant (TenantConfig.datevBeraterNr / .datevMandantenNr) and
+ * are nullable, because neither has a defensible default. This resolver returns null when
+ * either is missing; the callers turn that into an HTTP 409 with DATEV_KANZLEI_MISSING_ERROR
+ * rather than shipping the old placeholder, which looked like a value and was not one.
+ */
+export const DATEV_KANZLEI_MISSING_ERROR =
+  "Berater- und Mandantennummer sind nicht hinterlegt. Bitte unter Administration → Export → Konfiguration eintragen — ohne sie kann DATEV die Datei keinem Mandanten zuordnen.";
+
+export function resolveDatevKanzlei(
+  config: { datevBeraterNr: number | null; datevMandantenNr: number | null } | null,
+): { beraterNr: number; mandantenNr: number } | null {
+  if (config?.datevBeraterNr == null || config?.datevMandantenNr == null) return null;
+  return { beraterNr: config.datevBeraterNr, mandantenNr: config.datevMandantenNr };
+}
+
 // ── buildDatevLodas ───────────────────────────────────────────────────────────
 // Issue #256 (Befund 1): the LODAS record id of the Bewegungsdaten record type. It is
 // declared once in [Satzbeschreibung] and repeated as the FIRST field of every data row
@@ -620,11 +641,15 @@ function buildDatevLodas(params: {
   start: Date;
   end: Date;
   lna: { normal: number; urlaub: number; krank: number; sonderurlaub: number };
+  // Issue #256 (Befund 3): the BeraterNr/MandantenNr pair of the [Allgemein] header.
+  // Required, not optional: a `0` here is what made the file unassignable to a Mandant,
+  // so the caller has to have resolved a real pair before it gets this far.
+  kanzlei: { beraterNr: number; mandantenNr: number };
   // Phase 104 (D-30): bestätigte § 9-Gutschriften je Mitarbeiter, bereits bulk-fetched
   // und CONFIRMED-only gefiltert vom Aufrufer (T-104-09-N1/PENDING).
   section9ByEmp?: Map<string, Array<{ creditedStart: Date; creditedEnd: Date }>>;
 }): Buffer {
-  const { employees, year: y, month: m, start, end, lna, section9ByEmp } = params;
+  const { employees, year: y, month: m, start, end, lna, kanzlei, section9ByEmp } = params;
   const CRLF = "\r\n";
   const lines: string[] = [];
 
@@ -805,7 +830,8 @@ function buildDatevLodas(params: {
 
   // ── DATEV LODAS ASCII-Import Format ──────────────────────────────────────
   // Produces a CP1252-encoded .txt file with three INI sections:
-  //   [Allgemein]        – Ziel=LODAS, Version_SST=1.0, BeraterNr=0, MandantenNr=0, Datumsangaben=DDMMJJJJ
+  //   [Allgemein]        – Ziel=LODAS, Version_SST=1.0, BeraterNr/MandantenNr (TenantConfig,
+  //                          Issue #256), Datumsangaben=DDMMJJJJ
   //   [Satzbeschreibung] – declares the Satz-ID and the 12 fields of a Bewegungsdaten row
   //   [Bewegungsdaten]   – actual employee rows
   //
@@ -816,8 +842,8 @@ function buildDatevLodas(params: {
     "[Allgemein]",
     "Ziel=LODAS",
     "Version_SST=1.0",
-    "BeraterNr=0",
-    "MandantenNr=0",
+    `BeraterNr=${kanzlei.beraterNr}`,
+    `MandantenNr=${kanzlei.mandantenNr}`,
     "Datumsangaben=DDMMJJJJ",
     `Abrechnungszeitraum=${String(m).padStart(2, "0")}${y}`,
     "",
@@ -1219,6 +1245,8 @@ export async function reportRoutes(app: FastifyInstance) {
           datevUrlaubNr: true,
           datevKrankNr: true,
           datevSonderurlaubNr: true,
+          datevBeraterNr: true,
+          datevMandantenNr: true,
         },
       });
       const lna = {
@@ -1227,6 +1255,15 @@ export async function reportRoutes(app: FastifyInstance) {
         krank: datevConfig?.datevKrankNr ?? 200,
         sonderurlaub: datevConfig?.datevSonderurlaubNr ?? 302,
       };
+
+      // Issue #256 (Befund 3): Berater- und Mandantennummer were hardcoded zeros — a file
+      // that no Lohnbüro can assign to a Mandant, handed over as if it were finished.
+      // There is no defensible default for either, so an unconfigured tenant gets a refusal
+      // with a German message instead of a plausible-looking but unimportable file.
+      const kanzlei = resolveDatevKanzlei(datevConfig);
+      if (!kanzlei) {
+        return reply.code(409).send({ error: DATEV_KANZLEI_MISSING_ERROR });
+      }
 
       const section9ByEmpDatev = await fetchConfirmedSection9CreditsByEmp(
         app,
@@ -1242,13 +1279,14 @@ export async function reportRoutes(app: FastifyInstance) {
         start,
         end,
         lna,
+        kanzlei,
         section9ByEmp: section9ByEmpDatev,
       });
 
-      // Issue #256, AK "der Export meldet, wenn er Personen auslässt": count who the
-      // period predicate left out and why. The file's own sections are LODAS's format
-      // and are still under review in Teil 2 of #256, so the count goes where it is
-      // durable, tenant-scoped and already read during an audit: the EXPORT row.
+      // Issue #256, acceptance criterion "the export reports whom it leaves out": count
+      // who the period predicate excluded, and why. The file's own sections are LODAS's
+      // format and are still under review in part 2 of #256, so the count goes where it
+      // is durable, tenant-scoped and already read during an audit: the EXPORT row.
       const [skippedNotYetHired, skippedAlreadyLeft] = await Promise.all([
         app.prisma.employee.count({
           where: { tenantId: req.user.tenantId, hireDate: { gt: end } },
@@ -1308,6 +1346,8 @@ export async function reportRoutes(app: FastifyInstance) {
           datevUrlaubNr: true,
           datevKrankNr: true,
           datevSonderurlaubNr: true,
+          datevBeraterNr: true,
+          datevMandantenNr: true,
         },
       });
       const lna = {
@@ -1316,6 +1356,15 @@ export async function reportRoutes(app: FastifyInstance) {
         krank: datevConfig?.datevKrankNr ?? 200,
         sonderurlaub: datevConfig?.datevSonderurlaubNr ?? 302,
       };
+
+      // Issue #256 (Befund 3): Berater- und Mandantennummer were hardcoded zeros — a file
+      // that no Lohnbüro can assign to a Mandant, handed over as if it were finished.
+      // There is no defensible default for either, so an unconfigured tenant gets a refusal
+      // with a German message instead of a plausible-looking but unimportable file.
+      const kanzlei = resolveDatevKanzlei(datevConfig);
+      if (!kanzlei) {
+        return reply.code(409).send({ error: DATEV_KANZLEI_MISSING_ERROR });
+      }
 
       const emp = await app.prisma.employee.findFirst({
         where: {
@@ -1364,6 +1413,7 @@ export async function reportRoutes(app: FastifyInstance) {
         start,
         end,
         lna,
+        kanzlei,
         section9ByEmp: section9ByEmpDatevSingle,
       });
 
