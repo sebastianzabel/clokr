@@ -63,6 +63,7 @@
 │   ├── /conflicts (GET, HEAD)
 │   ├── /copy-week (POST)
 │   ├── /coverage-rules (GET, HEAD, POST)
+│   ├── /deferred (GET, HEAD)
 │   ├── /dismiss-all (DELETE)
 │   ├── /generate-week (POST)
 │   ├── /json (GET, HEAD)

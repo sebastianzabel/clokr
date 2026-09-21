@@ -29,7 +29,7 @@ import type { FastifyBaseLogger } from "fastify";
 
 /**
  * Stable advisory-lock keys, one per cron family. Distinct integers so unrelated
- * jobs never contend for the same lock. Range 1001-1012 (see also
+ * jobs never contend for the same lock. Range 1001-1017 (see also
  * {@link tenantAdvisoryKey} for per-tenant derived keys).
  */
 export const ADVISORY_LOCK_KEYS = {
@@ -49,6 +49,7 @@ export const ADVISORY_LOCK_KEYS = {
   ATTENDANCE_GAP_EMPLOYEE: 1014n,
   ATTENDANCE_GAP_MANAGER: 1015n,
   ATTENDANCE_BREAK_UNCONFIRMED: 1016n,
+  MONTH_CLOSE_DEFERRAL_REMINDER: 1017n, // Phase 292 (#292) — weekly deferral escalation
 } as const;
 
 /**

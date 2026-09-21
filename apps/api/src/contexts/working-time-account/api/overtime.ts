@@ -14,6 +14,7 @@ import { fetchCloseMonthData } from "../close-month-data"; // PERF-V1814-01
 import { periodStartWindow, isPeriodStartInMonth } from "../snapshot-period";
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared saldo core
 import { findMissingWorkdays } from "../find-missing-workdays"; // Phase 76.26 — gap detector
+import { getDeferredMonthCloseState } from "../deferred-month-close"; // Phase 292 (#292)
 import { computeMonthSaldo } from "../month-saldo"; // §615 Team-Zeiten display fix
 import { getCarryOverBase } from "../carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { recalculateSnapshots } from "../recalculate-snapshots"; // Phase 99 (OB-03) — full-history re-thread
@@ -388,6 +389,30 @@ export async function overtimeRoutes(app: FastifyInstance) {
   });
 
   // ── Monatsabschluss ──────────────────────────────────────────────────────────
+
+  // GET /api/v1/overtime/close-month/deferred – der ZURÜCKGESTELLTE Abschluss als Zustand
+  //
+  // Phase 292 (GitHub issue #292). `/close-month/status` answers "how does month X look?" — it
+  // needs a year and a month, so it can only be asked about a month somebody already suspects.
+  // This route answers the question nobody could ask before: "is any month past its window and
+  // still open, for whom, since when, and how many gap days are behind it?" That is the state
+  // that had gone unnoticed for four months on a production tenant.
+  //
+  // `detailed=false` (default) skips per-month gap detection and answers who/since when only —
+  // the shape a dashboard-sized caller wants.
+  app.get("/close-month/deferred", {
+    schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, _reply) => {
+      const { detailed } = z
+        .object({ detailed: z.coerce.boolean().optional() })
+        .parse(req.query ?? {});
+
+      return getDeferredMonthCloseState(app.prisma, req.user.tenantId, {
+        detailed: detailed ?? false,
+      });
+    },
+  });
 
   // GET /api/v1/overtime/close-month/status?year=2026&month=2  – Status aller MA
   app.get("/close-month/status", {

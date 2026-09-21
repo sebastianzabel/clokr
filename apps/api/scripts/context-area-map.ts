@@ -220,6 +220,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   //    OvertimePlan ─────────────────────────────────────────────────────────────────────────
   "src/contexts/working-time-account/api/overtime.ts": "arbeitszeitkonto", // writes OpeningBalance/OvertimeAccount/OvertimeTransaction/SaldoSnapshot/OvertimePlan
   "src/contexts/working-time-account/plugins/auto-close-month.ts": "arbeitszeitkonto", // the cron close-path (CLAUDE.md "Saldo-Rechenpfade"); writes OvertimeAccount/SaldoSnapshot/TimeEntry
+  "src/contexts/working-time-account/plugins/deferred-month-close-reminder.ts": "arbeitszeitkonto", // Phase 292 (#292) — weekly escalation for a Monatsabschluss that stays deferred; writes Notification only
   "src/contexts/working-time-account/carry-over-base.ts": "arbeitszeitkonto", // OpeningBalance carry-over base
   "src/contexts/working-time-account/close-employee-month.ts": "arbeitszeitkonto", // pure Monatsabschluss saldo core (CLAUDE.md: "belongs to Arbeitszeitkonto and is NOT to be split")
   "src/contexts/working-time-account/close-month-data.ts": "arbeitszeitkonto", // data-gathering companion to close-employee-month.ts
@@ -228,6 +229,10 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/working-time-account/facade/saldo-snapshot.ts": "arbeitszeitkonto", // Phase 100B Plan 07 — W1-W7, SaldoSnapshot's only external access path
   "src/contexts/working-time-account/find-missing-workdays.ts": "arbeitszeitkonto", // Soll-vs-Ist gap detector; 3 of 5 importers (auto-close-month/close-employee-month/overtime) are Arbeitszeitkonto's own saldo paths
   "src/contexts/working-time-account/missing-entries-window.ts": "arbeitszeitkonto", // window-size companion of find-missing-workdays.ts, same callers
+  "src/contexts/working-time-account/month-close-window.ts": "arbeitszeitkonto", // Phase 292 (#292) — month-stepping + day-N window arithmetic of the Monatsabschluss, shared by the cron and the deferral reader
+  "src/contexts/working-time-account/month-gap-check.ts": "arbeitszeitkonto", // Phase 292 (#292) — the ONE definition of "gap" for the Monatsabschluss (lifted out of auto-close-month.ts)
+  "src/contexts/working-time-account/deferred-month-close.ts": "arbeitszeitkonto", // Phase 292 (#292) — a deferred Monatsabschluss as a derived, queryable state
+  "src/contexts/working-time-account/month-close-notification.ts": "arbeitszeitkonto", // Phase 292 (#292) — naming/linking/dedup of the Monatsabschluss deferral messages
   "src/contexts/working-time-account/month-saldo.ts": "arbeitszeitkonto", // core Soll-vs-Ist saldo calculation — Arbeitszeitkonto's own definition
   "src/contexts/working-time-account/negative-balance-tolerance.ts": "arbeitszeitkonto", // Überstundenabbau minus-hours tolerance (Phase 100)
   "src/contexts/working-time-account/overtime-balance.ts": "arbeitszeitkonto", // Phase 101B (Issue #101) — lifted out of time-tracking/api/time-entries.ts (owner's Nebenbefund); writes/computes OvertimeAccount balance, Arbeitszeitkonto's own subject
