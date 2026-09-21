@@ -644,6 +644,28 @@
     }
   }
 
+  // Issue #258 (hardening) — a failed REFETCH must not destroy an already-displayed value.
+  //
+  // This function is a refetch: `onMount` has already filled both KPI tiles via
+  // `loadOvertimeBalance()` and the year-scoped vacation-summary loader, and this runs again
+  // every time the
+  // request form opens (`$effect` below, "if (showForm) loadBalanceForType(formType)").
+  // Both catch arms used to blank their state, so ONE transient failure of the second call
+  // wiped a value the first call had fetched correctly — and the tile stayed empty until a
+  // full page reload. In a network trace that reads as "GET /leave/overtime-balance -> 200,
+  // tile empty anyway", which is exactly the shape of the still-unreproduced report in #258.
+  // It is a defect on its own terms regardless of whether it is that report's cause: the
+  // fresher, failed answer is not more true than the older, successful one.
+  //
+  // Preserving is only correct where the two calls ask the SAME question:
+  //   - OVERTIME_COMP: `/leave/overtime-balance` takes no parameters, so the preserved value
+  //     is the answer to the identical request. Preserve.
+  //   - VACATION: the entitlement read is scoped to `calYear`. Preserving across a year change
+  //     would re-create issue #122 (the tiles claiming one year while this writer shows
+  //     another), so it is preserved ONLY when `calYear` did not move while the request was in
+  //     flight. If it did, the displayed figure belongs to a year that is no longer on screen
+  //     and is cleared — a stale year's number under a new year's heading is worse than an
+  //     empty tile.
   async function loadBalanceForType(type: TypeCode) {
     if (type === "OVERTIME_COMP") {
       try {
@@ -656,15 +678,11 @@
         maxNegativeBalanceMinutes = r.maxNegativeBalanceMinutes;
         isNegativeLimitExceeded = r.isNegativeLimitExceeded;
       } catch {
-        overtimeBalance = null;
-        confirmedMinutes = undefined;
-        openMonthMinutes = undefined;
-        hasClosedMonth = false;
-        rosterIncomplete = undefined;
-        maxNegativeBalanceMinutes = undefined;
-        isNegativeLimitExceeded = undefined;
+        // Deliberately empty: keep whatever `loadOvertimeBalance()` already put on screen.
+        // Nothing is cleared here — see the block comment above.
       }
     } else if (type === "VACATION") {
+      const yearAtRequest = calYear;
       try {
         const userId = $authStore.user?.employeeId;
         if (!userId) return;
@@ -676,7 +694,9 @@
         const vac = entitlements.find((e) => e.typeCode === "VACATION");
         vacationBalance = mapVacationBalance(vac);
       } catch {
-        vacationBalance = null;
+        // Clear ONLY when the year moved while this request was in flight (issue #122's
+        // failure mode); otherwise keep what is on screen — see the block comment above.
+        if (yearAtRequest !== calYear) vacationBalance = null;
       }
     }
   }
