@@ -769,6 +769,98 @@ jobs:
         if: always() && steps.changes.outputs.visual == 'true'
         run: docker compose -f docker-compose.test.yml down -v || true
 
+  # ── e2e-ci (Phase 275, Issue #275, D-04/D-05/D-06) ────────────────────
+  # Runs the named `e2e-ci` Playwright project (apps/e2e/playwright.config.ts) — a
+  # small, explicit allowlist of spec files, currently: functional.spec.ts,
+  # bs-pattern-retroactive.spec.ts, leave-flow.spec.ts. The full per-file registry
+  # this allowlist must stay consistent with lives in
+  # apps/api/scripts/lint-e2e-spec-registry.json (plan 275-04).
+  #
+  # Deliberately NO path filter (D-05): a functional e2e suite must not skip on an
+  # apps/api-only change — that is exactly the class of change most likely to break
+  # it. A path filter here would silently reintroduce the "specs never run" defect
+  # this phase exists to close. Do not "optimise" one back in.
+  #
+  # Deliberately NO `needs:` — runs in parallel with `test`/`axe-scan`/
+  # `visual-regression`, same as those jobs today.
+  e2e-ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @clokr/db exec prisma generate
+
+      - name: Build web (for the e2e-ci stack)
+        run: pnpm --filter @clokr/web build
+        env:
+          PUBLIC_API_URL: http://localhost:4000
+
+      - name: Start docker test stack
+        env:
+          # The seed runs only at API container startup (docker-entrypoint.sh) — setting
+          # this on any later step has no effect at all. Plan 275-01 made the compose
+          # file's default stay "false" (visual-regression above boots the same stack
+          # with zero users and must not change behavior); this job is the one that
+          # opts in, matching the documented local command (docs/testing.md).
+          SEED_DEMO_DATA: "true"
+        run: |
+          docker compose -f docker-compose.test.yml up --wait --quiet-pull
+          curl -sf http://localhost:4001/api/v1/health || (echo "api-test not healthy" && exit 1)
+          curl -sf http://localhost:3001/login || (echo "web-test not reachable" && exit 1)
+          # Prove the seed actually took effect in THIS CI run, not just locally
+          # (AK-1 is a per-PR property, not a one-time protocol) — a real login with
+          # the seeded admin credentials (packages/db/src/seed-credentials.ts).
+          login_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            http://localhost:4001/api/v1/auth/login \
+            -H 'content-type: application/json' \
+            -d '{"email":"admin@clokr.de","password":"admin1234"}')
+          if [ "$login_status" != "200" ]; then
+            echo "Seeded admin login failed (HTTP ${login_status}) — SEED_DEMO_DATA did not take effect" >&2
+            exit 1
+          fi
+
+      - name: Run e2e-ci project inside pinned image
+        id: e2e-ci
+        run: |
+          docker compose -f docker-compose.e2e.yml build e2e-visual
+          # Same three traps as visual-regression above: pnpm install must run inside
+          # the sh -c chain (anonymous volumes shadow node_modules on container start),
+          # --user root (bind-mounted /work is owned by uid 1001, not pwuser/1000), and
+          # WEB_SERVER_DISABLED=true (the stack is already up from the previous step;
+          # playwright.config.ts's own webServer would otherwise collide on port 4001).
+          # E2E_API_BASE=4001 fixes the tenant fixture's stack-port default (Phase 275
+          # Task 1) — all three e2e-ci specs go through it.
+          docker compose -f docker-compose.e2e.yml run --rm \
+            --user root \
+            -e PLAYWRIGHT_BASE_URL=http://localhost:3001 \
+            -e E2E_API_BASE=http://localhost:4001 \
+            -e CI=true \
+            -e WEB_SERVER_DISABLED=true \
+            e2e-visual \
+            sh -c "pnpm install --frozen-lockfile && pnpm --filter e2e exec playwright test --project=e2e-ci"
+
+      - name: Upload playwright-report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-ci-report
+          path: apps/e2e/playwright-report/
+          retention-days: 14
+
+      - name: Tear down docker stack
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v || true
+
   # ── Docker Build Check (no push) ──────────────────────────────────────
   # Validates Dockerfiles compile and warms the GHA cache for faster builds on main.
   docker:
