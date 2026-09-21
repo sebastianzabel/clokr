@@ -91,7 +91,7 @@ export type {
 export { getLeaveTypeByCode, listLeaveTypes, updateLeaveType } from "./facade/leave-types";
 export type { UpdateLeaveTypeInput } from "./facade/leave-types";
 
-// ── LeaveEntitlement (plan 10, A11-A16 + H1 sibling) ─────────────────────────────────────────
+// ── LeaveEntitlement (plan 10, A11-A16 + the code-based vacation-expiry read) ────────────────
 export {
   getVacationEntitlement,
   listEntitlementsForYear,
@@ -99,7 +99,7 @@ export {
   getEntitlementById,
   getExpiringCarryOver,
   upsertVacationEntitlement,
-  getVacationEntitlementsForYearByDisplayName,
+  getVacationEntitlementsForYearByCode,
   hardDeleteEntitlementsForEmployee,
 } from "./facade/entitlements";
 export type { UpsertVacationEntitlementData } from "./facade/entitlements";

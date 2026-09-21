@@ -12,7 +12,7 @@
  * because every vacation-entitlement lookup resolves the VACATION `LeaveType` first and keys the
  * entitlement by `employeeId_leaveTypeId_year` — see {@link getVacationEntitlement}.
  *
- * ── A11/A16 vs the remaining name-based sibling below ────────────────────────────────────────
+ * ── A11/A16 vs the remaining sibling below ───────────────────────────────────────────────────
  * See `leave-types.ts`'s own module header (H1) for the full reasoning. In short:
  * {@link getVacationEntitlement} and {@link upsertVacationEntitlement} resolve the VACATION type
  * by its stable CODE (`leave-types.ts`'s `getLeaveTypeByCode`) — the correct shape, used by
@@ -21,9 +21,11 @@
  * warning is rerouted to {@link getVacationEntitlement} as of Issue #205 (Phase 205 Plan 01,
  * finding 2) — its previous name-based facade function, and the display-name lookup it alone
  * depended on, are both deleted (zero remaining callers, verified by full-repo grep).
- * {@link getVacationEntitlementsForYearByDisplayName} still preserves the remaining PRE-EXISTING
- * name-based lookup verbatim (`time-tracking/plugins/attendance-checker.ts`'s § 7 BUrlG reminder)
- * — closed separately by Phase 205 Plan 02.
+ * {@link getVacationEntitlementsForYearByCode} closes Issue #205's remaining finding 1
+ * (`time-tracking/plugins/attendance-checker.ts`'s § 7 BUrlG reminder, Phase 205 Plan 02) — it was
+ * renamed in place and its `where` now filters on `LeaveType.code`, not `LeaveType.name`, since no
+ * existing code-based function returns its tenant-wide, per-year, `{employeeId, userId,
+ * firstName}` shape.
  *
  * ── A12 vs A13 vs A15 — three separately-named reads, not one parameterised query (R-B) ────────
  * {@link listEntitlementsForYear} (tenant-wide, by year), {@link getEntitlementsForEmployee}
@@ -190,15 +192,20 @@ export async function upsertVacationEntitlement(
   });
 }
 
-// ── H1 deviation-preserving sibling, remaining after Issue #205 finding 2's cleanup ─────────────
+// ── Vacation entitlements for a year, by code (Issue #205 finding 1, Phase 205 Plan 02) ────────
 
 /**
- * H1 — preserves `attendance-checker.ts`'s § 7 BUrlG expiry-reminder query verbatim: every
- * `LeaveEntitlement` for `tenantId` in `year` whose `LeaveType.name` (NOT code) is "Urlaub". See
- * `leave-types.ts`'s module header for why this stays name-based rather than being routed through
- * A12/A17.
+ * Every `LeaveEntitlement` for `tenantId` in `year` whose `LeaveType.code` is `VACATION`. Site:
+ * `time-tracking/plugins/attendance-checker.ts`'s § 7 BUrlG / EuGH C-684/16 expiry-reminder cron
+ * (`checkVacationExpiry()`). This function previously resolved the VACATION type by its
+ * tenant-editable display name; it is renamed in place here and its `where` changed from a
+ * `LeaveType.name` filter to this `LeaveType.code` filter — a tenant that renames the VACATION
+ * type no longer silently stops receiving the reminder. Return shape, tenant-wide scope and the
+ * `employee: { id, userId, firstName }` projection are unchanged; no existing code-based function
+ * (`listEntitlementsForYear`, A12) returns this exact shape — see `leave-types.ts`'s module header
+ * (H1) for why A12 does not fit.
  */
-export async function getVacationEntitlementsForYearByDisplayName(
+export async function getVacationEntitlementsForYearByCode(
   db: Prisma.TransactionClient,
   tenantId: string,
   year: number,
@@ -207,7 +214,7 @@ export async function getVacationEntitlementsForYearByDisplayName(
     where: {
       year,
       employee: { tenantId },
-      leaveType: { name: "Urlaub" },
+      leaveType: { code: "VACATION" },
     },
     include: {
       employee: { select: { id: true, userId: true, firstName: true } },

@@ -23,10 +23,10 @@
  * The name-based `LeaveType` lookup that site alone depended on is deleted along with it — zero
  * remaining callers, verified by full-repo grep.
  *
- * The § 7 BUrlG reminder site is closed separately, by Phase 205 Plan 02
- * (`entitlements.ts`'s `getVacationEntitlementsForYearByDisplayName`, renamed in place there
- * rather than deleted, since no existing code-based function returns its tenant-wide, per-year,
- * `{employeeId, userId, firstName}` shape).
+ * The § 7 BUrlG reminder site is closed separately, by Phase 205 Plan 02: `entitlements.ts`'s
+ * name-based lookup was renamed in place to {@link getVacationEntitlementsForYearByCode} and its
+ * `where` now filters on `LeaveType.code`, rather than being deleted, since no existing code-based
+ * function returns its tenant-wide, per-year, `{employeeId, userId, firstName}` shape.
  *
  * ── H3 — {@link updateLeaveType} collapses a handler-level guard into a query-level proof ──────
  * `leave-settings.ts`'s `PUT /leave-types/:id` (moved from `platform/api/settings.ts` by Phase

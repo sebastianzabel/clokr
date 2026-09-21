@@ -1,9 +1,12 @@
 /**
  * Phase 100B Plan 10 (Wave 5, opening) — focused integration test for the Abwesenheiten
- * `LeaveType`/`LeaveEntitlement` facade (A11-A19 plus the remaining H1 deviation-preserving
- * sibling). Phase 205 Plan 01 (Issue #205, finding 2) deleted the two name-based lookups this
- * file used to cover, once their only caller was rerouted to the code-based
- * `getVacationEntitlement` (A11) — their coverage below was replaced accordingly, not removed.
+ * `LeaveType`/`LeaveEntitlement` facade (A11-A19 plus the vacation-expiry-by-code read). Phase
+ * 205 Plan 01 (Issue #205, finding 2) deleted the two name-based lookups this file used to
+ * cover, once their only caller was rerouted to the code-based `getVacationEntitlement` (A11) —
+ * their coverage below was replaced accordingly, not removed. Phase 205 Plan 02 (Issue #205,
+ * finding 1) renamed the remaining name-based sibling to `getVacationEntitlementsForYearByCode`
+ * and switched its `where` to filter on `LeaveType.code`; the coverage below is updated in place
+ * for the new name and extended with a direct code-based-behaviour assertion.
  *
  * `seedTestData()` already provisions one `LeaveType` (`vacationType`, code `VACATION`, name
  * "Urlaub" via `leaveTypeFields("VACATION")`) and one `LeaveEntitlement` row for the current
@@ -27,7 +30,7 @@ import {
   getEntitlementById,
   getExpiringCarryOver,
   upsertVacationEntitlement,
-  getVacationEntitlementsForYearByDisplayName,
+  getVacationEntitlementsForYearByCode,
   hardDeleteEntitlementsForEmployee,
 } from "../index";
 import type { FastifyInstance } from "fastify";
@@ -283,7 +286,7 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
     });
   });
 
-  describe("getVacationEntitlement rename-proof (Issue #205, finding 2) / getVacationEntitlementsForYearByDisplayName (H1)", () => {
+  describe("getVacationEntitlement rename-proof (Issue #205, finding 2) / getVacationEntitlementsForYearByCode (Issue #205, finding 1)", () => {
     it("the vacation entitlement is still found after the tenant renames the VACATION type (Issue #205, finding 2)", async () => {
       await app.prisma.leaveType.update({
         where: { id: data.vacationType.id },
@@ -319,14 +322,31 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
       expect(found?.entitlement?.employeeId).toBe(data.employee.id);
     });
 
-    it("getVacationEntitlementsForYearByDisplayName is tenant-wide and name-filtered", async () => {
-      const rows = await getVacationEntitlementsForYearByDisplayName(
-        app.prisma,
-        data.tenant.id,
-        year,
-      );
+    it("getVacationEntitlementsForYearByCode is tenant-wide and code-filtered", async () => {
+      const rows = await getVacationEntitlementsForYearByCode(app.prisma, data.tenant.id, year);
       expect(rows.map((r) => r.employee.id)).toContain(data.employee.id);
       expect(rows.map((r) => r.employee.id)).not.toContain(otherData.employee.id);
+    });
+
+    it("getVacationEntitlementsForYearByCode returns the identical row set after the tenant renames the VACATION type (Issue #205, finding 1)", async () => {
+      const before = await getVacationEntitlementsForYearByCode(app.prisma, data.tenant.id, year);
+      await app.prisma.leaveType.update({
+        where: { id: data.vacationType.id },
+        data: { name: "Jahresurlaub (umbenannt)" },
+      });
+      try {
+        const after = await getVacationEntitlementsForYearByCode(app.prisma, data.tenant.id, year);
+        expect(after.map((r) => r.employee.id).sort()).toEqual(
+          before.map((r) => r.employee.id).sort(),
+        );
+        expect(after.map((r) => r.employee.id)).toContain(data.employee.id);
+        expect(after.map((r) => r.employee.id)).not.toContain(otherData.employee.id);
+      } finally {
+        await app.prisma.leaveType.update({
+          where: { id: data.vacationType.id },
+          data: { name: "Urlaub" },
+        });
+      }
     });
   });
 

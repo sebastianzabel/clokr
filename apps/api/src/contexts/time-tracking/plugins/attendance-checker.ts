@@ -15,7 +15,7 @@ import {
 import { invalidReasonFields } from "../invalid-reason";
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
 import {
-  getVacationEntitlementsForYearByDisplayName, // Phase 100B Plan 10 — H1 sibling
+  getVacationEntitlementsForYearByCode, // Phase 205 Plan 02 (Issue #205, finding 1) — code-based
   getStalePendingLeaveRequestsForReminder, // Phase 100B Plan 13 — A7b
   getLeaveStartingInWindow, // Phase 100B Plan 13 — A9
 } from "../../absence";
@@ -516,8 +516,9 @@ export const attendanceCheckerPlugin = fp(async (app) => {
           const startMonth = cfg?.vacationReminderStartMonth ?? 10;
           if (currentMonth < startMonth) continue;
 
-          // Find employees with unused vacation this year (H1 deviation, preserved verbatim)
-          const entitlements = await getVacationEntitlementsForYearByDisplayName(
+          // Find employees with unused vacation this year, resolved by the stable code so a
+          // renamed VACATION type still receives this reminder (Issue #205, Phase 205 Plan 02)
+          const entitlements = await getVacationEntitlementsForYearByCode(
             app.prisma,
             tenant.id,
             currentYear,
