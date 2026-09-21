@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../../../middleware/auth";
-import { FederalState } from "@clokr/db";
+import { FederalState, type TenantConfig } from "@clokr/db";
 import { encrypt } from "../../../utils/crypto";
 // eslint-disable-next-line no-restricted-imports -- E-3: PUT /settings/work/:employeeId triggers saldo recalculation and shift cancellation as side effects of a contract change — same defect class as E-1. Disappears in Block 2 via a schedule-changed event. ADR 0001 Eintrag H.
 import { recalculateSnapshots } from "../../working-time-account/recalculate-snapshots";
@@ -381,6 +381,105 @@ export const employeeScheduleSchema = z
       });
     }
   });
+
+// ── PUT/GET /api/v1/settings/security — the writable field set, stated ONCE ──────────────────────
+//
+// Issue #148: the audit row of `PUT /settings/security` used to carry a hand-written, three-field
+// `oldValue` (twoFaEnabled, passwordMinLength, maxNegativeBalanceMinutes) while the very same
+// request could write twenty-two fields — the e-mail notification flags among them. For nineteen
+// fields the before-state was therefore not reconstructible from the trail, against CLAUDE.md
+// § Audit-Proof ("before/after values", "who changed what, when and why").
+//
+// The hand-written list IS the defect: it is a second statement of the writable set that nothing
+// forced to stay in step with the schema. So the schema below is the single source of that set,
+// and `projectSecuritySettings()` is the single projection that GET, the PUT response and the
+// audit row's oldValue/newValue all share. Adding a field to the schema without extending the
+// projection is now a compile error, not a silent hole in the trail.
+export const securitySettingsSchema = z.object({
+  twoFaEnabled: z.boolean().optional(),
+  passwordMinLength: z.number().int().min(8).max(128).optional(),
+  passwordRequireUpper: z.boolean().optional(),
+  passwordRequireLower: z.boolean().optional(),
+  passwordRequireDigit: z.boolean().optional(),
+  passwordRequireSpecial: z.boolean().optional(),
+  // Phase 100 (T-100-01): same upper bound as employeeScheduleSchema above — the
+  // tenant-wide default must not be settable beyond what the admin form advertises
+  // either, or a tenant default alone could turn the OVERTIME_COMP gate into a no-op.
+  maxNegativeBalanceMinutes: z
+    .number()
+    .int()
+    .min(0)
+    .max(999 * 60)
+    .nullable()
+    .optional(),
+  emailNotificationsEnabled: z.boolean().optional(),
+  emailOnLeaveRequest: z.boolean().optional(),
+  emailOnLeaveDecision: z.boolean().optional(),
+  emailOnOvertimeWarning: z.boolean().optional(),
+  emailOnMissingEntries: z.boolean().optional(),
+  emailOnClockOutReminder: z.boolean().optional(),
+  emailOnMonthClose: z.boolean().optional(),
+  emailOnRetroEntry: z.boolean().optional(),
+  sessionTimeoutMinutes: z.number().int().min(0).max(480).optional(),
+  refreshTokenDays: z.number().int().min(1).max(90).optional(),
+  rememberMeEnabled: z.boolean().optional(),
+  rememberMeDays: z.number().int().min(1).max(365).optional(),
+  maxSessionsPerUser: z.number().int().min(0).max(20).optional(),
+  loginMaxAttempts: z.number().int().min(1).max(20).optional(),
+  loginLockoutMinutes: z.number().int().min(1).max(1440).optional(),
+});
+
+/** Every field the security request can write, with `undefined` stripped — the shape of a
+ *  fully-resolved security-settings view. */
+export type SecuritySettings = Required<z.infer<typeof securitySettingsSchema>>;
+
+/** What each field reports for a tenant that has no TenantConfig row yet. Mirrors the
+ *  `@default()` of the matching column in packages/db/prisma/schema.prisma, so a read of an
+ *  absent row reports what a write would have found. The `SecuritySettings` annotation is the
+ *  gate: a field added to `securitySettingsSchema` without a default here fails `tsc`, which is
+ *  what keeps the projection from ever falling behind the writable set again (issue #148). */
+export const SECURITY_SETTINGS_DEFAULTS: SecuritySettings = {
+  twoFaEnabled: false,
+  passwordMinLength: 12,
+  passwordRequireUpper: true,
+  passwordRequireLower: true,
+  passwordRequireDigit: true,
+  passwordRequireSpecial: true,
+  maxNegativeBalanceMinutes: null,
+  emailNotificationsEnabled: false,
+  emailOnLeaveRequest: true,
+  emailOnLeaveDecision: true,
+  emailOnOvertimeWarning: false,
+  emailOnMissingEntries: false,
+  emailOnClockOutReminder: false,
+  emailOnMonthClose: true,
+  emailOnRetroEntry: true,
+  sessionTimeoutMinutes: 60,
+  refreshTokenDays: 7,
+  rememberMeEnabled: true,
+  rememberMeDays: 30,
+  maxSessionsPerUser: 0,
+  loginMaxAttempts: 5,
+  loginLockoutMinutes: 15,
+};
+
+/** The writable field set of `PUT /settings/security`, derived — never re-typed. */
+export const SECURITY_SETTINGS_FIELDS = Object.keys(
+  SECURITY_SETTINGS_DEFAULTS,
+) as (keyof SecuritySettings)[];
+
+/** Reads every writable security field off `cfg`, falling back to the column default where the
+ *  row is absent or the column is null. Used for GET, for the PUT response and for BOTH sides of
+ *  the audit row, so the trail can never describe fewer fields than the request can change. */
+export function projectSecuritySettings(cfg: TenantConfig | null): SecuritySettings {
+  const out: Record<string, unknown> = {};
+  for (const field of SECURITY_SETTINGS_FIELDS) {
+    const stored = cfg?.[field];
+    out[field] =
+      stored === undefined || stored === null ? SECURITY_SETTINGS_DEFAULTS[field] : stored;
+  }
+  return out as SecuritySettings;
+}
 
 export async function settingsRoutes(app: FastifyInstance) {
   // GET /api/v1/settings/work  — globale Vorgaben
@@ -1215,30 +1314,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     handler: async (req) => {
       const tenantId = req.user.tenantId;
       const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
-      return {
-        twoFaEnabled: cfg?.twoFaEnabled ?? false,
-        passwordMinLength: cfg?.passwordMinLength ?? 12,
-        passwordRequireUpper: cfg?.passwordRequireUpper ?? true,
-        passwordRequireLower: cfg?.passwordRequireLower ?? true,
-        passwordRequireDigit: cfg?.passwordRequireDigit ?? true,
-        passwordRequireSpecial: cfg?.passwordRequireSpecial ?? true,
-        maxNegativeBalanceMinutes: cfg?.maxNegativeBalanceMinutes ?? null,
-        emailNotificationsEnabled: cfg?.emailNotificationsEnabled ?? false,
-        emailOnLeaveRequest: cfg?.emailOnLeaveRequest ?? true,
-        emailOnLeaveDecision: cfg?.emailOnLeaveDecision ?? true,
-        emailOnOvertimeWarning: cfg?.emailOnOvertimeWarning ?? false,
-        emailOnMissingEntries: cfg?.emailOnMissingEntries ?? false,
-        emailOnClockOutReminder: cfg?.emailOnClockOutReminder ?? false,
-        emailOnMonthClose: cfg?.emailOnMonthClose ?? true,
-        emailOnRetroEntry: cfg?.emailOnRetroEntry ?? true,
-        sessionTimeoutMinutes: cfg?.sessionTimeoutMinutes ?? 60,
-        refreshTokenDays: cfg?.refreshTokenDays ?? 7,
-        rememberMeEnabled: cfg?.rememberMeEnabled ?? true,
-        rememberMeDays: cfg?.rememberMeDays ?? 30,
-        maxSessionsPerUser: cfg?.maxSessionsPerUser ?? 0,
-        loginMaxAttempts: cfg?.loginMaxAttempts ?? 5,
-        loginLockoutMinutes: cfg?.loginLockoutMinutes ?? 15,
-      };
+      return projectSecuritySettings(cfg);
     },
   });
 
@@ -1247,41 +1323,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
     handler: async (req) => {
-      const body = z
-        .object({
-          twoFaEnabled: z.boolean().optional(),
-          passwordMinLength: z.number().int().min(8).max(128).optional(),
-          passwordRequireUpper: z.boolean().optional(),
-          passwordRequireLower: z.boolean().optional(),
-          passwordRequireDigit: z.boolean().optional(),
-          passwordRequireSpecial: z.boolean().optional(),
-          // Phase 100 (T-100-01): same upper bound as employeeScheduleSchema above — the
-          // tenant-wide default must not be settable beyond what the admin form advertises
-          // either, or a tenant default alone could turn the OVERTIME_COMP gate into a no-op.
-          maxNegativeBalanceMinutes: z
-            .number()
-            .int()
-            .min(0)
-            .max(999 * 60)
-            .nullable()
-            .optional(),
-          emailNotificationsEnabled: z.boolean().optional(),
-          emailOnLeaveRequest: z.boolean().optional(),
-          emailOnLeaveDecision: z.boolean().optional(),
-          emailOnOvertimeWarning: z.boolean().optional(),
-          emailOnMissingEntries: z.boolean().optional(),
-          emailOnClockOutReminder: z.boolean().optional(),
-          emailOnMonthClose: z.boolean().optional(),
-          emailOnRetroEntry: z.boolean().optional(),
-          sessionTimeoutMinutes: z.number().int().min(0).max(480).optional(),
-          refreshTokenDays: z.number().int().min(1).max(90).optional(),
-          rememberMeEnabled: z.boolean().optional(),
-          rememberMeDays: z.number().int().min(1).max(365).optional(),
-          maxSessionsPerUser: z.number().int().min(0).max(20).optional(),
-          loginMaxAttempts: z.number().int().min(1).max(20).optional(),
-          loginLockoutMinutes: z.number().int().min(1).max(1440).optional(),
-        })
-        .parse(req.body);
+      const body = securitySettingsSchema.parse(req.body);
       const tenantId = req.user.tenantId;
       const oldConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
       const config = await app.prisma.tenantConfig.upsert({
@@ -1294,38 +1336,16 @@ export async function settingsRoutes(app: FastifyInstance) {
         action: "UPDATE",
         entity: "TenantConfig",
         entityId: tenantId,
-        oldValue: {
-          twoFaEnabled: oldConfig?.twoFaEnabled ?? false,
-          passwordMinLength: oldConfig?.passwordMinLength ?? 12,
-          maxNegativeBalanceMinutes: oldConfig?.maxNegativeBalanceMinutes ?? null,
-        },
-        newValue: body,
+        // Issue #148: BOTH sides are the FULL writable field set, projected by the same
+        // function the read endpoints use. `newValue` used to be the raw `body` — i.e. only the
+        // keys the caller happened to send — which left the after-state of every unsent field
+        // implicit as well. Full-on-both-sides makes the row self-contained: what changed is the
+        // diff, and neither side can list fewer fields than the request can write.
+        oldValue: projectSecuritySettings(oldConfig),
+        newValue: projectSecuritySettings(config),
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
-      return {
-        twoFaEnabled: config.twoFaEnabled,
-        passwordMinLength: config.passwordMinLength,
-        passwordRequireUpper: config.passwordRequireUpper,
-        passwordRequireLower: config.passwordRequireLower,
-        passwordRequireDigit: config.passwordRequireDigit,
-        passwordRequireSpecial: config.passwordRequireSpecial,
-        maxNegativeBalanceMinutes: config.maxNegativeBalanceMinutes,
-        emailNotificationsEnabled: config.emailNotificationsEnabled,
-        emailOnLeaveRequest: config.emailOnLeaveRequest,
-        emailOnLeaveDecision: config.emailOnLeaveDecision,
-        emailOnOvertimeWarning: config.emailOnOvertimeWarning,
-        emailOnMissingEntries: config.emailOnMissingEntries,
-        emailOnClockOutReminder: config.emailOnClockOutReminder,
-        emailOnMonthClose: config.emailOnMonthClose,
-        emailOnRetroEntry: config.emailOnRetroEntry,
-        sessionTimeoutMinutes: config.sessionTimeoutMinutes,
-        refreshTokenDays: config.refreshTokenDays,
-        rememberMeEnabled: config.rememberMeEnabled,
-        rememberMeDays: config.rememberMeDays,
-        maxSessionsPerUser: config.maxSessionsPerUser,
-        loginMaxAttempts: config.loginMaxAttempts,
-        loginLockoutMinutes: config.loginLockoutMinutes,
-      };
+      return projectSecuritySettings(config);
     },
   });
 
