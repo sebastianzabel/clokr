@@ -277,7 +277,7 @@ export interface CalendarLeaveOverlap {
   startDate: Date;
   endDate: Date;
   status: LeaveRequestStatus;
-  leaveType: { name: string };
+  leaveType: { name: string; code: LeaveTypeCode | null };
 }
 
 /**
@@ -289,7 +289,9 @@ export interface CalendarLeaveOverlap {
  * time).
  *
  * Sites: `composition/dashboard.ts`'s week-calendar overlay (tenant-wide and own-employee
- * variants).
+ * variants) — shared by BOTH `/team-week` and `/my-week`. `leaveType.code` is additive (Issue
+ * #205, finding 3): `/team-week` uses it for a rename-stable `leaveTypeCode` field alongside the
+ * existing display `reason`; `/my-week`'s own response shape is unaffected by this widening.
  */
 export async function getCalendarLeaveOverlapping(
   db: Prisma.TransactionClient,
@@ -310,7 +312,7 @@ export async function getCalendarLeaveOverlapping(
       startDate: true,
       endDate: true,
       status: true,
-      leaveType: { select: { name: true } },
+      leaveType: { select: { name: true, code: true } },
     },
   });
 }

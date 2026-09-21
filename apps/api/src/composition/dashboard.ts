@@ -539,11 +539,19 @@ export async function dashboardRoutes(app: FastifyInstance) {
             holidayName: holidayMap.get(dayStr) ?? null,
           });
 
+          // Issue #205 finding 3: `reason` has TWO sources — a tenant-renamable
+          // `LeaveType.name` on the leave path (resolvePresenceState reads
+          // `leave.leaveTypeName` above) and the stable `DISPLAY_NAME` table on the absence
+          // path — so a single control field can't represent both without lying for one of
+          // them. `leaveTypeCode`/`absenceType` are additive, rename-stable companions to
+          // `reason`; mirrors `/my-week`'s already-shipped `leaveType`/`absenceType` pair.
           return {
             date: dayStr,
             status,
             workedHours: round(workedMinutes / 60),
             reason,
+            leaveTypeCode: leave?.leaveType.code ?? null,
+            absenceType: absence?.type ?? null,
             shift,
             isWorkday,
             expectedHours,
