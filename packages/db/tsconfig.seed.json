@@ -10,5 +10,5 @@
     "rootDir": ".",
     "strict": false
   },
-  "include": ["src/seed.ts", "generated/**/*.d.ts"]
+  "include": ["src/seed.ts", "src/seed-credentials.ts", "generated/**/*.d.ts"]
 }

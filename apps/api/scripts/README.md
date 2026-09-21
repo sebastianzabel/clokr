@@ -28,6 +28,7 @@ classified by lifecycle.
 | backfill-leave-type-code.ts                    | 2026-09-14 | Gives every pre-Phase-97 `LeaveType` row its stable `code`, including legacy-alias names (`Jahresurlaub` → `VACATION`); no catch-all code, unmappable names are reported under `unmapped`; dry-run default, `--apply` opt-in, `--tenant-id`/`--all-tenants` required; doubles as the repeatable post-rollout sweep for the rolling-deploy window (its selection is `code IS NULL`, so re-running after a full rollout is safe) — see `docs/migrations.md` § "Phase 97 — LeaveType.code (Rollout-Reihenfolge)"   | Migration artifact (Phase 97) + Operator tool |
 | lint-tenant-scoping.ts                         | 2026-09-16 | CI/local gate: fails on a NEW route or service handler that reads a client-supplied identifier into a tenant-scoped Prisma model without a tenant constraint (see § Lint gates below). Composed of five sibling modules — `lint-tenant-scoping-types.ts`, `-model-graph.ts`, `-request-bindings.ts`, `-candidates.ts`, `-verdict.ts` (analysis) plus `-exceptions.ts` (the named-exception mechanism) — grouped as one row because they have no independent invocation; see each file's own header for its part | Lint gate (Phase 204)                         |
 | lint-guard-vacuity.ts                          | 2026-09-18 | CI/local/pre-commit gate: fails a file that walks the source tree and asserts on the result without proving the walked set non-empty (see § Lint gates below). AST classification lives in the sibling `lint-guard-vacuity-detect.ts`; exceptions in `lint-guard-vacuity-exceptions.json`                                                                                                                                                                                                                       | Lint gate (Phase 235, Issues #235/#240/#245)  |
+| lint-e2e-spec-registry.ts                      | 2026-09-21 | CI/local/pre-commit gate: fails unless every `apps/e2e/tests/*.spec.ts` file has exactly one entry in `lint-e2e-spec-registry.json` (category `in-ci`/`später-datum`/`später-seed` plus a mandatory reason) — see § Lint gates below. Pure validation/diff/extraction lives in the sibling `lint-e2e-spec-registry-validate.ts`                                                                                                                                                                                 | Lint gate (Phase 275, Issue #275, D-07)       |
 
 ## Migration artifacts
 
@@ -380,6 +381,37 @@ empty-abort there would be actively wrong, not merely unwanted). The register cu
 exactly one entry; growth beyond low single digits means the detection is wrong, not the guards.
 Full accounting of the phase's outcome, every exception and the named limits of what this gate
 structurally cannot see: `docs/adr/0001-abweichungen.md` Eintrag I.
+
+### `lint-e2e-spec-registry.ts` (Issue #275, D-07)
+
+Enforces one narrow, mechanical rule: every file under `apps/e2e/tests/*.spec.ts` must have exactly
+one entry in `apps/api/scripts/lint-e2e-spec-registry.json`, naming a `category` — `in-ci`,
+`später-datum`, or `später-seed`, D-07's own three literal values — plus a `reason` of at least
+30 characters ("a sentence, not a label"). This is the riegel against recurrence for the defect
+Phase 275 measured: 22 of 24 e2e spec files ran nowhere, neither in CI nor locally, with no
+checked-in record anywhere of when a given file was even meant to run. The gate also enforces the
+concrete sub-case that produced the finding in the first place — a file classified `in-ci` whose
+basename no CI-invoked Playwright project (`e2e-ci`, `axe-scan`, `visual`) actually runs in
+`apps/e2e/playwright.config.ts`'s `testMatch`, checked in both directions.
+
+- **Run locally:** `pnpm --filter @clokr/api exec tsx scripts/lint-e2e-spec-registry.ts [--check]
+[--rows] [--json]`
+- **Runs in CI as:** the `Lint e2e spec registry` step in `.github/workflows/ci.yml`, immediately
+  after `Lint guard vacuity`, asserting `--check`
+- **Runs in `.husky/pre-commit` as:** a full-repo (not staged-only) invocation above
+  `pnpm exec lint-staged` — a commit adding one new spec file still needs the gate to see the FULL
+  `apps/e2e/tests/` listing, which a staged-files-only invocation structurally cannot do
+
+**There is no "exception" concept for this gate.** Unlike `lint-tenant-scoping.ts` and
+`lint-guard-vacuity.ts`, every spec file gets EXACTLY one category, never zero — a file simply
+existing with no register entry is itself the defect, not a state that can be "safe" and excepted.
+**A hit on a clean tree is a FINDING, not an exception candidate** — the same house rule stated
+above for `lint-guard-vacuity.ts`: understand WHY a file is missing, stale, or drifted from the
+`in-ci` testMatch set before touching the register; adding a bogus entry to make the run green
+without that understanding is how this gate becomes decoration. The only legitimate change to the
+register is adding the missing entry, correcting a stale `file` path, or moving a file between
+categories once its actual situation changes (e.g. a `später-datum` file graduating into `in-ci`)
+— every such change carries its own measured reason, never a placeholder.
 
 ## Invocation
 

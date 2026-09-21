@@ -2,11 +2,7 @@ import { PrismaClient } from "../generated/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import bcrypt from "bcryptjs";
-
-const ADMIN_EMAIL = "admin@clokr.de";
-const ADMIN_PASSWORD = "admin1234";
-const EMPLOYEE_EMAIL = "max@clokr.de";
-const EMPLOYEE_PASSWORD = "mitarbeiter5678";
+import { ADMIN_EMAIL, ADMIN_PASSWORD, EMPLOYEE_EMAIL, EMPLOYEE_PASSWORD } from "./seed-credentials";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool as any);

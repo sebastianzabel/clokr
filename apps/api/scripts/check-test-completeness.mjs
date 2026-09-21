@@ -365,8 +365,21 @@ import { readFileSync } from "node:fs";
 //     reproduction transcript verbatim, including its `.stdout` access): 24 -> 25 tests.
 // 3221 + 1 = 3222, matching a fresh full-suite run's own totals exactly. MIN_FILES unchanged at
 // 266 (no new test FILE — the new file is fixture data, parsed, never collected as a test file).
-const MIN_FILES = 266;
-const MIN_TESTS = 3222;
+//
+// Phase 275 Plan 04 (Issue #275, D-07): new test FILE
+// `scripts/__tests__/lint-e2e-spec-registry-validate.test.ts` (table-driven, DB-free coverage of
+// the new `lint-e2e-spec-registry` gate's pure module) adds 22 tests: MIN_FILES 266 -> 267 would
+// be this plan's own delta alone, but a fresh full-suite run measured immediately before this edit
+// (`pnpm --filter @clokr/api test`) reports `Test Files 271 passed (271)` / `Tests 3289 passed | 3
+// skipped (3292)` — 4 more files and 48 more tests than 266/3222 already accounted for by other,
+// already-merged work between the WR-02 entry above and this one that never bumped this floor
+// (pre-existing drift, out of this plan's scope per CLAUDE.md's scope-boundary rule — nothing
+// investigated or attributed here beyond this plan's own +1 file/+22 tests). Raising straight to
+// the MEASURED current reality (271/3292), not merely 266+1/3222+22, because a floor left looser
+// than reality is exactly the silent-headroom risk D-09 exists to close: a future run could lose
+// several files before this check would even notice.
+const MIN_FILES = 271;
+const MIN_TESTS = 3292;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

@@ -1,0 +1,125 @@
+{
+  "registerSource": "Phase 275 (Issue #275, D-07) — every apps/e2e/tests/*.spec.ts file appears here exactly once, with a mandatory reason naming its measured cause. See .planning/phases/275-e2e-specs-laufen-nirgends-22-von-24-weder-in-ci-noch-lokal/275-03-SUMMARY.md for the full 15-file measurement table this register's später-datum reasons are drawn from.",
+  "entries": [
+    {
+      "file": "apps/e2e/tests/axe-scan.spec.ts",
+      "category": "in-ci",
+      "reason": "Already runs in CI before this phase via its own dedicated axe-scan Playwright project and CI job (Phase 70). D-08 replaced its former tautological assertion (expect(violations.length).toBeGreaterThanOrEqual(0), which cannot fail) with a real WCAG 2 A/AA check, so it is now a genuine gate, not a decorative one."
+    },
+    {
+      "file": "apps/e2e/tests/visual.spec.ts",
+      "category": "in-ci",
+      "reason": "Already runs in CI before this phase via its own dedicated visual Playwright project and the visual-regression job (Phase 75); before this phase it was the only structurally-capable-of-failing check among the two pre-phase CI specs, with pinned-image baselines at a 0.2% max-diff-pixel-ratio threshold."
+    },
+    {
+      "file": "apps/e2e/tests/functional.spec.ts",
+      "category": "in-ci",
+      "reason": "Selected for the new e2e-ci Playwright project (D-06): 0 date references, and once the shared What's-New-drawer mock landed in the tenant fixture, 21/22 tests pass with 1 designed self-skip for an empty release-notes corpus (measured, 275-03)."
+    },
+    {
+      "file": "apps/e2e/tests/bs-pattern-retroactive.spec.ts",
+      "category": "in-ci",
+      "reason": "Selected for the e2e-ci Playwright project via D-06's fallback list (6 date references but reproducibly green): 4/4 pass across 5 consecutive runs once the What's-New mock body was corrected from a bare array to { releases: [] } (measured, 275-03)."
+    },
+    {
+      "file": "apps/e2e/tests/leave-flow.spec.ts",
+      "category": "in-ci",
+      "reason": "Selected for the e2e-ci Playwright project via D-06's fallback list (7 date references but reproducibly green): 6/6 pass once the shared What's-New-drawer mock removed the pointer-interception failures it previously hit on 3 of 6 tests (measured, 275-03)."
+    },
+    {
+      "file": "apps/e2e/tests/accessibility.spec.ts",
+      "category": "später-seed",
+      "reason": "Imports ./helpers and authenticates through the seeded admin (admin@clokr.de via TEST_ADMIN), which requires the setup Playwright project's storageState; the e2e-ci selection deliberately avoids depending on the seed-login group (D-01/D-06) since local seed drift was itself part of this phase's own finding."
+    },
+    {
+      "file": "apps/e2e/tests/auth.spec.ts",
+      "category": "später-seed",
+      "reason": "Imports ./helpers and authenticates through the seeded admin (admin@clokr.de via TEST_ADMIN), which requires the setup Playwright project's storageState; the e2e-ci selection deliberately avoids depending on the seed-login group (D-01/D-06). Candidate for TestTenant exposing email/password (deferred idea) once a follow-up phase lands."
+    },
+    {
+      "file": "apps/e2e/tests/core-flows.spec.ts",
+      "category": "später-seed",
+      "reason": "Imports ./helpers and authenticates through the seeded admin (admin@clokr.de via TEST_ADMIN), which requires the setup Playwright project's storageState; the e2e-ci selection deliberately avoids depending on the seed-login group (D-01/D-06)."
+    },
+    {
+      "file": "apps/e2e/tests/error-handling-flow.spec.ts",
+      "category": "später-seed",
+      "reason": "Imports ./helpers and authenticates through the seeded admin (admin@clokr.de via TEST_ADMIN), which requires the setup Playwright project's storageState; the e2e-ci selection deliberately avoids depending on the seed-login group (D-01/D-06)."
+    },
+    {
+      "file": "apps/e2e/tests/mobile-flow.spec.ts",
+      "category": "später-seed",
+      "reason": "Imports ./helpers and authenticates through the seeded admin (admin@clokr.de via TEST_ADMIN), which requires the setup Playwright project's storageState; the e2e-ci selection deliberately avoids depending on the seed-login group (D-01/D-06)."
+    },
+    {
+      "file": "apps/e2e/tests/overtime-saldo-flow.spec.ts",
+      "category": "später-seed",
+      "reason": "Imports ./helpers and authenticates through the seeded admin (admin@clokr.de via TEST_ADMIN), which requires the setup Playwright project's storageState; the e2e-ci selection deliberately avoids depending on the seed-login group (D-01/D-06)."
+    },
+    {
+      "file": "apps/e2e/tests/admin-pausendauer.spec.ts",
+      "category": "später-datum",
+      "reason": "seedEmployee fails with 400: the API now requires a full ISO datetime for hireDate while the spec sends a bare date string (2 date references measured, 275-03) — the same root cause as locked-month/monatsabschluss/month-close-gaps/tracking-exemption. X-Test-Now exists as the tool for a future date-arithmetic migration."
+    },
+    {
+      "file": "apps/e2e/tests/admin-settings-flow.spec.ts",
+      "category": "später-datum",
+      "reason": "getByTestId('admin-system-sicherheit-twoFaEnabled') resolves but stays hidden (2 tests), and a third test times out waiting for a password-policy page.waitForResponse round trip (5/8 pass, 275-03 measurement) — selector/UI drift, not a date issue, grouped here pending plan 275-05's dedicated spec-repair follow-up ticket."
+    },
+    {
+      "file": "apps/e2e/tests/bs-pattern.spec.ts",
+      "category": "später-datum",
+      "reason": "getByTestId('bs-pattern-mode-block') never appears, and a delete-then-restore flow times out waiting for a testid (1/6 pass, 275-03 measurement) — selector/UI drift, grouped here pending plan 275-05's dedicated spec-repair follow-up ticket."
+    },
+    {
+      "file": "apps/e2e/tests/cancellation.spec.ts",
+      "category": "später-datum",
+      "reason": "createManager fails with 400 ('Mindestens ein Großbuchstabe erforderlich'): the password policy now requires an uppercase letter, which the fixture's hardcoded password predates (2 date references measured, 275-03) — distinct from the hireDate root cause affecting five sibling files."
+    },
+    {
+      "file": "apps/e2e/tests/fixtures-tenant.spec.ts",
+      "category": "später-datum",
+      "reason": "'admin token authenticates against the API' calls GET /api/v1/me, which does not exist in that shape — apps/api/src/contexts/platform/api/me.ts only registers /me/preferences and /me/release-notes-seen. A stale endpoint assumption (2/3 pass), not a wiring issue — E2E_API_BASE was correctly :4001 throughout (275-03 measurement)."
+    },
+    {
+      "file": "apps/e2e/tests/leave-overlap-masking.spec.ts",
+      "category": "später-datum",
+      "reason": "Written one day before this phase (Phase 262, commit 1cfa7f7d); uses new Date() plus toISOString().slice(0, 10) date arithmetic at lines 27-29, AND is a third, ad-hoc auth pattern that imports neither ../fixtures nor ./helpers but calls POST /test/bootstrap-tenant itself at line 139 — whoever migrates it onto ../fixtures must account for both properties, not only the date one."
+    },
+    {
+      "file": "apps/e2e/tests/locked-month.spec.ts",
+      "category": "später-datum",
+      "reason": "seedLockedMonth: employee create fails with 400 from the same hireDate ISO-datetime tightening as admin-pausendauer/monatsabschluss/month-close-gaps/tracking-exemption (5 date references measured, 275-03; 0/5 pass)."
+    },
+    {
+      "file": "apps/e2e/tests/monatsabschluss.spec.ts",
+      "category": "später-datum",
+      "reason": "Identical hireDate ISO-datetime rejection (400) as admin-pausendauer/locked-month/month-close-gaps/tracking-exemption (4 date references measured, 275-03; 0/3 pass)."
+    },
+    {
+      "file": "apps/e2e/tests/month-close-gaps.spec.ts",
+      "category": "später-datum",
+      "reason": "Identical hireDate ISO-datetime rejection (400), the largest date-reference count of the group (12, measured 275-03; 0/2 pass) — same root cause as admin-pausendauer/locked-month/monatsabschluss/tracking-exemption."
+    },
+    {
+      "file": "apps/e2e/tests/nfc-punch.spec.ts",
+      "category": "später-datum",
+      "reason": "Expected punch action 'OUT', got 'NOOP' (4 date references measured, 0/2 pass, 275-03 measurement) — a genuine business-logic/behavior drift in punch-toggle semantics, distinct from every UI/data-shape cause above; needs product-level triage, not a selector fix."
+    },
+    {
+      "file": "apps/e2e/tests/time-entries-flow.spec.ts",
+      "category": "später-datum",
+      "reason": "getByTestId('time-entries-page') not found, plus five further testid-drift failures down the same flow (2 date references measured, 0/6 pass, 275-03 measurement) — selector drift, grouped here pending plan 275-05's dedicated spec-repair follow-up ticket."
+    },
+    {
+      "file": "apps/e2e/tests/tracking-exemption.spec.ts",
+      "category": "später-datum",
+      "reason": "Identical hireDate ISO-datetime rejection (400) as admin-pausendauer/locked-month/monatsabschluss/month-close-gaps (1 date reference measured, 275-03; 0/1 pass)."
+    },
+    {
+      "file": "apps/e2e/tests/vacation-carryover.spec.ts",
+      "category": "später-datum",
+      "reason": "getByTestId('urlaub-balance-current'/'urlaub-balance-carryover') not found across all 4 tests (3 date references measured, 0/4 pass, 275-03 measurement) — the only file in the group that already uses X-Test-Now, so the migration tool is proven; only its selectors need repair."
+    }
+  ]
+}

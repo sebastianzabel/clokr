@@ -57,7 +57,7 @@ services:
       APP_URL: "http://localhost:3001"
       API_PORT: "4000"
       API_HOST: "0.0.0.0"
-      SEED_DEMO_DATA: "false"
+      SEED_DEMO_DATA: "${SEED_DEMO_DATA:-false}"
     ports:
       - "4001:4000"
     depends_on:
