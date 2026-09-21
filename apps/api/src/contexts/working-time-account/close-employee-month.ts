@@ -25,6 +25,20 @@
  *   fix the loop skipped VOCATIONAL_SCHOOL/PATTERN, double-counting each BS day's Soll
  *   (inflated Monats-Soll/Ist; prod-confirmed 247:00 on a 38h/week contract).
  *
+ * Überstundenausgleich (issue #220, model B):
+ *   Until this fix the function did not distinguish absence KINDS at all — `approvedLeave`
+ *   carried no type discriminator, so an approved OVERTIME_COMP request reduced the Soll
+ *   exactly like Urlaub. The unworked day's minus therefore vanished and the stored balance
+ *   ROSE by the day's hours while the `OvertimeTransaction` journal row said it fell. Measured
+ *   over the real endpoints on an 8h-Monday fixture: approval moved the stored balance by +8 h
+ *   (journal: −8 h), cancellation by −8 h (journal: +8 h) — a 16 h error per compensated day
+ *   against the booking intent.
+ *   The fix keeps the Soll reduction (the Ausgleichstag IS paid and must not also produce a
+ *   gap) and adds the withdrawal as a separate summand on the balance, taken from the very
+ *   same `calcLeaveAbsenceMinutesTz()` return value that granted the credit. Credit and
+ *   withdrawal are therefore the same number by construction, for half days, holidays inside
+ *   the range and D-15 overlap dedup alike.
+ *
  * exitDate convention (D-03):
  *   exitDate is INCLUSIVE — last working day, per vocational-school-generator.ts:320
  *   precedent. effectiveEnd = min(exitDate, monthLastDay).
@@ -99,6 +113,18 @@ export type CloseMonthInput = {
     startDate: Date;
     endDate: Date;
     halfDay: boolean;
+    /**
+     * Issue #220 — `true` exactly for `LeaveType.code === "OVERTIME_COMP"` rows
+     * (Überstundenausgleich). NOT optional on purpose: a missing value here silently
+     * degrades to "ordinary leave", which is the bug this field exists to close, so the
+     * compiler must name every call site instead. Build the whole array through
+     * {@link toCloseMonthApprovedLeave} rather than deriving the flag inline.
+     *
+     * Semantics: an OVERTIME_COMP day stays Soll-free like any other approved absence
+     * (the day IS paid) AND additionally withdraws exactly that credited amount from the
+     * account — see the `overtimeCompensationMinutes` accumulation below.
+     */
+    isOvertimeCompensation: boolean;
   }>;
   absences: Array<{
     startDate: Date;
@@ -182,10 +208,49 @@ export type CloseMonthResult = {
   effectiveCarryOverOut: number; // 0 if TRACK_ONLY; else = carryOverOut
   snapshotExpectedMinutes: number; // = expectedMinutes for SHIFT_BASED; netExpected otherwise
 
+  /**
+   * Issue #220 — the Überstundenausgleich WITHDRAWAL already subtracted from
+   * `balanceMinutes` (and therefore from `carryOverOut`), in minutes, always >= 0.
+   *
+   * It is the sum of the SAME `calcLeaveAbsenceMinutesTz()` return values that credited
+   * those rows' Soll in the loops below — not a second, independently derived figure.
+   * Reported here so a caller/test can read the withdrawal without re-deriving it; no
+   * production writer consumes it today.
+   */
+  overtimeCompensationMinutes: number;
+
   // Gap detection results (for warning UX in 76.28)
   gaps: WorkdayGap[];
   coveredDates: Set<string>;
 };
+
+/**
+ * Issue #220 — the ONE derivation of {@link CloseMonthInput.approvedLeave}'s
+ * `isOvertimeCompensation` flag, shared by all six `closeEmployeeMonth()` call sites.
+ *
+ * Centralised deliberately: six inline copies of `lr.leaveType?.code === "OVERTIME_COMP"`
+ * are six places that can drift apart, and a drifted copy is invisible — it produces a
+ * plausible saldo that is silently 2x the day's hours off (see #220's measurement:
+ * approval moved the stored balance +8h where the journal said -8h).
+ *
+ * The discriminator is the stable `LeaveType.code` enum, never `LeaveType.name` —
+ * CLAUDE.md § Context Boundaries forbids display strings as control values.
+ */
+export function toCloseMonthApprovedLeave(
+  rows: ReadonlyArray<{
+    startDate: Date;
+    endDate: Date;
+    halfDay: boolean | null;
+    leaveType?: { code: string | null } | null;
+  }>,
+): CloseMonthInput["approvedLeave"] {
+  return rows.map((lr) => ({
+    startDate: lr.startDate,
+    endDate: lr.endDate,
+    halfDay: Boolean(lr.halfDay),
+    isOvertimeCompensation: lr.leaveType?.code === "OVERTIME_COMP",
+  }));
+}
 
 // ── Implementation ────────────────────────────────────────────────────────────
 
@@ -286,6 +351,27 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
 
   const scheduleType = String(schedule.type ?? "");
 
+  /**
+   * Issue #220 — Überstundenausgleich WITHDRAWAL accumulator (minutes, >= 0).
+   *
+   * Filled by BOTH leave loops below (SHIFT_BASED and non-SHIFT) from the value that
+   * loop has just credited for the very same row, and subtracted from `balanceMinutes`
+   * once, after the branch. Taking the credited value rather than recomputing is the
+   * whole point: credit and withdrawal cannot then diverge on half days, on holidays
+   * inside the range, or on the D-15 overlap dedup — whatever the Soll reduction was
+   * worth is exactly what leaves the account.
+   *
+   * Model B of #220's two candidate models (owner decision 2026-09-21): the Ausgleichstag
+   * stays Soll-free (it is paid), and the withdrawal is booked on top, so the
+   * `OvertimeTransaction` journal row and the stored balance move together — a
+   * `REDUCTION` row now corresponds to a balance that actually fell.
+   *
+   * MONTHLY_HOURS never reaches either loop (CLAUDE.md § Schedule Types: no
+   * holiday/absence deduction), so it credits nothing and withdraws nothing — the
+   * invariant "withdrawal == credit" holds there by staying 0 on both sides.
+   */
+  let overtimeCompensationMinutes = 0;
+
   // ── Step 1: Compute effectiveStart and effectiveEnd ───────────────────────
   //
   // effectiveStart = max(hireDate, monthFirstDay) — TZ-normalized.
@@ -309,6 +395,7 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
         carryOverOut: carryOverIn,
         effectiveCarryOverOut: carryOverIn,
         snapshotExpectedMinutes: 0,
+        overtimeCompensationMinutes: 0,
         gaps: [],
         coveredDates: new Set<string>(),
       };
@@ -631,13 +718,16 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
       const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
       const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
       if (leaveStart > leaveEnd) continue;
-      sbLeaveCredit += calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
+      const rowCredit = calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
         halfDay: Boolean(lr.halfDay),
         // NOTE: still no holiday exclusion here — consistent with overtime.ts:1050,
         // auto-close-month.ts:447, recalculate-snapshots.ts:248 (all four SHIFT_BASED
         // paths omit it). D-15 adds ONLY the already-claimed-days exclusion.
         excludeHolidays: sbClaimed,
       });
+      sbLeaveCredit += rowCredit;
+      // Issue #220: the withdrawal is THIS row's credit, not a second computation of it.
+      if (lr.isOvertimeCompensation) overtimeCompensationMinutes += rowCredit;
       claimDays(leaveStart, leaveEnd, tz, sbClaimed);
     }
 
@@ -772,10 +862,13 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
         const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
         const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
         if (leaveStart > leaveEnd) continue;
-        leaveMinutes += calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
+        const rowCredit = calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
           halfDay: Boolean(lr.halfDay),
           excludeHolidays: nsClaimed, // D-06 holidays + D-15 claimed days
         });
+        leaveMinutes += rowCredit;
+        // Issue #220: the withdrawal is THIS row's credit, not a second computation of it.
+        if (lr.isOvertimeCompensation) overtimeCompensationMinutes += rowCredit;
         claimDays(leaveStart, leaveEnd, tz, nsClaimed);
       }
 
@@ -826,10 +919,21 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
 
   // Phase 76.22: SHIFT_BASED uses D-01 two-clause formula via shiftBalanceOverride.
   // Non-SHIFT branches use the flat totalWorked − netExpected subtraction.
-  const balanceMinutes =
+  const grossBalanceMinutes =
     shiftBalanceOverride !== null
       ? Math.round(shiftBalanceOverride)
       : Math.round(totalWorked - netExpected);
+
+  // Issue #220 — Überstundenausgleich withdrawal, applied ONCE for both branches.
+  //
+  // Deliberately OUTSIDE calcShiftBasedSaldo's § 615 clauses: this is an account
+  // MOVEMENT (the employee spends banked overtime), not a statement about how much work
+  // was owed or offered that month. Folding it into the Soll would change the § 615
+  // Annahmeverzug comparison itself; subtracting it here leaves `expectedMinutes` /
+  // `snapshotExpectedMinutes` exactly as before — the Ausgleichstag remains a paid,
+  // Soll-free day — and moves only the balance.
+  const withdrawalMinutes = Math.round(overtimeCompensationMinutes);
+  const balanceMinutes = grossBalanceMinutes - withdrawalMinutes;
 
   const carryOverOut = carryOverIn + balanceMinutes;
 
@@ -853,6 +957,7 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
     carryOverOut,
     effectiveCarryOverOut,
     snapshotExpectedMinutes,
+    overtimeCompensationMinutes: withdrawalMinutes,
     gaps,
     coveredDates,
   };

@@ -17,7 +17,7 @@
 import { FastifyInstance } from "fastify";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
 import { getHolidays, STATE_MAP } from "../platform";
-import { closeEmployeeMonth } from "./close-employee-month"; // Phase 76.26 — shared pure saldo core
+import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "./close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { isBridgeSnapshot } from "./saldo-snapshot-cleanup"; // 2026-08 hardening — SNAP-04 bridge guard
 import { computeInjectedDelta } from "./saldo-chain-integrity"; // Phase 98 — shared delta formula
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
@@ -421,11 +421,9 @@ export async function recalculateSnapshots(
         startTime: sh.startTime,
         endTime: sh.endTime,
       })),
-      approvedLeave: closeApprovedLeave.map((lr) => ({
-        startDate: lr.startDate,
-        endDate: lr.endDate,
-        halfDay: Boolean(lr.halfDay),
-      })),
+      // Issue #220: the shared mapper also derives isOvertimeCompensation from
+      // LeaveType.code — never inline it, see toCloseMonthApprovedLeave's doc block.
+      approvedLeave: toCloseMonthApprovedLeave(closeApprovedLeave),
       // Phase 76.12 D-14: halfDay: Boolean(lr.halfDay) and calcLeaveAbsenceMinutesTz
       // are now inside closeEmployeeMonth; the mapping above preserves the halfDay field.
       // Phase 76.32.1 (Wave 4): halfDay: ab.halfDay threaded through absence mapper.

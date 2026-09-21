@@ -24,7 +24,7 @@ import {
 } from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports (plan-04 carry-over row)
 import { getHolidays, STATE_MAP } from "../platform";
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
-import { closeEmployeeMonth } from "./close-employee-month"; // SNAP-03 — Phase 76.27
+import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "./close-employee-month"; // SNAP-03 — Phase 76.27
 import { getConfirmedCarryOver } from "./confirmed-saldo"; // Phase 97-06
 import {
   getTenantTimezone,
@@ -409,11 +409,9 @@ export async function computeOvertimeBalanceBreakdown(
         breakMinutes: e.breakMinutes ?? 0,
       })),
       shifts: monthShifts,
-      approvedLeave: monthLeave.map((lr) => ({
-        startDate: lr.startDate,
-        endDate: lr.endDate,
-        halfDay: lr.halfDay,
-      })),
+      // Issue #220: the shared mapper also derives isOvertimeCompensation from
+      // LeaveType.code — never inline it, see toCloseMonthApprovedLeave's doc block.
+      approvedLeave: toCloseMonthApprovedLeave(monthLeave),
       absences: monthAbsences.map((ab) => ({
         startDate: ab.startDate,
         endDate: ab.endDate,
@@ -636,11 +634,9 @@ export async function computeOvertimeBalanceBreakdown(
           breakMinutes: e.breakMinutes ?? 0,
         })),
       shifts: allShifts.filter((s) => s.date >= curMonthFirstDay && s.date <= effectiveEnd),
-      approvedLeave: curLeave.map((lr) => ({
-        startDate: lr.startDate,
-        endDate: lr.endDate,
-        halfDay: lr.halfDay,
-      })),
+      // Issue #220: the shared mapper also derives isOvertimeCompensation from
+      // LeaveType.code — never inline it, see toCloseMonthApprovedLeave's doc block.
+      approvedLeave: toCloseMonthApprovedLeave(curLeave),
       absences: curAbsences.map((ab) => ({
         startDate: ab.startDate,
         endDate: ab.endDate,

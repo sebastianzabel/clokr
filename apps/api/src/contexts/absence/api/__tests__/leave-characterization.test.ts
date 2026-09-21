@@ -30,10 +30,38 @@ import type { FastifyInstance } from "fastify";
 describe("leave.ts characterization — cancellation-approval Rückbuchung (Phase 113b)", () => {
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
+  /** Second approver: the 4-eyes rule (COMP-V1814-02) blocks the manager who approved the leave
+   *  from also approving its cancellation. */
+  let secondManagerToken: string;
 
   beforeAll(async () => {
     app = await getTestApp();
     data = await seedTestData(app, "leave-char");
+
+    const mgrUser = await app.prisma.user.create({
+      data: {
+        email: `char-mgr2-${Date.now().toString(36)}@test.de`,
+        passwordHash: data.adminUser.passwordHash,
+        role: "MANAGER",
+        isActive: true,
+      },
+    });
+    await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: mgrUser.id,
+        employeeNumber: `CM2-${Date.now().toString(36)}`,
+        firstName: "Zweiter",
+        lastName: "Pruefer",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    const login = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: mgrUser.email, password: "test1234" },
+    });
+    secondManagerToken = JSON.parse(login.body).accessToken;
   });
 
   afterAll(async () => {
@@ -169,8 +197,27 @@ describe("leave.ts characterization — cancellation-approval Rückbuchung (Phas
     ).toBe(txCountBefore);
   });
 
-  it("D-12 (real defect, issue #220): approving a CANCELLATION_REQUESTED OVERTIME_COMP leave writes a CORRECTION OvertimeTransaction crediting the hours back, but OvertimeAccount.balanceHours is immediately overwritten by the SAME request's unconditional updateOvertimeAccount() recompute — the credit has no observable effect on the stored balance", async () => {
-    const dateIso = holidayFreeMondayStr(10);
+  it("D-12 (issue #220, FIXED): a cancelled OVERTIME_COMP writes the CORRECTION row AND the stored balance moves with it — approval and cancellation are now two equal, opposite movements", async () => {
+    // WHAT THIS TEST USED TO PIN, and why it was rewritten rather than deleted (issue #220's
+    // own acceptance criteria require the rewrite):
+    //
+    // Until the #220 fix this case asserted that the CORRECTION credit had "NO observable
+    // effect": the manual `reverseOvertimeCompensation()` write was overwritten microseconds
+    // later by the same request's unconditional `updateOvertimeAccount()` recompute, and the
+    // recompute knew nothing about Überstundenausgleich. Those assertions described a defect and
+    // are gone; the audit-trail assertions they sat next to are kept verbatim.
+    //
+    // It ALSO used `holidayFreeMondayStr(10)` — a FUTURE Monday. That is outside the live
+    // recompute window (which ends at today/yesterday), so the recompute could not have reacted
+    // to this request whatever it contained, and the test would have stayed green through the
+    // fix without measuring anything. The day is therefore moved into the PAST, and the request
+    // now travels the real lifecycle (PENDING → APPROVED → CANCELLATION_REQUESTED → CANCELLED)
+    // instead of being created mid-flow, so the balance movement is observable at all.
+    //
+    // The differential measurement of the withdrawal's SIZE lives in
+    // `overtime-comp-saldo.test.ts`; this file keeps its own subject — the
+    // CANCELLATION_REQUESTED → APPROVED branch of `PATCH /requests/:id/review`.
+    const dateIso = holidayFreeMondayStr(-8);
     const overtimeCompType = await app.prisma.leaveType.create({
       data: { tenantId: data.tenant.id, ...leaveTypeFields("OVERTIME_COMP"), color: "#8B5CF6" },
     });
@@ -182,58 +229,90 @@ describe("leave.ts characterization — cancellation-approval Rückbuchung (Phas
         startDate: new Date(dateIso),
         endDate: new Date(dateIso),
         days: 1,
-        status: "CANCELLATION_REQUESTED",
-        cancellationRequestedBy: data.empUser.id,
+        status: "PENDING",
       },
     });
 
-    const acctBefore = await app.prisma.overtimeAccount.findUnique({
+    const acct = await app.prisma.overtimeAccount.findUnique({
       where: { employeeId: data.employee.id },
     });
     await app.prisma.overtimeTransaction.deleteMany({
-      where: { overtimeAccountId: acctBefore!.id },
+      where: { overtimeAccountId: acct!.id },
     });
 
-    const res = await app.inject({
+    // ── Approval ──────────────────────────────────────────────────────────────
+    const approveRes = await app.inject({
       method: "PATCH",
       url: `/api/v1/leave/requests/${leave.id}/review`,
       headers: { authorization: `Bearer ${data.adminToken}` },
       payload: { status: "APPROVED" },
     });
+    expect(approveRes.statusCode).toBe(200);
+    expect(JSON.parse(approveRes.body).status).toBe("APPROVED");
 
-    expect(res.statusCode).toBe(200);
+    const balanceAfterApproval = Number(
+      (await app.prisma.overtimeAccount.findUnique({ where: { employeeId: data.employee.id } }))
+        ?.balanceHours,
+    );
+
+    // ── Cancellation, approved by a DIFFERENT manager (4-eyes, COMP-V1814-02) ──
+    const delRes = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/leave/requests/${leave.id}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { reason: "Ausgleichstag wird nicht genommen" },
+    });
+    expect(delRes.statusCode).toBe(200);
+    expect(JSON.parse(delRes.body).status).toBe("CANCELLATION_REQUESTED");
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${leave.id}/review`,
+      headers: { authorization: `Bearer ${secondManagerToken}` },
+      payload: { status: "APPROVED" },
+    });
+
+    expect(res.statusCode, res.body).toBe(200);
     expect(JSON.parse(res.body).status).toBe("CANCELLED");
 
-    // The audit trail (Revisionssicherheit): a CORRECTION transaction WAS written, crediting
-    // the employee's scheduled hours for that weekday (8h fixed-schedule fixture) back.
+    // The audit trail (Revisionssicherheit) — unchanged assertions, kept verbatim: a REDUCTION
+    // on approval and a CORRECTION on cancellation, each for the employee's scheduled hours for
+    // that weekday (8h fixed-schedule fixture).
     const transactions = await app.prisma.overtimeTransaction.findMany({
-      where: { overtimeAccountId: acctBefore!.id },
+      where: { overtimeAccountId: acct!.id },
+      orderBy: { createdAt: "asc" },
     });
     expect(
-      transactions.length,
-      "pins that a CORRECTION OvertimeTransaction row is written on OVERTIME_COMP cancellation approval",
-    ).toBe(1);
-    expect(transactions[0].type).toBe("CORRECTION");
+      transactions.map((t) => t.type),
+      "pins that OVERTIME_COMP writes a REDUCTION on approval and a CORRECTION on cancellation approval",
+    ).toEqual(["REDUCTION", "CORRECTION"]);
+    expect(Number(transactions[0].hours)).toBe(-8);
     expect(
-      Number(transactions[0].hours),
+      Number(transactions[1].hours),
       "pins the credited amount: the fixture's Monday Soll (8h)",
     ).toBe(8);
 
-    // Independently recompute what updateOvertimeAccount() would (and, per the code path, DID)
-    // write as the stored balance — computeOvertimeBalanceHours() is the same pure function the
-    // route calls; nothing in this test touches its inputs (TimeEntry / WorkSchedule) between the
-    // two calls, so an unchanged result here is not a race — it is the same deterministic value.
+    // `updateOvertimeAccount()` still REPLACES the stored balance with the independent Ist-Soll
+    // recompute — that has not changed and is not a defect: for a non-exempt employee the
+    // recompute is the single source of truth. What changed is that the recompute now carries
+    // the Überstundenausgleich withdrawal, so the journal row above and the stored balance below
+    // can no longer contradict each other.
     const recomputed = await computeOvertimeBalanceHours(app, data.employee.id);
     const finalAccount = await app.prisma.overtimeAccount.findUnique({
       where: { employeeId: data.employee.id },
     });
     expect(
       Number(finalAccount?.balanceHours),
-      "wrong per #220 — fix the code (make the recompute additive with, or skip itself after, the manual OVERTIME_COMP credit) and this test together; today the stored balance is the independent Ist-Soll recompute, not `hrs` credited back",
+      "the stored balance IS the recompute (unchanged by #220 — the recompute is the writer)",
     ).toBeCloseTo(recomputed!, 5);
+
+    // The correct behaviour #220 asked for, and the assertion that fails against the pre-fix
+    // code: the compensated day was never worked, so cancelling it releases the withdrawal
+    // (+8h) exactly as the day's own Soll returns (−8h). Before the fix there was no withdrawal
+    // to release and this delta was −8h.
     expect(
-      Number(finalAccount?.balanceHours),
-      "wrong per #220 — the manual +8h credit-back has NO observable effect: the stored balance never equals the naively-expected `previousBalance(0) + hrs(8)`",
-    ).not.toBe(8);
+      Number(finalAccount?.balanceHours) - balanceAfterApproval,
+      "cancellation releases the withdrawal while the unworked day's Soll returns — net zero",
+    ).toBeCloseTo(0, 5);
   });
 });

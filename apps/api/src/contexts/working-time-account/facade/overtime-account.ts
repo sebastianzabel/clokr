@@ -45,15 +45,20 @@
  * `acct` again after their `if (account && hours > 0)` block (verified by reading all four before
  * writing this file) — there is nothing for the caller to hand back.
  *
- * ── H1 / issue #220 — a real, KNOWN defect, reproduced deliberately, not fixed ─────────────────
- * `leave.ts:1088`'s unconditional `updateOvertimeAccount()` recompute runs immediately after the
- * cancellation-approval reversal (W12's first copy) and overwrites whatever `balanceHours` this
- * function just wrote with an independently-computed Ist-Soll value — so the CORRECTION
- * transaction row IS written (the audit trail is intact) but its credit has NO observable effect
- * on the stored balance. `leave-characterization.test.ts:172` pins this exact defect. This facade
- * reproduces it byte-for-byte on purpose: "fixing" it while extracting the function would be a
- * behaviour change this phase explicitly promises not to make. Do not touch it here; #220 is the
- * tracking issue for fixing it later.
+ * ── H1 / issue #220 — RESOLVED, one layer down; these two functions are unchanged ─────────────
+ * The unconditional `updateOvertimeAccount()` recompute in `leave.ts` still runs right after
+ * these writes and still REPLACES `balanceHours` with an independently-computed Ist-Soll value —
+ * that is by design and was never the defect. The defect was that the recompute did not know
+ * Überstundenausgleich existed: `closeEmployeeMonth()` reduced an OVERTIME_COMP day's Soll like
+ * Urlaub and withdrew nothing, so the stored balance moved OPPOSITE to the journal row these
+ * functions write. Since #220 the recompute carries the withdrawal (model B — see
+ * `close-employee-month.ts`'s "Überstundenausgleich" header note), so journal and balance agree.
+ *
+ * These two functions were NOT changed by that fix and must not be: for `isTimeTrackingExempt`
+ * (§ 18) employees `computeOvertimeBalanceBreakdown()` returns null and `updateOvertimeAccount()`
+ * leaves the stored value alone, which makes the manual booking here the ONLY effective writer on
+ * that path. `overtime-comp-saldo.test.ts` covers both paths; `leave-characterization.test.ts`
+ * pins the cancellation branch.
  *
  * ── H2 — the fail-safe reads are not the normal path ──────────────────────────────────────────
  * `leave.ts:634` and `:2443` (both W8) exist because `getConfirmedCarryOver` can throw. Reading

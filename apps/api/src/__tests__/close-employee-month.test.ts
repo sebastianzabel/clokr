@@ -1011,6 +1011,7 @@ describe("closeEmployeeMonth — case 5: MONTHLY_HOURS no-gap, leave NOT deducte
           startDate: new Date("2026-07-07T00:00:00Z"),
           endDate: new Date("2026-07-11T23:59:59Z"),
           halfDay: false,
+          isOvertimeCompensation: false,
         },
       ],
       absences: [],
