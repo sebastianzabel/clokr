@@ -29,6 +29,7 @@
     SICK_CODES,
     type CalendarTypeCode,
   } from "$lib/leave/team-calendar-visibility"; // Phase 257, Phase 262, #269
+  import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte"; // #265
   import { resolveAdjustmentBadge, type LastDaysAdjustment } from "$lib/leave/vacation-balance"; // Phase 107-07
   import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
 
@@ -783,6 +784,25 @@
   let calDays = $derived(buildCalDays(calYear, calMonth));
   let calLanes = $derived(buildLaneMap(filteredCalEntries));
 
+  // ── Day detail (GitHub issue #265) ────────────────────────────────────────
+  // Below 700px the bar's type label is hidden, so the type would be carried by colour alone.
+  // Tapping a day spells the types out. The trigger is a real <button> inside the cell, so touch
+  // and keyboard (Enter/Space) both reach it, and `Modal` owns Escape.
+  let dayDetailDate = $state<string | null>(null);
+  let dayDetailOpen = $state(false);
+
+  /** The tapped day's bars — the same filter the cell's `dayAbsences` applies. */
+  let dayDetailEntries = $derived(
+    (dayDetailDate ? (calMap.get(dayDetailDate) ?? []) : []).filter(
+      (e) => !e.isHoliday && (e.isOwn || e.status === "APPROVED"),
+    ),
+  );
+
+  function openDayDetail(dateStr: string) {
+    dayDetailDate = dateStr;
+    dayDetailOpen = true;
+  }
+
   // ── Anträge-Filter + Pagination ───────────────────────────────────────────
   let filterLeaveStatus = $state<Status | "">("");
   let filterLeaveType = $state<TypeCode | "">("");
@@ -1194,6 +1214,22 @@
                 {/if}
               {/each}
             </div>
+            <!-- Tap target for the day-detail sheet (#265). Shown only below 700px — see
+                 `.cal-day-tap` in the style block — because that is where the bar's type label
+                 leaves the screen and where no finger can open a `title` tooltip. It covers the
+                 whole cell rather than a single 22px bar: stacked lanes sit 24px apart, so
+                 per-bar targets grown to finger size would overlap each other. -->
+            {#if dayAbsences.length > 0}
+              <button
+                type="button"
+                class="cal-day-tap"
+                data-testid="cal-day-tap"
+                aria-label="Abwesenheiten am {fmtDate(day.dateStr)} anzeigen"
+                onclick={() => openDayDetail(day.dateStr)}
+              >
+                <span class="cal-day-tap-hint" aria-hidden="true">i</span>
+              </button>
+            {/if}
           </div>
         {/each}
       </div>
@@ -1549,6 +1585,16 @@
     </div>
   {/if}
 {/if}
+
+<!-- ── Day detail (#265): the absence types of one day, in plain text ───────────
+     Opened by the `.cal-day-tap` button in the calendar cell. The role rule from #257 is
+     enforced inside the component's shared module, not here. -->
+<CalendarDayDetail
+  bind:open={dayDetailOpen}
+  dateLabel={dayDetailDate ? fmtDate(dayDetailDate) : ""}
+  entries={dayDetailEntries}
+  role={$authStore.user?.role}
+/>
 
 <!-- ── Review-Modal (Phase 255: the shared LeaveReviewDialog component) ──────── -->
 <LeaveReviewDialog
@@ -2403,6 +2449,15 @@
     text-overflow: ellipsis;
   }
 
+  /* ── Day-detail trigger (#265) ─────────────────────────────────────────
+     Above the breakpoint the bar prints the type itself and a pointer can open the `title`
+     tooltip, so the button does not exist there — `display: none` also keeps it out of the tab
+     order, which is why its visibility and its reachability cannot drift apart. The media block
+     at the bottom of this file turns it on for exactly the widths that hide `.cal-chip-type`. */
+  .cal-day-tap {
+    display: none;
+  }
+
   /* Legende */
   .cal-legend {
     display: flex;
@@ -2495,8 +2550,64 @@
     .pending-info {
       gap: 0.5rem;
     }
+    /* The bar is too narrow here for "Überstundenausgleich", so the label leaves the EYES — but
+       not the accessibility tree. This is app.css's `.sr-only` recipe, inlined because a class
+       cannot be added by viewport width; `display: none` (what stood here before #265) took the
+       type away from screen readers too. What replaces it visually is `.cal-day-tap` below. */
     .cal-chip-type {
-      display: none;
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border-width: 0;
+    }
+    .cal-day-tap {
+      display: flex;
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      /* Top-right: the day number occupies the top-left and the bars start below it, so this is
+         the one corner of the cell that never has a bar under it. */
+      align-items: flex-start;
+      justify-content: flex-end;
+      /* The target is the whole cell: at least 86px tall (the `.cal-cell` recipe in app.css) and
+         one full calendar column wide — ≥ 44px down to a 360px viewport. Narrower than that, the
+         seven-column grid is the essential layout and bounds the width. */
+      min-height: 44px;
+      padding: 4px;
+      background: transparent;
+      border: 0;
+      border-radius: var(--r-md);
+      cursor: pointer;
+      appearance: none;
+    }
+    .cal-day-tap:focus-visible {
+      outline: 2px solid var(--brand);
+      outline-offset: -2px;
+    }
+    /* The affordance. A bar nobody knows is tappable is no remedy at all, and a touch device
+       offers no hover or cursor to hint with — so the hint is drawn. It says "there is more
+       here", not WHICH type: one glyph for every day, never a per-type symbol set (the symbol
+       option was weighed and rejected in #265). */
+    .cal-day-tap-hint {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-family: var(--font-serif);
+      font-style: italic;
+      font-size: 0.625rem;
+      font-weight: 700;
+      line-height: 1;
     }
   }
 </style>
