@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
@@ -910,6 +910,122 @@ describe("Employees API", () => {
       expect(delRes.statusCode).toBe(204);
       const found = await app.prisma.employee.findUnique({ where: { id: emp.id } });
       expect(found).toBeNull();
+    });
+  });
+
+  describe("PATCH /api/v1/employees/:id — pro-rata Urlaubswarnung (Issue #205, finding 2)", () => {
+    let entitlementYear: number;
+    let exitDateIso: string;
+
+    beforeAll(async () => {
+      const entitlement = await app.prisma.leaveEntitlement.findFirstOrThrow({
+        where: { employeeId: data.employee.id, leaveTypeId: data.vacationType.id },
+      });
+      entitlementYear = entitlement.year;
+      // Mid-January (not the last day of the month) keeps "volle Beschäftigungsmonate" at zero
+      // regardless of the running process's timezone (see calculateProRataVacation), so the
+      // pro-rata allowance is deterministically 0 and any usedDays > 0 triggers the warning —
+      // an exit date derived from the entitlement's own year, not a hardcoded calendar date.
+      exitDateIso = new Date(Date.UTC(entitlementYear, 0, 15, 12, 0, 0)).toISOString();
+    });
+
+    afterEach(async () => {
+      await app.prisma.leaveEntitlement.update({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId: data.employee.id,
+            leaveTypeId: data.vacationType.id,
+            year: entitlementYear,
+          },
+        },
+        data: { usedDays: 0 },
+      });
+      await app.prisma.employee.update({
+        where: { id: data.employee.id },
+        data: { exitDate: null },
+      });
+    });
+
+    it("fires after the VACATION type is renamed away from 'Urlaub' (AK-2)", async () => {
+      await app.prisma.leaveEntitlement.update({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId: data.employee.id,
+            leaveTypeId: data.vacationType.id,
+            year: entitlementYear,
+          },
+        },
+        data: { usedDays: 5 },
+      });
+      await app.prisma.leaveType.update({
+        where: { id: data.vacationType.id },
+        data: { name: "Jahresurlaub (umbenannt)" },
+      });
+      try {
+        const renamed = await app.prisma.leaveType.findUniqueOrThrow({
+          where: { id: data.vacationType.id },
+        });
+        expect(renamed.name).not.toBe("Urlaub");
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/employees/${data.employee.id}`,
+          headers: { authorization: `Bearer ${data.adminToken}` },
+          payload: { exitDate: exitDateIso },
+        });
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body.proRataWarning).toBeDefined();
+        expect(typeof body.proRataWarning.message).toBe("string");
+        expect(body.proRataWarning.message.length).toBeGreaterThan(0);
+        expect(body.proRataWarning.used).toBe(5);
+        expect(body.proRataWarning.entitlement).toBe(0);
+      } finally {
+        await app.prisma.leaveType.update({
+          where: { id: data.vacationType.id },
+          data: { name: "Urlaub" },
+        });
+      }
+    });
+
+    it("fires identically when the type is NOT renamed (AK-5 twin)", async () => {
+      await app.prisma.leaveEntitlement.update({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId: data.employee.id,
+            leaveTypeId: data.vacationType.id,
+            year: entitlementYear,
+          },
+        },
+        data: { usedDays: 5 },
+      });
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/employees/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { exitDate: exitDateIso },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.proRataWarning).toBeDefined();
+      expect(body.proRataWarning.used).toBe(5);
+      expect(body.proRataWarning.entitlement).toBe(0);
+    });
+
+    it("does not fire when usedDays is within the pro-rata allowance (negative control)", async () => {
+      // usedDays stays at the seeded 0, which does not exceed the 0-day pro-rata allowance for
+      // a mid-January exit date — proving the two positive assertions above are not vacuously
+      // true of every response.
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/employees/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { exitDate: exitDateIso },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.proRataWarning).toBeUndefined();
     });
   });
 });
