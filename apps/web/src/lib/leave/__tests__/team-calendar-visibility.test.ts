@@ -17,7 +17,9 @@ import {
   LEAVE_TYPE_OPTIONS,
   NEUTRAL_CHIP_LABEL,
   SICK_CODES,
+  resolveDayDetailRows,
   type ChipEntry,
+  type DayDetailEntry,
 } from "../team-calendar-visibility";
 import { showsBurlgSection7Notice } from "../leave-review";
 
@@ -180,4 +182,93 @@ describe("SICK_CODES", () => {
       }
     },
   );
+});
+
+// ── GitHub issue #265 — the tapped day's absences, spelled out ────────────────
+//
+// Below 700px the bar's type label is hidden, so the type was carried by COLOUR ALONE. The
+// remedy is a tap that reveals the type as text. That text is produced here, which makes this the
+// place where the #257 role rule must hold a second time: a detail sheet naming a colleague's
+// "Kinderkrank" to an EMPLOYEE would be a worse leak than the bug it fixes.
+describe("resolveDayDetailRows (#265)", () => {
+  function entry(over: Partial<DayDetailEntry> = {}): DayDetailEntry {
+    return {
+      id: "row-1",
+      firstName: "A.",
+      lastName: "B.",
+      typeCode: "SICK",
+      typeName: "Krankmeldung",
+      status: "APPROVED",
+      isOwn: false,
+      ...over,
+    };
+  }
+
+  // THE pair from the ticket: #d97706 against #ea580c is the hardest colour discrimination on
+  // this calendar, so it is the pair the text must separate.
+  const sickPair: DayDetailEntry[] = [
+    entry({ id: "r1", firstName: "Eins", typeCode: "SICK", typeName: "Krankmeldung" }),
+    entry({ id: "r2", firstName: "Zwei", typeCode: "SICK_CHILD", typeName: "Kinderkrank" }),
+  ];
+
+  it("MANAGER: Krank and Kinderkrank come back as two DIFFERENT words, not two colours", () => {
+    const rows = resolveDayDetailRows(sickPair, "MANAGER");
+    expect(rows).toHaveLength(2); // anti-vacuity: the mapping actually produced lines
+    expect(rows[0].typeLabel).toBe("Krankmeldung");
+    expect(rows[1].typeLabel).toBe("Kinderkrank");
+    expect(rows[0].typeLabel).not.toBe(rows[1].typeLabel);
+    // And the distinction does not depend on the swatch, which is the whole point.
+    expect(rows[0].background).not.toBe(rows[1].background);
+  });
+
+  it("ADMIN sees the types too", () => {
+    const rows = resolveDayDetailRows(sickPair, "ADMIN");
+    expect(rows.map((r) => r.typeLabel)).toEqual(["Krankmeldung", "Kinderkrank"]);
+  });
+
+  it("EMPLOYEE, colleague's rows: BOTH read the neutral word and NEITHER names a sickness", () => {
+    const rows = resolveDayDetailRows(sickPair, "EMPLOYEE");
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.typeLabel)).toEqual([NEUTRAL_CHIP_LABEL, NEUTRAL_CHIP_LABEL]);
+    const everything = JSON.stringify(rows);
+    expect(everything).not.toContain("Krank");
+    expect(everything).not.toContain("SICK");
+    // Identical neutral fills: an EMPLOYEE must not be able to tell the two apart by swatch
+    // either, which would reintroduce the leak through the back door.
+    expect(rows[0].background).toBe(rows[1].background);
+  });
+
+  it("EMPLOYEE, own row: the type IS named — the rule is about colleagues, not about secrecy", () => {
+    const rows = resolveDayDetailRows([entry({ isOwn: true })], "EMPLOYEE");
+    expect(rows[0].typeLabel).toBe("Krankmeldung");
+  });
+
+  it("no role at all (undefined/null) is treated as an EMPLOYEE — the safe side", () => {
+    for (const role of [undefined, null, "", "SOMETHING_NEW"]) {
+      const rows = resolveDayDetailRows(sickPair, role);
+      expect(rows.map((r) => r.typeLabel)).toEqual([NEUTRAL_CHIP_LABEL, NEUTRAL_CHIP_LABEL]);
+    }
+  });
+
+  it("carries the full name, the pending flag and the paired foreground", () => {
+    const rows = resolveDayDetailRows(
+      [entry({ firstName: "Vor", lastName: "Nach", status: "PENDING", isOwn: true })],
+      "EMPLOYEE",
+    );
+    expect(rows[0].name).toBe("Vor Nach");
+    expect(rows[0].isPending).toBe(true);
+    expect(rows[0].textColor).toContain("-text");
+  });
+
+  it("CANCELLATION_REQUESTED counts as pending, exactly as the bar's modifier class does", () => {
+    const rows = resolveDayDetailRows(
+      [entry({ status: "CANCELLATION_REQUESTED", isOwn: true })],
+      "EMPLOYEE",
+    );
+    expect(rows[0].isPending).toBe(true);
+  });
+
+  it("an empty day yields no rows (the sheet's empty state is reachable)", () => {
+    expect(resolveDayDetailRows([], "ADMIN")).toEqual([]);
+  });
 });
