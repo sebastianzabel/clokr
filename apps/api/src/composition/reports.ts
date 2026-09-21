@@ -553,6 +553,36 @@ async function resolveReportOvertimeHours(
   }
 }
 
+// ── DATEV payroll period person set ───────────────────────────────────────────
+/**
+ * Issue #256 (Befund 2): who belongs in a payroll export for [start, end]?
+ *
+ * The answer is "whoever was employed at some point DURING that period" — never
+ * "whoever is employed today". The previous predicate (`exitDate: null` plus
+ * `user.isActive`) answered the second question, so a correction run for July, made
+ * after a September exit, silently dropped that person and every one of their hours
+ * from the file. Nothing in the file said so.
+ *
+ * Both date bounds are INCLUSIVE:
+ *   - `hireDate` is the first working day, so `hireDate <= end` means at least one day
+ *     of the period falls inside the employment.
+ *   - `exitDate` is the last working day (close-employee-month.ts, D-03), so
+ *     `exitDate >= start` means the employment still reached into the period.
+ *     `exitDate: null` = still employed, which always overlaps.
+ *
+ * `user.isActive` is deliberately NOT part of this predicate. It is a LOGIN state —
+ * flipped by deactivation, by lockout and by DSGVO anonymisation — and says nothing
+ * about whether a person was employed in the payroll period. The measured case was an
+ * employee on Elternzeit whose login had been switched off: 31 days of Elternzeit that
+ * the Lohnbüro must see, withheld because they could not sign in.
+ */
+export function datevPayrollPeriodEmployeeFilter(start: Date, end: Date) {
+  return {
+    hireDate: { lte: end },
+    OR: [{ exitDate: null }, { exitDate: { gte: start } }],
+  };
+}
+
 // ── buildDatevLodas ───────────────────────────────────────────────────────────
 // Issue #256 (Befund 1): the LODAS record id of the Bewegungsdaten record type. It is
 // declared once in [Satzbeschreibung] and repeated as the FIRST field of every data row
@@ -1143,8 +1173,12 @@ export async function reportRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, m, tz);
 
+      // Issue #256 (Befund 2): employed DURING the Abrechnungszeitraum, not employed today.
       const employees = await app.prisma.employee.findMany({
-        where: { tenantId: req.user.tenantId, exitDate: null, user: { isActive: true } },
+        where: {
+          tenantId: req.user.tenantId,
+          ...datevPayrollPeriodEmployeeFilter(start, end),
+        },
         include: {
           workSchedules: { orderBy: { validFrom: "asc" } },
           timeEntries: {
@@ -1211,11 +1245,31 @@ export async function reportRoutes(app: FastifyInstance) {
         section9ByEmp: section9ByEmpDatev,
       });
 
+      // Issue #256, AK "der Export meldet, wenn er Personen auslässt": count who the
+      // period predicate left out and why. The file's own sections are LODAS's format
+      // and are still under review in Teil 2 of #256, so the count goes where it is
+      // durable, tenant-scoped and already read during an audit: the EXPORT row.
+      const [skippedNotYetHired, skippedAlreadyLeft] = await Promise.all([
+        app.prisma.employee.count({
+          where: { tenantId: req.user.tenantId, hireDate: { gt: end } },
+        }),
+        app.prisma.employee.count({
+          where: { tenantId: req.user.tenantId, exitDate: { lt: start } },
+        }),
+      ]);
+
       await app.audit({
         userId: req.user.sub,
         action: "EXPORT",
         entity: "Report",
-        newValue: { type: "DATEV", year, month },
+        newValue: {
+          type: "DATEV",
+          year,
+          month,
+          employeesIncluded: employees.length,
+          skippedNotYetHired,
+          skippedAlreadyLeft,
+        },
       });
 
       reply.header("Content-Type", "application/octet-stream");
@@ -1267,8 +1321,9 @@ export async function reportRoutes(app: FastifyInstance) {
         where: {
           id: employeeId,
           tenantId: req.user.tenantId, // tenant isolation — mandatory
-          exitDate: null,
-          user: { isActive: true },
+          // Issue #256 (Befund 2): the SAME period predicate the company-wide export uses,
+          // from the same function, so the two cannot answer "who counts" differently.
+          ...datevPayrollPeriodEmployeeFilter(start, end),
         },
         include: {
           timeEntries: {

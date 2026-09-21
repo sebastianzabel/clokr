@@ -22,6 +22,7 @@ import type { FastifyInstance } from "fastify";
 // declared in [Satzbeschreibung] — 13 fields in total. Named offsets instead of bare
 // indices, so the next shift of the row shape breaks a name, not a silent off-by-one.
 const F_SATZ_ID = 0;
+const F_PNR = 1;
 const F_AUSFALL = 4;
 const F_LOHNART = 5;
 const F_STUNDEN = 6;
@@ -352,5 +353,185 @@ describe("DATEV export — FIRST automated coverage in its own file (Phase 104)"
         expect(fields.length).toBe(1 + declaredValueCount);
       }
     });
+  });
+});
+
+// ── Issue #256, Befund 2 ───────────────────────────────────────────────────────
+// The person set of a payroll export is decided by the state DURING the
+// Abrechnungszeitraum, never by the state of today. Measured failure: a July export
+// re-run in September silently lost an employee — and every hour they had worked in
+// July — because their employment had ended in between. Nothing in the file said so.
+describe("Personenkreis nach dem Abrechnungszeitraum (#256-02)", () => {
+  let app: FastifyInstance;
+  let d: Awaited<ReturnType<typeof seedTestData>>;
+
+  // 2026-07-01 (Wed) and 2026-07-02 (Thu) — both workdays, both inside July.
+  const JULY_WORK_DAY = "2026-07-01";
+
+  async function addEmployee(opts: {
+    label: string;
+    hireDate: Date;
+    exitDate: Date | null;
+    userActive: boolean;
+  }) {
+    const user = await app.prisma.user.create({
+      data: {
+        email: `datev-256-${opts.label}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@test.de`,
+        passwordHash: "DUMMY",
+        role: "EMPLOYEE",
+        isActive: opts.userActive,
+      },
+    });
+    const employee = await app.prisma.employee.create({
+      data: {
+        tenantId: d.tenant.id,
+        userId: user.id,
+        employeeNumber: `P256-${opts.label}-${Date.now().toString(36)}`,
+        firstName: "Test",
+        lastName: `Fall ${opts.label}`,
+        hireDate: opts.hireDate,
+        exitDate: opts.exitDate,
+      },
+    });
+    // Worked time inside July so the person has something to lose.
+    await app.prisma.timeEntry.create({
+      data: {
+        employeeId: employee.id,
+        date: new Date(`${JULY_WORK_DAY}T00:00:00.000Z`),
+        startTime: new Date(`${JULY_WORK_DAY}T07:00:00.000Z`),
+        endTime: new Date(`${JULY_WORK_DAY}T15:00:00.000Z`),
+        breakMinutes: 0,
+      },
+    });
+    return employee;
+  }
+
+  // Exit two months AFTER the exported period — the ticket's first measured case.
+  let exitedAfterPeriod: Awaited<ReturnType<typeof addEmployee>>;
+  // Login switched off, no exit date at all — the ticket's second measured case.
+  let deactivatedLogin: Awaited<ReturnType<typeof addEmployee>>;
+  // NEGATIVE CONTROL: left BEFORE the period. Without it, "delete the filter entirely"
+  // would satisfy every other assertion in this block.
+  let leftBeforePeriod: Awaited<ReturnType<typeof addEmployee>>;
+  // NEGATIVE CONTROL: hired AFTER the period ended.
+  let hiredAfterPeriod: Awaited<ReturnType<typeof addEmployee>>;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    d = await seedTestData(app, "datev-256-2");
+    exitedAfterPeriod = await addEmployee({
+      label: "exit-sep",
+      hireDate: new Date("2024-01-01T00:00:00.000Z"),
+      exitDate: new Date("2026-09-12T00:00:00.000Z"),
+      userActive: true,
+    });
+    deactivatedLogin = await addEmployee({
+      label: "no-login",
+      hireDate: new Date("2024-01-01T00:00:00.000Z"),
+      exitDate: null,
+      userActive: false,
+    });
+    leftBeforePeriod = await addEmployee({
+      label: "exit-jun",
+      hireDate: new Date("2024-01-01T00:00:00.000Z"),
+      exitDate: new Date("2026-06-30T00:00:00.000Z"),
+      userActive: true,
+    });
+    hiredAfterPeriod = await addEmployee({
+      label: "hire-aug",
+      hireDate: new Date("2026-08-01T00:00:00.000Z"),
+      exitDate: null,
+      userActive: true,
+    });
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, d.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  async function julyRows(): Promise<string[]> {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/reports/datev?year=2026&month=7",
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = iconv.decode(res.rawPayload, "win1252");
+    return body
+      .split("[Bewegungsdaten]")[1]
+      .split("\r\n")
+      .filter((l) => l.trim().length > 0);
+  }
+
+  function rowsFor(rows: string[], employeeNumber: string): string[] {
+    return rows.filter((r) => r.split(";")[F_PNR] === employeeNumber);
+  }
+
+  it("#256-02a: an employee who left AFTER the period is still in the export, with their hours", async () => {
+    const rows = await julyRows();
+    // Guard against a vacuous pass — an empty [Bewegungsdaten] block would let every
+    // `toHaveLength(0)` below succeed without proving anything (Issues #235/#240/#245).
+    expect(rows.length).toBeGreaterThan(0);
+
+    const mine = rowsFor(rows, exitedAfterPeriod.employeeNumber);
+    expect(mine).toHaveLength(1);
+    expect(mine[0].split(";")[F_STUNDEN]).toBe("8,00");
+  });
+
+  it("#256-02b: an employee whose login is deactivated but who has no exit date is in the export", async () => {
+    const rows = await julyRows();
+    expect(rows.length).toBeGreaterThan(0);
+
+    const mine = rowsFor(rows, deactivatedLogin.employeeNumber);
+    expect(mine).toHaveLength(1);
+    expect(mine[0].split(";")[F_STUNDEN]).toBe("8,00");
+  });
+
+  it("#256-02c (negative control): someone who left BEFORE the period is NOT in the export", async () => {
+    const rows = await julyRows();
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rowsFor(rows, leftBeforePeriod.employeeNumber)).toHaveLength(0);
+  });
+
+  it("#256-02d (negative control): someone hired AFTER the period is NOT in the export", async () => {
+    const rows = await julyRows();
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rowsFor(rows, hiredAfterPeriod.employeeNumber)).toHaveLength(0);
+  });
+
+  it("#256-02e: the per-employee export honours the same predicate — a later exit no longer 404s", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/reports/datev/employee?employeeId=${exitedAfterPeriod.id}&year=2026&month=7`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+
+    // …and still refuses a period the person was not employed in.
+    const before = await app.inject({
+      method: "GET",
+      url: `/api/v1/reports/datev/employee?employeeId=${leftBeforePeriod.id}&year=2026&month=7`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(before.statusCode).toBe(404);
+  });
+
+  it("#256-02f: the EXPORT audit row names how many people were skipped and why", async () => {
+    await julyRows();
+    const entry = await app.prisma.auditLog.findFirst({
+      where: { action: "EXPORT", entity: "Report" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(entry).not.toBeNull();
+    const v = entry!.newValue as Record<string, unknown>;
+    expect(v.type).toBe("DATEV");
+    expect(v.employeesIncluded).toBeGreaterThan(0);
+    // Exactly the two negative controls above, counted by their reason.
+    expect(v.skippedAlreadyLeft).toBe(1);
+    expect(v.skippedNotYetHired).toBe(1);
   });
 });
