@@ -1117,14 +1117,31 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     });
 
     it("edge cases — full-year hire still needs all months", async () => {
-      // Sanity check: full-year employee with only 11 closed months must NOT get a
-      // YEARLY snapshot (regardless of hireDate-aware fix). This ensures the fix
-      // doesn't accidentally lower the bar for full-year employees.
+      // Sanity check: a full-year employee with a genuinely missing month must NOT get a
+      // YEARLY snapshot. This ensures the fix doesn't accidentally lower the bar for
+      // full-year employees.
+      //
+      // Issue #242: this test used to seed months 1-11 and was green for the WRONG reason.
+      // With the naive UTC year window, January's tenant-local periodStart (stored as
+      // `2023-12-31` for Europe/Berlin) fell outside the range, so only TEN rows were
+      // counted, not eleven. Once #242 made the range tenant-TZ-aware, eleven were counted
+      // AND the monthly loop in the same run closed the missing December itself -> twelve,
+      // and the YEARLY snapshot was created. The assertion below is unchanged; only the
+      // fixture is re-founded so the situation it claims to test actually occurs: the
+      // missing month sits in the MIDDLE of the year, where the monthly loop cannot reach
+      // it. See the seeding comment below.
       const tenant = await createEdgeTenant("fyr");
       const { empId, userId } = await createEdgeEmployee(tenant.id, new Date("2024-01-01"));
 
-      // Seed only 11 months — December 2024 intentionally missing.
-      await seedMonthlySnapshots(empId, 2024, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+      // Seed eleven months with a gap in the MIDDLE — June 2024 missing, December present.
+      //
+      // The gap must not be a trailing one. The monthly loop closes every open month from
+      // the first gap up to prevMonth (buildMonthRange, :78-90), so any missing November or
+      // December is filled during the very same run and the set reaches twelve. Because
+      // computeFirstOpenMonth() starts from the LAST snapshot, a mid-year gap is invisible
+      // to that loop: firstOpen becomes January 2025, which is past the December 2024
+      // ceiling, so nothing is closed and June stays missing.
+      await seedMonthlySnapshots(empId, 2024, [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]);
 
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date("2025-01-16T06:00:00.000Z"));
@@ -1135,7 +1152,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
         const yearly = await app.prisma.saldoSnapshot.findFirst({
           where: { employeeId: empId, periodType: "YEARLY", superseded: false },
         });
-        // 11 months < expectedMonths=12 → no YEARLY snapshot yet
+        // 11 closed months, June still missing → 11 < expectedMonths=12 → no YEARLY yet
         expect(yearly).toBeNull();
       } finally {
         vi.useRealTimers();
