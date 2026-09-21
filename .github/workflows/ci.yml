@@ -284,6 +284,22 @@ jobs:
         # empty — see ADR 0001 Eintrag I.
         run: pnpm --filter @clokr/api exec tsx scripts/lint-guard-vacuity.ts --check 0
 
+      - name: Test guard-vacuity classifier (the gate's own red proof — PR #290)
+        # The step above proves the WALKED SET is the expected size. This step proves the
+        # CLASSIFIER still works: for every file it reports as proved, deleting the proof must
+        # flip it to vacuous. Without it, `--check 0` keeps passing while the classifier that
+        # decides what "proved" means has silently stopped deciding anything.
+        #
+        # Unconditional for the same reason the step above is — but the reason is sharper here,
+        # and it was learned the hard way. This test file lives in apps/api, so it used to run
+        # only inside the path-filtered API suite; the files it CLASSIFIES span the whole repo,
+        # apps/web included. A web-only PR therefore could not run it. That is exactly how it
+        # broke: #284 (issue #149) added apps/web/src/__tests__/client-logger-install-site.test.ts,
+        # matched no path in the `api` filter, went green, and turned main red on the next commit
+        # that did touch apps/api. A gate whose TRIGGER is narrower than its SCOPE is a gate with
+        # a hole in it.
+        run: pnpm --filter @clokr/api exec vitest run scripts/__tests__/lint-guard-vacuity.test.ts
+
       - name: Lint e2e spec registry (Issue #275 — D-07, every apps/e2e/tests/*.spec.ts file must have exactly one register entry)
         # 22 of 24 e2e spec files ran nowhere — neither in CI nor locally — with no checked-in
         # record anywhere of when a given file was even meant to run. Every spec file now carries
