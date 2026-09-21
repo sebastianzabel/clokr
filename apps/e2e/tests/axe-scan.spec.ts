@@ -2,13 +2,16 @@ import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
 /**
- * a11y advisory gate for Phase 70 (DEVOPS-V8-05).
- * Scoped to the LOGIN page only (public, no auth) — full authenticated-page
- * coverage requires the docker-compose webServer: from Phase 73.
+ * a11y gate for Phase 70 (DEVOPS-V8-05), made real and blocking by Phase 275 /
+ * Issue #275 (D-08). Scoped to the LOGIN page only (public, no auth) — full
+ * authenticated-page coverage requires the docker-compose webServer: from
+ * Phase 73, and remains open (not scheduled).
  *
- * Phase 70 = advisory: violations are logged but the spec always passes.
- * Phase 73 will flip the assertion to `expect(violations).toEqual([])`
- * (hard gate) once docker-compose + seeded test data are wired into CI.
+ * This assertion CAN fail (`toEqual([])`), and a failure DOES block the PR:
+ * the `axe-scan` CI job's `continue-on-error: true` was removed in the same
+ * phase (`.github/workflows/ci.yml`) — an owner-approved second deliberate
+ * exception to this phase's "do not repair specs" scope fence, made because
+ * the measured `/login` violation count was 0 (blocking costs nothing today).
  */
 test.describe("axe a11y scan — public pages", () => {
   test("login page has no WCAG 2 A/AA violations", async ({ page }) => {
@@ -19,19 +22,19 @@ test.describe("axe a11y scan — public pages", () => {
       .withTags(["wcag2a", "wcag2aa"])
       .analyze();
 
-    // Phase 70: advisory — log violations but do not fail.
-    // Phase 73 will flip this to a hard expect() once docker-compose is wired.
+    // Log violations for diagnosability — the assertion below fails on any non-empty
+    // violation list, so this listing is what makes a red run actionable.
     if (accessibilityScanResults.violations.length > 0) {
       console.warn(
-        `[axe-scan] Found ${accessibilityScanResults.violations.length} a11y violations on /login (advisory in Phase 70):`,
+        `[axe-scan] Found ${accessibilityScanResults.violations.length} a11y violations on /login:`,
       );
       for (const v of accessibilityScanResults.violations) {
         console.warn(`  - [${v.impact}] ${v.id}: ${v.description} (${v.nodes.length} nodes)`);
       }
     }
 
-    // Phase 70 assertion: spec passes regardless of violations (advisory).
-    // Replace with `expect(accessibilityScanResults.violations).toEqual([])` in Phase 73.
-    expect(accessibilityScanResults.violations.length).toBeGreaterThanOrEqual(0);
+    // Real assertion (Phase 275 / Issue #275, D-08). Measured on 2026-09-21 against the
+    // same server shape CI scans (built apps/web, served on :4173): 0 violations.
+    expect(accessibilityScanResults.violations).toEqual([]);
   });
 });

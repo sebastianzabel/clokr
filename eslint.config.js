@@ -61,6 +61,7 @@ export default [
       "apps/api/scripts/**",
       "packages/db/src/seed-demo.ts",
       "packages/db/src/seed.ts",
+      "packages/db/src/seed-credentials.ts",
       "packages/db/src/reset-demo.ts",
       "apps/api/vitest.*.ts",
       // packages/types has no tsconfig.json of its own and isn't `include`d by any other

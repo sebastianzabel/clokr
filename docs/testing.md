@@ -1,5 +1,9 @@
 # API integration test database
 
+> This document also covers the Playwright end-to-end suite — see "End-to-end tests
+> (Playwright)" near the bottom — despite its title, which predates that section
+> (Phase 275, Issue #275).
+
 The `apps/api` integration suite (`pnpm --filter @clokr/api test`) connects to its own,
 genuinely separate PostgreSQL databases — never the local dev database `clokr`. As of
 Phase 106 the suite runs its test files in parallel, and each Vitest worker connects to its
@@ -494,3 +498,82 @@ the anti-pattern Phase 101 exists to eliminate. All three of the partial-unique-
 failures, and the previously-unresolved `leave.test.ts` full-suite-only flake, disappeared
 together when provisioning switched from `db push` to `migrate deploy` (D-02) — see
 `101-02-SUMMARY.md` for the full reconciliation of every number in this table.
+
+## End-to-end tests (Playwright)
+
+Phase 275 (Issue #275) made a named, small selection of the `apps/e2e` Playwright suite runnable
+both locally and in CI, against the SAME `docker-compose.test.yml` stack the `visual-regression`
+and `axe-scan` CI jobs already use (ports 5433/4001/3001), rather than the local dev stack
+(5432/4000/3000). Before this phase, 22 of 24 spec files had never run anywhere — see
+`apps/api/scripts/lint-e2e-spec-registry.json` below for what became of each one.
+
+### 1. Bring the stack up, WITH users
+
+```bash
+SEED_DEMO_DATA=true docker compose -f docker-compose.test.yml up --wait
+```
+
+`SEED_DEMO_DATA` is read exactly once, by `apps/api/docker-entrypoint.sh` at API container
+startup — the seed (`packages/db/src/seed.ts`) runs there and nowhere else. Setting the
+variable on any later command (the Playwright run below, a `docker exec`, …) has **no effect
+at all**; it must be set on this `up` invocation. The compose file's own default
+(`docker-compose.test.yml:60`, `${SEED_DEMO_DATA:-false}`) stays `false` so that
+`visual-regression`'s existing, unrelated CI job — which boots the identical stack with zero
+users — is unaffected (Phase 275 Plan 01, D-02).
+
+A successful seed produces two logged-in-capable users, both defined in the single source
+`packages/db/src/seed-credentials.ts` (`ADMIN_EMAIL`/`ADMIN_PASSWORD`,
+`EMPLOYEE_EMAIL`/`EMPLOYEE_PASSWORD`). `apps/e2e/.env` (gitignored, may still exist on your
+machine from before this phase) **can no longer override these** — the `process.env.TEST_ADMIN_*`
+read in `apps/e2e/tests/helpers.ts` was removed without replacement (D-03), specifically so a
+stale local `.env` can no longer silently steer a local run at credentials the seed never set.
+The stack comes up and the CI selection below runs green with that file still in place —
+that is the D-03 proof, not something you need to reproduce by hand.
+
+### 2. Run the CI selection against it
+
+```bash
+cd apps/e2e
+WEB_SERVER_DISABLED=true PLAYWRIGHT_BASE_URL=http://localhost:3001 \
+  E2E_API_BASE=http://localhost:4001 pnpm exec playwright test --project=e2e-ci
+```
+
+This is deliberately the same command, the same project name and the same three environment
+variables the `e2e-ci` CI job (`.github/workflows/ci.yml`) runs against the same stack (D-05) —
+a green run here and a green run in CI mean the same thing. `--project=e2e-ci` is a named
+Playwright project in `apps/e2e/playwright.config.ts` with an explicit `testMatch` allowlist of
+exactly three files (`functional.spec.ts`, `bs-pattern-retroactive.spec.ts`,
+`leave-flow.spec.ts`) and no `dependencies: ["setup"]` — these specs authenticate per-test via
+the tenant-bootstrap fixture, not via the seeded admin's `storageState` (D-04/D-06).
+
+### 3. Tear down
+
+```bash
+docker compose -f docker-compose.test.yml down -v
+```
+
+`postgres-test` runs on `tmpfs` (`docker-compose.test.yml`), so `-v` (dropping the anonymous
+volumes) leaves nothing behind — the next `up --wait` with `SEED_DEMO_DATA=true` always seeds a
+genuinely empty database, never a leftover one from a previous run.
+
+### Which spec runs where, and why not the other 21
+
+`apps/api/scripts/lint-e2e-spec-registry.json` is the checked-in, per-file answer for every one
+of the 24 files under `apps/e2e/tests/*.spec.ts`: `in-ci` (currently 5 — the three `e2e-ci`
+files above plus `axe-scan.spec.ts` and `visual.spec.ts`, each already running via their own
+dedicated CI job), `später-seed` (authenticates via the seeded admin's `storageState`, not yet
+wired to this stack) or `später-datum` (breaks on a measured, named cause — a tightened
+`hireDate` validation, a tightened password policy, UI/testid drift, and others). A
+CI/pre-commit gate (`apps/api/scripts/lint-e2e-spec-registry.ts`) fails the build if any spec
+file is missing an entry, if an entry points at a file that no longer exists, or if a file that
+a CI-invoked Playwright project actually runs is not categorised `in-ci`. See
+`apps/api/scripts/README.md` § Lint gates.
+
+**A later, one-off measurement (GitHub issue #281) ran all 24 files against this stack once via
+`desktop-chrome`/`mobile-chrome`/`tablet`** (Playwright's own full, `setup`-dependent projects,
+not the `e2e-ci` selection above) and found the `später-seed` category's stated blocker does not
+fully hold: two of its six files ran to completion with the seeded admin's `storageState` in
+place and failed for an unrelated, unmeasured reason instead. The register's `reason` field is
+each file's REASON FOR NOT BEING IN `e2e-ci` at the time it was written, not a live guarantee of
+what breaks it — issue #281 carries the measured, per-file detail; this document does not repeat
+it.
