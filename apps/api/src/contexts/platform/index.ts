@@ -38,6 +38,10 @@
  * Eintrag H explains why anonymize.ts stays in the Unterbau rather than moving to composition/.
  */
 export { getHolidays, STATE_MAP } from "./holidays";
+// Phase 292 (#292): the code STATE_MAP maps into. Declared public so a caller that carries a
+// state code between two platform calls (month-gap-check.ts) can name its type instead of
+// widening it to `string` and casting at the `getHolidays()` boundary.
+export type { FederalStateCode } from "./holidays";
 export { employeeScopeWhere } from "./facade/employee-scope";
 export type { EmployeeScope } from "./facade/employee-scope";
 export { auditReasonSchema, AUDIT_REASON_REQUIRED } from "./audit-reason";
