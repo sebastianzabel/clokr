@@ -320,7 +320,20 @@ function deleteLines(text: string, lines: readonly number[]): string {
  * walk-and-proof, so a single deletion can uncover a second, still-intact proof elsewhere in the
  * same file — see this file's own docblock, item 3). The 20-iteration bound is generous headroom
  * over any real file's proof count (every file measured so far carries at most two independent
- * proofs) and exists only so a genuine bug here fails loudly instead of hanging. */
+ * proofs) and exists only so a genuine bug here fails loudly instead of hanging.
+ *
+ * Progress is measured on the REMAINING TEXT, never on the reported line numbers. Line numbers are
+ * recomputed against a text that just got shorter, so two independent proofs can legitimately be
+ * reported at the same 1-based line in consecutive rounds — the second one having slid up into the
+ * position the first one vacated. Keying "no progress" on the line set therefore aborted the
+ * deletion walk while a real, still-intact proof remained, and the caller then read that leftover
+ * as "this file cannot be flipped to vacuous". Measured on
+ * `apps/web/src/__tests__/client-logger-install-site.test.ts` (issue #149): round 0 reports
+ * `length` at line 56, round 1 reports `contains` at line 56 again, round 2 reaches "none" — the
+ * old key aborted after round 1 and failed a file that does flip. A deletion of a non-empty line
+ * set always shortens the text, so comparing texts detects every real step and stops only when a
+ * round removes nothing at all. This strictly widens the red proof: a file that genuinely cannot be
+ * flipped still runs out of rounds and still fails. */
 function deleteEveryProofUntilVacuous(
   file: string,
   text: string,
@@ -328,14 +341,12 @@ function deleteEveryProofUntilVacuous(
 ): GuardClassification {
   let currentText = text;
   let current = classification;
-  const seenLineSets = new Set<string>();
   for (let i = 0; i < 20 && current.inputProof !== "none"; i++) {
     const lines = current.inputProofSites.map((s) => s.line);
     if (lines.length === 0) break;
-    const key = [...lines].sort((a, b) => a - b).join(",");
-    if (seenLineSets.has(key)) break; // no progress — stop rather than loop forever
-    seenLineSets.add(key);
-    currentText = deleteLines(currentText, lines);
+    const nextText = deleteLines(currentText, lines);
+    if (nextText === currentText) break; // no progress — stop rather than loop forever
+    currentText = nextText;
     current = classifyGuardFile(file, currentText);
   }
   return current;
