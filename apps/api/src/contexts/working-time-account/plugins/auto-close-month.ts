@@ -170,7 +170,6 @@ export const autoCloseMonthPlugin = fp(async (app) => {
 
             // Compute the first open month = max(hireMonth, lastSnapshot+1)
             const firstOpen = computeFirstOpenMonth(emp.hireDate, lastSnap, tz);
-            if (firstOpen === null) continue;
 
             // Build the ordered range [firstOpen .. prevMonth]
             const monthsToClose = buildMonthRange(firstOpen, { year: prevYear, month: prevMonth });

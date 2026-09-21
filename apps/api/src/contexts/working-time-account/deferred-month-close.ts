@@ -193,7 +193,6 @@ export async function getDeferredMonthCloseState(
     });
 
     const firstOpen = computeFirstOpenMonth(emp.hireDate, lastSnap, tz);
-    if (firstOpen === null) continue;
 
     const overdue = buildMonthRange(firstOpen, { year: prevYear, month: prevMonth }).filter((m) =>
       isMonthPastItsWindow(m.year, m.month, tz, retroWindowDays, now),

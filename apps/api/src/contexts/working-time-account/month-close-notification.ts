@@ -64,5 +64,11 @@ export function blockedSetFingerprint(
     .map((e) => `${e.employeeId}@${e.year}-${String(e.month).padStart(2, "0")}`)
     .sort()
     .join("|");
-  return createHash("sha1").update(canonical).digest("hex").slice(0, 16);
+  // sha256, not sha1: the input is a canonical list of employee ids, and CodeQL's
+  // js/weak-cryptographic-algorithm rightly flags a broken digest over personal data even
+  // where the digest is only a dedup key. Truncating to 16 hex chars is unchanged — this is
+  // an equality key for `Notification.relatedId`, never a security boundary, and the shorter
+  // form keeps the column readable. Nothing persisted depends on the old value: the fingerprint
+  // is introduced by this same change.
+  return createHash("sha256").update(canonical).digest("hex").slice(0, 16);
 }

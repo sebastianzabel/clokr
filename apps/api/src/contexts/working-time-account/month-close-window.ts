@@ -66,11 +66,18 @@ export function buildMonthRange(firstOpen: MonthKey, ceiling: MonthKey): MonthKe
  * Compute the first open month for an employee: max(hireMonth, lastSnapshotMonth+1).
  * Returns null if the employee has no hire date (shouldn't happen in practice).
  */
+// Returns a month for EVERY input — there is no "no first open month" case: with no prior
+// snapshot the hire month is the answer, and with one it is max(hireMonth, lastClosed + 1).
+// The return type said `MonthKey | null` when this was lifted out of auto-close-month.ts, which
+// made both callers carry an `if (... === null) continue` that CodeQL correctly reported as a
+// guard that always evaluates to false (js/useless-expression, PR #298). A guard that cannot
+// fire is indistinguishable from one that has stopped working — the same defect family the
+// anti-vacuity gate exists for — so the type is narrowed and the dead guards are gone.
 export function computeFirstOpenMonth(
   hireDate: Date,
   lastSnap: { periodStart: Date } | null,
   tz: string,
-): MonthKey | null {
+): MonthKey {
   // TZ-normalize hireDate to get the calendar month in tenant timezone
   const hireDateStr = dateStrInTz(hireDate, tz);
   const [hireYearStr, hireMonthStr] = hireDateStr.split("-");
