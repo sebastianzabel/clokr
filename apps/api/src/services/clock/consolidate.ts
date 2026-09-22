@@ -7,6 +7,7 @@
 // Fix: add `endTime: { lte: openEntry.startTime }` to the lookup.
 import type { Prisma, TimeEntry } from "@clokr/db";
 import type { FastifyBaseLogger } from "fastify";
+import { MIN_MERGE_PREDECESSOR_DURATION_MS } from "./thresholds";
 
 export function calcBreakMinutesLocal(breaks: { startTime: Date; endTime: Date }[]): number {
   return breaks.reduce((sum, b) => sum + (b.endTime.getTime() - b.startTime.getTime()) / 60000, 0);
@@ -69,7 +70,7 @@ export async function consolidateSameDayEntries(
   // it the sole predecessor candidate. Extending the artifact would carry the wrong startTime
   // into the canonical record — a Revisionssicherheit violation. Prefer no-merge over that.
   const prevDurationMs = previousEntry.endTime.getTime() - previousEntry.startTime.getTime();
-  if (prevDurationMs < 60_000) {
+  if (prevDurationMs < MIN_MERGE_PREDECESSOR_DURATION_MS) {
     log.warn(
       { previousEntryId: previousEntry.id, prevDurationMs, reason: "artifact_sub_minute" },
       "merge_skipped_artifact",
