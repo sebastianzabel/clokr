@@ -26,4 +26,12 @@ pnpm --filter @clokr/api exec tsx scripts/lint-guard-vacuity.ts --check 0 || exi
 # averaged over 3 runs, this plan's own measurement).
 pnpm --filter @clokr/api exec tsx scripts/lint-e2e-spec-registry.ts --check || exit 1
 
+# One-shot lint:t100-09-routes (Phase 259 Plan 03, Issue #259, D-01/D-03/D-07). Full-repo, not
+# staged-only — a commit adding one new route file still needs the gate to see the FULL
+# apps/api/src/contexts/*/api/ directory listing, which a staged-files-only invocation
+# structurally cannot do (same reasoning as the two lines above). ~0.46s measured on this machine
+# for the tool alone (`time pnpm --filter @clokr/api exec tsx scripts/lint-t100-09-routes.ts
+# --check`, averaged over 3 runs, this plan's own measurement).
+pnpm --filter @clokr/api run lint:t100-09-routes --check || exit 1
+
 pnpm exec lint-staged

@@ -394,8 +394,26 @@ import { readFileSync } from "node:fs";
 // entry above: that plan's own scope was this exact floor (D-09), so absorbing drift into it was
 // in-scope work; this plan's scope is a tenant-isolation fix in `avatars.ts`, and moving this
 // floor beyond its own measured contribution would be fixing an unrelated finding on sight.
-const MIN_FILES = 271;
-const MIN_TESTS = 3294;
+// Phase 259 Plan 03 (Issue #259, T-100-09, D-03c/D-07) — raised to the MEASURED full-suite
+// reality this time, not this plan's own delta alone (explicit instruction for this plan,
+// departing from the Phase 259 Plan 01 entry above's "own contribution only" default — see that
+// entry's own reasoning for when absorbing drift is in scope vs. not).
+//
+// Two new test FILES landed since the 271/3294 floor above: Plan 259-02's
+// `scripts/__tests__/lint-t100-09-routes-validate.test.ts` (43 tests, verified with `pnpm exec
+// vitest run scripts/__tests__/lint-t100-09-routes-validate.test.ts`, "43 tests" in its own
+// output) and this plan's own `src/__tests__/t100-09-oracle-probe.test.ts` (5 tests, same
+// verification). Those two plans' own direct contribution is therefore 271 + 2 = 273 files,
+// 3294 + 43 + 5 = 3342 tests — but a fresh full-suite run measured immediately before this edit
+// (`pnpm --filter @clokr/api test`) reports `Test Files 277 passed (277)` / `Tests 3399 passed |
+// 3 skipped (3402)`, cross-checked against `apps/api/vitest-report.json`'s own
+// `testResults.length` (277) / `numTotalTests` (3402) directly. The remaining 4 files / 60 tests
+// beyond 273/3342 are pre-existing drift from other already-merged work between the Phase 259
+// Plan 01 entry above and this one, the same kind of gap that entry's own comment named and
+// deliberately left unabsorbed — absorbed HERE instead, on explicit instruction, so the floor
+// reflects what the suite actually collects rather than continuing to understate it.
+const MIN_FILES = 277;
+const MIN_TESTS = 3402;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

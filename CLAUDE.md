@@ -649,6 +649,24 @@ turn the gate red, never let it report success having checked nothing:
 
 Verify with `pnpm --filter @clokr/api exec tsx scripts/lint-guard-vacuity.ts --check 0`. A hit on a
 clean tree is a finding to report, not an exception to add.
+
+### T-100-09 route gate (Issue #259)
+
+A tenant-scoped route with a path parameter that answers a foreign tenant's real entity
+differently from an id that exists nowhere (a distinguishable status or body — a tenant-membership
+oracle) fails CI, not just review — the tenant-scoping gate above only checks that the Prisma call
+is scoped, not that the REJECTION is indistinguishable:
+
+| Source | What it governs |
+| --- | --- |
+| `apps/api/scripts/lint-t100-09-routes.ts` | The completeness gate — every path-parameter route must have exactly one register entry |
+| `apps/api/scripts/lint-t100-09-routes.json` | The register: `probe` / `nicht anwendbar` / `bekannt-abweichend`, each with a measured reason |
+| `apps/api/src/__tests__/t100-09-oracle-probe.test.ts` | The behavioral half — every `probe` route hit twice, status+body byte-compared |
+| `apps/api/scripts/README.md` § Lint gates | The three categories, the two named out-of-scope boundaries, and how to add a justified entry |
+
+Verify with `pnpm --filter @clokr/api run lint:t100-09-routes --check` (completeness) and
+`pnpm --filter @clokr/api exec vitest run src/__tests__/t100-09-oracle-probe.test.ts` (behavior). A
+hit on a clean tree is a finding to report, not an exception to add.
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->
