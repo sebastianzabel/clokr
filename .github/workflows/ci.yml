@@ -323,6 +323,19 @@ jobs:
         # There is no "exception" concept here — every file gets exactly one category, never zero.
         run: pnpm --filter @clokr/api exec tsx scripts/lint-e2e-spec-registry.ts --check
 
+      - name: Lint T-100-09 routes (Issue #259 — every path-parameter route must have exactly one register entry)
+        # The completeness half of the T-100-09 checker: every route with a path parameter under
+        # apps/api/src/contexts/*/api/**/*.ts must carry exactly one entry in
+        # apps/api/scripts/lint-t100-09-routes.json (category `probe` / `nicht anwendbar` /
+        # `bekannt-abweichend`, plus a mandatory measured reason). The route SET comes from parsing
+        # source text, never from the presence of a CROSS_TENANT_ACCESS_DENIED audit call — deleting
+        # that call rewrites a handler but does not remove the route from the checked set (D-03).
+        # The BEHAVIORAL half — hitting every `probe` route twice and byte-comparing status+body —
+        # is src/__tests__/t100-09-oracle-probe.test.ts, which runs inside "Run API tests with
+        # coverage" below, not here. Unconditional, no path filter, same as the two gates above it:
+        # a gate a path filter can skip is not a gate, and the cost is ~1s.
+        run: pnpm --filter @clokr/api run lint:t100-09-routes --check
+
       - name: Lint saldo-lock periodStart derivation (Issue #241 — five sites found by hand)
         # A periodType:"MONTHLY" SaldoSnapshot where-comparison on periodStart whose value does
         # not trace back to monthRangeUtc() is the exact defect class of #241 (three route gates

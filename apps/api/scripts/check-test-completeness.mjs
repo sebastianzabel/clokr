@@ -378,8 +378,42 @@ import { readFileSync } from "node:fs";
 // the MEASURED current reality (271/3292), not merely 266+1/3222+22, because a floor left looser
 // than reality is exactly the silent-headroom risk D-09 exists to close: a future run could lose
 // several files before this check would even notice.
-const MIN_FILES = 271;
-const MIN_TESTS = 3292;
+// Phase 259 Plan 01 (Issue #259, T-100-09): no new test FILE — sec-08-avatars-post-tenant.test.ts
+// already existed and was rewritten in place — MIN_FILES stays 271. MIN_TESTS rises from 3292 to
+// 3294: the rewrite replaced 3 cases with 5 (two byte-identical-404 cases plus one audit case,
+// replacing the single stale 403 assertion; two pre-existing no-regression cases kept as-is),
+// verified with `pnpm --filter @clokr/api exec vitest run src/__tests__/sec-08-avatars-post-tenant.test.ts`
+// ("5 tests" in its own output, up from 3) — 3292 + 2 = 3294. No other test file changed in this
+// plan. A fresh full-suite run measured immediately before this edit (`pnpm --filter @clokr/api
+// test`) reports `Test Files 275 passed (275)` / `Tests 3349 passed | 3 skipped (3352)` — 4 more
+// files and 58 more tests than 271/3294 already accounted for by other, already-merged work
+// between the Phase 275 Plan 04 entry above and this one that never bumped this floor
+// (pre-existing drift, out of this plan's scope per CLAUDE.md's scope-boundary rule and Issue
+// #259's own D-06 — nothing investigated or attributed here beyond this plan's own +2 tests).
+// Deliberately NOT raised straight to the measured 275/3352 here, unlike the Phase 275 Plan 04
+// entry above: that plan's own scope was this exact floor (D-09), so absorbing drift into it was
+// in-scope work; this plan's scope is a tenant-isolation fix in `avatars.ts`, and moving this
+// floor beyond its own measured contribution would be fixing an unrelated finding on sight.
+// Phase 259 Plan 03 (Issue #259, T-100-09, D-03c/D-07) — raised to the MEASURED full-suite
+// reality this time, not this plan's own delta alone (explicit instruction for this plan,
+// departing from the Phase 259 Plan 01 entry above's "own contribution only" default — see that
+// entry's own reasoning for when absorbing drift is in scope vs. not).
+//
+// Two new test FILES landed since the 271/3294 floor above: Plan 259-02's
+// `scripts/__tests__/lint-t100-09-routes-validate.test.ts` (43 tests, verified with `pnpm exec
+// vitest run scripts/__tests__/lint-t100-09-routes-validate.test.ts`, "43 tests" in its own
+// output) and this plan's own `src/__tests__/t100-09-oracle-probe.test.ts` (5 tests, same
+// verification). Those two plans' own direct contribution is therefore 271 + 2 = 273 files,
+// 3294 + 43 + 5 = 3342 tests — but a fresh full-suite run measured immediately before this edit
+// (`pnpm --filter @clokr/api test`) reports `Test Files 277 passed (277)` / `Tests 3399 passed |
+// 3 skipped (3402)`, cross-checked against `apps/api/vitest-report.json`'s own
+// `testResults.length` (277) / `numTotalTests` (3402) directly. The remaining 4 files / 60 tests
+// beyond 273/3342 are pre-existing drift from other already-merged work between the Phase 259
+// Plan 01 entry above and this one, the same kind of gap that entry's own comment named and
+// deliberately left unabsorbed — absorbed HERE instead, on explicit instruction, so the floor
+// reflects what the suite actually collects rather than continuing to understate it.
+const MIN_FILES = 277;
+const MIN_TESTS = 3402;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

@@ -20,17 +20,24 @@ export async function avatarRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Keine Berechtigung" });
       }
 
+      // Same T-100-09 guard as GET/DELETE above (Issue #259, CLOSED-BY this change): the 404
+      // body is IDENTICAL to the genuine not-found branch, so this endpoint cannot be used as
+      // a tenant-membership oracle. The isSelf/isManager check above stays where it is — it is
+      // existence-independent and therefore not an oracle; this guard is what an ADMIN/MANAGER
+      // of a FOREIGN tenant runs into. The attempt is not lost: it is recorded in the audit log
+      // via app.audit() below, where it belongs.
       const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
-      if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
-
-      // Tenant scope: the isSelf/isManager check above only guards EMPLOYEE callers, so
-      // ADMIN/MANAGER still need this explicit tenant comparison. Unlike GET and DELETE
-      // (both fixed in phase 258), this branch is a plain 403 and still carries the same
-      // untreated employee-existence oracle as those two did before the fix — an ADMIN/
-      // MANAGER can distinguish "exists in another tenant" (403) from "exists nowhere"
-      // (404 above). Deliberately NOT fixed here: tracked as GitHub Issue #259.
-      if (employee.tenantId !== req.user.tenantId) {
-        return reply.code(403).send({ error: "Keine Berechtigung" });
+      if (!employee || employee.tenantId !== req.user.tenantId) {
+        if (employee) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "CROSS_TENANT_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+        }
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
       const data = await req.file();

@@ -1,0 +1,830 @@
+{
+  "registerSource": "Phase 259 Plan 02 (Issue #259, D-03/D-03a/D-05/D-06/D-06a/D-07). The DERIVED set — parsed from apps/api/src/contexts/*/api/**/*.ts source text via lint-t100-09-routes.ts, joined against apps/api/src/app.ts's app.register() prefixes — is 76 routes with a path parameter (33 route files, 186 total route declarations). 259-CONTEXT.md's own D-05 measurement states 75: that count came from a grep-shaped scan whose regex could not match a newline between `app.delete(` and the opening path-string quote, and therefore missed apps/api/src/contexts/absence/api/company-shutdowns.ts:183's `app.delete(\\n    \"/:id/exceptions/:employeeId\",`. A newline-tolerant parse (this gate's own extractRouteDeclarations) finds that route, making the real, mechanically-derived figure 76 — the parser was made newline-tolerant to reach this number, not adjusted to match the earlier 75. Every entry below must have route/file/category/reason and, for probe, params (one key per path parameter) and optionally minimalBody; bekannt-abweichend additionally requires ticket + validatedAt (ISO date, expires after 90 days, D-06a corrected). Two genuine T-100-09 violations were measured while building this register and are classified bekannt-abweichend with a new GitHub issue each (#309, #310) — see their entries below; neither handler was touched (D-06).",
+  "entries": [
+    {
+      "route": "POST /api/v1/avatars/:employeeId",
+      "file": "apps/api/src/contexts/platform/api/avatars.ts",
+      "category": "probe",
+      "params": {
+        "employeeId": "employee"
+      },
+      "minimalBody": null,
+      "reason": "avatars.ts POST handler (fixed 259-01): combined `!employee || employee.tenantId !== req.user.tenantId` guard at line ~29-38 returns the byte-identical 404 before `await req.file()` at line ~44 is ever reached — sec-08-avatars-post-tenant.test.ts case C (bodyless, no content-type probe) proves this directly, so `minimalBody: null` is correct: a bodyless probe reaches the guard.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/avatars/:employeeId",
+      "file": "apps/api/src/contexts/platform/api/avatars.ts",
+      "category": "probe",
+      "params": {
+        "employeeId": "employee"
+      },
+      "minimalBody": null,
+      "reason": "avatars.ts GET handler (fixed Phase 258): combined `!employee || employee.tenantId !== req.user.tenantId` guard at line ~94, byte-identical 404 at line ~104, CROSS_TENANT_ACCESS_DENIED audited only when `employee` is truthy — GET has no request body, so a bodyless probe reaches the guard trivially.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/avatars/:employeeId",
+      "file": "apps/api/src/contexts/platform/api/avatars.ts",
+      "category": "probe",
+      "params": {
+        "employeeId": "employee"
+      },
+      "minimalBody": null,
+      "reason": "avatars.ts DELETE handler (fixed Phase 258): combined `!employee || employee.tenantId !== req.user.tenantId` guard at line ~148, byte-identical 404 at line ~158, CROSS_TENANT_ACCESS_DENIED audited only when `employee` is truthy — DELETE has no request body, so a bodyless probe reaches the guard trivially.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/employees/:id",
+      "file": "apps/api/src/contexts/platform/api/employees.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": null,
+      "reason": "employees.ts:312-313 uses a SCOPED `findUnique({ where: { id, tenantId: req.user.tenantId } } })` — tenantId is baked into the query itself, so a foreign-tenant id and an unknown id both return the identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404 with no separate audit call possible (Prisma never returns the row to compare against).",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/employees/:id",
+      "file": "apps/api/src/contexts/platform/api/employees.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": {},
+      "reason": "employees.ts:530-533 uses the same SCOPED `findUnique({id, tenantId})` as GET /:id, byte-identical 404. `updateEmployeeSchema.parse(req.body)` at line 528 runs BEFORE the lookup (D-07), but every field is `.optional()` so `{}` satisfies it and reaches the guard — an empty body is NOT the same as no body at all (bare `.parse(undefined)` throws), hence the explicit `{}` minimalBody.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/employees/:id/unlock",
+      "file": "apps/api/src/contexts/platform/api/employees.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": null,
+      "reason": "employees.ts:761-774: separate `!employee` (404) and `employee.tenantId !== req.user.tenantId` (audited CROSS_TENANT_ACCESS_DENIED, then 404) branches return the byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }`. No body is parsed.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/employees/:id/deactivate",
+      "file": "apps/api/src/contexts/platform/api/employees.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": null,
+      "reason": "employees.ts:802-815: fetch-then-compare, byte-identical 404, CROSS_TENANT_ACCESS_DENIED audited. `z.object({ exitDate: z.string().optional() }).parse(req.body ?? {})` at line 800 runs before the lookup but the `?? {}` fallback plus the all-optional schema means a bodyless probe already reaches the guard without needing an explicit minimalBody.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/employees/:id/reactivate",
+      "file": "apps/api/src/contexts/platform/api/employees.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": null,
+      "reason": "employees.ts:860-873: fetch-then-compare, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited. No body is parsed by this handler.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/employees/:id/resend-invitation",
+      "file": "apps/api/src/contexts/platform/api/employees.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": null,
+      "reason": "employees.ts:921-934: fetch-then-compare, byte-identical 404, CROSS_TENANT_ACCESS_DENIED audited. No body is parsed by this handler.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/employees/:id",
+      "file": "apps/api/src/contexts/platform/api/employees.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": null,
+      "reason": "employees.ts:981-994: fetch-then-compare, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited. No body is parsed. This is the DSGVO anonymization delete — destructive, but idempotent and non-permanent (anonymizes, does not hard-delete), so probing it is safe.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/employees/:id/hard-delete/authorize",
+      "file": "apps/api/src/contexts/platform/api/employees.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": null,
+      "reason": "employees.ts:1069-1072 uses a SCOPED `findUnique({id, tenantId})`, byte-identical 404, no audit possible (scoped query never returns a foreign row to compare). No body is parsed. DESTRUCTIVE-ADJACENT: this authorizes a subsequent hard-delete (15-minute TTL, 4-eyes) — 259-03's probe ordering constraint must run this AFTER any state-mutating probes on the same fixture employee, or place it last, since a stray authorization row is otherwise harmless (it only enables a SEPARATE DELETE call) but is still a real write.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/employees/:id/hard-delete",
+      "file": "apps/api/src/contexts/platform/api/employees.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": {},
+      "reason": "employees.ts:1101-1105 uses a SCOPED `findUnique({id, tenantId})`, byte-identical 404, no audit possible (scoped). `forceDeleteBodySchema = z.object({forceDelete: z.boolean().optional()}).optional()` parsed at line 1099 before the lookup; `{}` satisfies it. DESTRUCTIVE: on a genuinely-existing SAME-tenant employee this would actually hard-delete — 259-03's probe must ONLY ever run this against a foreign-tenant id (which the guard rejects at line 1105, before any deletion logic) and an unknown id, never against a real employee in the caller's own tenant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/employees/:id/availability",
+      "file": "apps/api/src/contexts/scheduling/api/availability.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": null,
+      "reason": "availability.ts:118-122 uses a SCOPED `findFirst({id, tenantId: req.user.tenantId})`, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404, no audit possible (scoped query). No body is parsed by GET.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PUT /api/v1/employees/:id/availability",
+      "file": "apps/api/src/contexts/scheduling/api/availability.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": {
+        "entries": []
+      },
+      "reason": "availability.ts:158-162 uses the same SCOPED `findFirst({id, tenantId})` as GET, byte-identical 404. `putAvailabilitySchema.parse(req.body)` at line 156 runs before the lookup and REQUIRES `entries` (a non-optional array) — `{}` would throw, but `{\"entries\":[]}` satisfies the schema (an empty array needs no per-item validation) and reaches the guard.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/employees/:id/shift-patterns",
+      "file": "apps/api/src/contexts/scheduling/api/shift-patterns.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": null,
+      "reason": "shift-patterns.ts:36-37 uses a SCOPED `findFirst({id, tenantId: req.user.tenantId})`, byte-identical 404, no audit possible (scoped). No body is parsed by GET. This is the measured two-exported-function, multi-line-import file — its OTHER route (`GET /shift-patterns/tenant`) carries no path parameter and is out of this register.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PUT /api/v1/employees/:id/shift-patterns",
+      "file": "apps/api/src/contexts/scheduling/api/shift-patterns.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": {
+        "patterns": []
+      },
+      "reason": "shift-patterns.ts:75-79 uses the same SCOPED `findFirst({id, tenantId})` as GET, byte-identical 404. `putPatternsSchema.parse(req.body)` at line 73 runs before the lookup and REQUIRES `patterns` (a non-optional array); `{\"patterns\":[]}` satisfies it and reaches the guard.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/employees/:id/vocational-school-pattern",
+      "file": "apps/api/src/contexts/absence/api/vocational-school-pattern.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": null,
+      "reason": "vocational-school-pattern.ts:129-133 uses a SCOPED `findFirst({id, tenantId: req.user.tenantId})`, byte-identical 404, no audit possible (scoped). No body is parsed by GET.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PUT /api/v1/employees/:id/vocational-school-pattern",
+      "file": "apps/api/src/contexts/absence/api/vocational-school-pattern.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": {
+        "patterns": []
+      },
+      "reason": "vocational-school-pattern.ts:173-177 uses the same SCOPED `findFirst({id, tenantId})` as GET, byte-identical 404. `putPatternsSchema.parse(req.body)` at line 171 runs before the lookup and REQUIRES `patterns` (a non-optional array); `{\"patterns\":[]}` satisfies it and reaches the guard.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/settings/work/:employeeId",
+      "file": "apps/api/src/contexts/platform/api/settings.ts",
+      "category": "probe",
+      "params": {
+        "employeeId": "employee"
+      },
+      "minimalBody": null,
+      "reason": "settings.ts:905-916: combined-shape fetch-then-compare (`!employee || employee.tenantId !== req.user.tenantId`), byte-identical `{ error: \"Kein Arbeitszeitmodell gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited only when `employee` is truthy. This is the canonical T-100-09 example CLAUDE.md/259-CONTEXT.md both cite. No body is parsed by GET.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PUT /api/v1/settings/work/:employeeId",
+      "file": "apps/api/src/contexts/platform/api/settings.ts",
+      "category": "probe",
+      "params": {
+        "employeeId": "employee"
+      },
+      "minimalBody": {},
+      "reason": "settings.ts:952-960: same combined-shape guard as GET above, byte-identical 404, audited. `employeeScheduleSchema.parse(req.body)` at line 940 runs BEFORE the lookup at 942 (D-07); every top-level field carries a `.default(...)` and the `superRefine` at line 373 only fires for `type: SHIFT_BASED|FLEXTIME` (default is FIXED_SCHEDULE), so `{}` satisfies the schema and reaches the guard — bare `.parse(undefined)` would throw, hence the explicit `{}`.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/settings/work/:employeeId/history",
+      "file": "apps/api/src/contexts/platform/api/settings.ts",
+      "category": "probe",
+      "params": {
+        "employeeId": "employee"
+      },
+      "minimalBody": null,
+      "reason": "settings.ts:1391-1404: same combined-shape guard as GET /work/:employeeId (its own comment says \"copied verbatim\"), byte-identical `{ error: \"Kein Arbeitszeitmodell gefunden\" }` 404, audited. No body is parsed by GET.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/settings/vacation/:employeeId",
+      "file": "apps/api/src/contexts/absence/api/leave-settings.ts",
+      "category": "probe",
+      "params": {
+        "employeeId": "employee"
+      },
+      "minimalBody": null,
+      "reason": "leave-settings.ts:32-47: separate `!employee` (404) and tenant-mismatch (audited CROSS_TENANT_ACCESS_DENIED, then 404) branches, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }`. No body is parsed by GET.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PUT /api/v1/settings/vacation/:employeeId",
+      "file": "apps/api/src/contexts/absence/api/leave-settings.ts",
+      "category": "probe",
+      "params": {
+        "employeeId": "employee"
+      },
+      "minimalBody": {
+        "year": 2026,
+        "totalDays": 0
+      },
+      "reason": "leave-settings.ts:79-94: same fetch-then-compare guard as GET above, byte-identical 404, audited. `vacationEntitlementSchema.parse(req.body)` at line 77 runs BEFORE the lookup at 79 and REQUIRES `year` and `totalDays` (D-07 — a bodyless probe would 400 on both arms); `{\"year\":2026,\"totalDays\":0}` is a minimal valid body that reaches the guard.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/leave/entitlements/:employeeId",
+      "file": "apps/api/src/contexts/absence/api/leave.ts",
+      "category": "probe",
+      "params": {
+        "employeeId": "employee"
+      },
+      "minimalBody": null,
+      "reason": "leave.ts:2605-2618: separate `!employee` (404) and tenant-mismatch (audited CROSS_TENANT_ACCESS_DENIED, then 404) branches, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }`. No body is parsed by GET.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/overtime/:employeeId",
+      "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
+      "category": "probe",
+      "params": {
+        "employeeId": "employee"
+      },
+      "minimalBody": null,
+      "reason": "overtime.ts:123-133: separate `!employee` (404) and tenant-mismatch (audited CROSS_TENANT_ACCESS_DENIED, then 404) branches, byte-identical `{ error: \"Konto nicht gefunden\" }`. Reachable because `seedTestData` creates an `OvertimeAccount` for every employee (line 109's own `!account` 404 at line 109 never fires for the fixture's foreign employee). No body is parsed by GET.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/overtime/snapshots/:employeeId",
+      "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
+      "category": "probe",
+      "params": {
+        "employeeId": "employee"
+      },
+      "minimalBody": null,
+      "reason": "overtime.ts:1514-1520 uses a combined `!employee || employee.tenantId !== req.user.tenantId` condition, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404 — the response IS byte-identical (the T-100-09 property this register tracks), but UNLIKE its siblings this route carries NO CROSS_TENANT_ACCESS_DENIED audit call; flagged for transparency, not filed as bekannt-abweichend since the probe-relevant guarantee (response indistinguishability) is measured intact. No body is parsed by GET.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/overtime/month-saldo/:employeeId",
+      "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
+      "category": "probe",
+      "params": {
+        "employeeId": "employee"
+      },
+      "minimalBody": null,
+      "reason": "overtime.ts:1867-1873 uses a combined `!employee || employee.tenantId !== req.user.tenantId` condition, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404, no audit call (same as /snapshots above). REQUIRED query params `year`/`month` (z.coerce.number, no default) are parsed at line 1854-1859 BEFORE the guard — the D-07 risk here is on the QUERY STRING, not the body (this is a GET with no body at all); 259-03's probe MUST supply `?year=2026&month=1` (or similar) on both arms or it gets a mutual 400 that proves nothing, exactly D-07's failure shape on a different input channel.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PUT /api/v1/settings/leave-types/:id",
+      "file": "apps/api/src/contexts/absence/api/leave-settings.ts",
+      "category": "probe",
+      "params": {
+        "id": "leaveType"
+      },
+      "minimalBody": {},
+      "reason": "leave-settings.ts:225 delegates to `updateLeaveType(app.prisma, req.user.tenantId, id, body)` — the facade's own guard-fetch AND update both carry `tenantId` in their WHERE (handler comment at lines 218-224: \"same 404 either way, no tenant-membership oracle\"), byte-identical `{ error: \"Abwesenheitstyp nicht gefunden\" }` 404, no audit possible (scoped). Body schema is all-`.optional()`; `{}` satisfies it.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/leave/requests/:id",
+      "file": "apps/api/src/contexts/absence/api/leave.ts",
+      "category": "bekannt-abweichend",
+      "params": null,
+      "minimalBody": null,
+      "reason": "MEASURED NON-CONFORMANT (filed as Issue #309, not fixed — D-06). leave.ts:1630-1636 loads the LeaveRequest via `findFirst({where:{id, deletedAt:null}})` with NO tenantId filter, then only compares `existing.employeeId !== req.user.employeeId` (ownership, not tenant). Unknown id → 404 \"Antrag nicht gefunden\"; a REAL id in a FOREIGN tenant → 403 \"Forbidden\" — distinguishable, a genuine cross-tenant existence oracle.",
+      "ticket": 309,
+      "validatedAt": "2026-09-22"
+    },
+    {
+      "route": "POST /api/v1/time-entries/:id/breaks",
+      "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
+      "category": "bekannt-abweichend",
+      "params": null,
+      "minimalBody": null,
+      "reason": "MEASURED NON-CONFORMANT (filed as Issue #310, not fixed — D-06). time-entries.ts:688-697 returns `{error:\"Eintrag nicht gefunden\"}` 404 for an unknown id (line 692) but `{error:\"Kein Zugriff\"}` 403 for a real TimeEntry in a FOREIGN tenant (line 696) — distinguishable status codes and bodies, no CROSS_TENANT_ACCESS_DENIED audit call either, unlike every sibling route in this same file.",
+      "ticket": 310,
+      "validatedAt": "2026-09-22"
+    },
+    {
+      "route": "DELETE /api/v1/admin/presence-sources/:id",
+      "file": "apps/api/src/contexts/time-tracking/api/admin-presence-sources.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a PresenceSource (WiFi adapter config), not Employee/LeaveType — the shared fixture (`seedTestData`) creates neither, so no foreign instance can be probed. admin-presence-sources.ts:191-194 uses a SCOPED `findFirst({id, tenantId, deletedAt:null})`, byte-identical 404 — the handler IS in the T-100-09 shape.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/admin/presence-sources/:id/devices/:mac",
+      "file": "apps/api/src/contexts/time-tracking/api/admin-presence-sources.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a PresenceSource and `:mac` a raw MAC-address string (external identifier, not a tenant-bound entity) — neither is Employee/LeaveType-producible by the shared fixture. admin-presence-sources.ts:423-426 scopes the source lookup by `{id, tenantId, deletedAt:null}`, byte-identical 404 — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/admin/presence-sources/:id/devices",
+      "file": "apps/api/src/contexts/time-tracking/api/admin-presence-sources.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a PresenceSource, not Employee/LeaveType — fixture cannot produce a foreign instance. admin-presence-sources.ts:223-226 scopes the lookup by `{id, tenantId, deletedAt:null}`, byte-identical 404 — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/admin/presence-sources/:id",
+      "file": "apps/api/src/contexts/time-tracking/api/admin-presence-sources.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a PresenceSource, not Employee/LeaveType — fixture cannot produce a foreign instance. admin-presence-sources.ts:129-132 scopes the lookup by `{id, tenantId, deletedAt:null}`, byte-identical 404 — conformant. Body is parsed at line 127, after the scoped lookup is irrelevant since the query itself never leaks foreign-tenant existence.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/admin/presence-sources/:id/devices/:mac/assign",
+      "file": "apps/api/src/contexts/time-tracking/api/admin-presence-sources.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a PresenceSource and `:mac` a raw MAC string — neither is Employee/LeaveType-producible. admin-presence-sources.ts:337-340 scopes the source lookup by `{id, tenantId, deletedAt:null}`, byte-identical 404 — conformant (the body's `employeeId` is a separate, tenant-scoped lookup at line 349-352, out of this PATH-parameter register).",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/api-keys/:id",
+      "file": "apps/api/src/contexts/platform/api/api-keys.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses an ApiKey, not Employee/LeaveType — fixture cannot produce a foreign instance. api-keys.ts:95-98 uses a combined `!key || key.tenantId !== req.user.tenantId` condition, byte-identical `{ error: \"API Key nicht gefunden\" }` 404 — conformant (no audit call, but response is identical either way).",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/company-shutdowns/:id",
+      "file": "apps/api/src/contexts/absence/api/company-shutdowns.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a CompanyShutdown, not Employee/LeaveType — fixture cannot produce a foreign instance. company-shutdowns.ts:128-129 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ message: \"Nicht gefunden\" }` 404 — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/company-shutdowns/:id/exceptions/:employeeId",
+      "file": "apps/api/src/contexts/absence/api/company-shutdowns.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "Two path parameters of DIFFERENT kinds — `:id` (CompanyShutdown) and `:employeeId` (Employee) — and `probe` requires EVERY parameter to be fixture-producible; CompanyShutdown is not. company-shutdowns.ts:190-191 scopes the shutdown lookup by `{id, tenantId}` (byte-identical 404); the `employeeId` itself is never looked up at all (line 198's `deleteMany` is a no-op either way) — no oracle exists on either parameter, but the fixture limitation on `:id` decides the category regardless.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/company-shutdowns/:id",
+      "file": "apps/api/src/contexts/absence/api/company-shutdowns.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a CompanyShutdown, not Employee/LeaveType — fixture cannot produce a foreign instance. company-shutdowns.ts:85-86 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ message: \"Nicht gefunden\" }` 404 — conformant. Body is parsed at line 83, before the scoped lookup, but that is irrelevant since the query itself never leaks foreign-tenant existence.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/company-shutdowns/:id/exceptions",
+      "file": "apps/api/src/contexts/absence/api/company-shutdowns.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a CompanyShutdown, not Employee/LeaveType — fixture cannot produce a foreign instance. company-shutdowns.ts:152-153 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ message: \"Betriebsurlaub nicht gefunden\" }` 404 — conformant (the body's `employeeId` at line 155 is a SEPARATE, also-scoped lookup, out of this path-parameter register).",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/employees/me/wifi/devices/:id",
+      "file": "apps/api/src/contexts/time-tracking/api/employee-wifi.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a PresenceDevice SCOPED to the CALLER'S OWN `req.user.employeeId` (the \"me\" in the URL) — never a client-supplied employee id, so there is no cross-tenant or cross-employee dimension to probe at all. employee-wifi.ts:180-181: `getPresenceDevice(prisma, id, employeeId)` scopes by the caller's own employeeId; a device belonging to anyone else (own tenant or foreign) is indistinguishable from \"does not exist\" — the file's own header comment (facade module) documents this collapsed-404 design explicitly.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/holidays/:id",
+      "file": "apps/api/src/contexts/platform/api/holidays.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a PublicHoliday, not Employee/LeaveType — fixture cannot produce a foreign instance. holidays.ts:166-168 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Feiertag nicht gefunden\" }` 404 — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/integrations/phorest/mappings/:phorestStaffId",
+      "file": "apps/api/src/contexts/scheduling/api/integrations.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:phorestStaffId` is an EXTERNAL Phorest identifier, not a tenant-bound Clokr entity — measured expectation from 259-CONTEXT.md's own D-05 count, confirmed by reading the handler. integrations.ts:439-443 uses a SCOPED `findUnique({tenantId_phorestStaffId: {tenantId, phorestStaffId}})` compound key, byte-identical `{ error: \"Zuordnung nicht gefunden.\" }` 404 — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/leave/requests/:id",
+      "file": "apps/api/src/contexts/absence/api/leave.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a LeaveRequest, not Employee/LeaveType directly — the shared fixture (`seedTestData`) creates no LeaveRequest, so no foreign instance can be probed. leave.ts:2035-2050 uses a fetch-then-compare guard (`existing.employee.tenantId !== req.user.tenantId`), byte-identical `{ error: \"Antrag nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited — the handler IS in the T-100-09 shape.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/leave/requests/:id/attest",
+      "file": "apps/api/src/contexts/absence/api/leave.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a LeaveRequest — fixture cannot produce a foreign instance (same as DELETE /requests/:id above). leave.ts:2105-2120 uses a fetch-then-compare guard, byte-identical `{ error: \"Antrag nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/leave/requests/:id/correct",
+      "file": "apps/api/src/contexts/absence/api/leave.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a LeaveRequest — fixture cannot produce a foreign instance. leave.ts:1709-1725 uses a fetch-then-compare guard, byte-identical `{ error: \"Antrag nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited — conformant. `correctSchema.parse(req.body)` at line 1707 runs BEFORE the lookup at 1709, but is noted here for completeness (D-07) rather than acted on, since this route is not probe-eligible regardless.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/leave/requests/:id/review",
+      "file": "apps/api/src/contexts/absence/api/leave.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "THE MEASURED D-07 EXAMPLE. `:id` addresses a LeaveRequest — fixture cannot produce a foreign instance, so this route is not probe-eligible even though its STATIC shape is conformant: leave.ts:985-999 uses a fetch-then-compare guard, byte-identical `{ error: \"Antrag nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited. But `reviewSchema.parse(req.body)` at line 983 (requires non-optional `status`) runs BEFORE the tenant check at line 991 — a bodyless probe gets 400 on BOTH arms, which is exactly why D-07 exists (259-RESEARCH.md's own finding for this precise route).",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/leave/section9/:id",
+      "file": "apps/api/src/contexts/absence/api/leave.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a Section9Credit, not Employee/LeaveType — fixture cannot produce a foreign instance. leave.ts:2870-2898 uses a fetch-then-compare guard, byte-identical `{ error: \"Vorgang nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/leave/section9/:id/confirm",
+      "file": "apps/api/src/contexts/absence/api/leave.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a Section9Credit — fixture cannot produce a foreign instance. leave.ts:2953-2973 uses a fetch-then-compare guard EXPLICITLY placed \"BEFORE any state check\" (its own comment), byte-identical `{ error: \"§-9-Vorgang nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/leave/section9/:id/reject",
+      "file": "apps/api/src/contexts/absence/api/leave.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a Section9Credit — fixture cannot produce a foreign instance. leave.ts:3216-3230 uses a fetch-then-compare guard, byte-identical `{ error: \"§-9-Vorgang nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/leave/section9/:id/reopen",
+      "file": "apps/api/src/contexts/absence/api/leave.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a Section9Credit — fixture cannot produce a foreign instance. leave.ts:3293-3308 uses a fetch-then-compare guard, byte-identical `{ error: \"§-9-Vorgang nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/notifications/:id",
+      "file": "apps/api/src/contexts/platform/api/notifications.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a Notification SCOPED to the CALLER'S OWN `req.user.sub` (userId), never a client-supplied tenant/employee — no cross-tenant dimension. notifications.ts:53-58: `updateMany({where:{id, userId:req.user.sub, dismissedAt:null}})`, `result.count===0` → 404 either for an unknown id OR one belonging to anyone else (any tenant) — byte-identical, trivially conformant by construction.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/notifications/:id/read",
+      "file": "apps/api/src/contexts/platform/api/notifications.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a Notification SCOPED to the CALLER'S OWN userId, same as DELETE above. notifications.ts:28-31: `updateMany({where:{id, userId:req.user.sub}})` ALWAYS returns `{success:true}` regardless of match count (line 32) — no branch exists at all, so there is structurally no oracle to probe.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/retro-entry-requests/:id",
+      "file": "apps/api/src/contexts/time-tracking/api/retro-entry-requests.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a RetroEntryRequest, not Employee/LeaveType — fixture cannot produce a foreign instance. retro-entry-requests.ts:634-643 uses a fetch-then-compare guard explicitly mirroring `leave.ts:1511-1521` (its own comment), byte-identical `{ error: \"Antrag nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/retro-entry-requests/:id/review",
+      "file": "apps/api/src/contexts/time-tracking/api/retro-entry-requests.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a RetroEntryRequest — fixture cannot produce a foreign instance. retro-entry-requests.ts:230-237 uses a fetch-then-compare guard, byte-identical `{ error: \"Antrag nicht gefunden\" }` 404 for both arms — conformant, though this branch carries NO audit call (unlike the DELETE sibling above). `reviewRetroRequestSchema.parse(req.body)` at line 220 runs before the lookup at 223 — same D-07 shape as `PATCH /leave/requests/:id/review`, noted for completeness though not probe-eligible here regardless.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/section9-documents/:creditId",
+      "file": "apps/api/src/contexts/absence/api/section9-documents.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:creditId` addresses a Section9Credit — fixture cannot produce a foreign instance. section9-documents.ts:177-192 uses a fetch-then-compare guard, byte-identical `{ error: \"§-9-Vorgang nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/section9-documents/:creditId",
+      "file": "apps/api/src/contexts/absence/api/section9-documents.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:creditId` addresses a Section9Credit — fixture cannot produce a foreign instance. section9-documents.ts:51-68 uses a fetch-then-compare guard placed explicitly \"BEFORE any other check\" (its own comment, mirroring avatars.ts), byte-identical `{ error: \"§-9-Vorgang nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited, and the guard runs before `req.file()` at line 98 — the multipart-safe shape this whole D-07 concern started from (259-01's own precedent).",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/shifts/:id",
+      "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a Shift, not Employee/LeaveType — fixture cannot produce a foreign instance. Shift has no `tenantId` of its own; shifts.ts:3147-3165 resolves tenant via the owning Employee, byte-identical `{ error: \"Schicht nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/shifts/coverage-rules/:id",
+      "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a CoverageRule, not Employee/LeaveType — fixture cannot produce a foreign instance. shifts.ts:755-758 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Bedarfsregel nicht gefunden\" }` 404 — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/shifts/templates/:id",
+      "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a ShiftTemplate, not Employee/LeaveType — fixture cannot produce a foreign instance. shifts.ts:649-652 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Vorlage nicht gefunden\" }` 404 — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PUT /api/v1/shifts/:id",
+      "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a Shift — fixture cannot produce a foreign instance. shifts.ts:2063-2076 resolves tenant via the owning Employee, byte-identical `{ error: \"Schicht nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited — conformant. `shiftSchema.partial().parse(req.body)` at line 2052 runs before the existence check at 2055 — same D-07 shape as other PUT/PATCH routes, noted for completeness though not probe-eligible here regardless.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PUT /api/v1/shifts/coverage-rules/:id",
+      "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a CoverageRule — fixture cannot produce a foreign instance. shifts.ts:720-723 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Bedarfsregel nicht gefunden\" }` 404 — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PUT /api/v1/shifts/templates/:id",
+      "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a ShiftTemplate — fixture cannot produce a foreign instance. shifts.ts:617-620 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Vorlage nicht gefunden\" }` 404 — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/shifts/:id/restore",
+      "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a Shift — fixture cannot produce a foreign instance. shifts.ts:3285-3288 uses a SCOPED `findFirst({id, employee:{tenantId}})`, byte-identical `{ error: \"Schicht nicht gefunden\" }` 404 — conformant. No body is parsed.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/special-leave/rules/:id",
+      "file": "apps/api/src/contexts/absence/api/special-leave.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a SpecialLeaveRule, not Employee/LeaveType — fixture cannot produce a foreign instance. special-leave.ts:178-181 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Regel nicht gefunden\" }` 404 — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/special-leave/rules/:id",
+      "file": "apps/api/src/contexts/absence/api/special-leave.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a SpecialLeaveRule — fixture cannot produce a foreign instance. special-leave.ts:85-88 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Regel nicht gefunden\" }` 404 — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PUT /api/v1/special-leave/rules/:id",
+      "file": "apps/api/src/contexts/absence/api/special-leave.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a SpecialLeaveRule — fixture cannot produce a foreign instance. special-leave.ts:139-142 uses a SCOPED `findFirst({id, tenantId})` — its own comment states explicitly \"same 404 either way, no tenant-membership oracle\" — conformant. `updateRuleSchema.parse(req.body)` at line 132 runs before the lookup at 139, noted for completeness though not probe-eligible here regardless.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/terminals/:id",
+      "file": "apps/api/src/contexts/time-tracking/api/terminals.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a TerminalApiKey, not Employee/LeaveType — fixture cannot produce a foreign instance. terminals.ts:130-133 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Schlüssel nicht gefunden\" }` 404 — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/test/tenant/:id",
+      "file": "apps/api/src/contexts/platform/api/test-bootstrap.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "Not a T-100-09 candidate at all, by design, not by fixture limitation. This route self-gates on `ALLOW_TEST_BOOTSTRAP` (test-bootstrap.ts:88-90 returns before ANY route in this plugin registers when the flag is false — never present on int/prod). It performs NO `req.user.tenantId` check whatsoever (line 227-267): it operates on ANY `test-*`-prefixed Tenant id regardless of caller, which is the INTENDED cross-tenant behavior of an e2e-fixture teardown surface, not an oracle over the caller's own tenant membership.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/time-entries/:id",
+      "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a TimeEntry, not Employee/LeaveType — fixture cannot produce a foreign instance. time-entries.ts:1895-1905 uses a fetch-then-compare guard, byte-identical `{ error: \"Eintrag nicht gefunden\" }` 404 for both arms — conformant (this sibling of the bekannt-abweichend `POST /:id/breaks` finding IS correct).",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/time-entries/:id/break-status",
+      "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a TimeEntry — fixture cannot produce a foreign instance. time-entries.ts:1980-1997 uses a fetch-then-compare guard, byte-identical `{ error: \"Eintrag nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/time-entries/:id/revalidate",
+      "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a TimeEntry — fixture cannot produce a foreign instance. time-entries.ts:1798-1808 uses a fetch-then-compare guard, byte-identical `{ error: \"Eintrag nicht gefunden\" }` 404 for both arms — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/time-entries/:id/clock-out",
+      "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a TimeEntry — fixture cannot produce a foreign instance. time-entries.ts:492-507 uses a fetch-then-compare guard, byte-identical `{ error: \"Eintrag nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited — conformant. `clockOutSchema.parse(req.body)` at line 489 runs before the lookup at 492, noted for completeness (D-07) though not probe-eligible here regardless.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PUT /api/v1/time-entries/:id",
+      "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a TimeEntry — fixture cannot produce a foreign instance. time-entries.ts:1344-1359 uses a fetch-then-compare guard, byte-identical `{ error: \"Eintrag nicht gefunden\" }` 404 for both arms — conformant. `updateEntrySchema.parse(req.body)` at line 1340 runs before the lookup at 1344, noted for completeness though not probe-eligible here regardless.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/vocational-school/:absenceId",
+      "file": "apps/api/src/contexts/absence/api/vocational-school.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:absenceId` addresses an Absence (Berufsschultag), not Employee/LeaveType — fixture cannot produce a foreign instance. vocational-school.ts:394-395 uses a SCOPED `findFirst({id: absenceId, employee: {tenantId}})`, byte-identical `{ error: \"Berufsschultag nicht gefunden\" }` 404 — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/audit-logs/:id",
+      "file": "apps/api/src/contexts/platform/api/audit-logs.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses an AuditLog, not Employee/LeaveType — fixture cannot produce a foreign instance. audit-logs.ts:54-57 uses a SCOPED `findFirst({id, user: {employee: {tenantId}}})`, byte-identical `{ error: \"Audit-Eintrag nicht gefunden\" }` 404 — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    }
+  ]
+}
