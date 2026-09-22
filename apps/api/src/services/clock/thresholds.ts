@@ -1,7 +1,7 @@
 // Phase 307 Plan 01, Task 3 (D-06 confirmed) — two named constants, not one, for a 60-second
 // floor that shows up in two different places in services/clock/ for two different reasons.
 //
-// Measured (RESEARCH.md Q2, CONTEXT.md's "Nachtrag nach der Recherche"):
+// Measured (RESEARCH.md Q2, CONTEXT.md's post-research addendum):
 //
 // - `resolver.ts`'s STOP branch measures `gapMs`: the elapsed time between the entry CURRENTLY
 //   being closed's own `startTime` and the incoming STOP event's timestamp. It answers "is this
