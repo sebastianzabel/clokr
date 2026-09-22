@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.11.1](https://github.com/sebastianzabel/clokr/compare/v1.11.0...v1.11.1) (2026-09-21)
+
+
+### Features
+
+* **257-01:** add shared team-calendar leave-type visibility module ([082baf3](https://github.com/sebastianzabel/clokr/commit/082baf3db70eafe43ed5582b1c4f2d6775ac0b55))
+
+
+### Bug Fixes
+
+* **148-01:** oldValue des Sicherheits-Endpunkts umfasst alle schreibbaren Felder ([#288](https://github.com/sebastianzabel/clokr/issues/288)) ([33e8d86](https://github.com/sebastianzabel/clokr/commit/33e8d86ab4f8e19fce391dab6f7807a4d3de4a40))
+* **149:** Clientseitige Fehlerprotokollierung wieder zustellbar — richtige Token-Schlüssel, hörbarer Ausfall, Root-Layout-Handler ([#284](https://github.com/sebastianzabel/clokr/issues/284)) ([d6dacf2](https://github.com/sebastianzabel/clokr/commit/d6dacf201834a9b4b544867cebf1e48a7accd827))
+* **220:** Überstundenausgleich belastet das Arbeitszeitkonto tatsächlich ([#295](https://github.com/sebastianzabel/clokr/issues/295)) ([17cfef7](https://github.com/sebastianzabel/clokr/commit/17cfef7c972f6f39039b271775ce5227c5e7c5c7))
+* **242:** Jahresabschluss zählt den Januar mit — Mandanten-Zeitzone statt naivem UTC-Jahresbereich ([#278](https://github.com/sebastianzabel/clokr/issues/278)) ([a84b9de](https://github.com/sebastianzabel/clokr/commit/a84b9de7a1dbd3e300da60650662e0302e0adf05))
+* **255:** ein gemeinsamer Abwesenheits-Prüfdialog — Attest auf beiden Wegen, BUrlG-§-7-Hinweis nur wo er gilt ([#276](https://github.com/sebastianzabel/clokr/issues/276)) ([8300094](https://github.com/sebastianzabel/clokr/commit/8300094f4a45171f8492bf7010a4e4e202619c02))
+* **257-02:** route team-calendar bars and legend through the one shared visibility decision ([ebf6a9d](https://github.com/sebastianzabel/clokr/commit/ebf6a9d9a16008a727eb69e8eb9d0d7f59c3d9be))
+* **257-03:** declare per-token WCAG AA foreground colours for absence-bar labels ([2c05b50](https://github.com/sebastianzabel/clokr/commit/2c05b5000e0a90f0b08839c970541298166a4f2d))
+* **257:** Abwesenheitsart im Team-Kalender für Manager/Admin, ehrliche Legende, lesbare Beschriftung ([fba90b1](https://github.com/sebastianzabel/clokr/commit/fba90b10769453dfacdc0961aa5285d0a04e2aa6))
+* **258-01:** ein fehlgeschlagener Nachladeversuch löscht die angezeigten Saldo-Werte nicht mehr ([#299](https://github.com/sebastianzabel/clokr/issues/299)) ([9ab6ee8](https://github.com/sebastianzabel/clokr/commit/9ab6ee8a307b9bc751c61dea99fdb0721fe18b7b))
+* **258:** Avatar-Endpunkt antwortet 204, Mandanten-Orakel auf GET und DELETE geschlossen, Dunkelmodus-Kontrast ([#260](https://github.com/sebastianzabel/clokr/issues/260)) ([83512d1](https://github.com/sebastianzabel/clokr/commit/83512d186498b8f32e82ca3eed8cce2c150796c3))
+* **262:** GET /leave/overlap maskiert Abwesenheitsart, drei Aufrufstellen zeigen was sie bekommen ([#268](https://github.com/sebastianzabel/clokr/issues/268)) ([1cfa7f7](https://github.com/sebastianzabel/clokr/commit/1cfa7f7ddb2cb1e1836b169f8eedb3eae8dc6563))
+* **271+269:** Samstags-Bombe in drei Schicht-Tests + main-Blocker G6/LeaveTypeCode ([#272](https://github.com/sebastianzabel/clokr/issues/272)) ([71a0f07](https://github.com/sebastianzabel/clokr/commit/71a0f07ebf04e3cb65a4db8617775fb8ad9d22ac))
+* **290-01:** Selbsttest des Anti-Vakuitäts-Gates misst Fortschritt am Text statt an Zeilennummern ([#290](https://github.com/sebastianzabel/clokr/issues/290)) ([ec9d2fc](https://github.com/sebastianzabel/clokr/commit/ec9d2fc4ca3db3403ba8e43556006470e45c6058))
+* **297:** Selbsttest des Anti-Vakuitäts-Gates läuft DB-frei — unbedingter Riegel stand auf bedingter Voraussetzung ([#297](https://github.com/sebastianzabel/clokr/issues/297)) ([0449271](https://github.com/sebastianzabel/clokr/commit/0449271f88985ca991ef78ce113bbb88a52a62de))
+* **301-01:** PUT /settings/work akzeptiert die eigene GET-Ausgabe, und Fehler nennen das Feld ([#302](https://github.com/sebastianzabel/clokr/issues/302)) ([743f998](https://github.com/sebastianzabel/clokr/commit/743f9985bc8482c3764609930e4efdd59e0de4b4))
+
+
+### Documentation
+
+* **release:** Release Notes für v1.11.1 — und die Version zurück auf Patch ([#305](https://github.com/sebastianzabel/clokr/issues/305)) ([54a6f55](https://github.com/sebastianzabel/clokr/commit/54a6f557b373b0a802225085a48c72eef9427139))
+
 ## [1.11.0](https://github.com/sebastianzabel/clokr/compare/v1.10.1...v1.11.0) (2026-09-18)
 
 
