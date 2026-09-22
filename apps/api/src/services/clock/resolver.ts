@@ -224,10 +224,22 @@ export async function resolveClockEvent(
           const target = openEntry!;
           // D-02: 60s server double-tap debounce. A STOP within 60s of START is an accidental
           // double-tap → NO-OP: leave the entry open, produce no zero/near-zero-duration row.
+          //
+          // Phase 307 Plan 01 (D-01 corrected): gated on `event.interactive`, not on
+          // `event.source` — a source-literal list here would be exactly the resolver-internal
+          // special-casing future-source.test.ts forbids ("adding a sixth source is one new
+          // adapter file, no resolver changes"). `event.interactive` is set by the adapter that
+          // built this event; a missing/false value takes the conservative (debounced) branch.
           const gapMs = event.timestamp.getTime() - target.startTime.getTime();
-          if (gapMs < 60_000) {
+          if (!event.interactive && gapMs < 60_000) {
             app.log.info(
-              { entryId: target.id, gapMs, source: event.source, reason: "DEBOUNCE_NOOP" },
+              {
+                entryId: target.id,
+                gapMs,
+                source: event.source,
+                interactive: Boolean(event.interactive),
+                reason: "DEBOUNCE_NOOP",
+              },
               "clock_event_noop",
             );
             return { kind: "DEBOUNCE_NOOP" } as const;

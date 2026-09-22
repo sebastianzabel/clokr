@@ -241,6 +241,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         date: todayInTz(tz),
         dateStr: dateStrInTz(now, tz),
         actor: { type: "TERMINAL", terminalApiKeyId: apiKey.id },
+        // Phase 307 (D-01): not interactive. A second tap on the terminal within the debounce
+        // window is exactly the accidental double-tap the guard exists to swallow — that
+        // protection is this route's whole reason to exist and stays (CONTEXT.md phase
+        // boundary: "der NFC-Doppeltipp-Schutz selbst" is out of scope).
+        interactive: false,
       };
 
       const resolution = await resolveClockEvent(app, event, req);
@@ -445,6 +450,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         dateStr: dateStrInTz(now, tz),
         note: body.note,
         actor: resolveActor(req),
+        // Phase 307 (D-01): interactive. Currently inert — `decide()` (state-machine.ts) never
+        // returns STOP for `intent: "IN"`, so the debounce guard is never consulted here — but
+        // the field names the CALLER'S CHANNEL, not today's effect; a silent construction site
+        // here would quietly lie the moment that ever changes.
+        interactive: true,
       };
       const resolution = await resolveClockEvent(app, event, req);
       if (resolution.kind === "CLOCKED_IN") {
@@ -522,6 +532,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         dateStr: dateStrInTz(now, tz),
         note: body.note,
         actor: resolveActor(req),
+        // Phase 307 (D-01): interactive — this is the reported bug. `source` above is
+        // `entry.source`, the channel that CREATED this row, not who is clicking "Ausstempeln"
+        // right now; branching the debounce guard on it would answer the wrong question. This
+        // handler IS the adapter for the current call, so it — not the resolver — is the only
+        // place that knows the CURRENT caller's channel, hence the field below is set.
+        interactive: true,
       };
 
       const resolution = await resolveClockEvent(app, event, req);

@@ -13,6 +13,25 @@ export type Actor =
 // Note: `source` is `string` (not the Prisma TimeEntrySource enum) so that the
 // future-source.test.ts can feed a synthetic 'SYNTHETIC' value through the
 // resolver without a schema change. Architectural enforcement of D-05 #10.
+//
+// Phase 307 Plan 01 (D-01 corrected) — `interactive` and why it exists:
+//
+// 1. `source` is NOT the current caller's channel on every route. On `/:id/clock-out`
+//    (time-entries.ts's build site) it is read as `entry.source` — the channel that CREATED
+//    this row, not the one closing it now. Branching the debounce guard on `event.source`
+//    would therefore answer "how did this entry come to exist", not "who is clicking
+//    'Ausstempeln' right now" — the wrong question for a double-tap guard.
+// 2. `interactive` is set by the ADAPTER, never derived by the resolver, because only the
+//    adapter knows which channel the CURRENT request arrived on. The resolver reads this one
+//    property and does not enumerate sources — future-source.test.ts's guarantee ("adding a
+//    sixth source is one new adapter file, no resolver changes") stays intact.
+// 3. `interactive` is OPTIONAL on purpose, not for convenience: future-source.test.ts builds a
+//    ClockEvent literal without this field and must not be relaxed (its own docstring forbids
+//    it). A missing value takes the SAME branch as `interactive: false` — pre-Phase-307
+//    behaviour, never the riskier one. Forgetting to set it yields the conservative outcome.
+// 4. All five `TimeEntrySource` values (NFC, MOBILE, MANUAL, CORRECTION, WIFI) are covered by
+//    this without enumerating any of them here: what matters is the channel of THIS call, not
+//    the value stored in the row, so `CORRECTION` needs no special case either.
 export type ClockEvent = {
   employeeId: string;
   tenantId: string;
@@ -23,6 +42,7 @@ export type ClockEvent = {
   dateStr: string;
   note?: string;
   actor: Actor;
+  interactive?: boolean;
 };
 
 export type ConflictReason =
