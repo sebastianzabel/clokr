@@ -49,6 +49,7 @@
     reopenGapStartLabel,
     type ClockDayEntry,
   } from "$lib/dashboard/day-state";
+  import { interpretClockOut, type ClockOutResponse } from "$lib/dashboard/clock-out-result"; // Phase 307 Plan 02 (D-04)
   import { format, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
   import {
@@ -158,17 +159,13 @@
     audit?: { id: string };
   };
 
-  // /:id/clock-out resolves to CLOCKED_OUT (normal close) or CONSOLIDATED (merged
-  // into a prior same-day entry inside `tenant.consolidationGapHours`).
-  type ClockOutResponse = {
-    resolution: {
-      kind: "CLOCKED_OUT" | "CONSOLIDATED";
-      entry: { id: string; endTime: string };
-    };
-    audit?: { id: string };
-    warnings?: unknown[];
-    entry?: { id: string; endTime: string };
-  };
+  // /:id/clock-out's response type — Phase 307 Plan 02 (D-04): imported from
+  // $lib/dashboard/clock-out-result instead of declared here, so there is exactly ONE
+  // definition, not this hand-written copy plus the server's ClockResolution union drifting
+  // apart from it. That drift is what let DEBOUNCE_NOOP go unread in the first place: this type
+  // used to declare `resolution.kind: "CLOCKED_OUT" | "CONSOLIDATED"` only and `resolution.entry`
+  // as required, so evaluating the response was not even compilable without lying about the
+  // shape a DEBOUNCE_NOOP body actually has.
 
   // ── State ──────────────────────────────────────────────────────────────────
   // ── Clock state (Phase 115, GitHub issue #118) ────────────────────────────
@@ -847,15 +844,28 @@
             return; // abort clock-out — user can retry
           }
         }
-        // Phase 76.2 D-03 — explicit generic. We don't currently consume the
-        // response (the dashboard state below is unconditional on success);
-        // CONFLICT branches surface as thrown ApiError, caught below.
+        // Phase 76.2 D-03 — explicit generic; CONFLICT branches (and, since Phase 307 Plan 02,
+        // DEBOUNCE_NOOP too) surface as thrown ApiError (HTTP 409), caught below.
         // Phase 129: no breakMinutes in the body — the server derives it from Break rows only.
-        await api.post<ClockOutResponse>(`/time-entries/${activeEntryId}/clock-out`, {});
-        // Phase 115 (issue #118): clockedIn / activeEntryId / clockStart are $derived now.
-        // They resolve to the closed state on their own once loadData() returns the closed
-        // row, and the open-break $effect then clears breakStartedAt.
-        breakMinutes = 0;
+        // Phase 307 Plan 02 (D-04, AK-1/AK-4): the response IS now read, through the pure
+        // interpretClockOut() translator — a DEBOUNCE_NOOP must never again reach the surface
+        // as a silent success (it no longer can via HTTP either, since the route now answers
+        // 409, but interpretClockOut() stays the defensive second line: see its own docblock).
+        const clockOutResponse = await api.post<ClockOutResponse>(
+          `/time-entries/${activeEntryId}/clock-out`,
+          {},
+        );
+        const clockOutResult = interpretClockOut(clockOutResponse);
+        if (clockOutResult.kind === "not-closed") {
+          toasts.error(clockOutResult.message);
+        } else {
+          // Phase 115 (issue #118): clockedIn / activeEntryId / clockStart are $derived now.
+          // They resolve to the closed state on their own once loadData() returns the closed
+          // row, and the open-break $effect then clears breakStartedAt.
+          breakMinutes = 0;
+        }
+        // Independent of the outcome above: this mirrors the break `endOpenBreak()` already
+        // closed server-side a few lines up, not whether the clock-out itself succeeded.
         clearStoredOpenBreak();
       }
       await loadData();
