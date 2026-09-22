@@ -16,7 +16,7 @@ Capture  →  Inbox  →  Triage  →  Ready  →  GSD  →  Ship  →  Release
 2. **Inbox** — every new issue lands there automatically. It is a queue, not a backlog.
 3. **Triage** — every second Monday, driven by the sprint issue the workflow opens.
 4. **Ready** — at most five issues, each with acceptance criteria, iteration and milestone.
-5. **GSD** — `/gsd:new-milestone`, then the normal phase flow.
+5. **GSD** — `/gsd-new-milestone`, then the normal phase flow.
 6. **Ship** — PR, CI green, merge.
 7. **Release** — merge the release PR. See [`release-process.md`](release-process.md).
 
@@ -92,7 +92,7 @@ An issue is a **phase**, not a plan. Phase 104 ran to thirteen plans; five plans
 afternoon, five phases are a fortnight, and the cap only means something at phase
 granularity.
 
-The issue's acceptance criteria are the input to `/gsd:discuss-phase`. They are the contract;
+The issue's acceptance criteria are the input to `/gsd-discuss-phase`. They are the contract;
 the plans are how it gets met.
 
 Note that `.planning/` is gitignored — the planning artifacts are local. The issue is the

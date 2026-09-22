@@ -92,7 +92,7 @@ jobs:
           - [ ] **Branch Protection prüfen** — \`./scripts/apply-branch-protection.sh\`
           - [ ] **release-please-PR** prüfen und mergen
           - [ ] **Dependabot-Queue** durchgehen — läuft am Board vorbei und wächst sonst still
-          - [ ] \`/gsd:new-milestone\` in Claude Code, gefüttert mit den 5 Issues
+          - [ ] \`/gsd-new-milestone\` in Claude Code, gefüttert mit den 5 Issues
 
           ---
 
