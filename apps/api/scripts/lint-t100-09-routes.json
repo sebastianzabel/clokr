@@ -1,0 +1,35 @@
+{
+  "registerSource": "Phase 259 Plan 02 (Issue #259, D-03/D-03a/D-05/D-06/D-06a/D-07). The DERIVED set — parsed from apps/api/src/contexts/*/api/**/*.ts source text via lint-t100-09-routes.ts, joined against apps/api/src/app.ts's app.register() prefixes — is 76 routes with a path parameter (33 route files, 186 total route declarations). 259-CONTEXT.md's own D-05 measurement states 75: that count came from a grep-shaped scan whose regex could not match a newline between `app.delete(` and the opening path-string quote, and therefore missed apps/api/src/contexts/absence/api/company-shutdowns.ts:183's `app.delete(\n    \"/:id/exceptions/:employeeId\",`. A newline-tolerant parse (this gate's own extractRouteDeclarations) finds that route, making the real, mechanically-derived figure 76 — the parser was made newline-tolerant to reach this number, not adjusted to match the earlier 75. Every entry below must have route/file/category/reason and, for probe, params (one key per path parameter) and optionally minimalBody; bekannt-abweichend additionally requires ticket + validatedAt (ISO date, expires after 90 days, D-06a corrected).",
+  "entries": [
+    {
+      "route": "POST /api/v1/avatars/:employeeId",
+      "file": "apps/api/src/contexts/platform/api/avatars.ts",
+      "category": "probe",
+      "params": { "employeeId": "employee" },
+      "minimalBody": null,
+      "reason": "avatars.ts POST handler (fixed 259-01): combined `!employee || employee.tenantId !== req.user.tenantId` guard at line ~29-38 returns the byte-identical 404 before `await req.file()` at line ~44 is ever reached — sec-08-avatars-post-tenant.test.ts case C (bodyless, no content-type probe) proves this directly, so `minimalBody: null` is correct: a bodyless probe reaches the guard.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/avatars/:employeeId",
+      "file": "apps/api/src/contexts/platform/api/avatars.ts",
+      "category": "probe",
+      "params": { "employeeId": "employee" },
+      "minimalBody": null,
+      "reason": "avatars.ts GET handler (fixed Phase 258): combined `!employee || employee.tenantId !== req.user.tenantId` guard at line ~94, byte-identical 404 at line ~104, CROSS_TENANT_ACCESS_DENIED audited only when `employee` is truthy — GET has no request body, so a bodyless probe reaches the guard trivially.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/avatars/:employeeId",
+      "file": "apps/api/src/contexts/platform/api/avatars.ts",
+      "category": "probe",
+      "params": { "employeeId": "employee" },
+      "minimalBody": null,
+      "reason": "avatars.ts DELETE handler (fixed Phase 258): combined `!employee || employee.tenantId !== req.user.tenantId` guard at line ~148, byte-identical 404 at line ~158, CROSS_TENANT_ACCESS_DENIED audited only when `employee` is truthy — DELETE has no request body, so a bodyless probe reaches the guard trivially.",
+      "ticket": null,
+      "validatedAt": null
+    }
+  ]
+}
