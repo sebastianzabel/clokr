@@ -42,7 +42,7 @@
     vacationCardLabel,
   } from "$lib/leave/vacation-summary";
   import { SICK_TYPE_CODES } from "$lib/leave/leave-kind"; // Phase 201 (Issue #201, B)
-  import { NEUTRAL_CHIP_LABEL } from "$lib/leave/team-calendar-visibility"; // Phase 262
+  import { NEUTRAL_CHIP_LABEL, resolveChipVisual } from "$lib/leave/team-calendar-visibility"; // Phase 262 / 303
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -428,25 +428,6 @@
     "November",
     "Dezember",
   ];
-
-  // Typ → Hintergrundfarbe (approved=satt, pending=heller)
-  function typeColor(code: TypeCode | null, status: Status, isOwn: boolean): string {
-    if (!isOwn || !code)
-      return status === "APPROVED" ? "var(--leave-type-absent)" : "var(--leave-type-absent-muted)";
-    const colors: Record<TypeCode, string> = {
-      VACATION: "var(--leave-type-vacation)",
-      OVERTIME_COMP: "var(--leave-type-overtime)",
-      SPECIAL: "var(--leave-type-special)",
-      EDUCATION: "var(--leave-type-education)",
-      SICK: "var(--leave-type-sick)",
-      SICK_CHILD: "var(--leave-type-sick-child)",
-      UNPAID: "var(--leave-type-unpaid)",
-      HOLIDAY: "var(--leave-type-holiday)",
-      MATERNITY: "var(--leave-type-maternity)",
-      PARENTAL: "var(--leave-type-parental)",
-    };
-    return colors[code] ?? "var(--leave-type-default)";
-  }
 
   // ── Laden ─────────────────────────────────────────────────────────────────
   onMount(async () => {
@@ -1914,6 +1895,7 @@
                     {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
                     {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
                     {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
+                    {@const _vis = resolveChipVisual(e, $authStore.user?.role)}
                     <!-- Phase 104-10 (D-28/D-29): the § 9 marker only applies to the SPECIFIC
                          days the server named in section9Days — a multi-day bar can be
                          partially marked. -->
@@ -1930,18 +1912,15 @@
                       class:cal-chip--own={e.isOwn}
                       class:cal-chip--section9-superseded={_section9OnDay &&
                         e.section9 === "SUPERSEDED"}
-                      style:background={typeColor(e.typeCode, e.status, e.isOwn)}
-                      title="{e.firstName} {e.lastName}{e.isOwn && e.typeName
-                        ? ' · ' + e.typeName
+                      style:background={_vis.background}
+                      style:color={_vis.textColor}
+                      title="{e.firstName} {e.lastName}{_vis.typeLabel
+                        ? ' · ' + _vis.typeLabel
                         : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
                     >
                       {#if _showLabel}
                         <span class="cal-chip-name">{e.firstName}</span>
-                        {#if e.isOwn && e.typeName}
-                          <span class="cal-chip-type">{e.typeName}</span>
-                        {:else}
-                          <span class="cal-chip-type">abwesend</span>
-                        {/if}
+                        <span class="cal-chip-type">{_vis.chipLabel}</span>
                       {/if}
                       {#if _section9OnDay && (e.section9 === "CONFIRMED" || e.section9 === "AU_PENDING")}
                         {@const _isConfirmedSection9 = e.section9 === "CONFIRMED"}
