@@ -80,14 +80,19 @@ describe("leave/+page.svelte — request form's overlap panel (D-10)", () => {
     expect(iface).toContain("typeCode: string | null");
   });
 
-  it('"abwesend" survives exactly twice: the empty-state sentence and the out-of-scope calendar chip', () => {
-    // 1. ":1628" (line numbers pre-edit) "Niemand sonst abwesend ✓" — explicitly kept verbatim,
-    //    see <scope_boundary>, not a chip label.
-    // 2. ":1919" "cal-chip-type" — the personal calendar chip fed by GET /leave/calendar's own
-    //    isOwn branch, deliberately out of scope for this plan (262-CONTEXT.md D-11b note).
-    // A third occurrence would mean a fourth hand-typed literal slipped back into the overlap
-    // panel this plan just fixed.
-    expect(abwesendCount(LEAVE_PAGE)).toBe(2);
+  it('"abwesend" survives exactly once: the empty-state sentence', () => {
+    // ":1628" (line numbers pre-Phase-262-edit) "Niemand sonst abwesend ✓" — explicitly kept
+    // verbatim, see <scope_boundary>, not a chip label.
+    //
+    // The second occurrence this test used to name — the calendar chip's hand-typed
+    // `>abwesend<` fallback, called out as "out of scope for Phase 262" — was Phase 303's own
+    // fourth hand-copy of the team calendar's visibility rule. Phase 303 routed that chip
+    // through the shared `resolveChipVisual()`, which prints `NEUTRAL_CHIP_LABEL` (an
+    // identifier, not this literal) instead, so the count is now 1, not 2. This is a fact
+    // changing, not a threshold being relaxed (CLAUDE.md § no test manipulation) — the literal
+    // itself is gone from the source, confirmed separately by leave-type-visibility.test.ts
+    // A7. A third occurrence would mean a fifth hand-typed literal slipped in unnoticed.
+    expect(abwesendCount(LEAVE_PAGE)).toBe(1);
   });
 });
 
