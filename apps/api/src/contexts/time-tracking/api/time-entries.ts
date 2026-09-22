@@ -6,6 +6,7 @@ import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../arbzg";
 import { getEffectiveBreakDuration } from "../break-effective";
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
+import { buildClockOutDebounceMessage } from "../clock-out-debounce-message"; // Phase 307 Plan 02 (D-03/D-05)
 import { resolveClockEvent } from "../../../services/clock/resolver";
 import { resolveActor } from "../../../services/clock/audit-actor";
 import type { ClockEvent } from "../../../services/clock/types";
@@ -241,6 +242,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         date: todayInTz(tz),
         dateStr: dateStrInTz(now, tz),
         actor: { type: "TERMINAL", terminalApiKeyId: apiKey.id },
+        // Phase 307 (D-01): not interactive. A second tap on the terminal within the debounce
+        // window is exactly the accidental double-tap the guard exists to swallow — that
+        // protection is this route's whole reason to exist and stays (CONTEXT.md phase
+        // boundary: "der NFC-Doppeltipp-Schutz selbst" is out of scope).
+        interactive: false,
       };
 
       const resolution = await resolveClockEvent(app, event, req);
@@ -292,6 +298,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
 
       // D-02: DEBOUNCE_NOOP — STOP within 60s of START is a double-tap NO-OP; return 200.
+      // Phase 307 Plan 02: deliberately UNCHANGED by the DEBOUNCE_NOOP -> 409 flip on
+      // `/:id/clock-out` below. A terminal double-tap is not a user error and must not surface
+      // one; this route is the one genuinely non-interactive caller of `resolveClockEvent`
+      // (Phase 307 Plan 01 Task 1 proved no NFC-terminal path reaches `/:id/clock-out` at all).
       if (resolution.kind === "DEBOUNCE_NOOP") {
         return reply.code(200).send({
           action: "NOOP" as const,
@@ -445,6 +455,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         dateStr: dateStrInTz(now, tz),
         note: body.note,
         actor: resolveActor(req),
+        // Phase 307 (D-01): interactive. Currently inert — `decide()` (state-machine.ts) never
+        // returns STOP for `intent: "IN"`, so the debounce guard is never consulted here — but
+        // the field names the CALLER'S CHANNEL, not today's effect; a silent construction site
+        // here would quietly lie the moment that ever changes.
+        interactive: true,
       };
       const resolution = await resolveClockEvent(app, event, req);
       if (resolution.kind === "CLOCKED_IN") {
@@ -522,6 +537,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         dateStr: dateStrInTz(now, tz),
         note: body.note,
         actor: resolveActor(req),
+        // Phase 307 (D-01): interactive — this is the reported bug. `source` above is
+        // `entry.source`, the channel that CREATED this row, not who is clicking "Ausstempeln"
+        // right now; branching the debounce guard on it would answer the wrong question. This
+        // handler IS the adapter for the current call, so it — not the resolver — is the only
+        // place that knows the CURRENT caller's channel, hence the field below is set.
+        interactive: true,
       };
 
       const resolution = await resolveClockEvent(app, event, req);
@@ -551,9 +572,30 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(409).send({ error: "Konflikt", resolution });
       }
 
-      // D-02: DEBOUNCE_NOOP — STOP within 60s of START is a double-tap NO-OP; return 200.
+      // Phase 307 Plan 02 (D-03/D-05 corrected): DEBOUNCE_NOOP is now a 409, not a 200-with-field.
+      // A NOOP is not a success — the user wanted to clock out and did not; 409 is exactly what
+      // the five CONFLICT branches above already answer on this route, so it falls into the
+      // dashboard's existing catch/toasts.error path without a new display mechanism, and keeps
+      // the route internally consistent (one non-success shape, not two).
+      //
+      // Since Phase 307 Plan 01 set this route's ClockEvent.interactive field to true
+      // unconditionally, the resolver's debounce guard is permanently short-circuited here — this
+      // branch is defensive/unreachable from an HTTP call to `/:id/clock-out`, the same category
+      // as the 500 guard immediately below for CLOCKED_IN/CONFIRMED. It exists for a future
+      // adapter change that might send a non-interactive event through this route; D-04 (the
+      // type names every result the endpoint can produce) holds in full force BECAUSE of this
+      // defensiveness, not despite it — the guard is the assurance, the message is the courtesy.
+      //
+      // `/nfc-punch` (a separately registered route, see time-entries.ts's nfc-punch handler
+      // above) keeps its own DEBOUNCE_NOOP branch at 200/`action: "NOOP"`, UNCHANGED by this
+      // phase — a terminal double-tap is not an error and must not surface one; that is a
+      // decision, not an omission (Phase 307 Plan 01 Task 1 proved no NFC-terminal path reaches
+      // this route at all).
       if (resolution.kind === "DEBOUNCE_NOOP") {
-        return reply.code(200).send({ action: "NOOP" as const, resolution });
+        return reply.code(409).send({
+          error: buildClockOutDebounceMessage(entry.startTime, tz),
+          resolution,
+        });
       }
 
       if (resolution.kind !== "CLOCKED_OUT" && resolution.kind !== "CONSOLIDATED") {

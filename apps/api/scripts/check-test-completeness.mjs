@@ -412,8 +412,17 @@ import { readFileSync } from "node:fs";
 // Plan 01 entry above and this one, the same kind of gap that entry's own comment named and
 // deliberately left unabsorbed — absorbed HERE instead, on explicit instruction, so the floor
 // reflects what the suite actually collects rather than continuing to understate it.
-const MIN_FILES = 277;
-const MIN_TESTS = 3402;
+// Phase 307 Plan 02 (Issue #307, D-09 successor) — three new test FILES landed across the
+// phase's two plans: Plan 01's `services/clock/__tests__/interactive-debounce.integration.test.ts`
+// (8 tests) and `services/clock/__tests__/thresholds.test.ts` (3 tests), plus this plan's own
+// `contexts/time-tracking/__tests__/clock-out-debounce-message.test.ts` (3 tests) — 277 + 3 = 280
+// files, 3402 + 8 + 3 + 3 = 3416 tests. A fresh full-suite run measured immediately before this
+// edit (`pnpm --filter @clokr/api test`) reports `Test Files 280 passed (280)` / `Tests 3413
+// passed | 3 skipped (3416)`, cross-checked against `apps/api/vitest-report.json`'s own
+// `testResults.length` (280) / `numTotalTests` (3416) directly — an exact match with this plan's
+// own accounting, so no unrelated drift needed absorbing this time.
+const MIN_FILES = 280;
+const MIN_TESTS = 3416;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
