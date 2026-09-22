@@ -8,6 +8,7 @@ import type { ClockEvent, ClockResolution, ClockState } from "./types";
 import { decide } from "./state-machine";
 import { emitClockAudit } from "./audit-actor";
 import { consolidateSameDayEntries, calcBreakMinutesLocal } from "./consolidate";
+import { DOUBLE_TAP_DEBOUNCE_MS } from "./thresholds";
 import { hasApprovedLeaveOnDate } from "../../contexts/absence"; // Phase 100b Plan 14 (AC-1) — index is the public surface
 import {
   invalidReasonFields,
@@ -231,7 +232,7 @@ export async function resolveClockEvent(
           // adapter file, no resolver changes"). `event.interactive` is set by the adapter that
           // built this event; a missing/false value takes the conservative (debounced) branch.
           const gapMs = event.timestamp.getTime() - target.startTime.getTime();
-          if (!event.interactive && gapMs < 60_000) {
+          if (!event.interactive && gapMs < DOUBLE_TAP_DEBOUNCE_MS) {
             app.log.info(
               {
                 entryId: target.id,
