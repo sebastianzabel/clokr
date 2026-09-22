@@ -21,6 +21,7 @@
   } from "$lib/phorest/appointmentCollisions";
   import { toasts } from "$stores/toast";
   import KarenzAttestPanel from "$lib/components/leave/KarenzAttestPanel.svelte";
+  import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte"; // Phase 303-03 (#265's pattern)
   import {
     summarizeKarenzOverrun,
     karenzOverrunDays,
@@ -42,7 +43,7 @@
     vacationCardLabel,
   } from "$lib/leave/vacation-summary";
   import { SICK_TYPE_CODES } from "$lib/leave/leave-kind"; // Phase 201 (Issue #201, B)
-  import { NEUTRAL_CHIP_LABEL } from "$lib/leave/team-calendar-visibility"; // Phase 262
+  import { NEUTRAL_CHIP_LABEL, resolveChipVisual } from "$lib/leave/team-calendar-visibility"; // Phase 262 / 303
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -428,25 +429,6 @@
     "November",
     "Dezember",
   ];
-
-  // Typ → Hintergrundfarbe (approved=satt, pending=heller)
-  function typeColor(code: TypeCode | null, status: Status, isOwn: boolean): string {
-    if (!isOwn || !code)
-      return status === "APPROVED" ? "var(--leave-type-absent)" : "var(--leave-type-absent-muted)";
-    const colors: Record<TypeCode, string> = {
-      VACATION: "var(--leave-type-vacation)",
-      OVERTIME_COMP: "var(--leave-type-overtime)",
-      SPECIAL: "var(--leave-type-special)",
-      EDUCATION: "var(--leave-type-education)",
-      SICK: "var(--leave-type-sick)",
-      SICK_CHILD: "var(--leave-type-sick-child)",
-      UNPAID: "var(--leave-type-unpaid)",
-      HOLIDAY: "var(--leave-type-holiday)",
-      MATERNITY: "var(--leave-type-maternity)",
-      PARENTAL: "var(--leave-type-parental)",
-    };
-    return colors[code] ?? "var(--leave-type-default)";
-  }
 
   // ── Laden ─────────────────────────────────────────────────────────────────
   onMount(async () => {
@@ -1045,6 +1027,29 @@
   let calMap = $derived(buildCalMap(calEntries));
   let calDays = $derived(buildCalDays(calYear, calMonth));
   let calLanes = $derived(buildLaneMap(calEntries));
+
+  // ── Day detail (GitHub issue #303, D-02/D-09) ─────────────────────────────
+  // Below 700px the bar's type label is hidden, so the type would be carried by colour alone.
+  // Tapping the corner target spells the types out. The trigger is a real <button> inside the
+  // cell, so touch and keyboard (Enter/Space) both reach it, and `Modal` owns Escape. Unlike
+  // #265's whole-cell trigger on /team/leave, this page's cell is already the create-a-request
+  // control (drag-select, Enter/Space opens the form) — D-09 fixes a corner target instead of
+  // the whole cell, so that interaction survives (see the trigger markup below).
+  let dayDetailDate = $state<string | null>(null);
+  let dayDetailOpen = $state(false);
+
+  /** The tapped day's bars — the same filter the cell's `dayAbsences` and the lane map apply. */
+  let dayDetailEntries = $derived(
+    (dayDetailDate ? (calMap.get(dayDetailDate) ?? []) : []).filter(
+      (e) => !e.isHoliday && (e.isOwn || e.status === "APPROVED"),
+    ),
+  );
+
+  function openDayDetail(dateStr: string) {
+    dayDetailDate = dateStr;
+    dayDetailOpen = true;
+  }
+
   // ── Urlaubszusammenfassung (über dem Kalender) ────────────────────────────
   let pendingVacDays = $derived(
     myRequests
@@ -1914,6 +1919,7 @@
                     {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
                     {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
                     {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
+                    {@const _vis = resolveChipVisual(e, $authStore.user?.role)}
                     <!-- Phase 104-10 (D-28/D-29): the § 9 marker only applies to the SPECIFIC
                          days the server named in section9Days — a multi-day bar can be
                          partially marked. -->
@@ -1930,18 +1936,15 @@
                       class:cal-chip--own={e.isOwn}
                       class:cal-chip--section9-superseded={_section9OnDay &&
                         e.section9 === "SUPERSEDED"}
-                      style:background={typeColor(e.typeCode, e.status, e.isOwn)}
-                      title="{e.firstName} {e.lastName}{e.isOwn && e.typeName
-                        ? ' · ' + e.typeName
+                      style:background={_vis.background}
+                      style:color={_vis.textColor}
+                      title="{e.firstName} {e.lastName}{_vis.typeLabel
+                        ? ' · ' + _vis.typeLabel
                         : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
                     >
                       {#if _showLabel}
                         <span class="cal-chip-name">{e.firstName}</span>
-                        {#if e.isOwn && e.typeName}
-                          <span class="cal-chip-type">{e.typeName}</span>
-                        {:else}
-                          <span class="cal-chip-type">abwesend</span>
-                        {/if}
+                        <span class="cal-chip-type">{_vis.chipLabel}</span>
                       {/if}
                       {#if _section9OnDay && (e.section9 === "CONFIRMED" || e.section9 === "AU_PENDING")}
                         {@const _isConfirmedSection9 = e.section9 === "CONFIRMED"}
@@ -1966,6 +1969,29 @@
                   {/if}
                 {/each}
               </div>
+              <!-- Tap target for the day-detail sheet (#303, D-09). Shown only below 700px —
+                   see `.cal-day-tap` in the style block — because that is where the bar's type
+                   label leaves the screen and where no finger can open a `title` tooltip.
+                   UNLIKE #265's whole-cell trigger on /team/leave, this is a CORNER target
+                   only: the cell here is already the create-a-request control (drag-select via
+                   onmousedown/onmouseenter, Enter/Space via onkeydown, completed by the
+                   page-level window onmouseup above), so a whole-cell overlay would sit on top
+                   of that primary action and — because mousedown still bubbles — fire both the
+                   sheet and the new-request modal. Propagation is stopped below on both
+                   mousedown and keydown so this trigger cannot co-fire either handler. -->
+              {#if dayAbsences.length > 0}
+                <button
+                  type="button"
+                  class="cal-day-tap"
+                  data-testid="leave-cal-day-tap"
+                  aria-label="Abwesenheiten am {fmtDate(day.dateStr)} anzeigen"
+                  onclick={() => openDayDetail(day.dateStr)}
+                  onmousedown={(e) => e.stopPropagation()}
+                  onkeydown={(e) => e.stopPropagation()}
+                >
+                  <span class="cal-day-tap-hint" aria-hidden="true">i</span>
+                </button>
+              {/if}
             </div>
           {/each}
         </div>
@@ -2278,6 +2304,16 @@
     confirmLabel="Bestätigen"
     danger
     onConfirm={confirmCancelDialog}
+  />
+
+  <!-- ── Day detail (#303): the absence types of one day, in plain text ───────
+       Opened by the `.cal-day-tap` button in the calendar cell. The role rule from #257 is
+       enforced inside the component's shared module, not here (D-10). -->
+  <CalendarDayDetail
+    bind:open={dayDetailOpen}
+    dateLabel={dayDetailDate ? fmtDate(dayDetailDate) : ""}
+    entries={dayDetailEntries}
+    role={$authStore.user?.role}
   />
 </div>
 
@@ -2736,6 +2772,16 @@
     text-overflow: ellipsis;
   }
 
+  /* ── Day-detail trigger (#303, D-09) ─────────────────────────────────
+     Above the breakpoint the bar prints the type itself and a pointer can open the `title`
+     tooltip, so the button does not exist there — `display: none` also keeps it out of the tab
+     order, which is why its visibility and its reachability cannot drift apart. The media block
+     at the bottom of this file turns it on, as a CORNER target only (not #265's whole-cell
+     trigger — this page's cell is already the create-a-request control, see D-09 below). */
+  .cal-day-tap {
+    display: none;
+  }
+
   /* Phase 104-10 (D-28): a confirmed § 9 credit overlays this vacation day — the entry
      stays discoverable but visibly loses to the SICK entry (reduced emphasis, same
      opacity idiom as .cal-chip--pending above, no new colour token). */
@@ -2868,8 +2914,72 @@
     .overlap-dates {
       margin-left: 0;
     }
+    /* The bar is too narrow here for the type name, so the label leaves the EYES — but not the
+       accessibility tree. This is app.css's `.sr-only` recipe, inlined because a class cannot be
+       added by viewport width; `display: none` (what stood here before #303) took the type away
+       from screen readers too. What replaces it visually is `.cal-day-tap` below. */
     .cal-chip-type {
-      display: none;
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border-width: 0;
+    }
+    .cal-day-tap {
+      display: flex;
+      position: absolute;
+      /* D-09: the containing block is app.css's `.cal-cell { position: relative }`. Unlike
+         #265's whole-cell trigger (`inset: 0`) this box is deliberately a CORNER, not the cell —
+         this page's cell already runs the create-a-request interaction (drag-select on
+         mousedown/mouseenter, Enter/Space on keydown, completed by the page-level window
+         mouseup), and an overlay covering the whole cell would sit on top of that primary
+         action, firing both the day-detail sheet and the new-request modal because mousedown
+         still bubbles. Only `top`/`right` are set — `bottom`/`left` stay unset on purpose, so
+         the box cannot stretch across the cell the way `inset: 0` would. */
+      top: 0;
+      right: 0;
+      z-index: 2;
+      align-items: center;
+      justify-content: center;
+      /* Both minimums are asserted here, unlike the whole-cell variant on /team/leave: that one
+         borrows its 44px height for free from the `.cal-cell` recipe (min-height: 86px); a
+         corner box has no such floor, so width AND height each need their own 44px minimum. */
+      min-width: 44px;
+      min-height: 44px;
+      padding: 4px;
+      background: transparent;
+      border: 0;
+      border-radius: var(--r-md);
+      cursor: pointer;
+      appearance: none;
+    }
+    .cal-day-tap:focus-visible {
+      outline: 2px solid var(--brand);
+      outline-offset: -2px;
+    }
+    /* The affordance. A bar nobody knows is tappable is no remedy at all, and a touch device
+       offers no hover or cursor to hint with — so the hint is drawn. It says "there is more
+       here", not WHICH type: one glyph for every day, never a per-type symbol set (the symbol
+       option was weighed and rejected in #265, reused here per D-02). */
+    .cal-day-tap-hint {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-family: var(--font-serif);
+      font-style: italic;
+      font-size: 0.625rem;
+      font-weight: 700;
+      line-height: 1;
     }
   }
   @media (max-width: 480px) {
