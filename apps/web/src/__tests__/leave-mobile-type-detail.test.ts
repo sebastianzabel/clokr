@@ -284,10 +284,25 @@ describe("#303 (leave) — page wiring (source pins)", () => {
     const cell = cellBlock();
     const start = cell.indexOf('data-testid="leave-cal-day-tap"');
     expect(start).toBeGreaterThan(-1);
-    // Back up to the nearest opening `<button` before the testid, forward to its `>`.
+    // Back up to the nearest opening `<button` before the testid.
     const tagStart = cell.lastIndexOf("<button", start);
     expect(tagStart).toBeGreaterThan(-1);
-    const tagEnd = cell.indexOf(">", start);
+    // Forward to the tag's REAL closing `>` — not the first textual `>`. An event-handler
+    // attribute like `onclick={() => ...}` contains a bare `>` as part of `=>`, which sits
+    // inside `{...}` before the tag actually closes; a naive `indexOf(">")` would truncate the
+    // slice there and silently drop every attribute after it (including the propagation pin
+    // this block exists to prove). Track brace depth and only accept a `>` at depth 0.
+    let depth = 0;
+    let tagEnd = -1;
+    for (let i = tagStart; i < cell.length; i++) {
+      const ch = cell[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      else if (ch === ">" && depth === 0) {
+        tagEnd = i;
+        break;
+      }
+    }
     expect(tagEnd).toBeGreaterThan(tagStart);
     return cell.slice(tagStart, tagEnd + 1);
   }
