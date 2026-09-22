@@ -28,6 +28,12 @@ import { screen, fireEvent } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte";
 import { NEUTRAL_CHIP_LABEL, type DayDetailEntry } from "$lib/leave/team-calendar-visibility";
+import {
+  cssForViewport,
+  styleBlockOf,
+  probeAt as sharedProbeAt,
+  INVENTED_CLASS,
+} from "$tests/media-query-probe";
 
 function readRepoFile(relativeFromHere: string, relativeFromCwd: string): string {
   try {
@@ -47,83 +53,19 @@ const PHONE_WIDTH = 390; // iPhone 14 logical width — below the breakpoint
 const DESKTOP_WIDTH = 1280; // above it
 
 // ── The page's own <style> block ─────────────────────────────────────────────
+// Local wrapper: the shared instrument (`$tests/media-query-probe`) takes the page source as an
+// explicit argument — it cannot know which page a consumer is testing — so this file supplies its
+// own PAGE constant here.
 function pageStyleBlock(): string {
-  const open = PAGE.lastIndexOf("<style>");
-  const close = PAGE.lastIndexOf("</style>");
-  if (open === -1 || close <= open) throw new Error("no <style> block found in the page");
-  return PAGE.slice(open + "<style>".length, close);
-}
-
-// ── A fail-closed media evaluator ───────────────────────────────────────────
-// Only width-in-px conditions are understood. Anything else THROWS, so a future
-// `@media (hover: hover)` cannot be quietly skipped into a green test.
-function mediaMatches(condition: string, viewportPx: number): boolean {
-  const parts = condition.split(/\s+and\s+/).map((p) => p.trim());
-  return parts.every((part) => {
-    const m = /^\((max|min)-width:\s*(\d+)px\)$/.exec(part);
-    if (!m) {
-      throw new Error(`cssForViewport cannot evaluate media condition: ${condition}`);
-    }
-    const px = Number(m[2]);
-    return m[1] === "max" ? viewportPx <= px : viewportPx >= px;
-  });
-}
-
-/** The page's CSS as a browser at `viewportPx` would see it: matching `@media` blocks inlined,
- *  non-matching ones dropped. */
-function cssForViewport(css: string, viewportPx: number): string {
-  let out = "";
-  let i = 0;
-  for (;;) {
-    const at = css.indexOf("@media", i);
-    if (at === -1) {
-      out += css.slice(i);
-      return out;
-    }
-    out += css.slice(i, at);
-    const braceOpen = css.indexOf("{", at);
-    if (braceOpen === -1) throw new Error("unterminated @media condition");
-    const condition = css.slice(at + "@media".length, braceOpen).trim();
-    let depth = 0;
-    let j = braceOpen;
-    for (; j < css.length; j++) {
-      if (css[j] === "{") depth++;
-      else if (css[j] === "}") {
-        depth--;
-        if (depth === 0) break;
-      }
-    }
-    if (depth !== 0) throw new Error("unbalanced @media block");
-    if (mediaMatches(condition, viewportPx)) out += css.slice(braceOpen + 1, j);
-    i = j + 1;
-  }
+  return styleBlockOf(PAGE);
 }
 
 // ── Measuring harness ───────────────────────────────────────────────────────
-const INVENTED_CLASS = "cal-day-tap-no-such-class-265";
-
-interface Probe {
-  styles(className: string, tag?: string): CSSStyleDeclaration;
-}
-
+// Local wrapper: preserves the existing `probeAt(WIDTH)` call sites below, which rely on the CSS
+// defaulting to this page's own flattened style block. The shared `probeAt` has no page-level
+// default by design — see `$tests/media-query-probe`.
 function probeAt(viewportPx: number, css: string = cssForViewport(pageStyleBlock(), viewportPx)) {
-  Object.defineProperty(window, "innerWidth", {
-    value: viewportPx,
-    configurable: true,
-    writable: true,
-  });
-  const style = document.createElement("style");
-  style.textContent = css;
-  document.head.appendChild(style);
-  const probe: Probe = {
-    styles(className, tag = "span") {
-      const el = document.createElement(tag);
-      el.className = className;
-      document.body.appendChild(el);
-      return getComputedStyle(el);
-    },
-  };
-  return probe;
+  return sharedProbeAt(viewportPx, css);
 }
 
 afterEach(() => {
