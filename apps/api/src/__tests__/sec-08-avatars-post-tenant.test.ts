@@ -1,9 +1,12 @@
 /**
- * fix(sec-08): POST /api/v1/avatars/:employeeId only guarded the self-upload path
- * (`isSelf`) — an ADMIN/MANAGER of any tenant could upload an avatar onto a foreign
- * tenant's employee, since the `isManager` branch never compared tenantId. Fixed by
- * copying the tenant check already established on the sibling GET /:employeeId
- * (below in the same file) verbatim.
+ * fix(sec-08): POST /api/v1/avatars/:employeeId compared its two rejection branches for
+ * ADMIN/MANAGER callers and found them distinguishable — a foreign tenant's real employee
+ * id got 403 "Keine Berechtigung", an id that exists nowhere got 404 "Mitarbeiter nicht
+ * gefunden". That difference IS a tenant-membership oracle (Issue #259, T-100-09) — GET
+ * and DELETE of the same file were already fixed in Phase 258, POST was left behind on
+ * purpose and reported. Rewritten here the way `sec-09-avatars-delete-tenant.test.ts` was
+ * rewritten for DELETE: byte-identical 404 for both arms, audited only when the probed
+ * employee genuinely exists in a foreign tenant.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
@@ -52,8 +55,22 @@ describe("POST /api/v1/avatars/:employeeId — tenant isolation (sec-08)", () =>
     }
   });
 
-  it("tenantA ADMIN uploading an avatar onto tenantB's employee → 403, avatarPath untouched", async () => {
+  // Case A (AC-1/AC-2). Explicit state setup first, so this case is order-independent and
+  // does not rely on running before case D (which sets tenantB's employee avatarPath).
+  it("tenantA ADMIN uploading an avatar onto tenantB's employee → the byte-identical 404 as an unknown id (T-100-09, was 403), avatarPath untouched", async () => {
+    await app.prisma.employee.update({
+      where: { id: tenantB.employee.id },
+      data: { avatarPath: null },
+    });
+
     const { body, contentType } = buildMultipartBody("avatar.jpg", "image/jpeg", JPEG_BYTES);
+
+    const notFound = await app.inject({
+      method: "POST",
+      url: "/api/v1/avatars/00000000-0000-0000-0000-000000000000",
+      headers: { authorization: `Bearer ${tenantA.adminToken}`, "content-type": contentType },
+      payload: body,
+    });
 
     const res = await app.inject({
       method: "POST",
@@ -62,8 +79,10 @@ describe("POST /api/v1/avatars/:employeeId — tenant isolation (sec-08)", () =>
       payload: body,
     });
 
-    expect(res.statusCode).toBe(403);
-    expect(JSON.parse(res.body)).toEqual({ error: "Keine Berechtigung" });
+    // Compared against the captured unknown-id response, not a string literal: the invariant
+    // is "indistinguishable", not "equals this particular German sentence" (T-100-09).
+    expect(res.statusCode).toBe(notFound.statusCode);
+    expect(res.body).toBe(notFound.body);
 
     const victimAfter = await app.prisma.employee.findUnique({
       where: { id: tenantB.employee.id },
@@ -71,6 +90,59 @@ describe("POST /api/v1/avatars/:employeeId — tenant isolation (sec-08)", () =>
     expect(victimAfter?.avatarPath).toBeNull();
   });
 
+  // Case B (AC-3), both directions in one case, mirroring sec-09's audit test.
+  it("CROSS_TENANT_ACCESS_DENIED is audited for a real foreign employee, and NOT for an unknown id", async () => {
+    const { body, contentType } = buildMultipartBody("avatar.jpg", "image/jpeg", JPEG_BYTES);
+
+    await app.inject({
+      method: "POST",
+      url: `/api/v1/avatars/${tenantB.employee.id}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}`, "content-type": contentType },
+      payload: body,
+    });
+
+    const auditForRealEmployee = await app.prisma.auditLog.findFirst({
+      where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: tenantB.employee.id },
+    });
+    expect(auditForRealEmployee).not.toBeNull();
+
+    const unknownId = "00000000-0000-0000-0000-000000000002";
+    await app.inject({
+      method: "POST",
+      url: `/api/v1/avatars/${unknownId}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}`, "content-type": contentType },
+      payload: body,
+    });
+
+    const auditForUnknownId = await app.prisma.auditLog.findFirst({
+      where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: unknownId },
+    });
+    expect(auditForUnknownId).toBeNull();
+  });
+
+  // Case C (NEW, POST-specific): the same equality as case A but with NO payload and NO
+  // content-type header on either arm. Proves the guard returns before `await req.file()`
+  // (avatars.ts:36) is ever reached — a bodyless probe must get the 404, not a 400 "no file
+  // uploaded". Plan 259-02's checker sends exactly this shape; without this case, that
+  // checker's green on this route would be unproven.
+  it("tenantA ADMIN probing tenantB's employee with NO body and NO content-type → still the byte-identical 404 (T-100-09, guard runs before req.file())", async () => {
+    const notFound = await app.inject({
+      method: "POST",
+      url: "/api/v1/avatars/00000000-0000-0000-0000-000000000000",
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/avatars/${tenantB.employee.id}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+
+    expect(res.statusCode).toBe(notFound.statusCode);
+    expect(res.body).toBe(notFound.body);
+  });
+
+  // Case D (kept, no regression): tenantB's OWN admin can still upload.
   it("the same upload by tenantB's OWN ADMIN still succeeds exactly as before (no regression)", async () => {
     const { body, contentType } = buildMultipartBody("avatar.jpg", "image/jpeg", JPEG_BYTES);
 
@@ -88,6 +160,7 @@ describe("POST /api/v1/avatars/:employeeId — tenant isolation (sec-08)", () =>
     expect(victimAfter?.avatarPath).not.toBeNull();
   });
 
+  // Case E (kept, no regression): self-upload still succeeds.
   it("self-upload by the employee themselves still succeeds exactly as before (no regression)", async () => {
     const { body, contentType } = buildMultipartBody("avatar.jpg", "image/jpeg", JPEG_BYTES);
 
