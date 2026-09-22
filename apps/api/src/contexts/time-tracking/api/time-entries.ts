@@ -578,8 +578,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // dashboard's existing catch/toasts.error path without a new display mechanism, and keeps
       // the route internally consistent (one non-success shape, not two).
       //
-      // Since Phase 307 Plan 01 set `interactive: true` unconditionally on THIS route's
-      // ClockEvent, the resolver's debounce guard is permanently short-circuited here — this
+      // Since Phase 307 Plan 01 set this route's ClockEvent.interactive field to true
+      // unconditionally, the resolver's debounce guard is permanently short-circuited here — this
       // branch is defensive/unreachable from an HTTP call to `/:id/clock-out`, the same category
       // as the 500 guard immediately below for CLOCKED_IN/CONFIRMED. It exists for a future
       // adapter change that might send a non-interactive event through this route; D-04 (the
