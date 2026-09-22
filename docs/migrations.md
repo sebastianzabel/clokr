@@ -232,6 +232,45 @@ DATABASE_URL=... pnpm --filter @clokr/api exec tsx scripts/backfill-leave-type-c
 DATABASE_URL=... pnpm --filter @clokr/api exec tsx scripts/backfill-leave-type-code.ts --all-tenants --apply
 ```
 
+**Diese Form gilt für dev und int, NICHT für prod.** Sie setzt einen Repo-Checkout mit `pnpm`
+UND eine von aussen erreichbare Datenbank voraus. Auf prod ist der Postgres-Port im
+Compose-Netz sichtbar, aber nicht auf den Host veröffentlicht — am 2026-09-22 gemessen:
+
+```
+docker inspect clokr-db --format '{{json .NetworkSettings.Ports}}'  ->  {"5432/tcp":null}
+```
+
+Kein `DATABASE_URL` von aussen erreicht sie also. Auf prod läuft der Sweep **im API-Container**.
+Dort gibt es weder `pnpm` noch `npx`, wohl aber den TypeScript-Runner und das Skript selbst:
+
+```bash
+ssh <prod-host> 'docker exec clokr-api sh -lc \
+  "cd /app && ./node_modules/.bin/tsx apps/api/scripts/backfill-leave-type-code.ts --all-tenants"'
+```
+
+Ausgabe des Laufs vom 2026-09-22 (prod, gegen v1.11.0, Dry-Run):
+
+```json
+{
+  "dryRun": true,
+  "tenantsScanned": 1,
+  "rowsScanned": 5,
+  "planned": [],
+  "applied": 0,
+  "unmapped": [],
+  "conflicts": []
+}
+```
+
+**Ist `planned` leer, wird `--apply` NICHT gefahren** — es gäbe nichts anzuwenden, und ein
+Leerlauf ist kein zusätzlicher Beleg. Der Nachweis ist dann Schritt 4, nicht ein zweiter Aufruf.
+
+Nebenbei, weil es die Erwartung an diesen Schritt verschiebt: prod läuft als
+Docker-Compose-Recreate, nicht als Rolling Deploy. Das Fenster, in dem das ALTE Image über
+`ensureLeaveType()` eine Zeile ohne Code anlegen könnte, existiert dort praktisch nicht — auf
+int (ArgoCD, echtes Rolling Deploy) sehr wohl. Der Schritt entfällt deshalb nirgends; er ist auf
+prod nur erwartbar ein No-op, und genau das ist oben gemessen statt zugesichert.
+
 **4. Verifikation — nachmessen, nicht zusichern (Lehre aus Phase 96 WR-02):**
 
 ```sql
