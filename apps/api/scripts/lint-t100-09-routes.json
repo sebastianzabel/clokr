@@ -349,12 +349,17 @@
     {
       "route": "PATCH /api/v1/leave/requests/:id",
       "file": "apps/api/src/contexts/absence/api/leave.ts",
-      "category": "bekannt-abweichend",
-      "params": null,
-      "minimalBody": null,
-      "reason": "MEASURED NON-CONFORMANT (filed as Issue #309, not fixed — D-06). leave.ts:1630-1636 loads the LeaveRequest via `findFirst({where:{id, deletedAt:null}})` with NO tenantId filter, then only compares `existing.employeeId !== req.user.employeeId` (ownership, not tenant). Unknown id → 404 \"Antrag nicht gefunden\"; a REAL id in a FOREIGN tenant → 403 \"Forbidden\" — distinguishable, a genuine cross-tenant existence oracle.",
-      "ticket": 309,
-      "validatedAt": "2026-09-22"
+      "category": "probe",
+      "params": {
+        "id": "leaveRequest"
+      },
+      "minimalBody": {
+        "startDate": "2026-01-05",
+        "endDate": "2026-01-05"
+      },
+      "reason": "FIXED (Issue #309): tenant guard now runs BEFORE the ownership check in the PATCH /requests/:id handler, fetching employee.tenantId via include and returning the identical 404 {\"error\":\"Antrag nicht gefunden\"} for both a foreign-tenant real id and an unknown id, with a CROSS_TENANT_ACCESS_DENIED audit nested so it fires only when the row exists. minimalBody is required because updateSchema.parse(req.body) runs before the findFirst, a bodyless probe would 400 on both arms (D-07).",
+      "ticket": null,
+      "validatedAt": null
     },
     {
       "route": "POST /api/v1/time-entries/:id/breaks",
