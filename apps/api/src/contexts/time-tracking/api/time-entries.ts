@@ -731,11 +731,26 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         where: { id, deletedAt: null },
         include: { employee: { select: { tenantId: true } } },
       });
-      if (!entry) return reply.code(404).send({ error: "Eintrag nicht gefunden" });
-
-      // Multi-tenancy: cross-tenant access is not allowed.
-      if (entry.employee.tenantId !== user.tenantId) {
-        return reply.code(403).send({ error: "Kein Zugriff" });
+      // T-100-09 cross-tenant existence oracle (Issue #310): folded into one condition so an
+      // unknown id and a real id in a foreign tenant answer with the identical 404 — the previous
+      // two-branch shape (404 for unknown, 403 "Kein Zugriff" for foreign-tenant) let any
+      // authenticated user of any tenant probe whether an arbitrary id exists anywhere. The audit
+      // is nested so it fires ONLY when the row exists: an unknown id must write no AuditLog row,
+      // or the row count itself would reopen the oracle this guard just closed. This is a write
+      // route, and #310 names the missing audit as part of the finding — sibling `/break-status`
+      // already audits this same defect class, `PUT /:id` does not (mixed precedent in this file);
+      // structure copied from `avatars.ts`'s folded-condition + nested-audit pattern.
+      if (!entry || entry.employee.tenantId !== user.tenantId) {
+        if (entry) {
+          await app.audit({
+            userId: user.sub,
+            action: "CROSS_TENANT_ACCESS_DENIED",
+            entity: "TimeEntry",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+        }
+        return reply.code(404).send({ error: "Eintrag nicht gefunden" });
       }
 
       // Only the entry's owner or a manager/admin may append breaks.

@@ -364,12 +364,17 @@
     {
       "route": "POST /api/v1/time-entries/:id/breaks",
       "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
-      "category": "bekannt-abweichend",
-      "params": null,
-      "minimalBody": null,
-      "reason": "MEASURED NON-CONFORMANT (filed as Issue #310, not fixed — D-06). time-entries.ts:688-697 returns `{error:\"Eintrag nicht gefunden\"}` 404 for an unknown id (line 692) but `{error:\"Kein Zugriff\"}` 403 for a real TimeEntry in a FOREIGN tenant (line 696) — distinguishable status codes and bodies, no CROSS_TENANT_ACCESS_DENIED audit call either, unlike every sibling route in this same file.",
-      "ticket": 310,
-      "validatedAt": "2026-09-22"
+      "category": "probe",
+      "params": {
+        "id": "timeEntry"
+      },
+      "minimalBody": {
+        "startTime": "2026-01-05T09:00:00.000Z",
+        "endTime": "2026-01-05T09:30:00.000Z"
+      },
+      "reason": "FIXED (Issue #310): the separate not-found (404) and cross-tenant (403 \"Kein Zugriff\") branches in POST /:id/breaks are folded into one condition, both arms now answering the identical 404 {\"error\":\"Eintrag nicht gefunden\"}, with a new CROSS_TENANT_ACCESS_DENIED audit nested so it fires only when the row exists (this route previously had NO audit call at all, unlike sibling PATCH /:id/break-status). minimalBody is required because appendBreakSchema.parse(req.body) runs before the findFirst, a bodyless probe would 400 on both arms (D-07).",
+      "ticket": null,
+      "validatedAt": null
     },
     {
       "route": "DELETE /api/v1/admin/presence-sources/:id",
