@@ -792,7 +792,7 @@ piece of work should come from.** Short version:
   alongside. Chores do not count.
 - **`Ready` is a contract, not a mood:** acceptance criteria complete, Iteration
   + Milestone set. **Do not start a phase from an issue that is not Ready** — the acceptance
-  criteria are the input to `/gsd:discuss-phase`.
+  criteria are the input to `/gsd-discuss-phase`.
 - `main` is the only line. The 1.9.x patch line is retired; there are no release branches.
 
 `.planning/` is gitignored, so an issue can never link to a planning artifact. The commit
@@ -804,11 +804,20 @@ Before using Edit, Write, or other file-changing tools, start work through a GSD
 
 Use these entry points:
 
-- `/gsd:quick` for small fixes, doc updates, and ad-hoc tasks
-- `/gsd:debug` for investigation and bug fixing
-- `/gsd:execute-phase` for planned phase work
+- `/gsd-quick` for small fixes, doc updates, and ad-hoc tasks
+- `/gsd-debug` for investigation and bug fixing
+- `/gsd-execute-phase` for planned phase work
 
 Do not make direct repo edits outside a GSD workflow unless the user explicitly asks to bypass it.
+
+**The commands are `/gsd-<name>`, never `/gsd:<name>`.** Those are two different products. GSD's
+development moved to `open-gsd/gsd-core` (npm `@opengsd/gsd-core`) in May 2026 over trust and
+ownership concerns about the former upstream; the predecessor `get-shit-done-cc` is frozen at
+1.42.3 (last published 2026-05-23) and is not to be installed. A stale local copy of it lived in
+this repo's gitignored `.claude/` until 2026-09-22 and shadowed every command with a colon-named
+twin — running `/gsd:update` would have reinstalled the abandoned package. It is gone; only the
+global gsd-core install remains. If a colon-named command reappears, something reinstalled the
+wrong package.
 
 ## Worktree Merge Safety
 
@@ -829,7 +838,7 @@ When GSD executor worktrees merge back into the main branch, **the merge can sil
 
 ## Developer Profile
 
-> Profile not yet configured. Run `/gsd:profile-user` to generate your developer profile.
+> Profile not yet configured. Run `/gsd-profile-user` to generate your developer profile.
 > This section is managed by `generate-claude-profile` -- do not edit manually.
 
 <!-- GSD:profile-end -->
