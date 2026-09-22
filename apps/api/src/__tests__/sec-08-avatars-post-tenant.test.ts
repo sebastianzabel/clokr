@@ -1,9 +1,9 @@
 /**
  * fix(sec-08): POST /api/v1/avatars/:employeeId compared its two rejection branches for
  * ADMIN/MANAGER callers and found them distinguishable — a foreign tenant's real employee
- * id got 403 "Keine Berechtigung", an id that exists nowhere got 404 "Mitarbeiter nicht
- * gefunden". That difference IS a tenant-membership oracle (Issue #259, T-100-09) — GET
- * and DELETE of the same file were already fixed in Phase 258, POST was left behind on
+ * id got a 403 permission error, an id that exists nowhere got a differently worded 404
+ * not-found error. That difference IS a tenant-membership oracle (Issue #259, T-100-09) —
+ * GET and DELETE of the same file were already fixed in Phase 258, POST was left behind on
  * purpose and reported. Rewritten here the way `sec-09-avatars-delete-tenant.test.ts` was
  * rewritten for DELETE: byte-identical 404 for both arms, audited only when the probed
  * employee genuinely exists in a foreign tenant.
