@@ -60,6 +60,74 @@ function tenantAuthHeaders(tenant: TestTenant): Record<string, string> {
   };
 }
 
+/**
+ * Pick a future weekday that is guaranteed to stay inside the CURRENT calendar year.
+ *
+ * Why the year matters: both `/leave` and `/team/leave` load their rows year-scoped
+ * (`/leave/requests?year=${calYear}`, and `calYear` is initialised from
+ * `now.getFullYear()`). A leave request dated in the NEXT year is created
+ * successfully — the API is perfectly happy with it — but the list never loads it,
+ * so no row testid ever appears and the assertion fails on a locator rather than on
+ * the behaviour under test. A plain `today + N days` therefore turns red for every
+ * run in the last N days of the year. Measured: the +100 variant went red on
+ * 2026-09-23 and would have stayed red until 2027-01-01 (GitHub issue #319).
+ *
+ * The time-of-day is pinned to local noon before formatting because
+ * `toISOString().slice(0, 10)` cuts in UTC: without it, a morning run in a timezone
+ * east of UTC yields the previous calendar day (the midnight-straddle class from
+ * issue #34).
+ *
+ * Fails loudly rather than silently returning a past date: clamping to 31 December
+ * and walking back to a weekday can land on or before today when the run itself
+ * happens in the last days of the year. A test asserting on a date in the past would
+ * still "pass" while proving nothing, which is precisely the failure mode this
+ * project keeps paying for.
+ */
+function futureWeekdayInCurrentYear(preferredOffsetDays: number): string {
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  const year = today.getFullYear();
+
+  const target = new Date(today);
+  target.setDate(target.getDate() + preferredOffsetDays);
+
+  // Inside the year: walk FORWARD, the direction that keeps the date future.
+  if (target.getFullYear() === year) {
+    while (target.getDay() === 0 || target.getDay() === 6) {
+      target.setDate(target.getDate() + 1);
+    }
+  }
+
+  // Re-checked, NOT an `else`: the forward weekend walk above can itself cross
+  // into the next year when the offset lands on a Saturday in late December
+  // (measured: 2028-09-21 + 100 days = Sat 2028-12-30, forward-walked to
+  // 2029-01-01). Testing the year only once would leave exactly that case broken.
+  if (target.getFullYear() !== year) {
+    // Clamp into the current year, then walk BACK to the nearest weekday.
+    // setFullYear, not setMonth: `target` has already rolled into the NEXT year
+    // here, so setting only month+day would land on 31 December of THAT year and
+    // reproduce the very bug this helper exists to prevent.
+    target.setFullYear(year, 11, 31);
+    while (target.getDay() === 0 || target.getDay() === 6) {
+      target.setDate(target.getDate() - 1);
+    }
+  }
+
+  if (target.getTime() <= today.getTime()) {
+    const daysLeft = Math.round(
+      (new Date(year, 11, 31, 12).getTime() - today.getTime()) / 86_400_000,
+    );
+    throw new Error(
+      `futureWeekdayInCurrentYear(${preferredOffsetDays}) could not find a future weekday ` +
+        `inside ${year}: best candidate ${target.toISOString().slice(0, 10)} is not after ` +
+        `today ${today.toISOString().slice(0, 10)} (${daysLeft} day(s) left in the year). ` +
+        `The year-scoped list cannot render a next-year row — see GitHub issue #319.`,
+    );
+  }
+
+  return target.toISOString().slice(0, 10);
+}
+
 test.describe("Leave (Urlaub) UI flow", () => {
   test("page renders the documented testid surface (D-05)", async ({ page, tenant }) => {
     await loginAsTenantAdmin(page, tenant);
@@ -112,12 +180,10 @@ test.describe("Leave (Urlaub) UI flow", () => {
     const form = page.getByTestId("leave-form");
     await expect(form).toBeVisible();
 
-    // SICK avoids the vacation-entitlement guard. Date 90 days out + tenant
-    // isolation prevents collisions across test runs.
-    const future = new Date();
-    future.setDate(future.getDate() + 90);
-    while (future.getDay() === 0 || future.getDay() === 6) future.setDate(future.getDate() + 1);
-    const dateStr = future.toISOString().slice(0, 10);
+    // SICK avoids the vacation-entitlement guard. A date ~90 days out + tenant
+    // isolation prevents collisions across test runs; the helper keeps it inside
+    // the current year, which the year-scoped list requires (issue #319).
+    const dateStr = futureWeekdayInCurrentYear(90);
 
     await form.getByTestId("leave-form-type").selectOption("SICK");
     await form.getByTestId("leave-form-from").fill(dateStr);
@@ -155,17 +221,13 @@ test.describe("Leave (Urlaub) UI flow", () => {
     await expect(page.getByTestId(`leave-mine-row-${created!.id}-status-badge`)).toBeVisible();
   });
 
-  test("manager review modal exposes leave-approval-modal-* testids", async ({
-    page,
-    tenant,
-  }) => {
+  test("manager review modal exposes leave-approval-modal-* testids", async ({ page, tenant }) => {
     // Seed a SICK leave for the bootstrap admin's employee via the API so the
     // /team/leave Genehmigungen tab has something to render. Using SICK over
     // VACATION sidesteps the vacation-entitlement guard on bare-bones tenants.
-    const future = new Date();
-    future.setDate(future.getDate() + 100);
-    while (future.getDay() === 0 || future.getDay() === 6) future.setDate(future.getDate() + 1);
-    const dateStr = future.toISOString().slice(0, 10);
+    // Kept inside the current year — /team/leave loads its rows year-scoped, so a
+    // next-year request is created but never rendered (issue #319).
+    const dateStr = futureWeekdayInCurrentYear(100);
 
     // Create a second employee in the tenant so the admin (manager) is not
     // looking at their OWN request — `/team/leave` blocks self-approval and
