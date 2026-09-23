@@ -186,3 +186,94 @@ describe("real-file classification (not a fixture stand-in)", () => {
     },
   );
 });
+
+// ── Issue #263: the bound rule widens from "literal zero" to "excludes zero" ────────────────────
+//
+// One row per boundary named in 263-01-PLAN.md's own table. Every row shares the same walk
+// (`readdirSync` into `files`), so the ONLY variable is the matcher/bound under test -- the table
+// IS the specification for `boundExcludesEmpty`, not an incidental byproduct of testing it.
+
+function boundaryTableSource(assertLine: string, extraDecl = ""): string {
+  return `
+    import { readdirSync } from "node:fs";
+    const MIN = 0;
+    function scan(dir) {
+      const files = readdirSync(dir);
+      ${extraDecl}
+      ${assertLine}
+    }
+  `;
+}
+
+interface BoundaryRow {
+  name: string;
+  source: string;
+  expected: InputProofKind;
+}
+
+const BOUNDARY_MATRIX: BoundaryRow[] = [
+  {
+    name: "toBeGreaterThan(0) — the shape accepted today, must not regress",
+    source: boundaryTableSource("expect(files.length).toBeGreaterThan(0);"),
+    expected: "length",
+  },
+  {
+    name: "toBeGreaterThan(50) — AC-1: stronger than > 0, was rejected before this plan",
+    source: boundaryTableSource("expect(files.length).toBeGreaterThan(50);"),
+    expected: "length",
+  },
+  {
+    name: "toBeGreaterThanOrEqual(1) — AC-2: excludes 0",
+    source: boundaryTableSource("expect(files.length).toBeGreaterThanOrEqual(1);"),
+    expected: "length",
+  },
+  {
+    name: "toBeGreaterThanOrEqual(0) — AC-2: holds for EVERY length, proves nothing",
+    source: boundaryTableSource("expect(files.length).toBeGreaterThanOrEqual(0);"),
+    expected: "none",
+  },
+  {
+    name: "toBeGreaterThan(-1) — AC-3: length 0 satisfies it",
+    source: boundaryTableSource("expect(files.length).toBeGreaterThan(-1);"),
+    expected: "none",
+  },
+  {
+    name: "toBeGreaterThan(MIN) — AC-3: bound not statically known",
+    source: boundaryTableSource("expect(files.length).toBeGreaterThan(MIN);"),
+    expected: "none",
+  },
+  {
+    name: "toBeGreaterThan(1 - 1) — AC-3: expression, not a literal",
+    source: boundaryTableSource("expect(files.length).toBeGreaterThan(1 - 1);"),
+    expected: "none",
+  },
+  {
+    name: "not.toBeGreaterThan(0) — negation must stay rejected",
+    source: boundaryTableSource("expect(files.length).not.toBeGreaterThan(0);"),
+    expected: "none",
+  },
+  {
+    name: ".size with toBeGreaterThanOrEqual(24) — the real notification-email-policy.test.ts shape",
+    source: boundaryTableSource(
+      "expect(found.size).toBeGreaterThanOrEqual(24);",
+      "const found = new Set(files);",
+    ),
+    expected: "length",
+  },
+];
+
+describe.each(BOUNDARY_MATRIX)("boundExcludesEmpty ($name)", ({ source, expected }) => {
+  it(`classifies as inputProof "${expected}"`, () => {
+    const result = classifyGuardFile("boundary-table.ts", source);
+    expect(result.inputProof).toBe(expected);
+  });
+});
+
+describe("BOUNDARY_MATRIX completeness (D-07: red proof over the WHOLE table, both directions)", () => {
+  it("is non-empty and contains at least one row of each expected verdict", () => {
+    expect(BOUNDARY_MATRIX.length, "BOUNDARY_MATRIX is empty").toBeGreaterThan(0);
+    const verdicts = new Set(BOUNDARY_MATRIX.map((r) => r.expected));
+    expect(verdicts.has("length"), "BOUNDARY_MATRIX lost all its 'length' rows").toBe(true);
+    expect(verdicts.has("none"), "BOUNDARY_MATRIX lost all its 'none' rows").toBe(true);
+  });
+});

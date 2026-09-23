@@ -628,6 +628,25 @@ function isZeroNumericLiteral(expr: ts.Expression): boolean {
   return ts.isNumericLiteral(expr) && expr.text === "0";
 }
 
+/** Issue #263: the signed numeric value of a literal bound, or `null` if `expr` is not a numeric
+ * literal (a variable, a binary expression, anything else). Underscore separators are stripped
+ * defensively so a bound written `20_000` is read as a number, not silently dropped by
+ * `Number(...)`. Mirrors the `PrefixUnaryExpression` shape `isNonZeroNumericLiteral` already
+ * uses, so `-1` resolves to `-1`, not `null`. */
+function numericLiteralValue(expr: ts.Expression): number | null {
+  if (ts.isNumericLiteral(expr)) {
+    const value = Number(expr.text.replace(/_/g, ""));
+    return Number.isFinite(value) ? value : null;
+  }
+  if (ts.isPrefixUnaryExpression(expr) && ts.isNumericLiteral(expr.operand)) {
+    const value = Number(expr.operand.text.replace(/_/g, ""));
+    if (!Number.isFinite(value)) return null;
+    if (expr.operator === ts.SyntaxKind.MinusToken) return -value;
+    if (expr.operator === ts.SyntaxKind.PlusToken) return value;
+  }
+  return null;
+}
+
 function findAssertSites(sourceFile: ts.SourceFile): AssertSiteInternal[] {
   const sites: AssertSiteInternal[] = [];
 
@@ -732,6 +751,19 @@ interface ProofSite {
   subject: string;
 }
 
+/** Issue #263: a bound proves the walked set non-empty exactly when it EXCLUDES the value 0 —
+ * never merely because the number is non-negative. `toBeGreaterThanOrEqual(0)` is rejected
+ * because it holds for length 0 itself (a tautology over any length); `toBeGreaterThan(-1)` is
+ * rejected for the same reason (length 0 satisfies `0 > -1`). A non-literal bound (`numericLiteralValue`
+ * returns `null`) or any matcher other than these two is never a proof. */
+function boundExcludesEmpty(method: string, arg0: ts.Expression): boolean {
+  const value = numericLiteralValue(arg0);
+  if (value === null) return false;
+  if (method === "toBeGreaterThan") return value >= 0;
+  if (method === "toBeGreaterThanOrEqual") return value > 0;
+  return false;
+}
+
 /** The `"length"` shape: `expect(x.length).toBeGreaterThan(0)`, `expect(x).not.toHaveLength(0)`,
  * `expect(x.size).toBeGreaterThan(0)`, `expect(x.length).not.toBe(0)` — subject always a
  * walk-derived binding. */
@@ -752,7 +784,7 @@ function matchLengthProof(
     if (!arg0) continue;
 
     const lengthSubject = walkDerivedLengthSubject(subjectExpr, derived);
-    if (lengthSubject && !hasNot && method === "toBeGreaterThan" && isZeroNumericLiteral(arg0)) {
+    if (lengthSubject && !hasNot && boundExcludesEmpty(method, arg0)) {
       hits.push({ line: lineOf(sourceFile, node), subject: lengthSubject.name });
       continue;
     }

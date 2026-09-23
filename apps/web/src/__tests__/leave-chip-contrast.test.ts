@@ -166,11 +166,8 @@ describe("leave-chip-contrast — WCAG AA for every --leave-type-* fill/text pai
     }
     walk(srcRoot);
 
-    // Anti-vacuity: a walk that found nothing must fail, not pass silently. The plain
-    // `> 0` form is the shape apps/api/scripts/lint-guard-vacuity.ts recognises as a proof
-    // that the walked (input) set is non-empty; the `> 50` assertion below is the stronger,
-    // substantive floor this plan actually wants.
-    expect(files.length).toBeGreaterThan(0);
+    // Anti-vacuity: a walk that found nothing must fail, not pass silently — this assertion
+    // is itself the non-emptiness proof for the walked (input) set.
     expect(files.length).toBeGreaterThan(50);
 
     const offenders = files.filter((f) => {
