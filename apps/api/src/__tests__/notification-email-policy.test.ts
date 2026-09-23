@@ -86,15 +86,10 @@ describe("NOTIFICATION_EMAIL_POLICY exhaustiveness (quick-260825-k3g)", () => {
     // Without this floor, a scanner broken by a future refactor would find nothing and
     // the exhaustiveness assertions below would pass vacuously — strictly worse than no
     // test at all.
-    // 235-BEFUND-B.md #3: a companion, machine-recognised non-emptiness proof — see
-    // lint-guard-vacuity-detect.ts's matchLengthProof, which only recognises `toBeGreaterThan(0)`,
-    // not `toBeGreaterThanOrEqual(24)`. Added alongside, not replacing: 24 is the stronger,
-    // deliberately chosen invariant and stays.
     expect(
       found.size,
       "no notify() call site scanned under apps/api/src — the source tree moved or emptied",
-    ).toBeGreaterThan(0);
-    expect(found.size).toBeGreaterThanOrEqual(24);
+    ).toBeGreaterThanOrEqual(24);
   });
 
   it("correctly splits the leave.ts ternary into both branches, not the status operand", () => {
