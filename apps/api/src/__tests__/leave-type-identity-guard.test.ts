@@ -205,15 +205,10 @@ function isAllowed(hit: LiteralHit): boolean {
 describe("Phase 97 (T2) — leave-type identity guard", () => {
   it("sanity: the file collector actually walks all three scan roots (a silently-empty scan would pass forever)", () => {
     const files = collectFiles();
-    // 235-BEFUND-B.md #2: a companion, machine-recognised non-emptiness proof — see
-    // lint-guard-vacuity-detect.ts's matchLengthProof, which only recognises `toBeGreaterThan(0)`,
-    // not the pre-existing `toBeGreaterThan(200)` below. Added alongside, not replacing: 200 is a
-    // stronger, deliberately chosen invariant and stays.
     expect(
       files.length,
       "no file scanned under apps/api/src, apps/web/src or apps/api/scripts — one of the three roots moved or emptied",
-    ).toBeGreaterThan(0);
-    expect(files.length).toBeGreaterThan(200);
+    ).toBeGreaterThan(200);
     expect(files.some((f) => repoRel(f).startsWith("apps/api/scripts/"))).toBe(true);
     expect(files.some((f) => repoRel(f).startsWith("apps/web/src/"))).toBe(true);
     expect(files.every((f) => !repoRel(f).includes("/__tests__/"))).toBe(true);
