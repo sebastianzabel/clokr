@@ -1,9 +1,12 @@
 /**
  * leave-overtime-comp-shift-based.test.ts
  *
- * Phase 100 (OTC-04, Task 2) — end-to-end pin that a SHIFT_BASED OVERTIME_COMP request costs
- * the ROSTERED netto hours (Shift table), not the WorkSchedule per-day Soll fields, across the
- * gate (POST /leave/requests) and the preview (GET /leave/hours-preview) — the same function,
+ * Originally Phase 100 (OTC-04, Task 2): end-to-end pin that a SHIFT_BASED OVERTIME_COMP
+ * request costs the ROSTERED netto hours (Shift table), not the WorkSchedule per-day Soll
+ * fields. Superseded by the owner's 2026-09-23 decision on issue #293: the day now costs the
+ * Ø-Methode day (the same figure the saldo itself uses to credit it), and the roster is no
+ * longer read at all. This file now pins THAT invariant across the gate (POST
+ * /leave/requests) and the preview (GET /leave/hours-preview) — the same function,
  * `getScheduledHours`, backs both.
  *
  * This file owns its own tenant + two-employee fixture (SHIFT_BASED + FIXED_SCHEDULE, same
@@ -65,10 +68,14 @@ function addDaysIso(iso: string, days: number): string {
 // Four widely-spaced anchors on the SAME employee's timeline — 28 days apart so no realistic
 // holiday-skip can make any two collide; the beforeAll invariant below re-verifies this rather
 // than trusting it silently.
-const MONDAY_1 = nextNonHolidayMonday(14); // single rostered shift 09:00-15:00 -> 6.00h (flagship)
-const MONDAY_2 = nextNonHolidayMonday(42); // shift created THEN soft-deleted -> 0h (D-06)
-const MONDAY_3 = nextNonHolidayMonday(70); // no shift at all -> 0h (D-08)
-const RANGE_4_MON = nextNonHolidayMonday(98); // two shifts Mon+Tue -> 13.50h (D-05); halfDay -> 3.00h (D-07)
+//
+// The fixture's Ø-Methode day (#293): weeklyHours 40 / workDays.length 5 (schema default
+// [1,2,3,4,5], never overridden below) = 480min = 8.00h per contracted weekday. Every expected
+// number from here on is derived from that one fact, not hardcoded independently of it.
+const MONDAY_1 = nextNonHolidayMonday(14); // single rostered shift 09:00-15:00 -> 8.00h (flagship, roster now irrelevant)
+const MONDAY_2 = nextNonHolidayMonday(42); // shift created THEN soft-deleted -> still 8.00h (D-06 reversed: roster is not read)
+const MONDAY_3 = nextNonHolidayMonday(70); // no shift at all -> still 8.00h (D-08 reversed: an empty roster is no longer free)
+const RANGE_4_MON = nextNonHolidayMonday(98); // two contracted weekdays Mon+Tue -> 16.00h (2 x Ø-Methode day); halfDay -> 8.00h
 const RANGE_4_TUE = addDaysIso(RANGE_4_MON, 1);
 // WR-02 (code review, 2026-08-21): SAME-DAY split shift, inserted LATE-time-first /
 // EARLY-time-second — the reverse of `startTime asc` order — so a correct pick can only come
@@ -83,7 +90,7 @@ const STALE_BALANCE_HOURS = 999;
 // always in the past (never expires), carries no literal calendar-year string.
 const PAST_ANCHOR = new Date(Date.UTC(new Date().getUTCFullYear() - 2, 0, 1));
 
-describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getScheduledHours (Phase 100 / OTC-04)", () => {
+describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getScheduledHours (issue #293)", () => {
   let app: FastifyInstance;
   let tenantId: string;
   let shiftEmpToken: string;
@@ -96,7 +103,7 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
     const prisma = app.prisma;
 
     // Self-verifying invariant: the four anchors must be strictly increasing, or a downstream
-    // range collision would silently corrupt the D-05/D-06/D-08 assertions below.
+    // range collision would silently corrupt the assertions below.
     const anchors = [MONDAY_1, MONDAY_2, MONDAY_3, RANGE_4_MON, SPLIT_SHIFT_DAY];
     for (let i = 1; i < anchors.length; i++) {
       if (anchors[i] <= anchors[i - 1]) {
@@ -137,8 +144,10 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
       },
     });
 
-    // mondayHours deliberately 8 — the divergence between this and the rostered 6h IS the
-    // OTC-04 assertion. SHIFT_BASED ignores every per-Tag-Soll field on this row.
+    // mondayHours deliberately 8 (SHIFT_BASED ignores every per-Tag-Soll field — it happens to
+    // equal the Ø-Methode day for this fixture, but that is coincidence, not the source of the
+    // 8.00h the assertions below check). workDays is left at the schema default [1,2,3,4,5], so
+    // the Ø-Methode day = weeklyHours 40 / workDays.length 5 = 8.00h for any Mon-Fri day (#293).
     await prisma.workSchedule.create({
       data: {
         employeeId: shiftEmp.id,
@@ -170,7 +179,8 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
       data: { employeeId: shiftEmp.id, balanceHours: STALE_BALANCE_HOURS },
     });
 
-    // MONDAY_1: one rostered shift, 09:00-15:00 (360 brutto, exactly 6h -> break 0 -> 6.00h netto).
+    // MONDAY_1: one rostered shift, 09:00-15:00 (6.00h netto). Kept deliberately DIFFERENT from
+    // the 8.00h Ø-Methode day this now costs (#293) — the gap proves the roster is not read.
     await prisma.shift.create({
       data: {
         employeeId: shiftEmp.id,
@@ -180,7 +190,8 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
       },
     });
 
-    // MONDAY_2: a shift exists but is soft-deleted — must contribute 0 (D-06).
+    // MONDAY_2: a shift exists but is soft-deleted — must NOT change the cost (D-06, now
+    // trivially true because the branch never reads the Shift table any more).
     const m2Shift = await prisma.shift.create({
       data: {
         employeeId: shiftEmp.id,
@@ -195,11 +206,14 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
       data: { deletedAt: new Date(), deletedReason: "TEST_SOFT_DELETE" },
     });
 
-    // MONDAY_3: deliberately NO shift created — D-08.
+    // MONDAY_3: deliberately NO shift created — D-08's "empty roster costs nothing" is REVERSED
+    // by #293: the day still costs the Ø-Methode day.
 
-    // RANGE_4: two shifts across Mon+Tue — Mon 09:00-15:00 (360 brutto -> 6.00h) + Tue
-    // 06:00-14:00 (480 brutto, over 6h -> break 30 -> 7.50h) = 13.50h; halfDay uses the FIRST
-    // (Monday's, orderBy date asc) shift's netto halved = 3.00h.
+    // RANGE_4: two shifts across Mon+Tue, deliberately at netto values that do NOT sum to the
+    // 16.00h (2 x Ø-Methode day) the range now costs — Mon 09:00-15:00 (6.00h netto) + Tue
+    // 06:00-14:00 (7.50h netto) = 13.50h roster sum, proving the range total is no longer the
+    // roster's. halfDay uses calcLeaveAbsenceMinutesTz's own halfDay option on the whole range,
+    // not "the first shift" — 8.00h (half of 16.00h).
     await prisma.shift.create({
       data: {
         employeeId: shiftEmp.id,
@@ -217,12 +231,11 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
       },
     });
 
-    // SPLIT_SHIFT_DAY (WR-02): two shifts on the SAME calendar day, inserted with the LATE-time
-    // shift FIRST and the EARLY-time shift SECOND — deliberately the reverse of `startTime asc` —
-    // so the "first rostered shift" test below can only pass if the query's ORDER BY (not
-    // insertion order) determines the pick. LATE: 14:00-21:00 = 420min brutto, >6h -> 30min break
-    // -> 390min (6.50h) netto. EARLY: 06:00-10:00 = 240min brutto, <=6h -> no break -> 240min
-    // (4.00h) netto. The two netto values are deliberately far apart so a wrong pick is unmissable.
+    // SPLIT_SHIFT_DAY (WR-02, now superseded): two shifts on the SAME calendar day, inserted
+    // with the LATE-time shift FIRST and the EARLY-time shift SECOND — deliberately the reverse
+    // of `startTime asc`. The determinism property WR-02 fixed is superseded by a STRONGER one
+    // (#293): the roster is not read at all, so insertion order cannot matter regardless of
+    // which shift a query might have picked.
     await prisma.shift.create({
       data: {
         employeeId: shiftEmp.id,
@@ -333,7 +346,7 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
     });
   }
 
-  it("flagship (D-05): one rostered 09:00-15:00 shift costs 6.00h on the gate, not the WorkSchedule's mondayHours=8 — proven via a deliberately-too-large request against a temporarily zeroed confirmed balance", async () => {
+  it("flagship (#293): one rostered 09:00-15:00 shift costs the 8.00h Ø-Methode day on the gate, NOT the roster's 6.00h — proven via a deliberately-too-large request against a temporarily zeroed confirmed balance", async () => {
     await app.prisma.saldoSnapshot.update({
       where: { id: shiftSnapshotId },
       data: { carryOver: 0 },
@@ -342,7 +355,7 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
       const res = await postOvertimeComp(shiftEmpToken, MONDAY_1, MONDAY_1);
       expect(res.statusCode).toBe(400);
       const body = JSON.parse(res.body);
-      expect(body.requested).toBe(6);
+      expect(body.requested).toBe(8);
       expect(body.available).toBe(0);
     } finally {
       await app.prisma.saldoSnapshot.update({
@@ -352,58 +365,58 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
     }
   });
 
-  it("GET /leave/hours-preview returns the SAME 6.00h for the identical range — gate and preview agree (OTC-05); minutesNeeded is the exact-minute counterpart (WR-03)", async () => {
+  it("GET /leave/hours-preview returns the SAME 8.00h for the identical range — gate and preview agree (OTC-05); minutesNeeded is the exact-minute counterpart (WR-03)", async () => {
     const res = await hoursPreview(shiftEmpToken, MONDAY_1, MONDAY_1);
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
-    expect(body.hours).toBe(6);
+    expect(body.hours).toBe(8);
     // WR-03 (code review) — minutesNeeded is Math.round(hours * 60), the SAME formula
     // the POST /requests OVERTIME_COMP gate uses for neededMinutes. The client compares
     // against this exact integer instead of reconstructing it from the rounded `hours`.
-    expect(body.minutesNeeded).toBe(360);
+    expect(body.minutesNeeded).toBe(480);
   });
 
-  it("D-06: a soft-deleted shift contributes 0h and the request is NOT rejected for insufficient hours", async () => {
+  it("D-06 REVERSED (#293): a soft-deleted shift does NOT change the cost — still the 8.00h Ø-Methode day, because the roster is not read at all", async () => {
     const preview = await hoursPreview(shiftEmpToken, MONDAY_2, MONDAY_2);
-    expect(JSON.parse(preview.body).hours).toBe(0);
+    expect(JSON.parse(preview.body).hours).toBe(8);
 
     const res = await postOvertimeComp(shiftEmpToken, MONDAY_2, MONDAY_2);
     expect(res.statusCode).toBe(201);
   });
 
-  it("D-08: no shift at all in the range costs 0h and the request is NOT rejected", async () => {
+  it("D-08 REVERSED (#293): no shift at all in the range still costs the 8.00h Ø-Methode day — an empty roster is no longer free", async () => {
     const preview = await hoursPreview(shiftEmpToken, MONDAY_3, MONDAY_3);
-    expect(JSON.parse(preview.body).hours).toBe(0);
+    expect(JSON.parse(preview.body).hours).toBe(8);
 
     const res = await postOvertimeComp(shiftEmpToken, MONDAY_3, MONDAY_3);
     expect(res.statusCode).toBe(201);
   });
 
-  it("D-05: two shifts in a 2-day range sum to 13.50h (the second shift's 480 brutto takes the 30min auto-break), accepted against the generous confirmed balance", async () => {
+  it("D-05 REVERSED (#293): two contracted weekdays in a 2-day range cost 16.00h (2 x the 8.00h Ø-Methode day), NOT the roster's 13.50h sum", async () => {
     const preview = await hoursPreview(shiftEmpToken, RANGE_4_MON, RANGE_4_TUE);
-    expect(JSON.parse(preview.body).hours).toBe(13.5);
+    expect(JSON.parse(preview.body).hours).toBe(16);
 
     const res = await postOvertimeComp(shiftEmpToken, RANGE_4_MON, RANGE_4_TUE);
     expect(res.statusCode).toBe(201);
   });
 
-  it("D-07: halfDay over the same 2-day range costs half the FIRST rostered shift's netto — 3.00h (WR-03: minutesNeeded 180), not half of 13.50h", async () => {
+  it("D-07 REVERSED (#293): halfDay over the same 2-day range costs half the RANGE's Ø-Methode total — 8.00h (WR-03: minutesNeeded 480), not half the first shift's netto", async () => {
     const preview = await hoursPreview(shiftEmpToken, RANGE_4_MON, RANGE_4_TUE, true);
     const body = JSON.parse(preview.body);
-    expect(body.hours).toBe(3);
-    expect(body.minutesNeeded).toBe(180);
+    expect(body.hours).toBe(8);
+    expect(body.minutesNeeded).toBe(480);
   });
 
-  it("WR-02: same-day split shift picks the EARLY-time shift deterministically (2.00h), never the LATE-time one (3.25h), regardless of insertion order", async () => {
-    // Both shifts share the same `date`; only `startTime asc` (the WR-02 fix) can break the tie.
-    // The LATE shift (14:00-21:00, 6.50h netto) was inserted BEFORE the EARLY shift
-    // (06:00-10:00, 4.00h netto) in beforeAll — a query relying on insertion/physical order would
-    // be expected to surface the LATE shift first, giving the WRONG halfDay result (3.25h).
+  it("WR-02 SUPERSEDED (#293): same-day split shift costs 4.00h (half the 8.00h Ø-Methode day) regardless of which shift was inserted first — the roster is not read, so insertion order cannot matter", async () => {
+    // Both shifts share the same `date`; under the old rule only `startTime asc` (the WR-02
+    // fix) could break the tie. Under #293 the tie is moot: the branch never queries the Shift
+    // table, so the LATE-time-first insertion order below is deliberately left as-is to prove
+    // it no longer has any effect on the result.
     const preview = await hoursPreview(shiftEmpToken, SPLIT_SHIFT_DAY, SPLIT_SHIFT_DAY, true);
     expect(preview.statusCode).toBe(200);
     const previewBody = JSON.parse(preview.body);
-    expect(previewBody.hours).toBe(2);
-    expect(previewBody.minutesNeeded).toBe(120); // WR-03: exact-minute counterpart
+    expect(previewBody.hours).toBe(4);
+    expect(previewBody.minutesNeeded).toBe(240); // WR-03: exact-minute counterpart
 
     const res = await postOvertimeComp(shiftEmpToken, SPLIT_SHIFT_DAY, SPLIT_SHIFT_DAY, true);
     expect(res.statusCode).toBe(201);

@@ -356,18 +356,15 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
     ).toBeCloseTo(8, H);
   });
 
-  it("SHIFT_BASED CHARACTERIZATION (pre-existing, NOT fixed here): the journal row is the ROSTER netto while the saldo withdrawal is the Ø-Methode day — the two disagree (#220 follow-up, issue #293)", async () => {
-    // Two different answers to "how long is this day?" meet here, and neither is wrong on its
-    // own terms:
-    //   - the OvertimeTransaction amount comes from getScheduledHours() (leave.ts), which for
-    //     SHIFT_BASED sums the ROSTER (Shift netto, Phase 100 / OTC-04);
-    //   - the saldo withdrawal comes from calcLeaveAbsenceMinutesTz(), the Ø-Methode
-    //     (weeklyHours / contracted workdays, BAG 9 AZR 406/17) — the same figure that granted
-    //     the day's Soll credit, which is exactly what #220 requires it to be.
-    // For an under-rostered day the journal therefore books less than the account loses.
-    // This is the pre-existing two-Soll-concepts question, not a regression introduced by #220's
-    // fix, and it is filed separately as issue #293. Pinned here so the size of the gap is a
-    // measured number rather than an argument.
+  it("SHIFT_BASED (#293, owner decision 2026-09-23): the journal amount and the measured saldo withdrawal are EQUAL — the receipt follows the account", async () => {
+    // Pre-fix, the OvertimeTransaction amount came from getScheduledHours() (leave.ts), which
+    // for SHIFT_BASED summed the ROSTER (Shift netto, Phase 100 / OTC-04), while the saldo
+    // withdrawal came from calcLeaveAbsenceMinutesTz(), the Ø-Methode (weeklyHours / contracted
+    // workdays, BAG 9 AZR 406/17) — the same figure that granted the day's Soll credit. The two
+    // could and did diverge (issue #293). The roster below is deliberately SHORT (07:00-13:00,
+    // 6h netto against an 8h Ø-Methode day) to prove the divergence axis is now closed: the
+    // receipt no longer reads the roster at all, so an under-rostered day no longer produces a
+    // smaller receipt than the account actually loses.
     const n = ++fixtureCounter;
     const s = `${Date.now().toString(36)}-sb${n}`;
     const user = await app.prisma.user.create({
@@ -413,10 +410,7 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
       where: { overtimeAccountId: acct!.id },
     });
     expect(tx).toHaveLength(1);
-    expect(
-      Number(tx[0].hours),
-      "journal amount = roster netto (getScheduledHours, SHIFT_BASED branch)",
-    ).toBeCloseTo(-6, H);
+    const journalAmount = Math.abs(Number(tx[0].hours));
 
     // The saldo side, measured the same differential way as the FIXED_SCHEDULE cases above.
     const vacEmp = await app.prisma.employee.create({
@@ -467,14 +461,14 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
     expect((await review(vacReq.id, data.adminToken)).statusCode).toBe(200);
 
     const withdrawal = (await balanceOf(vacEmp.id)) - (await balanceOf(emp.id));
+
+    // ONE equality assertion, not three pins: the journal's absolute amount and the measured
+    // saldo withdrawal must be the SAME number, because both now come from the same function
+    // call (getScheduledHours() -> calcLeaveAbsenceMinutesTz()) on the same schedule row.
     expect(
-      withdrawal,
-      "saldo withdrawal = Ø-Methode day (8.00h), NOT the 6.00h the journal row booked",
-    ).toBeCloseTo(8, H);
-    expect(
-      withdrawal - Math.abs(Number(tx[0].hours)),
-      "MEASURED DIVERGENCE between journal amount and saldo effect for SHIFT_BASED: 2.00 h",
-    ).toBeCloseTo(2, H);
+      journalAmount,
+      `journal amount (${journalAmount}h) must equal the measured saldo withdrawal (${withdrawal}h) — the receipt follows the account (#293)`,
+    ).toBeCloseTo(withdrawal, H);
   });
 
   it("§ 18-exempt employees: the manual booking stays the only writer and still works — the recompute never touches their balance (#220)", async () => {

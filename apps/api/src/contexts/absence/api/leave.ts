@@ -22,12 +22,7 @@ import {
   recalculateCarryOver,
 } from "../leave-days";
 import { formatMinutesHM } from "../format-hm"; // Phase 100
-import {
-  shiftNettoMinutes, // Phase 100 (OTC-04)
-  getShiftsInRange, // Phase 100B Plan 05 — S1/S2
-  flagShiftsConflictingWithLeave, // Phase 100B Plan 05 — S1/S2
-  sumShiftNettoMinutes, // Phase 100 (OTC-04)
-} from "../../scheduling"; // Phase 101B (Issue #101, wave 9) — merged from two deep imports
+import { flagShiftsConflictingWithLeave } from "../../scheduling"; // Phase 100B Plan 05 — S1/S2
 import {
   getOvertimeAccount,
   bookOvertimeCompensation,
@@ -40,6 +35,7 @@ import {
   loadNegativeBalanceTolerance,
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
+  calcLeaveAbsenceMinutesTz, // Issue #293 — receipt shares the saldo's own Ø-Methode entry point
   type OvertimeBalanceBreakdown,
 } from "../../working-time-account"; // Phase 100B Plan 06 — W8/W11/W12; Plan 07 — W1; Phase 101B
 import { auditReasonSchema } from "../../platform"; // Quick 260824-cjd
@@ -3482,18 +3478,17 @@ class Section9MissingEntitlementError extends Error {
  * globalen Tenant-Defaults falls kein individueller Plan vorhanden).
  * Halbe Tage = halbe Stunden des ersten Arbeitstages.
  *
- * SHIFT_BASED (Phase 100 / OTC-04, D-05..D-08): the per-Tag-Soll fields
- * (mondayHours…sundayHours) on WorkSchedule are NOT authoritative for this schedule type —
- * the real hours live in the `Shift` table. This function branches on `ws.type ===
- * "SHIFT_BASED"` before the per-weekday path below and instead sums each rostered shift's
- * netto minutes: brutto (endTime − startTime, midnight-crossing corrected) minus the
- * tenant/employee auto-break for that duration (`shift-netto.ts`). `Shift` carries no
- * `breakMinutes` column, so the original Phase-49.5 formula `(endTime - startTime -
- * breakMinutes)` named a field that does not exist — this replaces it. Soft-deleted shifts
- * (`deletedAt != null`) are excluded (D-06) — an employer-cancelled shift is not time the
- * employee has to buy back. Half-day uses the netto of the FIRST rostered shift in the
- * range, halved (D-07). An employee with no shifts in the range costs 0 hours and the
- * request is not rejected for that reason (D-08).
+ * SHIFT_BASED (owner decision on issue #293, 2026-09-23): this used to sum the rostered
+ * `Shift` rows (Phase 100 / OTC-04, D-05..D-08 — superseded by this decision, not just
+ * amended). That made the receipt answer a different question than the saldo, which credits
+ * an OVERTIME_COMP day via the Ø-Methode (`calcLeaveAbsenceMinutesTz`,
+ * `close-employee-month.ts:721`) — the two could and did diverge (issue #293). The decided
+ * rule: the day IS the average contract day, full stop. This branch now calls the SAME
+ * function the saldo calls, on the SAME schedule row, so the receipt amount and the saldo
+ * effect are one number because they are one function call — not two formulas kept in sync by
+ * hand. Half-day uses that function's own `halfDay` option (no bespoke first-shift-halved
+ * path any more). An employee with no shifts in the range now costs a full Ø-Methode day —
+ * an empty roster is no longer free, which is the material behavior change from D-08.
  */
 async function getScheduledHours(
   prisma: DbClient,
@@ -3518,42 +3513,24 @@ async function getScheduledHours(
   const ws = employee?.workSchedules[0] ?? null;
   const cfg = employee?.tenant?.config;
 
-  // SHIFT_BASED: netto summed from the Shift table (Phase 100 / OTC-04, D-05..D-08) — see the
-  // docblock above. Returns BEFORE the FIXED_SCHEDULE / FLEXTIME / MONTHLY_HOURS per-weekday
-  // path below, which stays byte-for-byte unchanged for every other schedule type.
+  // SHIFT_BASED (issue #293): the receipt follows the account — see the docblock above.
+  // Returns BEFORE the FIXED_SCHEDULE / FLEXTIME / MONTHLY_HOURS per-weekday path below, which
+  // stays byte-for-byte unchanged for every other schedule type.
   if (ws?.type === "SHIFT_BASED") {
-    // Phase 100B Plan 05 — S1, contexts/scheduling facade. The facade's own default ordering
-    // ([{date:"asc"},{startTime:"asc"}]) IS the D-07/WR-02 determinism fix this call site
-    // originally needed ("first rostered shift" must be deterministic — `date` alone ties on
-    // same-day split shifts, `startTime` breaks the tie).
-    const shifts = await getShiftsInRange(
-      prisma,
-      { kind: "employee", employeeId, tenantId: employee?.tenantId ?? "" },
-      start,
-      end,
-    );
+    // `cfg.timezone` (not `getTenantTimezone()`): that helper's signature is
+    // `FastifyInstance["prisma"]`, not tx-compatible, and this function is called with a
+    // transaction client at the correction site (`:1899`/`:1951`) — same reason
+    // `shift-leave-recalc-resolver.ts` avoids it. `cfg` is already loaded above by this
+    // function's own employee query, so this needs no extra read at all; "Europe/Berlin" is
+    // the same fallback `getTenantTimezone()` itself uses for a tenant with no config row.
+    const tz = cfg?.timezone ?? "Europe/Berlin";
 
-    const employeeBreakShape = {
-      breakOver6hOverride: employee?.breakOver6hOverride ?? null,
-      breakOver9hOverride: employee?.breakOver9hOverride ?? null,
-    };
-    const tenantBreakShape = {
-      defaultBreakOver6h: cfg?.defaultBreakOver6h ?? 30,
-      defaultBreakOver9h: cfg?.defaultBreakOver9h ?? 45,
-    };
-
-    // The `holidays` set is deliberately NOT applied on this path. For SHIFT_BASED the roster
-    // is authoritative — if nobody rostered the employee on a public holiday there is no shift
-    // and the day costs nothing on its own; if somebody DID roster them, those hours are real
-    // planned work and taking the day off genuinely consumes them. Filtering by holiday here
-    // would double-count the exclusion.
-    if (halfDay) {
-      // D-07: half day = half the netto of the FIRST rostered shift; D-08: empty roster -> 0.
-      if (shifts.length === 0) return 0;
-      return shiftNettoMinutes(shifts[0], employeeBreakShape, tenantBreakShape) / 2 / 60;
-    }
-    // D-05: sum of every non-deleted rostered shift's netto; naturally 0 for an empty roster (D-08).
-    return sumShiftNettoMinutes(shifts, employeeBreakShape, tenantBreakShape) / 60;
+    // The `holidays` set is deliberately NOT forwarded here, mirroring
+    // `close-employee-month.ts:721-729` exactly: the saldo side passes a cross-row
+    // already-claimed-days dedup set on that call, not public holidays, so forwarding this
+    // function's own `holidays` argument would apply a set the saldo side never sees.
+    const minutes = calcLeaveAbsenceMinutesTz(ws, start, end, tz, { halfDay });
+    return minutes / 60;
   }
 
   // Stunden pro Wochentag (0=So, 1=Mo … 6=Sa)
