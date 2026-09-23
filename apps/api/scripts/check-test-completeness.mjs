@@ -421,8 +421,35 @@ import { readFileSync } from "node:fs";
 // passed | 3 skipped (3416)`, cross-checked against `apps/api/vitest-report.json`'s own
 // `testResults.length` (280) / `numTotalTests` (3416) directly — an exact match with this plan's
 // own accounting, so no unrelated drift needed absorbing this time.
-const MIN_FILES = 280;
-const MIN_TESTS = 3416;
+// Issue #206 (`LeaveType.code` set to `NOT NULL`) — floor LOWERED, on a green run, not stretched
+// to keep a red one passing (this is a removal of test cases whose constructed state the
+// database now refuses, per Task 1's own SQLSTATE 23502 proof, not a relaxation to dodge a
+// failure). One test FILE removed entirely:
+// `apps/api/scripts/__tests__/backfill-leave-type-code.test.ts` (12 cases) — its subject,
+// `scripts/backfill-leave-type-code.ts`, was removed with it: the script's only selection,
+// `code IS NULL`, can never again match a row after migration
+// `20260923090815_leave_type_code_not_null`, so none of its 12 cases (each first constructing a
+// codeless row) could be repaired, only deleted. Net test-case changes within still-existing
+// files (no FILE count change): `leave.test.ts` lost 3 cases whose subject was the same
+// now-impossible state and had no reverse to rewrite toward (two `ensureLeaveType()` self-heal
+// cases, one multi-row-ordering case — `@@unique([tenantId, code])` already forbade two rows
+// sharing one real code, so no candidate-set could ever be rebuilt with real codes either);
+// `leave-correct.test.ts` lost 1 case for the same reason (its guard, `leave.ts`'s
+// `!oldTypeCode` check, was removed as unreachable in the same commit); `leave-entitlement-self-heal.test.ts`
+// lost 1 case (Phase 97 D-12's "Test 4") plus its now-orphaned fixture. Every OTHER case this
+// issue touched was rewritten in place with a real, deliberately wrong-scope code (mostly
+// `"OTHER"`) instead of deleted — no further count change from those. A fresh, fully GREEN
+// full-suite run (`pnpm --filter @clokr/api test`, zero failed suites — the prior run with the
+// still-present backfill script failed one suite and is NOT the basis for this floor, per this
+// issue's own instruction to measure only from green) reports `Test Files 279 passed (279)` /
+// `Tests 3398 passed | 3 skipped (3401)`, cross-checked against `vitest-report.json`'s own
+// `testResults.length` (279) / `numTotalTests` (3401) directly. 280 - 1 = 279 files matches
+// exactly. The test-count arithmetic above does not reconcile to the exact byte (net -15
+// measured vs. an estimated -17 from summing this comment's own deltas) — accepted as ordinary
+// slack in a hand-summed delta across five files touched by two commits; the measured total from
+// the JSON reporter, not the hand sum, is what this floor is set to.
+const MIN_FILES = 279;
+const MIN_TESTS = 3401;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

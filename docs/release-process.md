@@ -229,8 +229,9 @@ release in between. Do not. Deploy prod through each released version in order.
 The canonical case is `docs/migrations.md` § "Phase 97 — LeaveType.code (Rollout-Reihenfolge)"
 step 5: the `SET NOT NULL` migration may only be created _after_ the release containing Phase 97
 (**v1.11.0**) is fully rolled out on int **and prod**, and after the follow-up sweep
-(`backfill-leave-type-code.ts --all-tenants --apply`) has run. Skipping v1.11.0 on prod would leave
-that precondition permanently unmeetable, because the release that satisfies it would never have
+(`backfill-leave-type-code.ts --all-tenants --apply`, since removed by Issue #206 — see
+`docs/migrations.md`'s own step 5 for why) has run. Skipping v1.11.0 on prod would leave that
+precondition permanently unmeetable, because the release that satisfies it would never have
 existed on prod as a deployed state — only as a commit inside a later image.
 
 The concrete ordering agreed for this line (owner, 2026-09-18):

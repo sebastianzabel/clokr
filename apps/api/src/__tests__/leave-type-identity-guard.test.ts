@@ -242,11 +242,15 @@ describe("Phase 97 (T2) — leave-type identity guard", () => {
     expect(violations).toEqual([]);
   });
 
-  it("LEGACY_ALIASES / LEAVE_TYPE_LEGACY_ALIASES is referenced only by the backfill script, the ensureLeaveType() self-heal, and its own definition", () => {
+  it("LEGACY_ALIASES / LEAVE_TYPE_LEGACY_ALIASES is referenced only by its own definition and by the code comment documenting its removed callers (Issue #206)", () => {
+    // Issue #206 removed both former callers: the backfill script (deleted, its job made
+    // permanently impossible by the NOT NULL migration) and ensureLeaveType()'s self-heal step
+    // (deleted, unreachable once a codeless row can no longer exist). `leave.ts` stays permitted
+    // because it now carries a comment NAMING this identifier to explain that removal — not a
+    // call site.
     const permitted = new Set([
       "apps/api/src/contexts/absence/leave-type.ts",
       "apps/api/src/contexts/absence/api/leave.ts",
-      "apps/api/scripts/backfill-leave-type-code.ts",
     ]);
     const files = collectFiles();
     const violations: string[] = [];
@@ -264,12 +268,8 @@ describe("Phase 97 (T2) — leave-type identity guard", () => {
     expect(violations).toEqual([]);
   });
 
-  it("leaveTypeCodeForName (the name -> code direction) is called only by the backfill script, the ensureLeaveType() self-heal, and its own definition", () => {
-    const permitted = new Set([
-      "apps/api/src/contexts/absence/leave-type.ts",
-      "apps/api/src/contexts/absence/api/leave.ts",
-      "apps/api/scripts/backfill-leave-type-code.ts",
-    ]);
+  it("leaveTypeCodeForName (the name -> code direction) is called only by its own definition (Issue #206 removed both former callers)", () => {
+    const permitted = new Set(["apps/api/src/contexts/absence/leave-type.ts"]);
     const files = collectFiles();
     const violations: string[] = [];
     for (const abs of files) {
