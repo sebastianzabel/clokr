@@ -444,10 +444,21 @@ import { readFileSync } from "node:fs";
 // issue's own instruction to measure only from green) reports `Test Files 279 passed (279)` /
 // `Tests 3398 passed | 3 skipped (3401)`, cross-checked against `vitest-report.json`'s own
 // `testResults.length` (279) / `numTotalTests` (3401) directly. 280 - 1 = 279 files matches
-// exactly. The test-count arithmetic above does not reconcile to the exact byte (net -15
-// measured vs. an estimated -17 from summing this comment's own deltas) — accepted as ordinary
-// slack in a hand-summed delta across five files touched by two commits; the measured total from
-// the JSON reporter, not the hand sum, is what this floor is set to.
+// exactly. The test-count arithmetic above (-17, verified by counting `it(` additions/removals
+// per file with `git diff c5f4fd26..3a6cdcc2`, not estimated) does NOT reconcile against the
+// inherited 3416 floor by itself: 3416 - 17 = 3399, two short of the measured 3401. Traced, not
+// shrugged off: `c5f4fd26` — this issue's own starting base commit, already on `main` before this
+// issue began, from an unrelated ticket (#309/#310) — added 2 new `it()` cases to
+// `src/__tests__/t100-09-oracle-probe.test.ts` without bumping this floor (`git diff
+// f418c7a2..c5f4fd26 -- apps/api/src/__tests__/t100-09-oracle-probe.test.ts` shows exactly two
+// added `it(` lines, zero removed; `f418c7a2` is the commit that set 3416, and
+// `f418c7a2..c5f4fd26` contains no other commit). The floor this issue inherited was therefore
+// already stale by +2 before this issue touched anything: the TRUE baseline at `c5f4fd26` was
+// 3418, not 3416. 3418 - 17 = 3401 — matches the measured green run exactly, with nothing left
+// unexplained. This is a pre-existing floor-drift gap from `c5f4fd26`/#309/#310, out of THIS
+// issue's scope to correct retroactively (CLAUDE.md's scope-boundary rule — only fix what the
+// current task's own changes caused), named here rather than silently absorbed or waved off as
+// rounding.
 const MIN_FILES = 279;
 const MIN_TESTS = 3401;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
