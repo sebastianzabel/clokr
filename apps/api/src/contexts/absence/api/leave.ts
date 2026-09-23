@@ -33,8 +33,9 @@ import {
   recalculateSnapshots,
   getConfirmedCarryOver,
   loadNegativeBalanceTolerance,
-  updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
+  computeOvertimeBalanceHours, // Issue #294 — pure read, run BEFORE the booking+persist transaction
+  persistOvertimeBalance, // Issue #294 — booking + recompute in one $transaction
   calcLeaveAbsenceMinutesTz, // Issue #293 — receipt shares the saldo's own Ø-Methode entry point
   type OvertimeBalanceBreakdown,
 } from "../../working-time-account"; // Phase 100B Plan 06 — W8/W11/W12; Plan 07 — W1; Phase 101B
@@ -1010,6 +1011,14 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       // ── Stornierungsantrag prüfen ────────────────────────────────────────────
       if (existing.status === "CANCELLATION_REQUESTED") {
+        // Issue #294: the OVERTIME_COMP reversal below is computed here but NOT written here —
+        // it is issued at the tail, in the SAME $transaction as the balance persist, so a failed
+        // persist rolls the reversal back with it instead of leaving an orphan receipt.
+        let pendingOvertimeReversal: {
+          tenantId: string;
+          hours: number;
+          description: string;
+        } | null = null;
         if (body.status === "APPROVED") {
           // Stornierung genehmigen → CANCELLED + Rückbuchung
           await app.prisma.leaveRequest.update({
@@ -1063,13 +1072,11 @@ export async function leaveRoutes(app: FastifyInstance) {
               existing.halfDay,
               new Set(hMap.keys()),
             );
-            await reverseOvertimeCompensation(
-              app.prisma,
-              existing.employeeId,
-              tenantIdForReversal,
-              hrs,
-              `Stornierung Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]}`,
-            );
+            pendingOvertimeReversal = {
+              tenantId: tenantIdForReversal,
+              hours: hrs,
+              description: `Stornierung Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]}`,
+            };
           }
         } else {
           // Stornierung ablehnen → zurück auf APPROVED
@@ -1104,12 +1111,27 @@ export async function leaveRoutes(app: FastifyInstance) {
               "Failed to recalculate snapshots after leave cancellation",
             ),
           );
-          await updateOvertimeAccount(app, existing.employeeId).catch((err) =>
-            app.log.error(
-              { err, employeeId: existing.employeeId },
-              "Failed to update overtime account after leave cancellation",
-            ),
-          );
+
+          // Issue #294: the pure read happens BEFORE the transaction; booking (if any) then
+          // persist happen inside ONE `$transaction` — no swallower any more, so a failed
+          // persist now answers non-2xx instead of a silent 200 with a stale balance.
+          const effectiveBalanceHours = await computeOvertimeBalanceHours(app, existing.employeeId);
+          await app.prisma.$transaction(async (tx) => {
+            if (pendingOvertimeReversal) {
+              await reverseOvertimeCompensation(
+                tx,
+                existing.employeeId,
+                pendingOvertimeReversal.tenantId,
+                pendingOvertimeReversal.hours,
+                pendingOvertimeReversal.description,
+              );
+            }
+            // null = §18-exempt: persist nothing, the reversal above (if any) still stands as
+            // the sole writer for that path.
+            if (effectiveBalanceHours !== null) {
+              await persistOvertimeBalance(app, tx, existing.employeeId, effectiveBalanceHours);
+            }
+          });
         }
 
         // Auto-dismiss manager LEAVE_REQUEST notifications for this request
@@ -1136,6 +1158,12 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       // ── Normaler Antrag (PENDING) ────────────────────────────────────────────
       const reviewTypeCode = existing.leaveType.code;
+
+      // Issue #294: the OVERTIME_COMP booking below is computed but NOT written where it is
+      // decided — it is issued at the tail, in the SAME $transaction as the balance persist,
+      // so a failed persist rolls the booking back with it instead of leaving an orphan receipt.
+      let pendingOvertimeBooking: { tenantId: string; hours: number; description: string } | null =
+        null;
 
       // Phase 107 (D-07/D-10, T-107-20): for an APPROVED SHIFT_BASED vacation request, recompute
       // `days` from the roster and determine `daysProvisional` BEFORE the update() call below, so
@@ -1241,13 +1269,11 @@ export async function leaveRoutes(app: FastifyInstance) {
             existing.halfDay,
             new Set(hMap.keys()),
           );
-          await bookOvertimeCompensation(
-            app.prisma,
-            existing.employeeId,
-            tenantIdForBooking,
+          pendingOvertimeBooking = {
+            tenantId: tenantIdForBooking,
             hours,
-            `Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]} – ${existing.endDate.toISOString().split("T")[0]}`,
-          );
+            description: `Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]} – ${existing.endDate.toISOString().split("T")[0]}`,
+          };
         }
 
         // ── § 9 BUrlG (Phase 104, D-09): Krank-im-Urlaub-Vorgang anlegen ──────────
@@ -1420,12 +1446,27 @@ export async function leaveRoutes(app: FastifyInstance) {
             "Failed to recalculate snapshots after leave approval",
           ),
         );
-        await updateOvertimeAccount(app, existing.employeeId).catch((err) =>
-          app.log.error(
-            { err, employeeId: existing.employeeId },
-            "Failed to update overtime account after leave approval",
-          ),
-        );
+
+        // Issue #294: pure read BEFORE the transaction; booking (if any) then persist happen
+        // inside ONE `$transaction` — no swallower any more, so a failed persist now answers
+        // non-2xx instead of a silent 200 with a stale balance.
+        const effectiveBalanceHours = await computeOvertimeBalanceHours(app, existing.employeeId);
+        await app.prisma.$transaction(async (tx) => {
+          if (pendingOvertimeBooking) {
+            await bookOvertimeCompensation(
+              tx,
+              existing.employeeId,
+              pendingOvertimeBooking.tenantId,
+              pendingOvertimeBooking.hours,
+              pendingOvertimeBooking.description,
+            );
+          }
+          // null = §18-exempt: persist nothing, the booking above (if any) still stands as the
+          // sole writer for that path.
+          if (effectiveBalanceHours !== null) {
+            await persistOvertimeBalance(app, tx, existing.employeeId, effectiveBalanceHours);
+          }
+        });
 
         // Phase 43-04: reverse-hook — when a leave is APPROVED, mark any
         // existing shifts for this employee on overlapping dates as
@@ -2006,12 +2047,28 @@ export async function leaveRoutes(app: FastifyInstance) {
           "Failed to recalculate snapshots after leave correction",
         ),
       );
-      await updateOvertimeAccount(app, existing.employeeId).catch((err) =>
-        app.log.error(
-          { err, employeeId: existing.employeeId },
-          "Failed to update overtime account after leave correction",
-        ),
+      // Issue #294: swallower removed — a failing recompute now answers non-2xx instead of a
+      // silent 200 with a stale balance. Full atomicity is NOT available at this site: the
+      // booking pair above is already committed inside the CR-01 transaction (`app.prisma.
+      // $transaction` earlier in this handler), and this recompute reads the leave row through
+      // `app.prisma` — it must run AFTER that transaction commits, or it would read the
+      // pre-correction state. Threading a client through computeOvertimeBalanceBreakdown() was
+      // ruled out (it performs ~15 separate app.prisma reads plus getEffectiveSchedule(app, …)).
+      // Inlined via computeOvertimeBalanceHours + persistOvertimeBalance (rather than the
+      // updateOvertimeAccount() wrapper) — byte-identical behaviour, same null-guard for the
+      // §18-exempt path, same non-transactional app.prisma write.
+      const effectiveBalanceHoursForCorrection = await computeOvertimeBalanceHours(
+        app,
+        existing.employeeId,
       );
+      if (effectiveBalanceHoursForCorrection !== null) {
+        await persistOvertimeBalance(
+          app,
+          app.prisma,
+          existing.employeeId,
+          effectiveBalanceHoursForCorrection,
+        );
+      }
 
       return {
         ...updated,

@@ -17,6 +17,7 @@
 // auto-close-month.ts, overtime.ts). No `foreign-context-access-exceptions.json` entry needed.
 
 import { FastifyInstance } from "fastify";
+import type { Prisma } from "@clokr/db";
 import {
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
   getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
@@ -716,30 +717,40 @@ export async function computeOvertimeBalanceHours(
   return breakdown.totalHours;
 }
 
-// ── Überstundensaldo berechnen UND persistieren (event-driven writer) ─────────
-// Thin wrapper around computeOvertimeBalanceHours (single source of truth): recomputes the live
-// lifetime saldo through windowEnd and upserts OvertimeAccount.balanceHours. Called on every
-// time-entry mutation + month close/unlock. Exempt employees (compute → null) are skipped without
-// resetting the stored value (preserve audit trail).
-export async function updateOvertimeAccount(app: FastifyInstance, employeeId: string) {
-  const effectiveBalanceHours = await computeOvertimeBalanceHours(app, employeeId);
-  if (effectiveBalanceHours === null) return; // §18-exempt — do not touch stored balance
-
+// ── Überstundensaldo persistieren (issue #294) ────────────────────────────────
+// Split out of updateOvertimeAccount so a caller that already holds a transaction handle (the
+// leave-approval / leave-cancellation review sites) can book its OvertimeTransaction pair and
+// persist the recomputed balance in the SAME `$transaction` — a failed persist then rolls the
+// booking back with it, instead of leaving an orphan receipt on a stale balance. `db:
+// Prisma.TransactionClient` (not `app: FastifyInstance`) so both `app.prisma` and a `tx` handle
+// are assignable — the same shape the facade's D-07 rule already uses (`facade/overtime-account.ts`).
+// Keeps the tenantId lookup and the threshold warning here so that log is not duplicated at every
+// call site.
+export async function persistOvertimeBalance(
+  app: FastifyInstance,
+  db: Prisma.TransactionClient,
+  employeeId: string,
+  balanceHours: number,
+) {
   // Phase 100B Plan 06 (D-10/G4): setOvertimeAccountBalance requires a tenantId parameter for
   // facade signature uniformity, even though this caller-facing function's own signature stays
-  // (app, employeeId) unchanged (many call sites, out of this plan's scope) — so it resolves the
-  // employee's tenantId itself, once, right before the write.
-  const emp = await app.prisma.employee.findUnique({
+  // (app, db, employeeId, balanceHours) — so it resolves the employee's tenantId itself, once,
+  // right before the write. Read through `db` so it sees the SAME transactional snapshot the
+  // write itself commits into.
+  const emp = await db.employee.findUnique({
     where: { id: employeeId },
     select: { tenantId: true },
   });
   const account = await setOvertimeAccountBalance(
-    app.prisma,
+    db,
     employeeId,
     emp?.tenantId ?? "",
-    effectiveBalanceHours,
+    balanceHours,
   );
 
+  // getEffectiveSchedule() is `app`-based, not tx-compatible (same reason getTenantTimezone()
+  // is avoided elsewhere in this context) — an informational threshold warning does not need
+  // to read inside the caller's transaction.
   const schedule = await getEffectiveSchedule(app, employeeId);
   const threshold = Number(schedule.overtimeThreshold);
   if (Number(account.balanceHours) >= threshold) {
@@ -747,4 +758,17 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       `⚠️  Mitarbeiter ${employeeId} hat ${account.balanceHours}h Überstunden (Threshold: ${threshold}h)`,
     );
   }
+}
+
+// ── Überstundensaldo berechnen UND persistieren (event-driven writer) ─────────
+// Thin wrapper around computeOvertimeBalanceHours (single source of truth): recomputes the live
+// lifetime saldo through windowEnd and upserts OvertimeAccount.balanceHours. Called on every
+// time-entry mutation + month close/unlock. Exempt employees (compute → null) are skipped without
+// resetting the stored value (preserve audit trail). Signature, name and behaviour unchanged for
+// its twenty other call sites — it now delegates the write to persistOvertimeBalance().
+export async function updateOvertimeAccount(app: FastifyInstance, employeeId: string) {
+  const effectiveBalanceHours = await computeOvertimeBalanceHours(app, employeeId);
+  if (effectiveBalanceHours === null) return; // §18-exempt — do not touch stored balance
+
+  await persistOvertimeBalance(app, app.prisma, employeeId, effectiveBalanceHours);
 }

@@ -110,5 +110,6 @@ export {
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
   computeOvertimeBalanceHours,
+  persistOvertimeBalance, // Issue #294 — booking + recompute in one $transaction
 } from "./overtime-balance";
 export type { OvertimeBalanceBreakdown } from "./overtime-balance";
