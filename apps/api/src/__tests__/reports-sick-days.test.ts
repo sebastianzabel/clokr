@@ -647,7 +647,7 @@ describe("Reports: Monatsbericht type comparisons run on LeaveType.code (Phase 9
   let data: Awaited<ReturnType<typeof seedTestData>>;
 
   let empRenamed: { id: string };
-  let empNullCode: { id: string };
+  let empOtherCode: { id: string };
   let empParity: { id: string };
 
   beforeAll(async () => {
@@ -673,13 +673,15 @@ describe("Reports: Monatsbericht type comparisons run on LeaveType.code (Phase 9
       data: { name: "Erholungsurlaub" }, // renamed away from the canonical "Urlaub"
     });
 
-    // A pre-Phase-97 style row: a name the backfill could not map, so it was left
-    // without a code (D-09 — no silent default to the vacation code).
-    const nullCodeType = await app.prisma.leaveType.create({
+    // Issue #206 made `LeaveType.code` NOT NULL — a codeless row (the pre-Phase-97 state this
+    // used to model, a name the backfill could not map) can no longer exist. `OTHER` preserves
+    // the exact case: it matches none of the seven type buckets below and isn't SICK/SICK_CHILD
+    // either, so it produces the same "counted nowhere" result a codeless row used to.
+    const otherCodeType = await app.prisma.leaveType.create({
       data: {
         tenantId: data.tenant.id,
-        code: null,
-        name: "Sonderfall ohne Code",
+        code: "OTHER",
+        name: "Sonderfall ohne passende Kategorie",
         isPaid: true,
         requiresApproval: true,
         color: "#9CA3AF",
@@ -759,7 +761,7 @@ describe("Reports: Monatsbericht type comparisons run on LeaveType.code (Phase 9
         isActive: true,
       },
     });
-    const employeeNullCode = await app.prisma.employee.create({
+    const employeeOtherCode = await app.prisma.employee.create({
       data: {
         tenantId: data.tenant.id,
         userId: userNullCode.id,
@@ -771,7 +773,7 @@ describe("Reports: Monatsbericht type comparisons run on LeaveType.code (Phase 9
     });
     await app.prisma.workSchedule.create({
       data: {
-        employeeId: employeeNullCode.id,
+        employeeId: employeeOtherCode.id,
         weeklyHours: 40,
         mondayHours: 8,
         tuesdayHours: 8,
@@ -784,14 +786,14 @@ describe("Reports: Monatsbericht type comparisons run on LeaveType.code (Phase 9
       },
     });
     await app.prisma.overtimeAccount.create({
-      data: { employeeId: employeeNullCode.id, balanceHours: 0 },
+      data: { employeeId: employeeOtherCode.id, balanceHours: 0 },
     });
-    empNullCode = { id: employeeNullCode.id };
+    empOtherCode = { id: employeeOtherCode.id };
 
     await app.prisma.leaveRequest.create({
       data: {
-        employeeId: employeeNullCode.id,
-        leaveTypeId: nullCodeType.id,
+        employeeId: employeeOtherCode.id,
+        leaveTypeId: otherCodeType.id,
         startDate: new Date("2027-02-15T00:00:00.000Z"),
         endDate: new Date("2027-02-16T00:00:00.000Z"),
         days: 2,
@@ -953,8 +955,8 @@ describe("Reports: Monatsbericht type comparisons run on LeaveType.code (Phase 9
     expect(row.vacationDays).toBe(2);
   });
 
-  it("Case 4: a request on a code=null row appears in none of the seven type sums and is not counted as sick", async () => {
-    const row = await monthlyRowFor(empNullCode.id);
+  it("Case 4: a request on an OTHER-coded row appears in none of the seven type sums and is not counted as sick", async () => {
+    const row = await monthlyRowFor(empOtherCode.id);
     expect(row.vacationDays).toBe(0);
     expect(row.overtimeCompDays).toBe(0);
     expect(row.specialLeaveDays).toBe(0);

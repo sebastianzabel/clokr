@@ -195,12 +195,13 @@ describe("hasApprovedLeaveOnDate — LeaveRequest branch (Phase 100B plan 14, D-
   });
 
   it("falls back to the generic OTHER code when LeaveType.code is null, rather than crashing or reading .name", async () => {
-    // LeaveType.code is nullable in the schema until the Phase 97/98b post-rollout sweep's SET NOT
-    // NULL lands (schema.prisma:612-613). Checked against the dev database on 2026-09-17: 5/5 rows
-    // already carry a code — this path is defensive, not observed in production today. It does
-    // NOT fall back to resolving the code from the row's name: `leave-type.ts`'s
-    // `leaveTypeCodeForName()` is backfill-only and may not be called from a request handler, and
-    // this function is called from two of them.
+    // LeaveType.code is NOT NULL in the database as of issue #206 — the real Prisma client can no
+    // longer produce a row with a null code. This test's `stubPrisma()` is a hand-built mock, not
+    // the generated client, so it can still give the `code` field a null value at the TypeScript
+    // level; the assertion below exercises the defensive fallback for that stub shape, not for a
+    // database state that can occur any more. It does NOT fall back to resolving the code from
+    // the row's name: `leave-type.ts`'s `leaveTypeCodeForName()` is backfill-only and may not be
+    // called from a request handler, and this function is called from two of them.
     const result = await hasApprovedLeaveOnDate(
       stubPrisma({ leaveRequests: [leaveRow({ leaveType: { code: null }, status: "APPROVED" })] }),
       EMP,

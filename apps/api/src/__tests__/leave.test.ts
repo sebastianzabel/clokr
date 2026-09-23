@@ -1708,42 +1708,13 @@ describe("ensureLeaveType (Phase 97)", () => {
     expect(row?.name).toBe("Erholungsurlaub");
   });
 
-  it("heals an uncoded canonical-name row: sets the code, leaves the canonical name as-is", async () => {
-    const d = await seed("elt2");
-    // Force the seeded fixture row back to the pre-phase-97 uncoded state this case exercises
-    // (seedTestData's own row is coded from the start since Plan 03 Task 3 — see setup.ts).
-    await app.prisma.leaveType.update({
-      where: { id: d.vacationType.id },
-      data: { code: null, name: "Urlaub" },
-    });
-    const before = await app.prisma.leaveType.findUnique({ where: { id: d.vacationType.id } });
-    expect(before?.code).toBeNull();
-    expect(before?.name).toBe("Urlaub");
-
-    const res = await getEntitlements(d);
-    expect(res.statusCode).toBe(200);
-
-    const after = await app.prisma.leaveType.findUnique({ where: { id: d.vacationType.id } });
-    expect(after?.id).toBe(d.vacationType.id);
-    expect(after?.code).toBe("VACATION");
-    expect(after?.name).toBe("Urlaub");
-  });
-
-  it("heals an uncoded legacy-name row: sets the code AND corrects the legacy name", async () => {
-    const d = await seed("elt3");
-    await app.prisma.leaveType.update({
-      where: { id: d.vacationType.id },
-      data: { code: null, name: "Jahresurlaub" },
-    });
-
-    const res = await getEntitlements(d);
-    expect(res.statusCode).toBe(200);
-
-    const after = await app.prisma.leaveType.findUnique({ where: { id: d.vacationType.id } });
-    expect(after?.id).toBe(d.vacationType.id);
-    expect(after?.code).toBe("VACATION");
-    expect(after?.name).toBe("Urlaub");
-  });
+  // "heals an uncoded canonical-name row: sets the code, leaves the canonical name as-is" and
+  // "heals an uncoded legacy-name row: sets the code AND corrects the legacy name" removed
+  // (Issue #206): both forced the fixture row's code to null to exercise `ensureLeaveType()`'s
+  // self-heal step, which this issue removed from production (the database now refuses to store
+  // that state — SQLSTATE 23502, proven in Task 1 of this issue's plan). Giving the row a real
+  // code instead of healing it into one would just re-run the "resolves an already-coded row by
+  // code" case above verbatim — no reverse assertion survives that isn't already covered there.
 
   it("creates a new row with code, name, isPaid and requiresApproval when none exists", async () => {
     const d = await seed("elt4");
@@ -1774,16 +1745,26 @@ describe("ensureLeaveType (Phase 97)", () => {
     expect(rows[0].id).toBe(d.vacationType.id);
   });
 
-  it("does not heal a second uncoded legacy row once a coded row already exists (no duplicate-code write)", async () => {
+  it("does not touch an unrelated, differently-coded row for the same tenant (ensureLeaveType() is scoped to its own code)", async () => {
     const d = await seed("elt6");
-    // The default fixture row becomes the already-coded row.
+    // Issue #206 made `LeaveType.code` NOT NULL — this case used to give the sibling row NO code
+    // at all (the state the self-heal step, now removed, existed to repair). A row with a real
+    // but different code makes the same point about scope: ensureLeaveType()'s step 1 lookup is
+    // `{ tenantId, code }`, so a sibling row for the SAME tenant with a DIFFERENT code must never
+    // be read, renamed or otherwise touched by a request for VACATION.
     await app.prisma.leaveType.update({
       where: { id: d.vacationType.id },
       data: { code: "VACATION" },
     });
-    // A second, uncoded legacy-named row for the same tenant — must stay untouched.
-    const legacyRow = await app.prisma.leaveType.create({
-      data: { tenantId: d.tenant.id, name: "Jahresurlaub", isPaid: true, requiresApproval: true },
+    // A second, differently-coded row for the same tenant — must stay untouched.
+    const siblingRow = await app.prisma.leaveType.create({
+      data: {
+        tenantId: d.tenant.id,
+        code: "SPECIAL",
+        name: "Jahresurlaub",
+        isPaid: true,
+        requiresApproval: true,
+      },
     });
 
     const res = await getEntitlements(d);
@@ -1791,37 +1772,23 @@ describe("ensureLeaveType (Phase 97)", () => {
 
     const rows = await app.prisma.leaveType.findMany({ where: { tenantId: d.tenant.id } });
     expect(rows).toHaveLength(2);
-    const stillUncoded = rows.find((r) => r.id === legacyRow.id);
-    expect(stillUncoded?.code).toBeNull();
-    expect(stillUncoded?.name).toBe("Jahresurlaub");
+    const untouched = rows.find((r) => r.id === siblingRow.id);
+    expect(untouched?.code).toBe("SPECIAL");
+    expect(untouched?.name).toBe("Jahresurlaub");
   });
 
-  it("orders a multi-row healing candidate set deterministically (createdAt asc, then id asc)", async () => {
-    const d = await seed("elt7");
-    // Replace the default fixture row with two uncoded candidates for the same code,
-    // created in a known order — the older one (canonical name) must win.
-    await app.prisma.leaveEntitlement.deleteMany({ where: { employeeId: d.employee.id } });
-    await app.prisma.leaveType.delete({ where: { id: d.vacationType.id } });
-    const older = await app.prisma.leaveType.create({
-      data: { tenantId: d.tenant.id, name: "Urlaub", isPaid: true, requiresApproval: true },
-    });
-    // Ensure strictly later createdAt than `older` without relying on real-clock granularity.
-    await app.prisma.leaveType.update({
-      where: { id: older.id },
-      data: { createdAt: new Date(Date.now() - 60_000) },
-    });
-    const newer = await app.prisma.leaveType.create({
-      data: { tenantId: d.tenant.id, name: "Jahresurlaub", isPaid: true, requiresApproval: true },
-    });
-
-    const res = await getEntitlements(d);
-    expect(res.statusCode).toBe(200);
-
-    const healed = await app.prisma.leaveType.findUnique({ where: { id: older.id } });
-    expect(healed?.code).toBe("VACATION");
-    const untouched = await app.prisma.leaveType.findUnique({ where: { id: newer.id } });
-    expect(untouched?.code).toBeNull();
-  });
+  // "orders a multi-row healing candidate set deterministically (createdAt asc, then id asc)"
+  // removed (Issue #206) — a documented EXCEPTION to this issue's general "rewrite beats delete"
+  // rule, not a plain application of it, because no rewrite is possible here even in principle:
+  // this test's entire subject was choosing ONE row out of SEVERAL UNCODED candidates sharing a
+  // target code. `@@unique([tenantId, code])` already forbade two rows sharing the SAME real
+  // code before this issue — that constraint predates Issue #206 and is untouched by it — so a
+  // "candidate set" sharing one target code could only ever be constructed from UNCODED rows.
+  // Once `code` is NOT NULL, no uncoded row can exist, and therefore no more-than-one-candidate
+  // set can ever be constructed again, with real codes or otherwise: giving `older`/`newer`
+  // distinct real codes does not approximate this test's subject, it eliminates it, because two
+  // distinctly-coded rows were never candidates for the same code in the first place. There is no
+  // reverse assertion to rewrite toward.
 
   it("resolves via GET /entitlements while creating no AuditLog row (unchanged pre-phase-97 behavior)", async () => {
     const d = await seed("elt8");
@@ -1973,24 +1940,28 @@ describe("Phase 97-05: typeCode derives from LeaveType.code, not name (D-09/D-10
     expect(row.typeCode).toBe("VACATION");
   });
 
-  it("GET /requests: a row with code = null yields typeCode null — never a silent VACATION fallback (D-09)", async () => {
+  it("GET /requests: a row with a non-VACATION code yields that same typeCode — never a silent VACATION fallback (D-09)", async () => {
     const d = await seed("tc3");
-    const uncoded = await app.prisma.leaveType.create({
+    // Issue #206 made `LeaveType.code` NOT NULL — a codeless row can no longer exist, so this
+    // case now exercises the guard's actual remaining shape: a real, deliberately non-VACATION
+    // code must resolve to ITSELF, never silently to VACATION.
+    const otherType = await app.prisma.leaveType.create({
       data: {
         tenantId: d.tenant.id,
-        name: "Ohne-Code-Sonderfall",
+        code: "OTHER",
+        name: "Sonderfall-Ohne-Passende-Kategorie",
         isPaid: true,
         requiresApproval: true,
       },
     });
-    expect(uncoded.code).toBeNull();
+    expect(otherType.code).toBe("OTHER");
 
     // Bypass the API (POST requires a known TypeCode) — insert directly so the row's code
-    // stays null through the whole test.
+    // stays "OTHER" through the whole test.
     const req = await app.prisma.leaveRequest.create({
       data: {
         employeeId: d.employee.id,
-        leaveTypeId: uncoded.id,
+        leaveTypeId: otherType.id,
         startDate: new Date("2027-02-15"),
         endDate: new Date("2027-02-16"),
         days: 2,
@@ -2004,7 +1975,7 @@ describe("Phase 97-05: typeCode derives from LeaveType.code, not name (D-09/D-10
       headers: { authorization: `Bearer ${d.adminToken}` },
     });
     const row = JSON.parse(listRes.body).find((r: { id: string }) => r.id === req.id);
-    expect(row.typeCode).toBeNull();
+    expect(row.typeCode).toBe("OTHER");
   });
 
   it("PATCH .../review APPROVED books usedDays only for code = VACATION, driven by the renamed row's code", async () => {
@@ -2060,12 +2031,16 @@ describe("Phase 97-05: typeCode derives from LeaveType.code, not name (D-09/D-10
     expect(Number(after!.usedDays)).toBe(Number(days));
   });
 
-  it("PATCH .../review APPROVED does NOT book usedDays when the row's code is null (D-09 — no silent VACATION fallback)", async () => {
+  it("PATCH .../review APPROVED does NOT book usedDays for a non-VACATION code (D-09 — no silent VACATION fallback)", async () => {
     const d = await seed("tc5");
-    const uncoded = await app.prisma.leaveType.create({
+    // Issue #206 made `LeaveType.code` NOT NULL — a codeless row can no longer exist. This case
+    // now exercises the guard's remaining shape: booking only fires for VACATION/OVERTIME_COMP
+    // (leave.ts), so a real, deliberately non-VACATION code must still book nothing.
+    const otherType = await app.prisma.leaveType.create({
       data: {
         tenantId: d.tenant.id,
-        name: "Sonderfall-Kein-Code",
+        code: "OTHER",
+        name: "Sonderfall-Ohne-Buchung",
         isPaid: true,
         requiresApproval: true,
       },
@@ -2073,7 +2048,7 @@ describe("Phase 97-05: typeCode derives from LeaveType.code, not name (D-09/D-10
     const req = await app.prisma.leaveRequest.create({
       data: {
         employeeId: d.employee.id,
-        leaveTypeId: uncoded.id,
+        leaveTypeId: otherType.id,
         startDate: new Date("2027-03-08"),
         endDate: new Date("2027-03-09"),
         days: 2,
@@ -2092,7 +2067,7 @@ describe("Phase 97-05: typeCode derives from LeaveType.code, not name (D-09/D-10
       payload: { status: "APPROVED" },
     });
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body).typeCode).toBeNull();
+    expect(JSON.parse(res.body).typeCode).toBe("OTHER");
 
     // No entitlement row was created or altered as a side effect of the (non-)booking.
     const entAfter = await app.prisma.leaveEntitlement.count({
@@ -2177,12 +2152,18 @@ describe("Phase 97-05 Task 2: iCal export shows the tenant's own display name; e
     expect(res.body).toContain("CATEGORIES:VACATION");
   });
 
-  it("GET /ical/personal: a request on a code = null row has no CATEGORIES line at all (D-09 — no invented VACATION category)", async () => {
+  it("GET /ical/personal: a request on a non-VACATION-coded row carries CATEGORIES for its own code, never an invented VACATION category (D-09)", async () => {
     const d = await seed("ic2");
-    const uncoded = await app.prisma.leaveType.create({
+    // Issue #206 made `LeaveType.code` NOT NULL — a codeless row (and therefore a categories-less
+    // event) can no longer exist. `categories: r.leaveType.code ?? undefined` (leave.ts) now
+    // always resolves to a real code, so the assertion this case can still make — and the more
+    // interesting one now that the row always has an identity — is that the CATEGORIES line
+    // carries THIS row's own code, never a silently invented "VACATION".
+    const otherType = await app.prisma.leaveType.create({
       data: {
         tenantId: d.tenant.id,
-        name: "Ohne-Code-Kalenderfall",
+        code: "OTHER",
+        name: "Ohne-Passende-Kategorie-Kalenderfall",
         isPaid: true,
         requiresApproval: true,
       },
@@ -2190,7 +2171,7 @@ describe("Phase 97-05 Task 2: iCal export shows the tenant's own display name; e
     const req = await app.prisma.leaveRequest.create({
       data: {
         employeeId: d.employee.id,
-        leaveTypeId: uncoded.id,
+        leaveTypeId: otherType.id,
         startDate: new Date("2027-04-12"),
         endDate: new Date("2027-04-13"),
         days: 2,
@@ -2205,11 +2186,11 @@ describe("Phase 97-05 Task 2: iCal export shows the tenant's own display name; e
     });
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain(`UID:leave-${req.id}@clokr`);
-    expect(res.body).toContain("SUMMARY:Ohne-Code-Kalenderfall");
+    expect(res.body).toContain("SUMMARY:Ohne-Passende-Kategorie-Kalenderfall");
     expect(res.body).not.toContain("CATEGORIES:VACATION");
-    // No CATEGORIES line at all for this event — not just a missing "VACATION" value.
+    // CATEGORIES is present and carries this row's own code, not merely absent-of-VACATION.
     const eventBlock = res.body.split(`UID:leave-${req.id}@clokr`)[1].split("END:VEVENT")[0];
-    expect(eventBlock).not.toContain("CATEGORIES:");
+    expect(eventBlock).toContain("CATEGORIES:OTHER");
   });
 
   it("GET /ical/team: summary is '<Vorname> <Nachname> — <Anzeigename der Zeile>'", async () => {
