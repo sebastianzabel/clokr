@@ -48,3 +48,18 @@ export { auditReasonSchema, AUDIT_REASON_REQUIRED } from "./audit-reason";
 export { calculateWorkDays } from "./calculate-work-days";
 export { syncSchoolHolidaysForTenant } from "./plugins/school-holidays-sync";
 export { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "./employee-anonymization-filter";
+// Phase 72b (#72): the permission catalog (resource × action × reach) that #73/#75/#83 build on.
+export {
+  PERMISSIONS,
+  PERMISSION_RESOURCES,
+  PERMISSION_REACHES,
+  PERMISSION_RELATIONS,
+  permissionKey,
+} from "./permission-catalog";
+export type {
+  Permission,
+  PermissionKey,
+  PermissionReach,
+  PermissionRelation,
+  PermissionResource,
+} from "./permission-catalog";
