@@ -459,8 +459,26 @@ import { readFileSync } from "node:fs";
 // issue's scope to correct retroactively (CLAUDE.md's scope-boundary rule — only fix what the
 // current task's own changes caused), named here rather than silently absorbed or waved off as
 // rounding.
+//
+// Orchestrator correction, same run: 3401 was still 10 BELOW reality, and the reason is the
+// generalisable one. That number came from a green run taken BEFORE this branch merged
+// `origin/main`; the merge brought in #263 (19a24505), whose diff adds only TWO `it()`
+// declarations — but one of them sits inside `describe.each(BOUNDARY_MATRIX)` over a nine-row
+// table, so it expands to nine runtime cases, ten with the completeness case beside it.
+//
+// That is the systematic reason floor accounting keeps falling behind, and it is worth stating
+// plainly: COUNTING `it(` IN A DIFF UNDERCOUNTS TABLE-DRIVEN TESTS. A floor is a statement about
+// RUNTIME cases, so it may only ever be set from the reporter's own `numTotalTests` on a fully
+// green run of the tree that is actually being merged — never from a hand-summed diff, and never
+// from a run predating a later merge into the same branch.
+//
+// Independently re-measured in the main checkout after merging this branch onto `origin/main`
+// (`pnpm --filter @clokr/api test`): `Test Files 279 passed (279)`, `Tests 3408 passed |
+// 3 skipped (3411)`, zero failures — `vitest-report.json` agrees (`testResults.length` 279,
+// `numTotalTests` 3411). Both stale steps above (c5f4fd26's +2 and #263's +10) are absorbed by
+// taking that measurement as the floor, so the floor no longer trails the suite.
 const MIN_FILES = 279;
-const MIN_TESTS = 3401;
+const MIN_TESTS = 3411;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
