@@ -1629,9 +1629,27 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const existing = await app.prisma.leaveRequest.findFirst({
         where: { id, deletedAt: null }, // D-09: soft-deleted requests are not-found
-        include: { leaveType: true },
+        include: { leaveType: true, employee: { select: { tenantId: true } } },
       });
       if (!existing) return reply.code(404).send({ error: "Antrag nicht gefunden" });
+
+      // T-100-09 cross-tenant existence oracle (Issue #309): tenant isolation MUST run before
+      // the ownership check below, or a real id in a foreign tenant answers 403 while an unknown
+      // id answers 404 — two distinguishable responses that let any authenticated user of any
+      // tenant probe whether an arbitrary id exists anywhere. The audit is nested inside the
+      // mismatch branch on purpose: an unknown id must write no AuditLog row, or the row count
+      // itself would reopen the oracle this guard just closed. Shape copied verbatim from
+      // `PATCH /requests/:id/correct` below in this same file.
+      if (existing.employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "LeaveRequest",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Antrag nicht gefunden" });
+      }
       if (existing.employeeId !== req.user.employeeId)
         return reply.code(403).send({ error: "Forbidden" });
       if (existing.status !== "PENDING")

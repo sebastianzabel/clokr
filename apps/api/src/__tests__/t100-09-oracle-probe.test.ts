@@ -23,10 +23,12 @@
  * classifier recognises as `input-proof:length` — see `absence-vocabulary-guard.test.ts:208` and
  * `leave-type-identity-guard.test.ts:57` for the same idiom, both already classified `guard` today.
  *
- * On today's tree this checker finds nothing to fix: all 28 `probe` routes already conform (259-01
- * closed the one gap, in `avatars.ts`'s POST handler). Its only functional proof is therefore the
- * rollback demonstration recorded in 259-03-SUMMARY.md — this file has no red-proof mechanism of
- * its own beyond that recorded, once-performed observation (D-03c).
+ * On today's tree this checker finds nothing to fix: all 30 `probe` routes already conform (259-01
+ * closed the first gap, in `avatars.ts`'s POST handler; a quick task closed the remaining two,
+ * Issues #309/#310, folding their fixtures into this same describe block's `beforeAll`). Its only
+ * functional proof beyond that is the rollback demonstration recorded in 259-03-SUMMARY.md plus
+ * the two reverts recorded for #309/#310 — this file has no red-proof mechanism of its own beyond
+ * those recorded, once-performed observations (D-03c).
  *
  * ── D-07 — a mutual non-404 is a failure, never a pass ────────────────────────────────────────────
  * `PATCH /leave/requests/:id/review` (`leave.ts:983`, classified `bekannt-abweichend`, Issue #309)
@@ -253,13 +255,26 @@ const orderedProbeEntries = [...probeEntries].sort((a, b) => {
 
 type FixtureBundle = Awaited<ReturnType<typeof seedTestData>>;
 
-/** Resolves a register `params` fixture key ("employee" / "leaveType") to the foreign tenant's
- * real entity id. `null` means the key is unrecognised — the caller must fail loudly, never
- * silently skip the route (D-03). Today's vocabulary is exactly these two keys; a register entry
- * naming a third one this probe does not implement is exactly the failure this function surfaces. */
+// ── Fixture rows the base `seedTestData` bundle does not carry (Issue #309/#310) ───────────────
+// `seedTestData` (setup.ts) is shared by ~277 test files; adding a LeaveRequest/TimeEntry row to
+// it would change row counts under list-endpoint assertions across the whole suite. Both rows are
+// created locally in the `behavioral sweep` describe's own `beforeAll` below instead, and their
+// ids are stashed here so `fixtureValueFor` (which only ever resolves keys for tenantB, the sole
+// foreign-tenant bundle passed into it by the sweep) can hand them out.
+let tenantBLeaveRequestId: string | undefined;
+let tenantBTimeEntryId: string | undefined;
+
+/** Resolves a register `params` fixture key to the foreign tenant's real entity id. `null` means
+ * the key is unrecognised — the caller must fail loudly, never silently skip the route (D-03).
+ * Today's vocabulary is exactly these four keys: `employee`/`leaveType` from the shared
+ * `seedTestData` bundle, `leaveRequest`/`timeEntry` from the locally created fixtures above (Issue
+ * #309/#310) — a register entry naming a fifth one this probe does not implement is exactly the
+ * failure this function surfaces. */
 function fixtureValueFor(bundle: FixtureBundle, fixtureKey: string): string | null {
   if (fixtureKey === "employee") return bundle.employee.id;
   if (fixtureKey === "leaveType") return bundle.vacationType.id;
+  if (fixtureKey === "leaveRequest") return tenantBLeaveRequestId ?? null;
+  if (fixtureKey === "timeEntry") return tenantBTimeEntryId ?? null;
   return null;
 }
 
@@ -310,6 +325,34 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
       app = await getTestApp();
       tenantA = await seedTestData(app, "t10009-a");
       tenantB = await seedTestData(app, "t10009-b");
+
+      // Issue #309 fixture: a real, PENDING LeaveRequest owned by tenantB's employee. Fixed
+      // dates (not `toISOString().slice(0,10)`-relative — this project's known time-bomb fixture
+      // shape) are safe here because both probe arms return from the tenant guard before any
+      // date-dependent code path runs; the row's only job is to EXIST as a foreign-tenant entity.
+      const leaveRequest = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: tenantB.employee.id,
+          leaveTypeId: tenantB.vacationType.id,
+          status: "PENDING",
+          days: 1,
+          startDate: new Date("2026-01-05"),
+          endDate: new Date("2026-01-05"),
+        },
+      });
+      tenantBLeaveRequestId = leaveRequest.id;
+
+      // Issue #310 fixture: a real, closed TimeEntry owned by tenantB's employee (same
+      // direct-create idiom as tenant-isolation.test.ts's cross-tenant clock-out fixture).
+      const timeEntry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: tenantB.employee.id,
+          date: new Date("2026-01-05"),
+          startTime: new Date("2026-01-05T08:00:00.000Z"),
+          endTime: new Date("2026-01-05T16:00:00.000Z"),
+        },
+      });
+      tenantBTimeEntryId = timeEntry.id;
     });
 
     afterAll(async () => {
@@ -428,6 +471,28 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
       expect(after).not.toBeNull();
       expect(after?.firstName).not.toBe("Gelöscht");
       expect(after?.avatarPath).toBeNull();
+    });
+
+    it("fixture integrity after the sweep: tenantB's LeaveRequest (Issue #309) is still PENDING with unchanged dates and note — a guard that answers 404 while still performing the PATCH would otherwise pass the byte comparison", async () => {
+      const after = await app.prisma.leaveRequest.findUnique({
+        where: { id: tenantBLeaveRequestId },
+      });
+      expect(after).not.toBeNull();
+      expect(after?.status).toBe("PENDING");
+      expect(after?.startDate.toISOString().slice(0, 10)).toBe("2026-01-05");
+      expect(after?.endDate.toISOString().slice(0, 10)).toBe("2026-01-05");
+      expect(after?.note).toBeNull();
+    });
+
+    it("fixture integrity after the sweep: tenantB's TimeEntry (Issue #310) still has zero Break rows, breakMinutes 0, and an unchanged breakStatus — a guard that answers 404 while still performing the POST would otherwise pass the byte comparison", async () => {
+      const after = await app.prisma.timeEntry.findUnique({ where: { id: tenantBTimeEntryId } });
+      expect(after).not.toBeNull();
+      expect(after?.breakMinutes).toBe(0);
+      expect(after?.breakStatus).toBe("CONFIRMED");
+      const breakCount = await app.prisma.break.count({
+        where: { timeEntryId: tenantBTimeEntryId },
+      });
+      expect(breakCount).toBe(0);
     });
   });
 });
