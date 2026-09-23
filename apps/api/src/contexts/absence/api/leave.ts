@@ -51,7 +51,6 @@ import { revalidateLeaveCancellationEntries } from "../../time-tracking"; // Pha
 import {
   REQUESTABLE_CODES as TYPE_CODES,
   LEAVE_TYPE_DEFS,
-  LEAVE_TYPE_LEGACY_ALIASES as LEGACY_ALIASES,
   LEAVE_REQUEST_EMAIL_SUBJECT,
   leaveTypeFields,
   DISPLAY_NAME,
@@ -93,8 +92,11 @@ type DbClient = FastifyInstance["prisma"] | Prisma.TransactionClient;
 
 // ── Feste Abwesenheitstypen ──────────────────────────────────────────────────
 // Phase 97 (T2, D-04): the nine codes, their German display names and the legacy seed aliases
-// now live in ONE place, `utils/leave-type.ts`. `TYPE_CODES` / `LEGACY_ALIASES` are transitional
-// import aliases so this move touched no call site; plan 05 replaces the call sites themselves.
+// now live in ONE place, `utils/leave-type.ts`. `TYPE_CODES` is a transitional import alias so
+// that move touched no call site. `LEAVE_TYPE_LEGACY_ALIASES` (formerly imported here as
+// `LEGACY_ALIASES`) was removed with issue #206 once `ensureLeaveType()`'s legacy-name self-heal
+// step — its only caller in this file — was removed; the name-to-code mapping still lives in
+// `leave-type.ts` for its other caller.
 //
 // `RequestableCode`, not `LeaveTypeCode` (Phase 98b, D-01): `ensureLeaveType()` resolves a
 // `LeaveType` row, and a `LeaveType` row never exists for an imposed absence — every one of its
@@ -107,17 +109,19 @@ type TypeCode = RequestableCode;
  * Phase 97 (T2, AC-1): the CODE is the identity. `name` is display text a tenant may rename
  * freely (AC-2), so this function never rewrites the name of a row that already has a code.
  *
- * Step 2 is a one-time self-heal for rows written before the phase-97 backfill, or by the OLD
- * image during a rolling-deploy window (D-21). It is the only runtime caller of the name ->
- * code direction, it is guarded against producing a second row with the same code for the
- * tenant, and its lookup is deterministically ordered (issue #196: Postgres gives no row order
- * without ORDER BY, and GET/PUT resolving different rows is exactly the defect that caused).
+ * Two steps: an identity lookup by `{ tenantId, code }`, then a P2002-guarded create for the
+ * first request of a given code. Issue #206 made `LeaveType.code` NOT NULL in the database, so
+ * a row with no code can no longer exist; the self-heal step that used to repair one (a one-time
+ * migration path for rows written before the phase-97 backfill, or by the OLD image during a
+ * rolling-deploy window, D-21) is gone — its target row is unreachable by construction, not
+ * merely unused, and the six preconditions measured against int/prod on 2026-09-23 (recorded on
+ * issue #206) confirm no such row survived to this point.
  *
  * Auditing: unchanged from the pre-phase-97 implementation — this find-or-create writes no
- * AuditLog row and did not before either (the old code renamed legacy rows unaudited in the
- * same way). Not a regression introduced here; tracked as the pre-existing gap it is.
+ * AuditLog row and did not before either. Not a regression introduced here; tracked as the
+ * pre-existing gap it is.
  *
- * Review WR-01 (phase 97): step 3's create is P2002-guarded — steps 1-2 above are a
+ * Review WR-01 (phase 97): step 2's create is P2002-guarded — step 1 above is a
  * check-then-create race, so two concurrent first-time requests for the same code can both
  * reach the create. The loser re-reads by `{ tenantId, code }` and resolves to the winner's
  * row instead of surfacing a bare 500. If that re-read comes up empty, the P2002 did not come
@@ -134,27 +138,9 @@ async function ensureLeaveType(
   const byCode = await prisma.leaveType.findFirst({ where: { tenantId, code } });
   if (byCode) return byCode.id;
 
-  // 2. One-time self-heal of an uncoded row that carries this type's canonical or legacy name.
-  const def = LEAVE_TYPE_DEFS[code];
-  const candidateNames = [def.name, ...(LEGACY_ALIASES[code] ?? [])];
-  const uncoded = await prisma.leaveType.findFirst({
-    where: { tenantId, code: null, name: { in: candidateNames } },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-  });
-  if (uncoded) {
-    const isLegacyName = uncoded.name !== def.name;
-    const healed = await prisma.leaveType.update({
-      where: { id: uncoded.id },
-      // A legacy seed name is not a display text the tenant chose — it is corrected.
-      // A canonical name is left exactly as it is.
-      data: { code, ...(isLegacyName ? { name: def.name } : {}) },
-    });
-    return healed.id;
-  }
-
-  // 3. Create. leaveTypeFields() makes code and name structurally inseparable.
+  // 2. Create. leaveTypeFields() makes code and name structurally inseparable.
   //
-  // Review WR-01 (phase 97): steps 1-2 above are a check-then-create race. Two concurrent
+  // Review WR-01 (phase 97): step 1 above is a check-then-create race. Two concurrent
   // first-time requests for the same (tenantId, code) both pass them and both arrive here;
   // @@unique([tenantId, code]) lets exactly one win and raises P2002 on the loser, which
   // used to surface as a bare HTTP 500 for an operation that had in fact succeeded. Same
@@ -1813,19 +1799,15 @@ export async function leaveRoutes(app: FastifyInstance) {
       const oldTypeCode = existingTypeCode; // from existing.leaveType.code (delta-lock step)
       const newType = body.type ?? oldTypeCode;
 
-      // IN-94-01: Phase 97 — a LeaveType row whose `code` is NULL (pre-backfill, or written by
-      // the old image during a rolling deploy, D-21) leaves oldTypeCode undefined; when the type
-      // is also left unchanged, newType is undefined too. The reverse/apply dispatch would then
-      // silently fall through to no-op — updating dates/days WITHOUT adjusting the entitlement
-      // ledger (a stranded Kontingent). For audit-proof code, fail loud rather than skip the
-      // authoritative booking.
-      if (!oldTypeCode || !newType) {
-        app.log.error(
-          { id, leaveTypeId: existing.leaveTypeId, oldTypeCode, newType },
-          "Unresolved leaveType on leave correction — refusing to skip entitlement booking",
-        );
-        return reply.code(400).send({ error: "Unbekannter Antragstyp — Korrektur nicht möglich" });
-      }
+      // IN-94-01 (Phase 97, D-21) used to guard here: a LeaveType row whose `code` was NULL
+      // (pre-backfill, or written by the old image during a rolling deploy) left oldTypeCode
+      // undefined, and the reverse/apply dispatch below would silently fall through to a no-op —
+      // updating dates/days WITHOUT adjusting the entitlement ledger (a stranded Kontingent).
+      // Issue #206's migration (20260923090815_leave_type_code_not_null) tightened that column to
+      // required, making that state impossible to construct: `existing.leaveType.code` is a
+      // required `LeaveTypeCode` now, so `oldTypeCode` (and therefore `newType`) can never be
+      // falsy for a real row. The assertion moved from this application guard into the database
+      // constraint — it did not disappear.
 
       // ── Step 7a: half-day-sick reject (pre-write) — Krankheit ist immer ganztägig.
       if (body.halfDay && (newType === "SICK" || newType === "SICK_CHILD")) {

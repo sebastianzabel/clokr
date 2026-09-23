@@ -587,7 +587,7 @@ describe("POST /shifts conflictType — classified by LeaveType.code, not name (
       | "EDUCATION"
       | "MATERNITY"
       | "PARENTAL"
-      | null,
+      | "OTHER",
     name: string,
     expected: string,
   ) {
@@ -680,7 +680,10 @@ describe("POST /shifts conflictType — classified by LeaveType.code, not name (
     await expectConflictType("PARENTAL", "Elternzeit", "other");
   });
 
-  it("a LeaveType row with code=null yields 'other' and does not throw", async () => {
-    await expectConflictType(null, "Alteintrag ohne Code", "other");
+  it("an OTHER-coded LeaveType row yields 'other' and does not throw", async () => {
+    // Issue #206 made `LeaveType.code` NOT NULL — a codeless row can no longer exist. `OTHER`
+    // preserves the exact case: it matches none of VACATION/SPECIAL/SICK/SICK_CHILD, so the
+    // conflict resolver's catch-all branch fires the same way a codeless row used to trigger it.
+    await expectConflictType("OTHER", "Alteintrag mit fremdem Code", "other");
   });
 });

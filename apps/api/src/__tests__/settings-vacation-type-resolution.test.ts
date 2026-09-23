@@ -132,13 +132,18 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     });
 
     // ── Tenant C: single arbitrarily-named urlaub row ──────────────────────────────────────
-    // Deliberately codeless — "Erholungsurlaub" is not one of the nine canonical/legacy names,
-    // exactly the case this file's resolution logic is exercised against.
+    // Issue #206 made `LeaveType.code` NOT NULL — a codeless row can no longer exist. Deliberately
+    // WRONG-scope code instead ("UNPAID", not "VACATION"): "Erholungsurlaub" is not one of the
+    // nine canonical/legacy names, and now carries a real but non-matching identity — exactly the
+    // case this file's resolution logic (findUnique on [tenantId, code = "VACATION"]) is exercised
+    // against; a row whose code is anything other than "VACATION" is not found, same as a row with
+    // no code at all used to be.
     await app.prisma.leaveEntitlement.deleteMany({ where: { employeeId: tenantC.employee.id } });
     await app.prisma.leaveType.delete({ where: { id: tenantC.vacationType.id } });
     erholungsurlaubC = await app.prisma.leaveType.create({
       data: {
         tenantId: tenantC.tenant.id,
+        code: "UNPAID",
         name: "Erholungsurlaub",
         isPaid: true,
         requiresApproval: true,
@@ -147,13 +152,14 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     });
 
     // ── Tenant D: ambiguous non-canonical names, no canonical/legacy row ───────────────────
-    // First row deliberately codeless (same reasoning as tenant C); second row IS the SPECIAL
-    // type and gets its code.
+    // First row given a wrong-scope code too (same reasoning as tenant C, Issue #206); second
+    // row IS the SPECIAL type and gets its own code.
     await app.prisma.leaveEntitlement.deleteMany({ where: { employeeId: tenantD.employee.id } });
     await app.prisma.leaveType.delete({ where: { id: tenantD.vacationType.id } });
     await app.prisma.leaveType.create({
       data: {
         tenantId: tenantD.tenant.id,
+        code: "UNPAID",
         name: "Erholungsurlaub",
         isPaid: true,
         requiresApproval: true,
@@ -305,18 +311,20 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
     });
   });
 
-  describe("C) single arbitrarily-named, codeless urlaub row — deterministic 404 (Phase 97 behavior change)", () => {
+  describe("C) single arbitrarily-named, wrong-scope-coded urlaub row — deterministic 404 (Phase 97 behavior change)", () => {
     // #196's old resolver had a fallback for exactly this case: if the priority-ordered name
     // match found nothing, but the old ambiguous `contains: "Urlaub"` query matched EXACTLY ONE
     // row, that single row was returned — preserving a tenant's arbitrarily-named vacation row
     // (e.g. "Erholungsurlaub"). That fallback existed only because the row had no other way to
     // assert its identity. Phase 97 gives every canonical type a stable code, and identity is now
-    // the code, not a name heuristic of any kind — a row without `code = "VACATION"` has no
-    // identity to be found by, single match or not. This test's positive-resolution case is
+    // the code, not a name heuristic of any kind — a row whose code is not `"VACATION"` has no
+    // identity to be found by, single name match or not. This test's positive-resolution case is
     // therefore gone without replacement (the fallback it protected no longer exists); what
     // replaces it is the 404 assertion below, which is really block E's case (no vacation type
-    // configured) reached via a different fixture shape.
-    it("GET returns 404 — a codeless row is never selected, even as the sole 'Urlaub'-like match", async () => {
+    // configured) reached via a different fixture shape. Issue #206 made `code` NOT NULL, so the
+    // fixture row now carries a real, deliberately wrong-scope code ("UNPAID") instead of no code
+    // at all — `findUnique` on `[tenantId, code = "VACATION"]` finds nothing either way.
+    it("GET returns 404 — a wrong-scope-coded row is never selected, even as the sole 'Urlaub'-like match", async () => {
       const res = await app.inject({
         method: "GET",
         url: `/api/v1/settings/vacation/${tenantC.employee.id}?year=${YEAR}`,
@@ -325,7 +333,7 @@ describe("settings /vacation/:employeeId — deterministic vacation LeaveType re
       expect(res.statusCode).toBe(404);
       expect(JSON.parse(res.body)).toEqual({ error: "Urlaubstyp nicht konfiguriert" });
       // erholungsurlaubC is referenced only to keep the fixture's intent documented; the row
-      // deliberately has no code and is proven above to never be resolved.
+      // deliberately carries the wrong code and is proven above to never be resolved as VACATION.
       expect(erholungsurlaubC.name).toBe("Erholungsurlaub");
     });
   });

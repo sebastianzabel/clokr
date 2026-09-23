@@ -615,9 +615,11 @@ model LeaveType {
   id               String   @id @default(uuid())
   tenantId         String
   name             String // Anzeigetext, frei änderbar — Identität steckt in `code`
-  // Phase 97 (T2) — Identitätsträger. `name` ist ab dieser Phase reiner Anzeigetext (AC-2).
-  // Nullable bleibt sie, bis Plan 10 nach dem Nachlauf-Sweep SET NOT NULL setzt (D-20/D-21).
-  code             LeaveTypeCode?
+  // Phase 97 (T2) — Identitätsträger. `name` ist seit dieser Phase reiner Anzeigetext (AC-2).
+  // Issue #206: `code` ist seit dieser Migration verpflichtend. Der Nachlauf-Sweep (Phase 97,
+  // D-20/D-21) hat auf int und prod je 0 codelose Zeilen gemessen, bevor die Spalte verpflichtend
+  // wurde (dokumentiert in docs/migrations.md § Phase 97).
+  code             LeaveTypeCode
   isPaid           Boolean  @default(true)
   requiresApproval Boolean  @default(true)
   color            String   @default("#3B82F6")
@@ -633,8 +635,11 @@ model LeaveType {
   @@unique([tenantId, name])
   // Phase 97 (T2, AC-1) — der Identitaets-Constraint. `[tenantId, name]` darueber bleibt als
   // reiner Datenqualitaets-Constraint bestehen und traegt keine Identitaet mehr.
-  // Postgres behandelt NULL in Unique-Indizes als paarweise verschieden (empirisch gegen
-  // PG 18 geprueft), der Index vertraegt die nullable Spalte also auch waehrend des Rollouts.
+  // Historische Anmerkung (Issue #206 hat sie geschlossen): Postgres behandelt NULL in
+  // Unique-Indizes als paarweise verschieden (empirisch gegen PG 18 geprueft) — das trug diesen
+  // Index waehrend des nullable-Rollout-Fensters. Seit `code` NOT NULL ist, ist diese
+  // NULL-Sonderbehandlung nicht mehr aktiv relevant, bleibt hier aber als Beleg fuer die
+  // Rollout-Entscheidung stehen.
   @@unique([tenantId, code])
   @@index([tenantId])
 }

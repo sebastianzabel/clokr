@@ -39,13 +39,15 @@ export async function hasApprovedLeaveOnDate(
     include: { leaveType: { select: { code: true } } },
   });
   if (leave) {
-    // LeaveType.code is nullable in the schema until the Phase 97/98b post-rollout sweep's
-    // SET NOT NULL lands (schema.prisma:612-613, D-20/D-21) — checked directly against the dev
-    // database on 2026-09-17: 5/5 LeaveType rows already carry a code, zero missing. This
-    // fallback exists only for the case a pre-Phase-97 row somehow still lacks one: fall back to
-    // the generic `OTHER` code rather than crash. It deliberately does NOT resolve the code by
-    // reading the (tenant-editable) name — that would both reintroduce a name-based lookup this
-    // file exists to remove and violate the backfill-only restriction named above.
+    // LeaveType.code is NOT NULL in the database as of issue #206 (schema.prisma, migration
+    // 20260923090815_leave_type_code_not_null) — the six preconditions measured against int/prod
+    // on 2026-09-23 (recorded on issue #206) found zero rows without a code before the column was
+    // tightened. The `?? "OTHER"` fallback below therefore no longer guards against a real
+    // database state; it survives purely as defence for a hand-built test stub whose shape
+    // (`leave-check.test.ts`) can still give the `code` field a null value at the TypeScript
+    // level. It deliberately does NOT resolve the code by reading the (tenant-editable) name —
+    // that would both reintroduce a name-based lookup this file exists to remove and violate the
+    // backfill-only restriction named above.
     return {
       code: leave.leaveType.code ?? "OTHER",
       status: leave.status as "APPROVED" | "CANCELLATION_REQUESTED",

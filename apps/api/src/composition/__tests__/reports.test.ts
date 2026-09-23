@@ -443,7 +443,7 @@ describe("Reports API", () => {
       expect(vacationLine).toContain(";3,0;");
     });
 
-    it("D13-3: a request on a code=null row produces no Ausfall-Lohnart line and leaves the other rows unchanged", async () => {
+    it("D13-3: a request on an OTHER-coded row (outside every Lohnart mapping) produces no Ausfall-Lohnart line and leaves the other rows unchanged", async () => {
       const employee2 = await app.prisma.employee.create({
         data: {
           tenantId: d13Data.tenant.id,
@@ -463,11 +463,16 @@ describe("Reports API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
-      const nullCodeType = await app.prisma.leaveType.create({
+      // Issue #206 made `LeaveType.code` NOT NULL — a codeless row can no longer exist. `OTHER`
+      // preserves the exact case this test exercises: `daysForCode()` (reports.ts) is only ever
+      // called with VACATION/OVERTIME_COMP/SPECIAL/EDUCATION/UNPAID/MATERNITY/PARENTAL, and sick
+      // days are handled separately — `OTHER` matches none of those, so it produces no Ausfall
+      // line for exactly the same reason a codeless row used to produce none.
+      const otherCodeType = await app.prisma.leaveType.create({
         data: {
           tenantId: d13Data.tenant.id,
-          code: null,
-          name: "Sonderfall ohne Code (D13)",
+          code: "OTHER",
+          name: "Sonderfall ohne passende Lohnart (D13)",
           isPaid: true,
           requiresApproval: true,
           color: "#9CA3AF",
@@ -476,7 +481,7 @@ describe("Reports API", () => {
       await app.prisma.leaveRequest.create({
         data: {
           employeeId: employee2.id,
-          leaveTypeId: nullCodeType.id,
+          leaveTypeId: otherCodeType.id,
           startDate: new Date("2026-04-20"), // Monday
           endDate: new Date("2026-04-21"), // Tuesday
           days: 2,
@@ -489,7 +494,7 @@ describe("Reports API", () => {
         .split(/\r\n/)
         .filter((l) => l.startsWith(`${DATEV_BWD_SATZ_ID};${employee2.employeeNumber};`));
       // Exactly one line for this employee: the unconditional "normal hours" row with
-      // an empty Ausfallschlüssel — no U/S/K row was written for the code=null request.
+      // an empty Ausfallschlüssel — no U/S/K row was written for the OTHER-coded request.
       expect(lines.length).toBe(1);
       expect(lines[0]).not.toMatch(/;U;|;S;|;K;/);
 
@@ -914,12 +919,15 @@ describe("Reports API", () => {
         },
       });
 
-      // A pre-Phase-97 style row with no code — must never contribute to the overview.
-      const nullCodeType = await app.prisma.leaveType.create({
+      // Issue #206 made `LeaveType.code` NOT NULL — a codeless row can no longer exist. `OTHER`
+      // preserves the exact case: the overview filters `e.leaveType.code !== "VACATION"`
+      // (reports.ts), so any non-VACATION code — real or, formerly, none at all — must never
+      // contribute to the overview.
+      const otherCodeType = await app.prisma.leaveType.create({
         data: {
           tenantId: d11Data.tenant.id,
-          code: null,
-          name: "Sonderfall ohne Code (D11)",
+          code: "OTHER",
+          name: "Sonderfall ohne passende Kategorie (D11)",
           isPaid: true,
           requiresApproval: true,
           color: "#9CA3AF",
@@ -928,7 +936,7 @@ describe("Reports API", () => {
       await app.prisma.leaveEntitlement.create({
         data: {
           employeeId: d11Data.employee.id,
-          leaveTypeId: nullCodeType.id,
+          leaveTypeId: otherCodeType.id,
           year,
           totalDays: 999,
           usedDays: 0,
@@ -999,7 +1007,7 @@ describe("Reports API", () => {
       expect(row!.totalDays).toBe(30);
     });
 
-    it("D11-4: the code=null entitlement (999 days) never contributes to totalDays", async () => {
+    it("D11-4: the OTHER-coded entitlement (999 days) never contributes to totalDays", async () => {
       const row = await overviewRow();
       expect(row).toBeDefined();
       expect(row!.totalDays).not.toBe(999);

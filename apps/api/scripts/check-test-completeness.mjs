@@ -421,8 +421,64 @@ import { readFileSync } from "node:fs";
 // passed | 3 skipped (3416)`, cross-checked against `apps/api/vitest-report.json`'s own
 // `testResults.length` (280) / `numTotalTests` (3416) directly — an exact match with this plan's
 // own accounting, so no unrelated drift needed absorbing this time.
-const MIN_FILES = 280;
-const MIN_TESTS = 3416;
+// Issue #206 (`LeaveType.code` set to `NOT NULL`) — floor LOWERED, on a green run, not stretched
+// to keep a red one passing (this is a removal of test cases whose constructed state the
+// database now refuses, per Task 1's own SQLSTATE 23502 proof, not a relaxation to dodge a
+// failure). One test FILE removed entirely:
+// `apps/api/scripts/__tests__/backfill-leave-type-code.test.ts` (12 cases) — its subject,
+// `scripts/backfill-leave-type-code.ts`, was removed with it: the script's only selection,
+// `code IS NULL`, can never again match a row after migration
+// `20260923090815_leave_type_code_not_null`, so none of its 12 cases (each first constructing a
+// codeless row) could be repaired, only deleted. Net test-case changes within still-existing
+// files (no FILE count change): `leave.test.ts` lost 3 cases whose subject was the same
+// now-impossible state and had no reverse to rewrite toward (two `ensureLeaveType()` self-heal
+// cases, one multi-row-ordering case — `@@unique([tenantId, code])` already forbade two rows
+// sharing one real code, so no candidate-set could ever be rebuilt with real codes either);
+// `leave-correct.test.ts` lost 1 case for the same reason (its guard, `leave.ts`'s
+// `!oldTypeCode` check, was removed as unreachable in the same commit); `leave-entitlement-self-heal.test.ts`
+// lost 1 case (Phase 97 D-12's "Test 4") plus its now-orphaned fixture. Every OTHER case this
+// issue touched was rewritten in place with a real, deliberately wrong-scope code (mostly
+// `"OTHER"`) instead of deleted — no further count change from those. A fresh, fully GREEN
+// full-suite run (`pnpm --filter @clokr/api test`, zero failed suites — the prior run with the
+// still-present backfill script failed one suite and is NOT the basis for this floor, per this
+// issue's own instruction to measure only from green) reports `Test Files 279 passed (279)` /
+// `Tests 3398 passed | 3 skipped (3401)`, cross-checked against `vitest-report.json`'s own
+// `testResults.length` (279) / `numTotalTests` (3401) directly. 280 - 1 = 279 files matches
+// exactly. The test-count arithmetic above (-17, verified by counting `it(` additions/removals
+// per file with `git diff c5f4fd26..3a6cdcc2`, not estimated) does NOT reconcile against the
+// inherited 3416 floor by itself: 3416 - 17 = 3399, two short of the measured 3401. Traced, not
+// shrugged off: `c5f4fd26` — this issue's own starting base commit, already on `main` before this
+// issue began, from an unrelated ticket (#309/#310) — added 2 new `it()` cases to
+// `src/__tests__/t100-09-oracle-probe.test.ts` without bumping this floor (`git diff
+// f418c7a2..c5f4fd26 -- apps/api/src/__tests__/t100-09-oracle-probe.test.ts` shows exactly two
+// added `it(` lines, zero removed; `f418c7a2` is the commit that set 3416, and
+// `f418c7a2..c5f4fd26` contains no other commit). The floor this issue inherited was therefore
+// already stale by +2 before this issue touched anything: the TRUE baseline at `c5f4fd26` was
+// 3418, not 3416. 3418 - 17 = 3401 — matches the measured green run exactly, with nothing left
+// unexplained. This is a pre-existing floor-drift gap from `c5f4fd26`/#309/#310, out of THIS
+// issue's scope to correct retroactively (CLAUDE.md's scope-boundary rule — only fix what the
+// current task's own changes caused), named here rather than silently absorbed or waved off as
+// rounding.
+//
+// Orchestrator correction, same run: 3401 was still 10 BELOW reality, and the reason is the
+// generalisable one. That number came from a green run taken BEFORE this branch merged
+// `origin/main`; the merge brought in #263 (19a24505), whose diff adds only TWO `it()`
+// declarations — but one of them sits inside `describe.each(BOUNDARY_MATRIX)` over a nine-row
+// table, so it expands to nine runtime cases, ten with the completeness case beside it.
+//
+// That is the systematic reason floor accounting keeps falling behind, and it is worth stating
+// plainly: COUNTING `it(` IN A DIFF UNDERCOUNTS TABLE-DRIVEN TESTS. A floor is a statement about
+// RUNTIME cases, so it may only ever be set from the reporter's own `numTotalTests` on a fully
+// green run of the tree that is actually being merged — never from a hand-summed diff, and never
+// from a run predating a later merge into the same branch.
+//
+// Independently re-measured in the main checkout after merging this branch onto `origin/main`
+// (`pnpm --filter @clokr/api test`): `Test Files 279 passed (279)`, `Tests 3408 passed |
+// 3 skipped (3411)`, zero failures — `vitest-report.json` agrees (`testResults.length` 279,
+// `numTotalTests` 3411). Both stale steps above (c5f4fd26's +2 and #263's +10) are absorbed by
+// taking that measurement as the floor, so the floor no longer trails the suite.
+const MIN_FILES = 279;
+const MIN_TESTS = 3411;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

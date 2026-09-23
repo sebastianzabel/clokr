@@ -28,10 +28,9 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
   // Employee B: leave-page regression (stored=10, actual=0)
   let empB_Id: string;
   let empB_EntId: string;
-  // Employee C: codeless legacy row (entitlement on "Urlaub", approved request on "Jahresurlaub" —
-  // no longer aggregated post-Phase-97, see Test 4)
-  let empC_Id: string;
-  let empC_EntId: string;
+  // Formerly also had Employee C: a codeless legacy row exercising Phase 97 D-12's
+  // name-list-aggregation removal via "Test 4" below. Issue #206 made `LeaveType.code` NOT NULL,
+  // which makes that fixture unconstructable — Employee C and Test 4 were removed with it.
 
   beforeAll(async () => {
     app = await getTestApp();
@@ -79,12 +78,7 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
     });
     adminToken = JSON.parse(loginRes.body).accessToken as string;
 
-    // ── LeaveType "Urlaub" (canonical) + "Jahresurlaub" (legacy, codeless) ─────
-    // Employee C exercises what USED TO BE name-based legacy-alias aggregation across two
-    // DISTINCT rows for the same tenant. `jahresurlaub` deliberately stays codeless:
-    // @@unique([tenantId, code]) forbids giving both rows the VACATION code. Phase 97 (Plan 09,
-    // D-12) removes the name-list aggregation this fixture used to exercise; see Test 4 below
-    // for the resulting (deliberate) behavior change.
+    // ── LeaveType "Urlaub" (canonical) ─────
     const urlaub = await prisma.leaveType.create({
       data: {
         tenantId: tenant.id,
@@ -95,15 +89,11 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
         color: "#3B82F6",
       },
     });
-    const jahresurlaub = await prisma.leaveType.create({
-      data: {
-        tenantId: tenant.id,
-        name: "Jahresurlaub",
-        isPaid: true,
-        requiresApproval: true,
-        color: "#3B82F6",
-      },
-    });
+    // Formerly also created a second, deliberately codeless "Jahresurlaub" row here to exercise
+    // Employee C / Test 4 below (Phase 97 D-12's name-list-aggregation removal). Issue #206 made
+    // `LeaveType.code` NOT NULL, so that fixture can no longer be constructed; Test 4 and its
+    // fixture (Employee C, both entitlement and leave request) were removed with it — see git
+    // history for the pre-#206 shape.
 
     // Helper: create a fresh employee (user + employee + workSchedule + overtimeAccount).
     const mkEmployee = async (slug: string) => {
@@ -184,33 +174,6 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
     });
     empB_EntId = entB.id;
     // No LeaveRequest for empB.
-
-    // ── Employee C: codeless legacy row, no longer aggregated (Test 4 below) ──────────────
-    // Entitlement is attached to "Urlaub" (canonical) with usedDays=0.
-    // An approved LeaveRequest sits on the codeless "Jahresurlaub" row instead — post-Phase-97
-    // this no longer contributes to the canonical entitlement's heal (see Test 4).
-    empC_Id = await mkEmployee("empC");
-    const entC = await prisma.leaveEntitlement.create({
-      data: {
-        employeeId: empC_Id,
-        leaveTypeId: urlaub.id,
-        year: currentYear,
-        totalDays: 20,
-        usedDays: 0,
-        carriedOverDays: 0,
-      },
-    });
-    empC_EntId = entC.id;
-    await prisma.leaveRequest.create({
-      data: {
-        employeeId: empC_Id,
-        leaveTypeId: jahresurlaub.id, // attached to the codeless legacy row, not the canonical one
-        status: "APPROVED",
-        startDate: new Date(`${currentYear}-04-01T00:00:00Z`),
-        endDate: new Date(`${currentYear}-04-07T00:00:00Z`),
-        days: 5,
-      },
-    });
   });
 
   afterAll(async () => {
@@ -287,37 +250,13 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
     expect(Number(db!.usedDays)).toBe(0);
   });
 
-  it("Test 4 (Phase 97 D-12, deliberate behavior change): a codeless legacy row's approved request is NO LONGER aggregated into the canonical VACATION entitlement", async () => {
-    // Pre-Phase-97 this row's usedDays healed to 5 (the "Jahresurlaub" row's approved request
-    // was pulled in via a hard-coded German display-name list). Phase 97 resolves the
-    // aggregation scope by `code === "VACATION"` alone; the codeless "Jahresurlaub" row has no
-    // code and therefore no longer contributes. The tenant's own "Urlaub" LeaveRequest.days
-    // total for empC is zero, so the entitlement heals to 0, not 5 — this is the AC-5
-    // precondition in practice: Step 0's production query proved no codeless row with attached
-    // requests exists in clokr/clokr_test at execution time, so this scenario is confined to
-    // this deliberately-constructed fixture. A real orphaned row like "Jahresurlaub" here is
-    // caught by the Plan 04 backfill/sweep script as a "conflicts" entry (its target code
-    // VACATION is already claimed by the canonical "Urlaub" row) — it is surfaced for a human,
-    // never silently absorbed again.
-    const res = await app.inject({
-      method: "GET",
-      url: `/api/v1/reports/leave-overview?year=${currentYear}`,
-      headers: { authorization: `Bearer ${adminToken}` },
-    });
-    expect(res.statusCode).toBe(200);
-    const body = res.json() as Array<{
-      employee: { id: string };
-      leaveType: { name: string };
-      usedDays: number;
-    }>;
-    const rowC = body.find((r) => r.employee.id === empC_Id && r.leaveType.name === "Urlaub");
-    expect(rowC, "Employee C 'Urlaub' row must be present").toBeDefined();
-    expect(rowC!.usedDays).toBe(0);
-
-    // Persisted on the canonical entitlement row.
-    const db = await app.prisma.leaveEntitlement.findUnique({ where: { id: empC_EntId } });
-    expect(Number(db!.usedDays)).toBe(0);
-  });
+  // "Test 4 (Phase 97 D-12, deliberate behavior change): a codeless legacy row's approved
+  // request is NO LONGER aggregated into the canonical VACATION entitlement" removed (Issue
+  // #206): its fixture (Employee C, a "Jahresurlaub" LeaveType row with no `code`) built the
+  // exact state `LeaveType.code NOT NULL` now refuses to store. The aggregation-scope behavior
+  // it pinned (`code === "VACATION"` only, no display-name list) is unaffected and remains
+  // covered by `describe("selfHealUsedDays resolves the VACATION aggregation scope by code
+  // (Phase 97, D-12)")` below, which uses real, non-VACATION codes rather than a codeless row.
 });
 
 // ── Phase 97 Plan 09 (D-12): code-based aggregation scope, and the AC-5 characterization ──────

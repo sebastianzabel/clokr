@@ -128,7 +128,7 @@ const DOWN_MONDAY = nextHolidayFreeMonday(224); // AC-RC-07 downward, direct cal
 const UP_MONDAY = nextHolidayFreeMonday(238, 1); // AC-RC-07 upward, direct call
 const RENAME_SCOPE_MONDAY = nextHolidayFreeMonday(266); // D-16: renamed VACATION-code row still
 // resolves; a SICK-code row in the same week stays out of scope
-const NULL_CODE_MONDAY = nextHolidayFreeMonday(280); // D-16: a code=null row is not adjusted
+const WRONG_SCOPE_CODE_MONDAY = nextHolidayFreeMonday(280); // D-16: a wrong-scope-coded row is not adjusted
 const PAST_DAY = pastDateStr(45); // AC-RC-04 — comfortably in the past
 
 describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () => {
@@ -813,17 +813,20 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     expect(Number(persistedSick!.days)).toBe(3); // untouched — SICK is out of scope
   });
 
-  // ── D-16: a code=null LeaveType row is not adjusted ─────────────────────────────────────────
-  it("D-16: a request on a code=null LeaveType row is not adjusted", async () => {
-    const start = NULL_CODE_MONDAY;
-    const end = addDaysIso(NULL_CODE_MONDAY, 1);
-    // A pre-backfill-style row — no code. Phase 97 (D-09) leaves such rows without a code
-    // rather than guessing one; the resolver must treat this exactly like a wrong-scope type.
-    const uncodedType = await app.prisma.leaveType.create({
+  // ── D-16: a wrong-scope-coded LeaveType row is not adjusted ─────────────────────────────────
+  it("D-16: a request on a wrong-scope-coded LeaveType row is not adjusted", async () => {
+    const start = WRONG_SCOPE_CODE_MONDAY;
+    const end = addDaysIso(WRONG_SCOPE_CODE_MONDAY, 1);
+    // Issue #206 made `LeaveType.code` NOT NULL — a pre-backfill-style row with no code can no
+    // longer exist. A real, deliberately wrong-scope code (not VACATION/OVERTIME_COMP, the two
+    // roster-recalc cares about) preserves the exact assertion this case existed to make: the
+    // resolver must treat any type outside its scope identically, whether the old "no code at
+    // all" state or a real but irrelevant code.
+    const wrongScopeType = await app.prisma.leaveType.create({
       data: {
         tenantId,
-        code: null,
-        name: "Uraltzeile ohne Code",
+        code: "SPECIAL",
+        name: "Uraltzeile mit fremdem Code",
         isPaid: true,
         requiresApproval: true,
       },
@@ -831,7 +834,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     const req = await app.prisma.leaveRequest.create({
       data: {
         employeeId: emp.id,
-        leaveTypeId: uncodedType.id,
+        leaveTypeId: wrongScopeType.id,
         startDate: utcMidnight(start),
         endDate: utcMidnight(end),
         days: 2,

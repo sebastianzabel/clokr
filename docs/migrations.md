@@ -265,6 +265,14 @@ Ausgabe des Laufs vom 2026-09-22 (prod, gegen v1.11.0, Dry-Run):
 **Ist `planned` leer, wird `--apply` NICHT gefahren** — es gäbe nichts anzuwenden, und ein
 Leerlauf ist kein zusätzlicher Beleg. Der Nachweis ist dann Schritt 4, nicht ein zweiter Aufruf.
 
+**Nachtrag (Issue #206):** Der Sweep war ein einmaliger Rollout-Schritt für das Fenster zwischen
+Backfill-Migration und `SET NOT NULL`. Die Migration
+`packages/db/prisma/migrations/20260923090815_leave_type_code_not_null` hat den Zustand
+`code IS NULL` in der Datenbank dauerhaft unmöglich gemacht — der Sweep hätte ab diesem Release
+für immer nichts mehr zu finden. `scripts/backfill-leave-type-code.ts` wurde deshalb mit dieser
+Änderung entfernt (samt seiner Testdatei); die Befehle und die gemessene Ausgabe oben bleiben als
+Beleg für den abgeschlossenen Rollout stehen, sind aber nicht mehr ausführbar.
+
 Nebenbei, weil es die Erwartung an diesen Schritt verschiebt: prod läuft als
 Docker-Compose-Recreate, nicht als Rolling Deploy. Das Fenster, in dem das ALTE Image über
 `ensureLeaveType()` eine Zeile ohne Code anlegen könnte, existiert dort praktisch nicht — auf
@@ -283,15 +291,25 @@ Erst wenn beide Abfragen das erwartete Ergebnis liefern, darf `SET NOT NULL` (Pl
 Meldet der Dry-Run `unmapped`-Zeilen, trägt ein Mandant einen eigenen Typnamen — das ist eine
 Rückfrage an den Betreiber, kein Fall für einen Ersatzcode.
 
-**5. `SET NOT NULL` — eigener, SPÄTERER Release. Nicht in diesem Branch anlegen.**
+**5. `code` auf `NOT NULL` gesetzt — abgeschlossen, Issue #206.**
 
 > **Rollout-Reihenfolge, nicht nur Zeitpunkt (Owner-Entscheidung 2026-09-18).** Die Vorbedingung
-> nennt eine **Version**: das Release mit Phase 97 ist **v1.11.0**. prod wird deshalb NICHT von
+> nannte eine **Version**: das Release mit Phase 97 ist **v1.11.0**. prod wurde deshalb NICHT von
 > v1.10.x direkt auf v1.11.1 gezogen, sondern der Reihe nach — erst v1.11.0 (dort den
-> Nachlauf-Sweep fahren und seine Ausgabe festhalten), dann v1.11.1. Ein Versionssprung würde
-> diese Vorbedingung dauerhaft unerfüllbar machen, weil das Release, das sie erfüllt, auf prod nie
-> als ausgelieferter Zustand existiert hätte. Siehe `docs/release-process.md`
-> § „Upgrade path: do not skip a version on prod". Verfolgt als GitHub-Issue #206.
+> Nachlauf-Sweep gefahren und seine Ausgabe festgehalten, siehe Schritt 3), dann v1.11.1. Ein
+> Versionssprung hätte diese Vorbedingung dauerhaft unerfüllbar gemacht, weil das Release, das sie
+> erfüllt, auf prod nie als ausgelieferter Zustand existiert hätte. Siehe `docs/release-process.md`
+> § „Upgrade path: do not skip a version on prod".
+
+Die sechs Vorbedingungen (0 codelose Zeilen auf int UND prod, 0 Duplikat-`(tenantId, code)`-Gruppen
+auf beiden, 5-Zeilen-Kontrolle) wurden am 2026-09-23 gemessen und auf Issue #206 dokumentiert. Die
+Migration `packages/db/prisma/migrations/20260923090815_leave_type_code_not_null`
+(`ALTER TABLE "LeaveType" ALTER COLUMN "code" SET NOT NULL`) ist damit gelandet;
+`ensureLeaveType()`s Selbstheilungspfad und ein zweiter, symmetrischer 400-Riegel im
+`correct`-Handler (beide griffen nur bei einer codelosen Zeile) sind mit ihr entfernt worden. Der
+Nachlauf-Sweep-Skript `scripts/backfill-leave-type-code.ts` wurde ebenfalls entfernt (siehe
+Nachtrag zu Schritt 3) — seine einzige Auswahlbedingung (`code IS NULL`) kann ab diesem Release
+kein Ergebnis mehr liefern.
 
 (Schritte 0-4 stehen oben; Schritt 0 ist die Rollout-Einheit R1 — Migration und Schreibpfad in
 EINEM Merge.)
