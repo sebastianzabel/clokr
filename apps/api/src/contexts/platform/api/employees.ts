@@ -9,7 +9,11 @@ import { validatePassword, loadPasswordPolicy } from "../password-policy";
 import { calculateProRataVacation } from "../../absence/vacation-calc";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { anonymizeEmployeeData, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../anonymize";
-import { withRoleLockoutGuard, type RemovedRoleAssignment } from "../facade/role-assignments";
+import {
+  removeRoleAssignmentsOfUser,
+  withRoleLockoutGuard,
+  type RemovedRoleAssignment,
+} from "../facade/role-assignments";
 import { requestAuditFields } from "../request-audit-fields";
 import { RoleLockoutError, ROLE_LOCKOUT_MESSAGE } from "../role-assignment";
 import {
@@ -1249,7 +1253,8 @@ export async function employeeRoutes(app: FastifyInstance) {
       // Phase 74b (D-20): the whole transaction body runs under the lockout guard, order
       // unchanged. On the real path the tenant's last holder never gets here — the
       // anonymization precondition above refuses first, and anonymized users are inactive and
-      // hold no assignments. The guard is wired anyway so the rule holds by construction.
+      // normally hold no assignments (any left over are removed with an audit below). The guard
+      // is wired anyway so the rule holds by construction.
       try {
         await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
           await withRoleLockoutGuard(tx, req.user.tenantId, async () => {
@@ -1293,6 +1298,23 @@ export async function employeeRoutes(app: FastifyInstance) {
             await hardDeleteEntitlementsForEmployee(tx, id);
             await tx.workSchedule.deleteMany({ where: { employeeId: id } });
             await hardDeleteOvertimeDataForEmployee(tx, id);
+            // 74b review WR-04 (D-12/D-22): remove the user's remaining role assignments
+            // explicitly, one DELETE audit each, before the user row goes. The
+            // RoleAssignment.userId `onDelete: Cascade` stays only as a backstop: a cascade
+            // writes no audit row, and an anonymized user can still hold an assignment that was
+            // written directly (script, fixture) rather than through a route.
+            const removedRoleAssignments = await removeRoleAssignmentsOfUser(
+              tx,
+              req.user.tenantId,
+              userId,
+            );
+            await auditRemovedRoleAssignments(
+              app,
+              req,
+              tx,
+              removedRoleAssignments,
+              "Endgültige Löschung",
+            );
             // Finally: employee and user records
             await tx.employee.delete({ where: { id } });
             await tx.user.delete({ where: { id: userId } });

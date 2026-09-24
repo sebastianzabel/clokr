@@ -24,7 +24,12 @@ function uniqueSuffix(label: string): string {
 }
 
 /** Role-descriptive fixture user + employee — no person names (CLAUDE.md PII rule). */
-async function createUserWithEmployee(app: FastifyInstance, tenantId: string, label: string) {
+async function createUserWithEmployee(
+  app: FastifyInstance,
+  tenantId: string,
+  label: string,
+  employeeData: { firstName?: string; hireDate?: Date; exitDate?: Date } = {},
+) {
   const s = uniqueSuffix(label);
   const passwordHash = await bcrypt.hash("test1234", 10);
   const user = await app.prisma.user.create({
@@ -35,9 +40,10 @@ async function createUserWithEmployee(app: FastifyInstance, tenantId: string, la
       tenantId,
       userId: user.id,
       employeeNumber: `RVF-${crypto.randomBytes(6).toString("hex")}`,
-      firstName: label,
+      firstName: employeeData.firstName ?? label,
       lastName: "Test",
-      hireDate: new Date("2024-01-01"),
+      hireDate: employeeData.hireDate ?? new Date("2024-01-01"),
+      exitDate: employeeData.exitDate,
     },
   });
   return { user, employee };
@@ -529,5 +535,59 @@ describe("Phase 74b review fixes", () => {
       type: "API_KEY",
       apiKeyId: key.id,
     });
+  });
+
+  // ── WR-04: hard delete removes remaining assignments explicitly, one DELETE audit each ─────────
+
+  it("WR-04: hard-deleting a user who still holds an assignment writes one RoleAssignment DELETE audit per row instead of a silent cascade", async () => {
+    // An anonymized-looking employee (anonymized first name, exit date past every retention
+    // window) whose user still holds an assignment — the state WR-02 showed can arise, built
+    // directly here because no route produces it any more.
+    const person = await createUserWithEmployee(app, tenantA.tenant.id, "Endgueltig", {
+      firstName: "Gelöscht",
+      hireDate: new Date("2004-01-01"),
+      exitDate: new Date("2010-01-01"),
+    });
+    const tenantWide = await assignTenant(person.user.id, roleX.id);
+    const salonScoped = await app.prisma.roleAssignment.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        userId: person.user.id,
+        accessRoleId: roleY.id,
+        scopeType: "SALONS",
+        salonIds: [salonA1.id],
+        employeeIds: [],
+      },
+    });
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/employees/${person.employee.id}/hard-delete`,
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({}),
+    });
+
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(204);
+    expect(await app.prisma.user.findUnique({ where: { id: person.user.id } })).toBeNull();
+    for (const [removed, roleName] of [
+      [tenantWide, roleX.name],
+      [salonScoped, roleY.name],
+    ] as const) {
+      const audits = await assignmentAudits(removed.id, "DELETE");
+      expect(audits, `DELETE audit for ${removed.scopeType} assignment`).toHaveLength(1);
+      expect(audits[0].oldValue).toEqual({
+        userId: person.user.id,
+        accessRoleId: removed.accessRoleId,
+        roleName,
+        scopeType: removed.scopeType,
+        salonIds: removed.salonIds,
+        employeeIds: removed.employeeIds,
+      });
+      expect(audits[0].newValue).toEqual({ reason: "Endgültige Löschung" });
+      expect(audits[0].userId).toBe(tenantA.adminUser.id);
+    }
   });
 });

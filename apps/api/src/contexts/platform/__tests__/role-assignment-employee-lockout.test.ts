@@ -444,7 +444,7 @@ describe("Role lockout protection — employee triggers (Phase 74b, Issue #74)",
     expect(await auditCount("Employee", person.employee.id, "HARD_DELETE")).toBe(0);
   });
 
-  it("(l) the same fixture with a second holder is hard-deleted; its assignment goes with the user", async () => {
+  it("(l) the same fixture with a second holder is hard-deleted; its assignment is removed with a DELETE audit, not a silent cascade (74b review WR-04)", async () => {
     const { person, assignment } = await inconsistentAnonymizedHolder();
     const other = await createUserWithEmployee(app, tenantA.tenant.id, "Zweiter Halter");
     await assignTenant(tenantA.tenant.id, other.user.id, roleManage.id);
@@ -454,6 +454,7 @@ describe("Role lockout protection — employee triggers (Phase 74b, Issue #74)",
     expect(res.statusCode).toBe(204);
     expect(await personState(person)).toEqual({ employee: null, user: null });
     expect(await app.prisma.roleAssignment.findUnique({ where: { id: assignment.id } })).toBeNull();
+    expect(await auditCount("RoleAssignment", assignment.id, "DELETE")).toBe(1);
     expect(await auditCount("Employee", person.employee.id, "HARD_DELETE")).toBe(1);
   });
 });
