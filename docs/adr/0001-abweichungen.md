@@ -999,3 +999,41 @@ Aufruftext und absolutem Serverpfad. Vorbestehend, hier nicht geändert (nur der
 **Nachtrag 2026-09-24 (Issue #330, PR #331):** Erledigt. Bei Status ≥ 500 antwortet der
 generische Zweig jetzt immer mit `{"error":"Interner Serverfehler"}`; die Originalmeldung steht
 nur im Log, mit Route und Request-ID (`error-handler-5xx.test.ts`).
+
+---
+
+## L — Öffnungszeiten wandern an den Salon (Phase 64b, Issue #64)
+
+**Schwere: informativ. Nachtrag 2026-09-24 — Semantikänderung des Unterbaus nach ADR 0002,
+Entscheidung 7.**
+
+**Was sich geändert hat:** Der Unterbau hat ein neues Modell `Salon` unterhalb von `Tenant`
+(Erweiterung). Dazu wandert ein Wert zwischen Unterbau-Modellen (Semantikänderung): Die
+Öffnungszeiten gehören jetzt dem Salon (`Salon.openingHours`). `TenantConfig.storeHours` ist als
+veraltet markiert (`/// @deprecated` in `packages/db/prisma/schema.prisma`). Die Migration
+`20260924071637_add_salon` legt für jeden bestehenden Mandanten genau einen aktiven Standard-Salon an.
+Er heißt wie der Mandant und übernimmt `TenantConfig.storeHours` unverändert. Der Zugriff läuft nur
+über `contexts/platform/facade/salons.ts`, erreichbar über `contexts/platform/index.ts`.
+
+**Was bewusst noch nicht umgestellt ist:** Die Schicht-Öffnungszeitprüfung
+(`assertWithinStoreHours()` in `apps/api/src/contexts/scheduling/api/shifts.ts`) liest bis #325
+weiter den Mandantenwert `TenantConfig.storeHours`, denn eine Schicht kennt noch keinen Salon. Die
+Schichtplanungsseite (`apps/web/src/routes/(app)/shifts/+page.svelte`) liest die geschlossenen
+Wochentage ebenfalls weiter über `GET /settings/work`. Das legt die Owner-Entscheidung vom
+2026-09-24 auf #64 fest.
+
+**Wie die beiden Werte bis #325 gleich bleiben:** Ändert `PUT /api/v1/settings/work` die
+Mandanten-Öffnungszeiten und hat der Mandant genau einen aktiven Salon, schreibt derselbe Aufruf
+die Werte in dieselbe Transaktion auch in diesen Salon. Dazu kommt ein eigener Audit-Eintrag
+`UPDATE Salon` mit altem und neuem Wert. Den Spiegel übernimmt `syncSoleActiveSalonOpeningHours()`.
+Gespiegelt wird nur bei einer echten Änderung. Bei mehr als einem aktiven Salon wird nicht
+gespiegelt, weil offen wäre, welchen Salon der Mandantenwert meint. #325 entfernt den Spiegel
+zusammen mit der Umstellung der Prüfung.
+
+**Was verhindert, dass neue Logik den alten Wert liest:** `apps/api/src/__tests__/store-hours-readers.test.ts`
+hält die heute erlaubten Stellen fest, an denen der Code `storeHours` liest. Jede neue Stelle macht
+den Test rot.
+
+**Mandantengrenze:** Der Fremdschlüssel `Salon → Tenant` bleibt im Unterbau, mit
+`onDelete: Restrict` (ADR 0002, Entscheidung 4). Ein Salon wird nie gelöscht, nur deaktiviert.
+Die Routen mit Pfadparameter unter `/api/v1/salons/:id` stehen als `probe` im T-100-09-Register.
