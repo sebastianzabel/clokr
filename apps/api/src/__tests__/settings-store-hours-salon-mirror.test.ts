@@ -3,8 +3,10 @@
  * mirrors into a tenant's SOLE active salon, atomically and audited, while leaving a multi-salon
  * tenant's salons alone and never renaming a salon via `tenantName`.
  *
- * `seedTestData()` does not create a Salon (D-18 exemption) — every fixture salon this file needs
- * is created directly via `app.prisma.salon.create(...)`, matching `salons.test.ts`'s own pattern.
+ * `seedTestData()` creates ONE active default salon for its tenant (Phase 67b Plan 03, D-24) —
+ * a test that needs a specific salon count deletes that seeded default first (no assignment row
+ * references it) and creates its own fixture salon(s) directly via `app.prisma.salon.create(...)`,
+ * matching `salons.test.ts`'s own pattern.
  */
 import { describe, it, expect, beforeAll } from "vitest";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
@@ -46,6 +48,10 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
   it("one active salon + storeHours with day 0 closed: salon.openingHours updates, exactly one audited UPDATE Salon row", async () => {
     const data = await seedTestData(app, "sh-mirror-one");
     try {
+      // Phase 67b Plan 03 (D-24): seedTestData now seeds its own active default salon — this
+      // test wants "Einziger Salon" below to be the tenant's ONLY (and therefore sole-active)
+      // salon, so the seeded default is removed first (no assignment row references it).
+      await app.prisma.salon.delete({ where: { id: data.defaultSalon.id } });
       const salon = await app.prisma.salon.create({
         data: {
           tenantId: data.tenant.id,
@@ -130,6 +136,9 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
   it("one active + one inactive salon: the active one is mirrored, the inactive one untouched", async () => {
     const data = await seedTestData(app, "sh-mirror-mix");
     try {
+      // Phase 67b Plan 03 (D-24): remove the seeded default salon so "Aktiv" below is the
+      // tenant's only ACTIVE salon (the sole-active-salon precondition this test exercises).
+      await app.prisma.salon.delete({ where: { id: data.defaultSalon.id } });
       const active = await app.prisma.salon.create({
         data: {
           tenantId: data.tenant.id,
@@ -245,6 +254,9 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
   it("WR-03: storeHours keeps the pre-64b legacy schema — a week the stricter salon schema would reject (open >= close on an open day) is accepted and mirrored verbatim (D-04); a 6-day week still 400s with nothing written", async () => {
     const data = await seedTestData(app, "sh-mirror-legacy");
     try {
+      // Phase 67b Plan 03 (D-24): remove the seeded default salon so "Legacy-Zeiten" below is
+      // the tenant's only (sole-active) salon, matching this test's own "one active salon" case.
+      await app.prisma.salon.delete({ where: { id: data.defaultSalon.id } });
       const salon = await app.prisma.salon.create({
         data: {
           tenantId: data.tenant.id,

@@ -14,6 +14,7 @@ import bcrypt from "bcryptjs";
 // inferred return type implicitly references JsonValue without a local binding.
 import { Prisma } from "@clokr/db";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
+import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform";
 
 // Keep JsonValue reachable from this module's public types (intentional no-op type alias)
 export type _SeedJsonValue = Prisma.JsonValue;
@@ -112,6 +113,23 @@ export async function seedTestData(testApp: FastifyInstance, suffix = "") {
       tenantId: tenant.id,
       defaultVacationDays: 30,
       timezone: "Europe/Berlin",
+    },
+  });
+
+  // Phase 67b Plan 03 (issue #67, D-24): every tenant gets its default salon here too, exactly
+  // like test-bootstrap.ts's bootstrap-tenant handler (`facade/salons.ts`'s `DEFAULT_SALON_OPENING_HOURS`,
+  // `isActive: true`, name = tenant name) — POST /api/v1/employees (D-22) now resolves a new
+  // employee's Stammsalon against the tenant's active salons, and the ~277 test files that
+  // transitively call seedTestData() and then POST an employee without an explicit `homeSalonId`
+  // depend on this tenant having EXACTLY ONE active salon for that resolution to succeed (research
+  // Pitfall 5). The two employees seedTestData creates below deliberately do NOT get HOME rows —
+  // same convention as the ~100 fixtures that insert an Employee row directly (D-24).
+  const defaultSalon = await prisma.salon.create({
+    data: {
+      tenantId: tenant.id,
+      name: tenant.name,
+      openingHours: DEFAULT_SALON_OPENING_HOURS,
+      isActive: true,
     },
   });
 
@@ -242,6 +260,7 @@ export async function seedTestData(testApp: FastifyInstance, suffix = "") {
     employee,
     empToken,
     vacationType,
+    defaultSalon,
   };
 }
 
@@ -376,8 +395,9 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   await prisma.tenantConfig.deleteMany({ where: { tenantId } });
   // Phase 64b (issue #64): Salon.tenant is onDelete: Restrict (D-01) — must be deleted before
   // prisma.tenant.delete below, or the delete fails and leaks fixture rows into the shared test
-  // database (seedTestData itself never creates a Salon, D-18, so this only matters for suites
-  // that create one directly).
+  // database. Phase 67b Plan 03 (D-24): seedTestData itself now creates the tenant's default
+  // salon (defaultSalon, above) — this deleteMany also covers that row, in addition to any salon
+  // a suite created directly.
   await prisma.salon.deleteMany({ where: { tenantId } });
   await prisma.tenant.delete({ where: { id: tenantId } });
 }

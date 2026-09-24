@@ -1,8 +1,10 @@
 /**
  * Phase 64b Plan 01 (issue #64) — GET /api/v1/salons role gate, includeInactive, isMultiSalon.
  *
- * `seedTestData()` does NOT create a Salon for its tenant (D-18 exemption) — every fixture salon
- * this file needs is created directly via `app.prisma.salon.create(...)`.
+ * `seedTestData()` creates ONE active default salon for its tenant (Phase 67b Plan 03, D-24) —
+ * every describe below that needs a specific salon COUNT deletes that seeded default first (it
+ * carries no assignment row, so nothing blocks the delete) and creates its own fixture salons
+ * directly via `app.prisma.salon.create(...)`.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
@@ -24,6 +26,11 @@ describe("GET /api/v1/salons", () => {
   beforeAll(async () => {
     app = await getTestApp();
     tenant = await seedTestData(app, "salons-route");
+    // Phase 67b Plan 03 (D-24): seedTestData now seeds its own active default salon — this
+    // describe wants ITS OWN "one active, one inactive" pair below to be the tenant's only
+    // salons, so the seeded default is removed here (it carries no assignment row, so the
+    // Restrict FK never blocks this delete).
+    await app.prisma.salon.delete({ where: { id: tenant.defaultSalon.id } });
 
     // Inline MANAGER, same pattern as tenant-isolation.test.ts's SEC-V1814-01 block.
     const s = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -519,6 +526,11 @@ describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
     tenantA = await seedTestData(app, "salon-deact-a");
     tenantB = await seedTestData(app, "salon-deact-b");
     managerToken = await createManagerFor(app, tenantA.tenant.id, "mgr-deact-");
+    // Phase 67b Plan 03 (D-24): remove both tenants' seeded default salons so this describe's
+    // own salonA1/salonA2/foreignSalon are each tenant's ONLY salons — every isMultiSalon and
+    // LAST_ACTIVE_SALON assertion below counts exactly these fixtures, not a third seeded one.
+    await app.prisma.salon.delete({ where: { id: tenantA.defaultSalon.id } });
+    await app.prisma.salon.delete({ where: { id: tenantB.defaultSalon.id } });
 
     salonA1 = await app.prisma.salon.create({
       data: {

@@ -265,7 +265,11 @@ type FixtureBundle = Awaited<ReturnType<typeof seedTestData>>;
 let tenantBLeaveRequestId: string | undefined;
 let tenantBTimeEntryId: string | undefined;
 // Phase 64b Plan 02 (Issue #64, Pitfall 4): a real Salon for tenantB, same local-fixture idiom as
-// the two above — `seedTestData` does not create a Salon (D-18 exemption), so one is created here.
+// the two above. `seedTestData` now creates its own active default salon (Phase 67b Plan 03,
+// D-24), but this SECOND, dedicated salon is still created here — the register's `salon` fixture
+// key needs an id independent of that default (e.g. WR-04's activate/deactivate probes act on it
+// directly, and tenantB now has TWO active salons, which strengthens rather than weakens that
+// reasoning: see t100-09 fixture-integrity check below).
 let tenantBSalonId: string | undefined;
 // Phase 64b review (WR-04): an INACTIVE Salon for tenantB, the target of POST /:id/activate — an
 // active target could never be flipped by activate (ALREADY_ACTIVE), so the integrity check below

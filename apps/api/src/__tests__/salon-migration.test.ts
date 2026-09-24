@@ -63,6 +63,15 @@ describe("Phase 64b tracer — default-salon migration + GET /api/v1/salons", ()
     tenantA = await seedTestData(app, "salon-mig-a");
     tenantB = await seedTestData(app, "salon-mig-b");
 
+    // Phase 67b Plan 03 (D-24): seedTestData now seeds its own active default salon — this tracer
+    // exists to prove the MIGRATION'S data section creates it, so both tenants' seeded defaults are
+    // removed BEFORE the migration runs. Without this, the migration's `NOT EXISTS` guard would see
+    // an already-present Salon and skip the insert entirely, and the test below would observe
+    // seedTestData's salon instead of the migration's — passing vacuously even if the migration's
+    // INSERT were broken. See the vacuity proof in 67b-03-SUMMARY.md.
+    await app.prisma.salon.delete({ where: { id: tenantA.defaultSalon.id } });
+    await app.prisma.salon.delete({ where: { id: tenantB.defaultSalon.id } });
+
     // Execute the migration's own data section (D-14), committed — this is what a real migration
     // run does once. NOT EXISTS makes running it again later (Task 2's cases) safe.
     await app.prisma.$executeRawUnsafe(readDataSection());
