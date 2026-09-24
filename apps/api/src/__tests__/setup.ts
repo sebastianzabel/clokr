@@ -359,6 +359,10 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   await prisma.overtimePlan.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.invitation.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.workSchedule.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  // Phase 67b (issue #67): EmployeeSalonAssignment.employee AND .salon are onDelete: Restrict
+  // (D-01) — must be deleted before prisma.employee.deleteMany below, or the delete fails and
+  // leaks fixture rows into the shared test database.
+  await prisma.employeeSalonAssignment.deleteMany({ where: { tenantId } });
   await prisma.employee.deleteMany({ where: { tenantId } });
   await prisma.refreshToken.deleteMany({ where: { userId: { in: userIds } } });
   await prisma.otpToken.deleteMany({ where: { userId: { in: userIds } } });

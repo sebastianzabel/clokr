@@ -340,7 +340,9 @@ Jede Zeile ist eine Aufrufstelle des Rollen-Guards `requireRole` (`middleware/au
 relativ zu `apps/api/src/`; die Route steht ohne das Präfix aus `app.ts`. Die Spalte „heute“ nennt
 die Rollen, die der Guard heute durchlässt: `A` = ADMIN, `M` = MANAGER, `E` = EMPLOYEE.
 Die Zeilen für `contexts/platform/api/salons.ts` (Präfix `/api/v1/salons`) belegen den Stand von
-Phase 64b (#64) — die Datei gibt es in `bea6b5c7` noch nicht.
+Phase 64b (#64) — die Datei gibt es in `bea6b5c7` noch nicht. Die Zeile für
+`contexts/platform/api/salon-assignments.ts` (Präfix `/api/v1/employees`) belegt den Stand von
+Phase 67b (#67).
 
 | Stelle                                                     | Route                                      | heute   | Permission                     | Reichweite                                   |
 | ---------------------------------------------------------- | ------------------------------------------ | ------- | ------------------------------ | -------------------------------------------- |
@@ -402,6 +404,7 @@ Phase 64b (#64) — die Datei gibt es in `bea6b5c7` noch nicht.
 | `contexts/platform/api/employees.ts:977`                   | `DELETE /:id`                              | A       | `employee:anonymize`           | ZUGEWIESEN                                   |
 | `contexts/platform/api/employees.ts:1065`                  | `POST /:id/hard-delete/authorize`          | A       | `employee:anonymize`           | ZUGEWIESEN                                   |
 | `contexts/platform/api/employees.ts:1096`                  | `DELETE /:id/hard-delete`                  | A       | `employee:anonymize`           | ZUGEWIESEN                                   |
+| `contexts/platform/api/salon-assignments.ts:48`            | `GET /:id/salon-assignments`               | A, M    | `employee:read`                | ZUGEWIESEN                                   |
 | `contexts/platform/api/holidays.ts:105`                    | `POST /`                                   | A       | `holiday:manage`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/holidays.ts:163`                    | `DELETE /:id`                              | A       | `holiday:manage`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/imports.ts:74`                      | `POST /employees`                          | A       | `employee:import`              | ZUGEWIESEN                                   |

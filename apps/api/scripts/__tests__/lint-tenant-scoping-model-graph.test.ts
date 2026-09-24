@@ -18,9 +18,9 @@ import {
 
 const liveModels = Prisma.dmmf.datamodel.models as unknown as readonly DmmfModel[];
 
-// The 17 models measured directly against schema.prisma (204-RESEARCH.md §Schema Derivation,
-// D-19; AccessRole added Phase 73b, Issue #73; Salon added Phase 64b, Issue #64) to carry their
-// own `tenantId` scalar column.
+// The 18 models measured directly against schema.prisma (204-RESEARCH.md §Schema Derivation,
+// D-19; AccessRole added Phase 73b, Issue #73; Salon added Phase 64b, Issue #64;
+// EmployeeSalonAssignment added Phase 67b, Issue #67) to carry their own `tenantId` scalar column.
 const EXPECTED_OWN_MODELS = [
   "TenantConfig",
   "Employee",
@@ -39,6 +39,7 @@ const EXPECTED_OWN_MODELS = [
   "ShiftTemplate",
   "CoverageRule",
   "Salon",
+  "EmployeeSalonAssignment",
 ].sort();
 
 describe("delegateName", () => {
@@ -54,6 +55,8 @@ describe("classifyModel (live DMMF from @clokr/db)", () => {
     expect(classifyModel("TenantConfig", liveModels)).toEqual({ kind: "own" });
     // Phase 64b (issue #64): Salon carries its own tenantId scalar column.
     expect(classifyModel("Salon", liveModels)).toEqual({ kind: "own" });
+    // Phase 67b (issue #67): EmployeeSalonAssignment carries its own tenantId scalar column.
+    expect(classifyModel("EmployeeSalonAssignment", liveModels)).toEqual({ kind: "own" });
   });
 
   it("D-18: classifies Shift as relation via employee, NOT own — Issue #204's body is wrong here; schema.prisma:1381-1406 has no Shift.tenantId", () => {
@@ -94,8 +97,8 @@ describe("classifyModel (live DMMF from @clokr/db)", () => {
 describe("buildModelGraph (live DMMF from @clokr/db)", () => {
   const graph = buildModelGraph();
 
-  it("classifies exactly 43 models with no residual category (D-05)", () => {
-    expect(graph.size).toBe(43);
+  it("classifies exactly 44 models with no residual category (D-05)", () => {
+    expect(graph.size).toBe(44);
     for (const [, tenancy] of graph) {
       expect(["own", "relation", "none"]).toContain(tenancy.kind);
     }
@@ -107,7 +110,7 @@ describe("buildModelGraph (live DMMF from @clokr/db)", () => {
     expect(graph.has("apiKey")).toBe(true);
   });
 
-  it("marks exactly the 17 measured models as own, by NAME (not just count)", () => {
+  it("marks exactly the 18 measured models as own, by NAME (not just count)", () => {
     const ownDelegateNames = [...graph]
       .filter(([, v]) => v.kind === "own")
       .map(([k]) => k)

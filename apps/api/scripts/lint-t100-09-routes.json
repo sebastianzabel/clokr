@@ -50,6 +50,18 @@
       "validatedAt": null
     },
     {
+      "route": "GET /api/v1/employees/:id/salon-assignments",
+      "file": "apps/api/src/contexts/platform/api/salon-assignments.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": null,
+      "reason": "Phase 67b Plan 01 (Issue #67, D-19): salon-assignments.ts:59 calls findEmployeeInTenant(app.prisma, tenantId, id), an inline tenant-scoped `findFirst({ where: { id, tenantId } })` — returns null for BOTH a foreign tenant's real employee and a nonexistent id; both fall through to the shared rejectUnknownEmployee(...) helper, which sends the byte-identical 404 {\"error\":\"Mitarbeiter nicht gefunden\"} and audits CROSS_TENANT_ACCESS_DENIED only when employeeExistsInForeignTenant(...) confirms the row exists in another tenant. GET has no body. API-key callers (`apikey:<id>` subject) get the same 404: rejectUnknownEmployee audits through auditSalonAssignmentEvent, which leaves AuditLog.userId unset and records the key id in newValue.actor, so the audit insert cannot fail on the User foreign key (WR-01 convention, same as auditSalon); the same defect in other routes is tracked in #333.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "PATCH /api/v1/employees/:id",
       "file": "apps/api/src/contexts/platform/api/employees.ts",
       "category": "probe",

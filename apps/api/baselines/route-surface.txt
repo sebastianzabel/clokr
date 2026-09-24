@@ -27,6 +27,7 @@
 │       ├── /reject (POST)
 │       ├── /resend-invitation (POST)
 │       ├── /review (PATCH)
+│       ├── /salon-assignments (GET, HEAD)
 │       ├── /shift-patterns (GET, HEAD, PUT)
 │       ├── /unlock (PATCH)
 │       ├── /vocational-school-pattern (GET, HEAD, PUT)

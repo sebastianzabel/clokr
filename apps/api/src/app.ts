@@ -57,6 +57,7 @@ import { avatarRoutes } from "./contexts/platform/api/avatars";
 import { section9DocumentRoutes } from "./contexts/absence/api/section9-documents";
 import { apiKeyRoutes } from "./contexts/platform/api/api-keys";
 import { salonRoutes } from "./contexts/platform/api/salons"; // Phase 64b (issue #64)
+import { salonAssignmentRoutes } from "./contexts/platform/api/salon-assignments"; // Phase 67b (issue #67)
 import { roleRoutes } from "./contexts/platform/api/roles";
 import { presenceRoutes } from "./contexts/time-tracking/api/presence";
 import { adminPresenceSourcesRoutes } from "./contexts/time-tracking/api/admin-presence-sources";
@@ -332,6 +333,9 @@ export async function buildApp() {
   // under the employees namespace (GET/PATCH /api/v1/employees/me/wifi, POST
   // /api/v1/employees/me/wifi/devices, DELETE /api/v1/employees/me/wifi/devices/:id)
   await app.register(employeeWifiRoutes, { prefix: "/api/v1/employees" });
+  // Phase 67b — salon assignments live under the employees namespace (GET/POST
+  // /api/v1/employees/:id/salon-assignments…)
+  await app.register(salonAssignmentRoutes, { prefix: "/api/v1/employees" });
   await app.register(integrationRoutes, { prefix: "/api/v1/integrations" });
   await app.register(importRoutes, { prefix: "/api/v1/imports" });
   await app.register(terminalRoutes, { prefix: "/api/v1/terminals" });
