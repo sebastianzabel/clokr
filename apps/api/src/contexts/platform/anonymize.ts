@@ -26,6 +26,13 @@
  *   - AuditLog.oldValue/newValue → redacted for Employee + User audit rows
  *     (prevents name/email from surviving in historical JSON — COMP-V1814-01)
  *   - Notification.title/message → "ANONYMIZED" (for the user's own notifications)
+ *   - RoleAssignment: every row of the user is hard-deleted (Phase 74b, D-22 — an anonymized
+ *     person must not hold rights, and a leftover row would block deleting its role). The
+ *     removed rows are RETURNED so the route can write one DELETE audit entry per row; the
+ *     batch script (`scripts/anonymize-dump.ts`) records them in its ANONYMIZATION_RUN summary
+ *     instead (`removedRoleAssignmentCount` plus every removed row in `removedRoleAssignments`,
+ *     74b review WR-05). Person-scope lists of other users that contain this employee's id are
+ *     left unchanged (ids only — the permission resolution ignores anonymized targets).
  *
  * Preserved (for retention compliance §147 AO / §257 HGB / § 16 ArbZG):
  *   TimeEntry, LeaveRequest, Absence, Schedule, OvertimeAccount row counts
@@ -44,7 +51,10 @@
  *   - Open the transaction (`prisma.$transaction(...)`)
  *   - Emit the AuditLog entry — this helper does NOT log itself.
  *     The route emits action="ANONYMIZE" (per-employee).
- *     The batch script emits action="ANONYMIZATION_RUN" (whole-DB sweep).
+ *     The batch script emits action="ANONYMIZATION_RUN" (whole-DB sweep), whose newValue lists
+ *     the returned `removedRoleAssignments` of every employee it processed.
+ *     The route also emits one action="DELETE" entity="RoleAssignment" entry per row in the
+ *     returned `removedRoleAssignments` (newValue.reason "Anonymisierung", Phase 74b D-22).
  *   - Delete MinIO avatar + absence-document objects AFTER the tx commits
  *     (MinIO is not transactional with Postgres; pre-fetch paths before calling).
  *
@@ -56,6 +66,7 @@ import { clearEntryNotesForEmployee } from "../time-tracking"; // Phase 100B Pla
 import { anonymizeSection9CreditsForEmployee } from "../absence"; // Phase 100B Plan 11 — T-100B-48
 import { anonymizeAbsencesForEmployee } from "../absence"; // Phase 100B Plan 12 — F3
 import { anonymizeLeaveRequestsForEmployee } from "../absence"; // Phase 100B Plan 13 — F3
+import { removeRoleAssignmentsOfUser, type RemovedRoleAssignment } from "./facade/role-assignments";
 // Phase 101B (Issue #101, Nachtrag 2026-09-17): the two sentinel `where` fragments lifted out of
 // this file into ./employee-anonymization-filter.ts — re-exported below (unchanged) so
 // scheduling/api/shifts.ts and ./api/employees.ts (neither touched by this plan) keep resolving
@@ -70,17 +81,24 @@ export interface AnonymizeEmployeeOptions {
   employeeId: string;
 }
 
+/** What the anonymization removed that the caller must audit (Phase 74b, D-22). */
+export interface AnonymizeEmployeeResult {
+  removedRoleAssignments: RemovedRoleAssignment[];
+}
+
 /**
  * Anonymize a single employee in place. Caller controls the transaction
  * boundary so multiple employees can be anonymized atomically or
  * one-employee-per-transaction depending on the caller's needs.
  */
-export async function anonymizeEmployeeData(opts: AnonymizeEmployeeOptions): Promise<void> {
+export async function anonymizeEmployeeData(
+  opts: AnonymizeEmployeeOptions,
+): Promise<AnonymizeEmployeeResult> {
   const { tx, employeeId } = opts;
 
   const employee = await tx.employee.findUnique({
     where: { id: employeeId },
-    select: { id: true, userId: true, employeeNumber: true },
+    select: { id: true, tenantId: true, userId: true, employeeNumber: true },
   });
   if (!employee) {
     throw new Error(`anonymizeEmployeeData: employee ${employeeId} not found`);
@@ -111,6 +129,9 @@ export async function anonymizeEmployeeData(opts: AnonymizeEmployeeOptions): Pro
       isActive: false,
     },
   });
+
+  // Phase 74b (D-22): an anonymized person holds no rights — remove every role assignment.
+  const removedRoleAssignments = await removeRoleAssignmentsOfUser(tx, employee.tenantId, userId);
 
   // Notizen in Zeiteinträgen anonymisieren (können persönliche Daten enthalten)
   // Phase 100B Plan 08 — T10, contexts/time-tracking facade (reaches soft-deleted rows too).
@@ -157,4 +178,6 @@ export async function anonymizeEmployeeData(opts: AnonymizeEmployeeOptions): Pro
   await tx.invitation.deleteMany({ where: { employeeId } });
   await tx.otpToken.deleteMany({ where: { userId } });
   await tx.refreshToken.deleteMany({ where: { userId } });
+
+  return { removedRoleAssignments };
 }

@@ -390,12 +390,35 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // (`db: Prisma.TransactionClient` first, `tenantId` present alongside `openingHours` which does
   // not match the `*Ids?` trigger pattern), no new exception needed. The module-private
   // `normalizeOpeningHoursForCompare` helper is not exported and is not counted here.
-  it("the real tree has exactly 92 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  //
+  // 92 -> 93 in Phase 74b Plan 01 (Issue #74): `contexts/platform/facade/role-assignments.ts`
+  // added (matches the `contexts/*/facade/**/*.ts` glob directly, no KNOWN_FACADE_FILES entry
+  // needed) — 1 new exported function (userMayApply) — passes F1/F2/F3 directly, flat parameters
+  // (`db: Prisma.TransactionClient, tenantId, userId, permission, target`) so F3 sees `tenantId`
+  // right next to `userId`, no new exception.
+  //
+  // 93 -> 95 in Phase 74b Plan 03 (Issue #74): same file, 2 more exported functions —
+  // countGuardedPermissionHolders(db, tenantId) and withRoleLockoutGuard(db, tenantId, write), the
+  // lockout guard (D-17..D-19) — both pass F1/F2/F3 directly (`db: Prisma.TransactionClient`
+  // first, `tenantId` present, `write` does not match the `*Ids?` trigger pattern), no new
+  // exception needed.
+  //
+  // 95 -> 96 in Phase 74b Plan 04 (Issue #74): same file, 1 more exported function —
+  // removeRoleAssignmentsOfUser(db, tenantId, userId), the DSGVO removal of an anonymized user's
+  // assignments (D-22) — passes F1/F2/F3 directly (`db: Prisma.TransactionClient` first,
+  // `tenantId` right next to `userId`), no new exception needed.
+  //
+  // 96 -> 97 in the Phase 74b code review (WR-02, plan 74b-05): same file, 1 more exported
+  // function — lockTenantForRoleChanges(db, tenantId), the tenant row lock lifted out of
+  // withRoleLockoutGuard so POST /role-assignments takes the same lock without duplicating its
+  // SQL — passes F1/F2/F3 directly, no new exception needed.
+  it("the real tree has exactly 97 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
         ...KNOWN_FACADE_FILES,
         "apps/api/src/contexts/platform/facade/employee-scope.ts",
+        "apps/api/src/contexts/platform/facade/role-assignments.ts",
         "apps/api/src/contexts/platform/facade/salons.ts",
         "apps/api/src/contexts/scheduling/facade/shifts.ts",
         "apps/api/src/contexts/scheduling/facade/availability.ts",
@@ -417,7 +440,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(92);
+    expect(functions).toHaveLength(97);
 
     const rawExceptions = JSON.parse(
       readFileSync(

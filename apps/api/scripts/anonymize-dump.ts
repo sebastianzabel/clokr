@@ -34,26 +34,36 @@
  *       sourceRowCounts: { ... },
  *       targetRowCounts: { ... },
  *       anonymizedCount: <number>,
+ *       removedRoleAssignmentCount: <number>,
+ *       removedRoleAssignments: [ ... ],      // one entry per removed RoleAssignment
  *       durationMs: <number>,
  *       error?: <string>,                    // only on failure
  *     }
  *   }
+ *
+ * Role assignments (Phase 74b, D-22; code review WR-05): `anonymizeEmployeeData` hard-deletes
+ * every `RoleAssignment` of the anonymized user and returns the removed rows. The route writes one
+ * `DELETE` audit per row; this batch path records them instead in the run summary above —
+ * `removedRoleAssignments` carries each row's id plus the same D-12 values the route's `oldValue`
+ * carries (userId, accessRoleId, roleName, scopeType, salonIds, employeeIds). Ids and role names
+ * only, no personal data. Without this the deletions left no audit trace at all.
+ *
+ * Importing this module is side-effect-free (no connection, no run): the database is only opened
+ * and the sweep only started when the file is executed as a script (run-guard at the bottom), so
+ * `scripts/__tests__/anonymize-dump.test.ts` can exercise the exported helpers against a test
+ * database. Same pattern as `audit-break-consistency.ts`.
  */
 import { PrismaClient } from "@clokr/db";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
+import { pathToFileURL } from "node:url";
 
 import { anonymizeEmployeeData } from "../src/contexts/platform/anonymize";
 
-if (!process.env.DATABASE_URL) {
-  console.error("DATABASE_URL is required");
-  process.exit(1);
-}
-
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const adapter = new PrismaPg(pool as any);
-const prisma = new PrismaClient({ adapter });
+/** One removed assignment, as `anonymizeEmployeeData` returns it (route audit `oldValue` + id). */
+type RemovedRoleAssignment = Awaited<
+  ReturnType<typeof anonymizeEmployeeData>
+>["removedRoleAssignments"][number];
 
 interface RowCounts {
   timeEntries: number;
@@ -63,7 +73,7 @@ interface RowCounts {
   overtimeAccounts: number;
 }
 
-async function collectRowCounts(): Promise<RowCounts> {
+async function collectRowCounts(prisma: PrismaClient): Promise<RowCounts> {
   const [timeEntries, leaveRequests, absences, schedules, overtimeAccounts] = await Promise.all([
     prisma.timeEntry.count(),
     prisma.leaveRequest.count(),
@@ -74,7 +84,70 @@ async function collectRowCounts(): Promise<RowCounts> {
   return { timeEntries, leaveRequests, absences, schedules, overtimeAccounts };
 }
 
-async function main() {
+/** What one sweep over a list of employees did, before the summary audit row is written. */
+export interface AnonymizationBatchResult {
+  anonymizedCount: number;
+  /** Every RoleAssignment the sweep hard-deleted (D-22), in processing order. */
+  removedRoleAssignments: RemovedRoleAssignment[];
+  failedEmployeeId: string | null;
+  failedError: string | null;
+}
+
+/**
+ * Anonymizes each employee in its own transaction, in order, and stops at the first failure.
+ * Collects the role assignments `anonymizeEmployeeData` removed, so the run summary can record
+ * them (74b review WR-05) — a failed employee's transaction rolled back, so it contributes none.
+ */
+export async function anonymizeEmployeesForRun(
+  prisma: PrismaClient,
+  employeeIds: string[],
+): Promise<AnonymizationBatchResult> {
+  const result: AnonymizationBatchResult = {
+    anonymizedCount: 0,
+    removedRoleAssignments: [],
+    failedEmployeeId: null,
+    failedError: null,
+  };
+  for (const employeeId of employeeIds) {
+    try {
+      const { removedRoleAssignments } = await prisma.$transaction(async (tx) =>
+        anonymizeEmployeeData({ tx, employeeId }),
+      );
+      result.removedRoleAssignments.push(...removedRoleAssignments);
+      result.anonymizedCount++;
+    } catch (err) {
+      result.failedEmployeeId = employeeId;
+      result.failedError = err instanceof Error ? err.message : String(err);
+      console.error(`[anonymize-dump] FAILED on employee ${employeeId}: ${result.failedError}`);
+      break;
+    }
+  }
+  return result;
+}
+
+/** The `newValue` of the run's single ANONYMIZATION_RUN audit row (D-08 shape, see docblock). */
+export function buildRunSummary(input: {
+  sourceRowCounts: RowCounts;
+  targetRowCounts: RowCounts;
+  durationMs: number;
+  batch: AnonymizationBatchResult;
+}): Record<string, unknown> {
+  const { sourceRowCounts, targetRowCounts, durationMs, batch } = input;
+  const newValue: Record<string, unknown> = {
+    sourceRowCounts,
+    targetRowCounts,
+    anonymizedCount: batch.anonymizedCount,
+    removedRoleAssignmentCount: batch.removedRoleAssignments.length,
+    removedRoleAssignments: batch.removedRoleAssignments,
+    durationMs,
+  };
+  if (batch.failedEmployeeId) {
+    newValue.error = `Failed on employeeId=${batch.failedEmployeeId}: ${batch.failedError}`;
+  }
+  return newValue;
+}
+
+async function main(prisma: PrismaClient) {
   const startedAt = Date.now();
   const runId = `run-${new Date(startedAt).toISOString()}`;
 
@@ -83,27 +156,14 @@ async function main() {
   const employees = await prisma.employee.findMany({ select: { id: true } });
   console.log(`[anonymize-dump] found ${employees.length} employees`);
 
-  const sourceRowCounts = await collectRowCounts();
+  const sourceRowCounts = await collectRowCounts(prisma);
 
-  let anonymizedCount = 0;
-  let failedEmployeeId: string | null = null;
-  let failedError: string | null = null;
+  const batch = await anonymizeEmployeesForRun(
+    prisma,
+    employees.map((emp) => emp.id),
+  );
 
-  for (const emp of employees) {
-    try {
-      await prisma.$transaction(async (tx) => {
-        await anonymizeEmployeeData({ tx, employeeId: emp.id });
-      });
-      anonymizedCount++;
-    } catch (err) {
-      failedEmployeeId = emp.id;
-      failedError = err instanceof Error ? err.message : String(err);
-      console.error(`[anonymize-dump] FAILED on employee ${emp.id}: ${failedError}`);
-      break;
-    }
-  }
-
-  const targetRowCounts = await collectRowCounts();
+  const targetRowCounts = await collectRowCounts(prisma);
   const durationMs = Date.now() - startedAt;
 
   // Volume-preservation invariant (D-10): anonymization mutates rows in
@@ -122,15 +182,7 @@ async function main() {
     );
   }
 
-  const newValue: Record<string, unknown> = {
-    sourceRowCounts,
-    targetRowCounts,
-    anonymizedCount,
-    durationMs,
-  };
-  if (failedEmployeeId) {
-    newValue.error = `Failed on employeeId=${failedEmployeeId}: ${failedError}`;
-  }
+  const newValue = buildRunSummary({ sourceRowCounts, targetRowCounts, durationMs, batch });
 
   await prisma.auditLog.create({
     data: {
@@ -142,25 +194,43 @@ async function main() {
     },
   });
 
-  if (failedEmployeeId) {
+  if (batch.failedEmployeeId) {
     console.error(
-      `[anonymize-dump] partial run: ${anonymizedCount}/${employees.length} anonymized in ${durationMs}ms before failure`,
+      `[anonymize-dump] partial run: ${batch.anonymizedCount}/${employees.length} anonymized in ${durationMs}ms before failure`,
     );
     process.exitCode = 1;
     return;
   }
 
   console.log(
-    `[anonymize-dump] anonymized ${anonymizedCount}/${employees.length} employees in ${durationMs}ms`,
+    `[anonymize-dump] anonymized ${batch.anonymizedCount}/${employees.length} employees in ${durationMs}ms`,
   );
 }
 
-main()
-  .catch((err) => {
-    console.error("[anonymize-dump] fatal error:", err);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-    await pool.end();
-  });
+async function run() {
+  if (!process.env.DATABASE_URL) {
+    console.error("DATABASE_URL is required");
+    process.exit(1);
+  }
+
+  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const adapter = new PrismaPg(pool as any);
+  const prisma = new PrismaClient({ adapter });
+
+  await main(prisma)
+    .catch((err) => {
+      console.error("[anonymize-dump] fatal error:", err);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await prisma.$disconnect();
+      await pool.end();
+    });
+}
+
+// Run-guard: only open the database and start the sweep when invoked as a script, so importing
+// the module for tests is side-effect-free (no connection, no process.exit, no anonymization).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void run();
+}

@@ -9,12 +9,20 @@ import {
   normalizeRolePermissions,
   copyRoleName,
 } from "../access-role";
+import { ROLE_LOCKOUT_MESSAGE, RoleLockoutError } from "../role-assignment";
+import { withRoleLockoutGuard } from "../facade/role-assignments";
+import { foreignKeyConstraintOf } from "../prisma-foreign-key";
+import { requestAuditFields } from "../request-audit-fields";
 
 const ROLE_NAME_CONFLICT_MESSAGE = "Eine Rolle mit diesem Namen existiert bereits.";
 const ROLE_NOT_FOUND_MESSAGE = "Rolle nicht gefunden";
 const ROLE_SYSTEM_UPDATE_MESSAGE =
   "Systemrollen können nicht geändert werden. Kopieren Sie die Rolle, um sie anzupassen.";
 const ROLE_SYSTEM_DELETE_MESSAGE = "Systemrollen können nicht gelöscht werden.";
+const ROLE_ASSIGNED_DELETE_MESSAGE =
+  "Die Rolle ist noch Nutzern zugewiesen und kann nicht gelöscht werden.";
+/** The `onDelete: Restrict` backstop of D-21 (migration 20260924145050_role_assignment). */
+const ROLE_ASSIGNMENT_ROLE_FOREIGN_KEY = "RoleAssignment_accessRoleId_fkey";
 
 const nameSchema = z.string().trim().min(1).max(ROLE_NAME_MAX_LENGTH);
 
@@ -163,16 +171,14 @@ export async function roleRoutes(app: FastifyInstance) {
           });
           await app.audit({
             tx,
-            userId: req.user.sub,
             action: "CREATE",
             entity: "AccessRole",
             entityId: source.id,
-            newValue: {
+            ...requestAuditFields(req, {
               name: source.name,
               permissions: source.permissions,
               tenantId: source.tenantId,
-            },
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            }),
           });
           return source;
         });
@@ -225,7 +231,7 @@ export async function roleRoutes(app: FastifyInstance) {
       security: [{ bearerAuth: [] }],
       summary: "Update a customer role",
       description:
-        "Changes name and/or permissions of a customer role of the caller's own tenant. A no-op request (nothing actually changes) writes nothing and audits nothing. A system role is never changeable and answers 409. A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
+        "Changes name and/or permissions of a customer role of the caller's own tenant. A no-op request (nothing actually changes) writes nothing and audits nothing. A system role is never changeable and answers 409. A change that would remove the last tenant-wide holder of role:manage or role-assignment:manage answers 409 and changes nothing (lockout protection). A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
     },
     preHandler: requireRole("ADMIN"),
     handler: async (req, reply) => {
@@ -270,21 +276,25 @@ export async function roleRoutes(app: FastifyInstance) {
               return null;
             }
           }
-          const row = await tx.accessRole.update({
-            where: { id },
-            data: { name: nextName, nameKey: nextNameKey, permissions: nextPermissions },
+          // D-19/D-20: removing a guarded permission from a customer role can remove the last
+          // tenant-wide holder. The guard runs on EVERY update (it can only fire on a >= 1 -> 0
+          // transition), so no per-trigger "which permissions were removed" logic can drift. The
+          // update and its audit run on the transaction client; RoleLockoutError rolls both back.
+          return withRoleLockoutGuard(tx, req.user.tenantId, async () => {
+            const row = await tx.accessRole.update({
+              where: { id },
+              data: { name: nextName, nameKey: nextNameKey, permissions: nextPermissions },
+            });
+            await app.audit({
+              tx,
+              action: "UPDATE",
+              entity: "AccessRole",
+              entityId: row.id,
+              oldValue: { name: existing.name, permissions: existing.permissions },
+              ...requestAuditFields(req, { name: row.name, permissions: row.permissions }),
+            });
+            return row;
           });
-          await app.audit({
-            tx,
-            userId: req.user.sub,
-            action: "UPDATE",
-            entity: "AccessRole",
-            entityId: row.id,
-            oldValue: { name: existing.name, permissions: existing.permissions },
-            newValue: { name: row.name, permissions: row.permissions },
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
-          });
-          return row;
         });
 
         if (!updated) {
@@ -292,6 +302,9 @@ export async function roleRoutes(app: FastifyInstance) {
         }
         return toRoleResponse(updated);
       } catch (err: unknown) {
+        if (err instanceof RoleLockoutError) {
+          return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
+        }
         if (isPrismaErrorCode(err, "P2002")) {
           return reply.code(409).send({ error: ROLE_NAME_CONFLICT_MESSAGE });
         }
@@ -304,14 +317,15 @@ export async function roleRoutes(app: FastifyInstance) {
   });
 
   // DELETE /api/v1/roles/:id — hard-deletes an own customer role (AK-73-2/AK-73-10); a system
-  // role answers 409 with no write and no audit (AK-73-5).
+  // role answers 409 with no write and no audit (AK-73-5); so does a customer role that is still
+  // assigned (Phase 74b, D-21).
   app.delete("/:id", {
     schema: {
       tags: ["Rollen"],
       security: [{ bearerAuth: [] }],
       summary: "Delete a customer role",
       description:
-        "Hard-deletes a customer role of the caller's own tenant (owner decision on #73 — not a retention-relevant record). A system role is never deletable and answers 409. A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
+        "Hard-deletes a customer role of the caller's own tenant (owner decision on #73 — not a retention-relevant record). A system role is never deletable and answers 409. A customer role that is still assigned to a user answers 409 and is not deleted. A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
     },
     preHandler: requireRole("ADMIN"),
     handler: async (req, reply) => {
@@ -330,13 +344,20 @@ export async function roleRoutes(app: FastifyInstance) {
       }
 
       try {
-        await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        const outcome = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          // D-21: an assigned role cannot be deleted. Checked only AFTER the tenant guard and the
+          // system-role 409 above — before the tenant guard it would answer a foreign tenant's
+          // assigned role differently from an unknown id (a T-100-09 oracle). The
+          // `onDelete: Restrict` foreign key on RoleAssignment.accessRoleId is the backstop for an
+          // assignment created concurrently after this count (P2003, mapped below).
+          const assignedCount = await tx.roleAssignment.count({
+            where: { accessRoleId: id, tenantId: req.user.tenantId },
+          });
+          if (assignedCount > 0) return "ASSIGNED" as const;
+
           await tx.accessRole.delete({ where: { id } });
-          // #74 adds "an assigned role cannot be deleted" — no assignments exist yet, so a hard
-          // delete here can never orphan one.
           await app.audit({
             tx,
-            userId: req.user.sub,
             action: "DELETE",
             entity: "AccessRole",
             entityId: existing.id,
@@ -345,11 +366,21 @@ export async function roleRoutes(app: FastifyInstance) {
               permissions: existing.permissions,
               tenantId: existing.tenantId,
             },
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            ...requestAuditFields(req),
           });
+          return "DELETED" as const;
         });
+        if (outcome === "ASSIGNED") {
+          return reply.code(409).send({ error: ROLE_ASSIGNED_DELETE_MESSAGE });
+        }
         return reply.code(204).send();
       } catch (err: unknown) {
+        // 74b review WR-03: only the RoleAssignment -> AccessRole foreign key means "still
+        // assigned". Any other P2003 (before the actor fix: the audit insert's AuditLog.userId FK
+        // for an API-key caller) is a real failure and must not be answered as a false 409.
+        if (foreignKeyConstraintOf(err) === ROLE_ASSIGNMENT_ROLE_FOREIGN_KEY) {
+          return reply.code(409).send({ error: ROLE_ASSIGNED_DELETE_MESSAGE });
+        }
         if (isPrismaErrorCode(err, "P2025")) {
           return reply.code(404).send({ error: ROLE_NOT_FOUND_MESSAGE });
         }
@@ -425,18 +456,16 @@ export async function roleRoutes(app: FastifyInstance) {
           });
           await app.audit({
             tx,
-            userId: req.user.sub,
             action: "COPY",
             entity: "AccessRole",
             entityId: row.id,
-            newValue: {
+            ...requestAuditFields(req, {
               name: row.name,
               permissions: row.permissions,
               tenantId: row.tenantId,
               copiedFromId: source.id,
               copiedFromName: source.name,
-            },
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            }),
           });
           return row;
         });

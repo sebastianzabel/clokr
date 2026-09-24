@@ -45,7 +45,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "employees.ts:312-313 uses a SCOPED `findUnique({ where: { id, tenantId: req.user.tenantId } } })` — tenantId is baked into the query itself, so a foreign-tenant id and an unknown id both return the identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404 with no separate audit call possible (Prisma never returns the row to compare against).",
+      "reason": "employees.ts:352-353 uses a SCOPED `findUnique({ where: { id, tenantId: req.user.tenantId } } })` — tenantId is baked into the query itself, so a foreign-tenant id and an unknown id both return the identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404 with no separate audit call possible (Prisma never returns the row to compare against).",
       "ticket": null,
       "validatedAt": null
     },
@@ -57,7 +57,7 @@
         "id": "employee"
       },
       "minimalBody": {},
-      "reason": "employees.ts:530-533 uses the same SCOPED `findUnique({id, tenantId})` as GET /:id, byte-identical 404. `updateEmployeeSchema.parse(req.body)` at line 528 runs BEFORE the lookup (D-07), but every field is `.optional()` so `{}` satisfies it and reaches the guard — an empty body is NOT the same as no body at all (bare `.parse(undefined)` throws), hence the explicit `{}` minimalBody.",
+      "reason": "employees.ts:570-571 uses the same SCOPED `findUnique({id, tenantId})` as GET /:id, byte-identical 404. `updateEmployeeSchema.parse(req.body)` at line 568 runs BEFORE the lookup (D-07), but every field is `.optional()` so `{}` satisfies it and reaches the guard — an empty body is NOT the same as no body at all (bare `.parse(undefined)` throws), hence the explicit `{}` minimalBody.",
       "ticket": null,
       "validatedAt": null
     },
@@ -69,7 +69,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "employees.ts:761-774: separate `!employee` (404) and `employee.tenantId !== req.user.tenantId` (audited CROSS_TENANT_ACCESS_DENIED, then 404) branches return the byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }`. No body is parsed.",
+      "reason": "employees.ts:801-814: separate `!employee` (404) and `employee.tenantId !== req.user.tenantId` (audited CROSS_TENANT_ACCESS_DENIED, then 404) branches return the byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }`. No body is parsed.",
       "ticket": null,
       "validatedAt": null
     },
@@ -81,7 +81,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "employees.ts:802-815: fetch-then-compare, byte-identical 404, CROSS_TENANT_ACCESS_DENIED audited. `z.object({ exitDate: z.string().optional() }).parse(req.body ?? {})` at line 800 runs before the lookup but the `?? {}` fallback plus the all-optional schema means a bodyless probe already reaches the guard without needing an explicit minimalBody.",
+      "reason": "employees.ts:842-855: fetch-then-compare, byte-identical 404, CROSS_TENANT_ACCESS_DENIED audited. `z.object({ exitDate: z.string().optional() }).parse(req.body ?? {})` at line 840 runs before the lookup but the `?? {}` fallback plus the all-optional schema means a bodyless probe already reaches the guard without needing an explicit minimalBody.",
       "ticket": null,
       "validatedAt": null
     },
@@ -93,7 +93,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "employees.ts:860-873: fetch-then-compare, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited. No body is parsed by this handler.",
+      "reason": "employees.ts:916-929: fetch-then-compare, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited. No body is parsed by this handler.",
       "ticket": null,
       "validatedAt": null
     },
@@ -105,7 +105,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "employees.ts:921-934: fetch-then-compare, byte-identical 404, CROSS_TENANT_ACCESS_DENIED audited. No body is parsed by this handler.",
+      "reason": "employees.ts:977-990: fetch-then-compare, byte-identical 404, CROSS_TENANT_ACCESS_DENIED audited. No body is parsed by this handler.",
       "ticket": null,
       "validatedAt": null
     },
@@ -117,7 +117,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "employees.ts:981-994: fetch-then-compare, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited. No body is parsed. This is the DSGVO anonymization delete — destructive, but idempotent and non-permanent (anonymizes, does not hard-delete), so probing it is safe.",
+      "reason": "employees.ts:1037-1050: fetch-then-compare, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited. No body is parsed. This is the DSGVO anonymization delete — destructive, but idempotent and non-permanent (anonymizes, does not hard-delete), so probing it is safe.",
       "ticket": null,
       "validatedAt": null
     },
@@ -129,7 +129,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "employees.ts:1069-1072 uses a SCOPED `findUnique({id, tenantId})`, byte-identical 404, no audit possible (scoped query never returns a foreign row to compare). No body is parsed. DESTRUCTIVE-ADJACENT: this authorizes a subsequent hard-delete (15-minute TTL, 4-eyes) — 259-03's probe ordering constraint must run this AFTER any state-mutating probes on the same fixture employee, or place it last, since a stray authorization row is otherwise harmless (it only enables a SEPARATE DELETE call) but is still a real write.",
+      "reason": "employees.ts:1148-1151 uses a SCOPED `findUnique({id, tenantId})`, byte-identical 404, no audit possible (scoped query never returns a foreign row to compare). No body is parsed. DESTRUCTIVE-ADJACENT: this authorizes a subsequent hard-delete (15-minute TTL, 4-eyes) — 259-03's probe ordering constraint must run this AFTER any state-mutating probes on the same fixture employee, or place it last, since a stray authorization row is otherwise harmless (it only enables a SEPARATE DELETE call) but is still a real write.",
       "ticket": null,
       "validatedAt": null
     },
@@ -141,7 +141,7 @@
         "id": "employee"
       },
       "minimalBody": {},
-      "reason": "employees.ts:1101-1105 uses a SCOPED `findUnique({id, tenantId})`, byte-identical 404, no audit possible (scoped). `forceDeleteBodySchema = z.object({forceDelete: z.boolean().optional()}).optional()` parsed at line 1099 before the lookup; `{}` satisfies it. DESTRUCTIVE: on a genuinely-existing SAME-tenant employee this would actually hard-delete — 259-03's probe must ONLY ever run this against a foreign-tenant id (which the guard rejects at line 1105, before any deletion logic) and an unknown id, never against a real employee in the caller's own tenant.",
+      "reason": "employees.ts:1180-1184 uses a SCOPED `findUnique({id, tenantId})`, byte-identical 404, no audit possible (scoped). `forceDeleteBodySchema = z.object({forceDelete: z.boolean().optional()}).optional()` parsed at line 1178 before the lookup; `{}` satisfies it. DESTRUCTIVE: on a genuinely-existing SAME-tenant employee this would actually hard-delete — 259-03's probe must ONLY ever run this against a foreign-tenant id (which the guard rejects at line 1184, before any deletion logic) and an unknown id, never against a real employee in the caller's own tenant.",
       "ticket": null,
       "validatedAt": null
     },
@@ -224,6 +224,42 @@
       "validatedAt": null
     },
     {
+      "route": "GET /api/v1/role-assignments/:id",
+      "file": "apps/api/src/contexts/platform/api/role-assignments.ts",
+      "category": "probe",
+      "params": {
+        "id": "roleAssignment"
+      },
+      "minimalBody": null,
+      "reason": "role-assignments.ts:407-408 uses a SCOPED `findFirst({ where: { id, tenantId } })` — RoleAssignment.tenantId is never null (Pattern 1, unlike AccessRole's nullable tenant), so this is the simple inline shape, not roles.ts's nested guard. A scoped query cannot distinguish a foreign tenant's real row from a nonexistent id; both answer the identical `{ error: \"Rollenzuweisung nicht gefunden\" }` 404. GET has no request body.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/role-assignments/:id",
+      "file": "apps/api/src/contexts/platform/api/role-assignments.ts",
+      "category": "probe",
+      "params": {
+        "id": "roleAssignment"
+      },
+      "minimalBody": {},
+      "reason": "role-assignments.ts:453-454 uses the same SCOPED `findFirst({ where: { id, tenantId } })` as GET, answered by the byte-identical 404 at 524-525. Since the 74b code review (WR-01) the lookup runs inside the withRoleLockoutGuard callback, after the tenant row lock, so a foreign or unknown id takes that lock too; it writes nothing, so the guard's before/after holder counts are equal and its 409 can never fire on this path — both arms still answer the same 404. `updateAssignmentSchema.parse(req.body ?? {})` at line 435 runs BEFORE the lookup (house convention); both fields are `.nullish()` and `.strict()` only rejects fields other than these two, so `{}` satisfies it and reaches the tenant guard.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/role-assignments/:id",
+      "file": "apps/api/src/contexts/platform/api/role-assignments.ts",
+      "category": "probe",
+      "params": {
+        "id": "roleAssignment"
+      },
+      "minimalBody": null,
+      "reason": "role-assignments.ts:573-574 uses the same SCOPED `findFirst({ where: { id, tenantId } })` as GET, answered by the byte-identical 404 at 588-589. Since the 74b code review (WR-01) the lookup runs inside the withRoleLockoutGuard callback, after the tenant row lock; a foreign or unknown id deletes nothing, so the lockout 409 can never fire on this path. DELETE carries no body.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "GET /api/v1/roles/:id",
       "file": "apps/api/src/contexts/platform/api/roles.ts",
       "category": "probe",
@@ -231,7 +267,7 @@
         "id": "customRole"
       },
       "minimalBody": null,
-      "reason": "roles.ts:197 fetch by id (findUnique, no tenant filter), then the nested guard at 197-206: line 201 `if (existing.tenantId !== null)` wraps line 202 `if (existing.tenantId !== req.user.tenantId)`, both returning the byte-identical 404 `{ error: \"Rolle nicht gefunden\" }`. System roles (tenantId null) are visible to every tenant by design (D-07), so the probe targets a customer role via the `customRole` fixture, not a system row.",
+      "reason": "roles.ts:213 fetch by id (findUnique, no tenant filter), then the nested guard at 213-222: line 217 `if (existing.tenantId !== null)` wraps line 218 `if (existing.tenantId !== req.user.tenantId)`, both returning the byte-identical 404 `{ error: \"Rolle nicht gefunden\" }`. System roles (tenantId null) are visible to every tenant by design (D-07), so the probe targets a customer role via the `customRole` fixture, not a system row.",
       "ticket": null,
       "validatedAt": null
     },
@@ -243,7 +279,7 @@
         "id": "customRole"
       },
       "minimalBody": {},
-      "reason": "roles.ts:227 fetch by id, nested guard at 231-235 (same shape as GET, byte-identical 404). updateRoleSchema.parse(req.body) at line 225 runs BEFORE the lookup (D-07 house convention); every field is `.nullish()` so `{}` satisfies it and reaches the guard. The system-role 409 branch (line 236) sits AFTER the tenant guard, so it never fires on the T-100-09 probe's customer-role/unknown-id pair.",
+      "reason": "roles.ts:243 fetch by id, nested guard at 247-251 (same shape as GET, byte-identical 404). updateRoleSchema.parse(req.body) at line 241 runs BEFORE the lookup (D-07 house convention); every field is `.nullish()` so `{}` satisfies it and reaches the guard. The system-role 409 branch (line 252) sits AFTER the tenant guard, so it never fires on the T-100-09 probe's customer-role/unknown-id pair; the lockout guard (409, Phase 74b-03) runs only inside the transaction after both.",
       "ticket": null,
       "validatedAt": null
     },
@@ -255,7 +291,7 @@
         "id": "customRole"
       },
       "minimalBody": null,
-      "reason": "roles.ts:307 fetch by id, nested guard at 311-315 (same shape as GET, byte-identical 404). DELETE carries no body, so minimalBody is null; the system-role 409 branch (line 316) sits after the tenant guard and never fires on this probe's pair.",
+      "reason": "roles.ts:333 fetch by id, nested guard at 337-341 (same shape as GET, byte-identical 404). DELETE carries no body, so minimalBody is null; the system-role 409 branch (line 342) sits after the tenant guard and never fires on this probe's pair. The assigned-role 409 (D-21, Phase 74b-03, count at 353-356) runs inside the transaction after both; the foreign customRole fixture IS assigned (the roleAssignment fixture references it), so moving that check before the tenant guard turns this sweep red (measured in 74b-03, mutation L11b).",
       "ticket": null,
       "validatedAt": null
     },
@@ -267,7 +303,7 @@
         "id": "customRole"
       },
       "minimalBody": {},
-      "reason": "roles.ts:381 fetch by id (findUnique, no tenant filter), nested guard at 385-386 (same shape as GET/PATCH/DELETE, byte-identical 404). copyRoleSchema.parse(req.body ?? {}) at line 379 runs BEFORE the lookup; its only field is `.nullish()` so `{}` (and no body at all) satisfies it and reaches the guard. Both a system role and an own customer role are valid sources (D-07), so, like GET/:id, the probe targets a customer role via the customRole fixture — nothing is created on the foreign-tenant arm since the guard runs before the transaction that would create the copy.",
+      "reason": "roles.ts:412 fetch by id (findUnique, no tenant filter), nested guard at 416-417 (same shape as GET/PATCH/DELETE, byte-identical 404). copyRoleSchema.parse(req.body ?? {}) at line 410 runs BEFORE the lookup; its only field is `.nullish()` so `{}` (and no body at all) satisfies it and reaches the guard. Both a system role and an own customer role are valid sources (D-07), so, like GET/:id, the probe targets a customer role via the customRole fixture — nothing is created on the foreign-tenant arm since the guard runs before the transaction that would create the copy.",
       "ticket": null,
       "validatedAt": null
     },

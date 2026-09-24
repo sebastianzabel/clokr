@@ -1,4 +1,4 @@
-import { FastifyInstance } from "fastify";
+import { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto, { createHash } from "crypto";
@@ -9,6 +9,13 @@ import { validatePassword, loadPasswordPolicy } from "../password-policy";
 import { calculateProRataVacation } from "../../absence/vacation-calc";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { anonymizeEmployeeData, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../anonymize";
+import {
+  removeRoleAssignmentsOfUser,
+  withRoleLockoutGuard,
+  type RemovedRoleAssignment,
+} from "../facade/role-assignments";
+import { requestAuditFields } from "../request-audit-fields";
+import { RoleLockoutError, ROLE_LOCKOUT_MESSAGE } from "../role-assignment";
 import {
   createOvertimeAccount,
   hardDeleteOvertimeDataForEmployee,
@@ -254,6 +261,39 @@ function deriveInvitationStatus(
   if (latest.acceptedAt) return "ACCEPTED";
   if (latest.expiresAt > new Date()) return "PENDING";
   return "EXPIRED";
+}
+
+/**
+ * Phase 74b (D-12/D-22): one `DELETE` audit entry per role assignment removed on behalf of `req`
+ * (anonymization, hard delete), inside the caller's transaction, with `oldValue` in the D-12 shape
+ * and `newValue.reason` naming the trigger. 74b review WR-06: the actor is resolved through
+ * `requestAuditFields`, so an API-key caller is recorded as `newValue.actor` instead of failing
+ * the `AuditLog.userId` foreign key and with it the whole transaction.
+ */
+async function auditRemovedRoleAssignments(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  tx: Prisma.TransactionClient,
+  removed: RemovedRoleAssignment[],
+  reason: string,
+) {
+  for (const row of removed) {
+    await app.audit({
+      action: "DELETE",
+      entity: "RoleAssignment",
+      entityId: row.id,
+      oldValue: {
+        userId: row.userId,
+        accessRoleId: row.accessRoleId,
+        roleName: row.roleName,
+        scopeType: row.scopeType,
+        salonIds: row.salonIds,
+        employeeIds: row.employeeIds,
+      },
+      ...requestAuditFields(req, { reason }),
+      tx,
+    });
+  }
 }
 
 export async function employeeRoutes(app: FastifyInstance) {
@@ -819,32 +859,48 @@ export async function employeeRoutes(app: FastifyInstance) {
 
       const effectiveExitDate = exitDate ? new Date(exitDate) : new Date();
 
-      await app.prisma.$transaction([
-        app.prisma.user.update({
-          where: { id: employee.userId },
-          data: { isActive: false },
-        }),
-        app.prisma.employee.update({
-          where: { id },
-          data: { exitDate: effectiveExitDate },
-        }),
-        app.prisma.refreshToken.updateMany({
-          where: { userId: employee.userId, revokedAt: null },
-          data: { revokedAt: new Date() },
-        }),
-        app.prisma.otpToken.updateMany({
-          where: { userId: employee.userId, usedAt: null },
-          data: { usedAt: new Date() },
-        }),
-      ]);
-
-      await app.audit({
-        userId: req.user.sub,
-        action: "UPDATE",
-        entity: "Employee",
-        entityId: id,
-        newValue: { isActive: false, exitDate: effectiveExitDate },
-      });
+      // Phase 74b (D-19/D-20): deactivating the tenant's last active tenant-wide holder of
+      // role:manage / role-assignment:manage would lock every admin out of role management. The
+      // four writes AND the audit run in one interactive transaction under the lockout guard, so a
+      // RoleLockoutError rolls all of them back. The user's role assignments stay (D-22): an
+      // inactive user holds no effective right, and reactivation restores it.
+      try {
+        await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          await withRoleLockoutGuard(tx, req.user.tenantId, async () => {
+            await tx.user.update({
+              where: { id: employee.userId },
+              data: { isActive: false },
+            });
+            await tx.employee.update({
+              where: { id },
+              data: { exitDate: effectiveExitDate },
+            });
+            await tx.refreshToken.updateMany({
+              where: { userId: employee.userId, revokedAt: null },
+              data: { revokedAt: new Date() },
+            });
+            await tx.otpToken.updateMany({
+              where: { userId: employee.userId, usedAt: null },
+              data: { usedAt: new Date() },
+            });
+            // 74b review WR-06: inside the guarded transaction a failing audit rolls the
+            // deactivation back, so the actor must never be an API key's `apikey:<id>` subject
+            // (AuditLog.userId FK); requestAuditFields also adds the request IP/user agent.
+            await app.audit({
+              action: "UPDATE",
+              entity: "Employee",
+              entityId: id,
+              ...requestAuditFields(req, { isActive: false, exitDate: effectiveExitDate }),
+              tx,
+            });
+          });
+        });
+      } catch (err) {
+        if (err instanceof RoleLockoutError) {
+          return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
+        }
+        throw err;
+      }
 
       return { success: true };
     },
@@ -1005,18 +1061,41 @@ export async function employeeRoutes(app: FastifyInstance) {
       // deletion just as reliably as an avatar or absence document.
       const section9Docs = await getSection9DocumentPaths(app.prisma, id);
 
-      await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-        await anonymizeEmployeeData({ tx, employeeId: id });
-        await app.audit({
-          userId: req.user.sub,
-          action: "ANONYMIZE",
-          entity: "Employee",
-          entityId: id,
-          oldValue: { employeeNumber: employee.employeeNumber },
-          request: { ip: req.ip, headers: req.headers as Record<string, string> },
-          tx,
+      // Phase 74b (D-19/D-20/D-22): the anonymization, the per-assignment DELETE audits and the
+      // ANONYMIZE audit run under the lockout guard. Anonymizing the tenant's last active
+      // tenant-wide holder of role:manage / role-assignment:manage rolls all of it back and
+      // answers 409 — and that return comes BEFORE the MinIO block below, so a rolled-back
+      // anonymization never loses a document.
+      try {
+        await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          await withRoleLockoutGuard(tx, req.user.tenantId, async () => {
+            const { removedRoleAssignments } = await anonymizeEmployeeData({
+              tx,
+              employeeId: id,
+            });
+            await auditRemovedRoleAssignments(
+              app,
+              req,
+              tx,
+              removedRoleAssignments,
+              "Anonymisierung",
+            );
+            await app.audit({
+              action: "ANONYMIZE",
+              entity: "Employee",
+              entityId: id,
+              oldValue: { employeeNumber: employee.employeeNumber },
+              ...requestAuditFields(req),
+              tx,
+            });
+          });
         });
-      });
+      } catch (err) {
+        if (err instanceof RoleLockoutError) {
+          return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
+        }
+        throw err;
+      }
 
       // Delete MinIO objects after the Postgres tx has committed successfully.
       // Failures are non-fatal — legal anonymization is already committed.
@@ -1171,51 +1250,82 @@ export async function employeeRoutes(app: FastifyInstance) {
       // an immutable audit trail (Revisionssicherheit).
       // AuditLog.userId uses onDelete:SetNull → the row survives the User deletion.
       // Hard delete in correct order — Restrict-protected relations first
-      await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-        // Audit first — entity still queryable; tx rollback removes phantom audit row
-        // Include forceDelete flag and retentionExpiresAt so auditors can identify overrides.
-        await app.audit({
-          userId: req.user.sub,
-          action: "HARD_DELETE",
-          entity: "Employee",
-          entityId: id,
-          oldValue: {
-            employeeNumber: employee.employeeNumber,
-            userEmail: employee.user.email,
-            retentionStart: retentionStart.toISOString(),
-          },
-          newValue: {
-            forceDelete: forceDelete === true,
-            retentionExpiresAt: retentionExpires.toISOString(),
-          },
-          request: { ip: req.ip, headers: req.headers as Record<string, string> },
-          tx,
+      // Phase 74b (D-20): the whole transaction body runs under the lockout guard, order
+      // unchanged. On the real path the tenant's last holder never gets here — the
+      // anonymization precondition above refuses first, and anonymized users are inactive and
+      // normally hold no assignments (any left over are removed with an audit below). The guard
+      // is wired anyway so the rule holds by construction.
+      try {
+        await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          await withRoleLockoutGuard(tx, req.user.tenantId, async () => {
+            // Audit first — entity still queryable; tx rollback removes phantom audit row
+            // Include forceDelete flag and retentionExpiresAt so auditors can identify overrides.
+            await app.audit({
+              userId: req.user.sub,
+              action: "HARD_DELETE",
+              entity: "Employee",
+              entityId: id,
+              oldValue: {
+                employeeNumber: employee.employeeNumber,
+                userEmail: employee.user.email,
+                retentionStart: retentionStart.toISOString(),
+              },
+              newValue: {
+                forceDelete: forceDelete === true,
+                retentionExpiresAt: retentionExpires.toISOString(),
+              },
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+              tx,
+            });
+            // ⚠️ PRE-EXISTING GAP, recorded in Phase 99 (OB-05) — deliberately NOT fixed here.
+            // This handler does not deleteMany() SaldoSnapshot, whose Employee relation is
+            // onDelete: Restrict — so tx.employee.delete() below will fail with an FK-restrict
+            // violation for any employee that ever had a closed month. Phase 99 adds OpeningBalance
+            // with the same Restrict relation, which inherits (does not cause) the same failure mode.
+            // Fixing the cascade is orthogonal to opening balances and needs its own retention/
+            // Revisionssicherheit decision (what may legally be hard-deleted after §147 AO expiry).
+            // Break records (nested under TimeEntry) — delete first
+            // Phase 100B Plan 08 — T11, contexts/time-tracking facade (Break before TimeEntry,
+            // the onDelete:Restrict ordering invariant, unchanged).
+            await hardDeleteTimeDataForEmployee(tx, id);
+            // Restrict-protected models
+            // Phase 100B Plan 13 — F3, contexts/absence facade (IN PLACE, ordering unchanged).
+            await hardDeleteLeaveRequestsForEmployee(tx, id);
+            // Phase 100B Plan 12 — F3, contexts/absence facade (IN PLACE, H5 ordering unchanged).
+            await hardDeleteAbsencesForEmployee(tx, id);
+            // Cascade-owned models (safe to delete explicitly)
+            // Phase 100B Plan 10 — F3, contexts/absence facade.
+            await hardDeleteEntitlementsForEmployee(tx, id);
+            await tx.workSchedule.deleteMany({ where: { employeeId: id } });
+            await hardDeleteOvertimeDataForEmployee(tx, id);
+            // 74b review WR-04 (D-12/D-22): remove the user's remaining role assignments
+            // explicitly, one DELETE audit each, before the user row goes. The
+            // RoleAssignment.userId `onDelete: Cascade` stays only as a backstop: a cascade
+            // writes no audit row, and an anonymized user can still hold an assignment that was
+            // written directly (script, fixture) rather than through a route.
+            const removedRoleAssignments = await removeRoleAssignmentsOfUser(
+              tx,
+              req.user.tenantId,
+              userId,
+            );
+            await auditRemovedRoleAssignments(
+              app,
+              req,
+              tx,
+              removedRoleAssignments,
+              "Endgültige Löschung",
+            );
+            // Finally: employee and user records
+            await tx.employee.delete({ where: { id } });
+            await tx.user.delete({ where: { id: userId } });
+          });
         });
-        // ⚠️ PRE-EXISTING GAP, recorded in Phase 99 (OB-05) — deliberately NOT fixed here.
-        // This handler does not deleteMany() SaldoSnapshot, whose Employee relation is
-        // onDelete: Restrict — so tx.employee.delete() below will fail with an FK-restrict
-        // violation for any employee that ever had a closed month. Phase 99 adds OpeningBalance
-        // with the same Restrict relation, which inherits (does not cause) the same failure mode.
-        // Fixing the cascade is orthogonal to opening balances and needs its own retention/
-        // Revisionssicherheit decision (what may legally be hard-deleted after §147 AO expiry).
-        // Break records (nested under TimeEntry) — delete first
-        // Phase 100B Plan 08 — T11, contexts/time-tracking facade (Break before TimeEntry,
-        // the onDelete:Restrict ordering invariant, unchanged).
-        await hardDeleteTimeDataForEmployee(tx, id);
-        // Restrict-protected models
-        // Phase 100B Plan 13 — F3, contexts/absence facade (IN PLACE, ordering unchanged).
-        await hardDeleteLeaveRequestsForEmployee(tx, id);
-        // Phase 100B Plan 12 — F3, contexts/absence facade (IN PLACE, H5 ordering unchanged).
-        await hardDeleteAbsencesForEmployee(tx, id);
-        // Cascade-owned models (safe to delete explicitly)
-        // Phase 100B Plan 10 — F3, contexts/absence facade.
-        await hardDeleteEntitlementsForEmployee(tx, id);
-        await tx.workSchedule.deleteMany({ where: { employeeId: id } });
-        await hardDeleteOvertimeDataForEmployee(tx, id);
-        // Finally: employee and user records
-        await tx.employee.delete({ where: { id } });
-        await tx.user.delete({ where: { id: userId } });
-      });
+      } catch (err) {
+        if (err instanceof RoleLockoutError) {
+          return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
+        }
+        throw err;
+      }
 
       return reply.code(204).send();
     },
