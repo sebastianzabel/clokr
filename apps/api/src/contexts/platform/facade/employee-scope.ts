@@ -25,6 +25,15 @@
  * exception for every function that takes a scope: an `EmployeeScope` parameter already carries a
  * `tenantId` sibling for its `employeeId`/`employeeIds`, by construction.
  *
+ * **Phase 77b (Issue #77) made the mapping fail-closed.** Every variant binds that `tenantId` into
+ * the fragment it returns (`employee: { tenantId }`), and an empty, missing or whitespace-only
+ * tenant throws `AccessContextError` before any fragment exists. Before 77b the `employee` /
+ * `employees` variants filtered by `employeeId` alone, so a scope naming one tenant but carrying a
+ * foreign tenant's employeeId would have matched that foreign tenant's rows. This is a
+ * Semantikänderung of a `contexts/platform/index.ts` export (ADR 0002, Entscheidung 7) — Nachtrag
+ * in `docs/adr/0001-abweichungen.md`. Route files never build an `EmployeeScope` by hand; they get
+ * one from `employeeScopeFor()` in `../access-context.ts`.
+ *
  * This module contains no Prisma CALL of its own — it is a pure, side-effect-free type/function
  * module, so its presence under `contexts/platform/facade/` does not move the
  * `lint:tenant-scoping` gate's counts. It also exports no `db: Prisma.TransactionClient`-taking
@@ -34,31 +43,37 @@
  * all. It carries a named exception in `lint-facade-signatures-exceptions.json` for exactly that
  * reason — see this plan's SUMMARY for the full reasoning.
  */
+import { requireTenantId } from "../access-context-error";
+
 export type EmployeeScope =
   | { kind: "employee"; employeeId: string; tenantId: string }
   | { kind: "employees"; employeeIds: string[]; tenantId: string }
   | { kind: "tenant"; tenantId: string };
 
 /**
- * The `where` fragment selecting the employee(s) an {@link EmployeeScope} names. Every returned
- * shape also implicitly requires the caller's own tenant constraint to be added by the facade
- * function that uses this fragment (typically `employee: { tenantId }` alongside it, or —
- * for a model that itself carries `employeeId` directly — `employeeId` combined with a join back
- * to `Employee.tenantId`); this helper only answers "which employee(s)", not "which tenant",
- * even though every {@link EmployeeScope} variant carries a `tenantId` field for exactly that
- * purpose (see the module header — G4/F3 needs it declared on the SCOPE, not necessarily used
- * again here).
+ * The `where` fragment selecting the employee(s) an {@link EmployeeScope} names, INSIDE the scope's
+ * tenant. Every variant binds `employee: { tenantId }` next to its `employeeId` constraint, so a
+ * facade that spreads this fragment is tenant-bound without adding a clause of its own:
+ *
+ * - `employee`  -> `{ employeeId, employee: { tenantId } }`
+ * - `employees` -> `{ employeeId: { in: employeeIds }, employee: { tenantId } }`
+ * - `tenant`    -> `{ employee: { tenantId } }`
+ *
+ * Fail-closed (Phase 77b, Issue #77): a scope whose `tenantId` is empty, missing or
+ * whitespace-only throws `AccessContextError` — which `app.ts` maps to HTTP 500 — instead of
+ * returning a filter. There is no fallback tenant.
  */
 export function employeeScopeWhere(scope: EmployeeScope): {
   employeeId?: string | { in: string[] };
-  employee?: { tenantId: string };
+  employee: { tenantId: string };
 } {
+  const tenantId = requireTenantId(scope.tenantId, "employeeScopeWhere");
   switch (scope.kind) {
     case "employee":
-      return { employeeId: scope.employeeId };
+      return { employeeId: scope.employeeId, employee: { tenantId } };
     case "employees":
-      return { employeeId: { in: scope.employeeIds } };
+      return { employeeId: { in: scope.employeeIds }, employee: { tenantId } };
     case "tenant":
-      return { employee: { tenantId: scope.tenantId } };
+      return { employee: { tenantId } };
   }
 }

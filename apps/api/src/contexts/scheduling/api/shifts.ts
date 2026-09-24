@@ -4,7 +4,14 @@ import { requireAuth, requireRole } from "../../../middleware/auth";
 import { isAvailabilityEnabled } from "../tenant-availability";
 import { getEffectiveBreakDuration } from "../../time-tracking"; // Phase 101B (Issue #101, wave 8)
 import { classifyLeaveTypeCode, type AvailabilityBucket } from "../shift-availability"; // Phase 98 (T3, plan 03) — the two classifiers' new home
-import { getHolidays, STATE_MAP, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../../platform";
+import {
+  getHolidays,
+  STATE_MAP,
+  NOT_ANONYMIZED_EMPLOYEE_WHERE,
+  accessContextFromRequest,
+  employeeScopeFor,
+  type AccessContext,
+} from "../../platform";
 import {
   isMonthClosed, // Phase 100B Plan 07 — W1
   getVocationalSchoolMinutesForDate,
@@ -164,20 +171,16 @@ interface ShiftConflict {
 async function findShiftConflict(
   prisma: import("@clokr/db").PrismaClient,
   employeeId: string,
-  tenantId: string,
+  access: AccessContext,
   isoDate: string,
 ): Promise<ShiftConflict | null> {
   const day = new Date(isoDate + "T00:00:00Z");
+  const scope = employeeScopeFor(access, { employeeId });
 
   // Check APPROVED LeaveRequest first (vacation/sonder) — Phase 100B Plan 13 (A1), contexts/absence
   // facade. Same status set as A1 (APPROVED only, NOT A2's CANCELLATION_REQUESTED-inclusive set —
   // read and confirmed, per H2), just from === to.
-  const [leave] = await getApprovedLeaveOverlapping(
-    prisma,
-    { kind: "employee", employeeId, tenantId },
-    day,
-    day,
-  );
+  const [leave] = await getApprovedLeaveOverlapping(prisma, scope, day, day);
   if (leave) {
     return {
       kind: "leave",
@@ -186,16 +189,11 @@ async function findShiftConflict(
     };
   }
 
-  // Then check Absence — Phase 100B Plan 12 (A4), contexts/absence facade. `tenantId` threaded
-  // in purely to satisfy EmployeeScope's "every variant carries tenantId" contract (D-10); both
-  // call sites already validate `employeeId` against `req.user.tenantId` upstream, so this is a
-  // proven no-op, not a behaviour change.
-  const [absence] = await getAbsencesOverlapping(
-    prisma,
-    { kind: "employee", employeeId, tenantId },
-    day,
-    day,
-  );
+  // Then check Absence — Phase 100B Plan 12 (A4), contexts/absence facade. The scope comes from
+  // the caller's access context (Phase 77b, Issue #77) and `employeeScopeWhere` binds its tenant
+  // into the filter; both call sites already validate `employeeId` against `req.user.tenantId`
+  // upstream, so the tenant binding is defence in depth, not a behaviour change.
+  const [absence] = await getAbsencesOverlapping(prisma, scope, day, day);
   if (absence) {
     return {
       kind: "absence",
@@ -792,6 +790,7 @@ export async function shiftRoutes(app: FastifyInstance) {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req) => {
+      const access = accessContextFromRequest(req);
       // Phase 47.1 verify-check (2026-05-20): GET /week resolver merges APPROVED LeaveRequest
       // (deletedAt: null) + non-deleted Absence + EmployeeAvailability into availability map.
       // See Phase 46-02 SUMMARY for the resolver design.
@@ -910,9 +909,9 @@ export async function shiftRoutes(app: FastifyInstance) {
         }),
         listLeaveTypes(app.prisma, tenantId),
         // Phase 100B Plan 13 — A1, contexts/absence facade.
-        getApprovedLeaveOverlapping(app.prisma, { kind: "tenant", tenantId }, monday, sunday),
+        getApprovedLeaveOverlapping(app.prisma, employeeScopeFor(access), monday, sunday),
         // Phase 100B Plan 12 — A4, contexts/absence facade.
-        getAbsencesOverlapping(app.prisma, { kind: "tenant", tenantId }, monday, sunday),
+        getAbsencesOverlapping(app.prisma, employeeScopeFor(access), monday, sunday),
         app.prisma.coverageRule.findMany({
           where: { tenantId },
           select: {
@@ -1283,7 +1282,7 @@ export async function shiftRoutes(app: FastifyInstance) {
       // Phase 100B Plan 13 — A2, contexts/absence facade.
       const leaveForSoll = await getActiveLeaveOverlapping(
         app.prisma,
-        { kind: "tenant", tenantId },
+        employeeScopeFor(access),
         monday,
         sunday,
       );
@@ -1748,6 +1747,7 @@ export async function shiftRoutes(app: FastifyInstance) {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req, reply) => {
+      const access = accessContextFromRequest(req);
       const body = shiftSchema.parse(req.body);
       const force = (req.query as { force?: string }).force === "true";
 
@@ -1858,12 +1858,7 @@ export async function shiftRoutes(app: FastifyInstance) {
       }
 
       // Conflict-check unless force=true
-      const conflict = await findShiftConflict(
-        app.prisma,
-        body.employeeId,
-        req.user.tenantId,
-        body.date,
-      );
+      const conflict = await findShiftConflict(app.prisma, body.employeeId, access, body.date);
       if (conflict && !force) {
         const isLeave = conflict.kind === "leave";
         return reply.code(409).send({
@@ -2048,6 +2043,7 @@ export async function shiftRoutes(app: FastifyInstance) {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req, reply) => {
+      const access = accessContextFromRequest(req);
       const { id } = req.params as { id: string };
       const body = shiftSchema.partial().parse(req.body);
       const force = (req.query as { force?: string }).force === "true";
@@ -2189,12 +2185,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
       }
 
-      const conflict = await findShiftConflict(
-        app.prisma,
-        effEmployeeId,
-        req.user.tenantId,
-        effDateIso,
-      );
+      const conflict = await findShiftConflict(app.prisma, effEmployeeId, access, effDateIso);
       if (conflict && !force) {
         const isLeave = conflict.kind === "leave";
         return reply.code(409).send({
@@ -2389,6 +2380,7 @@ export async function shiftRoutes(app: FastifyInstance) {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req, reply) => {
+      const access = accessContextFromRequest(req);
       const body = generateWeekSchema.parse(req.body);
 
       // Parse weekStart (Mo) and produce Mo-So ISO list
@@ -2445,17 +2437,12 @@ export async function shiftRoutes(app: FastifyInstance) {
           // Phase 100B Plan 13 — A1, contexts/absence facade.
           getApprovedLeaveOverlapping(
             app.prisma,
-            { kind: "tenant", tenantId },
+            employeeScopeFor(access),
             weekStartDate,
             weekEndDate,
           ),
           // Phase 100B Plan 12 — A4, contexts/absence facade.
-          getAbsencesOverlapping(
-            app.prisma,
-            { kind: "tenant", tenantId },
-            weekStartDate,
-            weekEndDate,
-          ),
+          getAbsencesOverlapping(app.prisma, employeeScopeFor(access), weekStartDate, weekEndDate),
           app.prisma.shift.findMany({
             where: {
               employee: { tenantId },
@@ -2730,6 +2717,7 @@ export async function shiftRoutes(app: FastifyInstance) {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req, reply) => {
+      const access = accessContextFromRequest(req);
       const body = copyWeekSchema.parse(req.body);
 
       // Align both weeks to Monday (UTC) for safety
@@ -2793,14 +2781,14 @@ export async function shiftRoutes(app: FastifyInstance) {
           // Phase 100B Plan 13 — A1, contexts/absence facade.
           getApprovedLeaveOverlapping(
             app.prisma,
-            { kind: "tenant", tenantId },
+            employeeScopeFor(access),
             targetStartDate,
             targetEndDate,
           ),
           // Phase 100B Plan 12 — A4, contexts/absence facade.
           getAbsencesOverlapping(
             app.prisma,
-            { kind: "tenant", tenantId },
+            employeeScopeFor(access),
             targetStartDate,
             targetEndDate,
           ),
