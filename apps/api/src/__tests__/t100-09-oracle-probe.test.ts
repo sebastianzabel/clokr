@@ -263,18 +263,23 @@ type FixtureBundle = Awaited<ReturnType<typeof seedTestData>>;
 // foreign-tenant bundle passed into it by the sweep) can hand them out.
 let tenantBLeaveRequestId: string | undefined;
 let tenantBTimeEntryId: string | undefined;
+// Phase 73b Plan 02 (Issue #73): a real tenantB customer AccessRole, so the three /roles/:id
+// probe entries have a foreign-tenant row to sweep against — system roles (tenantId null) are
+// visible to every tenant by design and would not exercise the tenant guard at all.
+let tenantBCustomRoleId: string | undefined;
 
 /** Resolves a register `params` fixture key to the foreign tenant's real entity id. `null` means
  * the key is unrecognised — the caller must fail loudly, never silently skip the route (D-03).
- * Today's vocabulary is exactly these four keys: `employee`/`leaveType` from the shared
+ * Today's vocabulary is exactly these five keys: `employee`/`leaveType` from the shared
  * `seedTestData` bundle, `leaveRequest`/`timeEntry` from the locally created fixtures above (Issue
- * #309/#310) — a register entry naming a fifth one this probe does not implement is exactly the
- * failure this function surfaces. */
+ * #309/#310), `customRole` from the locally created fixture below (Issue #73) — a register entry
+ * naming a sixth one this probe does not implement is exactly the failure this function surfaces. */
 function fixtureValueFor(bundle: FixtureBundle, fixtureKey: string): string | null {
   if (fixtureKey === "employee") return bundle.employee.id;
   if (fixtureKey === "leaveType") return bundle.vacationType.id;
   if (fixtureKey === "leaveRequest") return tenantBLeaveRequestId ?? null;
   if (fixtureKey === "timeEntry") return tenantBTimeEntryId ?? null;
+  if (fixtureKey === "customRole") return tenantBCustomRoleId ?? null;
   return null;
 }
 
@@ -353,6 +358,17 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         },
       });
       tenantBTimeEntryId = timeEntry.id;
+
+      // Issue #73 fixture: a real tenantB customer AccessRole (Phase 73b Plan 02).
+      const customRole = await app.prisma.accessRole.create({
+        data: {
+          tenantId: tenantB.tenant.id,
+          name: "T10009 Probe-Rolle",
+          nameKey: "t10009 probe-rolle",
+          permissions: ["role:read:ZUGEWIESEN"],
+        },
+      });
+      tenantBCustomRoleId = customRole.id;
     });
 
     afterAll(async () => {
@@ -493,6 +509,19 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         where: { timeEntryId: tenantBTimeEntryId },
       });
       expect(breakCount).toBe(0);
+    });
+
+    it("fixture integrity after the sweep: tenantB's AccessRole (Issue #73) still exists with unchanged name, nameKey and permissions, and tenantA has zero AccessRole rows of its own from this sweep — a guard that answers 404 while still performing the PATCH, DELETE or copy would otherwise pass the byte comparison", async () => {
+      const after = await app.prisma.accessRole.findUnique({ where: { id: tenantBCustomRoleId } });
+      expect(after).not.toBeNull();
+      expect(after?.name).toBe("T10009 Probe-Rolle");
+      expect(after?.nameKey).toBe("t10009 probe-rolle");
+      expect(after?.permissions).toEqual(["role:read:ZUGEWIESEN"]);
+
+      const tenantARoleCount = await app.prisma.accessRole.count({
+        where: { tenantId: tenantA.tenant.id },
+      });
+      expect(tenantARoleCount).toBe(0);
     });
   });
 });
