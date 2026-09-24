@@ -12,7 +12,14 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee, // Phase 325 (issue #325)
+} from "./setup";
 import { todayStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 import { computeMonthSaldo } from "../contexts/working-time-account/month-saldo";
@@ -258,6 +265,7 @@ describe("month-saldo endpoint + computeMonthSaldo", () => {
 describe("rosterIncomplete (Phase 97-05, SALDO-DISP-07) — computeMonthSaldo", () => {
   let app: FastifyInstance;
   let tenantId: string;
+  let salonId: string; // Phase 325 (issue #325)
   let partlyRosteredEmpId: string;
   let fullyRosteredEmpId: string;
   let nonShiftEmpId: string;
@@ -282,6 +290,7 @@ describe("rosterIncomplete (Phase 97-05, SALDO-DISP-07) — computeMonthSaldo", 
       },
     });
     tenantId = tenant.id;
+    salonId = (await createTestSalon(prisma, tenantId)).id;
     const passwordHash = await bcrypt.hash("test1234", 10);
 
     // Shared SHIFT_BASED schedule shape — 38h/week, Mo-Fr day-hours set so the contract Ø-Soll is
@@ -337,6 +346,7 @@ describe("rosterIncomplete (Phase 97-05, SALDO-DISP-07) — computeMonthSaldo", 
         await prisma.shift.create({
           data: {
             employeeId: emp.id,
+            salonId, // Phase 325 (issue #325)
             date: new Date(d + "T00:00:00Z"),
             startTime: "08:00",
             endTime: "16:00",
@@ -397,6 +407,7 @@ describe("rosterIncomplete (Phase 97-05, SALDO-DISP-07) — computeMonthSaldo", 
         await prisma.shift.create({
           data: {
             employeeId: emp.id,
+            salonId, // Phase 325 (issue #325)
             date: new Date(d + "T00:00:00Z"),
             startTime: "08:00",
             endTime: "16:00",
@@ -538,6 +549,7 @@ describe("rosterIncomplete (Phase 97-05, SALDO-DISP-07) — computeMonthSaldo", 
 describe("workedDays (Phase 125, issue #125) — computeMonthSaldo", () => {
   let app: FastifyInstance;
   let tenantId: string;
+  let salonId: string; // Phase 325 (issue #325)
   let adminToken: string;
   let shiftEmpAId: string;
   let shiftEmpBId: string;
@@ -562,6 +574,7 @@ describe("workedDays (Phase 125, issue #125) — computeMonthSaldo", () => {
       },
     });
     tenantId = tenant.id;
+    salonId = (await createTestSalon(prisma, tenantId)).id;
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
     });
@@ -680,6 +693,7 @@ describe("workedDays (Phase 125, issue #125) — computeMonthSaldo", () => {
         await prisma.shift.create({
           data: {
             employeeId: emp.id,
+            salonId, // Phase 325 (issue #325)
             date: new Date(d + "T00:00:00Z"),
             startTime: "08:00",
             endTime: "16:00",

@@ -47,7 +47,7 @@
  * of the shared, tenant-TZ-correct string helpers in test-dates.ts.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
 import { holidayFreeMondayStr } from "./test-dates";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
@@ -77,6 +77,7 @@ describe("Phase 76.11 — /shifts/week emits leaveMinutesByEmp + absenceMinutesB
       },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 325 (issue #325)
     await prisma.tenantConfig.create({
       data: {
         tenantId,

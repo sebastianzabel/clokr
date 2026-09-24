@@ -16,7 +16,13 @@
 
 // RED until Plan 02 creates close-employee-month.ts
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee, // Phase 325 (issue #325)
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc, monthDayBounds } from "../contexts/working-time-account/timezone";
 import { recalculateSnapshots } from "../contexts/working-time-account/recalculate-snapshots";
@@ -166,6 +172,7 @@ describe("closeEmployeeMonth — case 1: FIXED gap month (CLOSE-05)", () => {
     const tenant = await prisma.tenant.create({
       data: { name: `CloseGap ${s}`, slug: s, federalState: "NIEDERSACHSEN" },
     });
+    await createTestSalon(prisma, tenant.id); // Phase 325 (issue #325)
     tenantId = tenant.id;
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ },
@@ -341,6 +348,7 @@ describe("closeEmployeeMonth — case 2: FIXED four-path parity (CLOSE-05)", () 
     const tenant = await prisma.tenant.create({
       data: { name: `Parity Fixed ${s}`, slug: s, federalState: "NIEDERSACHSEN" },
     });
+    await createTestSalon(prisma, tenant.id); // Phase 325 (issue #325)
     tenantId = tenant.id;
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ },
@@ -530,6 +538,7 @@ describe("closeEmployeeMonth — case 3: SHIFT_BASED Model B + §615 (CLOSE-05)"
     const tenant = await prisma.tenant.create({
       data: { name: `ShiftB ${s}`, slug: s, federalState: "NIEDERSACHSEN" },
     });
+    await createTestSalon(prisma, tenant.id); // Phase 325 (issue #325)
     tenantId = tenant.id;
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ },
@@ -632,6 +641,7 @@ describe("closeEmployeeMonth — case 3: SHIFT_BASED Model B + §615 (CLOSE-05)"
       await prisma.shift.create({
         data: {
           employeeId: empId,
+          salonId: await salonIdForEmployee(prisma, empId), // Phase 325 (issue #325)
           date: new Date(d + "T00:00:00Z"),
           startTime: "07:00",
           endTime: "15:30",
@@ -728,6 +738,7 @@ describe("closeEmployeeMonth — case 4: SHIFT_BASED BS-day neutrality (worked==
     const tenant = await prisma.tenant.create({
       data: { name: `BS ${s}`, slug: s, federalState: "NIEDERSACHSEN" },
     });
+    await createTestSalon(prisma, tenant.id); // Phase 325 (issue #325)
     tenantId = tenant.id;
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ },
@@ -859,6 +870,7 @@ describe("closeEmployeeMonth — case 4: SHIFT_BASED BS-day neutrality (worked==
     const tenant = await prisma.tenant.create({
       data: { name: `BSN ${s}`, slug: s, federalState: "NIEDERSACHSEN" },
     });
+    await createTestSalon(prisma, tenant.id); // Phase 325 (issue #325)
     await prisma.tenantConfig.create({
       data: { tenantId: tenant.id, defaultVacationDays: 30, timezone: TZ },
     });
@@ -1188,6 +1200,7 @@ describe("closeEmployeeMonth — case 9: SHIFT_BASED + VOCATIONAL_SCHOOL parity 
     const tenant = await prisma.tenant.create({
       data: { name: `ShiftBS ${s}`, slug: s, federalState: "NIEDERSACHSEN" },
     });
+    await createTestSalon(prisma, tenant.id); // Phase 325 (issue #325)
     tenantId = tenant.id;
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ },
@@ -1274,6 +1287,7 @@ describe("closeEmployeeMonth — case 9: SHIFT_BASED + VOCATIONAL_SCHOOL parity 
       await prisma.shift.create({
         data: {
           employeeId: empId,
+          salonId: await salonIdForEmployee(prisma, empId), // Phase 325 (issue #325)
           date: new Date(d + "T00:00:00Z"),
           startTime: "07:00",
           endTime: "15:30",
@@ -1423,6 +1437,7 @@ describe("closeEmployeeMonth — case 8: four-path parity SHIFT_BASED + FIXED (C
     const tenant = await prisma.tenant.create({
       data: { name: `Parity4P ${s}`, slug: s, federalState: "NIEDERSACHSEN" },
     });
+    await createTestSalon(prisma, tenant.id); // Phase 325 (issue #325)
     tenantId = tenant.id;
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ },
@@ -1551,6 +1566,7 @@ describe("closeEmployeeMonth — case 8: four-path parity SHIFT_BASED + FIXED (C
       await prisma.shift.create({
         data: {
           employeeId: shiftEmpId,
+          salonId: await salonIdForEmployee(prisma, shiftEmpId), // Phase 325 (issue #325)
           date: new Date(d + "T00:00:00Z"),
           startTime: "07:00",
           endTime: "15:30",
@@ -1780,6 +1796,7 @@ describe("TC-CLOSE-01 — close with gaps values 0h against full Soll", () => {
     const tenant = await prisma.tenant.create({
       data: { name: `TC01 ${s}`, slug: `tc01-${s}`, federalState: "NIEDERSACHSEN" },
     });
+    await createTestSalon(prisma, tenant.id); // Phase 325 (issue #325)
     tenantId = tenant.id;
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ },
@@ -1874,6 +1891,7 @@ describe("TC-CLOSE-01 — close with gaps values 0h against full Soll", () => {
       await prisma.shift.create({
         data: {
           employeeId: shiftEmpId,
+          salonId: await salonIdForEmployee(prisma, shiftEmpId), // Phase 325 (issue #325)
           date: new Date(d + "T00:00:00Z"),
           startTime: "07:00",
           endTime: "15:30",

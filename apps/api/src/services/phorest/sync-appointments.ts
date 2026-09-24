@@ -8,9 +8,11 @@
 // touching `status`.
 //
 // DSGVO (load-bearing, SA-02): the ONLY write path is the closed mapAppointment() object literal,
-// which reads ONLY staffId + start/end and emits ONLY { employeeId, date, startTime, endTime,
-// externalId }. The raw Phorest payload (which carries customer/service/price) is NEVER spread into
-// the return or into prisma.create — every non-staff/non-time field is unreachable by construction.
+// which reads ONLY staffId + start/end and emits ONLY { employeeId, salonId, date, startTime,
+// endTime, externalId }. The raw Phorest payload (which carries customer/service/price) is NEVER
+// spread into the return or into prisma.create — every non-staff/non-time field is unreachable by
+// construction. `salonId` (Phase 325, issue #325) is an internal Unterbau FK the caller resolves,
+// never Phorest customer data, so the minimization boundary is unchanged.
 // Combined with PhorestAppointment having no PII columns, minimization is structural.
 //
 // Plan 02 (this file) hardens the tracer's straight-insert into the full reconciliation core:
@@ -35,6 +37,7 @@
 import type { FastifyInstance } from "fastify";
 import { decryptSafe } from "../../utils/crypto";
 import { todayInTz, dateStrInTz } from "../../contexts/working-time-account"; // Phase 101B
+import { findDefaultSalon } from "../../contexts/platform"; // Phase 325 (issue #325), D-14/D-15
 import { phorestFetch } from "./client";
 import {
   extractAppointments,
@@ -58,9 +61,13 @@ type AppointmentRow = NonNullable<ReturnType<typeof mapAppointment>>;
 /**
  * The DSGVO minimization boundary (SA-02). A CLOSED pure function: it reads ONLY staff +
  * appointmentDate + start/end from the (PII-carrying) upstream item and returns a CLOSED object
- * literal with ONLY the five allowed fields. Returns null when date/start/end cannot be derived
+ * literal with ONLY the six allowed fields. Returns null when date/start/end cannot be derived
  * (the item is then skipped). NEVER spread `a` into the return — that is what makes
  * customer/service/price/notes unreachable.
+ *
+ * `salonId` (Phase 325, issue #325) is resolved ONCE by the caller (the tenant's default salon,
+ * D-04) and threaded through as a plain parameter — it never comes from the Phorest payload, so
+ * it does not weaken the minimization boundary above.
  *
  * v3 shape: the date is the SEPARATE `appointmentDate` ("yyyy-MM-dd"); start/end are Joda LocalTime
  * "HH:mm:ss" — sliced to the stored "HH:mm". NEVER new Date() a LocalTime value (that would apply a
@@ -70,8 +77,10 @@ export function mapAppointment(
   a: PhorestAppointmentItem,
   employeeId: string,
   tz: string,
+  salonId: string,
 ): {
   employeeId: string;
+  salonId: string;
   date: Date;
   startTime: string;
   endTime: string;
@@ -84,6 +93,7 @@ export function mapAppointment(
   if (!date || !startTime || !endTime) return null;
   return {
     employeeId,
+    salonId,
     date: new Date(date),
     startTime,
     endTime,
@@ -107,6 +117,14 @@ export async function syncPhorestAppointments(
     const password = decryptSafe(cfg?.phorestPassword);
     if (!cfg?.phorestBusinessId || !cfg?.phorestUsername || !password) {
       throw new Error("Phorest nicht konfiguriert");
+    }
+
+    // Phase 325 (issue #325), D-14/D-15: until #65, one Phorest coupling per tenant means its
+    // salon is the tenant's default salon — resolved once per run, before any Phorest fetch.
+    // #65 replaces this lookup with the salon of the specific Phorest coupling.
+    const defaultSalon = await findDefaultSalon(app.prisma, tenantId);
+    if (!defaultSalon) {
+      throw new Error("Kein aktiver Salon vorhanden.");
     }
 
     const baseUrl = cfg.phorestBaseUrl ?? DEFAULT_BASE_URL;
@@ -162,7 +180,7 @@ export async function syncPhorestAppointments(
       for (const a of items) {
         const employeeId = mapping.get(a.staffId);
         if (!employeeId) continue; // unmapped ⇒ never stored (DSGVO + SA-01, T-86-09)
-        const row = mapAppointment(a, employeeId, tz);
+        const row = mapAppointment(a, employeeId, tz, defaultSalon.id);
         if (row) fresh.push(row);
       }
 

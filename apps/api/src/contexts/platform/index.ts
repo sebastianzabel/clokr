@@ -80,6 +80,9 @@ export {
   salonOpeningHoursSchema,
   DEFAULT_SALON_OPENING_HOURS,
   findSalon,
+  // Phase 325 (issue #325), D-04: additive re-export — every Shift/PhorestAppointment writer
+  // resolves the tenant's default salon through this one function.
+  findDefaultSalon,
   createSalon,
   createSalonSchema,
   updateSalon,

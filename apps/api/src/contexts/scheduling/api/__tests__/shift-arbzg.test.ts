@@ -167,6 +167,7 @@ describe("Shift ArbZG Validation (Phase 47.4-01)", () => {
     await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date(PREV_ISO + "T00:00:00Z"),
         startTime: "22:00",
         endTime: "06:00",
@@ -205,6 +206,7 @@ describe("Shift ArbZG Validation (Phase 47.4-01)", () => {
     await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date(PREV_ISO + "T00:00:00Z"),
         startTime: "09:00",
         endTime: "18:00",
@@ -234,6 +236,7 @@ describe("Shift ArbZG Validation (Phase 47.4-01)", () => {
     const prevShift = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date(PREV_ISO + "T00:00:00Z"),
         startTime: "22:00",
         endTime: "06:00",

@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon, // Phase 325 (issue #325)
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import { dbDateStr, futureDateStr, nextWeekdayStr, utcMidnight } from "./test-dates";
 
@@ -916,6 +922,7 @@ describe("Shift Planning API", () => {
         data: [
           {
             employeeId: data.employee.id,
+            salonId: data.salonId, // Phase 325 (issue #325)
             templateId: copyTplId,
             date: new Date("2026-10-05"), // Mo
             startTime: "07:00",
@@ -925,6 +932,7 @@ describe("Shift Planning API", () => {
           },
           {
             employeeId: data.employee.id,
+            salonId: data.salonId, // Phase 325 (issue #325)
             templateId: copyTplId,
             date: new Date("2026-10-07"), // Mi
             startTime: "07:00",
@@ -934,6 +942,7 @@ describe("Shift Planning API", () => {
           },
           {
             employeeId: data.employee.id,
+            salonId: data.salonId, // Phase 325 (issue #325)
             templateId: copyTplId,
             date: new Date("2026-10-09"), // Fr
             startTime: "07:00",
@@ -1103,6 +1112,7 @@ describe("Shift Planning API", () => {
       const existing = await app.prisma.shift.create({
         data: {
           employeeId: data.employee.id,
+          salonId: data.salonId, // Phase 325 (issue #325)
           date: new Date("2026-10-12"),
           startTime: "10:00",
           endTime: "18:00",
@@ -1138,6 +1148,7 @@ describe("Shift Planning API", () => {
         const otherShift = await app.prisma.shift.create({
           data: {
             employeeId: otherData.employee.id,
+            salonId: otherData.salonId, // Phase 325 (issue #325)
             date: new Date("2026-10-05"), // same source Mo
             startTime: "09:00",
             endTime: "17:00",
@@ -1427,6 +1438,7 @@ describe("Shift Planning API", () => {
       const shift = await app.prisma.shift.create({
         data: {
           employeeId: data.employee.id,
+          salonId: data.salonId, // Phase 325 (issue #325)
           date: new Date(MONDAY_ISO + "T00:00:00Z"),
           startTime: "08:00",
           endTime: "16:00",
@@ -1728,6 +1740,7 @@ describe("Shift Planning API", () => {
       await app.prisma.shift.create({
         data: {
           employeeId: data.employee.id,
+          salonId: data.salonId, // Phase 325 (issue #325)
           templateId: availTplId,
           date: new Date(GEN_TUESDAY_ISO + "T00:00:00Z"),
           startTime: "09:00",
@@ -1796,6 +1809,7 @@ describe("Shift Planning API", () => {
       await app.prisma.shift.create({
         data: {
           employeeId: data.employee.id,
+          salonId: data.salonId, // Phase 325 (issue #325)
           templateId: availTplId,
           date: new Date(GEN_TUESDAY_ISO + "T00:00:00Z"),
           startTime: "09:00",
@@ -2089,6 +2103,7 @@ describe("Shift Planning API", () => {
           federalState: "NIEDERSACHSEN",
         },
       });
+      await createTestSalon(app.prisma, otherTenant.id); // Phase 325 (issue #325)
       await app.prisma.tenantConfig.create({
         data: { tenantId: otherTenant.id, defaultVacationDays: 30, timezone: "Europe/Berlin" },
       });

@@ -100,6 +100,7 @@ describe("Orphan-Shift-Lifecycle (PUT /api/v1/settings/work/:employeeId)", () =>
     for (let i = 1; i <= count; i++) {
       shifts.push({
         employeeId: shiftEmployee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date(isoDateOffset(i) + "T00:00:00Z"),
         startTime: "08:00",
         endTime: "16:00",
@@ -302,12 +303,14 @@ describe("Orphan-Shift-Lifecycle (PUT /api/v1/settings/work/:employeeId)", () =>
       data: [
         {
           employeeId: shiftEmployee.id,
+          salonId: data.salonId, // Phase 325 (issue #325)
           date: new Date(pastDate1 + "T00:00:00Z"),
           startTime: "08:00",
           endTime: "16:00",
         },
         {
           employeeId: shiftEmployee.id,
+          salonId: data.salonId, // Phase 325 (issue #325)
           date: new Date(pastDate2 + "T00:00:00Z"),
           startTime: "08:00",
           endTime: "16:00",

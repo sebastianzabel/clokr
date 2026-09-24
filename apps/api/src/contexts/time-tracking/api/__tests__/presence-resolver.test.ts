@@ -73,6 +73,7 @@ describe("POST /presence/events — Phase 76.2 Plan 5 resolver migration", () =>
     await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: TODAY_UTC_MIDNIGHT,
         startTime: "00:00",
         endTime: "23:59",

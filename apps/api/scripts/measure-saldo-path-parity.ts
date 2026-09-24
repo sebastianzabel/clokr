@@ -62,6 +62,23 @@ import {
   isWorkerDatabaseName,
 } from "../src/utils/test-database";
 
+// Phase 325 (issue #325): a third literal copy of DEFAULT_SALON_OPENING_HOURS
+// (`src/contexts/platform/facade/salons.ts`, `packages/db/src/default-salon.ts`) — this script's
+// own established discipline (see the header comment above `test-database-guard` import) defers
+// every `../src/*` import behind `await import(...)` inside `run()` because `config.ts` validates
+// the whole environment at module-evaluation time; a plain top-level import of the platform
+// context (a large re-export surface) would risk pulling that validation in before DATABASE_URL
+// is assigned. A local copy avoids that risk. Must stay byte-identical to the other two copies.
+const MEASURE_SCRIPT_SALON_OPENING_HOURS = [
+  { day: 0, open: "08:00", close: "20:00" },
+  { day: 1, open: "08:00", close: "20:00" },
+  { day: 2, open: "08:00", close: "20:00" },
+  { day: 3, open: "08:00", close: "20:00" },
+  { day: 4, open: "08:00", close: "20:00" },
+  { day: 5, open: "08:00", close: "20:00" },
+  { day: 6, open: "08:00", close: "20:00", closed: true },
+];
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -264,6 +281,7 @@ async function seedShift(
   empId: string,
   dateStr: string,
   netto: number,
+  salonId: string, // Phase 325 (issue #325)
 ): Promise<void> {
   const totalH = Math.floor(netto / 60);
   const totalM = netto % 60;
@@ -271,6 +289,7 @@ async function seedShift(
   await app.prisma.shift.create({
     data: {
       employeeId: empId,
+      salonId,
       date: new Date(dateStr + "T00:00:00Z"),
       startTime: "08:00",
       endTime: endHHMM,
@@ -325,6 +344,17 @@ async function seedGoldenAzubiJan2026(app: FastifyApp): Promise<ScenarioFixture>
     data: { name: `T22 Parity ${s}`, slug: s, federalState: "NIEDERSACHSEN" },
   });
   const tenantId = tenant.id;
+
+  // Phase 325 (issue #325): the required Shift.salonId FK needs a salon for this script's own
+  // tenant, same shape as `packages/db/src/seed-demo.ts`'s default salon.
+  const salon = await prisma.salon.create({
+    data: {
+      tenantId,
+      name: tenant.name,
+      openingHours: MEASURE_SCRIPT_SALON_OPENING_HOURS,
+      isActive: true,
+    },
+  });
 
   // Default-config tenant (vocationalSchoolMinutesPerDay stays at its DB default, bsSlot*
   // fields null) — FIRST_LONG_DAY resolves to the individual daily Soll (§15 Abs. 2 Nr. 2 BBiG),
@@ -440,8 +470,8 @@ async function seedGoldenAzubiJan2026(app: FastifyApp): Promise<ScenarioFixture>
     },
   });
 
-  for (const d of SHIFTS_576) await seedShift(app, empId, d, 576);
-  for (const d of SHIFTS_480) await seedShift(app, empId, d, 480);
+  for (const d of SHIFTS_576) await seedShift(app, empId, d, 576, salon.id);
+  for (const d of SHIFTS_480) await seedShift(app, empId, d, 480, salon.id);
   for (const d of SHIFTS_576) await seedEntry(app, empId, d, 576);
   for (const d of SHIFTS_480) await seedEntry(app, empId, d, 480);
 

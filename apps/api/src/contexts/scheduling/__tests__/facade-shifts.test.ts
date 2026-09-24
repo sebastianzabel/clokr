@@ -48,6 +48,7 @@ describe("Schichtplanung facade — getShiftsInRange / flagShiftsConflictingWith
     await prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         templateId,
         date: new Date(MONDAY_ISO + "T00:00:00Z"),
         startTime: "14:00",
@@ -58,6 +59,7 @@ describe("Schichtplanung facade — getShiftsInRange / flagShiftsConflictingWith
     await prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date(MONDAY_ISO + "T00:00:00Z"),
         startTime: "08:00",
         endTime: "12:00",
@@ -67,6 +69,7 @@ describe("Schichtplanung facade — getShiftsInRange / flagShiftsConflictingWith
     await prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date(TUESDAY_ISO + "T00:00:00Z"),
         startTime: "08:00",
         endTime: "12:00",
@@ -75,6 +78,7 @@ describe("Schichtplanung facade — getShiftsInRange / flagShiftsConflictingWith
     await prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date(OUTSIDE_ISO + "T00:00:00Z"),
         startTime: "08:00",
         endTime: "12:00",
@@ -83,6 +87,7 @@ describe("Schichtplanung facade — getShiftsInRange / flagShiftsConflictingWith
     await prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date(WEDNESDAY_ISO + "T00:00:00Z"),
         startTime: "08:00",
         endTime: "12:00",
@@ -95,6 +100,7 @@ describe("Schichtplanung facade — getShiftsInRange / flagShiftsConflictingWith
     await prisma.shift.create({
       data: {
         employeeId: data.adminEmployee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date(TUESDAY_ISO + "T00:00:00Z"),
         startTime: "09:00",
         endTime: "13:00",
@@ -106,6 +112,7 @@ describe("Schichtplanung facade — getShiftsInRange / flagShiftsConflictingWith
     await prisma.shift.create({
       data: {
         employeeId: otherTenantData.employee.id,
+        salonId: otherTenantData.salonId, // Phase 325 (issue #325)
         date: new Date(MONDAY_ISO + "T00:00:00Z"),
         startTime: "08:00",
         endTime: "12:00",
@@ -195,6 +202,7 @@ describe("Schichtplanung facade — getShiftsInRange / flagShiftsConflictingWith
       const shift1 = await app.prisma.shift.create({
         data: {
           employeeId: data.employee.id,
+          salonId: data.salonId, // Phase 325 (issue #325)
           date: new Date("2026-12-01T00:00:00Z"),
           startTime: "08:00",
           endTime: "12:00",
@@ -204,6 +212,7 @@ describe("Schichtplanung facade — getShiftsInRange / flagShiftsConflictingWith
       const shift2 = await app.prisma.shift.create({
         data: {
           employeeId: data.employee.id,
+          salonId: data.salonId, // Phase 325 (issue #325)
           date: new Date("2026-12-02T00:00:00Z"),
           startTime: "08:00",
           endTime: "12:00",
@@ -215,6 +224,7 @@ describe("Schichtplanung facade — getShiftsInRange / flagShiftsConflictingWith
       const alreadyFlagged = await app.prisma.shift.create({
         data: {
           employeeId: data.employee.id,
+          salonId: data.salonId, // Phase 325 (issue #325)
           date: new Date("2026-12-02T00:00:00Z"),
           startTime: "14:00",
           endTime: "18:00",
@@ -247,6 +257,7 @@ describe("Schichtplanung facade — getShiftsInRange / flagShiftsConflictingWith
       const otherTenantShift = await app.prisma.shift.create({
         data: {
           employeeId: otherTenantData.employee.id,
+          salonId: otherTenantData.salonId, // Phase 325 (issue #325)
           date: new Date("2026-12-01T00:00:00Z"),
           startTime: "08:00",
           endTime: "12:00",

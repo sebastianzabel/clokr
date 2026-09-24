@@ -13,8 +13,8 @@
  * Weekday encoding: `day` is 0 = Monday … 6 = Sunday — identical to `TenantConfig.storeHours`
  * (schema.prisma:217) and deliberately NOT `WorkSchedule.workDays`'s encoding (0 = Sunday). This
  * module's `openingHours` shape is a verbatim copy of `storeHours`'s shape (D-03) so the one-time
- * migration data section can copy the JSON without reshaping it, and so a future reader (#325) can
- * switch from tenant to salon level without changing its parsing.
+ * migration data section can copy the JSON without reshaping it, and so #325's shift-check reader
+ * could switch from tenant to salon level without changing its parsing.
  *
  * A `Salon` is never hard-deleted (D-06) — deactivation only (`isActive` / `deactivatedAt`). This
  * module therefore has, and will only ever have, no delete function.
@@ -29,10 +29,11 @@
  *   cannot be deactivated.
  * - Multisalon means MORE THAN ONE active salon (`isMultiSalonTenant()`) — a derived read, never
  *   a config flag.
- * - `TenantConfig.storeHours` is deprecated: no new code reads it. The shift check
- *   (`contexts/scheduling/api/shifts.ts`) keeps reading it until #325, and
- *   `PUT /api/v1/settings/work` mirrors it into a tenant's single active salon in the meantime
- *   (D-16) — both pinned by `store-hours-readers.test.ts`'s living allowlist.
+ * - `TenantConfig.storeHours` is deprecated: no new code reads it. Since Phase 325 (issue #325)
+ *   the shift check (`contexts/scheduling/api/shifts.ts`) reads the shift's own `Salon.openingHours`
+ *   instead; `PUT /api/v1/settings/work` still mirrors a `storeHours` write into a tenant's single
+ *   active salon (D-13) until #82 removes both the mirror and this field — pinned by
+ *   `store-hours-readers.test.ts`'s living allowlist (now `settings.ts` only).
  * - Every tenant-creating path (`seed.ts`, `seed-demo.ts`, `test-bootstrap.ts`) creates that
  *   tenant's default salon in the same step (D-18).
  */
@@ -114,6 +115,26 @@ export async function listSalons(
 ) {
   return db.salon.findMany({
     where: options.includeInactive ? { tenantId } : { tenantId, isActive: true },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+}
+
+/**
+ * Phase 325 (issue #325), D-04: the tenant's "default salon" — the earliest-created ACTIVE salon
+ * (`createdAt asc`, tie-break `id`), same ordering as {@link listSalons}. `null` when the tenant
+ * has no active salon — callers answer with a 409 `NO_ACTIVE_SALON` (routes) or fail the sync run
+ * loudly (D-15); this facade never falls back to an inactive salon at runtime (the migration's own
+ * backfill SQL has a migration-only fallback to the earliest salon of any state, pinned equal to
+ * this function's active-only rule by `apps/api/src/__tests__/shift-salon-migration.test.ts`).
+ * Once #65 exists, the Phorest sync's use of this function is replaced by the salon of the
+ * specific Phorest coupling.
+ */
+export async function findDefaultSalon(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+): Promise<Salon | null> {
+  return db.salon.findFirst({
+    where: { tenantId, isActive: true },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 }
@@ -369,7 +390,7 @@ export async function activateSalon(
   return { status: "OK", existing, updated };
 }
 
-// ── storeHours <-> Salon mirror (Phase 64b Plan 04, D-16) — removed by #325 ─────────────────────
+// ── storeHours <-> Salon mirror (Phase 64b Plan 04, D-16) — removed by #82 ──────────────────────
 
 /**
  * Tolerant equality for two `openingHours` JSON values: sorts by day and normalises an ABSENT
@@ -393,8 +414,11 @@ function normalizeOpeningHoursForCompare(value: unknown): string {
 }
 
 /**
- * D-16: keeps `TenantConfig.storeHours` and a tenant's single active salon in step until #325
- * removes the tenant field entirely. Called ONLY from `PUT /api/v1/settings/work`
+ * D-13/D-16: keeps `TenantConfig.storeHours` and a tenant's single active salon in step until #82
+ * removes the tenant field entirely (Phase 325, issue #325, kept this mirror deliberately — the
+ * admin UI's only opening-hours editor still writes `storeHours`, and removing the mirror before
+ * #82 builds a salon-level editor would make every future edit there invisible to the shift check).
+ * Called ONLY from `PUT /api/v1/settings/work`
  * (`contexts/platform/api/settings.ts`) when its body carries `storeHours`, and mirrors ONLY when
  * that value differs from `previousTenantHours` — the tenant value before the write, read by the
  * caller — so resending an unchanged week never overwrites a salon edited via

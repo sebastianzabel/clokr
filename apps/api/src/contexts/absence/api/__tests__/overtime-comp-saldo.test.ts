@@ -399,7 +399,13 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
     // Roster the day SHORT: 07:00-13:00 is 6h brutto and, being not MORE than 6h, carries no
     // mandatory break (§ 4 ArbZG) — netto 6.00 h against an Ø-Methode day of 8.00 h.
     await app.prisma.shift.create({
-      data: { employeeId: emp.id, date: new Date(DAY), startTime: "07:00", endTime: "13:00" },
+      data: {
+        employeeId: emp.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
+        date: new Date(DAY),
+        startTime: "07:00",
+        endTime: "13:00",
+      },
     });
 
     const req = await createRequest(emp.id, overtimeCompTypeId);
@@ -446,7 +452,13 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
       data: { employeeId: vacEmp.id, balanceHours: 0 },
     });
     await app.prisma.shift.create({
-      data: { employeeId: vacEmp.id, date: new Date(DAY), startTime: "07:00", endTime: "13:00" },
+      data: {
+        employeeId: vacEmp.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
+        date: new Date(DAY),
+        startTime: "07:00",
+        endTime: "13:00",
+      },
     });
     await app.prisma.leaveEntitlement.create({
       data: {

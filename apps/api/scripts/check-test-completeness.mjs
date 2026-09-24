@@ -560,8 +560,25 @@ import { readFileSync } from "node:fs";
 // IN-02) and `scripts/__tests__/anonymize-dump.test.ts` (2 cases, WR-05); 299 + 2 = 301 and
 // 3708 + 17 = 3725, which the reporter confirms. The merge with 67b / 325 still requires
 // re-measuring on the merged tree.
-const MIN_FILES = 301;
-const MIN_TESTS = 3725;
+//
+// Phase 325 (Issue #325), 2026-09-24: re-measured on the MERGED tree after confirming
+// `origin/main` @ c3777eb0 (#336, phase 64b) had not moved since the branch was cut
+// (`git merge-base --is-ancestor origin/main HEAD` was already true — no merge commit was
+// needed; `git fetch origin main` produced no new commits) — `pnpm --filter @clokr/api test`:
+// `Test Files 298 passed (298)`, `Tests 3642 passed | 3 skipped (3645)`, zero failures —
+// `vitest-report.json` agrees (`testResults.length` 298, `numTotalTests` 3645). Previous floor
+// 295 / 3611. Phase 325's own new files: `shift-salon.test.ts`, `shift-store-hours-salon.test.ts`,
+// `shift-salon-migration.test.ts` (295 + 3 = 298), plus cases added across the phase in
+// `sync-shifts.test.ts`, `sync-appointments.test.ts`, `store-hours-readers.test.ts`,
+// `lint-facade-signatures.test.ts` and `lint-tenant-scoping-model-graph.test.ts`. Numbers read
+// from the reporter, not summed from a diff.
+// Phase 325 merged with Phase 74b (origin/main @ 2f6765cd, #337), 2026-09-24: re-measured on the
+// MERGED tree (`pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api test`):
+// `Test Files 304 passed (304)`, `Tests 3756 passed | 3 skipped (3759)`, zero failures —
+// `vitest-report.json` agrees (`testResults.length` 304, `numTotalTests` 3759). 74b's 301 files
+// plus Phase 325's three new files = 304. Numbers read from the reporter, not summed from a diff.
+const MIN_FILES = 304;
+const MIN_TESTS = 3759;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

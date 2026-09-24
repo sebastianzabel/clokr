@@ -55,13 +55,22 @@ export function readDataSection(): string {
 
 describe("Phase 64b tracer — default-salon migration + GET /api/v1/salons", () => {
   let app: FastifyInstance;
-  let tenantA: Awaited<ReturnType<typeof seedTestData>>;
-  let tenantB: Awaited<ReturnType<typeof seedTestData>>;
+  // Phase 325 (issue #325), D-17: this block opts out of seedTestData's default salon
+  // (`{ withDefaultSalon: false }`) — otherwise the migration's own `INSERT ... WHERE NOT EXISTS`
+  // below would be a silent no-op against an already-salon'd tenant, and this test would keep
+  // passing while proving nothing (325-RESEARCH.md Pitfall 2). The opt-out overload returns
+  // `salonId: null` instead of the default overload's `salonId: string`, hence the widened type.
+  let tenantA: Omit<Awaited<ReturnType<typeof seedTestData>>, "salonId"> & {
+    salonId: string | null;
+  };
+  let tenantB: Omit<Awaited<ReturnType<typeof seedTestData>>, "salonId"> & {
+    salonId: string | null;
+  };
 
   beforeAll(async () => {
     app = await getTestApp();
-    tenantA = await seedTestData(app, "salon-mig-a");
-    tenantB = await seedTestData(app, "salon-mig-b");
+    tenantA = await seedTestData(app, "salon-mig-a", { withDefaultSalon: false });
+    tenantB = await seedTestData(app, "salon-mig-b", { withDefaultSalon: false });
 
     // Execute the migration's own data section (D-14), committed — this is what a real migration
     // run does once. NOT EXISTS makes running it again later (Task 2's cases) safe.

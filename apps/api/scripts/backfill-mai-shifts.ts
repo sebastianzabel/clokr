@@ -29,6 +29,7 @@ import pg from "pg";
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { updateOvertimeAccount } from "../src/contexts/time-tracking/api/time-entries";
+import { findDefaultSalon } from "../src/contexts/platform"; // Phase 325 (issue #325)
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is required");
@@ -102,6 +103,15 @@ async function main() {
     process.exit(1);
   }
 
+  // Phase 325 (issue #325): the required Shift.salonId FK needs the employee's tenant's default
+  // salon, resolved once before any dry-run output — abort loudly rather than let a NOT NULL
+  // violation surface later in --apply mode.
+  const salon = await findDefaultSalon(prisma, emp.tenantId);
+  if (!salon) {
+    console.error(`No active salon found for tenant ${emp.tenantId} — aborting.`);
+    process.exit(1);
+  }
+
   // Pre-flight: detect any existing shifts on these dates
   console.log(`Target employee: ${emp.firstName} ${emp.lastName} (${employeeId})`);
   console.log("Checking for existing shifts on target dates...");
@@ -145,6 +155,7 @@ async function main() {
       const shift = await tx.shift.create({
         data: {
           employeeId,
+          salonId: salon.id, // Phase 325 (issue #325)
           date: new Date(r.date + "T00:00:00Z"),
           startTime: r.startTime,
           endTime: r.endTime,
