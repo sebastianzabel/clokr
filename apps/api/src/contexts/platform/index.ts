@@ -102,3 +102,17 @@ export type { SalonForDay } from "./facade/salon-assignments";
 // Phase 73b (#73): the role-permission resolution path #74 calls, plus the case-insensitive
 // name identity #74's own role-assignment lookups reuse.
 export { roleGrants, normalizeRolePermissions, roleNameKey } from "./access-role";
+// Phase 74b (#74): the function-level resolution of effective rights — "may user U apply
+// permission P to a target described by employee and/or salon?" — plus the scope normalisation
+// every role-assignment write path uses.
+export { userMayApply } from "./facade/role-assignments";
+export {
+  decideUserMayApply,
+  normalizeRoleAssignmentScope,
+  roleAssignmentScopeOf,
+} from "./role-assignment";
+export type {
+  RoleAssignmentScope,
+  RoleAssignmentTarget,
+  NormalizedRoleAssignmentScope,
+} from "./role-assignment";

@@ -391,6 +391,28 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // not match the `*Ids?` trigger pattern), no new exception needed. The module-private
   // `normalizeOpeningHoursForCompare` helper is not exported and is not counted here.
   //
+  // 92 -> 93 in Phase 74b Plan 01 (Issue #74): `contexts/platform/facade/role-assignments.ts`
+  // added (matches the `contexts/*/facade/**/*.ts` glob directly, no KNOWN_FACADE_FILES entry
+  // needed) — 1 new exported function (userMayApply) — passes F1/F2/F3 directly, flat parameters
+  // (`db: Prisma.TransactionClient, tenantId, userId, permission, target`) so F3 sees `tenantId`
+  // right next to `userId`, no new exception.
+  //
+  // 93 -> 95 in Phase 74b Plan 03 (Issue #74): same file, 2 more exported functions —
+  // countGuardedPermissionHolders(db, tenantId) and withRoleLockoutGuard(db, tenantId, write), the
+  // lockout guard (D-17..D-19) — both pass F1/F2/F3 directly (`db: Prisma.TransactionClient`
+  // first, `tenantId` present, `write` does not match the `*Ids?` trigger pattern), no new
+  // exception needed.
+  //
+  // 95 -> 96 in Phase 74b Plan 04 (Issue #74): same file, 1 more exported function —
+  // removeRoleAssignmentsOfUser(db, tenantId, userId), the DSGVO removal of an anonymized user's
+  // assignments (D-22) — passes F1/F2/F3 directly (`db: Prisma.TransactionClient` first,
+  // `tenantId` right next to `userId`), no new exception needed.
+  //
+  // 96 -> 97 in the Phase 74b code review (WR-02, plan 74b-05): same file, 1 more exported
+  // function — lockTenantForRoleChanges(db, tenantId), the tenant row lock lifted out of
+  // withRoleLockoutGuard so POST /role-assignments takes the same lock without duplicating its
+  // SQL — passes F1/F2/F3 directly, no new exception needed.
+  //
   // 92 -> 97 in Phase 67b Plan 01 (Issue #67, Task 1): `contexts/platform/facade/salon-assignments.ts`
   // added (matches the `contexts/*/facade/**/*.ts` glob directly, no KNOWN_FACADE_FILES entry
   // needed) — 5 new exported functions (readTenantTimezone, findEmployeeInTenant,
@@ -422,12 +444,18 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // (homeSalonUsageFrom, endDeploymentsOnSalonDeactivation) — both pass F1/F2/F3 directly (`db:
   // Prisma.TransactionClient` first, `tenantId` required, `salonId` paired with `tenantId`), no
   // new exception needed.
-  it("the real tree has exactly 106 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  //
+  // 97 + 14 = 111 in the merge of `origin/main` (Phase 74b, 97) into `feat/67-salonzuordnung`
+  // (Phase 67b, measured above against the pre-74b base of 92): the two phases add functions in
+  // disjoint files (`role-assignments.ts` vs `salon-assignments.ts` / `salon-assignment-changes.ts`),
+  // so the counts add — 92 + 5 (74b) + 14 (67b) = 111, re-measured on the merged tree.
+  it("the real tree has exactly 111 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
         ...KNOWN_FACADE_FILES,
         "apps/api/src/contexts/platform/facade/employee-scope.ts",
+        "apps/api/src/contexts/platform/facade/role-assignments.ts",
         "apps/api/src/contexts/platform/facade/salons.ts",
         "apps/api/src/contexts/platform/facade/salon-assignments.ts",
         "apps/api/src/contexts/platform/facade/salon-assignment-changes.ts",
@@ -451,7 +479,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(106);
+    expect(functions).toHaveLength(111);
 
     const rawExceptions = JSON.parse(
       readFileSync(

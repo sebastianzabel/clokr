@@ -14,11 +14,12 @@
  * (CLAUDE.md § Creating a migration). `nameKey` gives the database a real backstop for the
  * tenant-internal uniqueness race via `@@unique([tenantId, nameKey])`.
  *
- * Lockout invariant for #74 (D-12, not enforced here — no assignments exist yet): before a
- * customer role's permission set is changed, at least one active user must retain
- * `role:manage` at tenant scope after the change. This module carries no code for that rule;
- * it is recorded here as the contract #74 must implement on role update, assignment revocation,
- * and user deactivation/anonymisation.
+ * Lockout invariant (#73 rule): at least one active user must keep `role:manage` (and
+ * `role-assignment:manage`) at tenant scope. This module carries no code for it. It is enforced
+ * by `withRoleLockoutGuard` in `facade/role-assignments.ts` (Phase 74b) on customer-role update,
+ * assignment change and revocation, and user deactivation, anonymisation and hard delete. "An
+ * assigned role cannot be deleted" is enforced in `DELETE /roles/:id`, with the
+ * `RoleAssignment.accessRoleId` foreign key (`onDelete: Restrict`) as the backstop.
  *
  * `roleGrants` is the ONE code path #74 evaluates a role through when deciding whether a role
  * grants a permission — identical for a system role and a customer role, because it reads only

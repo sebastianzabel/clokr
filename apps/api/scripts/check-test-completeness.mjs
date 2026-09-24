@@ -542,6 +542,25 @@ import { readFileSync } from "node:fs";
 // `test-bootstrap.test.ts` and `lint-facade-signatures.test.ts`; 291 + 4 = 295. Numbers read from
 // the reporter, not summed from a diff.
 //
+// Phase 74b (Issue #74), 2026-09-24: re-measured on the branch tree `feat/74-rollenzuweisung`
+// (branched from `main` @ c3777eb0, phase 64b merged) BEFORE merging the parallel phases 67b and
+// 325 (`pnpm --filter @clokr/api test`): `Test Files 299 passed (299)`, `Tests 3705 passed | 3
+// skipped (3708)`, zero failures — `vitest-report.json` agrees (`testResults.length` 299,
+// `numTotalTests` 3708). Phase 74b's own contribution is four new files (`role-assignment.test.ts`,
+// `role-assignments.test.ts`, `role-assignment-lockout.test.ts`,
+// `role-assignment-employee-lockout.test.ts`) plus cases in existing files; 295 + 4 = 299. Numbers
+// read from the reporter, not summed from a diff. Merging `origin/main` with 67b / 325 requires
+// re-measuring on the merged tree.
+//
+// Phase 74b code review fixes (plan 74b-05), 2026-09-24: re-measured on the same branch tree, still
+// before merging 67b / 325 (`pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api
+// test`): `Test Files 301 passed (301)`, `Tests 3722 passed | 3 skipped (3725)`, zero failures —
+// `vitest-report.json` agrees (`testResults.length` 301, `numTotalTests` 3725). Two new files:
+// `src/contexts/platform/__tests__/role-assignment-review-fixes.test.ts` (15 cases, WR-01..WR-06,
+// IN-02) and `scripts/__tests__/anonymize-dump.test.ts` (2 cases, WR-05); 299 + 2 = 301 and
+// 3708 + 17 = 3725, which the reporter confirms. The merge with 67b / 325 still requires
+// re-measuring on the merged tree.
+//
 // Phase 67b (Issue #67) Plan 05, 2026-09-24: re-measured on `feat/67-salonzuordnung` after Task 2's
 // attempted `git merge origin/main` (a genuine no-op — `origin/main` @ c3777eb0 had not moved past
 // this branch's own base since dispatch, confirmed via `git merge-base --is-ancestor origin/main
@@ -549,8 +568,16 @@ import { readFileSync } from "node:fs";
 // delta: `pnpm --filter @clokr/api test` → `Test Files 301 passed (301)`, `Tests 3709 passed | 3
 // skipped (3712)`, zero failures — `vitest-report.json` agrees (`testResults.length` 301,
 // `numTotalTests` 3712). Numbers read from the reporter, not summed from a diff.
-const MIN_FILES = 301;
-const MIN_TESTS = 3712;
+//
+// Merge of `origin/main` @ 2f6765cd (#337 phase 74b, #338) into `feat/67-salonzuordnung` (phase
+// 67b), 2026-09-24: re-measured on the MERGED tree (`pnpm --filter @clokr/api run test:setup &&
+// pnpm --filter @clokr/api test`): `Test Files 307 passed (307)`, `Tests 3823 passed | 3 skipped
+// (3826)`, zero failures — `vitest-report.json` agrees (`testResults.length` 307, `numTotalTests`
+// 3826). Both phases branched from c3777eb0 (295 / 3611): 295 + 6 (67b) + 6 (74b) = 307 and
+// 3611 + 101 (67b) + 114 (74b) = 3826, which the reporter confirms. Numbers read from the
+// reporter, not summed from a diff.
+const MIN_FILES = 307;
+const MIN_TESTS = 3826;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

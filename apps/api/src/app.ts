@@ -59,6 +59,7 @@ import { apiKeyRoutes } from "./contexts/platform/api/api-keys";
 import { salonRoutes } from "./contexts/platform/api/salons"; // Phase 64b (issue #64)
 import { salonAssignmentRoutes } from "./contexts/platform/api/salon-assignments"; // Phase 67b (issue #67)
 import { roleRoutes } from "./contexts/platform/api/roles";
+import { roleAssignmentRoutes } from "./contexts/platform/api/role-assignments"; // Phase 74b (issue #74)
 import { presenceRoutes } from "./contexts/time-tracking/api/presence";
 import { adminPresenceSourcesRoutes } from "./contexts/time-tracking/api/admin-presence-sources";
 import { adminSchoolHolidaysRoutes } from "./contexts/platform/api/admin/school-holidays";
@@ -347,6 +348,7 @@ export async function buildApp() {
   await app.register(section9DocumentRoutes, { prefix: "/api/v1/section9-documents" });
   await app.register(apiKeyRoutes, { prefix: "/api/v1/api-keys" });
   await app.register(roleRoutes, { prefix: "/api/v1/roles" });
+  await app.register(roleAssignmentRoutes, { prefix: "/api/v1/role-assignments" }); // Phase 74b (issue #74)
   await app.register(presenceRoutes, { prefix: "/api/v1/presence" });
   await app.register(adminPresenceSourcesRoutes, { prefix: "/api/v1/admin/presence-sources" });
   await app.register(adminSchoolHolidaysRoutes, { prefix: "/api/v1/admin/school-holidays" });
