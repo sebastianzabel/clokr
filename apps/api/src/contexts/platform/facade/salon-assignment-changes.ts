@@ -361,14 +361,25 @@ export async function changeHomeSalon(
  * AC-Stamm-4/D-06/D-11/D-12, D-02, D-27: end an assignment at `validUntil` (T). Ending only ever
  * SHORTENS a row — extending or reopening is rejected. `T = validFrom − 1` voids the row (D-03).
  *
- * Order: lock the employee → the row via a TRIPLE-scoped lookup (`id`, `tenantId`, `employeeId` —
- * a row belonging to another employee is indistinguishable from none, same T-100-09 shape as a
- * foreign tenant's row) → ASSIGNMENT_NOT_FOUND → lock the row's OWN salon `FOR SHARE` (uniform lock
- * order employee → salon, so a concurrent `deactivateSalon()` cannot deadlock against this update;
- * the lock's result is otherwise unused) → `kind === "HOME"` → HOME_NEEDS_SUCCESSOR (D-06) →
- * `T < validFrom − 1` → END_BEFORE_START → the row is not already open-ended AND `T >=` its current
- * `validUntil` → ONLY_SHORTEN → the closed-month lock (D-12, over the days the shortening actually
- * removes: `(T, oldValidUntil]`) → write (`validUntil` is the ONLY field this ever changes).
+ * Order: lock the employee → read ONLY the row's `salonId` via a TRIPLE-scoped lookup (`id`,
+ * `tenantId`, `employeeId` — a row belonging to another employee is indistinguishable from none,
+ * same T-100-09 shape as a foreign tenant's row) → ASSIGNMENT_NOT_FOUND → lock that salon
+ * `FOR SHARE` (uniform lock order employee → salon, so a concurrent `deactivateSalon()` cannot
+ * deadlock against this update) → RE-READ the row → every check below runs on that fresh row →
+ * `kind === "HOME"` → HOME_NEEDS_SUCCESSOR (D-06) → `T < validFrom − 1` → END_BEFORE_START → the
+ * row is not already open-ended AND `T >=` its current `validUntil` → ONLY_SHORTEN → the
+ * closed-month lock (D-12, over the days the shortening actually removes: `(T, oldValidUntil]`) →
+ * write (`validUntil` is the ONLY field this ever changes).
+ *
+ * Why the re-read (review CR-01): `deactivateSalon()` never locks the Employee row — it holds
+ * `FOR UPDATE` on the tenant's Salon rows and then ends this salon's deployments directly. A row
+ * read BEFORE the salon lock is a READ COMMITTED snapshot that may predate a deactivation which
+ * commits while this transaction waits for `FOR SHARE`; checking ONLY_SHORTEN against that stale
+ * copy would let this update re-extend (or un-void) a deployment the deactivation just ended, and
+ * the END audit row would record a false `oldValue`. The statement after the lock takes a fresh
+ * snapshot and so sees the committed deactivation. The row itself is deliberately NOT locked
+ * `FOR UPDATE` before the salon: the deactivation holds the salon and wants the row, so that order
+ * would deadlock.
  */
 export async function endSalonAssignment(
   db: Prisma.TransactionClient,
@@ -380,12 +391,20 @@ export async function endSalonAssignment(
   const employee = await lockEmployee(db, tenantId, employeeId);
   if (!employee) return { status: "EMPLOYEE_NOT_FOUND" };
 
+  const probe = await db.employeeSalonAssignment.findFirst({
+    where: { id: assignmentId, tenantId, employeeId },
+    select: { salonId: true },
+  });
+  if (!probe) return { status: "ASSIGNMENT_NOT_FOUND" };
+
+  await lockSalonForShare(db, tenantId, probe.salonId);
+
+  // Review CR-01: a fresh READ COMMITTED snapshot AFTER the salon lock — sees the validUntil a
+  // concurrent, now committed deactivation wrote. Every check and the audit `before` use THIS row.
   const row = await db.employeeSalonAssignment.findFirst({
     where: { id: assignmentId, tenantId, employeeId },
   });
   if (!row) return { status: "ASSIGNMENT_NOT_FOUND" };
-
-  await lockSalonForShare(db, tenantId, row.salonId);
 
   if (row.kind === "HOME") return { status: "HOME_NEEDS_SUCCESSOR" };
 

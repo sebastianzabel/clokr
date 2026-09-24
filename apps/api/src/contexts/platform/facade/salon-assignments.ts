@@ -327,9 +327,12 @@ export async function fillHomeGapBeforeHireDate(
 // CALLER before either of these runs, is what makes the "count employees as of D" read and the
 // "end deployments as of D" write observe a stable salon set. Neither function takes its own new
 // lock: `homeSalonUsageFrom` only reads, and `endDeploymentsOnSalonDeactivation` only ever narrows
-// an existing row's `validUntil` (D-03/D-11's "only ever shortens" shape), which cannot conflict
-// with anything the employee-facing write functions in `facade/salon-assignment-changes.ts` do
-// (those always lock the SAME salon `FOR SHARE` first, D-02).
+// an existing row's `validUntil` (D-03/D-11's "only ever shortens" shape). The employee-facing
+// write functions in `facade/salon-assignment-changes.ts` serialise against it by taking the SAME
+// salon `FOR SHARE` (D-02) and reading every row they judge only AFTER that lock:
+// `createDeploymentAssignment` and `changeHomeSalon` read the employee's rows after it, and
+// `endSalonAssignment` reads only the row's `salonId` before it and re-reads the full row after it
+// (review CR-01) — so none of them can act on a row version older than a committed deactivation.
 
 /** The result of {@link homeSalonUsageFrom}: how many still-employed people have this salon as
  * their current or future Stammsalon, as of `deactivationDay`. */

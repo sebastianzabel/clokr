@@ -7,6 +7,8 @@
  * - AC-Deaktiviert-2/D-15: on a successful deactivation, every DEPLOYMENT to that salon effective
  *   on some day `>= D` ends at D or is voided, audited (D-21).
  * - D-02: both race directions between a concurrent Stammsalon change and a deactivation.
+ * - Review CR-01: ending an Einsatzsalon assignment concurrently with a deactivation of its salon
+ *   evaluates the "only shorten" rule on the row as the deactivation left it, never on a stale read.
  *
  * `seedTestData()` creates ONE active default salon for its tenant (Phase 67b Plan 03, D-24) and
  * its two seeded employees get NO HOME rows (same D-24 convention `salon-assignments.test.ts`
@@ -17,7 +19,10 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS, deactivateSalon } from "../contexts/platform/facade/salons";
-import { changeHomeSalon } from "../contexts/platform/facade/salon-assignment-changes";
+import {
+  changeHomeSalon,
+  endSalonAssignment,
+} from "../contexts/platform/facade/salon-assignment-changes";
 import { salonForDay } from "../contexts/platform";
 import {
   addDays,
@@ -510,5 +515,85 @@ describe("POST /api/v1/salons/:id/deactivate — Stammsalon in use, Einsatzsalon
     if (result1.status === "HOME_SALON_IN_USE") {
       expect(result1.employeeCount).toBe(1);
     }
+  });
+
+  it("review CR-01: deactivateSalon(X) first, endSalonAssignment(R -> X, D+30) second — the end re-reads R after the salon lock, sees validUntil = D and answers ONLY_SHORTEN; R stays at D", async () => {
+    const salonX = await makeSalon("Salon X-Race-CR01");
+    const salonElsewhere = await makeSalon("Salon Elsewhere Race CR01");
+    const employee = await makeEmployee();
+    await createHome(employee.id, salonElsewhere.id, "2020-01-01");
+    const D = tenantLocalDay(new Date(), TENANT_TZ);
+    const deployment = await createDeployment(salonX.id, employee.id, "2020-01-06", null, [
+      mondayBasedWeekday(new Date(), TENANT_TZ),
+    ]);
+
+    let releaseTx1: (() => void) | undefined;
+    const tx1HoldGate = new Promise<void>((resolve) => {
+      releaseTx1 = resolve;
+    });
+    let signalTx1Locked: ((pid: number) => void) | undefined;
+    const tx1Locked = new Promise<number>((resolve) => {
+      signalTx1Locked = resolve;
+    });
+    const tx1Promise = app.prisma.$transaction(
+      async (tx) => {
+        const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+        const result = await deactivateSalon(tx, tenant.tenant.id, salonX.id);
+        signalTx1Locked?.(pid);
+        await tx1HoldGate;
+        return result;
+      },
+      { timeout: 20000 },
+    );
+    const tx1Pid = await tx1Locked;
+
+    let signalTx2Pid: ((pid: number) => void) | undefined;
+    const tx2PidKnown = new Promise<number>((resolve) => {
+      signalTx2Pid = resolve;
+    });
+    let tx2Settled = false;
+    const tx2Promise = app.prisma
+      .$transaction(
+        async (tx) => {
+          const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+          signalTx2Pid?.(pid);
+          return endSalonAssignment(
+            tx,
+            tenant.tenant.id,
+            employee.id,
+            deployment.id,
+            addDays(D, 30),
+          );
+        },
+        { timeout: 20000 },
+      )
+      .finally(() => {
+        tx2Settled = true;
+      });
+    const tx2Pid = await tx2PidKnown;
+
+    const deadline = Date.now() + 10000;
+    let tx2BlockedByTx1 = false;
+    while (!tx2Settled && Date.now() < deadline) {
+      const [{ blockers }] = await app.prisma.$queryRaw<{ blockers: number[] }[]>`
+        SELECT pg_blocking_pids(${tx2Pid}::int) AS blockers`;
+      if (blockers.includes(tx1Pid)) {
+        tx2BlockedByTx1 = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    releaseTx1?.();
+    const [result1, result2] = await Promise.all([tx1Promise, tx2Promise]);
+
+    expect(tx2BlockedByTx1, "tx2 was never observed waiting on tx1's salon lock").toBe(true);
+    expect(result1.status).toBe("OK");
+    expect(result2.status).toBe("ONLY_SHORTEN");
+
+    const after = await app.prisma.employeeSalonAssignment.findUniqueOrThrow({
+      where: { id: deployment.id },
+    });
+    expect(after.validUntil?.toISOString()).toBe(dayToDate(D).toISOString());
   });
 });
