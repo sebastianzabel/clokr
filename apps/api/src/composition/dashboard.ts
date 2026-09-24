@@ -356,6 +356,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req) => {
+      const access = accessContextFromRequest(req);
       const tenantId = req.user.tenantId;
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const query = req.query as { date?: string };
@@ -389,7 +390,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // itself) and other call sites of this same function need `isClockedIn` detection.
       const timeEntries = await getRecordedWorkEntriesInRange(
         app.prisma,
-        { kind: "tenant", tenantId },
+        employeeScopeFor(access),
         weekStart,
         weekEnd,
       );
@@ -399,7 +400,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // Phase 100B Plan 13 — A3, contexts/absence facade.
       const leaveRequests = await getCalendarLeaveOverlapping(
         app.prisma,
-        { kind: "tenant", tenantId },
+        employeeScopeFor(access),
         weekStart,
         weekEnd,
       );
@@ -408,7 +409,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // Phase 100B Plan 12 — A4, contexts/absence facade.
       const absences = await getAbsencesOverlapping(
         app.prisma,
-        { kind: "tenant", tenantId },
+        employeeScopeFor(access),
         weekStart,
         weekEnd,
       );
@@ -416,7 +417,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // Schichten der Woche (Phase 100B Plan 05 — S1, contexts/scheduling facade)
       const shifts = await getShiftsInRange(
         app.prisma,
-        { kind: "tenant", tenantId },
+        employeeScopeFor(access),
         weekStart,
         weekEnd,
       );
@@ -584,6 +585,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req) => {
+      const access = accessContextFromRequest(req);
       const tenantId = req.user.tenantId;
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const today = todayInTz(tz);
@@ -613,7 +615,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // 08 — getRecordedWorkEntriesInRange, not T2): `isClockedIn` below needs the open row.
       const timeEntries = await getRecordedWorkEntriesInRange(
         app.prisma,
-        { kind: "tenant", tenantId },
+        employeeScopeFor(access),
         today,
         today,
       );
@@ -622,7 +624,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // Phase 100B Plan 13 — A2, contexts/absence facade.
       const leaveRequests = await getActiveLeaveOverlapping(
         app.prisma,
-        { kind: "tenant", tenantId },
+        employeeScopeFor(access),
         today,
         today,
       );
@@ -631,7 +633,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // Phase 100B Plan 12 — A4, contexts/absence facade.
       const absences = await getAbsencesOverlapping(
         app.prisma,
-        { kind: "tenant", tenantId },
+        employeeScopeFor(access),
         today,
         today,
       );
@@ -880,6 +882,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req) => {
+      const access = accessContextFromRequest(req);
       const employeeId = req.user.employeeId!;
       const tenantId = req.user.tenantId;
       const tz = await getTenantTimezone(app.prisma, tenantId);
@@ -907,7 +910,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // getRecordedWorkEntriesInRange, not T2): `isClockedIn` below needs the open row present.
       const entries = await getRecordedWorkEntriesInRange(
         app.prisma,
-        { kind: "employee", employeeId, tenantId },
+        employeeScopeFor(access, { employeeId }),
         start,
         end,
       );
@@ -917,14 +920,14 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // Phase 100B Plan 13 — A3, contexts/absence facade.
       const myWeekLeaves = await getCalendarLeaveOverlapping(
         app.prisma,
-        { kind: "employee", employeeId, tenantId },
+        employeeScopeFor(access, { employeeId }),
         start,
         end,
       );
       // Phase 100B Plan 12 — A4, contexts/absence facade.
       const myWeekAbsences = await getAbsencesOverlapping(
         app.prisma,
-        { kind: "employee", employeeId, tenantId },
+        employeeScopeFor(access, { employeeId }),
         start,
         end,
       );
@@ -933,7 +936,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // Phase 100B Plan 05 — S1, contexts/scheduling facade.
       const myWeekShifts = await getShiftsInRange(
         app.prisma,
-        { kind: "employee", employeeId, tenantId },
+        employeeScopeFor(access, { employeeId }),
         start,
         end,
       );
@@ -1037,6 +1040,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req) => {
+      const access = accessContextFromRequest(req);
       const employeeId = req.user.employeeId;
       const tenantId = req.user.tenantId;
       const role = req.user.role;
@@ -1092,7 +1096,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
           // `lte: yesterday` (inclusive) for a @db.Date column, so the window is unchanged.
           const recentEntries = await getRecordedWorkEntriesInRange(
             app.prisma,
-            { kind: "employee", employeeId, tenantId },
+            employeeScopeFor(access, { employeeId }),
             windowStart,
             yesterday,
           );
@@ -1119,14 +1123,14 @@ export async function dashboardRoutes(app: FastifyInstance) {
           // Phase 100B Plan 13 — A1, contexts/absence facade.
           const approvedLeaveInWindow = await getApprovedLeaveOverlapping(
             app.prisma,
-            { kind: "employee", employeeId, tenantId },
+            employeeScopeFor(access, { employeeId }),
             windowStart,
             today,
           );
           // Phase 100B Plan 12 — A4, contexts/absence facade.
           const absencesInWindow = await getAbsencesOverlapping(
             app.prisma,
-            { kind: "employee", employeeId, tenantId },
+            employeeScopeFor(access, { employeeId }),
             windowStart,
             today,
           );
@@ -1147,7 +1151,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
           if (openItemsScheduleType === "SHIFT_BASED") {
             const openItemsShifts = await getShiftsInRange(
               app.prisma,
-              { kind: "employee", employeeId, tenantId },
+              employeeScopeFor(access, { employeeId }),
               windowStart,
               yesterday,
             );
