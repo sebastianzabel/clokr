@@ -19,6 +19,12 @@
  * `role:manage` at tenant scope after the change. This module carries no code for that rule;
  * it is recorded here as the contract #74 must implement on role update, assignment revocation,
  * and user deactivation/anonymisation.
+ *
+ * `roleGrants` is the ONE code path #74 evaluates a role through when deciding whether a role
+ * grants a permission — identical for a system role and a customer role, because it reads only
+ * `accessRole.permissions` and never `accessRole.tenantId` (AK-73-7). No "generic resolver", no
+ * `hasPermission(user, …)` lives here — binding a user to a role (assignment, scope) is #74/#75,
+ * not this module (D-11, no generalization on spec).
  */
 import { PERMISSIONS, permissionKey, type PermissionKey } from "./permission-catalog";
 
@@ -62,4 +68,37 @@ export function normalizeRolePermissions(keys: readonly string[]): PermissionKey
     if (wanted.has(key)) ordered.push(key);
   }
   return ordered;
+}
+
+/**
+ * Does `accessRole` grant `permission`? Answers from `accessRole.permissions` ONLY — `tenantId`
+ * is part of the input type on purpose (#74 passes whole rows of either a system or a customer
+ * role) but is NEVER read here (AK-73-7): a system role and an unchanged copy of it that carries
+ * a tenant must resolve identically for every catalog key.
+ */
+export function roleGrants(
+  accessRole: { readonly tenantId: string | null; readonly permissions: readonly string[] },
+  permission: PermissionKey,
+): boolean {
+  return accessRole.permissions.includes(permission);
+}
+
+/**
+ * The name a copy of `sourceName` gets when no explicit name is given (73b-03's copy route):
+ * attempt 1 -> `"<base> (Kopie)"`, attempt n >= 2 -> `"<base> (Kopie n)"`. `<base>` is the
+ * trimmed source name, cut (then end-trimmed) so the full result never exceeds
+ * `ROLE_NAME_MAX_LENGTH` characters. `attempt` must be an integer >= 1.
+ */
+export function copyRoleName(sourceName: string, attempt: number): string {
+  if (!Number.isInteger(attempt) || attempt < 1) {
+    throw new RangeError(`copyRoleName: attempt must be an integer >= 1, got ${attempt}`);
+  }
+  const suffix = attempt === 1 ? " (Kopie)" : ` (Kopie ${attempt})`;
+  const trimmedSource = sourceName.trim();
+  const maxBaseLength = ROLE_NAME_MAX_LENGTH - suffix.length;
+  const base =
+    trimmedSource.length > maxBaseLength
+      ? trimmedSource.slice(0, maxBaseLength).trimEnd()
+      : trimmedSource;
+  return `${base}${suffix}`;
 }
