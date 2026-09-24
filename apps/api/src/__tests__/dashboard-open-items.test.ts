@@ -16,7 +16,7 @@
  * known time bomb in this repo (`shifts.test.ts` expired exactly that way).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import { todayInTz } from "../contexts/working-time-account/timezone";
@@ -176,6 +176,8 @@ describe("GET /api/v1/dashboard/open-items — work obligation per schedule type
       },
     });
     tenantId = tenant.id;
+    const salon = await createTestSalon(prisma, tenantId); // Phase 325 (issue #325)
+    const salonId = salon.id;
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ },
     });
@@ -200,6 +202,7 @@ describe("GET /api/v1/dashboard/open-items — work obligation per schedule type
     await prisma.shift.create({
       data: {
         employeeId: shiftWithRoster,
+        salonId, // Phase 325 (issue #325)
         date: dbDate(ROSTER_DAY),
         startTime: "09:00",
         endTime: "17:00",
@@ -212,6 +215,7 @@ describe("GET /api/v1/dashboard/open-items — work obligation per schedule type
     await prisma.shift.create({
       data: {
         employeeId: shiftRosterEntry,
+        salonId, // Phase 325 (issue #325)
         date: dbDate(ROSTER_DAY),
         startTime: "09:00",
         endTime: "17:00",
@@ -234,6 +238,7 @@ describe("GET /api/v1/dashboard/open-items — work obligation per schedule type
     await prisma.shift.create({
       data: {
         employeeId: shiftRosterDeleted,
+        salonId, // Phase 325 (issue #325)
         date: dbDate(ROSTER_DAY),
         startTime: "09:00",
         endTime: "17:00",

@@ -26,7 +26,7 @@
  * `todayStr()` resolves "today" in the tenant timezone, not raw UTC.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -112,6 +112,7 @@ describe("Leave provisional approval — SHIFT_BASED roster-aware recompute (Pha
       data: { name: `LPA ${suffix}`, slug: `lpa-${suffix}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 325 (issue #325)
     await prisma.tenantConfig.create({ data: { tenantId } });
 
     const passwordHash = await bcrypt.hash("test1234", 10);
@@ -256,7 +257,13 @@ describe("Leave provisional approval — SHIFT_BASED roster-aware recompute (Pha
 
   async function seedShift(employeeId: string, dateIso: string) {
     await app.prisma.shift.create({
-      data: { employeeId, date: utcMidnight(dateIso), startTime: "09:00", endTime: "15:00" },
+      data: {
+        employeeId,
+        salonId: await salonIdForEmployee(app.prisma, employeeId), // Phase 325 (issue #325)
+        date: utcMidnight(dateIso),
+        startTime: "09:00",
+        endTime: "15:00",
+      },
     });
   }
 

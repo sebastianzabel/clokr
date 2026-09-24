@@ -16,7 +16,13 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+} from "./setup"; // Phase 325 (issue #325)
 import { monthRangeUtc } from "../contexts/working-time-account/timezone";
 import { detectMonthGaps } from "../contexts/working-time-account/month-gap-check";
 import {
@@ -38,6 +44,7 @@ async function createTenant(app: FastifyInstance, slugPart: string, closeWithGap
   const tenant = await app.prisma.tenant.create({
     data: { name: `D292 ${s}`, slug: `d292-${s}`, federalState: "NIEDERSACHSEN" },
   });
+  await createTestSalon(app.prisma, tenant.id); // Phase 325 (issue #325)
   await app.prisma.tenantConfig.create({
     data: {
       tenantId: tenant.id,
@@ -128,6 +135,7 @@ async function seedShift(app: FastifyInstance, employeeId: string, dateStr: stri
   await app.prisma.shift.create({
     data: {
       employeeId,
+      salonId: await salonIdForEmployee(app.prisma, employeeId), // Phase 325 (issue #325)
       date: new Date(`${dateStr}T00:00:00Z`),
       startTime: "09:00",
       endTime: "17:00",

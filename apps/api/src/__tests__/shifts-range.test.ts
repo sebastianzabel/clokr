@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon, // Phase 325 (issue #325)
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 describe("GET /api/v1/shifts/range", () => {
@@ -38,6 +44,7 @@ describe("GET /api/v1/shifts/range", () => {
       data: { name: "OtherTenant-sr", slug: `other-sr-${Date.now()}` },
     });
     otherTenantId = otherTenant.id;
+    const otherSalon = await createTestSalon(app.prisma, otherTenantId); // Phase 325 (issue #325)
     const otherAdmin = await app.prisma.user.create({
       data: {
         email: `other-admin-sr-${Date.now()}@test.de`,
@@ -76,6 +83,7 @@ describe("GET /api/v1/shifts/range", () => {
     await app.prisma.shift.create({
       data: {
         employeeId: otherEmp.id,
+        salonId: otherSalon.id, // Phase 325 (issue #325)
         date: new Date("2025-05-01T00:00:00Z"),
         startTime: "08:00",
         endTime: "16:00",
@@ -96,6 +104,8 @@ describe("GET /api/v1/shifts/range", () => {
         where: { email: { endsWith: "@test.de", contains: "other-admin-sr" } },
       });
       await app.prisma.tenantConfig.deleteMany({ where: { tenantId: otherTenantId } });
+      // Phase 325 (issue #325): Shift -> Salon is onDelete: Restrict — remove before the tenant.
+      await app.prisma.salon.deleteMany({ where: { tenantId: otherTenantId } });
       await app.prisma.tenant.delete({ where: { id: otherTenantId } }).catch(() => {});
     } catch (err) {
       console.error("Test cleanup failed:", err);
@@ -111,6 +121,7 @@ describe("GET /api/v1/shifts/range", () => {
     const shift1 = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date("2025-05-05T00:00:00Z"),
         startTime: "06:00",
         endTime: "14:00",
@@ -119,6 +130,7 @@ describe("GET /api/v1/shifts/range", () => {
     const shift2 = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date("2025-05-06T00:00:00Z"),
         startTime: "07:45",
         endTime: "18:00",
@@ -127,6 +139,7 @@ describe("GET /api/v1/shifts/range", () => {
     const shift3 = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date("2025-05-07T00:00:00Z"),
         startTime: "09:00",
         endTime: "17:00",
@@ -177,6 +190,7 @@ describe("GET /api/v1/shifts/range", () => {
     const s1 = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date("2025-06-10T00:00:00Z"),
         startTime: "08:00",
         endTime: "12:00",
@@ -185,6 +199,7 @@ describe("GET /api/v1/shifts/range", () => {
     const s2 = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date("2025-06-10T00:00:00Z"),
         startTime: "13:00",
         endTime: "17:00",
@@ -235,6 +250,7 @@ describe("GET /api/v1/shifts/range", () => {
     const deletedShift = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date("2025-07-01T00:00:00Z"),
         startTime: "08:00",
         endTime: "16:00",
@@ -283,6 +299,7 @@ describe("GET /api/v1/shifts/range", () => {
     const ownShift = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date("2025-08-01T00:00:00Z"),
         startTime: "09:00",
         endTime: "17:00",
@@ -317,6 +334,7 @@ describe("GET /api/v1/shifts/range", () => {
     const nightShift = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date("2025-09-01T00:00:00Z"),
         startTime: "22:00",
         endTime: "06:00",
@@ -357,6 +375,7 @@ describe("GET /api/v1/shifts/range", () => {
       const sh = await app.prisma.shift.create({
         data: {
           employeeId: data.employee.id,
+          salonId: data.salonId, // Phase 325 (issue #325)
           date: new Date(`${BASE_YEAR}-01-10T00:00:00Z`),
           startTime: "08:00",
           endTime: "16:00",
@@ -391,6 +410,7 @@ describe("GET /api/v1/shifts/range", () => {
       const sh = await app.prisma.shift.create({
         data: {
           employeeId: data.employee.id,
+          salonId: data.salonId, // Phase 325 (issue #325)
           date: new Date(`${BASE_YEAR}-02-10T00:00:00Z`),
           startTime: "07:00",
           endTime: "18:00",
@@ -424,6 +444,7 @@ describe("GET /api/v1/shifts/range", () => {
       const sh = await app.prisma.shift.create({
         data: {
           employeeId: data.employee.id,
+          salonId: data.salonId, // Phase 325 (issue #325)
           date: new Date(`${BASE_YEAR}-03-10T00:00:00Z`),
           startTime: "08:00",
           endTime: "15:00",
@@ -457,6 +478,7 @@ describe("GET /api/v1/shifts/range", () => {
       const sh = await app.prisma.shift.create({
         data: {
           employeeId: data.employee.id,
+          salonId: data.salonId, // Phase 325 (issue #325)
           date: new Date(`${BASE_YEAR}-04-10T00:00:00Z`),
           startTime: "06:00",
           endTime: "17:00",
@@ -487,6 +509,7 @@ describe("GET /api/v1/shifts/range", () => {
       const sh = await app.prisma.shift.create({
         data: {
           employeeId: data.employee.id,
+          salonId: data.salonId, // Phase 325 (issue #325)
           date: new Date(`${BASE_YEAR}-05-10T00:00:00Z`),
           startTime: "08:00",
           endTime: "14:00",
@@ -512,6 +535,7 @@ describe("GET /api/v1/shifts/range", () => {
       const sh = await app.prisma.shift.create({
         data: {
           employeeId: data.employee.id,
+          salonId: data.salonId, // Phase 325 (issue #325)
           date: new Date(`${BASE_YEAR}-06-10T00:00:00Z`),
           startTime: "10:00",
           endTime: "14:00",

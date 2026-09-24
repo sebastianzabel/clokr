@@ -33,7 +33,7 @@
  * No PII — synthetic fixtures only (createFixtureTenant + unique slugs).
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import {
@@ -83,6 +83,9 @@ async function seedShift(
   await app.prisma.shift.create({
     data: {
       employeeId: empId,
+      // Phase 325 (issue #325): this helper receives only an employeeId — resolve its own
+      // tenant's salon rather than assuming any particular seed/tenant.
+      salonId: await salonIdForEmployee(app.prisma, empId),
       date: new Date(dateStr + "T00:00:00Z"),
       startTime: "08:00",
       endTime: endHHMM,
@@ -124,6 +127,7 @@ async function createIsolatedTenant(
   const tenant = await prisma.tenant.create({
     data: { name: `Snap03 ${slug}`, slug: s, federalState: "NIEDERSACHSEN" },
   });
+  await createTestSalon(prisma, tenant.id); // Phase 325 (issue #325)
   await prisma.tenantConfig.create({
     data: { tenantId: tenant.id, defaultVacationDays: 30, timezone: TZ },
   });

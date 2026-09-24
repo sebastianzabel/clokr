@@ -19,7 +19,8 @@ import { RoleLockoutError, ROLE_LOCKOUT_MESSAGE } from "../role-assignment";
 import {
   createOvertimeAccount,
   hardDeleteOvertimeDataForEmployee,
-} from "../../working-time-account"; // Phase 100B Plan 06 — W13/W15
+  getTenantTimezone,
+} from "../../working-time-account"; // Phase 100B Plan 06 — W13/W15; Phase 67b Plan 03 — D-22/D-07
 import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
@@ -39,6 +40,15 @@ import {
   BS_BLOCK_WEEKLY_MIN_BOUND,
   BS_BLOCK_WEEKLY_MAX_BOUND,
 } from "../../absence"; // Phase 100B Plan 10 — A11 (Issue #205 reroute) / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6
+// Phase 67b Plan 03 (issue #67, D-22/D-07/D-24) — the Stammsalon lifecycle helpers.
+import {
+  createInitialHomeAssignment,
+  fillHomeGapBeforeHireDate,
+  resolveHomeSalonForNewEmployee,
+} from "../facade/salon-assignments";
+import { salonExistsInForeignTenant } from "../facade/salons";
+import { auditSalonAssignmentEvent } from "../salon-assignment-audit";
+import { tenantLocalDay, toAssignmentDto } from "../salon-assignment-rules";
 
 // ── Retention constant ─────────────────────────────────────────────────────
 const DEFAULT_RETENTION_YEARS = 10;
@@ -178,6 +188,10 @@ const createEmployeeSchema = z.object({
     .optional(),
   // Phase 76.31 D-06 — per-employee bsSlot* overrides (create).
   ...bsSlotEmployeeFields,
+  // Phase 67b Plan 03 (D-22, issue #67) — the new employee's Stammsalon. Omitted or explicit
+  // null resolves automatically when the tenant has exactly one active salon; explicit null is
+  // accepted because Clokr frontends send `field: x ? x : null`, never omit the key.
+  homeSalonId: z.string().uuid().optional().nullable(),
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
@@ -417,92 +431,156 @@ export async function employeeRoutes(app: FastifyInstance) {
         tenantConfigForDefaults?.defaultWorkDays,
       );
 
-      const { employee, invitationToken } = await app.prisma.$transaction(
-        async (tx: Prisma.TransactionClient) => {
-          const user = await tx.user.create({
-            data: {
-              email: body.email,
-              passwordHash,
-              role: body.role,
-              isActive: directPassword, // sofort aktiv wenn Passwort gesetzt
-            },
-          });
+      // Phase 67b Plan 03 (D-22, issue #67): only reads TenantConfig (cached), safe before the tx.
+      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
 
-          const emp = await tx.employee.create({
-            data: {
-              tenantId: req.user.tenantId,
-              userId: user.id,
-              firstName: body.firstName,
-              lastName: body.lastName,
-              employeeNumber: body.employeeNumber,
-              hireDate: new Date(body.hireDate),
-              nfcCardId: body.nfcCardId,
-              // Personalstruktur (Phase 41) — schema defaults apply if omitted
-              ...(body.classification !== undefined ? { classification: body.classification } : {}),
-              ...(body.coverageWeight !== undefined ? { coverageWeight: body.coverageWeight } : {}),
-              ...(body.requiresSupervision !== undefined
-                ? { requiresSupervision: body.requiresSupervision }
-                : {}),
-              // Phase 64 (D-08, BREAK-02): per-employee break override on create.
-              // undefined / omitted → null (fall back to tenant default).
-              breakOver6hOverride: body.breakOver6hOverride ?? null,
-              breakOver9hOverride: body.breakOver9hOverride ?? null,
-              // Phase 85.1.1 (D-01, D-04): per-employee Phorest puffer override on
-              // create. undefined / omitted → null (fall back to tenant default).
-              phorestPrepMinutesOverride: body.phorestPrepMinutesOverride ?? null,
-              phorestWrapupMinutesOverride: body.phorestWrapupMinutesOverride ?? null,
-              // Phase 76.31 (D-06): per-employee bsSlot* overrides on create.
-              // undefined / omitted → null (delegate down the slot hierarchy).
-              bsSlotFirstLongDayMinutes: body.bsSlotFirstLongDayMinutes ?? null,
-              bsSlotSecondLongDayMinutes: body.bsSlotSecondLongDayMinutes ?? null,
-              bsSlotShortDayMinutes: body.bsSlotShortDayMinutes ?? null,
-              bsSlotBlockWeekMinutes: body.bsSlotBlockWeekMinutes ?? null,
-            },
-          });
+      const result = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        // D-22/D-02: the FIRST statement in the transaction — a rejected outcome below returns
+        // before any write, so a 400 never leaves behind a User, Employee or assignment row.
+        const salonOutcome = await resolveHomeSalonForNewEmployee(
+          tx,
+          req.user.tenantId,
+          body.homeSalonId,
+        );
+        if (salonOutcome.status !== "OK") return salonOutcome;
 
-          await tx.workSchedule.create({
+        const user = await tx.user.create({
+          data: {
+            email: body.email,
+            passwordHash,
+            role: body.role,
+            isActive: directPassword, // sofort aktiv wenn Passwort gesetzt
+          },
+        });
+
+        const emp = await tx.employee.create({
+          data: {
+            tenantId: req.user.tenantId,
+            userId: user.id,
+            firstName: body.firstName,
+            lastName: body.lastName,
+            employeeNumber: body.employeeNumber,
+            hireDate: new Date(body.hireDate),
+            nfcCardId: body.nfcCardId,
+            // Personalstruktur (Phase 41) — schema defaults apply if omitted
+            ...(body.classification !== undefined ? { classification: body.classification } : {}),
+            ...(body.coverageWeight !== undefined ? { coverageWeight: body.coverageWeight } : {}),
+            ...(body.requiresSupervision !== undefined
+              ? { requiresSupervision: body.requiresSupervision }
+              : {}),
+            // Phase 64 (D-08, BREAK-02): per-employee break override on create.
+            // undefined / omitted → null (fall back to tenant default).
+            breakOver6hOverride: body.breakOver6hOverride ?? null,
+            breakOver9hOverride: body.breakOver9hOverride ?? null,
+            // Phase 85.1.1 (D-01, D-04): per-employee Phorest puffer override on
+            // create. undefined / omitted → null (fall back to tenant default).
+            phorestPrepMinutesOverride: body.phorestPrepMinutesOverride ?? null,
+            phorestWrapupMinutesOverride: body.phorestWrapupMinutesOverride ?? null,
+            // Phase 76.31 (D-06): per-employee bsSlot* overrides on create.
+            // undefined / omitted → null (delegate down the slot hierarchy).
+            bsSlotFirstLongDayMinutes: body.bsSlotFirstLongDayMinutes ?? null,
+            bsSlotSecondLongDayMinutes: body.bsSlotSecondLongDayMinutes ?? null,
+            bsSlotShortDayMinutes: body.bsSlotShortDayMinutes ?? null,
+            bsSlotBlockWeekMinutes: body.bsSlotBlockWeekMinutes ?? null,
+          },
+        });
+
+        await tx.workSchedule.create({
+          data: {
+            employeeId: emp.id,
+            type: body.scheduleType,
+            // For SHIFT_BASED: default to 40h if caller omits weeklyHours (null/0/undefined)
+            weeklyHours:
+              body.scheduleType === "SHIFT_BASED" ? body.weeklyHours || 40 : body.weeklyHours,
+            monthlyHours: body.monthlyHours ?? null,
+            // Phase 49.2 — FLEXTIME Kernarbeitszeit (only persisted when FLEXTIME)
+            coreStart: body.scheduleType === "FLEXTIME" ? (body.coreStart ?? null) : null,
+            coreEnd: body.scheduleType === "FLEXTIME" ? (body.coreEnd ?? null) : null,
+            coreDays: body.scheduleType === "FLEXTIME" ? (body.coreDays ?? []) : [],
+            workDays: resolvedWorkDays,
+            // Phase 107 (D-01, issue #94) — mirrors the weeklyHours SHIFT_BASED
+            // default-if-omitted convention above. Initial schedule on employee
+            // creation is a contract START (not a contract CHANGE), so workDays
+            // above is still allowed to resolve/derive normally — only the D-02
+            // freeze on the settings.ts re-save path is exempted from this.
+            contractWorkDaysPerWeek:
+              body.scheduleType === "SHIFT_BASED" ? (body.contractWorkDaysPerWeek ?? 5) : null,
+            validFrom: new Date(body.hireDate),
+          },
+        });
+
+        await createOvertimeAccount(tx, emp.id, req.user.tenantId);
+
+        // D-22: the new employee's Stammsalon (HOME) row, open-ended from its tenant-local hire
+        // day, in the SAME transaction — audited CREATE right after, still inside the tx.
+        const homeAssignment = await createInitialHomeAssignment(
+          tx,
+          req.user.tenantId,
+          emp.id,
+          salonOutcome.salonId,
+          tenantLocalDay(emp.hireDate, tz),
+        );
+        await auditSalonAssignmentEvent(app, req, {
+          entity: "EmployeeSalonAssignment",
+          action: "CREATE",
+          entityId: homeAssignment.id,
+          newValue: toAssignmentDto(homeAssignment),
+          tx,
+        });
+
+        // Einladung nur erstellen wenn kein Passwort gesetzt
+        let token: string | null = null;
+        if (!directPassword) {
+          token = crypto.randomBytes(32).toString("hex");
+          await tx.invitation.create({
             data: {
+              token: hashToken(token),
               employeeId: emp.id,
-              type: body.scheduleType,
-              // For SHIFT_BASED: default to 40h if caller omits weeklyHours (null/0/undefined)
-              weeklyHours:
-                body.scheduleType === "SHIFT_BASED" ? body.weeklyHours || 40 : body.weeklyHours,
-              monthlyHours: body.monthlyHours ?? null,
-              // Phase 49.2 — FLEXTIME Kernarbeitszeit (only persisted when FLEXTIME)
-              coreStart: body.scheduleType === "FLEXTIME" ? (body.coreStart ?? null) : null,
-              coreEnd: body.scheduleType === "FLEXTIME" ? (body.coreEnd ?? null) : null,
-              coreDays: body.scheduleType === "FLEXTIME" ? (body.coreDays ?? []) : [],
-              workDays: resolvedWorkDays,
-              // Phase 107 (D-01, issue #94) — mirrors the weeklyHours SHIFT_BASED
-              // default-if-omitted convention above. Initial schedule on employee
-              // creation is a contract START (not a contract CHANGE), so workDays
-              // above is still allowed to resolve/derive normally — only the D-02
-              // freeze on the settings.ts re-save path is exempted from this.
-              contractWorkDaysPerWeek:
-                body.scheduleType === "SHIFT_BASED" ? (body.contractWorkDaysPerWeek ?? 5) : null,
-              validFrom: new Date(body.hireDate),
+              email: body.email,
+              expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
             },
           });
+        }
 
-          await createOvertimeAccount(tx, emp.id, req.user.tenantId);
+        return { status: "OK" as const, employee: emp, invitationToken: token };
+      });
 
-          // Einladung nur erstellen wenn kein Passwort gesetzt
-          let token: string | null = null;
-          if (!directPassword) {
-            token = crypto.randomBytes(32).toString("hex");
-            await tx.invitation.create({
-              data: {
-                token: hashToken(token),
-                employeeId: emp.id,
-                email: body.email,
-                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-              },
-            });
+      if (result.status !== "OK") {
+        switch (result.status) {
+          case "SALON_NOT_FOUND": {
+            // T-100-09: byte-identical 400 for a foreign tenant's real salon and a nonexistent one;
+            // the CROSS_TENANT audit fires only for the foreign case and never reaches the client.
+            if (
+              await salonExistsInForeignTenant(app.prisma, req.user.tenantId, body.homeSalonId!)
+            ) {
+              await auditSalonAssignmentEvent(app, req, {
+                entity: "Salon",
+                action: "CROSS_TENANT_ACCESS_DENIED",
+                entityId: body.homeSalonId!,
+              });
+            }
+            return reply.code(400).send({ error: "Salon nicht gefunden" });
           }
+          case "SALON_INACTIVE":
+            return reply.code(400).send({
+              error: "Einem deaktivierten Salon kann keine neue Zuordnung zugewiesen werden.",
+            });
+          case "HOME_SALON_REQUIRED":
+            return reply.code(400).send({
+              error: "Bei mehreren aktiven Salons ist die Angabe des Stammsalons erforderlich.",
+            });
+          case "NO_ACTIVE_SALON":
+            return reply.code(400).send({ error: "Der Mandant hat keinen aktiven Salon." });
+          default: {
+            // Compile-time exhaustiveness: resolveHomeSalonForNewEmployee's return type has no
+            // other non-OK status.
+            const unreachable: never = result;
+            return unreachable;
+          }
+        }
+      }
 
-          return { employee: emp, invitationToken: token };
-        },
-      );
+      const { employee, invitationToken } = result;
 
       await app.audit({
         userId: req.user.sub,
@@ -631,11 +709,67 @@ export async function employeeRoutes(app: FastifyInstance) {
         updates.bsSlotBlockWeekMinutes = body.bsSlotBlockWeekMinutes;
       }
 
-      const updated = await app.prisma.employee.update({ where: { id }, data: updates });
+      // Phase 67b Plan 03 (D-07, issue #67, research Pitfall 2): only reads TenantConfig
+      // (cached), safe before the tx — resolved only when hireDate actually moves.
+      const tz =
+        body.hireDate !== undefined ? await getTenantTimezone(app.prisma, req.user.tenantId) : null;
 
-      if (body.role !== undefined) {
-        await app.prisma.user.update({ where: { id: employee.userId }, data: { role: body.role } });
-      }
+      // D-07: the employee update, the role change, the HOME gap-fill (when hireDate moves
+      // earlier) and their audit rows commit or roll back together — a crash between them must
+      // never leave a real day without a Stammsalon row, nor an audited gap-fill without its audited
+      // hire-date move (review IN-05). The pro-rata warning below stays OUTSIDE this transaction: it
+      // only reads and shapes a response field, and must not roll back a successful write.
+      const updated = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        const updatedEmp = await tx.employee.update({ where: { id }, data: updates });
+
+        if (body.role !== undefined) {
+          await tx.user.update({ where: { id: employee.userId }, data: { role: body.role } });
+        }
+
+        if (body.hireDate !== undefined && tz !== null) {
+          const gapOutcome = await fillHomeGapBeforeHireDate(
+            tx,
+            req.user.tenantId,
+            id,
+            tenantLocalDay(new Date(body.hireDate), tz),
+          );
+          if (gapOutcome.status === "FILLED") {
+            await auditSalonAssignmentEvent(app, req, {
+              entity: "EmployeeSalonAssignment",
+              action: "CREATE",
+              entityId: gapOutcome.created.id,
+              newValue: { ...toAssignmentDto(gapOutcome.created), trigger: "HIRE_DATE_CHANGED" },
+              tx,
+            });
+          }
+        }
+
+        // Review IN-05: the Employee UPDATE audit commits or rolls back with the update it
+        // describes (and with the gap-fill's CREATE audit above). Inside the transaction a failing
+        // audit rolls the write back, so the actor is resolved through requestAuditFields — an API
+        // key's `apikey:<id>` subject would otherwise fail the AuditLog.userId foreign key.
+        await app.audit({
+          action: "UPDATE",
+          entity: "Employee",
+          entityId: id,
+          oldValue: {
+            ...employee,
+            exitDate: employee.exitDate?.toISOString() ?? null,
+            // Personalstruktur (Phase 41) — Decimal → string for stable JSON
+            coverageWeight: employee.coverageWeight.toString(),
+          },
+          ...requestAuditFields(req, {
+            ...updatedEmp,
+            role: body.role,
+            exitDate: updatedEmp.exitDate?.toISOString() ?? null,
+            // Personalstruktur (Phase 41) — Decimal → string for stable JSON
+            coverageWeight: updatedEmp.coverageWeight.toString(),
+          }),
+          tx,
+        });
+
+        return updatedEmp;
+      });
 
       // ── Pro-rata Urlaubswarnung ──────────────────────────────────────────────
       // Compute warning when exitDate is set (or was just set) within the current year.
@@ -675,27 +809,6 @@ export async function employeeRoutes(app: FastifyInstance) {
           app.log.warn({ err }, "Pro-rata warning calculation failed silently");
         }
       }
-
-      await app.audit({
-        userId: req.user.sub,
-        action: "UPDATE",
-        entity: "Employee",
-        entityId: id,
-        oldValue: {
-          ...employee,
-          exitDate: employee.exitDate?.toISOString() ?? null,
-          // Personalstruktur (Phase 41) — Decimal → string for stable JSON
-          coverageWeight: employee.coverageWeight.toString(),
-        },
-        newValue: {
-          ...updated,
-          role: body.role,
-          exitDate: updated.exitDate?.toISOString() ?? null,
-          // Personalstruktur (Phase 41) — Decimal → string for stable JSON
-          coverageWeight: updated.coverageWeight.toString(),
-        },
-        request: { ip: req.ip, headers: req.headers as Record<string, string> },
-      });
 
       // Phase 64 (D-11): Dedicated audit row for break-override changes — emitted
       // ONLY when the PATCH body actually changed at least one of the two fields.
@@ -1315,6 +1428,13 @@ export async function employeeRoutes(app: FastifyInstance) {
               removedRoleAssignments,
               "Endgültige Löschung",
             );
+            // Phase 67b Plan 03 (D-24, issue #67): named compliance deletion after retention
+            // expiry, same class as workSchedule.deleteMany above — EmployeeSalonAssignment.employee
+            // is onDelete: Restrict, so this must run before tx.employee.delete below. The only
+            // non-anonymising removal of a Stammsalon/Einsatzsalon history in the product.
+            await tx.employeeSalonAssignment.deleteMany({
+              where: { employeeId: id, tenantId: req.user.tenantId },
+            });
             // Finally: employee and user records
             await tx.employee.delete({ where: { id } });
             await tx.user.delete({ where: { id: userId } });

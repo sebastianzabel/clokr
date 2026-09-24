@@ -30,7 +30,13 @@
  * 2400 the anti-off-by-one guard (Test C's toBe(2400) assertions) depends on.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee, // Phase 325 (issue #325)
+} from "./setup";
 import { holidayFreeMondayStr } from "./test-dates";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
@@ -108,6 +114,7 @@ describe("Phase 76.23 — contractSollMinutesByEmp in GET /shifts/week (§ 615 p
       },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 325 (issue #325)
     await prisma.tenantConfig.create({
       data: {
         tenantId,
@@ -323,6 +330,7 @@ describe("Phase 76.23 — contractSollMinutesByEmp in GET /shifts/week (§ 615 p
     const shift = await app.prisma.shift.create({
       data: {
         employeeId: empId,
+        salonId: await salonIdForEmployee(app.prisma, empId), // Phase 325 (issue #325)
         date: shiftDate,
         startTime: "08:00",
         endTime: "12:00", // 4h gross — below 6h threshold → 0 break → 240 min netto
@@ -366,11 +374,13 @@ describe("Phase 76.23 — contractSollMinutesByEmp in GET /shifts/week (§ 615 p
       where: { id: shift.id },
       data: { startTime: "07:00", endTime: "19:00" }, // 12h gross
     });
+    const additionalShiftSalonId = await salonIdForEmployee(app.prisma, empId); // Phase 325 (issue #325)
     const additionalShifts = await Promise.all(
       additionalDates.map((d) =>
         app.prisma.shift.create({
           data: {
             employeeId: empId,
+            salonId: additionalShiftSalonId,
             date: d,
             startTime: "07:00",
             endTime: "19:00", // 12h gross each

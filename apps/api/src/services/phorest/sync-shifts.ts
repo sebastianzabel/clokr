@@ -51,6 +51,7 @@ import {
   deductVacationDays,
   reverseVacationDays,
 } from "../../contexts/absence"; // Phase 101B (Issue #101, wave 7) — merged from four deep imports
+import { findDefaultSalon } from "../../contexts/platform"; // Phase 325 (issue #325), D-14/D-15
 import { phorestFetch } from "./client";
 import {
   phorestShiftKey,
@@ -263,6 +264,15 @@ export async function syncPhorestShifts(
     const password = decryptSafe(cfg?.phorestPassword);
     if (!cfg?.phorestBusinessId || !cfg?.phorestUsername || !password) {
       throw new Error("Phorest nicht konfiguriert");
+    }
+
+    // Phase 325 (issue #325), D-14/D-15: until #65, one Phorest coupling per tenant means its
+    // salon is the tenant's default salon — resolved once per run, before any Phorest fetch, so
+    // a tenant with no active salon fails fast without wasting a fetch. #65 replaces this lookup
+    // with the salon of the specific Phorest coupling.
+    const defaultSalon = await findDefaultSalon(app.prisma, tenantId);
+    if (!defaultSalon) {
+      throw new Error("Kein aktiver Salon vorhanden.");
     }
 
     const baseUrl = cfg.phorestBaseUrl ?? DEFAULT_BASE_URL;
@@ -598,6 +608,7 @@ export async function syncPhorestShifts(
               where: { externalId },
               create: {
                 employeeId,
+                salonId: defaultSalon.id, // Phase 325 (issue #325), D-14: create branch only
                 date: new Date(date),
                 startTime: paddedStart,
                 endTime: paddedEnd,

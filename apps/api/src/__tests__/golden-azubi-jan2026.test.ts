@@ -34,7 +34,7 @@
  * close-employee-month.test.ts case 9 (pure-core parity pin pattern).
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc, monthDayBounds } from "../contexts/working-time-account/timezone";
 import { recalculateSnapshots } from "../contexts/working-time-account/recalculate-snapshots";
@@ -130,6 +130,7 @@ async function seedShift(app: FastifyInstance, empId: string, dateStr: string, n
   await app.prisma.shift.create({
     data: {
       employeeId: empId,
+      salonId: await salonIdForEmployee(app.prisma, empId), // Phase 325 (issue #325)
       date: new Date(dateStr + "T00:00:00Z"),
       startTime: "08:00",
       endTime: endHHMM,
@@ -276,6 +277,7 @@ describe("Phase 76.32 — GOLDEN Azubi Jan 2026: BS + Urlaub + Feiertag", () => 
       data: { name: `Golden Jan26 ${s}`, slug: s, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 325 (issue #325)
     // Default-config tenant: vocationalSchoolMinutesPerDay stays at its DB @default(480)
     // and bsSlot* fields are null. Per owner decision 2026-07-21 the legacy field was
     // removed from the FIRST_LONG_DAY precedence chain, so FIRST_LONG_DAY now resolves

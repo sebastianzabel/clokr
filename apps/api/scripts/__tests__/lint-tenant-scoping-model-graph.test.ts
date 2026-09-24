@@ -18,9 +18,10 @@ import {
 
 const liveModels = Prisma.dmmf.datamodel.models as unknown as readonly DmmfModel[];
 
-// The 18 models measured directly against schema.prisma (204-RESEARCH.md §Schema Derivation,
+// The 19 models measured directly against schema.prisma (204-RESEARCH.md §Schema Derivation,
 // D-19; AccessRole added Phase 73b, Issue #73; Salon added Phase 64b, Issue #64; RoleAssignment
-// added Phase 74b, Issue #74) to carry their own `tenantId` scalar column.
+// added Phase 74b, Issue #74; EmployeeSalonAssignment added Phase 67b, Issue #67) to carry their
+// own `tenantId` scalar column.
 const EXPECTED_OWN_MODELS = [
   "TenantConfig",
   "Employee",
@@ -40,6 +41,7 @@ const EXPECTED_OWN_MODELS = [
   "CoverageRule",
   "Salon",
   "RoleAssignment",
+  "EmployeeSalonAssignment",
 ].sort();
 
 describe("delegateName", () => {
@@ -55,10 +57,25 @@ describe("classifyModel (live DMMF from @clokr/db)", () => {
     expect(classifyModel("TenantConfig", liveModels)).toEqual({ kind: "own" });
     // Phase 64b (issue #64): Salon carries its own tenantId scalar column.
     expect(classifyModel("Salon", liveModels)).toEqual({ kind: "own" });
+    // Phase 67b (issue #67): EmployeeSalonAssignment carries its own tenantId scalar column.
+    expect(classifyModel("EmployeeSalonAssignment", liveModels)).toEqual({ kind: "own" });
   });
 
   it("D-18: classifies Shift as relation via employee, NOT own — Issue #204's body is wrong here; schema.prisma:1381-1406 has no Shift.tenantId", () => {
     expect(classifyModel("Shift", liveModels)).toEqual({ kind: "relation", path: ["employee"] });
+  });
+
+  // Phase 325 (issue #325): Shift and PhorestAppointment both gained a `salon` relation this
+  // phase. `classifyModel` is a first-relation-in-declaration-order BFS (Salon has its own
+  // tenantId, so it WOULD short-circuit tenancy classification to `path: ["salon"]` if declared
+  // before `employee`) — the `salon` relation field MUST stay declared AFTER `employee` on both
+  // models, or every existing `employee: { tenantId }` scoping call in the codebase silently stops
+  // counting as scoped. This assertion is the mechanical proof that field order held.
+  it("Phase 325: classifies PhorestAppointment as relation via employee, NOT via salon — the new salon relation must stay declared after employee", () => {
+    expect(classifyModel("PhorestAppointment", liveModels)).toEqual({
+      kind: "relation",
+      path: ["employee"],
+    });
   });
 
   it("classifies Break as relation via timeEntry.employee (two hops, no own tenantId on Break or TimeEntry directly)", () => {
@@ -95,8 +112,8 @@ describe("classifyModel (live DMMF from @clokr/db)", () => {
 describe("buildModelGraph (live DMMF from @clokr/db)", () => {
   const graph = buildModelGraph();
 
-  it("classifies exactly 44 models with no residual category (D-05)", () => {
-    expect(graph.size).toBe(44);
+  it("classifies exactly 45 models with no residual category (D-05)", () => {
+    expect(graph.size).toBe(45);
     for (const [, tenancy] of graph) {
       expect(["own", "relation", "none"]).toContain(tenancy.kind);
     }
@@ -108,7 +125,7 @@ describe("buildModelGraph (live DMMF from @clokr/db)", () => {
     expect(graph.has("apiKey")).toBe(true);
   });
 
-  it("marks exactly the 18 measured models as own, by NAME (not just count)", () => {
+  it("marks exactly the 19 measured models as own, by NAME (not just count)", () => {
     const ownDelegateNames = [...graph]
       .filter(([, v]) => v.kind === "own")
       .map(([k]) => k)

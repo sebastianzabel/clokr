@@ -422,7 +422,13 @@ describe("Phase 69b — day-lookup characterization (pinned before the refactor)
   it("WIFI: connected on a day with a MANUAL row confirms it, no new row", async () => {
     const d = M[1];
     await app.prisma.shift.create({
-      data: { employeeId: W, date: utcMidnight(d), startTime: "09:00", endTime: "17:00" },
+      data: {
+        employeeId: W,
+        salonId: data.salonId,
+        date: utcMidnight(d),
+        startTime: "09:00",
+        endTime: "17:00",
+      },
     });
     const manual = await entry(W, d, "08:55", "17:00");
     const res = await presence(d, "09:05", "connected");
@@ -434,7 +440,13 @@ describe("Phase 69b — day-lookup characterization (pinned before the refactor)
   it("WIFI: connected twice → one WIFI row, second confirms it; disconnected closes it", async () => {
     const d = M[2];
     await app.prisma.shift.create({
-      data: { employeeId: W, date: utcMidnight(d), startTime: "09:00", endTime: "17:00" },
+      data: {
+        employeeId: W,
+        salonId: data.salonId,
+        date: utcMidnight(d),
+        startTime: "09:00",
+        endTime: "17:00",
+      },
     });
     expect((await presence(d, "09:02", "connected")).statusCode).toBe(200);
     const rows1 = await liveRows(W, d);
@@ -452,7 +464,13 @@ describe("Phase 69b — day-lookup characterization (pinned before the refactor)
   it("WIFI: disconnected without an entry → WIFI_NO_OPEN_ENTRY", async () => {
     const d = M[3];
     await app.prisma.shift.create({
-      data: { employeeId: W, date: utcMidnight(d), startTime: "09:00", endTime: "17:00" },
+      data: {
+        employeeId: W,
+        salonId: data.salonId,
+        date: utcMidnight(d),
+        startTime: "09:00",
+        endTime: "17:00",
+      },
     });
     expect((await presence(d, "17:05", "disconnected")).statusCode).toBe(200);
     expect(await wifiAudits("WIFI_NO_OPEN_ENTRY", W)).toBe(1);
@@ -462,7 +480,13 @@ describe("Phase 69b — day-lookup characterization (pinned before the refactor)
   it("WIFI: a soft-deleted MANUAL row is invisible — connected creates a WIFI row", async () => {
     const d = M[4];
     await app.prisma.shift.create({
-      data: { employeeId: W, date: utcMidnight(d), startTime: "09:00", endTime: "17:00" },
+      data: {
+        employeeId: W,
+        salonId: data.salonId,
+        date: utcMidnight(d),
+        startTime: "09:00",
+        endTime: "17:00",
+      },
     });
     await entry(W, d, "08:00", "12:00", { deletedAt: new Date() });
     expect((await presence(d, "09:03", "connected")).statusCode).toBe(200);

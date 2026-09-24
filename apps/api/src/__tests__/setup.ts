@@ -14,6 +14,11 @@ import bcrypt from "bcryptjs";
 // inferred return type implicitly references JsonValue without a local binding.
 import { Prisma } from "@clokr/db";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
+import {
+  DEFAULT_SALON_OPENING_HOURS,
+  findDefaultSalon,
+  type SalonOpeningHours,
+} from "../contexts/platform";
 
 // Keep JsonValue reachable from this module's public types (intentional no-op type alias)
 export type _SeedJsonValue = Prisma.JsonValue;
@@ -89,10 +94,66 @@ export async function closeTestApp(): Promise<void> {
 }
 
 /**
- * Seed a test tenant + admin user + employee and return auth tokens.
- * Uses a unique suffix to avoid conflicts with other tests.
+ * Phase 325 (issue #325), D-17: create one salon for a fixture tenant. Accepts a
+ * `Prisma.TransactionClient`-compatible client so both `app.prisma` and a `tx` inside a
+ * transaction work. `isActive: false` also sets `deactivatedAt` (mirrors the real write path's
+ * isActive<->deactivatedAt invariant, see `contexts/platform/facade/salons.ts`'s `createSalon`).
+ * `createdAt` is accepted for deterministic ordering fixtures (e.g. proving "earliest active
+ * salon wins" against a second, later-created salon).
  */
-export async function seedTestData(testApp: FastifyInstance, suffix = "") {
+export async function createTestSalon(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  overrides?: {
+    name?: string;
+    openingHours?: SalonOpeningHours;
+    isActive?: boolean;
+    createdAt?: Date;
+  },
+) {
+  const isActive = overrides?.isActive ?? true;
+  return db.salon.create({
+    data: {
+      tenantId,
+      name: overrides?.name ?? "Test Salon",
+      openingHours: overrides?.openingHours ?? DEFAULT_SALON_OPENING_HOURS,
+      isActive,
+      deactivatedAt: isActive ? null : new Date(),
+      ...(overrides?.createdAt ? { createdAt: overrides.createdAt } : {}),
+    },
+  });
+}
+
+/**
+ * Phase 325 (issue #325), D-17/research Pitfall 1: resolve the salon a fixture shift/appointment
+ * for `employeeId` should use — always the SAME tenant as that employee's, by construction (never
+ * a hardcoded id, never another fixture's salon). Uses the production default-salon rule
+ * (`findDefaultSalon`) so a two-tenant test cannot accidentally cross-wire a salon. Throws when
+ * the employee's tenant has no active salon — the fixture is missing a `createTestSalon()` call
+ * right after its `tenant.create`.
+ */
+export async function salonIdForEmployee(
+  db: Prisma.TransactionClient,
+  employeeId: string,
+): Promise<string> {
+  const employee = await db.employee.findUniqueOrThrow({
+    where: { id: employeeId },
+    select: { tenantId: true },
+  });
+  const salon = await findDefaultSalon(db, employee.tenantId);
+  if (!salon) {
+    throw new Error(
+      `salonIdForEmployee: employee ${employeeId} — fixture tenant has no active salon — call createTestSalon() after its tenant.create`,
+    );
+  }
+  return salon.id;
+}
+
+/**
+ * Phase 325 (issue #325), D-17: the pre-325 body of `seedTestData`, now called by it. Kept
+ * module-private — the two overload signatures below are what callers see.
+ */
+async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
   const s =
     (suffix ? suffix + "-" : "") + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const prisma = testApp.prisma;
@@ -246,6 +307,53 @@ export async function seedTestData(testApp: FastifyInstance, suffix = "") {
 }
 
 /**
+ * Seed a test tenant + admin user + employee and return auth tokens — plus, by default, one
+ * active default salon for the tenant (Phase 325, issue #325, D-17), mirroring the real-tenant
+ * invariant that every tenant has a salon (64b D-18). Pass `{ withDefaultSalon: false }` to opt
+ * out for the handful of tests whose own docblock states "seedTestData does not create a Salon"
+ * (`salons.test.ts`, `settings-store-hours-salon-mirror.test.ts`, and the tracer describe-block of
+ * `salon-migration.test.ts`) — those tests build an exact salon topology of their own, and an
+ * unconditional default salon would either flip a salon-count assertion or make the migration
+ * replay test's own `INSERT` a silent no-op (see 325-RESEARCH.md Q4/Pitfall 2).
+ *
+ * Two overloads so `Awaited<ReturnType<typeof seedTestData>>` — used all over the existing
+ * ~38-file default-path suite — resolves from the LAST overload and therefore always sees
+ * `salonId: string`; only a caller that explicitly writes `{ withDefaultSalon: false }` inline
+ * sees the narrower `salonId: null` type.
+ *
+ * Phase 67b Plan 03 (issue #67, D-24) relies on the same default salon: POST /api/v1/employees
+ * (D-22) resolves a new employee's Stammsalon against the tenant's active salons, and the test
+ * files that call seedTestData() and then POST an employee without an explicit `homeSalonId`
+ * depend on the tenant having EXACTLY ONE active salon for that resolution to succeed (research
+ * Pitfall 5). Both phases share this one salon (name = tenant name, `DEFAULT_SALON_OPENING_HOURS`,
+ * like test-bootstrap.ts's bootstrap-tenant handler) through `salonId`. The two employees
+ * seedTestData creates deliberately do NOT get HOME rows — same convention as the fixtures that
+ * insert an Employee row directly (D-24).
+ */
+export async function seedTestData(
+  testApp: FastifyInstance,
+  suffix: string,
+  options: { withDefaultSalon: false },
+): Promise<Awaited<ReturnType<typeof seedTenantFixture>> & { salonId: null }>;
+export async function seedTestData(
+  testApp: FastifyInstance,
+  suffix?: string,
+  options?: { withDefaultSalon?: true },
+): Promise<Awaited<ReturnType<typeof seedTenantFixture>> & { salonId: string }>;
+export async function seedTestData(
+  testApp: FastifyInstance,
+  suffix = "",
+  options: { withDefaultSalon?: boolean } = {},
+): Promise<Awaited<ReturnType<typeof seedTenantFixture>> & { salonId: string | null }> {
+  const base = await seedTenantFixture(testApp, suffix);
+  if (options.withDefaultSalon === false) {
+    return { ...base, salonId: null };
+  }
+  const salon = await createTestSalon(testApp.prisma, base.tenant.id, { name: base.tenant.name });
+  return { ...base, salonId: salon.id };
+}
+
+/**
  * Issue #256 (Befund 3): the DATEV export refuses to build a file without a
  * Berater-/Mandantennummer (HTTP 409, DATEV_KANZLEI_MISSING_ERROR).
  *
@@ -359,6 +467,10 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   await prisma.overtimePlan.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.invitation.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.workSchedule.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  // Phase 67b (issue #67): EmployeeSalonAssignment.employee AND .salon are onDelete: Restrict
+  // (D-01) — must be deleted before prisma.employee.deleteMany below, or the delete fails and
+  // leaks fixture rows into the shared test database.
+  await prisma.employeeSalonAssignment.deleteMany({ where: { tenantId } });
   await prisma.employee.deleteMany({ where: { tenantId } });
   await prisma.refreshToken.deleteMany({ where: { userId: { in: userIds } } });
   await prisma.otpToken.deleteMany({ where: { userId: { in: userIds } } });
@@ -372,8 +484,11 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   await prisma.tenantConfig.deleteMany({ where: { tenantId } });
   // Phase 64b (issue #64): Salon.tenant is onDelete: Restrict (D-01) — must be deleted before
   // prisma.tenant.delete below, or the delete fails and leaks fixture rows into the shared test
-  // database (seedTestData itself never creates a Salon, D-18, so this only matters for suites
-  // that create one directly).
+  // database. Phase 325 (issue #325) / Phase 67b Plan 03 (D-24): seedTestData() now creates ONE
+  // default salon for its tenant (opt-out via `{ withDefaultSalon: false }`) — this deleteMany
+  // covers that row as well as any salon a suite created directly. Shift/PhorestAppointment ->
+  // Salon and EmployeeSalonAssignment -> Salon are ALSO onDelete: Restrict, but the
+  // shift.deleteMany and employeeSalonAssignment.deleteMany above already run before this.
   await prisma.salon.deleteMany({ where: { tenantId } });
   await prisma.tenant.delete({ where: { id: tenantId } });
 }

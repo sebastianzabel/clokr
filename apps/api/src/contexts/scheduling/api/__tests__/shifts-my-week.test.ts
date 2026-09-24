@@ -178,6 +178,7 @@ describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
     await prisma.shift.create({
       data: {
         employeeId: employeeA.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         templateId: template.id,
         date: new Date(MONDAY_ISO + "T00:00:00Z"),
         startTime: "08:00",
@@ -187,6 +188,7 @@ describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
     await prisma.shift.create({
       data: {
         employeeId: employeeB.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         templateId: template.id,
         date: new Date(MONDAY_ISO + "T00:00:00Z"),
         startTime: "08:00",
@@ -196,6 +198,7 @@ describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
     await prisma.shift.create({
       data: {
         employeeId: employeeB.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         templateId: template.id,
         date: new Date(WEDNESDAY_ISO + "T00:00:00Z"),
         startTime: "08:00",
@@ -348,6 +351,7 @@ describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
       await prisma.shift.create({
         data: {
           employeeId: employeeBId,
+          salonId: data.salonId, // Phase 325 (issue #325)
           date: new Date(LATE_DAY_ISO + "T00:00:00Z"),
           startTime: "08:00",
           endTime: "12:00",
@@ -358,6 +362,7 @@ describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
       await prisma.shift.create({
         data: {
           employeeId: employeeAId,
+          salonId: data.salonId, // Phase 325 (issue #325)
           date: new Date(LATE_DAY_ISO + "T00:00:00Z"),
           startTime: "14:00",
           endTime: "18:00",

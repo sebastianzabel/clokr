@@ -22,7 +22,7 @@
  * (weeksAhead=8) to avoid collision with shifts-under-coverage.test.ts (6 weeks ahead).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
 import { holidayFreeMondayStr } from "./test-dates";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
@@ -129,6 +129,7 @@ describe("Phase 76.32 — SOLL-KORRELATION display correctness (BS single-count 
       },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 325 (issue #325)
     await prisma.tenantConfig.create({
       data: {
         tenantId,
@@ -428,6 +429,7 @@ describe("WR-02 RED→GREEN: leave inside Feiertag week — leave credit must ex
       },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 325 (issue #325)
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ },
     });
@@ -615,6 +617,7 @@ describe("WR-01 RED→GREEN: DB PublicHoliday must be federalState-scoped per bu
       },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 325 (issue #325)
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ },
     });

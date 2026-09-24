@@ -86,7 +86,7 @@
  */
 
 import { describe, it, expect, afterAll } from "vitest";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc, monthDayBounds } from "../contexts/working-time-account/timezone";
 import type { CloseMonthInput } from "../contexts/working-time-account/close-employee-month";
@@ -165,6 +165,7 @@ async function seedFixedSick(app: FastifyInstance): Promise<SeededContext> {
     data: { name: `HDS-FW ${s}`, slug: s, federalState: "NIEDERSACHSEN" },
   });
   const tenantId = tenant.id;
+  await createTestSalon(prisma, tenantId); // Phase 325 (issue #325)
   await prisma.tenantConfig.create({
     data: { tenantId, defaultVacationDays: 30, timezone: TZ },
   });
@@ -306,6 +307,7 @@ async function seedShiftSick(app: FastifyInstance): Promise<SeededContext> {
     data: { name: `HDS-SB ${s}`, slug: s, federalState: "NIEDERSACHSEN" },
   });
   const tenantId = tenant.id;
+  await createTestSalon(prisma, tenantId); // Phase 325 (issue #325)
   await prisma.tenantConfig.create({
     data: { tenantId, defaultVacationDays: 30, timezone: TZ },
   });
@@ -410,6 +412,7 @@ async function seedShiftSick(app: FastifyInstance): Promise<SeededContext> {
     await prisma.shift.create({
       data: {
         employeeId,
+        salonId: await salonIdForEmployee(prisma, employeeId), // Phase 325 (issue #325)
         date: new Date(dateStr + "T00:00:00Z"),
         startTime: "08:00",
         endTime: endHHMM,

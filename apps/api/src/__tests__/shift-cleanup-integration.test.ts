@@ -73,6 +73,7 @@ describe("Shift-Auto-Cleanup integration (Phase 67.2 Plan 04)", () => {
     const shift = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: tuesday,
         startTime: "08:00",
         endTime: "16:00",
@@ -109,6 +110,7 @@ describe("Shift-Auto-Cleanup integration (Phase 67.2 Plan 04)", () => {
     await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: tuesday,
         startTime: "08:00",
         endTime: "16:00",
@@ -153,6 +155,7 @@ describe("Shift-Auto-Cleanup integration (Phase 67.2 Plan 04)", () => {
     const shift = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: tuesday,
         startTime: "08:00",
         endTime: "16:00",
@@ -196,6 +199,7 @@ describe("Shift-Auto-Cleanup integration (Phase 67.2 Plan 04)", () => {
     const shift = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: tuesday,
         startTime: "08:00",
         endTime: "16:00",
@@ -226,6 +230,7 @@ describe("Shift-Auto-Cleanup integration (Phase 67.2 Plan 04)", () => {
     const shift = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: tuesday,
         startTime: "08:00",
         endTime: "16:00",

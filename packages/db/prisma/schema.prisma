@@ -42,6 +42,8 @@ model Tenant {
   salons               Salon[]
   // Phase 74b (issue #74) — role assignments scoped to this tenant
   roleAssignments      RoleAssignment[]
+  // Phase 67b (issue #67) — Salonzuordnung (HOME/DEPLOYMENT) rows
+  salonAssignments     EmployeeSalonAssignment[]
 }
 
 // Phase 64b (issue #64) — Unterbau level below Tenant (ADR 0001): a Salon is never hard-deleted,
@@ -61,8 +63,49 @@ model Salon {
   updatedAt      DateTime  @updatedAt @db.Timestamptz
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  // Phase 67b (issue #67) — Salonzuordnung rows pointing at this salon
+  assignments EmployeeSalonAssignment[]
+
+  // Phase 325 (issue #325): Prisma-only back-relations, no column on Salon.
+  shifts              Shift[]
+  phorestAppointments PhorestAppointment[]
 
   @@index([tenantId])
+}
+
+// Phase 67b (issue #67) — Unterbau (ADR 0002): versioned salon assignment per employee.
+// HOME = Stammsalon (exactly one effective row for every day from the tenant-local hireDate on,
+// gapless, non-overlapping); DEPLOYMENT = Einsatzsalon (any number, each with its own validity
+// period and optional weekdays). weekdays: 0 = Monday … 6 = Sunday — like EmployeeShiftPattern.dayOfWeek
+// and Salon.openingHours, explicitly NOT WorkSchedule.workDays (0 = Sunday). HOME rows always store
+// []. Rows are never deleted and never changed except by setting validUntil; a row with
+// validUntil = validFrom − 1 is "voided" and effective on no day (D-03).
+enum SalonAssignmentKind {
+  HOME
+  DEPLOYMENT
+}
+
+model EmployeeSalonAssignment {
+  id         String              @id @default(uuid())
+  tenantId   String
+  employeeId String
+  salonId    String
+  kind       SalonAssignmentKind
+  validFrom  DateTime            @db.Date
+  validUntil DateTime?           @db.Date // null = open-ended
+  weekdays   Int[]               @default([])
+  createdAt  DateTime            @default(now()) @db.Timestamptz
+  updatedAt  DateTime            @updatedAt @db.Timestamptz
+
+  // Phase 67b (issue #67), ADR 0002 E4: Restrict on all three — revision-relevant history, never
+  // cascade-deleted.
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  salon    Salon    @relation(fields: [salonId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([employeeId, kind, validFrom])
+  @@index([salonId])
 }
 
 // ─────────────────────────────────────────────
@@ -242,8 +285,10 @@ model TenantConfig {
   // Shape: Array<{ day: 0..6 (Mo..So), open: "HH:MM", close: "HH:MM", closed?: boolean }>
   // Default: Mo-Sa 08:00-20:00, So closed
   /// @deprecated Phase 64b (issue #64) — superseded by Salon.openingHours. No new code may read
-  /// this column; the only existing reader (contexts/scheduling/api/shifts.ts:256-300)
-  /// intentionally keeps reading it until #325 switches shift store-hours checks to salon level.
+  /// this column. Since Phase 325 (issue #325) the shift store-hours check reads the shift's own
+  /// Salon.openingHours instead; the only remaining writer/reader is `PUT /api/v1/settings/work`
+  /// (contexts/platform/api/settings.ts), kept intentionally until #82 removes both this column's
+  /// last write path and the storeHours<->Salon mirror it feeds.
   storeHours                        Json     @default("[{\"day\":0,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":1,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":2,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":3,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":4,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":5,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":6,\"open\":\"08:00\",\"close\":\"20:00\",\"closed\":true}]")
   // Phase 47.5 — How tightly to bind shifts to store hours.
   //   DAY_ONLY (default): block only on closed days (lets MAs prep before / clean after)
@@ -400,6 +445,8 @@ model Employee {
   phorestAppointments      PhorestAppointment[]
   // Phase 104 — § 9 BUrlG coupling rows (Restrict FK — never cascade-delete history)
   section9Credits          Section9Credit[]
+  // Phase 67b (issue #67) — Salonzuordnung rows (Restrict FK — never cascade-delete history)
+  salonAssignments         EmployeeSalonAssignment[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
@@ -1354,9 +1401,16 @@ model PhorestAppointment {
   // Audit-proof: never cascade-delete employee history (CLAUDE.md CASCADE=Restrict rule).
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
+  // Phase 325 (issue #325): the appointment's salon, same tenant as the employee — enforced by the
+  // application, never re-homed by a sync. Restrict because a salon is never hard-deleted
+  // (ADR 0002 "Neuer Fremdschlüssel auf den Unterbau").
+  salonId String
+  salon   Salon  @relation(fields: [salonId], references: [id], onDelete: Restrict)
+
   // Phase 87 overlap query: appointments of an employee within a date window.
   @@index([employeeId, date])
   @@index([date])
+  @@index([salonId])
 }
 
 enum ScheduleType {
@@ -1487,6 +1541,11 @@ model Shift {
   employee           Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   templateId         String?
   template           ShiftTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  // Phase 325 (issue #325): the shift's salon, same tenant as the employee — enforced by the
+  // application, never re-homed by a sync. Restrict because a salon is never hard-deleted
+  // (ADR 0002 "Neuer Fremdschlüssel auf den Unterbau").
+  salonId            String
+  salon              Salon          @relation(fields: [salonId], references: [id], onDelete: Restrict)
   date               DateTime       @db.Date
   startTime          String // "06:00"
   endTime            String // "14:00"
@@ -1517,6 +1576,7 @@ model Shift {
   @@index([employeeId, date, deletedAt])
   // Phase 85 — supports the windowed reconcile query (origin=PHOREST, date in window).
   @@index([origin, date])
+  @@index([salonId])
 }
 
 // Phase 43 — Recurring weekly shift assignments per employee.

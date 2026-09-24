@@ -1037,3 +1037,35 @@ den Test rot.
 **Mandantengrenze:** Der Fremdschlüssel `Salon → Tenant` bleibt im Unterbau, mit
 `onDelete: Restrict` (ADR 0002, Entscheidung 4). Ein Salon wird nie gelöscht, nur deaktiviert.
 Die Routen mit Pfadparameter unter `/api/v1/salons/:id` stehen als `probe` im T-100-09-Register.
+
+### Nachtrag 2026-09-24 — Phase 325 (Issue #325)
+
+**Was sich geändert hat:** `Shift.salonId` und `PhorestAppointment.salonId` sind Pflicht-Fremdschlüssel
+auf `Salon` mit `onDelete: Restrict` — die Frage, die die Prüftabelle von ADR 0002 für #325 offen ließ,
+hier entschieden, weil ein Salon nie hart gelöscht wird und Schichten revisionsrelevant sind. Die
+Migration `20260924145508_shift_salon` gibt jeder bestehenden Schicht und jedem Termin den Default-Salon
+des Mandanten (frühester aktiver Salon; nur in der Migration als Rückfall der früheste Salon überhaupt)
+und ändert an diesen Zeilen nichts außer `salonId`. Neue Fassadenfunktion `findDefaultSalon()` (additiv,
+Erweiterung nach ADR 0002 Entscheidung 7).
+
+**Die Öffnungszeitprüfung:** `assertWithinStoreHours()` liest seit #325 die Öffnungszeiten des Salons der
+Schicht; `shiftStoreHoursMode` bleibt eine Mandanteneinstellung. Für einen Mandanten mit einem Salon ist
+das Verhalten nachweislich gleich (Tabelle in `shift-store-hours-salon.test.ts`, vor der Umstellung gegen
+den alten Leser aufgenommen).
+
+**Abweichung von Eintrag L:** Der Spiegel `syncSoleActiveSalonOpeningHours()` bleibt entgegen dem Satz
+oben bis #82 — Begründung D-13: die einzige Öffnungszeiten-Oberfläche (`admin/system`) schreibt weiter
+`TenantConfig.storeHours`; ohne Spiegel wäre jede Änderung dort für die Prüfung unsichtbar und ein
+Mandant mit einem Salon verhielte sich anders (widerspricht #325 AC-5). Der Spiegel ist ein Schreiben in
+den Salon, kein fachliches Lesen. Die Schichtplanungsseite liest `storeHours` weiter nur zur Anzeige
+geschlossener Wochentage (D-16), ebenfalls bis #82. `store-hours-readers.test.ts` erlaubt nur noch
+`settings.ts`.
+
+**Mandantengrenze:** kein Datenbank-Trigger (eine Instanz pro Kunde, #226); die Anwendung prüft über
+`findSalon()` mandantengebunden, fremde und nicht existierende Salon-IDs werden byte-gleich mit 404
+abgelehnt (T-100-09). `POST /api/v1/shifts/bulk` prüft seit #325 zusätzlich, dass jeder Mitarbeiter zum
+Mandanten gehört — sonst hätte eine Schicht einen Salon eines fremden Mandanten bekommen können
+(vorher fehlende Prüfung, beim Bau gefunden).
+
+**Phorest:** Bis #65 schreibt die Synchronisation den Default-Salon; ohne aktiven Salon bricht der Lauf
+mit Fehler ab, bestehende Schichten werden nie umgehängt.

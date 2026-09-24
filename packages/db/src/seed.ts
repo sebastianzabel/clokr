@@ -3,7 +3,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import bcrypt from "bcryptjs";
 import { ADMIN_EMAIL, ADMIN_PASSWORD, EMPLOYEE_EMAIL, EMPLOYEE_PASSWORD } from "./seed-credentials";
-import { DEFAULT_SALON_OPENING_HOURS } from "./default-salon";
+import { DEFAULT_SALON_OPENING_HOURS, createDefaultHomeAssignment } from "./default-salon";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool as any);
@@ -104,6 +104,13 @@ async function main() {
     },
   });
 
+  // D-24 (Phase 67b Plan 04, issue #67): every employee this seed creates also gets its
+  // Stammsalon (HOME) row. Idempotent — a no-op on a re-run against an already-seeded
+  // database's admin employee (main() only reaches this far when demo-clokr didn't exist
+  // yet, but the helper's own idempotency check keeps this call safe either way).
+  await createDefaultHomeAssignment(prisma, adminEmployee.id);
+  console.log("Stammsalon zugeordnet");
+
   const existingAdminSchedule = await prisma.workSchedule.findFirst({
     where: { employeeId: adminEmployee.id },
   });
@@ -189,6 +196,10 @@ async function main() {
       nfcCardId: "NFC-TEST-001",
     },
   });
+
+  // D-24 (Phase 67b Plan 04, issue #67): same Stammsalon assignment as the admin above.
+  await createDefaultHomeAssignment(prisma, emp.id);
+  console.log("Stammsalon zugeordnet");
 
   const existingEmpSchedule = await prisma.workSchedule.findFirst({
     where: { employeeId: emp.id },

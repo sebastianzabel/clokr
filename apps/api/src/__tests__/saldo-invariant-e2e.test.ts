@@ -325,6 +325,7 @@ describe("saldo invariant E2E — all schedule types, Jan–Jul 2026", () => {
       await app.prisma.shift.create({
         data: {
           employeeId: empIds.shift,
+          salonId: data.salonId, // Phase 325 (issue #325) — createEmp() always uses data.tenant.id
           date: new Date(d + "T00:00:00Z"),
           startTime: "09:00",
           endTime: nineHour ? "18:00" : "16:00", // 9h → 510 net / 7h → 390 net

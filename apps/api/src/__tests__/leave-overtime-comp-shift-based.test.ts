@@ -21,7 +21,7 @@
  * its past-anchored literals for a documented reason in its own header).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -117,6 +117,7 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
       data: { name: `SHB ${suffix}`, slug: `shb-${suffix}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    const salonId = (await createTestSalon(prisma, tenantId)).id; // Phase 325 (issue #325)
     // TenantConfig created EXPLICITLY (not auto-created for a hand-rolled tenant.create()), so
     // the break defaults (30/45) come from a real row — not the code's own
     // `cfg?.defaultBreakOver6h ?? 30` fallback for a MISSING row.
@@ -184,6 +185,7 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
     await prisma.shift.create({
       data: {
         employeeId: shiftEmp.id,
+        salonId, // Phase 325 (issue #325)
         date: new Date(MONDAY_1 + "T00:00:00Z"),
         startTime: "09:00",
         endTime: "15:00",
@@ -195,6 +197,7 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
     const m2Shift = await prisma.shift.create({
       data: {
         employeeId: shiftEmp.id,
+        salonId, // Phase 325 (issue #325)
         date: new Date(MONDAY_2 + "T00:00:00Z"),
         startTime: "09:00",
         endTime: "15:00",
@@ -217,6 +220,7 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
     await prisma.shift.create({
       data: {
         employeeId: shiftEmp.id,
+        salonId, // Phase 325 (issue #325)
         date: new Date(RANGE_4_MON + "T00:00:00Z"),
         startTime: "09:00",
         endTime: "15:00",
@@ -225,6 +229,7 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
     await prisma.shift.create({
       data: {
         employeeId: shiftEmp.id,
+        salonId, // Phase 325 (issue #325)
         date: new Date(RANGE_4_TUE + "T00:00:00Z"),
         startTime: "06:00",
         endTime: "14:00",
@@ -239,6 +244,7 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
     await prisma.shift.create({
       data: {
         employeeId: shiftEmp.id,
+        salonId, // Phase 325 (issue #325)
         date: new Date(SPLIT_SHIFT_DAY + "T00:00:00Z"),
         startTime: "14:00",
         endTime: "21:00",
@@ -247,6 +253,7 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
     await prisma.shift.create({
       data: {
         employeeId: shiftEmp.id,
+        salonId, // Phase 325 (issue #325)
         date: new Date(SPLIT_SHIFT_DAY + "T00:00:00Z"),
         startTime: "06:00",
         endTime: "10:00",
@@ -302,6 +309,7 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
     await prisma.shift.create({
       data: {
         employeeId: fixedEmp.id,
+        salonId, // Phase 325 (issue #325)
         date: new Date(MONDAY_1 + "T00:00:00Z"),
         startTime: "09:00",
         endTime: "15:00",

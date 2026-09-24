@@ -9,6 +9,7 @@
 
 import type { FastifyInstance } from "fastify";
 import { leaveTypeFields } from "../../../contexts/absence/leave-type";
+import { createTestSalon } from "../../../__tests__/setup"; // Phase 325 (issue #325), D-17
 
 export const MAPPED_STAFF_ID = "ph-staff-mapped";
 export const UNMAPPED_STAFF_ID = "ph-staff-unmapped";
@@ -21,6 +22,7 @@ export interface PhorestSeed {
   mappedEmployeeId: string; // Erika — has a PhorestStaffMapping
   unmappedEmployeeId: string; // Max — name/email matches staff.json but NO mapping (SS-01)
   mappedEmployeeId2: string; // Bea — a second genuinely-mapped employee (85.1.1 two-mapped tests)
+  salonId: string; // Phase 325 (issue #325), D-17 — the tenant's default salon
 }
 
 // The Phorest staff emails/names are NOT suffixed — the SS-01 negative-match test needs them to
@@ -66,6 +68,10 @@ export async function seedPhorestTenant(app: FastifyInstance, suffix = ""): Prom
       phorestSyncWindowDays: 7,
     },
   });
+
+  // Phase 325 (issue #325), D-17: the required Shift/PhorestAppointment salonId FK needs this
+  // tenant's default salon — created right after TenantConfig, mirroring seedTestData's own order.
+  const salon = await createTestSalon(prisma, tenant.id, { name: tenant.name });
 
   // Mapped employee — matches staff.json "ph-staff-mapped".
   const erikaUser = await prisma.user.create({
@@ -126,6 +132,7 @@ export async function seedPhorestTenant(app: FastifyInstance, suffix = ""): Prom
     mappedEmployeeId: erika.id,
     unmappedEmployeeId: max.id,
     mappedEmployeeId2: bea.id,
+    salonId: salon.id,
   };
 }
 
@@ -224,5 +231,8 @@ export async function cleanupPhorestTenant(app: FastifyInstance, tenantId: strin
   await prisma.employee.deleteMany({ where: { tenantId } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
   await prisma.tenantConfig.deleteMany({ where: { tenantId } });
+  // Phase 325 (issue #325): Shift/PhorestAppointment -> Salon is onDelete: Restrict, so the salon
+  // must be removed after those deletes above and before the tenant delete below.
+  await prisma.salon.deleteMany({ where: { tenantId } });
   await prisma.tenant.delete({ where: { id: tenantId } });
 }

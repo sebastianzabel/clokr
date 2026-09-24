@@ -3,8 +3,10 @@
  * mirrors into a tenant's SOLE active salon, atomically and audited, while leaving a multi-salon
  * tenant's salons alone and never renaming a salon via `tenantName`.
  *
- * `seedTestData()` does not create a Salon (D-18 exemption) — every fixture salon this file needs
- * is created directly via `app.prisma.salon.create(...)`, matching `salons.test.ts`'s own pattern.
+ * `seedTestData()` does not create a Salon here — this file opts out via
+ * `{ withDefaultSalon: false }` (Phase 325, issue #325, D-17) — every fixture salon this file
+ * needs is created directly via `app.prisma.salon.create(...)`, matching `salons.test.ts`'s own
+ * pattern.
  */
 import { describe, it, expect, beforeAll } from "vitest";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
@@ -44,7 +46,7 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
   });
 
   it("one active salon + storeHours with day 0 closed: salon.openingHours updates, exactly one audited UPDATE Salon row", async () => {
-    const data = await seedTestData(app, "sh-mirror-one");
+    const data = await seedTestData(app, "sh-mirror-one", { withDefaultSalon: false });
     try {
       const salon = await app.prisma.salon.create({
         data: {
@@ -84,7 +86,7 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
   });
 
   it("two active salons: storeHours leaves both salons unchanged and writes no Salon audit row; TenantConfig.storeHours is still updated", async () => {
-    const data = await seedTestData(app, "sh-mirror-two");
+    const data = await seedTestData(app, "sh-mirror-two", { withDefaultSalon: false });
     try {
       const salonA = await app.prisma.salon.create({
         data: {
@@ -128,7 +130,7 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
   });
 
   it("one active + one inactive salon: the active one is mirrored, the inactive one untouched", async () => {
-    const data = await seedTestData(app, "sh-mirror-mix");
+    const data = await seedTestData(app, "sh-mirror-mix", { withDefaultSalon: false });
     try {
       const active = await app.prisma.salon.create({
         data: {
@@ -163,7 +165,7 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
   });
 
   it("PUT without storeHours (e.g. only overtimeThreshold) leaves the salon untouched", async () => {
-    const data = await seedTestData(app, "sh-mirror-notouch");
+    const data = await seedTestData(app, "sh-mirror-notouch", { withDefaultSalon: false });
     try {
       const salon = await app.prisma.salon.create({
         data: {
@@ -190,7 +192,7 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
   });
 
   it("WR-02: a PUT resending the UNCHANGED tenant storeHours (e.g. only shiftStoreHoursMode changed) does not overwrite a salon edited via PATCH, and writes no Salon audit row", async () => {
-    const data = await seedTestData(app, "sh-mirror-unchanged");
+    const data = await seedTestData(app, "sh-mirror-unchanged", { withDefaultSalon: false });
     try {
       const salon = await app.prisma.salon.create({
         data: {
@@ -243,7 +245,7 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
   });
 
   it("WR-03: storeHours keeps the pre-64b legacy schema — a week the stricter salon schema would reject (open >= close on an open day) is accepted and mirrored verbatim (D-04); a 6-day week still 400s with nothing written", async () => {
-    const data = await seedTestData(app, "sh-mirror-legacy");
+    const data = await seedTestData(app, "sh-mirror-legacy", { withDefaultSalon: false });
     try {
       const salon = await app.prisma.salon.create({
         data: {
@@ -282,7 +284,7 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
   });
 
   it("PUT with tenantName renames the tenant, not the default salon (D-17)", async () => {
-    const data = await seedTestData(app, "sh-mirror-rename");
+    const data = await seedTestData(app, "sh-mirror-rename", { withDefaultSalon: false });
     try {
       const salon = await app.prisma.salon.create({
         data: {

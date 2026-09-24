@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp } from "../../../__tests__/setup";
+import { getTestApp, salonIdForEmployee, createTestSalon } from "../../../__tests__/setup"; // Phase 325 (issue #325)
 import { syncPhorestShifts } from "../sync-shifts";
 import { extractWorkTimes } from "../types";
 import type { PhorestApiResponse } from "../types";
@@ -270,6 +270,7 @@ describe("phorest sync-shifts", () => {
       const manual = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date("2026-08-15"),
           startTime: "12:00",
           endTime: "20:00",
@@ -303,6 +304,7 @@ describe("phorest sync-shifts", () => {
       const far = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date(plusDays(10)),
           startTime: "08:00",
           endTime: "12:00",
@@ -342,6 +344,7 @@ describe("phorest sync-shifts", () => {
       await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date("2026-07-30"),
           startTime: "08:00",
           endTime: "16:00",
@@ -399,6 +402,7 @@ describe("phorest sync-shifts", () => {
       const manual = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date("2026-07-30"),
           startTime: "08:00",
           endTime: "16:00",
@@ -467,6 +471,7 @@ describe("phorest sync-shifts Phorest-master replace (85.1)", () => {
       const wrongTime = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date("2026-07-30"),
           startTime: "06:00",
           endTime: "07:00",
@@ -496,6 +501,7 @@ describe("phorest sync-shifts Phorest-master replace (85.1)", () => {
       const manual = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date("2026-07-31"),
           startTime: "10:00",
           endTime: "18:00",
@@ -529,6 +535,7 @@ describe("phorest sync-shifts Phorest-master replace (85.1)", () => {
       const manual = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date("2026-07-30"),
           startTime: "06:00",
           endTime: "07:00",
@@ -619,6 +626,7 @@ describe("phorest sync-shifts padding (85.1)", () => {
       const legacy = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date("2026-07-30"),
           startTime: "08:00",
           endTime: "16:00",
@@ -886,6 +894,7 @@ describe("phorest sync-shifts BS-gewinnt skip (85.1)", () => {
       const preExisting = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date("2026-07-31"),
           startTime: "09:00",
           endTime: "17:00",
@@ -934,6 +943,9 @@ describe("SHIFT-02 pending-leave protection", () => {
     return app.prisma.shift.create({
       data: {
         employeeId,
+        // Phase 325 (issue #325): only an employeeId is available here — resolve its own
+        // tenant's salon rather than assuming any particular seed object.
+        salonId: await salonIdForEmployee(app.prisma, employeeId),
         date: new Date(dateStr),
         startTime: "09:00",
         endTime: "17:00",
@@ -1191,5 +1203,170 @@ describe("extractWorkTimes slot-type allow-list (WR-01)", () => {
       startTime: "08:00:00",
       endTime: "16:00:00",
     });
+  });
+});
+
+// Phase 325 (issue #325), AC-6/D-14/D-15 — the sync writes the coupling's (default) salon on
+// every CREATED shift, never re-homes an existing one, and fails loudly with zero writes when the
+// tenant has no active salon.
+describe("phorest sync-shifts salon behavior (AC-6/D-14/D-15)", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("D-14: creates on the earliest ACTIVE salon by default; after it is deactivated, new (different-slot) shifts land on the next earliest active salon", async () => {
+    const seed = await seedPhorestTenant(app, "salon-default");
+    try {
+      mockPhorest(wttFixture);
+      const first = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(first.status).toBe("SUCCESS");
+      expect(first.created).toBe(2);
+
+      const firstShifts = await app.prisma.shift.findMany({
+        where: { employeeId: seed.mappedEmployeeId, origin: "PHOREST", deletedAt: null },
+      });
+      expect(firstShifts.length).toBeGreaterThan(0);
+      expect(firstShifts.every((shift) => shift.salonId === seed.salonId)).toBe(true);
+
+      // A second, LATER-created active salon — still not the default (seed.salonId is earlier).
+      const salonB = await createTestSalon(app.prisma, seed.tenantId, {
+        name: "Salon B",
+        createdAt: new Date(Date.now() + 60_000),
+      });
+
+      // Deactivate the original default — B becomes the earliest ACTIVE salon.
+      await app.prisma.salon.update({
+        where: { id: seed.salonId },
+        data: { isActive: false, deactivatedAt: new Date() },
+      });
+
+      // A genuinely NEW slot (different time on the same day → a different externalId, not an
+      // update of the existing rows) for BOTH mapped employees.
+      mockPhorest(wttTwoMapped);
+      const second = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(second.status).toBe("SUCCESS");
+      expect(second.created).toBeGreaterThanOrEqual(1);
+
+      const newShifts = await app.prisma.shift.findMany({
+        where: {
+          employeeId: { in: [seed.mappedEmployeeId, seed.mappedEmployeeId2] },
+          origin: "PHOREST",
+          startTime: "09:00",
+          deletedAt: null,
+        },
+      });
+      expect(newShifts.length).toBeGreaterThanOrEqual(1);
+      expect(newShifts.every((shift) => shift.salonId === salonB.id)).toBe(true);
+
+      // The FIRST sync's shifts (on the now-inactive original salon) keep it — no re-homing.
+      const originalShiftsAfter = await app.prisma.shift.findMany({
+        where: { id: { in: firstShifts.map((shift) => shift.id) } },
+      });
+      expect(originalShiftsAfter.every((shift) => shift.salonId === seed.salonId)).toBe(true);
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("D-14: an existing shift manually moved to another salon keeps that salon through a re-sync that hits the UPDATE branch", async () => {
+    const seed = await seedPhorestTenant(app, "no-rehome");
+    try {
+      mockPhorest(wttFixture);
+      const first = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(first.created).toBe(2);
+
+      const salonB = await createTestSalon(app.prisma, seed.tenantId, { name: "Salon B" });
+      const shift = await app.prisma.shift.findFirstOrThrow({
+        where: {
+          employeeId: seed.mappedEmployeeId,
+          origin: "PHOREST",
+          date: new Date("2026-07-30"),
+        },
+      });
+      await app.prisma.shift.update({ where: { id: shift.id }, data: { salonId: salonB.id } });
+
+      // Re-sync against the identical fixture → hits the UPDATE branch of the upsert (same externalId).
+      mockPhorest(wttFixture);
+      const second = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(second.status).toBe("SUCCESS");
+      expect(second.updated).toBeGreaterThanOrEqual(1);
+
+      const reloaded = await app.prisma.shift.findUniqueOrThrow({ where: { id: shift.id } });
+      expect(reloaded.salonId).toBe(salonB.id); // still B — the update branch never touches salonId
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("D-14: a MANUAL shift on a non-default salon keeps that salon when adopted (adopt-on-match)", async () => {
+    const seed = await seedPhorestTenant(app, "adopt-salon");
+    try {
+      const salonB = await createTestSalon(app.prisma, seed.tenantId, { name: "Salon B" });
+      await app.prisma.shift.create({
+        data: {
+          employeeId: seed.mappedEmployeeId,
+          salonId: salonB.id,
+          date: new Date("2026-07-30"),
+          startTime: "08:00",
+          endTime: "16:00",
+          origin: "MANUAL",
+          label: "Phorest",
+        },
+      });
+
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+
+      const adopted = await app.prisma.shift.findFirstOrThrow({
+        where: {
+          employeeId: seed.mappedEmployeeId,
+          date: new Date("2026-07-30"),
+          startTime: "08:00",
+          endTime: "16:00",
+          deletedAt: null,
+        },
+      });
+      expect(adopted.origin).toBe("PHOREST");
+      expect(adopted.salonId).toBe(salonB.id); // adopt-on-match never touches salonId (D-14)
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("D-15: a tenant with no active salon fails the sync loudly before any Phorest fetch, writes zero shifts", async () => {
+    const seed = await seedPhorestTenant(app, "no-active-salon");
+    try {
+      await app.prisma.salon.update({
+        where: { id: seed.salonId },
+        data: { isActive: false, deactivatedAt: new Date() },
+      });
+
+      const fetchSpy = vi.fn();
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("ERROR");
+      expect(res.error).toBe("Kein aktiver Salon vorhanden.");
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      const run = await app.prisma.phorestSyncRun.findUniqueOrThrow({ where: { id: res.runId } });
+      expect(run.status).toBe("ERROR");
+      expect(run.error).toBe("Kein aktiver Salon vorhanden.");
+
+      const shiftCount = await app.prisma.shift.count({
+        where: { employeeId: seed.mappedEmployeeId },
+      });
+      expect(shiftCount).toBe(0);
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
   });
 });

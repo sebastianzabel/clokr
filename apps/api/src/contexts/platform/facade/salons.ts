@@ -13,8 +13,8 @@
  * Weekday encoding: `day` is 0 = Monday … 6 = Sunday — identical to `TenantConfig.storeHours`
  * (schema.prisma:217) and deliberately NOT `WorkSchedule.workDays`'s encoding (0 = Sunday). This
  * module's `openingHours` shape is a verbatim copy of `storeHours`'s shape (D-03) so the one-time
- * migration data section can copy the JSON without reshaping it, and so a future reader (#325) can
- * switch from tenant to salon level without changing its parsing.
+ * migration data section can copy the JSON without reshaping it, and so #325's shift-check reader
+ * could switch from tenant to salon level without changing its parsing.
  *
  * A `Salon` is never hard-deleted (D-06) — deactivation only (`isActive` / `deactivatedAt`). This
  * module therefore has, and will only ever have, no delete function.
@@ -29,15 +29,28 @@
  *   cannot be deactivated.
  * - Multisalon means MORE THAN ONE active salon (`isMultiSalonTenant()`) — a derived read, never
  *   a config flag.
- * - `TenantConfig.storeHours` is deprecated: no new code reads it. The shift check
- *   (`contexts/scheduling/api/shifts.ts`) keeps reading it until #325, and
- *   `PUT /api/v1/settings/work` mirrors it into a tenant's single active salon in the meantime
- *   (D-16) — both pinned by `store-hours-readers.test.ts`'s living allowlist.
+ * - `TenantConfig.storeHours` is deprecated: no new code reads it. Since Phase 325 (issue #325)
+ *   the shift check (`contexts/scheduling/api/shifts.ts`) reads the shift's own `Salon.openingHours`
+ *   instead; `PUT /api/v1/settings/work` still mirrors a `storeHours` write into a tenant's single
+ *   active salon (D-13) until #82 removes both the mirror and this field — pinned by
+ *   `store-hours-readers.test.ts`'s living allowlist (now `settings.ts` only).
  * - Every tenant-creating path (`seed.ts`, `seed-demo.ts`, `test-bootstrap.ts`) creates that
  *   tenant's default salon in the same step (D-18).
+ * - Phase 67b (issue #67, D-14): a salon that is, on the deactivation day, the current or future
+ *   Stammsalon (HOME assignment) of a still-employed person cannot be deactivated —
+ *   `HOME_SALON_IN_USE`, checked between `ALREADY_INACTIVE` and `LAST_ACTIVE_SALON`.
+ * - Phase 67b (issue #67, D-15): a successful deactivation ends every running Einsatzsalon
+ *   (DEPLOYMENT) assignment to that salon at the deactivation date, voiding any that had not
+ *   started yet, in the SAME transaction as the deactivation itself.
  */
 import type { Prisma, Salon } from "@clokr/db";
 import { z } from "zod";
+import type { CalendarDay } from "../salon-assignment-rules";
+import {
+  endDeploymentsOnSalonDeactivation,
+  homeSalonUsageFrom,
+  type EndedDeploymentAssignment,
+} from "./salon-assignments";
 
 // A real HH:MM time: hours 00-23, minutes 00-59. Plain `\d{2}:\d{2}` (as `settings.ts`'s weaker,
 // pre-existing `storeHours` schema uses) would also accept "99:99" — D-04 requires a real time.
@@ -114,6 +127,26 @@ export async function listSalons(
 ) {
   return db.salon.findMany({
     where: options.includeInactive ? { tenantId } : { tenantId, isActive: true },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+}
+
+/**
+ * Phase 325 (issue #325), D-04: the tenant's "default salon" — the earliest-created ACTIVE salon
+ * (`createdAt asc`, tie-break `id`), same ordering as {@link listSalons}. `null` when the tenant
+ * has no active salon — callers answer with a 409 `NO_ACTIVE_SALON` (routes) or fail the sync run
+ * loudly (D-15); this facade never falls back to an inactive salon at runtime (the migration's own
+ * backfill SQL has a migration-only fallback to the earliest salon of any state, pinned equal to
+ * this function's active-only rule by `apps/api/src/__tests__/shift-salon-migration.test.ts`).
+ * Once #65 exists, the Phorest sync's use of this function is replaced by the salon of the
+ * specific Phorest coupling.
+ */
+export async function findDefaultSalon(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+): Promise<Salon | null> {
+  return db.salon.findFirst({
+    where: { tenantId, isActive: true },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 }
@@ -298,33 +331,60 @@ export async function updateSalon(
 // ── Deactivate / re-activate (Phase 64b Plan 02, D-06/D-07/D-08) — never delete ────────────────
 
 /**
- * D-06/D-07/D-08: the outcome of a deactivate/activate attempt, as a CODE, never a display string
- * (CLAUDE.md "never use a new display string as a control value") — the ROUTE maps each status to
- * its own German 409 message, or, for `NOT_FOUND`, to the shared `rejectUnknownSalon` 404.
+ * D-06/D-07/D-08/D-14: the outcome of a deactivate/activate attempt, as a CODE, never a display
+ * string (CLAUDE.md "never use a new display string as a control value") — the ROUTE maps each
+ * status to its own German 409 message, or, for `NOT_FOUND`, to the shared `rejectUnknownSalon`
+ * 404. `HOME_SALON_IN_USE` (Phase 67b, D-14) carries only a COUNT — never names, per the AC.
  */
 export type SalonStateChange =
   | { status: "OK"; existing: Salon; updated: Salon }
   | { status: "NOT_FOUND" }
   | { status: "ALREADY_INACTIVE" }
   | { status: "ALREADY_ACTIVE" }
-  | { status: "LAST_ACTIVE_SALON" };
+  | { status: "LAST_ACTIVE_SALON" }
+  | { status: "HOME_SALON_IN_USE"; employeeCount: number };
 
-/** The statuses {@link deactivateSalon} can return — never `ALREADY_ACTIVE`. */
-export type SalonDeactivation = Exclude<SalonStateChange, { status: "ALREADY_ACTIVE" }>;
+/**
+ * The statuses {@link deactivateSalon} can return — never `ALREADY_ACTIVE`. Phase 67b (D-15)
+ * makes this an EXPLICIT union rather than `Exclude<SalonStateChange, ...>`: its `OK` variant
+ * additionally carries `deactivationDay` and `endedAssignments`, fields {@link SalonActivation}'s
+ * `OK` variant does not have (activation never ends or voids a deployment).
+ */
+export type SalonDeactivation =
+  | {
+      status: "OK";
+      existing: Salon;
+      updated: Salon;
+      deactivationDay: CalendarDay;
+      endedAssignments: EndedDeploymentAssignment[];
+    }
+  | { status: "NOT_FOUND" }
+  | { status: "ALREADY_INACTIVE" }
+  | { status: "LAST_ACTIVE_SALON" }
+  | { status: "HOME_SALON_IN_USE"; employeeCount: number };
 
-/** The statuses {@link activateSalon} can return — never `ALREADY_INACTIVE`/`LAST_ACTIVE_SALON`. */
+/**
+ * The statuses {@link activateSalon} can return — never `ALREADY_INACTIVE`/`LAST_ACTIVE_SALON`/
+ * `HOME_SALON_IN_USE` (re-activating a salon can never make it anyone's Stammsalon by itself).
+ */
 export type SalonActivation = Exclude<
   SalonStateChange,
-  { status: "ALREADY_INACTIVE" | "LAST_ACTIVE_SALON" }
+  { status: "ALREADY_INACTIVE" | "LAST_ACTIVE_SALON" | "HOME_SALON_IN_USE" }
 >;
 
 /**
- * D-08/D-11: deactivate a salon. MUST run inside an interactive `$transaction` — the row lock
- * below is released at the end of the transaction it runs in, so calling this with a bare
+ * D-08/D-11/D-14/D-15: deactivate a salon. MUST run inside an interactive `$transaction` — the row
+ * lock below is released at the end of the transaction it runs in, so calling this with a bare
  * `PrismaClient` (no surrounding `$transaction`) gives no protection against the concurrent-
- * deactivation race the lock exists to prevent. This is the single place Phase 67b extends with
- * its Stammsalon guard (D-08's own wording): a status check inserted between `ALREADY_INACTIVE`
- * and `LAST_ACTIVE_SALON`, in this one function.
+ * deactivation race the lock exists to prevent. This is the extension point Phase 67b filled
+ * (64b D-08's own wording): `homeSalonUsageFrom` runs between `ALREADY_INACTIVE` and
+ * `LAST_ACTIVE_SALON` — a salon that is a still-employed person's current or future Stammsalon
+ * cannot be deactivated (D-14) — and, on success, `endDeploymentsOnSalonDeactivation` ends or
+ * voids every running Einsatzsalon assignment to it in the SAME transaction (D-15). Both helpers
+ * live in `./salon-assignments` (D-02: that module never imports `./salons`, so this direction is
+ * cycle-free) and take no lock of their own — they rely entirely on the `FOR UPDATE` lock below,
+ * which is why `homeSalonUsageFrom`'s own "today" read and `endDeploymentsOnSalonDeactivation`'s
+ * writes both observe a salon set that cannot change underneath them.
  */
 export async function deactivateSalon(
   db: Prisma.TransactionClient,
@@ -340,6 +400,11 @@ export async function deactivateSalon(
   if (!existing) return { status: "NOT_FOUND" };
   if (!existing.isActive) return { status: "ALREADY_INACTIVE" };
 
+  const usage = await homeSalonUsageFrom(db, tenantId, salonId);
+  if (usage.employeeCount > 0) {
+    return { status: "HOME_SALON_IN_USE", employeeCount: usage.employeeCount };
+  }
+
   const activeCount = await countActiveSalons(db, tenantId);
   if (activeCount <= 1) return { status: "LAST_ACTIVE_SALON" };
 
@@ -347,7 +412,21 @@ export async function deactivateSalon(
     where: { id: salonId, tenantId },
     data: { isActive: false, deactivatedAt: new Date() },
   });
-  return { status: "OK", existing, updated };
+
+  const endedAssignments = await endDeploymentsOnSalonDeactivation(
+    db,
+    tenantId,
+    salonId,
+    usage.deactivationDay,
+  );
+
+  return {
+    status: "OK",
+    existing,
+    updated,
+    deactivationDay: usage.deactivationDay,
+    endedAssignments,
+  };
 }
 
 /** D-07: the mirror of {@link deactivateSalon} — same lock, same lookup shape. */
@@ -369,7 +448,7 @@ export async function activateSalon(
   return { status: "OK", existing, updated };
 }
 
-// ── storeHours <-> Salon mirror (Phase 64b Plan 04, D-16) — removed by #325 ─────────────────────
+// ── storeHours <-> Salon mirror (Phase 64b Plan 04, D-16) — removed by #82 ──────────────────────
 
 /**
  * Tolerant equality for two `openingHours` JSON values: sorts by day and normalises an ABSENT
@@ -393,8 +472,11 @@ function normalizeOpeningHoursForCompare(value: unknown): string {
 }
 
 /**
- * D-16: keeps `TenantConfig.storeHours` and a tenant's single active salon in step until #325
- * removes the tenant field entirely. Called ONLY from `PUT /api/v1/settings/work`
+ * D-13/D-16: keeps `TenantConfig.storeHours` and a tenant's single active salon in step until #82
+ * removes the tenant field entirely (Phase 325, issue #325, kept this mirror deliberately — the
+ * admin UI's only opening-hours editor still writes `storeHours`, and removing the mirror before
+ * #82 builds a salon-level editor would make every future edit there invisible to the shift check).
+ * Called ONLY from `PUT /api/v1/settings/work`
  * (`contexts/platform/api/settings.ts`) when its body carries `storeHours`, and mirrors ONLY when
  * that value differs from `previousTenantHours` — the tenant value before the write, read by the
  * caller — so resending an unchanged week never overwrites a salon edited via

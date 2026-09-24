@@ -12,7 +12,13 @@
 // The 8 test scenarios mirror the plan's acceptance criteria one-to-one.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  salonIdForEmployee, // Phase 325 (issue #325)
+} from "./setup";
 import { saldoSnapshotPeriodBounds } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 import { cleanupShiftsForBSAbsence } from "../contexts/scheduling/shift-cleanup";
@@ -40,6 +46,9 @@ async function seedShift(
   return app.prisma.shift.create({
     data: {
       employeeId,
+      // Phase 325 (issue #325): this helper receives only an employeeId — resolve its own
+      // tenant's salon rather than assuming any particular seed object.
+      salonId: await salonIdForEmployee(app.prisma, employeeId),
       date,
       startTime: "08:00",
       endTime: "16:00",
