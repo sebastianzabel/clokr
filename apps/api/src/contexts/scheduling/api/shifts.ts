@@ -12,6 +12,7 @@ import {
   employeeScopeFor,
   type AccessContext,
   findDefaultSalon, // Phase 325 (issue #325), D-04/D-05
+  listSalons, // Phase 325 (issue #325), D-08 (copy-week fallback)
 } from "../../platform";
 import {
   isMonthClosed, // Phase 100B Plan 07 — W1
@@ -2633,6 +2634,16 @@ export async function shiftRoutes(app: FastifyInstance) {
         return { weekStart: weekStartIso, create: toCreate, skip, committed: false };
       }
 
+      // Phase 325 (issue #325), D-08: generate-week's patterns/templates carry no salon —
+      // every generated shift lands on the tenant's default salon. Resolved once, before the
+      // transaction, only when there is something to write.
+      let generateWeekSalonId: string | null = null;
+      if (toCreate.length > 0) {
+        const salon = await findDefaultSalon(app.prisma, tenantId);
+        if (!salon) return reply.code(409).send(NO_ACTIVE_SALON_REPLY);
+        generateWeekSalonId = salon.id;
+      }
+
       // Commit mode — write everything in one transaction
       const { rows: created, adjustments } = await app.prisma.$transaction(async (tx) => {
         const rows = [];
@@ -2641,6 +2652,7 @@ export async function shiftRoutes(app: FastifyInstance) {
             data: {
               employeeId: c.employeeId,
               templateId: c.templateId,
+              salonId: generateWeekSalonId as string, // Phase 325 (issue #325), D-08
               date: new Date(c.date),
               startTime: c.startTime,
               endTime: c.endTime,
@@ -2866,6 +2878,11 @@ export async function shiftRoutes(app: FastifyInstance) {
         existingShifts.map((s) => `${s.employeeId}::${s.date.toISOString().slice(0, 10)}`),
       );
 
+      // Phase 325 (issue #325), D-08: `sourceShifts`'s `include`-only query (no sibling `select`)
+      // already returns every Shift scalar, `salonId` included — no query change needed here.
+      // This map lets each copy keep its SOURCE shift's salon (a copy is a copy).
+      const sourceSalonByShiftId = new Map(sourceShifts.map((s) => [s.id, s.salonId]));
+
       type CopyCreate = {
         employeeId: string;
         date: string;
@@ -2954,15 +2971,38 @@ export async function shiftRoutes(app: FastifyInstance) {
         };
       }
 
+      // Phase 325 (issue #325), D-08: a copy keeps the SOURCE shift's salon when that salon is
+      // still active by commit time; otherwise (D-07 spirit: never a new shift on an inactive
+      // salon) it falls back to the tenant's default salon. Resolved once, before the
+      // transaction, only when there is something to write.
+      const activeSalons =
+        toCreate.length > 0
+          ? await listSalons(app.prisma, tenantId, { includeInactive: false })
+          : [];
+      const activeSalonIds = new Set(activeSalons.map((s) => s.id));
+      const copyWeekDefaultSalonId = activeSalons[0]?.id ?? null;
+      const needsFallbackSalon = toCreate.some(
+        (c) => !activeSalonIds.has(sourceSalonByShiftId.get(c.sourceShiftId) ?? ""),
+      );
+      if (needsFallbackSalon && !copyWeekDefaultSalonId) {
+        return reply.code(409).send(NO_ACTIVE_SALON_REPLY);
+      }
+
       // Commit mode — write everything in one transaction
       const { rows: created, adjustments } = await app.prisma.$transaction(async (tx) => {
         const rows: Array<Awaited<ReturnType<typeof tx.shift.create>> & { sourceShiftId: string }> =
           [];
         for (const c of toCreate) {
+          const sourceSalonId = sourceSalonByShiftId.get(c.sourceShiftId);
+          const salonId =
+            sourceSalonId && activeSalonIds.has(sourceSalonId)
+              ? sourceSalonId
+              : (copyWeekDefaultSalonId as string);
           const row = await tx.shift.create({
             data: {
               employeeId: c.employeeId,
               templateId: c.templateId,
+              salonId, // Phase 325 (issue #325), D-08
               date: new Date(c.date),
               startTime: c.startTime,
               endTime: c.endTime,
@@ -3064,6 +3104,17 @@ export async function shiftRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { shifts: shiftDefs } = bulkShiftSchema.parse(req.body);
 
+      // Phase 325 (issue #325), D-08: no per-item salonId on the body yet (plan 02 adds it) —
+      // every bulk-created shift lands on the tenant's default salon, resolved once. Plan 02
+      // also adds the employee-tenant guard this route is currently missing (pre-existing,
+      // unrelated gap — not fixed here).
+      let bulkSalonId: string | null = null;
+      if (shiftDefs.length > 0) {
+        const salon = await findDefaultSalon(app.prisma, req.user.tenantId);
+        if (!salon) return reply.code(409).send(NO_ACTIVE_SALON_REPLY);
+        bulkSalonId = salon.id;
+      }
+
       // Phase 107 (D-14/D-15): converted from the batch `$transaction([...])` form to the
       // interactive `$transaction(async (tx) => ...)` form — required to insert the resolver
       // call inside the SAME transaction as the creates (the batch form has no callback body
@@ -3076,6 +3127,7 @@ export async function shiftRoutes(app: FastifyInstance) {
             data: {
               employeeId: s.employeeId,
               templateId: s.templateId,
+              salonId: bulkSalonId as string, // Phase 325 (issue #325), D-08
               date: new Date(s.date),
               startTime: s.startTime,
               endTime: s.endTime,

@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp } from "../../../__tests__/setup";
+import { getTestApp, salonIdForEmployee } from "../../../__tests__/setup"; // Phase 325 (issue #325)
 import { syncPhorestShifts } from "../sync-shifts";
 import { extractWorkTimes } from "../types";
 import type { PhorestApiResponse } from "../types";
@@ -270,6 +270,7 @@ describe("phorest sync-shifts", () => {
       const manual = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date("2026-08-15"),
           startTime: "12:00",
           endTime: "20:00",
@@ -303,6 +304,7 @@ describe("phorest sync-shifts", () => {
       const far = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date(plusDays(10)),
           startTime: "08:00",
           endTime: "12:00",
@@ -342,6 +344,7 @@ describe("phorest sync-shifts", () => {
       await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date("2026-07-30"),
           startTime: "08:00",
           endTime: "16:00",
@@ -399,6 +402,7 @@ describe("phorest sync-shifts", () => {
       const manual = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date("2026-07-30"),
           startTime: "08:00",
           endTime: "16:00",
@@ -467,6 +471,7 @@ describe("phorest sync-shifts Phorest-master replace (85.1)", () => {
       const wrongTime = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date("2026-07-30"),
           startTime: "06:00",
           endTime: "07:00",
@@ -496,6 +501,7 @@ describe("phorest sync-shifts Phorest-master replace (85.1)", () => {
       const manual = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date("2026-07-31"),
           startTime: "10:00",
           endTime: "18:00",
@@ -529,6 +535,7 @@ describe("phorest sync-shifts Phorest-master replace (85.1)", () => {
       const manual = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date("2026-07-30"),
           startTime: "06:00",
           endTime: "07:00",
@@ -619,6 +626,7 @@ describe("phorest sync-shifts padding (85.1)", () => {
       const legacy = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date("2026-07-30"),
           startTime: "08:00",
           endTime: "16:00",
@@ -886,6 +894,7 @@ describe("phorest sync-shifts BS-gewinnt skip (85.1)", () => {
       const preExisting = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date("2026-07-31"),
           startTime: "09:00",
           endTime: "17:00",
@@ -934,6 +943,9 @@ describe("SHIFT-02 pending-leave protection", () => {
     return app.prisma.shift.create({
       data: {
         employeeId,
+        // Phase 325 (issue #325): only an employeeId is available here — resolve its own
+        // tenant's salon rather than assuming any particular seed object.
+        salonId: await salonIdForEmployee(app.prisma, employeeId),
         date: new Date(dateStr),
         startTime: "09:00",
         endTime: "17:00",

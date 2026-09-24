@@ -25,8 +25,10 @@ import appointmentsPagedP2 from "./fixtures/appointments-paged-p2.json";
 const originalFetch = global.fetch;
 const TZ = "Europe/Berlin";
 
-// The exact five business columns a stored PhorestAppointment row may carry, plus id + createdAt.
+// The exact six business columns a stored PhorestAppointment row may carry, plus id + createdAt.
 // The DSGVO minimization (SA-02) is asserted against this exact set — nothing customer/service/price.
+// `salonId` (Phase 325, issue #325) is an internal Unterbau FK the sync resolves itself, never
+// Phorest customer data — it does not widen the minimization boundary.
 const ALLOWED_KEYS = [
   "createdAt",
   "date",
@@ -34,6 +36,7 @@ const ALLOWED_KEYS = [
   "endTime",
   "externalId",
   "id",
+  "salonId",
   "startTime",
 ];
 

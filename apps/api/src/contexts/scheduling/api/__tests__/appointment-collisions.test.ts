@@ -48,6 +48,7 @@ describe("GET /phorest/appointment-collisions", () => {
       data: [
         {
           employeeId: seed.employee.id,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date(D1),
           startTime: "09:00",
           endTime: "10:00",
@@ -55,6 +56,7 @@ describe("GET /phorest/appointment-collisions", () => {
         },
         {
           employeeId: seed.employee.id,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date(D1),
           startTime: "11:00",
           endTime: "11:45",
@@ -62,6 +64,7 @@ describe("GET /phorest/appointment-collisions", () => {
         },
         {
           employeeId: seed.employee.id,
+          salonId: seed.salonId, // Phase 325 (issue #325)
           date: new Date(D2),
           startTime: "14:00",
           endTime: "15:00",
@@ -75,6 +78,7 @@ describe("GET /phorest/appointment-collisions", () => {
     const shiftOnD1 = await app.prisma.shift.create({
       data: {
         employeeId: seed.employee.id,
+        salonId: seed.salonId, // Phase 325 (issue #325)
         date: new Date(D1),
         startTime: "08:00",
         endTime: "16:00",
@@ -84,6 +88,7 @@ describe("GET /phorest/appointment-collisions", () => {
     const otherShift = await app.prisma.shift.create({
       data: {
         employeeId: other.employee.id,
+        salonId: other.salonId, // Phase 325 (issue #325) — the OTHER tenant's own salon
         date: new Date(D1),
         startTime: "08:00",
         endTime: "16:00",
