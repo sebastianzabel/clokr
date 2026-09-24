@@ -17,6 +17,7 @@ import {
   computeRetroLimitStr,
   computeEntryAgeInDays,
 } from "./retro-config"; // Phase 76.29 — RETRO-01 window guard
+import { findEntriesOfDay } from "./day-entries"; // Phase 69b — the single day lookup
 
 // ── Überlappungsprüfung ────────────────────────────────────────────────────────
 // entryDate (optional): the calendar date of the entry being created/updated.
@@ -91,20 +92,19 @@ export async function checkOverlap(
 // One-per-day existence check (step 1 of validateTimeEntryInvariants), extracted so it
 // can be re-run against a `tx` handle from inside the grant-consumption $transaction
 // (retro-grant-race-403-vs-409 fix) — see param doc on deferConflictChecksToTx below.
+// Phase 69b (Issue #69): the only place that ENFORCES "at most one entry per day" in code (the
+// partial unique index is the database backstop); it reads the day through findEntriesOfDay.
 export async function checkOneEntryPerDay(
   db: DbClient,
+  tenantId: string,
   employeeId: string,
   date: Date,
   excludeEntryId?: string,
 ): Promise<string | null> {
-  const existingEntry = await db.timeEntry.findFirst({
-    where: {
-      employeeId,
-      deletedAt: null,
-      date,
-      ...(excludeEntryId ? { id: { not: excludeEntryId } } : {}),
-    },
-  });
+  // MULTI-ENTRY: this is the rule itself — allowing several entries per day (#70) means relaxing
+  // or removing this check together with the unique index.
+  const dayEntries = await findEntriesOfDay(db, { tenantId, employeeId, date });
+  const existingEntry = dayEntries.find((e) => e.id !== excludeEntryId);
   if (existingEntry) {
     return "Es existiert bereits ein Eintrag für diesen Tag. Bitte den bestehenden Eintrag bearbeiten.";
   }
@@ -176,7 +176,13 @@ export async function validateTimeEntryInvariants(
   // Skipped when deferConflictChecksToTx is set (see param doc above) — the caller's own
   // $transaction is the authoritative source of truth in that case.
   if (!deferConflictChecksToTx) {
-    const oneDayError = await checkOneEntryPerDay(app.prisma, employeeId, date, excludeEntryId);
+    const oneDayError = await checkOneEntryPerDay(
+      app.prisma,
+      tenantId,
+      employeeId,
+      date,
+      excludeEntryId,
+    );
     if (oneDayError) {
       return { error: oneDayError };
     }

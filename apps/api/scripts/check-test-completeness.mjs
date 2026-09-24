@@ -478,6 +478,16 @@ import { readFileSync } from "node:fs";
 // `numTotalTests` 3411). Both stale steps above (c5f4fd26's +2 and #263's +10) are absorbed by
 // taking that measurement as the floor, so the floor no longer trails the suite.
 //
+// Phase 69b Plan 01 (Issue #69): the full suite on `bea6b5c7` (this branch's base, before any
+// change) reported `testResults.length` 280 and `numTotalTests` 3414 — main had already grown
+// by one file and three tests past the floor above (#324). This plan adds one file
+// (`day-lookup-characterization.test.ts`, 23 tests in its own output) and seven cases to
+// `resolver-reopen.integration.test.ts` (13 tests in its own output, was 6): 280 + 1 = 281,
+// 3414 + 23 + 7 = 3444.
+//
+// Phase 69b Plan 02: adds `time-entry-day-lookup-guard.test.ts` (6 tests in its own output):
+// 281 + 1 = 282, 3444 + 6 = 3450.
+//
 // Phase 72b (#72): re-measured from a fully green run of the branch tree at eb76f631
 // (`pnpm --filter @clokr/api test`): `Test Files 282 passed (282)`, `Tests 3426 passed |
 // 3 skipped (3429)` — `vitest-report.json` agrees (`testResults.length` 282, `numTotalTests`
@@ -492,8 +502,14 @@ import { readFileSync } from "node:fs";
 // other two test files that commit touched keep 8 and 7 cases) and is taken from the reporter,
 // not guessed. A later merge of `origin/main` into this branch requires re-measuring on the
 // merged tree before merge — never adding two hand numbers.
-const MIN_FILES = 282;
-const MIN_TESTS = 3429;
+//
+// Phase 72b, after merging `origin/main` @ a03b4e3a (#326, phase 69b) into the branch: both sides
+// had set 282 independently from different bases, so the floor was re-measured on the MERGED tree
+// (`pnpm --filter @clokr/api test`): `Test Files 284 passed (284)`, `Tests 3463 passed |
+// 3 skipped (3466)`, zero failures. That is 69b's hand-summed 3450 + this phase's 14 = 3464,
+// plus 2 runtime cases the 69b sum did not see — taken from the reporter, not added by hand.
+const MIN_FILES = 284;
+const MIN_TESTS = 3466;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

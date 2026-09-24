@@ -6,6 +6,7 @@ import { getCurrentShift } from "../../scheduling"; // Phase 101B (Issue #101, w
 import { getTenantTimezone, dateStrInTz } from "../../working-time-account"; // Phase 101B
 import { resolveClockEvent } from "../../../services/clock/resolver";
 import type { ClockEvent } from "../../../services/clock/types";
+import { findEntriesOfDay } from "../day-entries"; // Phase 69b — the single day lookup
 
 // ── Zod schema ────────────────────────────────────────────
 const presenceEventSchema = z.object({
@@ -187,14 +188,16 @@ export async function presenceRoutes(app: FastifyInstance) {
 
       // ── 7. Cross-source dedup check ───────────────────────────────────────
       // If a non-WIFI entry already exists for this date, confirm presence only (no second entry)
-      const existingNonWifiEntry = await app.prisma.timeEntry.findFirst({
-        where: {
-          employeeId: employee.id,
-          date: today,
-          deletedAt: null,
-          source: { in: ["NFC", "MANUAL", "CORRECTION"] },
-        },
+      // Phase 69b: the day's rows come from findEntriesOfDay; the adapter filters by source.
+      const dayEntries = await findEntriesOfDay(app.prisma, {
+        tenantId,
+        employeeId: employee.id,
+        date: today,
       });
+      // MULTI-ENTRY: "any non-WIFI row of the day" — with several entries the confirm targets the
+      // first one in start order; decide whether presence should attach to a specific entry.
+      const existingNonWifiEntry =
+        dayEntries.find((e) => ["NFC", "MANUAL", "CORRECTION"].includes(e.source)) ?? null;
 
       if (existingNonWifiEntry) {
         await app.prisma.auditLog.create({
@@ -223,9 +226,12 @@ export async function presenceRoutes(app: FastifyInstance) {
       // for a presence-confirm ping. See RESEARCH.md Pitfall 4.
       if (body.eventType === "connected") {
         // Check for existing WIFI entry — never create a second entry
-        const existingWifiEntry = await app.prisma.timeEntry.findFirst({
-          where: { employeeId: employee.id, date: today, deletedAt: null, source: "WIFI" },
-        });
+        // MULTI-ENTRY: "never a second entry" for WIFI relies on one row per day. Re-read (not the
+        // list above) so the query timing stays exactly as before the Phase 69b refactor.
+        const existingWifiEntry =
+          (
+            await findEntriesOfDay(app.prisma, { tenantId, employeeId: employee.id, date: today })
+          ).find((e) => e.source === "WIFI") ?? null;
 
         if (existingWifiEntry) {
           // Already clocked in via WIFI — confirm presence, no duplicate.
@@ -285,14 +291,16 @@ export async function presenceRoutes(app: FastifyInstance) {
             // entries this phase makes reachable would silently lose the
             // WIFI_PRESENCE_CONFIRMED audit entry — a gap in Revisionssicherheit.
             // The soft-delete filter stays (CLAUDE.md requirement).
-            const winnerEntry = await app.prisma.timeEntry.findFirst({
-              where: {
-                employeeId: employee.id,
-                date: today,
-                deletedAt: null,
-                endTime: null,
-              },
-            });
+            // MULTI-ENTRY: the race winner is "the open row of the day" — unambiguous only while
+            // at most one row per day exists.
+            const winnerEntry =
+              (
+                await findEntriesOfDay(app.prisma, {
+                  tenantId,
+                  employeeId: employee.id,
+                  date: today,
+                })
+              ).find((e) => e.endTime === null) ?? null;
             if (winnerEntry) {
               await app.prisma.auditLog.create({
                 data: {

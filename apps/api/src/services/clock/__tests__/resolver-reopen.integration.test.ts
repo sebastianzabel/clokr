@@ -266,6 +266,7 @@ describe("services/clock/resolver — D-01 reopen path (resolver-reopen.integrat
     const result = await app.prisma.$transaction(async (tx) => {
       return consolidateSameDayEntries(
         tx,
+        data.tenant.id,
         fakeOpenEntry as never,
         4, // gapHoursMax
         app.log,
@@ -308,5 +309,126 @@ describe("services/clock/resolver — D-01 reopen path (resolver-reopen.integrat
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // ── Issue #69 (Phase 69b): consolidation predecessor pick, characterized before the refactor ──
+  // gapHoursMax = 0 ends every found predecessor in `gap_exceeded` / `negative_gap` BEFORE any
+  // write, so these cases observe only WHICH row the day lookup selects. The "open" entry is a
+  // TypeScript-only value (like Test 5), never inserted.
+  describe("consolidate predecessor selection (characterization, Issue #69)", () => {
+    const at = (hh: number, mm = 0) =>
+      new Date(
+        `${ANCHOR_DATE_STR}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00.000Z`,
+      );
+    const dateOnly = () => new Date(`${ANCHOR_DATE_STR}T00:00:00.000Z`);
+    const spyLog = () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() });
+    type SpyLog = ReturnType<typeof spyLog>;
+    // The single call site of consolidateSameDayEntries in this block.
+    const consolidate = (open: unknown, log: SpyLog) =>
+      app.prisma.$transaction((tx) =>
+        consolidateSameDayEntries(tx, data.tenant.id, open as never, 0, log as never),
+      );
+
+    function fakeOpen(start: Date, end: Date, id = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee") {
+      return {
+        id,
+        employeeId: data.employee.id,
+        date: dateOnly(),
+        startTime: start,
+        endTime: end,
+        breakMinutes: 0,
+        type: "WORK",
+        source: "MOBILE",
+        retroRequestId: null,
+        deletedAt: null,
+      };
+    }
+    async function row(start: Date, end: Date | null, extra: Record<string, unknown> = {}) {
+      return app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: dateOnly(),
+          startTime: start,
+          endTime: end,
+          source: "NFC" as never,
+          ...extra,
+        },
+      });
+    }
+    function reasons(log: SpyLog): string[] {
+      return log.info.mock.calls
+        .filter((c) => c[1] === "merge_skipped")
+        .map((c) => (c[0] as { reason: string }).reason);
+    }
+    function attemptedWith(log: SpyLog): string | undefined {
+      const call = log.info.mock.calls.find((c) => c[1] === "merge_attempted");
+      return call ? (call[0] as { previousEntryId: string }).previousEntryId : undefined;
+    }
+
+    it("c1: a closed live row ending before the open start is the predecessor", async () => {
+      const prev = await row(at(6), at(10));
+      const log = spyLog();
+      const res = await consolidate(fakeOpen(at(11), at(12)), log);
+      expect(res.merged).toBe(false);
+      expect(attemptedWith(log)).toBe(prev.id);
+      expect(reasons(log)).toEqual(["gap_exceeded"]);
+    });
+
+    it("c2: endTime equal to the open start still qualifies (<=), gap 0 → negative_gap", async () => {
+      const prev = await row(at(6), at(10));
+      const log = spyLog();
+      await consolidate(fakeOpen(at(10), at(12)), log);
+      expect(attemptedWith(log)).toBe(prev.id);
+      expect(reasons(log)).toEqual(["negative_gap"]);
+    });
+
+    it("c3: a row ending after the open start is not a predecessor", async () => {
+      await row(at(6), at(10));
+      const log = spyLog();
+      await consolidate(fakeOpen(at(9), at(12)), log);
+      expect(attemptedWith(log)).toBeUndefined();
+      expect(reasons(log)).toEqual(["no_predecessor"]);
+    });
+
+    it("c4: a row coupled to a Zeitnachtrag is not a predecessor", async () => {
+      const req = await app.prisma.retroEntryRequest.create({
+        data: {
+          employeeId: data.employee.id,
+          targetDate: dateOnly(),
+          reason: "c4",
+          status: "APPROVED",
+        },
+      });
+      try {
+        await row(at(6), at(10), { retroRequestId: req.id });
+        const log = spyLog();
+        await consolidate(fakeOpen(at(11), at(12)), log);
+        expect(reasons(log)).toEqual(["no_predecessor"]);
+      } finally {
+        await app.prisma.timeEntry.deleteMany({ where: { retroRequestId: req.id } });
+        await app.prisma.retroEntryRequest.delete({ where: { id: req.id } });
+      }
+    });
+
+    it("c5: an open row is not a predecessor", async () => {
+      await row(at(6), null);
+      const log = spyLog();
+      await consolidate(fakeOpen(at(11), at(12)), log);
+      expect(reasons(log)).toEqual(["no_predecessor"]);
+    });
+
+    it("c6: a soft-deleted row is not a predecessor", async () => {
+      await row(at(6), at(10), { deletedAt: new Date() });
+      const log = spyLog();
+      await consolidate(fakeOpen(at(11), at(12)), log);
+      expect(reasons(log)).toEqual(["no_predecessor"]);
+    });
+
+    it("c7: the entry itself is never its own predecessor (the production path)", async () => {
+      const self = await row(at(6), at(10));
+      const log = spyLog();
+      await consolidate({ ...self }, log);
+      expect(reasons(log)).toEqual(["no_predecessor"]);
+    });
   });
 });
