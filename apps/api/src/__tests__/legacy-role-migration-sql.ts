@@ -19,6 +19,7 @@
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import pg from "pg";
 import type { PrismaClient } from "@clokr/db";
 
 // __dirname is apps/api/src/__tests__ — four levels up is the repo root (same resolution as
@@ -72,4 +73,28 @@ export async function executeLegacyRoleMigration(
   prisma: Pick<PrismaClient, "$executeRawUnsafe">,
 ): Promise<void> {
   await prisma.$executeRawUnsafe(readLegacyRoleMigrationSql());
+}
+
+/**
+ * Runs the migration file verbatim through a raw pg client on `connectionString` and returns the
+ * message of every notice the server sent while it ran (the migration RAISEs one NOTICE with its
+ * four counts, D-05). This is the only path that can see the notice — Prisma drops notices. The
+ * client is always closed, also when the SQL fails.
+ */
+export async function executeLegacyRoleMigrationCapturingNotices(
+  connectionString: string,
+): Promise<string[]> {
+  const sql = readLegacyRoleMigrationSql();
+  const client = new pg.Client({ connectionString });
+  const notices: string[] = [];
+  client.on("notice", (notice) => {
+    notices.push(notice.message ?? "");
+  });
+  await client.connect();
+  try {
+    await client.query(sql);
+  } finally {
+    await client.end();
+  }
+  return notices;
 }
