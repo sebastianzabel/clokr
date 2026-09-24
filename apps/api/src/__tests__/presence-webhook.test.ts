@@ -1,6 +1,6 @@
 /**
  * Integration tests for POST /api/v1/presence/events
- * Covers REQ-01 through REQ-09 as defined in 25-03-PLAN.md
+ * Covers REQ-01 through REQ-11; REQ-11 = GitHub issue #332
  *
  * Test date: 2026-01-15 (Thursday)
  * Shift: 09:00–17:00 Europe/Berlin = 08:00–16:00 UTC (winter, UTC+1)
@@ -213,6 +213,36 @@ describe("POST /api/v1/presence/events", () => {
     expect(log!.purgeable).toBe(true);
     expect(log!.entityId).toBeNull();
   });
+
+  // ── REQ-11 (#332): malformed MAC → 400 with fixed message, no audit row ──
+  it.each(["AA:BB:CC:DD:EE", "not-a-mac", "AA:BB:CC:DD:EE:FF:00"])(
+    "REQ-11 (#332): malformed MAC %s returns 400 with fixed message and writes no audit row",
+    async (malformedMac) => {
+      // No setupEmployee call needed — the request must be rejected before any employee lookup.
+      const before = new Date();
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/presence/events",
+        headers: { authorization: `Bearer ${RAW_KEY}` },
+        payload: {
+          mac: malformedMac,
+          eventType: "connected",
+          timestamp: IN_WINDOW_TIMESTAMP,
+          adapter: "fritzbox",
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body)).toEqual({ error: "Ungültige MAC-Adresse" });
+      expect(res.body).not.toContain(malformedMac);
+
+      const log = await app.prisma.auditLog.findFirst({
+        where: { action: { startsWith: "WIFI_" }, createdAt: { gte: before } },
+      });
+      expect(log).toBeNull();
+    },
+  );
 
   // ── REQ-04: Opt-out employee → 200 + purgeable WIFI_OPT_OUT AuditLog ────
   it("REQ-04: wifiPresenceEnabled=false returns 200 and writes purgeable WIFI_OPT_OUT audit log", async () => {
