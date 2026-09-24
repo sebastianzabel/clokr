@@ -3,6 +3,7 @@
 **Status:** akzeptiert
 **Datum:** 2026-08-28
 **Codestand der Belege:** `main` @ `263ed0aa`
+**Teilweise abgelöst durch:** ADR 0002 (`0002-vier-kontexte-und-unterbau.md`, 2026-09-24) — Kontextzahl: vier statt drei (Entscheidung 1); Regel 2 präzisiert, Offene Frage 1 beantwortet (Entscheidung 4); Regel 5 abgelöst (Entscheidung 2); Regel 6 abgelöst, eingeschränkt (Entscheidung 3); Regeln 1 und 4 an Auslöser gebunden (Entscheidung 6). Alles Übrige gilt unverändert.
 
 Alle Datei- und Zeilenangaben in diesem Dokument beziehen sich auf diesen Commit. Sie sind Belege,
 keine Wegbeschreibung — beim Nachprüfen in einem späteren Stand kann die Zeile verschoben sein, die
@@ -227,6 +228,8 @@ solange alles in einem Prozess läuft. Der Wert liegt in der Entkopplung, nicht 
 6. **Kein Aggregat-, Repository- oder CQRS-Gerüst.** Diese Entscheidung betrifft **Grenzen**, nicht
    Bausteine innerhalb der Grenzen. Wie ein Kontext innen gebaut ist, bleibt offen.
 
+> **Nachtrag (ADR 0002, 2026-09-24):** Regel 2 gilt nur noch zwischen gleichrangigen Kontexten — Fremdschlüssel auf den Unterbau sind erlaubt. Die Regeln 5 und 6 sind abgelöst, die Regeln 1 und 4 an Auslöser gebunden. Siehe `0002-vier-kontexte-und-unterbau.md`, Entscheidung 2 bis 6.
+
 Der Punkt an den Regeln 1–4: Die Grenze ist dann nicht Vorsatz, sondern **man merkt beim Übertreten,
 dass man sie übertritt.**
 
@@ -262,6 +265,7 @@ Diese Punkte sind **nicht** entschieden und werden hier bewusst nicht beantworte
    Kaskadenlöschung zu verhindern. Regel 2 dieses ADR verlangt, genau solche Fremdschlüssel über
    Kontextgrenzen aufzugeben. Damit wandert eine Garantie aus der Datenbank in Anwendungscode — und
    ein Betriebsprüfer bewertet beides unterschiedlich. Wie dieser Konflikt aufzulösen ist, ist offen.
+   **Beantwortet durch ADR 0002** (`0002-vier-kontexte-und-unterbau.md`, Entscheidung 4): Fremdschlüssel auf den Unterbau sind erlaubt, die Kontrolle `onDelete: Restrict` bleibt in der Datenbank.
 2. **Wo genau verläuft die Grenze zwischen Zeiterfassung und Arbeitszeitkonto?** Dass das
    Arbeitszeitkonto ein eigener Kontext ist, ist entschieden. Welche der 57 Dateien in
    `apps/api/src/utils/` zu welchem Kontext gehören, ist es nicht.
