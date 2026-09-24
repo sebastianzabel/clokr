@@ -62,11 +62,12 @@
  *
  * `findShiftConflict` (`shifts.ts`'s module-private single-day conflict check, formerly a bare
  * `findFirst`) is A4 too — same `where` shape (employee-scoped, no type/source filter,
- * `deletedAt: null`), just `from === to`. Its two call sites gained a `tenantId` argument
- * (threaded from each route handler's own `req.user.tenantId`) purely to satisfy
- * `EmployeeScope`'s "every variant carries tenantId" contract (D-10, T-100B-16) — both sites
- * already validate the employee against `req.user.tenantId` upstream, so this is a proven no-op,
- * not a behaviour change.
+ * `deletedAt: null`), just `from === to`. Its two call sites pass a `tenantId` argument (threaded
+ * from each route handler's own `req.user.tenantId`) that `EmployeeScope` carries in every variant
+ * (D-10, T-100B-16). Since Phase 77b (Issue #77) `employeeScopeWhere` binds that tenant into the
+ * query (`employee: { tenantId }`) and throws on an empty one — both sites already validate the
+ * employee against `req.user.tenantId` upstream, so for them the binding is a proven no-op, while a
+ * foreign employeeId can no longer match at all.
  *
  * ── A6 — VOCATIONAL_SCHOOL-only reads (8 sites, the mirror image of A5's exclusion) ─────────────
  * {@link getVocationalSchoolDays} (range) and {@link hasVocationalSchoolDay} (single-day
