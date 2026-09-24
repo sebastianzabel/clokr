@@ -150,3 +150,51 @@ export function toAssignmentDto(row: AssignmentRow): AssignmentDto {
     updatedAt: row.updatedAt,
   };
 }
+
+// ── Phase 67b Plan 02 (issue #67) additions — write-surface rules (D-04, D-10, D-20, D-27) ──────
+
+const CALENDAR_DAY_SHAPE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * D-20: `value` has the `YYYY-MM-DD` shape AND is a REAL calendar day — an impossible date like
+ * "2026-02-30" has the right shape but does not round-trip through {@link dayToDate}/
+ * {@link dateToDay} (JS's `Date.UTC` rolls it over into March), so the round-trip comparison below
+ * catches it without a hand-rolled per-month day-count table.
+ */
+export function isCalendarDay(value: string): value is CalendarDay {
+  if (!CALENDAR_DAY_SHAPE_RE.test(value)) return false;
+  return dateToDay(dayToDate(value)) === value;
+}
+
+/** D-04: distinct weekday codes (0..6), sorted ascending — the ONE normalised shape every stored
+ * `weekdays` array takes, so two arrays denoting the same set always compare equal. */
+export function normalizeWeekdays(list: number[]): number[] {
+  return Array.from(new Set(list)).sort((a, b) => a - b);
+}
+
+/**
+ * D-10/D-27: German adverb per weekday code, 0 = Monday … 6 = Sunday — the display label is always
+ * DERIVED from the code (CLAUDE.md "never use a new display string as a control value"), never the
+ * reverse; nothing in this module ever compares against these strings.
+ */
+export const WEEKDAY_ADVERB_DE: Readonly<Record<number, string>> = {
+  0: "montags",
+  1: "dienstags",
+  2: "mittwochs",
+  3: "donnerstags",
+  4: "freitags",
+  5: "samstags",
+  6: "sonntags",
+};
+
+/**
+ * D-10: the LOWEST weekday code present in both `a` and `b`, or `null` if they share none. Either
+ * array being empty (a DEPLOYMENT with no weekday restriction never weekday-conflicts, D-10) yields
+ * `null` by construction.
+ */
+export function firstCommonWeekday(a: number[], b: number[]): number | null {
+  const bSet = new Set(b);
+  const common = a.filter((day) => bSet.has(day));
+  if (common.length === 0) return null;
+  return Math.min(...common);
+}

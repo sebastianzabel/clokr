@@ -62,6 +62,21 @@
       "validatedAt": null
     },
     {
+      "route": "POST /api/v1/employees/:id/salon-assignments",
+      "file": "apps/api/src/contexts/platform/api/salon-assignments.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": {
+        "salonId": "00000000-0000-4000-8000-0000000067b1",
+        "validFrom": "2026-01-05"
+      },
+      "reason": "Phase 67b Plan 02 (Issue #67, D-08/D-19): createDeploymentSchema.parse(req.body) runs BEFORE the lookup (D-19) — the minimalBody above is the smallest body it accepts (salonId + validFrom; validUntil/weekdays are optional). createDeploymentAssignment(tx, tenantId, id, ...) calls lockEmployee(db, tenantId, employeeId) first, a tenant-scoped `$queryRaw ... FOR UPDATE` returning null for BOTH a foreign tenant's real employee and a nonexistent id; both fall through to the shared rejectUnknownEmployee(...) helper, the same byte-identical 404 as GET, auditing CROSS_TENANT_ACCESS_DENIED only when the row exists in another tenant. API-key callers get the same 404 via auditSalonAssignmentEvent (WR-01 convention); the same defect in other routes is tracked in #333.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "PATCH /api/v1/employees/:id",
       "file": "apps/api/src/contexts/platform/api/employees.ts",
       "category": "probe",

@@ -397,7 +397,12 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // employeeExistsInForeignTenant, listSalonAssignments, salonForDay), all five pass F1/F2/F3
   // directly (each declares `db: Prisma.TransactionClient` first and a required `tenantId`), no new
   // exception needed.
-  it("the real tree has exactly 97 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  //
+  // 97 -> 98 in Phase 67b Plan 02 (Issue #67, Task 1): `contexts/platform/facade/salon-assignment-
+  // changes.ts` added (matches the glob directly) — 1 new exported function
+  // (createDeploymentAssignment), passes F1/F2/F3 directly (`db: Prisma.TransactionClient` first,
+  // `tenantId` required, `employeeId` paired with `tenantId`), no new exception needed.
+  it("the real tree has exactly 98 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -405,6 +410,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
         "apps/api/src/contexts/platform/facade/employee-scope.ts",
         "apps/api/src/contexts/platform/facade/salons.ts",
         "apps/api/src/contexts/platform/facade/salon-assignments.ts",
+        "apps/api/src/contexts/platform/facade/salon-assignment-changes.ts",
         "apps/api/src/contexts/scheduling/facade/shifts.ts",
         "apps/api/src/contexts/scheduling/facade/availability.ts",
         "apps/api/src/contexts/time-tracking/facade/presence-devices.ts",
@@ -425,7 +431,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(97);
+    expect(functions).toHaveLength(98);
 
     const rawExceptions = JSON.parse(
       readFileSync(

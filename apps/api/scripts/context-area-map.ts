@@ -124,6 +124,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/facade/employee-scope.ts": "unterbau", // EmployeeScope discriminated union + employeeScopeWhere() (Phase 100B Plan 04, D-10) — Employee is Unterbau's own model; no Prisma call in this file
   "src/contexts/platform/facade/salons.ts": "unterbau", // Phase 64b (issue #64) — reads Salon, Unterbau's own model per ADR 0001
   "src/contexts/platform/facade/salon-assignments.ts": "unterbau", // Phase 67b (issue #67) — reads/writes EmployeeSalonAssignment, an Unterbau model per ADR 0002
+  "src/contexts/platform/facade/salon-assignment-changes.ts": "unterbau", // Phase 67b Plan 02 (issue #67) — lock-checked writes to EmployeeSalonAssignment, an Unterbau model per ADR 0002
   "src/contexts/platform/salon-assignment-rules.ts": "unterbau", // Phase 67b (issue #67) — pure day/weekday/period rules for EmployeeSalonAssignment, an Unterbau model per ADR 0002
   "src/contexts/platform/salon-assignment-audit.ts": "unterbau", // Phase 67b (issue #67) — shared WR-01 audit helper for EmployeeSalonAssignment, an Unterbau model per ADR 0002
   "src/contexts/platform/access-role.ts": "unterbau", // Phase 73b (#73): role = permission bundle, writes/reads AccessRole only — an Unterbau model

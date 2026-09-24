@@ -405,6 +405,7 @@ Phase 67b (#67).
 | `contexts/platform/api/employees.ts:1065`                  | `POST /:id/hard-delete/authorize`          | A       | `employee:anonymize`           | ZUGEWIESEN                                   |
 | `contexts/platform/api/employees.ts:1096`                  | `DELETE /:id/hard-delete`                  | A       | `employee:anonymize`           | ZUGEWIESEN                                   |
 | `contexts/platform/api/salon-assignments.ts:48`            | `GET /:id/salon-assignments`               | A, M    | `employee:read`                | ZUGEWIESEN                                   |
+| `contexts/platform/api/salon-assignments.ts:105`           | `POST /:id/salon-assignments`              | A       | `employee:update`              | ZUGEWIESEN                                   |
 | `contexts/platform/api/holidays.ts:105`                    | `POST /`                                   | A       | `holiday:manage`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/holidays.ts:163`                    | `DELETE /:id`                              | A       | `holiday:manage`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/imports.ts:74`                      | `POST /employees`                          | A       | `employee:import`              | ZUGEWIESEN                                   |
