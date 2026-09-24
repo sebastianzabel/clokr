@@ -39,6 +39,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
+import { dateToDay } from "../contexts/platform/salon-assignment-rules";
 
 /**
  * Build a fresh Fastify instance with `ALLOW_TEST_BOOTSTRAP` overridden.
@@ -270,6 +271,140 @@ describe("Phase 73-01: test-only tenant bootstrap", () => {
       expect(res.statusCode).toBe(404);
       const body = res.json() as { error?: string };
       expect(body.error).toBe("NotATestTenant");
+    });
+
+    // ── Phase 67b Plan 04 (issue #67, D-24) ─────────────────────────
+    // Non-API paths that create/delete employees must keep the Stammsalon
+    // invariant true — see 67b-04-PLAN.md must_haves.
+
+    it("POST /api/v1/test/bootstrap-tenant gives its admin employee exactly one HOME row to the tenant's only salon", async () => {
+      const res = await appOn.inject({
+        method: "POST",
+        url: "/api/v1/test/bootstrap-tenant",
+      });
+      expect(res.statusCode).toBe(200);
+      const { tenantId } = res.json() as { tenantId: string };
+      createdTenantIds.add(tenantId);
+
+      const employee = await appOn.prisma.employee.findFirst({ where: { tenantId } });
+      const salon = await appOn.prisma.salon.findFirst({ where: { tenantId } });
+      expect(employee).not.toBeNull();
+      expect(salon).not.toBeNull();
+
+      const assignments = await appOn.prisma.employeeSalonAssignment.findMany({
+        where: { employeeId: employee!.id },
+      });
+      expect(assignments).toHaveLength(1);
+      const assignment = assignments[0]!;
+      expect(assignment.kind).toBe("HOME");
+      expect(assignment.salonId).toBe(salon!.id);
+      expect(dateToDay(assignment.validFrom)).toBe("2024-01-01");
+      expect(assignment.validUntil).toBeNull();
+      expect(assignment.weekdays).toEqual([]);
+    });
+
+    it("POST /api/v1/test/bootstrap-terminal gives the new employee exactly one open HOME row to the tenant's default salon", async () => {
+      const bootstrapRes = await appOn.inject({
+        method: "POST",
+        url: "/api/v1/test/bootstrap-tenant",
+      });
+      expect(bootstrapRes.statusCode).toBe(200);
+      const { tenantId } = bootstrapRes.json() as { tenantId: string };
+      createdTenantIds.add(tenantId);
+      const salon = await appOn.prisma.salon.findFirst({ where: { tenantId } });
+      expect(salon).not.toBeNull();
+
+      const terminalRes = await appOn.inject({
+        method: "POST",
+        url: "/api/v1/test/bootstrap-terminal",
+        payload: { tenantId },
+      });
+      expect(terminalRes.statusCode).toBe(201);
+      const { employeeId } = terminalRes.json() as { employeeId: string };
+
+      const assignments = await appOn.prisma.employeeSalonAssignment.findMany({
+        where: { employeeId },
+      });
+      expect(assignments).toHaveLength(1);
+      const assignment = assignments[0]!;
+      expect(assignment.kind).toBe("HOME");
+      expect(assignment.salonId).toBe(salon!.id);
+      expect(assignment.validUntil).toBeNull();
+    });
+
+    it("POST /api/v1/test/bootstrap-terminal refuses a tenant with no active salon before writing anything", async () => {
+      const bootstrapRes = await appOn.inject({
+        method: "POST",
+        url: "/api/v1/test/bootstrap-tenant",
+      });
+      expect(bootstrapRes.statusCode).toBe(200);
+      const { tenantId } = bootstrapRes.json() as { tenantId: string };
+      createdTenantIds.add(tenantId);
+
+      // Fixture setup: deactivate the tenant's only salon directly, bypassing the
+      // deactivateSalon() "last active salon" guard (which would otherwise refuse this).
+      await appOn.prisma.salon.updateMany({
+        where: { tenantId },
+        data: { isActive: false, deactivatedAt: new Date() },
+      });
+
+      const usersBefore = await appOn.prisma.user.count({
+        where: { email: { contains: tenantId } },
+      });
+      const employeesBefore = await appOn.prisma.employee.count({ where: { tenantId } });
+      const keysBefore = await appOn.prisma.terminalApiKey.count({ where: { tenantId } });
+
+      const res = await appOn.inject({
+        method: "POST",
+        url: "/api/v1/test/bootstrap-terminal",
+        payload: { tenantId },
+      });
+      expect(res.statusCode).toBe(409);
+      const body = res.json() as { error?: string };
+      expect(body.error).toBe("Der Mandant hat keinen aktiven Salon.");
+
+      const usersAfter = await appOn.prisma.user.count({
+        where: { email: { contains: tenantId } },
+      });
+      const employeesAfter = await appOn.prisma.employee.count({ where: { tenantId } });
+      const keysAfter = await appOn.prisma.terminalApiKey.count({ where: { tenantId } });
+      expect(usersAfter).toBe(usersBefore);
+      expect(employeesAfter).toBe(employeesBefore);
+      expect(keysAfter).toBe(keysBefore);
+    });
+
+    it("DELETE /api/v1/test/tenant/:id removes assignment rows for both the admin and a bootstrapped terminal employee", async () => {
+      const bootstrapRes = await appOn.inject({
+        method: "POST",
+        url: "/api/v1/test/bootstrap-tenant",
+      });
+      expect(bootstrapRes.statusCode).toBe(200);
+      const { tenantId } = bootstrapRes.json() as { tenantId: string };
+      createdTenantIds.add(tenantId);
+
+      const terminalRes = await appOn.inject({
+        method: "POST",
+        url: "/api/v1/test/bootstrap-terminal",
+        payload: { tenantId },
+      });
+      expect(terminalRes.statusCode).toBe(201);
+
+      const deleteRes = await appOn.inject({
+        method: "DELETE",
+        url: `/api/v1/test/tenant/${tenantId}`,
+      });
+      expect(deleteRes.statusCode).toBe(200);
+
+      const remainingAssignments = await appOn.prisma.employeeSalonAssignment.count({
+        where: { tenantId },
+      });
+      expect(remainingAssignments).toBe(0);
+      const remainingEmployees = await appOn.prisma.employee.count({ where: { tenantId } });
+      expect(remainingEmployees).toBe(0);
+      const remainingSalons = await appOn.prisma.salon.count({ where: { tenantId } });
+      expect(remainingSalons).toBe(0);
+
+      createdTenantIds.delete(tenantId);
     });
   });
 });
