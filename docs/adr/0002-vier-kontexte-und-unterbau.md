@@ -125,8 +125,8 @@ for (const r of cross) console.log(`  ${kind(r)} ${r.from}(${owner[r.from]}).${r
 ' "$C"
 
 # 2. The boundary lint: five areas (four contexts + platform), and the exception register.
-echo "BOUNDARY_AREAS $(git show $C:eslint.boundaries.mjs | awk '/^export const BOUNDARY_CONTEXTS/{f=1;next} f&&/^\];/{f=0} f' | grep -c '"')"
-git show $C:apps/api/scripts/context-boundary-import-exceptions.json | jq -r '"COMPOSITION_ROOT_EXPECTED_COUNT " + ([.exceptions[] | select(.id == "composition-root") | .expectedCount] | first | tostring), "REGISTER_ENTRIES " + ([.exceptions[] | select(.id != "composition-root")] | length | tostring) + " ids=" + ([.exceptions[] | select(.id != "composition-root") | .id] | unique | join(","))'
+echo "BOUNDARY_AREAS $(git show ${C}:eslint.boundaries.mjs | awk '/^export const BOUNDARY_CONTEXTS/{f=1;next} f&&/^\];/{f=0} f' | grep -c '"')"
+git show ${C}:apps/api/scripts/context-boundary-import-exceptions.json | jq -r '"COMPOSITION_ROOT_EXPECTED_COUNT " + ([.exceptions[] | select(.id == "composition-root") | .expectedCount] | first | tostring), "REGISTER_ENTRIES " + ([.exceptions[] | select(.id != "composition-root")] | length | tostring) + " ids=" + ([.exceptions[] | select(.id != "composition-root") | .id] | unique | join(","))'
 
 # 3. Composition layer: its files, and that no context or service imports from it.
 echo "COMPOSITION_FILES $(git ls-tree --name-only $C apps/api/src/composition/ | grep -c '\.ts$')"
