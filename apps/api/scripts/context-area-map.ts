@@ -84,6 +84,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/utils/release-notes.ts": "rahmen", // bakes docs/release-notes/*.md into the image at build time; app-wide, tenant-agnostic, no model
   "src/__tests__/setup.ts": "rahmen", // full-suite fixture seeding across every model; test infra
   "src/__tests__/test-dates.ts": "rahmen", // test-only date helpers, no model
+  "src/__tests__/legacy-role-migration-sql.ts": "rahmen", // Phase 75b (Issue #75) — test infra that runs the checked-in legacy-role data migration verbatim; no model of its own
 
   // ── komposition — D-17: dashboard.ts/reports.ts unconditionally, plus pdf.ts (no model, no
   //    Fachregel, reports.ts's only caller); Phase 243 (D-01/D-13) adds activity.ts and
@@ -141,6 +142,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/request-audit-fields.ts": "unterbau", // Phase 74b review WR-03/WR-06 — resolves an audit's actor (user vs. API key) via accessContextFromRequest and its IP/headers; pure module, no model, no Prisma call; audit-trail vocabulary like audit-reason.ts
   "src/contexts/platform/role-assignment.ts": "unterbau", // Phase 74b (issue #74) — pure core reasoning over RoleAssignment/AccessRole/Salon/Employee/User, all Unterbau models
   "src/contexts/platform/school-holidays-client.ts": "unterbau", // fetches SchoolHolidayPeriod data from the external OpenHolidays/schulferien-api
+  "src/contexts/platform/system-roles.ts": "unterbau", // Phase 75b (Issue #75) — fixed ids, names and permission sets of the three global system roles (AccessRole rows, an Unterbau model); pure module, no Prisma call
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────

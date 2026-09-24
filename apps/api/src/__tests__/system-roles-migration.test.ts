@@ -10,6 +10,8 @@
  *   pre-assigned users get nothing), idempotency of a second run, `User.role` untouched, and the
  *   four NOTICE numbers — read through a raw pg client, because Prisma does not surface notices.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
@@ -90,30 +92,41 @@ interface MigrationCounts {
   alreadyAssigned: number;
 }
 
-/**
- * Read-only: the four numbers the migration's NOTICE reports, computed BEFORE it runs. Every
- * "User" row falls into exactly one bucket; "created" counts the users it is about to assign.
- */
-const COUNT_SELECT = `
-SELECT
-  count(*) FILTER (WHERE has_employee AND NOT anonymized AND NOT assigned) AS created,
-  count(*) FILTER (WHERE NOT has_employee) AS without_employee,
-  count(*) FILTER (WHERE has_employee AND anonymized) AS anonymized,
-  count(*) FILTER (WHERE has_employee AND NOT anonymized AND assigned) AS already_assigned
-FROM (
-  SELECT
-    e."id" IS NOT NULL AS has_employee,
-    coalesce(e."firstName" = U&'Gel\\00F6scht' AND e."lastName" LIKE U&'GEL\\00D6SCHT-%', false) AS anonymized,
-    EXISTS (SELECT 1 FROM "RoleAssignment" ra WHERE ra."userId" = u."id") AS assigned
-  FROM "User" u
-  LEFT JOIN "Employee" e ON e."userId" = u."id"
-) AS buckets`;
+// __dirname is apps/api/src/__tests__ — four levels up is the repo root.
+const MIGRATIONS_DOC = join(__dirname, "..", "..", "..", "..", "docs", "migrations.md");
 
+/**
+ * The single ```sql block between `<!-- <marker>:begin -->` and `<!-- <marker>:end -->` in
+ * docs/migrations.md. The operators' SELECTs are executed FROM THE DOC, so the documented SQL
+ * cannot drift from what the migration reports. A missing marker or block throws.
+ */
+function readDocumentedSql(marker: string): string {
+  const doc = readFileSync(MIGRATIONS_DOC, "utf8");
+  const begin = `<!-- ${marker}:begin -->`;
+  const end = `<!-- ${marker}:end -->`;
+  const beginIdx = doc.indexOf(begin);
+  const endIdx = doc.indexOf(end);
+  if (beginIdx === -1 || endIdx === -1 || endIdx < beginIdx) {
+    throw new Error(`docs/migrations.md: markers "${begin}" / "${end}" not found in order`);
+  }
+  const blocks = [...doc.slice(beginIdx + begin.length, endIdx).matchAll(/```sql\n([\s\S]*?)```/g)];
+  if (blocks.length !== 1) {
+    throw new Error(
+      `docs/migrations.md: expected one sql block in "${marker}", found ${blocks.length}`,
+    );
+  }
+  return blocks[0][1];
+}
+
+/**
+ * Read-only: the four numbers the migration's NOTICE reports, via the documented SELECT
+ * (docs/migrations.md § Phase 75b). Run BEFORE the migration, "created" counts the users it is
+ * about to assign; every "User" row falls into exactly one bucket.
+ */
 async function countMigrationBuckets(app: FastifyInstance): Promise<MigrationCounts> {
-  const rows =
-    await app.prisma.$queryRawUnsafe<
-      { created: bigint; without_employee: bigint; anonymized: bigint; already_assigned: bigint }[]
-    >(COUNT_SELECT);
+  const rows = await app.prisma.$queryRawUnsafe<
+    { created: bigint; without_employee: bigint; anonymized: bigint; already_assigned: bigint }[]
+  >(readDocumentedSql("75b-count-selects"));
   expect(rows).toHaveLength(1);
   return {
     created: Number(rows[0].created),
@@ -468,7 +481,7 @@ describe("legacy-role backfill edge cases (AC-75-4..AC-75-8, D-07, D-28)", () =>
     expect(after.filter((u) => fixtureIds.includes(u.id))).toHaveLength(fixtureIds.length);
   });
 
-  it("reports exactly one NOTICE whose four numbers match the pre-computed buckets", () => {
+  it("reports exactly one NOTICE whose four numbers equal the documented count SELECT (docs/migrations.md)", () => {
     const parsed = notices.map(parseNotice).filter((n): n is MigrationCounts => n !== null);
     expect(notices, "expected exactly one NOTICE from the migration").toHaveLength(1);
     expect(parsed, `NOTICE did not match the expected format: ${notices[0]}`).toHaveLength(1);
@@ -480,5 +493,29 @@ describe("legacy-role backfill edge cases (AC-75-4..AC-75-8, D-07, D-28)", () =>
     expect(expectedCounts.alreadyAssigned).toBeGreaterThanOrEqual(1);
     // "created" is also what the audit trail shows: one reason-tagged audit row per assignment.
     expect(reasonAuditsAfterFirstRun - reasonAuditsBeforeFirstRun).toBe(expectedCounts.created);
+  });
+
+  it("after the migration the documented count SELECT shows nothing left to create (post-deploy check)", async () => {
+    const after = await countMigrationBuckets(app);
+    expect(after).toEqual({
+      created: 0,
+      withoutEmployee: expectedCounts.withoutEmployee,
+      anonymized: expectedCounts.anonymized,
+      alreadyAssigned: expectedCounts.alreadyAssigned + expectedCounts.created,
+    });
+  });
+
+  it("the documented consistency SELECT reports a column/assignment divergence and nothing else for the fixture", async () => {
+    const rows = await app.prisma.$queryRawUnsafe<
+      { id: string; column_role: string; derived_role: string }[]
+    >(readDocumentedSql("75b-consistency-select"));
+    const fixtureIds = new Set([...eligible, ...skipped].map((u) => u.userId));
+    const fixtureRows = rows.filter((r) => fixtureIds.has(r.id));
+    // Only the pre-assigned user diverges: legacy EMPLOYEE in the column, but a stored customer
+    // role with a ZUGEWIESEN permission derives MANAGER. Every migrated user agrees by
+    // construction (the migration assigns the system role of the unchanged column).
+    expect(fixtureRows).toEqual([
+      { id: preAssigned.user.id, column_role: "EMPLOYEE", derived_role: "MANAGER" },
+    ]);
   });
 });

@@ -24,10 +24,10 @@
  *   (a) EIGENE reach letters — a row whose Reichweite names EIGENE and whose "heute" admits E
  *       attributes E to the EIGENE reach, so E is removed from that row's ZUGEWIESEN set
  *       (`GET /vocational-school/upcoming`: guard `A, M, E`, EIGENE via the handler check);
- *   (b) the Vorrang marker — a row whose Reichweite reads "Vorrang hat `<resource:action>`" is
- *       checked as holders(P) minus holders(V): the exclusive team-events branch of `GET /activity`
- *       admits "nur M" because `audit-log:read` wins for A. The marker is a machine-readable cell
- *       in the doc, not a special case keyed on a file name.
+ *   (b) the precedence (Vorrang) marker — a row whose Reichweite names a winning permission V in
+ *       the `VORRANG` pattern below is checked as holders(P) minus holders(V): the exclusive
+ *       team-events branch of `GET /activity` admits only M, because `audit-log:read` wins for A.
+ *       The marker is a machine-readable cell in the doc, not a special case keyed on a file name.
  *
  * The row reader mirrors `src/__tests__/permission-site-mapping.test.ts` (`readSectionRows`,
  * `splitCells`) as an independent copy, so a change to one parser cannot silently change what the
@@ -123,7 +123,7 @@ function lettersOf(text: string): Set<Letter> {
 /**
  * One site row → its ZUGEWIESEN letter set. Guard rows: the letters of the "heute" cell. Handler
  * rows: the letters of the text before the first colon (the whole cell if there is none), where
- * "nur X" means {X}. Anything else is an unknown shape — returned as an error, never guessed.
+ * the doc's "nur X" ("only X") means {X}. Anything else is an unknown shape — returned as an error, never guessed.
  */
 function parseSiteRow(row: DocRow, kind: "guard" | "handler"): SiteRow | string {
   const where = `${DOC_NAME} § ${row.heading}: ${row.raw}`;
