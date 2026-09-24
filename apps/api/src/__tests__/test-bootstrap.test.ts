@@ -38,6 +38,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
+import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 
 /**
  * Build a fresh Fastify instance with `ALLOW_TEST_BOOTSTRAP` overridden.
@@ -177,6 +178,20 @@ describe("Phase 73-01: test-only tenant bootstrap", () => {
       });
       expect(ent).not.toBeNull();
       expect(Number(ent!.totalDays)).toBe(30);
+
+      // D-18 (Phase 64b Plan 03): every e2e-bootstrapped tenant gets its default
+      // salon in the same step as the tenant itself — exactly one, name matching
+      // the tenant, no address, hours equal to the facade's default constant.
+      const salons = await appOn.prisma.salon.findMany({ where: { tenantId: body.tenantId } });
+      expect(salons).toHaveLength(1);
+      const salon = salons[0]!;
+      expect(salon.name).toBe(tenant!.name);
+      expect(salon.isActive).toBe(true);
+      expect(salon.deactivatedAt).toBeNull();
+      expect(salon.street).toBeNull();
+      expect(salon.postalCode).toBeNull();
+      expect(salon.city).toBeNull();
+      expect(salon.openingHours).toEqual(DEFAULT_SALON_OPENING_HOURS);
     });
 
     it("DELETE /api/v1/test/tenant/:id cascades child rows and drops the tenant", async () => {
@@ -233,6 +248,11 @@ describe("Phase 73-01: test-only tenant bootstrap", () => {
         where: { employeeId: employee!.id },
       });
       expect(remainingLeave).toBe(0);
+      // D-18: the default salon created alongside the tenant must be torn down
+      // too — Salon.tenant is onDelete: Restrict, so a leftover salon row would
+      // make the tenant.deleteMany above fail rather than silently leak.
+      const remainingSalons = await appOn.prisma.salon.count({ where: { tenantId } });
+      expect(remainingSalons).toBe(0);
 
       // Mark as drained so afterAll doesn't re-attempt cleanup.
       createdTenantIds.delete(tenantId);

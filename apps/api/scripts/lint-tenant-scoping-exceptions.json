@@ -238,42 +238,46 @@
   {
     "file": "apps/api/src/contexts/platform/api/test-bootstrap.ts",
     "handler": "DELETE /api/v1/test/tenant/:id",
-    "validatedAt": 227,
+    "validatedAt": 245,
     "calls": [
       {
         "call": "employee.deleteMany",
-        "line": 268
+        "line": 286
       },
       {
         "call": "leaveType.deleteMany",
-        "line": 272
+        "line": 290
       },
       {
         "call": "publicHoliday.deleteMany",
-        "line": 273
+        "line": 291
       },
       {
         "call": "coverageRule.deleteMany",
-        "line": 274
+        "line": 292
       },
       {
         "call": "shiftTemplate.deleteMany",
-        "line": 275
+        "line": 293
       },
       {
         "call": "companyShutdown.deleteMany",
-        "line": 276
+        "line": 294
       },
       {
         "call": "terminalApiKey.deleteMany",
-        "line": 277
+        "line": 295
+      },
+      {
+        "call": "salon.deleteMany",
+        "line": 299
       },
       {
         "call": "tenantConfig.deleteMany",
-        "line": 278
+        "line": 300
       }
     ],
-    "reason": "This whole plugin only registers when ALLOW_TEST_BOOTSTRAP=true (never true on int/prod, read once at boot in config.ts) — there is no per-caller tenant to isolate against because this test-only surface's authorization model is the env flag PLUS the ^test-[a-zA-Z0-9_-]{8}$ id format gate at line 227, not req.user.tenantId. Every call listed deletes by the SAME already-format-validated tenant id, never by a value scoped to a caller's own tenant. Lines shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context absence/leave-type import, E-8) — no finding, mechanical only."
+    "reason": "This whole plugin only registers when ALLOW_TEST_BOOTSTRAP=true (never true on int/prod, read once at boot in config.ts) — there is no per-caller tenant to isolate against because this test-only surface's authorization model is the env flag PLUS the ^test-[a-zA-Z0-9_-]{8}$ id format gate at line 245, not req.user.tenantId. Every call listed deletes by the SAME already-format-validated tenant id, never by a value scoped to a caller's own tenant, including the new salon.deleteMany (Phase 64b, issue #64, D-18) added at line 299 to tear down the default salon before the tenant delete (Salon.tenant is onDelete: Restrict). Lines shifted +18 in Phase 64b Plan 03 (GitHub issue #64): a new import plus a default-salon salon.create block (D-18) were added in the POST handler above this one, upstream of every anchor in this entry — mechanical only, no finding. tenantConfig.deleteMany shifted a further +4 (total +22) because the salon.deleteMany call itself, with its 3-line comment, was inserted immediately above it. Lines previously shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context absence/leave-type import, E-8) — no finding, mechanical only."
   },
   {
     "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
