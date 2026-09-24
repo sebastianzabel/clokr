@@ -5,7 +5,9 @@
  * `tenantId` — `apps/api/scripts/lint-facade-signatures.ts` (F1/F3) and
  * `apps/api/scripts/lint-tenant-scoping.ts` enforce this mechanically, the same shape as
  * `facade/salons.ts`. This module has no `app` and calls no `app.audit()` — resolution is a pure
- * read, evaluated live, never audited (there is nothing to record: no state changes).
+ * read, evaluated live, never audited (there is nothing to record: no state changes). The
+ * lockout guard `withRoleLockoutGuard` writes nothing itself either: it runs the CALLER's write
+ * and audit inside the caller's transaction and only decides whether that transaction may commit.
  *
  * `userMayApply` takes FLAT parameters rather than a single destructured options object — a
  * deviation from the plan's suggested `userMayApply(db, { tenantId, userId }, permission,
@@ -26,8 +28,12 @@ import { roleGrants } from "../access-role";
 import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../employee-anonymization-filter";
 import { findSalon } from "./salons";
 import {
+  RoleLockoutError,
+  countHoldersPerGuardedPermission,
   decideUserMayApply,
+  findLockedOutPermission,
   normalizeRoleAssignmentScope,
+  type GuardedPermission,
   type NormalizedRoleAssignmentScope,
   type RoleAssignmentTarget,
 } from "../role-assignment";
@@ -113,4 +119,59 @@ export async function userMayApply(
     targetEmployeeValid,
     targetSalon,
   });
+}
+
+// ── Lockout protection (Phase 74b, D-17..D-19) ──────────────────────────────────────────────────
+
+/**
+ * D-17: the number of distinct holders per guarded permission in `tenantId`, as seen by `db`. A
+ * holder is an active user whose employee belongs to the tenant, with a TENANT-scope assignment in
+ * the tenant whose role grants the permission. Reading through `db` means that, inside a
+ * transaction, the count sees that transaction's own uncommitted writes.
+ */
+export async function countGuardedPermissionHolders(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+): Promise<Record<GuardedPermission, number>> {
+  const rows = await db.roleAssignment.findMany({
+    where: {
+      tenantId,
+      scopeType: "TENANT",
+      user: { isActive: true, employee: { tenantId } },
+    },
+    select: {
+      userId: true,
+      accessRole: { select: { tenantId: true, permissions: true } },
+    },
+  });
+  return countHoldersPerGuardedPermission(tenantId, rows);
+}
+
+/**
+ * D-19: runs `write` under the lockout rule and returns its result.
+ *
+ * MUST be called inside an interactive `$transaction`, with the SAME client the write (and its
+ * audit) uses. The tenant row lock lasts only as long as the transaction it runs in, and the
+ * after-count must see the write's uncommitted effect. Counting on another client would read the
+ * pre-write state and never fire (74b-RESEARCH Pitfall 9).
+ *
+ * Order: lock the tenant row `FOR UPDATE`, which serialises every guarded change in the tenant.
+ * Then count holders, run `write`, and count again. When a guarded permission went from >= 1
+ * holders to 0 (D-18), throw {@link RoleLockoutError}. The throw rolls back the write AND its
+ * audit row. Every caller maps the error to 409 `ROLE_LOCKOUT_MESSAGE`.
+ */
+export async function withRoleLockoutGuard<T>(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  write: () => Promise<T>,
+): Promise<T> {
+  await db.$queryRaw`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId} FOR UPDATE`;
+  const before = await countGuardedPermissionHolders(db, tenantId);
+  const result = await write();
+  const after = await countGuardedPermissionHolders(db, tenantId);
+  const lockedOut = findLockedOutPermission(before, after);
+  if (lockedOut !== null) {
+    throw new RoleLockoutError(lockedOut);
+  }
+  return result;
 }

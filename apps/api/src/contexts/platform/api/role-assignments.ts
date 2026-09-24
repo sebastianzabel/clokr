@@ -22,10 +22,13 @@ import { requireRole } from "../../../middleware/auth";
 import { accessContextFromRequest } from "../access-context";
 import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../employee-anonymization-filter";
 import {
+  ROLE_LOCKOUT_MESSAGE,
+  RoleLockoutError,
   normalizeRoleAssignmentScope,
   roleAssignmentScopeOf,
   type NormalizedRoleAssignmentScope,
 } from "../role-assignment";
+import { withRoleLockoutGuard } from "../facade/role-assignments";
 
 // D-09: plain `z.string().min(1)`, NOT `.uuid()` — both T-100-09 probe arms (a real foreign id and
 // a shaped-but-nonexistent id) must pass the same validation, same idiom as `roles.ts`'s
@@ -493,7 +496,7 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       security: [{ bearerAuth: [] }],
       summary: "Revoke a role assignment",
       description:
-        "Hard-deletes a role assignment of the caller's own tenant, audited. A foreign tenant's real assignment and a nonexistent id both answer 404 with the same body (T-100-09).",
+        "Hard-deletes a role assignment of the caller's own tenant, audited. A foreign tenant's real assignment and a nonexistent id both answer 404 with the same body (T-100-09). Revoking the last tenant-wide holder of role:manage or role-assignment:manage answers 409 and changes nothing (lockout protection).",
     },
     preHandler: requireRole("ADMIN"),
     handler: async (req, reply) => {
@@ -508,17 +511,26 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       }
 
       try {
+        // D-19/D-20: the delete and its audit run under the lockout guard, on the transaction
+        // client. Revoking the last tenant-wide holder of a guarded permission throws
+        // RoleLockoutError, which rolls back both. The 404 above stays first, so the guard never
+        // runs for a foreign or unknown id (T-100-09).
         await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-          await tx.roleAssignment.delete({ where: { id, tenantId } });
-          await auditRoleAssignment(app, req, {
-            action: "DELETE",
-            entityId: existing.id,
-            oldValue: toAuditValue(existing, existing.accessRole.name),
-            tx,
+          await withRoleLockoutGuard(tx, tenantId, async () => {
+            await tx.roleAssignment.delete({ where: { id, tenantId } });
+            await auditRoleAssignment(app, req, {
+              action: "DELETE",
+              entityId: existing.id,
+              oldValue: toAuditValue(existing, existing.accessRole.name),
+              tx,
+            });
           });
         });
         return reply.code(204).send();
       } catch (err: unknown) {
+        if (err instanceof RoleLockoutError) {
+          return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
+        }
         if (isPrismaErrorCode(err, "P2025")) {
           return reply.code(404).send({ error: ASSIGNMENT_NOT_FOUND });
         }

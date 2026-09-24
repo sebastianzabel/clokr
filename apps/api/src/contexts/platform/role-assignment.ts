@@ -18,7 +18,8 @@
  * type only, so this file stays usable in a pure/unit-test context with no Prisma connection.
  */
 import type { RoleAssignmentScopeType } from "@clokr/db";
-import type { PermissionReach, PermissionRelation } from "./permission-catalog";
+import { roleGrants } from "./access-role";
+import type { PermissionKey, PermissionReach, PermissionRelation } from "./permission-catalog";
 
 /** The scope of a role assignment, as the API/application shape (not the stored row). */
 export type RoleAssignmentScope =
@@ -166,4 +167,105 @@ export function decideUserMayApply(facts: UserMayApplyFacts): boolean {
   }
 
   return false;
+}
+
+// ── Lockout protection (#73 rule, enforced by #74) ─────────────────────────────────────────────
+//
+// A HOLDER of a guarded permission is an ACTIVE user (`User.isActive`) whose employee belongs to
+// the tenant and who has at least one TENANT-scope assignment in that tenant whose role grants the
+// permission via `roleGrants` (D-17). A SALONS or PERSONS assignment never makes a holder: managing
+// roles and assignments is a tenant-wide resource (relation MANDANT), so only a TENANT scope can
+// ever exercise it (D-15).
+//
+// BOTH permissions are guarded. `role:manage` is the binding wording of #73/#74. Losing the last
+// holder of `role-assignment:manage` is the lockout that actually cannot be repaired from inside
+// the tenant: nobody left could grant the right back.
+//
+// The rule is a TRANSITION rule (D-18): only a change that takes a guarded permission's holder
+// count from >= 1 to 0 is rejected. A tenant that has no holder yet — every tenant until #75 seeds
+// assignments — is never blocked, otherwise every deactivation in every existing tenant would be
+// refused today.
+//
+// The counting below is pure. The facade (`facade/role-assignments.ts`, `withRoleLockoutGuard`)
+// loads the holder rows, locks the tenant row and counts before and after the write inside one
+// transaction.
+
+/** The permissions whose last tenant-wide holder must never disappear (D-17). */
+export const GUARDED_PERMISSIONS = [
+  "role:manage:ZUGEWIESEN",
+  "role-assignment:manage:ZUGEWIESEN",
+] as const satisfies readonly PermissionKey[];
+
+export type GuardedPermission = (typeof GUARDED_PERMISSIONS)[number];
+
+/** The German 409 message every lockout trigger answers with (D-19). */
+export const ROLE_LOCKOUT_MESSAGE =
+  "Nicht möglich: Danach hätte kein aktiver Nutzer mehr das Recht, Rollen bzw. Rollenzuweisungen mandantenweit zu verwalten.";
+
+/**
+ * Thrown inside a guarded transaction when the write would remove the last holder of
+ * `permission`. Throwing rolls back the write AND its audit row. Callers branch on
+ * `instanceof RoleLockoutError`, never on the message text.
+ */
+export class RoleLockoutError extends Error {
+  readonly permission: GuardedPermission;
+
+  constructor(permission: GuardedPermission) {
+    super(`Role lockout: the last tenant-wide holder of ${permission} would be removed`);
+    this.name = "RoleLockoutError";
+    this.permission = permission;
+  }
+}
+
+/**
+ * One candidate holder row: a TENANT-scope assignment of an active user of the tenant, with the
+ * role it binds. The facade has already applied the user, employee and scope filters. This module
+ * only evaluates the role.
+ */
+export interface GuardedHolderRow {
+  userId: string;
+  accessRole: { tenantId: string | null; permissions: readonly string[] };
+}
+
+/**
+ * The number of DISTINCT holders per guarded permission. A role counts only if it is a system role
+ * (`tenantId` null) or a customer role of `tenantId`. A foreign tenant's role never counts, even if
+ * a row referencing it slipped through.
+ */
+export function countHoldersPerGuardedPermission(
+  tenantId: string,
+  rows: readonly GuardedHolderRow[],
+): Record<GuardedPermission, number> {
+  const holders = new Map<GuardedPermission, Set<string>>(
+    GUARDED_PERMISSIONS.map((permission) => [permission, new Set<string>()]),
+  );
+  for (const row of rows) {
+    const roleBelongsHere =
+      row.accessRole.tenantId === null || row.accessRole.tenantId === tenantId;
+    if (!roleBelongsHere) continue;
+    for (const permission of GUARDED_PERMISSIONS) {
+      if (roleGrants(row.accessRole, permission)) {
+        holders.get(permission)?.add(row.userId);
+      }
+    }
+  }
+  const counts = {} as Record<GuardedPermission, number>;
+  for (const permission of GUARDED_PERMISSIONS) {
+    counts[permission] = holders.get(permission)?.size ?? 0;
+  }
+  return counts;
+}
+
+/**
+ * D-18: the first guarded permission whose holder count went from >= 1 (`before`) to 0 (`after`),
+ * or `null` when no permission lost its last holder. A 0 -> 0 transition is never a lockout.
+ */
+export function findLockedOutPermission(
+  before: Readonly<Record<GuardedPermission, number>>,
+  after: Readonly<Record<GuardedPermission, number>>,
+): GuardedPermission | null {
+  for (const permission of GUARDED_PERMISSIONS) {
+    if (before[permission] >= 1 && after[permission] === 0) return permission;
+  }
+  return null;
 }
