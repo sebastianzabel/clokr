@@ -89,14 +89,15 @@ export const OWNER_AREAS: readonly OwnerArea[] = [
 
 /**
  * Every Prisma delegate name (camelCase, as written in code) in `packages/db/prisma/schema.prisma`
- * today — 41 models, issue #99's table. `MODEL_OWNER` below is a `Record` over exactly this union
- * with no default branch: a model added to the schema later and not added here fails the
- * TypeScript build, rather than silently falling through to `platform` the way an enumerated
- * allowlist is supposed to (see `context-area-map.ts`'s own "never a fallthrough" note on
- * `rahmen`).
+ * today — 42 models, issue #99's table plus Salon (Phase 64b, issue #64). `MODEL_OWNER` below is a
+ * `Record` over exactly this union with no default branch: a model added to the schema later and
+ * not added here fails the TypeScript build, rather than silently falling through to `platform`
+ * the way an enumerated allowlist is supposed to (see `context-area-map.ts`'s own "never a
+ * fallthrough" note on `rahmen`).
  */
 export type PrismaModelName =
   | "tenant"
+  | "salon"
   | "tenantConfig"
   | "user"
   | "refreshToken"
@@ -139,13 +140,14 @@ export type PrismaModelName =
   | "employeeAvailability";
 
 /**
- * The 41-model ownership table (issue #99's "Modellzuordnung", ADR 0001 §3). This is the ONE
+ * The 42-model ownership table (issue #99's "Modellzuordnung", ADR 0001 §3). This is the ONE
  * place a model's owning context may be stated for this measurement (measurement authority rule
  * 5) — no other reader of this script should rebuild it inline.
  */
 export const MODEL_OWNER: Readonly<Record<PrismaModelName, OwnerArea>> = {
-  // platform (Unterbau) — 13
+  // platform (Unterbau) — 14
   tenant: "platform",
+  salon: "platform", // Phase 64b — Salon, issue #64
   tenantConfig: "platform",
   employee: "platform",
   user: "platform",

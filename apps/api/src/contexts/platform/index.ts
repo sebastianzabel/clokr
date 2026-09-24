@@ -63,3 +63,12 @@ export type {
   PermissionRelation,
   PermissionResource,
 } from "./permission-catalog";
+// Phase 64b (issue #64) — salon read surface
+export {
+  listSalons,
+  countActiveSalons,
+  isMultiSalonTenant,
+  salonOpeningHoursSchema,
+  DEFAULT_SALON_OPENING_HOURS,
+} from "./facade/salons";
+export type { SalonOpeningHours } from "./facade/salons";

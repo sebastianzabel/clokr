@@ -360,7 +360,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // same shape as anonymizeAbsencesForEmployee/hardDeleteAbsencesForEmployee above;
   // archiveLeaveRequestsBefore needs none, its tenantId parameter satisfies F3 directly, same as
   // archiveAbsencesBefore).
-  // 15 files, 82 exported functions total, 15 exception entries, 0 findings.
+  // 16 files, 85 exported functions total, 15 exception entries, 0 findings.
   //
   // 84 -> 82 in Phase 205 Plan 01 (Issue #205): the pro-rata-exit and updateLeaveType-adjacent
   // display-name-based siblings in entitlements.ts and leave-types.ts were DELETED, not renamed.
@@ -368,15 +368,20 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // through the code-based getVacationEntitlement / getLeaveTypeByCode, so both were left without
   // a caller and removed. Count unchanged (still 82) after Phase 205 Plan 02's rename of the
   // remaining sibling to getVacationEntitlementsForYearByCode — a rename keeps the count, only a
-  // delete or an add changes it. This golden number is a tripwire, so it is updated only when the
-  // tree legitimately changed — here it did, and the deletion is the point of that phase rather
-  // than a side effect.
-  it("the real tree has exactly 82 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  // delete or an add changes it.
+  //
+  // 82 -> 85 in Phase 64b Plan 01 (Issue #64): `contexts/platform/facade/salons.ts` added
+  // (matches the `contexts/*/facade/**/*.ts` glob directly, no KNOWN_FACADE_FILES entry needed) —
+  // 3 new exported functions (listSalons, countActiveSalons, isMultiSalonTenant), no new
+  // exceptions (all 3 pass F1/F2/F3 directly). This golden number is a tripwire, updated only when
+  // the tree legitimately changed — here it did.
+  it("the real tree has exactly 85 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
         ...KNOWN_FACADE_FILES,
         "apps/api/src/contexts/platform/facade/employee-scope.ts",
+        "apps/api/src/contexts/platform/facade/salons.ts",
         "apps/api/src/contexts/scheduling/facade/shifts.ts",
         "apps/api/src/contexts/scheduling/facade/availability.ts",
         "apps/api/src/contexts/time-tracking/facade/presence-devices.ts",
@@ -397,7 +402,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(82);
+    expect(functions).toHaveLength(85);
 
     const rawExceptions = JSON.parse(
       readFileSync(

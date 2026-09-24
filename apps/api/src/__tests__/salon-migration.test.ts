@@ -3,15 +3,20 @@
  * restatement of it) and reads the result back through the API.
  *
  * `readDataSection()` resolves the migration file by its exact, hardcoded directory name — never
- * `readdirSync` — so a later, unrelated migration cannot be silently picked up as "the" Salon
- * migration.
+ * a dynamic directory scan — so a later, unrelated migration cannot be silently picked up as "the"
+ * Salon migration.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
+import type { Prisma } from "@clokr/db";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
-import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
+import {
+  DEFAULT_SALON_OPENING_HOURS,
+  salonOpeningHoursSchema,
+  type SalonOpeningHours,
+} from "../contexts/platform/facade/salons";
 
 // __dirname is apps/api/src/__tests__ — four levels up is the repo root, same resolution as
 // t100-09-oracle-probe.test.ts.
@@ -117,5 +122,178 @@ describe("Phase 64b tracer — default-salon migration + GET /api/v1/salons", ()
     });
     expect(tenantBSalon).not.toBeNull();
     expect(body.salons.some((s) => s.id === tenantBSalon!.id)).toBe(false);
+  });
+});
+
+// ── Task 2: AC-3 hardening — custom hours, no TenantConfig, pre-existing salon, idempotency ────
+
+/**
+ * Thrown at the end of the rolled-back transaction below so the whole fixture (three tenants,
+ * their configs, the pre-existing salon) never actually lands in the shared test database —
+ * the ONLY durable state this test suite creates is the tracer's own two tenants above.
+ */
+class Salon64bMigrationCasesRollback extends Error {}
+
+const CUSTOM_STORE_HOURS: SalonOpeningHours = [
+  { day: 0, open: "08:00", close: "20:00", closed: true },
+  { day: 1, open: "08:00", close: "20:00" },
+  { day: 2, open: "08:00", close: "20:00" },
+  { day: 3, open: "08:00", close: "20:00" },
+  { day: 4, open: "08:00", close: "20:00" },
+  { day: 5, open: "09:00", close: "14:00" },
+  { day: 6, open: "08:00", close: "20:00", closed: true },
+];
+
+describe("Phase 64b — migration data-section cases A-C (D-14) + idempotency, rolled back", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  it("case A (custom storeHours), case B (no TenantConfig), case C (pre-existing salon), both runs idempotent", async () => {
+    const dataSection = readDataSection();
+
+    type Snapshot = {
+      tenantAName: string;
+      tenantBName: string;
+      preexistingSalonId: string;
+      afterFirst: {
+        a: Array<{ name: string; openingHours: unknown }>;
+        b: Array<{ name: string; openingHours: unknown }>;
+        c: Array<{ id: string }>;
+      };
+      afterSecond: {
+        a: Array<{ name: string; openingHours: unknown }>;
+        b: Array<{ name: string; openingHours: unknown }>;
+        c: Array<{ id: string }>;
+      };
+    };
+    let snapshot: Snapshot | undefined;
+
+    await expect(
+      app.prisma.$transaction(
+        async (tx: Prisma.TransactionClient) => {
+          const s = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+          // Case A: TenantConfig.storeHours set to a NON-default week.
+          const tenantA = await tx.tenant.create({
+            data: {
+              name: `Salon Case A ${s}`,
+              slug: `salon-case-a-${s}`,
+              federalState: "NIEDERSACHSEN",
+            },
+          });
+          await tx.tenantConfig.create({
+            data: { tenantId: tenantA.id, storeHours: CUSTOM_STORE_HOURS },
+          });
+
+          // Case B: tenant WITHOUT a TenantConfig row at all.
+          const tenantB = await tx.tenant.create({
+            data: {
+              name: `Salon Case B ${s}`,
+              slug: `salon-case-b-${s}`,
+              federalState: "NIEDERSACHSEN",
+            },
+          });
+
+          // Case C: tenant that already has a salon before the data section runs.
+          const tenantC = await tx.tenant.create({
+            data: {
+              name: `Salon Case C ${s}`,
+              slug: `salon-case-c-${s}`,
+              federalState: "NIEDERSACHSEN",
+            },
+          });
+          await tx.tenantConfig.create({ data: { tenantId: tenantC.id } });
+          const preexistingSalon = await tx.salon.create({
+            data: {
+              tenantId: tenantC.id,
+              name: "Bereits vorhandener Salon",
+              openingHours: DEFAULT_SALON_OPENING_HOURS,
+              isActive: true,
+            },
+          });
+
+          // First run of the real migration data section.
+          await tx.$executeRawUnsafe(dataSection);
+          const afterFirst = {
+            a: await tx.salon.findMany({ where: { tenantId: tenantA.id } }),
+            b: await tx.salon.findMany({ where: { tenantId: tenantB.id } }),
+            c: await tx.salon.findMany({ where: { tenantId: tenantC.id } }),
+          };
+
+          // Second run — NOT EXISTS must make this a no-op for every tenant.
+          await tx.$executeRawUnsafe(dataSection);
+          const afterSecond = {
+            a: await tx.salon.findMany({ where: { tenantId: tenantA.id } }),
+            b: await tx.salon.findMany({ where: { tenantId: tenantB.id } }),
+            c: await tx.salon.findMany({ where: { tenantId: tenantC.id } }),
+          };
+
+          snapshot = {
+            tenantAName: tenantA.name,
+            tenantBName: tenantB.name,
+            preexistingSalonId: preexistingSalon.id,
+            afterFirst,
+            afterSecond,
+          };
+
+          throw new Salon64bMigrationCasesRollback(
+            "deliberate rollback — this fixture must never be committed",
+          );
+        },
+        { timeout: 20000 },
+      ),
+    ).rejects.toBeInstanceOf(Salon64bMigrationCasesRollback);
+
+    expect(snapshot).toBeDefined();
+    const { tenantAName, tenantBName, preexistingSalonId, afterFirst, afterSecond } = snapshot!;
+
+    // Case A: exactly one salon, custom hours copied verbatim.
+    expect(afterFirst.a).toHaveLength(1);
+    expect(afterFirst.a[0].name).toBe(tenantAName);
+    expect(afterFirst.a[0].openingHours).toEqual(CUSTOM_STORE_HOURS);
+    expect(afterSecond.a).toHaveLength(1);
+
+    // Case B: exactly one salon, COALESCE fallback equals the facade constant.
+    expect(afterFirst.b).toHaveLength(1);
+    expect(afterFirst.b[0].name).toBe(tenantBName);
+    expect(afterFirst.b[0].openingHours).toEqual(DEFAULT_SALON_OPENING_HOURS);
+    expect(afterSecond.b).toHaveLength(1);
+
+    // Case C: still exactly the ONE pre-existing salon, same id, both runs.
+    expect(afterFirst.c).toHaveLength(1);
+    expect(afterFirst.c[0].id).toBe(preexistingSalonId);
+    expect(afterSecond.c).toHaveLength(1);
+    expect(afterSecond.c[0].id).toBe(preexistingSalonId);
+  });
+});
+
+// ── Living assertion: DEFAULT_SALON_OPENING_HOURS pinned to the schema's storeHours default ────
+
+describe("DEFAULT_SALON_OPENING_HOURS living assertion", () => {
+  let app: FastifyInstance;
+  let tenant: Awaited<ReturnType<typeof seedTestData>>;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    tenant = await seedTestData(app, "salon-living-assertion");
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenant.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  it("a TenantConfig created without storeHours equals DEFAULT_SALON_OPENING_HOURS, which itself parses under salonOpeningHoursSchema", async () => {
+    const config = await app.prisma.tenantConfig.findUniqueOrThrow({
+      where: { tenantId: tenant.tenant.id },
+    });
+    expect(config.storeHours).toEqual(DEFAULT_SALON_OPENING_HOURS);
+    expect(() => salonOpeningHoursSchema.parse(DEFAULT_SALON_OPENING_HOURS)).not.toThrow();
   });
 });
