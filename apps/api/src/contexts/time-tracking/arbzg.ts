@@ -12,6 +12,23 @@ import {
   getVocationalSchoolDays, // Phase 100B Plan 12 — A6
   BS_DAILY_DEFAULT_MIN,
 } from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports
+import type { TimeEntry } from "@clokr/db";
+import { findEntriesOfDay } from "./day-entries"; // Phase 69b — the single day lookup
+
+// Phase 69b: in-memory equivalents of the former `findFirst({ endTime: { not: null }, orderBy })`
+// rest-period lookups. Only closed rows count; the first maximum/minimum wins on ties.
+function latestEnding(entries: TimeEntry[]): TimeEntry | null {
+  let best: TimeEntry | null = null;
+  for (const e of entries) {
+    if (e.endTime === null) continue;
+    if (best === null || e.endTime.getTime() > best.endTime!.getTime()) best = e;
+  }
+  return best;
+}
+
+function earliestStarting(entries: TimeEntry[]): TimeEntry | null {
+  return entries.find((e) => e.endTime !== null) ?? null; // entries arrive in startTime order
+}
 
 export interface ArbZGWarning {
   code:
@@ -127,16 +144,15 @@ export async function checkArbZG(
     : 0;
 
   // ── 1. Tagessicht: alle abgeschlossenen Slots des Tages ────────────────────
-  const daySlots = await prisma.timeEntry.findMany({
-    where: {
+  // Phase 69b: read through findEntriesOfDay (the former one-day window on the DATE column equals
+  // equality on the UTC-midnight date); closed WORK rows only, in start order.
+  const daySlots = (
+    await findEntriesOfDay(prisma, {
+      tenantId: employee.tenantId,
       employeeId,
-      deletedAt: null,
-      date: { gte: new Date(dateStr), lte: new Date(dateStr + "T23:59:59.999Z") },
-      endTime: { not: null },
-      type: "WORK",
-    },
-    orderBy: { startTime: "asc" },
-  });
+      date: new Date(dateStr),
+    })
+  ).filter((e) => e.endTime !== null && e.type === "WORK");
 
   if (daySlots.length > 0) {
     // Phase 91 (BREAK-03) — a WAIVED day ("durchgearbeitet") downgrades the §4
@@ -144,6 +160,8 @@ export async function checkArbZG(
     // 12.02.2025, 5 AZR 51/24: time worked without a documented break is still
     // payable, so it must not hard-block). One entry per day makes `some`/`every`
     // equivalent here; `some` is used defensively.
+    // MULTI-ENTRY: with several entries per day `some` waives the whole day's § 4 check if ONE entry
+    // is waived, and the gap-as-break rule below decides how entry gaps count as breaks.
     const dayIsWaived = daySlots.some((s) => s.breakStatus === "WAIVED");
 
     // Netto-Arbeitszeit + explizite Pausen
@@ -197,20 +215,20 @@ export async function checkArbZG(
     }
 
     // § 5 ArbZG – Mindestruhezeit (11h zwischen Arbeitstagen)
-    // Vortag prüfen: letzter Slot des Vortages
+    // Previous day: its last closed slot (any type).
     const prevDate = new Date(changedDate);
     prevDate.setDate(prevDate.getDate() - 1);
     const prevDateStr = dateStrInTz(prevDate, tz);
 
-    const prevLastSlot = await prisma.timeEntry.findFirst({
-      where: {
+    // MULTI-ENTRY: rest period is measured from the LATEST end of the previous day — correct for
+    // several entries as long as "latest endTime" stays the selection rule.
+    const prevLastSlot = latestEnding(
+      await findEntriesOfDay(prisma, {
+        tenantId: employee.tenantId,
         employeeId,
-        deletedAt: null,
-        date: { gte: new Date(prevDateStr), lte: new Date(prevDateStr + "T23:59:59.999Z") },
-        endTime: { not: null },
-      },
-      orderBy: { endTime: "desc" },
-    });
+        date: new Date(prevDateStr),
+      }),
+    );
 
     if (prevLastSlot?.endTime && daySlots.length > 0) {
       const restMin = (daySlots[0].startTime.getTime() - prevLastSlot.endTime.getTime()) / 60000;
@@ -224,20 +242,19 @@ export async function checkArbZG(
       }
     }
 
-    // Folgetag prüfen: erster Slot des Folgetages
+    // Next day: its first closed slot (any type).
     const nextDate = new Date(changedDate);
     nextDate.setDate(nextDate.getDate() + 1);
     const nextDateStr = dateStrInTz(nextDate, tz);
 
-    const nextFirstSlot = await prisma.timeEntry.findFirst({
-      where: {
+    // MULTI-ENTRY: rest period is measured to the EARLIEST start of the next day.
+    const nextFirstSlot = earliestStarting(
+      await findEntriesOfDay(prisma, {
+        tenantId: employee.tenantId,
         employeeId,
-        deletedAt: null,
-        date: { gte: new Date(nextDateStr), lte: new Date(nextDateStr + "T23:59:59.999Z") },
-        endTime: { not: null },
-      },
-      orderBy: { startTime: "asc" },
-    });
+        date: new Date(nextDateStr),
+      }),
+    );
 
     const lastSlotToday = daySlots[daySlots.length - 1];
     if (nextFirstSlot && lastSlotToday.endTime) {
@@ -265,15 +282,14 @@ export async function checkArbZG(
     nextDate.setDate(nextDate.getDate() + 1);
     const nextDateStr = dateStrInTz(nextDate, tz);
 
-    const nextFirstSlot = await prisma.timeEntry.findFirst({
-      where: {
+    // MULTI-ENTRY: BS-day rest period, measured to the EARLIEST start of the next day.
+    const nextFirstSlot = earliestStarting(
+      await findEntriesOfDay(prisma, {
+        tenantId: employee.tenantId,
         employeeId,
-        deletedAt: null,
-        date: { gte: new Date(nextDateStr), lte: new Date(nextDateStr + "T23:59:59.999Z") },
-        endTime: { not: null },
-      },
-      orderBy: { startTime: "asc" },
-    });
+        date: new Date(nextDateStr),
+      }),
+    );
 
     if (nextFirstSlot) {
       // Detect block-week: ≥5 BS days in the same ISO week as `changedDate`.
