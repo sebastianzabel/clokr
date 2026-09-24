@@ -9,6 +9,8 @@ import { validatePassword, loadPasswordPolicy } from "../password-policy";
 import { calculateProRataVacation } from "../../absence/vacation-calc";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { anonymizeEmployeeData, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../anonymize";
+import { withRoleLockoutGuard } from "../facade/role-assignments";
+import { RoleLockoutError, ROLE_LOCKOUT_MESSAGE } from "../role-assignment";
 import {
   createOvertimeAccount,
   hardDeleteOvertimeDataForEmployee,
@@ -819,32 +821,46 @@ export async function employeeRoutes(app: FastifyInstance) {
 
       const effectiveExitDate = exitDate ? new Date(exitDate) : new Date();
 
-      await app.prisma.$transaction([
-        app.prisma.user.update({
-          where: { id: employee.userId },
-          data: { isActive: false },
-        }),
-        app.prisma.employee.update({
-          where: { id },
-          data: { exitDate: effectiveExitDate },
-        }),
-        app.prisma.refreshToken.updateMany({
-          where: { userId: employee.userId, revokedAt: null },
-          data: { revokedAt: new Date() },
-        }),
-        app.prisma.otpToken.updateMany({
-          where: { userId: employee.userId, usedAt: null },
-          data: { usedAt: new Date() },
-        }),
-      ]);
-
-      await app.audit({
-        userId: req.user.sub,
-        action: "UPDATE",
-        entity: "Employee",
-        entityId: id,
-        newValue: { isActive: false, exitDate: effectiveExitDate },
-      });
+      // Phase 74b (D-19/D-20): deactivating the tenant's last active tenant-wide holder of
+      // role:manage / role-assignment:manage would lock every admin out of role management. The
+      // four writes AND the audit run in one interactive transaction under the lockout guard, so a
+      // RoleLockoutError rolls all of them back. The user's role assignments stay (D-22): an
+      // inactive user holds no effective right, and reactivation restores it.
+      try {
+        await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          await withRoleLockoutGuard(tx, req.user.tenantId, async () => {
+            await tx.user.update({
+              where: { id: employee.userId },
+              data: { isActive: false },
+            });
+            await tx.employee.update({
+              where: { id },
+              data: { exitDate: effectiveExitDate },
+            });
+            await tx.refreshToken.updateMany({
+              where: { userId: employee.userId, revokedAt: null },
+              data: { revokedAt: new Date() },
+            });
+            await tx.otpToken.updateMany({
+              where: { userId: employee.userId, usedAt: null },
+              data: { usedAt: new Date() },
+            });
+            await app.audit({
+              userId: req.user.sub,
+              action: "UPDATE",
+              entity: "Employee",
+              entityId: id,
+              newValue: { isActive: false, exitDate: effectiveExitDate },
+              tx,
+            });
+          });
+        });
+      } catch (err) {
+        if (err instanceof RoleLockoutError) {
+          return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
+        }
+        throw err;
+      }
 
       return { success: true };
     },
