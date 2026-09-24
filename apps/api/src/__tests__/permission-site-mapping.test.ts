@@ -25,15 +25,30 @@
  * - A role check in a shape neither detector matches — e.g. a destructured role compared through
  *   `.includes(...)` — is invisible. That is why `HANDLER_DETECTOR` is kept broad.
  *
+ * Two more guards hold the descriptive half of the doc to the catalog (AK-72-8, D-12, D-15):
+ * - The section named by `PERMISSIONS_HEADING` has exactly one row per catalog permission — full key
+ *   `resource:action:REACH` plus two non-trivial text cells (what it allows, what it explicitly does
+ *   not) — and no row for a key the catalog lacks. Both directions: a permission added to the
+ *   catalog without a description turns this red, and so does a description left behind for a
+ *   permission that was removed.
+ * - The section named by `RESOURCES_HEADING` lists every catalog resource exactly once, with the
+ *   relation the catalog gives it.
+ *
  * When this is red: update `docs/permissions.md` — add, remove or reclassify the row for the site
- * the failure names, in the section it names. Never loosen a detector to make it green.
+ * or permission the failure names, in the section it names. Never loosen a detector or a parser to
+ * make it green.
  *
  * DB-free: no Prisma, no app build.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, extname } from "node:path";
 import { describe, it, expect } from "vitest";
-import { PERMISSIONS, PERMISSION_REACHES, permissionKey } from "../contexts/platform";
+import {
+  PERMISSIONS,
+  PERMISSION_REACHES,
+  PERMISSION_RESOURCES,
+  permissionKey,
+} from "../contexts/platform";
 
 const REPO_ROOT = join(__dirname, "..", "..", "..", "..");
 const SRC_ROOT = join(REPO_ROOT, "apps", "api", "src");
@@ -48,11 +63,19 @@ const HANDLER_DETECTOR = /\buser\.role\b|\brole\s*[!=]==/;
 const REQUIRE_ROLE_HEADING = "## Aufrufstellen von requireRole";
 const HANDLER_HEADING = "## Handler-Prüfungen";
 const EXCLUDED_HEADING = "## Nicht gezählte Treffer";
+const RESOURCES_HEADING = "## Ressourcen";
+const PERMISSIONS_HEADING = "## Permissions";
 
 const STELLE_FORMAT = /^`([^`\s]+\.ts):(\d+)`$/;
 const PERMISSION_FORMAT = /^`([a-z0-9-]+):([a-z0-9-]+)`$/;
 const REACH_TOKEN = /[A-Z][A-Z_]+/g;
 const MIN_REASON_LENGTH = 10;
+const PERMISSION_KEY_FORMAT = /^`([a-z0-9-]+:[a-z0-9-]+:(?:EIGENE|ZUGEWIESEN))`$/;
+const RESOURCE_KEY_FORMAT = /^`([a-z0-9-]+)`$/;
+const MIN_DESCRIPTION_LENGTH = 10;
+const PLACEHOLDER_TEXT = /\b(?:TODO|TBD|FIXME|XXX|Platzhalter)\b/i;
+/** The doc's relation labels, mapped onto the catalog's `relation` values. */
+const RELATION_LABELS: Record<string, string> = { Person: "PERSON", Mandant: "MANDANT" };
 
 // ── Source side ──────────────────────────────────────────────────────────────
 
@@ -202,6 +225,83 @@ function parseExcludedRow(row: DocRow): ExcludedRow | string {
   return { heading: row.heading, ...site };
 }
 
+interface PermissionRow {
+  key: string;
+}
+
+interface ResourceRow {
+  key: string;
+  relation: string;
+}
+
+function checkDescriptionCell(where: string, name: string, cell: string): string | null {
+  if (cell.length < MIN_DESCRIPTION_LENGTH) {
+    return `${where} — ${name} shorter than ${MIN_DESCRIPTION_LENGTH} characters`;
+  }
+  if (PLACEHOLDER_TEXT.test(cell)) return `${where} — ${name} is placeholder text`;
+  return null;
+}
+
+function parsePermissionRow(row: DocRow): PermissionRow | string {
+  const where = `${DOC_NAME} § ${row.heading}: ${row.raw}`;
+  if (row.cells.length !== 3) return `${where} — expected 3 cells, got ${row.cells.length}`;
+  const [permission, allowed, notAllowed] = row.cells;
+  const key = PERMISSION_KEY_FORMAT.exec(permission);
+  if (!key) return `${where} — Permission is not a backticked resource:action:REACH`;
+  const error =
+    checkDescriptionCell(where, "the allowed cell", allowed) ??
+    checkDescriptionCell(where, "the explicitly-not-allowed cell", notAllowed);
+  return error ?? { key: key[1] };
+}
+
+function parseResourceRow(row: DocRow): ResourceRow | string {
+  const where = `${DOC_NAME} § ${row.heading}: ${row.raw}`;
+  if (row.cells.length !== 4) return `${where} — expected 4 cells, got ${row.cells.length}`;
+  const [resource, context, relation, content] = row.cells;
+  const key = RESOURCE_KEY_FORMAT.exec(resource);
+  if (!key) return `${where} — Ressource is not a backticked resource key`;
+  if (context === "") return `${where} — Kontext is empty`;
+  const mapped = RELATION_LABELS[relation];
+  if (mapped === undefined) {
+    return `${where} — Bezug is "${relation}", expected one of ${Object.keys(RELATION_LABELS).join(", ")}`;
+  }
+  if (content.length < MIN_DESCRIPTION_LENGTH) {
+    return `${where} — Inhalt shorter than ${MIN_DESCRIPTION_LENGTH} characters`;
+  }
+  return { key: key[1], relation: mapped };
+}
+
+function parsedPermissionRows(doc: string): PermissionRow[] {
+  return readSectionRows(doc, PERMISSIONS_HEADING)
+    .map(parsePermissionRow)
+    .filter((r): r is PermissionRow => typeof r !== "string");
+}
+
+function parsedResourceRows(doc: string): ResourceRow[] {
+  return readSectionRows(doc, RESOURCES_HEADING)
+    .map(parseResourceRow)
+    .filter((r): r is ResourceRow => typeof r !== "string");
+}
+
+/** Keys missing from `rows`, keys occurring more than once, and keys not in `expected`. */
+function compareKeySets(
+  expected: readonly string[],
+  rows: readonly string[],
+): { missing: string[]; duplicate: string[]; extra: string[] } {
+  const want = new Set(expected);
+  const seen = new Set<string>();
+  const duplicate = new Set<string>();
+  for (const key of rows) {
+    if (seen.has(key)) duplicate.add(key);
+    seen.add(key);
+  }
+  return {
+    missing: expected.filter((k) => !seen.has(k)),
+    duplicate: [...duplicate].sort(),
+    extra: [...seen].filter((k) => !want.has(k)).sort(),
+  };
+}
+
 function parsedSiteRows(doc: string, heading: string): SiteRow[] {
   return readSectionRows(doc, heading)
     .map(parseSiteRow)
@@ -259,15 +359,21 @@ describe("permission site mapping — docs/permissions.md against apps/api/src (
     ).toBeGreaterThan(0);
   });
 
-  it("every data row of the three site sections parses (D-16)", () => {
+  it("every data row of the site, resource and permission sections parses (D-15, D-16)", () => {
     const doc = readDoc();
     const errors: string[] = [];
-    for (const heading of [REQUIRE_ROLE_HEADING, HANDLER_HEADING, EXCLUDED_HEADING]) {
+    const parsers: [string, (row: DocRow) => object | string][] = [
+      [RESOURCES_HEADING, parseResourceRow],
+      [PERMISSIONS_HEADING, parsePermissionRow],
+      [REQUIRE_ROLE_HEADING, parseSiteRow],
+      [HANDLER_HEADING, parseSiteRow],
+      [EXCLUDED_HEADING, parseExcludedRow],
+    ];
+    for (const [heading, parse] of parsers) {
       const n = headingOccurrences(doc, heading);
       if (n !== 1) errors.push(`${DOC_NAME}: heading "${heading}" occurs ${n} times, expected 1`);
       const rows = readSectionRows(doc, heading);
       if (rows.length === 0) errors.push(`${DOC_NAME} § ${heading}: no data rows`);
-      const parse = heading === EXCLUDED_HEADING ? parseExcludedRow : parseSiteRow;
       for (const row of rows) {
         const parsed = parse(row);
         if (typeof parsed === "string") errors.push(parsed);
@@ -348,5 +454,39 @@ describe("permission site mapping — docs/permissions.md against apps/api/src (
       violations,
       `${DOC_NAME} names a permission the catalog does not have — fix the row or the catalog`,
     ).toEqual([]);
+  });
+
+  it("every catalog permission has exactly one description row, and every row is a catalog permission (D-12, AK-72-8)", () => {
+    expect(
+      PERMISSIONS.length,
+      "PERMISSIONS is empty — the catalog import is broken",
+    ).toBeGreaterThan(0);
+    const rows = parsedPermissionRows(readDoc()).map((r) => r.key);
+    const result = compareKeySets(PERMISSIONS.map(permissionKey), rows);
+    expect(
+      result,
+      `${DOC_NAME} § ${PERMISSIONS_HEADING.replace(/^## /, "")} is out of step with PERMISSIONS — add the missing description, drop the duplicate, remove the row for a key the catalog lacks`,
+    ).toEqual({ missing: [], duplicate: [], extra: [] });
+  });
+
+  it("the resource table lists every catalog resource exactly once with the catalog's relation (D-15)", () => {
+    const catalog = Object.keys(PERMISSION_RESOURCES);
+    expect(
+      catalog.length,
+      "PERMISSION_RESOURCES is empty — the catalog import is broken",
+    ).toBeGreaterThan(0);
+    const rows = parsedResourceRows(readDoc());
+    const result = compareKeySets(
+      catalog,
+      rows.map((r) => r.key),
+    );
+    const resources: Record<string, { relation: string }> = PERMISSION_RESOURCES;
+    const wrongRelation = rows
+      .filter((r) => resources[r.key] !== undefined && resources[r.key].relation !== r.relation)
+      .map((r) => `${r.key}: doc says ${r.relation}, catalog says ${resources[r.key].relation}`);
+    expect(
+      { ...result, wrongRelation },
+      `${DOC_NAME} § ${RESOURCES_HEADING.replace(/^## /, "")} is out of step with PERMISSION_RESOURCES`,
+    ).toEqual({ missing: [], duplicate: [], extra: [], wrongRelation: [] });
   });
 });
