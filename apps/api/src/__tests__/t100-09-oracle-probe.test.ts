@@ -267,19 +267,25 @@ let tenantBTimeEntryId: string | undefined;
 // Phase 64b Plan 02 (Issue #64, Pitfall 4): a real Salon for tenantB, same local-fixture idiom as
 // the two above — `seedTestData` does not create a Salon (D-18 exemption), so one is created here.
 let tenantBSalonId: string | undefined;
+// Phase 64b review (WR-04): an INACTIVE Salon for tenantB, the target of POST /:id/activate — an
+// active target could never be flipped by activate (ALREADY_ACTIVE), so the integrity check below
+// could not see a guard that answers 404 while still activating.
+let tenantBInactiveSalonId: string | undefined;
+let tenantBInactiveSalonDeactivatedAt: Date | undefined;
 
 /** Resolves a register `params` fixture key to the foreign tenant's real entity id. `null` means
  * the key is unrecognised — the caller must fail loudly, never silently skip the route (D-03).
- * Today's vocabulary is exactly these five keys: `employee`/`leaveType` from the shared
- * `seedTestData` bundle, `leaveRequest`/`timeEntry`/`salon` from the locally created fixtures
- * above (Issue #309/#310, Phase 64b) — a register entry naming a sixth one this probe does not
- * implement is exactly the failure this function surfaces. */
+ * Today's vocabulary is exactly these six keys: `employee`/`leaveType` from the shared
+ * `seedTestData` bundle, `leaveRequest`/`timeEntry`/`salon`/`salonInactive` from the locally
+ * created fixtures above (Issue #309/#310, Phase 64b) — a register entry naming a seventh one this
+ * probe does not implement is exactly the failure this function surfaces. */
 function fixtureValueFor(bundle: FixtureBundle, fixtureKey: string): string | null {
   if (fixtureKey === "employee") return bundle.employee.id;
   if (fixtureKey === "leaveType") return bundle.vacationType.id;
   if (fixtureKey === "leaveRequest") return tenantBLeaveRequestId ?? null;
   if (fixtureKey === "timeEntry") return tenantBTimeEntryId ?? null;
   if (fixtureKey === "salon") return tenantBSalonId ?? null;
+  if (fixtureKey === "salonInactive") return tenantBInactiveSalonId ?? null;
   return null;
 }
 
@@ -359,8 +365,8 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
       });
       tenantBTimeEntryId = timeEntry.id;
 
-      // Phase 64b Plan 02 (Issue #64) fixture: a real, active Salon owned by tenantB — its only
-      // job, like the two fixtures above, is to EXIST as a foreign-tenant entity for the probe.
+      // Phase 64b Plan 02 (Issue #64) fixture: a real, active Salon owned by tenantB, the target
+      // of GET, PATCH and POST /:id/deactivate.
       const salon = await app.prisma.salon.create({
         data: {
           tenantId: tenantB.tenant.id,
@@ -370,6 +376,43 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         },
       });
       tenantBSalonId = salon.id;
+
+      // Phase 64b review (WR-04): with only one active salon, a deactivate that bypassed the
+      // tenant guard would still stop at LAST_ACTIVE_SALON and never change a row, so the integrity
+      // check could not go red. Both tenants get a second active salon, so the last-salon rule
+      // lets the deactivation through whichever tenant a broken guard counts against — the
+      // caller's (tenantA) or the salon owner's (tenantB).
+      await app.prisma.salon.create({
+        data: {
+          tenantId: tenantB.tenant.id,
+          name: "T-100-09 Salon 2",
+          openingHours: DEFAULT_SALON_OPENING_HOURS,
+          isActive: true,
+        },
+      });
+      for (const name of ["T-100-09 Salon A1", "T-100-09 Salon A2"]) {
+        await app.prisma.salon.create({
+          data: {
+            tenantId: tenantA.tenant.id,
+            name,
+            openingHours: DEFAULT_SALON_OPENING_HOURS,
+            isActive: true,
+          },
+        });
+      }
+
+      // Phase 64b review (WR-04): the target of POST /:id/activate — see tenantBInactiveSalonId.
+      tenantBInactiveSalonDeactivatedAt = new Date("2026-01-05T12:00:00.000Z");
+      const inactiveSalon = await app.prisma.salon.create({
+        data: {
+          tenantId: tenantB.tenant.id,
+          name: "T-100-09 Salon inaktiv",
+          openingHours: DEFAULT_SALON_OPENING_HOURS,
+          isActive: false,
+          deactivatedAt: tenantBInactiveSalonDeactivatedAt,
+        },
+      });
+      tenantBInactiveSalonId = inactiveSalon.id;
     });
 
     afterAll(async () => {
@@ -512,12 +555,21 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
       expect(breakCount).toBe(0);
     });
 
-    it("fixture integrity after the sweep: tenantB's Salon (Phase 64b) still has name 'T-100-09 Salon', isActive true, and deactivatedAt null — a guard that answers 404 while still performing the PATCH/deactivate/activate would otherwise pass the byte comparison", async () => {
+    it("fixture integrity after the sweep: tenantB's active Salon (Phase 64b) still has name 'T-100-09 Salon', isActive true, and deactivatedAt null — a guard that answers 404 while still performing the PATCH or the deactivate would otherwise pass the byte comparison (tenantB and tenantA each have a second active salon, so a bypassed deactivate is not stopped by the last-salon rule)", async () => {
       const after = await app.prisma.salon.findUnique({ where: { id: tenantBSalonId } });
       expect(after).not.toBeNull();
       expect(after?.name).toBe("T-100-09 Salon");
       expect(after?.isActive).toBe(true);
       expect(after?.deactivatedAt).toBeNull();
+    });
+
+    it("fixture integrity after the sweep: tenantB's inactive Salon (Phase 64b review, WR-04) is still inactive with its original deactivatedAt — a guard that answers 404 while still performing the activate would otherwise pass the byte comparison", async () => {
+      const after = await app.prisma.salon.findUnique({ where: { id: tenantBInactiveSalonId } });
+      expect(after).not.toBeNull();
+      expect(after?.isActive).toBe(false);
+      expect(after?.deactivatedAt?.toISOString()).toBe(
+        tenantBInactiveSalonDeactivatedAt?.toISOString(),
+      );
     });
   });
 });
