@@ -551,8 +551,17 @@ import { readFileSync } from "node:fs";
 // `role-assignment-employee-lockout.test.ts`) plus cases in existing files; 295 + 4 = 299. Numbers
 // read from the reporter, not summed from a diff. Merging `origin/main` with 67b / 325 requires
 // re-measuring on the merged tree.
-const MIN_FILES = 299;
-const MIN_TESTS = 3708;
+//
+// Phase 74b code review fixes (plan 74b-05), 2026-09-24: re-measured on the same branch tree, still
+// before merging 67b / 325 (`pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api
+// test`): `Test Files 301 passed (301)`, `Tests 3722 passed | 3 skipped (3725)`, zero failures —
+// `vitest-report.json` agrees (`testResults.length` 301, `numTotalTests` 3725). Two new files:
+// `src/contexts/platform/__tests__/role-assignment-review-fixes.test.ts` (15 cases, WR-01..WR-06,
+// IN-02) and `scripts/__tests__/anonymize-dump.test.ts` (2 cases, WR-05); 299 + 2 = 301 and
+// 3708 + 17 = 3725, which the reporter confirms. The merge with 67b / 325 still requires
+// re-measuring on the merged tree.
+const MIN_FILES = 301;
+const MIN_TESTS = 3725;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
