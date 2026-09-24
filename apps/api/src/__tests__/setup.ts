@@ -370,5 +370,10 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   await prisma.companyShutdown.deleteMany({ where: { tenantId } });
   await prisma.terminalApiKey.deleteMany({ where: { tenantId } });
   await prisma.tenantConfig.deleteMany({ where: { tenantId } });
+  // Phase 64b (issue #64): Salon.tenant is onDelete: Restrict (D-01) — must be deleted before
+  // prisma.tenant.delete below, or the delete fails and leaks fixture rows into the shared test
+  // database (seedTestData itself never creates a Salon, D-18, so this only matters for suites
+  // that create one directly).
+  await prisma.salon.deleteMany({ where: { tenantId } });
   await prisma.tenant.delete({ where: { id: tenantId } });
 }

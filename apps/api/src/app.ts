@@ -55,6 +55,7 @@ import { specialLeaveRoutes } from "./contexts/absence/api/special-leave";
 import { avatarRoutes } from "./contexts/platform/api/avatars";
 import { section9DocumentRoutes } from "./contexts/absence/api/section9-documents";
 import { apiKeyRoutes } from "./contexts/platform/api/api-keys";
+import { salonRoutes } from "./contexts/platform/api/salons"; // Phase 64b (issue #64)
 import { presenceRoutes } from "./contexts/time-tracking/api/presence";
 import { adminPresenceSourcesRoutes } from "./contexts/time-tracking/api/admin-presence-sources";
 import { adminSchoolHolidaysRoutes } from "./contexts/platform/api/admin/school-holidays";
@@ -279,6 +280,7 @@ export async function buildApp() {
   await app.register(overtimeRoutes, { prefix: "/api/v1/overtime" });
   await app.register(reportRoutes, { prefix: "/api/v1/reports" });
   await app.register(settingsRoutes, { prefix: "/api/v1/settings" });
+  await app.register(salonRoutes, { prefix: "/api/v1/salons" }); // Phase 64b (issue #64)
   // Phase 243 Plan 02 (B1) — Abwesenheiten routes kept under the /settings prefix:
   // GET/PUT /api/v1/settings/vacation/:employeeId, GET /api/v1/settings/leave-types,
   // PUT /api/v1/settings/leave-types/:id
