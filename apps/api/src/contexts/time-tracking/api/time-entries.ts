@@ -1116,7 +1116,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             // the same day) rather than the grant race itself — the (employeeId,date)
             // partial unique index remains the final backstop for the one-per-day case.
             const conflictDate = new Date(body.date);
-            const oneDayErrorTx = await checkOneEntryPerDay(tx, employeeId, conflictDate);
+            const oneDayErrorTx = await checkOneEntryPerDay(
+              tx,
+              user.tenantId,
+              employeeId,
+              conflictDate,
+            );
             if (oneDayErrorTx) {
               throw new Error(`ENTRY_CONFLICT:${oneDayErrorTx}`);
             }
@@ -1240,6 +1245,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         if (err instanceof Error && err.message.startsWith("ENTRY_CONFLICT:")) {
           return reply.code(409).send({ error: err.message.slice("ENTRY_CONFLICT:".length) });
         }
+        // MULTI-ENTRY: this P2002 → 409 mapping only exists because of the one-per-day unique index;
+        // it disappears (or changes meaning) when the index is dropped (#70).
         // DATA-V1814-04: the partial-unique index catches a concurrent same-day create
         // that raced past the app-level one-per-day check → P2002 → 409 (not a 500).
         if (

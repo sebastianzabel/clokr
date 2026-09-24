@@ -266,6 +266,7 @@ describe("services/clock/resolver — D-01 reopen path (resolver-reopen.integrat
     const result = await app.prisma.$transaction(async (tx) => {
       return consolidateSameDayEntries(
         tx,
+        data.tenant.id,
         fakeOpenEntry as never,
         4, // gapHoursMax
         app.log,
@@ -325,7 +326,7 @@ describe("services/clock/resolver — D-01 reopen path (resolver-reopen.integrat
     // The single call site of consolidateSameDayEntries in this block.
     const consolidate = (open: unknown, log: SpyLog) =>
       app.prisma.$transaction((tx) =>
-        consolidateSameDayEntries(tx, open as never, 0, log as never),
+        consolidateSameDayEntries(tx, data.tenant.id, open as never, 0, log as never),
       );
 
     function fakeOpen(start: Date, end: Date, id = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee") {

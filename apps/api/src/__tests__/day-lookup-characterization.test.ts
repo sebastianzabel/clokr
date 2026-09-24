@@ -3,9 +3,9 @@
  * employee on one day".
  *
  * Written and pinned GREEN against the code BEFORE the day lookups were routed through
- * `findEntriesOfDay()`; it must stay green, byte-unchanged, afterwards. That is the evidence that
- * the refactor changed no behaviour (Issue #69: "Saldo und ArbZG-Befunde vor und nach der
- * Umstellung identisch").
+ * `findEntriesOfDay()`; its test code must stay unchanged and green afterwards. That is the
+ * evidence that the refactor changed no behaviour (Issue #69: saldo and ArbZG findings identical
+ * before and after the change).
  *
  * It deliberately enters only through signatures the refactor does NOT change — `checkArbZG`,
  * `resolveClockEvent`, and the HTTP routes (`/time-entries`, `/presence/events`,

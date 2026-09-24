@@ -484,8 +484,11 @@ import { readFileSync } from "node:fs";
 // (`day-lookup-characterization.test.ts`, 23 tests in its own output) and seven cases to
 // `resolver-reopen.integration.test.ts` (13 tests in its own output, was 6): 280 + 1 = 281,
 // 3414 + 23 + 7 = 3444.
-const MIN_FILES = 281;
-const MIN_TESTS = 3444;
+//
+// Phase 69b Plan 02: adds `time-entry-day-lookup-guard.test.ts` (6 tests in its own output):
+// 281 + 1 = 282, 3444 + 6 = 3450.
+const MIN_FILES = 282;
+const MIN_TESTS = 3450;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
