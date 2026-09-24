@@ -339,6 +339,8 @@ Nutzers. Vor #74 hält niemand eine Rolle, die Regel hätte keine Eingabe.
 Jede Zeile ist eine Aufrufstelle des Rollen-Guards `requireRole` (`middleware/auth.ts`). Pfade sind
 relativ zu `apps/api/src/`; die Route steht ohne das Präfix aus `app.ts`. Die Spalte „heute“ nennt
 die Rollen, die der Guard heute durchlässt: `A` = ADMIN, `M` = MANAGER, `E` = EMPLOYEE.
+Die Zeilen für `contexts/platform/api/salons.ts` (Präfix `/api/v1/salons`) belegen den Stand von
+Phase 64b (#64) — die Datei gibt es in `bea6b5c7` noch nicht.
 
 | Stelle                                                     | Route                                      | heute   | Permission                     | Reichweite                                   |
 | ---------------------------------------------------------- | ------------------------------------------ | ------- | ------------------------------ | -------------------------------------------- |
@@ -410,6 +412,12 @@ die Rollen, die der Guard heute durchlässt: `A` = ADMIN, `M` = MANAGER, `E` = E
 | `contexts/platform/api/roles.ts:230`                       | `PATCH /:id`                               | A       | `role:manage`                  | ZUGEWIESEN                                   |
 | `contexts/platform/api/roles.ts:316`                       | `DELETE /:id`                              | A       | `role:manage`                  | ZUGEWIESEN                                   |
 | `contexts/platform/api/roles.ts:373`                       | `POST /:id/copy`                           | A       | `role:manage`                  | ZUGEWIESEN                                   |
+| `contexts/platform/api/salons.ts:118`                      | `GET /`                                    | A, M    | `salon:read`                   | ZUGEWIESEN                                   |
+| `contexts/platform/api/salons.ts:136`                      | `GET /:id`                                 | A, M    | `salon:read`                   | ZUGEWIESEN                                   |
+| `contexts/platform/api/salons.ts:152`                      | `POST /`                                   | A       | `salon:manage`                 | ZUGEWIESEN                                   |
+| `contexts/platform/api/salons.ts:178`                      | `PATCH /:id`                               | A       | `salon:manage`                 | ZUGEWIESEN                                   |
+| `contexts/platform/api/salons.ts:216`                      | `POST /:id/deactivate`                     | A       | `salon:manage`                 | ZUGEWIESEN                                   |
+| `contexts/platform/api/salons.ts:259`                      | `POST /:id/activate`                       | A       | `salon:manage`                 | ZUGEWIESEN                                   |
 | `contexts/platform/api/settings.ts:637`                    | `PUT /work`                                | A       | `tenant-settings:update`       | ZUGEWIESEN                                   |
 | `contexts/platform/api/settings.ts:937`                    | `PUT /work/:employeeId`                    | A, M    | `contract:update`              | ZUGEWIESEN                                   |
 | `contexts/platform/api/settings.ts:1247`                   | `GET /smtp`                                | A       | `tenant-settings:read`         | ZUGEWIESEN                                   |

@@ -72,6 +72,27 @@ export type {
   PermissionRelation,
   PermissionResource,
 } from "./permission-catalog";
+// Phase 64b (issue #64) — salon read + write surface (Plan 02 adds the write functions)
+export {
+  listSalons,
+  countActiveSalons,
+  isMultiSalonTenant,
+  salonOpeningHoursSchema,
+  DEFAULT_SALON_OPENING_HOURS,
+  findSalon,
+  createSalon,
+  createSalonSchema,
+  updateSalon,
+  updateSalonSchema,
+  deactivateSalon,
+  activateSalon,
+} from "./facade/salons";
+export type {
+  SalonOpeningHours,
+  CreateSalonInput,
+  UpdateSalonInput,
+  SalonStateChange,
+} from "./facade/salons";
 // Phase 73b (#73): the role-permission resolution path #74 calls, plus the case-insensitive
 // name identity #74's own role-assignment lookups reuse.
 export { roleGrants, normalizeRolePermissions, roleNameKey } from "./access-role";

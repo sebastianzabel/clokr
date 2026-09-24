@@ -146,38 +146,38 @@
   {
     "file": "apps/api/src/contexts/platform/api/settings.ts",
     "handler": "GET /api/v1/settings/work/:employeeId",
-    "validatedAt": 912,
+    "validatedAt": 965,
     "calls": [
       {
         "call": "workSchedule.findFirst",
-        "line": 925
+        "line": 978
       }
     ],
-    "reason": "Lines shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context working-time-account/recalculate-snapshots import, E-3) — no finding, mechanical only. employee is fetch-then-compared against req.user.tenantId at line 812; workSchedule.findFirst reuses the SAME validated employeeId immediately after (Phase 100 CR-01, mirrors the PUT handler below). Lines shifted -14 in Phase 243 Plan 02 Task 1's removal of the Abwesenheiten route blocks above (two import blocks, the vacationEntitlementSchema, and the two moved route bodies) plus one prettier-collapsed blank line left behind by the schema removal — no finding, mechanical only. (Previously shifted +6 in Phase 100B Plan 10's new import block.) Lines shifted +99 in issue #148 (the security-settings schema, defaults and projectSecuritySettings() hoisted to module scope above settingsRoutes so the audit row's oldValue can no longer list fewer fields than the request writes) — no finding, mechanical only. Lines shifted +14 in issue #256 (Befund 3): the datevBeraterNr/datevMandantenNr Zod fields and their explanatory comment were added to tenantConfigSchema above this handler — no finding, mechanical only. Lines shifted +29 in the #300 fix (the decimalFromApi() preprocess helper and its docblock were added above tenantConfigSchema so the PUT accepts the Decimal strings its own GET emits) — no finding, mechanical only. (Lines shifted +1 net in Phase 77b Plan 02: access-context import above this handler — mechanical only.)"
+    "reason": "Lines shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context working-time-account/recalculate-snapshots import, E-3) — no finding, mechanical only. employee is fetch-then-compared against req.user.tenantId at line 812; workSchedule.findFirst reuses the SAME validated employeeId immediately after (Phase 100 CR-01, mirrors the PUT handler below). Lines shifted -14 in Phase 243 Plan 02 Task 1's removal of the Abwesenheiten route blocks above (two import blocks, the vacationEntitlementSchema, and the two moved route bodies) plus one prettier-collapsed blank line left behind by the schema removal — no finding, mechanical only. (Previously shifted +6 in Phase 100B Plan 10's new import block.) Lines shifted +99 in issue #148 (the security-settings schema, defaults and projectSecuritySettings() hoisted to module scope above settingsRoutes so the audit row's oldValue can no longer list fewer fields than the request writes) — no finding, mechanical only. Lines shifted +14 in issue #256 (Befund 3): the datevBeraterNr/datevMandantenNr Zod fields and their explanatory comment were added to tenantConfigSchema above this handler — no finding, mechanical only. Lines shifted +29 in the #300 fix (the decimalFromApi() preprocess helper and its docblock were added above tenantConfigSchema so the PUT accepts the Decimal strings its own GET emits) — no finding, mechanical only. Lines shifted +27 in Phase 64b Plan 04 (GitHub issue #64): storeHours is now validated by salonOpeningHoursSchema (imported from ../facade/salons, +4 lines) and PUT /work's config writes wrapped in one $transaction with the D-16 salon mirror + its audit call (net +23 more) above this handler — mechanical only, no finding. Lines shifted +26 in Phase 64b's review fixes (WR-02/WR-03): the storeHours field went back to its pre-64b legacy Zod schema with an explanatory comment, and PUT /work reads the previous TenantConfig.storeHours inside its transaction so the D-16 mirror runs only on a real change — both above this handler — mechanical only, no finding. Lines shifted again when merging origin/main after Phase 77b Plan 02 (access-context import/first statement above this handler) — mechanical only."
   },
   {
     "file": "apps/api/src/contexts/platform/api/settings.ts",
     "handler": "PUT /api/v1/settings/work/:employeeId",
-    "validatedAt": 954,
+    "validatedAt": 1007,
     "calls": [
       {
         "call": "workSchedule.findFirst",
-        "line": 975
+        "line": 1028
       },
       {
         "call": "workSchedule.findFirst",
-        "line": 1058
+        "line": 1111
       },
       {
         "call": "workSchedule.findFirst",
-        "line": 1132
+        "line": 1185
       },
       {
         "call": "workSchedule.findFirst",
-        "line": 1161
+        "line": 1214
       }
     ],
-    "reason": "Lines shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context working-time-account/recalculate-snapshots import, E-3) — no finding, mechanical only. employee is fetch-then-compared against req.user.tenantId at line 853; all four workSchedule.findFirst calls reuse the SAME validated employeeId at various points later in the same handler (orphan-shift detection, existing-row lookup, prior-workDays lookup). Lines shifted -14 in Phase 243 Plan 02 Task 1's removal of the Abwesenheiten route blocks above (two import blocks, the vacationEntitlementSchema, and the two moved route bodies) plus one prettier-collapsed blank line left behind by the schema removal — no finding, mechanical only. (Previously shifted +6 in Phase 100B Plan 10's new import block.) Lines shifted +99 in issue #148 (the security-settings schema, defaults and projectSecuritySettings() hoisted to module scope above settingsRoutes so the audit row's oldValue can no longer list fewer fields than the request writes) — no finding, mechanical only. Lines shifted +14 in issue #256 (Befund 3): the datevBeraterNr/datevMandantenNr Zod fields and their explanatory comment were added to tenantConfigSchema above this handler — no finding, mechanical only. Lines shifted +29 in the #300 fix (the decimalFromApi() preprocess helper and its docblock were added above tenantConfigSchema so the PUT accepts the Decimal strings its own GET emits) — no finding, mechanical only. (Lines shifted +2 net in Phase 77b Plan 02: access-context first statement and import — mechanical only.)"
+    "reason": "Lines shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context working-time-account/recalculate-snapshots import, E-3) — no finding, mechanical only. employee is fetch-then-compared against req.user.tenantId at line 853; all four workSchedule.findFirst calls reuse the SAME validated employeeId at various points later in the same handler (orphan-shift detection, existing-row lookup, prior-workDays lookup). Lines shifted -14 in Phase 243 Plan 02 Task 1's removal of the Abwesenheiten route blocks above (two import blocks, the vacationEntitlementSchema, and the two moved route bodies) plus one prettier-collapsed blank line left behind by the schema removal — no finding, mechanical only. (Previously shifted +6 in Phase 100B Plan 10's new import block.) Lines shifted +99 in issue #148 (the security-settings schema, defaults and projectSecuritySettings() hoisted to module scope above settingsRoutes so the audit row's oldValue can no longer list fewer fields than the request writes) — no finding, mechanical only. Lines shifted +14 in issue #256 (Befund 3): the datevBeraterNr/datevMandantenNr Zod fields and their explanatory comment were added to tenantConfigSchema above this handler — no finding, mechanical only. Lines shifted +29 in the #300 fix (the decimalFromApi() preprocess helper and its docblock were added above tenantConfigSchema so the PUT accepts the Decimal strings its own GET emits) — no finding, mechanical only. Lines shifted +27 in Phase 64b Plan 04 (GitHub issue #64): storeHours now validated by salonOpeningHoursSchema and PUT /work's config writes wrapped in one $transaction with the D-16 salon mirror — mechanical only, no finding. Lines shifted +26 in Phase 64b's review fixes (WR-02/WR-03): the storeHours field went back to its pre-64b legacy Zod schema with an explanatory comment, and PUT /work reads the previous TenantConfig.storeHours inside its transaction so the D-16 mirror runs only on a real change — both above this handler — mechanical only, no finding. Lines shifted again when merging origin/main after Phase 77b Plan 02 (access-context import/first statement above this handler) — mechanical only."
   },
   {
     "file": "apps/api/src/contexts/scheduling/api/shift-patterns.ts",
@@ -238,42 +238,46 @@
   {
     "file": "apps/api/src/contexts/platform/api/test-bootstrap.ts",
     "handler": "DELETE /api/v1/test/tenant/:id",
-    "validatedAt": 227,
+    "validatedAt": 245,
     "calls": [
       {
         "call": "employee.deleteMany",
-        "line": 268
+        "line": 286
       },
       {
         "call": "leaveType.deleteMany",
-        "line": 272
+        "line": 290
       },
       {
         "call": "publicHoliday.deleteMany",
-        "line": 273
+        "line": 291
       },
       {
         "call": "coverageRule.deleteMany",
-        "line": 274
+        "line": 292
       },
       {
         "call": "shiftTemplate.deleteMany",
-        "line": 275
+        "line": 293
       },
       {
         "call": "companyShutdown.deleteMany",
-        "line": 276
+        "line": 294
       },
       {
         "call": "terminalApiKey.deleteMany",
-        "line": 277
+        "line": 295
+      },
+      {
+        "call": "salon.deleteMany",
+        "line": 299
       },
       {
         "call": "tenantConfig.deleteMany",
-        "line": 278
+        "line": 300
       }
     ],
-    "reason": "This whole plugin only registers when ALLOW_TEST_BOOTSTRAP=true (never true on int/prod, read once at boot in config.ts) — there is no per-caller tenant to isolate against because this test-only surface's authorization model is the env flag PLUS the ^test-[a-zA-Z0-9_-]{8}$ id format gate at line 227, not req.user.tenantId. Every call listed deletes by the SAME already-format-validated tenant id, never by a value scoped to a caller's own tenant. Lines shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context absence/leave-type import, E-8) — no finding, mechanical only."
+    "reason": "This whole plugin only registers when ALLOW_TEST_BOOTSTRAP=true (never true on int/prod, read once at boot in config.ts) — there is no per-caller tenant to isolate against because this test-only surface's authorization model is the env flag PLUS the ^test-[a-zA-Z0-9_-]{8}$ id format gate at line 245, not req.user.tenantId. Every call listed deletes by the SAME already-format-validated tenant id, never by a value scoped to a caller's own tenant, including the new salon.deleteMany (Phase 64b, issue #64, D-18) added at line 299 to tear down the default salon before the tenant delete (Salon.tenant is onDelete: Restrict). Lines shifted +18 in Phase 64b Plan 03 (GitHub issue #64): a new import plus a default-salon salon.create block (D-18) were added in the POST handler above this one, upstream of every anchor in this entry — mechanical only, no finding. tenantConfig.deleteMany shifted a further +4 (total +22) because the salon.deleteMany call itself, with its 3-line comment, was inserted immediately above it. Lines previously shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context absence/leave-type import, E-8) — no finding, mechanical only."
   },
   {
     "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",

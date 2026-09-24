@@ -42,6 +42,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 import type { FastifyInstance } from "fastify";
 
 // A narrower union than fastify's own `HTTPMethods` (which also includes "trace") — this probe
@@ -263,6 +264,15 @@ type FixtureBundle = Awaited<ReturnType<typeof seedTestData>>;
 // foreign-tenant bundle passed into it by the sweep) can hand them out.
 let tenantBLeaveRequestId: string | undefined;
 let tenantBTimeEntryId: string | undefined;
+// Phase 64b Plan 02 (Issue #64, Pitfall 4): a real Salon for tenantB, same local-fixture idiom as
+// the two above — `seedTestData` does not create a Salon (D-18 exemption), so one is created here.
+let tenantBSalonId: string | undefined;
+// Phase 64b review (WR-04): an INACTIVE Salon for tenantB, the target of POST /:id/activate — an
+// active target could never be flipped by activate (ALREADY_ACTIVE), so the integrity check below
+// could not see a guard that answers 404 while still activating.
+let tenantBInactiveSalonId: string | undefined;
+let tenantBInactiveSalonDeactivatedAt: Date | undefined;
+
 // Phase 73b Plan 02 (Issue #73): a real tenantB customer AccessRole, so the three /roles/:id
 // probe entries have a foreign-tenant row to sweep against — system roles (tenantId null) are
 // visible to every tenant by design and would not exercise the tenant guard at all.
@@ -270,15 +280,17 @@ let tenantBCustomRoleId: string | undefined;
 
 /** Resolves a register `params` fixture key to the foreign tenant's real entity id. `null` means
  * the key is unrecognised — the caller must fail loudly, never silently skip the route (D-03).
- * Today's vocabulary is exactly these five keys: `employee`/`leaveType` from the shared
- * `seedTestData` bundle, `leaveRequest`/`timeEntry` from the locally created fixtures above (Issue
- * #309/#310), `customRole` from the locally created fixture below (Issue #73) — a register entry
- * naming a sixth one this probe does not implement is exactly the failure this function surfaces. */
+ * Today's vocabulary is exactly these seven keys: `employee`/`leaveType` from the shared
+ * `seedTestData` bundle, `leaveRequest`/`timeEntry`/`salon`/`salonInactive`/`customRole` from the
+ * locally created fixtures (Issue #309/#310, Phase 64b, Issue #73) — a register entry naming an
+ * eighth one this probe does not implement is exactly the failure this function surfaces. */
 function fixtureValueFor(bundle: FixtureBundle, fixtureKey: string): string | null {
   if (fixtureKey === "employee") return bundle.employee.id;
   if (fixtureKey === "leaveType") return bundle.vacationType.id;
   if (fixtureKey === "leaveRequest") return tenantBLeaveRequestId ?? null;
   if (fixtureKey === "timeEntry") return tenantBTimeEntryId ?? null;
+  if (fixtureKey === "salon") return tenantBSalonId ?? null;
+  if (fixtureKey === "salonInactive") return tenantBInactiveSalonId ?? null;
   if (fixtureKey === "customRole") return tenantBCustomRoleId ?? null;
   return null;
 }
@@ -359,6 +371,54 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
       });
       tenantBTimeEntryId = timeEntry.id;
 
+      // Phase 64b Plan 02 (Issue #64) fixture: a real, active Salon owned by tenantB, the target
+      // of GET, PATCH and POST /:id/deactivate.
+      const salon = await app.prisma.salon.create({
+        data: {
+          tenantId: tenantB.tenant.id,
+          name: "T-100-09 Salon",
+          openingHours: DEFAULT_SALON_OPENING_HOURS,
+          isActive: true,
+        },
+      });
+      tenantBSalonId = salon.id;
+
+      // Phase 64b review (WR-04): with only one active salon, a deactivate that bypassed the
+      // tenant guard would still stop at LAST_ACTIVE_SALON and never change a row, so the integrity
+      // check could not go red. Both tenants get a second active salon, so the last-salon rule
+      // lets the deactivation through whichever tenant a broken guard counts against — the
+      // caller's (tenantA) or the salon owner's (tenantB).
+      await app.prisma.salon.create({
+        data: {
+          tenantId: tenantB.tenant.id,
+          name: "T-100-09 Salon 2",
+          openingHours: DEFAULT_SALON_OPENING_HOURS,
+          isActive: true,
+        },
+      });
+      for (const name of ["T-100-09 Salon A1", "T-100-09 Salon A2"]) {
+        await app.prisma.salon.create({
+          data: {
+            tenantId: tenantA.tenant.id,
+            name,
+            openingHours: DEFAULT_SALON_OPENING_HOURS,
+            isActive: true,
+          },
+        });
+      }
+
+      // Phase 64b review (WR-04): the target of POST /:id/activate — see tenantBInactiveSalonId.
+      tenantBInactiveSalonDeactivatedAt = new Date("2026-01-05T12:00:00.000Z");
+      const inactiveSalon = await app.prisma.salon.create({
+        data: {
+          tenantId: tenantB.tenant.id,
+          name: "T-100-09 Salon inaktiv",
+          openingHours: DEFAULT_SALON_OPENING_HOURS,
+          isActive: false,
+          deactivatedAt: tenantBInactiveSalonDeactivatedAt,
+        },
+      });
+      tenantBInactiveSalonId = inactiveSalon.id;
       // Issue #73 fixture: a real tenantB customer AccessRole (Phase 73b Plan 02).
       const customRole = await app.prisma.accessRole.create({
         data: {
@@ -509,6 +569,23 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         where: { timeEntryId: tenantBTimeEntryId },
       });
       expect(breakCount).toBe(0);
+    });
+
+    it("fixture integrity after the sweep: tenantB's active Salon (Phase 64b) still has name 'T-100-09 Salon', isActive true, and deactivatedAt null — a guard that answers 404 while still performing the PATCH or the deactivate would otherwise pass the byte comparison (tenantB and tenantA each have a second active salon, so a bypassed deactivate is not stopped by the last-salon rule)", async () => {
+      const after = await app.prisma.salon.findUnique({ where: { id: tenantBSalonId } });
+      expect(after).not.toBeNull();
+      expect(after?.name).toBe("T-100-09 Salon");
+      expect(after?.isActive).toBe(true);
+      expect(after?.deactivatedAt).toBeNull();
+    });
+
+    it("fixture integrity after the sweep: tenantB's inactive Salon (Phase 64b review, WR-04) is still inactive with its original deactivatedAt — a guard that answers 404 while still performing the activate would otherwise pass the byte comparison", async () => {
+      const after = await app.prisma.salon.findUnique({ where: { id: tenantBInactiveSalonId } });
+      expect(after).not.toBeNull();
+      expect(after?.isActive).toBe(false);
+      expect(after?.deactivatedAt?.toISOString()).toBe(
+        tenantBInactiveSalonDeactivatedAt?.toISOString(),
+      );
     });
 
     it("fixture integrity after the sweep: tenantB's AccessRole (Issue #73) still exists with unchanged name, nameKey and permissions, and tenantA has zero AccessRole rows of its own from this sweep — a guard that answers 404 while still performing the PATCH, DELETE or copy would otherwise pass the byte comparison", async () => {

@@ -17,10 +17,11 @@
  * winter month, adjust CEST_OFFSET_H accordingly.
  */
 
-import { PrismaClient } from "../generated/client";
+import { PrismaClient, type Prisma } from "../generated/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import bcrypt from "bcryptjs";
+import { DEFAULT_SALON_OPENING_HOURS } from "./default-salon";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool as any);
@@ -332,9 +333,29 @@ async function main() {
       phorestPrepMinutes: 10,
       phorestWrapupMinutes: 5,
       phorestAppointmentHorizonDays: 90,
+      // D-18 (Phase 64b, issue #64): explicit so it stays in step, on write, with
+      // the default salon's openingHours below — both come from the same constant.
+      storeHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
     },
   });
   bump("tenantConfig");
+
+  // ── Salon (D-18, Phase 64b, issue #64) ─────────────────────────────────────
+  // Every tenant this seed bootstraps also gets its default salon, in the same
+  // step, name = tenant name, hours = the same constant just written into
+  // TenantConfig.storeHours above. No audit-log write here (research Pitfall 5)
+  // — a seed script has no request principal. This seed only ever runs against
+  // a fresh tenant (the early-return guard above bails when TENANT_SLUG already
+  // exists), so no idempotency check is needed here unlike seed.ts.
+  await prisma.salon.create({
+    data: {
+      tenantId: tenant.id,
+      name: tenant.name,
+      openingHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
+      isActive: true,
+    },
+  });
+  bump("salon");
 
   // ── Employees + Users + WorkSchedule + OvertimeAccount ─────────────────────
   for (const s of EMPLOYEES) {

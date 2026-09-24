@@ -38,6 +38,29 @@ model Tenant {
   phorestSyncRuns      PhorestSyncRun[]
   // Phase 73b (#73) — named permission bundles (customer roles)
   accessRoles          AccessRole[]
+  // Phase 64b (issue #64) — Unterbau level below Tenant
+  salons               Salon[]
+}
+
+// Phase 64b (issue #64) — Unterbau level below Tenant (ADR 0001): a Salon is never hard-deleted,
+// only deactivated (isActive/deactivatedAt). openingHours shares TenantConfig.storeHours's exact
+// shape: Array<{ day: 0..6 (Mo..So), open: "HH:MM", close: "HH:MM", closed?: boolean }>.
+model Salon {
+  id             String    @id @default(uuid())
+  tenantId       String
+  name           String
+  street         String?
+  postalCode     String?
+  city           String?
+  openingHours   Json
+  isActive       Boolean   @default(true)
+  deactivatedAt  DateTime? @db.Timestamptz
+  createdAt      DateTime  @default(now()) @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
 }
 
 // ─────────────────────────────────────────────
@@ -216,6 +239,9 @@ model TenantConfig {
   // Ladenöffnungszeiten (Phase 42) — JSON array, one entry per weekday.
   // Shape: Array<{ day: 0..6 (Mo..So), open: "HH:MM", close: "HH:MM", closed?: boolean }>
   // Default: Mo-Sa 08:00-20:00, So closed
+  /// @deprecated Phase 64b (issue #64) — superseded by Salon.openingHours. No new code may read
+  /// this column; the only existing reader (contexts/scheduling/api/shifts.ts:256-300)
+  /// intentionally keeps reading it until #325 switches shift store-hours checks to salon level.
   storeHours                        Json     @default("[{\"day\":0,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":1,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":2,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":3,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":4,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":5,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":6,\"open\":\"08:00\",\"close\":\"20:00\",\"closed\":true}]")
   // Phase 47.5 — How tightly to bind shifts to store hours.
   //   DAY_ONLY (default): block only on closed days (lets MAs prep before / clean after)

@@ -251,7 +251,7 @@ function assertShiftNotPast(iso: string): { code: "SHIFT_PAST_IMMUTABLE"; messag
 
 /**
  * Phase 47.5 — Verify a shift falls inside the tenant's configured store hours.
- * Reads TenantConfig.storeHours (JSON array, one entry per weekday 0=Mo..6=So).
+ * Reads the DEPRECATED TenantConfig.storeHours (0=Mo..6=So) on purpose until #325 switches this check to the shift's Salon.openingHours.
  * Returns null if inside or no config; otherwise a 409 payload for soft-warn override.
  * Cross-midnight shifts (end < start) are NOT supported by this check — they always
  * fail because they leave the day's open/close window; users override via force=true.

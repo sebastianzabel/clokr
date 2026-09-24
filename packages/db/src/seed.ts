@@ -1,8 +1,9 @@
-import { PrismaClient } from "../generated/client";
+import { PrismaClient, type Prisma } from "../generated/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import bcrypt from "bcryptjs";
 import { ADMIN_EMAIL, ADMIN_PASSWORD, EMPLOYEE_EMAIL, EMPLOYEE_PASSWORD } from "./seed-credentials";
+import { DEFAULT_SALON_OPENING_HOURS } from "./default-salon";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool as any);
@@ -51,9 +52,31 @@ async function main() {
       defaultSundayHours: 0,
       overtimeThreshold: 60,
       allowOvertimePayout: false,
+      // D-18 (Phase 64b, issue #64): explicit so it stays in step, on write, with
+      // the default salon's openingHours below — both come from the same constant.
+      storeHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
     },
   });
   console.log("TenantConfig angelegt");
+
+  // D-18 (Phase 64b, issue #64): every tenant this seed bootstraps also gets its
+  // default salon, in the same step. An already-seeded tenant never reaches this
+  // point (main() returns early when `demo-clokr` exists) — such tenants got their
+  // salon from the migration's data section. The findFirst guard only keeps this
+  // block safe on its own; it is not a second idempotency mechanism. No audit-log
+  // write here (research Pitfall 5) — a seed script has no request principal.
+  const existingSalon = await prisma.salon.findFirst({ where: { tenantId: tenant.id } });
+  if (!existingSalon) {
+    await prisma.salon.create({
+      data: {
+        tenantId: tenant.id,
+        name: tenant.name,
+        openingHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
+        isActive: true,
+      },
+    });
+    console.log("Salon angelegt");
+  }
 
   // Admin User anlegen — skip password overwrite if user already exists
   const existingAdminUser = await prisma.user.findUnique({ where: { email: ADMIN_EMAIL } });

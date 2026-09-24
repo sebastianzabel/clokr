@@ -41,6 +41,7 @@ import { z } from "zod";
 import { config } from "../../../config.js";
 // eslint-disable-next-line no-restricted-imports -- E-8: test-fixture route only, never registered on int or prod. Permanent named exception — same precedent as Phase 100b's D-03 for this same file. ADR 0001 Eintrag H.
 import { leaveTypeFields } from "../../absence/leave-type.js";
+import { DEFAULT_SALON_OPENING_HOURS } from "../facade/salons.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -122,6 +123,23 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
           tenantId: tenant.id,
           defaultVacationDays: 30,
           timezone: "Europe/Berlin",
+        },
+      });
+
+      // D-18 (Phase 64b, issue #64): every code path that creates a tenant for
+      // real use also creates its default salon, in the same step, mirroring
+      // the plan-01 migration's rule for tenants that already existed. No audit
+      // trail write here (research Pitfall 5) — this handler has no request
+      // principal, same as every other seeding call in this test-only route.
+      // TenantConfig above carries the storeHours column default (no explicit
+      // value); DEFAULT_SALON_OPENING_HOURS equals that default by construction
+      // (pinned in salon-migration.test.ts), so tenant and salon agree here too.
+      await prisma.salon.create({
+        data: {
+          tenantId: tenant.id,
+          name: tenant.name,
+          openingHours: DEFAULT_SALON_OPENING_HOURS,
+          isActive: true,
         },
       });
 
@@ -275,6 +293,10 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
       await prisma.shiftTemplate.deleteMany({ where: { tenantId: id } });
       await prisma.companyShutdown.deleteMany({ where: { tenantId: id } });
       await prisma.terminalApiKey.deleteMany({ where: { tenantId: id } });
+      // Salon.tenant is onDelete: Restrict (D-18) — this env-gated, `^test-…$`
+      // id-gated teardown is the only place Salon rows are removed for a
+      // bootstrapped test tenant.
+      await prisma.salon.deleteMany({ where: { tenantId: id } });
       await prisma.tenantConfig.deleteMany({ where: { tenantId: id } });
 
       const deleted = await prisma.tenant.deleteMany({ where: { id } });

@@ -5,7 +5,7 @@
  *
  * ── WHAT THIS MEASURES ────────────────────────────────────────────────────────────────────────
  * Every Prisma call under `apps/api/src/{contexts,composition,services}/**\/*.ts` (production
- * code only — `__tests__/` and `*.test.ts` are skipped) whose delegate is one of the 42 models in
+ * code only — `__tests__/` and `*.test.ts` are skipped) whose delegate is one of the 43 models in
  * `packages/db/prisma/schema.prisma`. Each call's AREA (which physical location it sits in) is
  * compared against its MODEL's OWNER (which context that model belongs to, per ADR 0001 §3). A
  * FOREIGN access is one where the owner is not `platform` and the owner differs from the area —
@@ -89,7 +89,7 @@ export const OWNER_AREAS: readonly OwnerArea[] = [
 
 /**
  * Every Prisma delegate name (camelCase, as written in code) in `packages/db/prisma/schema.prisma`
- * today — 42 models, issue #99's table, extended by Phase 73b's `AccessRole` (#73). `MODEL_OWNER`
+ * today — 43 models, issue #99's table, extended by Phase 73b's `AccessRole` (#73) and Phase 64b's `Salon` (#64). `MODEL_OWNER`
  * below is a `Record` over exactly this union with no default branch: a model added to the schema
  * later and not added here fails the TypeScript build, rather than silently falling through to
  * `platform` the way an enumerated allowlist is supposed to (see `context-area-map.ts`'s own
@@ -97,6 +97,7 @@ export const OWNER_AREAS: readonly OwnerArea[] = [
  */
 export type PrismaModelName =
   | "tenant"
+  | "salon"
   | "tenantConfig"
   | "user"
   | "refreshToken"
@@ -140,13 +141,14 @@ export type PrismaModelName =
   | "employeeAvailability";
 
 /**
- * The 42-model ownership table (issue #99's "Modellzuordnung", ADR 0001 §3). This is the ONE
+ * The 43-model ownership table (issue #99's "Modellzuordnung", ADR 0001 §3). This is the ONE
  * place a model's owning context may be stated for this measurement (measurement authority rule
  * 5) — no other reader of this script should rebuild it inline.
  */
 export const MODEL_OWNER: Readonly<Record<PrismaModelName, OwnerArea>> = {
-  // platform (Unterbau) — 14
+  // platform (Unterbau) — 15
   tenant: "platform",
+  salon: "platform", // Phase 64b — Salon, issue #64
   tenantConfig: "platform",
   employee: "platform",
   user: "platform",
@@ -257,7 +259,7 @@ const OP_ALT = OPS.map(escapeRegExp).join("|");
  * `(?:[A-Za-z_$][\w$]*\.)+` requires one or more dot-terminated identifier segments and is
  * DELIBERATELY not pinned to any particular name (measurement authority rule 2) — `app.prisma.`,
  * `tx.`, `prisma.`, `client.db.` all match. `<model>` and `<op>` are literal alternations over the
- * closed 42-model / 14-op vocabulary, so a receiver chain that merely CONTAINS one of those words
+ * closed 43-model / 14-op vocabulary, so a receiver chain that merely CONTAINS one of those words
  * as a substring elsewhere never confuses the match (the two trailing literal dots anchor it).
  */
 const CALL_RE = new RegExp(`((?:[A-Za-z_$][\\w$]*\\.)+)(${MODEL_ALT})\\.(${OP_ALT})\\(`, "g");

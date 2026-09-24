@@ -18,8 +18,9 @@ import {
 
 const liveModels = Prisma.dmmf.datamodel.models as unknown as readonly DmmfModel[];
 
-// The 16 models measured directly against schema.prisma (204-RESEARCH.md §Schema Derivation,
-// D-19; AccessRole added Phase 73b, Issue #73) to carry their own `tenantId` scalar column.
+// The 17 models measured directly against schema.prisma (204-RESEARCH.md §Schema Derivation,
+// D-19; AccessRole added Phase 73b, Issue #73; Salon added Phase 64b, Issue #64) to carry their
+// own `tenantId` scalar column.
 const EXPECTED_OWN_MODELS = [
   "TenantConfig",
   "Employee",
@@ -37,6 +38,7 @@ const EXPECTED_OWN_MODELS = [
   "CompanyShutdown",
   "ShiftTemplate",
   "CoverageRule",
+  "Salon",
 ].sort();
 
 describe("delegateName", () => {
@@ -50,6 +52,8 @@ describe("classifyModel (live DMMF from @clokr/db)", () => {
   it("classifies a model with its own tenantId scalar as own", () => {
     expect(classifyModel("Employee", liveModels)).toEqual({ kind: "own" });
     expect(classifyModel("TenantConfig", liveModels)).toEqual({ kind: "own" });
+    // Phase 64b (issue #64): Salon carries its own tenantId scalar column.
+    expect(classifyModel("Salon", liveModels)).toEqual({ kind: "own" });
   });
 
   it("D-18: classifies Shift as relation via employee, NOT own — Issue #204's body is wrong here; schema.prisma:1381-1406 has no Shift.tenantId", () => {
@@ -90,8 +94,8 @@ describe("classifyModel (live DMMF from @clokr/db)", () => {
 describe("buildModelGraph (live DMMF from @clokr/db)", () => {
   const graph = buildModelGraph();
 
-  it("classifies exactly 42 models with no residual category (D-05)", () => {
-    expect(graph.size).toBe(42);
+  it("classifies exactly 43 models with no residual category (D-05)", () => {
+    expect(graph.size).toBe(43);
     for (const [, tenancy] of graph) {
       expect(["own", "relation", "none"]).toContain(tenancy.kind);
     }
@@ -103,7 +107,7 @@ describe("buildModelGraph (live DMMF from @clokr/db)", () => {
     expect(graph.has("apiKey")).toBe(true);
   });
 
-  it("marks exactly the 16 measured models as own, by NAME (not just count)", () => {
+  it("marks exactly the 17 measured models as own, by NAME (not just count)", () => {
     const ownDelegateNames = [...graph]
       .filter(([, v]) => v.kind === "own")
       .map(([k]) => k)

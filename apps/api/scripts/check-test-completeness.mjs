@@ -532,8 +532,17 @@ import { readFileSync } from "node:fs";
 // (288 + 2 = 290 files, 3512 + 47 = 3559 tests). The remaining +1 file / +7 tests are drift from
 // the merged `origin/main` commits (#331, #334), absorbed by measurement, not added by hand. A
 // later merge of phase 64b requires re-measuring on the merged tree again.
-const MIN_FILES = 291;
-const MIN_TESTS = 3566;
+//
+// Phase 64b (Issue #64), 2026-09-24: re-measured on the MERGED tree after merging `origin/main` @
+// 6e36ac57 (#335, phase 73b) into `feat/64-salon` (`pnpm --filter @clokr/api test`): `Test Files
+// 295 passed (295)`, `Tests 3608 passed | 3 skipped (3611)`, zero failures — `vitest-report.json`
+// agrees. Phase 64b's own contribution is four new files (`salons.test.ts`,
+// `salon-migration.test.ts`, `settings-store-hours-salon-mirror.test.ts`,
+// `store-hours-readers.test.ts`) plus cases in `t100-09-oracle-probe.test.ts`,
+// `test-bootstrap.test.ts` and `lint-facade-signatures.test.ts`; 291 + 4 = 295. Numbers read from
+// the reporter, not summed from a diff.
+const MIN_FILES = 295;
+const MIN_TESTS = 3611;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

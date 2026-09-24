@@ -875,6 +875,56 @@
       "validatedAt": null
     },
     {
+      "route": "GET /api/v1/salons/:id",
+      "file": "apps/api/src/contexts/platform/api/salons.ts",
+      "category": "probe",
+      "params": {
+        "id": "salon"
+      },
+      "minimalBody": null,
+      "reason": "Phase 64b Plan 02 (Issue #64, D-13): findSalon(app.prisma, req.user.tenantId, id) is inline-tenant-id scoped (`findFirst({ where: { id, tenantId } })`) and returns null for BOTH a foreign tenant's real salon and a nonexistent id; both fall through to the shared rejectUnknownSalon(...) helper, which sends the byte-identical 404 {\"error\":\"Salon nicht gefunden\"} and audits CROSS_TENANT_ACCESS_DENIED only when salonExistsInForeignTenant(...) confirms the row exists in another tenant. GET has no body. API-key callers (`apikey:<id>` subject) get the same 404: rejectUnknownSalon audits through auditSalon, which leaves AuditLog.userId unset and records the key id in newValue.actor, so the audit insert cannot fail on the User foreign key (Phase 64b review WR-01); the same defect in other routes is tracked in #333.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/salons/:id",
+      "file": "apps/api/src/contexts/platform/api/salons.ts",
+      "category": "probe",
+      "params": {
+        "id": "salon"
+      },
+      "minimalBody": {
+        "name": "T-100-09-Probe"
+      },
+      "reason": "Phase 64b Plan 02 (Issue #64, D-13): updateSalonSchema.parse(req.body) runs BEFORE the lookup (D-07) — `{\"name\":\"T-100-09-Probe\"}` is the smallest body it accepts (an empty `{}` would instead reach the dedicated NO_CHANGES branch, which is a DIFFERENT code path from the T-100-09 guard this register tracks). updateSalon(tx, tenantId, id, patch) carries tenantId in BOTH its guard-fetch and its own update `where`, returning null for a foreign or nonexistent id; the route's rejectUnknownSalon(...) helper then sends the byte-identical 404, auditing CROSS_TENANT_ACCESS_DENIED only when the row exists in another tenant. API-key callers (`apikey:<id>` subject) get the same 404: rejectUnknownSalon audits through auditSalon, which leaves AuditLog.userId unset and records the key id in newValue.actor, so the audit insert cannot fail on the User foreign key (Phase 64b review WR-01); the same defect in other routes is tracked in #333.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/salons/:id/deactivate",
+      "file": "apps/api/src/contexts/platform/api/salons.ts",
+      "category": "probe",
+      "params": {
+        "id": "salon"
+      },
+      "minimalBody": null,
+      "reason": "Phase 64b Plan 02 (Issue #64, D-08/D-13): deactivateSalon(tx, tenantId, id) locks the tenant's Salon rows FOR UPDATE, then a tenant-scoped findFirst returns NOT_FOUND for a foreign or nonexistent id (before any active-count/conflict check runs) — the route maps NOT_FOUND to the shared rejectUnknownSalon(...) helper, the same byte-identical 404 as every other /:id route, auditing CROSS_TENANT_ACCESS_DENIED only when the row exists in another tenant. No body is parsed by this route. API-key callers (`apikey:<id>` subject) get the same 404: rejectUnknownSalon audits through auditSalon, which leaves AuditLog.userId unset and records the key id in newValue.actor, so the audit insert cannot fail on the User foreign key (Phase 64b review WR-01); the same defect in other routes is tracked in #333. Probed against an active foreign salon while both the calling and the owning tenant have a second active salon (Phase 64b review WR-04): with a single active salon a deactivate that bypassed the guard would stop at LAST_ACTIVE_SALON, so the probe's fixture-integrity check could not see it.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/salons/:id/activate",
+      "file": "apps/api/src/contexts/platform/api/salons.ts",
+      "category": "probe",
+      "params": {
+        "id": "salonInactive"
+      },
+      "minimalBody": null,
+      "reason": "Phase 64b Plan 02 (Issue #64, D-07/D-13): activateSalon(tx, tenantId, id) is the structural mirror of deactivateSalon — same lock, same tenant-scoped findFirst returning NOT_FOUND for a foreign or nonexistent id before any conflict check, same shared rejectUnknownSalon(...) 404. No body is parsed by this route. API-key callers (`apikey:<id>` subject) get the same 404: rejectUnknownSalon audits through auditSalon, which leaves AuditLog.userId unset and records the key id in newValue.actor, so the audit insert cannot fail on the User foreign key (Phase 64b review WR-01); the same defect in other routes is tracked in #333. Probed against an INACTIVE foreign salon (fixture key `salonInactive`, Phase 64b review WR-04): an active target would stop at ALREADY_ACTIVE, so the probe's fixture-integrity check could not see an activate that bypassed the guard.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "GET /api/v1/audit-logs/:id",
       "file": "apps/api/src/contexts/platform/api/audit-logs.ts",
       "category": "nicht anwendbar",
