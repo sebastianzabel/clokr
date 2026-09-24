@@ -90,6 +90,8 @@ jobs:
               - 'pnpm-workspace.yaml'
               - 'package.json'
               - '.github/workflows/ci.yml'
+              # Read by permission-site-mapping.test.ts: a doc-only PR must still run the suite (#284).
+              - 'docs/permissions.md'
 
       - uses: actions/setup-node@v6
         with:

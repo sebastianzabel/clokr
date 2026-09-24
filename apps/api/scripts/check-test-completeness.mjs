@@ -487,8 +487,29 @@ import { readFileSync } from "node:fs";
 //
 // Phase 69b Plan 02: adds `time-entry-day-lookup-guard.test.ts` (6 tests in its own output):
 // 281 + 1 = 282, 3444 + 6 = 3450.
-const MIN_FILES = 282;
-const MIN_TESTS = 3450;
+//
+// Phase 72b (#72): re-measured from a fully green run of the branch tree at eb76f631
+// (`pnpm --filter @clokr/api test`): `Test Files 282 passed (282)`, `Tests 3426 passed |
+// 3 skipped (3429)` — `vitest-report.json` agrees (`testResults.length` 282, `numTotalTests`
+// 3429). The phase adds permission-catalog.test.ts and permission-site-mapping.test.ts; the floor
+// is taken from the reporter, not from a hand count of the diff (see above).
+// Accounting: previous floor 279 / 3411. The two new files carry 6 and 8 cases (each read from
+// its own `assertionResults.length` in that report), so the phase's own contribution is
+// 281 / 3425. The remaining +1 file / +4 tests are drift from already-merged work absorbed by
+// measurement, per the "Orchestrator correction" rule above: the branch base `bea6b5c7` (#324)
+// added `src/__tests__/leave-overtime-comp-atomicity.test.ts` (3 cases) without raising the
+// floor; the fourth runtime case is not visible to `it(` counting over `7ca61ee1..bea6b5c7` (the
+// other two test files that commit touched keep 8 and 7 cases) and is taken from the reporter,
+// not guessed. A later merge of `origin/main` into this branch requires re-measuring on the
+// merged tree before merge — never adding two hand numbers.
+//
+// Phase 72b, after merging `origin/main` @ a03b4e3a (#326, phase 69b) into the branch: both sides
+// had set 282 independently from different bases, so the floor was re-measured on the MERGED tree
+// (`pnpm --filter @clokr/api test`): `Test Files 284 passed (284)`, `Tests 3463 passed |
+// 3 skipped (3466)`, zero failures. That is 69b's hand-summed 3450 + this phase's 14 = 3464,
+// plus 2 runtime cases the 69b sum did not see — taken from the reporter, not added by hand.
+const MIN_FILES = 284;
+const MIN_TESTS = 3466;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

@@ -56,3 +56,19 @@ export {
   AccessContextError,
 } from "./access-context";
 export type { AccessContext } from "./access-context";
+
+// Phase 72b (#72): the permission catalog (resource × action × reach) that #73/#75/#83 build on.
+export {
+  PERMISSIONS,
+  PERMISSION_RESOURCES,
+  PERMISSION_REACHES,
+  PERMISSION_RELATIONS,
+  permissionKey,
+} from "./permission-catalog";
+export type {
+  Permission,
+  PermissionKey,
+  PermissionReach,
+  PermissionRelation,
+  PermissionResource,
+} from "./permission-catalog";
