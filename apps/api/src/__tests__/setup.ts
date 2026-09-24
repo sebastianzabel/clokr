@@ -475,6 +475,10 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   // (opt-out via `{ withDefaultSalon: false }`); Shift/PhorestAppointment -> Salon are ALSO
   // onDelete: Restrict, but the shift.deleteMany above already runs before this, so no reordering
   // was needed.
+  // Phase 65b (issue #65): SalonCoupling -> Salon and PhorestSyncRun.salonId -> Salon are Restrict
+  // too. Runs cascade from the tenant, but the salon delete comes first, so both go here.
+  await prisma.salonCoupling.deleteMany({ where: { tenantId } });
+  await prisma.phorestSyncRun.deleteMany({ where: { tenantId } });
   await prisma.salon.deleteMany({ where: { tenantId } });
   await prisma.tenant.delete({ where: { id: tenantId } });
 }
