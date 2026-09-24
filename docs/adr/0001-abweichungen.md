@@ -829,3 +829,173 @@ erfüllt.
 Owner-Entscheidung vom 2026-09-24 auf #66: Backlog ohne Milestone, „derzeit kein Anlass“; es gibt
 keine Entität Beschäftigung. Eintrag C bleibt, wie er steht. Kommt #66 zurück, ist es eine
 Semantikänderung des Unterbaus und läuft durch das volle Verfahren aus ADR 0002, Entscheidung 7.
+
+---
+
+## K — Zugriffskontext und fail-closed `employeeScopeWhere()` (Phase 77b, Issue #77)
+
+**Schwere: informativ. Nachtrag 2026-09-24 (Issue #77, Phase 77b) — Semantikänderung eines
+Unterbau-Exports nach ADR 0002, Entscheidung 7.**
+
+**Warum dieser Eintrag existiert:** `employeeScopeWhere()` ist ein Export von
+`contexts/platform/index.ts`, und seine Bedeutung hat sich geändert — eine Semantikänderung im Sinn
+von `0002-vier-kontexte-und-unterbau.md`, Entscheidung 7, die nach der Auslieferung hier
+nachgetragen wird. Zugleich legt die Phase den Zugriffskontext an, an dem #91 die Reichweite
+einschränken wird. Ohne Protokoll sähe die Hälfte, die bewusst offen blieb, wie Vergessenes aus.
+
+### Was sich geändert hat
+
+- **`employeeScopeWhere()` bindet den Mandanten in allen drei Varianten.** `employee` ergibt
+  `{ employeeId, employee: { tenantId } }`, `employees` ergibt
+  `{ employeeId: { in }, employee: { tenantId } }`, `tenant` ergibt `{ employee: { tenantId } }`
+  (`apps/api/src/contexts/platform/facade/employee-scope.ts:66-80`). Vorher trug die
+  `employee`-Variante nur die `employeeId` und die `employees`-Variante nur die ID-Menge (Stand
+  `28009b3f`, `employee-scope.ts:57-60`); der Mandant im `EmployeeScope` war dort ein Pflichtfeld
+  ohne Wirkung. Eine fremde `employeeId` passierte den Fassadenfilter.
+- **Ein leerer Mandant wirft.** `undefined`, `null`, ein Nicht-String, `""` oder nur Leerzeichen
+  ergeben `AccessContextError` (`requireTenantId()`, `contexts/platform/access-context-error.ts:34`)
+  statt eines Filters. Es gibt keinen Rückfall-Mandanten.
+- **Keine Fassaden-Aufrufstelle hat sich geändert.** Die Fassaden spreizen das Fragment wie bisher;
+  die Rechen- und Hintergrundmodule, die ihren `EmployeeScope` noch als Literal bauen, sind durch
+  dieselbe Bindung jetzt mitgeschützt, ohne angefasst worden zu sein.
+- **Fehlender Kontext = HTTP 500.** `app.ts:169-178` fängt `AccessContextError` vor dem generischen
+  Zweig ab, schreibt einen Fehler-Logeintrag mit Route und Methode und antwortet
+  `500 { error: "Interner Serverfehler" }` — nie mit Daten, nie mit dem Fehlertext.
+- **Eine fremde ID bleibt 404.** Ablehnungen für echte Entitäten eines fremden Mandanten sind
+  unverändert und byte-gleich mit einer nirgends existierenden ID (T-100-09,
+  `t100-09-oracle-probe.test.ts` grün). Ein fehlender Kontext ist ein Programmierfehler, kein Orakel.
+- **Ein JWT ohne Mandant bekommt jetzt 500 statt einer leeren Antwort.** `auth.ts` stellt für einen
+  Benutzer ohne Mitarbeiterdatensatz `tenantId: ""` aus (`contexts/platform/api/auth.ts:176`,
+  `:270`, `:305`, `:383`, `:549`). Gemessen: Jeder Pfad, der einen Benutzer anlegt (POST
+  `/employees`, `employees.ts:382`; `imports.ts:116`; `test-bootstrap.ts`; `seed.ts`;
+  `seed-demo.ts`), legt den Mitarbeiter mit an — ein solches Token hat also keinen regulären
+  Entstehungsweg. Auf den umgestellten Handlern (`/dashboard/team-week`, `/today-attendance`,
+  `/my-week`, `/open-items`, Schichtplanung, Überstunden, Einstellungen) antwortet es mit 500 statt
+  mit einem leeren 200. Das ist beabsichtigt, Issue #77: „Ein fehlender Kontext wird nie zu einem
+  leeren Filter.“ GET `/dashboard/` behält seine datenbankfreie 200-Antwort mit leeren Kennzahlen
+  für ein Token ohne `employeeId` (`composition/dashboard.ts:64`); der Zugriffskontext wird erst
+  danach gebaut (`:79`).
+
+### Der Zugriffskontext
+
+`apps/api/src/contexts/platform/access-context.ts` trägt Mandant, Akteur und Reichweite. Es gibt
+genau zwei Konstruktoren, beide rein und synchron, beide werfen bei fehlendem Mandanten, bevor
+irgendeine Abfrage läuft:
+
+- `accessContextFromRequest(req)` (`:58`) — Akteur `user` oder `apiKey` (Präfix `apikey:` im
+  `sub`);
+- `accessContextForJob(tenantId, job)` (`:79`) — Akteur `system`.
+
+Die Reichweite kennt heute nur `{ kind: "wholeTenant" }` — bewusst nicht `"tenant"`, damit ein
+Reichweiten-Literal nie mit einem `EmployeeScope`-Literal verwechselt werden kann.
+`employeeScopeFor()` (`:98`) ist die einzige Funktion, die aus einem Zugriffskontext einen
+`EmployeeScope` macht, und damit die eine Stelle, an der #91 die Reichweite auf Salon oder Personen
+einschränken wird. Routendateien (`contexts/*/api/**`, `composition/dashboard.ts`,
+`composition/reports.ts`) bauen einen Scope nur noch darüber;
+`apps/api/src/__tests__/route-employee-scope-literals.test.ts` prüft das über den TypeScript-AST und
+scheitert an jedem Literal. `findShiftConflict()` (`contexts/scheduling/api/shifts.ts:171`) nimmt
+dafür den Zugriffskontext statt einer `tenantId`.
+
+`AccessContextError` und `requireTenantId()` liegen in einem eigenen Blattmodul ohne Importe
+(`access-context-error.ts`). Grund: `measure-context-boundary-imports.ts --cycles --check 22` zählt
+auch reine Typ-Importe als Kante; ein Importpaar `access-context.ts` ↔ `facade/employee-scope.ts`
+hätte einen neuen Zyklus erzeugt. Die Zyklenzahl ist unverändert 22.
+
+### Was bewusst NICHT geschah
+
+- **Die Mandantenfilter in den Routen bleiben — für #226.** `tenantId: req.user.tenantId` steht
+  weiterhin an 117 Stellen in 21 Produktionsdateien. Dass es vorher 118 in 22 waren, ist keine
+  Umstellung eines Filters: Die eine Fundstelle in `contexts/platform/api/settings.ts:993` (Stand
+  `28009b3f`) war ein `EmployeeScope`-Literal, kein Prisma-Filter, und wurde mit den übrigen
+  Scope-Literalen umgestellt.
+- **Die Aliase `const tenantId = req.user.tenantId` bleiben.** `lint:tenant-scoping` erkennt einen
+  Mandanten nur über `req.user.<feld>` und daran gebundene Namen
+  (`apps/api/scripts/lint-tenant-scoping-request-bindings.ts:323-331`), nicht über
+  `access.tenantId`. Eine Umstellung hätte das Gate rot gemacht oder neue Ausnahmen verlangt; beides
+  ist #226.
+- **Die Scope-Literale in Rechen- und Hintergrundmodulen bleiben** (Owner-Entscheidung auf #77): 30
+  in 11 Dateien — `absence/leave-days.ts` (1), `time-tracking/arbzg.ts` (2),
+  `time-tracking/plugins/attendance-checker.ts` (2), `working-time-account/close-month-data.ts` (3),
+  `month-gap-check.ts` (1), `month-saldo.ts` (4), `overtime-balance.ts` (4),
+  `plugins/auto-close-month.ts` (4), `recalculate-snapshots.ts` (4), `vocational-school-saldo.ts`
+  (3), `services/phorest/sync-shifts.ts` (2). Die im Issue genannten „31“ zählten eine
+  Docblock-Zeile in `absence/facade/absences.ts:104` (Stand `28009b3f`: `:103`) mit. Diese Literale sind jetzt durch das
+  fail-closed `employeeScopeWhere()` gedeckt.
+- **Die Rückfälle `employee?.tenantId ?? ""` in den Rechenmodulen blieben unangetastet.** Geprüft
+  wurde, ob ein erreichbarer Pfad einen Scope mit leerem Mandanten baut (sieben Stellen in
+  `overtime-balance.ts` und `vocational-school-saldo.ts`): Jeder Aufrufer arbeitet an einem
+  existierenden Mitarbeiter, und ein voller Testlauf mit einer Sonde in `requireTenantId()` zählte
+  24 Würfe, alle aus den neuen Tests, 0 aus einem Produktionspfad. Kein Frührücksprung, kein
+  Ersatz-Rückfall.
+- **Keine Zeilenrechte in der Datenbank, keine Prisma-Erweiterung** (`$extends`/`$use`), keine
+  Umstellung der Cron-Plugins: `accessContextForJob()` hat noch keinen Produktionsaufrufer — #226.
+- **Keine neue Ausnahme** in einem Ausnahmeregister; in `lint-tenant-scoping-exceptions.json`
+  wurden nur Zeilennummern nachgezogen (20 Einträge, 43 Aufrufe, unverändert).
+
+### Gemessen
+
+Produktionsdateien unter `apps/api/src`, ohne `__tests__/` und `*.test.ts`:
+
+| Größe                                          | vorher (`28009b3f`) | nachher           |
+| ---------------------------------------------- | ------------------- | ----------------- |
+| `EmployeeScope`-Literale in Routendateien      | 33 in 4 Dateien     | 0                 |
+| `EmployeeScope`-Literale in Rechen-/Jobmodulen | 30 in 11 Dateien    | 30 in 11 Dateien  |
+| `tenantId: req.user.tenantId`                  | 118 in 22 Dateien   | 117 in 21 Dateien |
+| `req.user.tenantId`                            | 300 in 38 Dateien   | 297 in 38 Dateien |
+| `CROSS_TENANT_ACCESS_DENIED`                   | 40 in 11 Dateien    | 40 in 11 Dateien  |
+| API-Testdateien / Testfälle (Reporter)         | 282 / 3451          | 288 / 3512        |
+
+Die drei entfernten `req.user.tenantId`-Treffer sind das Scope-Literal in `settings.ts` und die zwei
+Aufrufargumente von `findShiftConflict()`. Die Testzahlen nachher stammen vom Lauf nach dem Merge
+von `origin/main` (Phase 72b, +2 Dateien); Phase 77b selbst trägt 4 Dateien und 46 Laufzeitfälle
+bei (5 + 21 + 15 + 4, dazu eine Tabellenzeile in `lint-guard-vacuity.test.ts` für den neuen
+Walker).
+
+Jeder neue Schutz war einmal rot, dann zurückgenommen:
+
+- **M1:** `accessContextFromRequest()` nahm einen leeren Mandanten an —
+  `access-context-missing.test.ts` wurde in drei Fällen rot, weil vor der 500 bereits eine
+  `tenantConfig`-Abfrage lief bzw. (Schlüssel fehlt) der Prisma-Fehlertext im Antwortkörper stand.
+- **M2:** `accessContextForJob()` übersprang die Mandantenprüfung — vier Fälle in
+  `contexts/platform/__tests__/access-context.test.ts` rot.
+- **M3:** Die `employee`-Variante verlor `employee: { tenantId }` — `employee-scope.test.ts` rot,
+  darunter der Fall, in dem der Scope von Mandant A den Zeiteintrag eines Mitarbeiters von Mandant
+  B zurückgab.
+- **M4:** Ein `{ kind: "tenant", tenantId }`-Literal zurück in `composition/dashboard.ts` —
+  `route-employee-scope-literals.test.ts` rot mit Datei und Zeile.
+
+### Nachrechnen
+
+```bash
+# Route-file literals (expected: no match, exit 1)
+git grep -cE 'kind: "(tenant|employee|employees)"' -- 'apps/api/src/contexts/*/api/**' \
+  apps/api/src/composition/dashboard.ts apps/api/src/composition/reports.ts ':!**/__tests__/**'
+# Calc/background literals (30 in 11; the two excluded files define the type and the factory)
+git grep -nE 'kind: "(tenant|employee|employees)"' -- apps/api/src ':!**/__tests__/**' \
+  ':!**/*.test.ts' ':!apps/api/src/contexts/platform/access-context.ts' \
+  ':!apps/api/src/contexts/platform/facade/employee-scope.ts' | grep -v ' \* ' \
+  | awk -F: '{f[$1]++} END {n=0; for (k in f) n+=f[k]; print n, length(f)}'
+# Occurrences and files; swap the pattern for 'req.user.tenantId' / 'CROSS_TENANT_ACCESS_DENIED'
+git grep -o 'tenantId: req.user.tenantId' -- apps/api/src ':!**/__tests__/**' ':!**/*.test.ts' \
+  | awk -F: '{f[$1]++} END {n=0; for (k in f) n+=f[k]; print n, length(f)}'
+# Gates
+pnpm --filter @clokr/api run lint:tenant-scoping
+pnpm --filter @clokr/api exec tsx scripts/measure-context-boundary-imports.ts --cycles --check 22
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/__tests__/route-employee-scope-literals.test.ts \
+  src/__tests__/access-context-missing.test.ts src/contexts/platform/__tests__/access-context.test.ts \
+  src/contexts/platform/__tests__/employee-scope.test.ts
+```
+
+Für den Vorher-Stand dieselben `git grep`-Befehle mit `28009b3f` vor dem `--`; weil `git grep`
+dann jede Zeile mit `28009b3f:` beginnt, zählt `awk` über `$2` statt `$1`. Der zweite Befehl zählt
+auf `28009b3f` die 33 Routenliterale mit (63 in 15 Dateien = 33 in 4 + 30 in 11).
+
+**Offen, nicht Teil dieser Phase:** Der generische Zweig in `app.ts` (`:179-182`) gibt bei jedem
+unerwarteten Fehler `error.message` wörtlich an den Client zurück — bei Prisma-Fehlern samt
+Aufruftext und absolutem Serverpfad. Vorbestehend, hier nicht geändert (nur der neue
+`AccessContextError`-Zweig hat einen festen Text); Kandidat für ein eigenes Issue.
+
+**Nachtrag 2026-09-24 (Issue #330, PR #331):** Erledigt. Bei Status ≥ 500 antwortet der
+generische Zweig jetzt immer mit `{"error":"Interner Serverfehler"}`; die Originalmeldung steht
+nur im Log, mit Route und Request-ID (`error-handler-5xx.test.ts`).

@@ -49,14 +49,13 @@
  * every one already carried it, and there is no deliberate "…WithDeleted" variant among them. Its
  * absence here would be a finding, not a design choice; there isn't one to make.
  *
- * Tenant: `EmployeeScope`'s `"tenant"` variant constrains via `employee: { tenantId }`
- * (`employeeScopeWhere`, plan 04). The `"employee"`/`"employees"` variants constrain by
- * `employeeId` ONLY, exactly matching what all 16 read call sites of that shape do today (none of
- * them additionally filter `employee: { tenantId }` — `dashboard.ts:1171` is the one exception that
- * DOES carry the extra clause today; removing it here is a no-op because a single `employeeId`
- * already denotes exactly one employee in exactly one tenant). `getShiftsInRange` is not itself a
- * gate-relevant method (`findMany` is not in `RELEVANT_METHODS`, `lint-tenant-scoping-types.ts`),
- * so this is a read-shape decision, not a tenant-scoping-gate requirement.
+ * Tenant: since Phase 77b (Issue #77) every `EmployeeScope` variant constrains via
+ * `employee: { tenantId }` (`employeeScopeWhere`) — the `"employee"`/`"employees"` variants in
+ * addition to their `employeeId` constraint — and a scope with an empty tenant throws before a
+ * query is built. A scope naming one tenant but carrying a foreign tenant's employeeId therefore
+ * matches no shift. `getShiftsInRange` is not itself a gate-relevant method (`findMany` is not in
+ * `RELEVANT_METHODS`, `lint-tenant-scoping-types.ts`), so the tenant binding is a fail-closed
+ * read-shape guarantee, not a tenant-scoping-gate requirement.
  *
  * ── S2 flagShiftsConflictingWithLeave ──────────────────────────────────────────────────────────
  * `leave.ts:1424` (`findMany`) + `:1435` (`updateMany`) is ONE operation, not two independent

@@ -9,6 +9,7 @@ import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import { config } from "./config";
+import { AccessContextError } from "./contexts/platform"; // Phase 77b (Issue #77) — index, not the deep module
 import { authRoutes } from "./contexts/platform/api/auth";
 import { employeeRoutes } from "./contexts/platform/api/employees";
 import { employeeWifiRoutes } from "./contexts/time-tracking/api/employee-wifi"; // Phase 243 Plan 02 (B2)
@@ -164,6 +165,16 @@ export async function buildApp() {
           message: fieldErrors.join("; "),
           details: parsed,
         });
+      }
+      // Phase 77b (Issue #77, D-10): a missing tenant frame is a programming error. Fail closed
+      // with a fixed body and its own log line naming the route, so the unguarded caller can be
+      // found. (Since Issue #330 the generic branch below also never echoes a 5xx message.)
+      if (error instanceof AccessContextError || error.name === "AccessContextError") {
+        req.log.error(
+          { err: error, route: req.routeOptions?.url, method: req.method },
+          "access context missing",
+        );
+        return reply.code(500).send({ error: "Interner Serverfehler" });
       }
       // Issue #330: a 5xx is an unexpected failure, and its message is internal (Prisma model,
       // field and constraint names, hosts, paths). The client gets a fixed body; the original
