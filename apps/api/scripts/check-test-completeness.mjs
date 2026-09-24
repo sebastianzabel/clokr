@@ -521,8 +521,19 @@ import { readFileSync } from "node:fs";
 // (288)`, `Tests 3509 passed | 3 skipped (3512)`, zero failures — `vitest-report.json` agrees
 // (`testResults.length` 288, `numTotalTests` 3512). 284 + 4 = 288 and 3466 + 45 + 1 = 3512
 // reconcile exactly, but the numbers below are read from the reporter, not summed from a diff.
-const MIN_FILES = 288;
-const MIN_TESTS = 3512;
+//
+// Phase 64b (Issue #64), 2026-09-24: re-measured on the tree after merging `origin/main` @
+// 966921fe (#329 phase 77b, #331, #334) into `feat/64-salon`, fully green
+// (`pnpm --filter @clokr/api test`): `Test Files 293 passed (293)`, `Tests 3561 passed |
+// 3 skipped (3564)`, zero failures — `vitest-report.json` agrees (`testResults.length` 293,
+// `numTotalTests` 3564). The phase adds four test files — `salons.test.ts`,
+// `salon-migration.test.ts`, `settings-store-hours-salon-mirror.test.ts` and
+// `store-hours-readers.test.ts` — and extends `t100-09-oracle-probe.test.ts`,
+// `test-bootstrap.test.ts` and `lint-facade-signatures.test.ts`; the fifth new file versus the
+// floor above is main's own `error-handler-5xx.test.ts` (#331), which never raised it. Numbers read
+// from the reporter, not summed from a diff.
+const MIN_FILES = 293;
+const MIN_TESTS = 3564;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
