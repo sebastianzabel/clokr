@@ -4,9 +4,12 @@ import { requireRole, requireAuth } from "../../../middleware/auth";
 import { encrypt, decryptSafe } from "../../../utils/crypto";
 import { withAdvisoryLock, tenantAdvisoryKey } from "../../../utils/with-advisory-lock";
 import { phorestFetch, PhorestApiError } from "../../../services/phorest/client";
-import { syncPhorestShifts } from "../../../services/phorest/sync-shifts";
-import { syncPhorestAppointments } from "../../../services/phorest/sync-appointments";
-import type { PhorestStaffItem, SyncResult } from "../../../services/phorest/types";
+import {
+  syncPhorestForTenant,
+  aggregateSalonSyncResults,
+  type SalonSyncResult,
+} from "../../../services/phorest/sync-tenant";
+import type { PhorestStaffItem } from "../../../services/phorest/types";
 
 /**
  * Phorest API Integration
@@ -25,6 +28,8 @@ import type { PhorestStaffItem, SyncResult } from "../../../services/phorest/typ
  * Phase 85: the Phorest HTTP client (phorestFetch) and the shift-sync body were promoted to
  * services/phorest/. This file keeps the config/test/staff routes and the manual sync trigger,
  * which now calls the shared syncPhorestShifts() under the per-tenant advisory lock (SS-07).
+ * Since Phase 65b (issue #65) the trigger calls the orchestrator syncPhorestForTenant()
+ * (services/phorest/sync-tenant.ts), which syncs every coupled ACTIVE salon under that one lock.
  */
 
 const syncSchema = z.object({
@@ -493,37 +498,41 @@ export async function integrationRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { startDate, endDate } = syncSchema.parse(req.body);
 
+      const tenantId = req.user.tenantId;
+
       // SS-07: the manual trigger takes the SAME per-tenant advisory lock as the cron so a
-      // manual click can't race the scheduled sync. Both call the ONE shared service.
-      let result: SyncResult | undefined;
+      // manual click can't race the scheduled sync. Both call the ONE shared orchestrator
+      // (Phase 65b, D-13), which syncs every coupled ACTIVE salon inside this one lock.
+      let results: SalonSyncResult[] | undefined;
       await withAdvisoryLock(
         app.prisma,
-        tenantAdvisoryKey(req.user.tenantId),
+        tenantAdvisoryKey(tenantId),
         async () => {
-          result = await syncPhorestShifts(app, req.user.tenantId, {
+          results = await syncPhorestForTenant(app, tenantId, {
             startDate,
             endDate,
-            actorUserId: req.user.sub,
-          });
-          // Phase 86 (SA-03): appointment sync runs inside the SAME lock, recording onto the SAME
-          // run row (result.runId). Appointment counters live on the run; the endpoint response
-          // stays the shift SyncResult (surfacing appointment counts here is out of scope).
-          await syncPhorestAppointments(app, req.user.tenantId, {
-            runId: result.runId,
             actorUserId: req.user.sub,
           });
         },
         app.log,
       );
 
-      if (!result) {
+      if (results === undefined) {
         // Lock not acquired — another sync (cron or a concurrent manual click) is running.
         return reply
           .code(409)
           .send({ error: "Ein Phorest-Sync läuft bereits. Bitte später erneut versuchen." });
       }
 
-      return result;
+      if (results.length === 0) {
+        return reply.code(409).send({
+          error: "Kein aktiver Salon ist mit Phorest gekoppelt.",
+          code: "NO_PHOREST_COUPLING",
+        });
+      }
+
+      // Backward-compatible top-level aggregate (the admin page reads it) plus per-salon results.
+      return aggregateSalonSyncResults(results);
     },
   });
 

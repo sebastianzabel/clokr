@@ -89,7 +89,7 @@ export const OWNER_AREAS: readonly OwnerArea[] = [
 
 /**
  * Every Prisma delegate name (camelCase, as written in code) in `packages/db/prisma/schema.prisma`
- * today — 44 models, issue #99's table, extended by Phase 73b's `AccessRole` (#73), Phase 64b's `Salon` (#64) and Phase 74b's `RoleAssignment` (#74). `MODEL_OWNER`
+ * today — 45 models, issue #99's table, extended by Phase 73b's `AccessRole` (#73), Phase 64b's `Salon` (#64), Phase 74b's `RoleAssignment` (#74) and Phase 65b's `SalonCoupling` (#65). `MODEL_OWNER`
  * below is a `Record` over exactly this union with no default branch: a model added to the schema
  * later and not added here fails the TypeScript build, rather than silently falling through to
  * `platform` the way an enumerated allowlist is supposed to (see `context-area-map.ts`'s own
@@ -131,6 +131,7 @@ export type PrismaModelName =
   | "phorestStaffMapping"
   | "phorestSyncRun"
   | "phorestAppointment"
+  | "salonCoupling"
   | "companyShutdown"
   | "companyShutdownException"
   | "notification"
@@ -142,7 +143,7 @@ export type PrismaModelName =
   | "employeeAvailability";
 
 /**
- * The 44-model ownership table (issue #99's "Modellzuordnung", ADR 0001 §3). This is the ONE
+ * The 45-model ownership table (issue #99's "Modellzuordnung", ADR 0001 §3). This is the ONE
  * place a model's owning context may be stated for this measurement (measurement authority rule
  * 5) — no other reader of this script should rebuild it inline.
  */
@@ -187,7 +188,7 @@ export const MODEL_OWNER: Readonly<Record<PrismaModelName, OwnerArea>> = {
   overtimePlan: "working-time-account",
   saldoSnapshot: "working-time-account",
   openingBalance: "working-time-account",
-  // scheduling — 8
+  // scheduling — 9
   shift: "scheduling",
   shiftTemplate: "scheduling",
   employeeShiftPattern: "scheduling",
@@ -196,6 +197,7 @@ export const MODEL_OWNER: Readonly<Record<PrismaModelName, OwnerArea>> = {
   phorestAppointment: "scheduling",
   phorestStaffMapping: "scheduling",
   phorestSyncRun: "scheduling",
+  salonCoupling: "scheduling", // Phase 65b (#65) — Phorest coupling per salon
 };
 
 export const PRISMA_MODELS: readonly PrismaModelName[] = Object.keys(

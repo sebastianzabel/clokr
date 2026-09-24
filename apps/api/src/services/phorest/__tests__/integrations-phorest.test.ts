@@ -10,8 +10,14 @@
 
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+} from "../../../__tests__/setup";
 import { encrypt, decryptSafe } from "../../../utils/crypto";
+import { mockPhorestByBranch } from "./helpers";
 
 const originalFetch = global.fetch;
 const PREFIX = "/api/v1/integrations";
@@ -348,7 +354,13 @@ describe("integrations phorest routes", () => {
 
   it("GET /phorest/sync-runs returns latest + history", async () => {
     await app.prisma.phorestSyncRun.create({
-      data: { tenantId: seed.tenant.id, status: "SUCCESS", created: 1, finishedAt: new Date() },
+      data: {
+        tenantId: seed.tenant.id,
+        salonId: seed.salonId, // Phase 65b (issue #65, D-03): a run names its salon
+        status: "SUCCESS",
+        created: 1,
+        finishedAt: new Date(),
+      },
     });
     const res = await app.inject({
       method: "GET",
@@ -360,5 +372,196 @@ describe("integrations phorest routes", () => {
     expect(body.latest).not.toBeNull();
     expect(Array.isArray(body.history)).toBe(true);
     expect(body.total).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ── Manual trigger per salon (Phase 65b, issue #65, D-13) ─────────────────────────────────────
+
+const SYNC_BODY = { startDate: "2026-07-01", endDate: "2026-12-31" };
+const MAPPED_65B = "ph-65b-mapped";
+
+/** A worktimetable page with one WORKING slot per entry (fixtures/worktimetables*.json shape). */
+function wtt(slots: { staffId: string; date: string }[]): unknown {
+  return {
+    _embedded: {
+      workTimeTables: slots.map((s) => ({
+        staffId: s.staffId,
+        timeSlots: [{ date: s.date, startTime: "09:00:00", endTime: "17:00:00", type: "WORKING" }],
+      })),
+    },
+    page: { size: 200, totalElements: slots.length, totalPages: 1, number: 0 },
+  };
+}
+
+const BRANCH_1_WTT = wtt([
+  { staffId: MAPPED_65B, date: "2026-08-03" },
+  { staffId: "ph-65b-unmapped-1", date: "2026-08-03" },
+]);
+const BRANCH_2_WTT = wtt([
+  { staffId: MAPPED_65B, date: "2026-08-04" },
+  { staffId: "ph-65b-unmapped-2", date: "2026-08-04" },
+]);
+
+describe("POST /phorest/sync-shifts per salon (Phase 65b, D-13)", () => {
+  let app: FastifyInstance;
+  let seed: Awaited<ReturnType<typeof seedTestData>>;
+  let secondSalon: { id: string; name: string };
+
+  const auth = () => ({ authorization: `Bearer ${seed.adminToken}` });
+  const sync = () =>
+    app.inject({
+      method: "POST",
+      url: `${PREFIX}/phorest/sync-shifts`,
+      headers: auth(),
+      payload: SYNC_BODY,
+    });
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    seed = await seedTestData(app, "intph65b");
+    await app.prisma.tenantConfig.update({
+      where: { tenantId: seed.tenant.id },
+      data: {
+        phorestBusinessId: "biz-1",
+        phorestUsername: "user@salon.de",
+        phorestPassword: "secret-pw", // decryptSafe tolerates plaintext
+      },
+    });
+    secondSalon = await createTestSalon(app.prisma, seed.tenant.id, {
+      name: "Zweitsalon 65b",
+      createdAt: new Date(Date.now() + 60_000),
+    });
+    await app.prisma.salonCoupling.create({
+      data: {
+        tenantId: seed.tenant.id,
+        salonId: seed.salonId,
+        provider: "PHOREST",
+        externalBranchId: "branch-1",
+      },
+    });
+    await app.prisma.salonCoupling.create({
+      data: {
+        tenantId: seed.tenant.id,
+        salonId: secondSalon.id,
+        provider: "PHOREST",
+        externalBranchId: "branch-2",
+      },
+    });
+    await app.prisma.phorestStaffMapping.create({
+      data: { tenantId: seed.tenant.id, phorestStaffId: MAPPED_65B, employeeId: seed.employee.id },
+    });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  afterAll(async () => {
+    try {
+      // Mapping + appointment cache are unknown to cleanupTestData (both Restrict onto Employee);
+      // couplings and runs are deleted by cleanupTestData since Phase 65b.
+      await app.prisma.phorestStaffMapping.deleteMany({ where: { tenantId: seed.tenant.id } });
+      await app.prisma.phorestAppointment.deleteMany({
+        where: { employee: { tenantId: seed.tenant.id } },
+      });
+      await cleanupTestData(app, seed.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  it("(1) two coupled salons: per-salon results in salon order plus summed top-level fields", async () => {
+    mockPhorestByBranch({
+      "branch-1": { worktimetables: BRANCH_1_WTT },
+      "branch-2": { worktimetables: BRANCH_2_WTT },
+    });
+    const res = await sync();
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.results).toHaveLength(2);
+    expect(body.results.map((r: { salonId: string }) => r.salonId)).toEqual([
+      seed.salonId,
+      secondSalon.id,
+    ]);
+    for (const r of body.results) {
+      expect(typeof r.salonName).toBe("string");
+      expect(typeof r.runId).toBe("string");
+      expect(r.runId.length).toBeGreaterThan(0);
+      expect(typeof r.appointments).toBe("object");
+      expect(r.appointments.status).toBe("SUCCESS");
+    }
+    expect(body.results[1].salonName).toBe("Zweitsalon 65b");
+    const sum = (k: "created" | "cancelled" | "unmapped") =>
+      body.results.reduce((acc: number, r: Record<string, number>) => acc + r[k], 0);
+    expect(body.created).toBe(sum("created"));
+    expect(body.cancelled).toBe(sum("cancelled"));
+    expect(body.unmapped).toBe(sum("unmapped"));
+    expect(body.created).toBe(2);
+    expect(body.unmapped).toBe(2);
+    expect(body.status).toBe("SUCCESS");
+    expect(body.error).toBeUndefined();
+  });
+
+  it("(2) a 503 on the second salon's branch: top-level ERROR with a salon-prefixed error", async () => {
+    mockPhorestByBranch({
+      "branch-1": { worktimetables: BRANCH_1_WTT },
+      "branch-2": { status: 503 },
+    });
+    const res = await sync();
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.status).toBe("ERROR");
+    expect(body.results[0].status).toBe("SUCCESS");
+    expect(body.results[1].status).toBe("ERROR");
+    expect(body.error.startsWith("Zweitsalon 65b: ")).toBe(true);
+  });
+
+  it("(3) single coupled salon: top-level fields equal results[0], error unprefixed", async () => {
+    await app.prisma.salonCoupling.deleteMany({ where: { salonId: secondSalon.id } });
+
+    mockPhorestByBranch({ "branch-1": { worktimetables: BRANCH_1_WTT } });
+    const ok = JSON.parse((await sync()).body);
+    expect(ok.results).toHaveLength(1);
+    const only = ok.results[0];
+    for (const k of [
+      "status",
+      "created",
+      "updated",
+      "cancelled",
+      "unmapped",
+      "skippedVocationalSchool",
+      "replaced",
+      "protectedPendingLeave",
+      "leaveRecalcFailures",
+      "skippedOtherSalon",
+    ]) {
+      expect(ok[k]).toEqual(only[k]);
+    }
+    expect(ok.unmappedStaff).toEqual(only.unmappedStaff);
+
+    mockPhorestByBranch({ "branch-1": { status: 503 } });
+    const failed = JSON.parse((await sync()).body);
+    expect(failed.results).toHaveLength(1);
+    expect(failed.status).toBe("ERROR");
+    expect(typeof failed.results[0].error).toBe("string");
+    expect(failed.error).toBe(failed.results[0].error);
+  });
+
+  it("(4) no coupled active salon: 409 NO_PHOREST_COUPLING and no run row", async () => {
+    await app.prisma.salonCoupling.deleteMany({ where: { tenantId: seed.tenant.id } });
+    const before = await app.prisma.phorestSyncRun.count({ where: { tenantId: seed.tenant.id } });
+    const requested = mockPhorestByBranch({ "branch-1": {} });
+
+    const res = await sync();
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({
+      error: "Kein aktiver Salon ist mit Phorest gekoppelt.",
+      code: "NO_PHOREST_COUPLING",
+    });
+    expect(await app.prisma.phorestSyncRun.count({ where: { tenantId: seed.tenant.id } })).toBe(
+      before,
+    );
+    expect(requested).toHaveLength(0);
   });
 });
