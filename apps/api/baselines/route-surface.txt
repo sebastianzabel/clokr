@@ -149,6 +149,7 @@
 ├── /api/v1/reports/monthly (GET, HEAD)
 ├── /api/v1/reports/vacation/pdf (GET, HEAD)
 ├── /api/v1/retro-entry-requests (POST, GET, HEAD)
+├── /api/v1/roles (GET, HEAD, POST)
 ├── /api/v1/section9-documents/:creditId (POST, GET, HEAD)
 ├── /api/v1/settings/employees (GET, HEAD)
 ├── /api/v1/settings/leave-types (GET, HEAD)

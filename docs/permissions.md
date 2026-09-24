@@ -1,7 +1,8 @@
 # Permission-Katalog: Ressource × Aktion × Reichweite
 
 **Status:** gültig ab Phase 72b (Issue #72)
-**Codestand der Belege:** `main` @ `bea6b5c7`
+**Codestand der Belege:** `main` @ `bea6b5c7`, die `contexts/platform/api/roles.ts`-Zeilen aus
+Phase 73b (Issue #73) auf Branch `feat/73-rollen`
 
 Alle Datei- und Zeilenangaben in diesem Dokument beziehen sich auf diesen Commit. Sie sind Belege,
 keine Wegbeschreibung — in einem späteren Stand kann die Zeile verschoben sein, die Zuordnung muss
@@ -398,6 +399,8 @@ die Rollen, die der Guard heute durchlässt: `A` = ADMIN, `M` = MANAGER, `E` = E
 | `contexts/platform/api/holidays.ts:163`                    | `DELETE /:id`                              | A       | `holiday:manage`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/imports.ts:74`                      | `POST /employees`                          | A       | `employee:import`              | ZUGEWIESEN                                   |
 | `contexts/platform/api/imports.ts:176`                     | `POST /time-entries`                       | A       | `time-entry:import`            | ZUGEWIESEN                                   |
+| `contexts/platform/api/roles.ts:98`                        | `GET /`                                    | A       | `role:read`                    | ZUGEWIESEN                                   |
+| `contexts/platform/api/roles.ts:122`                       | `POST /`                                   | A       | `role:manage`                  | ZUGEWIESEN                                   |
 | `contexts/platform/api/settings.ts:637`                    | `PUT /work`                                | A       | `tenant-settings:update`       | ZUGEWIESEN                                   |
 | `contexts/platform/api/settings.ts:937`                    | `PUT /work/:employeeId`                    | A, M    | `contract:update`              | ZUGEWIESEN                                   |
 | `contexts/platform/api/settings.ts:1247`                   | `GET /smtp`                                | A       | `tenant-settings:read`         | ZUGEWIESEN                                   |
