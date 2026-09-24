@@ -224,6 +224,42 @@
       "validatedAt": null
     },
     {
+      "route": "GET /api/v1/role-assignments/:id",
+      "file": "apps/api/src/contexts/platform/api/role-assignments.ts",
+      "category": "probe",
+      "params": {
+        "id": "roleAssignment"
+      },
+      "minimalBody": null,
+      "reason": "role-assignments.ts:363-364 uses a SCOPED `findFirst({ where: { id, tenantId } })` — RoleAssignment.tenantId is never null (Pattern 1, unlike AccessRole's nullable tenant), so this is the simple inline shape, not roles.ts's nested guard. A scoped query cannot distinguish a foreign tenant's real row from a nonexistent id; both answer the identical `{ error: \"Rollenzuweisung nicht gefunden\" }` 404. GET has no request body.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/role-assignments/:id",
+      "file": "apps/api/src/contexts/platform/api/role-assignments.ts",
+      "category": "probe",
+      "params": {
+        "id": "roleAssignment"
+      },
+      "minimalBody": {},
+      "reason": "role-assignments.ts:394-395 uses the same SCOPED `findFirst({ where: { id, tenantId } })` as GET, byte-identical 404. `updateAssignmentSchema.parse(req.body ?? {})` at line 391 runs BEFORE the lookup (house convention); both fields are `.nullish()` and `.strict()` only rejects fields other than these two, so `{}` satisfies it and reaches the tenant guard.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "DELETE /api/v1/role-assignments/:id",
+      "file": "apps/api/src/contexts/platform/api/role-assignments.ts",
+      "category": "probe",
+      "params": {
+        "id": "roleAssignment"
+      },
+      "minimalBody": null,
+      "reason": "role-assignments.ts:502-503 uses the same SCOPED `findFirst({ where: { id, tenantId } })` as GET, byte-identical 404. DELETE carries no body.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "GET /api/v1/roles/:id",
       "file": "apps/api/src/contexts/platform/api/roles.ts",
       "category": "probe",

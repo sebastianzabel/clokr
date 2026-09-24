@@ -12,6 +12,7 @@ import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../.
 import { roleNameKey, normalizeRolePermissions } from "../access-role";
 import { DEFAULT_SALON_OPENING_HOURS } from "../facade/salons";
 import type { FastifyInstance } from "fastify";
+import type { RoleAssignment } from "@clokr/db";
 
 /** Role-descriptive fixture user + employee — no person names (CLAUDE.md PII rule). */
 async function createUserWithEmployee(app: FastifyInstance, tenantId: string, label: string) {
@@ -116,6 +117,7 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
   let tenantA: Awaited<ReturnType<typeof seedTestData>>;
   let tenantB: Awaited<ReturnType<typeof seedTestData>>;
   let roleA: Awaited<ReturnType<typeof createCustomerRole>>;
+  let roleA2: Awaited<ReturnType<typeof createCustomerRole>>;
   let roleB: Awaited<ReturnType<typeof createCustomerRole>>;
   let systemRole: Awaited<ReturnType<typeof createSystemRole>>;
   let salonA1: Awaited<ReturnType<typeof createSalon>>;
@@ -133,6 +135,9 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
   let granteeDuplicate: Awaited<ReturnType<typeof createUserWithEmployee>>;
   let granteeRace: Awaited<ReturnType<typeof createUserWithEmployee>>;
   let granteeIgnoredTenant: Awaited<ReturnType<typeof createUserWithEmployee>>;
+  let granteeIdRoutes: Awaited<ReturnType<typeof createUserWithEmployee>>;
+  let granteeDeleteFlow: Awaited<ReturnType<typeof createUserWithEmployee>>;
+  let tenantBIdAssignment: RoleAssignment;
 
   beforeAll(async () => {
     app = await getTestApp();
@@ -140,6 +145,7 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
     tenantB = await seedTestData(app, "74b-api-b");
 
     roleA = await createCustomerRole(app, tenantA.tenant.id, "RoleA");
+    roleA2 = await createCustomerRole(app, tenantA.tenant.id, "RoleA2");
     roleB = await createCustomerRole(app, tenantB.tenant.id, "RoleB");
     systemRole = await createSystemRole(app);
 
@@ -172,6 +178,19 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
       tenantA.tenant.id,
       "GranteeIgnoredTenant",
     );
+    granteeIdRoutes = await createUserWithEmployee(app, tenantA.tenant.id, "GranteeIdRoutes");
+    granteeDeleteFlow = await createUserWithEmployee(app, tenantA.tenant.id, "GranteeDeleteFlow");
+
+    tenantBIdAssignment = await app.prisma.roleAssignment.create({
+      data: {
+        tenantId: tenantB.tenant.id,
+        userId: tenantB.empUser.id,
+        accessRoleId: roleB.id,
+        scopeType: "TENANT",
+        salonIds: [],
+        employeeIds: [],
+      },
+    });
   });
 
   afterAll(async () => {
@@ -435,24 +454,15 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
   });
 
   it("(f) GET / lists only the caller's tenant's rows; ?userId= filters to that user", async () => {
-    const tenantBAssignment = await app.prisma.roleAssignment.create({
-      data: {
-        tenantId: tenantB.tenant.id,
-        userId: tenantB.empUser.id,
-        accessRoleId: roleB.id,
-        scopeType: "TENANT",
-        salonIds: [],
-        employeeIds: [],
-      },
-    });
-
+    // Reuses the tenantB fixture assignment created in beforeAll (Task 2's T-100-09 target) — a
+    // second create with the same (user, role, scopeType) would collide with the @@unique index.
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/role-assignments",
       headers: { authorization: `Bearer ${tenantA.adminToken}` },
     });
     const list = JSON.parse(res.body) as Array<{ id: string; userId: string }>;
-    expect(list.some((a) => a.id === tenantBAssignment.id)).toBe(false);
+    expect(list.some((a) => a.id === tenantBIdAssignment.id)).toBe(false);
     const dbCount = await app.prisma.roleAssignment.count({
       where: { tenantId: tenantA.tenant.id },
     });
@@ -495,5 +505,409 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
       scope: { type: "TENANT" },
     });
     expect(postRes.statusCode).toBe(403);
+  });
+
+  // ── Task 2: GET/PATCH/DELETE /:id — sequential, sharing `assignmentId` across steps ──────────
+  let assignmentId: string;
+
+  it("(Task2-1) GET /:id: own assignment matches its GET / list item; a foreign assignment and an unknown id answer the same 404", async () => {
+    const createRes = await post(app, tenantA.adminToken, {
+      userId: granteeIdRoutes.user.id,
+      accessRoleId: roleA.id,
+      scope: { type: "TENANT" },
+    });
+    expect(createRes.statusCode).toBe(201);
+    assignmentId = JSON.parse(createRes.body).id;
+
+    const getRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/role-assignments/${assignmentId}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+    expect(getRes.statusCode).toBe(200);
+    const getBody = JSON.parse(getRes.body);
+
+    const listRes = await app.inject({
+      method: "GET",
+      url: "/api/v1/role-assignments",
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+    const listItem = (JSON.parse(listRes.body) as Array<{ id: string }>).find(
+      (a) => a.id === assignmentId,
+    );
+    expect(getBody).toEqual(listItem);
+
+    const unknown = "00000000-0000-4000-8000-000000000002";
+    const foreignRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/role-assignments/${tenantBIdAssignment.id}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+    const unknownRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/role-assignments/${unknown}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+    expect(foreignRes.statusCode).toBe(404);
+    expect(unknownRes.statusCode).toBe(404);
+    expect(foreignRes.body).toBe(unknownRes.body);
+    expect(JSON.parse(foreignRes.body)).toEqual({ error: "Rollenzuweisung nicht gefunden" });
+  });
+
+  it("(Task2-2) PATCH scope change: SALONS given unsorted with a duplicate is normalized and stored; exactly one UPDATE audit with full D-12 values", async () => {
+    const auditBefore = await app.prisma.auditLog.count({
+      where: { entity: "RoleAssignment", action: "UPDATE" },
+    });
+    const before = await app.prisma.roleAssignment.findUnique({
+      where: { id: assignmentId },
+      include: { accessRole: true },
+    });
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/role-assignments/${assignmentId}`,
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({
+        scope: { type: "SALONS", salonIds: [salonA2.id, salonA1.id, salonA1.id] },
+      }),
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    const expectedSalonIds = [salonA1.id, salonA2.id].sort();
+    expect(body.scope).toEqual({ type: "SALONS", salonIds: expectedSalonIds });
+
+    const auditAfter = await app.prisma.auditLog.count({
+      where: { entity: "RoleAssignment", action: "UPDATE" },
+    });
+    expect(auditAfter - auditBefore).toBe(1);
+    const auditRow = await app.prisma.auditLog.findFirst({
+      where: { entity: "RoleAssignment", action: "UPDATE", entityId: assignmentId },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(auditRow?.oldValue).toEqual({
+      userId: before!.userId,
+      accessRoleId: before!.accessRoleId,
+      roleName: before!.accessRole.name,
+      scopeType: before!.scopeType,
+      salonIds: before!.salonIds,
+      employeeIds: before!.employeeIds,
+    });
+    expect(auditRow?.newValue).toEqual({
+      userId: before!.userId,
+      accessRoleId: before!.accessRoleId,
+      roleName: before!.accessRole.name,
+      scopeType: "SALONS",
+      salonIds: expectedSalonIds,
+      employeeIds: [],
+    });
+  });
+
+  it("(Task2-3) PATCH {} and an identical scope are no-ops: 200, updatedAt unchanged, no new UPDATE audit", async () => {
+    const before = await app.prisma.roleAssignment.findUnique({ where: { id: assignmentId } });
+    const auditBefore = await app.prisma.auditLog.count({
+      where: { entity: "RoleAssignment", action: "UPDATE" },
+    });
+
+    const emptyRes = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/role-assignments/${assignmentId}`,
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({}),
+    });
+    expect(emptyRes.statusCode).toBe(200);
+
+    const sameScopeRes = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/role-assignments/${assignmentId}`,
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({
+        scope: { type: "SALONS", salonIds: [salonA1.id, salonA2.id] },
+      }),
+    });
+    expect(sameScopeRes.statusCode).toBe(200);
+
+    const after = await app.prisma.roleAssignment.findUnique({ where: { id: assignmentId } });
+    expect(after?.updatedAt.toISOString()).toBe(before?.updatedAt.toISOString());
+
+    const auditAfter = await app.prisma.auditLog.count({
+      where: { entity: "RoleAssignment", action: "UPDATE" },
+    });
+    expect(auditAfter).toBe(auditBefore);
+  });
+
+  it("(Task2-4) PATCH accessRoleId to another own role changes roleName; a foreign role, a foreign salon and an empty salon list are rejected", async () => {
+    const roleChangeRes = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/role-assignments/${assignmentId}`,
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({ accessRoleId: roleA2.id }),
+    });
+    expect(roleChangeRes.statusCode).toBe(200);
+    expect(JSON.parse(roleChangeRes.body).roleName).toBe(roleA2.name);
+
+    const foreignRoleRes = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/role-assignments/${assignmentId}`,
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({ accessRoleId: roleB.id }),
+    });
+    expect(foreignRoleRes.statusCode).toBe(404);
+    expect(JSON.parse(foreignRoleRes.body)).toEqual({ error: "Rolle nicht gefunden" });
+
+    const foreignSalonRes = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/role-assignments/${assignmentId}`,
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({ scope: { type: "SALONS", salonIds: [salonB1.id] } }),
+    });
+    expect(foreignSalonRes.statusCode).toBe(404);
+    expect(JSON.parse(foreignSalonRes.body)).toEqual({ error: "Salon nicht gefunden" });
+
+    const emptySalonRes = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/role-assignments/${assignmentId}`,
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({ scope: { type: "SALONS", salonIds: [] } }),
+    });
+    expect(emptySalonRes.statusCode).toBe(400);
+  });
+
+  it("(Task2-5) a PATCH that would create a duplicate (same user, role and scope type) answers 409; the row is unchanged", async () => {
+    const other = await post(app, tenantA.adminToken, {
+      userId: granteeIdRoutes.user.id,
+      accessRoleId: roleA.id,
+      scope: { type: "TENANT" },
+    });
+    expect(other.statusCode).toBe(201);
+
+    const before = await app.prisma.roleAssignment.findUnique({ where: { id: assignmentId } });
+
+    const dupRes = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/role-assignments/${assignmentId}`,
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({ accessRoleId: roleA.id, scope: { type: "TENANT" } }),
+    });
+    expect(dupRes.statusCode).toBe(409);
+    expect(JSON.parse(dupRes.body)).toEqual({
+      error: "Diese Rolle ist dem Nutzer mit diesem Scope-Typ bereits zugewiesen.",
+    });
+
+    const after = await app.prisma.roleAssignment.findUnique({ where: { id: assignmentId } });
+    expect(after).toEqual(before);
+  });
+
+  it("(Task2-6) a PATCH body carrying userId is rejected with 400; the row's userId is unchanged", async () => {
+    const before = await app.prisma.roleAssignment.findUnique({ where: { id: assignmentId } });
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/role-assignments/${assignmentId}`,
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({ userId: granteeTenant.user.id }),
+    });
+    expect(res.statusCode).toBe(400);
+    const after = await app.prisma.roleAssignment.findUnique({ where: { id: assignmentId } });
+    expect(after?.userId).toBe(before?.userId);
+  });
+
+  it("(Task2-7) PATCH {} and DELETE on a foreign tenant's assignment and an unknown id answer the same 404, no audit, the foreign row unchanged", async () => {
+    const unknown = "00000000-0000-4000-8000-000000000003";
+    const auditBefore = await app.prisma.auditLog.count({ where: { entity: "RoleAssignment" } });
+
+    const patchForeign = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/role-assignments/${tenantBIdAssignment.id}`,
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({}),
+    });
+    const patchUnknown = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/role-assignments/${unknown}`,
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({}),
+    });
+    expect(patchForeign.statusCode).toBe(404);
+    expect(patchForeign.body).toBe(patchUnknown.body);
+
+    const deleteForeign = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/role-assignments/${tenantBIdAssignment.id}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+    const deleteUnknown = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/role-assignments/${unknown}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+    expect(deleteForeign.statusCode).toBe(404);
+    expect(deleteForeign.body).toBe(deleteUnknown.body);
+
+    const auditAfter = await app.prisma.auditLog.count({ where: { entity: "RoleAssignment" } });
+    expect(auditAfter).toBe(auditBefore);
+
+    const stillExists = await app.prisma.roleAssignment.findUnique({
+      where: { id: tenantBIdAssignment.id },
+    });
+    expect(stillExists).toEqual(tenantBIdAssignment);
+  });
+
+  it("(Task2-8) DELETE revokes an own assignment: 204 empty body, row gone, exactly one DELETE audit, GET /:id afterwards answers 404", async () => {
+    const createRes = await post(app, tenantA.adminToken, {
+      userId: granteeDeleteFlow.user.id,
+      accessRoleId: roleA.id,
+      scope: { type: "TENANT" },
+    });
+    const id = JSON.parse(createRes.body).id;
+    const before = await app.prisma.roleAssignment.findUnique({
+      where: { id },
+      include: { accessRole: true },
+    });
+
+    const auditBefore = await app.prisma.auditLog.count({
+      where: { entity: "RoleAssignment", action: "DELETE" },
+    });
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/role-assignments/${id}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+    expect(res.statusCode).toBe(204);
+    expect(res.body).toBe("");
+
+    const row = await app.prisma.roleAssignment.findUnique({ where: { id } });
+    expect(row).toBeNull();
+
+    const auditAfter = await app.prisma.auditLog.count({
+      where: { entity: "RoleAssignment", action: "DELETE" },
+    });
+    expect(auditAfter - auditBefore).toBe(1);
+    const auditRow = await app.prisma.auditLog.findFirst({
+      where: { entity: "RoleAssignment", action: "DELETE", entityId: id },
+    });
+    expect(auditRow?.oldValue).toEqual({
+      userId: before!.userId,
+      accessRoleId: before!.accessRoleId,
+      roleName: before!.accessRole.name,
+      scopeType: before!.scopeType,
+      salonIds: before!.salonIds,
+      employeeIds: before!.employeeIds,
+    });
+
+    const getAfter = await app.inject({
+      method: "GET",
+      url: `/api/v1/role-assignments/${id}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+    expect(getAfter.statusCode).toBe(404);
+  });
+
+  it("(Task2-9) AK-74-5: the ADMIN role guard rejects an EMPLOYEE token on GET/PATCH/DELETE /:id", async () => {
+    const getRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/role-assignments/${assignmentId}`,
+      headers: { authorization: `Bearer ${tenantA.empToken}` },
+    });
+    expect(getRes.statusCode).toBe(403);
+
+    const patchRes = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/role-assignments/${assignmentId}`,
+      headers: { authorization: `Bearer ${tenantA.empToken}`, "content-type": "application/json" },
+      payload: "{}",
+    });
+    expect(patchRes.statusCode).toBe(403);
+
+    const deleteRes = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/role-assignments/${assignmentId}`,
+      headers: { authorization: `Bearer ${tenantA.empToken}` },
+    });
+    expect(deleteRes.statusCode).toBe(403);
+  });
+
+  it("(Task2-10) a PATCH that changes only the role does not re-validate the stored scope: a person list whose employee was anonymized since still allows the role change", async () => {
+    // The stored scope was valid when written; the employee in it was anonymized afterwards. A
+    // role-only change must not answer "Mitarbeiter nicht gefunden" for a list it did not touch.
+    const stored = await app.prisma.roleAssignment.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        userId: granteeDeleteFlow.user.id,
+        accessRoleId: roleA.id,
+        scopeType: "PERSONS",
+        salonIds: [],
+        employeeIds: [anon.employee.id],
+      },
+    });
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/role-assignments/${stored.id}`,
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({ accessRoleId: roleA2.id }),
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.roleName).toBe(roleA2.name);
+    expect(body.scope).toEqual({ type: "PERSONS", employeeIds: [anon.employee.id] });
+
+    // Once the person list IS part of the write, it is validated: swap to a live employee (200),
+    // then try to put the anonymized one back — "not found" (D-08).
+    const resend = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/role-assignments/${stored.id}`,
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({ scope: { type: "PERSONS", employeeIds: [personX.employee.id] } }),
+    });
+    expect(resend.statusCode).toBe(200);
+    const swapBack = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/role-assignments/${stored.id}`,
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({ scope: { type: "PERSONS", employeeIds: [anon.employee.id] } }),
+    });
+    expect(swapBack.statusCode).toBe(404);
+    expect(JSON.parse(swapBack.body)).toEqual({ error: "Mitarbeiter nicht gefunden" });
   });
 });

@@ -20,7 +20,6 @@ import { z } from "zod";
 import type { Prisma } from "@clokr/db";
 import { requireRole } from "../../../middleware/auth";
 import { accessContextFromRequest } from "../access-context";
-import { findSalon } from "../facade/salons";
 import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../employee-anonymization-filter";
 import {
   normalizeRoleAssignmentScope,
@@ -78,6 +77,7 @@ const USER_NOT_FOUND = "Nutzer nicht gefunden";
 const ROLE_NOT_FOUND = "Rolle nicht gefunden";
 const SALON_NOT_FOUND = "Salon nicht gefunden";
 const EMPLOYEE_NOT_FOUND = "Mitarbeiter nicht gefunden";
+const ASSIGNMENT_NOT_FOUND = "Rollenzuweisung nicht gefunden";
 const DUPLICATE_ASSIGNMENT_MESSAGE =
   "Diese Rolle ist dem Nutzer mit diesem Scope-Typ bereits zugewiesen.";
 
@@ -191,14 +191,16 @@ type ReferenceResolution =
 
 /**
  * D-08: resolves every id referenced by a write against the caller's own tenant, in order, and
- * only for the refs given (`userId` is only checked on create — PATCH never changes it, D-07).
- * One query per kind answers ALL of that kind's "not found" cases alike (unknown id, foreign
- * tenant, an anonymized target) — the whole point of D-08's byte-identical 404s.
+ * only for the refs given (`userId` is only checked on create — PATCH never changes it, D-07;
+ * `scope` is omitted by a PATCH that leaves the scope untouched, so a stored scope that was valid
+ * when written — e.g. a person list whose employee was anonymized since — does not block a role
+ * change). One query per kind answers ALL of that kind's "not found" cases alike (unknown id,
+ * foreign tenant, an anonymized target) — the whole point of D-08's byte-identical 404s.
  */
 async function resolveAssignmentReferences(
   db: Prisma.TransactionClient,
   tenantId: string,
-  refs: { userId?: string; accessRoleId: string; scope: NormalizedRoleAssignmentScope },
+  refs: { userId?: string; accessRoleId: string; scope?: NormalizedRoleAssignmentScope },
 ): Promise<ReferenceResolution> {
   if (refs.userId !== undefined) {
     const user = await db.user.findFirst({
@@ -218,7 +220,7 @@ async function resolveAssignmentReferences(
     }
   }
 
-  if (refs.scope.scopeType === "SALONS") {
+  if (refs.scope?.scopeType === "SALONS") {
     const found = await db.salon.findMany({
       where: { id: { in: refs.scope.salonIds }, tenantId },
       select: { id: true },
@@ -226,7 +228,7 @@ async function resolveAssignmentReferences(
     if (found.length !== refs.scope.salonIds.length) return { status: "SALON_NOT_FOUND" };
   }
 
-  if (refs.scope.scopeType === "PERSONS") {
+  if (refs.scope?.scopeType === "PERSONS") {
     const found = await db.employee.findMany({
       where: { id: { in: refs.scope.employeeIds }, tenantId, ...NOT_ANONYMIZED_EMPLOYEE_WHERE },
       select: { id: true },
@@ -335,6 +337,190 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       } catch (err: unknown) {
         if (isPrismaErrorCode(err, "P2002")) {
           return reply.code(409).send({ error: DUPLICATE_ASSIGNMENT_MESSAGE });
+        }
+        throw err;
+      }
+    },
+  });
+
+  // GET /api/v1/role-assignments/:id — a single assignment of the caller's own tenant. Pattern 1
+  // (RESEARCH.md): RoleAssignment.tenantId is NEVER null, so the simple inline `{ id, tenantId }`
+  // shape applies directly — not roles.ts's nested-if, which exists only for AccessRole's nullable
+  // tenant. A foreign tenant's real assignment and a nonexistent id both answer 404 identically
+  // (T-100-09, D-11) because the scoped query itself cannot distinguish them.
+  app.get("/:id", {
+    schema: {
+      tags: ["Rollenzuweisungen"],
+      security: [{ bearerAuth: [] }],
+      summary: "Read a single role assignment",
+      description:
+        "Returns one role assignment of the caller's own tenant. A foreign tenant's real assignment and a nonexistent id both answer 404 with the same body (T-100-09).",
+    },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      const tenantId = req.user.tenantId;
+      const existing = await app.prisma.roleAssignment.findFirst({
+        where: { id, tenantId },
+        include: { accessRole: true },
+      });
+      if (!existing) {
+        return reply.code(404).send({ error: ASSIGNMENT_NOT_FOUND });
+      }
+      return toRoleAssignmentResponse(existing);
+    },
+  });
+
+  // PATCH /api/v1/role-assignments/:id — change the role and/or scope of an assignment of the
+  // caller's own tenant (D-07). `userId` is never changeable (revoke + create instead) — the
+  // schema's `.strict()` turns a body carrying it into a 400 (T-74b-13). A no-op (nothing actually
+  // changes) writes and audits nothing (D-07/D-12).
+  app.patch("/:id", {
+    schema: {
+      tags: ["Rollenzuweisungen"],
+      security: [{ bearerAuth: [] }],
+      summary: "Change a role assignment's role and/or scope",
+      description:
+        "Changes the access role and/or scope of a role assignment of the caller's own tenant. `userId` is not changeable — revoke and create a new assignment instead. A no-op request writes nothing and audits nothing. A foreign tenant's real assignment and a nonexistent id both answer 404 with the same body (T-100-09). A change that would create a duplicate (same user, role and scope type) answers 409.",
+    },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      // Parsed BEFORE the lookup (roles.ts house convention) so an empty body `{}` still reaches
+      // the tenant guard below — every field here is nullish, so `{}` always parses.
+      const body = updateAssignmentSchema.parse(req.body ?? {});
+      const tenantId = req.user.tenantId;
+
+      const existing = await app.prisma.roleAssignment.findFirst({
+        where: { id, tenantId },
+        include: { accessRole: true },
+      });
+      if (!existing) {
+        return reply.code(404).send({ error: ASSIGNMENT_NOT_FOUND });
+      }
+
+      const nextAccessRoleId = body.accessRoleId ?? existing.accessRoleId;
+      const nextScope: NormalizedRoleAssignmentScope =
+        body.scope !== undefined && body.scope !== null
+          ? normalizeRoleAssignmentScope(body.scope)
+          : {
+              scopeType: existing.scopeType,
+              salonIds: existing.salonIds,
+              employeeIds: existing.employeeIds,
+            };
+
+      const roleChanged = nextAccessRoleId !== existing.accessRoleId;
+      const scopeChanged =
+        nextScope.scopeType !== existing.scopeType ||
+        nextScope.salonIds.length !== existing.salonIds.length ||
+        !nextScope.salonIds.every((v, i) => v === existing.salonIds[i]) ||
+        nextScope.employeeIds.length !== existing.employeeIds.length ||
+        !nextScope.employeeIds.every((v, i) => v === existing.employeeIds[i]);
+
+      if (!roleChanged && !scopeChanged) {
+        // A no-op is not a change (D-07/D-12): nothing to write, nothing to audit.
+        return toRoleAssignmentResponse(existing);
+      }
+
+      // Resolve only the changed scope references — the same 404s as POST (D-08). The role is
+      // always resolved because its name feeds the audit value; an unchanged role is the stored
+      // one, which the AccessRole foreign key keeps resolvable.
+      const resolution = await resolveAssignmentReferences(app.prisma, tenantId, {
+        accessRoleId: nextAccessRoleId,
+        scope: scopeChanged ? nextScope : undefined,
+      });
+      if (resolution.status !== "OK") {
+        return sendReferenceNotFound(reply, resolution);
+      }
+      const { accessRole: nextAccessRole } = resolution;
+
+      try {
+        const updated = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          if (roleChanged || nextScope.scopeType !== existing.scopeType) {
+            const duplicate = await tx.roleAssignment.findFirst({
+              where: {
+                tenantId,
+                userId: existing.userId,
+                accessRoleId: nextAccessRoleId,
+                scopeType: nextScope.scopeType,
+                id: { not: id },
+              },
+            });
+            if (duplicate) return null;
+          }
+
+          const row = await tx.roleAssignment.update({
+            where: { id, tenantId },
+            data: {
+              accessRoleId: nextAccessRoleId,
+              scopeType: nextScope.scopeType,
+              salonIds: nextScope.salonIds,
+              employeeIds: nextScope.employeeIds,
+            },
+            include: { accessRole: true },
+          });
+          await auditRoleAssignment(app, req, {
+            action: "UPDATE",
+            entityId: row.id,
+            oldValue: toAuditValue(existing, existing.accessRole.name),
+            newValue: toAuditValue(row, nextAccessRole.name),
+            tx,
+          });
+          return row;
+        });
+
+        if (!updated) {
+          return reply.code(409).send({ error: DUPLICATE_ASSIGNMENT_MESSAGE });
+        }
+        return toRoleAssignmentResponse(updated);
+      } catch (err: unknown) {
+        if (isPrismaErrorCode(err, "P2002")) {
+          return reply.code(409).send({ error: DUPLICATE_ASSIGNMENT_MESSAGE });
+        }
+        if (isPrismaErrorCode(err, "P2025")) {
+          return reply.code(404).send({ error: ASSIGNMENT_NOT_FOUND });
+        }
+        throw err;
+      }
+    },
+  });
+
+  // DELETE /api/v1/role-assignments/:id — revoke = audited hard delete (D-05). No `deletedAt` on
+  // `RoleAssignment`; history lives entirely in the AuditLog.
+  app.delete("/:id", {
+    schema: {
+      tags: ["Rollenzuweisungen"],
+      security: [{ bearerAuth: [] }],
+      summary: "Revoke a role assignment",
+      description:
+        "Hard-deletes a role assignment of the caller's own tenant, audited. A foreign tenant's real assignment and a nonexistent id both answer 404 with the same body (T-100-09).",
+    },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      const tenantId = req.user.tenantId;
+      const existing = await app.prisma.roleAssignment.findFirst({
+        where: { id, tenantId },
+        include: { accessRole: true },
+      });
+      if (!existing) {
+        return reply.code(404).send({ error: ASSIGNMENT_NOT_FOUND });
+      }
+
+      try {
+        await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          await tx.roleAssignment.delete({ where: { id, tenantId } });
+          await auditRoleAssignment(app, req, {
+            action: "DELETE",
+            entityId: existing.id,
+            oldValue: toAuditValue(existing, existing.accessRole.name),
+            tx,
+          });
+        });
+        return reply.code(204).send();
+      } catch (err: unknown) {
+        if (isPrismaErrorCode(err, "P2025")) {
+          return reply.code(404).send({ error: ASSIGNMENT_NOT_FOUND });
         }
         throw err;
       }
