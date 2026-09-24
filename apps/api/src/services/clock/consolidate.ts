@@ -8,6 +8,7 @@
 import type { Prisma, TimeEntry } from "@clokr/db";
 import type { FastifyBaseLogger } from "fastify";
 import { MIN_MERGE_PREDECESSOR_DURATION_MS } from "./thresholds";
+import { findEntriesOfDay } from "../../contexts/time-tracking/day-entries"; // Phase 69b
 
 export function calcBreakMinutesLocal(breaks: { startTime: Date; endTime: Date }[]): number {
   return breaks.reduce((sum, b) => sum + (b.endTime.getTime() - b.startTime.getTime()) / 60000, 0);
@@ -27,6 +28,7 @@ export type ConsolidateResult =
 
 export async function consolidateSameDayEntries(
   tx: Prisma.TransactionClient,
+  tenantId: string,
   openEntry: TimeEntry,
   gapHoursMax: number,
   log: FastifyBaseLogger,
@@ -36,25 +38,29 @@ export async function consolidateSameDayEntries(
     return { merged: false };
   }
 
-  // TIME-V19-04 bug #1 fix: filter endTime <= openEntry.startTime to prevent
-  // out-of-order writes from selecting a later sibling as the predecessor.
-  const previousEntry = await tx.timeEntry.findFirst({
-    where: {
-      employeeId: openEntry.employeeId,
-      deletedAt: null,
-      date: openEntry.date,
-      id: { not: openEntry.id },
-      endTime: { not: null, lte: openEntry.startTime },
-      // Phase 118 (D-08): a row coupled to a Zeitnachtrag (Phase 96,
-      // `retroRequestId @unique`) is off-limits as a predecessor. Merging would either
-      // extend it or soft-delete it, breaking the 1:1 coupling to the RetroEntryRequest —
-      // the approval flow would then release no entry, or a corrupted one. `isInvalid` is
-      // deliberately NOT filtered here (consistent with D-01: an invalidated row is a real
-      // attendance row).
-      retroRequestId: null,
-    },
-    orderBy: { endTime: "desc" },
+  // Phase 69b (Issue #69): the day is read through findEntriesOfDay; the predecessor rule is
+  // applied in memory, unchanged:
+  // - TIME-V19-04 bug #1 fix: endTime <= openEntry.startTime, so out-of-order writes cannot select
+  //   a later sibling as the predecessor.
+  // - Phase 118 (D-08): a row coupled to a Zeitnachtrag (Phase 96, `retroRequestId @unique`) is
+  //   off-limits as a predecessor. Merging would either extend it or soft-delete it, breaking the
+  //   1:1 coupling to the RetroEntryRequest — the approval flow would then release no entry, or a
+  //   corrupted one. `isInvalid` is deliberately NOT filtered here (consistent with D-01: an
+  //   invalidated row is a real attendance row).
+  // - The latest-ending candidate wins.
+  // MULTI-ENTRY: consolidation merges two same-day rows into one — its whole premise is one entry
+  // per day; #70 must decide whether it still merges, and with which predecessor.
+  const dayEntries = await findEntriesOfDay(tx, {
+    tenantId,
+    employeeId: openEntry.employeeId,
+    date: openEntry.date,
   });
+  let previousEntry: TimeEntry | null = null;
+  for (const e of dayEntries) {
+    if (e.id === openEntry.id || e.endTime === null || e.retroRequestId !== null) continue;
+    if (e.endTime > openEntry.startTime) continue;
+    if (previousEntry === null || e.endTime > previousEntry.endTime!) previousEntry = e;
+  }
 
   if (!previousEntry || !previousEntry.endTime) {
     log.info(

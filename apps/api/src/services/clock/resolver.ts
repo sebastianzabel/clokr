@@ -14,6 +14,7 @@ import {
   invalidReasonFields,
   CLEARED_INVALID_REASON,
 } from "../../contexts/time-tracking/invalid-reason";
+import { findEntriesOfDay } from "../../contexts/time-tracking/day-entries"; // Phase 69b
 
 export async function resolveClockEvent(
   app: FastifyInstance,
@@ -59,27 +60,27 @@ export async function resolveClockEvent(
       // of issue #124 at once: the permanently open entry (OUT → NOT_CLOCKED_IN →
       // 409 "already clocked out") and the P2002 on the next IN (→ 500).
       // Do not reintroduce this filter.
-      const openEntry = await tx.timeEntry.findFirst({
-        where: {
-          employeeId: event.employeeId,
-          deletedAt: null,
-          date: event.date,
-          endTime: null,
-        },
+      // Phase 69b (Issue #69): the day is read once through findEntriesOfDay; open/closed are
+      // picked from that list with the same rules the two former queries used.
+      const dayEntries = await findEntriesOfDay(tx, {
+        tenantId: event.tenantId,
+        employeeId: event.employeeId,
+        date: event.date,
       });
+      // MULTI-ENTRY: the clock state is "the open row of the day" — with several entries there can
+      // be several open rows, and STOP must know which one it closes.
+      const openEntry = dayEntries.find((e) => e.endTime === null) ?? null;
 
       // D-01: when no open entry, look for a closed non-deleted same-day entry to potentially reopen.
-      // Query WITHOUT isLocked filter so the REOPEN branch can return explicit MONTH_LOCKED CONFLICT.
+      // Selected WITHOUT isLocked filter so the REOPEN branch can return explicit MONTH_LOCKED CONFLICT.
+      // MULTI-ENTRY: REOPEN extends the latest-ending row of the day; with several entries a new IN
+      // could instead start a new entry — that choice belongs to #70.
       const closedEntry = !openEntry
-        ? await tx.timeEntry.findFirst({
-            where: {
-              employeeId: event.employeeId,
-              deletedAt: null,
-              date: event.date,
-              endTime: { not: null },
-            },
-            orderBy: { endTime: "desc" },
-          })
+        ? dayEntries.reduce<(typeof dayEntries)[number] | null>(
+            (best, e) =>
+              e.endTime !== null && (best === null || e.endTime > best.endTime!) ? e : best,
+            null,
+          )
         : null;
 
       // Phase 118 (D-02/D-03): a row coupled to a still-PENDING Zeitnachtrag
@@ -264,7 +265,13 @@ export async function resolveClockEvent(
           });
           const gapHoursMax = tenantConfig?.consolidationGapHours ?? 4;
 
-          const merge = await consolidateSameDayEntries(tx, updated, gapHoursMax, app.log);
+          const merge = await consolidateSameDayEntries(
+            tx,
+            event.tenantId,
+            updated,
+            gapHoursMax,
+            app.log,
+          );
 
           if (merge.merged) {
             const audit = await emitClockAudit(tx, {
@@ -353,6 +360,8 @@ export async function resolveClockEvent(
       }
     });
   } catch (err: unknown) {
+    // MULTI-ENTRY: this P2002 → ALREADY_CLOCKED_IN mapping is the concurrency backstop of the
+    // one-per-day unique index; without the index (#70) the race needs another guard.
     // Phase 118 (D-06): the partial day-uniqueness index
     // `TimeEntry_employeeId_date_unique_not_deleted` catches a concurrent same-day
     // create that slipped past the resolver's FOR-UPDATE lock (e.g.

@@ -477,8 +477,18 @@ import { readFileSync } from "node:fs";
 // 3 skipped (3411)`, zero failures — `vitest-report.json` agrees (`testResults.length` 279,
 // `numTotalTests` 3411). Both stale steps above (c5f4fd26's +2 and #263's +10) are absorbed by
 // taking that measurement as the floor, so the floor no longer trails the suite.
-const MIN_FILES = 279;
-const MIN_TESTS = 3411;
+//
+// Phase 69b Plan 01 (Issue #69): the full suite on `bea6b5c7` (this branch's base, before any
+// change) reported `testResults.length` 280 and `numTotalTests` 3414 — main had already grown
+// by one file and three tests past the floor above (#324). This plan adds one file
+// (`day-lookup-characterization.test.ts`, 23 tests in its own output) and seven cases to
+// `resolver-reopen.integration.test.ts` (13 tests in its own output, was 6): 280 + 1 = 281,
+// 3414 + 23 + 7 = 3444.
+//
+// Phase 69b Plan 02: adds `time-entry-day-lookup-guard.test.ts` (6 tests in its own output):
+// 281 + 1 = 282, 3444 + 6 = 3450.
+const MIN_FILES = 282;
+const MIN_TESTS = 3450;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
