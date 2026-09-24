@@ -53,7 +53,8 @@ describe("accessContextFromRequest (Phase 77b, D-02/D-13)", () => {
   }
 
   it("throws for a user object without the tenantId key", () => {
-    const { tenantId: _omitted, ...withoutTenant } = VALID_USER;
+    const withoutTenant = { sub: VALID_USER.sub, role: VALID_USER.role, employeeId: "emp-1" };
+    expect("tenantId" in withoutTenant).toBe(false);
     expect(() => accessContextFromRequest(fakeRequest(withoutTenant))).toThrow(AccessContextError);
   });
 
