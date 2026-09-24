@@ -309,6 +309,15 @@ export type SalonStateChange =
   | { status: "ALREADY_ACTIVE" }
   | { status: "LAST_ACTIVE_SALON" };
 
+/** The statuses {@link deactivateSalon} can return — never `ALREADY_ACTIVE`. */
+export type SalonDeactivation = Exclude<SalonStateChange, { status: "ALREADY_ACTIVE" }>;
+
+/** The statuses {@link activateSalon} can return — never `ALREADY_INACTIVE`/`LAST_ACTIVE_SALON`. */
+export type SalonActivation = Exclude<
+  SalonStateChange,
+  { status: "ALREADY_INACTIVE" | "LAST_ACTIVE_SALON" }
+>;
+
 /**
  * D-08/D-11: deactivate a salon. MUST run inside an interactive `$transaction` — the row lock
  * below is released at the end of the transaction it runs in, so calling this with a bare
@@ -321,7 +330,7 @@ export async function deactivateSalon(
   db: Prisma.TransactionClient,
   tenantId: string,
   salonId: string,
-): Promise<SalonStateChange> {
+): Promise<SalonDeactivation> {
   // FOR UPDATE, ordered by id — locks every one of the tenant's Salon rows for the lifetime of
   // the enclosing transaction, the same shape as `services/clock/resolver.ts:37`'s per-employee
   // lock, generalised to "every row that could change countActiveSalons' answer".
@@ -346,7 +355,7 @@ export async function activateSalon(
   db: Prisma.TransactionClient,
   tenantId: string,
   salonId: string,
-): Promise<SalonStateChange> {
+): Promise<SalonActivation> {
   await db.$queryRaw`SELECT "id" FROM "Salon" WHERE "tenantId" = ${tenantId} ORDER BY "id" FOR UPDATE`;
 
   const existing = await db.salon.findFirst({ where: { id: salonId, tenantId } });

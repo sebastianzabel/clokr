@@ -120,9 +120,7 @@ export async function salonRoutes(app: FastifyInstance) {
       const { includeInactive } = listQuerySchema.parse(req.query);
 
       return {
-        salons: await listSalons(app.prisma, req.user.tenantId, {
-          includeInactive: includeInactive ?? false,
-        }),
+        salons: await listSalons(app.prisma, req.user.tenantId, { includeInactive }),
         isMultiSalon: await isMultiSalonTenant(app.prisma, req.user.tenantId),
       };
     },
@@ -242,9 +240,11 @@ export async function salonRoutes(app: FastifyInstance) {
           return reply.code(409).send({ error: ALREADY_INACTIVE_MESSAGE });
         case "LAST_ACTIVE_SALON":
           return reply.code(409).send({ error: LAST_ACTIVE_SALON_MESSAGE });
-        default:
-          // ALREADY_ACTIVE cannot occur on the deactivate path — exhaustiveness guard only.
-          return reply.code(409).send({ error: "Unerwarteter Zustand." });
+        default: {
+          // Compile-time exhaustiveness: deactivateSalon's return type has no other status.
+          const unreachable: never = outcome;
+          return unreachable;
+        }
       }
     },
   });
@@ -281,9 +281,11 @@ export async function salonRoutes(app: FastifyInstance) {
           return rejectUnknownSalon(app, req, reply, id);
         case "ALREADY_ACTIVE":
           return reply.code(409).send({ error: ALREADY_ACTIVE_MESSAGE });
-        default:
-          // ALREADY_INACTIVE/LAST_ACTIVE_SALON cannot occur on the activate path.
-          return reply.code(409).send({ error: "Unerwarteter Zustand." });
+        default: {
+          // Compile-time exhaustiveness: activateSalon's return type has no other status.
+          const unreachable: never = outcome;
+          return unreachable;
+        }
       }
     },
   });

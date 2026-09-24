@@ -60,10 +60,11 @@ async function main() {
   console.log("TenantConfig angelegt");
 
   // D-18 (Phase 64b, issue #64): every tenant this seed bootstraps also gets its
-  // default salon, in the same step — idempotent, so re-running the seed against
-  // an already-seeded tenant (e.g. one from before this plan) does not duplicate
-  // it. No audit-log write here (research Pitfall 5) — a seed script has no
-  // request principal.
+  // default salon, in the same step. An already-seeded tenant never reaches this
+  // point (main() returns early when `demo-clokr` exists) — such tenants got their
+  // salon from the migration's data section. The findFirst guard only keeps this
+  // block safe on its own; it is not a second idempotency mechanism. No audit-log
+  // write here (research Pitfall 5) — a seed script has no request principal.
   const existingSalon = await prisma.salon.findFirst({ where: { tenantId: tenant.id } });
   if (!existingSalon) {
     await prisma.salon.create({
