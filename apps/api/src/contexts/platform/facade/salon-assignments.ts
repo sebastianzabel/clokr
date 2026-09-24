@@ -135,9 +135,13 @@ export interface SalonForDay {
 /**
  * D-16: `date` is an instant, converted to the tenant-local calendar day and weekday. Returns the
  * first effective DEPLOYMENT whose weekdays contain that weekday (unique by D-10), else the
- * effective HOME row, else `null` (before hireDate / no rows at all — e.g. a legacy fixture).
- * Tenant required; a foreign employeeId yields `null` (no rows can match a tenantId it doesn't
- * belong to).
+ * effective HOME row, else `null` (no rows at all — e.g. a legacy fixture). Tenant required; a
+ * foreign or nonexistent employeeId yields `null`.
+ *
+ * Review IN-02: a day before the employee's tenant-local `hireDate` always yields `null`, even when
+ * a HOME row still covers it — D-07 deliberately leaves HOME rows before a hire date that moved
+ * LATER in place ("harmless"), and this check is what keeps them harmless: D-16 specifies the
+ * answer only from `hireDate` on.
  *
  * No `isActive` filter on the salon: the history of a since-deactivated salon stays answerable —
  * this function only asks "which salon was this employee assigned to", not "is that salon
@@ -153,6 +157,13 @@ export async function salonForDay(
   const day = tenantLocalDay(date, tz);
   const weekday = mondayBasedWeekday(date, tz);
   const dayAsDate = dayToDate(day);
+
+  const employee = await db.employee.findFirst({
+    where: { id: employeeId, tenantId },
+    select: { hireDate: true },
+  });
+  if (!employee) return null;
+  if (day < tenantLocalDay(employee.hireDate, tz)) return null;
 
   const rows = await db.employeeSalonAssignment.findMany({
     where: {

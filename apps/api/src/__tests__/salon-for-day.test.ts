@@ -305,6 +305,60 @@ describe("salonForDay / listSalonAssignments (Phase 67b Plan 01 Task 2, issue #6
     });
   });
 
+  it("review IN-02 / D-16: after the hire date moved LATER, salonForDay answers null for every day before the tenant-local hireDate although the old HOME row still covers it, and HOME from the hire day on", async () => {
+    const lateUser = await app.prisma.user.create({
+      data: {
+        email: `sfd-late-${Date.now().toString(36)}@test.de`,
+        passwordHash: "x",
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    // 2025-03-14T23:30:00Z is 2025-03-15 00:30 in Berlin: the tenant-local hire day is the 15th,
+    // the UTC day the 14th — so the 14th proves the comparison is tenant-local, not UTC.
+    const lateEmployee = await app.prisma.employee.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        userId: lateUser.id,
+        employeeNumber: `SFD-LATE-${Date.now().toString(36)}`,
+        firstName: "Late",
+        lastName: "Hire",
+        hireDate: new Date("2025-03-14T23:30:00Z"),
+      },
+    });
+    // The HOME row from the OLD, earlier hire date — D-07 leaves it in place when hireDate moves
+    // later.
+    await app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        employeeId: lateEmployee.id,
+        salonId: salonA.id,
+        kind: "HOME",
+        validFrom: new Date("2024-01-01"),
+        validUntil: null,
+        weekdays: [],
+      },
+    });
+
+    for (const instant of ["2024-06-01T10:00:00Z", "2025-03-14T12:00:00Z"]) {
+      const before = await salonForDay(
+        app.prisma,
+        tenantA.tenant.id,
+        lateEmployee.id,
+        new Date(instant),
+      );
+      expect(before, `${instant} lies before the tenant-local hire day`).toBeNull();
+    }
+
+    const hireDay = await salonForDay(
+      app.prisma,
+      tenantA.tenant.id,
+      lateEmployee.id,
+      new Date("2025-03-15T08:00:00Z"),
+    );
+    expect(hireDay).toEqual({ salonId: salonA.id, kind: "HOME", assignmentId: expect.any(String) });
+  });
+
   it("D-17: listSalonAssignments returns ALL rows including ended and voided, HOME first then by validFrom", async () => {
     const rows = await listSalonAssignments(app.prisma, tenantA.tenant.id, tenantA.employee.id);
     // HOME (1) + DEPLOYMENT B + DEPLOYMENT C + voided DEPLOYMENT = 4 rows total (S/M live on the
