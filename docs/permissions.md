@@ -525,3 +525,87 @@ hier, mit Begründung.
 | `contexts/platform/api/employees.ts:596`                   | Die Rolle wird hier gesetzt, nicht geprüft; künftig `role-assignment:manage`, die Route selbst ist über :525 erfasst.        |
 | `contexts/time-tracking/plugins/attendance-checker.ts:169` | Auswahl der Benachrichtigungsempfänger im Cron-Job, kein Anfragekontext; gehört zu #75.                                      |
 | `middleware/auth.ts:76`                                    | Die Implementierung des Rollen-Guards selbst; jede Aufrufstelle steht einzeln im Abschnitt zu requireRole.                   |
+
+## Keine Permissions
+
+Folgende Regeln und Mechanismen stehen bewusst nicht im Katalog.
+
+**Sperren, die für jede Rolle gelten.** Sie sind keine Permissions, weil sie sich sonst durch die
+Zusammenstellung einer Rolle abschalten ließen — und genau das darf nicht gehen (#78). Wer eine
+Genehmigungs-Permission hat, bleibt an sie gebunden:
+
+- **Keine Selbstgenehmigung von Urlaubs- und Abwesenheitsanträgen** —
+  `contexts/absence/api/leave.ts:988-996`: Wer einen Antrag prüft, darf nicht der Antragsteller
+  sein.
+- **Keine Selbstgenehmigung von Zeitnachträgen** —
+  `contexts/time-tracking/api/retro-entry-requests.ts:244`: dieselbe Sperre für Zeitnachträge.
+- **Stornierung durch einen anderen Manager** — `contexts/absence/api/leave.ts:1000`: Eine
+  Stornierung genehmigt nie die Person, die sie beantragt hat.
+- **Vier-Augen-Regel bei der endgültigen Löschung** — `contexts/platform/api/employees.ts:1060`
+  (Freigabe durch einen Administrator) und `:1144` (die Löschung prüft, dass die Freigabe von einem
+  ANDEREN Administrator stammt und höchstens 15 Minuten alt ist): Innerhalb der Aufbewahrungsfrist
+  löscht niemand allein. `employee:anonymize` erlaubt die Löschkette, ersetzt diese Regel aber nicht.
+
+**Eigene Systeme außerhalb des Katalogs:**
+
+- **Scopes von API-Schlüsseln** (`ApiKey.scopes`, `packages/db/prisma/schema.prisma:1036`). Heute
+  wertet `middleware/auth.ts:52-57` nur den Scope `admin` aus; jeder andere Schlüssel wirkt wie
+  `MANAGER`, die übrigen Scopes werden nirgends geprüft. Die neutrale Abbildung auf Permissions
+  übernimmt #75.
+- **Anmeldung der NFC-Terminals** mit einem eigenen Terminal-Schlüssel
+  (`contexts/time-tracking/api/terminals.ts:95`). Das ist Geräte-Authentifizierung, keine
+  Berechtigung einer Person; verwaltet werden die Schlüssel über `terminal:manage`.
+- **Die Abfragen, die Benachrichtigungsempfänger nach Rolle suchen** (etwa
+  `role: { in: ["ADMIN", "MANAGER"] }`; Issue #72 zählt 16 solche Stellen). Sie wählen aus, wer eine
+  Nachricht bekommt, und treffen keine Zugriffsentscheidung; ihre Umstellung gehört zu #75.
+- **Ein Superadmin oberhalb des Mandanten** — das ist #88.
+
+## Pflege
+
+Dieses Dokument wird von zwei Tests gegen den Code gehalten:
+
+- `apps/api/src/contexts/platform/__tests__/permission-catalog.test.ts` prüft den Katalog selbst:
+  eindeutige Tripel, genau zwei Reichweiten, kein `EIGENE` auf einer Mandant-Ressource und den
+  Abgleich mit der eingecheckten Tabelle aus Issue #72.
+- `apps/api/src/__tests__/permission-site-mapping.test.ts` prüft dieses Dokument: die Aufrufstellen
+  und Handler-Prüfungen gegen den Quellbaum, die Abschnitte „Ressourcen“ und „Permissions“ gegen den
+  Katalog.
+
+Ausführen:
+
+```bash
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/__tests__/permission-site-mapping.test.ts src/contexts/platform/__tests__/permission-catalog.test.ts
+```
+
+Was eine rote Meldung bedeutet und was zu tun ist:
+
+- **„a requireRole call site was added or removed“** oder **„a role check was added or removed“** —
+  in der genannten Datei ist eine Stelle hinzugekommen oder weggefallen. Zeile im genannten
+  Abschnitt ergänzen oder löschen; „Stelle“ ist die aktuelle Zeile, Permission und Reichweite kommen
+  aus dem Katalog.
+- **Ein neuer Treffer der Handler-Suche, der keine Zugriffsentscheidung trifft** (Rolle nur geloggt,
+  ins Token geschrieben, gesetzt oder als Datenfilter benutzt) — Zeile im Abschnitt „Nicht gezählte
+  Treffer“ mit Begründung.
+- **„names a permission the catalog does not have“** — die Zeile nennt eine Permission oder
+  Reichweite, die es im Katalog nicht gibt: Zeile korrigieren, nicht den Katalog passend machen.
+- **Abschnitte „Permissions“ oder „Ressourcen“ passen nicht zum Katalog** — eine neue Permission oder
+  Ressource (etwa aus #73 oder #74) braucht eine Zeile in „Permissions“ und, bei einer neuen
+  Ressource, eine in „Ressourcen“; eine entfernte verliert ihre Zeilen. `ISSUE_72_TABLE` im
+  Katalogtest wird nur zusammen mit dem Ticket erweitert, das die neue Permission begründet.
+- **„unparseable rows“** — eine Tabellenzeile hat das falsche Format (fehlende Backticks, falsche
+  Spaltenzahl, zu kurzer oder leerer Text). Zeile reparieren, nie den Parser lockern.
+
+Zeilennummern sind Belege, keine Adressen: Eine reine Verschiebung macht die Tests nicht rot. Wer
+Zeilen neu nachmisst, aktualisiert „Codestand der Belege“ im Kopf dieses Dokuments.
+
+Bekannte Grenzen, ausdrücklich hingenommen:
+
+1. Wandert eine Stelle innerhalb derselben Datei von einer Route zu einer anderen, ohne dass sich
+   die Anzahl der Stellen in der Datei ändert, merkt der Test das nicht (D-10).
+2. Eine Rollenprüfung in einer Form, die keine der beiden Suchen erkennt — etwa eine per
+   Destrukturierung gelesene Rolle, die über `.includes(...)` verglichen wird — bleibt unsichtbar.
+   Rollenprüfungen deshalb gegen `req.user.role` bzw. `user.role` schreiben.
+3. Dieses Dokument wird auch von der API-Testsuite in CI gelesen. Deshalb steht es im Pfadfilter
+   `api:` von `.github/workflows/ci.yml`; eine reine Änderung an diesem Dokument startet die
+   API-Tests.
