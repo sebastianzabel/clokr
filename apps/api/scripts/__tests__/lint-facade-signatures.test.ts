@@ -384,7 +384,13 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   //
   // 89 -> 91 in Phase 64b Plan 02 (Issue #64, Task 2): same file, 2 more exported functions —
   // deactivateSalon, activateSalon — both pass F1/F2/F3 directly, no new exception needed.
-  it("the real tree has exactly 91 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  //
+  // 91 -> 92 in Phase 64b Plan 04 (Issue #64, Task 1): same file, 1 more exported function —
+  // syncSoleActiveSalonOpeningHours (D-16 storeHours<->salon mirror) — passes F1/F2/F3 directly
+  // (`db: Prisma.TransactionClient` first, `tenantId` present alongside `openingHours` which does
+  // not match the `*Ids?` trigger pattern), no new exception needed. The module-private
+  // `normalizeOpeningHoursForCompare` helper is not exported and is not counted here.
+  it("the real tree has exactly 92 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -411,7 +417,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(91);
+    expect(functions).toHaveLength(92);
 
     const rawExceptions = JSON.parse(
       readFileSync(

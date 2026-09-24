@@ -3,6 +3,10 @@ import { z } from "zod";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { FederalState, type TenantConfig } from "@clokr/db";
 import { encrypt } from "../../../utils/crypto";
+// Phase 64b (issue #64, D-04/D-16): the Salon facade's single canonical opening-hours schema —
+// stricter than this file's own pre-existing (now removed) storeHours regex-only check — plus the
+// function that mirrors a validated write into the tenant's sole active salon.
+import { salonOpeningHoursSchema, syncSoleActiveSalonOpeningHours } from "../facade/salons";
 // eslint-disable-next-line no-restricted-imports -- E-3: PUT /settings/work/:employeeId triggers saldo recalculation and shift cancellation as side effects of a contract change — same defect class as E-1. Disappears in Block 2 via a schedule-changed event. ADR 0001 Eintrag H.
 import { recalculateSnapshots } from "../../working-time-account/recalculate-snapshots";
 import {
@@ -147,18 +151,13 @@ const tenantConfigSchema = z
     datevMandantenNr: z.number().int().min(1).max(99999).nullable().optional(),
     // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
     monthlyHoursHolidayDeduction: z.boolean().optional(),
-    // Ladenöffnungszeiten (Phase 42) — 7 entries Mo-So
-    storeHours: z
-      .array(
-        z.object({
-          day: z.number().int().min(0).max(6),
-          open: z.string().regex(/^\d{2}:\d{2}$/),
-          close: z.string().regex(/^\d{2}:\d{2}$/),
-          closed: z.boolean().optional(),
-        }),
-      )
-      .length(7)
-      .optional(),
+    // Ladenöffnungszeiten (Phase 42). Phase 64b (issue #64, D-04/D-16): now the Salon facade's
+    // stricter salonOpeningHoursSchema (each weekday 0..6 exactly once, real HH:MM times,
+    // open < close unless closed) instead of this file's own former length(7)+regex-only check —
+    // one canonical schema for both the tenant field and Salon.openingHours. `TenantConfig.storeHours`
+    // itself is DEPRECATED (no new code reads it, #325); this PUT still writes it and, when the
+    // tenant has exactly one active salon, mirrors the same value into that salon (see below).
+    storeHours: salonOpeningHoursSchema.optional(),
     // Phase 47.5 — STRICT / DAY_ONLY / OFF
     shiftStoreHoursMode: z.enum(["STRICT", "DAY_ONLY", "OFF"]).optional(),
     // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults (tenant-level pre-fill suggestion)
@@ -647,7 +646,9 @@ export async function settingsRoutes(app: FastifyInstance) {
         select: { defaultBreakOver6h: true, defaultBreakOver9h: true },
       });
 
-      // federalState + tenantName gehören zum Tenant, nicht zur TenantConfig
+      // federalState and tenantName belong to Tenant, not to TenantConfig (D-17: renaming the
+      // tenant here never renames its default salon — the salon's name is its own master data
+      // once created).
       const {
         federalState,
         tenantName,
@@ -674,19 +675,45 @@ export async function settingsRoutes(app: FastifyInstance) {
       if (federalState) tenantUpdate.federalState = federalState as FederalState;
       if (tenantName !== undefined) tenantUpdate.name = tenantName;
 
-      const [config] = await Promise.all([
-        app.prisma.tenantConfig.upsert({
+      // Phase 64b (issue #64, D-16, research Pitfall 1): the tenantConfig upsert, the optional
+      // tenant update, and — ONLY when this PUT's body carries storeHours — the D-16 salon mirror
+      // plus its own UPDATE Salon audit row all run in ONE transaction, so a mirror failure rolls
+      // back the tenantConfig write too. The applyToExisting employee loop below and the
+      // TenantConfig/BREAK_DEFAULT_CHANGED audits stay OUTSIDE this transaction — separate,
+      // pre-existing code paths this task does not widen the lock scope around.
+      const config = await app.prisma.$transaction(async (tx) => {
+        const upserted = await tx.tenantConfig.upsert({
           where: { tenantId },
           update: configData,
           create: { tenantId, ...configData },
-        }),
-        Object.keys(tenantUpdate).length > 0
-          ? app.prisma.tenant.update({
-              where: { id: tenantId },
-              data: tenantUpdate,
-            })
-          : Promise.resolve(null),
-      ]);
+        });
+
+        if (Object.keys(tenantUpdate).length > 0) {
+          await tx.tenant.update({
+            where: { id: tenantId },
+            data: tenantUpdate,
+          });
+        }
+
+        const hours = configData.storeHours;
+        if (hours !== undefined) {
+          const mirrored = await syncSoleActiveSalonOpeningHours(tx, tenantId, hours);
+          if (mirrored) {
+            await app.audit({
+              userId: req.user.sub,
+              action: "UPDATE",
+              entity: "Salon",
+              entityId: mirrored.updated.id,
+              oldValue: mirrored.existing,
+              newValue: mirrored.updated,
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+              tx,
+            });
+          }
+        }
+
+        return upserted;
+      });
 
       // Auf bestehende MA anwenden: Neue Schedule-Version für alle MA,
       // deren aktueller Schedule noch den alten Defaults entspricht

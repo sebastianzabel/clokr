@@ -342,3 +342,67 @@ export async function activateSalon(
   });
   return { status: "OK", existing, updated };
 }
+
+// ── storeHours <-> Salon mirror (Phase 64b Plan 04, D-16) — removed by #325 ─────────────────────
+
+/**
+ * Tolerant equality for two `openingHours` JSON values: sorts by day and normalises an ABSENT
+ * `closed` down to the same shape as an explicit `false`, so key order and an omitted `closed`
+ * never register as a "change" that {@link syncSoleActiveSalonOpeningHours} would otherwise
+ * mirror (and audit) for no real difference. Module-private — no caller needs the intermediate
+ * string, only the equality it produces.
+ */
+function normalizeOpeningHoursForCompare(value: unknown): string {
+  const rows = Array.isArray(value) ? (value as SalonOpeningHours) : [];
+  return JSON.stringify(
+    [...rows]
+      .sort((a, b) => a.day - b.day)
+      .map((row) => ({
+        day: row.day,
+        open: row.open,
+        close: row.close,
+        closed: row.closed === true,
+      })),
+  );
+}
+
+/**
+ * D-16: keeps `TenantConfig.storeHours` and a tenant's single active salon in step until #325
+ * removes the tenant field entirely. Called ONLY from `PUT /api/v1/settings/work`
+ * (`contexts/platform/api/settings.ts`) when its body carries `storeHours` — this is a WRITE into
+ * the salon from inside an existing platform route, not a new read of `storeHours` (this function
+ * never reads `TenantConfig` itself; `openingHours` arrives already validated by
+ * {@link salonOpeningHoursSchema}). Deliberately NOT re-exported from `index.ts` (Plan 04) — the
+ * PUT /work handler is this function's only legitimate caller, not a general-purpose surface for
+ * Phase 67b.
+ *
+ * With more than one active salon the tenant value is ambiguous which salon it means — nothing is
+ * mirrored, and `TenantConfig.storeHours` is still updated by the caller regardless. A salon
+ * edited directly via `PATCH /api/v1/salons/:id` is never mirrored back into `TenantConfig` in the
+ * other direction — #325 switches the shift check's reader instead of building a second mirror.
+ */
+export async function syncSoleActiveSalonOpeningHours(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  openingHours: SalonOpeningHours,
+): Promise<{ existing: Salon; updated: Salon } | null> {
+  const activeSalons = await db.salon.findMany({
+    where: { tenantId, isActive: true },
+    take: 2,
+  });
+  if (activeSalons.length !== 1) return null;
+
+  const [salon] = activeSalons;
+  if (
+    normalizeOpeningHoursForCompare(salon.openingHours) ===
+    normalizeOpeningHoursForCompare(openingHours)
+  ) {
+    return null;
+  }
+
+  const updated = await db.salon.update({
+    where: { id: salon.id, tenantId },
+    data: { openingHours: openingHours as unknown as Prisma.InputJsonValue },
+  });
+  return { existing: salon, updated };
+}
