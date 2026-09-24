@@ -714,9 +714,10 @@ export async function employeeRoutes(app: FastifyInstance) {
       const tz =
         body.hireDate !== undefined ? await getTenantTimezone(app.prisma, req.user.tenantId) : null;
 
-      // D-07: the employee update, the role change and the HOME gap-fill (when hireDate moves
-      // earlier) commit or roll back together — a crash between them must never leave a real day
-      // without a Stammsalon row. The pro-rata warning below stays OUTSIDE this transaction: it
+      // D-07: the employee update, the role change, the HOME gap-fill (when hireDate moves
+      // earlier) and their audit rows commit or roll back together — a crash between them must
+      // never leave a real day without a Stammsalon row, nor an audited gap-fill without its audited
+      // hire-date move (review IN-05). The pro-rata warning below stays OUTSIDE this transaction: it
       // only reads and shapes a response field, and must not roll back a successful write.
       const updated = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         const updatedEmp = await tx.employee.update({ where: { id }, data: updates });
@@ -742,6 +743,30 @@ export async function employeeRoutes(app: FastifyInstance) {
             });
           }
         }
+
+        // Review IN-05: the Employee UPDATE audit commits or rolls back with the update it
+        // describes (and with the gap-fill's CREATE audit above). Inside the transaction a failing
+        // audit rolls the write back, so the actor is resolved through requestAuditFields — an API
+        // key's `apikey:<id>` subject would otherwise fail the AuditLog.userId foreign key.
+        await app.audit({
+          action: "UPDATE",
+          entity: "Employee",
+          entityId: id,
+          oldValue: {
+            ...employee,
+            exitDate: employee.exitDate?.toISOString() ?? null,
+            // Personalstruktur (Phase 41) — Decimal → string for stable JSON
+            coverageWeight: employee.coverageWeight.toString(),
+          },
+          ...requestAuditFields(req, {
+            ...updatedEmp,
+            role: body.role,
+            exitDate: updatedEmp.exitDate?.toISOString() ?? null,
+            // Personalstruktur (Phase 41) — Decimal → string for stable JSON
+            coverageWeight: updatedEmp.coverageWeight.toString(),
+          }),
+          tx,
+        });
 
         return updatedEmp;
       });
@@ -784,27 +809,6 @@ export async function employeeRoutes(app: FastifyInstance) {
           app.log.warn({ err }, "Pro-rata warning calculation failed silently");
         }
       }
-
-      await app.audit({
-        userId: req.user.sub,
-        action: "UPDATE",
-        entity: "Employee",
-        entityId: id,
-        oldValue: {
-          ...employee,
-          exitDate: employee.exitDate?.toISOString() ?? null,
-          // Personalstruktur (Phase 41) — Decimal → string for stable JSON
-          coverageWeight: employee.coverageWeight.toString(),
-        },
-        newValue: {
-          ...updated,
-          role: body.role,
-          exitDate: updated.exitDate?.toISOString() ?? null,
-          // Personalstruktur (Phase 41) — Decimal → string for stable JSON
-          coverageWeight: updated.coverageWeight.toString(),
-        },
-        request: { ip: req.ip, headers: req.headers as Record<string, string> },
-      });
 
       // Phase 64 (D-11): Dedicated audit row for break-override changes — emitted
       // ONLY when the PATCH body actually changed at least one of the two fields.

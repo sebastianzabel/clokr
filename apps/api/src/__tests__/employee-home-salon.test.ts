@@ -333,6 +333,40 @@ describe("PATCH /api/v1/employees/:id — Stammsalon-Lücke bei früherem Eintri
     expect(iterated).toBeGreaterThan(0);
   });
 
+  it("review IN-05: an ADMIN-scope API key moves hireDate earlier — 200; the Employee UPDATE audit is written inside the same transaction as the gap-fill, without userId and naming the key", async () => {
+    const keyRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/api-keys",
+      headers: { authorization: `Bearer ${tenant.adminToken}` },
+      payload: { name: "IN-05 admin key", scopes: ["admin"] },
+    });
+    expect(keyRes.statusCode, keyRes.body.slice(0, 400)).toBe(200);
+    const key = JSON.parse(keyRes.body) as { id: string; rawKey: string };
+
+    const emp = await createEmployeeWithHome("in05", "2024-01-01", tenant.defaultSalon.id);
+    const res = await patchEmployee(key.rawKey, emp.id, { hireDate: "2023-10-01T00:00:00.000Z" });
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
+
+    const gapRows = await app.prisma.employeeSalonAssignment.findMany({
+      where: { employeeId: emp.id, kind: "HOME", validFrom: new Date("2023-10-01") },
+    });
+    expect(gapRows).toHaveLength(1);
+
+    const updateAudits = await app.prisma.auditLog.findMany({
+      where: { entity: "Employee", action: "UPDATE", entityId: emp.id },
+    });
+    expect(updateAudits).toHaveLength(1);
+    expect(updateAudits[0].userId).toBeNull();
+    const newValue = updateAudits[0].newValue as { actor?: unknown; hireDate?: string } | null;
+    expect(newValue?.actor).toEqual({ type: "API_KEY", apiKeyId: key.id });
+    expect(newValue?.hireDate).toBe("2023-10-01T00:00:00.000Z");
+
+    const gapAudits = await app.prisma.auditLog.findMany({
+      where: { entity: "EmployeeSalonAssignment", action: "CREATE", entityId: gapRows[0].id },
+    });
+    expect(gapAudits).toHaveLength(1);
+  });
+
   it("hireDate moved LATER than the earliest HOME row: no new assignment row", async () => {
     const emp = await createEmployeeWithHome("d07b", "2024-01-01", tenant.defaultSalon.id);
     const res = await patchEmployee(tenant.adminToken, emp.id, {
