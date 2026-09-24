@@ -28,10 +28,14 @@
  */
 import type { Prisma } from "@clokr/db";
 import {
+  addDays,
+  dateToDay,
   dayToDate,
+  isVoided,
   mondayBasedWeekday,
   tenantLocalDay,
   type AssignmentRow,
+  type CalendarDay,
 } from "../salon-assignment-rules";
 
 const DEFAULT_TENANT_TIMEZONE = "Europe/Berlin";
@@ -166,4 +170,146 @@ export async function salonForDay(
   }
 
   return null;
+}
+
+// ── Phase 67b Plan 03 (issue #67) additions — the employee-lifecycle write helpers ───────────────
+//
+// These three functions keep the D-24 invariant ("exactly one HOME row per day from hireDate")
+// true across `POST /employees` (D-22), `PATCH /employees/:id`'s hire-date gap-fill (D-07), and the
+// CSV import (D-23). None of them needs `isSnapshotLocked` or a tenant-timezone helper from
+// `working-time-account` — D-22/D-07 both explicitly carry NO lock check (a brand-new employee, or
+// the days before an OLD hire date, can never have a closed-month time entry) — so, unlike
+// `facade/salon-assignment-changes.ts`, they live in THIS read-oriented module without breaking its
+// "no other context" invariant.
+
+/** The outcome of resolving a NEW employee's Stammsalon (D-22). */
+export type ResolveHomeSalonOutcome =
+  | { status: "OK"; salonId: string }
+  | { status: "SALON_NOT_FOUND" }
+  | { status: "SALON_INACTIVE" }
+  | { status: "HOME_SALON_REQUIRED" }
+  | { status: "NO_ACTIVE_SALON" };
+
+/**
+ * D-22/D-02: resolves which salon a NEW employee's HOME row should point at. MUST be the FIRST
+ * statement inside the employee-creating transaction (`db` is that transaction's client) — every
+ * `FOR SHARE` lock below is released at the end of it, and a non-OK outcome must leave nothing
+ * written, which only holds if every check upstream of the first write ran inside the same tx.
+ *
+ * An explicit `requestedSalonId` (an omitted key and an explicit `null` are treated identically,
+ * D-22 — frontends send explicit null) is looked up and lock-checked directly: absent/inactive rows
+ * return `SALON_NOT_FOUND`/`SALON_INACTIVE` — a foreign tenant's real salon and a nonexistent one
+ * are indistinguishable at this layer (T-100-09); the ROUTE decides whether to additionally audit a
+ * `CROSS_TENANT_ACCESS_DENIED` row for the foreign case. Omitted/null resolves against the tenant's
+ * ACTIVE salons ordered `createdAt, id` (the 64b default-salon order): zero -> `NO_ACTIVE_SALON`,
+ * more than one -> `HOME_SALON_REQUIRED`, exactly one -> `OK`. The `FOR SHARE` lock on every
+ * candidate row serialises this resolution against a concurrent `deactivateSalon()`'s `FOR UPDATE`
+ * over the same tenant's salons (D-02) — the two can never both believe they observed a stable
+ * salon state.
+ */
+export async function resolveHomeSalonForNewEmployee(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  requestedSalonId: string | null | undefined,
+): Promise<ResolveHomeSalonOutcome> {
+  if (requestedSalonId) {
+    const rows = await db.$queryRaw<{ id: string; isActive: boolean }[]>`
+      SELECT "id", "isActive" FROM "Salon" WHERE "id" = ${requestedSalonId} AND "tenantId" = ${tenantId} FOR SHARE
+    `;
+    const salon = rows[0];
+    if (!salon) return { status: "SALON_NOT_FOUND" };
+    if (!salon.isActive) return { status: "SALON_INACTIVE" };
+    return { status: "OK", salonId: salon.id };
+  }
+
+  const activeSalons = await db.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "Salon" WHERE "tenantId" = ${tenantId} AND "isActive" = true
+    ORDER BY "createdAt", "id" FOR SHARE
+  `;
+  if (activeSalons.length === 0) return { status: "NO_ACTIVE_SALON" };
+  if (activeSalons.length > 1) return { status: "HOME_SALON_REQUIRED" };
+  return { status: "OK", salonId: activeSalons[0].id };
+}
+
+/**
+ * D-22: creates the open HOME row `[validFrom, null)`, `weekdays: []`, for a NEW employee. Only
+ * valid for an employee created in the SAME transaction right after
+ * {@link resolveHomeSalonForNewEmployee} locked the salon — a brand-new employee has no other
+ * assignment rows (no overlap possible) and no time entries yet (no closed month, so no lock
+ * check, D-12).
+ */
+export async function createInitialHomeAssignment(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  employeeId: string,
+  salonId: string,
+  validFrom: CalendarDay,
+): Promise<AssignmentRow> {
+  return db.employeeSalonAssignment.create({
+    data: {
+      tenantId,
+      employeeId,
+      salonId,
+      kind: "HOME",
+      validFrom: dayToDate(validFrom),
+      validUntil: null,
+      weekdays: [],
+    },
+  });
+}
+
+/** The outcome of {@link fillHomeGapBeforeHireDate} (D-07). */
+export type FillHomeGapOutcome =
+  | { status: "NO_HOME_ROWS" }
+  | { status: "NOT_NEEDED" }
+  | { status: "FILLED"; created: AssignmentRow };
+
+/**
+ * D-07: when an employee's `hireDate` moves EARLIER than its earliest effective HOME row's
+ * `validFrom`, fills the new gap with a HOME row `[newHireDay, earliest.validFrom - 1]` to the
+ * EARLIEST row's OWN salon — extending that row's salon backwards, never choosing a different one
+ * (D-13 exemption: no `isActive` check on that salon here). No lock check (D-12): the days this
+ * fills lie strictly BEFORE the OLD hire date, which by construction can carry no time entry, so no
+ * closed month can be affected. An employee with no (non-voided) HOME rows at all — a legacy
+ * fixture predating this phase — returns `NO_HOME_ROWS` and writes nothing; a `newHireDay` that is
+ * not earlier than the earliest row returns `NOT_NEEDED`.
+ *
+ * MUST be called inside the SAME transaction as the employee's `hireDate` update (research
+ * Pitfall 2) — the employee row lock below is released at the end of that transaction, so calling
+ * this with a bare `PrismaClient` gives no protection against a concurrent HOME-row write.
+ */
+export async function fillHomeGapBeforeHireDate(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  employeeId: string,
+  newHireDay: CalendarDay,
+): Promise<FillHomeGapOutcome> {
+  await db.$queryRaw`
+    SELECT "id" FROM "Employee" WHERE "id" = ${employeeId} AND "tenantId" = ${tenantId} FOR UPDATE
+  `;
+
+  const rows = await db.employeeSalonAssignment.findMany({
+    where: { tenantId, employeeId, kind: "HOME" },
+  });
+  const effectiveRows = rows.filter((row) => !isVoided(row));
+  if (effectiveRows.length === 0) return { status: "NO_HOME_ROWS" };
+
+  const earliest = effectiveRows.reduce((a, b) =>
+    a.validFrom.getTime() <= b.validFrom.getTime() ? a : b,
+  );
+  const earliestDay = dateToDay(earliest.validFrom);
+  if (newHireDay >= earliestDay) return { status: "NOT_NEEDED" };
+
+  const created = await db.employeeSalonAssignment.create({
+    data: {
+      tenantId,
+      employeeId,
+      salonId: earliest.salonId,
+      kind: "HOME",
+      validFrom: dayToDate(newHireDay),
+      validUntil: dayToDate(addDays(earliestDay, -1)),
+      weekdays: [],
+    },
+  });
+  return { status: "FILLED", created };
 }
