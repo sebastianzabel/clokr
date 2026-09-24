@@ -146,7 +146,7 @@ export async function buildApp() {
   app.setErrorHandler(
     (
       error: Error & { statusCode?: number; issues?: Array<{ path: string[]; message: string }> },
-      _req,
+      req,
       reply,
     ) => {
       if (error.name === "ZodError" || error.issues) {
@@ -165,10 +165,21 @@ export async function buildApp() {
           details: parsed,
         });
       }
-      app.log.error(error);
-      return reply
-        .code(error.statusCode ?? 500)
-        .send({ error: error.message ?? "Interner Serverfehler" });
+      // Issue #330: a 5xx is an unexpected failure, and its message is internal (Prisma model,
+      // field and constraint names, hosts, paths). The client gets a fixed body; the original
+      // error goes to the log only, with route and request id so it can be found again.
+      // A 4xx carrying `statusCode` was raised deliberately and keeps its (German) message.
+      // A statusCode below 400 is not an error status — treat it as 500, like Fastify does.
+      const status =
+        typeof error.statusCode === "number" && error.statusCode >= 400 ? error.statusCode : 500;
+      app.log.error(
+        { err: error, reqId: req.id, route: req.routeOptions?.url, method: req.method, status },
+        "request failed",
+      );
+      if (status >= 500) {
+        return reply.code(status).send({ error: "Interner Serverfehler" });
+      }
+      return reply.code(status).send({ error: error.message ?? "Interner Serverfehler" });
     },
   );
 
