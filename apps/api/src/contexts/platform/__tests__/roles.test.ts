@@ -9,6 +9,9 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import { PERMISSIONS, permissionKey } from "../permission-catalog";
 import { roleNameKey, normalizeRolePermissions } from "../access-role";
+// AK-73-7/D-11 (test (w)): `roleGrants` pulled from the Unterbau's public surface (`..`), not
+// from `access-role.ts` directly — this is the exact import path #74 will use.
+import { roleGrants } from "..";
 import type { FastifyInstance } from "fastify";
 
 const ROLE_NAME_CONFLICT_MESSAGE = "Eine Rolle mit diesem Namen existiert bereits.";
@@ -19,6 +22,13 @@ describe("Roles API (Phase 73b, Issue #73)", () => {
   let dataB: Awaited<ReturnType<typeof seedTestData>>;
   let systemRoleId: string;
   let systemRoleName: string;
+  // A second, GLOBAL system fixture with a 100-character name — the copy-truncation edge case
+  // (test (y)) needs a source name that is already at `ROLE_NAME_MAX_LENGTH`.
+  let longSystemRoleId: string;
+  let longSystemRoleName: string;
+  // Copies made from the first system fixture in tests (t)/(u), reused by (v).
+  let firstCopyId: string;
+  let secondCopyId: string;
 
   // Two catalog keys, referenced by position so this file never restates a permission literal —
   // PERMISSIONS[0] always sorts before PERMISSIONS[1] in catalog order (D-03).
@@ -44,6 +54,19 @@ describe("Roles API (Phase 73b, Issue #73)", () => {
       },
     });
     systemRoleId = systemRole.id;
+
+    // Exactly 100 characters: a fixed, unique-enough base padded with a filler character so the
+    // length is precise regardless of the timestamp token's own length.
+    longSystemRoleName = `System-Lang-Testrolle ${Date.now().toString(36)} `.padEnd(100, "X");
+    const longSystemRole = await app.prisma.accessRole.create({
+      data: {
+        tenantId: null,
+        name: longSystemRoleName,
+        nameKey: roleNameKey(longSystemRoleName),
+        permissions: normalizeRolePermissions([keyLow]),
+      },
+    });
+    longSystemRoleId = longSystemRole.id;
   });
 
   afterAll(async () => {
@@ -51,6 +74,11 @@ describe("Roles API (Phase 73b, Issue #73)", () => {
       await app.prisma.accessRole.delete({ where: { id: systemRoleId } });
     } catch (err) {
       console.error("System role fixture cleanup failed:", err);
+    }
+    try {
+      await app.prisma.accessRole.delete({ where: { id: longSystemRoleId } });
+    } catch (err) {
+      console.error("Long system role fixture cleanup failed:", err);
     }
     try {
       await cleanupTestData(app, dataA.tenant.id);
@@ -585,5 +613,246 @@ describe("Roles API (Phase 73b, Issue #73)", () => {
       headers: { authorization: `Bearer ${dataA.empToken}` },
     });
     expect(deleteRes.statusCode).toBe(403);
+  });
+
+  it("(t) AK-73-6: copies the system fixture without a body -> 201, generated name, source unchanged", async () => {
+    const beforeSystem = await app.prisma.accessRole.findUniqueOrThrow({
+      where: { id: systemRoleId },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/roles/${systemRoleId}/copy`,
+      headers: { authorization: `Bearer ${dataA.adminToken}` },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body);
+    expect(body.name).toBe(`${systemRoleName} (Kopie)`);
+    expect(body.isSystem).toBe(false);
+    expect(body.permissions).toEqual(beforeSystem.permissions);
+    firstCopyId = body.id;
+
+    const row = await app.prisma.accessRole.findUniqueOrThrow({ where: { id: firstCopyId } });
+    expect(row.tenantId).toBe(dataA.tenant.id);
+    expect(row.permissions).toEqual(beforeSystem.permissions);
+
+    const afterSystem = await app.prisma.accessRole.findUniqueOrThrow({
+      where: { id: systemRoleId },
+    });
+    expect(afterSystem).toEqual(beforeSystem);
+  });
+
+  it("(u) AK-73-6/AK-73-8: repeated copies generate '(Kopie n)'; an explicit name is honored; a colliding name -> 409", async () => {
+    const secondRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/roles/${systemRoleId}/copy`,
+      headers: { authorization: `Bearer ${dataA.adminToken}` },
+      payload: {},
+    });
+    expect(secondRes.statusCode).toBe(201);
+    const secondBody = JSON.parse(secondRes.body);
+    expect(secondBody.name).toBe(`${systemRoleName} (Kopie 2)`);
+    secondCopyId = secondBody.id;
+
+    const explicitName = `Eigene Leitung ${Date.now().toString(36)}`;
+    const explicitRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/roles/${systemRoleId}/copy`,
+      headers: { authorization: `Bearer ${dataA.adminToken}` },
+      payload: { name: explicitName },
+    });
+    expect(explicitRes.statusCode).toBe(201);
+    expect(JSON.parse(explicitRes.body).name).toBe(explicitName);
+
+    const nullNameRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/roles/${systemRoleId}/copy`,
+      headers: { authorization: `Bearer ${dataA.adminToken}` },
+      payload: { name: null },
+    });
+    expect(nullNameRes.statusCode).toBe(201);
+    expect(JSON.parse(nullNameRes.body).name).toBe(`${systemRoleName} (Kopie 3)`);
+
+    const conflictRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/roles/${systemRoleId}/copy`,
+      headers: { authorization: `Bearer ${dataA.adminToken}` },
+      payload: { name: systemRoleName.toUpperCase() },
+    });
+    expect(conflictRes.statusCode).toBe(409);
+    expect(JSON.parse(conflictRes.body).error).toBe(ROLE_NAME_CONFLICT_MESSAGE);
+  });
+
+  it("(v) AK-73-6: a copy is freely editable and deletable; the system fixture stays untouched", async () => {
+    const beforeSystem = await app.prisma.accessRole.findUniqueOrThrow({
+      where: { id: systemRoleId },
+    });
+
+    const newCopyName = `Kopie geändert ${Date.now().toString(36)}`;
+    const patchRes = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/roles/${firstCopyId}`,
+      headers: { authorization: `Bearer ${dataA.adminToken}` },
+      payload: { name: newCopyName, permissions: [keyLow] },
+    });
+    expect(patchRes.statusCode).toBe(200);
+    const patched = JSON.parse(patchRes.body);
+    expect(patched.name).toBe(newCopyName);
+    expect(patched.permissions).toEqual([keyLow]);
+
+    const deleteRes = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/roles/${secondCopyId}`,
+      headers: { authorization: `Bearer ${dataA.adminToken}` },
+    });
+    expect(deleteRes.statusCode).toBe(204);
+    const deletedRow = await app.prisma.accessRole.findUnique({ where: { id: secondCopyId } });
+    expect(deletedRow).toBeNull();
+
+    const afterSystem = await app.prisma.accessRole.findUniqueOrThrow({
+      where: { id: systemRoleId },
+    });
+    expect(afterSystem).toEqual(beforeSystem);
+  });
+
+  it("(w) AK-73-7/D-11: an unchanged copy of the system fixture resolves identically for every catalog key, non-vacuously", async () => {
+    const copyRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/roles/${systemRoleId}/copy`,
+      headers: { authorization: `Bearer ${dataA.adminToken}` },
+      payload: { name: `AK-73-7-Kopie ${Date.now().toString(36)}` },
+    });
+    expect(copyRes.statusCode).toBe(201);
+    const copyId = JSON.parse(copyRes.body).id;
+
+    const systemRow = await app.prisma.accessRole.findUniqueOrThrow({
+      where: { id: systemRoleId },
+    });
+    const copyRow = await app.prisma.accessRole.findUniqueOrThrow({ where: { id: copyId } });
+    expect(copyRow.permissions).toEqual(systemRow.permissions);
+
+    let trueCount = 0;
+    let falseCount = 0;
+    for (const permission of PERMISSIONS) {
+      const key = permissionKey(permission);
+      const systemResult = roleGrants(systemRow, key);
+      const copyResult = roleGrants(copyRow, key);
+      expect(copyResult).toBe(systemResult);
+      if (systemResult) trueCount++;
+      else falseCount++;
+    }
+    expect(trueCount).toBe(systemRow.permissions.length);
+    expect(trueCount).toBeGreaterThanOrEqual(1);
+    expect(falseCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("(x) copies an own customer role through the same route", async () => {
+    const ownName = `Eigene Quelle ${Date.now().toString(36)}`;
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/roles",
+      headers: { authorization: `Bearer ${dataA.adminToken}` },
+      payload: { name: ownName, permissions: [keyHigh] },
+    });
+    const own = JSON.parse(createRes.body);
+
+    const copyRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/roles/${own.id}/copy`,
+      headers: { authorization: `Bearer ${dataA.adminToken}` },
+    });
+    expect(copyRes.statusCode).toBe(201);
+    const copy = JSON.parse(copyRes.body);
+    expect(copy.name).toBe(`${ownName} (Kopie)`);
+    expect(copy.permissions).toEqual([keyHigh]);
+
+    const row = await app.prisma.accessRole.findUniqueOrThrow({ where: { id: copy.id } });
+    expect(row.tenantId).toBe(dataA.tenant.id);
+  });
+
+  it("(y) copying a 100-character source name truncates the base so the result stays <= 100 characters", async () => {
+    expect(longSystemRoleName.length).toBe(100);
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/roles/${longSystemRoleId}/copy`,
+      headers: { authorization: `Bearer ${dataA.adminToken}` },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body);
+    expect(body.name.length).toBeLessThanOrEqual(100);
+    expect(body.name.endsWith(" (Kopie)")).toBe(true);
+  });
+
+  it("(z) AK-73-10: exactly one COPY audit with the full lineage", async () => {
+    const explicitName = `Audit-Kopie ${Date.now().toString(36)}`;
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/roles/${systemRoleId}/copy`,
+      headers: { authorization: `Bearer ${dataA.adminToken}` },
+      payload: { name: explicitName },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body);
+
+    const audits = await app.prisma.auditLog.findMany({
+      where: { entity: "AccessRole", action: "COPY", entityId: body.id },
+    });
+    expect(audits.length).toBe(1);
+    expect(audits[0].newValue).toEqual({
+      name: body.name,
+      permissions: body.permissions,
+      tenantId: dataA.tenant.id,
+      copiedFromId: systemRoleId,
+      copiedFromName: systemRoleName,
+    });
+  });
+
+  it("(aa) AK-73-9: copying tenant B's customer role vs. an unknown id are byte-identical 404; nothing created, no audit", async () => {
+    const foreignCreateRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/roles",
+      headers: { authorization: `Bearer ${dataB.adminToken}` },
+      payload: { name: `T-100-09-Copy-Quelle ${Date.now().toString(36)}`, permissions: [keyLow] },
+    });
+    const foreignRole = JSON.parse(foreignCreateRes.body);
+    const unknownId = "00000000-0000-4000-8000-000000000074";
+
+    const countBefore = await app.prisma.accessRole.count({ where: { tenantId: dataA.tenant.id } });
+
+    const foreignRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/roles/${foreignRole.id}/copy`,
+      headers: { authorization: `Bearer ${dataA.adminToken}` },
+    });
+    const unknownRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/roles/${unknownId}/copy`,
+      headers: { authorization: `Bearer ${dataA.adminToken}` },
+    });
+
+    expect(foreignRes.statusCode).toBe(404);
+    expect(unknownRes.statusCode).toBe(404);
+    expect(foreignRes.body).toBe(unknownRes.body);
+
+    const countAfter = await app.prisma.accessRole.count({ where: { tenantId: dataA.tenant.id } });
+    expect(countAfter).toBe(countBefore);
+
+    const audits = await app.prisma.auditLog.findMany({
+      where: { entity: "AccessRole", action: "COPY" },
+    });
+    const leaksSourceId = audits.some(
+      (a) => (a.newValue as { copiedFromId?: string } | null)?.copiedFromId === foreignRole.id,
+    );
+    expect(leaksSourceId).toBe(false);
+  });
+
+  it("(ab) AK-73-11: rejects an EMPLOYEE token with 403 on the copy route", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/roles/${systemRoleId}/copy`,
+      headers: { authorization: `Bearer ${dataA.empToken}` },
+      payload: {},
+    });
+    expect(res.statusCode).toBe(403);
   });
 });

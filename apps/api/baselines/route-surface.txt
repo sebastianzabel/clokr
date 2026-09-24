@@ -5,6 +5,7 @@
 │       └── /all (GET, HEAD)
 │       └── /attest (PATCH)
 │       └── /availability (GET, HEAD, PUT)
+│       └── /copy (POST)
 │       └── /devices (GET, HEAD)
 │       └── /exceptions (POST)
 │       └── /history (GET, HEAD)

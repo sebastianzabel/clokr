@@ -7,6 +7,7 @@ import {
   roleNameKey,
   unknownPermissionKeys,
   normalizeRolePermissions,
+  copyRoleName,
 } from "../access-role";
 
 const ROLE_NAME_CONFLICT_MESSAGE = "Eine Rolle mit diesem Namen existiert bereits.";
@@ -44,6 +45,15 @@ const updateRoleSchema = z.object({
   name: nameSchema.nullish(),
   permissions: permissionsSchema.nullish(),
 });
+
+// `.nullish()` on `name`: the route parses `req.body ?? {}`, so a bodyless copy still parses, and
+// the T-100-09 probe's `minimalBody: {}` reaches the tenant guard before anything is created.
+const copyRoleSchema = z.object({
+  name: nameSchema.nullish(),
+});
+
+/** Bound on the generated-name retry loop (D-06/D-07) — never actually reached in practice. */
+const COPY_NAME_ATTEMPT_LIMIT = 1000;
 
 interface AccessRoleRow {
   id: string;
@@ -342,6 +352,102 @@ export async function roleRoutes(app: FastifyInstance) {
       } catch (err: unknown) {
         if (isPrismaErrorCode(err, "P2025")) {
           return reply.code(404).send({ error: ROLE_NOT_FOUND_MESSAGE });
+        }
+        throw err;
+      }
+    },
+  });
+
+  // POST /api/v1/roles/:id/copy — the only way to adapt a system role (AK-73-6): copies a system
+  // role or an own customer role into a NEW customer role of the caller's own tenant. The copy is
+  // free-standing and freely editable from the moment it is created — it carries no reference back
+  // to its source; the lineage lives only in the COPY audit entry (AK-73-10).
+  app.post("/:id/copy", {
+    schema: {
+      tags: ["Rollen"],
+      security: [{ bearerAuth: [] }],
+      summary: "Copy a role into an own customer role",
+      description:
+        "Creates a customer role of the caller's own tenant with the same permissions as a system role or an own customer role. Without an explicit name, one is generated from the source name: '<Quelle> (Kopie)', then '(Kopie 2)', '(Kopie 3)' … An explicit name that collides is rejected with 409, same as create. A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
+    },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      // Parsed BEFORE the lookup (house convention) so a bodyless copy `{}` still reaches the
+      // tenant guard below — every field here is nullish, and `req.body ?? {}` covers no body at
+      // all (the T-100-09 probe's `minimalBody` for this route).
+      const body = copyRoleSchema.parse(req.body ?? {});
+
+      const source = await app.prisma.accessRole.findUnique({ where: { id } });
+      if (!source) {
+        return reply.code(404).send({ error: ROLE_NOT_FOUND_MESSAGE });
+      }
+      if (source.tenantId !== null) {
+        if (source.tenantId !== req.user.tenantId) {
+          return reply.code(404).send({ error: ROLE_NOT_FOUND_MESSAGE });
+        }
+      }
+      // A system role AND an own customer role are both valid sources — one code path, no branch
+      // on the kind of source (D-07); the guard above already rejected a foreign customer role.
+
+      const tenantId = req.user.tenantId;
+      const permissions = normalizeRolePermissions(source.permissions);
+
+      try {
+        const created = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          let name: string;
+          let nameKey: string;
+
+          if (body.name != null) {
+            name = body.name;
+            nameKey = roleNameKey(name);
+            if (await nameTaken(tx, tenantId, nameKey, null)) {
+              return null;
+            }
+          } else {
+            let attempt = 1;
+            let generatedName = copyRoleName(source.name, attempt);
+            let generatedNameKey = roleNameKey(generatedName);
+            while (await nameTaken(tx, tenantId, generatedNameKey, null)) {
+              attempt++;
+              if (attempt > COPY_NAME_ATTEMPT_LIMIT) {
+                return null;
+              }
+              generatedName = copyRoleName(source.name, attempt);
+              generatedNameKey = roleNameKey(generatedName);
+            }
+            name = generatedName;
+            nameKey = generatedNameKey;
+          }
+
+          const row = await tx.accessRole.create({
+            data: { tenantId, name, nameKey, permissions },
+          });
+          await app.audit({
+            tx,
+            userId: req.user.sub,
+            action: "COPY",
+            entity: "AccessRole",
+            entityId: row.id,
+            newValue: {
+              name: row.name,
+              permissions: row.permissions,
+              tenantId: row.tenantId,
+              copiedFromId: source.id,
+              copiedFromName: source.name,
+            },
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return row;
+        });
+
+        if (!created) {
+          return reply.code(409).send({ error: ROLE_NAME_CONFLICT_MESSAGE });
+        }
+        return reply.code(201).send(toRoleResponse(created));
+      } catch (err: unknown) {
+        if (isPrismaErrorCode(err, "P2002")) {
+          return reply.code(409).send({ error: ROLE_NAME_CONFLICT_MESSAGE });
         }
         throw err;
       }

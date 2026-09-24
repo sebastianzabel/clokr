@@ -260,6 +260,18 @@
       "validatedAt": null
     },
     {
+      "route": "POST /api/v1/roles/:id/copy",
+      "file": "apps/api/src/contexts/platform/api/roles.ts",
+      "category": "probe",
+      "params": {
+        "id": "customRole"
+      },
+      "minimalBody": {},
+      "reason": "roles.ts:381 fetch by id (findUnique, no tenant filter), nested guard at 385-386 (same shape as GET/PATCH/DELETE, byte-identical 404). copyRoleSchema.parse(req.body ?? {}) at line 379 runs BEFORE the lookup; its only field is `.nullish()` so `{}` (and no body at all) satisfies it and reaches the guard. Both a system role and an own customer role are valid sources (D-07), so, like GET/:id, the probe targets a customer role via the customRole fixture — nothing is created on the foreign-tenant arm since the guard runs before the transaction that would create the copy.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "GET /api/v1/settings/work/:employeeId",
       "file": "apps/api/src/contexts/platform/api/settings.ts",
       "category": "probe",

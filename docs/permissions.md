@@ -99,8 +99,8 @@ Ausgabe von `permissionKey`), mit dem, was sie erlaubt, und dem, was sie ausdrü
 
 Routen stehen ohne das Präfix `/api/v1`. Die Spalte „erlaubt“ beschreibt, was die Stellen in den
 Abschnitten „Aufrufstellen von requireRole“ und „Handler-Prüfungen“ heute schon freigeben, dazu die
-Routen, die nur eine Anmeldung verlangen und auf die eigenen Daten filtern; für `salon`, `role` und
-`role-assignment` die Endpunkte, die #64, #73 und #74 bringen.
+Routen, die nur eine Anmeldung verlangen und auf die eigenen Daten filtern; für `salon` und
+`role-assignment` die Endpunkte, die #64 und #74 bringen — `role` hat mit #73 echte Routen.
 
 ### `employee` — Mitarbeiter-Stammdaten
 
@@ -158,10 +158,15 @@ Routen, die nur eine Anmeldung verlangen und auf die eigenen Daten filtern; für
 
 ### `role` — Rollen
 
-| Permission               | erlaubt                                                                                                       | erlaubt ausdrücklich nicht                                                                                                                                                                                                     |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `role:read:ZUGEWIESEN`   | Die Rollen des Mandanten und die darin gebündelten Permissions lesen, über die Endpunkte, die #73 einführt.   | Rollen anlegen oder ändern (`role:manage`); Rollen Personen zuweisen (`role-assignment:manage`). Wirkt nur bei einer Zuweisung mit Scope Mandant (#91).                                                                        |
-| `role:manage:ZUGEWIESEN` | Rollen anlegen, ändern und löschen, also Permissions zu Rollen bündeln, über die Endpunkte, die #73 einführt. | Rollen zuweisen (`role-assignment:manage`); die Sperren abschalten, die keine Permissions sind (Selbstgenehmigung, Vier-Augen-Regel) — sie gelten für jede Rolle (#78). Wirkt nur bei einer Zuweisung mit Scope Mandant (#91). |
+| Permission               | erlaubt                                                                                                                                                           | erlaubt ausdrücklich nicht                                                                                                                                                                                                                                                                                           |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `role:read:ZUGEWIESEN`   | Die Rollen des Mandanten und die darin gebündelten Permissions lesen (Systemrollen und die eigenen Rollen): `GET /roles`, `GET /roles/:id`.                       | Rollen anlegen oder ändern (`role:manage`); Rollen Personen zuweisen (`role-assignment:manage`). Wirkt nur bei einer Zuweisung mit Scope Mandant (#91).                                                                                                                                                              |
+| `role:manage:ZUGEWIESEN` | Rollen anlegen, ändern, kopieren und löschen, also Permissions zu Rollen bündeln: `POST /roles`, `PATCH /roles/:id`, `POST /roles/:id/copy`, `DELETE /roles/:id`. | Rollen zuweisen (`role-assignment:manage`); die Sperren abschalten, die keine Permissions sind (Selbstgenehmigung, Vier-Augen-Regel) — sie gelten für jede Rolle (#78); Systemrollen ändern oder löschen — die sind gesperrt (409), nur Kopieren ist erlaubt. Wirkt nur bei einer Zuweisung mit Scope Mandant (#91). |
+
+**Aussperrschutz (Regel für #74):** Im Mandanten muss immer mindestens ein aktiver Nutzer bleiben,
+der `role:manage` mit Scope Mandant hält; geprüft wird das erst mit den Zuweisungen aus #74 — beim
+Ändern einer Rolle, beim Entziehen einer Zuweisung und beim Deaktivieren oder Anonymisieren eines
+Nutzers. Vor #74 hält niemand eine Rolle, die Regel hätte keine Eingabe.
 
 ### `role-assignment` — Rollenzuweisungen
 
@@ -399,11 +404,12 @@ die Rollen, die der Guard heute durchlässt: `A` = ADMIN, `M` = MANAGER, `E` = E
 | `contexts/platform/api/holidays.ts:163`                    | `DELETE /:id`                              | A       | `holiday:manage`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/imports.ts:74`                      | `POST /employees`                          | A       | `employee:import`              | ZUGEWIESEN                                   |
 | `contexts/platform/api/imports.ts:176`                     | `POST /time-entries`                       | A       | `time-entry:import`            | ZUGEWIESEN                                   |
-| `contexts/platform/api/roles.ts:115`                       | `GET /`                                    | A       | `role:read`                    | ZUGEWIESEN                                   |
-| `contexts/platform/api/roles.ts:139`                       | `POST /`                                   | A       | `role:manage`                  | ZUGEWIESEN                                   |
-| `contexts/platform/api/roles.ts:194`                       | `GET /:id`                                 | A       | `role:read`                    | ZUGEWIESEN                                   |
-| `contexts/platform/api/roles.ts:220`                       | `PATCH /:id`                               | A       | `role:manage`                  | ZUGEWIESEN                                   |
-| `contexts/platform/api/roles.ts:306`                       | `DELETE /:id`                              | A       | `role:manage`                  | ZUGEWIESEN                                   |
+| `contexts/platform/api/roles.ts:125`                       | `GET /`                                    | A       | `role:read`                    | ZUGEWIESEN                                   |
+| `contexts/platform/api/roles.ts:149`                       | `POST /`                                   | A       | `role:manage`                  | ZUGEWIESEN                                   |
+| `contexts/platform/api/roles.ts:204`                       | `GET /:id`                                 | A       | `role:read`                    | ZUGEWIESEN                                   |
+| `contexts/platform/api/roles.ts:230`                       | `PATCH /:id`                               | A       | `role:manage`                  | ZUGEWIESEN                                   |
+| `contexts/platform/api/roles.ts:316`                       | `DELETE /:id`                              | A       | `role:manage`                  | ZUGEWIESEN                                   |
+| `contexts/platform/api/roles.ts:373`                       | `POST /:id/copy`                           | A       | `role:manage`                  | ZUGEWIESEN                                   |
 | `contexts/platform/api/settings.ts:637`                    | `PUT /work`                                | A       | `tenant-settings:update`       | ZUGEWIESEN                                   |
 | `contexts/platform/api/settings.ts:937`                    | `PUT /work/:employeeId`                    | A, M    | `contract:update`              | ZUGEWIESEN                                   |
 | `contexts/platform/api/settings.ts:1247`                   | `GET /smtp`                                | A       | `tenant-settings:read`         | ZUGEWIESEN                                   |
