@@ -108,6 +108,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/api/me.ts": "unterbau", // writes User only
   "src/contexts/platform/api/notifications.ts": "unterbau", // writes Notification only
   "src/contexts/platform/api/release-notes.ts": "unterbau", // app-wide, tenant-agnostic feature with no model; under src/routes/ so cannot be rahmen (#99: no route may be a fallthrough) — Unterbau is the closest fit as the shared, context-agnostic substrate
+  "src/contexts/platform/api/role-assignments.ts": "unterbau", // Phase 74b (#74): role assignment with scope — reads/writes RoleAssignment and reads AccessRole/Salon/Employee/User, all Unterbau models
   "src/contexts/platform/api/roles.ts": "unterbau", // Phase 73b (#73): role = permission bundle, writes/reads AccessRole only — an Unterbau model
   "src/contexts/platform/api/settings.ts": "unterbau", // writes WorkSchedule/TenantConfig primarily (PUT /settings/work); tx.shift.deleteMany is a side effect of a schedule change, not the primary subject. Phase 243 Plan 02 (B1) moved the LeaveEntitlement/LeaveType routes out to contexts/absence/api/leave-settings.ts, so that clause no longer applies here
   "src/contexts/platform/api/salons.ts": "unterbau", // Phase 64b (issue #64) — reads Salon, Unterbau's own model per ADR 0001
@@ -122,6 +123,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/plugins/token-cleanup.ts": "unterbau", // deletes stale OtpToken/RefreshToken
   "src/contexts/platform/facade/employee-scope.ts": "unterbau", // EmployeeScope discriminated union + employeeScopeWhere() (Phase 100B Plan 04, D-10) — Employee is Unterbau's own model; no Prisma call in this file
   "src/contexts/platform/facade/salons.ts": "unterbau", // Phase 64b (issue #64) — reads Salon, Unterbau's own model per ADR 0001
+  "src/contexts/platform/facade/role-assignments.ts": "unterbau", // Phase 74b (issue #74) — userMayApply() reads RoleAssignment/AccessRole/Salon/Employee/User, all Unterbau models
   "src/contexts/platform/access-role.ts": "unterbau", // Phase 73b (#73): role = permission bundle, writes/reads AccessRole only — an Unterbau model
   "src/contexts/platform/access-context.ts": "unterbau", // Phase 77b (Issue #77) — AccessContext + its two constructors + employeeScopeFor(); pure module, no Prisma call
   "src/contexts/platform/access-context-error.ts": "unterbau", // Phase 77b (Issue #77) — AccessContextError + requireTenantId(); zero-import leaf, pure module, no Prisma call
@@ -135,6 +137,9 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/notification-email-policy.ts": "unterbau", // per-type email-toggle registry for Notification — Unterbau's own model
   "src/contexts/platform/password-policy.ts": "unterbau", // User/auth password rules
   "src/contexts/platform/permission-catalog.ts": "unterbau", // Phase 72b (Issue #72) — the permission catalog; ADR 0001 names permissions as part of the shared substrate, and the catalog has no model of its own
+  "src/contexts/platform/prisma-foreign-key.ts": "unterbau", // Phase 74b review WR-02/WR-03 — reads the violated FK constraint name off a Prisma P2003 error; pure module, no model, no Prisma call; its callers are Unterbau routes (role-assignments.ts, roles.ts)
+  "src/contexts/platform/request-audit-fields.ts": "unterbau", // Phase 74b review WR-03/WR-06 — resolves an audit's actor (user vs. API key) via accessContextFromRequest and its IP/headers; pure module, no model, no Prisma call; audit-trail vocabulary like audit-reason.ts
+  "src/contexts/platform/role-assignment.ts": "unterbau", // Phase 74b (issue #74) — pure core reasoning over RoleAssignment/AccessRole/Salon/Employee/User, all Unterbau models
   "src/contexts/platform/school-holidays-client.ts": "unterbau", // fetches SchoolHolidayPeriod data from the external OpenHolidays/schulferien-api
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/

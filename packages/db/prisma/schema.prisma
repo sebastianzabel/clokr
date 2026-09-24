@@ -40,6 +40,8 @@ model Tenant {
   accessRoles          AccessRole[]
   // Phase 64b (issue #64) — Unterbau level below Tenant
   salons               Salon[]
+  // Phase 74b (issue #74) — role assignments scoped to this tenant
+  roleAssignments      RoleAssignment[]
 }
 
 // Phase 64b (issue #64) — Unterbau level below Tenant (ADR 0001): a Salon is never hard-deleted,
@@ -289,6 +291,8 @@ model User {
   otpTokens     OtpToken[]
   auditLogs     AuditLog[]
   notifications Notification[]
+  // Phase 74b (issue #74) — role assignments held by this user
+  roleAssignments RoleAssignment[]
 }
 
 model RefreshToken {
@@ -1096,9 +1100,46 @@ model AccessRole {
   updatedAt   DateTime @updatedAt @db.Timestamptz
 
   tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // Phase 74b (issue #74) — role assignments referencing this role
+  roleAssignments RoleAssignment[]
 
   @@unique([tenantId, nameKey])
   @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────
+// ROLLENZUWEISUNG (Phase 74b, Issue #74)
+// A RoleAssignment binds one user to one role (system or customer, Phase 73b) with exactly one
+// scope: the whole tenant, a list of salons, or a list of persons (employees). Arrays instead of
+// join tables — the same precedent as AccessRole.permissions (73b): salons are never
+// hard-deleted (Phase 64b D-06), and tenant membership of every id in the arrays is validated on
+// write, so a DB foreign key could not check that anyway (it could not enforce "same tenant" for
+// an array element). The shape invariant (TENANT -> both arrays empty; SALONS -> salonIds
+// non-empty, employeeIds empty; PERSONS -> employeeIds non-empty, salonIds empty) is enforced in
+// the application, not the database — Prisma cannot express a CHECK constraint here, and
+// migration SQL is never hand-edited (CLAUDE.md § Creating a migration). No validity period and
+// no soft-delete column — revoking an assignment is an audited hard delete (D-05).
+// ─────────────────────────────────────────────
+
+model RoleAssignment {
+  id           String                  @id @default(uuid())
+  tenantId     String
+  userId       String
+  accessRoleId String
+  scopeType    RoleAssignmentScopeType
+  salonIds     String[]
+  employeeIds  String[]
+  createdAt    DateTime                @default(now()) @db.Timestamptz
+  updatedAt    DateTime                @updatedAt @db.Timestamptz
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessRole AccessRole @relation(fields: [accessRoleId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, accessRoleId, scopeType])
+  @@index([tenantId])
+  @@index([userId])
+  @@index([accessRoleId])
 }
 
 // ─────────────────────────────────────────────
@@ -1592,4 +1633,11 @@ enum AvailabilityStatus {
   AVAILABLE
   UNAVAILABLE
   PREFERRED
+}
+
+// Phase 74b (issue #74) — the three scopes a RoleAssignment can hold.
+enum RoleAssignmentScopeType {
+  TENANT
+  SALONS
+  PERSONS
 }

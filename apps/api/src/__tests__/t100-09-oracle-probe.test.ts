@@ -278,12 +278,17 @@ let tenantBInactiveSalonDeactivatedAt: Date | undefined;
 // visible to every tenant by design and would not exercise the tenant guard at all.
 let tenantBCustomRoleId: string | undefined;
 
+// Phase 74b Plan 02 (Issue #74): a real tenantB RoleAssignment, so the three
+// /role-assignments/:id probe entries have a foreign-tenant row to sweep against.
+let tenantBRoleAssignmentId: string | undefined;
+
 /** Resolves a register `params` fixture key to the foreign tenant's real entity id. `null` means
  * the key is unrecognised — the caller must fail loudly, never silently skip the route (D-03).
- * Today's vocabulary is exactly these seven keys: `employee`/`leaveType` from the shared
- * `seedTestData` bundle, `leaveRequest`/`timeEntry`/`salon`/`salonInactive`/`customRole` from the
- * locally created fixtures (Issue #309/#310, Phase 64b, Issue #73) — a register entry naming an
- * eighth one this probe does not implement is exactly the failure this function surfaces. */
+ * Today's vocabulary is exactly these eight keys: `employee`/`leaveType` from the shared
+ * `seedTestData` bundle, `leaveRequest`/`timeEntry`/`salon`/`salonInactive`/`customRole`/
+ * `roleAssignment` from the locally created fixtures (Issue #309/#310, Phase 64b, Issue #73,
+ * Issue #74) — a register entry naming a ninth one this probe does not implement is exactly the
+ * failure this function surfaces. */
 function fixtureValueFor(bundle: FixtureBundle, fixtureKey: string): string | null {
   if (fixtureKey === "employee") return bundle.employee.id;
   if (fixtureKey === "leaveType") return bundle.vacationType.id;
@@ -292,6 +297,7 @@ function fixtureValueFor(bundle: FixtureBundle, fixtureKey: string): string | nu
   if (fixtureKey === "salon") return tenantBSalonId ?? null;
   if (fixtureKey === "salonInactive") return tenantBInactiveSalonId ?? null;
   if (fixtureKey === "customRole") return tenantBCustomRoleId ?? null;
+  if (fixtureKey === "roleAssignment") return tenantBRoleAssignmentId ?? null;
   return null;
 }
 
@@ -429,6 +435,20 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         },
       });
       tenantBCustomRoleId = customRole.id;
+
+      // Issue #74 fixture: a real tenantB RoleAssignment (Phase 74b Plan 02), reusing the
+      // customRole fixture above — no new AccessRole needed.
+      const roleAssignment = await app.prisma.roleAssignment.create({
+        data: {
+          tenantId: tenantB.tenant.id,
+          userId: tenantB.adminUser.id,
+          accessRoleId: tenantBCustomRoleId,
+          scopeType: "TENANT",
+          salonIds: [],
+          employeeIds: [],
+        },
+      });
+      tenantBRoleAssignmentId = roleAssignment.id;
     });
 
     afterAll(async () => {
@@ -599,6 +619,22 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         where: { tenantId: tenantA.tenant.id },
       });
       expect(tenantARoleCount).toBe(0);
+    });
+
+    it("fixture integrity after the sweep: tenantB's RoleAssignment (Issue #74) still exists with unchanged accessRoleId and scopeType TENANT and empty arrays, and tenantA has zero RoleAssignment rows of its own from this sweep — a guard that answers 404 while still performing the PATCH or DELETE would otherwise pass the byte comparison", async () => {
+      const after = await app.prisma.roleAssignment.findUnique({
+        where: { id: tenantBRoleAssignmentId },
+      });
+      expect(after).not.toBeNull();
+      expect(after?.accessRoleId).toBe(tenantBCustomRoleId);
+      expect(after?.scopeType).toBe("TENANT");
+      expect(after?.salonIds).toEqual([]);
+      expect(after?.employeeIds).toEqual([]);
+
+      const tenantARoleAssignmentCount = await app.prisma.roleAssignment.count({
+        where: { tenantId: tenantA.tenant.id },
+      });
+      expect(tenantARoleAssignmentCount).toBe(0);
     });
   });
 });
