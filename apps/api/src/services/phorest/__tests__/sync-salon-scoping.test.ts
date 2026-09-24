@@ -8,11 +8,18 @@
 // coupled to "branch-2". Only A's run is executed and only "branch-1" is registered with the fetch
 // mock, so a fetch for B's branch would throw — each case also asserts that no requested URL names
 // branch-2. Every shift case passes an explicit window so no case depends on today's date.
+//
+// The appointment case (D-11) uses a dynamic in-horizon date, because the appointment sync always
+// fetches today..today+horizon. The cross-tenant case (AC-2/AC-5) couples two tenants to the same
+// branch id — allowed, the coupling is unique per (tenant, provider, branch) only.
 
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp } from "../../../__tests__/setup";
+import { getTestApp, createTestSalon } from "../../../__tests__/setup";
+import { todayInTz, dateStrInTz } from "../../../contexts/working-time-account/timezone";
 import { syncPhorestShifts } from "../sync-shifts";
+import { syncPhorestAppointments } from "../sync-appointments";
+import { syncPhorestForTenant } from "../sync-tenant";
 import {
   seedPhorestTenant,
   cleanupPhorestTenant,
@@ -49,6 +56,35 @@ type ShiftFixture = {
 /** Seed one shift row with an EXPLICIT salon — the whole point of this file. */
 async function seedShift(app: FastifyInstance, data: ShiftFixture) {
   return app.prisma.shift.create({ data: { ...data, date: new Date(data.date) } });
+}
+
+const TZ = "Europe/Berlin";
+
+/** In-horizon appointment date, computed the way the service does (todayInTz + N days). */
+function inHorizon(daysAhead: number): string {
+  const day = todayInTz(TZ);
+  day.setUTCDate(day.getUTCDate() + daysAhead);
+  return dateStrInTz(day, TZ);
+}
+
+/** An appointment page with one item per entry (only staff + date + times, no PII needed). */
+function appointmentsBody(items: { id: string; staffId: string; date: string }[]): unknown {
+  return {
+    _embedded: {
+      appointments: items.map((a) => ({
+        appointmentId: a.id,
+        staffId: a.staffId,
+        appointmentDate: a.date,
+        startTime: "10:00:00",
+        endTime: "11:00:00",
+      })),
+    },
+    page: { size: 200, totalElements: items.length, totalPages: 1, number: 0 },
+  };
+}
+
+function uniqueSuffix(): string {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
 /** The fetch log proves A's run reached Phorest and never asked for salon B's branch. */
@@ -373,6 +409,199 @@ describe("shift reconcile per salon (Phase 65b, D-09/D-10)", () => {
       expectOnlyBranch1(requested);
     } finally {
       await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+});
+
+describe("appointment hard-replace per salon (Phase 65b, D-11)", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("(e) A's hard-replace removes A's stale row, never B's row; the stored row carries A's salon", async () => {
+    const seed = await seedPhorestTenant(app, "scope-e");
+    try {
+      const b = await addCoupledSalon(app, seed.tenantId, "branch-2", { name: "Salon B" });
+      const s = uniqueSuffix();
+      const date = inHorizon(5);
+      const bRow = await app.prisma.phorestAppointment.create({
+        data: {
+          employeeId: seed.mappedEmployeeId2,
+          salonId: b.salonId,
+          date: new Date(date),
+          startTime: "12:00",
+          endTime: "13:00",
+          externalId: `appt-b-keep-${s}`,
+        },
+      });
+      const aStale = await app.prisma.phorestAppointment.create({
+        data: {
+          employeeId: seed.mappedEmployeeId2,
+          salonId: seed.salonId,
+          date: new Date(date),
+          startTime: "14:00",
+          endTime: "15:00",
+          externalId: `appt-a-stale-${s}`,
+        },
+      });
+      const requested = mockPhorestByBranch({
+        "branch-1": {
+          appointments: appointmentsBody([
+            { id: `appt-a-new-${s}`, staffId: MAPPED_STAFF_ID, date },
+          ]),
+        },
+      });
+
+      const res = await syncPhorestAppointments(app, seed.tenantId, seed.target, {});
+
+      expect(res.status).toBe("SUCCESS");
+      expect(res.appointmentsRemoved).toBe(1);
+      expect(res.appointmentsStored).toBe(1);
+      expect(await app.prisma.phorestAppointment.findUnique({ where: { id: aStale.id } })).toBe(
+        null,
+      );
+      const bAfter = await app.prisma.phorestAppointment.findUnique({ where: { id: bRow.id } });
+      expect(bAfter).toEqual(bRow);
+      const fresh = await app.prisma.phorestAppointment.findUniqueOrThrow({
+        where: { externalId: `appt-a-new-${s}` },
+      });
+      expect(fresh.employeeId).toBe(seed.mappedEmployeeId);
+      expect(fresh.salonId).toBe(seed.salonId);
+      expectOnlyBranch1(requested);
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+});
+
+describe("cross-tenant same branch (Phase 65b, AC-2/AC-5)", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  /**
+   * Tenant T2, coupled to the SAME branch id as the seed tenant. Built by hand instead of a second
+   * seedPhorestTenant(): that helper purges the fixed fixture e-mails first and would delete T1's
+   * employees. T2's user e-mail is suffixed; its mapping reuses MAPPED_STAFF_ID, which is legal
+   * because PhorestStaffMapping is unique per (tenant, phorestStaffId).
+   */
+  async function seedSecondTenantOnSameBranch(
+    branchId: string,
+  ): Promise<{ tenantId: string; salonId: string; employeeId: string }> {
+    const s = uniqueSuffix();
+    const tenant = await app.prisma.tenant.create({
+      data: { name: `Phorest T2 ${s}`, slug: `phorest-t2-${s}`, federalState: "NIEDERSACHSEN" },
+    });
+    await app.prisma.tenantConfig.create({
+      data: {
+        tenantId: tenant.id,
+        timezone: TZ,
+        phorestBusinessId: "biz-1",
+        phorestUsername: "user@salon.de",
+        phorestPassword: "secret-pw",
+        phorestSyncWindowDays: 7,
+      },
+    });
+    const salon = await createTestSalon(app.prisma, tenant.id, { name: tenant.name });
+    await app.prisma.salonCoupling.create({
+      data: {
+        tenantId: tenant.id,
+        salonId: salon.id,
+        provider: "PHOREST",
+        externalBranchId: branchId,
+      },
+    });
+    const user = await app.prisma.user.create({
+      data: { email: `t2-${s}@example.test`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+    });
+    const employee = await app.prisma.employee.create({
+      data: {
+        tenantId: tenant.id,
+        userId: user.id,
+        employeeNumber: `T2-${s}`,
+        firstName: "Tara",
+        lastName: "Zweitmandant",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    await app.prisma.phorestStaffMapping.create({
+      data: { tenantId: tenant.id, phorestStaffId: MAPPED_STAFF_ID, employeeId: employee.id },
+    });
+    return { tenantId: tenant.id, salonId: salon.id, employeeId: employee.id };
+  }
+
+  it("two tenants coupled to the same branch id: T1's orchestrator run never touches T2 and every run's salon is its own tenant's", async () => {
+    const t1 = await seedPhorestTenant(app, "scope-xt");
+    let t2: Awaited<ReturnType<typeof seedSecondTenantOnSameBranch>> | undefined;
+    try {
+      t2 = await seedSecondTenantOnSameBranch(t1.target.externalBranchId);
+      const s = uniqueSuffix();
+      // In T1's window and absent from T1's fresh set — a tenant-blind reconcile would cancel it.
+      const t2Shift = await app.prisma.shift.create({
+        data: {
+          employeeId: t2.employeeId,
+          salonId: t2.salonId,
+          date: new Date("2026-08-05"),
+          startTime: "08:00",
+          endTime: "16:00",
+          label: "Phorest",
+          origin: "PHOREST",
+          externalId: `${MAPPED_STAFF_ID}|2026-08-05|08:00:00|16:00:00|t2-${s}`,
+        },
+      });
+      // In T1's appointment horizon — a tenant-blind hard-replace would delete it.
+      const t2Appt = await app.prisma.phorestAppointment.create({
+        data: {
+          employeeId: t2.employeeId,
+          salonId: t2.salonId,
+          date: new Date(inHorizon(4)),
+          startTime: "10:00",
+          endTime: "11:00",
+          externalId: `appt-t2-${s}`,
+        },
+      });
+      const requested = mockPhorestByBranch({ "branch-1": { worktimetables: wttFixture } });
+
+      const results = await syncPhorestForTenant(app, t1.tenantId, WIDE_WINDOW);
+
+      expect(results.map((r) => r.salonId)).toEqual([t1.salonId]);
+      expect(results[0].status).toBe("SUCCESS");
+      expect(results[0].created).toBe(2);
+      expect(results[0].cancelled).toBe(0);
+      expect(results[0].appointments.status).toBe("SUCCESS");
+
+      expect(await app.prisma.shift.findUnique({ where: { id: t2Shift.id } })).toEqual(t2Shift);
+      expect(await app.prisma.phorestAppointment.findUnique({ where: { id: t2Appt.id } })).toEqual(
+        t2Appt,
+      );
+      expect(await app.prisma.phorestSyncRun.count({ where: { tenantId: t2.tenantId } })).toBe(0);
+
+      const runs = await app.prisma.phorestSyncRun.findMany({
+        where: { tenantId: { in: [t1.tenantId, t2.tenantId] } },
+        include: { salon: { select: { tenantId: true } } },
+      });
+      expect(runs).toHaveLength(1);
+      for (const run of runs) {
+        expect(run.salon.tenantId).toBe(run.tenantId);
+      }
+      expect(runs[0].tenantId).toBe(t1.tenantId);
+      expect(runs[0].salonId).toBe(t1.salonId);
+      expect(requested.length).toBeGreaterThan(0);
+    } finally {
+      if (t2) await cleanupPhorestTenant(app, t2.tenantId);
+      await cleanupPhorestTenant(app, t1.tenantId);
     }
   });
 });
