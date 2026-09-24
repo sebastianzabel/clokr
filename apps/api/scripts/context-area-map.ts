@@ -121,6 +121,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/plugins/token-cleanup.ts": "unterbau", // deletes stale OtpToken/RefreshToken
   "src/contexts/platform/facade/employee-scope.ts": "unterbau", // EmployeeScope discriminated union + employeeScopeWhere() (Phase 100B Plan 04, D-10) — Employee is Unterbau's own model; no Prisma call in this file
   "src/contexts/platform/access-role.ts": "unterbau", // Phase 73b (#73): role = permission bundle, writes/reads AccessRole only — an Unterbau model
+  "src/contexts/platform/access-context.ts": "unterbau", // Phase 77b (Issue #77) — AccessContext + its two constructors + employeeScopeFor(); pure module, no Prisma call
+  "src/contexts/platform/access-context-error.ts": "unterbau", // Phase 77b (Issue #77) — AccessContextError + requireTenantId(); zero-import leaf, pure module, no Prisma call
   "src/contexts/platform/anonymize.ts": "unterbau", // DSGVO Art. 17 anonymization; primary subject is Employee+User (CLAUDE.md "DSGVO Employee Deletion"), other models' notes/documents nulled as side effects
   "src/contexts/platform/audit-reason.ts": "unterbau", // shared "Begründung ist erforderlich" validation reused across every correction/storno field app-wide; audit-trail vocabulary, no model
   "src/contexts/platform/calculate-work-days.ts": "unterbau", // normalizes WorkSchedule.workDays — Unterbau's own model

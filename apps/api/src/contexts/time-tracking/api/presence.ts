@@ -47,7 +47,16 @@ export async function presenceRoutes(app: FastifyInstance) {
 
       // ── 2. Parse + normalize body ─────────────────────────────────────────
       const body = presenceEventSchema.parse(req.body);
-      const mac = normalizeMac(body.mac);
+      // A syntactically invalid MAC is a client error, not a 500 (GitHub issue #332).
+      // The message is fixed and never echoes the raw input because the MAC is a device
+      // identifier (personal data) and the caller is a machine — same message as
+      // admin-presence-sources.ts.
+      let mac: string;
+      try {
+        mac = normalizeMac(body.mac);
+      } catch {
+        return reply.code(400).send({ error: "Ungültige MAC-Adresse" });
+      }
       const eventTime = new Date(body.timestamp);
 
       // ── 3. MAC → Employee lookup (opt-in + tenant-scoped) ─────────────────

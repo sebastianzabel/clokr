@@ -48,6 +48,15 @@ export { auditReasonSchema, AUDIT_REASON_REQUIRED } from "./audit-reason";
 export { calculateWorkDays } from "./calculate-work-days";
 export { syncSchoolHolidaysForTenant } from "./plugins/school-holidays-sync";
 export { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "./employee-anonymization-filter";
+// Phase 77b (Issue #77): the central, fail-closed access context and the one EmployeeScope factory.
+export {
+  accessContextFromRequest,
+  accessContextForJob,
+  employeeScopeFor,
+  AccessContextError,
+} from "./access-context";
+export type { AccessContext } from "./access-context";
+
 // Phase 72b (#72): the permission catalog (resource × action × reach) that #73/#75/#83 build on.
 export {
   PERMISSIONS,

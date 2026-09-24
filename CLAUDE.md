@@ -627,6 +627,12 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 - All data-access queries filter by `tenantId` from `req.user.tenantId`
 - Employee lookups always scoped to tenant
 - Tenant-specific config accessed via `TenantConfig` model
+- Route files (`contexts/*/api/**`, `composition/dashboard.ts`, `composition/reports.ts`) build an
+  `EmployeeScope` only via `employeeScopeFor(accessContextFromRequest(req), …)` from
+  `contexts/platform` (#77), never as an object literal (`route-employee-scope-literals.test.ts`
+  fails on one); jobs use `accessContextForJob(tenantId, job)`. Both, like `employeeScopeWhere()`,
+  throw `AccessContextError` on an empty tenant (500 via `app.ts`; a foreign id stays 404). Keep
+  `const tenantId = req.user.tenantId` for Prisma filters — the gate below reads only that (#226).
 
 ### Tenant-scoping gate (Issue #204)
 
