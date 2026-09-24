@@ -2,7 +2,8 @@
 
 **Status:** gültig ab Phase 72b (Issue #72)
 **Codestand der Belege:** `main` @ `bea6b5c7`, die `contexts/platform/api/roles.ts`-Zeilen aus
-Phase 73b (Issue #73) auf Branch `feat/73-rollen`
+Phase 73b (Issue #73) auf Branch `feat/73-rollen`, die `contexts/platform/api/role-assignments.ts`-Zeilen
+aus Phase 74b (Issue #74) auf Branch `feat/74-rollenzuweisung`
 
 Alle Datei- und Zeilenangaben in diesem Dokument beziehen sich auf diesen Commit. Sie sind Belege,
 keine Wegbeschreibung — in einem späteren Stand kann die Zeile verschoben sein, die Zuordnung muss
@@ -99,8 +100,8 @@ Ausgabe von `permissionKey`), mit dem, was sie erlaubt, und dem, was sie ausdrü
 
 Routen stehen ohne das Präfix `/api/v1`. Die Spalte „erlaubt“ beschreibt, was die Stellen in den
 Abschnitten „Aufrufstellen von requireRole“ und „Handler-Prüfungen“ heute schon freigeben, dazu die
-Routen, die nur eine Anmeldung verlangen und auf die eigenen Daten filtern; für `salon` und
-`role-assignment` die Endpunkte, die #64 und #74 bringen — `role` hat mit #73 echte Routen.
+Routen, die nur eine Anmeldung verlangen und auf die eigenen Daten filtern. `salon` (#64), `role`
+(#73) und `role-assignment` (#74) haben echte Routen.
 
 ### `employee` — Mitarbeiter-Stammdaten
 
@@ -170,9 +171,9 @@ Nutzers. Vor #74 hält niemand eine Rolle, die Regel hätte keine Eingabe.
 
 ### `role-assignment` — Rollenzuweisungen
 
-| Permission                          | erlaubt                                                                                                                                                                                                                                      | erlaubt ausdrücklich nicht                                                                                                              |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `role-assignment:manage:ZUGEWIESEN` | Rollen an Personen zuweisen und entziehen, samt Scope der Zuweisung (Mandant, Salons oder Personenliste), über die Endpunkte, die #74 einführt; ersetzt das heutige Setzen von `User.role` über `PATCH /employees/:id` (`employees.ts:596`). | Rollen selbst definieren (`role:manage`); Stammdaten ändern (`employee:update`). Wirkt nur bei einer Zuweisung mit Scope Mandant (#91). |
+| Permission                          | erlaubt                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | erlaubt ausdrücklich nicht                                                                                                                                                                                                     |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `role-assignment:manage:ZUGEWIESEN` | Rollen an Personen zuweisen, ändern und entziehen, samt Scope der Zuweisung (Mandant, Salons oder Personenliste): Zuweisungen auflisten (`GET /role-assignments`), eine lesen (`GET /role-assignments/:id`), eine Rolle mit Scope zuweisen (`POST /role-assignments`), Rolle oder Scope ändern (`PATCH /role-assignments/:id`) und entziehen (`DELETE /role-assignments/:id` — löschen, auditiert). Ersetzt künftig das Setzen von `User.role` über `PATCH /employees/:id` (`employees.ts:596`). Nur mit Scope Mandant: heute durch `requireRole("ADMIN")` erfüllt (ADMIN wirkt mandantenweit); die Prüfung auf `role-assignment:manage` mit Scope Mandant folgt mit #75. | Rollen selbst definieren (`role:manage`); Stammdaten ändern (`employee:update`); den Nutzer einer bestehenden Zuweisung austauschen (dafür entziehen und neu zuweisen). Wirkt nur bei einer Zuweisung mit Scope Mandant (#91). |
 
 ### `time-entry` — Zeiteinträge und Pausen
 
@@ -340,7 +341,9 @@ Jede Zeile ist eine Aufrufstelle des Rollen-Guards `requireRole` (`middleware/au
 relativ zu `apps/api/src/`; die Route steht ohne das Präfix aus `app.ts`. Die Spalte „heute“ nennt
 die Rollen, die der Guard heute durchlässt: `A` = ADMIN, `M` = MANAGER, `E` = EMPLOYEE.
 Die Zeilen für `contexts/platform/api/salons.ts` (Präfix `/api/v1/salons`) belegen den Stand von
-Phase 64b (#64) — die Datei gibt es in `bea6b5c7` noch nicht.
+Phase 64b (#64) — die Datei gibt es in `bea6b5c7` noch nicht. Die Zeilen für
+`contexts/platform/api/role-assignments.ts` (Präfix `/api/v1/role-assignments`) belegen den Stand von
+Phase 74b (#74) auf Branch `feat/74-rollenzuweisung`.
 
 | Stelle                                                     | Route                                      | heute   | Permission                     | Reichweite                                   |
 | ---------------------------------------------------------- | ------------------------------------------ | ------- | ------------------------------ | -------------------------------------------- |
@@ -406,6 +409,11 @@ Phase 64b (#64) — die Datei gibt es in `bea6b5c7` noch nicht.
 | `contexts/platform/api/holidays.ts:163`                    | `DELETE /:id`                              | A       | `holiday:manage`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/imports.ts:74`                      | `POST /employees`                          | A       | `employee:import`              | ZUGEWIESEN                                   |
 | `contexts/platform/api/imports.ts:176`                     | `POST /time-entries`                       | A       | `time-entry:import`            | ZUGEWIESEN                                   |
+| `contexts/platform/api/role-assignments.ts:263`            | `GET /`                                    | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/role-assignments.ts:285`            | `POST /`                                   | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/role-assignments.ts:359`            | `GET /:id`                                 | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/role-assignments.ts:386`            | `PATCH /:id`                               | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/role-assignments.ts:498`            | `DELETE /:id`                              | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
 | `contexts/platform/api/roles.ts:125`                       | `GET /`                                    | A       | `role:read`                    | ZUGEWIESEN                                   |
 | `contexts/platform/api/roles.ts:149`                       | `POST /`                                   | A       | `role:manage`                  | ZUGEWIESEN                                   |
 | `contexts/platform/api/roles.ts:204`                       | `GET /:id`                                 | A       | `role:read`                    | ZUGEWIESEN                                   |
