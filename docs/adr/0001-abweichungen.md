@@ -27,6 +27,8 @@ beschriebene Struktur existiert schlicht nicht:**
 | Kein direkter Fremdzugriff     | 67 Dateien greifen direkt auf Prisma zu; es gibt keine Datenzugriffsschicht      |
 | Ereignis-Integration           | **0** Treffer für Emitter/Bus/Publish/Subscribe in `apps/api/src`                |
 
+> **Nachtrag 2026-09-24 (ADR 0002, Issue #110):** Drei Zeilen dieser Tabelle lesen sich seit ADR 0002 anders — „Ein Schema pro Kontext“ und „Migrationen beim Kontext“ sind keine Abweichungen mehr, sondern Arbeitspakete mit Auslöser; „Keine kontextübergreifenden FK“ ist in der präzisierten Fassung gemessen erfüllt. Die Tabelle bleibt als historische Messung auf `263ed0aa` stehen — siehe Eintrag J.
+
 Das ist nicht als Vorwurf gemeint. Bei genau einem Fachbereich bringt ein Schema pro Kontext
 keinen Nutzen und kostet echten Aufwand. Es ist die ehrliche Feststellung, dass das ADR ein
 **Zielbild** beschreibt und nicht einen erreichten Zustand — und dass die Regeln 1–4 erst mit dem
@@ -766,3 +768,64 @@ Eintrag und `235-BEFUND.md` verweist (Plan 235-09, Task 3). Weiteres:
 Fundtabelle), `235-BASELINE.md` (die Ausgangsmessung), `235-PLANKORREKTUR.md` (die
 Planungskorrektur), `apps/api/scripts/README.md` § Lint gates (die neue Gate-Dokumentation),
 `CLAUDE.md` § Multi-Tenancy Convention (der Verweis-Eintrag für Leser ohne `.planning/`-Zugriff).
+
+---
+
+## J — ADR 0002 (Issue #110)
+
+**Schwere: informativ. Nachtrag 2026-09-24 — ADR 0002 löst Teile von ADR 0001 ab.**
+
+**Warum dieser Eintrag existiert:** Die Vorbemerkung zeigt drei Zeilen als Abweichungen, die ADR 0002
+(`0002-vier-kontexte-und-unterbau.md`) neu einordnet. Blieben sie unkommentiert stehen, lernte die
+nächste Leserin, der Tabelle zu misstrauen. Die Tabelle selbst bleibt unverändert als Messung auf
+`263ed0aa`; dieser Eintrag sagt, wie sie ab ADR 0002 zu lesen ist.
+
+### Offene Frage 1 ist geschlossen
+
+ADR 0001 § Offene Fragen, Punkt 1 (Fremdschlüssel als Compliance-Kontrolle), ist durch
+`0002-vier-kontexte-und-unterbau.md`, Entscheidung 4, beantwortet: Fremdschlüssel auf den Unterbau
+sind erlaubt, zwischen gleichrangigen Kontexten bleiben sie verboten. Die Kontrolle
+`onDelete: Restrict` auf `Employee → TimeEntry/LeaveRequest/Absence` bleibt in der Datenbank. ADR
+0001 selbst trägt nur einen Verweis, sein Text ist unverändert.
+
+### Die Vorbemerkungstabelle, neu gelesen
+
+| Zeile der Vorbemerkung         | Stand `263ed0aa` (oben, unverändert) | Lesart ab ADR 0002, gemessen auf `bea6b5c7`                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ein Schema pro Kontext         | Abweichung                           | Keine Abweichung mehr — Arbeitspaket #105 (T10) mit Auslöser (Entscheidung 6)                                                                                                                                                                                                                                                                                 |
+| Migrationen beim Kontext       | Abweichung                           | Keine Abweichung mehr — Arbeitspaket #106 (T12) mit Auslöser (Entscheidung 6)                                                                                                                                                                                                                                                                                 |
+| Keine kontextübergreifenden FK | Abweichung                           | Erfüllt in der präzisierten Fassung: 28 kontextübergreifende Fremdschlüssel, alle 28 auf den Unterbau (18 auf `Employee`, 10 auf `Tenant`), 0 zwischen gleichrangigen Kontexten. Die „20 Modelle“ von damals sind heute 20 Fremdschlüssel auf `Employee` = 18 kontextübergreifend + 2 innerhalb des Unterbaus (`Invitation`, `WorkSchedule`) (Entscheidung 4) |
+| Kein direkter Fremdzugriff     | Abweichung                           | Unverändert durch ADR 0002; seit Eintrag G gemessen erfüllt                                                                                                                                                                                                                                                                                                   |
+| Ereignis-Integration           | Abweichung                           | Weiterhin 0 Treffer; die Handler-Arten sind die Regel für #102 (Entscheidung 10), kein Broker (Entscheidung 5)                                                                                                                                                                                                                                                |
+
+Jede Zahl lässt sich mit dem Block in ADR 0002 § Kontext › „Belege nachrechnen“ nachrechnen.
+
+### T11 entfällt
+
+Das Kriterium stammt aus Issue #110; der Owner-Kommentar auf #110 vom 2026-09-24 hält fest, dass
+der Bezeichner T11 in keinem eingecheckten Dokument vorkommt. Gemessen auf `bea6b5c7`: 0-mal in
+`docs/` und `CLAUDE.md`; 8-mal in 4 Codedateien, dort durchweg als planinterne Aufgabenbezeichnung
+von Phase 100B Plan 08 (`hardDeleteTimeDataForEmployee`), also in einem anderen Namensraum. Die
+T-Reihe der Issues (#96–#113) hat kein T11 (T10 = #105, T12 = #106; auch T13, T16 und T17 fehlen).
+Nachrechnen: `gh issue list --state all --limit 400 --json number,title --jq '.[] | select(.title | test("^T[0-9]+ ")) | "\(.number) \(.title)"'`.
+
+Schluss, kein Beleg: T11 war das Arbeitspaket „Fremdschlüssel über Kontextgrenzen entfernen“, das
+Regel 2 von ADR 0001 verlangt hätte. Dafür spricht der Text von #105: „Die Fremdschlüssel bleiben, wo
+sie sind“, „Damit entfällt der frühere Blocker vollständig“, „Siehe T19“ — T19 ist #110.
+
+Unabhängig von der Nummerierung gilt, wörtlich aus ADR 0002, Entscheidung 4:
+Kein Arbeitspaket, das einen Fremdschlüssel auf den Unterbau entfernt oder abschwächt, existiert oder wird angelegt.
+
+### Regeln 1 und 4: Auslöser statt Abweichung
+
+Der Satz aus den Konsequenzen von ADR 0001, der heutige Code erfülle die Regeln 1–4 nicht, liest
+sich seit ADR 0002 so: Die Regeln 1 und 4 sind Arbeitspakete mit Auslöser (Entscheidung 6 —
+Migrationen verschiedener Kontexte kollidieren in der Praxis, oder eine Datenbankrolle muss pro
+Kontext vergeben werden). Regel 2 ist in der präzisierten Fassung erfüllt. Regel 3 ist seit Eintrag G
+erfüllt.
+
+### Eintrag C: nur ein Verweis
+
+Owner-Entscheidung vom 2026-09-24 auf #66: Backlog ohne Milestone, „derzeit kein Anlass“; es gibt
+keine Entität Beschäftigung. Eintrag C bleibt, wie er steht. Kommt #66 zurück, ist es eine
+Semantikänderung des Unterbaus und läuft durch das volle Verfahren aus ADR 0002, Entscheidung 7.

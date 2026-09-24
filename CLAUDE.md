@@ -99,33 +99,41 @@ Full workflow incl. the SAFETY-CRITICAL one-time int/prod baseline runbook: `doc
 - Code, comments, commit messages, docs: **English**
 - API descriptions (Swagger): English
 
-## Context Boundaries (ADR 0001)
+## Context Boundaries (ADR 0001, ADR 0002)
 
-**Read `docs/adr/0001-drei-kontexte.md` before adding a feature or moving code across these lines.**
+**Read `docs/adr/0002-vier-kontexte-und-unterbau.md` and `docs/adr/0001-drei-kontexte.md` (partially superseded by 0002) before adding a feature or moving code across these lines.**
 Deviations from the target picture, with file references: `docs/adr/0001-abweichungen.md`.
 
-Clokr has **three business contexts** plus a shared substrate that belongs to none of them:
+Clokr has **four business contexts**, a shared substrate (**Unterbau**, the Shared Kernel) that belongs to none of them, and a rule-free **composition layer**:
 
-- **Zeiterfassung** — clock in/out, correction, validity, ArbZG. Records what happened. Minute-level, one row per employee and day.
-- **Abwesenheiten** — request, approval, entitlement, carry-over. A workflow with status, not a recording. Date ranges in days.
-- **Arbeitszeitkonto** — Soll vs. Ist, saldo, Monatsabschluss. Reads from both. Owns the once-per-day rule.
-- **Unterbau** (shared): Tenant, Salon, Beschäftigung, permissions.
+- **Zeiterfassung** (`contexts/time-tracking/` + `services/clock/`) — clock in/out, correction, validity, ArbZG. Records what happened. Minute-level, one row per employee and day.
+- **Abwesenheiten** (`contexts/absence/`) — request, approval, entitlement, carry-over. A workflow with status, not a recording. Date ranges in days.
+- **Schichtplanung** (`contexts/scheduling/` + `services/phorest/`) — shifts, templates, coverage, availability, Phorest sync. Plans the future. Since Phase 107 it feeds Arbeitszeitkonto (SHIFT_BASED Soll) and Abwesenheiten (SHIFT_BASED leave-day count).
+- **Arbeitszeitkonto** (`contexts/working-time-account/`) — Soll vs. Ist, saldo, Monatsabschluss. Reads from the others. Owns the once-per-day rule.
+- **Unterbau** (Shared Kernel, `contexts/platform/`) — the 13 `platform` models of `MODEL_OWNER` in `apps/api/scripts/measure-foreign-context-access.ts` (Tenant, TenantConfig, Employee, User, WorkSchedule, …) and permissions. Salon (#64) and Salonzuordnung (#67) land here; Beschäftigung (#66) is backlog and has no entity.
+- **Composition layer** (`apps/api/src/composition/` + composition root `apps/api/src/app.ts`) — owns no model, carries no business rule, reads contexts only through their `index.ts`, and no context imports from `composition/`. A business rule found there moves into the owning context (ADR 0002, Entscheidung 9).
 
 Rules — these are directives, not preferences:
 
 - **Absence is NEVER a `TimeEntryType`.** A time entry has no "requested" status, and approved leave for next August is not a recorded period. `TimeEntryType` stays free of absence values.
 - **`calcLeaveAbsenceMinutesTz()` (`apps/api/src/contexts/working-time-account/timezone.ts`) belongs to Arbeitszeitkonto and is NOT to be split.** It and the `sbClaimed` dedup set in `close-employee-month.ts` carry the invariant *a day reduces Soll exactly once*. Anyone wanting to split it must first prove the invariant is secured otherwise.
 - **`LeaveRequest` = requested absence** (status, entitlement, approver): Urlaub, Krankheit, Sonderurlaub. **`Absence` = imposed absence** (occurs, is not requested): Berufsschule, Mutterschutz, Elternzeit. `SICK` belongs to `LeaveRequest`.
-- **No foreign keys across context boundaries** — reference foreign entities by ID without a constraint. (Open conflict with the `onDelete: Restrict` compliance rule below — see ADR 0001 "Offene Fragen"; do not resolve it unilaterally.)
+- **No foreign keys between peer contexts; foreign keys onto the Unterbau are allowed** (ADR 0002, Entscheidung 4). Existing `onDelete` behaviour is untouched; the `onDelete: Restrict` compliance control on Employee→TimeEntry/LeaveRequest/Absence stays in the database. A new FK onto the Unterbau is named in its issue as a new Shared-Kernel dependency, revision-relevant relations use `onDelete: Restrict`, and the referenced Unterbau row must belong to the same tenant.
 - **No direct table access across contexts.** Go through the owning context's public interface.
   **Mechanically enforced (Phase 101B, Issue #101):** `eslint.boundaries.mjs`'s `no-restricted-imports`
   blocks fail the build (CI and pre-commit) on a deep import into a foreign context's internals —
-  the only legal way in is `contexts/<name>/index.ts`. The composition root (`app.ts`) and six
+  the only legal way in is `contexts/<name>/index.ts`. Its five boundary areas (`BOUNDARY_CONTEXTS`)
+  are the four contexts plus `platform`; `services/clock/` counts as Zeiterfassung and
+  `services/phorest/` as Schichtplanung. The composition root (`app.ts`) and six
   individually reasoned, dated exceptions (`apps/api/scripts/context-boundary-import-exceptions.json`)
   are named in `docs/adr/0001-abweichungen.md` Eintrag H; a new one is a finding to report, not a
   step to take.
 - **Never use a new display string as a control value.** No `x === "Ausstempeln fehlt"`, no lookup by `leaveType.name`. Existing occurrences are documented deviations, not precedent.
-- **No generalization on spec.** No plugin system, no generic extension mechanism, no abstraction layer without a concrete second use case. Extensibility gets generalized when the fourth context is built — not before.
+- **No generalization on spec.** No plugin system, no generic extension mechanism, no abstraction layer without a concrete second use case (ADR 0002, Entscheidung 2). The former fourth-context trigger is void because the fourth context exists; a generalization already scheduled with a concrete use case, such as the in-process dispatcher (#102), is legitimate.
+- **Tactical DDD building blocks only in Arbeitszeitkonto.** Aggregate, Repository and Value Object only in `contexts/working-time-account/` (#107, #108) — not in the other contexts, the Unterbau or the composition layer. No CQRS (ADR 0002, Entscheidung 3).
+- **One schema and one central migration directory are conforming.** Per-context schemas (#105) and migrations (#106) only on a trigger — migrations of different contexts collide in practice, or a database role must be granted per context. They bring signal and migration separation, not compile-time isolation, which comes from the facades (#100) and the lint (#101) (ADR 0002, Entscheidung 6).
+- **Event handlers are invariant-carrying or reactive** (ADR 0002, Entscheidung 10). Invariant-carrying: synchronous, inside the sender's transaction, fail-closed — its failure aborts the sender's write. Reactive: after commit, may fail, never aborts the sender, failure logged. Default is reactive; invariant-carrying only when a named invariant requires it, and it then lives in the context owning that invariant (example: `recalcProvisionalLeaveForShiftChange(tx, …)`, Phase 107 D-15). No dispatcher exists yet — that is #102. No broker until a consumer outside the process exists or an event must survive a restart (Entscheidung 5).
+- **Unterbau changes need the owner** (ADR 0002, Entscheidung 7). An Unterbau change (a) adds, changes or removes a field, relation, enum value or model owned by the Unterbau, or (b) changes the signature or semantics of an export of `contexts/platform/index.ts`. An **Erweiterung** (additive; no existing reader has to change) is approved by the issue reaching `Ready`; a **Semantikänderung** (meaning, unit, nullability, required-ness, fallback chain, `onDelete`, removal/rename, moving a value between Unterbau models) additionally needs an explicit owner decision comment on the issue before `Ready` and a Nachtrag in `docs/adr/0001-abweichungen.md` after shipping. Every Unterbau-change issue carries a section „Auswirkung auf die Kontexte“ naming Zeiterfassung, Abwesenheiten, Schichtplanung, Arbeitszeitkonto and the composition layer — each with an effect or an explicit "keine".
 - **When unsure which context a new feature belongs to: ask.** Do not guess.
 
 ## Audit-Proof / Revisionssicherheit
