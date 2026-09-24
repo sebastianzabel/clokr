@@ -55,6 +55,7 @@ import { specialLeaveRoutes } from "./contexts/absence/api/special-leave";
 import { avatarRoutes } from "./contexts/platform/api/avatars";
 import { section9DocumentRoutes } from "./contexts/absence/api/section9-documents";
 import { apiKeyRoutes } from "./contexts/platform/api/api-keys";
+import { roleRoutes } from "./contexts/platform/api/roles";
 import { presenceRoutes } from "./contexts/time-tracking/api/presence";
 import { adminPresenceSourcesRoutes } from "./contexts/time-tracking/api/admin-presence-sources";
 import { adminSchoolHolidaysRoutes } from "./contexts/platform/api/admin/school-holidays";
@@ -317,6 +318,7 @@ export async function buildApp() {
   await app.register(avatarRoutes, { prefix: "/api/v1/avatars" });
   await app.register(section9DocumentRoutes, { prefix: "/api/v1/section9-documents" });
   await app.register(apiKeyRoutes, { prefix: "/api/v1/api-keys" });
+  await app.register(roleRoutes, { prefix: "/api/v1/roles" });
   await app.register(presenceRoutes, { prefix: "/api/v1/presence" });
   await app.register(adminPresenceSourcesRoutes, { prefix: "/api/v1/admin/presence-sources" });
   await app.register(adminSchoolHolidaysRoutes, { prefix: "/api/v1/admin/school-holidays" });
