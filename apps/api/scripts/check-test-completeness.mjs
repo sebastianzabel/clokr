@@ -522,18 +522,27 @@ import { readFileSync } from "node:fs";
 // (`testResults.length` 288, `numTotalTests` 3512). 284 + 4 = 288 and 3466 + 45 + 1 = 3512
 // reconcile exactly, but the numbers below are read from the reporter, not summed from a diff.
 //
-// Phase 64b (Issue #64), 2026-09-24: re-measured on the tree after merging `origin/main` @
-// 966921fe (#329 phase 77b, #331, #334) into `feat/64-salon`, fully green
-// (`pnpm --filter @clokr/api test`): `Test Files 293 passed (293)`, `Tests 3561 passed |
-// 3 skipped (3564)`, zero failures — `vitest-report.json` agrees (`testResults.length` 293,
-// `numTotalTests` 3564). The phase adds four test files — `salons.test.ts`,
-// `salon-migration.test.ts`, `settings-store-hours-salon-mirror.test.ts` and
-// `store-hours-readers.test.ts` — and extends `t100-09-oracle-probe.test.ts`,
-// `test-bootstrap.test.ts` and `lint-facade-signatures.test.ts`; the fifth new file versus the
-// floor above is main's own `error-handler-5xx.test.ts` (#331), which never raised it. Numbers read
-// from the reporter, not summed from a diff.
-const MIN_FILES = 293;
-const MIN_TESTS = 3564;
+// Phase 73b (Issue #73): re-measured on the branch tree AFTER merging `origin/main` @ 966921fe
+// (#329 phase 77b, #331, #334) into `feat/73-rollen` (`pnpm --filter @clokr/api test`):
+// `Test Files 291 passed (291)`, `Tests 3563 passed | 3 skipped (3566)`, zero failures —
+// `vitest-report.json` agrees (`testResults.length` 291, `numTotalTests` 3566). Previous floor
+// 288 / 3512. The phase adds `src/contexts/platform/__tests__/roles.test.ts` (28 cases) and
+// `src/contexts/platform/__tests__/access-role.test.ts` (18 cases), each read from its own
+// `assertionResults.length`, plus one integrity case in `t100-09-oracle-probe.test.ts`
+// (288 + 2 = 290 files, 3512 + 47 = 3559 tests). The remaining +1 file / +7 tests are drift from
+// the merged `origin/main` commits (#331, #334), absorbed by measurement, not added by hand. A
+// later merge of phase 64b requires re-measuring on the merged tree again.
+//
+// Phase 64b (Issue #64), 2026-09-24: re-measured on the MERGED tree after merging `origin/main` @
+// 6e36ac57 (#335, phase 73b) into `feat/64-salon` (`pnpm --filter @clokr/api test`): `Test Files
+// 295 passed (295)`, `Tests 3608 passed | 3 skipped (3611)`, zero failures — `vitest-report.json`
+// agrees. Phase 64b's own contribution is four new files (`salons.test.ts`,
+// `salon-migration.test.ts`, `settings-store-hours-salon-mirror.test.ts`,
+// `store-hours-readers.test.ts`) plus cases in `t100-09-oracle-probe.test.ts`,
+// `test-bootstrap.test.ts` and `lint-facade-signatures.test.ts`; 291 + 4 = 295. Numbers read from
+// the reporter, not summed from a diff.
+const MIN_FILES = 295;
+const MIN_TESTS = 3611;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

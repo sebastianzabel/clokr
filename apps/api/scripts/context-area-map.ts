@@ -108,6 +108,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/api/me.ts": "unterbau", // writes User only
   "src/contexts/platform/api/notifications.ts": "unterbau", // writes Notification only
   "src/contexts/platform/api/release-notes.ts": "unterbau", // app-wide, tenant-agnostic feature with no model; under src/routes/ so cannot be rahmen (#99: no route may be a fallthrough) — Unterbau is the closest fit as the shared, context-agnostic substrate
+  "src/contexts/platform/api/roles.ts": "unterbau", // Phase 73b (#73): role = permission bundle, writes/reads AccessRole only — an Unterbau model
   "src/contexts/platform/api/settings.ts": "unterbau", // writes WorkSchedule/TenantConfig primarily (PUT /settings/work); tx.shift.deleteMany is a side effect of a schedule change, not the primary subject. Phase 243 Plan 02 (B1) moved the LeaveEntitlement/LeaveType routes out to contexts/absence/api/leave-settings.ts, so that clause no longer applies here
   "src/contexts/platform/api/salons.ts": "unterbau", // Phase 64b (issue #64) — reads Salon, Unterbau's own model per ADR 0001
   "src/contexts/platform/api/test-bootstrap.ts": "unterbau", // full-tenant dataset reset for e2e bootstrapping; under src/routes/ so cannot be rahmen despite being test-only — Tenant is the root model a full-tenant reset operates against, no single business context owns it
@@ -121,6 +122,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/plugins/token-cleanup.ts": "unterbau", // deletes stale OtpToken/RefreshToken
   "src/contexts/platform/facade/employee-scope.ts": "unterbau", // EmployeeScope discriminated union + employeeScopeWhere() (Phase 100B Plan 04, D-10) — Employee is Unterbau's own model; no Prisma call in this file
   "src/contexts/platform/facade/salons.ts": "unterbau", // Phase 64b (issue #64) — reads Salon, Unterbau's own model per ADR 0001
+  "src/contexts/platform/access-role.ts": "unterbau", // Phase 73b (#73): role = permission bundle, writes/reads AccessRole only — an Unterbau model
   "src/contexts/platform/access-context.ts": "unterbau", // Phase 77b (Issue #77) — AccessContext + its two constructors + employeeScopeFor(); pure module, no Prisma call
   "src/contexts/platform/access-context-error.ts": "unterbau", // Phase 77b (Issue #77) — AccessContextError + requireTenantId(); zero-import leaf, pure module, no Prisma call
   "src/contexts/platform/anonymize.ts": "unterbau", // DSGVO Art. 17 anonymization; primary subject is Employee+User (CLAUDE.md "DSGVO Employee Deletion"), other models' notes/documents nulled as side effects

@@ -93,3 +93,6 @@ export type {
   UpdateSalonInput,
   SalonStateChange,
 } from "./facade/salons";
+// Phase 73b (#73): the role-permission resolution path #74 calls, plus the case-insensitive
+// name identity #74's own role-assignment lookups reuse.
+export { roleGrants, normalizeRolePermissions, roleNameKey } from "./access-role";

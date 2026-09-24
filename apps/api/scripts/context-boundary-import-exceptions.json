@@ -5,8 +5,8 @@
       "id": "composition-root",
       "file": "src/app.ts",
       "wholeFile": true,
-      "expectedCount": 47,
-      "reason": "Composition root. Owner decision 2026-09-17 (Form C, CONTEXT.md D-01): app.ts registers every route module of every context; routing them through the five index.ts would force ~70 re-exports including every route registrar and turn import cycles into a real question. Named as ONE exception, not as a bucket. Count 45 → 46 in Phase 292 (GitHub issue #292): app.ts additionally registers deferredMonthCloseReminderPlugin (contexts/working-time-account/plugins/deferred-month-close-reminder.ts) — one more plugin registration by the composition root, exactly the shape this exception already covers. Count 46 → 47 in Phase 64b (GitHub issue #64): app.ts additionally registers salonRoutes (contexts/platform/api/salons.ts) — the same shape this exception already covers.",
+      "expectedCount": 48,
+      "reason": "Composition root. Owner decision 2026-09-17 (Form C, CONTEXT.md D-01): app.ts registers every route module of every context; routing them through the five index.ts would force ~70 re-exports including every route registrar and turn import cycles into a real question. Named as ONE exception, not as a bucket. Count 45 → 46 in Phase 292 (GitHub issue #292): app.ts additionally registers deferredMonthCloseReminderPlugin (contexts/working-time-account/plugins/deferred-month-close-reminder.ts) — one more plugin registration by the composition root, exactly the shape this exception already covers. Count 46 → 47 in Phase 73b (GitHub issue #73): app.ts additionally registers roleRoutes (contexts/platform/api/roles.ts, prefix /api/v1/roles) — one more route registration by the composition root, the same shape. Count 47 → 48 in Phase 64b (GitHub issue #64): app.ts additionally registers salonRoutes (contexts/platform/api/salons.ts, prefix /api/v1/salons) — one more route registration by the composition root, the same shape.",
       "disappearsIn": "Never by design — app.ts is the composition root. Re-open only if the routing shape itself changes."
     },
     {

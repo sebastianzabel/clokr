@@ -36,6 +36,8 @@ model Tenant {
   // Phase 85 — Phorest staff mapping + sync run history
   phorestStaffMappings PhorestStaffMapping[]
   phorestSyncRuns      PhorestSyncRun[]
+  // Phase 73b (#73) — named permission bundles (customer roles)
+  accessRoles          AccessRole[]
   // Phase 64b (issue #64) — Unterbau level below Tenant
   salons               Salon[]
 }
@@ -1068,6 +1070,28 @@ model ApiKey {
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────
+// ROLLEN (Phase 73b, Issue #73)
+// A role is a named SET of catalog permission keys (contexts/platform/permission-catalog.ts).
+// A system role is a row with tenantId = null (global, seeded by #75/#76); a customer role is a
+// row with a tenantId (owner decision — no separate "isSystem" flag, see access-role.ts).
+// ─────────────────────────────────────────────
+
+model AccessRole {
+  id          String   @id @default(uuid())
+  tenantId    String? // null = system role
+  name        String // trimmed display name as entered
+  nameKey     String // name.trim().toLowerCase() — the case-insensitive identity
+  permissions String[] // catalog permission keys, resource:action:REACH
+  createdAt   DateTime @default(now()) @db.Timestamptz
+  updatedAt   DateTime @updatedAt @db.Timestamptz
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, nameKey])
   @@index([tenantId])
 }
 
