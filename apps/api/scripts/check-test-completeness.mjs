@@ -541,8 +541,16 @@ import { readFileSync } from "node:fs";
 // `store-hours-readers.test.ts`) plus cases in `t100-09-oracle-probe.test.ts`,
 // `test-bootstrap.test.ts` and `lint-facade-signatures.test.ts`; 291 + 4 = 295. Numbers read from
 // the reporter, not summed from a diff.
-const MIN_FILES = 295;
-const MIN_TESTS = 3611;
+//
+// Phase 67b (Issue #67) Plan 05, 2026-09-24: re-measured on `feat/67-salonzuordnung` after Task 2's
+// attempted `git merge origin/main` (a genuine no-op — `origin/main` @ c3777eb0 had not moved past
+// this branch's own base since dispatch, confirmed via `git merge-base --is-ancestor origin/main
+// HEAD`) — this is therefore the phase's OWN accumulated total across plans 01-05, not a merge
+// delta: `pnpm --filter @clokr/api test` → `Test Files 301 passed (301)`, `Tests 3709 passed | 3
+// skipped (3712)`, zero failures — `vitest-report.json` agrees (`testResults.length` 301,
+// `numTotalTests` 3712). Numbers read from the reporter, not summed from a diff.
+const MIN_FILES = 301;
+const MIN_TESTS = 3712;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
