@@ -521,8 +521,19 @@ import { readFileSync } from "node:fs";
 // (288)`, `Tests 3509 passed | 3 skipped (3512)`, zero failures — `vitest-report.json` agrees
 // (`testResults.length` 288, `numTotalTests` 3512). 284 + 4 = 288 and 3466 + 45 + 1 = 3512
 // reconcile exactly, but the numbers below are read from the reporter, not summed from a diff.
-const MIN_FILES = 288;
-const MIN_TESTS = 3512;
+//
+// Phase 73b (Issue #73): re-measured on the branch tree AFTER merging `origin/main` @ 966921fe
+// (#329 phase 77b, #331, #334) into `feat/73-rollen` (`pnpm --filter @clokr/api test`):
+// `Test Files 291 passed (291)`, `Tests 3563 passed | 3 skipped (3566)`, zero failures —
+// `vitest-report.json` agrees (`testResults.length` 291, `numTotalTests` 3566). Previous floor
+// 288 / 3512. The phase adds `src/contexts/platform/__tests__/roles.test.ts` (28 cases) and
+// `src/contexts/platform/__tests__/access-role.test.ts` (18 cases), each read from its own
+// `assertionResults.length`, plus one integrity case in `t100-09-oracle-probe.test.ts`
+// (288 + 2 = 290 files, 3512 + 47 = 3559 tests). The remaining +1 file / +7 tests are drift from
+// the merged `origin/main` commits (#331, #334), absorbed by measurement, not added by hand. A
+// later merge of phase 64b requires re-measuring on the merged tree again.
+const MIN_FILES = 291;
+const MIN_TESTS = 3566;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
