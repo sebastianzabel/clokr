@@ -40,6 +40,7 @@
 │   └── /:id (GET, HEAD)
 │   └── /:id (GET, HEAD)
 │   └── /:id (GET, HEAD, PATCH, DELETE)
+│   └── /:id (GET, HEAD, PATCH, DELETE)
 │   └── /:id (GET, HEAD, PUT, DELETE)
 │   └── /:id (PATCH, DELETE)
 │   └── /:id (PATCH, DELETE)
