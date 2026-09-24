@@ -10,6 +10,10 @@ import {
 } from "../access-role";
 
 const ROLE_NAME_CONFLICT_MESSAGE = "Eine Rolle mit diesem Namen existiert bereits.";
+const ROLE_NOT_FOUND_MESSAGE = "Rolle nicht gefunden";
+const ROLE_SYSTEM_UPDATE_MESSAGE =
+  "Systemrollen können nicht geändert werden. Kopieren Sie die Rolle, um sie anzupassen.";
+const ROLE_SYSTEM_DELETE_MESSAGE = "Systemrollen können nicht gelöscht werden.";
 
 const nameSchema = z.string().trim().min(1).max(ROLE_NAME_MAX_LENGTH);
 
@@ -26,6 +30,19 @@ const permissionsSchema = z.array(z.string()).superRefine((keys, ctx) => {
 const createRoleSchema = z.object({
   name: nameSchema,
   permissions: permissionsSchema,
+});
+
+// D-08: plain `z.string().min(1)`, NOT `.uuid()` — both T-100-09 probe arms (a real foreign id
+// and a shaped-but-nonexistent id) must pass the same validation, or a stricter schema would
+// answer the two arms differently for a reason unrelated to tenant isolation.
+const idParamSchema = z.object({ id: z.string().min(1) });
+
+// `.nullish()` on both fields: a frontend sends explicit `null` for "unchanged" as much as it
+// omits the key, and `{}` (every field absent) must still parse — the T-100-09 probe's PATCH
+// `minimalBody` relies on this to reach the tenant guard.
+const updateRoleSchema = z.object({
+  name: nameSchema.nullish(),
+  permissions: permissionsSchema.nullish(),
 });
 
 interface AccessRoleRow {
@@ -157,6 +174,174 @@ export async function roleRoutes(app: FastifyInstance) {
       } catch (err: unknown) {
         if (isPrismaErrorCode(err, "P2002")) {
           return reply.code(409).send({ error: ROLE_NAME_CONFLICT_MESSAGE });
+        }
+        throw err;
+      }
+    },
+  });
+
+  // GET /api/v1/roles/:id — a system role or the caller's own customer role (AK-73-2). Never a
+  // shared loader with PATCH/DELETE: the tenant-scoping gate only credits a fetch that sits in
+  // the same function scope as the later write it authorises (RESEARCH.md Pitfall 1).
+  app.get("/:id", {
+    schema: {
+      tags: ["Rollen"],
+      security: [{ bearerAuth: [] }],
+      summary: "Read a single role",
+      description:
+        "Returns a system role (readable by every tenant) or a customer role of the caller's own tenant. A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
+    },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      const existing = await app.prisma.accessRole.findUnique({ where: { id } });
+      if (!existing) {
+        return reply.code(404).send({ error: ROLE_NOT_FOUND_MESSAGE });
+      }
+      if (existing.tenantId !== null) {
+        if (existing.tenantId !== req.user.tenantId) {
+          return reply.code(404).send({ error: ROLE_NOT_FOUND_MESSAGE });
+        }
+      }
+      return toRoleResponse(existing);
+    },
+  });
+
+  // PATCH /api/v1/roles/:id — change an own customer role's name and/or permissions
+  // (AK-73-2/AK-73-10); a system role answers 409 with no write and no audit (AK-73-4).
+  app.patch("/:id", {
+    schema: {
+      tags: ["Rollen"],
+      security: [{ bearerAuth: [] }],
+      summary: "Update a customer role",
+      description:
+        "Changes name and/or permissions of a customer role of the caller's own tenant. A no-op request (nothing actually changes) writes nothing and audits nothing. A system role is never changeable and answers 409. A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
+    },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      // Parsed BEFORE the lookup (house convention) so an empty body `{}` still reaches the
+      // tenant guard below — every field here is nullish, so `{}` always parses.
+      const body = updateRoleSchema.parse(req.body);
+
+      const existing = await app.prisma.accessRole.findUnique({ where: { id } });
+      if (!existing) {
+        return reply.code(404).send({ error: ROLE_NOT_FOUND_MESSAGE });
+      }
+      if (existing.tenantId !== null) {
+        if (existing.tenantId !== req.user.tenantId) {
+          return reply.code(404).send({ error: ROLE_NOT_FOUND_MESSAGE });
+        }
+      }
+      if (existing.tenantId === null) {
+        return reply.code(409).send({ error: ROLE_SYSTEM_UPDATE_MESSAGE });
+      }
+
+      const nextName = body.name ?? existing.name;
+      const nextPermissions =
+        body.permissions != null
+          ? normalizeRolePermissions(body.permissions)
+          : existing.permissions;
+
+      const permissionsUnchanged =
+        nextPermissions.length === existing.permissions.length &&
+        nextPermissions.every((p, i) => p === existing.permissions[i]);
+      if (nextName === existing.name && permissionsUnchanged) {
+        // A no-op is not a change (D-CONTEXT PATCH note): nothing to write, nothing to audit.
+        return toRoleResponse(existing);
+      }
+
+      const nextNameKey = roleNameKey(nextName);
+
+      try {
+        const updated = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          if (nextName !== existing.name) {
+            if (await nameTaken(tx, req.user.tenantId, nextNameKey, existing.id)) {
+              return null;
+            }
+          }
+          const row = await tx.accessRole.update({
+            where: { id },
+            data: { name: nextName, nameKey: nextNameKey, permissions: nextPermissions },
+          });
+          await app.audit({
+            tx,
+            userId: req.user.sub,
+            action: "UPDATE",
+            entity: "AccessRole",
+            entityId: row.id,
+            oldValue: { name: existing.name, permissions: existing.permissions },
+            newValue: { name: row.name, permissions: row.permissions },
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return row;
+        });
+
+        if (!updated) {
+          return reply.code(409).send({ error: ROLE_NAME_CONFLICT_MESSAGE });
+        }
+        return toRoleResponse(updated);
+      } catch (err: unknown) {
+        if (isPrismaErrorCode(err, "P2002")) {
+          return reply.code(409).send({ error: ROLE_NAME_CONFLICT_MESSAGE });
+        }
+        if (isPrismaErrorCode(err, "P2025")) {
+          return reply.code(404).send({ error: ROLE_NOT_FOUND_MESSAGE });
+        }
+        throw err;
+      }
+    },
+  });
+
+  // DELETE /api/v1/roles/:id — hard-deletes an own customer role (AK-73-2/AK-73-10); a system
+  // role answers 409 with no write and no audit (AK-73-5).
+  app.delete("/:id", {
+    schema: {
+      tags: ["Rollen"],
+      security: [{ bearerAuth: [] }],
+      summary: "Delete a customer role",
+      description:
+        "Hard-deletes a customer role of the caller's own tenant (owner decision on #73 — not a retention-relevant record). A system role is never deletable and answers 409. A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
+    },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      const existing = await app.prisma.accessRole.findUnique({ where: { id } });
+      if (!existing) {
+        return reply.code(404).send({ error: ROLE_NOT_FOUND_MESSAGE });
+      }
+      if (existing.tenantId !== null) {
+        if (existing.tenantId !== req.user.tenantId) {
+          return reply.code(404).send({ error: ROLE_NOT_FOUND_MESSAGE });
+        }
+      }
+      if (existing.tenantId === null) {
+        return reply.code(409).send({ error: ROLE_SYSTEM_DELETE_MESSAGE });
+      }
+
+      try {
+        await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          await tx.accessRole.delete({ where: { id } });
+          // #74 adds "an assigned role cannot be deleted" — no assignments exist yet, so a hard
+          // delete here can never orphan one.
+          await app.audit({
+            tx,
+            userId: req.user.sub,
+            action: "DELETE",
+            entity: "AccessRole",
+            entityId: existing.id,
+            oldValue: {
+              name: existing.name,
+              permissions: existing.permissions,
+              tenantId: existing.tenantId,
+            },
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+        });
+        return reply.code(204).send();
+      } catch (err: unknown) {
+        if (isPrismaErrorCode(err, "P2025")) {
+          return reply.code(404).send({ error: ROLE_NOT_FOUND_MESSAGE });
         }
         throw err;
       }
