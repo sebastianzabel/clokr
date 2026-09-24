@@ -11,6 +11,8 @@ import {
 } from "../access-role";
 import { ROLE_LOCKOUT_MESSAGE, RoleLockoutError } from "../role-assignment";
 import { withRoleLockoutGuard } from "../facade/role-assignments";
+import { foreignKeyConstraintOf } from "../prisma-foreign-key";
+import { requestAuditFields } from "../request-audit-fields";
 
 const ROLE_NAME_CONFLICT_MESSAGE = "Eine Rolle mit diesem Namen existiert bereits.";
 const ROLE_NOT_FOUND_MESSAGE = "Rolle nicht gefunden";
@@ -19,6 +21,8 @@ const ROLE_SYSTEM_UPDATE_MESSAGE =
 const ROLE_SYSTEM_DELETE_MESSAGE = "Systemrollen können nicht gelöscht werden.";
 const ROLE_ASSIGNED_DELETE_MESSAGE =
   "Die Rolle ist noch Nutzern zugewiesen und kann nicht gelöscht werden.";
+/** The `onDelete: Restrict` backstop of D-21 (migration 20260924145050_role_assignment). */
+const ROLE_ASSIGNMENT_ROLE_FOREIGN_KEY = "RoleAssignment_accessRoleId_fkey";
 
 const nameSchema = z.string().trim().min(1).max(ROLE_NAME_MAX_LENGTH);
 
@@ -167,16 +171,14 @@ export async function roleRoutes(app: FastifyInstance) {
           });
           await app.audit({
             tx,
-            userId: req.user.sub,
             action: "CREATE",
             entity: "AccessRole",
             entityId: source.id,
-            newValue: {
+            ...requestAuditFields(req, {
               name: source.name,
               permissions: source.permissions,
               tenantId: source.tenantId,
-            },
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            }),
           });
           return source;
         });
@@ -285,13 +287,11 @@ export async function roleRoutes(app: FastifyInstance) {
             });
             await app.audit({
               tx,
-              userId: req.user.sub,
               action: "UPDATE",
               entity: "AccessRole",
               entityId: row.id,
               oldValue: { name: existing.name, permissions: existing.permissions },
-              newValue: { name: row.name, permissions: row.permissions },
-              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+              ...requestAuditFields(req, { name: row.name, permissions: row.permissions }),
             });
             return row;
           });
@@ -358,7 +358,6 @@ export async function roleRoutes(app: FastifyInstance) {
           await tx.accessRole.delete({ where: { id } });
           await app.audit({
             tx,
-            userId: req.user.sub,
             action: "DELETE",
             entity: "AccessRole",
             entityId: existing.id,
@@ -367,7 +366,7 @@ export async function roleRoutes(app: FastifyInstance) {
               permissions: existing.permissions,
               tenantId: existing.tenantId,
             },
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            ...requestAuditFields(req),
           });
           return "DELETED" as const;
         });
@@ -376,7 +375,10 @@ export async function roleRoutes(app: FastifyInstance) {
         }
         return reply.code(204).send();
       } catch (err: unknown) {
-        if (isPrismaErrorCode(err, "P2003")) {
+        // 74b review WR-03: only the RoleAssignment -> AccessRole foreign key means "still
+        // assigned". Any other P2003 (before the actor fix: the audit insert's AuditLog.userId FK
+        // for an API-key caller) is a real failure and must not be answered as a false 409.
+        if (foreignKeyConstraintOf(err) === ROLE_ASSIGNMENT_ROLE_FOREIGN_KEY) {
           return reply.code(409).send({ error: ROLE_ASSIGNED_DELETE_MESSAGE });
         }
         if (isPrismaErrorCode(err, "P2025")) {
@@ -454,18 +456,16 @@ export async function roleRoutes(app: FastifyInstance) {
           });
           await app.audit({
             tx,
-            userId: req.user.sub,
             action: "COPY",
             entity: "AccessRole",
             entityId: row.id,
-            newValue: {
+            ...requestAuditFields(req, {
               name: row.name,
               permissions: row.permissions,
               tenantId: row.tenantId,
               copiedFromId: source.id,
               copiedFromName: source.name,
-            },
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            }),
           });
           return row;
         });

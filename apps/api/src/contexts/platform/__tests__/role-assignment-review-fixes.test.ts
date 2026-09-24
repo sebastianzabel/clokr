@@ -73,17 +73,19 @@ function forward(target: object, prop: string | symbol): unknown {
 }
 
 /**
- * A transaction client whose `roleAssignment.create` runs `hook` first — the window between the
- * route's own reference check and its insert, inside the route's transaction.
+ * A transaction client whose `<model>.<method>` runs `hook` first — e.g. the window between a
+ * route's own check and its write, inside the route's transaction.
  */
-function beforeRoleAssignmentCreate(
+function beforeDelegateCall(
   tx: Prisma.TransactionClient,
+  model: "roleAssignment" | "accessRole",
+  method: string,
   hook: () => Promise<unknown>,
 ): Prisma.TransactionClient {
-  const delegate = new Proxy(tx.roleAssignment, {
+  const delegate = new Proxy(tx[model], {
     get(target, prop) {
       const value = forward(target, prop);
-      if (prop !== "create") return value;
+      if (prop !== method) return value;
       return async (args: unknown) => {
         await hook();
         return (value as (a: unknown) => Promise<unknown>)(args);
@@ -92,7 +94,7 @@ function beforeRoleAssignmentCreate(
   });
   return new Proxy(tx, {
     get(target, prop) {
-      return prop === "roleAssignment" ? delegate : forward(target, prop);
+      return prop === model ? delegate : forward(target, prop);
     },
   });
 }
@@ -304,7 +306,7 @@ describe("Phase 74b review fixes", () => {
     const grantee = await createUserWithEmployee(app, tenantA.tenant.id, "Grantee");
     const doomedRole = await createRole(app, tenantA.tenant.id, "RDoomed", [TIME_ENTRY_READ]);
     wrapNextTransactionClient((tx) =>
-      beforeRoleAssignmentCreate(tx, () =>
+      beforeDelegateCall(tx, "roleAssignment", "create", () =>
         app.prisma.accessRole.delete({ where: { id: doomedRole.id } }),
       ),
     );
@@ -325,6 +327,137 @@ describe("Phase 74b review fixes", () => {
           action: "CREATE",
           newValue: { path: ["userId"], equals: grantee.user.id },
         },
+      }),
+    ).toBe(0);
+  });
+
+  // ── WR-03: DELETE /roles/:id maps only the assignment FK to 409; API-key actors audit cleanly ──
+
+  const ROLE_ASSIGNED_DELETE_MESSAGE =
+    "Die Rolle ist noch Nutzern zugewiesen und kann nicht gelöscht werden.";
+
+  async function createAdminApiKey() {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/api-keys",
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      payload: { name: "Review WR-03 admin key", scopes: ["admin"] },
+    });
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
+    return JSON.parse(res.body) as { id: string; rawKey: string };
+  }
+
+  function sendAs(
+    token: string,
+    method: "POST" | "PATCH" | "DELETE",
+    url: string,
+    payload?: object,
+  ) {
+    return app.inject({
+      method,
+      url,
+      headers: {
+        authorization: `Bearer ${token}`,
+        ...(payload === undefined ? {} : { "content-type": "application/json" }),
+      },
+      ...(payload === undefined ? {} : { payload: JSON.stringify(payload) }),
+    });
+  }
+
+  it("WR-03: an ADMIN-scope API key can create, change, copy and delete an unassigned role; every AccessRole audit row has no userId and names the key", async () => {
+    const key = await createAdminApiKey();
+
+    const created = await sendAs(key.rawKey, "POST", "/api/v1/roles", {
+      name: uniqueSuffix("Rolle per API-Key"),
+      permissions: [TIME_ENTRY_READ],
+    });
+    expect(created.statusCode, created.body.slice(0, 400)).toBe(201);
+    const roleId = (JSON.parse(created.body) as { id: string }).id;
+
+    const patched = await sendAs(key.rawKey, "PATCH", `/api/v1/roles/${roleId}`, {
+      name: uniqueSuffix("Rolle per API-Key geaendert"),
+    });
+    expect(patched.statusCode, patched.body.slice(0, 400)).toBe(200);
+
+    const copied = await sendAs(key.rawKey, "POST", `/api/v1/roles/${roleId}/copy`, {});
+    expect(copied.statusCode, copied.body.slice(0, 400)).toBe(201);
+    const copyId = (JSON.parse(copied.body) as { id: string }).id;
+
+    const deleted = await sendAs(key.rawKey, "DELETE", `/api/v1/roles/${roleId}`);
+    expect(deleted.statusCode, "an unassigned role answered as 'still assigned'").toBe(204);
+
+    for (const [action, entityId] of [
+      ["CREATE", roleId],
+      ["UPDATE", roleId],
+      ["COPY", copyId],
+      ["DELETE", roleId],
+    ] as const) {
+      const row = await app.prisma.auditLog.findFirst({
+        where: { entity: "AccessRole", entityId, action },
+      });
+      expect(row, `${action} audit row`).not.toBeNull();
+      expect(row?.userId, `${action} userId`).toBeNull();
+      expect((row?.newValue as { actor?: unknown } | null)?.actor, `${action} actor`).toEqual({
+        type: "API_KEY",
+        apiKeyId: key.id,
+      });
+      expect(row?.ipAddress, `${action} ip`).not.toBeNull();
+    }
+  });
+
+  it("WR-03: a P2003 on another foreign key while deleting a role is not answered as 'still assigned'", async () => {
+    const role = await createRole(app, tenantA.tenant.id, "RAuditFk", [TIME_ENTRY_READ]);
+    const realAudit = app.audit.bind(app);
+    vi.spyOn(app, "audit").mockImplementation(async (entry) => {
+      if (entry.entity === "AccessRole" && entry.entityId === role.id) {
+        // The shape Prisma 7 + adapter-pg reports for a violated AuditLog.userId reference.
+        throw Object.assign(new Error("foreign key violation (test)"), {
+          code: "P2003",
+          meta: {
+            modelName: "AuditLog",
+            driverAdapterError: {
+              name: "DriverAdapterError",
+              cause: {
+                kind: "ForeignKeyConstraintViolation",
+                constraint: { index: "AuditLog_userId_fkey" },
+              },
+            },
+          },
+        });
+      }
+      return realAudit(entry);
+    });
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/roles/${role.id}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+
+    expect(res.body).not.toContain(ROLE_ASSIGNED_DELETE_MESSAGE);
+    expect(res.statusCode).toBe(500);
+    expect(await app.prisma.accessRole.findUnique({ where: { id: role.id } })).not.toBeNull();
+  });
+
+  it("WR-03: an assignment created after the in-transaction count still turns the role delete into the 'still assigned' 409 via its foreign key", async () => {
+    const role = await createRole(app, tenantA.tenant.id, "RLateAssign", [TIME_ENTRY_READ]);
+    const grantee = await createUserWithEmployee(app, tenantA.tenant.id, "Grantee");
+    wrapNextTransactionClient((tx) =>
+      beforeDelegateCall(tx, "accessRole", "delete", () => assignTenant(grantee.user.id, role.id)),
+    );
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/roles/${role.id}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({ error: ROLE_ASSIGNED_DELETE_MESSAGE });
+    expect(await app.prisma.accessRole.findUnique({ where: { id: role.id } })).not.toBeNull();
+    expect(
+      await app.prisma.auditLog.count({
+        where: { entity: "AccessRole", entityId: role.id, action: "DELETE" },
       }),
     ).toBe(0);
   });
