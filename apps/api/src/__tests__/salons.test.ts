@@ -739,3 +739,136 @@ describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
     expect(activeCount).toBe(1);
   });
 });
+
+/**
+ * Phase 64b review, WR-01: a `clk_` API-key caller has `req.user.sub = "apikey:<id>"`, which is
+ * not a `User.id`. Every salon audit row must therefore leave `userId` unset and record the key id
+ * in `newValue.actor` — otherwise the `AuditLog.userId` foreign key fails the insert, every write
+ * answers 500, and the T-100-09 path answers 500 for a foreign salon against 404 for an unknown id.
+ */
+describe("Salon routes with an API-key caller (Phase 64b review, WR-01)", () => {
+  let app: FastifyInstance;
+  let tenantA: Awaited<ReturnType<typeof seedTestData>>;
+  let tenantB: Awaited<ReturnType<typeof seedTestData>>;
+  let adminKey: { id: string; rawKey: string };
+  let managerKey: { id: string; rawKey: string };
+  let foreignSalon: { id: string };
+
+  const unknownId = "00000000-0000-4000-8000-000000000299";
+
+  async function createApiKey(scopes: string[], name: string) {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/api-keys",
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      payload: { name, scopes },
+    });
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
+    const body = JSON.parse(res.body) as { id: string; rawKey: string };
+    return { id: body.id, rawKey: body.rawKey };
+  }
+
+  function send(key: string, method: "GET" | "POST" | "PATCH", url: string, payload?: object) {
+    if (payload === undefined) {
+      return app.inject({ method, url, headers: { authorization: `Bearer ${key}` } });
+    }
+    return app.inject({
+      method,
+      url,
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+      payload: JSON.stringify(payload),
+    });
+  }
+
+  async function auditRow(action: string, entityId: string) {
+    return app.prisma.auditLog.findFirst({
+      where: { action, entity: "Salon", entityId },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    tenantA = await seedTestData(app, "salon-apikey-a");
+    tenantB = await seedTestData(app, "salon-apikey-b");
+    adminKey = await createApiKey(["admin"], "Salon WR-01 admin key");
+    managerKey = await createApiKey(["read:employees"], "Salon WR-01 manager key");
+
+    // Tenant A needs an active salon besides the one the test creates, so deactivate succeeds.
+    await app.prisma.salon.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        name: "Salon Bestand",
+        openingHours: DEFAULT_SALON_OPENING_HOURS,
+        isActive: true,
+      },
+    });
+    foreignSalon = await app.prisma.salon.create({
+      data: {
+        tenantId: tenantB.tenant.id,
+        name: "Fremder Salon (API-Key)",
+        openingHours: DEFAULT_SALON_OPENING_HOURS,
+        isActive: true,
+      },
+    });
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantA.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed (tenantA):", err);
+    }
+    try {
+      await cleanupTestData(app, tenantB.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed (tenantB):", err);
+    }
+  });
+
+  it("an ADMIN-scope key can create, update, deactivate and activate a salon; every audit row has no userId and names the key in newValue.actor", async () => {
+    const created = await send(adminKey.rawKey, "POST", "/api/v1/salons", {
+      name: "Salon per API-Key",
+      openingHours: DEFAULT_SALON_OPENING_HOURS,
+    });
+    expect(created.statusCode, created.body.slice(0, 400)).toBe(201);
+    const salonId = (JSON.parse(created.body) as { id: string }).id;
+
+    const patched = await send(adminKey.rawKey, "PATCH", `/api/v1/salons/${salonId}`, {
+      name: "Salon per API-Key (umbenannt)",
+    });
+    expect(patched.statusCode, patched.body.slice(0, 400)).toBe(200);
+
+    const deactivated = await send(adminKey.rawKey, "POST", `/api/v1/salons/${salonId}/deactivate`);
+    expect(deactivated.statusCode, deactivated.body.slice(0, 400)).toBe(200);
+
+    const activated = await send(adminKey.rawKey, "POST", `/api/v1/salons/${salonId}/activate`);
+    expect(activated.statusCode, activated.body.slice(0, 400)).toBe(200);
+
+    for (const action of ["CREATE", "UPDATE", "DEACTIVATE", "ACTIVATE"]) {
+      const row = await auditRow(action, salonId);
+      expect(row, `${action} audit row`).not.toBeNull();
+      expect(row?.userId, `${action} userId`).toBeNull();
+      const newValue = row?.newValue as { actor?: unknown; id?: string } | null;
+      expect(newValue?.actor, `${action} actor`).toEqual({
+        type: "API_KEY",
+        apiKeyId: adminKey.id,
+      });
+      // The row data is still there next to the actor — the actor is added, nothing replaced.
+      expect(newValue?.id, `${action} row id`).toBe(salonId);
+    }
+  });
+
+  it("a MANAGER-scope key gets the byte-identical 404 for a foreign salon and an unknown id; the CROSS_TENANT_ACCESS_DENIED row has no userId and names the key", async () => {
+    const foreignRes = await send(managerKey.rawKey, "GET", `/api/v1/salons/${foreignSalon.id}`);
+    const unknownRes = await send(managerKey.rawKey, "GET", `/api/v1/salons/${unknownId}`);
+    expect(foreignRes.statusCode, foreignRes.body.slice(0, 400)).toBe(404);
+    expect(unknownRes.statusCode).toBe(404);
+    expect(foreignRes.body).toBe(unknownRes.body);
+
+    const row = await auditRow("CROSS_TENANT_ACCESS_DENIED", foreignSalon.id);
+    expect(row).not.toBeNull();
+    expect(row?.userId).toBeNull();
+    expect(row?.newValue).toEqual({ actor: { type: "API_KEY", apiKeyId: managerKey.id } });
+  });
+});

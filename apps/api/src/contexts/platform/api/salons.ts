@@ -10,6 +10,7 @@
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import type { Prisma } from "@clokr/db";
 import { requireRole } from "../../../middleware/auth";
 import {
   activateSalon,
@@ -40,11 +41,59 @@ const ALREADY_ACTIVE_MESSAGE = "Der Salon ist bereits aktiv.";
 const LAST_ACTIVE_SALON_MESSAGE =
   "Der letzte aktive Salon eines Mandanten kann nicht deaktiviert werden.";
 
+// `requireAuth` (middleware/auth.ts) sets `req.user.sub` to this prefix plus the key id for a
+// `clk_` API key — the same prefix `services/clock/audit-actor.ts`'s `resolveActor` recognises.
+const API_KEY_SUBJECT_PREFIX = "apikey:";
+
+/**
+ * Every Salon audit row goes through here (Phase 64b review, WR-01). For a `clk_` API-key caller
+ * `req.user.sub` is `apikey:<id>`, which is not a `User.id` — `AuditLog.userId` has a foreign key
+ * to `User`, so passing it through would fail the audit insert: a 500 on every write, and on the
+ * T-100-09 path a 500 for a foreign salon against a 404 for an unknown id (an oracle). Same storage
+ * convention as `services/clock/audit-actor.ts`'s `emitClockAudit`: a non-user actor leaves
+ * `userId` unset and is recorded as `newValue.actor = { type: "API_KEY", apiKeyId }`. A local
+ * equivalent rather than an import, because `services/clock/` belongs to Zeiterfassung and the
+ * Unterbau may not reach into a Fach-Kontext (ADR 0001). The same fix for every other route that
+ * audits `req.user.sub` is tracked in #333.
+ */
+async function auditSalon(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  entry: {
+    action: string;
+    entityId: string;
+    oldValue?: unknown;
+    newValue?: object;
+    tx?: Prisma.TransactionClient;
+  },
+) {
+  const subject = req.user.sub;
+  const apiKeyId = subject.startsWith(API_KEY_SUBJECT_PREFIX)
+    ? subject.slice(API_KEY_SUBJECT_PREFIX.length)
+    : null;
+  const actor = apiKeyId === null ? null : { type: "API_KEY" as const, apiKeyId };
+
+  let newValue: object | undefined = entry.newValue;
+  if (actor) newValue = { ...(entry.newValue ?? {}), actor };
+
+  await app.audit({
+    userId: actor ? undefined : subject,
+    action: entry.action,
+    entity: "Salon",
+    entityId: entry.entityId,
+    oldValue: entry.oldValue,
+    newValue,
+    request: { ip: req.ip, headers: req.headers as Record<string, string> },
+    tx: entry.tx,
+  });
+}
+
 /**
  * D-13: the shared T-100-09 guard for every `/:id` route below. A foreign tenant's real salon and
  * a nonexistent id both end up here and get the IDENTICAL 404 — the only difference is whether a
  * `CROSS_TENANT_ACCESS_DENIED` row is written first, and that row's existence never reaches the
- * client (it only ever changes the audit log, never the response).
+ * client (it only ever changes the audit log, never the response). The audit goes through
+ * {@link auditSalon}, so an API-key caller gets the same 404 as a JWT caller (WR-01).
  */
 async function rejectUnknownSalon(
   app: FastifyInstance,
@@ -53,13 +102,7 @@ async function rejectUnknownSalon(
   salonId: string,
 ) {
   if (await salonExistsInForeignTenant(app.prisma, req.user.tenantId, salonId)) {
-    await app.audit({
-      userId: req.user.sub,
-      action: "CROSS_TENANT_ACCESS_DENIED",
-      entity: "Salon",
-      entityId: salonId,
-      request: { ip: req.ip, headers: req.headers as Record<string, string> },
-    });
+    await auditSalon(app, req, { action: "CROSS_TENANT_ACCESS_DENIED", entityId: salonId });
   }
   return reply.code(404).send({ error: SALON_NOT_FOUND });
 }
@@ -114,13 +157,10 @@ export async function salonRoutes(app: FastifyInstance) {
 
       const salon = await app.prisma.$transaction(async (tx) => {
         const created = await createSalon(tx, req.user.tenantId, body);
-        await app.audit({
-          userId: req.user.sub,
+        await auditSalon(app, req, {
           action: "CREATE",
-          entity: "Salon",
           entityId: created.id,
           newValue: created,
-          request: { ip: req.ip, headers: req.headers as Record<string, string> },
           tx,
         });
         return created;
@@ -153,14 +193,11 @@ export async function salonRoutes(app: FastifyInstance) {
       const result = await app.prisma.$transaction(async (tx) => {
         const outcome = await updateSalon(tx, req.user.tenantId, id, patch);
         if (!outcome) return null;
-        await app.audit({
-          userId: req.user.sub,
+        await auditSalon(app, req, {
           action: "UPDATE",
-          entity: "Salon",
           entityId: id,
           oldValue: outcome.existing,
           newValue: outcome.updated,
-          request: { ip: req.ip, headers: req.headers as Record<string, string> },
           tx,
         });
         return outcome.updated;
@@ -185,14 +222,11 @@ export async function salonRoutes(app: FastifyInstance) {
       const outcome = await app.prisma.$transaction(async (tx) => {
         const change = await deactivateSalon(tx, req.user.tenantId, id);
         if (change.status === "OK") {
-          await app.audit({
-            userId: req.user.sub,
+          await auditSalon(app, req, {
             action: "DEACTIVATE",
-            entity: "Salon",
             entityId: id,
             oldValue: change.existing,
             newValue: change.updated,
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
             tx,
           });
         }
@@ -229,14 +263,11 @@ export async function salonRoutes(app: FastifyInstance) {
       const outcome = await app.prisma.$transaction(async (tx) => {
         const change = await activateSalon(tx, req.user.tenantId, id);
         if (change.status === "OK") {
-          await app.audit({
-            userId: req.user.sub,
+          await auditSalon(app, req, {
             action: "ACTIVATE",
-            entity: "Salon",
             entityId: id,
             oldValue: change.existing,
             newValue: change.updated,
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
             tx,
           });
         }
