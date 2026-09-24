@@ -12,6 +12,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Prisma } from "@clokr/db";
 import { requireRole } from "../../../middleware/auth";
+import { accessContextFromRequest } from "../access-context";
 import {
   activateSalon,
   createSalon,
@@ -41,20 +42,16 @@ const ALREADY_ACTIVE_MESSAGE = "Der Salon ist bereits aktiv.";
 const LAST_ACTIVE_SALON_MESSAGE =
   "Der letzte aktive Salon eines Mandanten kann nicht deaktiviert werden.";
 
-// `requireAuth` (middleware/auth.ts) sets `req.user.sub` to this prefix plus the key id for a
-// `clk_` API key — the same prefix `services/clock/audit-actor.ts`'s `resolveActor` recognises.
-const API_KEY_SUBJECT_PREFIX = "apikey:";
-
 /**
  * Every Salon audit row goes through here (Phase 64b review, WR-01). For a `clk_` API-key caller
  * `req.user.sub` is `apikey:<id>`, which is not a `User.id` — `AuditLog.userId` has a foreign key
  * to `User`, so passing it through would fail the audit insert: a 500 on every write, and on the
- * T-100-09 path a 500 for a foreign salon against a 404 for an unknown id (an oracle). Same storage
- * convention as `services/clock/audit-actor.ts`'s `emitClockAudit`: a non-user actor leaves
- * `userId` unset and is recorded as `newValue.actor = { type: "API_KEY", apiKeyId }`. A local
- * equivalent rather than an import, because `services/clock/` belongs to Zeiterfassung and the
- * Unterbau may not reach into a Fach-Kontext (ADR 0001). The same fix for every other route that
- * audits `req.user.sub` is tracked in #333.
+ * T-100-09 path a 500 for a foreign salon against a 404 for an unknown id (an oracle). The actor is
+ * resolved by the Unterbau's central access context (`accessContextFromRequest`, #77) rather than by
+ * parsing the subject here. Same storage convention as `services/clock/audit-actor.ts`'s
+ * `emitClockAudit`: a non-user actor leaves `userId` unset and is recorded as
+ * `newValue.actor = { type: "API_KEY", apiKeyId }`. The same fix for every other route that audits
+ * `req.user.sub` is tracked in #333.
  */
 async function auditSalon(
   app: FastifyInstance,
@@ -67,17 +64,15 @@ async function auditSalon(
     tx?: Prisma.TransactionClient;
   },
 ) {
-  const subject = req.user.sub;
-  const apiKeyId = subject.startsWith(API_KEY_SUBJECT_PREFIX)
-    ? subject.slice(API_KEY_SUBJECT_PREFIX.length)
-    : null;
-  const actor = apiKeyId === null ? null : { type: "API_KEY" as const, apiKeyId };
+  const { actor } = accessContextFromRequest(req);
+  const apiKeyActor =
+    actor.kind === "apiKey" ? { type: "API_KEY" as const, apiKeyId: actor.apiKeyId } : null;
 
   let newValue: object | undefined = entry.newValue;
-  if (actor) newValue = { ...(entry.newValue ?? {}), actor };
+  if (apiKeyActor) newValue = { ...(entry.newValue ?? {}), actor: apiKeyActor };
 
   await app.audit({
-    userId: actor ? undefined : subject,
+    userId: actor.kind === "user" ? actor.userId : undefined,
     action: entry.action,
     entity: "Salon",
     entityId: entry.entityId,
