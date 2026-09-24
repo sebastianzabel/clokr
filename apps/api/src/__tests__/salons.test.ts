@@ -1,8 +1,9 @@
 /**
  * Phase 64b Plan 01 (issue #64) — GET /api/v1/salons role gate, includeInactive, isMultiSalon.
  *
- * `seedTestData()` does NOT create a Salon for its tenant (D-18 exemption) — every fixture salon
- * this file needs is created directly via `app.prisma.salon.create(...)`.
+ * `seedTestData()` does NOT create a Salon for its tenant here — this file opts out via
+ * `{ withDefaultSalon: false }` (Phase 325, issue #325, D-17) — every fixture salon this file
+ * needs is created directly via `app.prisma.salon.create(...)`.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
@@ -16,14 +17,16 @@ import {
 
 describe("GET /api/v1/salons", () => {
   let app: FastifyInstance;
-  let tenant: Awaited<ReturnType<typeof seedTestData>>;
+  let tenant: Omit<Awaited<ReturnType<typeof seedTestData>>, "salonId"> & {
+    salonId: string | null;
+  };
   let managerToken: string;
   let activeSalonId: string;
   let inactiveSalonId: string;
 
   beforeAll(async () => {
     app = await getTestApp();
-    tenant = await seedTestData(app, "salons-route");
+    tenant = await seedTestData(app, "salons-route", { withDefaultSalon: false });
 
     // Inline MANAGER, same pattern as tenant-isolation.test.ts's SEC-V1814-01 block.
     const s = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -218,8 +221,12 @@ async function createManagerFor(app: FastifyInstance, tenantId: string, labelPre
 
 describe("Salon lifecycle: read by id, create, update, deactivate, activate (Phase 64b Plan 02, issue #64)", () => {
   let app: FastifyInstance;
-  let tenantA: Awaited<ReturnType<typeof seedTestData>>;
-  let tenantB: Awaited<ReturnType<typeof seedTestData>>;
+  let tenantA: Omit<Awaited<ReturnType<typeof seedTestData>>, "salonId"> & {
+    salonId: string | null;
+  };
+  let tenantB: Omit<Awaited<ReturnType<typeof seedTestData>>, "salonId"> & {
+    salonId: string | null;
+  };
   let managerToken: string;
   let salonA: { id: string; name: string };
 
@@ -245,8 +252,8 @@ describe("Salon lifecycle: read by id, create, update, deactivate, activate (Pha
 
   beforeAll(async () => {
     app = await getTestApp();
-    tenantA = await seedTestData(app, "salon-lifecycle-a");
-    tenantB = await seedTestData(app, "salon-lifecycle-b");
+    tenantA = await seedTestData(app, "salon-lifecycle-a", { withDefaultSalon: false });
+    tenantB = await seedTestData(app, "salon-lifecycle-b", { withDefaultSalon: false });
     managerToken = await createManagerFor(app, tenantA.tenant.id, "mgr-lifecycle-");
 
     salonA = await app.prisma.salon.create({
@@ -497,8 +504,12 @@ describe("Salon lifecycle: read by id, create, update, deactivate, activate (Pha
  */
 describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
   let app: FastifyInstance;
-  let tenantA: Awaited<ReturnType<typeof seedTestData>>;
-  let tenantB: Awaited<ReturnType<typeof seedTestData>>;
+  let tenantA: Omit<Awaited<ReturnType<typeof seedTestData>>, "salonId"> & {
+    salonId: string | null;
+  };
+  let tenantB: Omit<Awaited<ReturnType<typeof seedTestData>>, "salonId"> & {
+    salonId: string | null;
+  };
   let managerToken: string;
   let salonA1: { id: string };
   let salonA2: { id: string };
@@ -516,8 +527,8 @@ describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
 
   beforeAll(async () => {
     app = await getTestApp();
-    tenantA = await seedTestData(app, "salon-deact-a");
-    tenantB = await seedTestData(app, "salon-deact-b");
+    tenantA = await seedTestData(app, "salon-deact-a", { withDefaultSalon: false });
+    tenantB = await seedTestData(app, "salon-deact-b", { withDefaultSalon: false });
     managerToken = await createManagerFor(app, tenantA.tenant.id, "mgr-deact-");
 
     salonA1 = await app.prisma.salon.create({
@@ -784,8 +795,12 @@ describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
  */
 describe("Salon routes with an API-key caller (Phase 64b review, WR-01)", () => {
   let app: FastifyInstance;
-  let tenantA: Awaited<ReturnType<typeof seedTestData>>;
-  let tenantB: Awaited<ReturnType<typeof seedTestData>>;
+  let tenantA: Omit<Awaited<ReturnType<typeof seedTestData>>, "salonId"> & {
+    salonId: string | null;
+  };
+  let tenantB: Omit<Awaited<ReturnType<typeof seedTestData>>, "salonId"> & {
+    salonId: string | null;
+  };
   let adminKey: { id: string; rawKey: string };
   let managerKey: { id: string; rawKey: string };
   let foreignSalon: { id: string };
@@ -825,8 +840,8 @@ describe("Salon routes with an API-key caller (Phase 64b review, WR-01)", () => 
 
   beforeAll(async () => {
     app = await getTestApp();
-    tenantA = await seedTestData(app, "salon-apikey-a");
-    tenantB = await seedTestData(app, "salon-apikey-b");
+    tenantA = await seedTestData(app, "salon-apikey-a", { withDefaultSalon: false });
+    tenantB = await seedTestData(app, "salon-apikey-b", { withDefaultSalon: false });
     adminKey = await createApiKey(["admin"], "Salon WR-01 admin key");
     managerKey = await createApiKey(["read:employees"], "Salon WR-01 manager key");
 

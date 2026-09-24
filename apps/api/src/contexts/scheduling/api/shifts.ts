@@ -11,6 +11,7 @@ import {
   accessContextFromRequest,
   employeeScopeFor,
   type AccessContext,
+  findDefaultSalon, // Phase 325 (issue #325), D-04/D-05
 } from "../../platform";
 import {
   isMonthClosed, // Phase 100B Plan 07 — W1
@@ -61,6 +62,13 @@ const shiftSchema = z.object({
 const bulkShiftSchema = z.object({
   shifts: z.array(shiftSchema),
 });
+
+// Phase 325 (issue #325), D-04/D-05: a tenant with no active salon cannot receive a new shift —
+// every write path that resolves a default salon and finds none answers with this body.
+const NO_ACTIVE_SALON_REPLY = {
+  error: "Kein aktiver Salon vorhanden.",
+  code: "NO_ACTIVE_SALON",
+} as const;
 
 // Phase 43 — Auto-Gen
 const generateWeekSchema = z.object({
@@ -1759,6 +1767,11 @@ export async function shiftRoutes(app: FastifyInstance) {
       });
       if (!targetEmp) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
+      // Phase 325 (issue #325), D-04/D-05: no salonId in the body yet (plan 02 adds it) — every
+      // new shift lands on the tenant's default salon. No active salon -> 409 before any write.
+      const salon = await findDefaultSalon(app.prisma, req.user.tenantId);
+      if (!salon) return reply.code(409).send(NO_ACTIVE_SALON_REPLY);
+
       // Phase 47.1 — Eligibility gate: only SHIFT_BASED employees may receive shift assignments.
       const eligibility = await assertEmployeeShiftEligible(app.prisma, body.employeeId);
       if (eligibility) {
@@ -1914,6 +1927,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           data: {
             employeeId: body.employeeId,
             templateId: body.templateId,
+            salonId: salon.id, // Phase 325 (issue #325), D-05
             date: new Date(body.date),
             startTime: body.startTime,
             endTime: body.endTime,

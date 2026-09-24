@@ -206,34 +206,34 @@
   {
     "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
     "handler": "PUT /api/v1/shifts/:id",
-    "validatedAt": 2063,
+    "validatedAt": 2077,
     "calls": [
       {
         "call": "shift.findUnique",
-        "line": 2051
+        "line": 2065
       },
       {
         "call": "shift.update",
-        "line": 2237
+        "line": 2251
       }
     ],
-    "reason": "Shift has no tenantId of its own. The shift is first fetched by id (line 2055, unscoped by itself), then its OWNER is validated by a SECOND fetch+compare on a DERIVED field (existingOwner = employee.findUnique({ id: existing.employeeId }), compared at line 2067) BEFORE the fetched row is read or written anywhere below — including the shift.update at line 2246, which reuses the SAME id. This mirrors overtime.ts's own comment ('Shift has no tenantId of its own — go via employee'). (Lines shifted +16 net in Phase 267 Plan 03: the GET /week threat-coverage comment block + its new preHandler line, upstream of this handler — mechanical only. On top of the -4 net shift Phase 101B Plan 08: four separate deep absence imports [vacation-calc, shift-leave-recalc-resolver, api/leave] merged as extra names into the existing absence-index import, collapsing 20 lines of import statements into 16 — mechanical only. On top of the -1 net shift Phase 101B Plan 07: the platform/holidays + platform/anonymize import pair merged into one platform/index.ts import. On top of the -21 net shift Phase 100B Plan 13, the -8 net shift Phase 100B Plan 12, the -15 net shift Phase 100B Plan 11, the -2 net shift Phase 100B Plan 10, the earlier +1 from Phase 100B Plan 07's `isMonthClosed` import and the +1 from Issue #241's `monthRangeUtc` import.) (Lines shifted -4 / -9 net in Phase 77b Plan 02: access-context first statement and import; findShiftConflict and its callers took one AccessContext parameter and prettier collapsed the shortened calls — mechanical only.)"
+    "reason": "Shift has no tenantId of its own. The shift is first fetched by id (line 2065, unscoped by itself), then its OWNER is validated by a SECOND fetch+compare on a DERIVED field (existingOwner = employee.findUnique({ id: existing.employeeId }), compared at line 2077) BEFORE the fetched row is read or written anywhere below — including the shift.update at line 2251, which reuses the SAME id. This mirrors overtime.ts's own comment ('Shift has no tenantId of its own — go via employee'). (Lines shifted +14 net in Phase 325 Plan 01 Task 1: default-salon resolution in POST /, upstream of this handler — mechanical only.) (Lines shifted +16 net in Phase 267 Plan 03: the GET /week threat-coverage comment block + its new preHandler line, upstream of this handler — mechanical only. On top of the -4 net shift Phase 101B Plan 08: four separate deep absence imports [vacation-calc, shift-leave-recalc-resolver, api/leave] merged as extra names into the existing absence-index import, collapsing 20 lines of import statements into 16 — mechanical only. On top of the -1 net shift Phase 101B Plan 07: the platform/holidays + platform/anonymize import pair merged into one platform/index.ts import. On top of the -21 net shift Phase 100B Plan 13, the -8 net shift Phase 100B Plan 12, the -15 net shift Phase 100B Plan 11, the -2 net shift Phase 100B Plan 10, the earlier +1 from Phase 100B Plan 07's `isMonthClosed` import and the +1 from Issue #241's `monthRangeUtc` import.) (Lines shifted -4 / -9 net in Phase 77b Plan 02: access-context first statement and import; findShiftConflict and its callers took one AccessContext parameter and prettier collapsed the shortened calls — mechanical only.)"
   },
   {
     "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
     "handler": "DELETE /api/v1/shifts/:id",
-    "validatedAt": 3144,
+    "validatedAt": 3158,
     "calls": [
       {
         "call": "shift.findUnique",
-        "line": 3135
+        "line": 3149
       },
       {
         "call": "shift.delete",
-        "line": 3168
+        "line": 3182
       }
     ],
-    "reason": "Same derived-field second-hop guard as the PUT /:id handler above: the shift is fetched by id (line 3147), then existingOwner = employee.findUnique({ id: existing.employeeId }) is compared at line 3156 BEFORE the shift is read or deleted — including the shift.delete at line 3180, which reuses the SAME id. (Lines shifted +16 net in Phase 267 Plan 03, same GET /week threat-coverage comment block + preHandler line noted on the PUT /:id entry above, upstream of this handler — mechanical only. On top of the -4 net shift Phase 101B Plan 08, same import-block merge noted on the PUT /:id entry above, upstream of this handler — mechanical only. On top of the -1 net shift Phase 101B Plan 07: the platform/holidays + platform/anonymize import pair merged into one platform/index.ts import, upstream of this handler. On top of the -33 net shift Phase 100B Plan 13, the -20 net shift Phase 100B Plan 12 already recorded here — no finding, mechanical only.) (Lines shifted -12 net in Phase 77b Plan 02: access-context first statement and import; findShiftConflict and its callers took one AccessContext parameter and prettier collapsed the shortened calls — mechanical only.)"
+    "reason": "Same derived-field second-hop guard as the PUT /:id handler above: the shift is fetched by id (line 3149), then existingOwner = employee.findUnique({ id: existing.employeeId }) is compared at line 3158 BEFORE the shift is read or deleted — including the shift.delete at line 3182, which reuses the SAME id. (Lines shifted +14 net in Phase 325 Plan 01 Task 1: default-salon resolution in POST /, upstream of this handler — mechanical only.) (Lines shifted +16 net in Phase 267 Plan 03, same GET /week threat-coverage comment block + preHandler line noted on the PUT /:id entry above, upstream of this handler — mechanical only. On top of the -4 net shift Phase 101B Plan 08, same import-block merge noted on the PUT /:id entry above, upstream of this handler — mechanical only. On top of the -1 net shift Phase 101B Plan 07: the platform/holidays + platform/anonymize import pair merged into one platform/index.ts import, upstream of this handler. On top of the -33 net shift Phase 100B Plan 13, the -20 net shift Phase 100B Plan 12 already recorded here — no finding, mechanical only.) (Lines shifted -12 net in Phase 77b Plan 02: access-context first statement and import; findShiftConflict and its callers took one AccessContext parameter and prettier collapsed the shortened calls — mechanical only.)"
   },
   {
     "file": "apps/api/src/contexts/platform/api/test-bootstrap.ts",

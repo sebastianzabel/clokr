@@ -118,6 +118,26 @@ export async function listSalons(
   });
 }
 
+/**
+ * Phase 325 (issue #325), D-04: the tenant's "default salon" — the earliest-created ACTIVE salon
+ * (`createdAt asc`, tie-break `id`), same ordering as {@link listSalons}. `null` when the tenant
+ * has no active salon — callers answer with a 409 `NO_ACTIVE_SALON` (routes) or fail the sync run
+ * loudly (D-15); this facade never falls back to an inactive salon at runtime (the migration's own
+ * backfill SQL has a migration-only fallback to the earliest salon of any state, pinned equal to
+ * this function's active-only rule by `apps/api/src/__tests__/shift-salon-migration.test.ts`).
+ * Once #65 exists, the Phorest sync's use of this function is replaced by the salon of the
+ * specific Phorest coupling.
+ */
+export async function findDefaultSalon(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+): Promise<Salon | null> {
+  return db.salon.findFirst({
+    where: { tenantId, isActive: true },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+}
+
 /** Count of the tenant's currently ACTIVE salons — the input to {@link isMultiSalonTenant}. */
 export async function countActiveSalons(
   db: Prisma.TransactionClient,

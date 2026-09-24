@@ -60,6 +60,10 @@ model Salon {
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
 
+  // Phase 325 (issue #325): Prisma-only back-relations, no column on Salon.
+  shifts              Shift[]
+  phorestAppointments PhorestAppointment[]
+
   @@index([tenantId])
 }
 
@@ -1313,9 +1317,16 @@ model PhorestAppointment {
   // Audit-proof: never cascade-delete employee history (CLAUDE.md CASCADE=Restrict rule).
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
+  // Phase 325 (issue #325): the appointment's salon, same tenant as the employee — enforced by the
+  // application, never re-homed by a sync. Restrict because a salon is never hard-deleted
+  // (ADR 0002 "Neuer Fremdschlüssel auf den Unterbau").
+  salonId String
+  salon   Salon  @relation(fields: [salonId], references: [id], onDelete: Restrict)
+
   // Phase 87 overlap query: appointments of an employee within a date window.
   @@index([employeeId, date])
   @@index([date])
+  @@index([salonId])
 }
 
 enum ScheduleType {
@@ -1446,6 +1457,11 @@ model Shift {
   employee           Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   templateId         String?
   template           ShiftTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  // Phase 325 (issue #325): the shift's salon, same tenant as the employee — enforced by the
+  // application, never re-homed by a sync. Restrict because a salon is never hard-deleted
+  // (ADR 0002 "Neuer Fremdschlüssel auf den Unterbau").
+  salonId            String
+  salon              Salon          @relation(fields: [salonId], references: [id], onDelete: Restrict)
   date               DateTime       @db.Date
   startTime          String // "06:00"
   endTime            String // "14:00"
@@ -1476,6 +1492,7 @@ model Shift {
   @@index([employeeId, date, deletedAt])
   // Phase 85 — supports the windowed reconcile query (origin=PHOREST, date in window).
   @@index([origin, date])
+  @@index([salonId])
 }
 
 // Phase 43 — Recurring weekly shift assignments per employee.
