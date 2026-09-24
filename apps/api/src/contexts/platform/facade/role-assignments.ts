@@ -8,6 +8,8 @@
  * read, evaluated live, never audited (there is nothing to record: no state changes). The
  * lockout guard `withRoleLockoutGuard` writes nothing itself either: it runs the CALLER's write
  * and audit inside the caller's transaction and only decides whether that transaction may commit.
+ * The one writing function, `removeRoleAssignmentsOfUser` (DSGVO anonymization, D-22), returns the
+ * removed rows so that its caller writes the audit entries.
  *
  * `userMayApply` takes FLAT parameters rather than a single destructured options object — a
  * deviation from the plan's suggested `userMayApply(db, { tenantId, userId }, permission,
@@ -119,6 +121,55 @@ export async function userMayApply(
     targetEmployeeValid,
     targetSalon,
   });
+}
+
+// ── DSGVO removal (Phase 74b, D-22) ─────────────────────────────────────────────────────────────
+
+/** One removed assignment, in the shape the caller's `DELETE` audit records as `oldValue`. */
+export type RemovedRoleAssignment = {
+  id: string;
+  userId: string;
+  accessRoleId: string;
+  roleName: string;
+  scopeType: "TENANT" | "SALONS" | "PERSONS";
+  salonIds: string[];
+  employeeIds: string[];
+};
+
+/**
+ * D-22: hard-deletes every role assignment of `userId` in `tenantId` and returns the removed rows.
+ *
+ * Called by `anonymizeEmployeeData` inside the anonymization transaction (DSGVO Art. 17). An
+ * anonymized person must not hold any right, and a leftover row would block deleting its role
+ * forever (`RoleAssignment.accessRoleId` is `onDelete: Restrict`). This module has no `app`, so the
+ * rows are returned for the caller to write one `DELETE` audit entry each. Person-scope lists of
+ * OTHER users that contain the employee's id are left alone: they hold ids only, and the
+ * resolution (`userMayApply`) ignores anonymized targets.
+ */
+export async function removeRoleAssignmentsOfUser(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  userId: string,
+): Promise<RemovedRoleAssignment[]> {
+  const rows = await db.roleAssignment.findMany({
+    where: { tenantId, userId },
+    include: { accessRole: { select: { name: true } } },
+    orderBy: { createdAt: "asc" },
+  });
+  if (rows.length === 0) return [];
+  // Delete exactly the rows loaded above, so every deletion has its audit entry.
+  await db.roleAssignment.deleteMany({
+    where: { tenantId, userId, id: { in: rows.map((row) => row.id) } },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    userId: row.userId,
+    accessRoleId: row.accessRoleId,
+    roleName: row.accessRole.name,
+    scopeType: row.scopeType,
+    salonIds: row.salonIds,
+    employeeIds: row.employeeIds,
+  }));
 }
 
 // ── Lockout protection (Phase 74b, D-17..D-19) ──────────────────────────────────────────────────

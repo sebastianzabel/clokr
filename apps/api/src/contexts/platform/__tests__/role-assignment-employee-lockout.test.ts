@@ -25,6 +25,8 @@ import { ROLE_LOCKOUT_MESSAGE } from "../role-assignment";
 
 const ROLE_MANAGE = "role:manage:ZUGEWIESEN";
 const ASSIGNMENT_MANAGE = "role-assignment:manage:ZUGEWIESEN";
+const TIME_ENTRY_READ = "time-entry:read:ZUGEWIESEN";
+const AVATAR_KEY = "avatars/74b-04-test/dummy.webp";
 
 function uniqueSuffix(label: string): string {
   return (
@@ -86,6 +88,7 @@ describe("Role lockout protection — employee triggers (Phase 74b, Issue #74)",
   let tenantB: Awaited<ReturnType<typeof seedTestData>>;
   let roleManage: Awaited<ReturnType<typeof createRole>>;
   let roleManageB: Awaited<ReturnType<typeof createRole>>;
+  let roleTimeRead: Awaited<ReturnType<typeof createRole>>;
 
   async function assignTenant(
     tenantId: string,
@@ -95,6 +98,42 @@ describe("Role lockout protection — employee triggers (Phase 74b, Issue #74)",
     return app.prisma.roleAssignment.create({
       data: { tenantId, userId, accessRoleId, scopeType: "TENANT", salonIds: [], employeeIds: [] },
     });
+  }
+
+  async function assignPersons(
+    tenantId: string,
+    userId: string,
+    accessRoleId: string,
+    employeeIds: string[],
+  ): Promise<RoleAssignment> {
+    return app.prisma.roleAssignment.create({
+      data: { tenantId, userId, accessRoleId, scopeType: "PERSONS", salonIds: [], employeeIds },
+    });
+  }
+
+  function anonymize(employeeId: string) {
+    return app.inject({
+      method: "DELETE",
+      url: `/api/v1/employees/${employeeId}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+  }
+
+  function hardDelete(employeeId: string) {
+    return app.inject({
+      method: "DELETE",
+      url: `/api/v1/employees/${employeeId}/hard-delete`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      payload: {},
+    });
+  }
+
+  /** Employee + user rows as stored, for a deep "nothing changed" comparison. */
+  async function personState(fixture: { user: { id: string }; employee: { id: string } }) {
+    return {
+      employee: await app.prisma.employee.findUnique({ where: { id: fixture.employee.id } }),
+      user: await app.prisma.user.findUnique({ where: { id: fixture.user.id } }),
+    };
   }
 
   function auditCount(entity: string, entityId: string, action: string) {
@@ -119,6 +158,7 @@ describe("Role lockout protection — employee triggers (Phase 74b, Issue #74)",
       ROLE_MANAGE,
       ASSIGNMENT_MANAGE,
     ]);
+    roleTimeRead = await createRole(app, tenantA.tenant.id, "TR", [TIME_ENTRY_READ]);
   });
 
   beforeEach(async () => {
@@ -251,5 +291,169 @@ describe("Role lockout protection — employee triggers (Phase 74b, Issue #74)",
     const person = await createUserWithEmployee(app, tenantB.tenant.id, "Ohne Zuweisung");
     const res = await deactivate(person.employee.id, tenantB.adminToken);
     expect(res.statusCode).toBe(200);
+  });
+
+  // ── Trigger: DELETE /api/v1/employees/:id (anonymize) ──────────────────────────────────────────
+
+  it("(f) anonymizing the only active tenant-wide holder answers 409 before any MinIO delete; employee, user, assignment and audit log are unchanged", async () => {
+    const holder = await createUserWithEmployee(app, tenantA.tenant.id, "Halter", {
+      avatarPath: AVATAR_KEY,
+    });
+    const assignment = await assignTenant(tenantA.tenant.id, holder.user.id, roleManage.id);
+    const stateBefore = await personState(holder);
+    const deleteSpy = vi.spyOn(app.storage, "delete").mockResolvedValue(undefined);
+
+    const res = await anonymize(holder.employee.id);
+
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({ error: ROLE_LOCKOUT_MESSAGE });
+    expect(await personState(holder)).toEqual(stateBefore);
+    expect(await app.prisma.roleAssignment.findUnique({ where: { id: assignment.id } })).toEqual(
+      assignment,
+    );
+    expect(await auditCount("Employee", holder.employee.id, "ANONYMIZE")).toBe(0);
+    expect(await auditCount("RoleAssignment", assignment.id, "DELETE")).toBe(0);
+    expect(deleteSpy, "a rolled-back anonymization deleted a MinIO object").not.toHaveBeenCalled();
+  });
+
+  it("(g) with a second holder the anonymization succeeds; every assignment of the user is removed with one DELETE audit each (D-22)", async () => {
+    const holder = await createUserWithEmployee(app, tenantA.tenant.id, "Halter", {
+      avatarPath: AVATAR_KEY,
+    });
+    const other = await createUserWithEmployee(app, tenantA.tenant.id, "Zweiter Halter");
+    const trainee = await createUserWithEmployee(app, tenantA.tenant.id, "Azubi");
+    const tenantWide = await assignTenant(tenantA.tenant.id, holder.user.id, roleManage.id);
+    const personScoped = await assignPersons(tenantA.tenant.id, holder.user.id, roleTimeRead.id, [
+      trainee.employee.id,
+    ]);
+    await assignTenant(tenantA.tenant.id, other.user.id, roleManage.id);
+    const deleteSpy = vi.spyOn(app.storage, "delete").mockResolvedValue(undefined);
+
+    const res = await anonymize(holder.employee.id);
+
+    expect(res.statusCode).toBe(204);
+    expect(await app.prisma.roleAssignment.count({ where: { userId: holder.user.id } })).toBe(0);
+    for (const [removed, roleName] of [
+      [tenantWide, roleManage.name],
+      [personScoped, roleTimeRead.name],
+    ] as const) {
+      const audits = await app.prisma.auditLog.findMany({
+        where: { entity: "RoleAssignment", entityId: removed.id, action: "DELETE" },
+      });
+      expect(audits).toHaveLength(1);
+      expect(audits[0].oldValue).toEqual({
+        userId: removed.userId,
+        accessRoleId: removed.accessRoleId,
+        roleName,
+        scopeType: removed.scopeType,
+        salonIds: removed.salonIds,
+        employeeIds: removed.employeeIds,
+      });
+      expect(audits[0].newValue).toEqual({ reason: "Anonymisierung" });
+    }
+    expect(await auditCount("Employee", holder.employee.id, "ANONYMIZE")).toBe(1);
+    // Positive control for (f): the spy does see the avatar delete on the success path.
+    expect(deleteSpy).toHaveBeenCalledWith(AVATAR_KEY);
+  });
+
+  it("(h) D-22: a trainer's person-scope list that contains the anonymized employee stays unchanged and resolves to deny for that target", async () => {
+    const trainer = await createUserWithEmployee(app, tenantA.tenant.id, "Ausbilder");
+    const trainee = await createUserWithEmployee(app, tenantA.tenant.id, "Azubi");
+    const trainerAssignment = await assignPersons(
+      tenantA.tenant.id,
+      trainer.user.id,
+      roleTimeRead.id,
+      [trainee.employee.id],
+    );
+    const target = { employeeId: trainee.employee.id };
+    expect(
+      await userMayApply(app.prisma, tenantA.tenant.id, trainer.user.id, TIME_ENTRY_READ, target),
+    ).toBe(true);
+
+    expect((await anonymize(trainee.employee.id)).statusCode).toBe(204);
+
+    expect(
+      await app.prisma.roleAssignment.findUnique({ where: { id: trainerAssignment.id } }),
+    ).toEqual(trainerAssignment);
+    expect(
+      await userMayApply(app.prisma, tenantA.tenant.id, trainer.user.id, TIME_ENTRY_READ, target),
+    ).toBe(false);
+  });
+
+  it("(i) after anonymizing the only user of a customer role, the role can be deleted (no leftover assignment blocks it)", async () => {
+    const roleX = await createRole(app, tenantA.tenant.id, "RX", [TIME_ENTRY_READ]);
+    const person = await createUserWithEmployee(app, tenantA.tenant.id, "Einzige Zuweisung");
+    await assignTenant(tenantA.tenant.id, person.user.id, roleX.id);
+
+    expect((await anonymize(person.employee.id)).statusCode).toBe(204);
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/roles/${roleX.id}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+    expect(res.statusCode).toBe(204);
+  });
+
+  // ── Trigger: DELETE /api/v1/employees/:id/hard-delete ──────────────────────────────────────────
+
+  it("(j) hard-deleting the only holder is refused earlier by the anonymization precondition; nothing changes", async () => {
+    const holder = await createUserWithEmployee(app, tenantA.tenant.id, "Halter");
+    const assignment = await assignTenant(tenantA.tenant.id, holder.user.id, roleManage.id);
+    const stateBefore = await personState(holder);
+
+    const res = await hardDelete(holder.employee.id);
+
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({ error: "Mitarbeiter muss zuerst anonymisiert werden" });
+    expect(await personState(holder)).toEqual(stateBefore);
+    expect(await app.prisma.roleAssignment.findUnique({ where: { id: assignment.id } })).toEqual(
+      assignment,
+    );
+  });
+
+  /**
+   * ADVERSARIAL fixture, built directly via Prisma and reachable through no route: an employee
+   * that already carries the anonymized first name and an exit date past every retention window,
+   * but whose user is still active and still holds a tenant-wide assignment. Real anonymization
+   * deactivates the user and removes the assignments, so on the real path the precondition in (j)
+   * refuses first. This state exists only to prove the guard itself is wired into the hard-delete
+   * transaction (D-20: the AC holds by construction).
+   */
+  async function inconsistentAnonymizedHolder() {
+    const person = await createUserWithEmployee(app, tenantA.tenant.id, "Inkonsistent", {
+      firstName: "Gelöscht",
+      exitDate: new Date("2010-01-01"),
+    });
+    const assignment = await assignTenant(tenantA.tenant.id, person.user.id, roleManage.id);
+    return { person, assignment };
+  }
+
+  it("(k) guard wiring proof: hard-deleting an (inconsistent) only holder answers 409 lockout; employee, user and assignment stay, no HARD_DELETE audit", async () => {
+    const { person, assignment } = await inconsistentAnonymizedHolder();
+    const stateBefore = await personState(person);
+
+    const res = await hardDelete(person.employee.id);
+
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({ error: ROLE_LOCKOUT_MESSAGE });
+    expect(await personState(person)).toEqual(stateBefore);
+    expect(await app.prisma.roleAssignment.findUnique({ where: { id: assignment.id } })).toEqual(
+      assignment,
+    );
+    expect(await auditCount("Employee", person.employee.id, "HARD_DELETE")).toBe(0);
+  });
+
+  it("(l) the same fixture with a second holder is hard-deleted; its assignment goes with the user", async () => {
+    const { person, assignment } = await inconsistentAnonymizedHolder();
+    const other = await createUserWithEmployee(app, tenantA.tenant.id, "Zweiter Halter");
+    await assignTenant(tenantA.tenant.id, other.user.id, roleManage.id);
+
+    const res = await hardDelete(person.employee.id);
+
+    expect(res.statusCode).toBe(204);
+    expect(await personState(person)).toEqual({ employee: null, user: null });
+    expect(await app.prisma.roleAssignment.findUnique({ where: { id: assignment.id } })).toBeNull();
+    expect(await auditCount("Employee", person.employee.id, "HARD_DELETE")).toBe(1);
   });
 });
