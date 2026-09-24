@@ -11,12 +11,13 @@
  * Phase 325 Plan 02 (issue #325), D-05/D-06/D-07/D-08/D-09 — extends the tracer above with the
  * explicit, body-supplied `salonId` on POST/PUT/bulk: tenant-scoped resolution (foreign vs
  * nonexistent byte-identical, T-100-09), the inactive-salon rule (D-07), and the bulk
- * employee-tenant guard the salon invariant needs (AC-1/AC-3).
+ * employee-tenant guard the salon invariant needs (AC-1/AC-3). Task 3 pins plan 01's D-08
+ * generate-week / copy-week / restore salon behaviour with live tests.
  */
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
-import { futureDateStr, nextWeekdayStr, addDaysStr } from "./test-dates";
+import { futureDateStr, nextWeekdayStr, addDaysStr, holidayFreeMondayStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 
 /** The next date on which a shift may actually be created (#271 — see sec-03's own comment). */
@@ -621,5 +622,245 @@ describe("POST/PUT/bulk /api/v1/shifts — explicit salonId (Phase 325 Plan 02, 
       },
     });
     expect(res.statusCode).toBe(400);
+  });
+});
+
+describe("generate-week / copy-week / restore salon behaviour — D-08 (Phase 325 Plan 02, issue #325)", () => {
+  let app: FastifyInstance;
+  const cleanupTenantIds: string[] = [];
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterAll(async () => {
+    for (const tenantId of cleanupTenantIds) {
+      try {
+        await cleanupTestData(app, tenantId);
+      } catch (err) {
+        console.error("Test cleanup failed:", err);
+      }
+    }
+  });
+
+  it("D-08: generate-week commit lands every created shift on the default salon; no active salon -> 409 NO_ACTIVE_SALON, preview still 200", async () => {
+    const seed = await seedTestData(app, "shift-salon-genweek");
+    cleanupTenantIds.push(seed.tenant.id);
+    await makeShiftEligible(app, seed.employee.id);
+
+    // A second, later-created salon — stays non-default; proves the CREATED rows land on the
+    // EARLIEST active salon, not just "whatever salon exists".
+    await createTestSalon(app.prisma, seed.tenant.id, {
+      name: "Zweitsalon Genweek",
+      createdAt: new Date(Date.now() + 60_000),
+    });
+
+    const tplRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/shifts/templates",
+      headers: { authorization: `Bearer ${seed.adminToken}` },
+      payload: { name: "D08-Tpl", startTime: "08:00", endTime: "16:00" },
+    });
+    const tplId = JSON.parse(tplRes.body).id;
+
+    const monday = holidayFreeMondayStr(14);
+    await app.inject({
+      method: "PUT",
+      url: `/api/v1/employees/${seed.employee.id}/shift-patterns`,
+      headers: { authorization: `Bearer ${seed.adminToken}` },
+      payload: { patterns: [{ dayOfWeek: 0, templateId: tplId, validFrom: "2024-06-01" }] },
+    });
+
+    const commitRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/shifts/generate-week",
+      headers: { authorization: `Bearer ${seed.adminToken}` },
+      payload: { weekStart: monday, commit: true },
+    });
+    expect(commitRes.statusCode, commitRes.body.slice(0, 300)).toBe(200);
+    const body = JSON.parse(commitRes.body);
+    expect(body.committed).toBe(true);
+    const created = body.create.filter(
+      (c: { employeeId: string }) => c.employeeId === seed.employee.id,
+    );
+    expect(created.length).toBeGreaterThan(0);
+    for (const c of created) {
+      const row = await app.prisma.shift.findUniqueOrThrow({ where: { id: c.id } });
+      expect(row.salonId).toBe(seed.salonId);
+    }
+
+    // No-active-salon tenant: preview still succeeds, commit answers 409 and writes nothing.
+    const seedNoSalon = await seedTestData(app, "shift-salon-genweek-none");
+    cleanupTenantIds.push(seedNoSalon.tenant.id);
+    await makeShiftEligible(app, seedNoSalon.employee.id);
+    await app.prisma.salon.update({
+      where: { id: seedNoSalon.salonId },
+      data: { isActive: false, deactivatedAt: new Date() },
+    });
+
+    const tplRes2 = await app.inject({
+      method: "POST",
+      url: "/api/v1/shifts/templates",
+      headers: { authorization: `Bearer ${seedNoSalon.adminToken}` },
+      payload: { name: "D08-Tpl-2", startTime: "08:00", endTime: "16:00" },
+    });
+    const tplId2 = JSON.parse(tplRes2.body).id;
+    const monday2 = holidayFreeMondayStr(15);
+    await app.inject({
+      method: "PUT",
+      url: `/api/v1/employees/${seedNoSalon.employee.id}/shift-patterns`,
+      headers: { authorization: `Bearer ${seedNoSalon.adminToken}` },
+      payload: { patterns: [{ dayOfWeek: 0, templateId: tplId2, validFrom: "2024-06-01" }] },
+    });
+
+    const previewRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/shifts/generate-week",
+      headers: { authorization: `Bearer ${seedNoSalon.adminToken}` },
+      payload: { weekStart: monday2, commit: false },
+    });
+    expect(previewRes.statusCode).toBe(200);
+
+    const before = await app.prisma.shift.count({ where: { employeeId: seedNoSalon.employee.id } });
+    const commitRes2 = await app.inject({
+      method: "POST",
+      url: "/api/v1/shifts/generate-week",
+      headers: { authorization: `Bearer ${seedNoSalon.adminToken}` },
+      payload: { weekStart: monday2, commit: true },
+    });
+    expect(commitRes2.statusCode).toBe(409);
+    expect(JSON.parse(commitRes2.body)).toEqual({
+      error: "Kein aktiver Salon vorhanden.",
+      code: "NO_ACTIVE_SALON",
+    });
+    const after = await app.prisma.shift.count({ where: { employeeId: seedNoSalon.employee.id } });
+    expect(after).toBe(before);
+  });
+
+  it("D-08: copy-week keeps the source shift's active salon, falls back to default for a since-deactivated source salon; preview 'create' items carry no salonId key", async () => {
+    const seed = await seedTestData(app, "shift-salon-copyweek");
+    cleanupTenantIds.push(seed.tenant.id);
+    await makeShiftEligible(app, seed.employee.id);
+
+    const salonB = await createTestSalon(app.prisma, seed.tenant.id, {
+      name: "Salon B Copyweek",
+      createdAt: new Date(Date.now() + 60_000),
+    });
+    const salonC = await createTestSalon(app.prisma, seed.tenant.id, {
+      name: "Salon C Copyweek (wird deaktiviert)",
+      createdAt: new Date(Date.now() + 120_000),
+    });
+
+    const sourceMonday = holidayFreeMondayStr(16);
+    const targetMonday = holidayFreeMondayStr(17);
+
+    const shiftOnB = await app.prisma.shift.create({
+      data: {
+        employeeId: seed.employee.id,
+        salonId: salonB.id,
+        date: new Date(sourceMonday),
+        startTime: "08:00",
+        endTime: "16:00",
+      },
+    });
+    const shiftOnC = await app.prisma.shift.create({
+      data: {
+        employeeId: seed.employee.id,
+        salonId: salonC.id,
+        date: new Date(addDaysStr(sourceMonday, 1)),
+        startTime: "08:00",
+        endTime: "16:00",
+      },
+    });
+
+    // Deactivate C AFTER the source shift was created on it (D-07 spirit: never a NEW shift on
+    // an inactive salon — the copy must fall back to the default, not keep C).
+    await app.prisma.salon.update({
+      where: { id: salonC.id },
+      data: { isActive: false, deactivatedAt: new Date() },
+    });
+
+    const previewRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/shifts/copy-week",
+      headers: { authorization: `Bearer ${seed.adminToken}` },
+      payload: { sourceWeekStart: sourceMonday, targetWeekStart: targetMonday, commit: false },
+    });
+    expect(previewRes.statusCode, previewRes.body.slice(0, 300)).toBe(200);
+    const previewBody = JSON.parse(previewRes.body);
+    expect(previewBody.create.length).toBeGreaterThan(0);
+    for (const item of previewBody.create) {
+      expect(Object.keys(item).sort()).toEqual(
+        [
+          "date",
+          "employeeId",
+          "endTime",
+          "label",
+          "note",
+          "sourceShiftId",
+          "startTime",
+          "templateId",
+        ].sort(),
+      );
+    }
+
+    const commitRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/shifts/copy-week",
+      headers: { authorization: `Bearer ${seed.adminToken}` },
+      payload: { sourceWeekStart: sourceMonday, targetWeekStart: targetMonday, commit: true },
+    });
+    expect(commitRes.statusCode, commitRes.body.slice(0, 300)).toBe(200);
+    const commitBody = JSON.parse(commitRes.body);
+
+    const copyOfB = commitBody.create.find(
+      (c: { sourceShiftId: string }) => c.sourceShiftId === shiftOnB.id,
+    );
+    const copyOfC = commitBody.create.find(
+      (c: { sourceShiftId: string }) => c.sourceShiftId === shiftOnC.id,
+    );
+    expect(copyOfB).toBeDefined();
+    expect(copyOfC).toBeDefined();
+
+    const rowB = await app.prisma.shift.findUniqueOrThrow({ where: { id: copyOfB.id } });
+    expect(rowB.salonId).toBe(salonB.id);
+
+    const rowC = await app.prisma.shift.findUniqueOrThrow({ where: { id: copyOfC.id } });
+    expect(rowC.salonId).toBe(seed.salonId);
+  });
+
+  it("D-08: POST /:id/restore leaves salonId untouched", async () => {
+    const seed = await seedTestData(app, "shift-salon-restore");
+    cleanupTenantIds.push(seed.tenant.id);
+    await makeShiftEligible(app, seed.employee.id);
+    const salonB = await createTestSalon(app.prisma, seed.tenant.id, {
+      name: "Salon B Restore",
+      createdAt: new Date(Date.now() + 60_000),
+    });
+
+    const monday = holidayFreeMondayStr(18);
+    const shift = await app.prisma.shift.create({
+      data: {
+        employeeId: seed.employee.id,
+        salonId: salonB.id,
+        date: new Date(monday),
+        startTime: "08:00",
+        endTime: "16:00",
+        deletedAt: new Date(),
+        deletedReason: "AUTO_BS_DAY_CLEANUP",
+      },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/shifts/${shift.id}/restore`,
+      headers: { authorization: `Bearer ${seed.adminToken}` },
+    });
+    expect(res.statusCode, res.body.slice(0, 300)).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.salonId).toBe(salonB.id);
+
+    const row = await app.prisma.shift.findUniqueOrThrow({ where: { id: shift.id } });
+    expect(row.salonId).toBe(salonB.id);
   });
 });
