@@ -75,6 +75,37 @@ function dedupeSorted(ids: readonly string[]): string[] {
   return [...new Set(ids)].sort();
 }
 
+/**
+ * A STORED row as a normalized scope for evaluation, or `null` when the row violates the D-03
+ * shape invariant: a TENANT row with any id in either list, a SALONS row without a salon or with
+ * person ids, a PERSONS row without a person or with salon ids.
+ *
+ * Phase 74b review IN-02: there is no DB CHECK constraint (D-03), so a script or fixture can write
+ * such a row. Evaluation must fail closed on it — the row grants nothing — rather than throw like
+ * {@link normalizeRoleAssignmentScope} (which guards WRITES) and turn every permission check of
+ * that user into a 500. A malformed TENANT row is rejected too, not read as tenant-wide: its
+ * lists show it was not written through the API, so which reach was meant is unknown.
+ */
+export function storedRoleAssignmentScope(row: {
+  readonly scopeType: RoleAssignmentScopeType;
+  readonly salonIds: readonly string[];
+  readonly employeeIds: readonly string[];
+}): NormalizedRoleAssignmentScope | null {
+  if (row.scopeType === "TENANT") {
+    return row.salonIds.length === 0 && row.employeeIds.length === 0
+      ? { scopeType: "TENANT", salonIds: [], employeeIds: [] }
+      : null;
+  }
+  if (row.scopeType === "SALONS") {
+    return row.salonIds.length > 0 && row.employeeIds.length === 0
+      ? { scopeType: "SALONS", salonIds: dedupeSorted(row.salonIds), employeeIds: [] }
+      : null;
+  }
+  return row.employeeIds.length > 0 && row.salonIds.length === 0
+    ? { scopeType: "PERSONS", salonIds: [], employeeIds: dedupeSorted(row.employeeIds) }
+    : null;
+}
+
 /** The inverse of {@link normalizeRoleAssignmentScope}: a stored row back to the API shape. */
 export function roleAssignmentScopeOf(row: {
   readonly scopeType: RoleAssignmentScopeType;

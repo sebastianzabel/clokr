@@ -16,6 +16,7 @@ import type { Prisma, RoleAssignment } from "@clokr/db";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import { roleNameKey, normalizeRolePermissions } from "../access-role";
 import { DEFAULT_SALON_OPENING_HOURS } from "../facade/salons";
+import { countGuardedPermissionHolders, userMayApply } from "../facade/role-assignments";
 
 const TIME_ENTRY_READ = "time-entry:read:ZUGEWIESEN";
 
@@ -589,5 +590,78 @@ describe("Phase 74b review fixes", () => {
       expect(audits[0].newValue).toEqual({ reason: "Endgültige Löschung" });
       expect(audits[0].userId).toBe(tenantA.adminUser.id);
     }
+  });
+
+  // ── IN-02: a malformed stored assignment fails closed (deny), it never throws ──────────────────
+
+  /** Writes a row that violates the D-03 shape invariant — reachable only via direct DB writes. */
+  function writeMalformed(
+    userId: string,
+    accessRoleId: string,
+    shape: {
+      scopeType: "TENANT" | "SALONS" | "PERSONS";
+      salonIds: string[];
+      employeeIds: string[];
+    },
+  ) {
+    return app.prisma.roleAssignment.create({
+      data: { tenantId: tenantA.tenant.id, userId, accessRoleId, ...shape },
+    });
+  }
+
+  it("IN-02: a SALONS row with an empty salon list denies for that row instead of throwing; the user's valid assignments still apply", async () => {
+    const holder = await createUserWithEmployee(app, tenantA.tenant.id, "Fehlform");
+    await writeMalformed(holder.user.id, roleX.id, {
+      scopeType: "SALONS",
+      salonIds: [],
+      employeeIds: [],
+    });
+
+    await expect(
+      userMayApply(app.prisma, tenantA.tenant.id, holder.user.id, TIME_ENTRY_READ, {
+        salonId: salonA1.id,
+      }),
+    ).resolves.toBe(false);
+
+    await assignTenant(holder.user.id, roleY.id);
+    await expect(
+      userMayApply(app.prisma, tenantA.tenant.id, holder.user.id, TIME_ENTRY_READ, {}),
+    ).resolves.toBe(true);
+  });
+
+  it("IN-02: a PERSONS row with an empty person list denies instead of throwing", async () => {
+    const holder = await createUserWithEmployee(app, tenantA.tenant.id, "Fehlform");
+    const target = await createUserWithEmployee(app, tenantA.tenant.id, "Ziel");
+    await writeMalformed(holder.user.id, roleX.id, {
+      scopeType: "PERSONS",
+      salonIds: [],
+      employeeIds: [],
+    });
+
+    await expect(
+      userMayApply(app.prisma, tenantA.tenant.id, holder.user.id, TIME_ENTRY_READ, {
+        employeeId: target.employee.id,
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it("IN-02: a TENANT row that also carries a salon list is malformed and grants nothing — neither a right nor holder status", async () => {
+    const holder = await createUserWithEmployee(app, tenantA.tenant.id, "Fehlform");
+    const roleManage = await createRole(app, tenantA.tenant.id, "RMFehlform", [
+      "role:manage:ZUGEWIESEN",
+      "role-assignment:manage:ZUGEWIESEN",
+    ]);
+    await writeMalformed(holder.user.id, roleManage.id, {
+      scopeType: "TENANT",
+      salonIds: [salonA1.id],
+      employeeIds: [],
+    });
+
+    await expect(
+      userMayApply(app.prisma, tenantA.tenant.id, holder.user.id, "role:manage:ZUGEWIESEN", {}),
+    ).resolves.toBe(false);
+    const holders = await countGuardedPermissionHolders(app.prisma, tenantA.tenant.id);
+    expect(holders["role:manage:ZUGEWIESEN"]).toBe(0);
+    expect(holders["role-assignment:manage:ZUGEWIESEN"]).toBe(0);
   });
 });

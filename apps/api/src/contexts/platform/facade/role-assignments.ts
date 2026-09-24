@@ -34,7 +34,7 @@ import {
   countHoldersPerGuardedPermission,
   decideUserMayApply,
   findLockedOutPermission,
-  normalizeRoleAssignmentScope,
+  storedRoleAssignmentScope,
   type GuardedPermission,
   type NormalizedRoleAssignmentScope,
   type RoleAssignmentTarget,
@@ -46,8 +46,9 @@ import {
  * Steps: (a) resolve the catalog entry for `permission` — an unknown key denies. (b) confirm the
  * user is active and belongs to a non-anonymized employee of the tenant — otherwise deny. (c)
  * load the user's assignments in the tenant, keep only those whose role grants `permission` via
- * `roleGrants` — the ONE role-evaluation path (AK-73-7) — and normalize their scopes; no granting
- * assignment denies before any target lookup. (d) resolve the target's live facts (employee
+ * `roleGrants` — the ONE role-evaluation path (AK-73-7) — and normalize their scopes, skipping a
+ * stored row that violates the D-03 shape (fail closed, IN-02); no granting assignment denies
+ * before any target lookup. (d) resolve the target's live facts (employee
  * validity, salon tenant-membership and activity). (e) hand everything to the pure decision table
  * `decideUserMayApply`.
  */
@@ -84,15 +85,11 @@ export async function userMayApply(
     const roleBelongsHere = accessRole.tenantId === null || accessRole.tenantId === tenantId;
     if (!roleBelongsHere) continue;
     if (!roleGrants(accessRole, permission)) continue;
-    grantingScopes.push(
-      normalizeRoleAssignmentScope(
-        assignment.scopeType === "TENANT"
-          ? { type: "TENANT" }
-          : assignment.scopeType === "SALONS"
-            ? { type: "SALONS", salonIds: assignment.salonIds }
-            : { type: "PERSONS", employeeIds: assignment.employeeIds },
-      ),
-    );
+    // 74b review IN-02: a row that violates the D-03 shape (no DB CHECK constraint exists)
+    // contributes nothing — fail closed for that row, never throw for the whole check.
+    const scope = storedRoleAssignmentScope(assignment);
+    if (scope === null) continue;
+    grantingScopes.push(scope);
   }
   if (grantingScopes.length === 0) return false;
 
@@ -176,8 +173,8 @@ export async function removeRoleAssignmentsOfUser(
 
 /**
  * D-17: the number of distinct holders per guarded permission in `tenantId`, as seen by `db`. A
- * holder is an active user whose employee belongs to the tenant, with a TENANT-scope assignment in
- * the tenant whose role grants the permission. Reading through `db` means that, inside a
+ * holder is an active user whose employee belongs to the tenant, with a well-formed TENANT-scope
+ * assignment in the tenant whose role grants the permission. Reading through `db` means that, inside a
  * transaction, the count sees that transaction's own uncommitted writes.
  */
 export async function countGuardedPermissionHolders(
@@ -188,6 +185,11 @@ export async function countGuardedPermissionHolders(
     where: {
       tenantId,
       scopeType: "TENANT",
+      // 74b review IN-02: only a well-formed TENANT row (both lists empty, D-03) makes a holder
+      // — the same rows `userMayApply` evaluates. A malformed one grants nothing there, so
+      // counting it here would let the guard remove the last holder who actually has the right.
+      salonIds: { isEmpty: true },
+      employeeIds: { isEmpty: true },
       user: { isActive: true, employee: { tenantId } },
     },
     select: {
