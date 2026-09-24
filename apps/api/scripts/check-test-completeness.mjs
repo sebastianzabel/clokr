@@ -508,8 +508,21 @@ import { readFileSync } from "node:fs";
 // (`pnpm --filter @clokr/api test`): `Test Files 284 passed (284)`, `Tests 3463 passed |
 // 3 skipped (3466)`, zero failures. That is 69b's hand-summed 3450 + this phase's 14 = 3464,
 // plus 2 runtime cases the 69b sum did not see — taken from the reporter, not added by hand.
-const MIN_FILES = 284;
-const MIN_TESTS = 3466;
+//
+// Phase 77b (Issue #77): the branch base 28009b3f measured 282 / 3451 (fully green run before any
+// change). The phase adds four test files — `src/__tests__/access-context-missing.test.ts` (5),
+// `src/contexts/platform/__tests__/access-context.test.ts` (21),
+// `src/contexts/platform/__tests__/employee-scope.test.ts` (15) and
+// `src/__tests__/route-employee-scope-literals.test.ts` (4) — plus ONE runtime case the diff does
+// not show: the new walker guard becomes a row of `lint-guard-vacuity.test.ts`'s
+// `describe.each(provedGuards())` whole-set red proof (the table-driven undercount named above).
+// Re-measured after merging `origin/main` @ b82e2179 (#328, phase 72b, floor 284 / 3466) into the
+// branch, on the MERGED tree (`pnpm --filter @clokr/api test:coverage`): `Test Files 288 passed
+// (288)`, `Tests 3509 passed | 3 skipped (3512)`, zero failures — `vitest-report.json` agrees
+// (`testResults.length` 288, `numTotalTests` 3512). 284 + 4 = 288 and 3466 + 45 + 1 = 3512
+// reconcile exactly, but the numbers below are read from the reporter, not summed from a diff.
+const MIN_FILES = 288;
+const MIN_TESTS = 3512;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
