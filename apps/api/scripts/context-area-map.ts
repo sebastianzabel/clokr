@@ -137,6 +137,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/notification-email-policy.ts": "unterbau", // per-type email-toggle registry for Notification — Unterbau's own model
   "src/contexts/platform/password-policy.ts": "unterbau", // User/auth password rules
   "src/contexts/platform/permission-catalog.ts": "unterbau", // Phase 72b (Issue #72) — the permission catalog; ADR 0001 names permissions as part of the shared substrate, and the catalog has no model of its own
+  "src/contexts/platform/prisma-foreign-key.ts": "unterbau", // Phase 74b review WR-02/WR-03 — reads the violated FK constraint name off a Prisma P2003 error; pure module, no model, no Prisma call; its callers are Unterbau routes (role-assignments.ts, roles.ts)
   "src/contexts/platform/role-assignment.ts": "unterbau", // Phase 74b (issue #74) — pure core reasoning over RoleAssignment/AccessRole/Salon/Employee/User, all Unterbau models
   "src/contexts/platform/school-holidays-client.ts": "unterbau", // fetches SchoolHolidayPeriod data from the external OpenHolidays/schulferien-api
 

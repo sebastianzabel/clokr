@@ -28,7 +28,8 @@ import {
   roleAssignmentScopeOf,
   type NormalizedRoleAssignmentScope,
 } from "../role-assignment";
-import { withRoleLockoutGuard } from "../facade/role-assignments";
+import { lockTenantForRoleChanges, withRoleLockoutGuard } from "../facade/role-assignments";
+import { foreignKeyConstraintOf } from "../prisma-foreign-key";
 
 // D-09: plain `z.string().min(1)`, NOT `.uuid()` — both T-100-09 probe arms (a real foreign id and
 // a shaped-but-nonexistent id) must pass the same validation, same idiom as `roles.ts`'s
@@ -83,6 +84,10 @@ const EMPLOYEE_NOT_FOUND = "Mitarbeiter nicht gefunden";
 const ASSIGNMENT_NOT_FOUND = "Rollenzuweisung nicht gefunden";
 const DUPLICATE_ASSIGNMENT_MESSAGE =
   "Diese Rolle ist dem Nutzer mit diesem Scope-Typ bereits zugewiesen.";
+
+/** The RoleAssignment foreign keys a racing delete can violate on insert (migration 20260924145050). */
+const ACCESS_ROLE_FOREIGN_KEY = "RoleAssignment_accessRoleId_fkey";
+const USER_FOREIGN_KEY = "RoleAssignment_userId_fkey";
 
 interface AccessRoleRow {
   id: string;
@@ -184,6 +189,12 @@ async function auditRoleAssignment(
     tx: entry.tx,
   });
 }
+
+/** What the POST transaction decided — mapped onto the reply outside the transaction. */
+type CreateOutcome =
+  | { kind: "REFERENCE_NOT_FOUND"; resolution: ReferenceResolution }
+  | { kind: "DUPLICATE" }
+  | { kind: "CREATED"; row: RoleAssignmentRow };
 
 /** What the guarded PATCH transaction decided — mapped onto the reply outside the transaction. */
 type PatchOutcome =
@@ -299,55 +310,77 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const scope = normalizeRoleAssignmentScope(body.scope);
 
-      const resolution = await resolveAssignmentReferences(app.prisma, tenantId, {
-        userId: body.userId,
-        accessRoleId: body.accessRoleId,
-        scope,
-      });
-      if (resolution.status !== "OK") {
-        return sendReferenceNotFound(reply, resolution);
-      }
-      const { accessRole } = resolution;
-
       try {
-        const created = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-          const duplicate = await tx.roleAssignment.findFirst({
-            where: {
-              tenantId,
+        // 74b review WR-02: the reference checks and the insert run in ONE transaction that first
+        // takes the tenant row lock every guarded role change takes (lockTenantForRoleChanges,
+        // also the first statement of withRoleLockoutGuard). Anonymizing the grantee holds that
+        // lock too, so the "user not anonymized" check can no longer pass before an anonymization
+        // commits and the insert land after it (D-22: an anonymized person holds no rights). The
+        // checks read on `tx` after the lock, i.e. what the previous lock holder committed.
+        const outcome = await app.prisma.$transaction(
+          async (tx: Prisma.TransactionClient): Promise<CreateOutcome> => {
+            await lockTenantForRoleChanges(tx, tenantId);
+
+            const resolution = await resolveAssignmentReferences(tx, tenantId, {
               userId: body.userId,
               accessRoleId: body.accessRoleId,
-              scopeType: scope.scopeType,
-            },
-          });
-          if (duplicate) return null;
+              scope,
+            });
+            if (resolution.status !== "OK") return { kind: "REFERENCE_NOT_FOUND", resolution };
 
-          const row = await tx.roleAssignment.create({
-            data: {
-              tenantId,
-              userId: body.userId,
-              accessRoleId: body.accessRoleId,
-              scopeType: scope.scopeType,
-              salonIds: scope.salonIds,
-              employeeIds: scope.employeeIds,
-            },
-            include: { accessRole: true },
-          });
-          await auditRoleAssignment(app, req, {
-            action: "CREATE",
-            entityId: row.id,
-            newValue: toAuditValue(row, accessRole.name),
-            tx,
-          });
-          return row;
-        });
+            const duplicate = await tx.roleAssignment.findFirst({
+              where: {
+                tenantId,
+                userId: body.userId,
+                accessRoleId: body.accessRoleId,
+                scopeType: scope.scopeType,
+              },
+            });
+            if (duplicate) return { kind: "DUPLICATE" };
 
-        if (!created) {
-          return reply.code(409).send({ error: DUPLICATE_ASSIGNMENT_MESSAGE });
+            const row = await tx.roleAssignment.create({
+              data: {
+                tenantId,
+                userId: body.userId,
+                accessRoleId: body.accessRoleId,
+                scopeType: scope.scopeType,
+                salonIds: scope.salonIds,
+                employeeIds: scope.employeeIds,
+              },
+              include: { accessRole: true },
+            });
+            await auditRoleAssignment(app, req, {
+              action: "CREATE",
+              entityId: row.id,
+              newValue: toAuditValue(row, resolution.accessRole.name),
+              tx,
+            });
+            return { kind: "CREATED", row };
+          },
+        );
+
+        switch (outcome.kind) {
+          case "REFERENCE_NOT_FOUND":
+            return sendReferenceNotFound(reply, outcome.resolution);
+          case "DUPLICATE":
+            return reply.code(409).send({ error: DUPLICATE_ASSIGNMENT_MESSAGE });
+          case "CREATED":
+            return reply.code(201).send(toRoleAssignmentResponse(outcome.row));
         }
-        return reply.code(201).send(toRoleAssignmentResponse(created));
       } catch (err: unknown) {
         if (isPrismaErrorCode(err, "P2002")) {
           return reply.code(409).send({ error: DUPLICATE_ASSIGNMENT_MESSAGE });
+        }
+        // 74b review WR-02: a referenced row that vanished between the check and the insert. A
+        // customer role delete does not take the tenant lock, so its foreign key is the backstop
+        // here; it answers the same 404 as a role that was never there. Any other P2003 (e.g. the
+        // audit insert's) is not a missing reference and is rethrown.
+        const constraint = foreignKeyConstraintOf(err);
+        if (constraint === ACCESS_ROLE_FOREIGN_KEY) {
+          return reply.code(404).send({ error: ROLE_NOT_FOUND });
+        }
+        if (constraint === USER_FOREIGN_KEY) {
+          return reply.code(404).send({ error: USER_NOT_FOUND });
         }
         throw err;
       }

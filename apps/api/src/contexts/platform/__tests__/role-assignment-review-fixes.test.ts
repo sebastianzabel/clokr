@@ -12,7 +12,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
-import type { RoleAssignment } from "@clokr/db";
+import type { Prisma, RoleAssignment } from "@clokr/db";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import { roleNameKey, normalizeRolePermissions } from "../access-role";
 import { DEFAULT_SALON_OPENING_HOURS } from "../facade/salons";
@@ -61,6 +61,41 @@ async function createRole(
 }
 
 type TransactionFn = (...args: unknown[]) => Promise<unknown>;
+type InteractiveTransactionFn = (
+  fn: (tx: Prisma.TransactionClient) => Promise<unknown>,
+  options?: unknown,
+) => Promise<unknown>;
+
+/** Reads a property off `target` and binds a function to it, so Prisma's `this` stays intact. */
+function forward(target: object, prop: string | symbol): unknown {
+  const value = (target as Record<string | symbol, unknown>)[prop];
+  return typeof value === "function" ? value.bind(target) : value;
+}
+
+/**
+ * A transaction client whose `roleAssignment.create` runs `hook` first — the window between the
+ * route's own reference check and its insert, inside the route's transaction.
+ */
+function beforeRoleAssignmentCreate(
+  tx: Prisma.TransactionClient,
+  hook: () => Promise<unknown>,
+): Prisma.TransactionClient {
+  const delegate = new Proxy(tx.roleAssignment, {
+    get(target, prop) {
+      const value = forward(target, prop);
+      if (prop !== "create") return value;
+      return async (args: unknown) => {
+        await hook();
+        return (value as (a: unknown) => Promise<unknown>)(args);
+      };
+    },
+  });
+  return new Proxy(tx, {
+    get(target, prop) {
+      return prop === "roleAssignment" ? delegate : forward(target, prop);
+    },
+  });
+}
 
 describe("Phase 74b review fixes", () => {
   let app: FastifyInstance;
@@ -79,6 +114,31 @@ describe("Phase 74b review fixes", () => {
       await concurrentWrite();
       return realTransaction(...args);
     }) as never);
+  }
+
+  /** Hands the NEXT `app.prisma.$transaction` callback a client wrapped by `wrap`. */
+  function wrapNextTransactionClient(
+    wrap: (tx: Prisma.TransactionClient) => Prisma.TransactionClient,
+  ) {
+    const realTransaction = app.prisma.$transaction.bind(
+      app.prisma,
+    ) as unknown as InteractiveTransactionFn;
+    vi.spyOn(app.prisma, "$transaction").mockImplementationOnce((async (
+      fn: (tx: Prisma.TransactionClient) => Promise<unknown>,
+      options?: unknown,
+    ) => realTransaction((tx) => fn(wrap(tx)), options)) as never);
+  }
+
+  function postAssignment(payload: object) {
+    return app.inject({
+      method: "POST",
+      url: "/api/v1/role-assignments",
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify(payload),
+    });
   }
 
   function assignTenant(userId: string, accessRoleId: string): Promise<RoleAssignment> {
@@ -211,5 +271,61 @@ describe("Phase 74b review fixes", () => {
     const audits = await assignmentAudits(assignment.id, "DELETE");
     expect(audits).toHaveLength(1);
     expect(audits[0].oldValue).toMatchObject({ scopeType: "SALONS", salonIds: [salonA1.id] });
+  });
+
+  // ── WR-02: POST is serialised against anonymization and maps a vanished reference to 404 ──────
+
+  it("WR-02: a grant racing the anonymization of its grantee answers 404 'Nutzer nicht gefunden' and leaves no assignment (D-22)", async () => {
+    const grantee = await createUserWithEmployee(app, tenantA.tenant.id, "Grantee");
+    beforeNextTransaction(async () => {
+      const anonymized = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/employees/${grantee.employee.id}`,
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      });
+      expect(anonymized.statusCode, anonymized.body.slice(0, 400)).toBe(204);
+    });
+
+    const res = await postAssignment({
+      userId: grantee.user.id,
+      accessRoleId: roleX.id,
+      scope: { type: "TENANT" },
+    });
+
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(404);
+    expect(JSON.parse(res.body)).toEqual({ error: "Nutzer nicht gefunden" });
+    expect(
+      await app.prisma.roleAssignment.count({ where: { userId: grantee.user.id } }),
+      "an anonymized user holds a role assignment",
+    ).toBe(0);
+  });
+
+  it("WR-02: a customer role deleted between the reference check and the insert answers 404 'Rolle nicht gefunden', not 500", async () => {
+    const grantee = await createUserWithEmployee(app, tenantA.tenant.id, "Grantee");
+    const doomedRole = await createRole(app, tenantA.tenant.id, "RDoomed", [TIME_ENTRY_READ]);
+    wrapNextTransactionClient((tx) =>
+      beforeRoleAssignmentCreate(tx, () =>
+        app.prisma.accessRole.delete({ where: { id: doomedRole.id } }),
+      ),
+    );
+
+    const res = await postAssignment({
+      userId: grantee.user.id,
+      accessRoleId: doomedRole.id,
+      scope: { type: "TENANT" },
+    });
+
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(404);
+    expect(JSON.parse(res.body)).toEqual({ error: "Rolle nicht gefunden" });
+    expect(await app.prisma.roleAssignment.count({ where: { userId: grantee.user.id } })).toBe(0);
+    expect(
+      await app.prisma.auditLog.count({
+        where: {
+          entity: "RoleAssignment",
+          action: "CREATE",
+          newValue: { path: ["userId"], equals: grantee.user.id },
+        },
+      }),
+    ).toBe(0);
   });
 });

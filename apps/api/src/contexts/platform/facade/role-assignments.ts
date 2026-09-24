@@ -199,6 +199,27 @@ export async function countGuardedPermissionHolders(
 }
 
 /**
+ * D-19: takes the tenant row lock that serialises every change to the tenant's role assignments,
+ * for the rest of the caller's transaction. MUST be called on the transaction client of an
+ * interactive `$transaction`; the lock is released at commit or rollback.
+ *
+ * {@link withRoleLockoutGuard} takes it first. A write that cannot decrease any holder count (a
+ * grant) needs no before/after count but still needs the lock: without it, `POST
+ * /role-assignments` could check "user not anonymized" before a concurrent anonymization commits
+ * and insert after it, leaving an anonymized person with an assignment (74b review WR-02, D-22).
+ * Every statement after the lock reads a fresh READ COMMITTED snapshot, so it sees what the
+ * previous lock holder committed.
+ *
+ * Lock mode `FOR NO KEY UPDATE`, see {@link withRoleLockoutGuard} for why not `FOR UPDATE`.
+ */
+export async function lockTenantForRoleChanges(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+): Promise<void> {
+  await db.$queryRaw`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId} FOR NO KEY UPDATE`;
+}
+
+/**
  * D-19: runs `write` under the lockout rule and returns its result.
  *
  * MUST be called inside an interactive `$transaction`, with the SAME client the write (and its
@@ -206,8 +227,8 @@ export async function countGuardedPermissionHolders(
  * after-count must see the write's uncommitted effect. Counting on another client would read the
  * pre-write state and never fire (74b-RESEARCH Pitfall 9).
  *
- * Order: lock the tenant row `FOR NO KEY UPDATE`, which serialises every guarded change in the
- * tenant. Then count holders, run `write`, and count again. When a guarded permission went from
+ * Order: lock the tenant row `FOR NO KEY UPDATE` ({@link lockTenantForRoleChanges}), which
+ * serialises every guarded change in the tenant. Then count holders, run `write`, and count again. When a guarded permission went from
  * >= 1 holders to 0 (D-18), throw {@link RoleLockoutError}. The throw rolls back the write AND its
  * audit row. Every caller maps the error to 409 `ROLE_LOCKOUT_MESSAGE`.
  *
@@ -223,7 +244,7 @@ export async function withRoleLockoutGuard<T>(
   tenantId: string,
   write: () => Promise<T>,
 ): Promise<T> {
-  await db.$queryRaw`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId} FOR NO KEY UPDATE`;
+  await lockTenantForRoleChanges(db, tenantId);
   const before = await countGuardedPermissionHolders(db, tenantId);
   const result = await write();
   const after = await countGuardedPermissionHolders(db, tenantId);
