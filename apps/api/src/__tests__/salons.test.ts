@@ -704,32 +704,68 @@ describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
       },
     });
 
-    // tx1 deactivates X and deliberately does not resolve immediately.
+    // Phase 64b review (WR-05): synchronised on observed database state, never on a fixed sleep.
+    // tx1 deactivates X and then HOLDS its transaction open (and with it the FOR UPDATE lock on
+    // the tenant's salon rows) until the test releases it — but only after it has told the test
+    // its backend pid and that deactivateSalon has returned, i.e. that the lock is held.
     let releaseTx1: (() => void) | undefined;
     const tx1HoldGate = new Promise<void>((resolve) => {
       releaseTx1 = resolve;
     });
+    let signalTx1Locked: ((pid: number) => void) | undefined;
+    const tx1Locked = new Promise<number>((resolve) => {
+      signalTx1Locked = resolve;
+    });
     const tx1Promise = app.prisma.$transaction(
       async (tx) => {
+        const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
         const result = await deactivateSalon(tx, tenantA.tenant.id, salonX.id);
+        signalTx1Locked?.(pid);
         await tx1HoldGate;
         return result;
       },
-      { timeout: 15000 },
+      { timeout: 20000 },
     );
+    const tx1Pid = await tx1Locked;
 
-    // Give tx1 time to acquire the FOR UPDATE lock before starting tx2.
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    // tx2 reports its own backend pid BEFORE it reaches the lock, so the test can watch it wait.
+    let signalTx2Pid: ((pid: number) => void) | undefined;
+    const tx2PidKnown = new Promise<number>((resolve) => {
+      signalTx2Pid = resolve;
+    });
+    let tx2Settled = false;
+    const tx2Promise = app.prisma
+      .$transaction(
+        async (tx) => {
+          const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+          signalTx2Pid?.(pid);
+          return deactivateSalon(tx, tenantA.tenant.id, salonY.id);
+        },
+        { timeout: 20000 },
+      )
+      .finally(() => {
+        tx2Settled = true;
+      });
+    const tx2Pid = await tx2PidKnown;
 
-    const tx2Promise = app.prisma.$transaction((tx) =>
-      deactivateSalon(tx, tenantA.tenant.id, salonY.id),
-    );
+    // Poll until PostgreSQL reports tx2 as blocked by tx1 (bounded). Without the FOR UPDATE lock
+    // tx2 is never blocked — it finishes on its own and the poll times out, which fails below.
+    const deadline = Date.now() + 10000;
+    let tx2BlockedByTx1 = false;
+    while (!tx2Settled && Date.now() < deadline) {
+      const [{ blockers }] = await app.prisma.$queryRaw<{ blockers: number[] }[]>`
+        SELECT pg_blocking_pids(${tx2Pid}::int) AS blockers`;
+      if (blockers.includes(tx1Pid)) {
+        tx2BlockedByTx1 = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
 
-    // tx2 must still be blocked ~500ms later, waiting on tx1's row lock.
-    await new Promise((resolve) => setTimeout(resolve, 500));
     releaseTx1?.();
-
     const [result1, result2] = await Promise.all([tx1Promise, tx2Promise]);
+
+    expect(tx2BlockedByTx1, "tx2 was never observed waiting on tx1's row lock").toBe(true);
     expect(result1.status).toBe("OK");
     expect(result2.status).toBe("LAST_ACTIVE_SALON");
 
