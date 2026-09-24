@@ -18,6 +18,23 @@
  *
  * A `Salon` is never hard-deleted (D-06) — deactivation only (`isActive` / `deactivatedAt`). This
  * module therefore has, and will only ever have, no delete function.
+ *
+ * ── Salon rules (Phase 64b, Issue #64) ────────────────────────────────────────────────────────
+ * - Salon is the Unterbau level below Tenant, read and written only through this module
+ *   (re-exported from `contexts/platform/index.ts`) — never a direct table access from another
+ *   context (ADR 0001).
+ * - Every function here requires `tenantId`; there is no untenanted read or write.
+ * - `openingHours` uses 0 = Monday … 6 = Sunday — NOT `WorkSchedule.workDays`'s encoding.
+ * - A Salon is never hard-deleted — only deactivate/activate; the last active salon of a tenant
+ *   cannot be deactivated.
+ * - Multisalon means MORE THAN ONE active salon (`isMultiSalonTenant()`) — a derived read, never
+ *   a config flag.
+ * - `TenantConfig.storeHours` is deprecated: no new code reads it. The shift check
+ *   (`contexts/scheduling/api/shifts.ts`) keeps reading it until #325, and
+ *   `PUT /api/v1/settings/work` mirrors it into a tenant's single active salon in the meantime
+ *   (D-16) — both pinned by `store-hours-readers.test.ts`'s living allowlist.
+ * - Every tenant-creating path (`seed.ts`, `seed-demo.ts`, `test-bootstrap.ts`) creates that
+ *   tenant's default salon in the same step (D-18).
  */
 import type { Prisma, Salon } from "@clokr/db";
 import { z } from "zod";
