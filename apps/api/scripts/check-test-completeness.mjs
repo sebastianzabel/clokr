@@ -541,8 +541,18 @@ import { readFileSync } from "node:fs";
 // `store-hours-readers.test.ts`) plus cases in `t100-09-oracle-probe.test.ts`,
 // `test-bootstrap.test.ts` and `lint-facade-signatures.test.ts`; 291 + 4 = 295. Numbers read from
 // the reporter, not summed from a diff.
-const MIN_FILES = 295;
-const MIN_TESTS = 3611;
+//
+// Phase 74b (Issue #74), 2026-09-24: re-measured on the branch tree `feat/74-rollenzuweisung`
+// (branched from `main` @ c3777eb0, phase 64b merged) BEFORE merging the parallel phases 67b and
+// 325 (`pnpm --filter @clokr/api test`): `Test Files 299 passed (299)`, `Tests 3705 passed | 3
+// skipped (3708)`, zero failures — `vitest-report.json` agrees (`testResults.length` 299,
+// `numTotalTests` 3708). Phase 74b's own contribution is four new files (`role-assignment.test.ts`,
+// `role-assignments.test.ts`, `role-assignment-lockout.test.ts`,
+// `role-assignment-employee-lockout.test.ts`) plus cases in existing files; 295 + 4 = 299. Numbers
+// read from the reporter, not summed from a diff. Merging `origin/main` with 67b / 325 requires
+// re-measuring on the merged tree.
+const MIN_FILES = 299;
+const MIN_TESTS = 3708;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

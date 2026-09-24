@@ -1,9 +1,9 @@
 # Permission-Katalog: Ressource × Aktion × Reichweite
 
 **Status:** gültig ab Phase 72b (Issue #72)
-**Codestand der Belege:** `main` @ `bea6b5c7`, die `contexts/platform/api/roles.ts`- und
-`contexts/platform/api/role-assignments.ts`-Zeilen aus Phase 74b (Issue #74) auf Branch
-`feat/74-rollenzuweisung`
+**Codestand der Belege:** `main` @ `bea6b5c7`, die `contexts/platform/api/roles.ts`-,
+`contexts/platform/api/role-assignments.ts`- und `contexts/platform/api/employees.ts`-Zeilen aus
+Phase 74b (Issue #74) auf Branch `feat/74-rollenzuweisung`
 
 Alle Datei- und Zeilenangaben in diesem Dokument beziehen sich auf diesen Commit. Sie sind Belege,
 keine Wegbeschreibung — in einem späteren Stand kann die Zeile verschoben sein, die Zuordnung muss
@@ -110,7 +110,7 @@ Routen, die nur eine Anmeldung verlangen und auf die eigenen Daten filtern. `sal
 | `employee:read:EIGENE`              | Die eigenen Stammdaten lesen (`GET /employees/:id` für sich selbst).                                                                                                                                                                                                   | Stammdaten anderer Mitarbeiter und die Mitarbeiterliste; den eigenen Vertrag (`contract:read`); die eigenen Stammdaten ändern (`employee:update`).                                                                                                                                                        |
 | `employee:read:ZUGEWIESEN`          | Die Mitarbeiterliste und die Stammdaten der Mitarbeiter im Scope lesen (`GET /employees`, `GET /employees/:id`, `GET /settings/employees`).                                                                                                                            | Anonymisierte Mitarbeiter einblenden (`employee:anonymize`); Verträge, Zeiteinträge, Saldo und Abwesenheiten — dafür gibt es eigene Permissions; nichts außerhalb des Scopes der Zuweisung.                                                                                                               |
 | `employee:create:ZUGEWIESEN`        | Neue Mitarbeiter anlegen (`POST /employees`), einschließlich Einladung und erstem Arbeitszeitmodell ab dem Eintrittsdatum.                                                                                                                                             | Mitarbeiter per Datei importieren (`employee:import`); spätere Vertragswechsel (`contract:update`); Rollen vergeben — das Setzen der Rolle geht künftig über `role-assignment:manage` (#74).                                                                                                              |
-| `employee:update:ZUGEWIESEN`        | Die Stammdaten eines Mitarbeiters im Scope ändern (`PATCH /employees/:id`), z. B. Name, Personalnummer, Eintritts- und Austrittsdatum, NFC-Karte.                                                                                                                      | Die Rolle setzen oder ändern — künftig `role-assignment:manage`, heute noch über dieselbe Route (`employees.ts:596`); den Vertrag ändern (`contract:update`); den Zugang sperren oder freigeben (`employee:manage-access`); anonymisieren (`employee:anonymize`).                                         |
+| `employee:update:ZUGEWIESEN`        | Die Stammdaten eines Mitarbeiters im Scope ändern (`PATCH /employees/:id`), z. B. Name, Personalnummer, Eintritts- und Austrittsdatum, NFC-Karte.                                                                                                                      | Die Rolle setzen oder ändern — künftig `role-assignment:manage`, heute noch über dieselbe Route (`employees.ts:598`); den Vertrag ändern (`contract:update`); den Zugang sperren oder freigeben (`employee:manage-access`); anonymisieren (`employee:anonymize`).                                         |
 | `employee:manage-access:ZUGEWIESEN` | Den Zugang eines Mitarbeiters im Scope verwalten: Konto entsperren, deaktivieren, reaktivieren, Einladung erneut senden (`PATCH /employees/:id/unlock`, `…/deactivate`, `…/reactivate`, `POST /employees/:id/resend-invitation`).                                      | Stammdaten ändern (`employee:update`); Mitarbeiter anonymisieren oder löschen (`employee:anonymize`); Rollen zuweisen (`role-assignment:manage`).                                                                                                                                                         |
 | `employee:anonymize:ZUGEWIESEN`     | Mitarbeiter nach DSGVO Art. 17 anonymisieren (`DELETE /employees/:id`), anonymisierte Mitarbeiter in der Liste einblenden und nach Ablauf der Aufbewahrungsfrist endgültig löschen (`POST /employees/:id/hard-delete/authorize`, `DELETE /employees/:id/hard-delete`). | Ersetzt nicht die Freigabe durch einen zweiten Administrator: Eine endgültige Löschung innerhalb der Aufbewahrungsfrist verlangt immer zwei verschiedene Personen (Vier-Augen-Regel, keine Permission); aufbewahrungspflichtige Zeiteinträge, Anträge und Salden bleiben bei der Anonymisierung erhalten. |
 | `employee:import:ZUGEWIESEN`        | Mitarbeiter per Datei importieren (`POST /imports/employees`).                                                                                                                                                                                                         | Zeiteinträge importieren (`time-entry:import`); einzelne Mitarbeiter anlegen oder ändern (`employee:create`, `employee:update`).                                                                                                                                                                          |
@@ -169,10 +169,24 @@ mindestens einer Zuweisung mit Scope Mandant, deren Rolle die Permission gewähr
 `role:manage` und `role-assignment:manage`. Abgelehnt (409) wird nur eine Änderung, die die Zahl
 der Halter einer dieser Permissions von mindestens 1 auf 0 senkt — ein Mandant, der noch keinen
 Halter hat, wird bis #75 nicht blockiert. Geprüft wird beim Entziehen und Ändern einer Zuweisung
-(`DELETE`/`PATCH /role-assignments/:id`) und beim Ändern einer Kundenrolle (`PATCH /roles/:id`),
-durch einen gemeinsamen Helfer (`withRoleLockoutGuard`, `contexts/platform/facade/role-assignments.ts`).
-Er sperrt die Zeile des Mandanten und zählt in derselben Transaktion vor und nach der Änderung;
-bei einem Verstoß wird die Änderung samt Audit-Eintrag zurückgerollt.
+(`DELETE`/`PATCH /role-assignments/:id`), beim Ändern einer Kundenrolle (`PATCH /roles/:id`), beim
+Deaktivieren (`PATCH /employees/:id/deactivate`), beim Anonymisieren (`DELETE /employees/:id`) und
+beim endgültigen Löschen eines Mitarbeiters (`DELETE /employees/:id/hard-delete` — greift praktisch
+schon an der Vorbedingung „zuerst anonymisieren“, weil anonymisierte Nutzer inaktiv sind und keine
+Zuweisung mehr haben), jeweils durch denselben Helfer (`withRoleLockoutGuard`,
+`contexts/platform/facade/role-assignments.ts`). Er sperrt die Zeile des Mandanten
+(`FOR NO KEY UPDATE`: serialisiert geschützte Änderungen untereinander, hält aber gewöhnliche
+Schreibzugriffe mit Fremdschlüssel auf den Mandanten nicht auf) und zählt in derselben Transaktion
+vor und nach der Änderung; bei einem Verstoß wird die Änderung samt Audit-Eintrag zurückgerollt. Beim
+Anonymisieren antwortet die Route mit 409, bevor Dateien im Objektspeicher gelöscht werden.
+
+Deaktivieren behält die Zuweisungen des Nutzers — sie wirken nicht, solange er inaktiv ist, und die
+Reaktivierung stellt sie wieder her. Anonymisieren (DSGVO Art. 17) entzieht sie: Jede Zuweisung wird
+in der Anonymisierungs-Transaktion gelöscht, mit einem eigenen Audit-Eintrag (`DELETE`,
+Begründung „Anonymisierung“). Personenlisten anderer Zuweisungen, die den anonymisierten
+Mitarbeiter enthalten, bleiben unverändert; die Auflösung ignoriert anonymisierte Ziele.
+Hintergrundjobs (Aufbewahrung, `data-retention`) prüfen den Aussperrschutz nicht — sie betreffen
+nur längst ausgeschiedene, anonymisierte Mitarbeiter (D-23).
 
 **Zugewiesene Rolle (umgesetzt mit #74):** Eine Kundenrolle, die noch mindestens einem Nutzer
 zugewiesen ist, lässt sich nicht löschen (`DELETE /roles/:id` → 409 „Die Rolle ist noch Nutzern
@@ -184,7 +198,7 @@ Rückfallsicherung und liefert dieselbe 409.
 
 | Permission                          | erlaubt                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | erlaubt ausdrücklich nicht                                                                                                                                                                                                     |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `role-assignment:manage:ZUGEWIESEN` | Rollen an Personen zuweisen, ändern und entziehen, samt Scope der Zuweisung (Mandant, Salons oder Personenliste): Zuweisungen auflisten (`GET /role-assignments`), eine lesen (`GET /role-assignments/:id`), eine Rolle mit Scope zuweisen (`POST /role-assignments`), Rolle oder Scope ändern (`PATCH /role-assignments/:id`) und entziehen (`DELETE /role-assignments/:id` — löschen, auditiert). Ersetzt künftig das Setzen von `User.role` über `PATCH /employees/:id` (`employees.ts:596`). Nur mit Scope Mandant: heute durch `requireRole("ADMIN")` erfüllt (ADMIN wirkt mandantenweit); die Prüfung auf `role-assignment:manage` mit Scope Mandant folgt mit #75. | Rollen selbst definieren (`role:manage`); Stammdaten ändern (`employee:update`); den Nutzer einer bestehenden Zuweisung austauschen (dafür entziehen und neu zuweisen). Wirkt nur bei einer Zuweisung mit Scope Mandant (#91). |
+| `role-assignment:manage:ZUGEWIESEN` | Rollen an Personen zuweisen, ändern und entziehen, samt Scope der Zuweisung (Mandant, Salons oder Personenliste): Zuweisungen auflisten (`GET /role-assignments`), eine lesen (`GET /role-assignments/:id`), eine Rolle mit Scope zuweisen (`POST /role-assignments`), Rolle oder Scope ändern (`PATCH /role-assignments/:id`) und entziehen (`DELETE /role-assignments/:id` — löschen, auditiert). Ersetzt künftig das Setzen von `User.role` über `PATCH /employees/:id` (`employees.ts:598`). Nur mit Scope Mandant: heute durch `requireRole("ADMIN")` erfüllt (ADMIN wirkt mandantenweit); die Prüfung auf `role-assignment:manage` mit Scope Mandant folgt mit #75. | Rollen selbst definieren (`role:manage`); Stammdaten ändern (`employee:update`); den Nutzer einer bestehenden Zuweisung austauschen (dafür entziehen und neu zuweisen). Wirkt nur bei einer Zuweisung mit Scope Mandant (#91). |
 
 ### `time-entry` — Zeiteinträge und Pausen
 
@@ -407,16 +421,16 @@ Branch `feat/74-rollenzuweisung`, nach dem Einbau des Aussperrschutzes neu gemes
 | `contexts/platform/api/api-keys.ts:121`                    | `GET /scopes`                              | A       | `api-key:manage`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/audit-logs.ts:19`                   | `GET /`                                    | A       | `audit-log:read`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/audit-logs.ts:51`                   | `GET /:id`                                 | A       | `audit-log:read`               | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:263`                   | `GET /`                                    | A, M    | `employee:read`                | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:338`                   | `POST /`                                   | A       | `employee:create`              | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:525`                   | `PATCH /:id`                               | A       | `employee:update`              | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:758`                   | `PATCH /:id/unlock`                        | A       | `employee:manage-access`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:797`                   | `PATCH /:id/deactivate`                    | A       | `employee:manage-access`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:856`                   | `PATCH /:id/reactivate`                    | A       | `employee:manage-access`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:917`                   | `POST /:id/resend-invitation`              | A       | `employee:manage-access`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:977`                   | `DELETE /:id`                              | A       | `employee:anonymize`           | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:1065`                  | `POST /:id/hard-delete/authorize`          | A       | `employee:anonymize`           | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:1096`                  | `DELETE /:id/hard-delete`                  | A       | `employee:anonymize`           | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:265`                   | `GET /`                                    | A, M    | `employee:read`                | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:340`                   | `POST /`                                   | A       | `employee:create`              | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:527`                   | `PATCH /:id`                               | A       | `employee:update`              | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:760`                   | `PATCH /:id/unlock`                        | A       | `employee:manage-access`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:799`                   | `PATCH /:id/deactivate`                    | A       | `employee:manage-access`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:872`                   | `PATCH /:id/reactivate`                    | A       | `employee:manage-access`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:933`                   | `POST /:id/resend-invitation`              | A       | `employee:manage-access`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:993`                   | `DELETE /:id`                              | A       | `employee:anonymize`           | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:1117`                  | `POST /:id/hard-delete/authorize`          | A       | `employee:anonymize`           | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:1148`                  | `DELETE /:id/hard-delete`                  | A       | `employee:anonymize`           | ZUGEWIESEN                                   |
 | `contexts/platform/api/holidays.ts:105`                    | `POST /`                                   | A       | `holiday:manage`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/holidays.ts:163`                    | `DELETE /:id`                              | A       | `holiday:manage`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/imports.ts:74`                      | `POST /employees`                          | A       | `employee:import`              | ZUGEWIESEN                                   |
@@ -523,8 +537,8 @@ nur `ZUGEWIESEN` schalten eine Funktion ganz frei oder ab.
 | `contexts/absence/api/vocational-school.ts:199`          | `GET /upcoming`                                   | A, M: alle; E: nur eigene                     | `vocational-school:read` | ZUGEWIESEN; sonst EIGENE |
 | `contexts/platform/api/avatars.ts:18`                    | `POST /:employeeId`                               | A, M: alle; E: nur eigenes Bild               | `employee:update-avatar` | ZUGEWIESEN; sonst EIGENE |
 | `contexts/platform/api/avatars.ts:141`                   | `DELETE /:employeeId`                             | A, M: alle; E: nur eigenes Bild               | `employee:update-avatar` | ZUGEWIESEN; sonst EIGENE |
-| `contexts/platform/api/employees.ts:271`                 | `GET /`                                           | nur A: Anonymisierte einblenden               | `employee:anonymize`     | ZUGEWIESEN               |
-| `contexts/platform/api/employees.ts:308`                 | `GET /:id`                                        | A, M: alle; E: nur eigene                     | `employee:read`          | ZUGEWIESEN; sonst EIGENE |
+| `contexts/platform/api/employees.ts:273`                 | `GET /`                                           | nur A: Anonymisierte einblenden               | `employee:anonymize`     | ZUGEWIESEN               |
+| `contexts/platform/api/employees.ts:310`                 | `GET /:id`                                        | A, M: alle; E: nur eigene                     | `employee:read`          | ZUGEWIESEN; sonst EIGENE |
 | `contexts/platform/api/settings.ts:894`                  | `GET /work/:employeeId`                           | A, M: alle; E: nur eigene                     | `contract:read`          | ZUGEWIESEN; sonst EIGENE |
 | `contexts/scheduling/api/availability.ts:125`            | `GET /:id/availability`                           | A, M: alle; E: nur eigene                     | `availability:read`      | ZUGEWIESEN; sonst EIGENE |
 | `contexts/scheduling/api/availability.ts:165`            | `PUT /:id/availability`                           | A, M: alle; E: nur eigene                     | `availability:update`    | ZUGEWIESEN; sonst EIGENE |
@@ -562,7 +576,7 @@ hier, mit Begründung.
 | `contexts/platform/api/auth.ts:304`                        | Die Rolle wird beim Token-Refresh in das JWT übernommen; keine Zugriffsentscheidung.                                         |
 | `contexts/platform/api/auth.ts:563`                        | Die Rolle wird im Helfer issueTokens (Anmeldung, OTP-Bestätigung) in das JWT übernommen; keine Zugriffsentscheidung.         |
 | `contexts/platform/api/auth.ts:620`                        | Die Rolle wird im Helfer issueTokens in der Antwort an den Client zurückgegeben; keine Zugriffsentscheidung.                 |
-| `contexts/platform/api/employees.ts:596`                   | Die Rolle wird hier gesetzt, nicht geprüft; künftig `role-assignment:manage`, die Route selbst ist über :525 erfasst.        |
+| `contexts/platform/api/employees.ts:598`                   | Die Rolle wird hier gesetzt, nicht geprüft; künftig `role-assignment:manage`, die Route selbst ist über :527 erfasst.        |
 | `contexts/time-tracking/plugins/attendance-checker.ts:169` | Auswahl der Benachrichtigungsempfänger im Cron-Job, kein Anfragekontext; gehört zu #75.                                      |
 | `middleware/auth.ts:76`                                    | Die Implementierung des Rollen-Guards selbst; jede Aufrufstelle steht einzeln im Abschnitt zu requireRole.                   |
 
@@ -581,8 +595,8 @@ Genehmigungs-Permission hat, bleibt an sie gebunden:
   `contexts/time-tracking/api/retro-entry-requests.ts:244`: dieselbe Sperre für Zeitnachträge.
 - **Stornierung durch einen anderen Manager** — `contexts/absence/api/leave.ts:1000`: Eine
   Stornierung genehmigt nie die Person, die sie beantragt hat.
-- **Vier-Augen-Regel bei der endgültigen Löschung** — `contexts/platform/api/employees.ts:1060`
-  (Freigabe durch einen Administrator) und `:1144` (die Löschung prüft, dass die Freigabe von einem
+- **Vier-Augen-Regel bei der endgültigen Löschung** — `contexts/platform/api/employees.ts:1112`
+  (Freigabe durch einen Administrator) und `:1196` (die Löschung prüft, dass die Freigabe von einem
   ANDEREN Administrator stammt und höchstens 15 Minuten alt ist): Innerhalb der Aufbewahrungsfrist
   löscht niemand allein. `employee:anonymize` erlaubt die Löschkette, ersetzt diese Regel aber nicht.
 
