@@ -4,17 +4,23 @@
  *
  * `TenantConfig.storeHours` is DEPRECATED (`contexts/platform/facade/salons.ts`'s module
  * docblock, D-15/D-16) — this file is what makes "no new code reads it" MECHANICAL rather than a
- * promise nobody checks. Any THIRD non-test `.ts` file under `apps/api/src` whose AST contains an
+ * promise nobody checks. Any SECOND non-test `.ts` file under `apps/api/src` whose AST contains an
  * Identifier named `storeHours` fails this test. A legitimate new reader needs an explicit owner
  * decision — AC-7 of GitHub issue #64 — which extends {@link ALLOWED_STORE_HOURS_READERS} below
  * with its own dated, reasoned comment; it is never a silent pass.
  *
- * `#325` removes `src/contexts/scheduling/api/shifts.ts` from this list when it switches the shift
- * check's reader from `TenantConfig.storeHours` to the shift's own `Salon.openingHours`.
+ * Phase 325 (issue #325) Plan 02 REMOVED `src/contexts/scheduling/api/shifts.ts` from this list:
+ * the shift check now reads the shift's own `Salon.openingHours` via `assertWithinStoreHours`,
+ * which no longer references `TenantConfig.storeHours` at all (only `shiftStoreHoursMode`, D-10).
+ * `settings.ts` is the ONLY reader left — it keeps writing `TenantConfig.storeHours` for
+ * `PUT /api/v1/settings/work` (the only opening-hours UI today) and mirroring that write into a
+ * tenant's SOLE active salon (D-13) until #82 removes both the mirror and this file's own
+ * allowlist. The web shift page's own `storeHours` display read (`+page.svelte`) is a display-only
+ * hint outside this API-only guard (D-16) and is unaffected either way.
  *
  * KNOWN LIMIT, stated rather than hidden: this guard is PER FILE — a new `storeHours` read added
- * INSIDE one of the two files already on the allowlist (`settings.ts`, `shifts.ts`) is invisible
- * to it. It only catches a NEW FILE gaining a reference, never new logic inside an existing one.
+ * INSIDE the one file already on the allowlist (`settings.ts`) is invisible to it. It only catches
+ * a NEW FILE gaining a reference, never new logic inside an existing one.
  *
  * AST via `ts.createSourceFile` (the `typescript` package, already used by
  * `apps/api/scripts/lint-facade-signatures.ts` and siblings — see that module's own docblock for
@@ -34,11 +40,10 @@ const SCAN_ROOT = join(API_ROOT, "src");
 // AC-7: the ONLY files a caller may reference `storeHours` from today. Paths are relative to
 // apps/api (i.e. "src/...", matching this module's own scan root), sorted for a stable diff.
 const ALLOWED_STORE_HOURS_READERS = [
-  // The reader kept ON PURPOSE until #325 switches the shift check to the shift's own
-  // Salon.openingHours (D-15). #325 removes this entry.
-  "src/contexts/scheduling/api/shifts.ts",
   // The tenant write path: PUT /api/v1/settings/work's Zod field (now salonOpeningHoursSchema),
-  // its GET defaults, and the D-16 syncSoleActiveSalonOpeningHours mirror call (Phase 64b Plan 04).
+  // its GET defaults, and the D-16 syncSoleActiveSalonOpeningHours mirror call (Phase 64b Plan 04)
+  // — kept until #82 removes both the mirror and the salon opening-hours UI it stands in for
+  // (Phase 325, issue #325, D-13).
   "src/contexts/platform/api/settings.ts",
 ].sort();
 

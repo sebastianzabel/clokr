@@ -304,8 +304,21 @@ function assertShiftNotPast(iso: string): { code: "SHIFT_PAST_IMMUTABLE"; messag
 }
 
 /**
- * Phase 47.5 — Verify a shift falls inside the tenant's configured store hours.
- * Reads the DEPRECATED TenantConfig.storeHours (0=Mo..6=So) on purpose until #325 switches this check to the shift's Salon.openingHours.
+ * Phase 47.5 — Verify a shift falls inside its own salon's opening hours.
+ * Since Phase 325 (issue #325) this reads the SHIFT'S OWN `Salon.openingHours` (0=Mo..6=So, the
+ * same shape 64b's `TenantConfig.storeHours` used — 64b D-03), not `TenantConfig.storeHours` —
+ * the caller resolves and passes it (POST: the assigned salon; PUT: the new salonId if given,
+ * else the shift's existing salon, D-10). `shiftStoreHoursMode` stays a TENANT setting, read from
+ * `TenantConfig` here (unchanged). `PUT /api/v1/settings/work` still mirrors a `storeHours` write
+ * into a tenant's sole active salon (D-13) — that mirror is why a one-salon tenant's behavior is
+ * unchanged by this switch (D-11); the mirror itself is removed together with the salon
+ * opening-hours UI, #82.
+ * D-11 preserves every OLD null-return exactly: no TenantConfig row -> null (mirrors the old
+ * combined `!cfg?.storeHours` branch — a tenant whose config row does not exist gets no check at
+ * all, regardless of what its salon's hours say); mode OFF -> null; hours not a real array -> null
+ * (the old missing-value branch, now guarding a malformed/absent `openingHours` value instead of a
+ * missing `storeHours` one); weekday entry missing -> null; closed-day and STRICT comparisons
+ * unchanged.
  * Returns null if inside or no config; otherwise a 409 payload for soft-warn override.
  * Cross-midnight shifts (end < start) are NOT supported by this check — they always
  * fail because they leave the day's open/close window; users override via force=true.
@@ -313,18 +326,20 @@ function assertShiftNotPast(iso: string): { code: "SHIFT_PAST_IMMUTABLE"; messag
 async function assertWithinStoreHours(
   prisma: import("@clokr/db").PrismaClient,
   tenantId: string,
+  openingHours: unknown,
   isoDate: string,
   startTime: string,
   endTime: string,
 ): Promise<{ code: "SHIFT_OUTSIDE_STORE_HOURS"; message: string } | null> {
   const cfg = await prisma.tenantConfig.findUnique({
     where: { tenantId },
-    select: { storeHours: true, shiftStoreHoursMode: true },
+    select: { shiftStoreHoursMode: true },
   });
-  if (!cfg?.storeHours) return null;
+  if (!cfg) return null; // D-11: no TenantConfig row -> no check
   const mode = cfg.shiftStoreHoursMode ?? "DAY_ONLY";
   if (mode === "OFF") return null;
-  const rows = cfg.storeHours as Array<{
+  if (!Array.isArray(openingHours)) return null; // D-11: the old missing-value branch
+  const rows = openingHours as Array<{
     day: number;
     open: string;
     close: string;
@@ -1847,6 +1862,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         const storeHit = await assertWithinStoreHours(
           app.prisma,
           req.user.tenantId,
+          salon.openingHours, // Phase 325 (issue #325) Plan 02, D-10
           body.date,
           body.startTime,
           body.endTime,
@@ -2067,6 +2083,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         const storeHitForAudit = await assertWithinStoreHours(
           app.prisma,
           req.user.tenantId,
+          salon.openingHours, // Phase 325 (issue #325) Plan 02, D-10
           body.date,
           body.startTime,
           body.endTime,
@@ -2164,9 +2181,11 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
       }
 
-      // Phase 325 (issue #325) Plan 02, D-05/D-06/D-07: a CHANGED salonId must resolve to one of
-      // the caller's own ACTIVE salons; an unchanged salonId is NEVER rejected here — an existing
-      // shift keeps its salon even if that salon is later deactivated (D-07).
+      // Phase 325 (issue #325) Plan 02, D-05/D-06/D-07/D-10: a CHANGED salonId must resolve to
+      // one of the caller's own ACTIVE salons; an unchanged salonId is NEVER rejected here — an
+      // existing shift keeps its salon even if that salon is later deactivated (D-07), and the
+      // store-hours check below still reads THAT (possibly inactive) salon's hours.
+      let effSalon: import("@clokr/db").Salon;
       if (body.salonId !== undefined && body.salonId !== existing.salonId) {
         const salonResolution = await resolveShiftSalon(
           app.prisma,
@@ -2176,6 +2195,11 @@ export async function shiftRoutes(app: FastifyInstance) {
         if ("reply" in salonResolution) {
           return reply.code(salonResolution.reply.status).send(salonResolution.reply.body);
         }
+        effSalon = salonResolution.salon;
+      } else {
+        const currentSalon = await findSalon(app.prisma, req.user.tenantId, existing.salonId);
+        if (!currentSalon) return reply.code(404).send({ error: "Salon nicht gefunden" });
+        effSalon = currentSalon;
       }
 
       // Phase 47.5 — Store-Hours Soft-Warn (effective values).
@@ -2183,6 +2207,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         const storeHit = await assertWithinStoreHours(
           app.prisma,
           req.user.tenantId,
+          effSalon.openingHours,
           effDateIso,
           effStartTime,
           effEndTime,
@@ -2418,6 +2443,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         const storeHitForAudit = await assertWithinStoreHours(
           app.prisma,
           req.user.tenantId,
+          effSalon.openingHours, // Phase 325 (issue #325) Plan 02, D-10
           effDateIso,
           effStartTime,
           effEndTime,

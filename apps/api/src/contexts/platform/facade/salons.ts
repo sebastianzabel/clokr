@@ -29,10 +29,11 @@
  *   cannot be deactivated.
  * - Multisalon means MORE THAN ONE active salon (`isMultiSalonTenant()`) — a derived read, never
  *   a config flag.
- * - `TenantConfig.storeHours` is deprecated: no new code reads it. The shift check
- *   (`contexts/scheduling/api/shifts.ts`) keeps reading it until #325, and
- *   `PUT /api/v1/settings/work` mirrors it into a tenant's single active salon in the meantime
- *   (D-16) — both pinned by `store-hours-readers.test.ts`'s living allowlist.
+ * - `TenantConfig.storeHours` is deprecated: no new code reads it. Since Phase 325 (issue #325)
+ *   the shift check (`contexts/scheduling/api/shifts.ts`) reads the shift's own `Salon.openingHours`
+ *   instead; `PUT /api/v1/settings/work` still mirrors a `storeHours` write into a tenant's single
+ *   active salon (D-13) until #82 removes both the mirror and this field — pinned by
+ *   `store-hours-readers.test.ts`'s living allowlist (now `settings.ts` only).
  * - Every tenant-creating path (`seed.ts`, `seed-demo.ts`, `test-bootstrap.ts`) creates that
  *   tenant's default salon in the same step (D-18).
  */
@@ -389,7 +390,7 @@ export async function activateSalon(
   return { status: "OK", existing, updated };
 }
 
-// ── storeHours <-> Salon mirror (Phase 64b Plan 04, D-16) — removed by #325 ─────────────────────
+// ── storeHours <-> Salon mirror (Phase 64b Plan 04, D-16) — removed by #82 ──────────────────────
 
 /**
  * Tolerant equality for two `openingHours` JSON values: sorts by day and normalises an ABSENT
@@ -413,8 +414,11 @@ function normalizeOpeningHoursForCompare(value: unknown): string {
 }
 
 /**
- * D-16: keeps `TenantConfig.storeHours` and a tenant's single active salon in step until #325
- * removes the tenant field entirely. Called ONLY from `PUT /api/v1/settings/work`
+ * D-13/D-16: keeps `TenantConfig.storeHours` and a tenant's single active salon in step until #82
+ * removes the tenant field entirely (Phase 325, issue #325, kept this mirror deliberately — the
+ * admin UI's only opening-hours editor still writes `storeHours`, and removing the mirror before
+ * #82 builds a salon-level editor would make every future edit there invisible to the shift check).
+ * Called ONLY from `PUT /api/v1/settings/work`
  * (`contexts/platform/api/settings.ts`) when its body carries `storeHours`, and mirrors ONLY when
  * that value differs from `previousTenantHours` — the tenant value before the write, read by the
  * caller — so resending an unchanged week never overwrites a salon edited via
