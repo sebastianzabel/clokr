@@ -18,8 +18,8 @@ import {
 
 const liveModels = Prisma.dmmf.datamodel.models as unknown as readonly DmmfModel[];
 
-// The 15 models measured directly against schema.prisma (204-RESEARCH.md §Schema Derivation,
-// D-19) to carry their own `tenantId` scalar column.
+// The 16 models measured directly against schema.prisma (204-RESEARCH.md §Schema Derivation,
+// D-19; AccessRole added Phase 73b, Issue #73) to carry their own `tenantId` scalar column.
 const EXPECTED_OWN_MODELS = [
   "TenantConfig",
   "Employee",
@@ -31,6 +31,7 @@ const EXPECTED_OWN_MODELS = [
   "PresenceSource",
   "PresenceDevice",
   "ApiKey",
+  "AccessRole",
   "PhorestStaffMapping",
   "PhorestSyncRun",
   "CompanyShutdown",
@@ -89,8 +90,8 @@ describe("classifyModel (live DMMF from @clokr/db)", () => {
 describe("buildModelGraph (live DMMF from @clokr/db)", () => {
   const graph = buildModelGraph();
 
-  it("classifies exactly 41 models with no residual category (D-05)", () => {
-    expect(graph.size).toBe(41);
+  it("classifies exactly 42 models with no residual category (D-05)", () => {
+    expect(graph.size).toBe(42);
     for (const [, tenancy] of graph) {
       expect(["own", "relation", "none"]).toContain(tenancy.kind);
     }
@@ -102,7 +103,7 @@ describe("buildModelGraph (live DMMF from @clokr/db)", () => {
     expect(graph.has("apiKey")).toBe(true);
   });
 
-  it("marks exactly the 15 measured models as own, by NAME (not just count)", () => {
+  it("marks exactly the 16 measured models as own, by NAME (not just count)", () => {
     const ownDelegateNames = [...graph]
       .filter(([, v]) => v.kind === "own")
       .map(([k]) => k)
