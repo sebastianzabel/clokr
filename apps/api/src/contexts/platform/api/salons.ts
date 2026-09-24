@@ -13,6 +13,8 @@ import { z } from "zod";
 import type { Prisma } from "@clokr/db";
 import { requireRole } from "../../../middleware/auth";
 import { accessContextFromRequest } from "../access-context";
+import { auditSalonAssignmentEvent } from "../salon-assignment-audit";
+import { toAssignmentDto } from "../salon-assignment-rules";
 import {
   activateSalon,
   createSalon,
@@ -41,6 +43,14 @@ const ALREADY_INACTIVE_MESSAGE = "Der Salon ist bereits deaktiviert.";
 const ALREADY_ACTIVE_MESSAGE = "Der Salon ist bereits aktiv.";
 const LAST_ACTIVE_SALON_MESSAGE =
   "Der letzte aktive Salon eines Mandanten kann nicht deaktiviert werden.";
+
+/**
+ * D-14: names only the COUNT, never any employee — the message text itself is the AC's own
+ * requirement, not a display string later compared against as a control value.
+ */
+function homeSalonInUseMessage(employeeCount: number): string {
+  return `Der Salon ist für ${employeeCount} Mitarbeiter ab dem Deaktivierungsdatum Stammsalon und kann nicht deaktiviert werden.`;
+}
 
 /**
  * Every Salon audit row goes through here (Phase 64b review, WR-01). For a `clk_` API-key caller
@@ -201,7 +211,7 @@ export async function salonRoutes(app: FastifyInstance) {
     },
   });
 
-  // POST /api/v1/salons/:id/deactivate — D-06/D-07/D-08, audited, never deletes
+  // POST /api/v1/salons/:id/deactivate — D-06/D-07/D-08/D-14/D-15, audited, never deletes
   app.post("/:id/deactivate", {
     schema: {
       tags: ["Salons"],
@@ -222,6 +232,18 @@ export async function salonRoutes(app: FastifyInstance) {
             newValue: change.updated,
             tx,
           });
+          // D-15/D-21: one END audit row per Einsatzsalon assignment the deactivation ended or
+          // voided, next to the salon's own DEACTIVATE row above.
+          for (const { before, after } of change.endedAssignments) {
+            await auditSalonAssignmentEvent(app, req, {
+              entity: "EmployeeSalonAssignment",
+              action: "END",
+              entityId: before.id,
+              oldValue: toAssignmentDto(before),
+              newValue: { ...toAssignmentDto(after), trigger: "SALON_DEACTIVATED" },
+              tx,
+            });
+          }
         }
         return change;
       });
@@ -235,6 +257,8 @@ export async function salonRoutes(app: FastifyInstance) {
           return reply.code(409).send({ error: ALREADY_INACTIVE_MESSAGE });
         case "LAST_ACTIVE_SALON":
           return reply.code(409).send({ error: LAST_ACTIVE_SALON_MESSAGE });
+        case "HOME_SALON_IN_USE":
+          return reply.code(409).send({ error: homeSalonInUseMessage(outcome.employeeCount) });
         default: {
           // Compile-time exhaustiveness: deactivateSalon's return type has no other status.
           const unreachable: never = outcome;

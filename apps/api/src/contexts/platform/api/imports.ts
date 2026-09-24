@@ -14,6 +14,14 @@ import {
 import { getTenantTimezone } from "../../working-time-account/timezone";
 import { createOvertimeAccount } from "../../working-time-account"; // Phase 100B Plan 06 — W13
 import { createImportedTimeEntry } from "../../time-tracking"; // Phase 100B Plan 08 — T12
+// Phase 67b Plan 03 (issue #67, D-23) — the Stammsalon lifecycle helpers.
+import { listSalons } from "../facade/salons";
+import {
+  createInitialHomeAssignment,
+  resolveHomeSalonForNewEmployee,
+} from "../facade/salon-assignments";
+import { auditSalonAssignmentEvent } from "../salon-assignment-audit";
+import { tenantLocalDay, toAssignmentDto } from "../salon-assignment-rules";
 
 const employeeRowSchema = z.object({
   email: z.string().email(),
@@ -72,9 +80,28 @@ export async function importRoutes(app: FastifyInstance) {
   app.post("/employees", {
     schema: { tags: ["Import"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
-    handler: async (req, _reply) => {
+    handler: async (req, reply) => {
       const { csv } = z.object({ csv: z.string() }).parse(req.body);
       const rows = parseCsv(csv);
+
+      // Phase 67b Plan 03 (D-23, issue #67): every imported employee needs a Stammsalon (HOME)
+      // row, and this endpoint has no per-row salon column (deferred to #82) — so it only works
+      // when the tenant has EXACTLY ONE active salon, checked up front, before ANY row is
+      // written. Zero or several active salons rejects the WHOLE import; no IMPORT audit row.
+      const activeSalons = await listSalons(app.prisma, req.user.tenantId, {
+        includeInactive: false,
+      });
+      if (activeSalons.length === 0) {
+        return reply.code(400).send({ error: "Der Mandant hat keinen aktiven Salon." });
+      }
+      if (activeSalons.length > 1) {
+        return reply.code(400).send({
+          error:
+            "Bei mehreren aktiven Salons ist kein Import möglich. Bitte legen Sie die Mitarbeiter einzeln an und geben Sie den Stammsalon an.",
+        });
+      }
+      const [theSalon] = activeSalons;
+      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
 
       const results: { row: number; status: "ok" | "error"; email?: string; error?: string }[] = [];
 
@@ -113,6 +140,22 @@ export async function importRoutes(app: FastifyInstance) {
             : await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 12);
 
           await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+            // D-23/D-02: re-checks the salon under FOR SHARE — a race with a concurrent
+            // deactivation between the up-front check and this row's own transaction throws,
+            // which the per-row catch below reports as this row's error (rolled back).
+            const salonOutcome = await resolveHomeSalonForNewEmployee(
+              tx,
+              req.user.tenantId,
+              theSalon.id,
+            );
+            if (salonOutcome.status !== "OK") {
+              throw new Error(
+                salonOutcome.status === "SALON_INACTIVE"
+                  ? "Einem deaktivierten Salon kann keine neue Zuordnung zugewiesen werden."
+                  : "Salon nicht gefunden",
+              );
+            }
+
             const user = await tx.user.create({
               data: {
                 email: data.email,
@@ -144,6 +187,23 @@ export async function importRoutes(app: FastifyInstance) {
             });
 
             await createOvertimeAccount(tx, emp.id, req.user.tenantId);
+
+            // D-23: the imported employee's Stammsalon (HOME) row, open-ended from its
+            // tenant-local hire day, in the SAME per-row transaction — audited CREATE.
+            const homeAssignment = await createInitialHomeAssignment(
+              tx,
+              req.user.tenantId,
+              emp.id,
+              salonOutcome.salonId,
+              tenantLocalDay(emp.hireDate, tz),
+            );
+            await auditSalonAssignmentEvent(app, req, {
+              entity: "EmployeeSalonAssignment",
+              action: "CREATE",
+              entityId: homeAssignment.id,
+              newValue: toAssignmentDto(homeAssignment),
+              tx,
+            });
           });
 
           results.push({ row: i + 1, status: "ok", email: data.email });

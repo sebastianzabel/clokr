@@ -320,6 +320,15 @@ async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
  * ~38-file default-path suite — resolves from the LAST overload and therefore always sees
  * `salonId: string`; only a caller that explicitly writes `{ withDefaultSalon: false }` inline
  * sees the narrower `salonId: null` type.
+ *
+ * Phase 67b Plan 03 (issue #67, D-24) relies on the same default salon: POST /api/v1/employees
+ * (D-22) resolves a new employee's Stammsalon against the tenant's active salons, and the test
+ * files that call seedTestData() and then POST an employee without an explicit `homeSalonId`
+ * depend on the tenant having EXACTLY ONE active salon for that resolution to succeed (research
+ * Pitfall 5). Both phases share this one salon (name = tenant name, `DEFAULT_SALON_OPENING_HOURS`,
+ * like test-bootstrap.ts's bootstrap-tenant handler) through `salonId`. The two employees
+ * seedTestData creates deliberately do NOT get HOME rows — same convention as the fixtures that
+ * insert an Employee row directly (D-24).
  */
 export async function seedTestData(
   testApp: FastifyInstance,
@@ -458,6 +467,10 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   await prisma.overtimePlan.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.invitation.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.workSchedule.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  // Phase 67b (issue #67): EmployeeSalonAssignment.employee AND .salon are onDelete: Restrict
+  // (D-01) — must be deleted before prisma.employee.deleteMany below, or the delete fails and
+  // leaks fixture rows into the shared test database.
+  await prisma.employeeSalonAssignment.deleteMany({ where: { tenantId } });
   await prisma.employee.deleteMany({ where: { tenantId } });
   await prisma.refreshToken.deleteMany({ where: { userId: { in: userIds } } });
   await prisma.otpToken.deleteMany({ where: { userId: { in: userIds } } });
@@ -471,10 +484,11 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   await prisma.tenantConfig.deleteMany({ where: { tenantId } });
   // Phase 64b (issue #64): Salon.tenant is onDelete: Restrict (D-01) — must be deleted before
   // prisma.tenant.delete below, or the delete fails and leaks fixture rows into the shared test
-  // database. Phase 325 (issue #325): seedTestData() now creates a default salon for its tenant
-  // (opt-out via `{ withDefaultSalon: false }`); Shift/PhorestAppointment -> Salon are ALSO
-  // onDelete: Restrict, but the shift.deleteMany above already runs before this, so no reordering
-  // was needed.
+  // database. Phase 325 (issue #325) / Phase 67b Plan 03 (D-24): seedTestData() now creates ONE
+  // default salon for its tenant (opt-out via `{ withDefaultSalon: false }`) — this deleteMany
+  // covers that row as well as any salon a suite created directly. Shift/PhorestAppointment ->
+  // Salon and EmployeeSalonAssignment -> Salon are ALSO onDelete: Restrict, but the
+  // shift.deleteMany and employeeSalonAssignment.deleteMany above already run before this.
   await prisma.salon.deleteMany({ where: { tenantId } });
   await prisma.tenant.delete({ where: { id: tenantId } });
 }

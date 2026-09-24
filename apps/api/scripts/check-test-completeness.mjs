@@ -561,6 +561,29 @@ import { readFileSync } from "node:fs";
 // 3708 + 17 = 3725, which the reporter confirms. The merge with 67b / 325 still requires
 // re-measuring on the merged tree.
 //
+// Phase 67b (Issue #67) Plan 05, 2026-09-24: re-measured on `feat/67-salonzuordnung` after Task 2's
+// attempted `git merge origin/main` (a genuine no-op — `origin/main` @ c3777eb0 had not moved past
+// this branch's own base since dispatch, confirmed via `git merge-base --is-ancestor origin/main
+// HEAD`) — this is therefore the phase's OWN accumulated total across plans 01-05, not a merge
+// delta: `pnpm --filter @clokr/api test` → `Test Files 301 passed (301)`, `Tests 3709 passed | 3
+// skipped (3712)`, zero failures — `vitest-report.json` agrees (`testResults.length` 301,
+// `numTotalTests` 3712). Numbers read from the reporter, not summed from a diff.
+//
+// Merge of `origin/main` @ 2f6765cd (#337 phase 74b, #338) into `feat/67-salonzuordnung` (phase
+// 67b), 2026-09-24: re-measured on the MERGED tree (`pnpm --filter @clokr/api run test:setup &&
+// pnpm --filter @clokr/api test`): `Test Files 307 passed (307)`, `Tests 3823 passed | 3 skipped
+// (3826)`, zero failures — `vitest-report.json` agrees (`testResults.length` 307, `numTotalTests`
+// 3826). Both phases branched from c3777eb0 (295 / 3611): 295 + 6 (67b) + 6 (74b) = 307 and
+// 3611 + 101 (67b) + 114 (74b) = 3826, which the reporter confirms. Numbers read from the
+// reporter, not summed from a diff.
+//
+// Phase 67b code review fixes (plan 67b-06), 2026-09-24: re-measured on the same merged tree after
+// the five review fixes (`pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api
+// test`): `Test Files 307 passed (307)`, `Tests 3828 passed | 3 skipped (3831)`, zero failures —
+// `vitest-report.json` agrees. No new file; five new cases in existing files (CR-01, WR-01, WR-02
+// in `salon-deactivation-assignments.test.ts`, IN-02 in `salon-for-day.test.ts`, IN-05 in
+// `employee-home-salon.test.ts`); 3826 + 5 = 3831, which the reporter confirms.
+//
 // Phase 325 (Issue #325), 2026-09-24: re-measured on the MERGED tree after confirming
 // `origin/main` @ c3777eb0 (#336, phase 64b) had not moved since the branch was cut
 // (`git merge-base --is-ancestor origin/main HEAD` was already true — no merge commit was
@@ -577,8 +600,16 @@ import { readFileSync } from "node:fs";
 // `Test Files 304 passed (304)`, `Tests 3756 passed | 3 skipped (3759)`, zero failures —
 // `vitest-report.json` agrees (`testResults.length` 304, `numTotalTests` 3759). 74b's 301 files
 // plus Phase 325's three new files = 304. Numbers read from the reporter, not summed from a diff.
-const MIN_FILES = 304;
-const MIN_TESTS = 3759;
+//
+// Merge of `origin/main` @ 5f77e921 (#339, phase 325) into `feat/67-salonzuordnung` (phase 67b,
+// 74b already merged), 2026-09-24: re-measured on the MERGED tree (`pnpm --filter @clokr/api run
+// test:setup && pnpm --filter @clokr/api test`): `Test Files 310 passed (310)`, `Tests 3862 passed
+// | 3 skipped (3865)`, zero failures — `vitest-report.json` agrees (`testResults.length` 310,
+// `numTotalTests` 3865). Common base 2f6765cd (301 / 3725): 307 / 3831 (67b side) plus 325's
+// three new files and 34 new cases (304 / 3759 on its side) = 310 / 3865, which the reporter
+// confirms. Numbers read from the reporter, not summed from a diff.
+const MIN_FILES = 310;
+const MIN_TESTS = 3865;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

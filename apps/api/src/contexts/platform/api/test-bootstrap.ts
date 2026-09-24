@@ -41,7 +41,9 @@ import { z } from "zod";
 import { config } from "../../../config.js";
 // eslint-disable-next-line no-restricted-imports -- E-8: test-fixture route only, never registered on int or prod. Permanent named exception — same precedent as Phase 100b's D-03 for this same file. ADR 0001 Eintrag H.
 import { leaveTypeFields } from "../../absence/leave-type.js";
-import { DEFAULT_SALON_OPENING_HOURS } from "../facade/salons.js";
+import { DEFAULT_SALON_OPENING_HOURS, listSalons } from "../facade/salons.js";
+import { readTenantTimezone } from "../facade/salon-assignments.js";
+import { dayToDate, tenantLocalDay } from "../salon-assignment-rules.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -118,11 +120,15 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
         },
       });
 
+      // Hoisted so both the TenantConfig write below and the D-24 Stammsalon
+      // row further down agree on the same tenant-local timezone value.
+      const timezone = "Europe/Berlin";
+
       await prisma.tenantConfig.create({
         data: {
           tenantId: tenant.id,
           defaultVacationDays: 30,
-          timezone: "Europe/Berlin",
+          timezone,
         },
       });
 
@@ -134,7 +140,7 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
       // TenantConfig above carries the storeHours column default (no explicit
       // value); DEFAULT_SALON_OPENING_HOURS equals that default by construction
       // (pinned in salon-migration.test.ts), so tenant and salon agree here too.
-      await prisma.salon.create({
+      const salon = await prisma.salon.create({
         data: {
           tenantId: tenant.id,
           name: tenant.name,
@@ -161,6 +167,24 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
           firstName: "Admin",
           lastName: "Test",
           hireDate: new Date("2024-01-01"),
+        },
+      });
+
+      // D-24 (Phase 67b Plan 04, issue #67): every code path that creates an
+      // employee also creates its Stammsalon (HOME) row, from that employee's
+      // tenant-local hire day, to the tenant's only salon. No audit trail
+      // write here — same reasoning as the salon block above (this handler
+      // has no request principal, same as every other seeding call in this
+      // test-only route).
+      await prisma.employeeSalonAssignment.create({
+        data: {
+          tenantId: tenant.id,
+          employeeId: adminEmployee.id,
+          salonId: salon.id,
+          kind: "HOME",
+          validFrom: dayToDate(tenantLocalDay(adminEmployee.hireDate, timezone)),
+          validUntil: null,
+          weekdays: [],
         },
       });
 
@@ -283,6 +307,13 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
       await prisma.overtimePlan.deleteMany({ where: { employeeId: { in: employeeIds } } });
       await prisma.invitation.deleteMany({ where: { employeeId: { in: employeeIds } } });
       await prisma.workSchedule.deleteMany({ where: { employeeId: { in: employeeIds } } });
+      // EmployeeSalonAssignment -> Employee and -> Salon are onDelete: Restrict (Phase 67b
+      // Plan 01, D-01) — delete the tenant's assignment rows before its employees and salons,
+      // same key shape as workSchedule.deleteMany above (query-derived id list, not the raw
+      // :id) so this teardown still completes for every bootstrapped test tenant (D-24).
+      await prisma.employeeSalonAssignment.deleteMany({
+        where: { employeeId: { in: employeeIds } },
+      });
       await prisma.employee.deleteMany({ where: { tenantId: id } });
       await prisma.refreshToken.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.otpToken.deleteMany({ where: { userId: { in: userIds } } });
@@ -345,6 +376,17 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
         return { error: "TenantNotFound" };
       }
 
+      // D-24 (Phase 67b Plan 04, issue #67): resolve the tenant's default salon (earliest-
+      // created active, tie-break id — the #64 default-salon rule) and its timezone BEFORE any
+      // write — a tenant with no active salon is refused with nothing written.
+      const activeSalons = await listSalons(app.prisma, body.tenantId, { includeInactive: false });
+      const defaultSalon = activeSalons[0];
+      if (!defaultSalon) {
+        reply.code(409);
+        return { error: "Der Mandant hat keinen aktiven Salon." };
+      }
+      const timezone = await readTenantTimezone(app.prisma, body.tenantId);
+
       // 1. TerminalApiKey — same generation contract as
       //    `apps/api/src/routes/terminals.ts` (clk_ prefix, 32-byte hex,
       //    SHA-256 hash). Raw key returned to the caller, NEVER persisted.
@@ -383,6 +425,22 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
           lastName: "Terminal",
           nfcCardId,
           hireDate: new Date("2024-01-01"),
+        },
+      });
+
+      // D-24 (Phase 67b Plan 04, issue #67): this employee also gets its Stammsalon (HOME) row,
+      // to the tenant's default salon resolved above, from its tenant-local hire day. No audit
+      // trail write here — same reasoning as bootstrap-tenant's HOME row above (this handler has
+      // no request principal, same as every other seeding call in this test-only route).
+      await app.prisma.employeeSalonAssignment.create({
+        data: {
+          tenantId: body.tenantId,
+          employeeId: employee.id,
+          salonId: defaultSalon.id,
+          kind: "HOME",
+          validFrom: dayToDate(tenantLocalDay(employee.hireDate, timezone)),
+          validUntil: null,
+          weekdays: [],
         },
       });
 
