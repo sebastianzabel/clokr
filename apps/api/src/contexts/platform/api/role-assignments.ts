@@ -185,6 +185,14 @@ async function auditRoleAssignment(
   });
 }
 
+/** What the guarded PATCH transaction decided — mapped onto the reply outside the transaction. */
+type PatchOutcome =
+  | { kind: "NOT_FOUND" }
+  | { kind: "REFERENCE_NOT_FOUND"; resolution: ReferenceResolution }
+  | { kind: "DUPLICATE" }
+  | { kind: "UNCHANGED"; row: RoleAssignmentRow }
+  | { kind: "UPDATED"; row: RoleAssignmentRow };
+
 type ReferenceResolution =
   | { status: "OK"; accessRole: AccessRoleRow }
   | { status: "USER_NOT_FOUND" }
@@ -393,69 +401,71 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       // the tenant guard below — every field here is nullish, so `{}` always parses.
       const body = updateAssignmentSchema.parse(req.body ?? {});
       const tenantId = req.user.tenantId;
-
-      const existing = await app.prisma.roleAssignment.findFirst({
-        where: { id, tenantId },
-        include: { accessRole: true },
-      });
-      if (!existing) {
-        return reply.code(404).send({ error: ASSIGNMENT_NOT_FOUND });
-      }
-
-      const nextAccessRoleId = body.accessRoleId ?? existing.accessRoleId;
-      const nextScope: NormalizedRoleAssignmentScope =
+      const requestedScope =
         body.scope !== undefined && body.scope !== null
           ? normalizeRoleAssignmentScope(body.scope)
-          : {
-              scopeType: existing.scopeType,
-              salonIds: existing.salonIds,
-              employeeIds: existing.employeeIds,
-            };
-
-      const roleChanged = nextAccessRoleId !== existing.accessRoleId;
-      const scopeChanged =
-        nextScope.scopeType !== existing.scopeType ||
-        nextScope.salonIds.length !== existing.salonIds.length ||
-        !nextScope.salonIds.every((v, i) => v === existing.salonIds[i]) ||
-        nextScope.employeeIds.length !== existing.employeeIds.length ||
-        !nextScope.employeeIds.every((v, i) => v === existing.employeeIds[i]);
-
-      if (!roleChanged && !scopeChanged) {
-        // A no-op is not a change (D-07/D-12): nothing to write, nothing to audit.
-        return toRoleAssignmentResponse(existing);
-      }
-
-      // Resolve only the changed scope references — the same 404s as POST (D-08). The role is
-      // always resolved because its name feeds the audit value; an unchanged role is the stored
-      // one, which the AccessRole foreign key keeps resolvable.
-      const resolution = await resolveAssignmentReferences(app.prisma, tenantId, {
-        accessRoleId: nextAccessRoleId,
-        scope: scopeChanged ? nextScope : undefined,
-      });
-      if (resolution.status !== "OK") {
-        return sendReferenceNotFound(reply, resolution);
-      }
-      const { accessRole: nextAccessRole } = resolution;
+          : null;
 
       try {
-        const updated = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-          if (roleChanged || nextScope.scopeType !== existing.scopeType) {
-            const duplicate = await tx.roleAssignment.findFirst({
-              where: {
-                tenantId,
-                userId: existing.userId,
-                accessRoleId: nextAccessRoleId,
-                scopeType: nextScope.scopeType,
-                id: { not: id },
-              },
+        // 74b review WR-01: the assignment is read INSIDE the guarded transaction, after the
+        // tenant row lock, and every decision (404, no-op, references, duplicate, audit
+        // `oldValue`) is derived from that read. A snapshot read before the lock let a
+        // concurrent PATCH's narrowing be silently reverted by a stale full-row write, and left
+        // the audit chain with an `oldValue` that did not match the previous `newValue`. The lock
+        // serialises every guarded writer in the tenant, so it covers PATCH-vs-PATCH on one row.
+        // D-19/D-20: narrowing a TENANT scope or switching the role can remove the last
+        // tenant-wide holder of a guarded permission; RoleLockoutError rolls update and audit back.
+        const outcome = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) =>
+          withRoleLockoutGuard(tx, tenantId, async (): Promise<PatchOutcome> => {
+            const current = await tx.roleAssignment.findFirst({
+              where: { id, tenantId },
+              include: { accessRole: true },
             });
-            if (duplicate) return null;
-          }
+            // A foreign tenant's assignment and an unknown id both end here (T-100-09).
+            if (!current) return { kind: "NOT_FOUND" };
 
-          // D-19/D-20: narrowing a TENANT scope or switching the role can remove the last
-          // tenant-wide holder of a guarded permission. The update and its audit run under the
-          // lockout guard on the transaction client; RoleLockoutError rolls both back.
-          return withRoleLockoutGuard(tx, tenantId, async () => {
+            const nextAccessRoleId = body.accessRoleId ?? current.accessRoleId;
+            const nextScope: NormalizedRoleAssignmentScope = requestedScope ?? {
+              scopeType: current.scopeType,
+              salonIds: current.salonIds,
+              employeeIds: current.employeeIds,
+            };
+
+            const roleChanged = nextAccessRoleId !== current.accessRoleId;
+            const scopeChanged =
+              nextScope.scopeType !== current.scopeType ||
+              nextScope.salonIds.length !== current.salonIds.length ||
+              !nextScope.salonIds.every((v, i) => v === current.salonIds[i]) ||
+              nextScope.employeeIds.length !== current.employeeIds.length ||
+              !nextScope.employeeIds.every((v, i) => v === current.employeeIds[i]);
+
+            if (!roleChanged && !scopeChanged) {
+              // A no-op is not a change (D-07/D-12): nothing to write, nothing to audit.
+              return { kind: "UNCHANGED", row: current };
+            }
+
+            // Resolve only the changed scope references — the same 404s as POST (D-08). The role
+            // is always resolved because its name feeds the audit value; an unchanged role is the
+            // stored one, which the AccessRole foreign key keeps resolvable.
+            const resolution = await resolveAssignmentReferences(tx, tenantId, {
+              accessRoleId: nextAccessRoleId,
+              scope: scopeChanged ? nextScope : undefined,
+            });
+            if (resolution.status !== "OK") return { kind: "REFERENCE_NOT_FOUND", resolution };
+
+            if (roleChanged || nextScope.scopeType !== current.scopeType) {
+              const duplicate = await tx.roleAssignment.findFirst({
+                where: {
+                  tenantId,
+                  userId: current.userId,
+                  accessRoleId: nextAccessRoleId,
+                  scopeType: nextScope.scopeType,
+                  id: { not: id },
+                },
+              });
+              if (duplicate) return { kind: "DUPLICATE" };
+            }
+
             const row = await tx.roleAssignment.update({
               where: { id, tenantId },
               data: {
@@ -469,18 +479,25 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
             await auditRoleAssignment(app, req, {
               action: "UPDATE",
               entityId: row.id,
-              oldValue: toAuditValue(existing, existing.accessRole.name),
-              newValue: toAuditValue(row, nextAccessRole.name),
+              oldValue: toAuditValue(current, current.accessRole.name),
+              newValue: toAuditValue(row, resolution.accessRole.name),
               tx,
             });
-            return row;
-          });
-        });
+            return { kind: "UPDATED", row };
+          }),
+        );
 
-        if (!updated) {
-          return reply.code(409).send({ error: DUPLICATE_ASSIGNMENT_MESSAGE });
+        switch (outcome.kind) {
+          case "NOT_FOUND":
+            return reply.code(404).send({ error: ASSIGNMENT_NOT_FOUND });
+          case "REFERENCE_NOT_FOUND":
+            return sendReferenceNotFound(reply, outcome.resolution);
+          case "DUPLICATE":
+            return reply.code(409).send({ error: DUPLICATE_ASSIGNMENT_MESSAGE });
+          case "UNCHANGED":
+          case "UPDATED":
+            return toRoleAssignmentResponse(outcome.row);
         }
-        return toRoleAssignmentResponse(updated);
       } catch (err: unknown) {
         if (err instanceof RoleLockoutError) {
           return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
@@ -510,30 +527,34 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const tenantId = req.user.tenantId;
-      const existing = await app.prisma.roleAssignment.findFirst({
-        where: { id, tenantId },
-        include: { accessRole: true },
-      });
-      if (!existing) {
-        return reply.code(404).send({ error: ASSIGNMENT_NOT_FOUND });
-      }
 
       try {
         // D-19/D-20: the delete and its audit run under the lockout guard, on the transaction
         // client. Revoking the last tenant-wide holder of a guarded permission throws
-        // RoleLockoutError, which rolls back both. The 404 above stays first, so the guard never
-        // runs for a foreign or unknown id (T-100-09).
-        await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-          await withRoleLockoutGuard(tx, tenantId, async () => {
+        // RoleLockoutError, which rolls back both. 74b review WR-01: the row is read inside the
+        // guard, after the tenant lock, so the audit `oldValue` is the state actually deleted.
+        // A foreign or unknown id writes nothing, so the guard cannot fire for it and both answer
+        // the same 404 (T-100-09).
+        const deleted = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) =>
+          withRoleLockoutGuard(tx, tenantId, async () => {
+            const current = await tx.roleAssignment.findFirst({
+              where: { id, tenantId },
+              include: { accessRole: true },
+            });
+            if (!current) return false;
             await tx.roleAssignment.delete({ where: { id, tenantId } });
             await auditRoleAssignment(app, req, {
               action: "DELETE",
-              entityId: existing.id,
-              oldValue: toAuditValue(existing, existing.accessRole.name),
+              entityId: current.id,
+              oldValue: toAuditValue(current, current.accessRole.name),
               tx,
             });
-          });
-        });
+            return true;
+          }),
+        );
+        if (!deleted) {
+          return reply.code(404).send({ error: ASSIGNMENT_NOT_FOUND });
+        }
         return reply.code(204).send();
       } catch (err: unknown) {
         if (err instanceof RoleLockoutError) {
