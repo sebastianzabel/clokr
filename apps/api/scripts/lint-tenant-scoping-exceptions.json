@@ -110,38 +110,38 @@
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
     "handler": "POST /api/v1/overtime/unlock-month",
-    "validatedAt": 1432,
+    "validatedAt": 1435,
     "calls": [
       {
         "call": "saldoSnapshot.findFirst",
-        "line": 1442
+        "line": 1445
       }
     ],
-    "reason": "employee (keyed on the SAME body employeeId) is fetch-then-compared against req.user.tenantId at line 1409; the remaining call reuses employeeId after that cross-tenant branch already returned 404. (Line shifted -2 in Phase 101B Plan 09 (wave 8), same import-block merge noted on the GET :employeeId entry above — mechanical only. On top of the +3 shift in Phase 101B Plan 08, same import-block merge noted on the GET :employeeId entry above — mechanical only.) (Phase 100B Plan 08: the second call this entry used to list, timeEntry.updateMany, is GONE from this file — it now runs inside unlockEntriesForMonth(tx, employeeId, employee.tenantId, ...) behind the Zeiterfassung facade, which the tenant-scoping gate never sees as a candidate at all here because 'employeeId' is itself a PRINCIPAL_FIELDS entry, and the facade's own tenantId parameter is threaded through explicitly at the call site — see 100B-08-SUMMARY.md. Lines shifted -3 in Phase 100B Plan 13: an earlier route handler's leaveRequest.findMany [10-line inline query] collapsed into getApprovedLeaveOverlapping(...) [7 lines], net -3 — mechanical only, no finding. On top of the -9 net shift Phase 100B Plan 12 already recorded here.) Lines shifted -2 in issue #220: the approvedLeave inline .map((lr) => ({...})) in this file's fetchCloseMonthData collapsed into the shared toCloseMonthApprovedLeave(...) mapper (5 lines to 3, comment included) — mechanical only, no finding. Phase 292 (GitHub issue #292): line numbers shifted mechanically (+1 for one added import, +25 for the new GET /close-month/deferred handler inserted above); the calls themselves are unchanged and were re-verified at the new lines."
+    "reason": "employee (keyed on the SAME body employeeId) is fetch-then-compared against req.user.tenantId at line 1409; the remaining call reuses employeeId after that cross-tenant branch already returned 404. (Line shifted -2 in Phase 101B Plan 09 (wave 8), same import-block merge noted on the GET :employeeId entry above — mechanical only. On top of the +3 shift in Phase 101B Plan 08, same import-block merge noted on the GET :employeeId entry above — mechanical only.) (Phase 100B Plan 08: the second call this entry used to list, timeEntry.updateMany, is GONE from this file — it now runs inside unlockEntriesForMonth(tx, employeeId, employee.tenantId, ...) behind the Zeiterfassung facade, which the tenant-scoping gate never sees as a candidate at all here because 'employeeId' is itself a PRINCIPAL_FIELDS entry, and the facade's own tenantId parameter is threaded through explicitly at the call site — see 100B-08-SUMMARY.md. Lines shifted -3 in Phase 100B Plan 13: an earlier route handler's leaveRequest.findMany [10-line inline query] collapsed into getApprovedLeaveOverlapping(...) [7 lines], net -3 — mechanical only, no finding. On top of the -9 net shift Phase 100B Plan 12 already recorded here.) Lines shifted -2 in issue #220: the approvedLeave inline .map((lr) => ({...})) in this file's fetchCloseMonthData collapsed into the shared toCloseMonthApprovedLeave(...) mapper (5 lines to 3, comment included) — mechanical only, no finding. Phase 292 (GitHub issue #292): line numbers shifted mechanically (+1 for one added import, +25 for the new GET /close-month/deferred handler inserted above); the calls themselves are unchanged and were re-verified at the new lines. (Lines shifted +3 net in Phase 77b Plan 02: access-context first statement in three handlers above; the widened platform import stays one line — mechanical only.)"
   },
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
     "handler": "POST /api/v1/overtime/close-year",
-    "validatedAt": 1550,
+    "validatedAt": 1553,
     "calls": [
       {
         "call": "saldoSnapshot.findFirst",
-        "line": 1565
+        "line": 1568
       }
     ],
-    "reason": "employee (keyed on the SAME body employeeId) is fetch-then-compared against req.user.tenantId at line 1527; saldoSnapshot.findFirst reuses employeeId after that cross-tenant branch already returned 404. Line shifted +2 in Phase 242 Plan 01 (wave 1): the tenant-TZ-aware MONTHLY-filter fix inserted a `getTenantTimezone` call between the employee check and this findFirst — mechanical only, no finding. Line shifted -2 in Phase 101B Plan 09 (wave 8), same import-block merge noted on the GET :employeeId entry above — mechanical only. On top of the +3 shift in Phase 101B Plan 08, same import-block merge noted on the GET :employeeId entry above — mechanical only. Lines shifted -3 in Phase 100B Plan 13 (same earlier-route-handler leaveRequest.findMany-to-facade collapse noted on the unlock-month entry above), on top of the -9 net shift Phase 100B Plan 12 already recorded here — mechanical only, no finding. Lines shifted -2 in issue #220: the approvedLeave inline .map((lr) => ({...})) in this file's fetchCloseMonthData collapsed into the shared toCloseMonthApprovedLeave(...) mapper (5 lines to 3, comment included) — mechanical only, no finding. Phase 292 (GitHub issue #292): line numbers shifted mechanically (+1 for one added import, +25 for the new GET /close-month/deferred handler inserted above); the calls themselves are unchanged and were re-verified at the new lines."
+    "reason": "employee (keyed on the SAME body employeeId) is fetch-then-compared against req.user.tenantId at line 1527; saldoSnapshot.findFirst reuses employeeId after that cross-tenant branch already returned 404. Line shifted +2 in Phase 242 Plan 01 (wave 1): the tenant-TZ-aware MONTHLY-filter fix inserted a `getTenantTimezone` call between the employee check and this findFirst — mechanical only, no finding. Line shifted -2 in Phase 101B Plan 09 (wave 8), same import-block merge noted on the GET :employeeId entry above — mechanical only. On top of the +3 shift in Phase 101B Plan 08, same import-block merge noted on the GET :employeeId entry above — mechanical only. Lines shifted -3 in Phase 100B Plan 13 (same earlier-route-handler leaveRequest.findMany-to-facade collapse noted on the unlock-month entry above), on top of the -9 net shift Phase 100B Plan 12 already recorded here — mechanical only, no finding. Lines shifted -2 in issue #220: the approvedLeave inline .map((lr) => ({...})) in this file's fetchCloseMonthData collapsed into the shared toCloseMonthApprovedLeave(...) mapper (5 lines to 3, comment included) — mechanical only, no finding. Phase 292 (GitHub issue #292): line numbers shifted mechanically (+1 for one added import, +25 for the new GET /close-month/deferred handler inserted above); the calls themselves are unchanged and were re-verified at the new lines. (Lines shifted +3 net in Phase 77b Plan 02: access-context first statement in three handlers above; the widened platform import stays one line — mechanical only.)"
   },
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
     "handler": "POST /api/v1/overtime/opening-balance",
-    "validatedAt": 1735,
+    "validatedAt": 1738,
     "calls": [
       {
         "call": "openingBalance.findFirst",
-        "line": 1746
+        "line": 1749
       }
     ],
-    "reason": "employee (keyed on the SAME body employeeId) is fetch-then-compared against req.user.tenantId at line 1712; openingBalance.findFirst reuses employeeId after that cross-tenant branch already returned 404. Lines shifted +30 in Phase 242 Plan 02 (wave 2): the tenant-TZ-aware month-window and month-number-assignment fix for POST /close-year (the handler immediately above this one in the same file) added that much code above this handler — mechanical only, no finding. Line shifted -2 in Phase 101B Plan 09 (wave 8), same import-block merge noted on the GET :employeeId entry above — mechanical only. On top of the +3 shift in Phase 101B Plan 08, same import-block merge noted on the GET :employeeId entry above — mechanical only. Lines shifted -3 in Phase 100B Plan 13 (same earlier-route-handler leaveRequest.findMany-to-facade collapse noted on the unlock-month entry above), on top of the -9 net shift Phase 100B Plan 12 already recorded here — mechanical only, no finding. Lines shifted -2 in issue #220: the approvedLeave inline .map((lr) => ({...})) in this file's fetchCloseMonthData collapsed into the shared toCloseMonthApprovedLeave(...) mapper (5 lines to 3, comment included) — mechanical only, no finding. Phase 292 (GitHub issue #292): line numbers shifted mechanically (+1 for one added import, +25 for the new GET /close-month/deferred handler inserted above); the calls themselves are unchanged and were re-verified at the new lines."
+    "reason": "employee (keyed on the SAME body employeeId) is fetch-then-compared against req.user.tenantId at line 1712; openingBalance.findFirst reuses employeeId after that cross-tenant branch already returned 404. Lines shifted +30 in Phase 242 Plan 02 (wave 2): the tenant-TZ-aware month-window and month-number-assignment fix for POST /close-year (the handler immediately above this one in the same file) added that much code above this handler — mechanical only, no finding. Line shifted -2 in Phase 101B Plan 09 (wave 8), same import-block merge noted on the GET :employeeId entry above — mechanical only. On top of the +3 shift in Phase 101B Plan 08, same import-block merge noted on the GET :employeeId entry above — mechanical only. Lines shifted -3 in Phase 100B Plan 13 (same earlier-route-handler leaveRequest.findMany-to-facade collapse noted on the unlock-month entry above), on top of the -9 net shift Phase 100B Plan 12 already recorded here — mechanical only, no finding. Lines shifted -2 in issue #220: the approvedLeave inline .map((lr) => ({...})) in this file's fetchCloseMonthData collapsed into the shared toCloseMonthApprovedLeave(...) mapper (5 lines to 3, comment included) — mechanical only, no finding. Phase 292 (GitHub issue #292): line numbers shifted mechanically (+1 for one added import, +25 for the new GET /close-month/deferred handler inserted above); the calls themselves are unchanged and were re-verified at the new lines. (Lines shifted +3 net in Phase 77b Plan 02: access-context first statement in three handlers above; the widened platform import stays one line — mechanical only.)"
   },
   {
     "file": "apps/api/src/contexts/platform/api/settings.ts",
@@ -206,34 +206,34 @@
   {
     "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
     "handler": "PUT /api/v1/shifts/:id",
-    "validatedAt": 2067,
+    "validatedAt": 2063,
     "calls": [
       {
         "call": "shift.findUnique",
-        "line": 2055
+        "line": 2051
       },
       {
         "call": "shift.update",
-        "line": 2246
+        "line": 2237
       }
     ],
-    "reason": "Shift has no tenantId of its own. The shift is first fetched by id (line 2055, unscoped by itself), then its OWNER is validated by a SECOND fetch+compare on a DERIVED field (existingOwner = employee.findUnique({ id: existing.employeeId }), compared at line 2067) BEFORE the fetched row is read or written anywhere below — including the shift.update at line 2246, which reuses the SAME id. This mirrors overtime.ts's own comment ('Shift has no tenantId of its own — go via employee'). (Lines shifted +16 net in Phase 267 Plan 03: the GET /week threat-coverage comment block + its new preHandler line, upstream of this handler — mechanical only. On top of the -4 net shift Phase 101B Plan 08: four separate deep absence imports [vacation-calc, shift-leave-recalc-resolver, api/leave] merged as extra names into the existing absence-index import, collapsing 20 lines of import statements into 16 — mechanical only. On top of the -1 net shift Phase 101B Plan 07: the platform/holidays + platform/anonymize import pair merged into one platform/index.ts import. On top of the -21 net shift Phase 100B Plan 13, the -8 net shift Phase 100B Plan 12, the -15 net shift Phase 100B Plan 11, the -2 net shift Phase 100B Plan 10, the earlier +1 from Phase 100B Plan 07's `isMonthClosed` import and the +1 from Issue #241's `monthRangeUtc` import.)"
+    "reason": "Shift has no tenantId of its own. The shift is first fetched by id (line 2055, unscoped by itself), then its OWNER is validated by a SECOND fetch+compare on a DERIVED field (existingOwner = employee.findUnique({ id: existing.employeeId }), compared at line 2067) BEFORE the fetched row is read or written anywhere below — including the shift.update at line 2246, which reuses the SAME id. This mirrors overtime.ts's own comment ('Shift has no tenantId of its own — go via employee'). (Lines shifted +16 net in Phase 267 Plan 03: the GET /week threat-coverage comment block + its new preHandler line, upstream of this handler — mechanical only. On top of the -4 net shift Phase 101B Plan 08: four separate deep absence imports [vacation-calc, shift-leave-recalc-resolver, api/leave] merged as extra names into the existing absence-index import, collapsing 20 lines of import statements into 16 — mechanical only. On top of the -1 net shift Phase 101B Plan 07: the platform/holidays + platform/anonymize import pair merged into one platform/index.ts import. On top of the -21 net shift Phase 100B Plan 13, the -8 net shift Phase 100B Plan 12, the -15 net shift Phase 100B Plan 11, the -2 net shift Phase 100B Plan 10, the earlier +1 from Phase 100B Plan 07's `isMonthClosed` import and the +1 from Issue #241's `monthRangeUtc` import.) (Lines shifted -4 / -9 net in Phase 77b Plan 02: access-context first statement and import; findShiftConflict and its callers took one AccessContext parameter and prettier collapsed the shortened calls — mechanical only.)"
   },
   {
     "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
     "handler": "DELETE /api/v1/shifts/:id",
-    "validatedAt": 3156,
+    "validatedAt": 3144,
     "calls": [
       {
         "call": "shift.findUnique",
-        "line": 3147
+        "line": 3135
       },
       {
         "call": "shift.delete",
-        "line": 3180
+        "line": 3168
       }
     ],
-    "reason": "Same derived-field second-hop guard as the PUT /:id handler above: the shift is fetched by id (line 3147), then existingOwner = employee.findUnique({ id: existing.employeeId }) is compared at line 3156 BEFORE the shift is read or deleted — including the shift.delete at line 3180, which reuses the SAME id. (Lines shifted +16 net in Phase 267 Plan 03, same GET /week threat-coverage comment block + preHandler line noted on the PUT /:id entry above, upstream of this handler — mechanical only. On top of the -4 net shift Phase 101B Plan 08, same import-block merge noted on the PUT /:id entry above, upstream of this handler — mechanical only. On top of the -1 net shift Phase 101B Plan 07: the platform/holidays + platform/anonymize import pair merged into one platform/index.ts import, upstream of this handler. On top of the -33 net shift Phase 100B Plan 13, the -20 net shift Phase 100B Plan 12 already recorded here — no finding, mechanical only.)"
+    "reason": "Same derived-field second-hop guard as the PUT /:id handler above: the shift is fetched by id (line 3147), then existingOwner = employee.findUnique({ id: existing.employeeId }) is compared at line 3156 BEFORE the shift is read or deleted — including the shift.delete at line 3180, which reuses the SAME id. (Lines shifted +16 net in Phase 267 Plan 03, same GET /week threat-coverage comment block + preHandler line noted on the PUT /:id entry above, upstream of this handler — mechanical only. On top of the -4 net shift Phase 101B Plan 08, same import-block merge noted on the PUT /:id entry above, upstream of this handler — mechanical only. On top of the -1 net shift Phase 101B Plan 07: the platform/holidays + platform/anonymize import pair merged into one platform/index.ts import, upstream of this handler. On top of the -33 net shift Phase 100B Plan 13, the -20 net shift Phase 100B Plan 12 already recorded here — no finding, mechanical only.) (Lines shifted -12 net in Phase 77b Plan 02: access-context first statement and import; findShiftConflict and its callers took one AccessContext parameter and prettier collapsed the shortened calls — mechanical only.)"
   },
   {
     "file": "apps/api/src/contexts/platform/api/test-bootstrap.ts",

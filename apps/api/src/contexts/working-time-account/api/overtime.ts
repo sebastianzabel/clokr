@@ -9,7 +9,7 @@ import {
 import { getConfirmedCarryOver } from "../confirmed-saldo"; // Phase 97-01
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "../timezone";
-import { getHolidays, STATE_MAP } from "../../platform";
+import { getHolidays, STATE_MAP, accessContextFromRequest, employeeScopeFor } from "../../platform";
 import { fetchCloseMonthData } from "../close-month-data"; // PERF-V1814-01
 import { periodStartWindow, isPeriodStartInMonth } from "../snapshot-period";
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared saldo core
@@ -419,6 +419,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req, _reply) => {
+      const access = accessContextFromRequest(req);
       const { year, month } = z
         .object({
           year: z.coerce.number().int().min(2020).max(2099),
@@ -565,7 +566,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
           // Phase 100B Plan 05 — S1, contexts/scheduling facade.
           const empShifts = await getShiftsInRange(
             app.prisma,
-            { kind: "employee", employeeId: emp.id, tenantId },
+            employeeScopeFor(access, { employeeId: emp.id }),
             monthStart,
             monthLastDay,
           );
@@ -654,6 +655,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req, _reply) => {
+      const access = accessContextFromRequest(req);
       const { year } = z
         .object({
           year: z.coerce.number().int().min(2020).max(2099),
@@ -860,7 +862,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             // Phase 100B Plan 05 — S1, contexts/scheduling facade.
             const empShiftsYs = await getShiftsInRange(
               app.prisma,
-              { kind: "employee", employeeId: emp.id, tenantId },
+              employeeScopeFor(access, { employeeId: emp.id }),
               ysMonthFirstDay,
               ysMonthLastDay,
             );
@@ -961,6 +963,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req, reply) => {
+      const access = accessContextFromRequest(req);
       const body = closeMonthSchema.parse(req.body);
       const { employeeId, year, month } = body;
 
@@ -1166,7 +1169,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
         // Phase 100B Plan 08 — T1, contexts/time-tracking facade. THE SALDO INPUT.
         getValidWorkedEntriesInRange(
           app.prisma,
-          { kind: "employee", employeeId, tenantId: employee.tenantId },
+          employeeScopeFor(access, { employeeId }),
           effectiveStart,
           monthLastDay,
         ),
@@ -1175,7 +1178,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
         // Phase 100B Plan 05 — S1, contexts/scheduling facade.
         getShiftsInRange(
           app.prisma,
-          { kind: "employee", employeeId, tenantId: employee.tenantId },
+          employeeScopeFor(access, { employeeId }),
           effectiveStart,
           monthLastDay,
         ),
@@ -1183,7 +1186,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
         // Phase 100B Plan 13 — A1, contexts/absence facade.
         getApprovedLeaveOverlapping(
           app.prisma,
-          { kind: "employee", employeeId, tenantId: employee.tenantId },
+          employeeScopeFor(access, { employeeId }),
           monthStart,
           monthEnd,
         ),
@@ -1191,7 +1194,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
         // Phase 100B Plan 12 — A4, contexts/absence facade. THE SALDO INPUT.
         getAbsencesOverlapping(
           app.prisma,
-          { kind: "employee", employeeId, tenantId: employee.tenantId },
+          employeeScopeFor(access, { employeeId }),
           effectiveStart,
           monthEnd,
         ),
