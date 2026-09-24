@@ -390,12 +390,19 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // (`db: Prisma.TransactionClient` first, `tenantId` present alongside `openingHours` which does
   // not match the `*Ids?` trigger pattern), no new exception needed. The module-private
   // `normalizeOpeningHoursForCompare` helper is not exported and is not counted here.
-  it("the real tree has exactly 92 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  //
+  // 92 -> 93 in Phase 74b Plan 01 (Issue #74): `contexts/platform/facade/role-assignments.ts`
+  // added (matches the `contexts/*/facade/**/*.ts` glob directly, no KNOWN_FACADE_FILES entry
+  // needed) — 1 new exported function (userMayApply) — passes F1/F2/F3 directly, flat parameters
+  // (`db: Prisma.TransactionClient, tenantId, userId, permission, target`) so F3 sees `tenantId`
+  // right next to `userId`, no new exception.
+  it("the real tree has exactly 93 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
         ...KNOWN_FACADE_FILES,
         "apps/api/src/contexts/platform/facade/employee-scope.ts",
+        "apps/api/src/contexts/platform/facade/role-assignments.ts",
         "apps/api/src/contexts/platform/facade/salons.ts",
         "apps/api/src/contexts/scheduling/facade/shifts.ts",
         "apps/api/src/contexts/scheduling/facade/availability.ts",
@@ -417,7 +424,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(92);
+    expect(functions).toHaveLength(93);
 
     const rawExceptions = JSON.parse(
       readFileSync(

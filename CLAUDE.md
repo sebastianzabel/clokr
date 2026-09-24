@@ -110,7 +110,7 @@ Clokr has **four business contexts**, a shared substrate (**Unterbau**, the Shar
 - **Abwesenheiten** (`contexts/absence/`) — request, approval, entitlement, carry-over. A workflow with status, not a recording. Date ranges in days.
 - **Schichtplanung** (`contexts/scheduling/` + `services/phorest/`) — shifts, templates, coverage, availability, Phorest sync. Plans the future. Since Phase 107 it feeds Arbeitszeitkonto (SHIFT_BASED Soll) and Abwesenheiten (SHIFT_BASED leave-day count).
 - **Arbeitszeitkonto** (`contexts/working-time-account/`) — Soll vs. Ist, saldo, Monatsabschluss. Reads from the others. Owns the once-per-day rule.
-- **Unterbau** (Shared Kernel, `contexts/platform/`) — the 13 `platform` models of `MODEL_OWNER` in `apps/api/scripts/measure-foreign-context-access.ts` (Tenant, TenantConfig, Employee, User, WorkSchedule, …) and permissions. Salon (#64) and Salonzuordnung (#67) land here; Beschäftigung (#66) is backlog and has no entity.
+- **Unterbau** (Shared Kernel, `contexts/platform/`) — the 16 `platform` models of `MODEL_OWNER` in `apps/api/scripts/measure-foreign-context-access.ts` (Tenant, TenantConfig, Employee, User, WorkSchedule, …) and permissions. Salon (#64), RoleAssignment (#74) and Salonzuordnung (#67) land here; Beschäftigung (#66) is backlog and has no entity.
 - **Composition layer** (`apps/api/src/composition/` + composition root `apps/api/src/app.ts`) — owns no model, carries no business rule, reads contexts only through their `index.ts`, and no context imports from `composition/`. A business rule found there moves into the owning context (ADR 0002, Entscheidung 9).
 
 Rules — these are directives, not preferences:
