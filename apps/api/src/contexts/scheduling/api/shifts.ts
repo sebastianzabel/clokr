@@ -12,6 +12,7 @@ import {
   employeeScopeFor,
   type AccessContext,
   findDefaultSalon, // Phase 325 (issue #325), D-04/D-05
+  findSalon, // Phase 325 (issue #325) Plan 02, D-06 (explicit salonId resolution)
   listSalons, // Phase 325 (issue #325), D-08 (copy-week fallback)
 } from "../../platform";
 import {
@@ -58,6 +59,9 @@ const shiftSchema = z.object({
   endTime: z.string().regex(/^\d{2}:\d{2}$/),
   label: z.string().optional(),
   note: z.string().optional(),
+  // Phase 325 (issue #325) Plan 02, D-05: optional — reused by POST, PUT (`.partial()`) and
+  // `/bulk` (`bulkShiftSchema`). See `resolveShiftSalon()` for how an explicit id is validated.
+  salonId: z.string().uuid().optional(),
 });
 
 const bulkShiftSchema = z.object({
@@ -70,6 +74,47 @@ const NO_ACTIVE_SALON_REPLY = {
   error: "Kein aktiver Salon vorhanden.",
   code: "NO_ACTIVE_SALON",
 } as const;
+
+type ShiftSalonResolution =
+  | { salon: import("@clokr/db").Salon }
+  | { reply: { status: number; body: Record<string, unknown> } };
+
+/**
+ * Phase 325 (issue #325) Plan 02, D-04/D-05/D-06/D-07 — resolve the salon a shift write should
+ * land on. An explicit `requestedSalonId` is resolved tenant-scoped via `findSalon`: a foreign
+ * tenant's real salon and a nonexistent id are BY CONSTRUCTION identical — one code path
+ * (`findSalon`) returns `null` for both (T-100-09) — so this answers a plain 404 with NO audit,
+ * mirroring this file's own `employeeId` 404 precedent (the facade's foreign-existence probe,
+ * `salonExistsInForeignTenant`, is deliberately not exported for another context to reuse). A
+ * found but DEACTIVATED salon answers 422 SALON_INACTIVE (D-07) — callers decide themselves
+ * whether an unchanged `salonId` should even reach this function (PUT's D-07 exemption never
+ * calls this for an id equal to the shift's current one). With `requestedSalonId` undefined,
+ * falls back to the tenant's default salon (D-04/D-05), answering the existing 409
+ * `NO_ACTIVE_SALON_REPLY` when the tenant has none.
+ */
+async function resolveShiftSalon(
+  prisma: import("@clokr/db").PrismaClient,
+  tenantId: string,
+  requestedSalonId: string | undefined,
+): Promise<ShiftSalonResolution> {
+  if (requestedSalonId !== undefined) {
+    const salon = await findSalon(prisma, tenantId, requestedSalonId);
+    if (!salon) {
+      return { reply: { status: 404, body: { error: "Salon nicht gefunden" } } };
+    }
+    if (!salon.isActive) {
+      return {
+        reply: { status: 422, body: { error: "Salon ist deaktiviert", code: "SALON_INACTIVE" } },
+      };
+    }
+    return { salon };
+  }
+  const salon = await findDefaultSalon(prisma, tenantId);
+  if (!salon) {
+    return { reply: { status: 409, body: NO_ACTIVE_SALON_REPLY } };
+  }
+  return { salon };
+}
 
 // Phase 43 — Auto-Gen
 const generateWeekSchema = z.object({
@@ -1768,10 +1813,14 @@ export async function shiftRoutes(app: FastifyInstance) {
       });
       if (!targetEmp) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
-      // Phase 325 (issue #325), D-04/D-05: no salonId in the body yet (plan 02 adds it) — every
-      // new shift lands on the tenant's default salon. No active salon -> 409 before any write.
-      const salon = await findDefaultSalon(app.prisma, req.user.tenantId);
-      if (!salon) return reply.code(409).send(NO_ACTIVE_SALON_REPLY);
+      // Phase 325 (issue #325) Plan 02, D-05/D-06/D-07: an explicit salonId is resolved
+      // tenant-scoped and must be one of the caller's own ACTIVE salons; with none given the
+      // shift lands on the tenant's default salon. No active salon -> 409 before any write.
+      const salonResolution = await resolveShiftSalon(app.prisma, req.user.tenantId, body.salonId);
+      if ("reply" in salonResolution) {
+        return reply.code(salonResolution.reply.status).send(salonResolution.reply.body);
+      }
+      const salon = salonResolution.salon;
 
       // Phase 47.1 — Eligibility gate: only SHIFT_BASED employees may receive shift assignments.
       const eligibility = await assertEmployeeShiftEligible(app.prisma, body.employeeId);
@@ -2115,6 +2164,20 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
       }
 
+      // Phase 325 (issue #325) Plan 02, D-05/D-06/D-07: a CHANGED salonId must resolve to one of
+      // the caller's own ACTIVE salons; an unchanged salonId is NEVER rejected here — an existing
+      // shift keeps its salon even if that salon is later deactivated (D-07).
+      if (body.salonId !== undefined && body.salonId !== existing.salonId) {
+        const salonResolution = await resolveShiftSalon(
+          app.prisma,
+          req.user.tenantId,
+          body.salonId,
+        );
+        if ("reply" in salonResolution) {
+          return reply.code(salonResolution.reply.status).send(salonResolution.reply.body);
+        }
+      }
+
       // Phase 47.5 — Store-Hours Soft-Warn (effective values).
       if (!force) {
         const storeHit = await assertWithinStoreHours(
@@ -2259,6 +2322,9 @@ export async function shiftRoutes(app: FastifyInstance) {
             ...(body.endTime ? { endTime: body.endTime } : {}),
             ...(body.label !== undefined ? { label: body.label || null } : {}),
             ...(body.note !== undefined ? { note: body.note || null } : {}),
+            // Phase 325 (issue #325) Plan 02, D-05: absent from the body -> the shift keeps its
+            // current salon (no key at all, not even a no-op assignment to the same value).
+            ...(body.salonId !== undefined ? { salonId: body.salonId } : {}),
             // If the user is force-saving on top of a conflict, clear any stale flag
             // (a manager has actively decided this shift stays).
             ...(force && conflict ? { conflictsWithLeave: false } : {}),
@@ -3104,15 +3170,48 @@ export async function shiftRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { shifts: shiftDefs } = bulkShiftSchema.parse(req.body);
 
-      // Phase 325 (issue #325), D-08: no per-item salonId on the body yet (plan 02 adds it) —
-      // every bulk-created shift lands on the tenant's default salon, resolved once. Plan 02
-      // also adds the employee-tenant guard this route is currently missing (pre-existing,
-      // unrelated gap — not fixed here).
-      let bulkSalonId: string | null = null;
+      // Phase 325 (issue #325) Plan 02, D-08/AC-1/AC-3: a validation pass BEFORE the transaction —
+      // any failure answers for the WHOLE atomic batch, zero rows written. (a) every distinct
+      // employeeId must belong to this tenant — closes a pre-existing gap (325-RESEARCH Security
+      // Domain): without this, a foreign tenant's employee could receive a shift on the caller's
+      // OWN salon, which is not a salon of the shift's own tenant (AC-1/AC-3).
       if (shiftDefs.length > 0) {
-        const salon = await findDefaultSalon(app.prisma, req.user.tenantId);
-        if (!salon) return reply.code(409).send(NO_ACTIVE_SALON_REPLY);
-        bulkSalonId = salon.id;
+        const distinctEmployeeIds = Array.from(new Set(shiftDefs.map((s) => s.employeeId)));
+        const ownEmployees = await app.prisma.employee.findMany({
+          where: { id: { in: distinctEmployeeIds }, tenantId: req.user.tenantId },
+          select: { id: true },
+        });
+        if (ownEmployees.length !== distinctEmployeeIds.length) {
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+      }
+
+      // (b) each DISTINCT explicit salonId resolved once through the shared resolver — the first
+      // failure (404 foreign/nonexistent, 422 inactive) answers for the whole batch.
+      const bulkSalonByRequestedId = new Map<string, import("@clokr/db").Salon>();
+      const distinctRequestedSalonIds = Array.from(
+        new Set(shiftDefs.map((s) => s.salonId).filter((id): id is string => id !== undefined)),
+      );
+      for (const requestedSalonId of distinctRequestedSalonIds) {
+        const salonResolution = await resolveShiftSalon(
+          app.prisma,
+          req.user.tenantId,
+          requestedSalonId,
+        );
+        if ("reply" in salonResolution) {
+          return reply.code(salonResolution.reply.status).send(salonResolution.reply.body);
+        }
+        bulkSalonByRequestedId.set(requestedSalonId, salonResolution.salon);
+      }
+
+      // (c) the default salon resolved once, only when at least one item has no explicit salonId.
+      let bulkDefaultSalonId: string | null = null;
+      if (shiftDefs.some((s) => s.salonId === undefined)) {
+        const salonResolution = await resolveShiftSalon(app.prisma, req.user.tenantId, undefined);
+        if ("reply" in salonResolution) {
+          return reply.code(salonResolution.reply.status).send(salonResolution.reply.body);
+        }
+        bulkDefaultSalonId = salonResolution.salon.id;
       }
 
       // Phase 107 (D-14/D-15): converted from the batch `$transaction([...])` form to the
@@ -3123,11 +3222,16 @@ export async function shiftRoutes(app: FastifyInstance) {
       const { created, adjustments } = await app.prisma.$transaction(async (tx) => {
         const rows = [];
         for (const s of shiftDefs) {
+          // Phase 325 (issue #325) Plan 02, D-08: each item's own resolved salon — the caller's
+          // explicit choice, or the tenant default resolved above.
+          const salonId = s.salonId
+            ? bulkSalonByRequestedId.get(s.salonId)!.id
+            : (bulkDefaultSalonId as string);
           const row = await tx.shift.create({
             data: {
               employeeId: s.employeeId,
               templateId: s.templateId,
-              salonId: bulkSalonId as string, // Phase 325 (issue #325), D-08
+              salonId,
               date: new Date(s.date),
               startTime: s.startTime,
               endTime: s.endTime,
