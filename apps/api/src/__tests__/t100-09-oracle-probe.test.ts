@@ -42,6 +42,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 import type { FastifyInstance } from "fastify";
 
 // A narrower union than fastify's own `HTTPMethods` (which also includes "trace") — this probe
@@ -263,18 +264,22 @@ type FixtureBundle = Awaited<ReturnType<typeof seedTestData>>;
 // foreign-tenant bundle passed into it by the sweep) can hand them out.
 let tenantBLeaveRequestId: string | undefined;
 let tenantBTimeEntryId: string | undefined;
+// Phase 64b Plan 02 (Issue #64, Pitfall 4): a real Salon for tenantB, same local-fixture idiom as
+// the two above — `seedTestData` does not create a Salon (D-18 exemption), so one is created here.
+let tenantBSalonId: string | undefined;
 
 /** Resolves a register `params` fixture key to the foreign tenant's real entity id. `null` means
  * the key is unrecognised — the caller must fail loudly, never silently skip the route (D-03).
- * Today's vocabulary is exactly these four keys: `employee`/`leaveType` from the shared
- * `seedTestData` bundle, `leaveRequest`/`timeEntry` from the locally created fixtures above (Issue
- * #309/#310) — a register entry naming a fifth one this probe does not implement is exactly the
- * failure this function surfaces. */
+ * Today's vocabulary is exactly these five keys: `employee`/`leaveType` from the shared
+ * `seedTestData` bundle, `leaveRequest`/`timeEntry`/`salon` from the locally created fixtures
+ * above (Issue #309/#310, Phase 64b) — a register entry naming a sixth one this probe does not
+ * implement is exactly the failure this function surfaces. */
 function fixtureValueFor(bundle: FixtureBundle, fixtureKey: string): string | null {
   if (fixtureKey === "employee") return bundle.employee.id;
   if (fixtureKey === "leaveType") return bundle.vacationType.id;
   if (fixtureKey === "leaveRequest") return tenantBLeaveRequestId ?? null;
   if (fixtureKey === "timeEntry") return tenantBTimeEntryId ?? null;
+  if (fixtureKey === "salon") return tenantBSalonId ?? null;
   return null;
 }
 
@@ -353,6 +358,18 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         },
       });
       tenantBTimeEntryId = timeEntry.id;
+
+      // Phase 64b Plan 02 (Issue #64) fixture: a real, active Salon owned by tenantB — its only
+      // job, like the two fixtures above, is to EXIST as a foreign-tenant entity for the probe.
+      const salon = await app.prisma.salon.create({
+        data: {
+          tenantId: tenantB.tenant.id,
+          name: "T-100-09 Salon",
+          openingHours: DEFAULT_SALON_OPENING_HOURS,
+          isActive: true,
+        },
+      });
+      tenantBSalonId = salon.id;
     });
 
     afterAll(async () => {
@@ -493,6 +510,14 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         where: { timeEntryId: tenantBTimeEntryId },
       });
       expect(breakCount).toBe(0);
+    });
+
+    it("fixture integrity after the sweep: tenantB's Salon (Phase 64b) still has name 'T-100-09 Salon', isActive true, and deactivatedAt null — a guard that answers 404 while still performing the PATCH/deactivate/activate would otherwise pass the byte comparison", async () => {
+      const after = await app.prisma.salon.findUnique({ where: { id: tenantBSalonId } });
+      expect(after).not.toBeNull();
+      expect(after?.name).toBe("T-100-09 Salon");
+      expect(after?.isActive).toBe(true);
+      expect(after?.deactivatedAt).toBeNull();
     });
   });
 });

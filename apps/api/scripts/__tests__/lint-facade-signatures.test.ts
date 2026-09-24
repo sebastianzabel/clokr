@@ -375,7 +375,13 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // 3 new exported functions (listSalons, countActiveSalons, isMultiSalonTenant), no new
   // exceptions (all 3 pass F1/F2/F3 directly). This golden number is a tripwire, updated only when
   // the tree legitimately changed — here it did.
-  it("the real tree has exactly 85 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  //
+  // 85 -> 89 in Phase 64b Plan 02 (Issue #64, Task 1): `contexts/platform/facade/salons.ts` (same
+  // file, already in the list above) gained 4 more exported functions — findSalon,
+  // salonExistsInForeignTenant, createSalon, updateSalon — all four pass F1/F2/F3 directly (each
+  // declares `db: Prisma.TransactionClient` first and, where a `*Id` parameter exists, a sibling
+  // `tenantId`), so no new exception entry is needed.
+  it("the real tree has exactly 89 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -402,7 +408,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(85);
+    expect(functions).toHaveLength(89);
 
     const rawExceptions = JSON.parse(
       readFileSync(

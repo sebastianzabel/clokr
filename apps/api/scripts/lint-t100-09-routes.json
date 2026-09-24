@@ -827,6 +827,32 @@
       "validatedAt": null
     },
     {
+      "route": "GET /api/v1/salons/:id",
+      "file": "apps/api/src/contexts/platform/api/salons.ts",
+      "category": "probe",
+      "params": {
+        "id": "salon"
+      },
+      "minimalBody": null,
+      "reason": "Phase 64b Plan 02 (Issue #64, D-13): findSalon(app.prisma, req.user.tenantId, id) is inline-tenant-id scoped (`findFirst({ where: { id, tenantId } })`) and returns null for BOTH a foreign tenant's real salon and a nonexistent id; both fall through to the shared rejectUnknownSalon(...) helper, which sends the byte-identical 404 {\"error\":\"Salon nicht gefunden\"} and audits CROSS_TENANT_ACCESS_DENIED only when salonExistsInForeignTenant(...) confirms the row exists in another tenant. GET has no body.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/salons/:id",
+      "file": "apps/api/src/contexts/platform/api/salons.ts",
+      "category": "probe",
+      "params": {
+        "id": "salon"
+      },
+      "minimalBody": {
+        "name": "T-100-09-Probe"
+      },
+      "reason": "Phase 64b Plan 02 (Issue #64, D-13): updateSalonSchema.parse(req.body) runs BEFORE the lookup (D-07) — `{\"name\":\"T-100-09-Probe\"}` is the smallest body it accepts (an empty `{}` would instead reach the dedicated NO_CHANGES branch, which is a DIFFERENT code path from the T-100-09 guard this register tracks). updateSalon(tx, tenantId, id, patch) carries tenantId in BOTH its guard-fetch and its own update `where`, returning null for a foreign or nonexistent id; the route's rejectUnknownSalon(...) helper then sends the byte-identical 404, auditing CROSS_TENANT_ACCESS_DENIED only when the row exists in another tenant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "GET /api/v1/audit-logs/:id",
       "file": "apps/api/src/contexts/platform/api/audit-logs.ts",
       "category": "nicht anwendbar",
