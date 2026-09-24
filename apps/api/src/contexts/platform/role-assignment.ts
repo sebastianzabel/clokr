@@ -152,9 +152,19 @@ export interface UserMayApplyFacts {
  *   - relation `PERSON`: a SALONS grant listing `target.salonId`, with that salon in the tenant
  *     AND currently active, -> true (salon activity is evaluated live — nothing is stored on the
  *     assignment). Otherwise a PERSONS grant listing `target.employeeId` (already known valid) ->
- *     true — the target's salon plays no role here (salon-crossing, binding: a PERSONS holder
- *     reaches a listed person regardless of which salon that person's target belongs to).
+ *     true — which of the TENANT'S salons the target names plays no role here (salon-crossing,
+ *     binding: a PERSONS holder reaches a listed person regardless of which salon that person's
+ *     target belongs to). A salon id that is not in the tenant is different: it makes the target
+ *     itself invalid and denies by the first ZUGEWIESEN rule above, before any scope is looked at
+ *     (74b review IN-04 — fail closed, deliberately).
  *     Otherwise -> false.
+ *
+ * Not a four-eyes check (74b review IN-01): nothing here excludes the user's OWN employee as a
+ * ZUGEWIESEN target. A TENANT scope, a SALONS scope listing the user's own salon, or a PERSONS
+ * list containing the user's own employee all allow e.g. an approve permission on the user
+ * themselves (consistent with D-15). Callers that need self-approval protection or a different
+ * approver (CLAUDE.md § 8 BUrlG, leave cancellation flow) keep those checks; `userMayApply` does
+ * not replace them (#91).
  */
 export function decideUserMayApply(facts: UserMayApplyFacts): boolean {
   if (facts.grantingScopes.length === 0) return false;

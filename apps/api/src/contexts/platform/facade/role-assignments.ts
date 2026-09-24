@@ -48,9 +48,13 @@ import {
  * load the user's assignments in the tenant, keep only those whose role grants `permission` via
  * `roleGrants` — the ONE role-evaluation path (AK-73-7) — and normalize their scopes, skipping a
  * stored row that violates the D-03 shape (fail closed, IN-02); no granting assignment denies
- * before any target lookup. (d) resolve the target's live facts (employee
- * validity, salon tenant-membership and activity). (e) hand everything to the pure decision table
+ * before any target lookup. (d) resolve the target's live facts (employee validity, salon
+ * tenant-membership and activity). (e) hand everything to the pure decision table
  * `decideUserMayApply`.
+ *
+ * Answers "may", not "should": it does not exclude the user's own employee as a target, so it
+ * never replaces a self-approval or different-approver check (74b review IN-01, see
+ * `decideUserMayApply`).
  */
 export async function userMayApply(
   db: Prisma.TransactionClient,
