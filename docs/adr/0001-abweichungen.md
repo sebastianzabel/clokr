@@ -995,3 +995,7 @@ auf `28009b3f` die 33 Routenliterale mit (63 in 15 Dateien = 33 in 4 + 30 in 11)
 unerwarteten Fehler `error.message` wörtlich an den Client zurück — bei Prisma-Fehlern samt
 Aufruftext und absolutem Serverpfad. Vorbestehend, hier nicht geändert (nur der neue
 `AccessContextError`-Zweig hat einen festen Text); Kandidat für ein eigenes Issue.
+
+**Nachtrag 2026-09-24 (Issue #330, PR #331):** Erledigt. Bei Status ≥ 500 antwortet der
+generische Zweig jetzt immer mit `{"error":"Interner Serverfehler"}`; die Originalmeldung steht
+nur im Log, mit Route und Request-ID (`error-handler-5xx.test.ts`).
