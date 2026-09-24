@@ -9,7 +9,7 @@
  * Pattern mirrors shifts-saldo-trigger.test.ts (Phase 76.5 sibling):
  *  - Shared singleton Fastify app via getTestApp()
  *  - Fresh tenant per suite, ADMIN user for POST/PUT writes
- *  - Future weekdays only (Sunday closed in default storeHours)
+ *  - Future weekdays only (Sunday closed in the seeded salon's default opening hours, #325)
  *
  * Tests:
  *  A. POST /shifts — 11h shift with breakOver9hOverride=60 → 201 created
@@ -43,7 +43,8 @@ function addDaysIso(iso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-// Skip Sundays (Sunday is closed in default storeHours → 409 SHIFT_OUTSIDE_STORE_HOURS).
+// Skip Sundays (Sunday is closed in the seeded salon's default opening hours, #325 →
+// 409 SHIFT_OUTSIDE_STORE_HOURS).
 function futureWeekday(start: string, offset: number): string {
   let cursor = offset;
   for (;;) {

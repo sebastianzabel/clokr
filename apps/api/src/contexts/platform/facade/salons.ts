@@ -13,8 +13,8 @@
  * Weekday encoding: `day` is 0 = Monday … 6 = Sunday — identical to `TenantConfig.storeHours`
  * (schema.prisma:217) and deliberately NOT `WorkSchedule.workDays`'s encoding (0 = Sunday). This
  * module's `openingHours` shape is a verbatim copy of `storeHours`'s shape (D-03) so the one-time
- * migration data section can copy the JSON without reshaping it, and so a future reader (#325) can
- * switch from tenant to salon level without changing its parsing.
+ * migration data section can copy the JSON without reshaping it, and so #325's shift-check reader
+ * could switch from tenant to salon level without changing its parsing.
  *
  * A `Salon` is never hard-deleted (D-06) — deactivation only (`isActive` / `deactivatedAt`). This
  * module therefore has, and will only ever have, no delete function.

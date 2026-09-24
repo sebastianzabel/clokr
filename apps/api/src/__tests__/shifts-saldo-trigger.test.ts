@@ -55,8 +55,9 @@ function addDaysIso(iso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-// Generate N future ISO dates skipping Sundays. The default TenantConfig has
-// storeHours with Sunday closed → shift POSTs on Sundays return 409
+// Generate N future ISO dates skipping Sundays. Since Phase 325 (issue #325) the store-hours
+// check reads the shift's own salon's opening hours; seedTestData()'s default salon has Sunday
+// closed (DEFAULT_SALON_OPENING_HOURS) → shift POSTs on Sundays return 409
 // SHIFT_OUTSIDE_STORE_HOURS. Tests use these helpers exclusively.
 function futureWeekdays(start: string, count: number, offset = 1): string[] {
   const out: string[] = [];
