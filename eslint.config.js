@@ -63,6 +63,11 @@ export default [
       "packages/db/src/seed.ts",
       "packages/db/src/seed-credentials.ts",
       "packages/db/src/reset-demo.ts",
+      // Phase 64b Plan 03 (issue #64): imported only by the seeds above, same
+      // "standalone, no tsconfig.json project covers it" shape — only
+      // tsconfig.seed.json includes it, and `project: true` auto-discovery
+      // only looks for tsconfig.json.
+      "packages/db/src/default-salon.ts",
       "apps/api/vitest.*.ts",
       // packages/types has no tsconfig.json of its own and isn't `include`d by any other
       // package's tsconfig either — genuinely pre-existing, this file was touched only twice in
