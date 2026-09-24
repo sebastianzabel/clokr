@@ -1,6 +1,11 @@
 import { FastifyInstance } from "fastify";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { getHolidays, STATE_MAP } from "../contexts/platform";
+import {
+  getHolidays,
+  STATE_MAP,
+  accessContextFromRequest,
+  employeeScopeFor,
+} from "../contexts/platform";
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
 import {
   getWorkedEntriesInRange,
@@ -67,6 +72,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
           scheduleType: null,
         });
       }
+      // Phase 77b (Issue #77, D-08): the tenant frame is checked before the first query. It sits
+      // after the early return above on purpose — that branch answers a constant, DB-free body for
+      // users without an employee record (whose JWT carries tenantId "", auth.ts), so it returns
+      // no tenant data and moving the guard above it would turn a documented 200 into a 500.
+      const access = accessContextFromRequest(req);
       const tenantId = req.user.tenantId;
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const now = new Date();
@@ -79,7 +89,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // truthy, so T2's `endTime: { not: null }` DB-level filter is a proven no-op here.
       const todayEntries = await getWorkedEntriesInRange(
         app.prisma,
-        { kind: "employee", employeeId, tenantId },
+        employeeScopeFor(access, { employeeId }),
         today,
         today,
       );
@@ -138,7 +148,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       const periodEntries = await getWorkedEntriesInRange(
         app.prisma,
-        { kind: "employee", employeeId, tenantId },
+        employeeScopeFor(access, { employeeId }),
         workedQueryStart,
         workedQueryEnd,
       );
