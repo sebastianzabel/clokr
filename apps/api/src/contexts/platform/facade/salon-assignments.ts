@@ -82,6 +82,23 @@ export async function employeeExistsInForeignTenant(
 }
 
 /**
+ * Phase 67b Plan 02 (issue #67, D-19) — audit-only helper for `api/salon-assignments.ts`'s
+ * `rejectUnknownAssignment` (the `:assignmentId` path-parameter guard for `end`). Never loads the
+ * foreign row, its boolean answer never reaches the client — same shape as
+ * `employeeExistsInForeignTenant` above and `salonExistsInForeignTenant` (`facade/salons.ts`).
+ */
+export async function salonAssignmentExistsInForeignTenant(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  assignmentId: string,
+): Promise<boolean> {
+  const count = await db.employeeSalonAssignment.count({
+    where: { id: assignmentId, NOT: { tenantId } },
+  });
+  return count > 0;
+}
+
+/**
  * D-17: ALL of the employee's assignment rows, including ended and voided ones — "a beendete
  * Zuordnung bleibt abrufbar mit ursprünglichem gültig-ab" (AC). Ordered kind, then validFrom, then
  * id (HOME sorts before DEPLOYMENT alphabetically, matching D-17's "HOME first" requirement).

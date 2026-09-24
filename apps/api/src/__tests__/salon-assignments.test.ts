@@ -10,6 +10,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
+import { salonForDay } from "../contexts/platform";
 
 describe("POST /api/v1/employees/:id/salon-assignments — create Einsatzsalon (Phase 67b Plan 02 Task 1)", () => {
   let app: FastifyInstance;
@@ -575,5 +576,700 @@ describe("POST /api/v1/employees/:id/salon-assignments — create Einsatzsalon (
       where: { employeeId: employee.id },
     });
     expect(rowCount).toBe(1);
+  });
+});
+
+describe("POST .../salon-assignments/home & .../:assignmentId/end — Stammsalon change and end an assignment (Phase 67b Plan 02 Task 2)", () => {
+  let app: FastifyInstance;
+  let tenantA: Awaited<ReturnType<typeof seedTestData>>;
+  let tenantB: Awaited<ReturnType<typeof seedTestData>>;
+  let home1: { id: string };
+  let home2: { id: string };
+  let home3: { id: string };
+  let home4: { id: string };
+  let deploySalon: { id: string };
+
+  function postHome(token: string, employeeId: string, body: Record<string, unknown>) {
+    return app.inject({
+      method: "POST",
+      url: `/api/v1/employees/${employeeId}/salon-assignments/home`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: body,
+    });
+  }
+
+  function postEnd(
+    token: string,
+    employeeId: string,
+    assignmentId: string,
+    body: Record<string, unknown>,
+  ) {
+    return app.inject({
+      method: "POST",
+      url: `/api/v1/employees/${employeeId}/salon-assignments/${assignmentId}/end`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: body,
+    });
+  }
+
+  function postDeployment(token: string, employeeId: string, body: Record<string, unknown>) {
+    return app.inject({
+      method: "POST",
+      url: `/api/v1/employees/${employeeId}/salon-assignments`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: body,
+    });
+  }
+
+  async function getAssignments(token: string, employeeId: string) {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/employees/${employeeId}/salon-assignments`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    return JSON.parse(res.body).assignments as {
+      id: string;
+      salonId: string;
+      kind: "HOME" | "DEPLOYMENT";
+      validFrom: string;
+      validUntil: string | null;
+    }[];
+  }
+
+  /** AC-Stamm-3: every calendar day in [2024-01-01, 2026-12-31] (1096 days — 2024 is a leap year)
+   * has EXACTLY one effective HOME row for `employeeId`. One `findMany`, then pure in-memory
+   * iteration — the same `isEffectiveOn` definition as the production code, restated here so the
+   * test does not depend on importing production internals. */
+  async function assertGaplessHomeTiling(employeeId: string) {
+    const rows = await app.prisma.employeeSalonAssignment.findMany({
+      where: { employeeId, kind: "HOME" },
+    });
+    const from = new Date("2024-01-01T00:00:00Z").getTime();
+    const to = new Date("2026-12-31T00:00:00Z").getTime();
+    let iterated = 0;
+    for (let t = from; t <= to; t += 86400000) {
+      const count = rows.filter(
+        (row) =>
+          row.validFrom.getTime() <= t &&
+          (row.validUntil === null || row.validUntil.getTime() >= t),
+      ).length;
+      expect(
+        count,
+        `day ${new Date(t).toISOString().slice(0, 10)} has ${count} effective HOME row(s)`,
+      ).toBe(1);
+      iterated += 1;
+    }
+    expect(iterated).toBe(1096);
+  }
+
+  async function createEmployee(namePrefix: string, hireDate = "2024-01-01") {
+    const s = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const user = await app.prisma.user.create({
+      data: {
+        email: `${namePrefix}-${s}@test.de`,
+        passwordHash: "x",
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    return app.prisma.employee.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        userId: user.id,
+        employeeNumber: `${namePrefix.toUpperCase()}-${s}`,
+        firstName: namePrefix,
+        lastName: "Test",
+        hireDate: new Date(hireDate),
+      },
+    });
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    tenantA = await seedTestData(app, "sa-home-a");
+    tenantB = await seedTestData(app, "sa-home-b");
+
+    const makeSalon = (name: string) =>
+      app.prisma.salon.create({
+        data: {
+          tenantId: tenantA.tenant.id,
+          name,
+          openingHours: DEFAULT_SALON_OPENING_HOURS,
+          isActive: true,
+        },
+      });
+    home1 = await makeSalon("Home Salon 1");
+    home2 = await makeSalon("Home Salon 2");
+    home3 = await makeSalon("Home Salon 3");
+    home4 = await makeSalon("Home Salon 4");
+    deploySalon = await makeSalon("Deploy Salon (D-09 overlap)");
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantA.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed (tenantA):", err);
+    }
+    try {
+      await cleanupTestData(app, tenantB.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed (tenantB):", err);
+    }
+  });
+
+  describe("AC-Stamm-3/D-05/AC-Aenderung-4: gapless HOME tiling across four changes", () => {
+    let employeeId: string;
+
+    beforeAll(async () => {
+      const employee = await createEmployee("tiling");
+      employeeId = employee.id;
+    });
+
+    it("first HOME at the hire date → 201, ended: null; every day has exactly one effective HOME row", async () => {
+      const res = await postHome(tenantA.adminToken, employeeId, {
+        salonId: home1.id,
+        validFrom: "2024-01-01",
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+      expect(body.ended).toBeNull();
+      expect(body.created.salonId).toBe(home1.id);
+      expect(body.created.validFrom).toBe("2024-01-01");
+      expect(body.created.validUntil).toBeNull();
+      await assertGaplessHomeTiling(employeeId);
+    });
+
+    it("change to Home Salon 2 at 2024-06-15 → salon 1 ends 2024-06-14, salon 2 open from 2024-06-15; tiling holds", async () => {
+      const res = await postHome(tenantA.adminToken, employeeId, {
+        salonId: home2.id,
+        validFrom: "2024-06-15",
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+      expect(body.ended.salonId).toBe(home1.id);
+      expect(body.ended.validUntil).toBe("2024-06-14");
+      expect(body.created.salonId).toBe(home2.id);
+      expect(body.created.validFrom).toBe("2024-06-15");
+      await assertGaplessHomeTiling(employeeId);
+    });
+
+    it("change to Home Salon 3 at 2025-01-01 → salon 2 ends 2024-12-31; tiling holds", async () => {
+      const res = await postHome(tenantA.adminToken, employeeId, {
+        salonId: home3.id,
+        validFrom: "2025-01-01",
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+      expect(body.ended.salonId).toBe(home2.id);
+      expect(body.ended.validUntil).toBe("2024-12-31");
+      await assertGaplessHomeTiling(employeeId);
+    });
+
+    it("change to Home Salon 4 at 2025-01-01 (SAME day as salon 3's own validFrom) → salon 3 is VOIDED (validUntil 2024-12-31), salon 4 open; tiling holds", async () => {
+      const res = await postHome(tenantA.adminToken, employeeId, {
+        salonId: home4.id,
+        validFrom: "2025-01-01",
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+      expect(body.ended.salonId).toBe(home3.id);
+      expect(body.ended.validUntil).toBe("2024-12-31");
+      expect(body.created.salonId).toBe(home4.id);
+      await assertGaplessHomeTiling(employeeId);
+    });
+
+    it("AC-Aenderung-4: GET still lists the ended salon-1 row with its ORIGINAL validFrom and its new validUntil; salonForDay answers salon 1 on 2024-06-14 and salon 2 on 2024-06-15", async () => {
+      const assignments = await getAssignments(tenantA.adminToken, employeeId);
+      const endedFirst = assignments.find((a) => a.salonId === home1.id);
+      expect(endedFirst?.validFrom).toBe("2024-01-01");
+      expect(endedFirst?.validUntil).toBe("2024-06-14");
+
+      const dayBefore = await salonForDay(
+        app.prisma,
+        tenantA.tenant.id,
+        employeeId,
+        new Date("2024-06-14T10:00:00Z"),
+      );
+      expect(dayBefore?.salonId).toBe(home1.id);
+      const dayAfter = await salonForDay(
+        app.prisma,
+        tenantA.tenant.id,
+        employeeId,
+        new Date("2024-06-15T10:00:00Z"),
+      );
+      expect(dayAfter?.salonId).toBe(home2.id);
+    });
+  });
+
+  describe("AC-Stamm-4/D-05/D-09: HOME change rejections", () => {
+    let employeeId: string;
+
+    beforeAll(async () => {
+      const employee = await createEmployee("stamm4");
+      employeeId = employee.id;
+      const first = await postHome(tenantA.adminToken, employeeId, {
+        salonId: home1.id,
+        validFrom: "2024-01-01",
+      });
+      expect(first.statusCode).toBe(201);
+      // The OPEN row is now Home Salon 2, validFrom 2024-06-01 — leaves a real gap
+      // [2024-01-01, 2024-06-01) to probe HOME_OVERLAP against.
+      const second = await postHome(tenantA.adminToken, employeeId, {
+        salonId: home2.id,
+        validFrom: "2024-06-01",
+      });
+      expect(second.statusCode).toBe(201);
+    });
+
+    it("D before the open row's own validFrom (but >= hireDate) → 409 HOME_OVERLAP; nothing written", async () => {
+      const before = await app.prisma.employeeSalonAssignment.count({ where: { employeeId } });
+      const res = await postHome(tenantA.adminToken, employeeId, {
+        salonId: home3.id,
+        validFrom: "2024-03-01",
+      });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body).error).toBe(
+        "Der Stammsalon-Wechsel überschneidet sich mit einer bestehenden Stammsalon-Zuordnung.",
+      );
+      expect(await app.prisma.employeeSalonAssignment.count({ where: { employeeId } })).toBe(
+        before,
+      );
+    });
+
+    it("the open row's own salon, D >= its validFrom → 409 ALREADY_HOME; nothing written", async () => {
+      const before = await app.prisma.employeeSalonAssignment.count({ where: { employeeId } });
+      const res = await postHome(tenantA.adminToken, employeeId, {
+        salonId: home2.id,
+        validFrom: "2024-07-01",
+      });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body).error).toBe("Der Salon ist ab diesem Datum bereits Stammsalon.");
+      expect(await app.prisma.employeeSalonAssignment.count({ where: { employeeId } })).toBe(
+        before,
+      );
+    });
+
+    it("D before the hire date → 400; nothing written", async () => {
+      const before = await app.prisma.employeeSalonAssignment.count({ where: { employeeId } });
+      const res = await postHome(tenantA.adminToken, employeeId, {
+        salonId: home3.id,
+        validFrom: "2023-12-31",
+      });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body).error).toBe(
+        "Die Zuordnung darf nicht vor dem Eintrittsdatum beginnen.",
+      );
+      expect(await app.prisma.employeeSalonAssignment.count({ where: { employeeId } })).toBe(
+        before,
+      );
+    });
+
+    it("a legacy employee with NO HOME rows, D != hireDate → 400 FIRST_HOME_NOT_AT_HIRE_DATE; nothing written", async () => {
+      const legacyEmployee = await createEmployee("legacy");
+      const before = await app.prisma.employeeSalonAssignment.count({
+        where: { employeeId: legacyEmployee.id },
+      });
+      const res = await postHome(tenantA.adminToken, legacyEmployee.id, {
+        salonId: home1.id,
+        validFrom: "2024-06-01",
+      });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body).error).toBe(
+        "Die erste Stammsalon-Zuordnung muss am Eintrittsdatum beginnen.",
+      );
+      expect(
+        await app.prisma.employeeSalonAssignment.count({
+          where: { employeeId: legacyEmployee.id },
+        }),
+      ).toBe(before);
+    });
+
+    it("D-04/D-05: a HOME body carrying validUntil or weekdays is rejected by the strict schema → 400", async () => {
+      const withValidUntil = await postHome(tenantA.adminToken, employeeId, {
+        salonId: home3.id,
+        validFrom: "2024-09-01",
+        validUntil: "2024-09-30",
+      });
+      expect(withValidUntil.statusCode).toBe(400);
+
+      const withWeekdays = await postHome(tenantA.adminToken, employeeId, {
+        salonId: home3.id,
+        validFrom: "2024-09-01",
+        weekdays: [1],
+      });
+      expect(withWeekdays.statusCode).toBe(400);
+    });
+
+    it("D-09: HOME change to a salon with an overlapping DEPLOYMENT → 409 same-salon message, nothing written (no auto-ending)", async () => {
+      const dep = await postDeployment(tenantA.adminToken, employeeId, {
+        salonId: deploySalon.id,
+        validFrom: "2024-08-01",
+        validUntil: "2024-08-31",
+      });
+      expect(dep.statusCode).toBe(201);
+
+      const before = await app.prisma.employeeSalonAssignment.count({ where: { employeeId } });
+      const res = await postHome(tenantA.adminToken, employeeId, {
+        salonId: deploySalon.id,
+        validFrom: "2024-08-15",
+      });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body).error).toBe(
+        "Der Mitarbeiter ist diesem Salon im gewählten Zeitraum bereits zugeordnet.",
+      );
+      expect(await app.prisma.employeeSalonAssignment.count({ where: { employeeId } })).toBe(
+        before,
+      );
+    });
+
+    it("AC-Stamm-4/D-06: ending a HOME row → 409 HOME_NEEDS_SUCCESSOR, nothing written", async () => {
+      const assignments = await getAssignments(tenantA.adminToken, employeeId);
+      const openHome = assignments.find((a) => a.kind === "HOME" && a.validUntil === null)!;
+      const before = await app.prisma.employeeSalonAssignment.count({ where: { employeeId } });
+      const res = await postEnd(tenantA.adminToken, employeeId, openHome.id, {
+        validUntil: "2024-09-01",
+      });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body).error).toBe(
+        "Ein Stammsalon kann nur durch einen neuen Stammsalon beendet werden.",
+      );
+      expect(await app.prisma.employeeSalonAssignment.count({ where: { employeeId } })).toBe(
+        before,
+      );
+    });
+  });
+
+  describe("D-11: ending a DEPLOYMENT — shorten only", () => {
+    let employeeId: string;
+    let assignmentId: string;
+
+    beforeAll(async () => {
+      const employee = await createEmployee("end-d11");
+      employeeId = employee.id;
+      const res = await postDeployment(tenantA.adminToken, employeeId, {
+        salonId: home1.id,
+        validFrom: "2026-01-01",
+      });
+      expect(res.statusCode).toBe(201);
+      assignmentId = JSON.parse(res.body).id;
+    });
+
+    it("ending an open DEPLOYMENT at T → 200, validUntil = T", async () => {
+      const res = await postEnd(tenantA.adminToken, employeeId, assignmentId, {
+        validUntil: "2026-03-31",
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body).validUntil).toBe("2026-03-31");
+    });
+
+    it("a second end with a later OR EQUAL T → 409 ONLY_SHORTEN", async () => {
+      const res = await postEnd(tenantA.adminToken, employeeId, assignmentId, {
+        validUntil: "2026-03-31",
+      });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body).error).toBe(
+        "Eine Zuordnung kann nur verkürzt, nicht verlängert werden.",
+      );
+    });
+
+    it("T < validFrom - 1 → 400 END_BEFORE_START", async () => {
+      const res = await postEnd(tenantA.adminToken, employeeId, assignmentId, {
+        validUntil: "2025-01-01",
+      });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body).error).toBe(
+        "Eine Zuordnung kann frühestens am Tag vor ihrem Beginn enden.",
+      );
+    });
+
+    it("T = validFrom - 1 → voids the row; salonForDay never returns it", async () => {
+      const res = await postEnd(tenantA.adminToken, employeeId, assignmentId, {
+        validUntil: "2025-12-31",
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body).validUntil).toBe("2025-12-31");
+
+      const day = await salonForDay(
+        app.prisma,
+        tenantA.tenant.id,
+        employeeId,
+        new Date("2026-01-01T10:00:00Z"),
+      );
+      expect(day).toBeNull();
+    });
+  });
+
+  describe("AC-Aenderung-1: end changes only validUntil (and updatedAt); no DELETE route exists", () => {
+    let employeeId: string;
+    let assignmentId: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let before: any;
+
+    beforeAll(async () => {
+      const employee = await createEmployee("aend1");
+      employeeId = employee.id;
+      const res = await postDeployment(tenantA.adminToken, employeeId, {
+        salonId: home2.id,
+        validFrom: "2026-04-01",
+        validUntil: "2026-04-30",
+        weekdays: [2],
+      });
+      expect(res.statusCode).toBe(201);
+      before = JSON.parse(res.body);
+      assignmentId = before.id;
+    });
+
+    it("every field except validUntil (and updatedAt) equals the row before the end", async () => {
+      const res = await postEnd(tenantA.adminToken, employeeId, assignmentId, {
+        validUntil: "2026-04-20",
+      });
+      expect(res.statusCode).toBe(200);
+      const after = JSON.parse(res.body);
+      expect(after.validUntil).toBe("2026-04-20");
+      expect(after.id).toBe(before.id);
+      expect(after.employeeId).toBe(before.employeeId);
+      expect(after.salonId).toBe(before.salonId);
+      expect(after.kind).toBe(before.kind);
+      expect(after.validFrom).toBe(before.validFrom);
+      expect(after.weekdays).toEqual(before.weekdays);
+      expect(after.createdAt).toBe(before.createdAt);
+    });
+
+    it("no DELETE route exists for an assignment — 404, and the row still exists unchanged", async () => {
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/employees/${employeeId}/salon-assignments/${assignmentId}`,
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      });
+      expect(res.statusCode).toBe(404);
+      const row = await app.prisma.employeeSalonAssignment.findUnique({
+        where: { id: assignmentId },
+      });
+      expect(row).not.toBeNull();
+    });
+  });
+
+  describe("AC-Aenderung-2/D-12: closed-month lock on HOME change and end", () => {
+    let employeeId: string;
+    let assignmentId: string;
+
+    async function lockDay(id: string, date: string) {
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: id,
+          date: new Date(date),
+          startTime: new Date(`${date}T08:00:00.000Z`),
+          endTime: new Date(`${date}T16:00:00.000Z`),
+          isLocked: true,
+        },
+      });
+    }
+
+    beforeAll(async () => {
+      const employee = await createEmployee("lock-t2");
+      employeeId = employee.id;
+      const home = await postHome(tenantA.adminToken, employeeId, {
+        salonId: home1.id,
+        validFrom: "2024-01-01",
+      });
+      expect(home.statusCode).toBe(201);
+
+      const dep = await postDeployment(tenantA.adminToken, employeeId, {
+        salonId: home3.id,
+        validFrom: "2025-01-01",
+      });
+      expect(dep.statusCode).toBe(201);
+      assignmentId = JSON.parse(dep.body).id;
+    });
+
+    it("a locked entry on 2025-05-10 blocks ending the DEPLOYMENT at 2025-05-20 (affected days lie in May) → 409", async () => {
+      await lockDay(employeeId, "2025-05-10");
+      const res = await postEnd(tenantA.adminToken, employeeId, assignmentId, {
+        validUntil: "2025-05-20",
+      });
+      expect(res.statusCode).toBe(409);
+    });
+
+    it("ending at 2025-06-30 does not touch the locked May entry → 200", async () => {
+      const res = await postEnd(tenantA.adminToken, employeeId, assignmentId, {
+        validUntil: "2025-06-30",
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it("a HOME change with D inside a locked month → 409", async () => {
+      await lockDay(employeeId, "2025-08-15");
+      const res = await postHome(tenantA.adminToken, employeeId, {
+        salonId: home4.id,
+        validFrom: "2025-08-01",
+      });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body).error).toBe(
+        "Der Zeitraum betrifft einen abgeschlossenen Monat. Rückwirkende Zuordnungen sind dort nicht möglich.",
+      );
+    });
+  });
+
+  describe("AC-Aenderung-3/D-21: audit rows", () => {
+    it("an end writes exactly one END audit row (oldValue = before, newValue = after)", async () => {
+      const employee = await createEmployee("audit-end");
+      const dep = await postDeployment(tenantA.adminToken, employee.id, {
+        salonId: home1.id,
+        validFrom: "2026-05-01",
+        validUntil: "2026-05-31",
+      });
+      const assignmentId = JSON.parse(dep.body).id;
+
+      const res = await postEnd(tenantA.adminToken, employee.id, assignmentId, {
+        validUntil: "2026-05-20",
+      });
+      expect(res.statusCode).toBe(200);
+
+      const audits = await app.prisma.auditLog.findMany({
+        where: { entity: "EmployeeSalonAssignment", entityId: assignmentId, action: "END" },
+      });
+      expect(audits).toHaveLength(1);
+      const oldValue = audits[0].oldValue as { validUntil: string | null };
+      const newValue = audits[0].newValue as { validUntil: string | null };
+      expect(oldValue.validUntil).toBe("2026-05-31");
+      expect(newValue.validUntil).toBe("2026-05-20");
+    });
+
+    it("a HOME change writes END (old row) + CREATE (new row)", async () => {
+      const employee = await createEmployee("audit-home-change");
+      const first = await postHome(tenantA.adminToken, employee.id, {
+        salonId: home1.id,
+        validFrom: "2024-01-01",
+      });
+      const firstId = JSON.parse(first.body).created.id;
+
+      const change = await postHome(tenantA.adminToken, employee.id, {
+        salonId: home2.id,
+        validFrom: "2024-07-01",
+      });
+      expect(change.statusCode).toBe(201);
+      const created = JSON.parse(change.body);
+
+      const endAudits = await app.prisma.auditLog.count({
+        where: { entity: "EmployeeSalonAssignment", entityId: firstId, action: "END" },
+      });
+      expect(endAudits).toBe(1);
+      const createAudits = await app.prisma.auditLog.count({
+        where: {
+          entity: "EmployeeSalonAssignment",
+          entityId: created.created.id,
+          action: "CREATE",
+        },
+      });
+      expect(createAudits).toBe(1);
+    });
+
+    it("a first HOME (no predecessor) writes only CREATE", async () => {
+      const employee = await createEmployee("audit-home-first");
+      const res = await postHome(tenantA.adminToken, employee.id, {
+        salonId: home1.id,
+        validFrom: "2024-01-01",
+      });
+      expect(res.statusCode).toBe(201);
+      const created = JSON.parse(res.body).created;
+
+      const createAudits = await app.prisma.auditLog.count({
+        where: { entity: "EmployeeSalonAssignment", entityId: created.id, action: "CREATE" },
+      });
+      expect(createAudits).toBe(1);
+      const endAudits = await app.prisma.auditLog.count({
+        where: { entity: "EmployeeSalonAssignment", entityId: created.id, action: "END" },
+      });
+      expect(endAudits).toBe(0);
+    });
+  });
+
+  describe("D-19: assignment-level T-100-09 (own employee id; foreign / other-employee / nonexistent assignmentId)", () => {
+    let employeeId: string;
+    let otherEmployeeAssignmentId: string;
+    let foreignAssignmentId: string;
+
+    beforeAll(async () => {
+      const employee = await createEmployee("d19-own");
+      employeeId = employee.id;
+
+      const otherEmployee = await createEmployee("d19-other");
+      const otherAssignment = await app.prisma.employeeSalonAssignment.create({
+        data: {
+          tenantId: tenantA.tenant.id,
+          employeeId: otherEmployee.id,
+          salonId: home1.id,
+          kind: "DEPLOYMENT",
+          validFrom: new Date("2026-01-01"),
+          validUntil: null,
+          weekdays: [],
+        },
+      });
+      otherEmployeeAssignmentId = otherAssignment.id;
+
+      const foreignSalon = await app.prisma.salon.create({
+        data: {
+          tenantId: tenantB.tenant.id,
+          name: "D-19 Foreign Salon",
+          openingHours: DEFAULT_SALON_OPENING_HOURS,
+          isActive: true,
+        },
+      });
+      const foreignAssignment = await app.prisma.employeeSalonAssignment.create({
+        data: {
+          tenantId: tenantB.tenant.id,
+          employeeId: tenantB.employee.id,
+          salonId: foreignSalon.id,
+          kind: "DEPLOYMENT",
+          validFrom: new Date("2026-01-01"),
+          validUntil: null,
+          weekdays: [],
+        },
+      });
+      foreignAssignmentId = foreignAssignment.id;
+    });
+
+    it("a foreign tenant's real assignmentId, a nonexistent one, and another own-tenant employee's assignmentId are all byte-identical 404s; CROSS_TENANT_ACCESS_DENIED only for the foreign one; the other employee's row is unchanged", async () => {
+      const unknownId = "00000000-0000-4000-8000-000000000402";
+      const foreignRes = await postEnd(tenantA.adminToken, employeeId, foreignAssignmentId, {
+        validUntil: "2026-06-01",
+      });
+      const unknownRes = await postEnd(tenantA.adminToken, employeeId, unknownId, {
+        validUntil: "2026-06-01",
+      });
+      const otherEmpRes = await postEnd(tenantA.adminToken, employeeId, otherEmployeeAssignmentId, {
+        validUntil: "2026-06-01",
+      });
+
+      expect(foreignRes.statusCode).toBe(404);
+      expect(unknownRes.statusCode).toBe(404);
+      expect(otherEmpRes.statusCode).toBe(404);
+      expect(foreignRes.body).toBe(unknownRes.body);
+      expect(otherEmpRes.body).toBe(unknownRes.body);
+      expect(JSON.parse(unknownRes.body).error).toBe("Zuordnung nicht gefunden");
+
+      const foreignAudit = await app.prisma.auditLog.count({
+        where: {
+          entity: "EmployeeSalonAssignment",
+          entityId: foreignAssignmentId,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+        },
+      });
+      expect(foreignAudit).toBeGreaterThanOrEqual(1);
+      const otherEmpAudit = await app.prisma.auditLog.count({
+        where: {
+          entity: "EmployeeSalonAssignment",
+          entityId: otherEmployeeAssignmentId,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+        },
+      });
+      expect(otherEmpAudit).toBe(0);
+
+      const otherRow = await app.prisma.employeeSalonAssignment.findUnique({
+        where: { id: otherEmployeeAssignmentId },
+      });
+      expect(otherRow?.validUntil).toBeNull();
+    });
   });
 });

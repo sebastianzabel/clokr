@@ -278,12 +278,18 @@ let tenantBInactiveSalonDeactivatedAt: Date | undefined;
 // visible to every tenant by design and would not exercise the tenant guard at all.
 let tenantBCustomRoleId: string | undefined;
 
+// Phase 67b Plan 02 (Issue #67, D-19): a real tenantB EmployeeSalonAssignment for the two-param
+// `end` route. A DEPLOYMENT, never HOME (D-05's HOME_SALON_IN_USE rule, plan 05, could otherwise
+// mask a broken deactivate guard against a HOME row of the same shape).
+let tenantBSalonAssignmentId: string | undefined;
+
 /** Resolves a register `params` fixture key to the foreign tenant's real entity id. `null` means
  * the key is unrecognised — the caller must fail loudly, never silently skip the route (D-03).
- * Today's vocabulary is exactly these seven keys: `employee`/`leaveType` from the shared
- * `seedTestData` bundle, `leaveRequest`/`timeEntry`/`salon`/`salonInactive`/`customRole` from the
- * locally created fixtures (Issue #309/#310, Phase 64b, Issue #73) — a register entry naming an
- * eighth one this probe does not implement is exactly the failure this function surfaces. */
+ * Today's vocabulary is exactly these EIGHT keys: `employee`/`leaveType` from the shared
+ * `seedTestData` bundle, `leaveRequest`/`timeEntry`/`salon`/`salonInactive`/`customRole`/
+ * `salonAssignment` from the locally created fixtures (Issue #309/#310, Phase 64b, Issue #73,
+ * Phase 67b Plan 02) — a register entry naming a ninth one this probe does not implement is
+ * exactly the failure this function surfaces. */
 function fixtureValueFor(bundle: FixtureBundle, fixtureKey: string): string | null {
   if (fixtureKey === "employee") return bundle.employee.id;
   if (fixtureKey === "leaveType") return bundle.vacationType.id;
@@ -292,6 +298,7 @@ function fixtureValueFor(bundle: FixtureBundle, fixtureKey: string): string | nu
   if (fixtureKey === "salon") return tenantBSalonId ?? null;
   if (fixtureKey === "salonInactive") return tenantBInactiveSalonId ?? null;
   if (fixtureKey === "customRole") return tenantBCustomRoleId ?? null;
+  if (fixtureKey === "salonAssignment") return tenantBSalonAssignmentId ?? null;
   return null;
 }
 
@@ -388,7 +395,7 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
       // check could not go red. Both tenants get a second active salon, so the last-salon rule
       // lets the deactivation through whichever tenant a broken guard counts against — the
       // caller's (tenantA) or the salon owner's (tenantB).
-      await app.prisma.salon.create({
+      const salon2 = await app.prisma.salon.create({
         data: {
           tenantId: tenantB.tenant.id,
           name: "T-100-09 Salon 2",
@@ -396,6 +403,22 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
           isActive: true,
         },
       });
+
+      // Phase 67b Plan 02 (Issue #67, D-19): a real tenantB DEPLOYMENT assignment (never HOME —
+      // plan 05's HOME_SALON_IN_USE rule could otherwise mask a broken deactivate guard), the
+      // target of the two-param `end` route.
+      const salonAssignment = await app.prisma.employeeSalonAssignment.create({
+        data: {
+          tenantId: tenantB.tenant.id,
+          employeeId: tenantB.employee.id,
+          salonId: salon2.id,
+          kind: "DEPLOYMENT",
+          validFrom: new Date("2026-01-05"),
+          validUntil: null,
+          weekdays: [0],
+        },
+      });
+      tenantBSalonAssignmentId = salonAssignment.id;
       for (const name of ["T-100-09 Salon A1", "T-100-09 Salon A2"]) {
         await app.prisma.salon.create({
           data: {
@@ -599,6 +622,19 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         where: { tenantId: tenantA.tenant.id },
       });
       expect(tenantARoleCount).toBe(0);
+    });
+
+    it("fixture integrity after the sweep: tenantB's employee still has exactly its one fixture EmployeeSalonAssignment (Phase 67b Plan 02), with validUntil still null — a guard that answers 404 while still performing the end would otherwise pass the byte comparison", async () => {
+      const after = await app.prisma.employeeSalonAssignment.findUnique({
+        where: { id: tenantBSalonAssignmentId },
+      });
+      expect(after).not.toBeNull();
+      expect(after?.validUntil).toBeNull();
+
+      const count = await app.prisma.employeeSalonAssignment.count({
+        where: { employeeId: tenantB.employee.id },
+      });
+      expect(count).toBe(1);
     });
   });
 });

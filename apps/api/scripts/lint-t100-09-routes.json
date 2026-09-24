@@ -77,6 +77,36 @@
       "validatedAt": null
     },
     {
+      "route": "POST /api/v1/employees/:id/salon-assignments/home",
+      "file": "apps/api/src/contexts/platform/api/salon-assignments.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": {
+        "salonId": "00000000-0000-4000-8000-0000000067b1",
+        "validFrom": "2026-01-05"
+      },
+      "reason": "Phase 67b Plan 02 (Issue #67, D-05/D-19): changeHomeSalonSchema.parse(req.body) runs BEFORE the lookup — the minimalBody above (salonId + validFrom) is the smallest body it accepts (validUntil/weekdays are rejected by the strict schema). changeHomeSalon(tx, tenantId, id, ...) calls lockEmployee(db, tenantId, employeeId) first, the same tenant-scoped `$queryRaw ... FOR UPDATE` as the DEPLOYMENT create route, returning null for BOTH a foreign tenant's real employee and a nonexistent id; both fall through to the shared rejectUnknownEmployee(...) helper, the same byte-identical 404. API-key callers get the same 404 via auditSalonAssignmentEvent (WR-01 convention); the same defect in other routes is tracked in #333.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/employees/:id/salon-assignments/:assignmentId/end",
+      "file": "apps/api/src/contexts/platform/api/salon-assignments.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee",
+        "assignmentId": "salonAssignment"
+      },
+      "minimalBody": {
+        "validUntil": "2026-01-05"
+      },
+      "reason": "Phase 67b Plan 02 (Issue #67, D-11/D-19): endAssignmentSchema.parse(req.body) runs BEFORE the lookup — `{\"validUntil\":\"2026-01-05\"}` is the smallest body it accepts. This is a TWO-fixture-kind route (D-19 forbids classifying it `nicht anwendbar` per the company-shutdowns.ts precedent): the probe's all-params substitution swaps BOTH `:id` and `:assignmentId` at once with either the foreign or the unknown value, so it stops at endSalonAssignment's FIRST guard — lockEmployee(db, tenantId, employeeId), returning null for BOTH a foreign tenant's real employee and a nonexistent id, byte-identical 404 via the shared rejectUnknownEmployee(...) helper. The assignment-level guard (own employee id, a foreign or another-employee's real assignmentId vs. a nonexistent one) is proven separately by `salon-assignments.test.ts` via `rejectUnknownAssignment(...)`, which scopes the lookup by `{ id: assignmentId, tenantId, employeeId }` in one `findFirst` — a row belonging to another employee is indistinguishable from none by construction. API-key callers get the same 404 via auditSalonAssignmentEvent (WR-01 convention); the same defect in other routes is tracked in #333.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "PATCH /api/v1/employees/:id",
       "file": "apps/api/src/contexts/platform/api/employees.ts",
       "category": "probe",

@@ -19,6 +19,8 @@
 import type { Prisma } from "@clokr/db";
 import { isSnapshotLocked, monthDayBounds, monthRangeUtc } from "../../working-time-account";
 import {
+  addDays,
+  dateToDay,
   dayToDate,
   FAR_FUTURE_DAY,
   firstCommonWeekday,
@@ -107,12 +109,17 @@ async function touchesLockedMonth(
 // ── Outcome union (D-27) — a code, never a display string ──────────────────────────────────────
 
 /**
- * The full set of codes every write function in this module can return. Task 2 (HOME change, end)
- * adds its own OK variants and failure codes on top of these. Never rendered directly — the ROUTE
- * maps each status to its own German message.
+ * The full set of codes every write function in this module can return. Never rendered directly —
+ * the ROUTE maps each status to its own German message.
  */
 export type SalonAssignmentOutcome =
   | { status: "OK_CREATED"; created: AssignmentRow }
+  | {
+      status: "OK_HOME_CHANGED";
+      ended: { before: AssignmentRow; after: AssignmentRow } | null;
+      created: AssignmentRow;
+    }
+  | { status: "OK_ENDED"; before: AssignmentRow; after: AssignmentRow }
   | { status: "EMPLOYEE_NOT_FOUND" }
   | { status: "SALON_NOT_FOUND" }
   | { status: "SALON_INACTIVE" }
@@ -120,10 +127,64 @@ export type SalonAssignmentOutcome =
   | { status: "INVALID_PERIOD" }
   | { status: "SAME_SALON_OVERLAP" }
   | { status: "WEEKDAY_CONFLICT"; weekday: number }
-  | { status: "MONTH_LOCKED" };
+  | { status: "MONTH_LOCKED" }
+  | { status: "HOME_OVERLAP" }
+  | { status: "ALREADY_HOME" }
+  | { status: "FIRST_HOME_NOT_AT_HIRE_DATE" }
+  | { status: "ASSIGNMENT_NOT_FOUND" }
+  | { status: "HOME_NEEDS_SUCCESSOR" }
+  | { status: "END_BEFORE_START" }
+  | { status: "ONLY_SHORTEN" };
 
 /** The statuses {@link createDeploymentAssignment} can return. */
-export type CreateDeploymentOutcome = SalonAssignmentOutcome;
+export type CreateDeploymentOutcome = Extract<
+  SalonAssignmentOutcome,
+  {
+    status:
+      | "OK_CREATED"
+      | "EMPLOYEE_NOT_FOUND"
+      | "SALON_NOT_FOUND"
+      | "SALON_INACTIVE"
+      | "BEFORE_HIRE_DATE"
+      | "INVALID_PERIOD"
+      | "SAME_SALON_OVERLAP"
+      | "WEEKDAY_CONFLICT"
+      | "MONTH_LOCKED";
+  }
+>;
+
+/** The statuses {@link changeHomeSalon} can return. */
+export type ChangeHomeSalonOutcome = Extract<
+  SalonAssignmentOutcome,
+  {
+    status:
+      | "OK_HOME_CHANGED"
+      | "EMPLOYEE_NOT_FOUND"
+      | "SALON_NOT_FOUND"
+      | "SALON_INACTIVE"
+      | "BEFORE_HIRE_DATE"
+      | "HOME_OVERLAP"
+      | "ALREADY_HOME"
+      | "FIRST_HOME_NOT_AT_HIRE_DATE"
+      | "SAME_SALON_OVERLAP"
+      | "MONTH_LOCKED";
+  }
+>;
+
+/** The statuses {@link endSalonAssignment} can return. */
+export type EndSalonAssignmentOutcome = Extract<
+  SalonAssignmentOutcome,
+  {
+    status:
+      | "OK_ENDED"
+      | "EMPLOYEE_NOT_FOUND"
+      | "ASSIGNMENT_NOT_FOUND"
+      | "HOME_NEEDS_SUCCESSOR"
+      | "END_BEFORE_START"
+      | "ONLY_SHORTEN"
+      | "MONTH_LOCKED";
+  }
+>;
 
 /**
  * AC-Einsatz-1/D-08..D-13, D-02, D-27: create a DEPLOYMENT (Einsatzsalon) assignment.
@@ -202,4 +263,152 @@ export async function createDeploymentAssignment(
   });
 
   return { status: "OK_CREATED", created };
+}
+
+/**
+ * AC-Stamm-3/AC-Stamm-4/D-05/D-06/D-09/D-12/D-13, D-02, D-27: change the Stammsalon (HOME) as of
+ * `input.validFrom` (D). Gapless by construction — the open row's `validUntil` is set to `D − 1`
+ * (voiding it when `D` equals its own `validFrom`, D-03) and the new open row `[D, null)` is
+ * created, both inside the caller's transaction.
+ *
+ * Order: lock the employee → lock the target salon `FOR SHARE` → resolve the tenant timezone and
+ * hire date → `D < hireLocal` → BEFORE_HIRE_DATE → load every one of the employee's rows → no HOME
+ * row at all (legacy employee) requires `D === hireLocal`, else FIRST_HOME_NOT_AT_HIRE_DATE;
+ * otherwise there MUST be exactly one open (validUntil null) HOME row by construction — its absence
+ * despite HOME rows existing is an invariant violation, not a status this function can name, so it
+ * throws → `D` before the open row's own `validFrom` → HOME_OVERLAP; the open row's salon already
+ * equals the target → ALREADY_HOME (D-05: also when `D` equals the open row's own `validFrom` — a
+ * void-and-recreate of the identical salon would write two rows for no observable change) → any
+ * OTHER non-voided row with the same salon overlapping the new open-ended period `[D, ∞)` →
+ * SAME_SALON_OVERLAP (D-09, across both kinds) → the closed-month lock (D-12, checked against the
+ * new open-ended period) → write.
+ */
+export async function changeHomeSalon(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  employeeId: string,
+  input: { salonId: string; validFrom: CalendarDay },
+): Promise<ChangeHomeSalonOutcome> {
+  const employee = await lockEmployee(db, tenantId, employeeId);
+  if (!employee) return { status: "EMPLOYEE_NOT_FOUND" };
+
+  const salon = await lockSalonForShare(db, tenantId, input.salonId);
+  if (!salon) return { status: "SALON_NOT_FOUND" };
+  if (!salon.isActive) return { status: "SALON_INACTIVE" };
+
+  const tz = await readTenantTimezone(db, tenantId);
+  const hireLocal = tenantLocalDay(employee.hireDate, tz);
+  if (input.validFrom < hireLocal) return { status: "BEFORE_HIRE_DATE" };
+
+  const existingRows = await db.employeeSalonAssignment.findMany({
+    where: { tenantId, employeeId },
+  });
+  const homeRows = existingRows.filter((row) => row.kind === "HOME");
+  const openHome = homeRows.find((row) => row.validUntil === null) ?? null;
+
+  if (homeRows.length === 0) {
+    if (input.validFrom !== hireLocal) return { status: "FIRST_HOME_NOT_AT_HIRE_DATE" };
+  } else {
+    if (!openHome) {
+      // Invariant violation, not a user-facing status: by construction (this function is the
+      // ONLY writer of HOME rows) there is always exactly one open HOME row once any exist.
+      throw new Error(
+        "EmployeeSalonAssignment invariant violation (D-05): employee has HOME rows but none is " +
+          "open (validUntil null) — expected exactly one open HOME row per employee.",
+      );
+    }
+    const openValidFromDay = dateToDay(openHome.validFrom);
+    if (input.validFrom < openValidFromDay) return { status: "HOME_OVERLAP" };
+    if (openHome.salonId === input.salonId) return { status: "ALREADY_HOME" };
+  }
+
+  const newPeriod = { validFrom: dayToDate(input.validFrom), validUntil: null };
+  const sameSalonOverlap = existingRows.some(
+    (row) =>
+      row.id !== openHome?.id && row.salonId === input.salonId && periodsOverlap(row, newPeriod),
+  );
+  if (sameSalonOverlap) return { status: "SAME_SALON_OVERLAP" };
+
+  if (await touchesLockedMonth(db, tenantId, employeeId, input.validFrom, null, tz)) {
+    return { status: "MONTH_LOCKED" };
+  }
+
+  let ended: { before: AssignmentRow; after: AssignmentRow } | null = null;
+  if (openHome) {
+    const after = await db.employeeSalonAssignment.update({
+      where: { id: openHome.id, tenantId },
+      data: { validUntil: dayToDate(addDays(input.validFrom, -1)) },
+    });
+    ended = { before: openHome, after };
+  }
+
+  const created = await db.employeeSalonAssignment.create({
+    data: {
+      tenantId,
+      employeeId,
+      salonId: input.salonId,
+      kind: "HOME",
+      validFrom: newPeriod.validFrom,
+      validUntil: null,
+      weekdays: [],
+    },
+  });
+
+  return { status: "OK_HOME_CHANGED", ended, created };
+}
+
+/**
+ * AC-Stamm-4/D-06/D-11/D-12, D-02, D-27: end an assignment at `validUntil` (T). Ending only ever
+ * SHORTENS a row — extending or reopening is rejected. `T = validFrom − 1` voids the row (D-03).
+ *
+ * Order: lock the employee → the row via a TRIPLE-scoped lookup (`id`, `tenantId`, `employeeId` —
+ * a row belonging to another employee is indistinguishable from none, same T-100-09 shape as a
+ * foreign tenant's row) → ASSIGNMENT_NOT_FOUND → lock the row's OWN salon `FOR SHARE` (uniform lock
+ * order employee → salon, so a concurrent `deactivateSalon()` cannot deadlock against this update;
+ * the lock's result is otherwise unused) → `kind === "HOME"` → HOME_NEEDS_SUCCESSOR (D-06) →
+ * `T < validFrom − 1` → END_BEFORE_START → the row is not already open-ended AND `T >=` its current
+ * `validUntil` → ONLY_SHORTEN → the closed-month lock (D-12, over the days the shortening actually
+ * removes: `(T, oldValidUntil]`) → write (`validUntil` is the ONLY field this ever changes).
+ */
+export async function endSalonAssignment(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  employeeId: string,
+  assignmentId: string,
+  validUntil: CalendarDay,
+): Promise<EndSalonAssignmentOutcome> {
+  const employee = await lockEmployee(db, tenantId, employeeId);
+  if (!employee) return { status: "EMPLOYEE_NOT_FOUND" };
+
+  const row = await db.employeeSalonAssignment.findFirst({
+    where: { id: assignmentId, tenantId, employeeId },
+  });
+  if (!row) return { status: "ASSIGNMENT_NOT_FOUND" };
+
+  await lockSalonForShare(db, tenantId, row.salonId);
+
+  if (row.kind === "HOME") return { status: "HOME_NEEDS_SUCCESSOR" };
+
+  const validFromDay = dateToDay(row.validFrom);
+  const minEnd = addDays(validFromDay, -1);
+  if (validUntil < minEnd) return { status: "END_BEFORE_START" };
+
+  if (row.validUntil !== null) {
+    const currentEndDay = dateToDay(row.validUntil);
+    if (validUntil >= currentEndDay) return { status: "ONLY_SHORTEN" };
+  }
+
+  const tz = await readTenantTimezone(db, tenantId);
+  const lockFrom = addDays(validUntil, 1);
+  const lockTo = row.validUntil !== null ? dateToDay(row.validUntil) : null;
+  if (await touchesLockedMonth(db, tenantId, employeeId, lockFrom, lockTo, tz)) {
+    return { status: "MONTH_LOCKED" };
+  }
+
+  const after = await db.employeeSalonAssignment.update({
+    where: { id: assignmentId, tenantId },
+    data: { validUntil: dayToDate(validUntil) },
+  });
+
+  return { status: "OK_ENDED", before: row, after };
 }

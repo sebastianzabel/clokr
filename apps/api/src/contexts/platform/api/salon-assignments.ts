@@ -12,17 +12,27 @@ import {
   employeeExistsInForeignTenant,
   findEmployeeInTenant,
   listSalonAssignments,
+  salonAssignmentExistsInForeignTenant,
 } from "../facade/salon-assignments";
-import { createDeploymentAssignment } from "../facade/salon-assignment-changes";
+import {
+  changeHomeSalon,
+  createDeploymentAssignment,
+  endSalonAssignment,
+} from "../facade/salon-assignment-changes";
 import { salonExistsInForeignTenant } from "../facade/salons";
 import { isCalendarDay, toAssignmentDto, WEEKDAY_ADVERB_DE } from "../salon-assignment-rules";
 import { auditSalonAssignmentEvent } from "../salon-assignment-audit";
 import { requireRole } from "../../../middleware/auth";
 
 const idParamSchema = z.object({ id: z.string().uuid() });
+const assignmentIdParamSchema = z.object({
+  id: z.string().uuid(),
+  assignmentId: z.string().uuid(),
+});
 
 const EMPLOYEE_NOT_FOUND = "Mitarbeiter nicht gefunden";
 const SALON_NOT_FOUND = "Salon nicht gefunden";
+const ASSIGNMENT_NOT_FOUND = "Zuordnung nicht gefunden";
 const SALON_INACTIVE_MESSAGE =
   "Einem deaktivierten Salon kann keine neue Zuordnung zugewiesen werden.";
 const BEFORE_HIRE_DATE_MESSAGE = "Die Zuordnung darf nicht vor dem Eintrittsdatum beginnen.";
@@ -31,6 +41,15 @@ const SAME_SALON_OVERLAP_MESSAGE =
   "Der Mitarbeiter ist diesem Salon im gewählten Zeitraum bereits zugeordnet.";
 const MONTH_LOCKED_MESSAGE =
   "Der Zeitraum betrifft einen abgeschlossenen Monat. Rückwirkende Zuordnungen sind dort nicht möglich.";
+const HOME_OVERLAP_MESSAGE =
+  "Der Stammsalon-Wechsel überschneidet sich mit einer bestehenden Stammsalon-Zuordnung.";
+const ALREADY_HOME_MESSAGE = "Der Salon ist ab diesem Datum bereits Stammsalon.";
+const FIRST_HOME_NOT_AT_HIRE_DATE_MESSAGE =
+  "Die erste Stammsalon-Zuordnung muss am Eintrittsdatum beginnen.";
+const HOME_NEEDS_SUCCESSOR_MESSAGE =
+  "Ein Stammsalon kann nur durch einen neuen Stammsalon beendet werden.";
+const END_BEFORE_START_MESSAGE = "Eine Zuordnung kann frühestens am Tag vor ihrem Beginn enden.";
+const ONLY_SHORTEN_MESSAGE = "Eine Zuordnung kann nur verkürzt, nicht verlängert werden.";
 
 const calendarDaySchema = z
   .string()
@@ -48,6 +67,20 @@ const createDeploymentSchema = z
     weekdays: z.array(z.number().int().min(0).max(6)).max(7).nullable().optional(),
   })
   .strict();
+
+/**
+ * D-05: `{ salonId, validFrom }` for a Stammsalon (HOME) change. `.strict()` rejects `validUntil`
+ * or `weekdays` (400) — a Stammsalon ends only by a successor, never by its own body.
+ */
+const changeHomeSalonSchema = z
+  .object({
+    salonId: z.string().uuid(),
+    validFrom: calendarDaySchema,
+  })
+  .strict();
+
+/** D-11: `{ validUntil }` for ending an assignment. */
+const endAssignmentSchema = z.object({ validUntil: calendarDaySchema }).strict();
 
 /**
  * D-19: the shared T-100-09 guard for every route below with an `:id` (employee) path parameter. A
@@ -94,6 +127,33 @@ async function rejectUnknownBodySalon(
   }
   return reply.code(400).send({ error: SALON_NOT_FOUND });
 }
+
+/**
+ * D-19: the shared T-100-09 guard for `:assignmentId` (the `end` route). A row belonging to
+ * another employee, a foreign tenant's real row, and a nonexistent id are ALL indistinguishable
+ * from "not found" by construction — `endSalonAssignment`'s own lookup already scopes by
+ * `{ id, tenantId, employeeId }` — so this helper's byte-identical 404 covers all three at once.
+ * `CROSS_TENANT_ACCESS_DENIED` is audited only when the row exists in ANOTHER tenant (an
+ * other-employee, same-tenant row never triggers it — that is not a tenant boundary crossing).
+ */
+async function rejectUnknownAssignment(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  reply: FastifyReply,
+  assignmentId: string,
+) {
+  if (await salonAssignmentExistsInForeignTenant(app.prisma, req.user.tenantId, assignmentId)) {
+    await auditSalonAssignmentEvent(app, req, {
+      entity: "EmployeeSalonAssignment",
+      action: "CROSS_TENANT_ACCESS_DENIED",
+      entityId: assignmentId,
+    });
+  }
+  return reply.code(404).send({ error: ASSIGNMENT_NOT_FOUND });
+}
+
+// Rows are never deleted (D-03/D-11/AC-Aenderung-1) — this file registers no DELETE handler for
+// any assignment; the only permitted change to an existing row is `validUntil`, via `end` below.
 
 export async function salonAssignmentRoutes(app: FastifyInstance) {
   // GET /api/v1/employees/:id/salon-assignments — full history (D-17, D-18, D-19)
@@ -174,6 +234,132 @@ export async function salonAssignmentRoutes(app: FastifyInstance) {
         default: {
           // Compile-time exhaustiveness: createDeploymentAssignment's return type has no other
           // status.
+          const unreachable: never = outcome;
+          return unreachable;
+        }
+      }
+    },
+  });
+
+  // POST /api/v1/employees/:id/salon-assignments/home — change the Stammsalon (HOME), D-05/D-06
+  app.post("/:id/salon-assignments/home", {
+    schema: {
+      tags: ["Mitarbeiter"],
+      summary: "Change an employee's Stammsalon (HOME) as of a given date",
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      // D-19: validated BEFORE any lookup, same ordering as the DEPLOYMENT create route.
+      const body = changeHomeSalonSchema.parse(req.body);
+      const tenantId = req.user.tenantId;
+
+      const outcome = await app.prisma.$transaction(async (tx) => {
+        const result = await changeHomeSalon(tx, tenantId, id, {
+          salonId: body.salonId,
+          validFrom: body.validFrom,
+        });
+        if (result.status === "OK_HOME_CHANGED") {
+          if (result.ended) {
+            await auditSalonAssignmentEvent(app, req, {
+              entity: "EmployeeSalonAssignment",
+              action: "END",
+              entityId: result.ended.after.id,
+              oldValue: toAssignmentDto(result.ended.before),
+              newValue: toAssignmentDto(result.ended.after),
+              tx,
+            });
+          }
+          await auditSalonAssignmentEvent(app, req, {
+            entity: "EmployeeSalonAssignment",
+            action: "CREATE",
+            entityId: result.created.id,
+            newValue: toAssignmentDto(result.created),
+            tx,
+          });
+        }
+        return result;
+      });
+
+      switch (outcome.status) {
+        case "OK_HOME_CHANGED":
+          return reply.code(201).send({
+            ended: outcome.ended ? toAssignmentDto(outcome.ended.after) : null,
+            created: toAssignmentDto(outcome.created),
+          });
+        case "EMPLOYEE_NOT_FOUND":
+          return rejectUnknownEmployee(app, req, reply, id);
+        case "SALON_NOT_FOUND":
+          return rejectUnknownBodySalon(app, req, reply, body.salonId);
+        case "SALON_INACTIVE":
+          return reply.code(400).send({ error: SALON_INACTIVE_MESSAGE });
+        case "BEFORE_HIRE_DATE":
+          return reply.code(400).send({ error: BEFORE_HIRE_DATE_MESSAGE });
+        case "HOME_OVERLAP":
+          return reply.code(409).send({ error: HOME_OVERLAP_MESSAGE });
+        case "ALREADY_HOME":
+          return reply.code(409).send({ error: ALREADY_HOME_MESSAGE });
+        case "FIRST_HOME_NOT_AT_HIRE_DATE":
+          return reply.code(400).send({ error: FIRST_HOME_NOT_AT_HIRE_DATE_MESSAGE });
+        case "SAME_SALON_OVERLAP":
+          return reply.code(409).send({ error: SAME_SALON_OVERLAP_MESSAGE });
+        case "MONTH_LOCKED":
+          return reply.code(409).send({ error: MONTH_LOCKED_MESSAGE });
+        default: {
+          // Compile-time exhaustiveness: changeHomeSalon's return type has no other status.
+          const unreachable: never = outcome;
+          return unreachable;
+        }
+      }
+    },
+  });
+
+  // POST /api/v1/employees/:id/salon-assignments/:assignmentId/end — end an assignment, D-06/D-11
+  app.post("/:id/salon-assignments/:assignmentId/end", {
+    schema: {
+      tags: ["Mitarbeiter"],
+      summary: "End (shorten) an existing salon assignment",
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id, assignmentId } = assignmentIdParamSchema.parse(req.params);
+      const body = endAssignmentSchema.parse(req.body);
+      const tenantId = req.user.tenantId;
+
+      const outcome = await app.prisma.$transaction(async (tx) => {
+        const result = await endSalonAssignment(tx, tenantId, id, assignmentId, body.validUntil);
+        if (result.status === "OK_ENDED") {
+          await auditSalonAssignmentEvent(app, req, {
+            entity: "EmployeeSalonAssignment",
+            action: "END",
+            entityId: result.after.id,
+            oldValue: toAssignmentDto(result.before),
+            newValue: toAssignmentDto(result.after),
+            tx,
+          });
+        }
+        return result;
+      });
+
+      switch (outcome.status) {
+        case "OK_ENDED":
+          return reply.code(200).send(toAssignmentDto(outcome.after));
+        case "EMPLOYEE_NOT_FOUND":
+          return rejectUnknownEmployee(app, req, reply, id);
+        case "ASSIGNMENT_NOT_FOUND":
+          return rejectUnknownAssignment(app, req, reply, assignmentId);
+        case "HOME_NEEDS_SUCCESSOR":
+          return reply.code(409).send({ error: HOME_NEEDS_SUCCESSOR_MESSAGE });
+        case "END_BEFORE_START":
+          return reply.code(400).send({ error: END_BEFORE_START_MESSAGE });
+        case "ONLY_SHORTEN":
+          return reply.code(409).send({ error: ONLY_SHORTEN_MESSAGE });
+        case "MONTH_LOCKED":
+          return reply.code(409).send({ error: MONTH_LOCKED_MESSAGE });
+        default: {
+          // Compile-time exhaustiveness: endSalonAssignment's return type has no other status.
           const unreachable: never = outcome;
           return unreachable;
         }
