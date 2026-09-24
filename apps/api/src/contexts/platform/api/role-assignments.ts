@@ -384,7 +384,7 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       security: [{ bearerAuth: [] }],
       summary: "Change a role assignment's role and/or scope",
       description:
-        "Changes the access role and/or scope of a role assignment of the caller's own tenant. `userId` is not changeable — revoke and create a new assignment instead. A no-op request writes nothing and audits nothing. A foreign tenant's real assignment and a nonexistent id both answer 404 with the same body (T-100-09). A change that would create a duplicate (same user, role and scope type) answers 409.",
+        "Changes the access role and/or scope of a role assignment of the caller's own tenant. `userId` is not changeable — revoke and create a new assignment instead. A no-op request writes nothing and audits nothing. A foreign tenant's real assignment and a nonexistent id both answer 404 with the same body (T-100-09). A change that would create a duplicate (same user, role and scope type) answers 409. A change that would remove the last tenant-wide holder of role:manage or role-assignment:manage (narrowing a TENANT scope or switching the role) answers 409 and changes nothing (lockout protection).",
     },
     preHandler: requireRole("ADMIN"),
     handler: async (req, reply) => {
@@ -452,24 +452,29 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
             if (duplicate) return null;
           }
 
-          const row = await tx.roleAssignment.update({
-            where: { id, tenantId },
-            data: {
-              accessRoleId: nextAccessRoleId,
-              scopeType: nextScope.scopeType,
-              salonIds: nextScope.salonIds,
-              employeeIds: nextScope.employeeIds,
-            },
-            include: { accessRole: true },
+          // D-19/D-20: narrowing a TENANT scope or switching the role can remove the last
+          // tenant-wide holder of a guarded permission. The update and its audit run under the
+          // lockout guard on the transaction client; RoleLockoutError rolls both back.
+          return withRoleLockoutGuard(tx, tenantId, async () => {
+            const row = await tx.roleAssignment.update({
+              where: { id, tenantId },
+              data: {
+                accessRoleId: nextAccessRoleId,
+                scopeType: nextScope.scopeType,
+                salonIds: nextScope.salonIds,
+                employeeIds: nextScope.employeeIds,
+              },
+              include: { accessRole: true },
+            });
+            await auditRoleAssignment(app, req, {
+              action: "UPDATE",
+              entityId: row.id,
+              oldValue: toAuditValue(existing, existing.accessRole.name),
+              newValue: toAuditValue(row, nextAccessRole.name),
+              tx,
+            });
+            return row;
           });
-          await auditRoleAssignment(app, req, {
-            action: "UPDATE",
-            entityId: row.id,
-            oldValue: toAuditValue(existing, existing.accessRole.name),
-            newValue: toAuditValue(row, nextAccessRole.name),
-            tx,
-          });
-          return row;
         });
 
         if (!updated) {
@@ -477,6 +482,9 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
         }
         return toRoleAssignmentResponse(updated);
       } catch (err: unknown) {
+        if (err instanceof RoleLockoutError) {
+          return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
+        }
         if (isPrismaErrorCode(err, "P2002")) {
           return reply.code(409).send({ error: DUPLICATE_ASSIGNMENT_MESSAGE });
         }

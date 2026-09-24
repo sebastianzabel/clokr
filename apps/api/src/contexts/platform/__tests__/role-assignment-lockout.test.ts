@@ -102,6 +102,7 @@ describe("Role lockout protection (Phase 74b, Issue #74)", () => {
   let roleManage: Awaited<ReturnType<typeof createRole>>;
   let roleRead: Awaited<ReturnType<typeof createRole>>;
   let roleManageB: Awaited<ReturnType<typeof createRole>>;
+  let roleManage2: Awaited<ReturnType<typeof createRole>>;
   let systemRoleManage: Awaited<ReturnType<typeof createRole>>;
 
   async function assign(
@@ -171,12 +172,18 @@ describe("Role lockout protection (Phase 74b, Issue #74)", () => {
       ROLE_MANAGE,
       ASSIGNMENT_MANAGE,
     ]);
+    roleManage2 = await createRole(app, tenantA.tenant.id, "RM2", [ROLE_MANAGE, ASSIGNMENT_MANAGE]);
     systemRoleManage = await createRole(app, null, "System-RM", [ROLE_MANAGE, ASSIGNMENT_MANAGE]);
   });
 
   beforeEach(async () => {
     await app.prisma.roleAssignment.deleteMany({
       where: { tenantId: { in: [tenantA.tenant.id, tenantB.tenant.id] } },
+    });
+    // Role-PATCH tests change RM's permissions; every test starts from RM granting both.
+    await app.prisma.accessRole.update({
+      where: { id: roleManage.id },
+      data: { permissions: normalizeRolePermissions([ROLE_MANAGE, ASSIGNMENT_MANAGE]) },
     });
     await app.prisma.user.updateMany({
       where: {
@@ -399,5 +406,182 @@ describe("Role lockout protection (Phase 74b, Issue #74)", () => {
       where: { id: { in: [first.id, second.id] } },
     });
     expect(remaining.map((row) => row.id)).toEqual([second.id]);
+  });
+
+  // ── Trigger: PATCH /api/v1/role-assignments/:id ────────────────────────────────────────────────
+
+  function patchAssignment(assignmentId: string, payload: unknown) {
+    return app.inject({
+      method: "PATCH",
+      url: `/api/v1/role-assignments/${assignmentId}`,
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify(payload),
+    });
+  }
+
+  /** Asserts the 409 lockout answer and that the assignment and its audit trail are untouched. */
+  async function expectAssignmentChangeRefused(assignment: RoleAssignment, payload: unknown) {
+    const auditsBefore = await auditCount("RoleAssignment", assignment.id, "UPDATE");
+    const res = await patchAssignment(assignment.id, payload);
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({ error: ROLE_LOCKOUT_MESSAGE });
+    const stored = await app.prisma.roleAssignment.findUnique({ where: { id: assignment.id } });
+    expect(stored).toEqual(assignment);
+    expect(await auditCount("RoleAssignment", assignment.id, "UPDATE")).toBe(auditsBefore);
+  }
+
+  it("(h) narrowing the only holder's TENANT scope to SALONS answers 409; the row keeps TENANT with empty lists and no UPDATE audit is written", async () => {
+    const onlyHolder = await assign(tenantA.tenant.id, holder1.user.id, roleManage.id);
+    await expectAssignmentChangeRefused(onlyHolder, {
+      scope: { type: "SALONS", salonIds: [salonA.id] },
+    });
+    const stored = await app.prisma.roleAssignment.findUnique({ where: { id: onlyHolder.id } });
+    expect(stored?.scopeType).toBe("TENANT");
+    expect(stored?.salonIds).toEqual([]);
+    expect(stored?.employeeIds).toEqual([]);
+  });
+
+  it("(i) narrowing the only holder's TENANT scope to PERSONS answers 409", async () => {
+    const onlyHolder = await assign(tenantA.tenant.id, holder1.user.id, roleManage.id);
+    await expectAssignmentChangeRefused(onlyHolder, {
+      scope: { type: "PERSONS", employeeIds: [withoutRight.employee.id] },
+    });
+  });
+
+  it("(j) switching the only holder's role to one without the guarded permissions answers 409", async () => {
+    const onlyHolder = await assign(tenantA.tenant.id, holder1.user.id, roleManage.id);
+    await expectAssignmentChangeRefused(onlyHolder, { accessRoleId: roleRead.id });
+  });
+
+  it("(k) with a second tenant-wide holder the same narrowing succeeds with 200 and one UPDATE audit", async () => {
+    const first = await assign(tenantA.tenant.id, holder1.user.id, roleManage.id);
+    await assign(tenantA.tenant.id, holder2.user.id, roleManage.id);
+    const auditsBefore = await auditCount("RoleAssignment", first.id, "UPDATE");
+
+    const res = await patchAssignment(first.id, {
+      scope: { type: "SALONS", salonIds: [salonA.id] },
+    });
+    expect(res.statusCode).toBe(200);
+    const stored = await app.prisma.roleAssignment.findUnique({ where: { id: first.id } });
+    expect(stored?.scopeType).toBe("SALONS");
+    expect(await auditCount("RoleAssignment", first.id, "UPDATE")).toBe(auditsBefore + 1);
+  });
+
+  // ── Trigger: PATCH /api/v1/roles/:id ───────────────────────────────────────────────────────────
+
+  function patchRole(roleId: string, payload: unknown) {
+    return app.inject({
+      method: "PATCH",
+      url: `/api/v1/roles/${roleId}`,
+      headers: {
+        authorization: `Bearer ${tenantA.adminToken}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify(payload),
+    });
+  }
+
+  async function expectRoleChangeRefused(permissions: string[]) {
+    const before = await app.prisma.accessRole.findUniqueOrThrow({ where: { id: roleManage.id } });
+    const auditsBefore = await auditCount("AccessRole", roleManage.id, "UPDATE");
+    const res = await patchRole(roleManage.id, { permissions });
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({ error: ROLE_LOCKOUT_MESSAGE });
+    const after = await app.prisma.accessRole.findUniqueOrThrow({ where: { id: roleManage.id } });
+    expect(after).toEqual(before);
+    expect(await auditCount("AccessRole", roleManage.id, "UPDATE")).toBe(auditsBefore);
+  }
+
+  it("(l) removing role:manage from the only holder's customer role answers 409; the role and its audit trail are unchanged", async () => {
+    await assign(tenantA.tenant.id, holder1.user.id, roleManage.id);
+    await expectRoleChangeRefused([ASSIGNMENT_MANAGE]);
+  });
+
+  it("(m) removing only role-assignment:manage answers 409 too — both permissions are guarded (D-17)", async () => {
+    await assign(tenantA.tenant.id, holder1.user.id, roleManage.id);
+    await expectRoleChangeRefused([ROLE_MANAGE]);
+  });
+
+  it("(n) adding a permission to the only holder's role succeeds with 200", async () => {
+    await assign(tenantA.tenant.id, holder1.user.id, roleManage.id);
+    const res = await patchRole(roleManage.id, {
+      permissions: [ROLE_MANAGE, ASSIGNMENT_MANAGE, "role:read:ZUGEWIESEN"],
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).permissions).toContain("role:read:ZUGEWIESEN");
+  });
+
+  it("(o) removing role:manage succeeds while another user holds it through a second customer role", async () => {
+    await assign(tenantA.tenant.id, holder1.user.id, roleManage.id);
+    await assign(tenantA.tenant.id, holder2.user.id, roleManage2.id);
+    const res = await patchRole(roleManage.id, { permissions: [ASSIGNMENT_MANAGE] });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).permissions).toEqual([ASSIGNMENT_MANAGE]);
+  });
+
+  it("(p) removing role:manage succeeds while another user holds it through a system role", async () => {
+    await assign(tenantA.tenant.id, holder1.user.id, roleManage.id);
+    await assign(tenantA.tenant.id, holder2.user.id, systemRoleManage.id);
+    const res = await patchRole(roleManage.id, { permissions: [ASSIGNMENT_MANAGE] });
+    expect(res.statusCode).toBe(200);
+  });
+
+  // ── D-21: DELETE /api/v1/roles/:id on an assigned role ─────────────────────────────────────────
+
+  function deleteRole(roleId: string) {
+    return app.inject({
+      method: "DELETE",
+      url: `/api/v1/roles/${roleId}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+  }
+
+  it("(q) D-21: deleting a customer role that is still assigned answers 409; role and assignment stay, no DELETE audit; once unassigned it deletes with 204", async () => {
+    const assignedRole = await createRole(app, tenantA.tenant.id, "RD", ["role:read:ZUGEWIESEN"]);
+    const assignment = await assign(tenantA.tenant.id, withoutRight.user.id, assignedRole.id, {
+      type: "PERSONS",
+      employeeIds: [holder1.employee.id],
+    });
+    const auditsBefore = await auditCount("AccessRole", assignedRole.id, "DELETE");
+
+    const refused = await deleteRole(assignedRole.id);
+    expect(refused.statusCode).toBe(409);
+    expect(JSON.parse(refused.body)).toEqual({
+      error: "Die Rolle ist noch Nutzern zugewiesen und kann nicht gelöscht werden.",
+    });
+    expect(await app.prisma.accessRole.findUnique({ where: { id: assignedRole.id } })).toEqual(
+      assignedRole,
+    );
+    expect(await app.prisma.roleAssignment.findUnique({ where: { id: assignment.id } })).toEqual(
+      assignment,
+    );
+    expect(await auditCount("AccessRole", assignedRole.id, "DELETE")).toBe(auditsBefore);
+
+    await app.prisma.roleAssignment.delete({ where: { id: assignment.id } });
+    const deleted = await deleteRole(assignedRole.id);
+    expect(deleted.statusCode).toBe(204);
+    expect(await auditCount("AccessRole", assignedRole.id, "DELETE")).toBe(auditsBefore + 1);
+  });
+
+  it("(r) T-100-09: another tenant's ASSIGNED customer role and an unknown id both answer the same 404", async () => {
+    await assign(tenantB.tenant.id, tenantBHolder.user.id, roleManageB.id);
+    const foreign = await deleteRole(roleManageB.id);
+    const unknown = await deleteRole("00000000-0000-4000-8000-000000000374");
+    expect(foreign.statusCode).toBe(404);
+    expect(unknown.statusCode).toBe(404);
+    expect(foreign.body).toBe(unknown.body);
+    expect(
+      await app.prisma.accessRole.findUnique({ where: { id: roleManageB.id } }),
+    ).not.toBeNull();
+  });
+
+  it("(s) an assigned SYSTEM role still answers the system-role 409 (the system check precedes the assigned check)", async () => {
+    await assign(tenantA.tenant.id, holder1.user.id, systemRoleManage.id);
+    const res = await deleteRole(systemRoleManage.id);
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({ error: "Systemrollen können nicht gelöscht werden." });
   });
 });
