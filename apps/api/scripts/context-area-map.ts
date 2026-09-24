@@ -122,6 +122,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/plugins/token-cleanup.ts": "unterbau", // deletes stale OtpToken/RefreshToken
   "src/contexts/platform/facade/employee-scope.ts": "unterbau", // EmployeeScope discriminated union + employeeScopeWhere() (Phase 100B Plan 04, D-10) — Employee is Unterbau's own model; no Prisma call in this file
   "src/contexts/platform/facade/salons.ts": "unterbau", // Phase 64b (issue #64) — reads Salon, Unterbau's own model per ADR 0001
+  "src/contexts/platform/facade/role-assignments.ts": "unterbau", // Phase 74b (issue #74) — userMayApply() reads RoleAssignment/AccessRole/Salon/Employee/User, all Unterbau models
   "src/contexts/platform/access-role.ts": "unterbau", // Phase 73b (#73): role = permission bundle, writes/reads AccessRole only — an Unterbau model
   "src/contexts/platform/access-context.ts": "unterbau", // Phase 77b (Issue #77) — AccessContext + its two constructors + employeeScopeFor(); pure module, no Prisma call
   "src/contexts/platform/access-context-error.ts": "unterbau", // Phase 77b (Issue #77) — AccessContextError + requireTenantId(); zero-import leaf, pure module, no Prisma call
@@ -135,6 +136,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/notification-email-policy.ts": "unterbau", // per-type email-toggle registry for Notification — Unterbau's own model
   "src/contexts/platform/password-policy.ts": "unterbau", // User/auth password rules
   "src/contexts/platform/permission-catalog.ts": "unterbau", // Phase 72b (Issue #72) — the permission catalog; ADR 0001 names permissions as part of the shared substrate, and the catalog has no model of its own
+  "src/contexts/platform/role-assignment.ts": "unterbau", // Phase 74b (issue #74) — pure core reasoning over RoleAssignment/AccessRole/Salon/Employee/User, all Unterbau models
   "src/contexts/platform/school-holidays-client.ts": "unterbau", // fetches SchoolHolidayPeriod data from the external OpenHolidays/schulferien-api
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/

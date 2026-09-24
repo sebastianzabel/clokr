@@ -105,18 +105,24 @@ export interface UserMayApplyFacts {
 /**
  * D-15: may the user apply the permission described by `facts.reach`/`facts.relation` to
  * `facts.target`, given `facts.grantingScopes` (already filtered to assignments whose role grants
- * the permission via `roleGrants`)?
+ * the permission via `roleGrants`)? The union is "any grant allows" — scopes of different roles
+ * are never merged into one combined scope.
  *
  * - No granting scope at all -> false (fail-closed).
  * - Reach `EIGENE` -> true only if the target names an employee, it equals the user's own
  *   employee id (non-null), and that employee is a valid (non-anonymized, tenant) employee —
  *   regardless of which scope granted it, even a TENANT scope.
  * - Reach `ZUGEWIESEN` -> false if the target names an employee that is not valid, or a salon
- *   that is not in the tenant; then true if any granting scope is TENANT.
- *
- * SALONS/PERSONS-scope and MANDANT-relation rules for `ZUGEWIESEN` are added in Phase 74b's
- * second task — until then, a SALONS/PERSONS-only holder is denied for `ZUGEWIESEN`, which is the
- * fail-closed direction.
+ *   that is not in the tenant. Then:
+ *   - any granting scope is TENANT -> true (covers both relations).
+ *   - relation `MANDANT` and no TENANT grant -> false (a tenant-wide resource only ever takes
+ *     effect from a TENANT-scope assignment).
+ *   - relation `PERSON`: a SALONS grant listing `target.salonId`, with that salon in the tenant
+ *     AND currently active, -> true (salon activity is evaluated live — nothing is stored on the
+ *     assignment). Otherwise a PERSONS grant listing `target.employeeId` (already known valid) ->
+ *     true — the target's salon plays no role here (salon-crossing, binding: a PERSONS holder
+ *     reaches a listed person regardless of which salon that person's target belongs to).
+ *     Otherwise -> false.
  */
 export function decideUserMayApply(facts: UserMayApplyFacts): boolean {
   if (facts.grantingScopes.length === 0) return false;
@@ -134,5 +140,30 @@ export function decideUserMayApply(facts: UserMayApplyFacts): boolean {
   if (facts.targetEmployeeValid === false) return false;
   if (facts.targetSalon?.inTenant === false) return false;
 
-  return facts.grantingScopes.some((scope) => scope.scopeType === "TENANT");
+  if (facts.grantingScopes.some((scope) => scope.scopeType === "TENANT")) return true;
+  if (facts.relation === "MANDANT") return false;
+
+  const salonId = facts.target.salonId;
+  if (
+    salonId !== undefined &&
+    facts.targetSalon?.isActive === true &&
+    facts.grantingScopes.some(
+      (scope) => scope.scopeType === "SALONS" && scope.salonIds.includes(salonId),
+    )
+  ) {
+    return true;
+  }
+
+  const employeeId = facts.target.employeeId;
+  if (
+    employeeId !== undefined &&
+    facts.targetEmployeeValid === true &&
+    facts.grantingScopes.some(
+      (scope) => scope.scopeType === "PERSONS" && scope.employeeIds.includes(employeeId),
+    )
+  ) {
+    return true;
+  }
+
+  return false;
 }
