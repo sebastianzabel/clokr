@@ -21,7 +21,7 @@ import { PrismaClient, type Prisma } from "../generated/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import bcrypt from "bcryptjs";
-import { DEFAULT_SALON_OPENING_HOURS } from "./default-salon";
+import { DEFAULT_SALON_OPENING_HOURS, createDefaultHomeAssignment } from "./default-salon";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool as any);
@@ -386,6 +386,13 @@ async function main() {
       },
     });
     bump("employee");
+
+    // D-24 (Phase 67b Plan 04, issue #67): every demo employee also gets its Stammsalon
+    // (HOME) row, to the tenant's default salon created above, from its tenant-local hire
+    // day. No audit-log write here (research Pitfall 5) — a seed script has no request
+    // principal, same reasoning as the salon block above.
+    await createDefaultHomeAssignment(prisma, employee.id);
+    bump("employeeSalonAssignment");
 
     const [mo, tu, we, th, fr, sa, su] = s.dayHours;
     const workDays = [1, 2, 3, 4, 5, 6, 0].filter((_, i) => s.dayHours[i] > 0);
