@@ -128,6 +128,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/month-first-date.ts": "unterbau", // WorkSchedule.validFrom month-1 rule — Unterbau's own model
   "src/contexts/platform/notification-email-policy.ts": "unterbau", // per-type email-toggle registry for Notification — Unterbau's own model
   "src/contexts/platform/password-policy.ts": "unterbau", // User/auth password rules
+  "src/contexts/platform/permission-catalog.ts": "unterbau", // Phase 72b (Issue #72) — the permission catalog; ADR 0001 names permissions as part of the shared substrate, and the catalog has no model of its own
   "src/contexts/platform/school-holidays-client.ts": "unterbau", // fetches SchoolHolidayPeriod data from the external OpenHolidays/schulferien-api
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/
