@@ -110,3 +110,12 @@ export type {
   RoleAssignmentTarget,
   NormalizedRoleAssignmentScope,
 } from "./role-assignment";
+// Phase 75b (#75): the three global system roles — fixed ids, display names and the permission
+// sets derived from docs/permissions.md. Code identifies a system role by id only.
+export {
+  SYSTEM_ROLE_IDS,
+  SYSTEM_ROLE_NAMES,
+  SYSTEM_ROLE_PERMISSIONS,
+  isSystemRoleId,
+} from "./system-roles";
+export type { SystemRoleSlot } from "./system-roles";
