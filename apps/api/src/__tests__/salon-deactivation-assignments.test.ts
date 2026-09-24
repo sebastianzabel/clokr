@@ -9,6 +9,8 @@
  * - D-02: both race directions between a concurrent Stammsalon change and a deactivation.
  * - Review CR-01: ending an Einsatzsalon assignment concurrently with a deactivation of its salon
  *   evaluates the "only shorten" rule on the row as the deactivation left it, never on a stale read.
+ * - Review WR-02: a DSGVO-anonymized employee has left by definition and never blocks a
+ *   deactivation, even without an exitDate.
  * - Review WR-01: every multi-salon row lock takes the rows in ONE global order (`ORDER BY "id"`),
  *   so resolving a new employee's Stammsalon cannot deadlock against a deactivation.
  *
@@ -54,7 +56,9 @@ describe("POST /api/v1/salons/:id/deactivate — Stammsalon in use, Einsatzsalon
     });
   }
 
-  async function makeEmployee(opts: { hireDate?: Date; exitDate?: Date | null } = {}) {
+  async function makeEmployee(
+    opts: { hireDate?: Date; exitDate?: Date | null; firstName?: string; lastName?: string } = {},
+  ) {
     empCounter += 1;
     const s = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}-${empCounter}`;
     const user = await app.prisma.user.create({
@@ -65,8 +69,8 @@ describe("POST /api/v1/salons/:id/deactivate — Stammsalon in use, Einsatzsalon
         tenantId: tenant.tenant.id,
         userId: user.id,
         employeeNumber: `SDA-${s}`,
-        firstName: "SDA",
-        lastName: "Test",
+        firstName: opts.firstName ?? "SDA",
+        lastName: opts.lastName ?? "Test",
         hireDate: opts.hireDate ?? new Date("2020-01-01"),
         exitDate: opts.exitDate ?? null,
       },
@@ -203,6 +207,23 @@ describe("POST /api/v1/salons/:id/deactivate — Stammsalon in use, Einsatzsalon
     const voided = await makeEmployee();
     const voidedFrom = addDays(D, 30);
     await createHome(voided.id, salonX.id, voidedFrom, addDays(voidedFrom, -1));
+
+    const res = await postDeactivate(salonX.id);
+    expect(res.statusCode).toBe(200);
+    const salon = await app.prisma.salon.findUnique({ where: { id: salonX.id } });
+    expect(salon?.isActive).toBe(false);
+  });
+
+  it("review WR-02: NOT blocking — a DSGVO-anonymized employee without exitDate who still holds an open HOME row to the salon; deactivation succeeds", async () => {
+    const salonX = await makeSalon("Salon X-WR02");
+    // The exact sentinel anonymizeEmployeeData writes (employee-anonymization-filter.ts); exitDate
+    // stays null because DELETE /employees/:id neither sets nor requires one.
+    const anonymized = await makeEmployee({
+      exitDate: null,
+      firstName: "Gelöscht",
+      lastName: `GELÖSCHT-${Date.now().toString(36)}`,
+    });
+    await createHome(anonymized.id, salonX.id, "2020-01-01");
 
     const res = await postDeactivate(salonX.id);
     expect(res.statusCode).toBe(200);

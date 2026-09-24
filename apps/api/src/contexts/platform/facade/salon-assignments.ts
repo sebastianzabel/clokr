@@ -19,8 +19,8 @@
  *   it at the deactivation date, voiding any that had not started yet
  *   ({@link endDeploymentsOnSalonDeactivation}).
  *
- * This module imports ONLY `@clokr/db` types and `./` sibling `../salon-assignment-rules` — never
- * another context and never `./salons`. `contexts/platform/index.ts` re-exports this module's read
+ * This module imports ONLY `@clokr/db` types, `../salon-assignment-rules` and the import-free
+ * leaf `../employee-anonymization-filter` — never another context and never `./salons`. `contexts/platform/index.ts` re-exports this module's read
  * surface (D-16) and its own docblock forbids transitively reaching another context; a future
  * import of `contexts/working-time-account` here (e.g. for a lock check) would break that
  * invariant, which is exactly why Plan 02's lock-checked WRITE functions live in a separate module
@@ -33,6 +33,7 @@
  * enforce this mechanically; this module is inside `SCOPED_DIRS` (`platform/facade/**`).
  */
 import type { Prisma } from "@clokr/db";
+import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../employee-anonymization-filter";
 import {
   addDays,
   dateToDay,
@@ -359,6 +360,12 @@ export interface HomeSalonUsage {
  * the `validUntil >= D` filter alone can express (a far-future, already-voided row could still
  * satisfy that filter). Exited employees never block a deactivation — the issue's own decision,
  * restated in D-14 — regardless of how far in the future their Stammsalon runs.
+ *
+ * Review WR-02: a DSGVO-anonymized employee has left by definition and never blocks either, even
+ * with `exitDate` null — `DELETE /employees/:id` neither sets nor requires one, D-25 migrates
+ * anonymized employees too, and the count-only 409 plus the anonymized rows being hidden from the
+ * employee list would leave an admin with no way to find or resolve the blocker. Excluded in SQL
+ * via the shared sentinel {@link NOT_ANONYMIZED_EMPLOYEE_WHERE}.
  */
 export async function homeSalonUsageFrom(
   db: Prisma.TransactionClient,
@@ -375,6 +382,7 @@ export async function homeSalonUsageFrom(
       salonId,
       kind: "HOME",
       OR: [{ validUntil: null }, { validUntil: { gte: deactivationDate } }],
+      employee: NOT_ANONYMIZED_EMPLOYEE_WHERE,
     },
     select: {
       employeeId: true,
