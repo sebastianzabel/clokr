@@ -12,6 +12,12 @@
  * - A row with `validUntil = validFrom − 1 day` is "voided" (D-03): effective on no day.
  * - `salonForDay`: the effective DEPLOYMENT whose weekdays contain the tenant-local weekday of the
  *   given day, first; else the effective HOME row; else `null`.
+ * - Phase 67b Plan 05 (D-14): a salon that is, on the deactivation day, the current or future
+ *   effective Stammsalon of at least one still-employed person cannot be deactivated
+ *   ({@link homeSalonUsageFrom}) — exited employees never block.
+ * - Phase 67b Plan 05 (D-15): deactivating a salon ends every running Einsatzsalon assignment to
+ *   it at the deactivation date, voiding any that had not started yet
+ *   ({@link endDeploymentsOnSalonDeactivation}).
  *
  * This module imports ONLY `@clokr/db` types and `./` sibling `../salon-assignment-rules` — never
  * another context and never `./salons`. `contexts/platform/index.ts` re-exports this module's read
@@ -312,4 +318,131 @@ export async function fillHomeGapBeforeHireDate(
     },
   });
   return { status: "FILLED", created };
+}
+
+// ── Phase 67b Plan 05 (issue #67) additions — deactivateSalon's D-14/D-15 extension point ────────
+//
+// These two functions are called ONLY from `facade/salons.ts`'s `deactivateSalon()`, inside the
+// same transaction as its `FOR UPDATE` lock over the tenant's Salon rows — that lock, taken by the
+// CALLER before either of these runs, is what makes the "count employees as of D" read and the
+// "end deployments as of D" write observe a stable salon set. Neither function takes its own new
+// lock: `homeSalonUsageFrom` only reads, and `endDeploymentsOnSalonDeactivation` only ever narrows
+// an existing row's `validUntil` (D-03/D-11's "only ever shortens" shape), which cannot conflict
+// with anything the employee-facing write functions in `facade/salon-assignment-changes.ts` do
+// (those always lock the SAME salon `FOR SHARE` first, D-02).
+
+/** The result of {@link homeSalonUsageFrom}: how many still-employed people have this salon as
+ * their current or future Stammsalon, as of `deactivationDay`. */
+export interface HomeSalonUsage {
+  deactivationDay: CalendarDay;
+  employeeCount: number;
+}
+
+/**
+ * D-14: computes today's tenant-local calendar day ONCE (`deactivationDay`, D) and counts the
+ * DISTINCT employees who (a) have an effective HOME row to `salonId` on some day `>= D` and (b)
+ * are still employed at D (`exitDate` null or tenant-local `exitDate >= D`). A voided HOME row
+ * (D-03) never counts — it is dropped in code via {@link isVoided} rather than the SQL `WHERE`,
+ * because "voided" is a relationship between a row's OWN `validFrom`/`validUntil`, not something
+ * the `validUntil >= D` filter alone can express (a far-future, already-voided row could still
+ * satisfy that filter). Exited employees never block a deactivation — the issue's own decision,
+ * restated in D-14 — regardless of how far in the future their Stammsalon runs.
+ */
+export async function homeSalonUsageFrom(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  salonId: string,
+): Promise<HomeSalonUsage> {
+  const tz = await readTenantTimezone(db, tenantId);
+  const deactivationDay = tenantLocalDay(new Date(), tz);
+  const deactivationDate = dayToDate(deactivationDay);
+
+  const rows = await db.employeeSalonAssignment.findMany({
+    where: {
+      tenantId,
+      salonId,
+      kind: "HOME",
+      OR: [{ validUntil: null }, { validUntil: { gte: deactivationDate } }],
+    },
+    select: {
+      employeeId: true,
+      validFrom: true,
+      validUntil: true,
+      employee: { select: { exitDate: true } },
+    },
+  });
+
+  const blockingEmployeeIds = new Set<string>();
+  for (const row of rows) {
+    if (isVoided(row)) continue;
+    if (row.employee.exitDate !== null) {
+      const exitDay = tenantLocalDay(row.employee.exitDate, tz);
+      if (exitDay < deactivationDay) continue;
+    }
+    blockingEmployeeIds.add(row.employeeId);
+  }
+
+  return { deactivationDay, employeeCount: blockingEmployeeIds.size };
+}
+
+/** One `EmployeeSalonAssignment` row {@link endDeploymentsOnSalonDeactivation} changed — the shape
+ * `api/salons.ts` needs to write its END audit row (old/new value). */
+export interface EndedDeploymentAssignment {
+  before: AssignmentRow;
+  after: AssignmentRow;
+}
+
+/**
+ * D-15: ends or voids every DEPLOYMENT row of `salonId` that is effective on some day
+ * `>= deactivationDay` (D) — a row already ending at or before D is left untouched (no write, no
+ * entry in the returned array, so `api/salons.ts` never audits a no-op). A voided row (D-03) is
+ * always skipped too, via {@link isVoided}, for the same "already-voided rows never re-match"
+ * reason {@link homeSalonUsageFrom} documents.
+ *
+ * For a row that had already started (`validFrom <= D`): `validUntil = D` — it ran up to and
+ * including the deactivation day, matching the issue's literal wording "enden am
+ * Deaktivierungsdatum". For a row that had not started yet (`validFrom > D`): `validUntil =
+ * validFrom - 1` — voided (D-03), because a future Einsatzsalon assignment to a salon that will
+ * never open again has no day left to be effective on. Every other field of the row (`weekdays`,
+ * `salonId`, …) is left exactly as it was — the only field this ever changes is `validUntil`.
+ *
+ * No lock check (D-12): the days this can possibly change all lie `>= today` by construction (D is
+ * `tenantLocalDay(new Date(), tz)`), and a day that has not happened yet can never lie inside an
+ * already-closed month. MUST be called only from inside `deactivateSalon`'s transaction, after its
+ * `FOR UPDATE` lock over the tenant's Salon rows has already been taken — this function takes no
+ * lock of its own.
+ */
+export async function endDeploymentsOnSalonDeactivation(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  salonId: string,
+  deactivationDay: CalendarDay,
+): Promise<EndedDeploymentAssignment[]> {
+  const deactivationDate = dayToDate(deactivationDay);
+
+  const rows = await db.employeeSalonAssignment.findMany({
+    where: {
+      tenantId,
+      salonId,
+      kind: "DEPLOYMENT",
+      OR: [{ validUntil: null }, { validUntil: { gt: deactivationDate } }],
+    },
+  });
+
+  const ended: EndedDeploymentAssignment[] = [];
+  for (const row of rows) {
+    if (isVoided(row)) continue;
+
+    const validFromDay = dateToDay(row.validFrom);
+    const newValidUntilDay =
+      validFromDay <= deactivationDay ? deactivationDay : addDays(validFromDay, -1);
+
+    const after = await db.employeeSalonAssignment.update({
+      where: { id: row.id, tenantId },
+      data: { validUntil: dayToDate(newValidUntilDay) },
+    });
+    ended.push({ before: row, after });
+  }
+
+  return ended;
 }

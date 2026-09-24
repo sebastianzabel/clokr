@@ -35,9 +35,21 @@
  *   (D-16) — both pinned by `store-hours-readers.test.ts`'s living allowlist.
  * - Every tenant-creating path (`seed.ts`, `seed-demo.ts`, `test-bootstrap.ts`) creates that
  *   tenant's default salon in the same step (D-18).
+ * - Phase 67b (issue #67, D-14): a salon that is, on the deactivation day, the current or future
+ *   Stammsalon (HOME assignment) of a still-employed person cannot be deactivated —
+ *   `HOME_SALON_IN_USE`, checked between `ALREADY_INACTIVE` and `LAST_ACTIVE_SALON`.
+ * - Phase 67b (issue #67, D-15): a successful deactivation ends every running Einsatzsalon
+ *   (DEPLOYMENT) assignment to that salon at the deactivation date, voiding any that had not
+ *   started yet, in the SAME transaction as the deactivation itself.
  */
 import type { Prisma, Salon } from "@clokr/db";
 import { z } from "zod";
+import type { CalendarDay } from "../salon-assignment-rules";
+import {
+  endDeploymentsOnSalonDeactivation,
+  homeSalonUsageFrom,
+  type EndedDeploymentAssignment,
+} from "./salon-assignments";
 
 // A real HH:MM time: hours 00-23, minutes 00-59. Plain `\d{2}:\d{2}` (as `settings.ts`'s weaker,
 // pre-existing `storeHours` schema uses) would also accept "99:99" — D-04 requires a real time.
@@ -298,33 +310,60 @@ export async function updateSalon(
 // ── Deactivate / re-activate (Phase 64b Plan 02, D-06/D-07/D-08) — never delete ────────────────
 
 /**
- * D-06/D-07/D-08: the outcome of a deactivate/activate attempt, as a CODE, never a display string
- * (CLAUDE.md "never use a new display string as a control value") — the ROUTE maps each status to
- * its own German 409 message, or, for `NOT_FOUND`, to the shared `rejectUnknownSalon` 404.
+ * D-06/D-07/D-08/D-14: the outcome of a deactivate/activate attempt, as a CODE, never a display
+ * string (CLAUDE.md "never use a new display string as a control value") — the ROUTE maps each
+ * status to its own German 409 message, or, for `NOT_FOUND`, to the shared `rejectUnknownSalon`
+ * 404. `HOME_SALON_IN_USE` (Phase 67b, D-14) carries only a COUNT — never names, per the AC.
  */
 export type SalonStateChange =
   | { status: "OK"; existing: Salon; updated: Salon }
   | { status: "NOT_FOUND" }
   | { status: "ALREADY_INACTIVE" }
   | { status: "ALREADY_ACTIVE" }
-  | { status: "LAST_ACTIVE_SALON" };
+  | { status: "LAST_ACTIVE_SALON" }
+  | { status: "HOME_SALON_IN_USE"; employeeCount: number };
 
-/** The statuses {@link deactivateSalon} can return — never `ALREADY_ACTIVE`. */
-export type SalonDeactivation = Exclude<SalonStateChange, { status: "ALREADY_ACTIVE" }>;
+/**
+ * The statuses {@link deactivateSalon} can return — never `ALREADY_ACTIVE`. Phase 67b (D-15)
+ * makes this an EXPLICIT union rather than `Exclude<SalonStateChange, ...>`: its `OK` variant
+ * additionally carries `deactivationDay` and `endedAssignments`, fields {@link SalonActivation}'s
+ * `OK` variant does not have (activation never ends or voids a deployment).
+ */
+export type SalonDeactivation =
+  | {
+      status: "OK";
+      existing: Salon;
+      updated: Salon;
+      deactivationDay: CalendarDay;
+      endedAssignments: EndedDeploymentAssignment[];
+    }
+  | { status: "NOT_FOUND" }
+  | { status: "ALREADY_INACTIVE" }
+  | { status: "LAST_ACTIVE_SALON" }
+  | { status: "HOME_SALON_IN_USE"; employeeCount: number };
 
-/** The statuses {@link activateSalon} can return — never `ALREADY_INACTIVE`/`LAST_ACTIVE_SALON`. */
+/**
+ * The statuses {@link activateSalon} can return — never `ALREADY_INACTIVE`/`LAST_ACTIVE_SALON`/
+ * `HOME_SALON_IN_USE` (re-activating a salon can never make it anyone's Stammsalon by itself).
+ */
 export type SalonActivation = Exclude<
   SalonStateChange,
-  { status: "ALREADY_INACTIVE" | "LAST_ACTIVE_SALON" }
+  { status: "ALREADY_INACTIVE" | "LAST_ACTIVE_SALON" | "HOME_SALON_IN_USE" }
 >;
 
 /**
- * D-08/D-11: deactivate a salon. MUST run inside an interactive `$transaction` — the row lock
- * below is released at the end of the transaction it runs in, so calling this with a bare
+ * D-08/D-11/D-14/D-15: deactivate a salon. MUST run inside an interactive `$transaction` — the row
+ * lock below is released at the end of the transaction it runs in, so calling this with a bare
  * `PrismaClient` (no surrounding `$transaction`) gives no protection against the concurrent-
- * deactivation race the lock exists to prevent. This is the single place Phase 67b extends with
- * its Stammsalon guard (D-08's own wording): a status check inserted between `ALREADY_INACTIVE`
- * and `LAST_ACTIVE_SALON`, in this one function.
+ * deactivation race the lock exists to prevent. This is the extension point Phase 67b filled
+ * (64b D-08's own wording): `homeSalonUsageFrom` runs between `ALREADY_INACTIVE` and
+ * `LAST_ACTIVE_SALON` — a salon that is a still-employed person's current or future Stammsalon
+ * cannot be deactivated (D-14) — and, on success, `endDeploymentsOnSalonDeactivation` ends or
+ * voids every running Einsatzsalon assignment to it in the SAME transaction (D-15). Both helpers
+ * live in `./salon-assignments` (D-02: that module never imports `./salons`, so this direction is
+ * cycle-free) and take no lock of their own — they rely entirely on the `FOR UPDATE` lock below,
+ * which is why `homeSalonUsageFrom`'s own "today" read and `endDeploymentsOnSalonDeactivation`'s
+ * writes both observe a salon set that cannot change underneath them.
  */
 export async function deactivateSalon(
   db: Prisma.TransactionClient,
@@ -340,6 +379,11 @@ export async function deactivateSalon(
   if (!existing) return { status: "NOT_FOUND" };
   if (!existing.isActive) return { status: "ALREADY_INACTIVE" };
 
+  const usage = await homeSalonUsageFrom(db, tenantId, salonId);
+  if (usage.employeeCount > 0) {
+    return { status: "HOME_SALON_IN_USE", employeeCount: usage.employeeCount };
+  }
+
   const activeCount = await countActiveSalons(db, tenantId);
   if (activeCount <= 1) return { status: "LAST_ACTIVE_SALON" };
 
@@ -347,7 +391,21 @@ export async function deactivateSalon(
     where: { id: salonId, tenantId },
     data: { isActive: false, deactivatedAt: new Date() },
   });
-  return { status: "OK", existing, updated };
+
+  const endedAssignments = await endDeploymentsOnSalonDeactivation(
+    db,
+    tenantId,
+    salonId,
+    usage.deactivationDay,
+  );
+
+  return {
+    status: "OK",
+    existing,
+    updated,
+    deactivationDay: usage.deactivationDay,
+    endedAssignments,
+  };
 }
 
 /** D-07: the mirror of {@link deactivateSalon} — same lock, same lookup shape. */

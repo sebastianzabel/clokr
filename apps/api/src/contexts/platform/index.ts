@@ -92,6 +92,7 @@ export type {
   CreateSalonInput,
   UpdateSalonInput,
   SalonStateChange,
+  SalonDeactivation,
 } from "./facade/salons";
 // Phase 67b (issue #67) — salon assignment read surface; the lock-checked write functions
 // (plan 02) are deliberately NOT re-exported, because they import the working-time-account index

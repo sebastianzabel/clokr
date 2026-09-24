@@ -416,7 +416,13 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // three pass F1/F2/F3 directly (`db: Prisma.TransactionClient` first, `tenantId` required, every
   // `*Id`/`*Ids` parameter — `requestedSalonId`, `employeeId`, `salonId` — paired with `tenantId`),
   // no new exception needed.
-  it("the real tree has exactly 104 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  //
+  // 104 -> 106 in Phase 67b Plan 05 (Issue #67, Task 1): `contexts/platform/facade/salon-
+  // assignments.ts` (same file already in the list above) gained 2 more exported functions
+  // (homeSalonUsageFrom, endDeploymentsOnSalonDeactivation) — both pass F1/F2/F3 directly (`db:
+  // Prisma.TransactionClient` first, `tenantId` required, `salonId` paired with `tenantId`), no
+  // new exception needed.
+  it("the real tree has exactly 106 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -445,7 +451,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(104);
+    expect(functions).toHaveLength(106);
 
     const rawExceptions = JSON.parse(
       readFileSync(
