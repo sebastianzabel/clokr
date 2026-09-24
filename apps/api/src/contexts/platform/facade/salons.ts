@@ -386,10 +386,15 @@ function normalizeOpeningHoursForCompare(value: unknown): string {
 /**
  * D-16: keeps `TenantConfig.storeHours` and a tenant's single active salon in step until #325
  * removes the tenant field entirely. Called ONLY from `PUT /api/v1/settings/work`
- * (`contexts/platform/api/settings.ts`) when its body carries `storeHours` — this is a WRITE into
+ * (`contexts/platform/api/settings.ts`) when its body carries `storeHours`, and mirrors ONLY when
+ * that value differs from `previousTenantHours` — the tenant value before the write, read by the
+ * caller — so resending an unchanged week never overwrites a salon edited via
+ * `PATCH /api/v1/salons/:id` (Phase 64b review, WR-02). This is a WRITE into
  * the salon from inside an existing platform route, not a new read of `storeHours` (this function
- * never reads `TenantConfig` itself; `openingHours` arrives already validated by
- * {@link salonOpeningHoursSchema}). Deliberately NOT re-exported from `index.ts` (Plan 04) — the
+ * never reads `TenantConfig` itself). `openingHours` arrives validated only by that route's legacy
+ * schema (7 entries, `HH:MM` format) and is written verbatim, exactly as the migration copied the
+ * tenant value — D-04: legacy values are not re-validated against {@link salonOpeningHoursSchema}
+ * (Phase 64b review, WR-03). Deliberately NOT re-exported from `index.ts` (Plan 04) — the
  * PUT /work handler is this function's only legitimate caller, not a general-purpose surface for
  * Phase 67b.
  *
@@ -401,8 +406,18 @@ function normalizeOpeningHoursForCompare(value: unknown): string {
 export async function syncSoleActiveSalonOpeningHours(
   db: Prisma.TransactionClient,
   tenantId: string,
-  openingHours: SalonOpeningHours,
+  change: { previousTenantHours: unknown; openingHours: SalonOpeningHours },
 ): Promise<{ existing: Salon; updated: Salon } | null> {
+  const { previousTenantHours, openingHours } = change;
+  // Review WR-02: mirror only a CHANGE of the tenant value. A tenant without a TenantConfig row
+  // (`undefined`) effectively has the column default, which DEFAULT_SALON_OPENING_HOURS equals.
+  if (
+    normalizeOpeningHoursForCompare(previousTenantHours ?? DEFAULT_SALON_OPENING_HOURS) ===
+    normalizeOpeningHoursForCompare(openingHours)
+  ) {
+    return null;
+  }
+
   const activeSalons = await db.salon.findMany({
     where: { tenantId, isActive: true },
     take: 2,

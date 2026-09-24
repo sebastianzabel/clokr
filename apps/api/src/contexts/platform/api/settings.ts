@@ -3,10 +3,8 @@ import { z } from "zod";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { FederalState, type TenantConfig } from "@clokr/db";
 import { encrypt } from "../../../utils/crypto";
-// Phase 64b (issue #64, D-04/D-16): the Salon facade's single canonical opening-hours schema —
-// stricter than this file's own pre-existing (now removed) storeHours regex-only check — plus the
-// function that mirrors a validated write into the tenant's sole active salon.
-import { salonOpeningHoursSchema, syncSoleActiveSalonOpeningHours } from "../facade/salons";
+// Phase 64b (issue #64, D-16): mirrors a storeHours change into the tenant's sole active salon.
+import { syncSoleActiveSalonOpeningHours } from "../facade/salons";
 // eslint-disable-next-line no-restricted-imports -- E-3: PUT /settings/work/:employeeId triggers saldo recalculation and shift cancellation as side effects of a contract change — same defect class as E-1. Disappears in Block 2 via a schedule-changed event. ADR 0001 Eintrag H.
 import { recalculateSnapshots } from "../../working-time-account/recalculate-snapshots";
 import {
@@ -151,13 +149,24 @@ const tenantConfigSchema = z
     datevMandantenNr: z.number().int().min(1).max(99999).nullable().optional(),
     // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
     monthlyHoursHolidayDeduction: z.boolean().optional(),
-    // Ladenöffnungszeiten (Phase 42). Phase 64b (issue #64, D-04/D-16): now the Salon facade's
-    // stricter salonOpeningHoursSchema (each weekday 0..6 exactly once, real HH:MM times,
-    // open < close unless closed) instead of this file's own former length(7)+regex-only check —
-    // one canonical schema for both the tenant field and Salon.openingHours. `TenantConfig.storeHours`
-    // itself is DEPRECATED (no new code reads it, #325); this PUT still writes it and, when the
-    // tenant has exactly one active salon, mirrors the same value into that salon (see below).
-    storeHours: salonOpeningHoursSchema.optional(),
+    // Ladenöffnungszeiten (Phase 42) — 7 entries Mo-So. Phase 64b (issue #64): deliberately the
+    // pre-64b legacy schema, NOT the Salon facade's stricter salonOpeningHoursSchema — the admin UI
+    // round-trips the stored value, and a stricter check would lock tenants whose stored hours it
+    // rejects out of this whole settings section (review WR-03; D-04: legacy values are not
+    // re-validated). `TenantConfig.storeHours` is DEPRECATED (no new code reads it, #325); this PUT
+    // still writes it and mirrors a CHANGED value verbatim into a tenant's sole active salon (D-16,
+    // see below), exactly as the migration copied it.
+    storeHours: z
+      .array(
+        z.object({
+          day: z.number().int().min(0).max(6),
+          open: z.string().regex(/^\d{2}:\d{2}$/),
+          close: z.string().regex(/^\d{2}:\d{2}$/),
+          closed: z.boolean().optional(),
+        }),
+      )
+      .length(7)
+      .optional(),
     // Phase 47.5 — STRICT / DAY_ONLY / OFF
     shiftStoreHoursMode: z.enum(["STRICT", "DAY_ONLY", "OFF"]).optional(),
     // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults (tenant-level pre-fill suggestion)
@@ -676,12 +685,26 @@ export async function settingsRoutes(app: FastifyInstance) {
       if (tenantName !== undefined) tenantUpdate.name = tenantName;
 
       // Phase 64b (issue #64, D-16, research Pitfall 1): the tenantConfig upsert, the optional
-      // tenant update, and — ONLY when this PUT's body carries storeHours — the D-16 salon mirror
-      // plus its own UPDATE Salon audit row all run in ONE transaction, so a mirror failure rolls
-      // back the tenantConfig write too. The applyToExisting employee loop below and the
+      // tenant update, and — ONLY when this PUT CHANGES storeHours — the D-16 salon mirror plus
+      // its own UPDATE Salon audit row all run in ONE transaction, so a mirror failure rolls back
+      // the tenantConfig write too. The applyToExisting employee loop below and the
       // TenantConfig/BREAK_DEFAULT_CHANGED audits stay OUTSIDE this transaction — separate,
       // pre-existing code paths this task does not widen the lock scope around.
       const config = await app.prisma.$transaction(async (tx) => {
+        // Review WR-02: the tenant value BEFORE this write. The admin UI resends the full week on
+        // every save of its section (also when only shiftStoreHoursMode changed), so "the body
+        // carries storeHours" is not "storeHours changed" — mirroring on the former would
+        // overwrite a salon edited via PATCH /api/v1/salons/:id with the unchanged tenant value.
+        const previousTenantHours =
+          configData.storeHours === undefined
+            ? undefined
+            : (
+                await tx.tenantConfig.findUnique({
+                  where: { tenantId },
+                  select: { storeHours: true },
+                })
+              )?.storeHours;
+
         const upserted = await tx.tenantConfig.upsert({
           where: { tenantId },
           update: configData,
@@ -697,7 +720,10 @@ export async function settingsRoutes(app: FastifyInstance) {
 
         const hours = configData.storeHours;
         if (hours !== undefined) {
-          const mirrored = await syncSoleActiveSalonOpeningHours(tx, tenantId, hours);
+          const mirrored = await syncSoleActiveSalonOpeningHours(tx, tenantId, {
+            previousTenantHours,
+            openingHours: hours,
+          });
           if (mirrored) {
             await app.audit({
               userId: req.user.sub,

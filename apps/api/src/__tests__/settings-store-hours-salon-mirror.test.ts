@@ -17,11 +17,15 @@ const DAY0_CLOSED = DEFAULT_SALON_OPENING_HOURS.map((d, i) =>
   i === 0 ? { ...d, closed: true } : d,
 );
 
-const DUPLICATE_DAY = DEFAULT_SALON_OPENING_HOURS.map((d, i) => (i === 6 ? { ...d, day: 0 } : d));
-
+// Legal under the pre-64b legacy storeHours schema (7 entries, `HH:MM` format), rejected by the
+// Salon facade's stricter salonOpeningHoursSchema (open >= close on an open day) — the shape a
+// tenant's stored hours can already have, and that the admin UI sends back unchanged (WR-03).
 const OPEN_GTE_CLOSE = DEFAULT_SALON_OPENING_HOURS.map((d, i) =>
   i === 0 ? { ...d, open: "20:00", close: "08:00", closed: false } : d,
 );
+
+// Invalid even under the legacy schema (6 entries instead of 7).
+const SIX_DAYS = DEFAULT_SALON_OPENING_HOURS.slice(0, 6);
 
 async function putWork(app: FastifyInstance, token: string, payload: Record<string, unknown>) {
   return app.inject({
@@ -185,36 +189,93 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
     }
   });
 
-  it("PUT with a duplicate day, or open >= close on an open day, is rejected 400 — nothing written", async () => {
-    const data = await seedTestData(app, "sh-mirror-invalid");
+  it("WR-02: a PUT resending the UNCHANGED tenant storeHours (e.g. only shiftStoreHoursMode changed) does not overwrite a salon edited via PATCH, and writes no Salon audit row", async () => {
+    const data = await seedTestData(app, "sh-mirror-unchanged");
     try {
       const salon = await app.prisma.salon.create({
         data: {
           tenantId: data.tenant.id,
-          name: "Bleibt gleich",
+          name: "Per PATCH geändert",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
         },
       });
 
-      const resDup = await putWork(app, data.adminToken, { storeHours: DUPLICATE_DAY });
-      expect(resDup.statusCode).toBe(400);
+      const patchRes = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/salons/${salon.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}`, "content-type": "application/json" },
+        payload: JSON.stringify({ openingHours: DAY0_CLOSED }),
+      });
+      expect(patchRes.statusCode, patchRes.body.slice(0, 400)).toBe(200);
+      const auditsAfterPatch = await app.prisma.auditLog.count({
+        where: { action: "UPDATE", entity: "Salon", entityId: salon.id },
+      });
+      expect(auditsAfterPatch).toBe(1);
 
-      const resOpenGte = await putWork(app, data.adminToken, { storeHours: OPEN_GTE_CLOSE });
-      expect(resOpenGte.statusCode).toBe(400);
+      const configBefore = await app.prisma.tenantConfig.findUniqueOrThrow({
+        where: { tenantId: data.tenant.id },
+      });
+      // The admin UI's save of the Öffnungszeiten section: the stored week sent back unchanged,
+      // plus a changed shift mode.
+      const newMode = configBefore.shiftStoreHoursMode === "OFF" ? "STRICT" : "OFF";
+      const res = await putWork(app, data.adminToken, {
+        storeHours: configBefore.storeHours,
+        shiftStoreHoursMode: newMode,
+      });
+      expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
+
+      const configAfter = await app.prisma.tenantConfig.findUniqueOrThrow({
+        where: { tenantId: data.tenant.id },
+      });
+      expect(configAfter.shiftStoreHoursMode).toBe(newMode);
 
       const fresh = await app.prisma.salon.findUniqueOrThrow({ where: { id: salon.id } });
-      expect(fresh.openingHours).toEqual(DEFAULT_SALON_OPENING_HOURS);
+      expect(fresh.openingHours).toEqual(DAY0_CLOSED);
+
+      const auditsAfterPut = await app.prisma.auditLog.count({
+        where: { action: "UPDATE", entity: "Salon", entityId: salon.id },
+      });
+      expect(auditsAfterPut).toBe(1);
+    } finally {
+      await cleanupTestData(app, data.tenant.id);
+    }
+  });
+
+  it("WR-03: storeHours keeps the pre-64b legacy schema — a week the stricter salon schema would reject (open >= close on an open day) is accepted and mirrored verbatim (D-04); a 6-day week still 400s with nothing written", async () => {
+    const data = await seedTestData(app, "sh-mirror-legacy");
+    try {
+      const salon = await app.prisma.salon.create({
+        data: {
+          tenantId: data.tenant.id,
+          name: "Legacy-Zeiten",
+          openingHours: DEFAULT_SALON_OPENING_HOURS,
+          isActive: true,
+        },
+      });
+
+      // Invalid under the legacy schema too: rejected, nothing written.
+      const resSix = await putWork(app, data.adminToken, { storeHours: SIX_DAYS });
+      expect(resSix.statusCode).toBe(400);
+      const untouched = await app.prisma.salon.findUniqueOrThrow({ where: { id: salon.id } });
+      expect(untouched.openingHours).toEqual(DEFAULT_SALON_OPENING_HOURS);
+
+      // Legal under the legacy schema: accepted, stored on the tenant, and copied verbatim.
+      const res = await putWork(app, data.adminToken, { storeHours: OPEN_GTE_CLOSE });
+      expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
 
       const config = await app.prisma.tenantConfig.findUniqueOrThrow({
         where: { tenantId: data.tenant.id },
       });
-      expect(config.storeHours).toEqual(DEFAULT_SALON_OPENING_HOURS);
+      expect(config.storeHours).toEqual(OPEN_GTE_CLOSE);
+
+      const fresh = await app.prisma.salon.findUniqueOrThrow({ where: { id: salon.id } });
+      expect(fresh.openingHours).toEqual(OPEN_GTE_CLOSE);
 
       const audits = await app.prisma.auditLog.findMany({
         where: { action: "UPDATE", entity: "Salon", entityId: salon.id },
       });
-      expect(audits.length).toBe(0);
+      expect(audits.length).toBe(1);
     } finally {
       await cleanupTestData(app, data.tenant.id);
     }
