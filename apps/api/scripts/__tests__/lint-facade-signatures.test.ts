@@ -396,7 +396,13 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // needed) — 1 new exported function (userMayApply) — passes F1/F2/F3 directly, flat parameters
   // (`db: Prisma.TransactionClient, tenantId, userId, permission, target`) so F3 sees `tenantId`
   // right next to `userId`, no new exception.
-  it("the real tree has exactly 93 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  //
+  // 93 -> 95 in Phase 74b Plan 03 (Issue #74): same file, 2 more exported functions —
+  // countGuardedPermissionHolders(db, tenantId) and withRoleLockoutGuard(db, tenantId, write), the
+  // lockout guard (D-17..D-19) — both pass F1/F2/F3 directly (`db: Prisma.TransactionClient`
+  // first, `tenantId` present, `write` does not match the `*Ids?` trigger pattern), no new
+  // exception needed.
+  it("the real tree has exactly 95 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -424,7 +430,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(93);
+    expect(functions).toHaveLength(95);
 
     const rawExceptions = JSON.parse(
       readFileSync(

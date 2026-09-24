@@ -1,9 +1,9 @@
 # Permission-Katalog: Ressource × Aktion × Reichweite
 
 **Status:** gültig ab Phase 72b (Issue #72)
-**Codestand der Belege:** `main` @ `bea6b5c7`, die `contexts/platform/api/roles.ts`-Zeilen aus
-Phase 73b (Issue #73) auf Branch `feat/73-rollen`, die `contexts/platform/api/role-assignments.ts`-Zeilen
-aus Phase 74b (Issue #74) auf Branch `feat/74-rollenzuweisung`
+**Codestand der Belege:** `main` @ `bea6b5c7`, die `contexts/platform/api/roles.ts`- und
+`contexts/platform/api/role-assignments.ts`-Zeilen aus Phase 74b (Issue #74) auf Branch
+`feat/74-rollenzuweisung`
 
 Alle Datei- und Zeilenangaben in diesem Dokument beziehen sich auf diesen Commit. Sie sind Belege,
 keine Wegbeschreibung — in einem späteren Stand kann die Zeile verschoben sein, die Zuordnung muss
@@ -159,15 +159,26 @@ Routen, die nur eine Anmeldung verlangen und auf die eigenen Daten filtern. `sal
 
 ### `role` — Rollen
 
-| Permission               | erlaubt                                                                                                                                                           | erlaubt ausdrücklich nicht                                                                                                                                                                                                                                                                                           |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `role:read:ZUGEWIESEN`   | Die Rollen des Mandanten und die darin gebündelten Permissions lesen (Systemrollen und die eigenen Rollen): `GET /roles`, `GET /roles/:id`.                       | Rollen anlegen oder ändern (`role:manage`); Rollen Personen zuweisen (`role-assignment:manage`). Wirkt nur bei einer Zuweisung mit Scope Mandant (#91).                                                                                                                                                              |
-| `role:manage:ZUGEWIESEN` | Rollen anlegen, ändern, kopieren und löschen, also Permissions zu Rollen bündeln: `POST /roles`, `PATCH /roles/:id`, `POST /roles/:id/copy`, `DELETE /roles/:id`. | Rollen zuweisen (`role-assignment:manage`); die Sperren abschalten, die keine Permissions sind (Selbstgenehmigung, Vier-Augen-Regel) — sie gelten für jede Rolle (#78); Systemrollen ändern oder löschen — die sind gesperrt (409), nur Kopieren ist erlaubt. Wirkt nur bei einer Zuweisung mit Scope Mandant (#91). |
+| Permission               | erlaubt                                                                                                                                                           | erlaubt ausdrücklich nicht                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `role:read:ZUGEWIESEN`   | Die Rollen des Mandanten und die darin gebündelten Permissions lesen (Systemrollen und die eigenen Rollen): `GET /roles`, `GET /roles/:id`.                       | Rollen anlegen oder ändern (`role:manage`); Rollen Personen zuweisen (`role-assignment:manage`). Wirkt nur bei einer Zuweisung mit Scope Mandant (#91).                                                                                                                                                                                                                              |
+| `role:manage:ZUGEWIESEN` | Rollen anlegen, ändern, kopieren und löschen, also Permissions zu Rollen bündeln: `POST /roles`, `PATCH /roles/:id`, `POST /roles/:id/copy`, `DELETE /roles/:id`. | Rollen zuweisen (`role-assignment:manage`); die Sperren abschalten, die keine Permissions sind (Selbstgenehmigung, Vier-Augen-Regel) — sie gelten für jede Rolle (#78); Systemrollen ändern oder löschen — die sind gesperrt (409), nur Kopieren ist erlaubt; eine Rolle löschen, die noch Nutzern zugewiesen ist (409, #74). Wirkt nur bei einer Zuweisung mit Scope Mandant (#91). |
 
-**Aussperrschutz (Regel für #74):** Im Mandanten muss immer mindestens ein aktiver Nutzer bleiben,
-der `role:manage` mit Scope Mandant hält; geprüft wird das erst mit den Zuweisungen aus #74 — beim
-Ändern einer Rolle, beim Entziehen einer Zuweisung und beim Deaktivieren oder Anonymisieren eines
-Nutzers. Vor #74 hält niemand eine Rolle, die Regel hätte keine Eingabe.
+**Aussperrschutz (umgesetzt mit #74):** Halter einer Permission ist ein aktiver Nutzer mit
+mindestens einer Zuweisung mit Scope Mandant, deren Rolle die Permission gewährt. Geschützt sind
+`role:manage` und `role-assignment:manage`. Abgelehnt (409) wird nur eine Änderung, die die Zahl
+der Halter einer dieser Permissions von mindestens 1 auf 0 senkt — ein Mandant, der noch keinen
+Halter hat, wird bis #75 nicht blockiert. Geprüft wird beim Entziehen und Ändern einer Zuweisung
+(`DELETE`/`PATCH /role-assignments/:id`) und beim Ändern einer Kundenrolle (`PATCH /roles/:id`),
+durch einen gemeinsamen Helfer (`withRoleLockoutGuard`, `contexts/platform/facade/role-assignments.ts`).
+Er sperrt die Zeile des Mandanten und zählt in derselben Transaktion vor und nach der Änderung;
+bei einem Verstoß wird die Änderung samt Audit-Eintrag zurückgerollt.
+
+**Zugewiesene Rolle (umgesetzt mit #74):** Eine Kundenrolle, die noch mindestens einem Nutzer
+zugewiesen ist, lässt sich nicht löschen (`DELETE /roles/:id` → 409 „Die Rolle ist noch Nutzern
+zugewiesen und kann nicht gelöscht werden.“). Die Prüfung läuft erst nach der Mandantenprüfung, eine
+fremde Rolle antwortet also weiter mit 404. Der Fremdschlüssel (`onDelete: Restrict`) ist die
+Rückfallsicherung und liefert dieselbe 409.
 
 ### `role-assignment` — Rollenzuweisungen
 
@@ -342,8 +353,9 @@ relativ zu `apps/api/src/`; die Route steht ohne das Präfix aus `app.ts`. Die S
 die Rollen, die der Guard heute durchlässt: `A` = ADMIN, `M` = MANAGER, `E` = EMPLOYEE.
 Die Zeilen für `contexts/platform/api/salons.ts` (Präfix `/api/v1/salons`) belegen den Stand von
 Phase 64b (#64) — die Datei gibt es in `bea6b5c7` noch nicht. Die Zeilen für
-`contexts/platform/api/role-assignments.ts` (Präfix `/api/v1/role-assignments`) belegen den Stand von
-Phase 74b (#74) auf Branch `feat/74-rollenzuweisung`.
+`contexts/platform/api/role-assignments.ts` (Präfix `/api/v1/role-assignments`) und
+`contexts/platform/api/roles.ts` (Präfix `/api/v1/roles`) belegen den Stand von Phase 74b (#74) auf
+Branch `feat/74-rollenzuweisung`, nach dem Einbau des Aussperrschutzes neu gemessen.
 
 | Stelle                                                     | Route                                      | heute   | Permission                     | Reichweite                                   |
 | ---------------------------------------------------------- | ------------------------------------------ | ------- | ------------------------------ | -------------------------------------------- |
@@ -409,17 +421,17 @@ Phase 74b (#74) auf Branch `feat/74-rollenzuweisung`.
 | `contexts/platform/api/holidays.ts:163`                    | `DELETE /:id`                              | A       | `holiday:manage`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/imports.ts:74`                      | `POST /employees`                          | A       | `employee:import`              | ZUGEWIESEN                                   |
 | `contexts/platform/api/imports.ts:176`                     | `POST /time-entries`                       | A       | `time-entry:import`            | ZUGEWIESEN                                   |
-| `contexts/platform/api/role-assignments.ts:263`            | `GET /`                                    | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/role-assignments.ts:285`            | `POST /`                                   | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/role-assignments.ts:359`            | `GET /:id`                                 | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/role-assignments.ts:386`            | `PATCH /:id`                               | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/role-assignments.ts:498`            | `DELETE /:id`                              | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/roles.ts:125`                       | `GET /`                                    | A       | `role:read`                    | ZUGEWIESEN                                   |
-| `contexts/platform/api/roles.ts:149`                       | `POST /`                                   | A       | `role:manage`                  | ZUGEWIESEN                                   |
-| `contexts/platform/api/roles.ts:204`                       | `GET /:id`                                 | A       | `role:read`                    | ZUGEWIESEN                                   |
-| `contexts/platform/api/roles.ts:230`                       | `PATCH /:id`                               | A       | `role:manage`                  | ZUGEWIESEN                                   |
-| `contexts/platform/api/roles.ts:316`                       | `DELETE /:id`                              | A       | `role:manage`                  | ZUGEWIESEN                                   |
-| `contexts/platform/api/roles.ts:373`                       | `POST /:id/copy`                           | A       | `role:manage`                  | ZUGEWIESEN                                   |
+| `contexts/platform/api/role-assignments.ts:266`            | `GET /`                                    | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/role-assignments.ts:288`            | `POST /`                                   | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/role-assignments.ts:362`            | `GET /:id`                                 | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/role-assignments.ts:389`            | `PATCH /:id`                               | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/role-assignments.ts:509`            | `DELETE /:id`                              | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/roles.ts:129`                       | `GET /`                                    | A       | `role:read`                    | ZUGEWIESEN                                   |
+| `contexts/platform/api/roles.ts:153`                       | `POST /`                                   | A       | `role:manage`                  | ZUGEWIESEN                                   |
+| `contexts/platform/api/roles.ts:208`                       | `GET /:id`                                 | A       | `role:read`                    | ZUGEWIESEN                                   |
+| `contexts/platform/api/roles.ts:234`                       | `PATCH /:id`                               | A       | `role:manage`                  | ZUGEWIESEN                                   |
+| `contexts/platform/api/roles.ts:330`                       | `DELETE /:id`                              | A       | `role:manage`                  | ZUGEWIESEN                                   |
+| `contexts/platform/api/roles.ts:402`                       | `POST /:id/copy`                           | A       | `role:manage`                  | ZUGEWIESEN                                   |
 | `contexts/platform/api/salons.ts:118`                      | `GET /`                                    | A, M    | `salon:read`                   | ZUGEWIESEN                                   |
 | `contexts/platform/api/salons.ts:136`                      | `GET /:id`                                 | A, M    | `salon:read`                   | ZUGEWIESEN                                   |
 | `contexts/platform/api/salons.ts:152`                      | `POST /`                                   | A       | `salon:manage`                 | ZUGEWIESEN                                   |
