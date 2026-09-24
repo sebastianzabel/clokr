@@ -1,4 +1,4 @@
-import { FastifyInstance } from "fastify";
+import { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto, { createHash } from "crypto";
@@ -9,7 +9,8 @@ import { validatePassword, loadPasswordPolicy } from "../password-policy";
 import { calculateProRataVacation } from "../../absence/vacation-calc";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { anonymizeEmployeeData, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../anonymize";
-import { withRoleLockoutGuard } from "../facade/role-assignments";
+import { withRoleLockoutGuard, type RemovedRoleAssignment } from "../facade/role-assignments";
+import { requestAuditFields } from "../request-audit-fields";
 import { RoleLockoutError, ROLE_LOCKOUT_MESSAGE } from "../role-assignment";
 import {
   createOvertimeAccount,
@@ -256,6 +257,39 @@ function deriveInvitationStatus(
   if (latest.acceptedAt) return "ACCEPTED";
   if (latest.expiresAt > new Date()) return "PENDING";
   return "EXPIRED";
+}
+
+/**
+ * Phase 74b (D-12/D-22): one `DELETE` audit entry per role assignment removed on behalf of `req`
+ * (anonymization, hard delete), inside the caller's transaction, with `oldValue` in the D-12 shape
+ * and `newValue.reason` naming the trigger. 74b review WR-06: the actor is resolved through
+ * `requestAuditFields`, so an API-key caller is recorded as `newValue.actor` instead of failing
+ * the `AuditLog.userId` foreign key and with it the whole transaction.
+ */
+async function auditRemovedRoleAssignments(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  tx: Prisma.TransactionClient,
+  removed: RemovedRoleAssignment[],
+  reason: string,
+) {
+  for (const row of removed) {
+    await app.audit({
+      action: "DELETE",
+      entity: "RoleAssignment",
+      entityId: row.id,
+      oldValue: {
+        userId: row.userId,
+        accessRoleId: row.accessRoleId,
+        roleName: row.roleName,
+        scopeType: row.scopeType,
+        salonIds: row.salonIds,
+        employeeIds: row.employeeIds,
+      },
+      ...requestAuditFields(req, { reason }),
+      tx,
+    });
+  }
 }
 
 export async function employeeRoutes(app: FastifyInstance) {
@@ -845,12 +879,14 @@ export async function employeeRoutes(app: FastifyInstance) {
               where: { userId: employee.userId, usedAt: null },
               data: { usedAt: new Date() },
             });
+            // 74b review WR-06: inside the guarded transaction a failing audit rolls the
+            // deactivation back, so the actor must never be an API key's `apikey:<id>` subject
+            // (AuditLog.userId FK); requestAuditFields also adds the request IP/user agent.
             await app.audit({
-              userId: req.user.sub,
               action: "UPDATE",
               entity: "Employee",
               entityId: id,
-              newValue: { isActive: false, exitDate: effectiveExitDate },
+              ...requestAuditFields(req, { isActive: false, exitDate: effectiveExitDate }),
               tx,
             });
           });
@@ -1033,32 +1069,19 @@ export async function employeeRoutes(app: FastifyInstance) {
               tx,
               employeeId: id,
             });
-            for (const removed of removedRoleAssignments) {
-              await app.audit({
-                userId: req.user.sub,
-                action: "DELETE",
-                entity: "RoleAssignment",
-                entityId: removed.id,
-                oldValue: {
-                  userId: removed.userId,
-                  accessRoleId: removed.accessRoleId,
-                  roleName: removed.roleName,
-                  scopeType: removed.scopeType,
-                  salonIds: removed.salonIds,
-                  employeeIds: removed.employeeIds,
-                },
-                newValue: { reason: "Anonymisierung" },
-                request: { ip: req.ip, headers: req.headers as Record<string, string> },
-                tx,
-              });
-            }
+            await auditRemovedRoleAssignments(
+              app,
+              req,
+              tx,
+              removedRoleAssignments,
+              "Anonymisierung",
+            );
             await app.audit({
-              userId: req.user.sub,
               action: "ANONYMIZE",
               entity: "Employee",
               entityId: id,
               oldValue: { employeeNumber: employee.employeeNumber },
-              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+              ...requestAuditFields(req),
               tx,
             });
           });

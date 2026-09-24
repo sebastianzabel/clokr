@@ -461,4 +461,73 @@ describe("Phase 74b review fixes", () => {
       }),
     ).toBe(0);
   });
+
+  // ── WR-06: deactivate / anonymize audits resolve the actor and carry the request ───────────────
+
+  async function latestAudit(entity: string, entityId: string, action: string) {
+    return app.prisma.auditLog.findFirst({
+      where: { entity, entityId, action },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  it("WR-06: an ADMIN-scope API key can deactivate an employee; the UPDATE audit has no userId, names the key and carries the IP", async () => {
+    const key = await createAdminApiKey();
+    const person = await createUserWithEmployee(app, tenantA.tenant.id, "Deaktivierung");
+
+    const res = await sendAs(
+      key.rawKey,
+      "PATCH",
+      `/api/v1/employees/${person.employee.id}/deactivate`,
+      {},
+    );
+
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
+    const row = await latestAudit("Employee", person.employee.id, "UPDATE");
+    expect(row?.userId).toBeNull();
+    expect((row?.newValue as { actor?: unknown } | null)?.actor).toEqual({
+      type: "API_KEY",
+      apiKeyId: key.id,
+    });
+    expect(row?.ipAddress).not.toBeNull();
+  });
+
+  it("WR-06: a deactivation by a logged-in admin records the admin and the request IP", async () => {
+    const person = await createUserWithEmployee(app, tenantA.tenant.id, "Deaktivierung");
+
+    const res = await sendAs(
+      tenantA.adminToken,
+      "PATCH",
+      `/api/v1/employees/${person.employee.id}/deactivate`,
+      {},
+    );
+
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
+    const row = await latestAudit("Employee", person.employee.id, "UPDATE");
+    expect(row?.userId).toBe(tenantA.adminUser.id);
+    expect(row?.ipAddress, "the deactivate audit carries no request IP").not.toBeNull();
+  });
+
+  it("WR-06: an ADMIN-scope API key can anonymize an employee holding an assignment; the per-assignment DELETE and the ANONYMIZE audit have no userId and name the key", async () => {
+    const key = await createAdminApiKey();
+    const person = await createUserWithEmployee(app, tenantA.tenant.id, "Anonymisierung");
+    const assignment = await assignTenant(person.user.id, roleX.id);
+
+    const res = await sendAs(key.rawKey, "DELETE", `/api/v1/employees/${person.employee.id}`);
+
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(204);
+    const removal = await latestAudit("RoleAssignment", assignment.id, "DELETE");
+    expect(removal?.userId).toBeNull();
+    expect(removal?.newValue).toEqual({
+      reason: "Anonymisierung",
+      actor: { type: "API_KEY", apiKeyId: key.id },
+    });
+    expect(removal?.ipAddress).not.toBeNull();
+    const anonymize = await latestAudit("Employee", person.employee.id, "ANONYMIZE");
+    expect(anonymize?.userId).toBeNull();
+    expect((anonymize?.newValue as { actor?: unknown } | null)?.actor).toEqual({
+      type: "API_KEY",
+      apiKeyId: key.id,
+    });
+  });
 });
