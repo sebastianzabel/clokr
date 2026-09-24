@@ -33,7 +33,7 @@
  *     persist.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
 import * as WorkingTimeAccountModule from "../contexts/working-time-account";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
@@ -93,6 +93,7 @@ describe("Phase 76.5 — Shift CRUD triggers OvertimeAccount recompute (SALDO-V1
       },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 325 (issue #325)
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ },
     });

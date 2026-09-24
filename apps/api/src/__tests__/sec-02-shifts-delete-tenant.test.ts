@@ -51,6 +51,7 @@ describe("DELETE /api/v1/shifts/:id — tenant isolation (sec-02)", () => {
     const victimShift = await app.prisma.shift.create({
       data: {
         employeeId: tenantB.employee.id,
+        salonId: tenantB.salonId, // Phase 325 (issue #325)
         date: new Date(nextOpenDayIso()),
         startTime: "08:00",
         endTime: "16:00",

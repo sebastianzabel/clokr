@@ -20,7 +20,13 @@
  * invokes it directly — no cron plumbing involved.
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon, // Phase 325 (issue #325)
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc } from "../contexts/working-time-account/timezone";
 import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
@@ -273,6 +279,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
       const tenant = await app.prisma.tenant.create({
         data: { name: `Shift ${s}`, slug: `shift-${s}`, federalState: "NIEDERSACHSEN" },
       });
+      const salon = await createTestSalon(app.prisma, tenant.id); // Phase 325 (issue #325)
       await app.prisma.tenantConfig.create({
         data: {
           tenantId: tenant.id,
@@ -327,7 +334,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
       await app.prisma.overtimeAccount.create({
         data: { employeeId: emp.id, balanceHours: 0 },
       });
-      return { tenant, empId: emp.id, userId: user.id };
+      return { tenant, empId: emp.id, userId: user.id, salonId: salon.id };
     }
 
     /**
@@ -348,7 +355,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     }
 
     it("uses actual shift netto durations (not Ø-Methode) for expectedMinutes", async () => {
-      const { tenant, empId } = await createShiftScenario("basic");
+      const { tenant, empId, salonId } = await createShiftScenario("basic");
 
       // Three shifts in January 2024 on the days that have marker hours (Tue/Thu/Fri):
       //   Tue Jan 2:  09:00-18:00 = 9h brutto → break 30min → netto 510min
@@ -367,6 +374,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
         await app.prisma.shift.create({
           data: {
             employeeId: empId,
+            salonId, // Phase 325 (issue #325)
             date: new Date(sh.date + "T00:00:00Z"),
             startTime: sh.startTime,
             endTime: sh.endTime,
@@ -423,7 +431,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     });
 
     it("SHIFT_BASED: excludes shifts on leave-covered dates from expectedMinutes", async () => {
-      const { tenant, empId } = await createShiftScenario("leave", {
+      const { tenant, empId, salonId } = await createShiftScenario("leave", {
         tuesdayHours: 1,
         thursdayHours: 1,
         fridayHours: 0,
@@ -434,6 +442,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
       await app.prisma.shift.create({
         data: {
           employeeId: empId,
+          salonId, // Phase 325 (issue #325)
           date: new Date("2024-01-02T00:00:00Z"),
           startTime: "09:00",
           endTime: "18:00",
@@ -442,6 +451,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
       await app.prisma.shift.create({
         data: {
           employeeId: empId,
+          salonId, // Phase 325 (issue #325)
           date: new Date("2024-01-04T00:00:00Z"),
           startTime: "09:00",
           endTime: "18:00",
@@ -511,7 +521,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     });
 
     it("invariant: live saldo (all open) equals cron-closed saldo for SHIFT_BASED", async () => {
-      const { tenant, empId } = await createShiftScenario("invariant");
+      const { tenant, empId, salonId } = await createShiftScenario("invariant");
 
       // Seed a zero December-2023 snapshot so the live calc's open range starts at
       // Jan 1 (without any snapshot, updateOvertimeAccount falls back to the CURRENT
@@ -542,6 +552,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
         await app.prisma.shift.create({
           data: {
             employeeId: empId,
+            salonId, // Phase 325 (issue #325)
             date: new Date(sh.date + "T00:00:00Z"),
             startTime: sh.startTime,
             endTime: sh.endTime,
@@ -620,7 +631,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
       //   Jan: SHIFT_BASED, has entries + shifts, gap check passes → closes.
       //   Feb: carryOverIn = Jan.effectiveCarryOverOut → closes.
       //   Result: both Jan and Feb have active snapshots; Feb.carryOver chains off Jan.
-      const { tenant, empId } = await createShiftScenario("backfill2mo");
+      const { tenant, empId, salonId } = await createShiftScenario("backfill2mo");
 
       // January 2024 shifts and entries on all Tue/Thu/Fri marker days
       const janShiftDays = [
@@ -632,6 +643,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
         await app.prisma.shift.create({
           data: {
             employeeId: empId,
+            salonId, // Phase 325 (issue #325)
             date: new Date(sh.date + "T00:00:00Z"),
             startTime: sh.startTime,
             endTime: sh.endTime,
@@ -659,6 +671,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
       await app.prisma.shift.create({
         data: {
           employeeId: empId,
+          salonId, // Phase 325 (issue #325)
           date: new Date("2024-02-06T00:00:00Z"),
           startTime: "09:00",
           endTime: "18:00", // 540 brutto − 30 break = 510 netto
@@ -750,7 +763,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
       //   Feb: gaps, past window, flag=false → BREAK (defer-forever) → loop stops.
       //   Mar: never reached (loop already broke at Feb).
       //   Result: Jan has active snapshot; Feb and Mar do NOT.
-      const { tenant, empId } = await createShiftScenario("gapbreak", undefined, {
+      const { tenant, empId, salonId } = await createShiftScenario("gapbreak", undefined, {
         closeMonthWithGapsAllowed: false,
       });
 
@@ -764,6 +777,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
         await app.prisma.shift.create({
           data: {
             employeeId: empId,
+            salonId, // Phase 325 (issue #325)
             date: new Date(sh.date + "T00:00:00Z"),
             startTime: sh.startTime,
             endTime: sh.endTime,
@@ -793,6 +807,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
       await app.prisma.shift.create({
         data: {
           employeeId: empId,
+          salonId, // Phase 325 (issue #325)
           date: new Date("2024-02-06T00:00:00Z"),
           startTime: "09:00",
           endTime: "18:00",
@@ -804,6 +819,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
       await app.prisma.shift.create({
         data: {
           employeeId: empId,
+          salonId, // Phase 325 (issue #325)
           date: new Date("2024-03-05T00:00:00Z"),
           startTime: "09:00",
           endTime: "18:00",
@@ -886,7 +902,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     });
 
     it("convention-robust guard: cron skips a month closed with UTC-naive periodStart", async () => {
-      const { tenant, empId } = await createShiftScenario("utcnaive");
+      const { tenant, empId, salonId } = await createShiftScenario("utcnaive");
 
       // Simulate a legacy/manual snapshot stored with the UTC-naive convention:
       // periodStart = Jan 1 UTC midnight (NOT the TZ-converted 2023-12-31 date).
@@ -930,7 +946,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     });
 
     it("recalculateSnapshots: SHIFT_BASED expected uses shift NETTO (break subtracted)", async () => {
-      const { tenant, empId } = await createShiftScenario("recalc");
+      const { tenant, empId, salonId } = await createShiftScenario("recalc");
 
       // 3 shifts, netto 1425 (brutto 1515 − breaks 90).
       const shiftDays = [
@@ -942,6 +958,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
         await app.prisma.shift.create({
           data: {
             employeeId: empId,
+            salonId, // Phase 325 (issue #325)
             date: new Date(sh.date + "T00:00:00Z"),
             startTime: sh.startTime,
             endTime: sh.endTime,
@@ -996,6 +1013,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
       const tenant = await app.prisma.tenant.create({
         data: { name: `Edge Tenant ${s}`, slug: `edge-${s}`, federalState: "NIEDERSACHSEN" },
       });
+      await createTestSalon(app.prisma, tenant.id); // Phase 325 (issue #325)
       await app.prisma.tenantConfig.create({
         data: { tenantId: tenant.id, defaultVacationDays: 30, timezone: "Europe/Berlin" },
       });
@@ -1350,6 +1368,7 @@ describe("cron gap-note (closeMonthWithGapsAllowed)", () => {
     const tenant = await prisma.tenant.create({
       data: { name: `GapNote ${s}`, slug: `gapnote-${s}`, federalState: "NIEDERSACHSEN" },
     });
+    await createTestSalon(prisma, tenant.id); // Phase 325 (issue #325)
     tenantId = tenant.id;
     await prisma.tenantConfig.create({
       data: {
@@ -1546,6 +1565,7 @@ describe("cron day-N window boundary (76.29-00 RED — SUPERSEDES day-15 grace)"
     const tenant = await prisma.tenant.create({
       data: { name: `DayN ${s}`, slug: `dayn-${s}`, federalState: "NIEDERSACHSEN" },
     });
+    await createTestSalon(prisma, tenant.id); // Phase 325 (issue #325)
     tenantId = tenant.id;
 
     // Write retroEntryWindowDays=10 + closeMonthWithGapsAllowed is set per-test via update.
@@ -1975,6 +1995,7 @@ describe("auto-close-month — BREAK-05 unconfirmed-break defer (RED, Phase 92 W
     const tenant = await prisma.tenant.create({
       data: { name: `BreakDefer ${s}`, slug: `bd-${s}`, federalState: "NIEDERSACHSEN" },
     });
+    await createTestSalon(prisma, tenant.id); // Phase 325 (issue #325)
     await prisma.tenantConfig.create({
       data: {
         tenantId: tenant.id,
@@ -2212,6 +2233,7 @@ describe("auto-close-month — BREAK-05 unconfirmed-break defer (RED, Phase 92 W
     const tenant = await prisma.tenant.create({
       data: { name: `BreakDeferFlex ${s}`, slug: `bd-flex-${s}`, federalState: "NIEDERSACHSEN" },
     });
+    await createTestSalon(prisma, tenant.id); // Phase 325 (issue #325)
     await prisma.tenantConfig.create({
       data: {
         tenantId: tenant.id,

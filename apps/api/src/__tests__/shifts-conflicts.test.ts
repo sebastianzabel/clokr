@@ -10,7 +10,13 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon, // Phase 325 (issue #325)
+} from "./setup";
 import { saldoSnapshotPeriodBounds } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 
@@ -59,6 +65,7 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
     const soft = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: future,
         startTime: "08:00",
         endTime: "16:00",
@@ -93,6 +100,7 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
     const shift = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: pastFlagged,
         startTime: "08:00",
         endTime: "16:00",
@@ -120,6 +128,7 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
     const otherTenant = await app.prisma.tenant.create({
       data: { name: "Other Co", slug: `other-${Date.now()}`, federalState: "BAYERN" },
     });
+    const otherSalon = await createTestSalon(app.prisma, otherTenant.id); // Phase 325 (issue #325)
     await app.prisma.tenantConfig.create({
       data: { tenantId: otherTenant.id, defaultVacationDays: 30, timezone: "Europe/Berlin" },
     });
@@ -144,6 +153,7 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
     const otherShift = await app.prisma.shift.create({
       data: {
         employeeId: otherEmp.id,
+        salonId: otherSalon.id, // Phase 325 (issue #325) — the OTHER tenant's own salon
         date: futureDate(10),
         startTime: "08:00",
         endTime: "16:00",
@@ -170,6 +180,8 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
       await app.prisma.employee.delete({ where: { id: otherEmp.id } });
       await app.prisma.user.delete({ where: { id: otherUser.id } });
       await app.prisma.tenantConfig.delete({ where: { tenantId: otherTenant.id } });
+      // Phase 325 (issue #325): Shift -> Salon is onDelete: Restrict — remove before the tenant.
+      await app.prisma.salon.delete({ where: { id: otherSalon.id } });
       await app.prisma.tenant.delete({ where: { id: otherTenant.id } });
     } catch (err) {
       console.error("Other-tenant cleanup failed:", err);
@@ -181,6 +193,7 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
     const shift = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: future,
         startTime: "08:00",
         endTime: "16:00",
@@ -219,6 +232,7 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
     const shift = await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: lockedDate,
         startTime: "08:00",
         endTime: "16:00",

@@ -222,18 +222,18 @@
   {
     "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
     "handler": "DELETE /api/v1/shifts/:id",
-    "validatedAt": 3207,
+    "validatedAt": 3210,
     "calls": [
       {
         "call": "shift.findUnique",
-        "line": 3198
+        "line": 3201
       },
       {
         "call": "shift.delete",
-        "line": 3231
+        "line": 3234
       }
     ],
-    "reason": "Same derived-field second-hop guard as the PUT /:id handler above: the shift is fetched by id (line 3198), then existingOwner = employee.findUnique({ id: existing.employeeId }) is compared at line 3207 BEFORE the shift is read or deleted — including the shift.delete at line 3231, which reuses the SAME id. (Lines shifted +49 net in Phase 325 Plan 01 Task 2: the generate-week default-salon block, the copy-week source-salon map + active-salon fallback block, and the /bulk default-salon block, all upstream of this handler — mechanical only. On top of the +1 net shift Task 1's import addition and the +14 net shift Task 1's POST / default-salon resolution, both upstream of this handler — mechanical only.) (Lines shifted +16 net in Phase 267 Plan 03, same GET /week threat-coverage comment block + preHandler line noted on the PUT /:id entry above, upstream of this handler — mechanical only. On top of the -4 net shift Phase 101B Plan 08, same import-block merge noted on the PUT /:id entry above, upstream of this handler — mechanical only. On top of the -1 net shift Phase 101B Plan 07: the platform/holidays + platform/anonymize import pair merged into one platform/index.ts import, upstream of this handler. On top of the -33 net shift Phase 100B Plan 13, the -20 net shift Phase 100B Plan 12 already recorded here — no finding, mechanical only.) (Lines shifted -12 net in Phase 77b Plan 02: access-context first statement and import; findShiftConflict and its callers took one AccessContext parameter and prettier collapsed the shortened calls — mechanical only.)"
+    "reason": "Same derived-field second-hop guard as the PUT /:id handler above: the shift is fetched by id (line 3201), then existingOwner = employee.findUnique({ id: existing.employeeId }) is compared at line 3210 BEFORE the shift is read or deleted — including the shift.delete at line 3234, which reuses the SAME id. (Lines shifted +3 net in Phase 325 Plan 01 Task 2's own lint-staged prettier reformatting at commit time, upstream of this handler — mechanical only. On top of the +49 net shift Phase 325 Plan 01 Task 2: the generate-week default-salon block, the copy-week source-salon map + active-salon fallback block, and the /bulk default-salon block, all upstream of this handler — mechanical only. On top of the +1 net shift Task 1's import addition and the +14 net shift Task 1's POST / default-salon resolution, both upstream of this handler — mechanical only.) (Lines shifted +16 net in Phase 267 Plan 03, same GET /week threat-coverage comment block + preHandler line noted on the PUT /:id entry above, upstream of this handler — mechanical only. On top of the -4 net shift Phase 101B Plan 08, same import-block merge noted on the PUT /:id entry above, upstream of this handler — mechanical only. On top of the -1 net shift Phase 101B Plan 07: the platform/holidays + platform/anonymize import pair merged into one platform/index.ts import, upstream of this handler. On top of the -33 net shift Phase 100B Plan 13, the -20 net shift Phase 100B Plan 12 already recorded here — no finding, mechanical only.) (Lines shifted -12 net in Phase 77b Plan 02: access-context first statement and import; findShiftConflict and its callers took one AccessContext parameter and prettier collapsed the shortened calls — mechanical only.)"
   },
   {
     "file": "apps/api/src/contexts/platform/api/test-bootstrap.ts",

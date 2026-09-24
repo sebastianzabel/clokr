@@ -12,7 +12,7 @@
  * shared singleton Fastify app, fresh tenant per suite, no Date mocking.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
 import { todayStr as tenantTodayStr, utcMidnight } from "./test-dates";
 import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
 import { monthRangeUtc, dateStrInTz } from "../contexts/working-time-account/timezone";
@@ -68,6 +68,7 @@ function expectedMinutesMonthlyMonTue(start: Date, end: Date, monthlyHours: numb
 describe("updateOvertimeAccount — MONTHLY_HOURS multi-month pro-rata + SHIFT_BASED Shift-sum", () => {
   let app: FastifyInstance;
   let tenantId: string;
+  let salonId: string; // Phase 325 (issue #325)
   let adminUserId: string;
 
   // Test 1: MONTHLY_HOURS Minijobber (Mo+Tu = 2 workdays/week, 80h/month)
@@ -94,6 +95,7 @@ describe("updateOvertimeAccount — MONTHLY_HOURS multi-month pro-rata + SHIFT_B
       data: { name: `FKM Saldo Test ${s}`, slug: `fkm-${s}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    salonId = (await createTestSalon(prisma, tenantId)).id; // Phase 325 (issue #325)
     await prisma.tenantConfig.create({
       data: { tenantId: tenant.id, defaultVacationDays: 30, timezone: TZ },
     });
@@ -296,6 +298,7 @@ describe("updateOvertimeAccount — MONTHLY_HOURS multi-month pro-rata + SHIFT_B
         await prisma.shift.create({
           data: {
             employeeId: empId,
+            salonId, // Phase 325 (issue #325)
             date: d,
             startTime: "08:00",
             endTime: "16:00",

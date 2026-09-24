@@ -32,7 +32,7 @@
  * observed.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -134,6 +134,7 @@ const PAST_DAY = pastDateStr(45); // AC-RC-04 — comfortably in the past
 describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () => {
   let app: FastifyInstance;
   let tenantId: string;
+  let salonId: string; // Phase 325 (issue #325)
   let vacTypeId: string;
   let adminAToken: string;
   let adminAUserId: string;
@@ -155,6 +156,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
       data: { name: `SLR ${suffix}`, slug: `slr-${suffix}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    salonId = (await createTestSalon(prisma, tenantId)).id; // Phase 325 (issue #325)
     await prisma.tenantConfig.create({ data: { tenantId } });
 
     const passwordHash = await bcrypt.hash("test1234", 10);
@@ -562,7 +564,13 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
 
     // Roster ONLY Monday -> roster-exact count = 1 < upper bound 3.
     await app.prisma.shift.create({
-      data: { employeeId: emp.id, date: utcMidnight(start), startTime: "09:00", endTime: "17:00" },
+      data: {
+        employeeId: emp.id,
+        salonId,
+        date: utcMidnight(start),
+        startTime: "09:00",
+        endTime: "17:00",
+      },
     });
 
     const { weekStart, weekEnd } = weekBoundsFor(start);
@@ -630,6 +638,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
       await app.prisma.shift.create({
         data: {
           employeeId: emp.id,
+          salonId, // Phase 325 (issue #325)
           date: utcMidnight(dateIso),
           startTime: "09:00",
           endTime: "17:00",
@@ -794,7 +803,13 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     // Roster ONLY Monday -> roster-exact count = 1 < upper bound 3 for the VACATION request, so
     // the recompute actually changes something (a no-op would pass trivially either way).
     await app.prisma.shift.create({
-      data: { employeeId: emp.id, date: utcMidnight(start), startTime: "09:00", endTime: "17:00" },
+      data: {
+        employeeId: emp.id,
+        salonId,
+        date: utcMidnight(start),
+        startTime: "09:00",
+        endTime: "17:00",
+      },
     });
 
     const { weekStart, weekEnd } = weekBoundsFor(start);
@@ -955,11 +970,18 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
       data: { usedDays: { increment: 2 } },
     });
     await app.prisma.shift.create({
-      data: { employeeId: emp.id, date: utcMidnight(monday), startTime: "09:00", endTime: "17:00" },
+      data: {
+        employeeId: emp.id,
+        salonId,
+        date: utcMidnight(monday),
+        startTime: "09:00",
+        endTime: "17:00",
+      },
     });
     const tuesdayShift = await app.prisma.shift.create({
       data: {
         employeeId: emp.id,
+        salonId, // Phase 325 (issue #325)
         date: utcMidnight(tuesday),
         startTime: "09:00",
         endTime: "17:00",

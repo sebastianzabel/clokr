@@ -29,7 +29,7 @@
  * close-employee-month.test.ts case 9 (pure-core pin), GOLDEN-MATRIX-SPEC.md.
  */
 import { vi, describe, it, expect, afterAll } from "vitest";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import {
   monthRangeUtc,
@@ -1415,6 +1415,7 @@ async function seedGoldenScenario(app: FastifyInstance, cell: Cell): Promise<See
     data: { name: `GM ${cell.id}`, slug: s, federalState: "NIEDERSACHSEN" },
   });
   const tenantId = tenant.id;
+  await createTestSalon(prisma, tenantId); // Phase 325 (issue #325)
   await prisma.tenantConfig.create({
     data: {
       tenantId,
@@ -1543,6 +1544,7 @@ async function seedGoldenScenario(app: FastifyInstance, cell: Cell): Promise<See
     await prisma.shift.create({
       data: {
         employeeId,
+        salonId: await salonIdForEmployee(prisma, employeeId), // Phase 325 (issue #325)
         date: new Date(sh.date + "T00:00:00Z"),
         startTime: "08:00",
         endTime: endHHMM,
@@ -2032,6 +2034,7 @@ describe("GT-08 — reopen earliest snapshot: live saldo == cumulative, not Feb-
       data: { name: "GM GT-08", slug: s, federalState: "NIEDERSACHSEN" },
     });
     gt08Tenant = tenant.id;
+    await createTestSalon(prisma, gt08Tenant); // Phase 325 (issue #325)
     await prisma.tenantConfig.create({
       data: { tenantId: gt08Tenant, defaultVacationDays: 30, timezone: TZ },
     });

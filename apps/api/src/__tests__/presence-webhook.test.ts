@@ -75,6 +75,7 @@ describe("POST /api/v1/presence/events", () => {
     await prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: TEST_DATE,
         startTime: "09:00",
         endTime: "17:00",

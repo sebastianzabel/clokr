@@ -1278,6 +1278,7 @@ describe("Reports API", () => {
       await prisma.shift.create({
         data: {
           employeeId: e.id,
+          salonId: data.salonId, // Phase 325 (issue #325) — e is created under data.tenant.id
           date: new Date("2025-01-06T00:00:00Z"),
           startTime: "08:00",
           endTime: "16:30",

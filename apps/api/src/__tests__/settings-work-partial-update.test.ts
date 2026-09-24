@@ -201,6 +201,7 @@ describe("PUT .../:employeeId cancelOrphanShifts write site — maxNegativeBalan
     await app.prisma.shift.create({
       data: {
         employeeId: shiftEmployee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: new Date(isoDateOffset(3) + "T00:00:00Z"),
         startTime: "08:00",
         endTime: "16:00",

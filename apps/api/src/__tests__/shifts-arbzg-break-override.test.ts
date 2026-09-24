@@ -22,7 +22,7 @@
  *     proves the validator still rejects truly illegal cases.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 
@@ -73,6 +73,7 @@ describe("Phase 76.10 — ArbZG § 3 daily-max honors employee break override (A
       },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 325 (issue #325)
     await prisma.tenantConfig.create({
       data: {
         tenantId,
