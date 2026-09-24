@@ -185,30 +185,116 @@ verweisen auf sie als „Entscheidung N“; sie wird nicht umnummeriert.
 Schichtplanung ist der vierte fachliche Kontext. Sie plant die Zukunft, die Zeiterfassung zeichnet
 die Vergangenheit auf.
 
+Sie trägt eigene Fachregeln, die heute im Code stehen:
+
+- **Besetzung** (`CoverageRule`),
+- **Verfügbarkeit** (`EmployeeAvailability`),
+- die **Öffnungszeitprüfung für Schichten**, gesteuert über `TenantConfig.shiftStoreHoursMode`,
+- der **Abgleich mit Phorest**.
+
+Issue #110 zählt auch das JArbSchG zu den Regeln der Schichtplanung. Auf `bea6b5c7` liegen die
+JArbSchG-Prüfungen aber in `contexts/absence/jarbschg.ts`, nicht in `contexts/scheduling/`. Dieses
+ADR verschiebt sie nicht und behauptet keine Prüfung auf Seiten der Schichtplanung, die es nicht
+gibt.
+
+Seit Phase 107 speist die Schichtplanung zwei Kontexte: das Arbeitszeitkonto (das Soll von
+`SHIFT_BASED`-Mitarbeitern kommt aus dem Dienstplan) und die Abwesenheiten (die Urlaubstage von
+`SHIFT_BASED`-Mitarbeitern werden über `recalcProvisionalLeaveForShiftChange` nachgerechnet).
+
+Zum Kontext gehören die acht Modelle `Shift`, `ShiftTemplate`, `EmployeeShiftPattern`,
+`EmployeeAvailability`, `CoverageRule`, `PhorestAppointment`, `PhorestStaffMapping` und
+`PhorestSyncRun`. Er liegt in zwei Bäumen, `apps/api/src/contexts/scheduling/` und
+`apps/api/src/services/phorest/` (ein Kontext, zwei Bäume, siehe `0001-abweichungen.md` Eintrag F).
+
+Abgleich mit der Wirklichkeit: `eslint.boundaries.mjs` setzt diese Grenze schon durch.
+`BOUNDARY_CONTEXTS` führt `scheduling` als einen der fünf Grenzbereiche, und Block 6 der
+Konfiguration ordnet `services/phorest/**` der Schichtplanung zu, so wie Block 5 `services/clock/**`
+der Zeiterfassung zuordnet. Dieses ADR gibt der Grenze einen Namen. An der Grenzprüfung ändert es
+nichts.
+
 ### 2. Regel 5 abgelöst: Der Auslöser ist eingetreten
 
 Die Auslöseklausel von Regel 5 („verallgemeinert wird, wenn der vierte Kontext gebaut wird“) ist
-gegenstandslos, denn der vierte Kontext existiert. Der Kern der Regel, keine Verallgemeinerung auf
-Vorrat, gilt unverändert weiter.
+gegenstandslos, denn der vierte Kontext existiert. Er hieß nur nie so.
+
+Der Kern der Regel gilt unverändert weiter: kein Plugin-System, kein generischer
+Erweiterungsmechanismus, keine Abstraktionsschicht ohne konkreten zweiten Anwendungsfall. Eine
+Verallgemeinerung, die bereits mit einem konkreten Anwendungsfall eingeplant ist, ist legitim.
+Benanntes Beispiel: der In-Process-Dispatcher aus #102 (T7).
 
 ### 3. Regel 6 abgelöst, eingeschränkt: Taktische Bausteine nur im Arbeitszeitkonto
 
-Aggregat, Repository und Value Object sind zugelassen, aber nur im Arbeitszeitkonto.
+Aggregat, Repository und Value Object sind zugelassen, aber nur im Arbeitszeitkonto
+(`contexts/working-time-account/`). Die Arbeitspakete dafür sind #107 (T14, Value Objects im Kern)
+und #108 (T15, Arbeitszeitkonto-Aggregat mit Repository).
+
+Taktische Bausteine sind nur im Arbeitszeitkonto zugelassen. Sie sind es nicht in den anderen drei
+Kontexten, nicht im Unterbau und nicht in der Kompositionsschicht.
+
+Begründung (Issue #110, Punkt 3): Aggregate lohnen sich dort, wo transaktionale Invarianten zu
+schützen sind, und die Einmal-Reduktion liegt im Arbeitszeitkonto. Für CRUD und generische
+Subdomänen wie Authentifizierung und Benachrichtigungen gelten sie als Over-Engineering.
+
+CQRS bleibt ausgeschlossen: keine Trennung in Lese- und Schreibmodell ohne gemessenen Bedarf.
 
 ### 4. Regel 2 präzisiert: Fremdschlüssel auf den Unterbau sind erlaubt
 
-Fremdschlüssel zwischen gleichrangigen Kontexten bleiben verboten, Fremdschlüssel von einem Kontext
-auf den Unterbau sind erlaubt. Das `onDelete`-Verhalten bestehender Relationen bleibt unberührt.
+Fremdschlüssel zwischen gleichrangigen Kontexten sind verboten.
+Fremdschlüssel von einem Kontext auf den Unterbau sind ausdrücklich erlaubt.
+Das `onDelete`-Verhalten jeder bestehenden Relation bleibt unberührt.
+
+Damit ist **Offene Frage 1** von ADR 0001 beantwortet: Die Compliance-Kontrolle
+`onDelete: Restrict` auf `Employee → TimeEntry/LeaveRequest/Absence` bleibt in der Datenbank, wo
+ein Betriebsprüfer sie erwartet. Sie wandert nicht in Anwendungscode.
+
+Gemessen ist die präzisierte Regel schon heute erfüllt: 28 von 28 kontextübergreifenden
+Fremdschlüsseln zeigen auf den Unterbau, 0 verbinden zwei gleichrangige Kontexte (siehe den Block
+unter „Belege nachrechnen“). Der Preis, die enge Kopplung an den Shared Kernel, steht unter
+Konsequenzen. Wie ein neuer Fremdschlüssel auf den Unterbau entsteht, regelt Entscheidung 7.
+
+**T11 entfällt.** Der Bezeichner T11 steht in keinem eingecheckten Dokument (0 Vorkommen in
+`docs/` und `CLAUDE.md`) und in keinem Issue-Titel: T10 ist #105, T12 ist #106. Der T-Reihe fehlen
+auch T13, T16 und T17, eine Lücke allein identifiziert also nichts. Im Code kommt das Token 8-mal in
+4 Dateien vor, dort aber als planinterne Aufgabenbezeichnung von Phase 100B Plan 08, also in einem
+anderen Namensraum.
+
+Daraus folgt ein Schluss, kein Beleg: T11 war das Arbeitspaket „Fremdschlüssel über Kontextgrenzen
+entfernen“, das Regel 2 von ADR 0001 zwischen der Schematrennung (T10) und der Migrationstrennung
+(T12) verlangt hätte. Dafür spricht der Text von #105: „Die Fremdschlüssel bleiben, wo sie sind“,
+„Damit entfällt der frühere Blocker vollständig“ und „Siehe T19“. T19 ist #110 selbst.
+
+Unabhängig von der Nummerierung gilt:
+Kein Arbeitspaket, das einen Fremdschlüssel auf den Unterbau entfernt oder abschwächt, existiert oder wird angelegt.
 
 ### 5. Kein Broker — mit Auslöser
 
-Die kontextübergreifende Invariante ist transaktional, ein Broker kann an dieser Transaktion nicht
-teilnehmen. Bis ein benannter Auslöser eintritt, bleibt die Integration im Prozess.
+Die kontextübergreifende Invariante ist transaktional. Nach Phase 107 D-15 läuft
+`recalcProvisionalLeaveForShiftChange(tx, …)` auf dem `Prisma.TransactionClient` des Aufrufers und
+rollt die Schichtänderung zurück, wenn sie scheitert. Ein Broker kann an dieser Transaktion nicht
+teilnehmen.
+
+Auslöser für einen späteren Broker sind:
+
+- ein Verbraucher **außerhalb des Prozesses**, oder
+- ein Ereignis, das einen **Neustart** überleben muss.
+
+Bis einer davon eintritt, bleibt die Integration im Prozess (#102).
 
 ### 6. Regeln 1 und 4: Auslöser statt Zielbild
 
-Ein Schema und ein Migrationsverzeichnis pro Kontext sind kein ständiges Zielbild mehr, an dem der
-Code gemessen wird, sondern Arbeitspakete mit Auslöser.
+Ein Schema pro Kontext bringt mit Prisma keine Isolation zur Übersetzungszeit: Es bleibt ein
+Client, in dem alle 41 Modelle erreichbar sind. #105 (T10) und #106 (T12) liefern ein strukturelles
+Signal und Migrationstrennung, keine Isolation. Die Isolation kommt aus den Fassaden (#100, T5) und
+der Grenzprüfung (#101, T6).
+
+Die Regeln 1 und 4 sind deshalb kein ständiges Zielbild mehr, an dem der Code gemessen wird. Sie
+werden zu Arbeitspaketen mit Auslöser. Issue #110 nennt keine Auslöser; die folgenden sind eine
+Entscheidung dieses ADR:
+
+- Migrationen verschiedener Kontexte kollidieren in der Praxis, oder
+- eine Datenbankrolle oder -berechtigung muss pro Kontext vergeben werden.
+
+Bis dahin ist ein Schema mit einem zentralen Migrationsverzeichnis regelkonform, keine Abweichung.
 
 ### 7. Governance des Unterbaus
 
@@ -217,18 +303,49 @@ was eine Erweiterung von einer Semantikänderung unterscheidet.
 
 ### 8. Ereignis-Versionierung: Notiz, kein Arbeitspaket
 
-Ereignisverträge im Prozess sind TypeScript-Typen und compilergeprüft. Ihre Versionierung wird erst
-mit einem Broker ein Problem und wird dann gelöst.
+Ereignisverträge im Prozess sind TypeScript-Typen und compilergeprüft. Ein Sender und ein Empfänger
+derselben Codeversion können nicht auseinanderlaufen. Die Versionierung wird erst dann ein echtes
+Problem, wenn Ereignisse über eine Codeversion hinaus serialisiert werden, also mit einem Broker
+(Entscheidung 5). Dann wird sie gelöst. Heute entsteht dafür kein Ticket.
 
 ### 9. Kompositionsschicht
 
-`apps/api/src/composition/` und die Kompositionswurzel `apps/api/src/app.ts` bilden eine eigene
-Schicht, die kein Modell besitzt und keine Fachregel trägt.
+`apps/api/src/composition/` (`activity.ts`, `dashboard.ts`, `data-retention.ts`, `pdf.ts`,
+`reports.ts`) und die Kompositionswurzel `apps/api/src/app.ts` bilden die Kompositionsschicht. Für
+sie gilt:
+
+- Sie besitzt kein Modell. Keines der 41 Modelle hat in `MODEL_OWNER` die Kompositionsschicht als
+  Eigentümer.
+- Sie trägt keine Fachregel.
+- Sie liest Kontexte nur über deren `index.ts`. Das ist durchgesetzt: Block 1 von
+  `eslint.boundaries.mjs` gilt auch für `composition/`, und das Register
+  `context-boundary-import-exceptions.json` enthält keinen Eintrag für `composition/`.
+- Kein Kontext und kein Service importiert aus `composition/` (gemessen: 0, vgl.
+  `0001-abweichungen.md` Eintrag H).
+- Eine Fachregel, die dort entdeckt wird, wandert in den Kontext, dem sie gehört.
+
+`apps/api/src/app.ts` bleibt die eine benannte Ausnahme der Grenzprüfung, unverändert. Die
+Kompositionsschicht ist weder ein Kontext noch Teil des Unterbaus.
 
 ### 10. Handler-Arten
 
-Ereignis-Handler sind entweder invariantentragend oder reaktiv. Der Standard für einen neuen Handler
-ist reaktiv.
+Ereignis-Handler sind von einer von zwei Arten:
+
+- **invariantentragend:** synchron, in der Transaktion des Senders, fail-closed. Scheitert der
+  Handler, bricht der Schreibvorgang des Senders ab.
+- **reaktiv:** läuft nach dem Commit, darf scheitern, bricht den Sender nie ab. Sein Scheitern wird
+  protokolliert.
+
+Der Standard für einen neuen Handler ist reaktiv. Invariantentragend ist ein Handler nur, wenn eine
+benannte Invariante es verlangt, und dann liegt er in dem Kontext, dem diese Invariante gehört.
+Heutiges Beispiel: `recalcProvisionalLeaveForShiftChange`. Die Abwesenheiten besitzen die Zahl der
+Urlaubstage, die Schichtplanung ruft die Funktion innerhalb ihrer eigenen Transaktion auf.
+
+Begründung: Ohne diese Unterscheidung könnte ein künftiger Kontext das Einstempeln brechen, weil
+ein scheiternder Nebenempfänger den Schreibvorgang der Zeiterfassung mitreißen würde.
+
+Es gibt heute keinen Dispatcher. #102 baut ihn. Die Handler-Arten sind die Regel, die er umsetzen
+muss, keine Beschreibung von vorhandenem Code.
 
 ---
 
