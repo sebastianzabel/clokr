@@ -296,4 +296,28 @@ describe("DEFAULT_SALON_OPENING_HOURS living assertion", () => {
     expect(config.storeHours).toEqual(DEFAULT_SALON_OPENING_HOURS);
     expect(() => salonOpeningHoursSchema.parse(DEFAULT_SALON_OPENING_HOURS)).not.toThrow();
   });
+
+  it("WR-06: the facade constant AND the seeds' own copy (packages/db/src/default-salon.ts) are byte-identical to TenantConfig.storeHours's @default in schema.prisma", async () => {
+    const schemaText = readFileSync(join(REPO_ROOT, "packages/db/prisma/schema.prisma"), "utf8");
+    const modelStart = schemaText.indexOf("model TenantConfig {");
+    expect(modelStart, "model TenantConfig not found in schema.prisma").toBeGreaterThan(-1);
+    const modelBody = schemaText.slice(modelStart, schemaText.indexOf("\n}", modelStart));
+    const defaultMatch = /^\s*storeHours\s+Json\s+@default\("((?:[^"\\]|\\.)*)"\)/m.exec(modelBody);
+    expect(defaultMatch, "TenantConfig.storeHours @default(...) not found").not.toBeNull();
+    // Prisma string literal -> JSON text: the only escapes in this default are \" quotes.
+    const schemaDefaultJson = (defaultMatch?.[1] ?? "").replace(/\\"/g, '"');
+    const schemaDefault: unknown = JSON.parse(schemaDefaultJson);
+
+    // A path computed at runtime, so tsc (rootDir: ./src) does not try to compile the seed file
+    // into this package — vitest still loads the real module, not a restatement of it.
+    const seedModulePath = join(REPO_ROOT, "packages/db/src/default-salon.ts");
+    const seedModule = (await import(seedModulePath)) as {
+      DEFAULT_SALON_OPENING_HOURS: unknown;
+    };
+
+    expect(DEFAULT_SALON_OPENING_HOURS).toEqual(schemaDefault);
+    expect(seedModule.DEFAULT_SALON_OPENING_HOURS).toEqual(schemaDefault);
+    expect(JSON.stringify(DEFAULT_SALON_OPENING_HOURS)).toBe(schemaDefaultJson);
+    expect(JSON.stringify(seedModule.DEFAULT_SALON_OPENING_HOURS)).toBe(schemaDefaultJson);
+  });
 });
