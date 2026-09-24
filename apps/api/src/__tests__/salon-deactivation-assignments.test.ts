@@ -9,6 +9,8 @@
  * - D-02: both race directions between a concurrent Stammsalon change and a deactivation.
  * - Review CR-01: ending an Einsatzsalon assignment concurrently with a deactivation of its salon
  *   evaluates the "only shorten" rule on the row as the deactivation left it, never on a stale read.
+ * - Review WR-01: every multi-salon row lock takes the rows in ONE global order (`ORDER BY "id"`),
+ *   so resolving a new employee's Stammsalon cannot deadlock against a deactivation.
  *
  * `seedTestData()` creates ONE active default salon for its tenant (Phase 67b Plan 03, D-24) and
  * its two seeded employees get NO HOME rows (same D-24 convention `salon-assignments.test.ts`
@@ -16,6 +18,7 @@
  * created directly, same convention as `salons.test.ts`/`salon-assignments.test.ts`.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS, deactivateSalon } from "../contexts/platform/facade/salons";
@@ -24,6 +27,7 @@ import {
   endSalonAssignment,
 } from "../contexts/platform/facade/salon-assignment-changes";
 import { salonForDay } from "../contexts/platform";
+import { resolveHomeSalonForNewEmployee } from "../contexts/platform/facade/salon-assignments";
 import {
   addDays,
   dayToDate,
@@ -595,5 +599,118 @@ describe("POST /api/v1/salons/:id/deactivate — Stammsalon in use, Einsatzsalon
       where: { id: deployment.id },
     });
     expect(after.validUntil?.toISOString()).toBe(dayToDate(D).toISOString());
+  });
+
+  it("review WR-01: resolveHomeSalonForNewEmployee locks the tenant's active salons in id order (the order deactivateSalon/activateSalon use), not in createdAt order", async () => {
+    const lockTenant = await seedTestData(app, "sda-lockorder");
+    try {
+      // Only the two salons below may be active: their createdAt order is the REVERSE of their id
+      // order, which is exactly the case where a createdAt-ordered lock deadlocks against the
+      // id-ordered FOR UPDATE of deactivateSalon/activateSalon.
+      await app.prisma.salon.update({
+        where: { id: lockTenant.defaultSalon.id },
+        data: { isActive: false, deactivatedAt: new Date() },
+      });
+      const lowId = `0${randomUUID().slice(1)}`;
+      const highId = `f${randomUUID().slice(1)}`;
+      await app.prisma.salon.create({
+        data: {
+          id: highId,
+          tenantId: lockTenant.tenant.id,
+          name: "WR-01 early createdAt, high id",
+          openingHours: DEFAULT_SALON_OPENING_HOURS,
+          isActive: true,
+          createdAt: new Date("2020-01-01T00:00:00.000Z"),
+        },
+      });
+      await app.prisma.salon.create({
+        data: {
+          id: lowId,
+          tenantId: lockTenant.tenant.id,
+          name: "WR-01 late createdAt, low id",
+          openingHours: DEFAULT_SALON_OPENING_HOURS,
+          isActive: true,
+          createdAt: new Date("2021-01-01T00:00:00.000Z"),
+        },
+      });
+
+      // tx C holds the HIGH-id salon, so the resolver below blocks on it. With id order it has
+      // already locked the LOW-id salon by then; with createdAt order it blocks on its FIRST row
+      // and holds nothing.
+      let releaseTxC: (() => void) | undefined;
+      const txCHoldGate = new Promise<void>((resolve) => {
+        releaseTxC = resolve;
+      });
+      let signalTxCLocked: ((pid: number) => void) | undefined;
+      const txCLocked = new Promise<number>((resolve) => {
+        signalTxCLocked = resolve;
+      });
+      const txCPromise = app.prisma.$transaction(
+        async (tx) => {
+          const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+          await tx.$queryRaw`SELECT "id" FROM "Salon" WHERE "id" = ${highId} FOR UPDATE`;
+          signalTxCLocked?.(pid);
+          await txCHoldGate;
+        },
+        { timeout: 20000 },
+      );
+      const txCPid = await txCLocked;
+
+      let signalTxAPid: ((pid: number) => void) | undefined;
+      const txAPidKnown = new Promise<number>((resolve) => {
+        signalTxAPid = resolve;
+      });
+      let txASettled = false;
+      const txAPromise = app.prisma
+        .$transaction(
+          async (tx) => {
+            const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+            signalTxAPid?.(pid);
+            return resolveHomeSalonForNewEmployee(tx, lockTenant.tenant.id, null);
+          },
+          { timeout: 20000 },
+        )
+        .finally(() => {
+          txASettled = true;
+        });
+      const txAPid = await txAPidKnown;
+
+      const deadline = Date.now() + 10000;
+      let txABlockedByTxC = false;
+      while (!txASettled && Date.now() < deadline) {
+        const [{ blockers }] = await app.prisma.$queryRaw<{ blockers: number[] }[]>`
+          SELECT pg_blocking_pids(${txAPid}::int) AS blockers`;
+        if (blockers.includes(txCPid)) {
+          txABlockedByTxC = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      // While the resolver waits for the high-id salon, the low-id salon must already be locked
+      // by it: a FOR UPDATE NOWAIT on that row fails with lock_not_available (55P03).
+      let lowIdLockError: unknown = null;
+      try {
+        await app.prisma.$transaction(async (tx) => {
+          await tx.$queryRaw`SELECT "id" FROM "Salon" WHERE "id" = ${lowId} FOR UPDATE NOWAIT`;
+        });
+      } catch (err) {
+        lowIdLockError = err;
+      }
+
+      releaseTxC?.();
+      const [, resultA] = await Promise.all([txCPromise, txAPromise]);
+
+      expect(txABlockedByTxC, "the resolver was never observed waiting on tx C's salon lock").toBe(
+        true,
+      );
+      expect(
+        String(lowIdLockError),
+        "the low-id salon was not yet locked by the resolver — rows are not taken in id order",
+      ).toContain("55P03");
+      expect(resultA.status).toBe("HOME_SALON_REQUIRED");
+    } finally {
+      await cleanupTestData(app, lockTenant.tenant.id);
+    }
   });
 });

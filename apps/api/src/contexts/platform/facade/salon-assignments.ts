@@ -211,7 +211,8 @@ export type ResolveHomeSalonOutcome =
  * more than one -> `HOME_SALON_REQUIRED`, exactly one -> `OK`. The `FOR SHARE` lock on every
  * candidate row serialises this resolution against a concurrent `deactivateSalon()`'s `FOR UPDATE`
  * over the same tenant's salons (D-02) — the two can never both believe they observed a stable
- * salon state.
+ * salon state. The rows are LOCKED in `id` order (the global salon lock order, review WR-01) and
+ * only then sorted into the default-salon order in memory.
  */
 export async function resolveHomeSalonForNewEmployee(
   db: Prisma.TransactionClient,
@@ -228,10 +229,18 @@ export async function resolveHomeSalonForNewEmployee(
     return { status: "OK", salonId: salon.id };
   }
 
-  const activeSalons = await db.$queryRaw<{ id: string }[]>`
-    SELECT "id" FROM "Salon" WHERE "tenantId" = ${tenantId} AND "isActive" = true
-    ORDER BY "createdAt", "id" FOR SHARE
+  // Review WR-01: rows are locked in the ONE global salon lock order, `ORDER BY "id"` — the order
+  // `deactivateSalon`/`activateSalon` take their `FOR UPDATE` in. Postgres locks rows in ORDER BY
+  // order, so locking here in `createdAt` order would deadlock against a concurrent deactivation
+  // whenever the two orders differ (random UUIDs: about half the time with two salons). The
+  // default-salon order (`createdAt, id`, 64b) is applied afterwards, in memory.
+  const locked = await db.$queryRaw<{ id: string; createdAt: Date }[]>`
+    SELECT "id", "createdAt" FROM "Salon" WHERE "tenantId" = ${tenantId} AND "isActive" = true
+    ORDER BY "id" FOR SHARE
   `;
+  const activeSalons = [...locked].sort(
+    (a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id),
+  );
   if (activeSalons.length === 0) return { status: "NO_ACTIVE_SALON" };
   if (activeSalons.length > 1) return { status: "HOME_SALON_REQUIRED" };
   return { status: "OK", salonId: activeSalons[0].id };
