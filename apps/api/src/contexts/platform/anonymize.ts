@@ -29,9 +29,10 @@
  *   - RoleAssignment: every row of the user is hard-deleted (Phase 74b, D-22 — an anonymized
  *     person must not hold rights, and a leftover row would block deleting its role). The
  *     removed rows are RETURNED so the route can write one DELETE audit entry per row; the
- *     batch script records them only through its ANONYMIZATION_RUN summary. Person-scope lists
- *     of other users that contain this employee's id are left unchanged (ids only — the
- *     permission resolution ignores anonymized targets).
+ *     batch script (`scripts/anonymize-dump.ts`) records them in its ANONYMIZATION_RUN summary
+ *     instead (`removedRoleAssignmentCount` plus every removed row in `removedRoleAssignments`,
+ *     74b review WR-05). Person-scope lists of other users that contain this employee's id are
+ *     left unchanged (ids only — the permission resolution ignores anonymized targets).
  *
  * Preserved (for retention compliance §147 AO / §257 HGB / § 16 ArbZG):
  *   TimeEntry, LeaveRequest, Absence, Schedule, OvertimeAccount row counts
@@ -50,7 +51,8 @@
  *   - Open the transaction (`prisma.$transaction(...)`)
  *   - Emit the AuditLog entry — this helper does NOT log itself.
  *     The route emits action="ANONYMIZE" (per-employee).
- *     The batch script emits action="ANONYMIZATION_RUN" (whole-DB sweep).
+ *     The batch script emits action="ANONYMIZATION_RUN" (whole-DB sweep), whose newValue lists
+ *     the returned `removedRoleAssignments` of every employee it processed.
  *     The route also emits one action="DELETE" entity="RoleAssignment" entry per row in the
  *     returned `removedRoleAssignments` (newValue.reason "Anonymisierung", Phase 74b D-22).
  *   - Delete MinIO avatar + absence-document objects AFTER the tx commits
