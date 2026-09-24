@@ -12,8 +12,10 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { requireRole } from "../../../middleware/auth";
 import {
+  activateSalon,
   createSalon,
   createSalonSchema,
+  deactivateSalon,
   findSalon,
   isMultiSalonTenant,
   listSalons,
@@ -33,6 +35,10 @@ const idParamSchema = z.object({ id: z.string().uuid() });
 
 const SALON_NOT_FOUND = "Salon nicht gefunden";
 const NO_CHANGES = "Keine Änderungen angegeben.";
+const ALREADY_INACTIVE_MESSAGE = "Der Salon ist bereits deaktiviert.";
+const ALREADY_ACTIVE_MESSAGE = "Der Salon ist bereits aktiv.";
+const LAST_ACTIVE_SALON_MESSAGE =
+  "Der letzte aktive Salon eines Mandanten kann nicht deaktiviert werden.";
 
 /**
  * D-13: the shared T-100-09 guard for every `/:id` route below. A foreign tenant's real salon and
@@ -162,6 +168,92 @@ export async function salonRoutes(app: FastifyInstance) {
 
       if (!result) return rejectUnknownSalon(app, req, reply, id);
       return result;
+    },
+  });
+
+  // POST /api/v1/salons/:id/deactivate — D-06/D-07/D-08, audited, never deletes
+  app.post("/:id/deactivate", {
+    schema: {
+      tags: ["Salons"],
+      summary: "Deactivate a salon",
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+
+      const outcome = await app.prisma.$transaction(async (tx) => {
+        const change = await deactivateSalon(tx, req.user.tenantId, id);
+        if (change.status === "OK") {
+          await app.audit({
+            userId: req.user.sub,
+            action: "DEACTIVATE",
+            entity: "Salon",
+            entityId: id,
+            oldValue: change.existing,
+            newValue: change.updated,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            tx,
+          });
+        }
+        return change;
+      });
+
+      switch (outcome.status) {
+        case "OK":
+          return outcome.updated;
+        case "NOT_FOUND":
+          return rejectUnknownSalon(app, req, reply, id);
+        case "ALREADY_INACTIVE":
+          return reply.code(409).send({ error: ALREADY_INACTIVE_MESSAGE });
+        case "LAST_ACTIVE_SALON":
+          return reply.code(409).send({ error: LAST_ACTIVE_SALON_MESSAGE });
+        default:
+          // ALREADY_ACTIVE cannot occur on the deactivate path — exhaustiveness guard only.
+          return reply.code(409).send({ error: "Unerwarteter Zustand." });
+      }
+    },
+  });
+
+  // POST /api/v1/salons/:id/activate — D-07, audited, mirror of deactivate
+  app.post("/:id/activate", {
+    schema: {
+      tags: ["Salons"],
+      summary: "Re-activate an inactive salon",
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+
+      const outcome = await app.prisma.$transaction(async (tx) => {
+        const change = await activateSalon(tx, req.user.tenantId, id);
+        if (change.status === "OK") {
+          await app.audit({
+            userId: req.user.sub,
+            action: "ACTIVATE",
+            entity: "Salon",
+            entityId: id,
+            oldValue: change.existing,
+            newValue: change.updated,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            tx,
+          });
+        }
+        return change;
+      });
+
+      switch (outcome.status) {
+        case "OK":
+          return outcome.updated;
+        case "NOT_FOUND":
+          return rejectUnknownSalon(app, req, reply, id);
+        case "ALREADY_ACTIVE":
+          return reply.code(409).send({ error: ALREADY_ACTIVE_MESSAGE });
+        default:
+          // ALREADY_INACTIVE/LAST_ACTIVE_SALON cannot occur on the activate path.
+          return reply.code(409).send({ error: "Unerwarteter Zustand." });
+      }
     },
   });
 }

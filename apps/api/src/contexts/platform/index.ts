@@ -63,12 +63,24 @@ export type {
   PermissionRelation,
   PermissionResource,
 } from "./permission-catalog";
-// Phase 64b (issue #64) — salon read surface
+// Phase 64b (issue #64) — salon read + write surface (Plan 02 adds the write functions)
 export {
   listSalons,
   countActiveSalons,
   isMultiSalonTenant,
   salonOpeningHoursSchema,
   DEFAULT_SALON_OPENING_HOURS,
+  findSalon,
+  createSalon,
+  createSalonSchema,
+  updateSalon,
+  updateSalonSchema,
+  deactivateSalon,
+  activateSalon,
 } from "./facade/salons";
-export type { SalonOpeningHours } from "./facade/salons";
+export type {
+  SalonOpeningHours,
+  CreateSalonInput,
+  UpdateSalonInput,
+  SalonStateChange,
+} from "./facade/salons";

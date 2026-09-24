@@ -853,6 +853,30 @@
       "validatedAt": null
     },
     {
+      "route": "POST /api/v1/salons/:id/deactivate",
+      "file": "apps/api/src/contexts/platform/api/salons.ts",
+      "category": "probe",
+      "params": {
+        "id": "salon"
+      },
+      "minimalBody": null,
+      "reason": "Phase 64b Plan 02 (Issue #64, D-08/D-13): deactivateSalon(tx, tenantId, id) locks the tenant's Salon rows FOR UPDATE, then a tenant-scoped findFirst returns NOT_FOUND for a foreign or nonexistent id (before any active-count/conflict check runs) — the route maps NOT_FOUND to the shared rejectUnknownSalon(...) helper, the same byte-identical 404 as every other /:id route, auditing CROSS_TENANT_ACCESS_DENIED only when the row exists in another tenant. No body is parsed by this route.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/salons/:id/activate",
+      "file": "apps/api/src/contexts/platform/api/salons.ts",
+      "category": "probe",
+      "params": {
+        "id": "salon"
+      },
+      "minimalBody": null,
+      "reason": "Phase 64b Plan 02 (Issue #64, D-07/D-13): activateSalon(tx, tenantId, id) is the structural mirror of deactivateSalon — same lock, same tenant-scoped findFirst returning NOT_FOUND for a foreign or nonexistent id before any conflict check, same shared rejectUnknownSalon(...) 404. No body is parsed by this route.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "GET /api/v1/audit-logs/:id",
       "file": "apps/api/src/contexts/platform/api/audit-logs.ts",
       "category": "nicht anwendbar",

@@ -8,7 +8,11 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
-import { DEFAULT_SALON_OPENING_HOURS, findSalon } from "../contexts/platform/facade/salons";
+import {
+  DEFAULT_SALON_OPENING_HOURS,
+  findSalon,
+  deactivateSalon,
+} from "../contexts/platform/facade/salons";
 
 describe("GET /api/v1/salons", () => {
   let app: FastifyInstance;
@@ -484,5 +488,254 @@ describe("Salon lifecycle: read by id, create, update, deactivate, activate (Pha
     const res = await patchSalon(tenantA.adminToken, salonA.id, {});
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.body)).toEqual({ error: "Keine Änderungen angegeben." });
+  });
+});
+
+/**
+ * Phase 64b Plan 02 (issue #64, D-06/D-07/D-08/AC-4/AC-5) — deactivate/re-activate: never delete,
+ * never zero active salons, even under concurrency.
+ */
+describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
+  let app: FastifyInstance;
+  let tenantA: Awaited<ReturnType<typeof seedTestData>>;
+  let tenantB: Awaited<ReturnType<typeof seedTestData>>;
+  let managerToken: string;
+  let salonA1: { id: string };
+  let salonA2: { id: string };
+  let foreignSalon: { id: string };
+
+  const unknownId = "00000000-0000-4000-8000-000000000199";
+
+  function postAction(token: string, id: string, action: "deactivate" | "activate") {
+    return app.inject({
+      method: "POST",
+      url: `/api/v1/salons/${id}/${action}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    tenantA = await seedTestData(app, "salon-deact-a");
+    tenantB = await seedTestData(app, "salon-deact-b");
+    managerToken = await createManagerFor(app, tenantA.tenant.id, "mgr-deact-");
+
+    salonA1 = await app.prisma.salon.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        name: "Salon A1",
+        openingHours: DEFAULT_SALON_OPENING_HOURS,
+        isActive: true,
+      },
+    });
+    salonA2 = await app.prisma.salon.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        name: "Salon A2",
+        openingHours: DEFAULT_SALON_OPENING_HOURS,
+        isActive: true,
+      },
+    });
+    foreignSalon = await app.prisma.salon.create({
+      data: {
+        tenantId: tenantB.tenant.id,
+        name: "Fremder Salon",
+        openingHours: DEFAULT_SALON_OPENING_HOURS,
+        isActive: true,
+      },
+    });
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantA.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed (tenantA):", err);
+    }
+    try {
+      await cleanupTestData(app, tenantB.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed (tenantB):", err);
+    }
+  });
+
+  it("AC-5: deactivating one of two active salons succeeds and flips isMultiSalon true -> false", async () => {
+    const beforeRes = await app.inject({
+      method: "GET",
+      url: "/api/v1/salons",
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+    expect(JSON.parse(beforeRes.body).isMultiSalon).toBe(true);
+
+    const res = await postAction(tenantA.adminToken, salonA2.id, "deactivate");
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.isActive).toBe(false);
+    expect(body.deactivatedAt).not.toBeNull();
+
+    const afterRes = await app.inject({
+      method: "GET",
+      url: "/api/v1/salons",
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+    expect(JSON.parse(afterRes.body).isMultiSalon).toBe(false);
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: { action: "DEACTIVATE", entity: "Salon", entityId: salonA2.id },
+    });
+    expect(audit).not.toBeNull();
+    expect((audit?.oldValue as { isActive?: boolean } | null)?.isActive).toBe(true);
+    expect((audit?.newValue as { isActive?: boolean } | null)?.isActive).toBe(false);
+  });
+
+  it("D-08: deactivating the LAST active salon is rejected with the exact German message, row unchanged, no DEACTIVATE audit row", async () => {
+    // salonA2 was deactivated by the previous test — salonA1 is now the tenant's only active salon.
+    const res = await postAction(tenantA.adminToken, salonA1.id, "deactivate");
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({
+      error: "Der letzte aktive Salon eines Mandanten kann nicht deaktiviert werden.",
+    });
+
+    const row = await app.prisma.salon.findUnique({ where: { id: salonA1.id } });
+    expect(row?.isActive).toBe(true);
+    expect(row?.deactivatedAt).toBeNull();
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: { action: "DEACTIVATE", entity: "Salon", entityId: salonA1.id },
+    });
+    expect(audit).toBeNull();
+  });
+
+  it("D-08: deactivating an already-inactive salon 409s; activating an already-active salon 409s", async () => {
+    const deactRes = await postAction(tenantA.adminToken, salonA2.id, "deactivate");
+    expect(deactRes.statusCode).toBe(409);
+    expect(JSON.parse(deactRes.body)).toEqual({ error: "Der Salon ist bereits deaktiviert." });
+
+    const actRes = await postAction(tenantA.adminToken, salonA1.id, "activate");
+    expect(actRes.statusCode).toBe(409);
+    expect(JSON.parse(actRes.body)).toEqual({ error: "Der Salon ist bereits aktiv." });
+  });
+
+  it("D-07: activating an inactive salon succeeds, clears deactivatedAt, and audits ACTIVATE with oldValue/newValue", async () => {
+    const res = await postAction(tenantA.adminToken, salonA2.id, "activate");
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.isActive).toBe(true);
+    expect(body.deactivatedAt).toBeNull();
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: { action: "ACTIVATE", entity: "Salon", entityId: salonA2.id },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(audit).not.toBeNull();
+    expect((audit?.oldValue as { isActive?: boolean } | null)?.isActive).toBe(false);
+    expect((audit?.newValue as { isActive?: boolean } | null)?.isActive).toBe(true);
+  });
+
+  it("D-07: a salon created inactive can be activated", async () => {
+    const created = await app.prisma.salon.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        name: "Vorbereiteter Salon",
+        openingHours: DEFAULT_SALON_OPENING_HOURS,
+        isActive: false,
+        deactivatedAt: new Date(),
+      },
+    });
+    const res = await postAction(tenantA.adminToken, created.id, "activate");
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).isActive).toBe(true);
+  });
+
+  it("D-06/AC-4: DELETE /api/v1/salons/:id does not exist (404, no route)", async () => {
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/salons/${salonA1.id}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("MANAGER gets 403 on deactivate and activate", async () => {
+    const deactRes = await postAction(managerToken, salonA1.id, "deactivate");
+    expect(deactRes.statusCode).toBe(403);
+    const actRes = await postAction(managerToken, salonA2.id, "activate");
+    expect(actRes.statusCode).toBe(403);
+  });
+
+  it("D-13: deactivate/activate answer a foreign tenant's real salon and an unknown id byte-identically", async () => {
+    const foreignDeact = await postAction(tenantA.adminToken, foreignSalon.id, "deactivate");
+    const unknownDeact = await postAction(tenantA.adminToken, unknownId, "deactivate");
+    expect(foreignDeact.statusCode).toBe(404);
+    expect(unknownDeact.statusCode).toBe(404);
+    expect(foreignDeact.body).toBe(unknownDeact.body);
+
+    const foreignAct = await postAction(tenantA.adminToken, foreignSalon.id, "activate");
+    const unknownAct = await postAction(tenantA.adminToken, unknownId, "activate");
+    expect(foreignAct.statusCode).toBe(404);
+    expect(unknownAct.statusCode).toBe(404);
+    expect(foreignAct.body).toBe(unknownAct.body);
+  });
+
+  it("concurrency: a transaction deactivating A blocks a second transaction deactivating B; after the first commits, the second sees LAST_ACTIVE_SALON and exactly one salon stays active", async () => {
+    // Clear every OTHER active salon this describe block's earlier tests left behind — the
+    // LAST_ACTIVE_SALON check is tenant-wide (D-08), so this race is only meaningful when X/Y are
+    // the tenant's only two active salons.
+    await app.prisma.salon.updateMany({
+      where: { tenantId: tenantA.tenant.id, isActive: true },
+      data: { isActive: false, deactivatedAt: new Date() },
+    });
+
+    // Two fresh active salons, the tenant's only active ones for the rest of this test.
+    const salonX = await app.prisma.salon.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        name: "Salon X (Konkurrenz)",
+        openingHours: DEFAULT_SALON_OPENING_HOURS,
+        isActive: true,
+      },
+    });
+    const salonY = await app.prisma.salon.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        name: "Salon Y (Konkurrenz)",
+        openingHours: DEFAULT_SALON_OPENING_HOURS,
+        isActive: true,
+      },
+    });
+
+    // tx1 deactivates X and deliberately does not resolve immediately.
+    let releaseTx1: (() => void) | undefined;
+    const tx1HoldGate = new Promise<void>((resolve) => {
+      releaseTx1 = resolve;
+    });
+    const tx1Promise = app.prisma.$transaction(
+      async (tx) => {
+        const result = await deactivateSalon(tx, tenantA.tenant.id, salonX.id);
+        await tx1HoldGate;
+        return result;
+      },
+      { timeout: 15000 },
+    );
+
+    // Give tx1 time to acquire the FOR UPDATE lock before starting tx2.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const tx2Promise = app.prisma.$transaction((tx) =>
+      deactivateSalon(tx, tenantA.tenant.id, salonY.id),
+    );
+
+    // tx2 must still be blocked ~500ms later, waiting on tx1's row lock.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    releaseTx1?.();
+
+    const [result1, result2] = await Promise.all([tx1Promise, tx2Promise]);
+    expect(result1.status).toBe("OK");
+    expect(result2.status).toBe("LAST_ACTIVE_SALON");
+
+    const activeCount = await app.prisma.salon.count({
+      where: { tenantId: tenantA.tenant.id, isActive: true },
+    });
+    expect(activeCount).toBe(1);
   });
 });

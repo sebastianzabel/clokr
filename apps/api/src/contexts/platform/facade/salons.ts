@@ -277,3 +277,68 @@ export async function updateSalon(
   });
   return { existing, updated };
 }
+
+// ── Deactivate / re-activate (Phase 64b Plan 02, D-06/D-07/D-08) — never delete ────────────────
+
+/**
+ * D-06/D-07/D-08: the outcome of a deactivate/activate attempt, as a CODE, never a display string
+ * (CLAUDE.md "never use a new display string as a control value") — the ROUTE maps each status to
+ * its own German 409 message, or, for `NOT_FOUND`, to the shared `rejectUnknownSalon` 404.
+ */
+export type SalonStateChange =
+  | { status: "OK"; existing: Salon; updated: Salon }
+  | { status: "NOT_FOUND" }
+  | { status: "ALREADY_INACTIVE" }
+  | { status: "ALREADY_ACTIVE" }
+  | { status: "LAST_ACTIVE_SALON" };
+
+/**
+ * D-08/D-11: deactivate a salon. MUST run inside an interactive `$transaction` — the row lock
+ * below is released at the end of the transaction it runs in, so calling this with a bare
+ * `PrismaClient` (no surrounding `$transaction`) gives no protection against the concurrent-
+ * deactivation race the lock exists to prevent. This is the single place Phase 67b extends with
+ * its Stammsalon guard (D-08's own wording): a status check inserted between `ALREADY_INACTIVE`
+ * and `LAST_ACTIVE_SALON`, in this one function.
+ */
+export async function deactivateSalon(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  salonId: string,
+): Promise<SalonStateChange> {
+  // FOR UPDATE, ordered by id — locks every one of the tenant's Salon rows for the lifetime of
+  // the enclosing transaction, the same shape as `services/clock/resolver.ts:37`'s per-employee
+  // lock, generalised to "every row that could change countActiveSalons' answer".
+  await db.$queryRaw`SELECT "id" FROM "Salon" WHERE "tenantId" = ${tenantId} ORDER BY "id" FOR UPDATE`;
+
+  const existing = await db.salon.findFirst({ where: { id: salonId, tenantId } });
+  if (!existing) return { status: "NOT_FOUND" };
+  if (!existing.isActive) return { status: "ALREADY_INACTIVE" };
+
+  const activeCount = await countActiveSalons(db, tenantId);
+  if (activeCount <= 1) return { status: "LAST_ACTIVE_SALON" };
+
+  const updated = await db.salon.update({
+    where: { id: salonId, tenantId },
+    data: { isActive: false, deactivatedAt: new Date() },
+  });
+  return { status: "OK", existing, updated };
+}
+
+/** D-07: the mirror of {@link deactivateSalon} — same lock, same lookup shape. */
+export async function activateSalon(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  salonId: string,
+): Promise<SalonStateChange> {
+  await db.$queryRaw`SELECT "id" FROM "Salon" WHERE "tenantId" = ${tenantId} ORDER BY "id" FOR UPDATE`;
+
+  const existing = await db.salon.findFirst({ where: { id: salonId, tenantId } });
+  if (!existing) return { status: "NOT_FOUND" };
+  if (existing.isActive) return { status: "ALREADY_ACTIVE" };
+
+  const updated = await db.salon.update({
+    where: { id: salonId, tenantId },
+    data: { isActive: true, deactivatedAt: null },
+  });
+  return { status: "OK", existing, updated };
+}
