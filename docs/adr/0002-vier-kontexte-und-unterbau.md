@@ -301,6 +301,84 @@ Bis dahin ist ein Schema mit einem zentralen Migrationsverzeichnis regelkonform,
 Der Unterbau bekommt ein Änderungsverfahren: Wer eine Änderung genehmigt, woran man sie erkennt und
 was eine Erweiterung von einer Semantikänderung unterscheidet.
 
+ADR 0001 sagt, der Unterbau „gehört keinem“. Das beantwortet die Eigentumsfrage, nicht die
+Änderungsfrage. Bei einem Shared Kernel mit vier abhängigen Kontexten ist die Änderungsfrage die
+Stelle, an der die enge Kopplung spürbar wird: Jede Änderung an `Employee`, `WorkSchedule` oder
+künftig `Salon` pflanzt sich in alle vier Kontexte fort. Dieser Abschnitt regelt sie.
+
+#### Was zum Unterbau gehört
+
+Zum Unterbau gehören die 13 Modelle, die `MODEL_OWNER` dem Bereich `platform` zuordnet: `Tenant`,
+`TenantConfig`, `Employee`, `User`, `AuditLog`, `ApiKey`, `Invitation`, `OtpToken`, `RefreshToken`,
+`Notification`, `PublicHoliday`, `SchoolHolidayPeriod` und `WorkSchedule`. Dazu kommt alles, was
+künftig in `contexts/platform/` entsteht, namentlich `Salon` (#64), die Salonzuordnung (#67) sowie
+der Berechtigungskatalog und die Rollen (#72, #73).
+
+#### Woran man eine Unterbau-Änderung erkennt
+
+Eine Änderung ist eine Unterbau-Änderung, wenn sie
+
+- (a) ein Feld, eine Relation, einen Enum-Wert oder ein Modell des Unterbaus hinzufügt, ändert oder
+  entfernt, oder
+- (b) die Signatur oder die Bedeutung eines Exports von `contexts/platform/index.ts` ändert.
+
+#### Erweiterung und Semantikänderung
+
+Eine **Erweiterung** ist additiv: ein neues Modell, ein neues optionales oder mit Standardwert
+versehenes Feld, eine neue Fassadenfunktion. Kein bestehender Leser muss sich ändern.
+
+Eine **Semantikänderung** ändert Bedeutung, Einheit, Nullbarkeit, Pflichtcharakter, eine
+Rückfallkette oder `onDelete`, entfernt oder benennt etwas um, oder verschiebt einen Wert von einem
+Unterbau-Modell in ein anderes.
+
+Im Zweifel entscheidet eine Frage:
+Muss ein bestehender Leser sich ändern? Dann ist es eine Semantikänderung.
+
+Eine Erweiterung wiegt leichter als eine Semantikänderung.
+
+#### Wer genehmigt
+
+Der Owner genehmigt. Bei einer **Erweiterung** ist die Genehmigung das Erreichen des Status `Ready`
+mit vorhandenem Abschnitt „Auswirkung auf die Kontexte“. Bei einer **Semantikänderung** braucht es
+zusätzlich einen ausdrücklichen Entscheidungskommentar des Owners auf dem Issue, und zwar **vor**
+`Ready`. Nach der Auslieferung folgt ein Nachtrag im begleitenden Dokument der ADR-Reihe, heute
+`docs/adr/0001-abweichungen.md`.
+
+#### Pflichtabschnitt „Auswirkung auf die Kontexte“
+
+Jedes Issue, das eine Unterbau-Änderung enthält, trägt einen Abschnitt mit genau diesem Titel. Er
+nennt Zeiterfassung, Abwesenheiten, Schichtplanung, Arbeitszeitkonto und die Kompositionsschicht,
+jeweils mit einer Auswirkung oder einem ausdrücklichen „keine“.
+
+Das ist Verfahren, kein Mechanismus: Die Prüfung ist das `Ready` des Owners. Eine maschinelle
+Prüfung, etwa über eine PR-Vorlage oder einen Lint, ist hier nicht entschieden.
+
+#### Neuer Fremdschlüssel auf den Unterbau
+
+Ein neuer Fremdschlüssel **von** einem Kontext **auf** den Unterbau (Beispiele: #68, #325, #65) ist
+selbst keine Unterbau-Änderung. Für ihn gilt:
+
+- Das Issue des Zielkontexts nennt ihn als neue Abhängigkeit vom Shared Kernel.
+- Revisionsrelevante Relationen tragen `onDelete: Restrict`.
+- Die referenzierte Unterbau-Zeile muss zum selben Mandanten gehören. Eine ID eines fremden
+  Mandanten wird so abgelehnt, dass die Antwort nicht von der auf eine nicht existierende ID zu
+  unterscheiden ist (T-100-09).
+
+#### Prüftabelle für v1.12.0 und #66
+
+Die Einordnung ist die Lesart dieses ADR. Der Owner bestätigt sie, indem er das Issue auf `Ready`
+setzt. Gelesen am 2026-09-24 (Issue-Text, Kommentare, Board-Status). Keines der sechs Issues trägt
+an diesem Tag einen Abschnitt „Auswirkung auf die Kontexte“.
+
+| Issue                       | Änderung und Kontext                                                                                                               | Einordnung nach Entscheidung 7                                                                                                                                                                                                                   | Stand 2026-09-24                                                                                                                                                                                                                                                                     |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| #64 Salon                   | Unterbau: neues Modell `Salon`; `TenantConfig.storeHours` wandert an den Salon                                                     | Erweiterung (neues Modell) **und** Semantikänderung (ein Wert wechselt das Unterbau-Modell) → volles Verfahren                                                                                                                                   | Owner-Entscheidung liegt vor (Kommentar vom 2026-09-24 zu den Öffnungszeiten); Ready am 2026-09-24, auf dem Board inzwischen `In Progress`. Abschnitt „Auswirkung auf die Kontexte“ fehlt, weil das Ticket älter ist als diese Regel → vor Beginn von Phase 64b nachtragen           |
+| #67 Salonzuordnung          | Unterbau: neues versioniertes Modell am `Employee`, neue Fassadenfunktion `salonForDay()`                                          | Erweiterung. Grenzfall: Der Stammsalon wird in `POST /employees` nur bei Mandanten mit mehr als einem aktiven Salon Pflicht. Das bleibt Erweiterung, weil sich kein bestehender Leser ändern muss und heute kein Mandant einen zweiten Salon hat | Ready (Ready-Prüfung, Kommentar vom 2026-09-24). Abschnitt „Auswirkung auf die Kontexte“ fehlt → vor Phase 67b nachtragen                                                                                                                                                            |
+| #68 `TimeEntry.salonId`     | Zeiterfassung: neuer Fremdschlüssel auf `Salon`                                                                                    | Keine Unterbau-Änderung; Regel „Neuer Fremdschlüssel auf den Unterbau“                                                                                                                                                                           | Erfüllt: Das Issue nennt die Abhängigkeit vom Unterbau, `onDelete: Restrict` und das Kriterium für fremde Mandanten (T-100-09). Ready                                                                                                                                                |
+| #65 Phorest pro Salon       | Schichtplanung: neue Fremdschlüssel auf `Salon` (Kopplungstabelle, `PhorestSyncRun`); `TenantConfig.phorestBranchId` wird abgelöst | Neue Fremdschlüssel auf den Unterbau **und** Semantikänderung eines Unterbau-Felds → volles Verfahren                                                                                                                                            | Owner-Entscheidung liegt vor (Ready-Prüfung, Kommentar vom 2026-09-24: `phorestBranchId` wird zur Kopplung am Default-Salon, die Spalte bleibt als veraltet markiert); `onDelete: Restrict` benannt. Ready. Abschnitt „Auswirkung auf die Kontexte“ fehlt → vor Phase 65b nachtragen |
+| #325 `Shift.salonId`        | Schichtplanung: neuer Fremdschlüssel auf `Salon`                                                                                   | Keine Unterbau-Änderung; Regel „Neuer Fremdschlüssel auf den Unterbau“                                                                                                                                                                           | Abhängigkeit (#64, #110) und Kriterium für fremde Mandanten vorhanden; `onDelete` nicht festgelegt → in der Phase entscheiden (ein Salon wird nach #64 nie hart gelöscht). Ready                                                                                                     |
+| #66 Beschäftigung (Backlog) | Unterbau: `WorkSchedule` wird Kind der Beschäftigung, `LeaveEntitlement` und `OvertimeAccount` werden neu verankert                | Semantikänderung → volles Verfahren                                                                                                                                                                                                              | Backlog ohne Milestone (Owner-Kommentar vom 2026-09-24, „derzeit kein Anlass“); wird geprüft, wenn es zurückkommt                                                                                                                                                                    |
+
 ### 8. Ereignis-Versionierung: Notiz, kein Arbeitspaket
 
 Ereignisverträge im Prozess sind TypeScript-Typen und compilergeprüft. Ein Sender und ein Empfänger
@@ -353,12 +431,31 @@ muss, keine Beschreibung von vorhandenem Code.
 
 **Positiv**
 
-- Das Repository widerspricht sich nicht mehr selbst: v1.12.0 wird gegen sein eigenes ADR gebaut.
+- Das Repository widerspricht sich nicht mehr selbst: v1.12.0 (#64, #65, #67, #68, #325) wird gegen
+  sein eigenes ADR gebaut.
+- Offene Frage 1 von ADR 0001 ist geschlossen. Die Compliance-Kontrolle bleibt in der Datenbank.
+- Die Schichtplanung hat den Namen, den die Grenzprüfung schon durchsetzt.
+- Änderungen am Unterbau werden sichtbar, bevor sie passieren, und eine Semantikänderung braucht
+  den Owner.
+- In der Kompositionsschicht kann nicht unbemerkt eine Fachregel wachsen.
+- Die Handler-Arten verhindern, dass ein künftiger Kontext das Einstempeln bricht.
 
 **Negativ / einzupreisen**
 
 - Enge Kopplung an den Shared Kernel: Jede Änderung am Unterbau pflanzt sich in alle vier Kontexte
-  fort. Das ist bewusst in Kauf genommen.
+  fort. Das ist bewusst in Kauf genommen (Entscheidung 4). Das Gegengewicht ist die Governance aus
+  Entscheidung 7.
+- 19 der 28 Fremdschlüssel auf den Unterbau sind `Cascade`. Dieses ADR lässt `onDelete` unberührt.
+  Die `Restrict`-Regel in `CLAUDE.md` deckt `TimeEntry`, `LeaveRequest` und `Absence` ab, und alle
+  drei sind `Restrict`. Ob weitere Relationen `Restrict` sein sollten, ist eine eigene
+  Compliance-Frage und hier nicht entschieden.
+- Die Governance ist Verfahren, kein Mechanismus. Sie hält nur, solange das `Ready` des Owners
+  gelebt wird.
+- Taktische Bausteine außerhalb des Arbeitszeitkontos brauchen ein neues ADR.
+- Keine Isolation zur Übersetzungszeit (ein Prisma-Client). Die Isolation bleibt bei #100 und #101;
+  #105 und #106 kommen nur mit Auslöser.
+- Es gibt noch keinen Dispatcher (#102). Die Handler-Arten sind seine Regel, kein vorhandener Code.
+- Die Einordnung in der Prüftabelle ist eine Lesart, die der Owner bestätigt.
 
 ---
 
@@ -366,4 +463,12 @@ muss, keine Beschreibung von vorhandenem Code.
 
 **Akzeptiert** am 2026-09-24.
 
-ADR 0001 ist in den im Kopf genannten Teilen abgelöst, nicht umgeschrieben.
+ADR 0002 löst ADR 0001 genau in den Teilen ab, die im Kopf genannt sind. Alles andere dort gilt
+weiter. ADR 0001 wird markiert, nicht umgeschrieben.
+
+Abweichungen und Nachträge werden weiter in `0001-abweichungen.md` geführt (Eintrag J). Ein eigenes
+Abweichungsdokument für ADR 0002 entsteht erst mit der ersten Abweichung.
+
+Ein Teil dieses ADR ist heute schon wahr: Die Fremdschlüsselregel ist gemessen erfüllt, und die
+Grenzprüfung kennt fünf Bereiche. Ein anderer Teil ist eine Regel für künftige Arbeit: die
+Governance, die Handler-Arten und die Auslöser.
