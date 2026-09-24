@@ -583,8 +583,33 @@ import { readFileSync } from "node:fs";
 // `vitest-report.json` agrees. No new file; five new cases in existing files (CR-01, WR-01, WR-02
 // in `salon-deactivation-assignments.test.ts`, IN-02 in `salon-for-day.test.ts`, IN-05 in
 // `employee-home-salon.test.ts`); 3826 + 5 = 3831, which the reporter confirms.
-const MIN_FILES = 307;
-const MIN_TESTS = 3831;
+//
+// Phase 325 (Issue #325), 2026-09-24: re-measured on the MERGED tree after confirming
+// `origin/main` @ c3777eb0 (#336, phase 64b) had not moved since the branch was cut
+// (`git merge-base --is-ancestor origin/main HEAD` was already true — no merge commit was
+// needed; `git fetch origin main` produced no new commits) — `pnpm --filter @clokr/api test`:
+// `Test Files 298 passed (298)`, `Tests 3642 passed | 3 skipped (3645)`, zero failures —
+// `vitest-report.json` agrees (`testResults.length` 298, `numTotalTests` 3645). Previous floor
+// 295 / 3611. Phase 325's own new files: `shift-salon.test.ts`, `shift-store-hours-salon.test.ts`,
+// `shift-salon-migration.test.ts` (295 + 3 = 298), plus cases added across the phase in
+// `sync-shifts.test.ts`, `sync-appointments.test.ts`, `store-hours-readers.test.ts`,
+// `lint-facade-signatures.test.ts` and `lint-tenant-scoping-model-graph.test.ts`. Numbers read
+// from the reporter, not summed from a diff.
+// Phase 325 merged with Phase 74b (origin/main @ 2f6765cd, #337), 2026-09-24: re-measured on the
+// MERGED tree (`pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api test`):
+// `Test Files 304 passed (304)`, `Tests 3756 passed | 3 skipped (3759)`, zero failures —
+// `vitest-report.json` agrees (`testResults.length` 304, `numTotalTests` 3759). 74b's 301 files
+// plus Phase 325's three new files = 304. Numbers read from the reporter, not summed from a diff.
+//
+// Merge of `origin/main` @ 5f77e921 (#339, phase 325) into `feat/67-salonzuordnung` (phase 67b,
+// 74b already merged), 2026-09-24: re-measured on the MERGED tree (`pnpm --filter @clokr/api run
+// test:setup && pnpm --filter @clokr/api test`): `Test Files 310 passed (310)`, `Tests 3862 passed
+// | 3 skipped (3865)`, zero failures — `vitest-report.json` agrees (`testResults.length` 310,
+// `numTotalTests` 3865). Common base 2f6765cd (301 / 3725): 307 / 3831 (67b side) plus 325's
+// three new files and 34 new cases (304 / 3759 on its side) = 310 / 3865, which the reporter
+// confirms. Numbers read from the reporter, not summed from a diff.
+const MIN_FILES = 310;
+const MIN_TESTS = 3865;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

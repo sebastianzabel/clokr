@@ -54,7 +54,7 @@ import2-${uid}@test.de;Import;Zwei;IM2-${uid};15.03.2026;EMPLOYEE;38.5;test1234`
         });
         expect(rows).toHaveLength(1);
         expect(rows[0].kind).toBe("HOME");
-        expect(rows[0].salonId).toBe(data.defaultSalon.id);
+        expect(rows[0].salonId).toBe(data.salonId);
         expect(rows[0].validUntil).toBeNull();
         const audit = await app.prisma.auditLog.findFirst({
           where: { entity: "EmployeeSalonAssignment", action: "CREATE", entityId: rows[0].id },
@@ -113,7 +113,7 @@ multi-${uid}@test.de;Multi;Salon;MULTI-${uid};01.01.2026`;
       const zero = await seedTestData(app, "im-zero");
       try {
         await app.prisma.salon.update({
-          where: { id: zero.defaultSalon.id },
+          where: { id: zero.salonId },
           data: { isActive: false, deactivatedAt: new Date() },
         });
 

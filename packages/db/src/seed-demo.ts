@@ -347,7 +347,7 @@ async function main() {
   // — a seed script has no request principal. This seed only ever runs against
   // a fresh tenant (the early-return guard above bails when TENANT_SLUG already
   // exists), so no idempotency check is needed here unlike seed.ts.
-  await prisma.salon.create({
+  const salon = await prisma.salon.create({
     data: {
       tenantId: tenant.id,
       name: tenant.name,
@@ -1024,6 +1024,7 @@ async function main() {
         data: {
           employeeId: emp[p.handle].empId,
           templateId: p.tpl.id,
+          salonId: salon.id, // Phase 325 (issue #325)
           date: shiftDay,
           startTime: p.tpl.startTime,
           endTime: p.tpl.endTime,
@@ -1046,6 +1047,7 @@ async function main() {
     await prisma.shift.create({
       data: {
         employeeId: emp[ps.handle].empId,
+        salonId: salon.id, // Phase 325 (issue #325)
         date: saturday,
         startTime: ps.start,
         endTime: ps.end,
@@ -1124,6 +1126,7 @@ async function main() {
       await prisma.phorestAppointment.create({
         data: {
           employeeId: emp[a.handle].empId,
+          salonId: salon.id, // Phase 325 (issue #325)
           date: ad,
           startTime: a.start,
           endTime: a.end,

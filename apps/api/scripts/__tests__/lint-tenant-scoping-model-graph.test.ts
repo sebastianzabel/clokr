@@ -65,6 +65,19 @@ describe("classifyModel (live DMMF from @clokr/db)", () => {
     expect(classifyModel("Shift", liveModels)).toEqual({ kind: "relation", path: ["employee"] });
   });
 
+  // Phase 325 (issue #325): Shift and PhorestAppointment both gained a `salon` relation this
+  // phase. `classifyModel` is a first-relation-in-declaration-order BFS (Salon has its own
+  // tenantId, so it WOULD short-circuit tenancy classification to `path: ["salon"]` if declared
+  // before `employee`) — the `salon` relation field MUST stay declared AFTER `employee` on both
+  // models, or every existing `employee: { tenantId }` scoping call in the codebase silently stops
+  // counting as scoped. This assertion is the mechanical proof that field order held.
+  it("Phase 325: classifies PhorestAppointment as relation via employee, NOT via salon — the new salon relation must stay declared after employee", () => {
+    expect(classifyModel("PhorestAppointment", liveModels)).toEqual({
+      kind: "relation",
+      path: ["employee"],
+    });
+  });
+
   it("classifies Break as relation via timeEntry.employee (two hops, no own tenantId on Break or TimeEntry directly)", () => {
     expect(classifyModel("Break", liveModels)).toEqual({
       kind: "relation",

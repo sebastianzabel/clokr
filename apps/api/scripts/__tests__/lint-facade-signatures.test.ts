@@ -449,7 +449,17 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // (Phase 67b, measured above against the pre-74b base of 92): the two phases add functions in
   // disjoint files (`role-assignments.ts` vs `salon-assignments.ts` / `salon-assignment-changes.ts`),
   // so the counts add — 92 + 5 (74b) + 14 (67b) = 111, re-measured on the merged tree.
-  it("the real tree has exactly 111 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  //
+  // 97 -> 98 in Phase 325 Plan 01 (renumbered after merging Phase 74b) (Issue #325): same file, 1 more exported function —
+  // findDefaultSalon (D-04: the tenant's default-salon resolver every Shift/PhorestAppointment
+  // writer calls) — passes F1/F2/F3 directly (`db: Prisma.TransactionClient` first, required
+  // `tenantId` second, no `*Ids?` parameter to trigger F2), no new exception needed.
+  //
+  // 111 + 1 = 112 in the merge of `origin/main` (Phase 325, 98) into `feat/67-salonzuordnung`
+  // (Phase 67b, 111): 325's one new function (findDefaultSalon in `salons.ts`) and 67b's 14 live in
+  // disjoint functions, so the counts add — 97 + 1 (325) + 14 (67b) = 112, re-measured on the
+  // merged tree.
+  it("the real tree has exactly 112 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -479,7 +489,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(111);
+    expect(functions).toHaveLength(112);
 
     const rawExceptions = JSON.parse(
       readFileSync(

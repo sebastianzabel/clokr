@@ -425,6 +425,7 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     await app.prisma.shift.create({
       data: {
         employeeId: erikaId,
+        salonId: seed.salonId, // Phase 325 (issue #325)
         date: utcMidnight(wednesday),
         startTime: "09:00",
         endTime: "17:00",

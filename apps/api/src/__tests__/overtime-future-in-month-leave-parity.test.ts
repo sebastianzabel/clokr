@@ -20,7 +20,7 @@
  * merely the prior-month carry (i.e. the open month is included with the leave credit applied).
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc, monthDayBounds } from "../contexts/working-time-account/timezone";
 import { computeOvertimeBalanceHours } from "../contexts/time-tracking/api/time-entries";
@@ -39,6 +39,7 @@ const PRIOR_MONTH = 6;
 describe("v1.8.26 — future-in-month approved leave: header == month-saldo (SHIFT_BASED)", () => {
   let app: FastifyInstance;
   let tenantId: string;
+  let salonId: string; // Phase 325 (issue #325)
   let employeeId: string;
   let adminToken: string;
 
@@ -52,6 +53,7 @@ describe("v1.8.26 — future-in-month approved leave: header == month-saldo (SHI
       data: { name: `FIML ${suffix}`, slug: `fiml-${suffix}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    salonId = (await createTestSalon(prisma, tenantId)).id; // Phase 325 (issue #325)
 
     const passwordHash = await bcrypt.hash("test1234", 10);
 
@@ -151,6 +153,7 @@ describe("v1.8.26 — future-in-month approved leave: header == month-saldo (SHI
       await prisma.shift.create({
         data: {
           employeeId: emp.id,
+          salonId, // Phase 325 (issue #325)
           date: new Date(d + "T00:00:00Z"),
           startTime: "08:00",
           endTime: "17:30",

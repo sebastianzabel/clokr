@@ -154,9 +154,9 @@ const tenantConfigSchema = z
     // pre-64b legacy schema, NOT the Salon facade's stricter salonOpeningHoursSchema — the admin UI
     // round-trips the stored value, and a stricter check would lock tenants whose stored hours it
     // rejects out of this whole settings section (review WR-03; D-04: legacy values are not
-    // re-validated). `TenantConfig.storeHours` is DEPRECATED (no new code reads it, #325); this PUT
-    // still writes it and mirrors a CHANGED value verbatim into a tenant's sole active salon (D-16,
-    // see below), exactly as the migration copied it.
+    // re-validated). `TenantConfig.storeHours` is DEPRECATED — since Phase 325 (issue #325) the
+    // shift store-hours check reads the shift's own salon instead; this PUT is the only remaining
+    // writer, mirroring a CHANGED value into a tenant's sole active salon (D-16) until #82 removes both.
     storeHours: z
       .array(
         z.object({

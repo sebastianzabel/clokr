@@ -33,7 +33,7 @@
  *     persist.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
 import * as WorkingTimeAccountModule from "../contexts/working-time-account";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
@@ -55,8 +55,9 @@ function addDaysIso(iso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-// Generate N future ISO dates skipping Sundays. The default TenantConfig has
-// storeHours with Sunday closed → shift POSTs on Sundays return 409
+// Generate N future ISO dates skipping Sundays. Since Phase 325 (issue #325) the store-hours
+// check reads the shift's own salon's opening hours; seedTestData()'s default salon has Sunday
+// closed (DEFAULT_SALON_OPENING_HOURS) → shift POSTs on Sundays return 409
 // SHIFT_OUTSIDE_STORE_HOURS. Tests use these helpers exclusively.
 function futureWeekdays(start: string, count: number, offset = 1): string[] {
   const out: string[] = [];
@@ -93,6 +94,7 @@ describe("Phase 76.5 — Shift CRUD triggers OvertimeAccount recompute (SALDO-V1
       },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 325 (issue #325)
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ },
     });

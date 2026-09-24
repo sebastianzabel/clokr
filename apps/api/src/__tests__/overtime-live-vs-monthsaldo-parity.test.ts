@@ -19,7 +19,7 @@
  * and that the value is NOT merely the prior-month carry-over (i.e. the current month is included).
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc, monthDayBounds } from "../contexts/working-time-account/timezone";
 import {
@@ -42,6 +42,7 @@ const PRIOR_MONTH = 6;
 describe("Bug 5 — live overtime helper == month-saldo lastCumulative (SHIFT_BASED, current partial month)", () => {
   let app: FastifyInstance;
   let tenantId: string;
+  let salonId: string; // Phase 325 (issue #325)
   let employeeId: string;
   let adminToken: string;
 
@@ -55,6 +56,7 @@ describe("Bug 5 — live overtime helper == month-saldo lastCumulative (SHIFT_BA
       data: { name: `Bug5 ${suffix}`, slug: `bug5-${suffix}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    salonId = (await createTestSalon(prisma, tenantId)).id;
 
     const passwordHash = await bcrypt.hash("test1234", 10);
 
@@ -169,6 +171,7 @@ describe("Bug 5 — live overtime helper == month-saldo lastCumulative (SHIFT_BA
       await prisma.shift.create({
         data: {
           employeeId: emp.id,
+          salonId, // Phase 325 (issue #325)
           date: new Date(d + "T00:00:00Z"),
           startTime: "08:00",
           endTime: "17:30",
@@ -328,6 +331,7 @@ describe("Bug 5 — live overtime helper == month-saldo lastCumulative (SHIFT_BA
 describe("SALDO-DISP-01 (required_test_assertions #1) — TRACK_ONLY confirmedMinutes/openMonthMinutes stay 0/0 even with a legacy non-zero snapshot carry-over", () => {
   let app: FastifyInstance;
   let tenantId: string;
+  let salonId: string; // Phase 325 (issue #325)
   let employeeId: string;
   let adminToken: string;
 
@@ -340,6 +344,7 @@ describe("SALDO-DISP-01 (required_test_assertions #1) — TRACK_ONLY confirmedMi
       data: { name: `TrackOnly ${suffix}`, slug: `trko-${suffix}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    salonId = (await createTestSalon(prisma, tenantId)).id;
 
     const passwordHash = await bcrypt.hash("test1234", 10);
     const adminUser = await prisma.user.create({
@@ -452,6 +457,7 @@ describe("SALDO-DISP-01 (required_test_assertions #1) — TRACK_ONLY confirmedMi
 describe("SALDO-DISP-07 (required_test_assertions #2) — rosterIncomplete on GET /overtime/:employeeId", () => {
   let app: FastifyInstance;
   let tenantId: string;
+  let salonId: string; // Phase 325 (issue #325)
   let partlyRosteredEmpId: string;
   let nonShiftEmpId: string;
   let zeroRosterEmpId: string;
@@ -474,6 +480,7 @@ describe("SALDO-DISP-07 (required_test_assertions #2) — rosterIncomplete on GE
       },
     });
     tenantId = tenant.id;
+    salonId = (await createTestSalon(prisma, tenantId)).id;
     const passwordHash = await bcrypt.hash("test1234", 10);
 
     const adminUser = await prisma.user.create({
@@ -542,6 +549,7 @@ describe("SALDO-DISP-07 (required_test_assertions #2) — rosterIncomplete on GE
         await prisma.shift.create({
           data: {
             employeeId: emp.id,
+            salonId, // Phase 325 (issue #325)
             date: new Date(d + "T00:00:00Z"),
             startTime: "08:00",
             endTime: "16:00",
@@ -706,6 +714,7 @@ describe("SALDO-DISP-07 (required_test_assertions #2) — rosterIncomplete on GE
 describe("WR-01 — rosterIncomplete anchor parity at the last calendar day of the month", () => {
   let app: FastifyInstance;
   let tenantId: string;
+  let salonId: string; // Phase 325 (issue #325)
   let employeeId: string;
 
   // "Today" = the LAST calendar day of July 2026 (a Friday), with NO entry logged yet today →
@@ -723,6 +732,7 @@ describe("WR-01 — rosterIncomplete anchor parity at the last calendar day of t
       data: { name: `WR01 ${suffix}`, slug: `wr01-${suffix}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    salonId = (await createTestSalon(prisma, tenantId)).id;
     const passwordHash = await bcrypt.hash("test1234", 10);
 
     const user = await prisma.user.create({
@@ -789,6 +799,7 @@ describe("WR-01 — rosterIncomplete anchor parity at the last calendar day of t
       await prisma.shift.create({
         data: {
           employeeId: emp.id,
+          salonId, // Phase 325 (issue #325)
           date: new Date(d + "T00:00:00Z"),
           startTime: "08:00",
           endTime: "16:00",

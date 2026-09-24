@@ -352,13 +352,19 @@ function deleteEveryProofUntilVacuous(
   return current;
 }
 
+// Walked ONCE at collection time and shared by both blocks below. The walk classifies every file
+// of the real tree and grows with it; calling it a second time inside the non-emptiness `it` put
+// that repeat walk under the 30 s test timeout, which the tree outgrew on CI (32.4 s, PR #339).
+// The assertion is unchanged — it checks the very array the whole-set proof iterates over.
+const PROVED_GUARDS = provedGuards();
+
 describe("provedGuards() non-emptiness — the red proof must not itself go vacuous", () => {
   it("finds at least one proved guard in the real tree", () => {
-    expect(provedGuards().length).toBeGreaterThan(0);
+    expect(PROVED_GUARDS.length).toBeGreaterThan(0);
   });
 });
 
-describe.each(provedGuards())(
+describe.each(PROVED_GUARDS)(
   "whole-set red proof: removing the input proof flips $file to vacuous",
   ({ file, text, classification }) => {
     it(`classifies input-proof:none after deleting every independent inputProofSites shape`, () => {

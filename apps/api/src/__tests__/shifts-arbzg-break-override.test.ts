@@ -9,7 +9,7 @@
  * Pattern mirrors shifts-saldo-trigger.test.ts (Phase 76.5 sibling):
  *  - Shared singleton Fastify app via getTestApp()
  *  - Fresh tenant per suite, ADMIN user for POST/PUT writes
- *  - Future weekdays only (Sunday closed in default storeHours)
+ *  - Future weekdays only (Sunday closed in the seeded salon's default opening hours, #325)
  *
  * Tests:
  *  A. POST /shifts — 11h shift with breakOver9hOverride=60 → 201 created
@@ -22,7 +22,7 @@
  *     proves the validator still rejects truly illegal cases.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 
@@ -43,7 +43,8 @@ function addDaysIso(iso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-// Skip Sundays (Sunday is closed in default storeHours → 409 SHIFT_OUTSIDE_STORE_HOURS).
+// Skip Sundays (Sunday is closed in the seeded salon's default opening hours, #325 →
+// 409 SHIFT_OUTSIDE_STORE_HOURS).
 function futureWeekday(start: string, offset: number): string {
   let cursor = offset;
   for (;;) {
@@ -73,6 +74,7 @@ describe("Phase 76.10 — ArbZG § 3 daily-max honors employee break override (A
       },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 325 (issue #325)
     await prisma.tenantConfig.create({
       data: {
         tenantId,

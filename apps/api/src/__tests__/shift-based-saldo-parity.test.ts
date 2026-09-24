@@ -33,7 +33,7 @@
  * References: D-01, D-02, D-05, D-06, D-07 (CONTEXT.md), SALDO-V1816-03/04 (REQUIREMENTS.md).
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc } from "../contexts/working-time-account/timezone";
 import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
@@ -86,6 +86,7 @@ async function createFixtureTenant(
   const tenant = await prisma.tenant.create({
     data: { name: `Parity ${slug}`, slug: s, federalState: "NIEDERSACHSEN" },
   });
+  await createTestSalon(prisma, tenant.id); // Phase 325 (issue #325)
   await prisma.tenantConfig.create({
     data: { tenantId: tenant.id, defaultVacationDays: 30, timezone: TZ },
   });
@@ -228,6 +229,7 @@ async function seedShift(
   await app.prisma.shift.create({
     data: {
       employeeId: empId,
+      salonId: await salonIdForEmployee(app.prisma, empId), // Phase 325 (issue #325)
       date: new Date(dateStr + "T00:00:00Z"),
       startTime: "08:00",
       endTime: endHHMM,

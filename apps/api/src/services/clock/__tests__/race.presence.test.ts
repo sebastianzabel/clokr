@@ -59,6 +59,7 @@ describe("services/clock — /presence/events race (sub-req C step 4 of 4)", () 
     await app.prisma.shift.create({
       data: {
         employeeId: data.employee.id,
+        salonId: data.salonId, // Phase 325 (issue #325)
         date: TODAY_UTC_MIDNIGHT,
         startTime: "00:00",
         endTime: "23:59",

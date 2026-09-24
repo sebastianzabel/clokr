@@ -793,7 +793,7 @@
       "category": "nicht anwendbar",
       "params": null,
       "minimalBody": null,
-      "reason": "`:id` addresses a Shift, not Employee/LeaveType — fixture cannot produce a foreign instance. Shift has no `tenantId` of its own; shifts.ts:3147-3165 resolves tenant via the owning Employee, byte-identical `{ error: \"Schicht nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited — conformant.",
+      "reason": "`:id` addresses a Shift, not Employee/LeaveType — fixture cannot produce a foreign instance. Shift has no `tenantId` of its own; shifts.ts:3331-3349 resolves tenant via the owning Employee, byte-identical `{ error: \"Schicht nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited — conformant.",
       "ticket": null,
       "validatedAt": null
     },
@@ -803,7 +803,7 @@
       "category": "nicht anwendbar",
       "params": null,
       "minimalBody": null,
-      "reason": "`:id` addresses a CoverageRule, not Employee/LeaveType — fixture cannot produce a foreign instance. shifts.ts:755-758 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Bedarfsregel nicht gefunden\" }` 404 — conformant.",
+      "reason": "`:id` addresses a CoverageRule, not Employee/LeaveType — fixture cannot produce a foreign instance. shifts.ts:822-825 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Bedarfsregel nicht gefunden\" }` 404 — conformant.",
       "ticket": null,
       "validatedAt": null
     },
@@ -813,7 +813,7 @@
       "category": "nicht anwendbar",
       "params": null,
       "minimalBody": null,
-      "reason": "`:id` addresses a ShiftTemplate, not Employee/LeaveType — fixture cannot produce a foreign instance. shifts.ts:649-652 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Vorlage nicht gefunden\" }` 404 — conformant.",
+      "reason": "`:id` addresses a ShiftTemplate, not Employee/LeaveType — fixture cannot produce a foreign instance. shifts.ts:716-719 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Vorlage nicht gefunden\" }` 404 — conformant.",
       "ticket": null,
       "validatedAt": null
     },
@@ -823,7 +823,7 @@
       "category": "nicht anwendbar",
       "params": null,
       "minimalBody": null,
-      "reason": "`:id` addresses a Shift — fixture cannot produce a foreign instance. shifts.ts:2063-2076 resolves tenant via the owning Employee, byte-identical `{ error: \"Schicht nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited — conformant. `shiftSchema.partial().parse(req.body)` at line 2052 runs before the existence check at 2055 — same D-07 shape as other PUT/PATCH routes, noted for completeness though not probe-eligible here regardless.",
+      "reason": "`:id` addresses a Shift — fixture cannot produce a foreign instance. shifts.ts:2132-2153 resolves tenant via the owning Employee, byte-identical `{ error: \"Schicht nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited — conformant. `shiftSchema.partial().parse(req.body)` at line 2129 runs before the existence check at 2132 — same D-07 shape as other PUT/PATCH routes, noted for completeness though not probe-eligible here regardless. Phase 325 (issue #325) Plan 02: the body field `salonId` is resolved through the tenant-scoped `findSalon`; a foreign tenant's salon and a nonexistent id both answer 404 `{ error: \"Salon nicht gefunden\" }`, byte-identical, pinned by `apps/api/src/__tests__/shift-salon.test.ts` for POST /, PUT /:id and POST /bulk (body-carried ids are outside this register's path-parameter scope, which is why they are pinned there).",
       "ticket": null,
       "validatedAt": null
     },
@@ -833,7 +833,7 @@
       "category": "nicht anwendbar",
       "params": null,
       "minimalBody": null,
-      "reason": "`:id` addresses a CoverageRule — fixture cannot produce a foreign instance. shifts.ts:720-723 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Bedarfsregel nicht gefunden\" }` 404 — conformant.",
+      "reason": "`:id` addresses a CoverageRule — fixture cannot produce a foreign instance. shifts.ts:787-790 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Bedarfsregel nicht gefunden\" }` 404 — conformant.",
       "ticket": null,
       "validatedAt": null
     },
@@ -843,7 +843,7 @@
       "category": "nicht anwendbar",
       "params": null,
       "minimalBody": null,
-      "reason": "`:id` addresses a ShiftTemplate — fixture cannot produce a foreign instance. shifts.ts:617-620 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Vorlage nicht gefunden\" }` 404 — conformant.",
+      "reason": "`:id` addresses a ShiftTemplate — fixture cannot produce a foreign instance. shifts.ts:684-687 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Vorlage nicht gefunden\" }` 404 — conformant.",
       "ticket": null,
       "validatedAt": null
     },
@@ -853,7 +853,7 @@
       "category": "nicht anwendbar",
       "params": null,
       "minimalBody": null,
-      "reason": "`:id` addresses a Shift — fixture cannot produce a foreign instance. shifts.ts:3285-3288 uses a SCOPED `findFirst({id, employee:{tenantId}})`, byte-identical `{ error: \"Schicht nicht gefunden\" }` 404 — conformant. No body is parsed.",
+      "reason": "`:id` addresses a Shift — fixture cannot produce a foreign instance. shifts.ts:3469-3471 uses a SCOPED `findFirst({id, employee:{tenantId}})`, byte-identical `{ error: \"Schicht nicht gefunden\" }` 404 — conformant. No body is parsed.",
       "ticket": null,
       "validatedAt": null
     },

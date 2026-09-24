@@ -361,7 +361,7 @@ describe("POST /api/v1/salons/:id/deactivate — Stammsalon in use, Einsatzsalon
     const salonX = await makeSalon("Salon X7");
     const D = tenantLocalDay(new Date(), TENANT_TZ);
     const employee = await makeEmployee();
-    await createHome(employee.id, tenant.defaultSalon.id, "2020-01-01");
+    await createHome(employee.id, tenant.salonId, "2020-01-01");
 
     const dayPlus7 = addDays(D, 7);
     // Europe/Berlin is always ahead of UTC (+1/+2h), so UTC midnight of a calendar day still
@@ -381,7 +381,7 @@ describe("POST /api/v1/salons/:id/deactivate — Stammsalon in use, Einsatzsalon
       dayToDate(dayPlus7),
     );
     expect(answer).toEqual({
-      salonId: tenant.defaultSalon.id,
+      salonId: tenant.salonId,
       kind: "HOME",
       assignmentId: expect.any(String),
     });
@@ -629,7 +629,7 @@ describe("POST /api/v1/salons/:id/deactivate — Stammsalon in use, Einsatzsalon
       // order, which is exactly the case where a createdAt-ordered lock deadlocks against the
       // id-ordered FOR UPDATE of deactivateSalon/activateSalon.
       await app.prisma.salon.update({
-        where: { id: lockTenant.defaultSalon.id },
+        where: { id: lockTenant.salonId },
         data: { isActive: false, deactivatedAt: new Date() },
       });
       const lowId = `0${randomUUID().slice(1)}`;

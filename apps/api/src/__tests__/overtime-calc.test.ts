@@ -799,6 +799,7 @@ describe("Overtime Saldo Calculation", () => {
         await app.prisma.shift.create({
           data: {
             employeeId: shiftEmpId,
+            salonId: data.salonId, // Phase 325 (issue #325) — same tenant as `data`
             date: new Date(d + "T00:00:00Z"),
             startTime: "08:00",
             endTime: "16:00",

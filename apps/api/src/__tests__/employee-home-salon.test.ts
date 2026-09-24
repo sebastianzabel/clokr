@@ -71,7 +71,7 @@ describe("POST /api/v1/employees — Stammsalon resolution (Phase 67b Plan 03, D
     });
     zeroActive = await seedTestData(app, "hs-zero");
     await app.prisma.salon.update({
-      where: { id: zeroActive.defaultSalon.id },
+      where: { id: zeroActive.salonId },
       data: { isActive: false, deactivatedAt: new Date() },
     });
     foreignTenant = await seedTestData(app, "hs-foreign");
@@ -98,7 +98,7 @@ describe("POST /api/v1/employees — Stammsalon resolution (Phase 67b Plan 03, D
     expect(rows).toHaveLength(1);
     const [row] = rows;
     expect(row.kind).toBe("HOME");
-    expect(row.salonId).toBe(single.defaultSalon.id);
+    expect(row.salonId).toBe(single.salonId);
     // 2026-03-01T23:30:00.000Z is 2026-03-02 00:30 in Europe/Berlin (CET, UTC+1 in March before
     // DST) — the tenant-local day, not the UTC day.
     expect(row.validFrom.toISOString().slice(0, 10)).toBe("2026-03-02");
@@ -109,7 +109,7 @@ describe("POST /api/v1/employees — Stammsalon resolution (Phase 67b Plan 03, D
       where: { entity: "EmployeeSalonAssignment", action: "CREATE", entityId: row.id },
     });
     expect(audit).not.toBeNull();
-    expect((audit?.newValue as { salonId?: string } | null)?.salonId).toBe(single.defaultSalon.id);
+    expect((audit?.newValue as { salonId?: string } | null)?.salonId).toBe(single.salonId);
   });
 
   it("one active salon, explicit homeSalonId: null: 201 (frontends send explicit null, never omit the key)", async () => {
@@ -124,7 +124,7 @@ describe("POST /api/v1/employees — Stammsalon resolution (Phase 67b Plan 03, D
       where: { employeeId: emp.id },
     });
     expect(rows).toHaveLength(1);
-    expect(rows[0].salonId).toBe(single.defaultSalon.id);
+    expect(rows[0].salonId).toBe(single.salonId);
   });
 
   it("two active salons, homeSalonId omitted: 400 'Bei mehreren aktiven Salons...'; no User or Employee written", async () => {
@@ -187,7 +187,7 @@ describe("POST /api/v1/employees — Stammsalon resolution (Phase 67b Plan 03, D
     const foreignRes = await postEmployee(
       app,
       single.adminToken,
-      minimalEmployeeBody({ homeSalonId: foreignTenant.defaultSalon.id }),
+      minimalEmployeeBody({ homeSalonId: foreignTenant.salonId }),
     );
     const unknownRes = await postEmployee(
       app,
@@ -203,7 +203,7 @@ describe("POST /api/v1/employees — Stammsalon resolution (Phase 67b Plan 03, D
       where: {
         entity: "Salon",
         action: "CROSS_TENANT_ACCESS_DENIED",
-        entityId: foreignTenant.defaultSalon.id,
+        entityId: foreignTenant.salonId,
       },
     });
     expect(foreignAudit).not.toBeNull();
@@ -304,7 +304,7 @@ describe("PATCH /api/v1/employees/:id — Stammsalon-Lücke bei früherem Eintri
   }
 
   it("hireDate moved earlier fills the gap with the earliest HOME row's own salon, audited CREATE with trigger HIRE_DATE_CHANGED; every day is tiled", async () => {
-    const emp = await createEmployeeWithHome("d07a", "2024-01-01", tenant.defaultSalon.id);
+    const emp = await createEmployeeWithHome("d07a", "2024-01-01", tenant.salonId);
 
     const res = await patchEmployee(tenant.adminToken, emp.id, {
       hireDate: "2023-10-01T00:00:00.000Z",
@@ -317,7 +317,7 @@ describe("PATCH /api/v1/employees/:id — Stammsalon-Lücke bei früherem Eintri
     });
     expect(rows).toHaveLength(2);
     const [gapRow, original] = rows;
-    expect(gapRow.salonId).toBe(tenant.defaultSalon.id);
+    expect(gapRow.salonId).toBe(tenant.salonId);
     expect(gapRow.validFrom.toISOString().slice(0, 10)).toBe("2023-10-01");
     expect(gapRow.validUntil?.toISOString().slice(0, 10)).toBe("2023-12-31");
     expect(original.validFrom.toISOString().slice(0, 10)).toBe("2024-01-01");
@@ -343,7 +343,7 @@ describe("PATCH /api/v1/employees/:id — Stammsalon-Lücke bei früherem Eintri
     expect(keyRes.statusCode, keyRes.body.slice(0, 400)).toBe(200);
     const key = JSON.parse(keyRes.body) as { id: string; rawKey: string };
 
-    const emp = await createEmployeeWithHome("in05", "2024-01-01", tenant.defaultSalon.id);
+    const emp = await createEmployeeWithHome("in05", "2024-01-01", tenant.salonId);
     const res = await patchEmployee(key.rawKey, emp.id, { hireDate: "2023-10-01T00:00:00.000Z" });
     expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
 
@@ -368,7 +368,7 @@ describe("PATCH /api/v1/employees/:id — Stammsalon-Lücke bei früherem Eintri
   });
 
   it("hireDate moved LATER than the earliest HOME row: no new assignment row", async () => {
-    const emp = await createEmployeeWithHome("d07b", "2024-01-01", tenant.defaultSalon.id);
+    const emp = await createEmployeeWithHome("d07b", "2024-01-01", tenant.salonId);
     const res = await patchEmployee(tenant.adminToken, emp.id, {
       hireDate: "2024-03-01T00:00:00.000Z",
     });
@@ -380,7 +380,7 @@ describe("PATCH /api/v1/employees/:id — Stammsalon-Lücke bei früherem Eintri
   });
 
   it("PATCH without hireDate: no assignment change", async () => {
-    const emp = await createEmployeeWithHome("d07c", "2024-01-01", tenant.defaultSalon.id);
+    const emp = await createEmployeeWithHome("d07c", "2024-01-01", tenant.salonId);
     const res = await patchEmployee(tenant.adminToken, emp.id, { firstName: "Renamed" });
     expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
     const count = await app.prisma.employeeSalonAssignment.count({
@@ -467,7 +467,7 @@ describe("DELETE /:id/hard-delete removes salon assignment rows first (Phase 67b
       data: {
         tenantId: tenant.tenant.id,
         employeeId: emp.id,
-        salonId: tenant.defaultSalon.id,
+        salonId: tenant.salonId,
         kind: "HOME",
         validFrom: exitDate,
         validUntil: null,
