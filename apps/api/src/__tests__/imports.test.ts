@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
+import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 
 describe("Bulk Import API", () => {
   let app: FastifyInstance;
@@ -39,6 +40,98 @@ import2-${uid}@test.de;Import;Zwei;IM2-${uid};15.03.2026;EMPLOYEE;38.5;test1234`
       expect(body.total).toBe(2);
       expect(body.imported).toBe(2);
       expect(body.errors).toBe(0);
+
+      // D-23 (Phase 67b Plan 03, issue #67): each imported employee has exactly one open HOME
+      // row to the tenant's (single) active salon, and it is audited CREATE.
+      const imported = await app.prisma.employee.findMany({
+        where: { employeeNumber: { in: [`IM1-${uid}`, `IM2-${uid}`] } },
+        select: { id: true },
+      });
+      expect(imported).toHaveLength(2);
+      for (const emp of imported) {
+        const rows = await app.prisma.employeeSalonAssignment.findMany({
+          where: { employeeId: emp.id },
+        });
+        expect(rows).toHaveLength(1);
+        expect(rows[0].kind).toBe("HOME");
+        expect(rows[0].salonId).toBe(data.defaultSalon.id);
+        expect(rows[0].validUntil).toBeNull();
+        const audit = await app.prisma.auditLog.findFirst({
+          where: { entity: "EmployeeSalonAssignment", action: "CREATE", entityId: rows[0].id },
+        });
+        expect(audit).not.toBeNull();
+      }
+    });
+
+    it("D-23: tenant with two active salons refuses the whole import up front — 400, 0 employees created, no IMPORT audit row", async () => {
+      const multi = await seedTestData(app, "im-multi");
+      try {
+        await app.prisma.salon.create({
+          data: {
+            tenantId: multi.tenant.id,
+            name: "Zweiter Salon",
+            openingHours: DEFAULT_SALON_OPENING_HOURS,
+            isActive: true,
+          },
+        });
+
+        const uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        const csv = `email;vorname;nachname;nr;eintrittsdatum
+multi-${uid}@test.de;Multi;Salon;MULTI-${uid};01.01.2026`;
+
+        const auditsBefore = await app.prisma.auditLog.count({
+          where: { entity: "Employee", action: "IMPORT", userId: multi.adminUser.id },
+        });
+
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/imports/employees",
+          headers: { authorization: `Bearer ${multi.adminToken}` },
+          payload: { csv },
+        });
+
+        expect(res.statusCode, res.body.slice(0, 400)).toBe(400);
+        expect(JSON.parse(res.body)).toEqual({
+          error:
+            "Bei mehreren aktiven Salons ist kein Import möglich. Bitte legen Sie die Mitarbeiter einzeln an und geben Sie den Stammsalon an.",
+        });
+
+        const created = await app.prisma.employee.count({
+          where: { employeeNumber: `MULTI-${uid}` },
+        });
+        expect(created).toBe(0);
+        const auditsAfter = await app.prisma.auditLog.count({
+          where: { entity: "Employee", action: "IMPORT", userId: multi.adminUser.id },
+        });
+        expect(auditsAfter).toBe(auditsBefore);
+      } finally {
+        await cleanupTestData(app, multi.tenant.id);
+      }
+    });
+
+    it("D-23: tenant with no active salon: 400 'Der Mandant hat keinen aktiven Salon.'", async () => {
+      const zero = await seedTestData(app, "im-zero");
+      try {
+        await app.prisma.salon.update({
+          where: { id: zero.defaultSalon.id },
+          data: { isActive: false, deactivatedAt: new Date() },
+        });
+
+        const csv = `email;vorname;nachname;nr;eintrittsdatum
+zero-${Date.now().toString(36)}@test.de;Zero;Salon;ZERO-1;01.01.2026`;
+
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/imports/employees",
+          headers: { authorization: `Bearer ${zero.adminToken}` },
+          payload: { csv },
+        });
+
+        expect(res.statusCode, res.body.slice(0, 400)).toBe(400);
+        expect(JSON.parse(res.body)).toEqual({ error: "Der Mandant hat keinen aktiven Salon." });
+      } finally {
+        await cleanupTestData(app, zero.tenant.id);
+      }
     });
 
     it("reports errors for invalid rows", async () => {

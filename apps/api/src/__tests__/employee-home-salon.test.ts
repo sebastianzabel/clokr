@@ -214,6 +214,179 @@ describe("POST /api/v1/employees — Stammsalon resolution (Phase 67b Plan 03, D
   });
 });
 
+describe("PATCH /api/v1/employees/:id — Stammsalon-Lücke bei früherem Eintrittsdatum (Phase 67b Plan 03, D-07)", () => {
+  let app: FastifyInstance;
+  let tenant: Awaited<ReturnType<typeof seedTestData>>;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    tenant = await seedTestData(app, "hs-d07");
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenant.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  async function createBareEmployee(prefix: string, hireDate: string) {
+    const s = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const user = await app.prisma.user.create({
+      data: {
+        email: `${prefix}-${s}@test.de`,
+        passwordHash: "x",
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    return app.prisma.employee.create({
+      data: {
+        tenantId: tenant.tenant.id,
+        userId: user.id,
+        employeeNumber: `${prefix.toUpperCase()}-${s}`,
+        firstName: prefix,
+        lastName: "Test",
+        hireDate: new Date(hireDate),
+      },
+    });
+  }
+
+  async function createEmployeeWithHome(prefix: string, hireDate: string, salonId: string) {
+    const emp = await createBareEmployee(prefix, hireDate);
+    await app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: tenant.tenant.id,
+        employeeId: emp.id,
+        salonId,
+        kind: "HOME",
+        validFrom: new Date(hireDate),
+        validUntil: null,
+        weekdays: [],
+      },
+    });
+    return emp;
+  }
+
+  function patchEmployee(token: string, id: string, body: Record<string, unknown>) {
+    return app.inject({
+      method: "PATCH",
+      url: `/api/v1/employees/${id}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: body,
+    });
+  }
+
+  /** Same in-memory tiling definition as `salon-assignments.test.ts`'s own proof, restated here
+   * rather than imported from production internals — every calendar day in [fromDay, toDay] has
+   * EXACTLY one effective HOME row. */
+  async function assertGaplessHomeTiling(employeeId: string, fromDay: string, toDay: string) {
+    const rows = await app.prisma.employeeSalonAssignment.findMany({
+      where: { employeeId, kind: "HOME" },
+    });
+    const from = new Date(`${fromDay}T00:00:00Z`).getTime();
+    const to = new Date(`${toDay}T00:00:00Z`).getTime();
+    let iterated = 0;
+    for (let t = from; t <= to; t += 86400000) {
+      const count = rows.filter(
+        (row) =>
+          row.validFrom.getTime() <= t &&
+          (row.validUntil === null || row.validUntil.getTime() >= t),
+      ).length;
+      expect(
+        count,
+        `day ${new Date(t).toISOString().slice(0, 10)} has ${count} effective HOME row(s)`,
+      ).toBe(1);
+      iterated += 1;
+    }
+    return iterated;
+  }
+
+  it("hireDate moved earlier fills the gap with the earliest HOME row's own salon, audited CREATE with trigger HIRE_DATE_CHANGED; every day is tiled", async () => {
+    const emp = await createEmployeeWithHome("d07a", "2024-01-01", tenant.defaultSalon.id);
+
+    const res = await patchEmployee(tenant.adminToken, emp.id, {
+      hireDate: "2023-10-01T00:00:00.000Z",
+    });
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
+
+    const rows = await app.prisma.employeeSalonAssignment.findMany({
+      where: { employeeId: emp.id, kind: "HOME" },
+      orderBy: { validFrom: "asc" },
+    });
+    expect(rows).toHaveLength(2);
+    const [gapRow, original] = rows;
+    expect(gapRow.salonId).toBe(tenant.defaultSalon.id);
+    expect(gapRow.validFrom.toISOString().slice(0, 10)).toBe("2023-10-01");
+    expect(gapRow.validUntil?.toISOString().slice(0, 10)).toBe("2023-12-31");
+    expect(original.validFrom.toISOString().slice(0, 10)).toBe("2024-01-01");
+    expect(original.validUntil).toBeNull();
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: { entity: "EmployeeSalonAssignment", action: "CREATE", entityId: gapRow.id },
+    });
+    expect(audit).not.toBeNull();
+    expect((audit?.newValue as { trigger?: string } | null)?.trigger).toBe("HIRE_DATE_CHANGED");
+
+    const iterated = await assertGaplessHomeTiling(emp.id, "2023-10-01", "2026-12-31");
+    expect(iterated).toBeGreaterThan(0);
+  });
+
+  it("hireDate moved LATER than the earliest HOME row: no new assignment row", async () => {
+    const emp = await createEmployeeWithHome("d07b", "2024-01-01", tenant.defaultSalon.id);
+    const res = await patchEmployee(tenant.adminToken, emp.id, {
+      hireDate: "2024-03-01T00:00:00.000Z",
+    });
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
+    const count = await app.prisma.employeeSalonAssignment.count({
+      where: { employeeId: emp.id, kind: "HOME" },
+    });
+    expect(count).toBe(1);
+  });
+
+  it("PATCH without hireDate: no assignment change", async () => {
+    const emp = await createEmployeeWithHome("d07c", "2024-01-01", tenant.defaultSalon.id);
+    const res = await patchEmployee(tenant.adminToken, emp.id, { firstName: "Renamed" });
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
+    const count = await app.prisma.employeeSalonAssignment.count({
+      where: { employeeId: emp.id, kind: "HOME" },
+    });
+    expect(count).toBe(1);
+  });
+
+  it("employee without any HOME row + earlier hireDate: 200, no assignment row created (legacy fixture)", async () => {
+    const emp = await createBareEmployee("d07d", "2024-01-01");
+    const res = await patchEmployee(tenant.adminToken, emp.id, {
+      hireDate: "2023-06-01T00:00:00.000Z",
+    });
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
+    const count = await app.prisma.employeeSalonAssignment.count({ where: { employeeId: emp.id } });
+    expect(count).toBe(0);
+  });
+
+  it("D-13 exemption: the earliest HOME row's salon is inactive — the gap row is still created with that (inactive) salon", async () => {
+    const inactiveSalon = await makeActiveSalon(app, tenant.tenant.id, "Bald inaktiv (D07)");
+    await app.prisma.salon.update({
+      where: { id: inactiveSalon.id },
+      data: { isActive: false, deactivatedAt: new Date() },
+    });
+    const emp = await createEmployeeWithHome("d07e", "2024-01-01", inactiveSalon.id);
+
+    const res = await patchEmployee(tenant.adminToken, emp.id, {
+      hireDate: "2023-10-01T00:00:00.000Z",
+    });
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
+
+    const rows = await app.prisma.employeeSalonAssignment.findMany({
+      where: { employeeId: emp.id, kind: "HOME" },
+      orderBy: { validFrom: "asc" },
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows[0].salonId).toBe(inactiveSalon.id);
+  });
+});
+
 describe("DELETE /:id/hard-delete removes salon assignment rows first (Phase 67b Plan 03, D-24)", () => {
   let app: FastifyInstance;
   let tenant: Awaited<ReturnType<typeof seedTestData>>;

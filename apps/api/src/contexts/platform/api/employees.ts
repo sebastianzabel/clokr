@@ -33,9 +33,10 @@ import {
   BS_BLOCK_WEEKLY_MIN_BOUND,
   BS_BLOCK_WEEKLY_MAX_BOUND,
 } from "../../absence"; // Phase 100B Plan 10 — A11 (Issue #205 reroute) / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6
-// Phase 67b Plan 03 (issue #67, D-22/D-24) — the Stammsalon lifecycle helpers.
+// Phase 67b Plan 03 (issue #67, D-22/D-07/D-24) — the Stammsalon lifecycle helpers.
 import {
   createInitialHomeAssignment,
+  fillHomeGapBeforeHireDate,
   resolveHomeSalonForNewEmployee,
 } from "../facade/salon-assignments";
 import { salonExistsInForeignTenant } from "../facade/salons";
@@ -668,11 +669,42 @@ export async function employeeRoutes(app: FastifyInstance) {
         updates.bsSlotBlockWeekMinutes = body.bsSlotBlockWeekMinutes;
       }
 
-      const updated = await app.prisma.employee.update({ where: { id }, data: updates });
+      // Phase 67b Plan 03 (D-07, issue #67, research Pitfall 2): only reads TenantConfig
+      // (cached), safe before the tx — resolved only when hireDate actually moves.
+      const tz =
+        body.hireDate !== undefined ? await getTenantTimezone(app.prisma, req.user.tenantId) : null;
 
-      if (body.role !== undefined) {
-        await app.prisma.user.update({ where: { id: employee.userId }, data: { role: body.role } });
-      }
+      // D-07: the employee update, the role change and the HOME gap-fill (when hireDate moves
+      // earlier) commit or roll back together — a crash between them must never leave a real day
+      // without a Stammsalon row. The pro-rata warning below stays OUTSIDE this transaction: it
+      // only reads and shapes a response field, and must not roll back a successful write.
+      const updated = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        const updatedEmp = await tx.employee.update({ where: { id }, data: updates });
+
+        if (body.role !== undefined) {
+          await tx.user.update({ where: { id: employee.userId }, data: { role: body.role } });
+        }
+
+        if (body.hireDate !== undefined && tz !== null) {
+          const gapOutcome = await fillHomeGapBeforeHireDate(
+            tx,
+            req.user.tenantId,
+            id,
+            tenantLocalDay(new Date(body.hireDate), tz),
+          );
+          if (gapOutcome.status === "FILLED") {
+            await auditSalonAssignmentEvent(app, req, {
+              entity: "EmployeeSalonAssignment",
+              action: "CREATE",
+              entityId: gapOutcome.created.id,
+              newValue: { ...toAssignmentDto(gapOutcome.created), trigger: "HIRE_DATE_CHANGED" },
+              tx,
+            });
+          }
+        }
+
+        return updatedEmp;
+      });
 
       // ── Pro-rata Urlaubswarnung ──────────────────────────────────────────────
       // Compute warning when exitDate is set (or was just set) within the current year.
