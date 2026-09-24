@@ -408,6 +408,84 @@ describe("Role lockout protection (Phase 74b, Issue #74)", () => {
     expect(remaining.map((row) => row.id)).toEqual([second.id]);
   });
 
+  it("(g2) the tenant row lock does not block a concurrent unguarded insert that references the tenant (FK check, FOR KEY SHARE)", async () => {
+    const first = await assign(tenantA.tenant.id, holder1.user.id, roleManage.id);
+    await assign(tenantA.tenant.id, holder2.user.id, roleManage.id);
+
+    // tx1 holds a guarded transaction — and with it the tenant row lock — open, as in (g).
+    let releaseTx1: (() => void) | undefined;
+    const tx1HoldGate = new Promise<void>((resolve) => {
+      releaseTx1 = resolve;
+    });
+    let signalTx1Locked: ((pid: number) => void) | undefined;
+    const tx1Locked = new Promise<number>((resolve) => {
+      signalTx1Locked = resolve;
+    });
+    const tx1Promise = app.prisma.$transaction(
+      async (tx) => {
+        const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+        await withRoleLockoutGuard(tx, tenantA.tenant.id, () =>
+          tx.roleAssignment.delete({ where: { id: first.id } }),
+        );
+        signalTx1Locked?.(pid);
+        await tx1HoldGate;
+      },
+      { timeout: 20000 },
+    );
+    const tx1Pid = await tx1Locked;
+
+    // tx3 is an ordinary, unguarded insert of a row whose foreign key references the same tenant.
+    // Its FK check takes FOR KEY SHARE on the Tenant row; a FOR UPDATE lock in tx1 would make it
+    // wait until tx1 ends, a FOR NO KEY UPDATE lock does not.
+    let signalTx3Pid: ((pid: number) => void) | undefined;
+    const tx3PidKnown = new Promise<number>((resolve) => {
+      signalTx3Pid = resolve;
+    });
+    let tx3Settled = false;
+    const tx3Promise = app.prisma
+      .$transaction(
+        async (tx) => {
+          const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+          signalTx3Pid?.(pid);
+          await tx.roleAssignment.create({
+            data: {
+              tenantId: tenantA.tenant.id,
+              userId: withoutRight.user.id,
+              accessRoleId: roleRead.id,
+              scopeType: "TENANT",
+            },
+          });
+        },
+        { timeout: 20000 },
+      )
+      .finally(() => {
+        tx3Settled = true;
+      });
+    const tx3Pid = await tx3PidKnown;
+
+    // Bounded poll on observed database state: either tx3 finishes while tx1 still holds its
+    // lock, or PostgreSQL reports tx3 as blocked by tx1.
+    const deadline = Date.now() + 10000;
+    let tx3BlockedByTx1 = false;
+    while (!tx3Settled && Date.now() < deadline) {
+      const [{ blockers }] = await app.prisma.$queryRaw<{ blockers: number[] }[]>`
+        SELECT pg_blocking_pids(${tx3Pid}::int) AS blockers`;
+      if (blockers.includes(tx1Pid)) {
+        tx3BlockedByTx1 = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const tx3FinishedWhileTx1Held = tx3Settled;
+
+    releaseTx1?.();
+    await tx1Promise;
+    await tx3Promise;
+
+    expect(tx3BlockedByTx1, "the FK insert waited on the guard's tenant row lock").toBe(false);
+    expect(tx3FinishedWhileTx1Held).toBe(true);
+  });
+
   // ── Trigger: PATCH /api/v1/role-assignments/:id ────────────────────────────────────────────────
 
   function patchAssignment(assignmentId: string, payload: unknown) {

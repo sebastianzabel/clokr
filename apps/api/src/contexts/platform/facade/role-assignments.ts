@@ -155,17 +155,24 @@ export async function countGuardedPermissionHolders(
  * after-count must see the write's uncommitted effect. Counting on another client would read the
  * pre-write state and never fire (74b-RESEARCH Pitfall 9).
  *
- * Order: lock the tenant row `FOR UPDATE`, which serialises every guarded change in the tenant.
- * Then count holders, run `write`, and count again. When a guarded permission went from >= 1
- * holders to 0 (D-18), throw {@link RoleLockoutError}. The throw rolls back the write AND its
+ * Order: lock the tenant row `FOR NO KEY UPDATE`, which serialises every guarded change in the
+ * tenant. Then count holders, run `write`, and count again. When a guarded permission went from
+ * >= 1 holders to 0 (D-18), throw {@link RoleLockoutError}. The throw rolls back the write AND its
  * audit row. Every caller maps the error to 409 `ROLE_LOCKOUT_MESSAGE`.
+ *
+ * Lock mode: `FOR NO KEY UPDATE`, not the `FOR UPDATE` D-19 names — same intent, narrower lock.
+ * `FOR NO KEY UPDATE` conflicts with itself, so two guarded changes in one tenant still wait for
+ * each other. Unlike `FOR UPDATE` it does NOT conflict with `FOR KEY SHARE`, the lock PostgreSQL
+ * takes on the referenced Tenant row for every foreign-key check. With `FOR UPDATE`, every
+ * concurrent insert (or FK-column update) of any tenant-scoped row — a time entry, a leave
+ * request — would wait for the guarded transaction to finish.
  */
 export async function withRoleLockoutGuard<T>(
   db: Prisma.TransactionClient,
   tenantId: string,
   write: () => Promise<T>,
 ): Promise<T> {
-  await db.$queryRaw`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId} FOR UPDATE`;
+  await db.$queryRaw`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId} FOR NO KEY UPDATE`;
   const before = await countGuardedPermissionHolders(db, tenantId);
   const result = await write();
   const after = await countGuardedPermissionHolders(db, tenantId);
