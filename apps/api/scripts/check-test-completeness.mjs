@@ -576,8 +576,15 @@ import { readFileSync } from "node:fs";
 // 3826). Both phases branched from c3777eb0 (295 / 3611): 295 + 6 (67b) + 6 (74b) = 307 and
 // 3611 + 101 (67b) + 114 (74b) = 3826, which the reporter confirms. Numbers read from the
 // reporter, not summed from a diff.
+//
+// Phase 67b code review fixes (plan 67b-06), 2026-09-24: re-measured on the same merged tree after
+// the five review fixes (`pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api
+// test`): `Test Files 307 passed (307)`, `Tests 3828 passed | 3 skipped (3831)`, zero failures —
+// `vitest-report.json` agrees. No new file; five new cases in existing files (CR-01, WR-01, WR-02
+// in `salon-deactivation-assignments.test.ts`, IN-02 in `salon-for-day.test.ts`, IN-05 in
+// `employee-home-salon.test.ts`); 3826 + 5 = 3831, which the reporter confirms.
 const MIN_FILES = 307;
-const MIN_TESTS = 3826;
+const MIN_TESTS = 3831;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
