@@ -12,6 +12,7 @@ import {
   snapToMonthFirstUtc,
 } from "../month-first-date";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
+import { accessContextFromRequest, employeeScopeFor } from "../access-context";
 import { DEFAULT_MISSING_ENTRIES_DAYS } from "../../working-time-account"; // issue #246, E-6
 import { getShiftsInRange, cancelOrphanShifts } from "../../scheduling"; // Phase 100B Plan 05 — S1/S3
 import {
@@ -936,6 +937,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req, reply) => {
+      const access = accessContextFromRequest(req);
       const { employeeId } = req.params as { employeeId: string };
       const body = employeeScheduleSchema.parse(req.body);
 
@@ -990,7 +992,7 @@ export async function settingsRoutes(app: FastifyInstance) {
           // Phase 100B Plan 05 — S1, contexts/scheduling facade.
           const futureShifts = await getShiftsInRange(
             app.prisma,
-            { kind: "employee", employeeId, tenantId: req.user.tenantId },
+            employeeScopeFor(access, { employeeId }),
             new Date(todayIso),
           );
 
