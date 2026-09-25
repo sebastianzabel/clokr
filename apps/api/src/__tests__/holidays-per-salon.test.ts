@@ -8,6 +8,7 @@
  * is the `DELETE /api/v1/integrations/phorest/couplings/:salonId` entry, whose OTHER,
  * body/query-carried salon routes are pinned in their own API tests the same way).
  */
+import { randomBytes, createHash } from "crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
@@ -381,5 +382,140 @@ describe("AC-13: POST /api/v1/holidays into a closed, locked month leaves its Sa
       orderBy: { id: "asc" },
     });
     expect(after).toEqual(before);
+  });
+});
+
+/**
+ * Issue #345 — before PR #364 (Phase 71b) rewrote this route, GET/POST `/api/v1/holidays`
+ * resolved the tenant via `(await tenant.findFirst({ where: { employees: { some: { userId:
+ * req.user.sub } } } })) ?? (await tenant.findFirst())`. An API-key caller's `req.user.sub` is
+ * `apikey:<id>` — no `Employee` row matches it — so the unfiltered, unsorted second
+ * `tenant.findFirst()` fired and answered with an arbitrary OTHER tenant's holidays (and let POST
+ * write into it). #364's rewrite reads `tenantId` exclusively from `req.user.tenantId`, which
+ * `apps/api/src/middleware/auth.ts:55-57` sets for BOTH JWT and API-key auth — no fallback lookup
+ * remains anywhere in `holidays.ts`. This suite is the test the issue itself asked for once the
+ * reported gap was found already closed: it repeats the existing JWT-based T-100-09 proof above
+ * with an API-key Authorization header instead, for the exact caller type (no Employee row) the
+ * old fallback singled out.
+ *
+ * Mutation proof (recorded here, not re-run by CI): temporarily replacing this suite's `tenantId`
+ * derivation expectation by pointing the route at a foreign tenant (simulating the reported
+ * fallback by hardcoding `tenantId = foreign.tenant.id` in the GET/POST handlers of
+ * `holidays.ts`) makes every assertion below fail — the "own tenant only" GET assertion sees the
+ * foreign tenant's calendar, and the T-100-09 byte-identity assertions still pass only if BOTH
+ * probes are equally miscategorized, which the count-based non-leakage assertions then catch by
+ * failing on cross-tenant row counts. Reverted after confirming the observed failures; see the
+ * quick-task SUMMARY for the exact captured red output.
+ */
+describe("Issue #345 — API-key caller stays scoped to its own tenant, no unfiltered fallback", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+  let foreign: Awaited<ReturnType<typeof seedTestData>>;
+  let apiKeyToken: string;
+  const unknownSalonId = "00000000-0000-4000-8000-000000000345";
+
+  async function createApiKey(tenantId: string, createdBy: string, scopes: string[]) {
+    const raw = `clk_${randomBytes(24).toString("hex")}`;
+    const row = await app.prisma.apiKey.create({
+      data: {
+        tenantId,
+        name: `holidays-345-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        keyHash: createHash("sha256").update(raw).digest("hex"),
+        keyPrefix: raw.slice(0, 8),
+        scopes,
+        createdBy,
+      },
+    });
+    return raw;
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "hps-345-a");
+    foreign = await seedTestData(app, "hps-345-b");
+    // "admin" scope resolves to the Admin permission role (request-permissions.ts:116), which
+    // holds `holiday:manage:ZUGEWIESEN` — the permission POST /api/v1/holidays requires.
+    apiKeyToken = await createApiKey(data.tenant.id, data.adminUser.id, ["admin"]);
+  });
+
+  afterAll(async () => {
+    await app.prisma.apiKey.deleteMany({ where: { tenantId: data.tenant.id } });
+    await cleanupTestData(app, data.tenant.id);
+    await cleanupTestData(app, foreign.tenant.id);
+  });
+
+  it("GET without salonId via an API key returns only the key's own-tenant calendar, never a foreign or arbitrary tenant's", async () => {
+    const res = await getHolidays(app, apiKeyToken, "?year=2026");
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
+    const body = JSON.parse(res.body) as Array<{ salonId: string }>;
+    expect(body.length).toBeGreaterThan(0);
+    for (const entry of body) expect(entry.salonId).toBe(data.salonId);
+  });
+
+  it("T-100-09 via API key: a foreign tenant's real salon and a nonexistent salon answer byte-identical status+body on GET and POST, and POST writes nothing", async () => {
+    const holidaysBeforeForeign = await app.prisma.publicHoliday.count({
+      where: { tenantId: foreign.tenant.id },
+    });
+    const holidaysBeforeOwn = await app.prisma.publicHoliday.count({
+      where: { tenantId: data.tenant.id },
+    });
+    const auditCountBefore = await app.prisma.auditLog.count({
+      where: { action: "CREATE", entity: "PublicHoliday" },
+    });
+
+    const getForeignRes = await getHolidays(
+      app,
+      apiKeyToken,
+      `?year=2026&salonId=${foreign.salonId}`,
+    );
+    const getUnknownRes = await getHolidays(
+      app,
+      apiKeyToken,
+      `?year=2026&salonId=${unknownSalonId}`,
+    );
+    expect(getForeignRes.statusCode).toBe(getUnknownRes.statusCode);
+    expect(getForeignRes.body).toBe(getUnknownRes.body);
+    expect(getForeignRes.statusCode).toBe(404);
+    expect(JSON.parse(getForeignRes.body)).toEqual({ error: "Salon nicht gefunden" });
+
+    const postForeignRes = await postHoliday(app, apiKeyToken, {
+      date: "2026-08-02",
+      name: "T-100-09 API-Key Foreign",
+      salonId: foreign.salonId,
+    });
+    const postUnknownRes = await postHoliday(app, apiKeyToken, {
+      date: "2026-08-02",
+      name: "T-100-09 API-Key Unknown",
+      salonId: unknownSalonId,
+    });
+    expect(postForeignRes.statusCode).toBe(postUnknownRes.statusCode);
+    expect(postForeignRes.body).toBe(postUnknownRes.body);
+    expect(postForeignRes.statusCode).toBe(404);
+    expect(JSON.parse(postForeignRes.body)).toEqual({ error: "Salon nicht gefunden" });
+
+    const holidaysAfterForeign = await app.prisma.publicHoliday.count({
+      where: { tenantId: foreign.tenant.id },
+    });
+    const holidaysAfterOwn = await app.prisma.publicHoliday.count({
+      where: { tenantId: data.tenant.id },
+    });
+    expect(holidaysAfterForeign).toBe(holidaysBeforeForeign);
+    expect(holidaysAfterOwn).toBe(holidaysBeforeOwn);
+
+    const auditCountAfter = await app.prisma.auditLog.count({
+      where: { action: "CREATE", entity: "PublicHoliday" },
+    });
+    expect(auditCountAfter).toBe(auditCountBefore);
+  });
+
+  it("POST via API key without salonId still lands on the key's own default salon, not a foreign or arbitrary one", async () => {
+    const res = await postHoliday(app, apiKeyToken, {
+      date: "2026-08-03",
+      name: "T-345 API-Key eigener Salon",
+    });
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(201);
+    const body = JSON.parse(res.body);
+    expect(body.tenantId).toBe(data.tenant.id);
+    expect(body.salonId).toBe(data.salonId);
   });
 });
