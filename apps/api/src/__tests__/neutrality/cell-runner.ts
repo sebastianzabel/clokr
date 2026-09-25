@@ -147,15 +147,25 @@ function project(name: ProjectionName, body: unknown, ctx: LabelContext): unknow
   if (name === "pendingApprovalsCount") {
     return (body as { pendingApprovalsCount?: unknown } | null)?.pendingApprovalsCount ?? null;
   }
-  // leaveTypeMask: per leave item "<label of the request>:<typeCode or null>:<typeName present?>"
+  if (name === "collisionTotal") {
+    return (body as { total?: unknown } | null)?.total ?? null;
+  }
+  // leaveTypeMask: per leave item "<label of the request>:<typeCode or null>:<typeName present?>",
+  // plus the § 9 marker where the item carries one (the calendar masks it together with the type).
   const items = Array.isArray(body) ? body : [];
   return items
     .map((raw) => {
-      const item = raw as { id?: string; typeCode?: unknown; typeName?: unknown };
+      const item = raw as {
+        id?: string;
+        typeCode?: unknown;
+        typeName?: unknown;
+        section9?: unknown;
+      };
       const label = typeof item.id === "string" ? relabel(ctx, item.id) : "<no id>";
       const code = typeof item.typeCode === "string" ? item.typeCode : "null";
       const named = item.typeName !== undefined && item.typeName !== null ? "named" : "unnamed";
-      return `${label}:${code}:${named}`;
+      const section9 = "section9" in item ? `:s9=${String(item.section9)}` : "";
+      return `${label}:${code}:${named}${section9}`;
     })
     .sort();
 }

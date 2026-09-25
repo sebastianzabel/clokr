@@ -10,19 +10,30 @@
  *   - a "foreign" person of the same tenant,
  *   - an anchor admin (legacy ADMIN with an Employee) that no cell ever targets, so the 74b
  *     lockout guard never trips when an actor deactivates or anonymizes someone (Pitfall 4),
- *   - its own copies of every tenant-level entity.
+ *   - a "holder" person that holds the tenant's customer-role assignment (never the actor),
+ *   - an anonymized employee (for `GET /employees?includeAnonymized=true`),
+ *   - per own and foreign person one entity of every person-bound kind, and per tenant one entity
+ *     of every tenant-level kind (`TENANT_LEVEL_KINDS`).
+ *
+ * The fallback actors (D-21) use the same builder; the matrix test simply builds their tenants
+ * AFTER the migration SQL ran, so their users hold no stored role assignment.
  *
  * Every id the builder creates — including the rows `seedTestData` creates — is registered in a
- * label registry under an actor-relative label (`own.employee`, `foreign.user`,
+ * label registry under an actor-relative label (`own.employee`, `foreign.leaveRequest.pending`,
  * `tenant.leaveType.VACATION`, …). The cell runner replaces every uuid in a response with its
- * label, so a recording is comparable across runs although every run creates new ids.
+ * label, so a recording is comparable across runs although every run creates new ids. Creation is
+ * deterministic: fixed order, fixed dates relative to the pinned "now" (2026-06-17), one time
+ * entry per person and day, leave away from month edges, no randomness in anything a response
+ * exposes (only key hashes and the seed's email suffix are random, and neither is recorded).
  *
  * No person names: fixture people carry role-descriptive names only.
  */
 import { randomBytes, createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Role } from "@clokr/db";
-import { seedTestData } from "../setup";
+import { configureDatevKanzlei, seedTestData } from "../setup";
+import { leaveTypeFields } from "../../contexts/absence/leave-type";
+import { DEFAULT_SALON_OPENING_HOURS } from "../../contexts/platform";
 import type { JwtPayload } from "../../middleware/auth";
 import { API_KEY_ACTORS, type ActorKind } from "./matrix-config";
 
@@ -81,37 +92,86 @@ function ownPersonRole(actor: ActorKind): Role {
   return "EMPLOYEE";
 }
 
-/** A cheap, valid-shaped password hash: no cell logs in with it. */
+/** A valid-shaped password hash no cell logs in with. */
 const UNUSED_PASSWORD_HASH = "$2a$10$abcdefghijklmnopqrstuuMatrixFixtureHashNotUsedForLogin00";
+
+/** Calendar days of the fixture, relative to the pinned "now" 2026-06-17 (a Wednesday). */
+const DAY = {
+  closedEntry: "2026-06-15", // Monday
+  invalidEntry: "2026-06-16", // Tuesday
+  openEntry: "2026-06-17", // today
+  shift: "2026-06-18", // Thursday
+  retroTarget: "2026-06-10", // Wednesday, last week
+  approvedLeaveStart: "2026-06-22",
+  approvedLeaveEnd: "2026-06-23",
+  pendingLeaveStart: "2026-07-06",
+  pendingLeaveEnd: "2026-07-08",
+  section9VacationStart: "2026-05-11",
+  section9VacationEnd: "2026-05-15",
+  section9Sick: "2026-05-13",
+  vocationalSchool: "2026-06-25", // Thursday
+  patternsFrom: "2026-06-01",
+  holiday: "2026-08-10",
+  shutdownStart: "2026-12-28",
+  shutdownEnd: "2026-12-30",
+} as const;
+
+function day(iso: string): Date {
+  return new Date(`${iso}T00:00:00.000Z`);
+}
+
+function at(iso: string, time: string): Date {
+  return new Date(`${iso}T${time}:00.000Z`);
+}
+
+function randomKey(): { raw: string; keyHash: string; keyPrefix: string } {
+  const raw = `clk_${randomBytes(24).toString("hex")}`;
+  return {
+    raw,
+    keyHash: createHash("sha256").update(raw).digest("hex"),
+    keyPrefix: raw.slice(0, 8),
+  };
+}
 
 interface PersonRows {
   userId: string;
   employeeId: string;
 }
 
+interface TenantContext {
+  app: FastifyInstance;
+  registry: LabelRegistry;
+  tenantId: string;
+  tenantSlug: string;
+  anchorUserId: string;
+}
+
 /** Creates a user + employee with a work schedule and an overtime account, and registers all four
  * ids under `<prefix>.user`, `<prefix>.employee`, `<prefix>.workSchedule`, `<prefix>.overtimeAccount`. */
 async function createPerson(
-  app: FastifyInstance,
-  registry: LabelRegistry,
-  opts: { tenantId: string; tenantSlug: string; prefix: string; role: Role; lastName: string },
+  t: TenantContext,
+  opts: { prefix: string; role: Role; lastName: string; anonymized?: boolean },
 ): Promise<PersonRows> {
-  const prisma = app.prisma;
+  const prisma = t.app.prisma;
   const user = await prisma.user.create({
     data: {
-      email: `${opts.prefix}-${opts.tenantSlug}@matrix.test`,
-      passwordHash: UNUSED_PASSWORD_HASH,
+      email: opts.anonymized
+        ? `geloescht-${opts.prefix}-${t.tenantSlug}@anonymized.invalid`
+        : `${opts.prefix}-${t.tenantSlug}@matrix.test`,
+      passwordHash: opts.anonymized ? "ANONYMIZED" : UNUSED_PASSWORD_HASH,
       role: opts.role,
-      isActive: true,
+      isActive: !opts.anonymized,
     },
   });
   const employee = await prisma.employee.create({
     data: {
-      tenantId: opts.tenantId,
+      tenantId: t.tenantId,
       userId: user.id,
-      employeeNumber: `${opts.prefix.toUpperCase()}-${opts.tenantSlug}`,
-      firstName: "Matrix",
-      lastName: opts.lastName,
+      employeeNumber: opts.anonymized
+        ? `GELÖSCHT-${t.tenantSlug}`
+        : `${opts.prefix.toUpperCase()}-${t.tenantSlug}`,
+      firstName: opts.anonymized ? "Gelöscht" : "Matrix",
+      lastName: opts.anonymized ? `GELÖSCHT-${t.tenantSlug}` : opts.lastName,
       hireDate: new Date("2024-01-01"),
     },
   });
@@ -132,57 +192,458 @@ async function createPerson(
   const account = await prisma.overtimeAccount.create({
     data: { employeeId: employee.id, balanceHours: 0 },
   });
-  registry.register(`${opts.prefix}.user`, user.id);
-  registry.register(`${opts.prefix}.employee`, employee.id);
-  registry.register(`${opts.prefix}.workSchedule`, schedule.id);
-  registry.register(`${opts.prefix}.overtimeAccount`, account.id);
+  t.registry.register(`${opts.prefix}.user`, user.id);
+  t.registry.register(`${opts.prefix}.employee`, employee.id);
+  t.registry.register(`${opts.prefix}.workSchedule`, schedule.id);
+  t.registry.register(`${opts.prefix}.overtimeAccount`, account.id);
   return { userId: user.id, employeeId: employee.id };
 }
 
 /** Registers the rows `seedTestData` created for one of its two persons. */
 async function registerSeedPerson(
-  app: FastifyInstance,
-  registry: LabelRegistry,
+  t: TenantContext,
   prefix: string,
-  person: { userId: string; employeeId: string },
+  person: PersonRows,
 ): Promise<void> {
-  registry.register(`${prefix}.user`, person.userId);
-  registry.register(`${prefix}.employee`, person.employeeId);
-  const schedule = await app.prisma.workSchedule.findFirstOrThrow({
+  t.registry.register(`${prefix}.user`, person.userId);
+  t.registry.register(`${prefix}.employee`, person.employeeId);
+  const schedule = await t.app.prisma.workSchedule.findFirstOrThrow({
     where: { employeeId: person.employeeId },
   });
-  registry.register(`${prefix}.workSchedule`, schedule.id);
-  const account = await app.prisma.overtimeAccount.findUniqueOrThrow({
+  t.registry.register(`${prefix}.workSchedule`, schedule.id);
+  const account = await t.app.prisma.overtimeAccount.findUniqueOrThrow({
     where: { employeeId: person.employeeId },
   });
-  registry.register(`${prefix}.overtimeAccount`, account.id);
+  t.registry.register(`${prefix}.overtimeAccount`, account.id);
 }
 
 /** Creates an API key with a known raw value; returns the raw `clk_` key. */
 async function createApiKey(
-  app: FastifyInstance,
-  registry: LabelRegistry,
-  opts: { tenantId: string; label: string; name: string; scopes: string[]; createdBy: string },
+  t: TenantContext,
+  opts: { label: string; name: string; scopes: string[] },
 ): Promise<string> {
-  const raw = `clk_${randomBytes(24).toString("hex")}`;
-  const row = await app.prisma.apiKey.create({
+  const key = randomKey();
+  const row = await t.app.prisma.apiKey.create({
     data: {
-      tenantId: opts.tenantId,
+      tenantId: t.tenantId,
       name: opts.name,
-      keyHash: createHash("sha256").update(raw).digest("hex"),
-      keyPrefix: raw.slice(0, 8),
+      keyHash: key.keyHash,
+      keyPrefix: key.keyPrefix,
       scopes: opts.scopes,
-      createdBy: opts.createdBy,
+      createdBy: t.anchorUserId,
     },
   });
-  registry.register(opts.label, row.id);
-  return raw;
+  t.registry.register(opts.label, row.id);
+  return key.raw;
+}
+
+interface TenantLevelIds {
+  vacationTypeId: string;
+  sickTypeId: string;
+  shiftTemplateId: string;
+  defaultSalonId: string;
+  secondSalonId: string;
+}
+
+/** Every tenant-level kind (`tenant.<kind>`). */
+async function createTenantEntities(
+  t: TenantContext,
+  seed: { vacationTypeId: string; defaultSalonId: string; foreignEmployeeId: string },
+): Promise<TenantLevelIds> {
+  const prisma = t.app.prisma;
+  const { registry, tenantId } = t;
+
+  const sickType = await prisma.leaveType.create({
+    data: { tenantId, ...leaveTypeFields("SICK"), color: "#EF4444" },
+  });
+  registry.register("tenant.leaveType.SICK", sickType.id);
+
+  const rule = await prisma.specialLeaveRule.create({
+    data: { tenantId, name: "Matrix Sonderurlaub", reason: "Matrix", defaultDays: 1 },
+  });
+  registry.register("tenant.specialLeaveRule", rule.id);
+
+  const holiday = await prisma.publicHoliday.create({
+    data: {
+      tenantId,
+      date: day(DAY.holiday),
+      name: "Matrix Feiertag",
+      federalState: "NIEDERSACHSEN",
+      year: 2026,
+    },
+  });
+  registry.register("tenant.holiday", holiday.id);
+
+  const shutdown = await prisma.companyShutdown.create({
+    data: {
+      tenantId,
+      name: "Matrix Betriebsurlaub",
+      startDate: day(DAY.shutdownStart),
+      endDate: day(DAY.shutdownEnd),
+    },
+  });
+  registry.register("tenant.companyShutdown", shutdown.id);
+  const exception = await prisma.companyShutdownException.create({
+    data: { shutdownId: shutdown.id, employeeId: seed.foreignEmployeeId, reason: "Matrix" },
+  });
+  registry.register("tenant.companyShutdown.exception", exception.id);
+
+  const template = await prisma.shiftTemplate.create({
+    data: { tenantId, name: "Matrix Frühschicht", startTime: "06:00", endTime: "14:00" },
+  });
+  registry.register("tenant.shiftTemplate", template.id);
+  const coverage = await prisma.coverageRule.create({
+    data: { tenantId, templateId: template.id, dayOfWeek: 0, minStaff: 1 },
+  });
+  registry.register("tenant.coverageRule", coverage.id);
+
+  const terminal = randomKey();
+  const terminalRow = await prisma.terminalApiKey.create({
+    data: {
+      tenantId,
+      name: "Matrix Terminal",
+      keyHash: terminal.keyHash,
+      keyPrefix: terminal.keyPrefix,
+    },
+  });
+  registry.register("tenant.terminal", terminalRow.id);
+
+  const source = randomKey();
+  const sourceRow = await prisma.presenceSource.create({
+    data: {
+      tenantId,
+      name: "Matrix Router",
+      keyHash: source.keyHash,
+      keyPrefix: source.keyPrefix,
+    },
+  });
+  registry.register("tenant.presenceSource", sourceRow.id);
+
+  const phorestStaffId = `matrix-staff-${t.tenantSlug}`;
+  const mapping = await prisma.phorestStaffMapping.create({
+    data: { tenantId, phorestStaffId, employeeId: seed.foreignEmployeeId },
+  });
+  registry.register("tenant.phorestMapping.row", mapping.id);
+  registry.register("tenant.phorestMapping", phorestStaffId);
+
+  const secondSalon = await prisma.salon.create({
+    data: {
+      tenantId,
+      name: "Matrix Salon Zwei",
+      openingHours: DEFAULT_SALON_OPENING_HOURS,
+      isActive: true,
+    },
+  });
+  registry.register("tenant.salon", secondSalon.id);
+  const inactiveSalon = await prisma.salon.create({
+    data: {
+      tenantId,
+      name: "Matrix Salon inaktiv",
+      openingHours: DEFAULT_SALON_OPENING_HOURS,
+      isActive: false,
+      deactivatedAt: new Date("2026-06-01T10:00:00.000Z"),
+    },
+  });
+  registry.register("tenant.salonInactive", inactiveSalon.id);
+
+  const auditRow = await prisma.auditLog.create({
+    data: {
+      userId: t.anchorUserId,
+      action: "UPDATE",
+      entity: "TenantConfig",
+      entityId: tenantId,
+      newValue: { matrix: true },
+    },
+  });
+  registry.register("tenant.auditLog", auditRow.id);
+
+  return {
+    vacationTypeId: seed.vacationTypeId,
+    sickTypeId: sickType.id,
+    shiftTemplateId: template.id,
+    defaultSalonId: seed.defaultSalonId,
+    secondSalonId: secondSalon.id,
+  };
+}
+
+/** Every person-bound kind for one person (`<prefix>.<kind>`). `macSuffix` keeps the per-tenant
+ * unique device MAC distinct between the own and the foreign person. */
+async function createPersonEntities(
+  t: TenantContext,
+  prefix: string,
+  person: PersonRows,
+  ids: TenantLevelIds,
+  macSuffix: string,
+): Promise<void> {
+  const prisma = t.app.prisma;
+  const { registry, tenantId } = t;
+  const employeeId = person.employeeId;
+  const reg = (kind: string, id: string) => registry.register(`${prefix}.${kind}`, id);
+
+  // Avatar: the path is served through the stubbed storage, so GET /avatars/:employeeId reads it.
+  await prisma.employee.update({
+    where: { id: employeeId },
+    data: { avatarPath: `avatars/${tenantId}/${employeeId}.webp` },
+  });
+
+  const closed = await prisma.timeEntry.create({
+    data: {
+      employeeId,
+      date: day(DAY.closedEntry),
+      startTime: at(DAY.closedEntry, "06:00"),
+      endTime: at(DAY.closedEntry, "14:30"),
+      breakMinutes: 30,
+      createdBy: t.anchorUserId,
+    },
+  });
+  reg("timeEntry.closed", closed.id);
+  const brk = await prisma.break.create({
+    data: {
+      timeEntryId: closed.id,
+      startTime: at(DAY.closedEntry, "10:00"),
+      endTime: at(DAY.closedEntry, "10:30"),
+    },
+  });
+  reg("timeEntry.closed.break", brk.id);
+  const invalid = await prisma.timeEntry.create({
+    data: {
+      employeeId,
+      date: day(DAY.invalidEntry),
+      startTime: at(DAY.invalidEntry, "06:00"),
+      isInvalid: true,
+      invalidReasonCode: "MISSING_CLOCK_OUT",
+      invalidReason: "Ausstempeln fehlt",
+      createdBy: t.anchorUserId,
+    },
+  });
+  reg("timeEntry.invalid", invalid.id);
+  const open = await prisma.timeEntry.create({
+    data: {
+      employeeId,
+      date: day(DAY.openEntry),
+      startTime: at(DAY.openEntry, "06:00"),
+      createdBy: t.anchorUserId,
+    },
+  });
+  reg("timeEntry.open", open.id);
+
+  const entitlementYear = 2026;
+  const existingEntitlement = await prisma.leaveEntitlement.findUnique({
+    where: {
+      employeeId_leaveTypeId_year: {
+        employeeId,
+        leaveTypeId: ids.vacationTypeId,
+        year: entitlementYear,
+      },
+    },
+  });
+  const entitlement =
+    existingEntitlement ??
+    (await prisma.leaveEntitlement.create({
+      data: {
+        employeeId,
+        leaveTypeId: ids.vacationTypeId,
+        year: entitlementYear,
+        totalDays: 30,
+        usedDays: 0,
+      },
+    }));
+  reg("entitlement.VACATION", entitlement.id);
+
+  const pending = await prisma.leaveRequest.create({
+    data: {
+      employeeId,
+      leaveTypeId: ids.vacationTypeId,
+      status: "PENDING",
+      days: 3,
+      startDate: day(DAY.pendingLeaveStart),
+      endDate: day(DAY.pendingLeaveEnd),
+    },
+  });
+  reg("leaveRequest.pending", pending.id);
+  const approved = await prisma.leaveRequest.create({
+    data: {
+      employeeId,
+      leaveTypeId: ids.vacationTypeId,
+      status: "APPROVED",
+      days: 2,
+      startDate: day(DAY.approvedLeaveStart),
+      endDate: day(DAY.approvedLeaveEnd),
+      reviewedBy: t.anchorUserId,
+      reviewedAt: new Date("2026-06-01T09:00:00.000Z"),
+    },
+  });
+  reg("leaveRequest.approved", approved.id);
+  const s9Vacation = await prisma.leaveRequest.create({
+    data: {
+      employeeId,
+      leaveTypeId: ids.vacationTypeId,
+      status: "APPROVED",
+      days: 5,
+      startDate: day(DAY.section9VacationStart),
+      endDate: day(DAY.section9VacationEnd),
+      reviewedBy: t.anchorUserId,
+      reviewedAt: new Date("2026-04-20T09:00:00.000Z"),
+    },
+  });
+  reg("leaveRequest.section9Vacation", s9Vacation.id);
+  const sick = await prisma.leaveRequest.create({
+    data: {
+      employeeId,
+      leaveTypeId: ids.sickTypeId,
+      status: "APPROVED",
+      days: 1,
+      startDate: day(DAY.section9Sick),
+      endDate: day(DAY.section9Sick),
+      reviewedBy: t.anchorUserId,
+      reviewedAt: new Date("2026-05-13T09:00:00.000Z"),
+    },
+  });
+  reg("leaveRequest.sick", sick.id);
+  const credit = await prisma.section9Credit.create({
+    data: {
+      employeeId,
+      sickRequestId: sick.id,
+      vacationRequestId: s9Vacation.id,
+      overlapStart: day(DAY.section9Sick),
+      overlapEnd: day(DAY.section9Sick),
+      status: "AU_PENDING",
+      documentPath: `section9/${tenantId}/${employeeId}.pdf`,
+    },
+  });
+  reg("section9.credit", credit.id);
+
+  const retro = await prisma.retroEntryRequest.create({
+    data: {
+      employeeId,
+      targetDate: day(DAY.retroTarget),
+      reason: "Matrix Nachtrag",
+      startTime: "08:00",
+      endTime: "16:00",
+      breakMinutes: 30,
+    },
+  });
+  reg("retroRequest.pending", retro.id);
+
+  const absence = await prisma.absence.create({
+    data: {
+      employeeId,
+      type: "VOCATIONAL_SCHOOL",
+      startDate: day(DAY.vocationalSchool),
+      endDate: day(DAY.vocationalSchool),
+      days: 1,
+      createdBy: t.anchorUserId,
+    },
+  });
+  reg("vocationalSchool.absence", absence.id);
+  const bsPattern = await prisma.employeeVocationalSchoolPattern.create({
+    data: {
+      employeeId,
+      daysOfWeek: [3],
+      blockWeeks: [],
+      validFrom: day(DAY.patternsFrom),
+    },
+  });
+  reg("vocationalSchool.pattern", bsPattern.id);
+
+  const shift = await prisma.shift.create({
+    data: {
+      employeeId,
+      templateId: ids.shiftTemplateId,
+      salonId: ids.defaultSalonId,
+      date: day(DAY.shift),
+      startTime: "08:00",
+      endTime: "16:00",
+      createdBy: t.anchorUserId,
+    },
+  });
+  reg("shift", shift.id);
+  const shiftPattern = await prisma.employeeShiftPattern.create({
+    data: {
+      employeeId,
+      dayOfWeek: 0,
+      templateId: ids.shiftTemplateId,
+      validFrom: day(DAY.patternsFrom),
+    },
+  });
+  reg("shiftPattern", shiftPattern.id);
+  const availability = await prisma.employeeAvailability.create({
+    data: {
+      employeeId,
+      dayOfWeek: 4,
+      status: "PREFERRED",
+      validFrom: day(DAY.patternsFrom),
+      createdBy: t.anchorUserId,
+    },
+  });
+  reg("availability", availability.id);
+  const appointment = await prisma.phorestAppointment.create({
+    data: {
+      employeeId,
+      salonId: ids.defaultSalonId,
+      date: day(DAY.shift),
+      startTime: "09:00",
+      endTime: "10:00",
+    },
+  });
+  reg("phorestAppointment", appointment.id);
+
+  const snapshot = await prisma.saldoSnapshot.create({
+    data: {
+      employeeId,
+      periodType: "MONTHLY",
+      periodStart: day("2026-04-01"),
+      periodEnd: day("2026-04-30"),
+      workedMinutes: 0,
+      expectedMinutes: 0,
+      balanceMinutes: 0,
+      carryOver: 0,
+      closedAt: new Date("2026-05-01T02:00:00.000Z"),
+    },
+  });
+  reg("saldoSnapshot", snapshot.id);
+
+  const notification = await prisma.notification.create({
+    data: {
+      userId: person.userId,
+      type: "LEAVE_REQUEST",
+      title: "Matrix",
+      message: "Matrix Benachrichtigung",
+      link: "/leave",
+      createdAt: new Date("2026-06-16T09:00:00.000Z"),
+    },
+  });
+  reg("notification", notification.id);
+
+  const device = await prisma.presenceDevice.create({
+    data: {
+      tenantId,
+      employeeId,
+      mac: `02:00:00:00:00:${macSuffix}`,
+      label: "Matrix Geraet",
+      addedByUserId: person.userId,
+    },
+  });
+  reg("wifiDevice", device.id);
+  registry.register(`${prefix}.presenceDevice.mac`, device.mac);
+
+  const assignment = await prisma.employeeSalonAssignment.create({
+    data: {
+      tenantId,
+      employeeId,
+      salonId: ids.secondSalonId,
+      kind: "DEPLOYMENT",
+      validFrom: day(DAY.patternsFrom),
+      weekdays: [0],
+    },
+  });
+  reg("salonAssignment", assignment.id);
 }
 
 /**
  * Builds one actor's tenant: `seedTestData` (its admin becomes the anchor admin, its employee the
- * foreign person), the own person with the actor's legacy role, the API keys, and — from Task 2 on
- * — every entity kind the route specs substitute.
+ * foreign person), the own person with the actor's legacy role, the holder of the customer role,
+ * an anonymized employee, the API keys, and every entity kind the route specs substitute.
  */
 export async function buildActorTenant(
   app: FastifyInstance,
@@ -191,53 +652,95 @@ export async function buildActorTenant(
   const registry = new LabelRegistry();
   const seed = await seedTestData(app, `75b-matrix-${actor.toLowerCase()}`);
   const tenantId = seed.tenant.id;
-  const tenantSlug = seed.tenant.slug;
+  const t: TenantContext = {
+    app,
+    registry,
+    tenantId,
+    tenantSlug: seed.tenant.slug,
+    anchorUserId: seed.adminUser.id,
+  };
   registry.register("tenant", tenantId);
+  // A configured DATEV Kanzlei, so the DATEV export cells reach the export instead of the 409.
+  await configureDatevKanzlei(app, tenantId);
   const config = await app.prisma.tenantConfig.findUniqueOrThrow({ where: { tenantId } });
   registry.register("tenant.config", config.id);
   registry.register("tenant.salon.default", seed.salonId);
   registry.register("tenant.leaveType.VACATION", seed.vacationType.id);
 
-  await registerSeedPerson(app, registry, "anchor.admin", {
+  await registerSeedPerson(t, "anchor.admin", {
     userId: seed.adminUser.id,
     employeeId: seed.adminEmployee.id,
   });
-  await registerSeedPerson(app, registry, "foreign", {
-    userId: seed.empUser.id,
-    employeeId: seed.employee.id,
-  });
-  const foreignEntitlement = await app.prisma.leaveEntitlement.findFirstOrThrow({
-    where: { employeeId: seed.employee.id },
-  });
-  registry.register("foreign.entitlement.VACATION", foreignEntitlement.id);
+  const foreign = { userId: seed.empUser.id, employeeId: seed.employee.id };
+  await registerSeedPerson(t, "foreign", foreign);
 
   const ownRole = ownPersonRole(actor);
-  const own = await createPerson(app, registry, {
-    tenantId,
-    tenantSlug,
+  const own = await createPerson(t, {
     prefix: "own",
     role: ownRole,
     lastName: API_KEY_ACTORS.has(actor) ? "Ohne Schluessel" : "Akteur",
   });
+  const holder = await createPerson(t, { prefix: "holder", role: "EMPLOYEE", lastName: "Rolle" });
+  await createPerson(t, {
+    prefix: "anonymized",
+    role: "EMPLOYEE",
+    lastName: "",
+    anonymized: true,
+  });
+
+  const ids = await createTenantEntities(t, {
+    vacationTypeId: seed.vacationType.id,
+    defaultSalonId: seed.salonId,
+    foreignEmployeeId: foreign.employeeId,
+  });
+  await createPersonEntities(t, "own", own, ids, "01");
+  await createPersonEntities(t, "foreign", foreign, ids, "02");
+
+  // Customer roles: one held by the holder (TENANT scope), one held by nobody.
+  const assignedRole = await app.prisma.accessRole.create({
+    data: {
+      tenantId,
+      name: "Matrix Kundenrolle",
+      nameKey: "matrix kundenrolle",
+      permissions: ["role:read:ZUGEWIESEN"],
+    },
+  });
+  registry.register("tenant.customRole.assigned", assignedRole.id);
+  const freeRole = await app.prisma.accessRole.create({
+    data: {
+      tenantId,
+      name: "Matrix Freie Rolle",
+      nameKey: "matrix freie rolle",
+      permissions: ["role:read:ZUGEWIESEN"],
+    },
+  });
+  registry.register("tenant.customRole.free", freeRole.id);
+  const customerAssignment = await app.prisma.roleAssignment.create({
+    data: {
+      tenantId,
+      userId: holder.userId,
+      accessRoleId: assignedRole.id,
+      scopeType: "TENANT",
+      salonIds: [],
+      employeeIds: [],
+    },
+  });
+  registry.register("tenant.roleAssignment.customer", customerAssignment.id);
 
   // The DELETE target of `/api-keys/:id` — never the actor's own key (75b-RESEARCH Q6).
-  await createApiKey(app, registry, {
-    tenantId,
+  await createApiKey(t, {
     label: "tenant.apiKey.secondary",
     name: "Matrix Zweitschluessel",
     scopes: [],
-    createdBy: seed.adminUser.id,
   });
 
   let authorization: string;
   let actorUserId: string | undefined;
   if (API_KEY_ACTORS.has(actor)) {
-    const raw = await createApiKey(app, registry, {
-      tenantId,
+    const raw = await createApiKey(t, {
       label: "actor.apiKey",
       name: "Matrix Akteur-Schluessel",
       scopes: actor === "APIKEY_ADMIN" ? ["admin"] : [],
-      createdBy: seed.adminUser.id,
     });
     authorization = `Bearer ${raw}`;
   } else {
@@ -252,4 +755,24 @@ export async function buildActorTenant(
   }
 
   return { actor, tenantId, authorization, actorUserId, registry };
+}
+
+/**
+ * Deletes the rows `cleanupTestData` does not know about, in dependency order, so its own deletes
+ * (and the final `tenant.delete`) succeed. Never throws on a missing row.
+ */
+export async function cleanupMatrixExtras(app: FastifyInstance, tenantId: string): Promise<void> {
+  const prisma = app.prisma;
+  const employees = await prisma.employee.findMany({
+    where: { tenantId },
+    select: { id: true, userId: true },
+  });
+  const employeeIds = employees.map((e) => e.id);
+  await prisma.roleAssignment.deleteMany({ where: { tenantId } });
+  await prisma.accessRole.deleteMany({ where: { tenantId } });
+  await prisma.phorestAppointment.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  await prisma.phorestStaffMapping.deleteMany({ where: { tenantId } });
+  await prisma.retroEntryRequest.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  await prisma.openingBalance.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  await prisma.presenceDevice.deleteMany({ where: { tenantId } });
 }
