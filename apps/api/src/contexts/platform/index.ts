@@ -115,6 +115,10 @@ export { userIdsHoldingPermission } from "./facade/role-assignments";
 // Phase 91b (Issue #91), D-03/D-04: how far a caller's access context reaches for one specific
 // permission — the reach every downstream context-owned scope filter narrows against.
 export { resolveAccessReach } from "./facade/role-assignments";
+// Phase 91b Plan 09 (Issue #91), D-17: narrows userIdsHoldingPermission's tenant-wide holder list
+// to holders whose OWN resolved reach covers the affected resource — the one shared narrowing
+// point every manager-notification recipient site in this phase uses.
+export { resolveScopedHolderIds } from "./facade/role-assignments";
 // Phase 91b Plan 02 (Issue #91), D-07: the one module answering "is this resource in scope" /
 // "which rows are in scope for a list", one function pair per resource-table row (D-09..D-12).
 export {

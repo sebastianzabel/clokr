@@ -486,3 +486,48 @@ export async function userIdsHoldingPermission(
 
   return [...new Set([...storedHolderIds, ...fallbackHolderIds])].sort();
 }
+
+/**
+ * Phase 91b (Issue #91), D-17: narrows `userIdsHoldingPermission`'s tenant-wide holder list to the
+ * holders whose OWN resolved reach for `permission` covers the affected resource — the ONE shared
+ * narrowing point every manager-notification site in this phase uses; no site re-implements the
+ * per-user reach resolution inline.
+ *
+ * For each `candidateUserIds` entry, resolves that user's own `AccessReach` for `permission` via
+ * {@link resolveAccessReach} against a freshly built `AccessContext` (its `reach` field is the
+ * constructor's static base, irrelevant here since `resolveAccessReach` ignores it and re-derives
+ * per permission from the user's stored `RoleAssignment` rows). A `wholeTenant` reach ALWAYS keeps
+ * the user, regardless of the specific `isInScope` callback — enforced HERE, in the one shared
+ * narrowing point, rather than trusted to every callback's own implementation (T-91b-38: a
+ * misbehaving or incomplete `isInScope` callback must never silently drop a whole-tenant holder
+ * from a notification). Every OTHER reach is kept only when `isInScope(reach)` resolves `true`.
+ *
+ * Callers pass `userIdsHoldingPermission`'s own output as `candidateUserIds` — a candidate that
+ * (defensively) holds nothing at all for `permission` still resolves without throwing (its reach
+ * fails every `isInScope` check and it is simply excluded). Order of `candidateUserIds` is
+ * preserved for ids that are kept (a stable filter, never a re-sort).
+ *
+ * Only narrows the recipient SET. Every existing lock or eligibility decision (self-approval,
+ * four-eyes, cancellation) at a call site is untouched by this function.
+ */
+export async function resolveScopedHolderIds(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  candidateUserIds: readonly string[],
+  permission: PermissionKey,
+  isInScope: (reach: AccessReach) => Promise<boolean> | boolean,
+): Promise<string[]> {
+  const kept: string[] = [];
+  for (const userId of candidateUserIds) {
+    const ctx: AccessContext = {
+      tenantId,
+      actor: { kind: "user", userId },
+      reach: { kind: "wholeTenant" },
+    };
+    const reach = await resolveAccessReach(db, ctx, permission);
+    if (reach.kind === "wholeTenant" || (await isInScope(reach))) {
+      kept.push(userId);
+    }
+  }
+  return kept;
+}

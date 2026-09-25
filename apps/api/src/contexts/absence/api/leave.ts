@@ -50,6 +50,7 @@ import {
   resolveAccessReach, // Phase 91b Plan 04 (#91), D-10/D-14
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 04 (#91), D-10
   isStammsalonScopeMatch, // Phase 91b Plan 04 (#91), D-10/D-14
+  resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
 } from "../../platform"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
@@ -767,9 +768,26 @@ export async function leaveRoutes(app: FastifyInstance) {
         req.user.tenantId,
         "leave-request:approve:ZUGEWIESEN",
       );
+      // Phase 91b Plan 09 (Issue #91), D-17: narrow the tenant-wide holder list to holders whose
+      // OWN reach covers the request's own employee — Stammsalon-only (D-10), Stichtag = the
+      // request's own startDate (the affected period, not "today").
+      const scopedLeaveRequestApproveHolderIds = await resolveScopedHolderIds(
+        app.prisma,
+        req.user.tenantId,
+        leaveRequestApproveHolderIds,
+        "leave-request:approve:ZUGEWIESEN",
+        (reach) =>
+          isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            reach,
+            request.employeeId,
+            request.startDate,
+          ),
+      );
       const managers = await app.prisma.user.findMany({
         where: {
-          id: { in: leaveRequestApproveHolderIds },
+          id: { in: scopedLeaveRequestApproveHolderIds },
           isActive: true,
           employee: { tenantId: req.user.tenantId },
         },
