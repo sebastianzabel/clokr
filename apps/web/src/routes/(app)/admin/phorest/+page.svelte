@@ -13,6 +13,10 @@
   // Phorest
   let phBusinessId = $state("");
   let phBranchId = $state("");
+  // Phase 65b (issue #65, D-20): true iff the tenant has exactly one active salon — the API is the
+  // authority here, the page only reflects it. When false the Branch-ID field is locked (the branch
+  // now lives on a per-salon coupling; multi-coupling UI is deferred to #82 ff.).
+  let phBranchIdEditable = $state(true);
   let phUsername = $state("");
   let phPassword = $state("");
   let phConfigured = $state(false);
@@ -165,7 +169,11 @@
       const ph = await api.get<{
         configured: boolean;
         phorestBusinessId: string | null;
-        phorestBranchId: string | null;
+        // Phase 65b (issue #65, D-19/D-20): the branch now lives on a per-salon coupling, not on
+        // TenantConfig — `branchId` is the sole active salon's coupling (null otherwise) and
+        // `branchIdEditable` says whether exactly one active salon exists.
+        branchId: string | null;
+        branchIdEditable: boolean;
         phorestUsername: string | null;
         phorestBaseUrl: string | null;
         phorestAutoSync: boolean;
@@ -176,7 +184,8 @@
       }>("/integrations/phorest/config");
       phConfigured = ph.configured;
       phBusinessId = ph.phorestBusinessId ?? "";
-      phBranchId = ph.phorestBranchId ?? "";
+      phBranchId = ph.branchId ?? "";
+      phBranchIdEditable = ph.branchIdEditable;
       phUsername = ph.phorestUsername ?? "";
       phAutoSync = ph.phorestAutoSync ?? false;
       phSyncCron = ph.phorestSyncCron ?? "0 3 * * *";
@@ -212,7 +221,6 @@
     try {
       await api.put("/integrations/phorest/config", {
         phorestBusinessId: phBusinessId,
-        phorestBranchId: phBranchId,
         phorestUsername: phUsername,
         phorestPassword: phPassword,
         phorestAutoSync: phAutoSync,
@@ -220,11 +228,15 @@
         phorestSyncWindowDays: phSyncWindowDays,
         phorestPrepMinutes: phPrepMinutes,
         phorestWrapupMinutes: phWrapupMinutes,
+        // Phase 65b (issue #65, D-20): the branch moved to the salon coupling and is sent only
+        // while exactly one salon is active — otherwise the API decides per salon (Task 1/2).
+        ...(phBranchIdEditable ? { branchId: phBranchId } : {}),
       });
       phConfigured = true;
       phSaved = true;
-      // savePhorest submits all nine fields regardless of which of the two Section footer
-      // buttons triggered it, so both config snapshots are re-taken together on success.
+      // savePhorest submits the eight unconditional fields plus the conditional branchId
+      // regardless of which of the two Section footer buttons triggered it, so both config
+      // snapshots are re-taken together on success.
       phConnectionSnapshot = snap(phBusinessId, phBranchId, phUsername, phPassword.length > 0);
       phImportSnapshot = snap(
         phPrepMinutes,
@@ -396,7 +408,9 @@
     }
     try {
       const res = await api.post<{
-        runId: string;
+        // Phase 65b (issue #65, D-13): the manual trigger's response is now a per-salon aggregate
+        // (top-level fields the toast reads below are unchanged); this page reads no per-salon
+        // `results` and no top-level `runId` any more.
         status: "SUCCESS" | "ERROR" | "SUSPECT";
         created: number;
         updated: number;
@@ -509,7 +523,13 @@
           bind:value={phBranchId}
           class="form-input"
           placeholder="z.B. branch-001"
+          disabled={!phBranchIdEditable}
         />
+        {#if !phBranchIdEditable}
+          <p class="form-hint text-muted">
+            Mehrere aktive Salons — die Phorest-Filiale wird je Salon gekoppelt.
+          </p>
+        {/if}
       </div>
       <div class="form-group">
         <label class="form-label" for="ph-user">API-Benutzername (E-Mail)</label>
