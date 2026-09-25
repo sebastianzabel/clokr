@@ -2,7 +2,12 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { fromZonedTime } from "date-fns-tz";
 import { requireAuth } from "../../../middleware/auth";
-import { hasPermission, permissionReach, requirePermission } from "../../platform";
+import {
+  hasPermission,
+  permissionReach,
+  requirePermission,
+  userIdsHoldingPermission, // Phase 75b Plan 10 (#75), D-16
+} from "../../platform";
 import { checkArbZG, ArbZGWarning } from "../arbzg";
 import { checkJArbSchG } from "../../absence"; // Phase 101B (Issue #101, wave 7)
 import { getTenantTimezone, dateStrInTz, todayInTz } from "../../working-time-account"; // Phase 101B
@@ -749,10 +754,17 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
       // them (net-new call site, mirrors the BREAK_COMPLIANCE_ALERT manager
       // iteration — skip the actor).
       try {
+        // Phase 75b Plan 10 (#75), D-16: holders of retro-request:approve replace the legacy
+        // A,M role predicate — the recorded recipient set is unchanged.
+        const withdrawnRetroApproveHolderIds = await userIdsHoldingPermission(
+          app.prisma,
+          user.tenantId,
+          "retro-request:approve:ZUGEWIESEN",
+        );
         const managers = await app.prisma.employee.findMany({
           where: {
             tenantId: user.tenantId,
-            user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+            user: { isActive: true, id: { in: withdrawnRetroApproveHolderIds } },
           },
           include: { user: { select: { id: true } } },
         });

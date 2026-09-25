@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "crypto";
 import { requireAuth } from "../../../middleware/auth";
-import { permissionReach, requirePermission } from "../../platform";
+import { permissionReach, requirePermission, userIdsHoldingPermission } from "../../platform"; // Phase 75b Plan 10 (#75), D-16 adds userIdsHoldingPermission
 import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../arbzg";
 import { getEffectiveBreakDuration } from "../break-effective";
@@ -1374,10 +1374,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // skipping the actor).
       if (pendingRetroCreate && entry.retroRequestId) {
         try {
+          // Phase 75b Plan 10 (#75), D-16: holders of retro-request:approve replace the legacy
+          // A,M role predicate — the recorded recipient set is unchanged.
+          const retroRequestedApproveHolderIds = await userIdsHoldingPermission(
+            app.prisma,
+            targetEmployee.tenantId,
+            "retro-request:approve:ZUGEWIESEN",
+          );
           const submitManagers = await app.prisma.employee.findMany({
             where: {
               tenantId: targetEmployee.tenantId,
-              user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+              user: { isActive: true, id: { in: retroRequestedApproveHolderIds } },
             },
             include: { user: { select: { id: true } } },
           });
@@ -1826,10 +1833,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // manager-iteration precedent (:2042-2052), skipping the actor.
       if (isOwnPendingNachtragEdit && existing.retroRequestId) {
         try {
+          // Phase 75b Plan 10 (#75), D-16: holders of retro-request:approve replace the legacy
+          // A,M role predicate — the recorded recipient set is unchanged.
+          const retroUpdatedApproveHolderIds = await userIdsHoldingPermission(
+            app.prisma,
+            existing.employee.tenantId,
+            "retro-request:approve:ZUGEWIESEN",
+          );
           const editManagers = await app.prisma.employee.findMany({
             where: {
               tenantId: existing.employee.tenantId,
-              user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+              user: { isActive: true, id: { in: retroUpdatedApproveHolderIds } },
             },
             include: { user: { select: { id: true } } },
           });
@@ -2174,10 +2188,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // Manager alert: also emails via the toggle field emailOnMissingEntries — see the
       // explicit BREAK_COMPLIANCE_ALERT policy entry in
       // apps/api/src/utils/notification-email-policy.ts (quick-260825-k3g).
+      // Phase 75b Plan 10 (#75), D-16: holders of team-overview:read replace the legacy A,M role
+      // predicate — the recorded recipient set is unchanged.
+      const breakComplianceTeamOverviewHolderIds = await userIdsHoldingPermission(
+        app.prisma,
+        entry.employee.tenantId,
+        "team-overview:read:ZUGEWIESEN",
+      );
       const managers = await app.prisma.employee.findMany({
         where: {
           tenantId: entry.employee.tenantId,
-          user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+          user: { isActive: true, id: { in: breakComplianceTeamOverviewHolderIds } },
         },
         include: { user: { select: { id: true } } },
       });

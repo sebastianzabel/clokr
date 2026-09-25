@@ -6,6 +6,7 @@ import { Role } from "@clokr/db";
 import { JwtPayload } from "../../../middleware/auth";
 import { validatePassword, loadPasswordPolicy } from "../password-policy";
 import { compatRoleForUser } from "../compat-role";
+import { userIdsHoldingPermission } from "../facade/role-assignments"; // Phase 75b Plan 10 (#75), D-16/D-17
 import { config } from "../../../config";
 
 /** SHA-256 hash for tokens stored in DB (refresh tokens, reset tokens). */
@@ -112,16 +113,26 @@ export async function authRoutes(app: FastifyInstance) {
             newValue: { attempts, lockoutMinutes },
           });
 
-          // Notify admins
+          // Notify admins. Phase 75b Plan 10 (#75), D-16/D-17: holders of
+          // employee:manage-access (unlock is part of it) replace the legacy Admin-only role
+          // predicate — the recorded recipient set is unchanged; the user.employee guard (no
+          // tenant to scope by otherwise) is unchanged.
           const admins = user.employee
-            ? await app.prisma.user.findMany({
-                where: {
-                  role: "ADMIN",
-                  isActive: true,
-                  employee: { tenantId: user.employee.tenantId },
-                },
-                select: { id: true },
-              })
+            ? await (async () => {
+                const employeeManageAccessHolderIds = await userIdsHoldingPermission(
+                  app.prisma,
+                  user.employee!.tenantId,
+                  "employee:manage-access:ZUGEWIESEN",
+                );
+                return app.prisma.user.findMany({
+                  where: {
+                    id: { in: employeeManageAccessHolderIds },
+                    isActive: true,
+                    employee: { tenantId: user.employee!.tenantId },
+                  },
+                  select: { id: true },
+                });
+              })()
             : [];
           for (const admin of admins) {
             await app.notify({
