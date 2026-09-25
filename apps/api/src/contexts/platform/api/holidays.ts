@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { FederalState, Salon } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
 import { requirePermission } from "../request-permissions";
-import { findDefaultSalon, findSalon, isMultiSalonTenant } from "../facade/salons";
+import { findDefaultSalon, findSalon, isMultiSalonTenant, listSalons } from "../facade/salons";
 import { holidaysForSalon } from "../facade/holiday-resolution";
 // eslint-disable-next-line no-restricted-imports -- E-1: creating a holiday loops over every employee and calls the saldo recalculation directly. Disappears in Block 2 (#102-#104), where a holiday-created event replaces the direct call. ADR 0001 Eintrag H.
 import { recalculateSnapshots } from "../../working-time-account/recalculate-snapshots";
@@ -85,11 +85,99 @@ function sendUnresolved(
   return reply.code(resolution.status).send(resolution.body);
 }
 
+/**
+ * Phase 71b-07 (issue #71), D-09 REVISED (coordinator decision, 2026-09-25): a READ must not
+ * require a salon. Computes one salon's merged holiday calendar (computed statutory holidays,
+ * manual `PublicHoliday` rows, tenant-wide Christmas-Eve/New-Year's-Eve company rules) for the
+ * given year. Every returned entry carries `salon.id` so a multi-salon concatenation (see the GET
+ * handler below) stays attributable per item.
+ */
+async function computeHolidaysForSalon(
+  app: FastifyInstance,
+  tenantId: string,
+  salon: Salon,
+  y: number,
+): Promise<HolidayResponseEntry[]> {
+  const salonHolidays = await holidaysForSalon(
+    app.prisma,
+    tenantId,
+    salon.id,
+    `${y}-01-01`,
+    `${y}-12-31`,
+  );
+
+  const computed: HolidayResponseEntry[] = [];
+  const manual: HolidayResponseEntry[] = [];
+  for (const h of salonHolidays) {
+    const entry: HolidayResponseEntry = {
+      id: h.manualHolidayId ?? `computed-${h.date}`,
+      tenantId,
+      salonId: salon.id,
+      date: h.date,
+      name: h.name,
+      federalState: salon.federalState,
+      year: y,
+      isManual: h.manualHolidayId !== null,
+    };
+    (entry.isManual ? manual : computed).push(entry);
+  }
+
+  // Heiligabend/Silvester company rules — mandantenweit, unverändert durch diese Migration.
+  const config = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
+  const companyHolidays: HolidayResponseEntry[] = [];
+  const validFromYear = config?.holidayRulesValidFromYear ?? new Date().getFullYear();
+  const christmasRule = y >= validFromYear ? (config?.christmasEveRule ?? "NORMAL") : "NORMAL";
+  const newYearsRule = y >= validFromYear ? (config?.newYearsEveRule ?? "NORMAL") : "NORMAL";
+  if (christmasRule !== "NORMAL") {
+    companyHolidays.push({
+      id: `company-${y}-12-24`,
+      tenantId,
+      salonId: salon.id,
+      date: `${y}-12-24`,
+      name: christmasRule === "FULL_DAY_OFF" ? "Heiligabend (frei)" : "Heiligabend (halber Tag)",
+      federalState: salon.federalState,
+      year: y,
+      isManual: false,
+    });
+  }
+  if (newYearsRule !== "NORMAL") {
+    companyHolidays.push({
+      id: `company-${y}-12-31`,
+      tenantId,
+      salonId: salon.id,
+      date: `${y}-12-31`,
+      name: newYearsRule === "FULL_DAY_OFF" ? "Silvester (frei)" : "Silvester (halber Tag)",
+      federalState: salon.federalState,
+      year: y,
+      isManual: false,
+    });
+  }
+
+  // Merge precedence: manuell > Firmenregel > berechnet — same rule as before this rewrite,
+  // now applied over the salon-resolved sets instead of the tenant-wide ones.
+  const manualDates = new Set(manual.map((m) => m.date));
+  const companyDates = new Set(companyHolidays.map((c) => c.date));
+  return [
+    ...computed.filter((c) => !manualDates.has(c.date) && !companyDates.has(c.date)),
+    ...companyHolidays.filter((c) => !manualDates.has(c.date)),
+    ...manual,
+  ].sort((a, b) => a.date.localeCompare(b.date));
+}
+
 export async function holidayRoutes(app: FastifyInstance) {
   // GET /api/v1/holidays?year=2026&salonId=...
   // Computes holidays on the fly for the salon's federal state (§ 2 EFZG — work location
   // decides, not the tenant's federal state), also merges the salon's manually added
   // entries and the tenant-wide Christmas Eve / New Year's Eve rules.
+  //
+  // D-09 REVISED (coordinator decision, 2026-09-25): a read must not require a salon. An
+  // EXPLICIT `salonId` still resolves through `resolveHolidaySalon` (identical 404 for a foreign
+  // or nonexistent id — T-100-09, unchanged). WITHOUT `salonId` this no longer 400s on a
+  // multi-salon tenant (the original Plan 06 behavior, still required for the WRITE paths below):
+  // it returns the concatenated calendars of every active salon, each item already carrying its
+  // own `salonId`. A single-salon tenant's response is unchanged in shape (it always carried
+  // `salonId` per item) and in content (looping over its one active salon is the same call as
+  // before).
   app.get("/", {
     schema: { tags: ["Feiertage"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
@@ -98,77 +186,25 @@ export async function holidayRoutes(app: FastifyInstance) {
       const y = year ? parseInt(year, 10) : new Date().getFullYear();
       const tenantId = req.user.tenantId;
 
-      const resolution = await resolveHolidaySalon(app, tenantId, salonId);
-      if (!resolution.ok) return sendUnresolved(reply, resolution);
-      const { salon } = resolution;
+      if (salonId) {
+        const salon = await findSalon(app.prisma, tenantId, salonId);
+        if (!salon) return reply.code(404).send(SALON_NOT_FOUND_BODY);
+        return computeHolidaysForSalon(app, tenantId, salon, y);
+      }
 
-      const salonHolidays = await holidaysForSalon(
-        app.prisma,
-        tenantId,
-        salon.id,
-        `${y}-01-01`,
-        `${y}-12-31`,
+      const activeSalons = await listSalons(app.prisma, tenantId, { includeInactive: false });
+      if (activeSalons.length === 0) {
+        return reply
+          .code(409)
+          .send({ error: "Kein aktiver Salon vorhanden.", code: "NO_ACTIVE_SALON" });
+      }
+
+      const perSalon = await Promise.all(
+        activeSalons.map((salon) => computeHolidaysForSalon(app, tenantId, salon, y)),
       );
-
-      const computed: HolidayResponseEntry[] = [];
-      const manual: HolidayResponseEntry[] = [];
-      for (const h of salonHolidays) {
-        const entry: HolidayResponseEntry = {
-          id: h.manualHolidayId ?? `computed-${h.date}`,
-          tenantId,
-          salonId: salon.id,
-          date: h.date,
-          name: h.name,
-          federalState: salon.federalState,
-          year: y,
-          isManual: h.manualHolidayId !== null,
-        };
-        (entry.isManual ? manual : computed).push(entry);
-      }
-
-      // Heiligabend/Silvester company rules — mandantenweit, unverändert durch diese Migration.
-      const config = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
-      const companyHolidays: HolidayResponseEntry[] = [];
-      const validFromYear = config?.holidayRulesValidFromYear ?? new Date().getFullYear();
-      const christmasRule = y >= validFromYear ? (config?.christmasEveRule ?? "NORMAL") : "NORMAL";
-      const newYearsRule = y >= validFromYear ? (config?.newYearsEveRule ?? "NORMAL") : "NORMAL";
-      if (christmasRule !== "NORMAL") {
-        companyHolidays.push({
-          id: `company-${y}-12-24`,
-          tenantId,
-          salonId: salon.id,
-          date: `${y}-12-24`,
-          name:
-            christmasRule === "FULL_DAY_OFF" ? "Heiligabend (frei)" : "Heiligabend (halber Tag)",
-          federalState: salon.federalState,
-          year: y,
-          isManual: false,
-        });
-      }
-      if (newYearsRule !== "NORMAL") {
-        companyHolidays.push({
-          id: `company-${y}-12-31`,
-          tenantId,
-          salonId: salon.id,
-          date: `${y}-12-31`,
-          name: newYearsRule === "FULL_DAY_OFF" ? "Silvester (frei)" : "Silvester (halber Tag)",
-          federalState: salon.federalState,
-          year: y,
-          isManual: false,
-        });
-      }
-
-      // Merge precedence: manuell > Firmenregel > berechnet — same rule as before this rewrite,
-      // now applied over the salon-resolved sets instead of the tenant-wide ones.
-      const manualDates = new Set(manual.map((m) => m.date));
-      const companyDates = new Set(companyHolidays.map((c) => c.date));
-      const merged = [
-        ...computed.filter((c) => !manualDates.has(c.date) && !companyDates.has(c.date)),
-        ...companyHolidays.filter((c) => !manualDates.has(c.date)),
-        ...manual,
-      ].sort((a, b) => a.date.localeCompare(b.date));
-
-      return merged;
+      return perSalon
+        .flat()
+        .sort((a, b) => a.date.localeCompare(b.date) || a.salonId.localeCompare(b.salonId));
     },
   });
 

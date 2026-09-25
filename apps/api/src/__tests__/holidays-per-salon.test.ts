@@ -104,14 +104,22 @@ describe("Two-salon tenant: SALON_REQUIRED, per-salon manual holidays, byte-iden
     await cleanupTestData(app, foreign.tenant.id);
   });
 
-  it("GET and POST without salonId 400 SALON_REQUIRED", async () => {
+  // D-09 REVISED (coordinator decision, 2026-09-25): a read must not require a salon. GET without
+  // `salonId` on a multi-salon tenant no longer 400s — it returns the concatenated calendars of
+  // every active salon, each item carrying its own `salonId`. WRITES are unchanged (still require
+  // `salonId` on a multi-salon tenant, 400 SALON_REQUIRED).
+  it("GET without salonId 200s with both salons' calendars, each item tagged with its salonId (D-09 revised)", async () => {
     const getRes = await getHolidays(app, data.adminToken, "?year=2026");
-    expect(getRes.statusCode).toBe(400);
-    expect(JSON.parse(getRes.body)).toEqual({
-      error: "Bitte einen Salon angeben — der Mandant hat mehrere aktive Salons.",
-      code: "SALON_REQUIRED",
-    });
+    expect(getRes.statusCode, getRes.body.slice(0, 400)).toBe(200);
+    const body = JSON.parse(getRes.body) as Array<{ date: string; salonId: string }>;
+    const salonIdsSeen = new Set(body.map((e) => e.salonId));
+    expect(salonIdsSeen).toEqual(new Set([salonA.id, salonB.id]));
+    // Fronleichnam is Bavaria-only — must appear tagged with salonA, not salonB.
+    const fronleichnamEntries = body.filter((e) => e.date === "2026-06-04");
+    expect(fronleichnamEntries.map((e) => e.salonId)).toEqual([salonA.id]);
+  });
 
+  it("POST without salonId still 400 SALON_REQUIRED (writes unchanged by D-09)", async () => {
     const postRes = await postHoliday(app, data.adminToken, {
       date: "2026-07-01",
       name: "Ohne Salon",
