@@ -9,7 +9,7 @@
         "employeeId": "employee"
       },
       "minimalBody": null,
-      "reason": "avatars.ts POST handler (fixed 259-01): combined `!employee || employee.tenantId !== req.user.tenantId` guard at line ~29-38 returns the byte-identical 404 before `await req.file()` at line ~44 is ever reached — sec-08-avatars-post-tenant.test.ts case C (bodyless, no content-type probe) proves this directly, so `minimalBody: null` is correct: a bodyless probe reaches the guard.",
+      "reason": "avatars.ts POST handler (fixed 259-01): combined `!employee || employee.tenantId !== req.user.tenantId` guard at line ~29-38 returns the byte-identical 404 before `await req.file()` at line ~44 is ever reached — sec-08-avatars-post-tenant.test.ts case C (bodyless, no content-type probe) proves this directly, so `minimalBody: null` is correct: a bodyless probe reaches the guard. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -21,7 +21,7 @@
         "employeeId": "employee"
       },
       "minimalBody": null,
-      "reason": "avatars.ts GET handler (fixed Phase 258): combined `!employee || employee.tenantId !== req.user.tenantId` guard at line ~94, byte-identical 404 at line ~104, CROSS_TENANT_ACCESS_DENIED audited only when `employee` is truthy — GET has no request body, so a bodyless probe reaches the guard trivially.",
+      "reason": "avatars.ts GET handler (fixed Phase 258): combined `!employee || employee.tenantId !== req.user.tenantId` guard at line ~94, byte-identical 404 at line ~104, CROSS_TENANT_ACCESS_DENIED audited only when `employee` is truthy — GET has no request body, so a bodyless probe reaches the guard trivially. Phase 91b Plan 10 (Issue #91), D-16: EXCLUDED from the scope-variant sweep — this route carries no permission gate beyond requireAuth (any authenticated tenant member may view any tenant member's avatar, a directory-style read by design), so salon/person scope narrowing does not apply.",
       "ticket": null,
       "validatedAt": null
     },
@@ -33,7 +33,7 @@
         "employeeId": "employee"
       },
       "minimalBody": null,
-      "reason": "avatars.ts DELETE handler (fixed Phase 258): combined `!employee || employee.tenantId !== req.user.tenantId` guard at line ~148, byte-identical 404 at line ~158, CROSS_TENANT_ACCESS_DENIED audited only when `employee` is truthy — DELETE has no request body, so a bodyless probe reaches the guard trivially.",
+      "reason": "avatars.ts DELETE handler (fixed Phase 258): combined `!employee || employee.tenantId !== req.user.tenantId` guard at line ~148, byte-identical 404 at line ~158, CROSS_TENANT_ACCESS_DENIED audited only when `employee` is truthy — DELETE has no request body, so a bodyless probe reaches the guard trivially. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -45,7 +45,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "employees.ts:352-353 uses a SCOPED `findUnique({ where: { id, tenantId: req.user.tenantId } } })` — tenantId is baked into the query itself, so a foreign-tenant id and an unknown id both return the identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404 with no separate audit call possible (Prisma never returns the row to compare against).",
+      "reason": "employees.ts:352-353 uses a SCOPED `findUnique({ where: { id, tenantId: req.user.tenantId } } })` — tenantId is baked into the query itself, so a foreign-tenant id and an unknown id both return the identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404 with no separate audit call possible (Prisma never returns the row to compare against). Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -57,7 +57,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "Phase 67b Plan 01 (Issue #67, D-19): salon-assignments.ts:59 calls findEmployeeInTenant(app.prisma, tenantId, id), an inline tenant-scoped `findFirst({ where: { id, tenantId } })` — returns null for BOTH a foreign tenant's real employee and a nonexistent id; both fall through to the shared rejectUnknownEmployee(...) helper, which sends the byte-identical 404 {\"error\":\"Mitarbeiter nicht gefunden\"} and audits CROSS_TENANT_ACCESS_DENIED only when employeeExistsInForeignTenant(...) confirms the row exists in another tenant. GET has no body. API-key callers (`apikey:<id>` subject) get the same 404: rejectUnknownEmployee audits through auditSalonAssignmentEvent, which leaves AuditLog.userId unset and records the key id in newValue.actor, so the audit insert cannot fail on the User foreign key (WR-01 convention, same as auditSalon); the same defect in other routes is tracked in #333.",
+      "reason": "Phase 67b Plan 01 (Issue #67, D-19): salon-assignments.ts:59 calls findEmployeeInTenant(app.prisma, tenantId, id), an inline tenant-scoped `findFirst({ where: { id, tenantId } })` — returns null for BOTH a foreign tenant's real employee and a nonexistent id; both fall through to the shared rejectUnknownEmployee(...) helper, which sends the byte-identical 404 {\"error\":\"Mitarbeiter nicht gefunden\"} and audits CROSS_TENANT_ACCESS_DENIED only when employeeExistsInForeignTenant(...) confirms the row exists in another tenant. GET has no body. API-key callers (`apikey:<id>` subject) get the same 404: rejectUnknownEmployee audits through auditSalonAssignmentEvent, which leaves AuditLog.userId unset and records the key id in newValue.actor, so the audit insert cannot fail on the User foreign key (WR-01 convention, same as auditSalon); the same defect in other routes is tracked in #333. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -72,7 +72,7 @@
         "salonId": "00000000-0000-4000-8000-0000000067b1",
         "validFrom": "2026-01-05"
       },
-      "reason": "Phase 67b Plan 02 (Issue #67, D-08/D-19): createDeploymentSchema.parse(req.body) runs BEFORE the lookup (D-19) — the minimalBody above is the smallest body it accepts (salonId + validFrom; validUntil/weekdays are optional). createDeploymentAssignment(tx, tenantId, id, ...) calls lockEmployee(db, tenantId, employeeId) first, a tenant-scoped `$queryRaw ... FOR UPDATE` returning null for BOTH a foreign tenant's real employee and a nonexistent id; both fall through to the shared rejectUnknownEmployee(...) helper, the same byte-identical 404 as GET, auditing CROSS_TENANT_ACCESS_DENIED only when the row exists in another tenant. API-key callers get the same 404 via auditSalonAssignmentEvent (WR-01 convention); the same defect in other routes is tracked in #333.",
+      "reason": "Phase 67b Plan 02 (Issue #67, D-08/D-19): createDeploymentSchema.parse(req.body) runs BEFORE the lookup (D-19) — the minimalBody above is the smallest body it accepts (salonId + validFrom; validUntil/weekdays are optional). createDeploymentAssignment(tx, tenantId, id, ...) calls lockEmployee(db, tenantId, employeeId) first, a tenant-scoped `$queryRaw ... FOR UPDATE` returning null for BOTH a foreign tenant's real employee and a nonexistent id; both fall through to the shared rejectUnknownEmployee(...) helper, the same byte-identical 404 as GET, auditing CROSS_TENANT_ACCESS_DENIED only when the row exists in another tenant. API-key callers get the same 404 via auditSalonAssignmentEvent (WR-01 convention); the same defect in other routes is tracked in #333. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -87,7 +87,7 @@
         "salonId": "00000000-0000-4000-8000-0000000067b1",
         "validFrom": "2026-01-05"
       },
-      "reason": "Phase 67b Plan 02 (Issue #67, D-05/D-19): changeHomeSalonSchema.parse(req.body) runs BEFORE the lookup — the minimalBody above (salonId + validFrom) is the smallest body it accepts (validUntil/weekdays are rejected by the strict schema). changeHomeSalon(tx, tenantId, id, ...) calls lockEmployee(db, tenantId, employeeId) first, the same tenant-scoped `$queryRaw ... FOR UPDATE` as the DEPLOYMENT create route, returning null for BOTH a foreign tenant's real employee and a nonexistent id; both fall through to the shared rejectUnknownEmployee(...) helper, the same byte-identical 404. API-key callers get the same 404 via auditSalonAssignmentEvent (WR-01 convention); the same defect in other routes is tracked in #333.",
+      "reason": "Phase 67b Plan 02 (Issue #67, D-05/D-19): changeHomeSalonSchema.parse(req.body) runs BEFORE the lookup — the minimalBody above (salonId + validFrom) is the smallest body it accepts (validUntil/weekdays are rejected by the strict schema). changeHomeSalon(tx, tenantId, id, ...) calls lockEmployee(db, tenantId, employeeId) first, the same tenant-scoped `$queryRaw ... FOR UPDATE` as the DEPLOYMENT create route, returning null for BOTH a foreign tenant's real employee and a nonexistent id; both fall through to the shared rejectUnknownEmployee(...) helper, the same byte-identical 404. API-key callers get the same 404 via auditSalonAssignmentEvent (WR-01 convention); the same defect in other routes is tracked in #333. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -102,7 +102,7 @@
       "minimalBody": {
         "validUntil": "2026-01-05"
       },
-      "reason": "Phase 67b Plan 02 (Issue #67, D-11/D-19): endAssignmentSchema.parse(req.body) runs BEFORE the lookup — `{\"validUntil\":\"2026-01-05\"}` is the smallest body it accepts. This is a TWO-fixture-kind route (D-19 forbids classifying it `nicht anwendbar` per the company-shutdowns.ts precedent): the probe's all-params substitution swaps BOTH `:id` and `:assignmentId` at once with either the foreign or the unknown value, so it stops at endSalonAssignment's FIRST guard — lockEmployee(db, tenantId, employeeId), returning null for BOTH a foreign tenant's real employee and a nonexistent id, byte-identical 404 via the shared rejectUnknownEmployee(...) helper. The assignment-level guard (own employee id, a foreign or another-employee's real assignmentId vs. a nonexistent one) is proven separately by `salon-assignments.test.ts` via `rejectUnknownAssignment(...)`, which scopes the lookup by `{ id: assignmentId, tenantId, employeeId }` in one `findFirst` — a row belonging to another employee is indistinguishable from none by construction. API-key callers get the same 404 via auditSalonAssignmentEvent (WR-01 convention); the same defect in other routes is tracked in #333.",
+      "reason": "Phase 67b Plan 02 (Issue #67, D-11/D-19): endAssignmentSchema.parse(req.body) runs BEFORE the lookup — `{\"validUntil\":\"2026-01-05\"}` is the smallest body it accepts. This is a TWO-fixture-kind route (D-19 forbids classifying it `nicht anwendbar` per the company-shutdowns.ts precedent): the probe's all-params substitution swaps BOTH `:id` and `:assignmentId` at once with either the foreign or the unknown value, so it stops at endSalonAssignment's FIRST guard — lockEmployee(db, tenantId, employeeId), returning null for BOTH a foreign tenant's real employee and a nonexistent id, byte-identical 404 via the shared rejectUnknownEmployee(...) helper. The assignment-level guard (own employee id, a foreign or another-employee's real assignmentId vs. a nonexistent one) is proven separately by `salon-assignments.test.ts` via `rejectUnknownAssignment(...)`, which scopes the lookup by `{ id: assignmentId, tenantId, employeeId }` in one `findFirst` — a row belonging to another employee is indistinguishable from none by construction. API-key callers get the same 404 via auditSalonAssignmentEvent (WR-01 convention); the same defect in other routes is tracked in #333. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -114,7 +114,7 @@
         "id": "employee"
       },
       "minimalBody": {},
-      "reason": "employees.ts:570-571 uses the same SCOPED `findUnique({id, tenantId})` as GET /:id, byte-identical 404. `updateEmployeeSchema.parse(req.body)` at line 568 runs BEFORE the lookup (D-07), but every field is `.optional()` so `{}` satisfies it and reaches the guard — an empty body is NOT the same as no body at all (bare `.parse(undefined)` throws), hence the explicit `{}` minimalBody.",
+      "reason": "employees.ts:570-571 uses the same SCOPED `findUnique({id, tenantId})` as GET /:id, byte-identical 404. `updateEmployeeSchema.parse(req.body)` at line 568 runs BEFORE the lookup (D-07), but every field is `.optional()` so `{}` satisfies it and reaches the guard — an empty body is NOT the same as no body at all (bare `.parse(undefined)` throws), hence the explicit `{}` minimalBody. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -126,7 +126,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "employees.ts:801-814: separate `!employee` (404) and `employee.tenantId !== req.user.tenantId` (audited CROSS_TENANT_ACCESS_DENIED, then 404) branches return the byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }`. No body is parsed.",
+      "reason": "employees.ts:801-814: separate `!employee` (404) and `employee.tenantId !== req.user.tenantId` (audited CROSS_TENANT_ACCESS_DENIED, then 404) branches return the byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }`. No body is parsed. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -138,7 +138,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "employees.ts:842-855: fetch-then-compare, byte-identical 404, CROSS_TENANT_ACCESS_DENIED audited. `z.object({ exitDate: z.string().optional() }).parse(req.body ?? {})` at line 840 runs before the lookup but the `?? {}` fallback plus the all-optional schema means a bodyless probe already reaches the guard without needing an explicit minimalBody.",
+      "reason": "employees.ts:842-855: fetch-then-compare, byte-identical 404, CROSS_TENANT_ACCESS_DENIED audited. `z.object({ exitDate: z.string().optional() }).parse(req.body ?? {})` at line 840 runs before the lookup but the `?? {}` fallback plus the all-optional schema means a bodyless probe already reaches the guard without needing an explicit minimalBody. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -150,7 +150,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "employees.ts:916-929: fetch-then-compare, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited. No body is parsed by this handler.",
+      "reason": "employees.ts:916-929: fetch-then-compare, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited. No body is parsed by this handler. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -162,7 +162,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "employees.ts:977-990: fetch-then-compare, byte-identical 404, CROSS_TENANT_ACCESS_DENIED audited. No body is parsed by this handler.",
+      "reason": "employees.ts:977-990: fetch-then-compare, byte-identical 404, CROSS_TENANT_ACCESS_DENIED audited. No body is parsed by this handler. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -174,7 +174,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "employees.ts:1037-1050: fetch-then-compare, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited. No body is parsed. This is the DSGVO anonymization delete — destructive, but idempotent and non-permanent (anonymizes, does not hard-delete), so probing it is safe.",
+      "reason": "employees.ts:1037-1050: fetch-then-compare, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited. No body is parsed. This is the DSGVO anonymization delete — destructive, but idempotent and non-permanent (anonymizes, does not hard-delete), so probing it is safe. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -186,7 +186,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "employees.ts:1148-1151 uses a SCOPED `findUnique({id, tenantId})`, byte-identical 404, no audit possible (scoped query never returns a foreign row to compare). No body is parsed. DESTRUCTIVE-ADJACENT: this authorizes a subsequent hard-delete (15-minute TTL, 4-eyes) — 259-03's probe ordering constraint must run this AFTER any state-mutating probes on the same fixture employee, or place it last, since a stray authorization row is otherwise harmless (it only enables a SEPARATE DELETE call) but is still a real write.",
+      "reason": "employees.ts:1148-1151 uses a SCOPED `findUnique({id, tenantId})`, byte-identical 404, no audit possible (scoped query never returns a foreign row to compare). No body is parsed. DESTRUCTIVE-ADJACENT: this authorizes a subsequent hard-delete (15-minute TTL, 4-eyes) — 259-03's probe ordering constraint must run this AFTER any state-mutating probes on the same fixture employee, or place it last, since a stray authorization row is otherwise harmless (it only enables a SEPARATE DELETE call) but is still a real write. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -198,7 +198,7 @@
         "id": "employee"
       },
       "minimalBody": {},
-      "reason": "employees.ts:1180-1184 uses a SCOPED `findUnique({id, tenantId})`, byte-identical 404, no audit possible (scoped). `forceDeleteBodySchema = z.object({forceDelete: z.boolean().optional()}).optional()` parsed at line 1178 before the lookup; `{}` satisfies it. DESTRUCTIVE: on a genuinely-existing SAME-tenant employee this would actually hard-delete — 259-03's probe must ONLY ever run this against a foreign-tenant id (which the guard rejects at line 1184, before any deletion logic) and an unknown id, never against a real employee in the caller's own tenant.",
+      "reason": "employees.ts:1180-1184 uses a SCOPED `findUnique({id, tenantId})`, byte-identical 404, no audit possible (scoped). `forceDeleteBodySchema = z.object({forceDelete: z.boolean().optional()}).optional()` parsed at line 1178 before the lookup; `{}` satisfies it. DESTRUCTIVE: on a genuinely-existing SAME-tenant employee this would actually hard-delete — 259-03's probe must ONLY ever run this against a foreign-tenant id (which the guard rejects at line 1184, before any deletion logic) and an unknown id, never against a real employee in the caller's own tenant. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -210,7 +210,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "availability.ts:118-122 uses a SCOPED `findFirst({id, tenantId: req.user.tenantId})`, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404, no audit possible (scoped query). No body is parsed by GET.",
+      "reason": "availability.ts:118-122 uses a SCOPED `findFirst({id, tenantId: req.user.tenantId})`, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404, no audit possible (scoped query). No body is parsed by GET. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -224,7 +224,7 @@
       "minimalBody": {
         "entries": []
       },
-      "reason": "availability.ts:158-162 uses the same SCOPED `findFirst({id, tenantId})` as GET, byte-identical 404. `putAvailabilitySchema.parse(req.body)` at line 156 runs before the lookup and REQUIRES `entries` (a non-optional array) — `{}` would throw, but `{\"entries\":[]}` satisfies the schema (an empty array needs no per-item validation) and reaches the guard.",
+      "reason": "availability.ts:158-162 uses the same SCOPED `findFirst({id, tenantId})` as GET, byte-identical 404. `putAvailabilitySchema.parse(req.body)` at line 156 runs before the lookup and REQUIRES `entries` (a non-optional array) — `{}` would throw, but `{\"entries\":[]}` satisfies the schema (an empty array needs no per-item validation) and reaches the guard. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -236,7 +236,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "shift-patterns.ts:36-37 uses a SCOPED `findFirst({id, tenantId: req.user.tenantId})`, byte-identical 404, no audit possible (scoped). No body is parsed by GET. This is the measured two-exported-function, multi-line-import file — its OTHER route (`GET /shift-patterns/tenant`) carries no path parameter and is out of this register.",
+      "reason": "shift-patterns.ts:36-37 uses a SCOPED `findFirst({id, tenantId: req.user.tenantId})`, byte-identical 404, no audit possible (scoped). No body is parsed by GET. This is the measured two-exported-function, multi-line-import file — its OTHER route (`GET /shift-patterns/tenant`) carries no path parameter and is out of this register. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -250,7 +250,7 @@
       "minimalBody": {
         "patterns": []
       },
-      "reason": "shift-patterns.ts:75-79 uses the same SCOPED `findFirst({id, tenantId})` as GET, byte-identical 404. `putPatternsSchema.parse(req.body)` at line 73 runs before the lookup and REQUIRES `patterns` (a non-optional array); `{\"patterns\":[]}` satisfies it and reaches the guard.",
+      "reason": "shift-patterns.ts:75-79 uses the same SCOPED `findFirst({id, tenantId})` as GET, byte-identical 404. `putPatternsSchema.parse(req.body)` at line 73 runs before the lookup and REQUIRES `patterns` (a non-optional array); `{\"patterns\":[]}` satisfies it and reaches the guard. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -262,7 +262,7 @@
         "id": "employee"
       },
       "minimalBody": null,
-      "reason": "vocational-school-pattern.ts:129-133 uses a SCOPED `findFirst({id, tenantId: req.user.tenantId})`, byte-identical 404, no audit possible (scoped). No body is parsed by GET.",
+      "reason": "vocational-school-pattern.ts:129-133 uses a SCOPED `findFirst({id, tenantId: req.user.tenantId})`, byte-identical 404, no audit possible (scoped). No body is parsed by GET. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -276,7 +276,7 @@
       "minimalBody": {
         "patterns": []
       },
-      "reason": "vocational-school-pattern.ts:173-177 uses the same SCOPED `findFirst({id, tenantId})` as GET, byte-identical 404. `putPatternsSchema.parse(req.body)` at line 171 runs before the lookup and REQUIRES `patterns` (a non-optional array); `{\"patterns\":[]}` satisfies it and reaches the guard.",
+      "reason": "vocational-school-pattern.ts:173-177 uses the same SCOPED `findFirst({id, tenantId})` as GET, byte-identical 404. `putPatternsSchema.parse(req.body)` at line 171 runs before the lookup and REQUIRES `patterns` (a non-optional array); `{\"patterns\":[]}` satisfies it and reaches the guard. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -372,7 +372,7 @@
         "employeeId": "employee"
       },
       "minimalBody": null,
-      "reason": "settings.ts:905-916: combined-shape fetch-then-compare (`!employee || employee.tenantId !== req.user.tenantId`), byte-identical `{ error: \"Kein Arbeitszeitmodell gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited only when `employee` is truthy. This is the canonical T-100-09 example CLAUDE.md/259-CONTEXT.md both cite. No body is parsed by GET.",
+      "reason": "settings.ts:905-916: combined-shape fetch-then-compare (`!employee || employee.tenantId !== req.user.tenantId`), byte-identical `{ error: \"Kein Arbeitszeitmodell gefunden\" }` 404, CROSS_TENANT_ACCESS_DENIED audited only when `employee` is truthy. This is the canonical T-100-09 example CLAUDE.md/259-CONTEXT.md both cite. No body is parsed by GET. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -384,7 +384,7 @@
         "employeeId": "employee"
       },
       "minimalBody": {},
-      "reason": "settings.ts:952-960: same combined-shape guard as GET above, byte-identical 404, audited. `employeeScheduleSchema.parse(req.body)` at line 940 runs BEFORE the lookup at 942 (D-07); every top-level field carries a `.default(...)` and the `superRefine` at line 373 only fires for `type: SHIFT_BASED|FLEXTIME` (default is FIXED_SCHEDULE), so `{}` satisfies the schema and reaches the guard — bare `.parse(undefined)` would throw, hence the explicit `{}`.",
+      "reason": "settings.ts:952-960: same combined-shape guard as GET above, byte-identical 404, audited. `employeeScheduleSchema.parse(req.body)` at line 940 runs BEFORE the lookup at 942 (D-07); every top-level field carries a `.default(...)` and the `superRefine` at line 373 only fires for `type: SHIFT_BASED|FLEXTIME` (default is FIXED_SCHEDULE), so `{}` satisfies the schema and reaches the guard — bare `.parse(undefined)` would throw, hence the explicit `{}`. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -396,7 +396,7 @@
         "employeeId": "employee"
       },
       "minimalBody": null,
-      "reason": "settings.ts:1391-1404: same combined-shape guard as GET /work/:employeeId (its own comment says \"copied verbatim\"), byte-identical `{ error: \"Kein Arbeitszeitmodell gefunden\" }` 404, audited. No body is parsed by GET.",
+      "reason": "settings.ts:1391-1404: same combined-shape guard as GET /work/:employeeId (its own comment says \"copied verbatim\"), byte-identical `{ error: \"Kein Arbeitszeitmodell gefunden\" }` 404, audited. No body is parsed by GET. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -408,7 +408,7 @@
         "employeeId": "employee"
       },
       "minimalBody": null,
-      "reason": "leave-settings.ts:32-47: separate `!employee` (404) and tenant-mismatch (audited CROSS_TENANT_ACCESS_DENIED, then 404) branches, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }`. No body is parsed by GET.",
+      "reason": "leave-settings.ts:32-47: separate `!employee` (404) and tenant-mismatch (audited CROSS_TENANT_ACCESS_DENIED, then 404) branches, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }`. No body is parsed by GET. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -423,7 +423,7 @@
         "year": 2026,
         "totalDays": 0
       },
-      "reason": "leave-settings.ts:79-94: same fetch-then-compare guard as GET above, byte-identical 404, audited. `vacationEntitlementSchema.parse(req.body)` at line 77 runs BEFORE the lookup at 79 and REQUIRES `year` and `totalDays` (D-07 — a bodyless probe would 400 on both arms); `{\"year\":2026,\"totalDays\":0}` is a minimal valid body that reaches the guard.",
+      "reason": "leave-settings.ts:79-94: same fetch-then-compare guard as GET above, byte-identical 404, audited. `vacationEntitlementSchema.parse(req.body)` at line 77 runs BEFORE the lookup at 79 and REQUIRES `year` and `totalDays` (D-07 — a bodyless probe would 400 on both arms); `{\"year\":2026,\"totalDays\":0}` is a minimal valid body that reaches the guard. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -435,7 +435,7 @@
         "employeeId": "employee"
       },
       "minimalBody": null,
-      "reason": "leave.ts:2605-2618: separate `!employee` (404) and tenant-mismatch (audited CROSS_TENANT_ACCESS_DENIED, then 404) branches, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }`. No body is parsed by GET.",
+      "reason": "leave.ts:2605-2618: separate `!employee` (404) and tenant-mismatch (audited CROSS_TENANT_ACCESS_DENIED, then 404) branches, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }`. No body is parsed by GET. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -447,7 +447,7 @@
         "employeeId": "employee"
       },
       "minimalBody": null,
-      "reason": "overtime.ts:123-133: separate `!employee` (404) and tenant-mismatch (audited CROSS_TENANT_ACCESS_DENIED, then 404) branches, byte-identical `{ error: \"Konto nicht gefunden\" }`. Reachable because `seedTestData` creates an `OvertimeAccount` for every employee (line 109's own `!account` 404 at line 109 never fires for the fixture's foreign employee). No body is parsed by GET.",
+      "reason": "overtime.ts:123-133: separate `!employee` (404) and tenant-mismatch (audited CROSS_TENANT_ACCESS_DENIED, then 404) branches, byte-identical `{ error: \"Konto nicht gefunden\" }`. Reachable because `seedTestData` creates an `OvertimeAccount` for every employee (line 109's own `!account` 404 at line 109 never fires for the fixture's foreign employee). No body is parsed by GET. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -459,7 +459,7 @@
         "employeeId": "employee"
       },
       "minimalBody": null,
-      "reason": "overtime.ts:1514-1520 uses a combined `!employee || employee.tenantId !== req.user.tenantId` condition, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404 — the response IS byte-identical (the T-100-09 property this register tracks), but UNLIKE its siblings this route carries NO CROSS_TENANT_ACCESS_DENIED audit call; flagged for transparency, not filed as bekannt-abweichend since the probe-relevant guarantee (response indistinguishability) is measured intact. No body is parsed by GET.",
+      "reason": "overtime.ts:1514-1520 uses a combined `!employee || employee.tenantId !== req.user.tenantId` condition, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404 — the response IS byte-identical (the T-100-09 property this register tracks), but UNLIKE its siblings this route carries NO CROSS_TENANT_ACCESS_DENIED audit call; flagged for transparency, not filed as bekannt-abweichend since the probe-relevant guarantee (response indistinguishability) is measured intact. No body is parsed by GET. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -471,7 +471,7 @@
         "employeeId": "employee"
       },
       "minimalBody": null,
-      "reason": "overtime.ts:1867-1873 uses a combined `!employee || employee.tenantId !== req.user.tenantId` condition, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404, no audit call (same as /snapshots above). REQUIRED query params `year`/`month` (z.coerce.number, no default) are parsed at line 1854-1859 BEFORE the guard — the D-07 risk here is on the QUERY STRING, not the body (this is a GET with no body at all); 259-03's probe MUST supply `?year=2026&month=1` (or similar) on both arms or it gets a mutual 400 that proves nothing, exactly D-07's failure shape on a different input channel.",
+      "reason": "overtime.ts:1867-1873 uses a combined `!employee || employee.tenantId !== req.user.tenantId` condition, byte-identical `{ error: \"Mitarbeiter nicht gefunden\" }` 404, no audit call (same as /snapshots above). REQUIRED query params `year`/`month` (z.coerce.number, no default) are parsed at line 1854-1859 BEFORE the guard — the D-07 risk here is on the QUERY STRING, not the body (this is a GET with no body at all); 259-03's probe MUST supply `?year=2026&month=1` (or similar) on both arms or it gets a mutual 400 that proves nothing, exactly D-07's failure shape on a different input channel. Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
@@ -498,7 +498,7 @@
         "startDate": "2026-01-05",
         "endDate": "2026-01-05"
       },
-      "reason": "FIXED (Issue #309): tenant guard now runs BEFORE the ownership check in the PATCH /requests/:id handler, fetching employee.tenantId via include and returning the identical 404 {\"error\":\"Antrag nicht gefunden\"} for both a foreign-tenant real id and an unknown id, with a CROSS_TENANT_ACCESS_DENIED audit nested so it fires only when the row exists. minimalBody is required because updateSchema.parse(req.body) runs before the findFirst, a bodyless probe would 400 on both arms (D-07).",
+      "reason": "FIXED (Issue #309): tenant guard now runs BEFORE the ownership check in the PATCH /requests/:id handler, fetching employee.tenantId via include and returning the identical 404 {\"error\":\"Antrag nicht gefunden\"} for both a foreign-tenant real id and an unknown id, with a CROSS_TENANT_ACCESS_DENIED audit nested so it fires only when the row exists. minimalBody is required because updateSchema.parse(req.body) runs before the findFirst, a bodyless probe would 400 on both arms (D-07). Phase 91b Plan 10 (Issue #91), D-16: EXCLUDED from the scope-variant sweep — this route is EIGENE-only (self-edit, `existing.employeeId !== req.user.employeeId` -> 403), no ZUGEWIESEN path exists for a manager to reach another employee's request here at all, so there is nothing for a salon/person scope check to narrow.",
       "ticket": null,
       "validatedAt": null
     },
@@ -513,7 +513,7 @@
         "startTime": "2026-01-05T09:00:00.000Z",
         "endTime": "2026-01-05T09:30:00.000Z"
       },
-      "reason": "FIXED (Issue #310): the separate not-found (404) and cross-tenant (403 \"Kein Zugriff\") branches in POST /:id/breaks are folded into one condition, both arms now answering the identical 404 {\"error\":\"Eintrag nicht gefunden\"}, with a new CROSS_TENANT_ACCESS_DENIED audit nested so it fires only when the row exists (this route previously had NO audit call at all, unlike sibling PATCH /:id/break-status). minimalBody is required because appendBreakSchema.parse(req.body) runs before the findFirst, a bodyless probe would 400 on both arms (D-07).",
+      "reason": "FIXED (Issue #310): the separate not-found (404) and cross-tenant (403 \"Kein Zugriff\") branches in POST /:id/breaks are folded into one condition, both arms now answering the identical 404 {\"error\":\"Eintrag nicht gefunden\"}, with a new CROSS_TENANT_ACCESS_DENIED audit nested so it fires only when the row exists (this route previously had NO audit call at all, unlike sibling PATCH /:id/break-status). minimalBody is required because appendBreakSchema.parse(req.body) runs before the findFirst, a bodyless probe would 400 on both arms (D-07). Phase 91b Plan 10 (Issue #91), D-16: covered by the scope-variant sweep in t100-09-oracle-probe.test.ts — a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical.",
       "ticket": null,
       "validatedAt": null
     },
