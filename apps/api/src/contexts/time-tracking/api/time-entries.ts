@@ -1075,8 +1075,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // the RetroEntryRequest create and the plain create, so a rejection (404/400) leaves zero
       // state change. An explicit salon (body.salonId) is stored UNCHANGED even when
       // `salonForDay` would suggest another, and the entry is not marked invalid for it (issue
-      // #68: "Ein Abweichen vom Muster aus #67 ist kein Fehler") — any caller allowed to use this
-      // route, including an employee filing their own Zeitnachtrag, may name a salon.
+      // #68: deviating from the #67 pattern here is not a mistake) — any caller allowed to use
+      // this route, including an employee filing their own Zeitnachtrag, may name a salon.
       const salonResolution = await resolveEntrySalon(app.prisma, {
         tenantId: user.tenantId,
         employeeId,
