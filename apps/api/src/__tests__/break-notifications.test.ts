@@ -19,7 +19,13 @@
  * un-opted tenants see ZERO behavior change once the cron ships.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { fromZonedTime } from "date-fns-tz";
@@ -42,6 +48,7 @@ async function seedBreakTenant(
   const tenant = await prisma.tenant.create({
     data: { name: `BreakNotif ${s}`, slug: `bn-${s}`, federalState: "NIEDERSACHSEN" },
   });
+  await createTestSalon(prisma, tenant.id); // Phase 68b (issue #68)
   await prisma.tenantConfig.create({
     data: {
       tenantId: tenant.id,
@@ -114,6 +121,7 @@ async function seedAutoEntry(app: FastifyInstance, employeeId: string, dateStr: 
       breakStatus: "AUTO",
       type: "WORK",
       source: "MANUAL",
+      salonId: await salonIdForEmployee(app.prisma, employeeId), // Phase 68b (issue #68)
     },
   });
 }

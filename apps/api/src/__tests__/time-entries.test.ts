@@ -90,6 +90,7 @@ describe("Time Entries API", () => {
           isInvalid: true,
           ...invalidReasonFields("MISSING_CLOCK_OUT"),
           source: "MOBILE",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
 
@@ -123,6 +124,7 @@ describe("Time Entries API", () => {
           isInvalid: true,
           ...invalidReasonFields("MISSING_CLOCK_OUT"),
           source: "MOBILE",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
 
@@ -136,6 +138,7 @@ describe("Time Entries API", () => {
           isInvalid: true,
           ...invalidReasonFields("MISSING_CLOCK_OUT"),
           source: "MOBILE",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
 
@@ -177,6 +180,7 @@ describe("Time Entries API", () => {
           isInvalid: true,
           ...invalidReasonFields("RETRO_APPROVAL_PENDING"),
           source: "MANUAL",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
 
@@ -586,6 +590,7 @@ describe("Time Entries API", () => {
           breakMinutes: 30,
           breakStatus: "AUTO",
           source: "MANUAL",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       flipCleanupIds.push(res.id);
@@ -712,6 +717,7 @@ describe("Time Entries API", () => {
           breakMinutes: 30,
           source: "MANUAL",
           deletedAt: new Date(),
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       softDeleteCleanupIds.push(entry.id);
@@ -752,6 +758,7 @@ describe("Time Entries API", () => {
           breakMinutes: 30,
           source: "MANUAL",
           isLocked: true,
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       lockedCleanupIds.push(entry.id);
@@ -777,6 +784,7 @@ describe("Time Entries API", () => {
           breakMinutes: 30,
           source: "MANUAL",
           isLocked: true,
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       lockedCleanupIds.push(entry.id);
@@ -849,6 +857,7 @@ describe("Time Entries API", () => {
           breakMinutes: 30,
           source: "MANUAL",
           deletedAt: new Date(),
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       cleanupIds.push(entry.id);
@@ -886,6 +895,7 @@ describe("Time Entries API", () => {
           endTime: new Date("2026-06-26T16:00:00Z"),
           breakMinutes: 30,
           source: "MANUAL",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       cleanupIds.push(entry.id);
@@ -927,6 +937,7 @@ describe("Time Entries API", () => {
           endTime: new Date("2026-06-27T16:00:00Z"),
           breakMinutes: 30,
           source: "MANUAL",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       cleanupIds.push(entry.id);

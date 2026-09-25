@@ -77,6 +77,7 @@ describe("anonymizeEmployeeData (helper)", () => {
         startTime: new Date("2025-06-15T08:00:00Z"),
         endTime: new Date("2025-06-15T16:00:00Z"),
         note: "Persönliche Notiz mit PII",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
     timeEntryId = te.id;

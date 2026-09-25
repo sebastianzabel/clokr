@@ -616,8 +616,25 @@ import { readFileSync } from "node:fs";
 // 3932). 65b's own branch (before this merge) measured 309 / 3826; merging in 67b's five new test
 // files and its share of new cases brings it to 315 / 3932, which the reporter confirms. Numbers
 // read from the reporter, not summed from a diff.
-const MIN_FILES = 315;
-const MIN_TESTS = 3932;
+//
+// Phase 68b (issue #68), 2026-09-25: re-measured on the FINAL, actually-merged tree
+// (`origin/main` @ 7f4b88e8, #351, phase 344-01, on top of #348/#349 phase 65b, merged into
+// `feat/68-zeiteintrag-salon` — merge commit `0d59687c`; `git merge-base --is-ancestor
+// origin/main HEAD` true afterwards, re-checked once more right before this sweep with no further
+// movement): `pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api test`:
+// `Test Files 321 passed (321)`, `Tests 3987 passed | 3 skipped (3990)`, zero failures —
+// `vitest-report.json` agrees (`testResults.length` 321, `numTotalTests` 3990). Previous floor
+// 315 / 3932 (65b's own measurement above, itself already merged with 67b). Phase 68b's own new
+// files: `time-entry-salon.test.ts`, `time-entry-salon-import.test.ts`,
+// `time-entry-salon-put.test.ts`, `time-entry-salon-clock.test.ts`,
+// `time-entry-salon-migration.test.ts` (5 files); the rest of the delta (315 -> 321 net, after
+// 68b's own 5 new files, is only 1 file — the merge brought in commits 5bab411f/1f623074/7f4b88e8,
+// which together add several new test files and cases but the 315/3932 baseline above was itself
+// measured AFTER those same 65b commits landed on `feat/65-phorest-kopplung`, so most of that
+// content was already counted there) is not reconstructed file-by-file here; the authoritative
+// numbers are the reporter's own count on the actually-merged tree, not a summed diff.
+const MIN_FILES = 321;
+const MIN_TESTS = 3990;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

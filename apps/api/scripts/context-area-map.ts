@@ -169,6 +169,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/clock-out-debounce-message.ts": "zeiterfassung", // Phase 307 Plan 02 (D-03/D-05) — builds the German 409 message for a DEBOUNCE_NOOP clock-out over TimeEntry.startTime
   "src/contexts/time-tracking/day-entries.ts": "zeiterfassung", // Phase 69b (Issue #69) — findEntriesOfDay, the single employee+day TimeEntry lookup
   "src/contexts/time-tracking/entry-invariants.ts": "zeiterfassung", // Phase 101B (Issue #101) — lifted out of api/time-entries.ts; one-per-day/overlap/month-lock/retro-window invariants + effective-schedule resolution over TimeEntry
+  "src/contexts/time-tracking/entry-salon.ts": "zeiterfassung", // Phase 68b (issue #68) — resolveEntrySalon, the entry-salon rule; reads the Unterbau only through the platform index
   "src/contexts/time-tracking/find-unconfirmed-break-days.ts": "zeiterfassung", // AUTO/CONFIRMED/WAIVED break-status query over TimeEntry
   "src/contexts/time-tracking/invalid-reason.ts": "zeiterfassung", // TimeEntry.invalidReason string registry; 4 of 6 importers are Zeiterfassung
   "src/contexts/time-tracking/normalize-mac.ts": "zeiterfassung", // PresenceDevice MAC-address normalization

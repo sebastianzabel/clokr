@@ -177,6 +177,7 @@ describe("POST /presence/events — Phase 76.2 Plan 5 resolver migration", () =>
         date: TODAY_UTC_MIDNIGHT,
         startTime: startedAt,
         source: "WIFI",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 
@@ -209,6 +210,7 @@ describe("POST /presence/events — Phase 76.2 Plan 5 resolver migration", () =>
         date: TODAY_UTC_MIDNIGHT,
         startTime: startedAt,
         source: "NFC",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 
@@ -241,6 +243,7 @@ describe("POST /presence/events — Phase 76.2 Plan 5 resolver migration", () =>
         date: TODAY_UTC_MIDNIGHT,
         startTime: startedAt,
         source: "WIFI",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 

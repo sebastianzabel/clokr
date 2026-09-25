@@ -5,6 +5,7 @@ import {
   closeTestApp,
   seedTestData,
   cleanupTestData,
+  salonIdForEmployee, // Phase 68b (issue #68)
 } from "../../../../__tests__/setup";
 import { computeMonthSaldo } from "../../month-saldo";
 import type { FastifyInstance } from "fastify";
@@ -97,6 +98,7 @@ describe("Opening Balance seeding — manual close & month-saldo parity (OB-02)"
         breakMinutes: 60,
         source: "MANUAL",
         type: "WORK",
+        salonId: await salonIdForEmployee(app.prisma, employeeId), // Phase 68b (issue #68)
       },
     });
   }

@@ -39,6 +39,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
+import { salonIdForEmployee } from "./setup"; // Phase 68b (issue #68)
 import { dateToDay } from "../contexts/platform/salon-assignment-rules";
 
 /**
@@ -217,6 +218,7 @@ describe("Phase 73-01: test-only tenant bootstrap", () => {
           date: new Date("2025-01-15"),
           startTime: new Date("2025-01-15T08:00:00Z"),
           endTime: new Date("2025-01-15T16:00:00Z"),
+          salonId: await salonIdForEmployee(appOn.prisma, employee!.id), // Phase 68b (issue #68)
         },
       });
       await appOn.prisma.leaveRequest.create({

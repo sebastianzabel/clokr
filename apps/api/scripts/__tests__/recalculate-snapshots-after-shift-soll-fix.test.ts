@@ -14,7 +14,13 @@
  * Uses initials-only (no PII per memory feedback_no_pii_in_github).
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "../../src/__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+} from "../../src/__tests__/setup"; // Phase 68b (issue #68)
 import {
   main,
   parseArgs2,
@@ -62,6 +68,7 @@ describe("recalculate-snapshots-after-shift-soll-fix (Phase 76.22 Plan 03)", () 
       data: { name: `P7622-03 ${slug}`, slug, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 68b (issue #68)
     await prisma.tenantConfig.create({
       data: {
         tenantId,
@@ -188,6 +195,7 @@ describe("recalculate-snapshots-after-shift-soll-fix (Phase 76.22 Plan 03)", () 
           type: "WORK",
           isLocked: true,
           lockedAt: new Date(),
+          salonId: await salonIdForEmployee(prisma, eid), // Phase 68b (issue #68)
         },
       });
     }

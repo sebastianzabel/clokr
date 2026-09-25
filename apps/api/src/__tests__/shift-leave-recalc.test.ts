@@ -465,6 +465,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
         date: utcMidnight(start),
         startTime: new Date(`${start}T09:00:00Z`),
         isLocked: true,
+        salonId, // Phase 68b (issue #68)
       },
     });
 

@@ -300,6 +300,7 @@ describe("Employees API", () => {
           startTime: new Date("2025-06-15T08:00:00Z"),
           endTime: new Date("2025-06-15T16:00:00Z"),
           note: "Persönliche Notiz",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
     });

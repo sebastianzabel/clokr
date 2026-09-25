@@ -375,6 +375,7 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
           source: "MANUAL",
           isLocked: true,
           lockedAt: new Date(),
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
 
@@ -436,6 +437,7 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
           source: "MANUAL",
           isLocked: true,
           lockedAt: new Date(),
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
 

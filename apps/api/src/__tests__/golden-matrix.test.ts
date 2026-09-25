@@ -1554,6 +1554,7 @@ async function seedGoldenScenario(app: FastifyInstance, cell: Cell): Promise<See
   }
 
   // WORK TimeEntries
+  const cellSalonId = await salonIdForEmployee(prisma, employeeId); // Phase 68b (issue #68)
   for (const e of cell.entries) {
     const start = new Date(e.date + "T08:00:00Z");
     const end = new Date(start.getTime() + e.netto * 60_000);
@@ -1565,6 +1566,7 @@ async function seedGoldenScenario(app: FastifyInstance, cell: Cell): Promise<See
         endTime: end,
         breakMinutes: 0,
         type: "WORK",
+        salonId: cellSalonId,
       },
     });
   }
@@ -2126,6 +2128,7 @@ describe("GT-08 — reopen earliest snapshot: live saldo == cumulative, not Feb-
     // 22 Mo-Fr entries in Jan 2026 (including Jan 01 / Neujahr), all at 480 net min.
     // Neujahr is a NI holiday — close-month will subtract it from expected (10080 expected).
     // Worked = 22 × 480 = 10560. Balance = 10560 − 10080 = +480 min = +8h.
+    const gt08SalonId = await salonIdForEmployee(prisma, employeeId); // Phase 68b (issue #68)
     for (const d of JAN_MO_FR) {
       await prisma.timeEntry.create({
         data: {
@@ -2135,6 +2138,7 @@ describe("GT-08 — reopen earliest snapshot: live saldo == cumulative, not Feb-
           endTime: new Date(d + "T16:00:00Z"),
           breakMinutes: 0,
           type: "WORK",
+          salonId: gt08SalonId,
         },
       });
     }

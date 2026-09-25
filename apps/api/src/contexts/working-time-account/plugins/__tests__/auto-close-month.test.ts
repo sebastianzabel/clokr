@@ -23,7 +23,13 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { getTestApp, closeTestApp, cleanupTestData } from "../../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+} from "../../../../__tests__/setup"; // Phase 68b (issue #68)
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { monthRangeUtc } from "../../timezone";
@@ -109,6 +115,7 @@ describe("auto-close-month plugin (Phase 76.12 Plan 02) — Ø-Methode + bsAbsen
         data: { name: `ACM 76.12 ${s}`, slug: `acm-${s}`, federalState: "NIEDERSACHSEN" },
       });
       tenantId = tenant.id;
+      await createTestSalon(prisma, tenantId); // Phase 68b (issue #68)
       await prisma.tenantConfig.create({
         data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
       });
@@ -236,6 +243,7 @@ describe("auto-close-month plugin (Phase 76.12 Plan 02) — Ø-Methode + bsAbsen
         "2026-05-28",
         // 2026-05-29 (Fri) covered by leave below
       ];
+      const asEmpSalonId = await salonIdForEmployee(prisma, asEmp.id); // Phase 68b (issue #68)
       for (const day of workdays) {
         await prisma.timeEntry.create({
           data: {
@@ -246,6 +254,7 @@ describe("auto-close-month plugin (Phase 76.12 Plan 02) — Ø-Methode + bsAbsen
             breakMinutes: 0,
             type: "WORK",
             source: "MANUAL",
+            salonId: asEmpSalonId,
           },
         });
       }

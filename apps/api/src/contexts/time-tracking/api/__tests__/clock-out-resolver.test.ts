@@ -86,6 +86,7 @@ describe("POST /:id/clock-out — Phase 76.2 resolver migration", () => {
         date,
         startTime,
         source: "MOBILE",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
     return { id: entry.id, startTime };

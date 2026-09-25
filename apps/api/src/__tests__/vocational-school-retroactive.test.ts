@@ -719,6 +719,7 @@ describe("Berufsschule — rückwirkende Musteränderungen (Phase 103, Tracer)",
         type: "WORK",
         isInvalid: opts.isInvalid ?? false,
         deletedAt: opts.deletedAt ?? null,
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
   }
@@ -1355,6 +1356,7 @@ describe("Berufsschule — rückwirkende Musteränderungen (Phase 103, Tracer)",
           breakMinutes: 0,
           source: "MANUAL",
           type: "WORK",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
     }

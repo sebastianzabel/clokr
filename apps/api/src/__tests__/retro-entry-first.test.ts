@@ -25,7 +25,13 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import { fromZonedTime } from "date-fns-tz";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import { daysAgoStrInTz, dbDateStr, TEST_TZ } from "./test-dates";
 import { invalidReasonFields } from "../contexts/time-tracking/invalid-reason";
@@ -105,6 +111,7 @@ async function seedEntryFirstTenant(app: FastifyInstance, suffix: string) {
   const tenant = await prisma.tenant.create({
     data: { name: `EntryFirst ${s}`, slug: `refirst-${s}`, federalState: "NIEDERSACHSEN" },
   });
+  await createTestSalon(prisma, tenant.id); // Phase 68b (issue #68)
   await prisma.tenantConfig.create({
     data: { tenantId: tenant.id, defaultVacationDays: 30, timezone: TZ },
   });
@@ -152,6 +159,7 @@ async function seedCoupledPending(
       ...invalidReasonFields("RETRO_APPROVAL_PENDING"),
       retroRequestId: request.id,
       isLocked: opts.isLocked ?? false,
+      salonId: await salonIdForEmployee(prisma, employeeId), // Phase 68b (issue #68)
     },
   });
   return { request, entry };
@@ -762,6 +770,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
             breakMinutes: 30,
             source: "MANUAL",
             createdBy: employeeId,
+            salonId: await salonIdForEmployee(app.prisma, employeeId), // Phase 68b (issue #68)
           },
         });
 

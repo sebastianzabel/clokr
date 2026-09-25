@@ -158,6 +158,7 @@ async function seedEntry(
       breakMinutes: 30,
       type: "WORK",
       isInvalid: opts.isInvalid ?? false,
+      salonId: await salonIdForEmployee(app.prisma, employeeId), // Phase 68b (issue #68)
     },
   });
 }

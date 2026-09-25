@@ -25,7 +25,13 @@ import { createHash } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { fromZonedTime } from "date-fns-tz";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  salonIdForEmployee,
+} from "./setup";
 import { TEST_TZ, todayStr, addDaysStr, utcMidnight, holidayFreeMondayStr } from "./test-dates";
 import { checkArbZG } from "../contexts/time-tracking/arbzg";
 import { resolveClockEvent } from "../services/clock/resolver";
@@ -121,6 +127,7 @@ describe("Phase 69b — day-lookup characterization (pinned before the refactor)
         breakMinutes: 0,
         source: "MANUAL",
         type: "WORK",
+        salonId: await salonIdForEmployee(app.prisma, employeeId), // Phase 68b (issue #68)
         ...extra,
       },
     });

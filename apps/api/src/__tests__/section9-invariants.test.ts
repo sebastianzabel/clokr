@@ -127,6 +127,7 @@ describe("§ 9 BUrlG legal invariants — Phase 104-06 Task 3", () => {
         type: "WORK",
         isLocked: true,
         lockedAt: new Date("2026-04-01T00:00:00Z"),
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
     await app.prisma.saldoSnapshot.create({

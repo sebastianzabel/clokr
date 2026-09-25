@@ -105,6 +105,7 @@ describe("leave.ts characterization — cancellation-approval Rückbuchung (Phas
         isInvalid: true,
         invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
         invalidReason: "Urlaubsstornierung ausstehend",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 
@@ -165,6 +166,7 @@ describe("leave.ts characterization — cancellation-approval Rückbuchung (Phas
         isInvalid: true,
         invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
         invalidReason: "Urlaubsstornierung ausstehend",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 

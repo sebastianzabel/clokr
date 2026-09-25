@@ -21,7 +21,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import { dateStrInTz } from "../contexts/working-time-account/timezone";
 import { computeEntryAgeInDays } from "../contexts/time-tracking/retro-config";
@@ -47,6 +53,7 @@ async function seedApprovalTenant(app: FastifyInstance, suffix: string) {
   const tenant = await prisma.tenant.create({
     data: { name: `RetroAppr ${s}`, slug: `rappr-${s}`, federalState: "NIEDERSACHSEN" },
   });
+  await createTestSalon(prisma, tenant.id); // Phase 68b (issue #68)
   await prisma.tenantConfig.create({
     data: { tenantId: tenant.id, defaultVacationDays: 30, timezone: TZ },
   });
@@ -145,6 +152,7 @@ async function seedEntryFirstCoupled(
       ...invalidReasonFields("RETRO_APPROVAL_PENDING"),
       retroRequestId: request.id,
       isLocked: opts.isLocked ?? false,
+      salonId: await salonIdForEmployee(prisma, employeeId), // Phase 68b (issue #68)
     },
   });
   return { request, entry };
@@ -819,6 +827,7 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
             breakMinutes: 30,
             source: "MANUAL",
             createdBy: employeeId,
+            salonId: await salonIdForEmployee(app.prisma, employeeId), // Phase 68b (issue #68)
           },
         });
 
@@ -931,6 +940,7 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
             breakMinutes: 30,
             source: "MANUAL",
             createdBy: employeeId,
+            salonId: await salonIdForEmployee(app.prisma, employeeId), // Phase 68b (issue #68)
           },
         });
 

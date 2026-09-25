@@ -13,7 +13,7 @@ import {
 // eslint-disable-next-line no-restricted-imports -- E-2: the importer writes directly into time-tracking and working-time-account. Disappears in Block 2 (#102-#104). ADR 0001 Eintrag H.
 import { getTenantTimezone } from "../../working-time-account/timezone";
 import { createOvertimeAccount } from "../../working-time-account"; // Phase 100B Plan 06 — W13
-import { createImportedTimeEntry } from "../../time-tracking"; // Phase 100B Plan 08 — T12
+import { createImportedTimeEntry, resolveEntrySalon } from "../../time-tracking"; // Phase 100B Plan 08 — T12; Phase 68b (issue #68), D-11
 // Phase 67b Plan 03 (issue #67, D-23) — the Stammsalon lifecycle helpers.
 import { listSalons } from "../facade/salons";
 import {
@@ -43,6 +43,11 @@ const timeEntryRowSchema = z.object({
   endTime: z.string(),
   breakMinutes: z.coerce.number().min(0).default(0),
   note: z.string().optional(),
+  // Phase 68b (issue #68), D-11: an optional per-row salon column. The value is the salon's
+  // UUID, never a salon name (CLAUDE.md: no display string as a control value) — resolved
+  // through `resolveEntrySalon`, so a foreign and a nonexistent id produce the same per-row
+  // text. Missing/empty column falls back to the derived salon (salonForDay -> default).
+  salonId: z.string().uuid().optional(),
 });
 
 function parseDate(str: string): string {
@@ -267,6 +272,8 @@ export async function importRoutes(app: FastifyInstance) {
             endTime: raw.endTime || raw.end || raw.Ende || raw.bis || raw.Bis || "",
             breakMinutes: raw.breakMinutes || raw.pause || raw.Pause || "0",
             note: raw.note || raw.notiz || raw.Notiz || "",
+            // Phase 68b (issue #68), D-11: an empty cell falls back to the derived salon.
+            salonId: raw.salonId || raw["Salon-ID"] || undefined,
           });
 
           const employeeId = empMap.get(data.employeeNumber);
@@ -299,6 +306,18 @@ export async function importRoutes(app: FastifyInstance) {
           });
           if (invariantError) throw new Error(invariantError.error);
 
+          // Phase 68b (issue #68), D-11: resolve the row's salon the same way every other
+          // TimeEntry writer does. A non-ok result throws so the existing per-row catch below
+          // reports the German error text and the import loop continues. An explicit
+          // `Salon-ID`/`salonId` CSV column is honoured; without it, the derived salon applies.
+          const salonResolution = await resolveEntrySalon(app.prisma, {
+            tenantId: req.user.tenantId,
+            employeeId,
+            startTime,
+            explicitSalonId: data.salonId,
+          });
+          if (!salonResolution.ok) throw new Error(salonResolution.body.error);
+
           // Phase 100B Plan 08 — T12, contexts/time-tracking facade.
           const created = await createImportedTimeEntry(app.prisma, {
             employeeId,
@@ -307,6 +326,7 @@ export async function importRoutes(app: FastifyInstance) {
             endTime,
             breakMinutes: data.breakMinutes,
             note: data.note || null,
+            salonId: salonResolution.salonId, // Phase 68b (issue #68), D-11
           });
 
           // Per-entry audit (Revisionssicherheit) — one AuditLog row per imported entry,

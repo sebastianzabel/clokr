@@ -379,6 +379,7 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
         date: utcMidnight(monday),
         startTime: new Date(`${monday}T09:00:00Z`),
         isLocked: true,
+        salonId: seed.salonId, // Phase 68b (issue #68)
       },
     });
 

@@ -162,6 +162,7 @@ describe("services/clock/resolver — D-01 reopen path (resolver-reopen.integrat
         source: "MOBILE" as never,
         isLocked: true,
         breakMinutes: 0,
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 
@@ -232,6 +233,7 @@ describe("services/clock/resolver — D-01 reopen path (resolver-reopen.integrat
         endTime: t1, // zero duration
         source: "NFC" as never,
         breakMinutes: 0,
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 
@@ -351,6 +353,7 @@ describe("services/clock/resolver — D-01 reopen path (resolver-reopen.integrat
           startTime: start,
           endTime: end,
           source: "NFC" as never,
+          salonId: data.salonId, // Phase 68b (issue #68)
           ...extra,
         },
       });
