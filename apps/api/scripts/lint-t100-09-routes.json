@@ -633,7 +633,7 @@
       "category": "nicht anwendbar",
       "params": null,
       "minimalBody": null,
-      "reason": "`:id` addresses a PublicHoliday, not Employee/LeaveType — fixture cannot produce a foreign instance. holidays.ts:166-168 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Feiertag nicht gefunden\" }` 404 — conformant.",
+      "reason": "`:id` addresses a PublicHoliday, not Employee/LeaveType — fixture cannot produce a foreign instance. holidays.ts:241-246 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Feiertag nicht gefunden\" }` 404 — conformant. Phase 71b (issue #71): body/query-carried salon ids on GET/POST /api/v1/holidays are outside this register's path-parameter scope and are pinned in `holidays-per-salon.test.ts` instead.",
       "ticket": null,
       "validatedAt": null
     },
