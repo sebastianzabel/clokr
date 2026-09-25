@@ -447,7 +447,6 @@ export async function overtimeRoutes(app: FastifyInstance) {
         include: {
           user: { select: { isActive: true } },
           workSchedules: { orderBy: { validFrom: "desc" } },
-          tenant: { select: { federalState: true } }, // fold tenant.findUnique (PERF-V1814-01)
         },
         orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
       });
@@ -457,21 +456,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const statusTenantConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
       const enforceBreakConfirmation = statusTenantConfig?.enforceBreakConfirmation ?? false;
 
-      // PERF-V1814-01: bulk-fetch all per-employee data in 5 parallel queries (replaces N+1)
-      const stateCode = STATE_MAP[employees[0]?.tenant?.federalState ?? "NIEDERSACHSEN"] ?? "NI";
-      const holidayDateStrings = new Set<string>(getHolidays(year, stateCode).map((h) => h.date));
+      // PERF-V1814-01: bulk-fetch all per-employee data (4 queries + 1 batched holiday
+      // resolution by work location, Phase 71b issue #71 — replaces N+1)
       const employeeIds = employees.map((e) => e.id);
-      const {
-        snapshotsByEmp,
-        entriesByEmp,
-        leaveByEmp,
-        absencesByEmp,
-        holidays: statusHolidays,
-      } = await fetchCloseMonthData(app.prisma, tenantId, employeeIds, monthStart, monthEnd);
-      // Add tenant-specific DB holidays to the computed holiday set
-      for (const h of statusHolidays) {
-        holidayDateStrings.add(dateStrInTz(h.date, tz));
-      }
+      const { snapshotsByEmp, entriesByEmp, leaveByEmp, absencesByEmp, holidaysByEmp } =
+        await fetchCloseMonthData(app.prisma, tenantId, employeeIds, monthStart, monthEnd, tz);
 
       // Phase 104 (R4 / D-21): the Karenz detector reuses leaveByEmp (Q3, fetchCloseMonthData)
       // — that query was extended with `include: { leaveType: true }` specifically so this
@@ -591,7 +580,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             endDate: ab.endDate,
             halfDay: ab.halfDay,
           })),
-          holidayDateStrings,
+          holidayDateStrings: holidaysByEmp.get(emp.id) ?? new Set(),
           rosterDates: statusRosterDates,
         });
 
@@ -691,24 +680,17 @@ export async function overtimeRoutes(app: FastifyInstance) {
         include: {
           user: { select: { isActive: true } },
           workSchedules: { orderBy: { validFrom: "desc" } },
-          tenant: { select: { federalState: true } }, // fold tenant.findUnique (PERF-V1814-01)
         },
         orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
       });
 
-      // PERF-V1814-01: derive state code from joined tenant; bulk-fetch full-year data in 5 queries
-      const yearStatusStateCode =
-        STATE_MAP[employees[0]?.tenant?.federalState ?? "NIEDERSACHSEN"] ?? "NI";
+      // PERF-V1814-01: bulk-fetch full-year data (4 queries + 1 batched work-location
+      // holiday resolution, Phase 71b issue #71)
       const { start: yearStart } = monthRangeUtc(year, 1, tz);
       const { end: yearEnd } = monthRangeUtc(year, 12, tz);
       const yearEmployeeIds = employees.map((e) => e.id);
-      const {
-        snapshotsByEmp,
-        entriesByEmp,
-        leaveByEmp,
-        absencesByEmp,
-        holidays: yearHolidays,
-      } = await fetchCloseMonthData(app.prisma, tenantId, yearEmployeeIds, yearStart, yearEnd);
+      const { snapshotsByEmp, entriesByEmp, leaveByEmp, absencesByEmp, holidaysByEmp } =
+        await fetchCloseMonthData(app.prisma, tenantId, yearEmployeeIds, yearStart, yearEnd, tz);
 
       // Build month statuses
       const months: {
@@ -810,28 +792,23 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
         let anyMissing = false;
 
-        // Phase 76.26 Task 2: build holiday set for this month (merged computed + DB).
         // Uses monthDayBounds for correct @db.Date filtering (SNAP-05).
         const { firstDay: ysMonthFirstDay, lastDay: ysMonthLastDay } = monthDayBounds(
           monthStart,
           monthEnd,
           tz,
         );
-        const ysComputedHolidays = getHolidays(year, yearStatusStateCode);
-        const ysMonthHolidayDateStrings = new Set<string>([
-          ...ysComputedHolidays
-            .filter(
-              (h) =>
-                h.date >= dateStrInTz(ysMonthFirstDay, tz) &&
-                h.date <= dateStrInTz(ysMonthLastDay, tz),
-            )
-            .map((h) => h.date),
-          ...yearHolidays
-            .filter((h) => h.date >= monthStart && h.date <= monthEnd)
-            .map((h) => dateStrInTz(h.date, tz)),
-        ]);
+        const ysMonthFirstStr = dateStrInTz(ysMonthFirstDay, tz);
+        const ysMonthLastStr = dateStrInTz(ysMonthLastDay, tz);
 
         for (const emp of unclosedEmployees) {
+          // Phase 71b (issue #71): the full-year, per-employee work-location holiday set
+          // (holidaysByEmp), filtered to this month — same window as before.
+          const ysMonthHolidayDateStrings = new Set<string>(
+            [...(holidaysByEmp.get(emp.id) ?? new Set<string>())].filter(
+              (d) => d >= ysMonthFirstStr && d <= ysMonthLastStr,
+            ),
+          );
           const schedule = emp.workSchedules[0];
 
           // No schedule or MONTHLY_HOURS/FLEXTIME → no missing dates — GH #143.

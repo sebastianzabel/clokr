@@ -4,12 +4,17 @@
  * Asserts that GET /overtime/close-month/status and
  * GET /overtime/close-month/year-status each issue at most ONE findMany call
  * per Prisma model (saldoSnapshot, timeEntry, leaveRequest, absence,
- * publicHoliday), regardless of employee count.
+ * publicHoliday, employeeSalonAssignment, salon), regardless of employee count.
  *
  * RED state (before Task 3): per-employee fan-out causes multiple findMany
  * calls → assertions fail.
  * GREEN state (after Task 3): bulk-fetch-then-join (fetchCloseMonthData)
  * → each model's findMany called exactly once → assertions pass.
+ *
+ * Phase 71b (issue #71): `employeeSalonAssignment` and `salon` were added when
+ * `fetchCloseMonthData()`'s tenant-wide `publicHoliday` query became ONE batched
+ * `holidaysAtWorkLocation()` call — that resolver issues its own bounded query set
+ * (contexts/platform), and this guard proves it stays bounded here too.
  */
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
@@ -92,6 +97,8 @@ describe("PERF-V1814-01 — close-month N+1 query regression guard", () => {
       leave: vi.spyOn(app.prisma.leaveRequest, "findMany"),
       absences: vi.spyOn(app.prisma.absence, "findMany"),
       holidays: vi.spyOn(app.prisma.publicHoliday, "findMany"),
+      assignments: vi.spyOn(app.prisma.employeeSalonAssignment, "findMany"),
+      salons: vi.spyOn(app.prisma.salon, "findMany"),
     };
 
     // January 2026 is a past month — handler processes it without "future" guard.
@@ -108,6 +115,8 @@ describe("PERF-V1814-01 — close-month N+1 query regression guard", () => {
     expect(spies.leave.mock.calls.length).toBeLessThanOrEqual(1);
     expect(spies.absences.mock.calls.length).toBeLessThanOrEqual(1);
     expect(spies.holidays.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(spies.assignments.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(spies.salons.mock.calls.length).toBeLessThanOrEqual(1);
   });
 
   // ── Test 2: close-month/year-status ─────────────────────────────────────────
@@ -121,6 +130,8 @@ describe("PERF-V1814-01 — close-month N+1 query regression guard", () => {
       leave: vi.spyOn(app.prisma.leaveRequest, "findMany"),
       absences: vi.spyOn(app.prisma.absence, "findMany"),
       holidays: vi.spyOn(app.prisma.publicHoliday, "findMany"),
+      assignments: vi.spyOn(app.prisma.employeeSalonAssignment, "findMany"),
+      salons: vi.spyOn(app.prisma.salon, "findMany"),
     };
 
     const res = await app.inject({
@@ -135,6 +146,8 @@ describe("PERF-V1814-01 — close-month N+1 query regression guard", () => {
     expect(spies.leave.mock.calls.length).toBeLessThanOrEqual(1);
     expect(spies.absences.mock.calls.length).toBeLessThanOrEqual(1);
     expect(spies.holidays.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(spies.assignments.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(spies.salons.mock.calls.length).toBeLessThanOrEqual(1);
   });
 
   // ── Test 3: regression guard — proves O(1) query count at 6 employees ───────
@@ -148,6 +161,8 @@ describe("PERF-V1814-01 — close-month N+1 query regression guard", () => {
       leave: vi.spyOn(app.prisma.leaveRequest, "findMany"),
       absences: vi.spyOn(app.prisma.absence, "findMany"),
       holidays: vi.spyOn(app.prisma.publicHoliday, "findMany"),
+      assignments: vi.spyOn(app.prisma.employeeSalonAssignment, "findMany"),
+      salons: vi.spyOn(app.prisma.salon, "findMany"),
     };
 
     // February 2026 — different month from Test 1 to avoid any caching effects.
@@ -162,6 +177,8 @@ describe("PERF-V1814-01 — close-month N+1 query regression guard", () => {
     expect(statusSpies.leave.mock.calls.length).toBeLessThanOrEqual(1);
     expect(statusSpies.absences.mock.calls.length).toBeLessThanOrEqual(1);
     expect(statusSpies.holidays.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(statusSpies.assignments.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(statusSpies.salons.mock.calls.length).toBeLessThanOrEqual(1);
 
     // Reset spies before testing year-status.
     vi.restoreAllMocks();
@@ -172,6 +189,8 @@ describe("PERF-V1814-01 — close-month N+1 query regression guard", () => {
       leave: vi.spyOn(app.prisma.leaveRequest, "findMany"),
       absences: vi.spyOn(app.prisma.absence, "findMany"),
       holidays: vi.spyOn(app.prisma.publicHoliday, "findMany"),
+      assignments: vi.spyOn(app.prisma.employeeSalonAssignment, "findMany"),
+      salons: vi.spyOn(app.prisma.salon, "findMany"),
     };
 
     const yearRes = await app.inject({
@@ -185,5 +204,7 @@ describe("PERF-V1814-01 — close-month N+1 query regression guard", () => {
     expect(yearSpies.leave.mock.calls.length).toBeLessThanOrEqual(1);
     expect(yearSpies.absences.mock.calls.length).toBeLessThanOrEqual(1);
     expect(yearSpies.holidays.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(yearSpies.assignments.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(yearSpies.salons.mock.calls.length).toBeLessThanOrEqual(1);
   });
 });
