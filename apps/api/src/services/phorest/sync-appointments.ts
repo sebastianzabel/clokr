@@ -2,17 +2,20 @@
 //
 // Sibling to sync-shifts.ts (whose internals are NOT modified here). Both the cron
 // (plugins/scheduler.ts) and the manual endpoint (routes/integrations.ts POST /phorest/sync-shifts)
-// call this AFTER syncPhorestShifts, INSIDE the same per-tenant withAdvisoryLock body, passing the
-// shift run's { runId } so appointment counters land on the SAME PhorestSyncRun row (SA-03). Shift
-// sync owns the run `status`; an appointment-fetch failure records onto `appointmentError`, never
-// touching `status`.
+// reach this through the orchestrator (sync-tenant.ts, Phase 65b), which calls it AFTER
+// syncPhorestShifts for the SAME coupled salon, INSIDE the same per-tenant withAdvisoryLock body,
+// passing the shift run's { runId } so appointment counters land on the SAME PhorestSyncRun row
+// (SA-03). Shift sync owns the run `status`; an appointment-fetch failure records onto
+// `appointmentError`, never touching `status`. Since Phase 65b the branch is the coupling's and the
+// hard-replace is delimited by the run's salon — a run for salon A never removes salon B's rows.
 //
 // DSGVO (load-bearing, SA-02): the ONLY write path is the closed mapAppointment() object literal,
 // which reads ONLY staffId + start/end and emits ONLY { employeeId, salonId, date, startTime,
 // endTime, externalId }. The raw Phorest payload (which carries customer/service/price) is NEVER
 // spread into the return or into prisma.create — every non-staff/non-time field is unreachable by
-// construction. `salonId` (Phase 325, issue #325) is an internal Unterbau FK the caller resolves,
-// never Phorest customer data, so the minimization boundary is unchanged.
+// construction. `salonId` (Phase 325, issue #325) is the coupled salon of the run (Phase 65b) — an
+// internal Unterbau FK the orchestrator resolves, never Phorest customer data, so the minimization
+// boundary is unchanged.
 // Combined with PhorestAppointment having no PII columns, minimization is structural.
 //
 // Plan 02 (this file) hardens the tracer's straight-insert into the full reconciliation core:
@@ -37,7 +40,6 @@
 import type { FastifyInstance } from "fastify";
 import { decryptSafe } from "../../utils/crypto";
 import { todayInTz, dateStrInTz } from "../../contexts/working-time-account"; // Phase 101B
-import { findDefaultSalon } from "../../contexts/platform"; // Phase 325 (issue #325), D-14/D-15
 import { phorestFetch } from "./client";
 import {
   extractAppointments,
@@ -45,6 +47,7 @@ import {
   phorestHasMorePages,
   PHOREST_PAGE_SIZE,
   type PhorestAppointmentItem,
+  type PhorestSyncTarget,
   type AppointmentSyncOpts,
   type AppointmentSyncResult,
 } from "./types";
@@ -65,9 +68,10 @@ type AppointmentRow = NonNullable<ReturnType<typeof mapAppointment>>;
  * (the item is then skipped). NEVER spread `a` into the return — that is what makes
  * customer/service/price/notes unreachable.
  *
- * `salonId` (Phase 325, issue #325) is resolved ONCE by the caller (the tenant's default salon,
- * D-04) and threaded through as a plain parameter — it never comes from the Phorest payload, so
- * it does not weaken the minimization boundary above.
+ * `salonId` (Phase 325, issue #325) is the coupled salon of the run (Phase 65b, D-11): resolved
+ * ONCE by the orchestrator (sync-tenant.ts) and threaded through as a plain parameter. It is still
+ * an internal Unterbau FK and never comes from the Phorest payload, so it does not weaken the
+ * minimization boundary above.
  *
  * v3 shape: the date is the SEPARATE `appointmentDate` ("yyyy-MM-dd"); start/end are Joda LocalTime
  * "HH:mm:ss" — sliced to the stored "HH:mm". NEVER new Date() a LocalTime value (that would apply a
@@ -101,9 +105,14 @@ export function mapAppointment(
   };
 }
 
+/**
+ * Syncs ONE coupled salon's Phorest appointments. `target` is REQUIRED (Phase 65b, D-08) so a
+ * caller without a salon is a compile error; it is resolved by the orchestrator (sync-tenant.ts).
+ */
 export async function syncPhorestAppointments(
   app: FastifyInstance,
   tenantId: string,
+  target: PhorestSyncTarget,
   opts: AppointmentSyncOpts = {},
 ): Promise<AppointmentSyncResult> {
   const result: AppointmentSyncResult = {
@@ -119,17 +128,11 @@ export async function syncPhorestAppointments(
       throw new Error("Phorest nicht konfiguriert");
     }
 
-    // Phase 325 (issue #325), D-14/D-15: until #65, one Phorest coupling per tenant means its
-    // salon is the tenant's default salon — resolved once per run, before any Phorest fetch.
-    // #65 replaces this lookup with the salon of the specific Phorest coupling.
-    const defaultSalon = await findDefaultSalon(app.prisma, tenantId);
-    if (!defaultSalon) {
-      throw new Error("Kein aktiver Salon vorhanden.");
-    }
-
+    // Credentials, base URL, business id, timezone and horizon stay per tenant; only the branch
+    // comes from the salon's coupling (Phase 65b, D-08).
     const baseUrl = cfg.phorestBaseUrl ?? DEFAULT_BASE_URL;
     const biz = cfg.phorestBusinessId;
-    const branch = cfg.phorestBranchId;
+    const branch = target.externalBranchId;
     const tz = cfg.timezone ?? "Europe/Berlin";
     const horizon = opts.horizonDays ?? cfg.phorestAppointmentHorizonDays ?? DEFAULT_HORIZON_DAYS;
 
@@ -138,7 +141,10 @@ export async function syncPhorestAppointments(
     const mappingRows = await app.prisma.phorestStaffMapping.findMany({ where: { tenantId } });
     const mapping = new Map(mappingRows.map((r) => [r.phorestStaffId, r.employeeId]));
 
-    app.log.info({ tenantId, horizon, runId: opts.runId }, "Phorest appointment sync started");
+    app.log.info(
+      { tenantId, salonId: target.salonId, horizon, runId: opts.runId },
+      "Phorest appointment sync started",
+    );
 
     // ── GATE-1 (fetch-ok) ────────────────────────────────────────────
     // Every phorestFetch below throws PhorestApiError on any non-ok/timeout/network failure. Any
@@ -180,7 +186,7 @@ export async function syncPhorestAppointments(
       for (const a of items) {
         const employeeId = mapping.get(a.staffId);
         if (!employeeId) continue; // unmapped ⇒ never stored (DSGVO + SA-01, T-86-09)
-        const row = mapAppointment(a, employeeId, tz, defaultSalon.id);
+        const row = mapAppointment(a, employeeId, tz, target.salonId);
         if (row) fresh.push(row);
       }
 
@@ -218,7 +224,8 @@ export async function syncPhorestAppointments(
 
     // Hard delete + insert as ONE $transaction (Pitfall 4: no crash-window where the cache is left
     // empty). TRANSIENT cache, NOT audit data → hard delete, run-level counters only, no per-row
-    // audit, no soft-delete (Pitfall 7). Delete scoped to window + mapped employees + tenant.
+    // audit, no soft-delete (Pitfall 7). Delete scoped to window + mapped employees + tenant, and
+    // (Phase 65b, D-11) to the run's salon — in ADDITION to those clauses, never instead of them.
     // createMany also carries skipDuplicates as a belt-and-braces guard against any pre-existing
     // out-of-window row that shares an externalId (the delete is window-scoped, dedupe is not).
     const [removed] = await app.prisma.$transaction([
@@ -227,6 +234,7 @@ export async function syncPhorestAppointments(
           date: { gte: windowStart, lte: windowEnd },
           employee: { tenantId },
           employeeId: { in: mappedEmployeeIds.length ? mappedEmployeeIds : ["__none__"] },
+          salonId: target.salonId,
         },
       }),
       app.prisma.phorestAppointment.createMany({ data: dedupedFresh, skipDuplicates: true }),

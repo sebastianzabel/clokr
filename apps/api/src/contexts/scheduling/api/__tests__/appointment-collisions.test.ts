@@ -14,7 +14,12 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, seedTestData, cleanupTestData } from "../../../../__tests__/setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+} from "../../../../__tests__/setup";
 
 // DSGVO contract: the response envelope and each collision object carry EXACTLY these keys — nothing else.
 const ALLOWED_RESPONSE_KEYS = ["collisions", "deepLink", "total"];
@@ -232,5 +237,132 @@ describe("GET /phorest/appointment-collisions", () => {
     expect(rangeBody.deepLink).toBeNull();
     expect("deepLink" in shiftBody).toBe(true);
     expect(shiftBody.deepLink).toBeNull();
+  });
+});
+
+// ── Salon resolution for the deep link (Phase 65b, issue #65, D-18) ───────────────────────────
+
+describe("GET /phorest/appointment-collisions salon resolution (Phase 65b, issue #65, D-18)", () => {
+  let app: FastifyInstance;
+  let seed: Awaited<ReturnType<typeof seedTestData>>;
+  let other: Awaited<ReturnType<typeof seedTestData>>;
+  let salonB: { id: string };
+  let shiftOnSalonAId: string;
+
+  const D1 = "2026-04-10";
+
+  function get(query: string, token: string) {
+    return app.inject({
+      method: "GET",
+      url: `${BASE}${query}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    seed = await seedTestData(app, "collide-salon");
+    other = await seedTestData(app, "collide-salon-other");
+
+    salonB = await createTestSalon(app.prisma, seed.tenant.id, {
+      name: "Collision Salon B",
+      createdAt: new Date(Date.now() + 60_000),
+    });
+    await app.prisma.salonCoupling.create({
+      data: {
+        tenantId: seed.tenant.id,
+        salonId: seed.salonId,
+        provider: "PHOREST",
+        externalBranchId: "collide-a",
+      },
+    });
+    await app.prisma.salonCoupling.create({
+      data: {
+        tenantId: seed.tenant.id,
+        salonId: salonB.id,
+        provider: "PHOREST",
+        externalBranchId: "collide-b",
+      },
+    });
+
+    await app.prisma.phorestAppointment.create({
+      data: {
+        employeeId: seed.employee.id,
+        salonId: seed.salonId,
+        date: new Date(D1),
+        startTime: "09:00",
+        endTime: "10:00",
+        externalId: `collide-salon-${seed.employee.id}-1`,
+      },
+    });
+
+    const shift = await app.prisma.shift.create({
+      data: {
+        employeeId: seed.employee.id,
+        salonId: seed.salonId,
+        date: new Date(D1),
+        startTime: "08:00",
+        endTime: "16:00",
+      },
+    });
+    shiftOnSalonAId = shift.id;
+  });
+
+  afterAll(async () => {
+    try {
+      await app.prisma.phorestAppointment.deleteMany({ where: { employeeId: seed.employee.id } });
+      await cleanupTestData(app, seed.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed (seed):", err);
+    }
+    try {
+      await cleanupTestData(app, other.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed (other):", err);
+    }
+  });
+
+  it("range shape, two couplings, no salonId -> 200 with the unchanged count and deepLink null (never 400)", async () => {
+    const res = await get(`?employeeId=${seed.employee.id}&from=${D1}&to=${D1}`, seed.adminToken);
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.total).toBe(1);
+    expect(body.deepLink).toBeNull();
+    expect(Object.keys(body).sort()).toEqual(ALLOWED_RESPONSE_KEYS);
+  });
+
+  it("range shape with another tenant's salon id and an unknown UUID both answer byte-identical 404 'Salon nicht gefunden'", async () => {
+    const foreignRes = await get(
+      `?employeeId=${seed.employee.id}&from=${D1}&to=${D1}&salonId=${other.salonId}`,
+      seed.adminToken,
+    );
+    const unknownRes = await get(
+      `?employeeId=${seed.employee.id}&from=${D1}&to=${D1}&salonId=00000000-0000-4000-8000-000000000030`,
+      seed.adminToken,
+    );
+    expect(foreignRes.statusCode).toBe(404);
+    expect(unknownRes.statusCode).toBe(404);
+    expect(foreignRes.body).toBe(unknownRes.body);
+    expect(JSON.parse(foreignRes.body)).toEqual({ error: "Salon nicht gefunden" });
+  });
+
+  it("range shape with salon B's own (coupled) id -> 200, count unaffected, deepLink null (owner gate)", async () => {
+    const res = await get(
+      `?employeeId=${seed.employee.id}&from=${D1}&to=${D1}&salonId=${salonB.id}`,
+      seed.adminToken,
+    );
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.total).toBe(1);
+    expect(body.deepLink).toBeNull();
+  });
+
+  it("shiftId shape resolves the shift's OWN salon -> 200, deepLink null, response key-set unchanged", async () => {
+    const res = await get(`?shiftId=${shiftOnSalonAId}`, seed.adminToken);
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.total).toBe(1);
+    expect(body.deepLink).toBeNull();
+    expect(Object.keys(body).sort()).toEqual(ALLOWED_RESPONSE_KEYS);
   });
 });

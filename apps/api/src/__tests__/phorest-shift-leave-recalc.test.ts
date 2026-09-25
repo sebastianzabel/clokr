@@ -315,7 +315,7 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     const requestId = await seedRequest(erikaId, monday, tuesday, 2, true); // D-07 upper bound: min(2,4)=2
 
     mockPhorestSlots([{ staffId: MAPPED_STAFF_ID, date: tuesday }]); // plans ONLY Tuesday
-    const res = await syncPhorestShifts(app, tenantId, windowAround(monday));
+    const res = await syncPhorestShifts(app, tenantId, seed.target, windowAround(monday));
     expect(res.status).toBe("SUCCESS");
 
     const persisted = await app.prisma.leaveRequest.findUnique({ where: { id: requestId } });
@@ -351,7 +351,7 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     const requestId = await seedRequest(erikaId, pastDay, pastDay, 1, true);
 
     mockPhorestSlots([{ staffId: MAPPED_STAFF_ID, date: pastDay }]);
-    const res = await syncPhorestShifts(app, tenantId, windowAround(pastMonday));
+    const res = await syncPhorestShifts(app, tenantId, seed.target, windowAround(pastMonday));
     expect(res.status).toBe("SUCCESS");
 
     // The shift itself still gets written (the guard is scoped to the leave recompute only).
@@ -383,7 +383,7 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     });
 
     mockPhorestSlots([{ staffId: MAPPED_STAFF_ID, date: tuesday }]);
-    const res = await syncPhorestShifts(app, tenantId, windowAround(monday));
+    const res = await syncPhorestShifts(app, tenantId, seed.target, windowAround(monday));
     expect(res.status).toBe("SUCCESS");
 
     const persisted = await app.prisma.leaveRequest.findUnique({ where: { id: requestId } });
@@ -404,7 +404,7 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     const requestId = await seedRequest(erikaId, monday, end, 8, false); // 4/week * 2 weeks
 
     mockPhorestSlots([{ staffId: MAPPED_STAFF_ID, date: midWeek }]);
-    const res = await syncPhorestShifts(app, tenantId, {
+    const res = await syncPhorestShifts(app, tenantId, seed.target, {
       startDate: addDaysIso(monday, -1),
       endDate: addDaysIso(monday, 15),
     });
@@ -449,7 +449,7 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     // isolation case's own independently-computed week) — staying inside THIS test's own already-
     // validated 7-day span removes that risk structurally instead of by chance.
     mockPhorestSlots([{ staffId: MAPPED_STAFF_ID_2, date: addDaysIso(monday, 4) }]);
-    const res = await syncPhorestShifts(app, tenantId, windowAround(monday));
+    const res = await syncPhorestShifts(app, tenantId, seed.target, windowAround(monday));
     expect(res.status).toBe("SUCCESS");
     expect(res.cancelled).toBe(1);
 
@@ -498,7 +498,7 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
         { staffId: MAPPED_STAFF_ID, date: tuesday },
         { staffId: MAPPED_STAFF_ID_2, date: tuesday },
       ]);
-      const res = await syncPhorestShifts(app, tenantId, windowAround(monday));
+      const res = await syncPhorestShifts(app, tenantId, seed.target, windowAround(monday));
       expect(res.status).toBe("SUCCESS"); // one employee's failure does not poison the run
       expect(res.leaveRecalcFailures).toBeGreaterThanOrEqual(1);
 
@@ -542,7 +542,7 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
       { staffId: MAPPED_STAFF_ID, date: thursday },
       { staffId: MAPPED_STAFF_ID, date: friday },
     ]);
-    const res = await syncPhorestShifts(app, tenantId, windowAround(monday));
+    const res = await syncPhorestShifts(app, tenantId, seed.target, windowAround(monday));
     expect(res.status).toBe("SUCCESS");
 
     const persisted = await app.prisma.leaveRequest.findUnique({ where: { id: requestId } });
@@ -570,7 +570,7 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     mockPhorestSlots([{ staffId: MAPPED_STAFF_ID, date: tuesday }]);
     // Simulates routes/integrations.ts POST /phorest/sync-shifts — actorUserId = the manager who
     // clicked "sync now", who is ALSO this request's own approver.
-    const res = await syncPhorestShifts(app, tenantId, {
+    const res = await syncPhorestShifts(app, tenantId, seed.target, {
       ...windowAround(monday),
       actorUserId: managerUserId,
     });

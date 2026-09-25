@@ -1069,3 +1069,89 @@ Mandanten gehört — sonst hätte eine Schicht einen Salon eines fremden Mandan
 
 **Phorest:** Bis #65 schreibt die Synchronisation den Default-Salon; ohne aktiven Salon bricht der Lauf
 mit Fehler ab, bestehende Schichten werden nie umgehängt.
+
+---
+
+## M — Phorest-Filiale je Salon: `SalonCoupling` löst `TenantConfig.phorestBranchId` ab (Phase 65b, Issue #65)
+
+**Schwere: informativ. Nachtrag 2026-09-25 — Semantikänderung des Unterbaus nach ADR 0002,
+Entscheidung 7, und neue Fremdschlüssel auf den Unterbau.**
+
+**Was sich geändert hat:** Die Schichtplanung bekommt ein neues Modell `SalonCoupling` (höchstens
+eine Kopplung je Salon, Provider-Enum mit dem einzigen Wert `PHOREST`, Filialkennung eindeutig je
+Mandant und Provider — bewusst nicht global, T-100-09). `TenantConfig.phorestBranchId` ist als
+veraltet markiert (`/// @deprecated` in `packages/db/prisma/schema.prisma`); kein Produktivcode
+liest oder schreibt die Spalte mehr, mechanisch belegt durch
+`apps/api/src/__tests__/phorest-branch-id-deprecated.test.ts`. Die Spalte bleibt für den
+Rückfallweg erhalten und wird in einem späteren Ticket entfernt (wie `storeHours` in #64). Die
+Migration `packages/db/prisma/migrations/20260925004150_salon_coupling/` koppelt jeden Mandanten
+mit einer nicht-leeren, getrimmten `phorestBranchId` an seinen Default-Salon — dieselbe Regel wie
+`findDefaultSalon()` (frühester aktiver Salon, sonst frühester überhaupt); ein Mandant ohne Wert
+oder mit nur Leerraum bekommt keine Kopplung; jeder bestehende `PhorestSyncRun` bekommt denselben
+Default-Salon. `phorestBranchId` wird dabei nicht gelöscht.
+
+**Neue Shared-Kernel-Abhängigkeiten:** `SalonCoupling.salonId -> Salon`, `SalonCoupling.tenantId ->
+Tenant`, `PhorestSyncRun.salonId -> Salon`, alle mit `onDelete: Restrict` (ADR 0002, Entscheidung 4) — ein Salon mit Kopplung oder Sync-Lauf kann nie gelöscht werden. Dieselbe Mandantengrenze wie
+bei #64/#325: kein Datenbank-Trigger (eine Instanz pro Kunde, #226), die Anwendung löst Salons nur
+über `findSalon()`/`listSalons()` auf. Die `tenantId`-Spalte auf `SalonCoupling` trägt die
+mandantenweite Eindeutigkeit (`@@unique([tenantId, provider, externalBranchId])`) und macht jede
+Abfrage über die Tabelle mandantenfähig für `lint:tenant-scoping`.
+
+**Abgleich je Salon:** Ein gemeinsamer Orchestrator (`syncPhorestForTenant`,
+`apps/api/src/services/phorest/sync-tenant.ts`) läuft für Cron und manuellen Trigger gleich, unter
+der unveränderten mandantenweiten Advisory-Lock, einmal je gekoppeltem AKTIVEM Salon. Jede
+Abgleich-Prüfung ist zusätzlich auf den Salon des Laufs eingegrenzt: GATE 3, das Stornieren
+verwaister Schichten, der Schutz bei offenem Urlaubsantrag, die Übernahme bestehender
+MANUAL-Schichten (Adopt-on-match, `sync-shifts.ts:564`) und der Phorest-Master-Ersetzen-Durchlauf
+(`sync-shifts.ts:898`) sowie das harte Ersetzen von Terminen (`sync-appointments.ts`). Die
+Begrenzung von Übernahme und Ersetzen-Durchlauf geht über den wörtlichen Kriterienkatalog des
+Issues hinaus — sie folgt aus dem Grundsatz "ein Lauf für Salon A ändert nichts an Salon B" und ist
+für einen Mandanten mit einem Salon byte-gleich zum bisherigen Verhalten. Der
+Schicht-/Termin-Schlüssel (`phorestShiftKey()`/`phorestAppointmentKey()`,
+`apps/api/src/services/phorest/types.ts:229`/`:250`) bleibt UNVERÄNDERT, damit der erste Lauf nach
+der Migration nicht jede bestehende Schicht storniert und neu anlegt. Folge: Trifft ein Lauf auf
+eine externe ID, die bereits einem ANDEREN Salon gehört (`sync-shifts.ts:512`), wird der Slot
+übersprungen, nie umgehängt — gezählt im laufinternen Zähler `skippedOtherSalon` (kein DB-Feld,
+gleiches Muster wie `protectedPendingLeave`).
+
+**Was verhindert, dass der alte Wert zurückkommt:**
+`apps/api/src/__tests__/phorest-branch-id-deprecated.test.ts` — vier Wurzeln (`apps/api/src`,
+`apps/api/scripts`, `apps/web/src`, `packages/db/src`), AST-Suche nach dem Bezeichner
+`phorestBranchId`, zweimal rot gesehen (eine `.ts`-Referenz, eine Svelte-Markup-Referenz) und
+danach wiederhergestellt.
+
+**API und Oberfläche:** Kopplungs-Routen
+(`GET/POST/DELETE /api/v1/integrations/phorest/couplings[/:salonId]`,
+`integrations.ts:251/279/374`), alle auditiert; das Löschen einer Kopplung ist ein harter Delete
+(Konfiguration, keine Zeitdaten — Owner-Entscheidung wie bei `storeHours`, #64) und rührt
+Schichten, Termine und Sync-Läufe nicht an (deren Fremdschlüssel zeigt auf den Salon, nicht auf die
+Kopplung). Die DELETE-Route steht als `probe` im T-100-09-Register. Test-, Mitarbeiter- und
+Termin-Kollisions-Routen lösen ihre Filiale über `resolvePhorestCoupling()` auf
+(`integrations.ts:168-213`): ohne Salonangabe genau eine aktive Kopplung, sonst
+`400 SALON_REQUIRED`; eine explizit angegebene Salon-ID darf auch einen eigenen, INAKTIVEN Salon
+benennen (derselbe Zweig prüft `isActive` bewusst nicht). Der Kollisions-Deep-Link
+(`GET /phorest/appointment-collisions`) blockiert die Kollisionszählung nie wegen der
+Salon-Auflösung — bei mehreren Kopplungen ohne Salonangabe liefert er `deepLink: null` statt eines 400. Die Konfig-API (`GET/PUT /phorest/config`) bleibt für Mandanten mit genau einem aktiven Salon
+unverändert nutzbar; bei mehr als einem aktiven Salon antwortet PUT mit einer neuen Branch-ID auf
+`400 BRANCH_PER_SALON` (`integrations.ts:465-469`). Die Admin-Seite
+(`apps/web/src/routes/(app)/admin/phorest/+page.svelte`) sperrt das Branch-ID-Feld in diesem Fall
+mit einem deutschen Hinweis; eine Mehrfach-Kopplungs-Oberfläche folgt erst mit #82 ff.
+
+**Bewusst nicht:** ein Studiolution-Provider-Wert, das Entfernen der Spalte `phorestBranchId`, ein
+filialbewusster Schicht-/Termin-Schlüssel, ein Sync-Fenster/Cron je Salon (bleibt mandantenweit),
+und eine Änderung an der env-gesteuerten E2E-Test-Bootstrap-Teardown
+(`apps/api/src/contexts/platform/api/test-bootstrap.ts:296-299`): E2E-Mandanten legen nie eine
+Phorest-Kopplung oder einen Sync-Lauf an, daher blockiert die bestehende
+`Restrict`-Fremdschlüsselkette das Löschen des Salons dort nicht, und die Teardown-Liste ließ die
+beiden neuen Tabellen unverändert aus.
+
+**Bekannte Grenze:** Ein Mandant, der schon vor dieser Phase mehr als einen Salon hatte und dessen
+Default-Salon sich nach #325 geändert hat, behält ältere PHOREST-Schichten auf dem früheren
+Default-Salon. Der Lauf des gekoppelten Salons überspringt sie (gezählt in `skippedOtherSalon`,
+sichtbar in der Antwort des manuellen Triggers) und hängt sie nie um. Mandanten mit genau einem
+Salon sind davon nicht betroffen. Es wird nur gesagt, was gemessen wurde — keine Aussage über
+Produktionszahlen.
+
+Der Satz "Phorest: Bis #65 schreibt die Synchronisation den Default-Salon; ohne aktiven Salon
+bricht der Lauf mit Fehler ab, bestehende Schichten werden nie umgehängt." am Ende des Nachtrags zu
+Eintrag L (Phase 325) ist mit diesem Eintrag abgelöst.
