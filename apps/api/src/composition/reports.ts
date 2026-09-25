@@ -2,8 +2,8 @@ import { FastifyInstance } from "fastify";
 import PDFDocument from "pdfkit";
 import iconv from "iconv-lite";
 import { formatInTimeZone } from "date-fns-tz";
-import { requireAuth, requireRole } from "../middleware/auth";
-import { getHolidays, STATE_MAP } from "../contexts/platform";
+import { requireAuth } from "../middleware/auth";
+import { getHolidays, STATE_MAP, requirePermission } from "../contexts/platform";
 import {
   SECTION9_LEGEND,
   generateMonthlyReportPdf,
@@ -921,7 +921,7 @@ export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/monthly?employeeId=&year=&month=
   app.get("/monthly", {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("report:read:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { employeeId, year, month } = req.query as {
         employeeId?: string;
@@ -1020,7 +1020,7 @@ export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/leave-overview?year=
   app.get("/leave-overview", {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("report:read:ZUGEWIESEN"),
     handler: async (req) => {
       const { year } = req.query as { year: string };
       const y = parseInt(year ?? new Date().getFullYear().toString());
@@ -1065,7 +1065,7 @@ export async function reportRoutes(app: FastifyInstance) {
   // employees before the EuGH C-684/16 deadline triggers.
   app.get("/carryover-at-risk", {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("report:read:ZUGEWIESEN"),
     handler: async (req) => {
       const { days } = req.query as { days?: string };
       const horizon = Math.max(1, Math.min(365, parseInt(days ?? "60", 10) || 60));
@@ -1148,7 +1148,7 @@ export async function reportRoutes(app: FastifyInstance) {
   // notification, and manager CC — but scoped to a single entitlement.
   app.post("/carryover-warn", {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("report:notify:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { entitlementId } = (req.body ?? {}) as { entitlementId?: string };
       if (!entitlementId) {
@@ -1188,7 +1188,7 @@ export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/datev?year=&month=  – DATEV LODAS Export
   app.get("/datev", {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("report:export:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { year, month } = req.query as { year: string; month: string };
       const y = parseInt(year);
@@ -1319,7 +1319,7 @@ export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/datev/employee?employeeId=&year=&month=  – Per-Employee DATEV LODAS Export (RPT-03)
   app.get("/datev/employee", {
     schema: { tags: ["Berichte"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("report:export:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { employeeId, year, month } = req.query as {
         employeeId?: string;
@@ -1559,7 +1559,7 @@ export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/monthly/pdf/all?year=&month=&role=  — PDF-01/PDF-03/PDF-05
   app.get("/monthly/pdf/all", {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("report:export:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { year, month, role } = req.query as {
         year: string;
@@ -1686,7 +1686,7 @@ export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/leave-list/pdf?year=  — PDF-02/PDF-05
   app.get("/leave-list/pdf", {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("report:export:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { year } = req.query as { year: string };
       const y = parseInt(year ?? new Date().getFullYear().toString());
@@ -1767,7 +1767,7 @@ export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/vacation/pdf?year=  — combined: leave list + overview
   app.get("/vacation/pdf", {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("report:export:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { year } = req.query as { year: string };
       const y = parseInt(year ?? new Date().getFullYear().toString());
@@ -1899,7 +1899,7 @@ export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/leave-overview/pdf?year=
   app.get("/leave-overview/pdf", {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("report:export:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { year } = req.query as { year: string };
       const y = parseInt(year ?? new Date().getFullYear().toString());

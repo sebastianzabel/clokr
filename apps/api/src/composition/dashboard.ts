@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { requireAuth } from "../middleware/auth";
+import { requirePermission } from "../contexts/platform";
 import {
   getHolidays,
   STATE_MAP,
@@ -354,7 +355,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard/team-week — Wochenübersicht für Admins/Manager
   app.get("/team-week", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
     handler: async (req) => {
       const access = accessContextFromRequest(req);
       const tenantId = req.user.tenantId;
@@ -583,7 +584,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard/today-attendance — Tages-Anwesenheitsübersicht (RPT-03)
   app.get("/today-attendance", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
     handler: async (req) => {
       const access = accessContextFromRequest(req);
       const tenantId = req.user.tenantId;
@@ -761,7 +762,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard/overtime-overview — Überstunden-Übersicht (RPT-01 + SALDO-03)
   app.get("/overtime-overview", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
     handler: async (req) => {
       const tenantId = req.user.tenantId;
 
