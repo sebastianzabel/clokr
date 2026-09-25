@@ -55,7 +55,7 @@ export {
   employeeScopeFor,
   AccessContextError,
 } from "./access-context";
-export type { AccessContext } from "./access-context";
+export type { AccessContext, AccessReach } from "./access-context";
 
 // Phase 72b (#72): the permission catalog (resource × action × reach) that #73/#75/#83 build on.
 export {
@@ -112,6 +112,9 @@ export { userMayApply } from "./facade/role-assignments";
 // Phase 75b (#75), D-16/D-17: the holders of a ZUGEWIESEN permission in a tenant — the Unterbau
 // answer every notification-recipient site asks instead of a role-based Prisma predicate.
 export { userIdsHoldingPermission } from "./facade/role-assignments";
+// Phase 91b (Issue #91), D-03/D-04: how far a caller's access context reaches for one specific
+// permission — the reach every downstream context-owned scope filter narrows against.
+export { resolveAccessReach } from "./facade/role-assignments";
 export {
   decideUserMayApply,
   normalizeRoleAssignmentScope,

@@ -14,10 +14,11 @@
  * - {@link accessContextForJob} — for background work that names its tenant explicitly.
  *
  * Route files build every `EmployeeScope` through {@link employeeScopeFor} only — never as an
- * object literal. That is the single hook where Issue #91 will narrow a scope to salons or
- * persons. The reach discriminator is deliberately `"wholeTenant"`, not `"tenant"`, so a reach
- * literal can never be mistaken for an `EmployeeScope` literal (`kind: "tenant"`) by the route-file
- * literal check.
+ * object literal. That is the single hook where Issue #91 narrows a scope to salons or persons —
+ * done here in Phase 91b Plan 01: {@link AccessReach} gained a `scoped` variant and
+ * `employeeScopeFor` a matching case. The reach discriminator is deliberately `"wholeTenant"`, not
+ * `"tenant"`, so a reach literal can never be mistaken for an `EmployeeScope` literal (`kind:
+ * "tenant"`) by the route-file literal check.
  *
  * A missing context is a programming error, not a tenant-membership question: `app.ts` maps the
  * error to HTTP 500 `{ error: "Interner Serverfehler" }` with a logged route. A foreign id keeps
@@ -36,11 +37,28 @@ export type AccessActor =
   | { kind: "system"; job: string };
 
 /**
- * How far the work reaches inside its tenant. `wholeTenant` is the only variant today; Issue #91
- * adds the narrower ones here — no speculative variants before that (CLAUDE.md "No generalization
- * on spec").
+ * How far the work reaches inside its tenant.
+ *
+ * `wholeTenant`: the entire tenant (a TENANT-scope assignment, or the legacy-role fallback for a
+ * user with no stored `RoleAssignment` row at all — see `resolveAccessReach`,
+ * `facade/role-assignments.ts`, Phase 91b/Issue #91).
+ *
+ * `scoped`: the UNION of every well-formed SALONS/PERSONS assignment that grants the permission
+ * being asked about — ONE combined variant, not two independent ones (Issue #91's own acceptance
+ * criterion: a user with a SALONS assignment on salon A AND a PERSONS assignment on employee C
+ * reaches "A OR C" in a single request). Either array may be empty; both empty with `kind:
+ * "scoped"` means no reach at all for this permission — fail closed, mirrors a TENANT
+ * assignment's `grantingScopes.length === 0` case in `decideUserMayApply`. `salonIds` is filtered
+ * to CURRENTLY active salons — salon activity is never stored on the assignment, it is evaluated
+ * live, same as `decideUserMayApply`'s `targetSalon.isActive` check.
+ *
+ * Two mutually exclusive variants (`salonScoped` / `personScoped`) could not represent the union
+ * above without inventing a third "both" variant, which is exactly the combinatorial
+ * special-casing CLAUDE.md's "no generalization on spec" rules out.
  */
-export type AccessReach = { kind: "wholeTenant" };
+export type AccessReach =
+  | { kind: "wholeTenant" }
+  | { kind: "scoped"; salonIds: readonly string[]; employeeIds: readonly string[] };
 
 export interface AccessContext {
   readonly tenantId: string;
@@ -96,18 +114,29 @@ export function accessContextForJob(
 /**
  * The ONE function that turns an access context into an {@link EmployeeScope}.
  *
- * No target → the whole tenant; `{ employeeId }` → that employee; `{ employeeIds }` → those
- * employees — each carrying the context's tenant. The tenant is re-asserted here (defence in depth
- * against a hand-built context object). The switch over `reach.kind` is exhaustive: adding a reach
- * variant (Issue #91) fails compilation here until it is evaluated.
+ * For a `wholeTenant` reach: no target → the whole tenant; `{ employeeId }` → that employee;
+ * `{ employeeIds }` → those employees — each carrying the context's tenant. The tenant is
+ * re-asserted here (defence in depth against a hand-built context object).
+ *
+ * For a `scoped` reach (Phase 91b/Issue #91, D-06): there is no tenant-wide `EmployeeScope`
+ * equivalent, so a call with NO target throws — a scoped reach has no "whole tenant" to fall back
+ * to, and the caller must resolve an explicit in-scope employeeId/employeeIds set first (a list
+ * endpoint does this via `contexts/platform/scope-filter.ts`, Plan 91b-02). A call WITH a target
+ * maps it straight through to the matching `EmployeeScope` variant — this function does NOT
+ * re-verify that the target is actually inside `reach.salonIds`/`reach.employeeIds`; the CALLER is
+ * responsible for having already proven that (a `scope-filter.ts` boolean check, or a resolved
+ * in-scope id list). Do not assume this function re-validates scope membership.
+ *
+ * The switch over `reach.kind` is exhaustive: adding a reach variant fails compilation here until
+ * it is evaluated — which is exactly how the `scoped` case above was added.
  */
 export function employeeScopeFor(
   ctx: AccessContext,
   target?: { employeeId: string } | { employeeIds: string[] },
 ): EmployeeScope {
   const tenantId = requireTenantId(ctx?.tenantId, "employeeScopeFor");
-  const reachKind = ctx.reach.kind;
-  switch (reachKind) {
+  const reach = ctx.reach;
+  switch (reach.kind) {
     case "wholeTenant": {
       if (!target) return { kind: "tenant", tenantId };
       if ("employeeIds" in target) {
@@ -115,8 +144,19 @@ export function employeeScopeFor(
       }
       return { kind: "employee", employeeId: target.employeeId, tenantId };
     }
+    case "scoped": {
+      if (!target) {
+        throw new AccessContextError(
+          "employeeScopeFor: a scoped reach has no tenant-wide EmployeeScope — resolve an explicit employeeId/employeeIds set via contexts/platform/scope-filter.ts first",
+        );
+      }
+      if ("employeeIds" in target) {
+        return { kind: "employees", employeeIds: target.employeeIds, tenantId };
+      }
+      return { kind: "employee", employeeId: target.employeeId, tenantId };
+    }
     default: {
-      const unhandled: never = reachKind;
+      const unhandled: never = reach;
       throw new AccessContextError(`employeeScopeFor: unhandled reach ${String(unhandled)}`);
     }
   }
