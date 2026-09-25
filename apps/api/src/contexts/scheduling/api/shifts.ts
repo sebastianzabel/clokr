@@ -2,11 +2,9 @@ import { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { isAvailabilityEnabled } from "../tenant-availability";
-import { getEffectiveBreakDuration } from "../../time-tracking"; // Phase 101B (Issue #101, wave 8)
+import { getEffectiveBreakDuration, getWorkedEntriesInRange } from "../../time-tracking"; // Phase 101B (Issue #101, wave 8); getWorkedEntriesInRange (T2) added Phase 71b (issue #71, D-07)
 import { classifyLeaveTypeCode, type AvailabilityBucket } from "../shift-availability"; // Phase 98 (T3, plan 03) — the two classifiers' new home
 import {
-  getHolidays,
-  STATE_MAP,
   NOT_ANONYMIZED_EMPLOYEE_WHERE,
   accessContextFromRequest,
   employeeScopeFor,
@@ -15,6 +13,7 @@ import {
   findSalon, // Phase 325 (issue #325) Plan 02, D-06 (explicit salonId resolution)
   listSalons, // Phase 325 (issue #325), D-08 (copy-week fallback)
   salonForDay, // Phase 344 (issue #344) — the employee's actual per-day salon assignment
+  holidaysAtWorkLocation, // Phase 71b (issue #71, D-07) — legal holidays by work location, week view only
 } from "../../platform";
 import {
   isMonthClosed, // Phase 100B Plan 07 — W1
@@ -1433,53 +1432,35 @@ export async function shiftRoutes(app: FastifyInstance) {
         return { start, end };
       }
 
-      // ── Phase 76.32 (D-08) — gesetzliche Feiertage per federal state for the visible week ──
-      // NOTE: this is DISTINCT from SchoolHolidayPeriod/resolveHoliday (BS-Ferien = Schulferien).
-      // We merge computed holidays (getHolidays — Gauss algorithm, all 16 Bundesländer) with
-      // tenant-specific DB overrides (PublicHoliday). Pattern mirrors overtime.ts:908-931.
-      // Cross-year guard: when the visible week spans a year boundary (e.g. Mon 2026-12-28 →
-      // Sun 2027-01-03), we must query getHolidays for BOTH years so Neujahr is not missed.
-      //
-      // MUST be built before the leave/absence loops so that empHolidaySet is available
-      // for the calcLeaveAbsenceMinutesTz calls (WR-02 fix).
-      const weekYearStart = monday.getUTCFullYear();
-      const weekYearEnd = new Date(weekDays[6] + "T00:00:00Z").getUTCFullYear();
-      const neededFsValues = new Set([defaultFederalState, ...empFederalState.values()]);
-      const dbWeekHolidays = await app.prisma.publicHoliday.findMany({
-        where: { tenantId, date: { gte: monday, lte: sunday } },
-      });
-      // WR-01 fix: memo keyed by fs (FederalState enum), NOT sc (state code string).
-      // DB PublicHoliday rows are filtered to the bucket's own federalState so a
-      // BAYERN-only holiday does NOT leak into a NIEDERSACHSEN employee's holiday set.
-      const holidaySetByFs = new Map<typeof defaultFederalState, Set<string>>();
-      const weekHolidaysByState = new Map<typeof defaultFederalState, Set<string>>();
-      for (const fs of neededFsValues) {
-        if (!holidaySetByFs.has(fs)) {
-          const sc = STATE_MAP[fs] ?? "NI";
-          const computedStart = getHolidays(weekYearStart, sc)
-            .filter((h) => h.date >= weekDays[0] && h.date <= weekDays[6])
-            .map((h) => h.date);
-          // Include next year's holidays when the week spans a year boundary.
-          const computedEnd =
-            weekYearEnd !== weekYearStart
-              ? getHolidays(weekYearEnd, sc)
-                  .filter((h) => h.date >= weekDays[0] && h.date <= weekDays[6])
-                  .map((h) => h.date)
-              : [];
-          // WR-01: filter DB overrides to this bucket's federalState only.
-          const db = dbWeekHolidays
-            .filter((h) => h.federalState === fs)
-            .map((h) => dateStrInTz(h.date, tenantTz));
-          holidaySetByFs.set(fs, new Set([...computedStart, ...computedEnd, ...db]));
-        }
-        weekHolidaysByState.set(fs, holidaySetByFs.get(fs)!);
-      }
+      // ── Phase 71b (issue #71), D-07 — gesetzliche Feiertage for the visible week, by WORK
+      // LOCATION (§ 2 EFZG) — NOT the Berufsschule override. This is DISTINCT from
+      // SchoolHolidayPeriod/resolveHoliday (BS-Ferien = Schulferien, Block A above, governed by
+      // empFederalState/federalStateOverride, which is UNCHANGED and stays that way). For legal
+      // holidays, `empFederalState` is no longer read: the salon in effect per employee and day
+      // — a closed work entry of that day, else the salon assignment, else the tenant's default
+      // salon — decides, resolved once for ALL employees of the week through the Unterbau's
+      // central resolver, before the synchronous leave/absence Soll loops below need it
+      // (WR-02 fix's ordering requirement is unchanged).
+      const weekEmployeeIds = employees.map((emp) => emp.id);
+      const weekEntries = await getWorkedEntriesInRange(
+        app.prisma,
+        employeeScopeFor(access, { employeeIds: weekEmployeeIds }),
+        monday,
+        sunday,
+      );
+      const weekHolidaysByEmployee = await holidaysAtWorkLocation(
+        app.prisma,
+        tenantId,
+        weekEmployeeIds,
+        weekDays[0],
+        weekDays[6],
+        weekEntries,
+      );
 
-      // Helper: per-employee holiday set (federal-state-aware) — used in leave/absence
+      // Helper: per-employee holiday set (work-location-aware) — used in leave/absence
       // credit loops (WR-02) and contractSollMinutesByEmp loop below.
       function getEmpHolidaySet(employeeId: string): Set<string> {
-        const fs = empFederalState.get(employeeId) ?? defaultFederalState;
-        return weekHolidaysByState.get(fs) ?? new Set<string>();
+        return new Set(weekHolidaysByEmployee.get(employeeId)?.keys() ?? []);
       }
 
       // Phase 104 (D-15, Tier 2): tagesbasierte Entdopplung für das Planungs-Soll.
