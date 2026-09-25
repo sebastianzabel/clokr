@@ -224,4 +224,366 @@ describe("Issue #91 (Phase 91b Plan 05) — overtime.ts salon/person scope", () 
     });
     expect(res.statusCode).toBe(200);
   });
+
+  // ── Task 2 — every other single-employee ZUGEWIESEN route, plus two NEW findings ──────────
+
+  it("GET /snapshots/:employeeId (NEW finding beyond Task 1's literal list — same shape as GET /:employeeId): an out-of-scope employee 404s with SCOPE_ACCESS_DENIED audit", async () => {
+    const outOfScope = await createEmployeeWithAccount("outscope-snapshots");
+    await createHome(outOfScope.employee.id, salonB.id);
+
+    const manager = await createScopedManager("mgr-snapshots", ["overtime:read:ZUGEWIESEN"], {
+      scopeType: "SALONS",
+      salonIds: [salonA.id],
+    });
+    const token = await login(manager.user.email);
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/overtime/snapshots/${outOfScope.employee.id}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toBe(JSON.stringify({ error: "Mitarbeiter nicht gefunden" }));
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: {
+        action: "SCOPE_ACCESS_DENIED",
+        entity: "Employee",
+        entityId: outOfScope.employee.id,
+      },
+    });
+    expect(audit).not.toBeNull();
+  });
+
+  it("GET /month-saldo/:employeeId (NEW finding beyond Task 1's literal list — same shape as GET /:employeeId): an out-of-scope employee 404s with SCOPE_ACCESS_DENIED audit", async () => {
+    const outOfScope = await createEmployeeWithAccount("outscope-monthsaldo");
+    await createHome(outOfScope.employee.id, salonB.id);
+
+    const manager = await createScopedManager("mgr-monthsaldo", ["overtime:read:ZUGEWIESEN"], {
+      scopeType: "SALONS",
+      salonIds: [salonA.id],
+    });
+    const token = await login(manager.user.email);
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/overtime/month-saldo/${outOfScope.employee.id}?year=2026&month=6`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toBe(JSON.stringify({ error: "Mitarbeiter nicht gefunden" }));
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: {
+        action: "SCOPE_ACCESS_DENIED",
+        entity: "Employee",
+        entityId: outOfScope.employee.id,
+      },
+    });
+    expect(audit).not.toBeNull();
+  });
+
+  it("POST /plans: an out-of-scope employee 404s with SCOPE_ACCESS_DENIED audit", async () => {
+    const outOfScope = await createEmployeeWithAccount("outscope-plans");
+    await createHome(outOfScope.employee.id, salonB.id);
+
+    const manager = await createScopedManager("mgr-plans", ["overtime:settle:ZUGEWIESEN"], {
+      scopeType: "SALONS",
+      salonIds: [salonA.id],
+    });
+    const token = await login(manager.user.email);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/overtime/plans",
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        employeeId: outOfScope.employee.id,
+        hoursToReduce: 5,
+        deadline: "2026-12-31T00:00:00.000Z",
+      },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toBe(JSON.stringify({ error: "Mitarbeiter nicht gefunden" }));
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: {
+        action: "SCOPE_ACCESS_DENIED",
+        entity: "Employee",
+        entityId: outOfScope.employee.id,
+      },
+    });
+    expect(audit).not.toBeNull();
+  });
+
+  it("POST /payout: an out-of-scope employee 404s with SCOPE_ACCESS_DENIED audit", async () => {
+    const outOfScope = await createEmployeeWithAccount("outscope-payout");
+    await createHome(outOfScope.employee.id, salonB.id);
+
+    const manager = await createScopedManager("mgr-payout", ["overtime:settle:ZUGEWIESEN"], {
+      scopeType: "SALONS",
+      salonIds: [salonA.id],
+    });
+    const token = await login(manager.user.email);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/overtime/payout",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { employeeId: outOfScope.employee.id, hours: 1 },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toBe(JSON.stringify({ error: "Mitarbeiter nicht gefunden" }));
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: {
+        action: "SCOPE_ACCESS_DENIED",
+        entity: "Employee",
+        entityId: outOfScope.employee.id,
+      },
+    });
+    expect(audit).not.toBeNull();
+  });
+
+  it("POST /close-month: an out-of-scope employee 404s with SCOPE_ACCESS_DENIED audit", async () => {
+    const outOfScope = await createEmployeeWithAccount("outscope-closemonth");
+    await createHome(outOfScope.employee.id, salonB.id);
+
+    const manager = await createScopedManager("mgr-closemonth", ["month-close:close:ZUGEWIESEN"], {
+      scopeType: "SALONS",
+      salonIds: [salonA.id],
+    });
+    const token = await login(manager.user.email);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/overtime/close-month",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { employeeId: outOfScope.employee.id, year: 2026, month: 6 },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toBe(JSON.stringify({ error: "Mitarbeiter nicht gefunden" }));
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: {
+        action: "SCOPE_ACCESS_DENIED",
+        entity: "Employee",
+        entityId: outOfScope.employee.id,
+      },
+    });
+    expect(audit).not.toBeNull();
+  });
+
+  it("POST /unlock-month: an out-of-scope employee 404s with SCOPE_ACCESS_DENIED audit (before the closed-month check even runs)", async () => {
+    const outOfScope = await createEmployeeWithAccount("outscope-unlock");
+    await createHome(outOfScope.employee.id, salonB.id);
+
+    const manager = await createScopedManager("mgr-unlock", ["month-close:unlock:ZUGEWIESEN"], {
+      scopeType: "SALONS",
+      salonIds: [salonA.id],
+    });
+    const token = await login(manager.user.email);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/overtime/unlock-month",
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        employeeId: outOfScope.employee.id,
+        year: 2026,
+        month: 6,
+        reason: "Testfall 91b-05",
+      },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toBe(JSON.stringify({ error: "Mitarbeiter nicht gefunden" }));
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: {
+        action: "SCOPE_ACCESS_DENIED",
+        entity: "Employee",
+        entityId: outOfScope.employee.id,
+      },
+    });
+    expect(audit).not.toBeNull();
+  });
+
+  it("POST /close-year: an out-of-scope employee 404s with SCOPE_ACCESS_DENIED audit", async () => {
+    const outOfScope = await createEmployeeWithAccount("outscope-closeyear");
+    await createHome(outOfScope.employee.id, salonB.id);
+
+    const manager = await createScopedManager(
+      "mgr-closeyear",
+      ["month-close:close-year:ZUGEWIESEN"],
+      { scopeType: "SALONS", salonIds: [salonA.id] },
+    );
+    const token = await login(manager.user.email);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/overtime/close-year",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { employeeId: outOfScope.employee.id, year: 2024 },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toBe(JSON.stringify({ error: "Mitarbeiter nicht gefunden" }));
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: {
+        action: "SCOPE_ACCESS_DENIED",
+        entity: "Employee",
+        entityId: outOfScope.employee.id,
+      },
+    });
+    expect(audit).not.toBeNull();
+  });
+
+  it("POST /opening-balance: an out-of-scope employee 404s with SCOPE_ACCESS_DENIED audit", async () => {
+    const outOfScope = await createEmployeeWithAccount("outscope-opening");
+    await createHome(outOfScope.employee.id, salonB.id);
+
+    const manager = await createScopedManager(
+      "mgr-opening",
+      ["overtime:set-opening-balance:ZUGEWIESEN"],
+      { scopeType: "SALONS", salonIds: [salonA.id] },
+    );
+    const token = await login(manager.user.email);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/overtime/opening-balance",
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        employeeId: outOfScope.employee.id,
+        minutes: 60,
+        effectiveFrom: "2026-01-01",
+        reason: "Testfall 91b-05 Eröffnungssaldo",
+      },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toBe(JSON.stringify({ error: "Mitarbeiter nicht gefunden" }));
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: {
+        action: "SCOPE_ACCESS_DENIED",
+        entity: "OpeningBalance",
+        entityId: outOfScope.employee.id,
+      },
+    });
+    expect(audit).not.toBeNull();
+  });
+
+  describe("list routes narrow BEFORE aggregating (D-13)", () => {
+    it("GET /close-month/status: a SALONS-scoped manager's response excludes an out-of-scope employee", async () => {
+      const inScope = await createEmployeeWithAccount("inscope-status");
+      await createHome(inScope.employee.id, salonA.id);
+      const outOfScope = await createEmployeeWithAccount("outscope-status");
+      await createHome(outOfScope.employee.id, salonB.id);
+
+      const manager = await createScopedManager("mgr-status", ["month-close:read:ZUGEWIESEN"], {
+        scopeType: "SALONS",
+        salonIds: [salonA.id],
+      });
+      const token = await login(manager.user.email);
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/overtime/close-month/status?year=2026&month=6",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const ids = (
+        JSON.parse(res.body) as { employees: Array<{ employeeId: string }> }
+      ).employees.map((e) => e.employeeId);
+      expect(ids).toContain(inScope.employee.id);
+      expect(ids).not.toContain(outOfScope.employee.id);
+    });
+
+    it("GET /close-month/year-status: adding an out-of-scope employee never changes a SALONS-scoped manager's month totals (before/after delta, robust against this suite's shared, accumulating tenant)", async () => {
+      // Employees with no WorkSchedule are always "ready" (never "missing"), so they never appear
+      // in any month's `missing[]` array regardless of scope — a string-containment check on the
+      // out-of-scope employee's name/number would be VACUOUS here (passes whether or not scoping
+      // works). `totalCount` is the field that DOES reflect every relevant employee whether or not
+      // they're "missing" — but this suite's tenant accumulates employees across many `it` blocks
+      // sharing one beforeAll, so comparing it to a fixed literal is unreliable. Comparing the SAME
+      // manager's SAME month before/after creating the out-of-scope employee isolates exactly its
+      // marginal effect, independent of how many other employees already exist in the tenant.
+      const inScope = await createEmployeeWithAccount("inscope-yearstatus");
+      await createHome(inScope.employee.id, salonA.id);
+
+      const manager = await createScopedManager("mgr-yearstatus", ["month-close:read:ZUGEWIESEN"], {
+        scopeType: "SALONS",
+        salonIds: [salonA.id],
+      });
+      const token = await login(manager.user.email);
+
+      const before = await app.inject({
+        method: "GET",
+        url: "/api/v1/overtime/close-month/year-status?year=2026",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(before.statusCode).toBe(200);
+      const beforeBody = JSON.parse(before.body) as { months: Array<{ totalCount: number }> };
+
+      const outOfScope = await createEmployeeWithAccount("outscope-yearstatus");
+      await createHome(outOfScope.employee.id, salonB.id);
+
+      const after = await app.inject({
+        method: "GET",
+        url: "/api/v1/overtime/close-month/year-status?year=2026",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(after.statusCode).toBe(200);
+      const afterBody = JSON.parse(after.body) as { months: Array<{ totalCount: number }> };
+
+      expect(afterBody.months.map((m) => m.totalCount)).toEqual(
+        beforeBody.months.map((m) => m.totalCount),
+      );
+    });
+
+    it("GET /close-month/deferred: a SALONS-scoped manager's response excludes an out-of-scope, genuinely-overdue employee", async () => {
+      const inScope = await createEmployeeWithAccount("inscope-deferred");
+      await createHome(inScope.employee.id, salonA.id);
+      const outOfScope = await createEmployeeWithAccount("outscope-deferred");
+      await createHome(outOfScope.employee.id, salonB.id);
+
+      const manager = await createScopedManager("mgr-deferred", ["month-close:read:ZUGEWIESEN"], {
+        scopeType: "SALONS",
+        salonIds: [salonA.id],
+      });
+      const token = await login(manager.user.email);
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/overtime/close-month/deferred",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as {
+        employees: Array<{ employeeId: string }>;
+      };
+      const ids = body.employees.map((e) => e.employeeId);
+      expect(ids).toContain(inScope.employee.id);
+      expect(ids).not.toContain(outOfScope.employee.id);
+    });
+
+    it("GET /close-month/status: a TENANT-scope (wholeTenant) manager sees both employees — unaffected", async () => {
+      const empA = await createEmployeeWithAccount("wholetenant-status-a");
+      await createHome(empA.employee.id, salonA.id);
+      const empB = await createEmployeeWithAccount("wholetenant-status-b");
+      await createHome(empB.employee.id, salonB.id);
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/overtime/close-month/status?year=2026&month=6",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const ids = (
+        JSON.parse(res.body) as { employees: Array<{ employeeId: string }> }
+      ).employees.map((e) => e.employeeId);
+      expect(ids).toContain(empA.employee.id);
+      expect(ids).toContain(empB.employee.id);
+    });
+  });
 });

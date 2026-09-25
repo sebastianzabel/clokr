@@ -307,6 +307,38 @@ export async function overtimeRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
+      // Phase 91b Plan 05 (Issue #91), D-10/D-14 — scope check. Stichtag = today (tenant-local):
+      // an Abbauplan has no period argument of its own (only employeeId/hoursToReduce/deadline,
+      // and `deadline` is a FUTURE target, not a Stichtag to check Stammsalon-at) — same "no
+      // natural period" precedent as the other create-style actions in this file's sibling plans.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "overtime:settle:ZUGEWIESEN",
+        );
+        const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            body.employeeId,
+            todayInTz(tz),
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: body.employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+      }
+
       const plan = await app.prisma.overtimePlan.create({
         data: {
           employeeId: body.employeeId,
@@ -351,6 +383,38 @@ export async function overtimeRoutes(app: FastifyInstance) {
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
+      // Phase 91b Plan 05 (Issue #91), D-10/D-14 — scope check. Deviation from the plan's own
+      // Stichtag guidance: the plan groups /payout with the period-bound month-close routes, but
+      // payoutSchema carries no month/year field at all (only employeeId/hours/note) — there is no
+      // period to take a last-day Stichtag from. Used today (tenant-local) instead, same as /plans.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "overtime:settle:ZUGEWIESEN",
+        );
+        const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            body.employeeId,
+            todayInTz(tz),
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: body.employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
       }
 
       const schedule = await app.prisma.workSchedule.findFirst({
@@ -457,8 +521,31 @@ export async function overtimeRoutes(app: FastifyInstance) {
         .object({ detailed: z.coerce.boolean().optional() })
         .parse(req.query ?? {});
 
+      // Phase 91b Plan 05 (Issue #91), D-10/D-13 — a NEW finding this plan makes (not named in the
+      // plan's own text, which enumerates line numbers rather than route names): this list route
+      // was never scoped at all — `getDeferredMonthCloseState` fetched every tenant employee
+      // unconditionally. Stichtag = today (tenant-local): this reports CURRENT deferral state, the
+      // same precedent as the other list routes in this file.
+      const access = accessContextFromRequest(req);
+      const deferredScopeReach = await resolveAccessReach(
+        app.prisma,
+        access,
+        "month-close:read:ZUGEWIESEN",
+      );
+      let deferredScopedEmployeeIds: "all" | string[] = "all";
+      if (deferredScopeReach.kind !== "wholeTenant") {
+        const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+        deferredScopedEmployeeIds = await resolveStammsalonScopedEmployeeIds(
+          app.prisma,
+          req.user.tenantId,
+          deferredScopeReach,
+          todayInTz(tz),
+        );
+      }
+
       return getDeferredMonthCloseState(app.prisma, req.user.tenantId, {
         detailed: detailed ?? false,
+        ...(deferredScopedEmployeeIds !== "all" ? { employeeIds: deferredScopedEmployeeIds } : {}),
       });
     },
   });
@@ -486,12 +573,32 @@ export async function overtimeRoutes(app: FastifyInstance) {
         tz,
       );
 
+      // Phase 91b Plan 05 (Issue #91), D-10/D-13 — narrow BEFORE fetching, not after: an
+      // out-of-scope employee must never even enter `employees` below, since every downstream
+      // computation (fetchCloseMonthData, findMissingWorkdays, ...) runs per row of that array.
+      // Stichtag = the period's own last day (this route acts on one specific year/month).
+      const statusScopeReach = await resolveAccessReach(
+        app.prisma,
+        access,
+        "month-close:read:ZUGEWIESEN",
+      );
+      const statusScopedEmployeeIds =
+        statusScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              tenantId,
+              statusScopeReach,
+              monthLastDay,
+            );
+
       // PERF-V1814-01: Get employees with tenant JOIN (folds tenant.findUnique, no extra query)
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId,
           user: { isActive: true },
           ...EXCLUDE_EXEMPT_EMPLOYEE_FILTER, // Phase 76.7 (D-07, SALDO-V19-04a)
+          ...(statusScopedEmployeeIds !== "all" ? { id: { in: statusScopedEmployeeIds } } : {}),
         },
         include: {
           user: { select: { isActive: true } },
@@ -730,12 +837,34 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const now = new Date();
 
+      // Phase 91b Plan 05 (Issue #91), D-10/D-13 — narrow BEFORE fetching, not after, same
+      // pattern as /close-month/status above. Stichtag = the period's own last day — this route
+      // acts on one specific year, so its last day (Dec 31, tenant-local) is the period boundary.
+      const { end: yearStatusStichtag } = monthRangeUtc(year, 12, tz);
+      const yearStatusScopeReach = await resolveAccessReach(
+        app.prisma,
+        access,
+        "month-close:read:ZUGEWIESEN",
+      );
+      const yearStatusScopedEmployeeIds =
+        yearStatusScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              tenantId,
+              yearStatusScopeReach,
+              yearStatusStichtag,
+            );
+
       // PERF-V1814-01: Get employees with tenant JOIN (folds tenant.findUnique, no extra query)
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId,
           user: { isActive: true },
           ...EXCLUDE_EXEMPT_EMPLOYEE_FILTER, // Phase 76.7 (D-07, SALDO-V19-04a)
+          ...(yearStatusScopedEmployeeIds !== "all"
+            ? { id: { in: yearStatusScopedEmployeeIds } }
+            : {}),
         },
         include: {
           user: { select: { isActive: true } },
@@ -1054,6 +1183,34 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       const tz = await getTenantTimezone(app.prisma, employee.tenantId);
       const { start: monthStart, end: monthEnd } = monthRangeUtc(year, month, tz);
+
+      // Phase 91b Plan 05 (Issue #91), D-10/D-14 — scope check, reusing the handler's own
+      // already-built `access` (line 1138). Stichtag = the period's own last day (monthEnd).
+      {
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "month-close:close:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            employeeId,
+            monthEnd,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+      }
 
       // Reject if employee was hired after this month
       if (employee.hireDate > monthEnd) {
@@ -1488,6 +1645,35 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, employee.tenantId);
       const { start: monthStart, end: monthEnd } = monthRangeUtc(year, month, tz);
 
+      // Phase 91b Plan 05 (Issue #91), D-10/D-14 — scope check. Stichtag = the period's own last
+      // day (monthEnd) — the month being unlocked.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "month-close:unlock:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            employeeId,
+            monthEnd,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+      }
+
       // Verify the month is actually closed — use findFirst with superseded:false
       // (compound accessor removed when @@unique replaced by partial unique index, COMP-V1814-04)
       // Convention-robust window: also matches legacy UTC-naive periodStart rows.
@@ -1574,6 +1760,34 @@ export async function overtimeRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
+      // Phase 91b Plan 05 (Issue #91), D-10/D-14 — a NEW finding beyond this plan's own literal
+      // task list: this route has the EXACT same unscoped-ZUGEWIESEN shape as GET /:employeeId
+      // above (its own comment even says "mirrors GET /:employeeId above"), so Plan 91b-01's D-05
+      // gate change exposes the identical gap here. Stichtag = today, same reasoning as above.
+      if (overtimeReach === "ZUGEWIESEN" && req.user.employeeId !== employeeId) {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(app.prisma, access, "overtime:read:ZUGEWIESEN");
+        const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            employeeId,
+            todayInTz(tz),
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+      }
+
       // PERF-V1814-03: cap at 120 (10 years × 12 monthly snapshots — defense-in-depth)
       const snapshots = await app.prisma.saldoSnapshot.findMany({
         where: { employeeId, superseded: false },
@@ -1611,6 +1825,35 @@ export async function overtimeRoutes(app: FastifyInstance) {
       // Year range
       const yearStart = new Date(`${year}-01-01T00:00:00Z`);
       const yearEnd = new Date(`${year}-12-31T23:59:59Z`);
+
+      // Phase 91b Plan 05 (Issue #91), D-10/D-14 — scope check. Stichtag = the period's own last
+      // day (yearEnd) — the year being closed.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "month-close:close-year:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            employeeId,
+            yearEnd,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+      }
 
       if (yearEnd > new Date()) {
         return reply.code(400).send({ error: "Laufendes Jahr kann nicht abgeschlossen werden" });
@@ -1811,6 +2054,35 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       const effectiveFromDate = new Date(`${effectiveFrom}T00:00:00Z`);
 
+      // Phase 91b Plan 05 (Issue #91), D-10/D-14 — scope check. Stichtag = the opening balance's
+      // own effectiveFrom date — the period this correction takes effect from.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "overtime:set-opening-balance:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            employeeId,
+            effectiveFromDate,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "OpeningBalance",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+      }
+
       // ── ONE $transaction for the mutation + its audit (locked decision D-06) ──
       // ORDER MATTERS: the partial unique index allows at most ONE superseded=false
       // row per employee and is NOT deferrable — the old row must be deactivated
@@ -1929,6 +2201,36 @@ export async function overtimeRoutes(app: FastifyInstance) {
       });
       if (!employee || employee.tenantId !== req.user.tenantId) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
+      // Phase 91b Plan 05 (Issue #91), D-10/D-14 — a NEW finding beyond this plan's own literal
+      // task list: same unscoped-ZUGEWIESEN shape as GET /:employeeId (this route's own comment
+      // says "mirrors GET /:employeeId above"). Stichtag = the requested month's own last day —
+      // this route IS period-bound (year/month query params), unlike snapshots/:employeeId's
+      // unbounded list.
+      if (overtimeReach === "ZUGEWIESEN" && req.user.employeeId !== employeeId) {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(app.prisma, access, "overtime:read:ZUGEWIESEN");
+        const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+        const { end: monthSaldoMonthEnd } = monthRangeUtc(year, month, tz);
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            employeeId,
+            monthSaldoMonthEnd,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
       }
 
       const result = await computeMonthSaldo(app, employeeId, year, month);
