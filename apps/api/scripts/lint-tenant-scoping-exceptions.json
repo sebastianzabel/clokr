@@ -6,27 +6,27 @@
     "calls": [
       {
         "call": "user.findUnique",
-        "line": 56
+        "line": 57
       },
       {
         "call": "otpToken.findFirst",
-        "line": 196
+        "line": 197
       },
       {
         "call": "user.findUnique",
-        "line": 219
+        "line": 220
       },
       {
         "call": "user.findUnique",
-        "line": 239
+        "line": 240
       },
       {
         "call": "otpToken.updateMany",
-        "line": 249
+        "line": 250
       },
       {
         "call": "user.findUnique",
-        "line": 350
+        "line": 356
       }
     ],
     "reason": "All six calls sit in pre-authentication flows (login, OTP verification, OTP resend, forgot-password) where req.user does not exist yet — there is no caller tenant to scope against, and the entire purpose of each call is establishing WHO the caller is before any tenant context exists. D-07 predicted this exact category."

@@ -231,3 +231,217 @@ describe("compat role — compatRoleForUser against the database (D-14, AC-75-5)
     expect(await compatRoleForUser(app.prisma, user.id, seed.tenant.id, "EMPLOYEE")).toBe("ADMIN");
   });
 });
+
+describe("compat role — login, OTP and refresh carry the derived role (D-14, D-12, AC-75-5)", () => {
+  let app: FastifyInstance;
+  let seed: Awaited<ReturnType<typeof seedTestData>>;
+  let otpSeed: Awaited<ReturnType<typeof seedTestData>>;
+  let ipCounter = 0;
+  const otpCodes: string[] = [];
+  let originalSendOtp: FastifyInstance["mailer"]["sendOtp"];
+
+  /** A fresh client address per request, so no per-IP rate limit can interfere. */
+  function nextIp(): string {
+    ipCounter += 1;
+    return `10.75.6.${ipCounter}`;
+  }
+
+  function tokenRole(token: string): unknown {
+    return (app.jwt.decode(token) as { role?: unknown } | null)?.role;
+  }
+
+  async function createUser(tenantId: string | null, role: Role, label: string) {
+    const s = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const user = await app.prisma.user.create({
+      data: {
+        email: `ct-${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role,
+        isActive: true,
+      },
+    });
+    if (tenantId !== null) {
+      await app.prisma.employee.create({
+        data: {
+          tenantId,
+          userId: user.id,
+          employeeNumber: `CT-${s}`.slice(0, 20),
+          firstName: label,
+          lastName: "Test",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+    }
+    return user;
+  }
+
+  /** A TENANT assignment on a customer role of `tenantId` holding one ZUGEWIESEN key. */
+  async function assignCustomerZugewiesen(tenantId: string, userId: string) {
+    const name = `Rolle ${userId.slice(0, 8)}`;
+    const role = await app.prisma.accessRole.create({
+      data: {
+        tenantId,
+        name,
+        nameKey: roleNameKey(name),
+        permissions: ["time-entry:read:EIGENE", "team-overview:read:ZUGEWIESEN"],
+      },
+    });
+    await app.prisma.roleAssignment.create({
+      data: {
+        tenantId,
+        userId,
+        accessRoleId: role.id,
+        scopeType: "TENANT",
+        salonIds: [],
+        employeeIds: [],
+      },
+    });
+  }
+
+  async function login(email: string) {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email, password: "test1234" },
+      remoteAddress: nextIp(),
+    });
+    return {
+      status: res.statusCode,
+      body: JSON.parse(res.body) as {
+        accessToken?: string;
+        refreshToken?: string;
+        user?: { role: string };
+        requiresOtp?: boolean;
+        userId?: string;
+      },
+    };
+  }
+
+  async function refreshRole(refreshToken: string): Promise<unknown> {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/refresh",
+      payload: { refreshToken },
+      remoteAddress: nextIp(),
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    return tokenRole((JSON.parse(res.body) as { accessToken: string }).accessToken);
+  }
+
+  async function otpLogin(email: string) {
+    const before = otpCodes.length;
+    const first = await login(email);
+    expect(first.status).toBe(202);
+    expect(first.body.requiresOtp).toBe(true);
+    expect(otpCodes.length).toBe(before + 1);
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/verify-otp",
+      payload: { userId: first.body.userId, code: otpCodes[otpCodes.length - 1] },
+      remoteAddress: nextIp(),
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    return JSON.parse(res.body) as { accessToken: string; user: { role: string } };
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    seed = await seedTestData(app, "compat-login");
+    otpSeed = await seedTestData(app, "compat-otp");
+    await app.prisma.tenantConfig.update({
+      where: { tenantId: otpSeed.tenant.id },
+      data: { twoFaEnabled: true },
+    });
+    originalSendOtp = app.mailer.sendOtp;
+    app.mailer.sendOtp = async (params) => {
+      otpCodes.push(params.code);
+    };
+  });
+
+  afterAll(async () => {
+    app.mailer.sendOtp = originalSendOtp;
+    for (const s of [seed, otpSeed]) {
+      try {
+        await app.prisma.roleAssignment.deleteMany({ where: { tenantId: s.tenant.id } });
+        await app.prisma.accessRole.deleteMany({ where: { tenantId: s.tenant.id } });
+        await cleanupTestData(app, s.tenant.id);
+      } catch (err) {
+        console.error("Cleanup failed:", err);
+      }
+    }
+    await closeTestApp();
+  });
+
+  it("a migrated MANAGER (stored Manager assignment) logs in with body and token role MANAGER", async () => {
+    const user = await createUser(seed.tenant.id, "MANAGER", "migrated-m");
+    await app.prisma.roleAssignment.create({
+      data: {
+        tenantId: seed.tenant.id,
+        userId: user.id,
+        accessRoleId: SYSTEM_ROLE_IDS.MANAGER,
+        scopeType: "TENANT",
+        salonIds: [],
+        employeeIds: [],
+      },
+    });
+    const res = await login(user.email);
+    expect(res.status).toBe(200);
+    expect(res.body.user?.role).toBe("MANAGER");
+    expect(tokenRole(res.body.accessToken as string)).toBe("MANAGER");
+    expect(await refreshRole(res.body.refreshToken as string)).toBe("MANAGER");
+  });
+
+  it("a legacy EMPLOYEE holding a TENANT customer role with a ZUGEWIESEN key logs in and refreshes as MANAGER — the column still says EMPLOYEE", async () => {
+    const user = await createUser(seed.tenant.id, "EMPLOYEE", "derived-m");
+    await assignCustomerZugewiesen(seed.tenant.id, user.id);
+    const res = await login(user.email);
+    expect(res.status).toBe(200);
+    expect(res.body.user?.role).toBe("MANAGER");
+    expect(tokenRole(res.body.accessToken as string)).toBe("MANAGER");
+    expect(await refreshRole(res.body.refreshToken as string)).toBe("MANAGER");
+    const column = await app.prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      select: { role: true },
+    });
+    expect(column.role).toBe("EMPLOYEE");
+  });
+
+  it("the same derivation applies to the OTP login", async () => {
+    const user = await createUser(otpSeed.tenant.id, "EMPLOYEE", "derived-otp");
+    await assignCustomerZugewiesen(otpSeed.tenant.id, user.id);
+    const body = await otpLogin(user.email);
+    expect(body.user.role).toBe("MANAGER");
+    expect(tokenRole(body.accessToken)).toBe("MANAGER");
+  });
+
+  it("a user without Employee (tenant '') carries exactly the User.role column (AC-75-5)", async () => {
+    const user = await createUser(null, "ADMIN", "no-emp");
+    try {
+      const res = await login(user.email);
+      expect(res.status).toBe(200);
+      expect(res.body.user?.role).toBe("ADMIN");
+      expect(tokenRole(res.body.accessToken as string)).toBe("ADMIN");
+      expect(await refreshRole(res.body.refreshToken as string)).toBe("ADMIN");
+    } finally {
+      await app.prisma.refreshToken.deleteMany({ where: { userId: user.id } });
+      await app.prisma.user.delete({ where: { id: user.id } });
+    }
+  });
+
+  it.each(["ADMIN", "MANAGER", "EMPLOYEE"] as const)(
+    "a fallback %s (no stored rows) carries the column in login, refresh and OTP",
+    async (role) => {
+      const user = await createUser(seed.tenant.id, role, `fb-${role}`);
+      const res = await login(user.email);
+      expect(res.status).toBe(200);
+      expect(res.body.user?.role).toBe(role);
+      expect(tokenRole(res.body.accessToken as string)).toBe(role);
+      expect(await refreshRole(res.body.refreshToken as string)).toBe(role);
+
+      const otpUser = await createUser(otpSeed.tenant.id, role, `fb-otp-${role}`);
+      const otp = await otpLogin(otpUser.email);
+      expect(otp.user.role).toBe(role);
+      expect(tokenRole(otp.accessToken)).toBe(role);
+    },
+  );
+});

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { Role } from "@clokr/db";
 import { JwtPayload } from "../../../middleware/auth";
 import { validatePassword, loadPasswordPolicy } from "../password-policy";
+import { compatRoleForUser } from "../compat-role";
 import { config } from "../../../config";
 
 /** SHA-256 hash for tokens stored in DB (refresh tokens, reset tokens). */
@@ -299,10 +300,15 @@ export async function authRoutes(app: FastifyInstance) {
         data: { revokedAt: new Date() },
       });
 
+      // Phase 75b (#75), D-14: the role claim is DERIVED from the user's role assignments at the one
+      // derivation site (compat-role.ts); no access decision reads it (D-12). It stays in the token
+      // because the frontend still consumes it until #83 removes User.role.
+      const tenantId = stored.user.employee?.tenantId ?? "";
+      const role = await compatRoleForUser(app.prisma, stored.user.id, tenantId, stored.user.role);
       const payload = {
         sub: stored.user.id,
-        role: stored.user.role,
-        tenantId: stored.user.employee?.tenantId ?? "",
+        role,
+        tenantId,
         employeeId: stored.user.employee?.id,
       };
 
@@ -558,9 +564,14 @@ async function issueTokens(
     ? (tenantConfig?.rememberMeDays ?? 30)
     : (tenantConfig?.refreshTokenDays ?? 7);
 
+  // Phase 75b (#75), D-14: the role published in the JWT and in the login body is DERIVED from the
+  // user's role assignments, computed once here at the one derivation site (compat-role.ts). No
+  // access decision reads it (D-12); the frontend still consumes it until #83 removes User.role.
+  const role = await compatRoleForUser(app.prisma, user.id, tenantId, user.role);
+
   const payload = {
     sub: user.id,
-    role: user.role,
+    role,
     tenantId,
     employeeId: user.employee?.id,
   };
@@ -617,7 +628,8 @@ async function issueTokens(
     user: {
       id: user.id,
       email: user.email,
-      role: user.role,
+      // The derived compat role (D-14), the same value as the JWT claim above.
+      role,
       employeeId: user.employee?.id ?? null,
       firstName: user.employee?.firstName ?? null,
     },
