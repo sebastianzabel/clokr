@@ -11,6 +11,7 @@ import type { FastifyInstance } from "fastify";
 import { getTestApp, seedTestData, cleanupTestData, salonIdForEmployee } from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 import { salonForDay } from "../contexts/platform";
+import { homeSalonAt } from "../contexts/platform/facade/salon-assignments";
 
 describe("POST /api/v1/employees/:id/salon-assignments — create Einsatzsalon (Phase 67b Plan 02 Task 1)", () => {
   let app: FastifyInstance;
@@ -1273,5 +1274,291 @@ describe("POST .../salon-assignments/home & .../:assignmentId/end — Stammsalon
       });
       expect(otherRow?.validUntil).toBeNull();
     });
+  });
+});
+
+describe("homeSalonAt (Phase 91b, Issue #91, D-08)", () => {
+  let app: FastifyInstance;
+  let tenantA: Awaited<ReturnType<typeof seedTestData>>;
+  let tenantB: Awaited<ReturnType<typeof seedTestData>>;
+  let salonA: { id: string };
+  let salonB: { id: string };
+  let salonDeploy: { id: string };
+
+  async function createEmployee(namePrefix: string, hireDate = "2024-01-01") {
+    const s = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const user = await app.prisma.user.create({
+      data: {
+        email: `${namePrefix}-${s}@test.de`,
+        passwordHash: "x",
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    return app.prisma.employee.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        userId: user.id,
+        employeeNumber: `${namePrefix.toUpperCase()}-${s}`,
+        firstName: namePrefix,
+        lastName: "HomeSalonAt",
+        hireDate: new Date(hireDate),
+      },
+    });
+  }
+
+  function createHome(
+    employeeId: string,
+    salonId: string,
+    validFrom: string,
+    validUntil: string | null,
+  ) {
+    return app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        employeeId,
+        salonId,
+        kind: "HOME",
+        validFrom: new Date(validFrom),
+        validUntil: validUntil ? new Date(validUntil) : null,
+        weekdays: [],
+      },
+    });
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    tenantA = await seedTestData(app, "hsa-a");
+    tenantB = await seedTestData(app, "hsa-b");
+
+    salonA = await app.prisma.salon.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        name: "HSA Salon A",
+        openingHours: DEFAULT_SALON_OPENING_HOURS,
+        isActive: true,
+      },
+    });
+    salonB = await app.prisma.salon.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        name: "HSA Salon B",
+        openingHours: DEFAULT_SALON_OPENING_HOURS,
+        isActive: true,
+      },
+    });
+    salonDeploy = await app.prisma.salon.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        name: "HSA Salon Deploy",
+        openingHours: DEFAULT_SALON_OPENING_HOURS,
+        isActive: true,
+      },
+    });
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantA.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed (tenantA):", err);
+    }
+    try {
+      await cleanupTestData(app, tenantB.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed (tenantB):", err);
+    }
+  });
+
+  it("an open HOME row (validFrom = hireDate, validUntil = null) resolves for any date on/after validFrom", async () => {
+    const employee = await createEmployee("hsa-open");
+    await createHome(employee.id, salonA.id, "2024-01-01", null);
+
+    const onHireDate = await homeSalonAt(
+      app.prisma,
+      tenantA.tenant.id,
+      employee.id,
+      new Date("2024-01-01T10:00:00Z"),
+    );
+    expect(onHireDate?.salonId).toBe(salonA.id);
+
+    const muchLater = await homeSalonAt(
+      app.prisma,
+      tenantA.tenant.id,
+      employee.id,
+      new Date("2027-06-15T10:00:00Z"),
+    );
+    expect(muchLater?.salonId).toBe(salonA.id);
+  });
+
+  it("a HOME salon change on a known date: the day before answers OLD, on/after answers NEW", async () => {
+    const employee = await createEmployee("hsa-change");
+    await createHome(employee.id, salonA.id, "2024-01-01", "2025-05-31");
+    await createHome(employee.id, salonB.id, "2025-06-01", null);
+
+    const dayBefore = await homeSalonAt(
+      app.prisma,
+      tenantA.tenant.id,
+      employee.id,
+      new Date("2025-05-31T10:00:00Z"),
+    );
+    expect(dayBefore?.salonId).toBe(salonA.id);
+
+    const changeDay = await homeSalonAt(
+      app.prisma,
+      tenantA.tenant.id,
+      employee.id,
+      new Date("2025-06-01T10:00:00Z"),
+    );
+    expect(changeDay?.salonId).toBe(salonB.id);
+  });
+
+  it("a date with NO HOME row covering it (legacy fixture with only a DEPLOYMENT row) yields null", async () => {
+    const employee = await createEmployee("hsa-legacy-deploy-only");
+    await app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        employeeId: employee.id,
+        salonId: salonDeploy.id,
+        kind: "DEPLOYMENT",
+        validFrom: new Date("2024-01-01"),
+        validUntil: null,
+        weekdays: [0, 1, 2, 3, 4, 5, 6],
+      },
+    });
+
+    const result = await homeSalonAt(
+      app.prisma,
+      tenantA.tenant.id,
+      employee.id,
+      new Date("2026-01-01T10:00:00Z"),
+    );
+    expect(result).toBeNull();
+  });
+
+  it("a date before the earliest HOME row's validFrom yields null", async () => {
+    const employee = await createEmployee("hsa-before-earliest");
+    await createHome(employee.id, salonA.id, "2025-01-01", null);
+
+    const beforeRow = await homeSalonAt(
+      app.prisma,
+      tenantA.tenant.id,
+      employee.id,
+      new Date("2024-06-01T10:00:00Z"),
+    );
+    expect(beforeRow).toBeNull();
+  });
+
+  it("D-08/Open Question 1 (Claude's discretion, pinned decision): NO hire-date floor — a HOME row covering a date BEFORE the employee's hireDate still resolves", async () => {
+    // hireDate is AFTER the HOME row's own validFrom — the reverse of the usual case. If
+    // homeSalonAt floored at hireDate the way salonForDay does, this would answer null.
+    const employee = await createEmployee("hsa-pre-hire-floor", "2025-06-01");
+    await createHome(employee.id, salonA.id, "2024-01-01", null);
+
+    const beforeHireDate = await homeSalonAt(
+      app.prisma,
+      tenantA.tenant.id,
+      employee.id,
+      new Date("2024-06-01T10:00:00Z"),
+    );
+    expect(beforeHireDate?.salonId).toBe(salonA.id);
+  });
+
+  it("a voided HOME row (validUntil = validFrom - 1 day) is never returned, even queried exactly at its own validFrom", async () => {
+    const employee = await createEmployee("hsa-voided");
+    await createHome(employee.id, salonA.id, "2024-01-01", null);
+    // Voided: validUntil (2026-04-30) is one day BEFORE validFrom (2026-05-01) — covers zero days.
+    await createHome(employee.id, salonB.id, "2026-05-01", "2026-04-30");
+
+    const atVoidedRowsOwnValidFrom = await homeSalonAt(
+      app.prisma,
+      tenantA.tenant.id,
+      employee.id,
+      new Date("2026-05-01T10:00:00Z"),
+    );
+    // The still-open HOME row (salonA) must win — never the voided row's salon (salonB).
+    expect(atVoidedRowsOwnValidFrom?.salonId).toBe(salonA.id);
+  });
+
+  it("a DEPLOYMENT row covering the same date (even matching that date's weekday) is IGNORED — the HOME row wins regardless", async () => {
+    const employee = await createEmployee("hsa-deployment-ignored");
+    await createHome(employee.id, salonA.id, "2024-01-01", null);
+    // Every weekday, so this DEPLOYMENT would win under salonForDay's rule for any date tested.
+    await app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        employeeId: employee.id,
+        salonId: salonDeploy.id,
+        kind: "DEPLOYMENT",
+        validFrom: new Date("2026-01-01"),
+        validUntil: new Date("2026-12-31"),
+        weekdays: [0, 1, 2, 3, 4, 5, 6],
+      },
+    });
+
+    const result = await homeSalonAt(
+      app.prisma,
+      tenantA.tenant.id,
+      employee.id,
+      new Date("2026-06-15T10:00:00Z"),
+    );
+    expect(result?.salonId).toBe(salonA.id);
+  });
+
+  it("a foreign tenant's real employeeId, and a nonexistent employeeId, both yield null", async () => {
+    const foreignSalon = await app.prisma.salon.create({
+      data: {
+        tenantId: tenantB.tenant.id,
+        name: "HSA Foreign Salon",
+        openingHours: DEFAULT_SALON_OPENING_HOURS,
+        isActive: true,
+      },
+    });
+    await app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: tenantB.tenant.id,
+        employeeId: tenantB.employee.id,
+        salonId: foreignSalon.id,
+        kind: "HOME",
+        validFrom: new Date("2024-01-01"),
+        validUntil: null,
+        weekdays: [],
+      },
+    });
+
+    const foreignTenant = await homeSalonAt(
+      app.prisma,
+      tenantA.tenant.id,
+      tenantB.employee.id,
+      new Date("2026-01-01T10:00:00Z"),
+    );
+    expect(foreignTenant).toBeNull();
+
+    const nonexistent = await homeSalonAt(
+      app.prisma,
+      tenantA.tenant.id,
+      "00000000-0000-4000-8000-000000000901",
+      new Date("2026-01-01T10:00:00Z"),
+    );
+    expect(nonexistent).toBeNull();
+  });
+
+  it("respects the tenant-local calendar day: a HOME-salon change is resolved by the Berlin day, not the UTC day, of the given instant", async () => {
+    const employee = await createEmployee("hsa-tz");
+    // Tenant default timezone is Europe/Berlin (no TenantConfig row for this fixture tenant).
+    // 2026-03-14T23:30:00Z is 2026-03-15 00:30 CET in Berlin (before the DST switch on 2026-03-29)
+    // — same instant/tenant-local-day pair the existing salonForDay IN-02 test uses.
+    await createHome(employee.id, salonA.id, "2024-01-01", "2026-03-14");
+    await createHome(employee.id, salonB.id, "2026-03-15", null);
+
+    const result = await homeSalonAt(
+      app.prisma,
+      tenantA.tenant.id,
+      employee.id,
+      new Date("2026-03-14T23:30:00Z"),
+    );
+    // A naive UTC-day read would see "2026-03-14" and answer salonA (the OLD row) — the
+    // tenant-local Berlin day is already "2026-03-15", which must answer salonB (the NEW row).
+    expect(result?.salonId).toBe(salonB.id);
   });
 });

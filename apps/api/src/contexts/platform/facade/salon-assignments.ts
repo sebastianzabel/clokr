@@ -190,6 +190,60 @@ export async function salonForDay(
   return null;
 }
 
+/**
+ * Phase 91b Plan 02 (issue #91, D-08) — the Stammsalon at an exact Stichtag, HOME-row only.
+ *
+ * This is deliberately NOT {@link salonForDay}: that function answers "which salon is this
+ * employee probably WORKING at on this day" and therefore mixes in DEPLOYMENT weekday matching —
+ * a DEPLOYMENT row effective on `date`, even one whose weekdays cover that day's weekday, is
+ * IGNORED here. `homeSalonAt` answers a narrower question, "which salon is this employee's HOME
+ * salon on this day", which `contexts/platform/scope-filter.ts` (Plan 91b-02 Tasks 2-3) needs as
+ * its one shared primitive for every Stammsalon-dependent scope rule (D-09/D-10/D-12) — no
+ * Stammsalon-at-a-date logic may be re-derived anywhere else (D-07).
+ *
+ * `date` is converted to the tenant-local calendar day exactly as {@link salonForDay} does. Unlike
+ * `salonForDay`, this function applies NO hire-date floor (Open Question 1 / A1 in
+ * 91b-RESEARCH.md): D-08's own text names no such floor, unlike `salonForDay`'s explicit IN-02
+ * one — a HOME row that covers a day before the employee's `hireDate` still resolves here. This is
+ * a deliberate, pinned decision (see 91b-02-SUMMARY.md), not an oversight; a HOME row realistically
+ * never predates `hireDate` in practice ({@link fillHomeGapBeforeHireDate}'s own invariant), so the
+ * omission is harmless in the data this system actually produces.
+ *
+ * No explicit `isVoided` post-filter is needed: a voided row's own `validFrom <= day <= validUntil`
+ * window spans zero days by construction (`validUntil < validFrom`), so the `validFrom`/`validUntil`
+ * predicate below already excludes it structurally — pinned by this module's own test, not merely
+ * assumed by reasoning about it.
+ *
+ * Returns `null` when no HOME row covers `date` — the fail-closed input every scope-filter.ts
+ * Stammsalon check treats as "not in scope for this branch" (D-08's "kein Stammsalon am Stichtag ⇒
+ * nicht im Scope"). A foreign or nonexistent `employeeId` also yields `null` (T-100-09 — this
+ * function never distinguishes the two cases).
+ */
+export async function homeSalonAt(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  employeeId: string,
+  date: Date,
+): Promise<{ salonId: string; assignmentId: string } | null> {
+  const tz = await readTenantTimezone(db, tenantId);
+  const day = tenantLocalDay(date, tz);
+  const dayAsDate = dayToDate(day);
+
+  const home = await db.employeeSalonAssignment.findFirst({
+    where: {
+      tenantId,
+      employeeId,
+      kind: "HOME",
+      validFrom: { lte: dayAsDate },
+      OR: [{ validUntil: null }, { validUntil: { gte: dayAsDate } }],
+    },
+    orderBy: [{ validFrom: "asc" }, { id: "asc" }],
+  });
+  if (!home) return null;
+
+  return { salonId: home.salonId, assignmentId: home.id };
+}
+
 // ── Phase 67b Plan 03 (issue #67) additions — the employee-lifecycle write helpers ───────────────
 //
 // These three functions keep the D-24 invariant ("exactly one HOME row per day from hireDate")
