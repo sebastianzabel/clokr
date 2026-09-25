@@ -27,6 +27,9 @@ import {
   updateSalon,
   updateSalonSchema,
 } from "../facade/salons";
+// Phase 71b (issue #71), D-12: a platform ROUTE file may import the time-tracking index (settings.ts,
+// employees.ts, imports.ts already do); the facade module itself (facade/salons.ts) never does.
+import { countEntriesForSalon } from "../../time-tracking";
 
 const listQuerySchema = z.object({
   includeInactive: z
@@ -43,6 +46,14 @@ const ALREADY_INACTIVE_MESSAGE = "Der Salon ist bereits deaktiviert.";
 const ALREADY_ACTIVE_MESSAGE = "Der Salon ist bereits aktiv.";
 const LAST_ACTIVE_SALON_MESSAGE =
   "Der letzte aktive Salon eines Mandanten kann nicht deaktiviert werden.";
+
+/**
+ * D-12: names only COUNTS, never any entry or assignment — same convention as
+ * {@link homeSalonInUseMessage}.
+ */
+function federalStateInUseMessage(): string {
+  return "Das Bundesland dieses Salons kann nicht mehr geändert werden: Es gibt bereits Zeiteinträge oder Salonzuordnungen für diesen Salon. Ein Umzug ist ein neuer Salon.";
+}
 
 /**
  * D-14: names only the COUNT, never any employee — the message text itself is the AC's own
@@ -193,21 +204,40 @@ export async function salonRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: NO_CHANGES });
       }
 
-      const result = await app.prisma.$transaction(async (tx) => {
-        const outcome = await updateSalon(tx, req.user.tenantId, id, patch);
-        if (!outcome) return null;
-        await auditSalon(app, req, {
-          action: "UPDATE",
-          entityId: id,
-          oldValue: outcome.existing,
-          newValue: outcome.updated,
-          tx,
-        });
-        return outcome.updated;
+      const outcome = await app.prisma.$transaction(async (tx) => {
+        const result = await updateSalon(tx, req.user.tenantId, id, patch, (countDb) =>
+          countEntriesForSalon(countDb, req.user.tenantId, id),
+        );
+        if (result.status === "OK") {
+          await auditSalon(app, req, {
+            action: "UPDATE",
+            entityId: id,
+            oldValue: result.existing,
+            newValue: result.updated,
+            tx,
+          });
+        }
+        return result;
       });
 
-      if (!result) return rejectUnknownSalon(app, req, reply, id);
-      return result;
+      switch (outcome.status) {
+        case "OK":
+          return outcome.updated;
+        case "NOT_FOUND":
+          return rejectUnknownSalon(app, req, reply, id);
+        case "FEDERAL_STATE_IN_USE":
+          return reply.code(409).send({
+            error: federalStateInUseMessage(),
+            code: "FEDERAL_STATE_IN_USE",
+            timeEntryCount: outcome.timeEntryCount,
+            assignmentCount: outcome.assignmentCount,
+          });
+        default: {
+          // Compile-time exhaustiveness: updateSalon's return type has no other status.
+          const unreachable: never = outcome;
+          return unreachable;
+        }
+      }
     },
   });
 

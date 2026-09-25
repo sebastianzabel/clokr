@@ -482,3 +482,27 @@ export async function createImportedTimeEntry(
     },
   });
 }
+
+// ── D-12 — "does any TimeEntry reference this salon?" ───────────────────────────────────────────
+
+/**
+ * Phase 71b (issue #71), D-12: does any `TimeEntry` — including a soft-deleted one — reference
+ * `salonId`? `contexts/platform/facade/salons.ts`'s `updateSalon` calls this (via a
+ * `contexts/time-tracking` index re-export injected by the ROUTE, `api/salons.ts` — this module
+ * imports no other context, ADR 0001/0002) to decide whether a `Salon.federalState` change is a
+ * silent recompute of already-recorded time or genuinely unreferenced.
+ *
+ * Deliberately WITHOUT `deletedAt: null` — the named soft-delete carve-out of this facade's D-08
+ * rule (same shape as {@link clearEntryNotesForEmployee}'s and
+ * {@link hardDeleteTimeDataForEmployee}'s own docblocks above): a soft-deleted entry still carries
+ * the salon as its recorded work location (Revisionssicherheit) and blocks the state change
+ * exactly like a live one — a hard-deleted salon reference is never possible (`onDelete: Restrict`
+ * on `TimeEntry.salon`), so "soft-deleted or live" is already every row that can exist.
+ */
+export async function countEntriesForSalon(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  salonId: string,
+): Promise<number> {
+  return db.timeEntry.count({ where: { salonId, employee: { tenantId } } });
+}

@@ -96,6 +96,7 @@ export type {
   SalonOpeningHours,
   CreateSalonInput,
   UpdateSalonInput,
+  UpdateSalonOutcome,
   SalonStateChange,
   SalonDeactivation,
 } from "./facade/salons";

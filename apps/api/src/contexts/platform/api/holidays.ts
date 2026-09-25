@@ -86,9 +86,9 @@ function sendUnresolved(
 
 export async function holidayRoutes(app: FastifyInstance) {
   // GET /api/v1/holidays?year=2026&salonId=...
-  // Berechnet Feiertage on-the-fly für das Bundesland des Salons (§ 2 EFZG — Arbeitsort
-  // entscheidet, nicht das Bundesland des Mandanten), mergt zusätzlich manuell hinzugefügte
-  // Einträge des Salons und die mandantenweiten Heiligabend-/Silvester-Regeln.
+  // Computes holidays on the fly for the salon's federal state (§ 2 EFZG — work location
+  // decides, not the tenant's federal state), also merges the salon's manually added
+  // entries and the tenant-wide Christmas Eve / New Year's Eve rules.
   app.get("/", {
     schema: { tags: ["Feiertage"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,

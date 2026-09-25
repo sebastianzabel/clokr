@@ -242,6 +242,9 @@ export const updateSalonSchema = z
     postalCode: addressField(POSTAL_CODE_MAX_LENGTH, "Postleitzahl"),
     city: addressField(CITY_MAX_LENGTH, "Ort"),
     openingHours: salonOpeningHoursSchema.optional(),
+    // Phase 71b (issue #71), D-12: changeable, but ONLY while nothing references the salon yet —
+    // see {@link updateSalon}'s own docblock for the guard.
+    federalState: z.nativeEnum(FederalState).optional(),
   })
   .strict();
 
@@ -318,21 +321,78 @@ export async function createSalon(
 }
 
 /**
- * D-13: the exact `updateLeaveType` shape (`apps/api/src/contexts/absence/facade/leave-types.ts`)
- * — a tenant-scoped guard-fetch AND the update itself both carry `tenantId` in their OWN `where`,
- * so the update does not depend on the guard having run first. `null` for a foreign OR nonexistent
- * `salonId` — the same byte-identical shape as {@link findSalon}. Only the keys PRESENT in `patch`
- * are written (see {@link updateSalonSchema}'s docblock); the ROUTE rejects an empty patch with
- * NO_CHANGES before ever calling this function.
+ * D-12: the outcome of an {@link updateSalon} call, as a CODE, never a display string (CLAUDE.md
+ * "never use a new display string as a control value") — the ROUTE maps `FEDERAL_STATE_IN_USE` to
+ * its own German 409, and `NOT_FOUND` to the shared `rejectUnknownSalon` 404. `FEDERAL_STATE_IN_USE`
+ * carries only COUNTS — never names, per the same AC style as {@link SalonStateChange}'s
+ * `HOME_SALON_IN_USE`.
+ */
+export type UpdateSalonOutcome =
+  | { status: "OK"; existing: Salon; updated: Salon }
+  | { status: "NOT_FOUND" }
+  | { status: "FEDERAL_STATE_IN_USE"; timeEntryCount: number; assignmentCount: number };
+
+/**
+ * D-13/D-12: the exact `updateLeaveType` shape (`apps/api/src/contexts/absence/facade/
+ * leave-types.ts`) — a tenant-scoped guard-fetch AND the update itself both carry `tenantId` in
+ * their OWN `where`, so the update does not depend on the guard having run first. `NOT_FOUND` for a
+ * foreign OR nonexistent `salonId` — the same byte-identical shape as {@link findSalon}. Only the
+ * keys PRESENT in `patch` are written (see {@link updateSalonSchema}'s docblock); the ROUTE rejects
+ * an empty patch with NO_CHANGES before ever calling this function.
+ *
+ * Phase 71b (issue #71), D-12: a `Salon.federalState` change is a NEW rule — "a salon does not
+ * move". A later change to the same salon would silently recompute every OPEN month's holidays but
+ * never a CLOSED one (Monatsabschluss immutability), producing an internally inconsistent account
+ * for the same salon across a month boundary; a real relocation is a NEW salon, not an edit of this
+ * one's state. So a `federalState` change is allowed ONLY while nothing recorded against this
+ * salon exists yet:
+ *
+ *   1. `patch.federalState` present → FOR UPDATE-lock the salon row FIRST, inside the caller's own
+ *      `$transaction` (the lock is released when that transaction ends — calling this against a
+ *      bare `PrismaClient` gives no protection at all). `FOR UPDATE` is the one lock mode strong
+ *      enough to conflict with the `FOR KEY SHARE` every `TimeEntry`/`EmployeeSalonAssignment`
+ *      INSERT takes on its referenced `Salon` row (the FK check) — an ordinary `UPDATE` only takes
+ *      `FOR NO KEY UPDATE`, which does NOT conflict with `FOR KEY SHARE`, so skipping this lock
+ *      would let a concurrent insert land between the count below and the write.
+ *   2. The tenant-scoped guard-fetch. No row (locked-but-vanished, or never existed) → `NOT_FOUND`.
+ *   3. Only when the NEW state actually DIFFERS from the stored one: count every
+ *      `EmployeeSalonAssignment` (ended and voided included — a past assignment is still history
+ *      against this salon's state) and, via the injected `countTimeEntriesForSalon` callback,
+ *      every `TimeEntry` (soft-deleted included) referencing this salon. Either count > 0 →
+ *      `FEDERAL_STATE_IN_USE`, nothing written.
+ *   4. Otherwise (no `federalState` in `patch`, or it equals the stored value, or the salon is
+ *      unreferenced) — update exactly as before this rule existed.
+ *
+ * `countTimeEntriesForSalon` is a CALLBACK, not a direct call, because this module imports no
+ * other context (ADR 0001/0002, this file's own header) — the ROUTE (`api/salons.ts`) resolves it
+ * from `contexts/time-tracking/index.ts`'s `countEntriesForSalon` and injects it here bound to the
+ * same `db`/`tenantId`/`salonId` this function is already working with.
  */
 export async function updateSalon(
   db: Prisma.TransactionClient,
   tenantId: string,
   salonId: string,
   patch: UpdateSalonInput,
-): Promise<{ existing: Salon; updated: Salon } | null> {
+  countTimeEntriesForSalon: (db: Prisma.TransactionClient) => Promise<number>,
+): Promise<UpdateSalonOutcome> {
+  const changingFederalState = patch.federalState !== undefined;
+
+  if (changingFederalState) {
+    await db.$queryRaw`SELECT "id" FROM "Salon" WHERE "id" = ${salonId} AND "tenantId" = ${tenantId} FOR UPDATE`;
+  }
+
   const existing = await db.salon.findFirst({ where: { id: salonId, tenantId } });
-  if (!existing) return null;
+  if (!existing) return { status: "NOT_FOUND" };
+
+  if (changingFederalState && patch.federalState !== existing.federalState) {
+    const [assignmentCount, timeEntryCount] = await Promise.all([
+      db.employeeSalonAssignment.count({ where: { tenantId, salonId } }),
+      countTimeEntriesForSalon(db),
+    ]);
+    if (assignmentCount > 0 || timeEntryCount > 0) {
+      return { status: "FEDERAL_STATE_IN_USE", timeEntryCount, assignmentCount };
+    }
+  }
 
   const { openingHours, ...rest } = patch;
   const updated = await db.salon.update({
@@ -344,7 +404,7 @@ export async function updateSalon(
         : {}),
     },
   });
-  return { existing, updated };
+  return { status: "OK", existing, updated };
 }
 
 // ── Deactivate / re-activate (Phase 64b Plan 02, D-06/D-07/D-08) — never delete ────────────────
