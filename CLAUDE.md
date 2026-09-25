@@ -217,6 +217,7 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
 - Break model: `Break[]` records with startTime/endTime (legacy: `breakMinutes` integer)
 - `openAdd()` on frontend redirects to edit if entry already exists for that day
 - API POST rejects with 409 if entry already exists for employee+date
+- **Every entry carries a required `salonId`** (FK onto `Salon`, `onDelete: Restrict`, Phase 68b / issue #68), decided by `resolveEntrySalon()` in `apps/api/src/contexts/time-tracking/entry-salon.ts` — the only place this rule lives: an explicit, active salon of the same tenant on manual entries, corrections, Zeitnachträge and the CSV import (400 `SALON_INACTIVE` when deactivated, 404 indistinguishable for a foreign or unknown id); otherwise `salonForDay()`, then the tenant's default salon, 409 `NO_ACTIVE_SALON` if none exists. The clock paths (NFC/MOBILE/WIFI) take no salon input until #87. `PUT` may change the salon (never on a locked entry, never re-derived from a changed date). The salon hangs on the entry, not the day (#70).
 
 ## ArbZG (Arbeitszeitgesetz) Rules
 
