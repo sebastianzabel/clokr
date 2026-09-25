@@ -144,7 +144,10 @@ export async function flagShiftsConflictingWithLeave(
       conflictsWithLeave: false,
       deletedAt: null, // Phase 67.2 — the reverse-hook only flags ACTIVE shifts
     },
-    select: { id: true, date: true, startTime: true, endTime: true, label: true },
+    // Phase 91b Plan 09 (Issue #91), D-17: `salonId` is returned so the caller's manager
+    // notification fan-out can narrow recipients via `isShiftInScope` (D-11) — this facade
+    // function's own S2 purpose (flag + return the flagged rows) is unchanged.
+    select: { id: true, date: true, startTime: true, endTime: true, label: true, salonId: true },
   });
 
   if (conflictingShifts.length > 0) {

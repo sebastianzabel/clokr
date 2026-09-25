@@ -6,30 +6,30 @@
     "calls": [
       {
         "call": "user.findUnique",
-        "line": 58
+        "line": 61
       },
       {
         "call": "otpToken.findFirst",
-        "line": 208
-      },
-      {
-        "call": "user.findUnique",
         "line": 231
       },
       {
         "call": "user.findUnique",
-        "line": 251
-      },
-      {
-        "call": "otpToken.updateMany",
-        "line": 261
+        "line": 254
       },
       {
         "call": "user.findUnique",
-        "line": 367
+        "line": 274
+      },
+      {
+        "call": "otpToken.updateMany",
+        "line": 284
+      },
+      {
+        "call": "user.findUnique",
+        "line": 390
       }
     ],
-    "reason": "All six calls sit in pre-authentication flows (login, OTP verification, OTP resend, forgot-password) where req.user does not exist yet — there is no caller tenant to scope against, and the entire purpose of each call is establishing WHO the caller is before any tenant context exists. D-07 predicted this exact category. (Lines shifted +1 to +11 in Phase 75b Plan 10 (#75): a new import plus the ACCOUNT_LOCKED recipient site (D-16/D-17, userIdsHoldingPermission) inside the login handler's failed-attempt branch added net 11 lines above every call after that branch; the calls themselves are unmoved, mechanical only.)"
+    "reason": "All six calls sit in pre-authentication flows (login, OTP verification, OTP resend, forgot-password) where req.user does not exist yet — there is no caller tenant to scope against, and the entire purpose of each call is establishing WHO the caller is before any tenant context exists. D-07 predicted this exact category. (Lines shifted +1 to +11 in Phase 75b Plan 10 (#75): a new import plus the ACCOUNT_LOCKED recipient site (D-16/D-17, userIdsHoldingPermission) inside the login handler's failed-attempt branch added net 11 lines above every call after that branch; the calls themselves are unmoved, mechanical only.) Lines shifted +3 (import block: userIdsHoldingPermission's import widened to also bring in resolveScopedHolderIds, plus 3 new imports — isStammsalonScopeMatch, readTenantTimezone, dayToDate/tenantLocalDay) and a further +20 inside the login handler (Phase 91b Plan 09, Issue #91, D-17: the employee:manage-access ACCOUNT_LOCKED notification's new resolveScopedHolderIds narrowing block, upstream of every subsequent call in this handler and every later handler in the file) — old lines [58, 208, 231, 251, 261, 367] -> new lines [61, 231, 254, 274, 284, 390], no finding, mechanical shift only; re-verified at the new lines."
   },
   {
     "file": "apps/api/src/contexts/absence/api/company-shutdowns.ts",

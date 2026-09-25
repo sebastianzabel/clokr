@@ -51,6 +51,7 @@ import {
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 04 (#91), D-10
   isStammsalonScopeMatch, // Phase 91b Plan 04 (#91), D-10/D-14
   resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
+  isShiftInScope, // Phase 91b Plan 09 (#91), D-11/D-17
 } from "../../platform"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
@@ -1507,11 +1508,28 @@ export async function leaveRoutes(app: FastifyInstance) {
               employeeUser.tenantId,
               "section9:decide:ZUGEWIESEN",
             );
+            // Phase 91b Plan 09 (Issue #91), D-17: narrow to holders whose OWN reach covers this
+            // Section9Credit's employee — Stammsalon-only (D-10), Stichtag = the credit's own
+            // overlap period start.
+            const scopedSection9DecideHolderIds = await resolveScopedHolderIds(
+              app.prisma,
+              employeeUser.tenantId,
+              section9DecideHolderIds,
+              "section9:decide:ZUGEWIESEN",
+              (reach) =>
+                isStammsalonScopeMatch(
+                  app.prisma,
+                  employeeUser.tenantId,
+                  reach,
+                  existing.employeeId,
+                  ov.overlapStart,
+                ),
+            );
             const section9Managers = await app.prisma.employee.findMany({
               where: {
                 tenantId: employeeUser.tenantId,
                 user: {
-                  id: { in: section9DecideHolderIds, not: req.user.sub }, // Phase-91 idiom: never notify the actor
+                  id: { in: scopedSection9DecideHolderIds, not: req.user.sub }, // Phase-91 idiom: never notify the actor
                   isActive: true,
                 },
               },
@@ -1636,10 +1654,28 @@ export async function leaveRoutes(app: FastifyInstance) {
                   empName.tenantId,
                   "shift:plan:ZUGEWIESEN",
                 );
+                // Phase 91b Plan 09 (Issue #91), D-11/D-17: narrow to holders whose OWN reach
+                // covers AT LEAST ONE of the flagged conflicting shifts (the batch's own salon(s)
+                // — a single leave approval can conflict with shifts at different salons, and this
+                // ONE notification summarizes ALL of them, so a holder in scope for any one of the
+                // affected shifts is kept). No Stammsalon fallback (D-11).
+                const scopedShiftPlanHolderIds = await resolveScopedHolderIds(
+                  app.prisma,
+                  empName.tenantId,
+                  shiftPlanHolderIds,
+                  "shift:plan:ZUGEWIESEN",
+                  (reach) =>
+                    conflictingShifts.some((s) =>
+                      isShiftInScope(reach, {
+                        salonId: s.salonId,
+                        employeeId: existing.employeeId,
+                      }),
+                    ),
+                );
                 const managers = await app.prisma.user.findMany({
                   where: {
                     isActive: true,
-                    id: { in: shiftPlanHolderIds },
+                    id: { in: scopedShiftPlanHolderIds },
                     employee: { tenantId: empName.tenantId },
                   },
                   select: { id: true },
@@ -3717,11 +3753,27 @@ export async function leaveRoutes(app: FastifyInstance) {
         credit.employee.tenantId,
         "section9:decide:ZUGEWIESEN",
       );
+      // Phase 91b Plan 09 (Issue #91), D-17: same rule as the detection-time notification above —
+      // Stammsalon-only (D-10), Stichtag = the credit's own overlap period start.
+      const scopedReopenSection9DecideHolderIds = await resolveScopedHolderIds(
+        app.prisma,
+        credit.employee.tenantId,
+        reopenSection9DecideHolderIds,
+        "section9:decide:ZUGEWIESEN",
+        (reach) =>
+          isStammsalonScopeMatch(
+            app.prisma,
+            credit.employee.tenantId,
+            reach,
+            credit.employeeId,
+            credit.overlapStart,
+          ),
+      );
       const section9Managers = await app.prisma.employee.findMany({
         where: {
           tenantId: credit.employee.tenantId,
           user: {
-            id: { in: reopenSection9DecideHolderIds, not: req.user.sub },
+            id: { in: scopedReopenSection9DecideHolderIds, not: req.user.sub },
             isActive: true,
           },
         },
