@@ -154,7 +154,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/school-holidays-client.ts": "unterbau", // fetches SchoolHolidayPeriod data from the external OpenHolidays/schulferien-api
   "src/contexts/platform/system-roles.ts": "unterbau", // Phase 75b (Issue #75) — fixed ids, names and permission sets of the three global system roles (AccessRole rows, an Unterbau model); pure module, no Prisma call
   "src/contexts/platform/request-permissions.ts": "unterbau", // Phase 75b (Issue #75) — request-scoped permission resolver plus requirePermission/requireAnyPermission/hasPermission/permissionReach; reads User/RoleAssignment/AccessRole, all Unterbau models
-  "src/contexts/platform/compat-role.ts": "unterbau", // Phase 75b (Issue #75), D-14 — the one compat-role derivation (legacy User.role <-> system roles); reads RoleAssignment/AccessRole, Unterbau models
+  "src/contexts/platform/compat-role.ts": "unterbau", // Phase 75b (Issue #75), D-14 — the one compat-role derivation (legacy User.role <-> system roles); reads RoleAssignment/AccessRole, and since Plan 11 writes RoleAssignment/User (fallback materialization, system-role replacement, column write-back) — all Unterbau models
+  "src/contexts/platform/role-assignment-audit.ts": "unterbau", // Phase 75b Plan 11 (Issue #75) — shared audit helpers for RoleAssignment writes (moved out of api/role-assignments.ts) plus the compatRole-on-last-row rule (D-29); writes AuditLog only via app.audit, Unterbau models
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────

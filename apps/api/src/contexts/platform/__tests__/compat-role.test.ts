@@ -17,6 +17,10 @@ import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../.
 import {
   compatRoleForUser,
   deriveCompatRole,
+  legacyFallbackAlreadyYields,
+  materializeLegacyRoleAssignment,
+  replaceSystemRoleAssignment,
+  syncCompatRoleColumn,
   systemRoleIdForLegacyRole,
   type CompatRoleAssignmentRow,
 } from "../compat-role";
@@ -444,4 +448,184 @@ describe("compat role — login, OTP and refresh carry the derived role (D-14, D
       expect(tokenRole(otp.accessToken)).toBe(role);
     },
   );
+});
+
+describe("compat role — write half against the database (D-14, D-15, D-26)", () => {
+  let app: FastifyInstance;
+  let seed: Awaited<ReturnType<typeof seedTestData>>;
+  let other: Awaited<ReturnType<typeof seedTestData>>;
+
+  async function createUser(tenantId: string, role: Role, label: string) {
+    const s = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const user = await app.prisma.user.create({
+      data: {
+        email: `cw-${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role,
+        isActive: true,
+      },
+    });
+    await app.prisma.employee.create({
+      data: {
+        tenantId,
+        userId: user.id,
+        employeeNumber: `CW-${s}`.slice(0, 20),
+        firstName: label,
+        lastName: "Test",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    return user;
+  }
+
+  function assign(
+    userId: string,
+    accessRoleId: string,
+    scope: { scopeType: "TENANT" | "SALONS"; salonIds?: string[] } = { scopeType: "TENANT" },
+  ) {
+    return app.prisma.roleAssignment.create({
+      data: {
+        tenantId: seed.tenant.id,
+        userId,
+        accessRoleId,
+        scopeType: scope.scopeType,
+        salonIds: scope.salonIds ?? [],
+        employeeIds: [],
+      },
+    });
+  }
+
+  function rowsOf(userId: string) {
+    return app.prisma.roleAssignment.findMany({
+      where: { tenantId: seed.tenant.id, userId },
+      orderBy: { createdAt: "asc" },
+    });
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    seed = await seedTestData(app, "compat-write");
+    other = await seedTestData(app, "compat-write-other");
+  });
+
+  afterAll(async () => {
+    try {
+      await app.prisma.roleAssignment.deleteMany({ where: { tenantId: seed.tenant.id } });
+      await app.prisma.accessRole.deleteMany({ where: { tenantId: seed.tenant.id } });
+      await cleanupTestData(app, seed.tenant.id);
+      await cleanupTestData(app, other.tenant.id);
+    } catch (err) {
+      console.error("Cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  it("materializeLegacyRoleAssignment stores the fallback once, and never for a user of another tenant", async () => {
+    const user = await createUser(seed.tenant.id, "MANAGER", "mat");
+    const first = await materializeLegacyRoleAssignment(app.prisma, seed.tenant.id, user.id);
+    expect(first).toMatchObject({
+      legacyRole: "MANAGER",
+      assignment: {
+        userId: user.id,
+        accessRoleId: SYSTEM_ROLE_IDS.MANAGER,
+        roleName: "Manager",
+        scopeType: "TENANT",
+        salonIds: [],
+        employeeIds: [],
+      },
+    });
+    expect(await materializeLegacyRoleAssignment(app.prisma, seed.tenant.id, user.id)).toBeNull();
+    expect((await rowsOf(user.id)).map((row) => row.id)).toEqual([first!.assignment.id]);
+
+    const foreign = await createUser(other.tenant.id, "ADMIN", "mat-foreign");
+    expect(
+      await materializeLegacyRoleAssignment(app.prisma, seed.tenant.id, foreign.id),
+    ).toBeNull();
+    expect(await app.prisma.roleAssignment.count({ where: { userId: foreign.id } })).toBe(0);
+  });
+
+  it("legacyFallbackAlreadyYields is true only for a fallback user whose column equals the role", async () => {
+    const fallback = await createUser(seed.tenant.id, "EMPLOYEE", "yields");
+    const yields = (role: Role) =>
+      legacyFallbackAlreadyYields(app.prisma, seed.tenant.id, fallback.id, role);
+    expect(await yields("EMPLOYEE")).toBe(true);
+    expect(await yields("MANAGER")).toBe(false);
+    await assign(fallback.id, SYSTEM_ROLE_IDS.EMPLOYEE);
+    expect(await yields("EMPLOYEE")).toBe(false);
+  });
+
+  it("replaceSystemRoleAssignment swaps only the TENANT system row; customer and SALONS rows stay", async () => {
+    const user = await createUser(seed.tenant.id, "ADMIN", "replace");
+    const name = `Schreibhaelfte ${user.id.slice(0, 8)}`;
+    const customerRole = await app.prisma.accessRole.create({
+      data: {
+        tenantId: seed.tenant.id,
+        name,
+        nameKey: roleNameKey(name),
+        permissions: ["role:read:ZUGEWIESEN"],
+      },
+    });
+    const adminRow = await assign(user.id, SYSTEM_ROLE_IDS.ADMIN);
+    const customerRow = await assign(user.id, customerRole.id);
+    const salonRow = await assign(user.id, SYSTEM_ROLE_IDS.MANAGER, {
+      scopeType: "SALONS",
+      salonIds: [seed.salonId],
+    });
+
+    const { removed, created } = await replaceSystemRoleAssignment(
+      app.prisma,
+      seed.tenant.id,
+      user.id,
+      "EMPLOYEE",
+    );
+    expect(removed.map((row) => row.id)).toEqual([adminRow.id]);
+    expect(removed[0].roleName).toBe("Admin");
+    expect(created).toMatchObject({ accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE, scopeType: "TENANT" });
+
+    const rows = await rowsOf(user.id);
+    expect(rows.map((row) => row.id).sort()).toEqual(
+      [customerRow.id, salonRow.id, created!.id].sort(),
+    );
+
+    // Idempotent: the target already stored → nothing removed, nothing created.
+    expect(
+      await replaceSystemRoleAssignment(app.prisma, seed.tenant.id, user.id, "EMPLOYEE"),
+    ).toEqual({ removed: [], created: null });
+  });
+
+  it("replaceSystemRoleAssignment replaces a malformed TENANT row on the target role", async () => {
+    const user = await createUser(seed.tenant.id, "EMPLOYEE", "malformed");
+    // A TENANT row carrying a salon list violates the D-03 shape and grants nothing (IN-02).
+    const malformed = await assign(user.id, SYSTEM_ROLE_IDS.EMPLOYEE, {
+      scopeType: "TENANT",
+      salonIds: [seed.salonId],
+    });
+    const { removed, created } = await replaceSystemRoleAssignment(
+      app.prisma,
+      seed.tenant.id,
+      user.id,
+      "EMPLOYEE",
+    );
+    expect(removed.map((row) => row.id)).toEqual([malformed.id]);
+    expect(created).toMatchObject({ accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE, salonIds: [] });
+  });
+
+  it("syncCompatRoleColumn writes the derived value only on a change and reports it", async () => {
+    const user = await createUser(seed.tenant.id, "MANAGER", "sync");
+    const adminRow = await assign(user.id, SYSTEM_ROLE_IDS.ADMIN);
+    expect(await syncCompatRoleColumn(app.prisma, seed.tenant.id, user.id)).toEqual({
+      from: "MANAGER",
+      to: "ADMIN",
+    });
+    expect(await syncCompatRoleColumn(app.prisma, seed.tenant.id, user.id)).toBeNull();
+
+    // D-08: no stored row left → EMPLOYEE, never a lingering ADMIN.
+    await app.prisma.roleAssignment.delete({ where: { id: adminRow.id } });
+    expect(await syncCompatRoleColumn(app.prisma, seed.tenant.id, user.id)).toEqual({
+      from: "ADMIN",
+      to: "EMPLOYEE",
+    });
+    const stored = await app.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(stored.role).toBe("EMPLOYEE");
+  });
 });
