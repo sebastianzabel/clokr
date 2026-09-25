@@ -479,6 +479,9 @@ benennt diesen Abschnitt um, wenn keine `requireRole`-Stelle mehr übrig ist.
 | `contexts/platform/api/settings.ts:1409`                   | `PUT /security`                                 | A       | `tenant-settings:update`       | ZUGEWIESEN                                   |
 | `contexts/platform/api/settings.ts:1440`                   | `GET /work/:employeeId/history`                 | A, M    | `contract:read`                | ZUGEWIESEN                                   |
 | `contexts/platform/api/settings.ts:1475`                   | `GET /employees`                                | A, M    | `employee:read`                | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/integrations.ts:251`              | `GET /phorest/couplings`                        | A       | `integration:manage`           | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/integrations.ts:279`              | `POST /phorest/couplings`                       | A       | `integration:manage`           | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/integrations.ts:369`              | `DELETE /phorest/couplings/:salonId`            | A       | `integration:manage`           | ZUGEWIESEN                                   |
 | `contexts/scheduling/api/integrations.ts:119`              | `GET /phorest/config`                           | A       | `integration:manage`           | ZUGEWIESEN                                   |
 | `contexts/scheduling/api/integrations.ts:146`              | `PUT /phorest/config`                           | A       | `integration:manage`           | ZUGEWIESEN                                   |
 | `contexts/scheduling/api/integrations.ts:200`              | `POST /phorest/test`                            | A       | `integration:manage`           | ZUGEWIESEN                                   |

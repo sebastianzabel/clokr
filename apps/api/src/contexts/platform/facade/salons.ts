@@ -138,8 +138,8 @@ export async function listSalons(
  * loudly (D-15); this facade never falls back to an inactive salon at runtime (the migration's own
  * backfill SQL has a migration-only fallback to the earliest salon of any state, pinned equal to
  * this function's active-only rule by `apps/api/src/__tests__/shift-salon-migration.test.ts`).
- * Once #65 exists, the Phorest sync's use of this function is replaced by the salon of the
- * specific Phorest coupling.
+ * Since Phase 65b (issue #65) the Phorest sync no longer uses this rule — it takes the salon of
+ * each coupling (`services/phorest/sync-tenant.ts`); routes and test fixtures still use it.
  */
 export async function findDefaultSalon(
   db: Prisma.TransactionClient,

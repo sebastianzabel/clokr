@@ -608,8 +608,16 @@ import { readFileSync } from "node:fs";
 // `numTotalTests` 3865). Common base 2f6765cd (301 / 3725): 307 / 3831 (67b side) plus 325's
 // three new files and 34 new cases (304 / 3759 on its side) = 310 / 3865, which the reporter
 // confirms. Numbers read from the reporter, not summed from a diff.
-const MIN_FILES = 310;
-const MIN_TESTS = 3865;
+//
+// Merge of `origin/main` @ 6ebcd133 (#340, phase 67b) into `feat/65-phorest-kopplung` (phase 65b),
+// 2026-09-25: re-measured on the MERGED tree (`pnpm --filter @clokr/api run test:setup &&
+// pnpm --filter @clokr/api test`): `Test Files 315 passed (315)`, `Tests 3929 passed | 3 skipped
+// (3932)`, zero failures — `vitest-report.json` agrees (`testResults.length` 315, `numTotalTests`
+// 3932). 65b's own branch (before this merge) measured 309 / 3826; merging in 67b's five new test
+// files and its share of new cases brings it to 315 / 3932, which the reporter confirms. Numbers
+// read from the reporter, not summed from a diff.
+const MIN_FILES = 315;
+const MIN_TESTS = 3932;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

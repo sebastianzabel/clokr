@@ -1,9 +1,15 @@
 // Phase 85 (SS-03/SS-04/SS-06/SS-07) — The ONE shared Phorest→clokr shift sync.
 //
 // Both the cron (plugins/scheduler.ts) and the manual endpoint
-// (routes/integrations.ts POST /phorest/sync-shifts) call this single function, killing
+// (routes/integrations.ts POST /phorest/sync-shifts) reach this single function, killing
 // the previous body duplication (SS-07 no-drift). Callers wrap it in withAdvisoryLock so
 // cron and a manual click can't reconcile concurrently.
+//
+// Phase 65b (issue #65): both triggers call the orchestrator in sync-tenant.ts, which calls this
+// function once per coupled ACTIVE salon with that salon's PhorestSyncTarget. The run row carries
+// the salon, the branch in every Phorest URL is the coupling's, and EVERY reconcile step below
+// (GATE 3, soft-cancel, pending-leave protection, adopt-on-match, replace pass) is delimited by
+// the run's salon in addition to the tenant — a run for salon A never touches salon B's shifts.
 //
 // Plan 01 delivered the production tracer: create-or-update (upsert) by externalId with
 // origin=PHOREST, explicit mapping only, one PhorestSyncRun history row per invocation.
@@ -51,13 +57,13 @@ import {
   deductVacationDays,
   reverseVacationDays,
 } from "../../contexts/absence"; // Phase 101B (Issue #101, wave 7) — merged from four deep imports
-import { findDefaultSalon } from "../../contexts/platform"; // Phase 325 (issue #325), D-14/D-15
 import { phorestFetch } from "./client";
 import {
   phorestShiftKey,
   extractWorkTimes,
   phorestHasMorePages,
   PHOREST_PAGE_SIZE,
+  type PhorestSyncTarget,
   type PhorestWorkTimeItem,
   type SyncOpts,
   type SyncResult,
@@ -235,14 +241,21 @@ async function isolateShiftFailure<T>(
   }
 }
 
+/**
+ * Syncs ONE coupled salon's Phorest branch into its shifts. `target` is a REQUIRED positional
+ * parameter (Phase 65b, D-08) so a caller that forgets the salon is a compile error, never a
+ * silent tenant-wide reconcile; it is resolved by the orchestrator (sync-tenant.ts).
+ */
 export async function syncPhorestShifts(
   app: FastifyInstance,
   tenantId: string,
+  target: PhorestSyncTarget,
   opts: SyncOpts = {},
 ): Promise<SyncResult> {
   // One run row per invocation (SS-05) — created RUNNING, finalized SUCCESS/SUSPECT/ERROR below.
+  // Phase 65b (D-03): the run names the salon whose branch it syncs.
   const run = await app.prisma.phorestSyncRun.create({
-    data: { tenantId, status: "RUNNING" },
+    data: { tenantId, salonId: target.salonId, status: "RUNNING" },
   });
 
   const result: SyncResult = {
@@ -257,27 +270,21 @@ export async function syncPhorestShifts(
     replaced: 0,
     protectedPendingLeave: 0,
     leaveRecalcFailures: 0,
+    skippedOtherSalon: 0,
   };
 
   try {
+    // Credentials, base URL, business id, timezone, window and puffer stay per tenant; only the
+    // branch comes from the salon's coupling (Phase 65b, D-08).
     const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
     const password = decryptSafe(cfg?.phorestPassword);
     if (!cfg?.phorestBusinessId || !cfg?.phorestUsername || !password) {
       throw new Error("Phorest nicht konfiguriert");
     }
 
-    // Phase 325 (issue #325), D-14/D-15: until #65, one Phorest coupling per tenant means its
-    // salon is the tenant's default salon — resolved once per run, before any Phorest fetch, so
-    // a tenant with no active salon fails fast without wasting a fetch. #65 replaces this lookup
-    // with the salon of the specific Phorest coupling.
-    const defaultSalon = await findDefaultSalon(app.prisma, tenantId);
-    if (!defaultSalon) {
-      throw new Error("Kein aktiver Salon vorhanden.");
-    }
-
     const baseUrl = cfg.phorestBaseUrl ?? DEFAULT_BASE_URL;
     const biz = cfg.phorestBusinessId;
-    const branch = cfg.phorestBranchId;
+    const branch = target.externalBranchId;
     const tz = cfg.timezone ?? "Europe/Berlin";
 
     // Phase 107 (D-14) — the eighth shift-leave-recalc write path. `actorUserId` is the real
@@ -305,7 +312,10 @@ export async function syncPhorestShifts(
     const windowStartDate = new Date(startDate);
     const windowEndDate = new Date(endDate);
 
-    app.log.info({ tenantId, startDate, endDate, runId: run.id }, "Phorest sync started");
+    app.log.info(
+      { tenantId, salonId: target.salonId, startDate, endDate, runId: run.id },
+      "Phorest sync started",
+    );
 
     // ── GATE 1 (fetch-ok) ────────────────────────────────────────────
     // Every Phorest fetch below throws PhorestApiError on any non-ok/throw. Any throw lands in
@@ -492,6 +502,27 @@ export async function syncPhorestShifts(
       if (!startH || !endH) continue;
 
       const externalId = phorestShiftKey(wt);
+
+      // Phase 65b (issue #65, D-10): phorestShiftKey() carries no branch, so two coupled salons'
+      // branches can deliver the same key. The row that already owns the key (active OR
+      // soft-deleted) belongs to its salon: if that is ANOTHER salon, this run skips the slot
+      // entirely — no update, no revive, not in freshExternalIds, not a covered day. Loaded once
+      // here and reused by the upsert path below for its created/updated count and audit oldValue.
+      const existing = await app.prisma.shift.findUnique({ where: { externalId } });
+      if (existing && existing.salonId !== target.salonId) {
+        result.skippedOtherSalon++;
+        app.log.warn(
+          {
+            tenantId,
+            runId: run.id,
+            externalId,
+            ownerSalonId: existing.salonId,
+            runSalonId: target.salonId,
+          },
+          "Phorest sync: slot already owned by another salon — skipped",
+        );
+        continue;
+      }
       freshExternalIds.add(externalId);
 
       // Phase 85.1.1 (D-02) — per-employee override wins over tenant default. `??` (NOT `||`) so
@@ -528,6 +559,8 @@ export async function syncPhorestShifts(
       // (deletedReason "PHOREST_REPLACED") — the 85-CONTEXT "MANUAL shifts are NEVER touched"
       // invariant is explicitly superseded for mapped employees on Phorest-covered days (see
       // 85.1-CONTEXT D-11). It is NOT reclassified/adopted here, just soft-deleted later.
+      // Phase 65b (D-09): only a row of THIS run's salon can be adopted — a legacy row in another
+      // salon is that salon's business and is never re-homed or reclassified by this run.
       const occupant = await app.prisma.shift.findFirst({
         where: {
           employeeId,
@@ -536,6 +569,7 @@ export async function syncPhorestShifts(
           endTime: endH,
           deletedAt: null,
           label: "Phorest",
+          salonId: target.salonId,
         },
       });
 
@@ -592,9 +626,8 @@ export async function syncPhorestShifts(
         continue;
       }
 
-      // No conflicting occupant → canonical upsert by externalId (create or update).
-      const existing = await app.prisma.shift.findUnique({ where: { externalId } });
-
+      // No conflicting occupant → canonical upsert by externalId (create or update). `existing`
+      // was loaded above (D-10 check) and is either null or a row of this run's salon.
       const { weekStart, weekEnd } = affectedWeekBounds(new Date(date));
       // Phase 107 (D-14/D-15): see the adopt-on-match branch above — same per-shift transaction shape.
       const upsertOutcome = await isolateShiftFailure(
@@ -608,7 +641,9 @@ export async function syncPhorestShifts(
               where: { externalId },
               create: {
                 employeeId,
-                salonId: defaultSalon.id, // Phase 325 (issue #325), D-14: create branch only
+                // Phase 325 (issue #325), D-14: create branch only (the update branch never
+                // re-homes a row). Phase 65b (D-08): the salon is the run target's.
+                salonId: target.salonId,
                 date: new Date(date),
                 startTime: paddedStart,
                 endTime: paddedEnd,
@@ -680,6 +715,8 @@ export async function syncPhorestShifts(
     // read — NOT a genuine "everything was deleted". Flag it SUSPECT, cancel ZERO, and return
     // before the delete pass. (An empty set with no prior active shifts is the legit "nothing
     // scheduled" case → stays SUCCESS, no cancel candidates.)
+    // Phase 65b (D-09): "prior active" means prior active shifts of THIS run's salon — another
+    // salon's roster says nothing about whether this branch's empty answer is plausible.
     if (freshExternalIds.size === 0) {
       const priorActive = await app.prisma.shift.count({
         where: {
@@ -687,6 +724,7 @@ export async function syncPhorestShifts(
           deletedAt: null,
           date: { gte: windowStartDate, lte: windowEndDate },
           employee: { tenantId },
+          salonId: target.salonId,
         },
       });
       if (priorActive > 0) {
@@ -721,6 +759,8 @@ export async function syncPhorestShifts(
     // array is a harmless Prisma no-op when no day was skipped.
     // Phase 95 (SHIFT-02): additionally exclude every (employeeId, date) in pendingLeaveDays — a
     // day with an active, not-yet-APPROVED leave is protected exactly like a BS day.
+    // Phase 65b (D-09): candidates are restricted to THIS run's salon — a shift of salon B is
+    // never absent from salon A's branch in any meaningful sense, so A's run never cancels it.
     const staleCandidates = await app.prisma.shift.findMany({
       where: {
         origin: "PHOREST",
@@ -728,6 +768,7 @@ export async function syncPhorestShifts(
         date: { gte: windowStartDate, lte: windowEndDate },
         externalId: { notIn: [...freshExternalIds] },
         employee: { tenantId },
+        salonId: target.salonId,
         NOT: [...bsSkippedDays, ...pendingLeaveDays].map((key) => {
           const [eid, d] = key.split("|");
           return { employeeId: eid, date: new Date(d) };
@@ -742,6 +783,8 @@ export async function syncPhorestShifts(
     // `externalId notIn freshExternalIds` counts only shifts that would otherwise have been
     // soft-cancelled (a day Phorest still covers needs no protection). A day that is ALSO BS-skipped
     // is already audited by the BS branch, so it is excluded here to avoid a double audit/count.
+    // Phase 65b (D-09): same salon delimiter as staleCandidates, so only shifts THIS run would
+    // have cancelled are counted and audited as protected.
     if (pendingLeaveDays.size > 0) {
       const protectedShifts = await app.prisma.shift.findMany({
         where: {
@@ -750,6 +793,7 @@ export async function syncPhorestShifts(
           date: { gte: windowStartDate, lte: windowEndDate },
           externalId: { notIn: [...freshExternalIds] },
           employee: { tenantId },
+          salonId: target.salonId,
           OR: [...pendingLeaveDays].map((key) => {
             const [eid, d] = key.split("|");
             return { employeeId: eid, date: new Date(d) };
@@ -841,6 +885,8 @@ export async function syncPhorestShifts(
     // AFTER both GATE-3 return-early exits and the soft-cancel loop, so a fetch-error/SUSPECT run
     // never reaches it (zero deletes). D-11b: a BS-skipped day is excluded — BS wins, leave it
     // alone. Scoped per Phorest-covered day only — never a tenant-wide delete (Pitfall 2).
+    // Phase 65b (D-09): and per salon — a springer covered by salon A's branch on day X keeps her
+    // shift in salon B on day X; A's branch is master for A's roster only.
     for (const key of freshCoveredDays) {
       if (bsSkippedDays.has(key)) continue;
       // Phase 95 (SHIFT-02) defense-in-depth: keep the two protected sets symmetric. This is a
@@ -855,6 +901,7 @@ export async function syncPhorestShifts(
           date: new Date(dateStr),
           deletedAt: null,
           employee: { tenantId },
+          salonId: target.salonId,
           // MANUAL rows carry externalId=null; Prisma `notIn` does NOT match NULL, so the null
           // branch is OR'd in explicitly (regardless of origin/label — this is the whole point
           // of D-11: reach MANUAL rows too, not just origin=PHOREST ones).
@@ -923,6 +970,7 @@ export async function syncPhorestShifts(
     app.log.info(
       {
         tenantId,
+        salonId: target.salonId,
         runId: run.id,
         status: result.status,
         created: result.created,
@@ -930,6 +978,7 @@ export async function syncPhorestShifts(
         cancelled: result.cancelled,
         unmapped: result.unmapped,
         leaveRecalcFailures: result.leaveRecalcFailures,
+        skippedOtherSalon: result.skippedOtherSalon,
       },
       "Phorest sync finished",
     );
@@ -937,7 +986,7 @@ export async function syncPhorestShifts(
   } catch (err) {
     result.status = "ERROR";
     result.error = err instanceof Error ? err.message : String(err);
-    app.log.error({ err, tenantId, runId: run.id }, "Phorest sync failed");
+    app.log.error({ err, tenantId, salonId: target.salonId, runId: run.id }, "Phorest sync failed");
     await app.prisma.phorestSyncRun
       .update({
         where: { id: run.id },

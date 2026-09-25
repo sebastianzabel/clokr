@@ -42,6 +42,8 @@ model Tenant {
   salons               Salon[]
   // Phase 74b (issue #74) — role assignments scoped to this tenant
   roleAssignments      RoleAssignment[]
+  // Phase 65b (issue #65): Prisma-only back-relation, one external-system coupling per salon.
+  salonCouplings       SalonCoupling[]
   // Phase 67b (issue #67) — Salonzuordnung (HOME/DEPLOYMENT) rows
   salonAssignments     EmployeeSalonAssignment[]
 }
@@ -69,6 +71,9 @@ model Salon {
   // Phase 325 (issue #325): Prisma-only back-relations, no column on Salon.
   shifts              Shift[]
   phorestAppointments PhorestAppointment[]
+  // Phase 65b (issue #65): Prisma-only back-relations, no column on Salon.
+  coupling            SalonCoupling?
+  phorestSyncRuns     PhorestSyncRun[]
 
   @@index([tenantId])
 }
@@ -158,6 +163,10 @@ model TenantConfig {
   timezone                            String  @default("Europe/Berlin")
   // Phorest-Integration
   phorestBusinessId                   String?
+  /// @deprecated Phase 65b (issue #65) — superseded by SalonCoupling (one Phorest branch per
+  /// salon). No code reads or writes this column (enforced by
+  /// apps/api/src/__tests__/phorest-branch-id-deprecated.test.ts); kept for the rollback path,
+  /// removed in a later ticket.
   phorestBranchId                     String?
   phorestUsername                     String?
   phorestPassword                     String?
@@ -1375,8 +1384,43 @@ model PhorestSyncRun {
   appointmentError        String?
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // Phase 65b (issue #65, D-03): the salon whose branch this run synced — same tenant as the run
+  // by construction of the orchestrator (services/phorest/sync-tenant.ts). Restrict so the run
+  // history can never silently lose its salon.
+  salonId                 String
+  salon                   Salon     @relation(fields: [salonId], references: [id], onDelete: Restrict)
 
   @@index([tenantId, startedAt])
+  @@index([salonId])
+}
+
+// Phase 65b (issue #65) — Schichtplanung-owned coupling of a salon to its branch in an external
+// system. At most one coupling per salon (salonId @unique). The branch id is unique per tenant and
+// provider, never globally: a global unique would reveal another tenant's branch id (T-100-09).
+// The tenantId column exists so that this uniqueness is a DB constraint and every query is
+// tenant-scopable. Salon and coupling share a tenant by application check (the salon is resolved
+// through the Unterbau facade), no DB trigger. Restrict because a salon is never hard-deleted
+// (ADR 0002 "Neuer Fremdschlüssel auf den Unterbau").
+model SalonCoupling {
+  id               String                @id @default(uuid())
+  tenantId         String
+  salonId          String                @unique
+  provider         SalonCouplingProvider
+  externalBranchId String
+  createdAt        DateTime              @default(now()) @db.Timestamptz
+  updatedAt        DateTime              @updatedAt @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  salon  Salon  @relation(fields: [salonId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, provider, externalBranchId])
+  @@index([tenantId])
+}
+
+// Phase 65b (issue #65): only PHOREST. Studiolution gets its value together with its integration
+// (owner decision on issue #65, CLAUDE.md "No generalization on spec").
+enum SalonCouplingProvider {
+  PHOREST
 }
 
 // Phase 86 (SA-01/SA-02) — DSGVO-minimal appointment busy-window cache.

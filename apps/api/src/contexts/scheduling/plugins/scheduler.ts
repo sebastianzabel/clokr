@@ -1,8 +1,7 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, tenantAdvisoryKey } from "../../../utils/with-advisory-lock";
-import { syncPhorestShifts } from "../../../services/phorest/sync-shifts";
-import { syncPhorestAppointments } from "../../../services/phorest/sync-appointments";
+import { syncPhorestForTenant } from "../../../services/phorest/sync-tenant";
 
 /**
  * Background scheduler for recurring tasks.
@@ -12,6 +11,10 @@ import { syncPhorestAppointments } from "../../../services/phorest/sync-appointm
  * services/phorest/sync-shifts.ts — this plugin only owns cron registration and the
  * per-tenant advisory lock. The manual endpoint (routes/integrations.ts) calls the same
  * function, so there is no behavior drift.
+ *
+ * Phase 65b (issue #65): the lock body calls the ONE orchestrator services/phorest/sync-tenant.ts,
+ * which runs the sync once per coupled ACTIVE salon (one PhorestSyncRun each). A tenant without a
+ * coupled active salon syncs nothing — the orchestrator logs it.
  */
 export const schedulerPlugin = fp(async (app) => {
   const tasks: ScheduledTask[] = [];
@@ -42,10 +45,10 @@ export const schedulerPlugin = fp(async (app) => {
             app.prisma,
             tenantAdvisoryKey(cfg.tenantId),
             async () => {
-              // Phase 86 (SA-03): shifts + appointments sync under the SAME lock and record onto
-              // the SAME PhorestSyncRun row (runId hand-off). Cron actor = SYSTEM (no actorUserId).
-              const shiftRun = await syncPhorestShifts(app, cfg.tenantId);
-              await syncPhorestAppointments(app, cfg.tenantId, { runId: shiftRun.runId });
+              // Phase 86 (SA-03) / Phase 65b (D-12): per coupled salon, shifts + appointments sync
+              // under this ONE tenant lock and record onto that salon's PhorestSyncRun row.
+              // Cron actor = SYSTEM (no actorUserId).
+              await syncPhorestForTenant(app, cfg.tenantId);
             },
             app.log,
           ).catch((err) => app.log.error({ err, tenantId: cfg.tenantId }, "Scheduler-Fehler"));
