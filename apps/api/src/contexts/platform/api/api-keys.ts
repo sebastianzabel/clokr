@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import crypto, { createHash } from "crypto";
-import { requireRole } from "../../../middleware/auth";
+import { requirePermission } from "../request-permissions";
 
 const VALID_SCOPES = [
   "read:employees",
@@ -25,7 +25,7 @@ export async function apiKeyRoutes(app: FastifyInstance) {
   // GET /api/v1/api-keys — list all keys for tenant
   app.get("/", {
     schema: { tags: ["API Keys"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("api-key:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const keys = await app.prisma.apiKey.findMany({
         where: { tenantId: req.user.tenantId },
@@ -49,7 +49,7 @@ export async function apiKeyRoutes(app: FastifyInstance) {
   // POST /api/v1/api-keys — create a new API key
   app.post("/", {
     schema: { tags: ["API Keys"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("api-key:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const body = createKeySchema.parse(req.body);
       const tenantId = req.user.tenantId;
@@ -88,7 +88,7 @@ export async function apiKeyRoutes(app: FastifyInstance) {
   // DELETE /api/v1/api-keys/:id — revoke a key
   app.delete("/:id", {
     schema: { tags: ["API Keys"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("api-key:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
 
@@ -118,7 +118,7 @@ export async function apiKeyRoutes(app: FastifyInstance) {
   // GET /api/v1/api-keys/scopes — list available scopes
   app.get("/scopes", {
     schema: { tags: ["API Keys"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("api-key:manage:ZUGEWIESEN"),
     handler: async () => {
       return VALID_SCOPES.map((s) => ({ scope: s, description: scopeDescription(s) }));
     },

@@ -453,11 +453,11 @@ benennt diesen Abschnitt um, wenn keine `requireRole`-Stelle mehr übrig ist.
 | `contexts/platform/api/holidays.ts:163`                    | `DELETE /:id`                                   | A       | `holiday:manage`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/imports.ts:82`                      | `POST /employees`                               | A       | `employee:import`              | ZUGEWIESEN                                   |
 | `contexts/platform/api/imports.ts:236`                     | `POST /time-entries`                            | A       | `time-entry:import`            | ZUGEWIESEN                                   |
-| `contexts/platform/api/role-assignments.ts:285`            | `GET /`                                         | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/role-assignments.ts:307`            | `POST /`                                        | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/role-assignments.ts:403`            | `GET /:id`                                      | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/role-assignments.ts:430`            | `PATCH /:id`                                    | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/role-assignments.ts:559`            | `DELETE /:id`                                   | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/role-assignments.ts:284`            | `GET /`                                         | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/role-assignments.ts:306`            | `POST /`                                        | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/role-assignments.ts:402`            | `GET /:id`                                      | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/role-assignments.ts:429`            | `PATCH /:id`                                    | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/role-assignments.ts:558`            | `DELETE /:id`                                   | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
 | `contexts/platform/api/roles.ts:133`                       | `GET /`                                         | A       | `role:read`                    | ZUGEWIESEN                                   |
 | `contexts/platform/api/roles.ts:157`                       | `POST /`                                        | A       | `role:manage`                  | ZUGEWIESEN                                   |
 | `contexts/platform/api/roles.ts:210`                       | `GET /:id`                                      | A       | `role:read`                    | ZUGEWIESEN                                   |

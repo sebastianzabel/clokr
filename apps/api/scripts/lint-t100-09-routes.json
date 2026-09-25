@@ -288,7 +288,7 @@
         "id": "roleAssignment"
       },
       "minimalBody": null,
-      "reason": "role-assignments.ts:407-408 uses a SCOPED `findFirst({ where: { id, tenantId } })` — RoleAssignment.tenantId is never null (Pattern 1, unlike AccessRole's nullable tenant), so this is the simple inline shape, not roles.ts's nested guard. A scoped query cannot distinguish a foreign tenant's real row from a nonexistent id; both answer the identical `{ error: \"Rollenzuweisung nicht gefunden\" }` 404. GET has no request body.",
+      "reason": "role-assignments.ts:406-407 uses a SCOPED `findFirst({ where: { id, tenantId } })` — RoleAssignment.tenantId is never null (Pattern 1, unlike AccessRole's nullable tenant), so this is the simple inline shape, not roles.ts's nested guard. A scoped query cannot distinguish a foreign tenant's real row from a nonexistent id; both answer the identical `{ error: \"Rollenzuweisung nicht gefunden\" }` 404. GET has no request body.",
       "ticket": null,
       "validatedAt": null
     },
@@ -300,7 +300,7 @@
         "id": "roleAssignment"
       },
       "minimalBody": {},
-      "reason": "role-assignments.ts:453-454 uses the same SCOPED `findFirst({ where: { id, tenantId } })` as GET, answered by the byte-identical 404 at 524-525. Since the 74b code review (WR-01) the lookup runs inside the withRoleLockoutGuard callback, after the tenant row lock, so a foreign or unknown id takes that lock too; it writes nothing, so the guard's before/after holder counts are equal and its 409 can never fire on this path — both arms still answer the same 404. `updateAssignmentSchema.parse(req.body ?? {})` at line 435 runs BEFORE the lookup (house convention); both fields are `.nullish()` and `.strict()` only rejects fields other than these two, so `{}` satisfies it and reaches the tenant guard.",
+      "reason": "role-assignments.ts:452-453 uses the same SCOPED `findFirst({ where: { id, tenantId } })` as GET, answered by the byte-identical 404 at 523-524. Since the 74b code review (WR-01) the lookup runs inside the withRoleLockoutGuard callback, after the tenant row lock, so a foreign or unknown id takes that lock too; it writes nothing, so the guard's before/after holder counts are equal and its 409 can never fire on this path — both arms still answer the same 404. `updateAssignmentSchema.parse(req.body ?? {})` at line 434 runs BEFORE the lookup (house convention); both fields are `.nullish()` and `.strict()` only rejects fields other than these two, so `{}` satisfies it and reaches the tenant guard.",
       "ticket": null,
       "validatedAt": null
     },
@@ -312,7 +312,7 @@
         "id": "roleAssignment"
       },
       "minimalBody": null,
-      "reason": "role-assignments.ts:573-574 uses the same SCOPED `findFirst({ where: { id, tenantId } })` as GET, answered by the byte-identical 404 at 588-589. Since the 74b code review (WR-01) the lookup runs inside the withRoleLockoutGuard callback, after the tenant row lock; a foreign or unknown id deletes nothing, so the lockout 409 can never fire on this path. DELETE carries no body.",
+      "reason": "role-assignments.ts:572-573 uses the same SCOPED `findFirst({ where: { id, tenantId } })` as GET, answered by the byte-identical 404 at 587-588. Since the 74b code review (WR-01) the lookup runs inside the withRoleLockoutGuard callback, after the tenant row lock; a foreign or unknown id deletes nothing, so the lockout 409 can never fire on this path. DELETE carries no body.",
       "ticket": null,
       "validatedAt": null
     },

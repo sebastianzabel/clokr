@@ -3,10 +3,9 @@
  * `/api/v1/role-assignments`.
  *
  * Grants, changes and revokes a `RoleAssignment` (74b-01: model, pure core, `userMayApply`
- * facade). Every route is guarded by the ADMIN role guard — the binding Ready decision "only
- * with tenant scope" is satisfied today by ADMIN being tenant-wide; the actual
- * `role-assignment:manage` permission check with tenant-scope enforcement is Issue #75's work,
- * not this phase's (D-14). (Never write the guard call's name directly followed by its opening
+ * facade). Every route is guarded by `role-assignment:manage:ZUGEWIESEN` (75b-06); tenant-scope
+ * enforcement of that permission (a TENANT-scope holder vs. a SALONS/PERSONS one) is Issue #91's
+ * work, not this plan's. (Never write the guard call's name directly followed by its opening
  * parenthesis in this docblock — this plan's verify step greps raw source lines to count guard
  * call sites, and a comment mention would inflate that count.)
  *
@@ -18,7 +17,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Prisma } from "@clokr/db";
-import { requireRole } from "../../../middleware/auth";
+import { requirePermission } from "../request-permissions";
 import { accessContextFromRequest } from "../access-context";
 import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../employee-anonymization-filter";
 import {
@@ -282,7 +281,7 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       description:
         "Returns every role assignment of the caller's own tenant, ordered by creation time. An optional `?userId=` filters to that user's assignments.",
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("role-assignment:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const { userId } = listQuerySchema.parse(req.query);
       const tenantId = req.user.tenantId;
@@ -304,7 +303,7 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       description:
         "Assigns an access role (system or customer) to a user of the caller's own tenant, with exactly one scope: the whole tenant, an explicit salon list, or an explicit employee list. Every referenced id is validated against the caller's own tenant; a foreign or nonexistent id answers 404, one message per kind, byte-identical between the two cases (T-100-09). A duplicate (same user, role and scope type) answers 409.",
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("role-assignment:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const body = createAssignmentSchema.parse(req.body);
       const tenantId = req.user.tenantId;
@@ -400,7 +399,7 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       description:
         "Returns one role assignment of the caller's own tenant. A foreign tenant's real assignment and a nonexistent id both answer 404 with the same body (T-100-09).",
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("role-assignment:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const tenantId = req.user.tenantId;
@@ -427,7 +426,7 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       description:
         "Changes the access role and/or scope of a role assignment of the caller's own tenant. `userId` is not changeable — revoke and create a new assignment instead. A no-op request writes nothing and audits nothing. A foreign tenant's real assignment and a nonexistent id both answer 404 with the same body (T-100-09). A change that would create a duplicate (same user, role and scope type) answers 409. A change that would remove the last tenant-wide holder of role:manage or role-assignment:manage (narrowing a TENANT scope or switching the role) answers 409 and changes nothing (lockout protection).",
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("role-assignment:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       // Parsed BEFORE the lookup (roles.ts house convention) so an empty body `{}` still reaches
@@ -556,7 +555,7 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       description:
         "Hard-deletes a role assignment of the caller's own tenant, audited. A foreign tenant's real assignment and a nonexistent id both answer 404 with the same body (T-100-09). Revoking the last tenant-wide holder of role:manage or role-assignment:manage answers 409 and changes nothing (lockout protection).",
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("role-assignment:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const tenantId = req.user.tenantId;

@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { Prisma } from "@clokr/db";
-import { requireRole } from "../../../middleware/auth";
+import { requirePermission } from "../request-permissions";
 import {
   ROLE_NAME_MAX_LENGTH,
   roleNameKey,
@@ -130,7 +130,7 @@ export async function roleRoutes(app: FastifyInstance) {
       description:
         "Returns every system role (global, no tenant) plus the customer roles owned by the caller's own tenant. System roles are listed first, then customer roles, both alphabetically by name.",
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("role:read:ZUGEWIESEN"),
     handler: async (req) => {
       const rows = await app.prisma.accessRole.findMany({
         where: { OR: [{ tenantId: null }, { tenantId: req.user.tenantId }] },
@@ -154,7 +154,7 @@ export async function roleRoutes(app: FastifyInstance) {
       description:
         "Creates a customer role of the caller's own tenant from a name and a set of catalog permission keys. Unknown permission keys are rejected with 400; a name that collides case-insensitively with an existing role of the same tenant, or with any system role, is rejected with 409.",
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("role:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const body = createRoleSchema.parse(req.body);
       const tenantId = req.user.tenantId;
@@ -207,7 +207,7 @@ export async function roleRoutes(app: FastifyInstance) {
       description:
         "Returns a system role (readable by every tenant) or a customer role of the caller's own tenant. A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("role:read:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const existing = await app.prisma.accessRole.findUnique({ where: { id } });
@@ -233,7 +233,7 @@ export async function roleRoutes(app: FastifyInstance) {
       description:
         "Changes name and/or permissions of a customer role of the caller's own tenant. A no-op request (nothing actually changes) writes nothing and audits nothing. A system role is never changeable and answers 409. A change that would remove the last tenant-wide holder of role:manage or role-assignment:manage answers 409 and changes nothing (lockout protection). A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("role:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       // Parsed BEFORE the lookup (house convention) so an empty body `{}` still reaches the
@@ -327,7 +327,7 @@ export async function roleRoutes(app: FastifyInstance) {
       description:
         "Hard-deletes a customer role of the caller's own tenant (owner decision on #73 — not a retention-relevant record). A system role is never deletable and answers 409. A customer role that is still assigned to a user answers 409 and is not deleted. A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("role:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const existing = await app.prisma.accessRole.findUnique({ where: { id } });
@@ -401,7 +401,7 @@ export async function roleRoutes(app: FastifyInstance) {
       description:
         "Creates a customer role of the caller's own tenant with the same permissions as a system role or an own customer role. Without an explicit name, one is generated from the source name: '<Quelle> (Kopie)', then '(Kopie 2)', '(Kopie 3)' … An explicit name that collides is rejected with 409, same as create. A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("role:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       // Parsed BEFORE the lookup (house convention) so a bodyless copy `{}` still reaches the
