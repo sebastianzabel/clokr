@@ -194,14 +194,14 @@
   {
     "file": "apps/api/src/contexts/absence/api/vocational-school-pattern.ts",
     "handler": "PUT /api/v1/employees/:id/vocational-school-pattern",
-    "validatedAt": 177,
+    "validatedAt": 216,
     "calls": [
       {
         "call": "employeeVocationalSchoolPattern.updateMany",
-        "line": 202
+        "line": 271
       }
     ],
-    "reason": "employee (and therefore id) is tenant-validated inline at line 177 (employee.findFirst({ id, tenantId: req.user.tenantId })); employeeVocationalSchoolPattern.updateMany reuses the SAME validated id as employeeId inside the replace transaction below. Lines shifted +4 in Phase 75b Plan 08 (Issue #75): the GET handler's role check became a permissionReach lookup with an added null-reach branch — no finding, mechanical only; validatedAt 173 -> 177, employeeVocationalSchoolPattern.updateMany 198 -> 202."
+    "reason": "employee (and therefore id) is tenant-validated inline at line 216 (employee.findFirst({ id, tenantId: req.user.tenantId })); employeeVocationalSchoolPattern.updateMany reuses the SAME validated id as employeeId inside the replace transaction below. Lines shifted +4 in Phase 75b Plan 08 (Issue #75): the GET handler's role check became a permissionReach lookup with an added null-reach branch — no finding, mechanical only; validatedAt 173 -> 177, employeeVocationalSchoolPattern.updateMany 198 -> 202. Lines shifted +39 in Phase 91b Plan 04 (Issue #91): a 6-line import-block widening (accessContextFromRequest/resolveAccessReach/isStammsalonScopeMatch plus a new getTenantTimezone/todayInTz import) upstream of both handlers, a 23-line D-10/D-14 scope-check block inside the GET handler above this PUT handler, and this PUT handler's OWN 23-line scope-check block inserted between the employee.findFirst tenant check and the updateMany below — no finding, mechanical plus one deliberate insertion between the two already-validated anchors; validatedAt 177 -> 216 (+39), employeeVocationalSchoolPattern.updateMany 202 -> 271 (+69, the extra +23 being this handler's own inserted block sitting BETWEEN validatedAt and the call)."
   },
   {
     "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
