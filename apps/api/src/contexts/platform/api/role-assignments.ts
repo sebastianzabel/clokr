@@ -14,11 +14,10 @@
  * and answers the byte-identical 404 of its own kind (D-08) — the four "not found" messages below
  * are the entire vocabulary; a caller cannot distinguish "foreign tenant" from "does not exist".
  */
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import type { Prisma } from "@clokr/db";
 import { requirePermission } from "../request-permissions";
-import { accessContextFromRequest } from "../access-context";
 import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../employee-anonymization-filter";
 import {
   ROLE_LOCKOUT_MESSAGE,
@@ -29,6 +28,7 @@ import {
 } from "../role-assignment";
 import { lockTenantForRoleChanges, withRoleLockoutGuard } from "../facade/role-assignments";
 import { foreignKeyConstraintOf } from "../prisma-foreign-key";
+import { auditRoleAssignment, roleAssignmentAuditValue } from "../role-assignment-audit";
 
 // D-09: plain `z.string().min(1)`, NOT `.uuid()` — both T-100-09 probe arms (a real foreign id and
 // a shaped-but-nonexistent id) must pass the same validation, same idiom as `roles.ts`'s
@@ -120,27 +120,6 @@ function toRoleAssignmentResponse(row: RoleAssignmentRow) {
   };
 }
 
-/** D-12: the exact audit value shape for every CREATE/UPDATE/DELETE on `RoleAssignment`. */
-function toAuditValue(
-  row: {
-    userId: string;
-    accessRoleId: string;
-    scopeType: NormalizedRoleAssignmentScope["scopeType"];
-    salonIds: string[];
-    employeeIds: string[];
-  },
-  roleName: string,
-) {
-  return {
-    userId: row.userId,
-    accessRoleId: row.accessRoleId,
-    roleName,
-    scopeType: row.scopeType,
-    salonIds: row.salonIds,
-    employeeIds: row.employeeIds,
-  };
-}
-
 /** Source: apps/api/src/contexts/platform/api/roles.ts (structural P2002/P2025 check idiom). */
 function isPrismaErrorCode(err: unknown, code: string): boolean {
   return (
@@ -149,44 +128,6 @@ function isPrismaErrorCode(err: unknown, code: string): boolean {
     "code" in err &&
     (err as { code: unknown }).code === code
   );
-}
-
-/**
- * Every RoleAssignment audit row goes through here (same reasoning as `salons.ts`'s `auditSalon`,
- * Phase 64b review WR-01): an API-key caller's `req.user.sub` is `apikey:<id>`, not a `User.id` —
- * `AuditLog.userId` has a foreign key to `User`, so passing it through would fail the audit insert.
- * The actor is resolved through the Unterbau's central access context (`accessContextFromRequest`,
- * #77) instead of parsing the subject here; a non-user actor leaves `userId` unset and is recorded
- * as `newValue.actor = { type: "API_KEY", apiKeyId }`.
- */
-async function auditRoleAssignment(
-  app: FastifyInstance,
-  req: FastifyRequest,
-  entry: {
-    action: string;
-    entityId: string;
-    oldValue?: unknown;
-    newValue?: object;
-    tx?: Prisma.TransactionClient;
-  },
-) {
-  const { actor } = accessContextFromRequest(req);
-  const apiKeyActor =
-    actor.kind === "apiKey" ? { type: "API_KEY" as const, apiKeyId: actor.apiKeyId } : null;
-
-  let newValue: object | undefined = entry.newValue;
-  if (apiKeyActor) newValue = { ...(entry.newValue ?? {}), actor: apiKeyActor };
-
-  await app.audit({
-    userId: actor.kind === "user" ? actor.userId : undefined,
-    action: entry.action,
-    entity: "RoleAssignment",
-    entityId: entry.entityId,
-    oldValue: entry.oldValue,
-    newValue,
-    request: { ip: req.ip, headers: req.headers as Record<string, string> },
-    tx: entry.tx,
-  });
 }
 
 /** What the POST transaction decided — mapped onto the reply outside the transaction. */
@@ -351,7 +292,7 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
             await auditRoleAssignment(app, req, {
               action: "CREATE",
               entityId: row.id,
-              newValue: toAuditValue(row, resolution.accessRole.name),
+              newValue: roleAssignmentAuditValue(row, resolution.accessRole.name),
               tx,
             });
             return { kind: "CREATED", row };
@@ -511,8 +452,8 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
             await auditRoleAssignment(app, req, {
               action: "UPDATE",
               entityId: row.id,
-              oldValue: toAuditValue(current, current.accessRole.name),
-              newValue: toAuditValue(row, resolution.accessRole.name),
+              oldValue: roleAssignmentAuditValue(current, current.accessRole.name),
+              newValue: roleAssignmentAuditValue(row, resolution.accessRole.name),
               tx,
             });
             return { kind: "UPDATED", row };
@@ -578,7 +519,7 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
             await auditRoleAssignment(app, req, {
               action: "DELETE",
               entityId: current.id,
-              oldValue: toAuditValue(current, current.accessRole.name),
+              oldValue: roleAssignmentAuditValue(current, current.accessRole.name),
               tx,
             });
             return true;
