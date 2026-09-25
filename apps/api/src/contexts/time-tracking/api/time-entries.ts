@@ -122,6 +122,9 @@ const updateEntrySchema = z.object({
   // Quick 260824-cjd: optional at the Zod layer on purpose — required ONLY when the
   // handler determines putIsCorrectionByManager, which cannot be decided pre-fetch.
   reason: z.string().optional().nullable(),
+  // Phase 68b (issue #68), D-12: an entry's salon may be changed. `null` is deliberately not
+  // accepted — a caller either names a (possibly unchanged) salon or leaves the field out.
+  salonId: z.string().uuid().optional(),
 });
 
 // ── Pausen-Minuten aus Break-Slots berechnen ──────────────────────────────────
@@ -1670,6 +1673,29 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           .send({ error: "JARBSCHG_MINOR_LIMIT", message: jarbSchgPut.message });
       }
 
+      // Phase 68b (issue #68), D-12: a salon change is validated only when a DIFFERENT salon is
+      // requested — the existing.isLocked gate above already rejected locked entries, so the same
+      // value is an accepted no-op even if that salon is inactive now (a form that re-sends the
+      // current value must not fail; issue #68: an entry keeps its salon when the salon is
+      // deactivated later). A change of date or times never re-derives the salon (the Ist-Ort is
+      // the truth, no silent re-homing). Runs BEFORE the break-slot block below (its non-grant
+      // path deletes+recreates Break rows outside any transaction), so a rejection changes
+      // nothing. The existing audit (oldValue: existing, newValue: updated) carries both salon ids
+      // unchanged — no audit code change needed.
+      let resolvedSalonId: string | undefined;
+      if (body.salonId !== undefined && body.salonId !== existing.salonId) {
+        const putSalonResolution = await resolveEntrySalon(app.prisma, {
+          tenantId: user.tenantId,
+          employeeId: existing.employeeId,
+          startTime: updatedStart,
+          explicitSalonId: body.salonId,
+        });
+        if (!putSalonResolution.ok) {
+          return reply.code(putSalonResolution.status).send(putSalonResolution.body);
+        }
+        resolvedSalonId = putSalonResolution.salonId;
+      }
+
       // Patch-Objekt explizit aufbauen um TS-Spread-Probleme zu vermeiden
       // Only set source to CORRECTION when a manager edits another employee's entry, OR when a
       // grant-backed edit is performed (putResolvedGrantId present — grant edits are always corrections).
@@ -1677,6 +1703,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // reuse it here so the patch and the retro-window exemption stay in sync.
       const patch: Record<string, unknown> =
         putIsCorrectionByManager || putResolvedGrantId ? { source: "CORRECTION" } : {};
+      if (resolvedSalonId !== undefined) patch.salonId = resolvedSalonId; // Phase 68b (issue #68), D-12
       if (body.date) patch.date = new Date(body.date);
       if (body.startTime) patch.startTime = new Date(body.startTime);
       if ("endTime" in body) patch.endTime = body.endTime ? new Date(body.endTime as string) : null;
