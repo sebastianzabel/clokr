@@ -2,8 +2,11 @@
 
 **Status:** gültig ab Phase 72b (Issue #72); seit Phase 75b (Issue #75) die Beschreibung der
 Permission-Guards, die jede Zugriffsentscheidung der API treffen
-**Codestand der Belege:** Branch `feat/75-permissions-umstellung` @ `92f7b05f` (Phase 75b, Plan
-75b-12) — jede Zeilenangabe in allen Abschnitten gegen diesen Stand neu gemessen
+**Codestand der Belege:** Branch `feat/75-permissions-umstellung` @ `c7e7e6c0` (Phase 75b, Plan
+75b-13: Merge von `origin/main` `704b1ee5`) — die 29 Zeilenangaben in `imports.ts`, `shifts.ts`
+und `time-entries.ts`, die dieser Merge verschoben hat, über den Merge-Diff neu zugeordnet und
+zeilengleich geprüft; alle übrigen Angaben unverändert aus der Messung von Plan 75b-12 (`92f7b05f`),
+ihre Dateien hat der Merge nicht berührt
 
 Alle Datei- und Zeilenangaben in diesem Dokument beziehen sich auf diesen Commit. Sie sind Belege,
 keine Wegbeschreibung — in einem späteren Stand kann die Zeile verschoben sein, die Zuordnung muss
@@ -479,8 +482,8 @@ schlägt fehl, wenn er oder ein Rollenvergleich zurückkommt (D-19).
 | `contexts/platform/api/salon-assignments.ts:325`           | `POST /:id/salon-assignments/:assignmentId/end` | A       | `employee:update`              | ZUGEWIESEN                                   |
 | `contexts/platform/api/holidays.ts:106`                    | `POST /`                                        | A       | `holiday:manage`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/holidays.ts:164`                    | `DELETE /:id`                                   | A       | `holiday:manage`               | ZUGEWIESEN                                   |
-| `contexts/platform/api/imports.ts:86`                      | `POST /employees`                               | A       | `employee:import`              | ZUGEWIESEN                                   |
-| `contexts/platform/api/imports.ts:258`                     | `POST /time-entries`                            | A       | `time-entry:import`            | ZUGEWIESEN                                   |
+| `contexts/platform/api/imports.ts:91`                      | `POST /employees`                               | A       | `employee:import`              | ZUGEWIESEN                                   |
+| `contexts/platform/api/imports.ts:263`                     | `POST /time-entries`                            | A       | `time-entry:import`            | ZUGEWIESEN                                   |
 | `contexts/platform/api/role-assignments.ts:246`            | `GET /`                                         | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
 | `contexts/platform/api/role-assignments.ts:268`            | `POST /`                                        | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
 | `contexts/platform/api/role-assignments.ts:376`            | `GET /:id`                                      | A       | `role-assignment:manage`       | ZUGEWIESEN                                   |
@@ -521,21 +524,21 @@ schlägt fehl, wenn er oder ein Rollenvergleich zurückkommt (D-19).
 | `contexts/scheduling/api/integrations.ts:929`              | `POST /phorest/sync-shifts`                     | A       | `integration:manage`           | ZUGEWIESEN                                   |
 | `contexts/scheduling/api/shift-patterns.ts:75`             | `PUT /:id/shift-patterns`                       | A, M    | `shift-pattern:update`         | ZUGEWIESEN                                   |
 | `contexts/scheduling/api/shift-patterns.ts:175`            | `GET /tenant`                                   | A, M    | `shift-pattern:read`           | ZUGEWIESEN                                   |
-| `contexts/scheduling/api/shifts.ts:661`                    | `POST /templates`                               | A       | `shift-config:manage`          | ZUGEWIESEN                                   |
-| `contexts/scheduling/api/shifts.ts:682`                    | `PUT /templates/:id`                            | A       | `shift-config:manage`          | ZUGEWIESEN                                   |
-| `contexts/scheduling/api/shifts.ts:715`                    | `DELETE /templates/:id`                         | A       | `shift-config:manage`          | ZUGEWIESEN                                   |
-| `contexts/scheduling/api/shifts.ts:751`                    | `POST /coverage-rules`                          | A       | `shift-config:manage`          | ZUGEWIESEN                                   |
-| `contexts/scheduling/api/shifts.ts:785`                    | `PUT /coverage-rules/:id`                       | A       | `shift-config:manage`          | ZUGEWIESEN                                   |
-| `contexts/scheduling/api/shifts.ts:821`                    | `DELETE /coverage-rules/:id`                    | A       | `shift-config:manage`          | ZUGEWIESEN                                   |
-| `contexts/scheduling/api/shifts.ts:862`                    | `GET /week`                                     | A, M    | `shift:read`                   | ZUGEWIESEN                                   |
-| `contexts/scheduling/api/shifts.ts:1824`                   | `POST /`                                        | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
-| `contexts/scheduling/api/shifts.ts:2132`                   | `PUT /:id`                                      | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
-| `contexts/scheduling/api/shifts.ts:2495`                   | `POST /generate-week`                           | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
-| `contexts/scheduling/api/shifts.ts:2843`                   | `POST /copy-week`                               | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
-| `contexts/scheduling/api/shifts.ts:3202`                   | `POST /bulk`                                    | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
-| `contexts/scheduling/api/shifts.ts:3335`                   | `DELETE /:id`                                   | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
-| `contexts/scheduling/api/shifts.ts:3423`                   | `GET /conflicts`                                | A, M    | `shift:read`                   | ZUGEWIESEN                                   |
-| `contexts/scheduling/api/shifts.ts:3470`                   | `POST /:id/restore`                             | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/shifts.ts:705`                    | `POST /templates`                               | A       | `shift-config:manage`          | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/shifts.ts:726`                    | `PUT /templates/:id`                            | A       | `shift-config:manage`          | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/shifts.ts:759`                    | `DELETE /templates/:id`                         | A       | `shift-config:manage`          | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/shifts.ts:795`                    | `POST /coverage-rules`                          | A       | `shift-config:manage`          | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/shifts.ts:829`                    | `PUT /coverage-rules/:id`                       | A       | `shift-config:manage`          | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/shifts.ts:865`                    | `DELETE /coverage-rules/:id`                    | A       | `shift-config:manage`          | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/shifts.ts:906`                    | `GET /week`                                     | A, M    | `shift:read`                   | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/shifts.ts:1868`                   | `POST /`                                        | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/shifts.ts:2183`                   | `PUT /:id`                                      | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/shifts.ts:2546`                   | `POST /generate-week`                           | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/shifts.ts:2913`                   | `POST /copy-week`                               | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/shifts.ts:3293`                   | `POST /bulk`                                    | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/shifts.ts:3455`                   | `DELETE /:id`                                   | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/shifts.ts:3543`                   | `GET /conflicts`                                | A, M    | `shift:read`                   | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/shifts.ts:3590`                   | `POST /:id/restore`                             | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/admin-presence-sources.ts:16`  | `GET /opted-in`                                 | A       | `presence-source:manage`       | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/admin-presence-sources.ts:40`  | `GET /`                                         | A       | `presence-source:manage`       | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/admin-presence-sources.ts:63`  | `POST /`                                        | A       | `presence-source:manage`       | ZUGEWIESEN                                   |
@@ -548,7 +551,7 @@ schlägt fehl, wenn er oder ein Rollenvergleich zurückkommt (D-19).
 | `contexts/time-tracking/api/terminals.ts:14`               | `GET /`                                         | A       | `terminal:manage`              | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/terminals.ts:35`               | `POST /`                                        | A       | `terminal:manage`              | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/terminals.ts:126`              | `DELETE /:id`                                   | A       | `terminal:manage`              | ZUGEWIESEN                                   |
-| `contexts/time-tracking/api/time-entries.ts:1886`          | `PATCH /:id/revalidate`                         | A, M    | `time-entry:revalidate`        | ZUGEWIESEN                                   |
+| `contexts/time-tracking/api/time-entries.ts:1956`          | `PATCH /:id/revalidate`                         | A, M    | `time-entry:revalidate`        | ZUGEWIESEN                                   |
 | `contexts/working-time-account/api/overtime.ts:245`        | `POST /plans`                                   | A, M    | `overtime:settle`              | ZUGEWIESEN                                   |
 | `contexts/working-time-account/api/overtime.ts:291`        | `POST /payout`                                  | A, M    | `overtime:settle`              | ZUGEWIESEN                                   |
 | `contexts/working-time-account/api/overtime.ts:410`        | `GET /close-month/deferred`                     | A, M    | `month-close:read`             | ZUGEWIESEN                                   |
@@ -596,16 +599,16 @@ der Umstellung (#75) durften.
 | `contexts/scheduling/api/availability.ts:170`            | `PUT /:id/availability`               | A, M: alle; E: nur eigene                     | `availability:update`    | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/scheduling/api/integrations.ts:989`            | `GET /phorest/appointment-collisions` | A, M: alle; E: nur eigene                     | `shift:read`             | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/scheduling/api/shift-patterns.ts:44`           | `GET /:id/shift-patterns`             | A, M: alle; E: nur eigene                     | `shift-pattern:read`     | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/scheduling/api/shifts.ts:1742`                 | `GET /range`                          | A, M: alle; E: nur eigene                     | `shift:read`             | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/scheduling/api/shifts.ts:1786`                 | `GET /range`                          | A, M: alle; E: nur eigene                     | `shift:read`             | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/time-tracking/api/retro-entry-requests.ts:102` | `POST /`                              | A, M: auch für andere; E: nur für sich        | `retro-request:create`   | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/time-tracking/api/retro-entry-requests.ts:275` | `PATCH /:id/review`                   | nur A, M                                      | `retro-request:approve`  | ZUGEWIESEN                               |
-| `contexts/time-tracking/api/time-entries.ts:426`         | `POST /clock-in`                      | A, M: auch für andere; E: nur für sich        | `time-entry:create`      | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/time-tracking/api/time-entries.ts:763`         | `POST /:id/breaks`                    | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/time-tracking/api/time-entries.ts:842`         | `GET /`                               | A, M: alle; E: nur eigene                     | `time-entry:read`        | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/time-tracking/api/time-entries.ts:903`         | `POST /`                              | A, M: auch für andere; E: nur für sich        | `time-entry:create`      | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/time-tracking/api/time-entries.ts:1425`        | `PUT /:id`                            | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/time-tracking/api/time-entries.ts:1988`        | `DELETE /:id`                         | A, M: alle; E: nur eigene                     | `time-entry:delete`      | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/time-tracking/api/time-entries.ts:2100`        | `PATCH /:id/break-status`             | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/time-tracking/api/time-entries.ts:444`         | `POST /clock-in`                      | A, M: auch für andere; E: nur für sich        | `time-entry:create`      | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/time-tracking/api/time-entries.ts:790`         | `POST /:id/breaks`                    | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/time-tracking/api/time-entries.ts:869`         | `GET /`                               | A, M: alle; E: nur eigene                     | `time-entry:read`        | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/time-tracking/api/time-entries.ts:930`         | `POST /`                              | A, M: auch für andere; E: nur für sich        | `time-entry:create`      | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/time-tracking/api/time-entries.ts:1471`        | `PUT /:id`                            | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/time-tracking/api/time-entries.ts:2058`        | `DELETE /:id`                         | A, M: alle; E: nur eigene                     | `time-entry:delete`      | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/time-tracking/api/time-entries.ts:2170`        | `PATCH /:id/break-status`             | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/working-time-account/api/overtime.ts:136`      | `GET /:employeeId`                    | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/working-time-account/api/overtime.ts:1516`     | `GET /snapshots/:employeeId`          | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/working-time-account/api/overtime.ts:1873`     | `GET /month-saldo/:employeeId`        | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                 |
@@ -644,9 +647,9 @@ Zeile für dieselbe Permission nennt (D-03 Regel (i)).
 | `contexts/time-tracking/plugins/attendance-checker.ts:308`                   | `OPEN_ENTRY_INVALIDATED`      | A, M  | `team-overview:read`     | ZUGEWIESEN |
 | `contexts/time-tracking/plugins/attendance-checker.ts:418`                   | `PENDING_LEAVE_REMINDER`      | A, M  | `leave-request:approve`  | ZUGEWIESEN |
 | `contexts/time-tracking/plugins/attendance-checker.ts:825`                   | `GAP_WARNING_MANAGER`         | A, M  | `team-overview:read`     | ZUGEWIESEN |
-| `contexts/time-tracking/api/time-entries.ts:1379`                            | `RETRO_ENTRY_REQUESTED`       | A, M  | `retro-request:approve`  | ZUGEWIESEN |
-| `contexts/time-tracking/api/time-entries.ts:1838`                            | `RETRO_ENTRY_UPDATED`         | A, M  | `retro-request:approve`  | ZUGEWIESEN |
-| `contexts/time-tracking/api/time-entries.ts:2193`                            | `BREAK_COMPLIANCE_ALERT`      | A, M  | `team-overview:read`     | ZUGEWIESEN |
+| `contexts/time-tracking/api/time-entries.ts:1425`                            | `RETRO_ENTRY_REQUESTED`       | A, M  | `retro-request:approve`  | ZUGEWIESEN |
+| `contexts/time-tracking/api/time-entries.ts:1908`                            | `RETRO_ENTRY_UPDATED`         | A, M  | `retro-request:approve`  | ZUGEWIESEN |
+| `contexts/time-tracking/api/time-entries.ts:2263`                            | `BREAK_COMPLIANCE_ALERT`      | A, M  | `team-overview:read`     | ZUGEWIESEN |
 | `contexts/time-tracking/api/retro-entry-requests.ts:759`                     | `RETRO_ENTRY_WITHDRAWN`       | A, M  | `retro-request:approve`  | ZUGEWIESEN |
 | `contexts/platform/api/auth.ts:122`                                          | `ACCOUNT_LOCKED`              | A     | `employee:manage-access` | ZUGEWIESEN |
 
