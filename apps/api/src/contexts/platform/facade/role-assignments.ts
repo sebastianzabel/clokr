@@ -28,6 +28,8 @@ import {
 } from "../permission-catalog";
 import { roleGrants } from "../access-role";
 import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../employee-anonymization-filter";
+import { systemRoleIdForLegacyRole } from "../compat-role";
+import { SYSTEM_ROLE_IDS } from "../system-roles";
 import { findSalon } from "./salons";
 import {
   RoleLockoutError,
@@ -259,4 +261,92 @@ export async function withRoleLockoutGuard<T>(
     throw new RoleLockoutError(lockedOut);
   }
   return result;
+}
+
+// ── Notification recipients (Phase 75b, Issue #75, D-16/D-17) ──────────────────────────────────
+
+/**
+ * D-16: the ids of every user of `tenantId` who holds `permission` — a ZUGEWIESEN permission only
+ * (an EIGENE key answers nothing at tenant scope, so it throws — D-09). A holder is either:
+ *
+ * (a) a well-formed TENANT-scope assignment (D-03 shape — fail closed on a malformed row, IN-02)
+ *     whose role belongs to the tenant (a system role, or a customer role OF this tenant — a
+ *     customer role of a FOREIGN tenant grants nothing even if a row references it) and grants
+ *     `permission` via `roleGrants`, the ONE role-evaluation path (AK-73-7). D-09: a SALONS or
+ *     PERSONS assignment never grants a ZUGEWIESEN permission here, even when its role would grant
+ *     it under a TENANT scope — that boundary is #91's, not this facade's; or
+ * (b) a user with NO stored `RoleAssignment` at all in the tenant — any scope, even a malformed
+ *     one, disables the fallback for that user (D-08's "Altrollen-Rückfall") — mapped through
+ *     `systemRoleIdForLegacyRole` (C-10, the compat module; never an inline role literal) onto the
+ *     matching system role, kept when THAT role grants `permission`.
+ *
+ * Every recipient site (D-16, D-17) keeps its OWN other filters — `isActive`, the employee's
+ * tenant, `exitDate`, an actor/target skip, the select shape. This facade answers only "who holds
+ * the permission", scoped to `tenantId`'s employees; it does not filter `isActive` itself, so an
+ * inactive holder is still returned here — exactly what lets a site's own `isActive` filter (or
+ * its absence) be the thing the neutrality recording actually exercises, per site.
+ */
+export async function userIdsHoldingPermission(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  permission: PermissionKey,
+): Promise<string[]> {
+  const catalogEntry = PERMISSIONS.find((candidate) => permissionKey(candidate) === permission);
+  if (!catalogEntry || catalogEntry.reach !== "ZUGEWIESEN") {
+    throw new RangeError(
+      `userIdsHoldingPermission: "${permission}" is not a ZUGEWIESEN permission`,
+    );
+  }
+
+  // Every stored assignment of the tenant, any scope: D-08's fallback triggers only for a user
+  // with NO row at all here, even a malformed or non-granting one.
+  const assignments = await db.roleAssignment.findMany({
+    where: { tenantId },
+    select: {
+      userId: true,
+      scopeType: true,
+      salonIds: true,
+      employeeIds: true,
+      accessRole: { select: { tenantId: true, permissions: true } },
+    },
+  });
+
+  const usersWithStoredAssignment = new Set<string>();
+  const storedHolderIds = new Set<string>();
+  for (const assignment of assignments) {
+    usersWithStoredAssignment.add(assignment.userId);
+    // D-09: only a well-formed TENANT-scope row (D-03 shape) can ever grant a ZUGEWIESEN
+    // permission here — a SALONS/PERSONS row, or a malformed TENANT row, contributes nothing.
+    if (assignment.scopeType !== "TENANT") continue;
+    if (assignment.salonIds.length > 0 || assignment.employeeIds.length > 0) continue;
+    const roleBelongsHere =
+      assignment.accessRole.tenantId === null || assignment.accessRole.tenantId === tenantId;
+    if (!roleBelongsHere) continue;
+    if (!roleGrants(assignment.accessRole, permission)) continue;
+    storedHolderIds.add(assignment.userId);
+  }
+
+  // D-08 fallback: a user of the tenant with no stored assignment is implicitly assigned the
+  // system role of their `User.role` column (`systemRoleIdForLegacyRole`, C-10) — loaded live so
+  // the fallback answers through the same `roleGrants` evaluation as every stored row.
+  const systemRoles = await db.accessRole.findMany({
+    where: { id: { in: Object.values(SYSTEM_ROLE_IDS) }, tenantId: null },
+    select: { id: true, tenantId: true, permissions: true },
+  });
+  const systemRoleById = new Map(systemRoles.map((role) => [role.id, role]));
+
+  const tenantUsers = await db.user.findMany({
+    where: { employee: { tenantId } },
+    select: { id: true, role: true },
+  });
+  const fallbackHolderIds = new Set<string>();
+  for (const user of tenantUsers) {
+    if (usersWithStoredAssignment.has(user.id)) continue;
+    const systemRole = systemRoleById.get(systemRoleIdForLegacyRole(user.role));
+    if (systemRole !== undefined && roleGrants(systemRole, permission)) {
+      fallbackHolderIds.add(user.id);
+    }
+  }
+
+  return [...new Set([...storedHolderIds, ...fallbackHolderIds])].sort();
 }

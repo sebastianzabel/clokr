@@ -2,10 +2,10 @@
  * Phase 75b (Issue #75), D-03 / D-32 — the system roles' permission sets are DERIVED from
  * `docs/permissions.md`, not chosen by intuition.
  *
- * The two site tables of the doc ("Aufrufstellen von requireRole" and "Handler-Prüfungen") name,
- * per call site, the permission it will ask for and — in the "heute" column — which legacy roles
- * the site admits today (A = ADMIN, M = MANAGER, E = EMPLOYEE). That column is the neutrality
- * contract of #75. This test reads it and proves:
+ * The site tables of the doc ("Aufrufstellen von requireRole", "Handler-Prüfungen" and, since
+ * Phase 75b Plan 10, "Empfängersuchen") name, per call site, the permission it will ask for and —
+ * in the "heute" column — which legacy roles the site admits today (A = ADMIN, M = MANAGER,
+ * E = EMPLOYEE). That column is the neutrality contract of #75. This test reads it and proves:
  *   (i)   every row naming the same `resource:action` agrees on the letters admitted through the
  *         ZUGEWIESEN reach — otherwise one permission cannot reproduce every site, and the catalog
  *         cut is not neutral (a finding, not something to loosen);
@@ -54,6 +54,12 @@ const DOC_NAME = "docs/permissions.md";
 
 const GUARD_HEADING = "## Aufrufstellen von requireRole";
 const HANDLER_HEADING = "## Handler-Prüfungen";
+/**
+ * Phase 75b Plan 10 (#75), D-16: the notification-recipient sites. Their "heute" cell has the
+ * SAME shape as a guard row — plain letters, no "nur " prefix, no colon-suffixed description
+ * (`docs/permissions.md` § Empfängersuchen) — so they are read with `kind: "guard"` below.
+ */
+const RECIPIENT_HEADING = "## Empfängersuchen";
 
 /** Input proof (vi): the measured row counts are 136 and 39; the floors leave room to shrink. */
 const MIN_GUARD_ROWS = 100;
@@ -163,6 +169,7 @@ function setsEqual(a: ReadonlySet<Letter>, b: ReadonlySet<Letter>): boolean {
 interface Derivation {
   guardRows: number;
   handlerRows: number;
+  recipientRows: number;
   rows: SiteRow[];
   errors: string[];
   /** resource:action → the letter set every non-Vorrang row agrees on. */
@@ -173,11 +180,16 @@ function deriveFromDoc(): Derivation {
   const doc = readFileSync(DOC_PATH, "utf8");
   const guardDocRows = readSectionRows(doc, GUARD_HEADING);
   const handlerDocRows = readSectionRows(doc, HANDLER_HEADING);
+  // Phase 75b Plan 10 (#75), D-16: the recipient section has the same 5-cell shape as a guard
+  // row (plain "heute" letters, no "nur " prefix, no colon-suffixed description) — read as kind
+  // "guard" so its letters feed the SAME agreement check (i) every other row goes through.
+  const recipientDocRows = readSectionRows(doc, RECIPIENT_HEADING);
   const errors: string[] = [];
   const rows: SiteRow[] = [];
   for (const [docRows, kind] of [
     [guardDocRows, "guard"],
     [handlerDocRows, "handler"],
+    [recipientDocRows, "guard"],
   ] as const) {
     for (const docRow of docRows) {
       const parsed = parseSiteRow(docRow, kind);
@@ -230,6 +242,7 @@ function deriveFromDoc(): Derivation {
   return {
     guardRows: guardDocRows.length,
     handlerRows: handlerDocRows.length,
+    recipientRows: recipientDocRows.length,
     rows,
     errors,
     holders,
@@ -258,7 +271,7 @@ function docDerivedSet(letter: Letter | null): string[] {
 }
 
 describe("Phase 75b — system-role permission sets derived from docs/permissions.md (D-03, D-32)", () => {
-  it("(vi) both site tables yield enough rows to prove something", () => {
+  it("(vi) all site tables yield enough rows to prove something", () => {
     expect(
       derivation.guardRows,
       `${DOC_NAME} § "${GUARD_HEADING}" yielded too few rows — section renamed or emptied?`,
@@ -267,7 +280,13 @@ describe("Phase 75b — system-role permission sets derived from docs/permission
       derivation.handlerRows,
       `${DOC_NAME} § "${HANDLER_HEADING}" yielded too few rows — section renamed or emptied?`,
     ).toBeGreaterThan(MIN_HANDLER_ROWS);
-    expect(derivation.rows.length).toBe(derivation.guardRows + derivation.handlerRows);
+    expect(
+      derivation.recipientRows,
+      `${DOC_NAME} § "${RECIPIENT_HEADING}" yielded no rows — section renamed or emptied?`,
+    ).toBeGreaterThan(0);
+    expect(derivation.rows.length).toBe(
+      derivation.guardRows + derivation.handlerRows + derivation.recipientRows,
+    );
   });
 
   it("both documented exceptions are modelled and exercised, not dead code (D-32)", () => {

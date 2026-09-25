@@ -578,6 +578,30 @@ nur `ZUGEWIESEN` schalten eine Funktion ganz frei oder ab.
 | `contexts/working-time-account/api/overtime.ts:1516`     | `GET /snapshots/:employeeId`          | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/working-time-account/api/overtime.ts:1873`     | `GET /month-saldo/:employeeId`        | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                 |
 
+## Empfängersuchen
+
+Eine Empfängersuche wählt aus, WER über ein Ereignis benachrichtigt wird (`app.notify`) — sie
+trifft keine Zugriffsentscheidung über den Aufrufer und stand deshalb bisher im Abschnitt „Keine
+Permissions“. Phase 75b (#75, D-16) stellt jede der 17 Stellen auf eine Permission um: die Fassade
+`userIdsHoldingPermission(db, tenantId, permission)` (`contexts/platform/facade/role-assignments.ts`)
+liefert die Nutzer-Ids, die eine ZUGEWIESEN-Permission über eine wohlgeformte TENANT-Zuweisung
+halten — gespeichert, oder implizit über die Systemrolle von `User.role` für einen Nutzer ohne
+gespeicherte Zuweisung (D-08, `systemRoleIdForLegacyRole`). Jede Stelle behält alle ihre übrigen
+Filter (`isActive`, Mandant, `exitDate`, Akteur-/Ziel-Ausschluss, Auswahlform) und ersetzt nur die
+Rollenbedingung durch die Trefferliste dieser Fassade. Die Permission je Stelle ist so gewählt,
+dass die heutige Empfänger-Menge unverändert bleibt (D-16): A,M-Stellen fragen eine Permission, die
+Admin UND Manager halten, A-Stellen eine, die nur Admin hält. Neu (D-09): ein TENANT-Inhaber einer
+Kundenrolle wird ab jetzt ebenfalls benachrichtigt; ein SALONS- oder PERSONS-Inhaber erst mit #91.
+
+Die Spalte „heute“ nennt wie bei den anderen Abschnitten die Rollen, die die Stelle vor der
+Umstellung ausgewählt hat — der Neutralitätsvertrag von D-16, geprüft von
+`src/contexts/platform/__tests__/system-roles.test.ts` gegen dieselben Buchstaben, die jede andere
+Zeile für dieselbe Permission nennt (D-03 Regel (i)).
+
+| Stelle                              | Benachrichtigung | heute | Permission              | Reichweite |
+| ----------------------------------- | ---------------- | ----- | ----------------------- | ---------- |
+| `contexts/absence/api/leave.ts:755` | `LEAVE_REQUEST`  | A, M  | `leave-request:approve` | ZUGEWIESEN |
+
 ## Nicht gezählte Treffer
 
 Die Suche nach Handler-Prüfungen ist bewusst breit: Sie findet jede Zeile, die `user.role` liest
@@ -585,22 +609,23 @@ oder `role` vergleicht. Die folgenden Treffer treffen keine Zugriffsentscheidung
 hier, damit jeder NEUE Treffer derselben Suche eingeordnet werden muss — als Handler-Prüfung oder
 hier, mit Begründung.
 
-| Stelle                                                     | Grund                                                                                                                                                                                                                                            |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `app.ts:213`                                               | Die Rolle wird nur in den Log-Kontext der Anfrage geschrieben; keine Zugriffsentscheidung.                                                                                                                                                       |
-| `composition/reports.ts:1580`                              | Filterparameter nach der Rolle der aufgelisteten Mitarbeiter im Sammel-PDF; keine Zugriffsentscheidung über den Aufrufer.                                                                                                                        |
-| `composition/reports.ts:1653`                              | Die Rolle des aufgelisteten Mitarbeiters wird in die Berichtsdaten übernommen; keine Zugriffsentscheidung.                                                                                                                                       |
-| `contexts/absence/api/leave.ts:740`                        | Die Rolle des Antragstellers wird in den Audit-Eintrag geschrieben; keine Zugriffsentscheidung.                                                                                                                                                  |
-| `contexts/platform/api/auth.ts:307`                        | Beim Token-Refresh wird die Kompatibilitätsrolle über `compatRoleForUser` abgeleitet (D-14) und in das JWT übernommen; die Spalte `User.role` ist nur der Rückfallwert für einen Nutzer ohne gespeicherte Zuweisung. Keine Zugriffsentscheidung. |
-| `contexts/platform/api/auth.ts:570`                        | Im Helfer issueTokens (Anmeldung, OTP-Bestätigung) wird die Kompatibilitätsrolle einmal über `compatRoleForUser` abgeleitet (D-14) und in JWT und Antwort übernommen; die Spalte ist nur der Rückfallwert. Keine Zugriffsentscheidung.           |
-| `contexts/platform/api/employees.ts:732`                   | Die Rolle wird hier gesetzt, nicht geprüft; künftig `role-assignment:manage`, die Route selbst ist über :650 erfasst.                                                                                                                            |
-| `contexts/platform/request-permissions.ts:143`             | Implementierung der Permission-Prüfung: Der Altrollen-Rückfall (D-08) liest die Spalte `User.role` eines Nutzers ohne gespeicherte Zuweisung und übergibt sie an `systemRoleIdForLegacyRole`; keine eigene Rollenentscheidung.                   |
-| `contexts/platform/request-permissions.ts:200`             | Implementierung der Permission-Prüfung: `permissionReach` fragt die ZUGEWIESEN-Permission über `hasPermission` ab; jede Aufrufstelle steht einzeln in ihrem Abschnitt.                                                                           |
-| `contexts/platform/request-permissions.ts:201`             | Implementierung der Permission-Prüfung: `permissionReach` fragt die EIGENE-Permission über `hasPermission` ab; jede Aufrufstelle steht einzeln in ihrem Abschnitt.                                                                               |
-| `contexts/platform/request-permissions.ts:216`             | Implementierung der Permission-Prüfung: der Guard `requirePermission` selbst; jede Aufrufstelle steht einzeln im Abschnitt zu den Guards.                                                                                                        |
-| `contexts/platform/request-permissions.ts:236`             | Implementierung der Permission-Prüfung: der Guard `requireAnyPermission` selbst; jede Aufrufstelle steht einzeln im Abschnitt zu den Guards.                                                                                                     |
-| `contexts/time-tracking/plugins/attendance-checker.ts:169` | Auswahl der Benachrichtigungsempfänger im Cron-Job, kein Anfragekontext; gehört zu #75.                                                                                                                                                          |
-| `middleware/auth.ts:76`                                    | Die Implementierung des Rollen-Guards selbst; jede Aufrufstelle steht einzeln im Abschnitt zu requireRole.                                                                                                                                       |
+| Stelle                                                     | Grund                                                                                                                                                                                                                                                          |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app.ts:213`                                               | Die Rolle wird nur in den Log-Kontext der Anfrage geschrieben; keine Zugriffsentscheidung.                                                                                                                                                                     |
+| `composition/reports.ts:1580`                              | Filterparameter nach der Rolle der aufgelisteten Mitarbeiter im Sammel-PDF; keine Zugriffsentscheidung über den Aufrufer.                                                                                                                                      |
+| `composition/reports.ts:1653`                              | Die Rolle des aufgelisteten Mitarbeiters wird in die Berichtsdaten übernommen; keine Zugriffsentscheidung.                                                                                                                                                     |
+| `contexts/absence/api/leave.ts:740`                        | Die Rolle des Antragstellers wird in den Audit-Eintrag geschrieben; keine Zugriffsentscheidung.                                                                                                                                                                |
+| `contexts/platform/api/auth.ts:307`                        | Beim Token-Refresh wird die Kompatibilitätsrolle über `compatRoleForUser` abgeleitet (D-14) und in das JWT übernommen; die Spalte `User.role` ist nur der Rückfallwert für einen Nutzer ohne gespeicherte Zuweisung. Keine Zugriffsentscheidung.               |
+| `contexts/platform/api/auth.ts:570`                        | Im Helfer issueTokens (Anmeldung, OTP-Bestätigung) wird die Kompatibilitätsrolle einmal über `compatRoleForUser` abgeleitet (D-14) und in JWT und Antwort übernommen; die Spalte ist nur der Rückfallwert. Keine Zugriffsentscheidung.                         |
+| `contexts/platform/api/employees.ts:732`                   | Die Rolle wird hier gesetzt, nicht geprüft; künftig `role-assignment:manage`, die Route selbst ist über :650 erfasst.                                                                                                                                          |
+| `contexts/platform/facade/role-assignments.ts:345`         | `userIdsHoldingPermission` (D-16): der Altrollen-Rückfall (D-08) liest die Spalte `User.role` eines Nutzers ohne gespeicherte Zuweisung und übergibt sie an `systemRoleIdForLegacyRole`, wie in `request-permissions.ts:143`; keine eigene Rollenentscheidung. |
+| `contexts/platform/request-permissions.ts:143`             | Implementierung der Permission-Prüfung: Der Altrollen-Rückfall (D-08) liest die Spalte `User.role` eines Nutzers ohne gespeicherte Zuweisung und übergibt sie an `systemRoleIdForLegacyRole`; keine eigene Rollenentscheidung.                                 |
+| `contexts/platform/request-permissions.ts:200`             | Implementierung der Permission-Prüfung: `permissionReach` fragt die ZUGEWIESEN-Permission über `hasPermission` ab; jede Aufrufstelle steht einzeln in ihrem Abschnitt.                                                                                         |
+| `contexts/platform/request-permissions.ts:201`             | Implementierung der Permission-Prüfung: `permissionReach` fragt die EIGENE-Permission über `hasPermission` ab; jede Aufrufstelle steht einzeln in ihrem Abschnitt.                                                                                             |
+| `contexts/platform/request-permissions.ts:216`             | Implementierung der Permission-Prüfung: der Guard `requirePermission` selbst; jede Aufrufstelle steht einzeln im Abschnitt zu den Guards.                                                                                                                      |
+| `contexts/platform/request-permissions.ts:236`             | Implementierung der Permission-Prüfung: der Guard `requireAnyPermission` selbst; jede Aufrufstelle steht einzeln im Abschnitt zu den Guards.                                                                                                                   |
+| `contexts/time-tracking/plugins/attendance-checker.ts:169` | Auswahl der Benachrichtigungsempfänger im Cron-Job, kein Anfragekontext; gehört zu #75.                                                                                                                                                                        |
+| `middleware/auth.ts:76`                                    | Die Implementierung des Rollen-Guards selbst; jede Aufrufstelle steht einzeln im Abschnitt zu requireRole.                                                                                                                                                     |
 
 ## Keine Permissions
 
@@ -631,9 +656,12 @@ Genehmigungs-Permission hat, bleibt an sie gebunden:
 - **Anmeldung der NFC-Terminals** mit einem eigenen Terminal-Schlüssel
   (`contexts/time-tracking/api/terminals.ts:95`). Das ist Geräte-Authentifizierung, keine
   Berechtigung einer Person; verwaltet werden die Schlüssel über `terminal:manage`.
-- **Die Abfragen, die Benachrichtigungsempfänger nach Rolle suchen** (etwa
-  `role: { in: ["ADMIN", "MANAGER"] }`; Issue #72 zählt 16 solche Stellen). Sie wählen aus, wer eine
-  Nachricht bekommt, und treffen keine Zugriffsentscheidung; ihre Umstellung gehört zu #75.
+- **Die Abfragen, die Benachrichtigungsempfänger auswählen.** Sie treffen keine
+  Zugriffsentscheidung über den Aufrufer — sie wählen aus, wer eine Nachricht bekommt. Bis zu ihrer
+  Umstellung in Phase 75b waren das reine Rollenabfragen (`role: { in: ["ADMIN", "MANAGER"] }`;
+  Issue #72 zählte 16 solche Stellen plus die 17. aus D-17); seit #75 sind es Permission-Abfragen
+  über `userIdsHoldingPermission` — Stelle, Permission und die Neutralitätsprüfung stehen im
+  Abschnitt „Empfängersuchen“, nicht hier.
 - **Ein Superadmin oberhalb des Mandanten** — das ist #88.
 
 ## Pflege

@@ -109,6 +109,9 @@ export { roleGrants, normalizeRolePermissions, roleNameKey } from "./access-role
 // permission P to a target described by employee and/or salon?" — plus the scope normalisation
 // every role-assignment write path uses.
 export { userMayApply } from "./facade/role-assignments";
+// Phase 75b (#75), D-16/D-17: the holders of a ZUGEWIESEN permission in a tenant — the Unterbau
+// answer every notification-recipient site asks instead of a role-based Prisma predicate.
+export { userIdsHoldingPermission } from "./facade/role-assignments";
 export {
   decideUserMayApply,
   normalizeRoleAssignmentScope,

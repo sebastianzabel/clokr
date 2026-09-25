@@ -44,6 +44,7 @@ import {
   requirePermission,
   hasPermission,
   permissionReach,
+  userIdsHoldingPermission, // Phase 75b Plan 10 (#75), D-16: notification-recipient lookups
 } from "../../platform"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
@@ -748,9 +749,17 @@ export async function leaveRoutes(app: FastifyInstance) {
       // display text only (ADR 0001, never compared). The mail subject is deliberately neutral
       // while the in-app title is type-specific (owner decision 2026-09-15).
       const typeDef = LEAVE_TYPE_DEFS[body.type];
+      // Phase 75b Plan 10 (#75), D-16: holders of leave-request:approve replace the legacy A,M
+      // role predicate — the recorded recipient set is unchanged (docs/permissions.md §
+      // Empfängersuchen).
+      const leaveRequestApproveHolderIds = await userIdsHoldingPermission(
+        app.prisma,
+        req.user.tenantId,
+        "leave-request:approve:ZUGEWIESEN",
+      );
       const managers = await app.prisma.user.findMany({
         where: {
-          role: { in: ["ADMIN", "MANAGER"] },
+          id: { in: leaveRequestApproveHolderIds },
           isActive: true,
           employee: { tenantId: req.user.tenantId },
         },

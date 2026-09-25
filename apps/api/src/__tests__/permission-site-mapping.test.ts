@@ -6,16 +6,22 @@
  * `contexts/platform/permission-catalog.ts`. That switch can only be rights-neutral if every
  * current check is mapped — so this test keeps the checked-in mapping true against the source tree.
  *
- * Two detectors run over every non-test `.ts` file under `apps/api/src` (comment lines skipped):
+ * Three detectors run over every non-test `.ts` file under `apps/api/src` (comment lines skipped):
  * - `REQUIRE_ROLE_DETECTOR` finds each call of the role guard helper (its own definition excluded);
  *   each hit must have one row in the section named by `REQUIRE_ROLE_HEADING`.
  * - `HANDLER_DETECTOR` finds any line that reads `user.role` or compares `role`; each hit must have
  *   one row in either the `HANDLER_HEADING` section (an access decision) or the `EXCLUDED_HEADING`
  *   section (a hit that decides nothing, with a reason). The detector is deliberately broad: a NEW
  *   role check in any of these shapes turns this test red until someone classifies it.
- * - Phase 75b (#75): during the call-site switch both detectors ALSO match the permission shapes
- *   (`requirePermission(`/`requireAnyPermission(` resp. `hasPermission(`/`permissionReach(`), see
- *   the constants below — a transitional union that plan 75b-12 replaces.
+ * - Phase 75b Plan 10 (#75), D-16/D-17: `RECIPIENT_DETECTOR` finds each call of the notification-
+ *   recipient facade `userIdsHoldingPermission(` (its own `export async function` definition
+ *   excluded); each hit must have one row in `RECIPIENT_HEADING` — the site → permission mapping
+ *   for the 17 notification-recipient lookups that used to be plain role queries (see "Keine
+ *   Permissions" in the doc for their pre-75b history).
+ * - Phase 75b (#75): during the call-site switch both the role-guard and handler detectors ALSO
+ *   match the permission shapes (`requirePermission(`/`requireAnyPermission(` resp.
+ *   `hasPermission(`/`permissionReach(`), see the constants below — a transitional union that plan
+ *   75b-12 replaces.
  *
  * Why per-file COUNTS and not line numbers: a fail-closed list pinned to line numbers goes stale
  * through unrelated edits in the same file (#309/#310 turned a branch red twice that way). An added
@@ -85,9 +91,18 @@ const HANDLER_DEFINITION_MARKERS = [
   "export async function hasPermission",
   "export async function permissionReach",
 ];
+/**
+ * Phase 75b Plan 10 (#75), D-16: every call of the notification-recipient facade. Unlike the two
+ * detectors above this one is NOT transitional — it has no legacy shape to also match, since the
+ * facade did not exist before #75b-10.
+ */
+const RECIPIENT_DETECTOR = /\buserIdsHoldingPermission\(/;
+/** The facade's own definition line — never a call site. */
+const RECIPIENT_DEFINITION_MARKERS = ["export async function userIdsHoldingPermission"];
 
 const REQUIRE_ROLE_HEADING = "## Aufrufstellen von requireRole";
 const HANDLER_HEADING = "## Handler-Prüfungen";
+const RECIPIENT_HEADING = "## Empfängersuchen";
 const EXCLUDED_HEADING = "## Nicht gezählte Treffer";
 const RESOURCES_HEADING = "## Ressourcen";
 const PERMISSIONS_HEADING = "## Permissions";
@@ -139,6 +154,13 @@ function isHandlerHit(line: string): boolean {
   return (
     HANDLER_DETECTOR.test(line) &&
     !HANDLER_DEFINITION_MARKERS.some((marker) => line.includes(marker))
+  );
+}
+
+function isRecipientHit(line: string): boolean {
+  return (
+    RECIPIENT_DETECTOR.test(line) &&
+    !RECIPIENT_DEFINITION_MARKERS.some((marker) => line.includes(marker))
   );
 }
 
@@ -389,6 +411,10 @@ describe("permission site mapping — docs/permissions.md against apps/api/src (
       total(countPerFile(files, isHandlerHit)),
       "HANDLER_DETECTOR found nothing — the role property was renamed; update the detector",
     ).toBeGreaterThan(0);
+    expect(
+      total(countPerFile(files, isRecipientHit)),
+      "RECIPIENT_DETECTOR found nothing — userIdsHoldingPermission was renamed; update the detector",
+    ).toBeGreaterThan(0);
   });
 
   it("every data row of the site, resource and permission sections parses (D-15, D-16)", () => {
@@ -399,6 +425,7 @@ describe("permission site mapping — docs/permissions.md against apps/api/src (
       [PERMISSIONS_HEADING, parsePermissionRow],
       [REQUIRE_ROLE_HEADING, parseSiteRow],
       [HANDLER_HEADING, parseSiteRow],
+      [RECIPIENT_HEADING, parseSiteRow],
       [EXCLUDED_HEADING, parseExcludedRow],
     ];
     for (const [heading, parse] of parsers) {
@@ -441,11 +468,23 @@ describe("permission site mapping — docs/permissions.md against apps/api/src (
     ).toEqual([]);
   });
 
-  it("every Datei:Zeile occurs at most once across the three site sections", () => {
+  it("recipient: per-file source count equals the doc row count, both directions (D-16)", () => {
+    const files = collectSourceFiles();
+    expect(files.length, "no .ts file found under apps/api/src").toBeGreaterThan(0);
+    const source = countPerFile(files, isRecipientHit);
+    const doc = countRowsPerFile(parsedSiteRows(readDoc(), RECIPIENT_HEADING));
+    expect(
+      compareCounts(source, doc, "userIdsHoldingPermission", RECIPIENT_HEADING.replace(/^## /, "")),
+      `a notification-recipient call site was added or removed — update ${DOC_NAME}`,
+    ).toEqual([]);
+  });
+
+  it("every Datei:Zeile occurs at most once across the four site sections", () => {
     const text = readDoc();
     const all = [
       ...parsedSiteRows(text, REQUIRE_ROLE_HEADING),
       ...parsedSiteRows(text, HANDLER_HEADING),
+      ...parsedSiteRows(text, RECIPIENT_HEADING),
       ...parsedExcludedRows(text),
     ];
     const seen = new Map<string, string>();
@@ -472,6 +511,7 @@ describe("permission site mapping — docs/permissions.md against apps/api/src (
     for (const row of [
       ...parsedSiteRows(text, REQUIRE_ROLE_HEADING),
       ...parsedSiteRows(text, HANDLER_HEADING),
+      ...parsedSiteRows(text, RECIPIENT_HEADING),
     ]) {
       for (const reach of row.reaches) {
         const key = `${row.resource}:${row.action}:${reach}`;
