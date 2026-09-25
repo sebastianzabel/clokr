@@ -12,7 +12,7 @@ import {
 import type { PhorestStaffItem } from "../../../services/phorest/types";
 // Phase 65b (issue #65): every salon read from Schichtplanung goes through the Unterbau's public
 // facade — never a direct `prisma.salon.*` call from this context (ADR 0001).
-import { findSalon, listSalons } from "../../platform";
+import { findSalon, listSalons, requirePermission } from "../../platform";
 
 /**
  * Phorest API Integration
@@ -255,7 +255,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   // GET /phorest/couplings — the tenant's couplings, one row per coupled salon.
   app.get("/phorest/couplings", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("integration:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const tenantId = req.user.tenantId;
       const salons = await listSalons(app.prisma, tenantId, { includeInactive: true });
@@ -283,7 +283,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   // POST /phorest/couplings — couple a salon to a Phorest branch (provider fixed by the route).
   app.post("/phorest/couplings", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("integration:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       const body = couplingCreateSchema.parse(req.body);
@@ -373,7 +373,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   // `apps/api/scripts/lint-t100-09-routes.json`'s entry for this route.
   app.delete("/phorest/couplings/:salonId", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("integration:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       const { salonId } = couplingParamSchema.parse(req.params);
