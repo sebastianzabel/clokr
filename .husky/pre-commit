@@ -34,4 +34,12 @@ pnpm --filter @clokr/api exec tsx scripts/lint-e2e-spec-registry.ts --check || e
 # --check`, averaged over 3 runs, this plan's own measurement).
 pnpm --filter @clokr/api run lint:t100-09-routes --check || exit 1
 
+# One-shot lint:role-checks (Phase 75b Plan 12, Issue #75, D-19). Full-repo, not staged-only — a
+# role comparison can come back in any non-test file under apps/api/src, and the single allowlisted
+# compat module (contexts/platform/compat-role.ts) must still exist, which a staged-files-only
+# invocation cannot see. ~0.98s measured on this machine for the whole pnpm invocation
+# (`time pnpm --filter @clokr/api run lint:role-checks`, averaged over 3 runs: 1.00s, 0.99s,
+# 0.94s, this plan's own measurement).
+pnpm --filter @clokr/api run lint:role-checks || exit 1
+
 pnpm exec lint-staged
