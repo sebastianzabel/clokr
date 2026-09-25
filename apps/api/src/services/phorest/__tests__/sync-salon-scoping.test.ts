@@ -1,6 +1,6 @@
 // Phase 65b (issue #65, D-09/D-10/D-24) — the per-query salon boundary matrix of the Phorest
-// reconcile. Issue #65's core criterion: "Ein Lauf für Salon A storniert keine Schicht und entfernt
-// keinen Termin von Salon B". Plan 01 added every salon filter in one tracer (sync-tenant.test.ts);
+// reconcile. Issue #65's core criterion, translated: "a run for salon A cancels no shift and
+// removes no appointment of salon B". Plan 01 added every salon filter in one tracer (sync-tenant.test.ts);
 // this file makes each filter individually load-bearing — each case fails when exactly its own
 // filter is removed (see the mutation proofs in the phase SUMMARY).
 //
