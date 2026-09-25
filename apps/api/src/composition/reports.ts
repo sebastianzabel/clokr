@@ -3,7 +3,7 @@ import PDFDocument from "pdfkit";
 import iconv from "iconv-lite";
 import { formatInTimeZone } from "date-fns-tz";
 import { requireAuth } from "../middleware/auth";
-import { getHolidays, STATE_MAP, requirePermission } from "../contexts/platform";
+import { getHolidays, STATE_MAP, requirePermission, permissionReach } from "../contexts/platform";
 import {
   SECTION9_LEGEND,
   generateMonthlyReportPdf,
@@ -1446,8 +1446,11 @@ export async function reportRoutes(app: FastifyInstance) {
 
       // Authorization: ADMIN/MANAGER may download any employee's PDF;
       // EMPLOYEE may only download their OWN PDF (self-employee check).
-      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
-      if (!isManager && req.user.employeeId !== employeeId) {
+      const reach = await permissionReach(req, "report:export");
+      if (reach !== "ZUGEWIESEN" && req.user.employeeId !== employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+      if (reach === null) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 

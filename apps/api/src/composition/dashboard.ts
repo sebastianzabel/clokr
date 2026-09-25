@@ -6,6 +6,7 @@ import {
   STATE_MAP,
   accessContextFromRequest,
   employeeScopeFor,
+  hasPermission,
 } from "../contexts/platform";
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
 import {
@@ -1044,8 +1045,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const access = accessContextFromRequest(req);
       const employeeId = req.user.employeeId;
       const tenantId = req.user.tenantId;
-      const role = req.user.role;
-      const isManager = role === "ADMIN" || role === "MANAGER";
+      const isManager = await hasPermission(req, "team-overview:read:ZUGEWIESEN");
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const today = todayInTz(tz);
       // GitHub issue #141: hoisted here (rather than fetched separately below) so the Karte and
