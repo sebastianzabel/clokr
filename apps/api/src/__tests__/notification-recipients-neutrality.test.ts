@@ -66,7 +66,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import type { Role } from "@clokr/db";
-import { getTestApp, cleanupTestData, createTestSalon } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup";
 import { executeLegacyRoleMigration } from "./legacy-role-migration-sql";
 import { LabelRegistry, cleanupMatrixExtras } from "./neutrality/fixture";
 import { installExternalStubs, type ExternalStubs } from "./neutrality/external-stubs";
@@ -250,6 +250,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
         endTime: at(iso, "15:00"),
         breakMinutes: 30,
         source: "MANUAL",
+        salonId: await salonIdForEmployee(app.prisma, p.employeeId), // Phase 68b (#68)
       },
     });
   }
@@ -440,6 +441,9 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
     await app.prisma.tenantConfig.create({
       data: { tenantId: tenantS, defaultVacationDays: 30, timezone: "Europe/Berlin" },
     });
+    // Phase 68b (#68, merged from origin/main 704b1ee5): TimeEntry.salonId is required, so tenant S
+    // needs a salon for its recent entries.
+    await createTestSalon(app.prisma, tenantS);
     const sAdmin = await createPerson(tenantS, "S.admin", { role: "ADMIN", exempt: true });
     const sManager = await createPerson(tenantS, "S.manager", { role: "MANAGER", exempt: true });
     await createRecentEntry(sAdmin, DAY.recentEntry);
@@ -466,6 +470,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
         endTime: null,
         breakMinutes: 0,
         source: "MANUAL",
+        salonId: salonR, // Phase 68b (#68)
       },
     });
     registry.register("R.requester.openEntry", openEntry.id);
@@ -479,6 +484,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
         breakMinutes: 30,
         breakStatus: "AUTO",
         source: "MANUAL",
+        salonId: salonR, // Phase 68b (#68)
       },
     });
     registry.register("R.requester.autoBreakEntry", autoBreakEntry.id);

@@ -47,7 +47,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import type { Role } from "@clokr/db";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup";
 import { executeLegacyRoleMigration } from "./legacy-role-migration-sql";
 import { LabelRegistry, cleanupMatrixExtras, type ActorFixture } from "./neutrality/fixture";
 import { installExternalStubs, type ExternalStubs } from "./neutrality/external-stubs";
@@ -211,6 +211,9 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
     await app.prisma.tenantConfig.create({
       data: { tenantId: tenant.id, timezone: "Europe/Berlin", twoFaEnabled },
     });
+    // Phase 68b (#68, merged from origin/main 704b1ee5): TimeEntry.salonId is required, so every
+    // fixture tenant needs a salon for createEntry below.
+    await createTestSalon(app.prisma, tenant.id);
     return tenant.id;
   }
 
@@ -270,6 +273,7 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
         endTime: new Date(`${iso}T15:00:00.000Z`),
         breakMinutes: 30,
         source: "MANUAL",
+        salonId: await salonIdForEmployee(app.prisma, employeeIdOf.get(label) as string), // Phase 68b (#68)
       },
     });
     registry.register(`${label}.timeEntry`, entry.id);

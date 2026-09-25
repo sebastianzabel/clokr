@@ -447,6 +447,7 @@ async function createPersonEntities(
       endTime: at(DAY.closedEntry, "14:30"),
       breakMinutes: 30,
       createdBy: t.anchorUserId,
+      salonId: ids.defaultSalonId, // Phase 68b (#68): required since origin/main 704b1ee5 — the tenant default salon, as the 68b backfill sets
     },
   });
   reg("timeEntry.closed", closed.id);
@@ -467,6 +468,7 @@ async function createPersonEntities(
       invalidReasonCode: "MISSING_CLOCK_OUT",
       invalidReason: "Ausstempeln fehlt",
       createdBy: t.anchorUserId,
+      salonId: ids.defaultSalonId, // Phase 68b (#68)
     },
   });
   reg("timeEntry.invalid", invalid.id);
@@ -476,6 +478,7 @@ async function createPersonEntities(
       date: day(DAY.openEntry),
       startTime: at(DAY.openEntry, "06:00"),
       createdBy: t.anchorUserId,
+      salonId: ids.defaultSalonId, // Phase 68b (#68)
     },
   });
   reg("timeEntry.open", open.id);
