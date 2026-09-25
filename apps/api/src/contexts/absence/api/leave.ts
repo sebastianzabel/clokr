@@ -1045,6 +1045,35 @@ export async function leaveRoutes(app: FastifyInstance) {
         });
         return reply.code(404).send({ error: "Antrag nicht gefunden" });
       }
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — scope check: a ZUGEWIESEN-scoped manager may
+      // only decide a request for an employee whose Stammsalon AT THE REQUEST'S OWN startDate is
+      // in scope. No entry-salon fallback (D-09) — LeaveRequest has no salonId.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "leave-request:approve:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            existing.employeeId,
+            existing.startDate,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "LeaveRequest",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Antrag nicht gefunden" });
+        }
+      }
       if (!["PENDING", "CANCELLATION_REQUESTED"].includes(existing.status)) {
         return reply.code(409).send({ error: "Antrag kann nicht mehr geändert werden" });
       }
@@ -1843,6 +1872,34 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Antrag nicht gefunden" });
       }
 
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — scope check, same pattern as /review above.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "leave-request:correct:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            existing.employeeId,
+            existing.startDate,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "LeaveRequest",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Antrag nicht gefunden" });
+        }
+      }
+
       // Nur GENEHMIGTE Anträge sind direkt korrigierbar (EDIT-01, per CONTEXT).
       if (existing.status !== "APPROVED") {
         return reply.code(409).send({ error: "Nur genehmigte Anträge können korrigiert werden" });
@@ -2249,6 +2306,34 @@ export async function leaveRoutes(app: FastifyInstance) {
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
         return reply.code(404).send({ error: "Antrag nicht gefunden" });
+      }
+
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — scope check, same pattern as /review above.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "leave-request:attest:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            existing.employeeId,
+            existing.startDate,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "LeaveRequest",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Antrag nicht gefunden" });
+        }
       }
 
       const typeCode = existing.leaveType.code;
@@ -2669,13 +2754,38 @@ export async function leaveRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
 
+      // Phase 91b Plan 04 (Issue #91), D-10 — this feed has no date window of its own (it returns
+      // every APPROVED request + absence, unbounded) to use as a Stichtag, unlike the plan's own
+      // text assumed; treated the same as GET /requests's own "no single natural period" case:
+      // tenant-local today.
+      const access = accessContextFromRequest(req);
+      const reach = await resolveAccessReach(app.prisma, access, "leave-request:read:ZUGEWIESEN");
+      const scopedEmployeeIds =
+        reach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              tenantId,
+              reach,
+              todayInTz(await getTenantTimezone(app.prisma, tenantId)),
+            );
+
       const [requests, absences] = await Promise.all([
         app.prisma.leaveRequest.findMany({
-          where: { deletedAt: null, employee: { tenantId }, status: "APPROVED" },
+          where: {
+            deletedAt: null,
+            employee: { tenantId },
+            status: "APPROVED",
+            ...(scopedEmployeeIds !== "all" ? { employeeId: { in: scopedEmployeeIds } } : {}),
+          },
           include: { leaveType: true, employee: { select: { firstName: true, lastName: true } } },
         }),
         app.prisma.absence.findMany({
-          where: { deletedAt: null, employee: { tenantId } },
+          where: {
+            deletedAt: null,
+            employee: { tenantId },
+            ...(scopedEmployeeIds !== "all" ? { employeeId: { in: scopedEmployeeIds } } : {}),
+          },
           include: { employee: { select: { firstName: true, lastName: true } } },
         }),
       ]);
@@ -3115,6 +3225,36 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
       }
 
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — scope check: a ZUGEWIESEN-scoped manager may
+      // only decide a § 9 case for an employee whose Stammsalon at the credit's own overlapStart
+      // (the credit's own period-start field, D-09-era computed at detection time) is in scope.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "section9:decide:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            credit.employeeId,
+            credit.overlapStart,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Section9Credit",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+        }
+      }
+
       if (credit.status === "CONFIRMED") {
         return reply.code(409).send({ error: "Vorgang wurde bereits bestätigt" });
       }
@@ -3372,6 +3512,36 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
       }
 
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — scope check: a ZUGEWIESEN-scoped manager may
+      // only decide a § 9 case for an employee whose Stammsalon at the credit's own overlapStart
+      // (the credit's own period-start field, D-09-era computed at detection time) is in scope.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "section9:decide:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            credit.employeeId,
+            credit.overlapStart,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Section9Credit",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+        }
+      }
+
       // D-11: eine bereits gebuchte Gutschrift kann nicht abgelehnt werden — eine
       // Korrektur wäre ein anderer Vorgang, außerhalb des Umfangs dieser Phase.
       if (credit.status === "CONFIRMED") {
@@ -3447,6 +3617,36 @@ export async function leaveRoutes(app: FastifyInstance) {
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
         return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+      }
+
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — scope check: a ZUGEWIESEN-scoped manager may
+      // only decide a § 9 case for an employee whose Stammsalon at the credit's own overlapStart
+      // (the credit's own period-start field, D-09-era computed at detection time) is in scope.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "section9:decide:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            credit.employeeId,
+            credit.overlapStart,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Section9Credit",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+        }
       }
 
       if (credit.status !== "REJECTED") {
