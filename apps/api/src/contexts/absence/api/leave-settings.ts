@@ -7,7 +7,7 @@
 
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireRole } from "../../../middleware/auth";
+import { requirePermission } from "../../platform";
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { getVacationEntitlement, upsertVacationEntitlement } from "../facade/entitlements"; // Phase 100B Plan 10 — A11/A16
 import { listLeaveTypes, updateLeaveType } from "../facade/leave-types"; // Phase 100B Plan 10 — A18/A19
@@ -23,7 +23,7 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
   // GET /api/v1/settings/vacation/:employeeId?year=  — Urlaubsanspruch eines Mitarbeiters
   app.get("/vacation/:employeeId", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("leave-entitlement:read:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { employeeId } = req.params as { employeeId: string };
       const { year: yearStr } = req.query as { year?: string };
@@ -71,7 +71,7 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
   // PUT /api/v1/settings/vacation/:employeeId  — Urlaubsanspruch setzen
   app.put("/vacation/:employeeId", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("leave-entitlement:update:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { employeeId } = req.params as { employeeId: string };
       const body = vacationEntitlementSchema.parse(req.body);
@@ -193,7 +193,7 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
   // GET /api/v1/settings/leave-types — all leave types with config
   app.get("/leave-types", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("leave-config:read:ZUGEWIESEN"),
     handler: async (req) => {
       const types = await listLeaveTypes(app.prisma, req.user.tenantId);
       return types;
@@ -203,7 +203,7 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
   // PUT /api/v1/settings/leave-types/:id — update leave type config
   app.put("/leave-types/:id", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("leave-config:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = z

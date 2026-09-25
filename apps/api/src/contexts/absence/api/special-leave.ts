@@ -1,7 +1,8 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { Prisma } from "@clokr/db";
-import { requireAuth, requireRole } from "../../../middleware/auth";
+import { requireAuth } from "../../../middleware/auth";
+import { requirePermission } from "../../platform";
 
 /** Statutory special leave defaults per § 616 BGB / common collective agreements. */
 const STATUTORY_DEFAULTS = [
@@ -93,7 +94,7 @@ export async function specialLeaveRoutes(app: FastifyInstance) {
   // POST /api/v1/special-leave/rules — custom rule (admin only)
   app.post("/rules", {
     schema: { tags: ["Sonderurlaub"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("leave-config:manage:ZUGEWIESEN"),
     handler: async (req, _reply) => {
       const body = createRuleSchema.parse(req.body);
       const tenantId = req.user.tenantId;
@@ -126,7 +127,7 @@ export async function specialLeaveRoutes(app: FastifyInstance) {
   // PUT /api/v1/special-leave/rules/:id
   app.put("/rules/:id", {
     schema: { tags: ["Sonderurlaub"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("leave-config:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = updateRuleSchema.parse(req.body);
@@ -170,7 +171,7 @@ export async function specialLeaveRoutes(app: FastifyInstance) {
   // DELETE /api/v1/special-leave/rules/:id — only custom rules
   app.delete("/rules/:id", {
     schema: { tags: ["Sonderurlaub"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("leave-config:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
 

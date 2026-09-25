@@ -34,18 +34,18 @@
   {
     "file": "apps/api/src/contexts/absence/api/company-shutdowns.ts",
     "handler": "DELETE /api/v1/company-shutdowns/:id/exceptions/:employeeId",
-    "validatedAt": 190,
+    "validatedAt": 207,
     "calls": [
       {
         "call": "companyShutdownException.findUnique",
-        "line": 194
+        "line": 211
       },
       {
         "call": "companyShutdownException.deleteMany",
-        "line": 198
+        "line": 215
       }
     ],
-    "reason": "shutdownId (the client-supplied :id) is tenant-validated at line 190 (companyShutdown.findFirst({ id, tenantId })). CompanyShutdownException rows only ever exist for a (shutdownId, employeeId) pair created together by the tenant-validated POST /:id/exceptions handler above (compound unique key shutdownId_employeeId, enforced at create time), so an employeeId from a different tenant can never match an existing row for this already-tenant-scoped shutdownId."
+    "reason": "shutdownId (the client-supplied :id) is tenant-validated at line 207 (companyShutdown.findFirst({ id, tenantId })). CompanyShutdownException rows only ever exist for a (shutdownId, employeeId) pair created together by the tenant-validated POST /:id/exceptions handler above (compound unique key shutdownId_employeeId, enforced at create time), so an employeeId from a different tenant can never match an existing row for this already-tenant-scoped shutdownId. Lines shifted +17 in Phase 75b Plan 07 (Issue #75): the middleware/auth requireRole import became a two-line split (requireAuth stays, requirePermission is a new separate import, +1), and each of the five requireRole(\"ADMIN\") preHandlers became a requirePermission(\"company-shutdown:manage:ZUGEWIESEN\") call — the longer permission key pushed all five single-line route registrations over the 100-char Prettier width, each wrapping to a multi-line call (4 lines net +3, or +4 for the already-multi-line DELETE .../:employeeId registration itself) — no finding, mechanical only; companyShutdownException.findUnique 194 -> 211, companyShutdownException.deleteMany 198 -> 215, validatedAt 190 -> 207."
   },
   {
     "file": "apps/api/src/contexts/platform/api/employees.ts",

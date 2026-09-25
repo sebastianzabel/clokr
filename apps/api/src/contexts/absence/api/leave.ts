@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { LeaveRequestStatus, Prisma } from "@clokr/db";
-import { requireAuth, requireRole } from "../../../middleware/auth";
+import { requireAuth } from "../../../middleware/auth";
 import { generateICal, addOneDay, type ICalEvent } from "../ical";
 import { splitDaysAcrossYears, calculateProRataVacation } from "../vacation-calc"; // Phase 107 (D-04/D-09)
 import { selfHealUsedDays, loadVacationTypeMeta } from "../leave-self-heal";
@@ -39,7 +39,7 @@ import {
   calcLeaveAbsenceMinutesTz, // Issue #293 — receipt shares the saldo's own Ø-Methode entry point
   type OvertimeBalanceBreakdown,
 } from "../../working-time-account"; // Phase 100B Plan 06 — W8/W11/W12; Plan 07 — W1; Phase 101B
-import { auditReasonSchema } from "../../platform"; // Quick 260824-cjd
+import { auditReasonSchema, requirePermission } from "../../platform"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
 import { isSickLeaveTypeCode } from "../leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
@@ -960,7 +960,7 @@ export async function leaveRoutes(app: FastifyInstance) {
   // ── PATCH /requests/:id/review  – Genehmigen / Ablehnen ─────────────────
   app.patch("/requests/:id/review", {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("leave-request:approve:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = reviewSchema.parse(req.body);
@@ -1742,7 +1742,7 @@ export async function leaveRoutes(app: FastifyInstance) {
   // → Status APPROVED(409) → Delta-Lock(409) → Domänen-Validierung(400).
   app.patch("/requests/:id/correct", {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("leave-request:correct:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = correctSchema.parse(req.body);
@@ -2150,7 +2150,7 @@ export async function leaveRoutes(app: FastifyInstance) {
   // ── PATCH /requests/:id/attest  – Attest-Daten setzen (nur Manager/Admin) ─
   app.patch("/requests/:id/attest", {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("leave-request:attest:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = attestSchema.parse(req.body);
@@ -2584,7 +2584,7 @@ export async function leaveRoutes(app: FastifyInstance) {
   // ── GET /ical/team  – iCal-Export aller Team-Abwesenheiten ─────────────
   app.get("/ical/team", {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("leave-request:read:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
 
@@ -2998,7 +2998,7 @@ export async function leaveRoutes(app: FastifyInstance) {
   // gesperrter Monate), mit ILLNESS-Übertragsfrist wo der Stichtag bereits verstrichen ist.
   app.post("/section9/:id/confirm", {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("section9:decide:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = section9ConfirmSchema.parse(req.body);
@@ -3261,7 +3261,7 @@ export async function leaveRoutes(app: FastifyInstance) {
   // ── POST /section9/:id/reject — AU-Nachweis abgelehnt (Phase 104-06, D-11) ───
   app.post("/section9/:id/reject", {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("section9:decide:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = section9ReasonSchema.parse(req.body);
@@ -3339,7 +3339,7 @@ export async function leaveRoutes(app: FastifyInstance) {
   // ── POST /section9/:id/reopen — abgelehnten Vorgang wieder eröffnen (D-11) ───
   app.post("/section9/:id/reopen", {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("section9:decide:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
 
