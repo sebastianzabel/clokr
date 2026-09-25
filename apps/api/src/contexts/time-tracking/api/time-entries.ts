@@ -2,7 +2,14 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "crypto";
 import { requireAuth } from "../../../middleware/auth";
-import { permissionReach, requirePermission, userIdsHoldingPermission } from "../../platform"; // Phase 75b Plan 10 (#75), D-16 adds userIdsHoldingPermission
+import {
+  permissionReach,
+  requirePermission,
+  userIdsHoldingPermission, // Phase 75b Plan 10 (#75), D-16
+  accessContextFromRequest, // Phase 91b Plan 03 (#91), D-09
+  resolveAccessReach, // Phase 91b Plan 03 (#91), D-09
+  scopedTimeEntryIds, // Phase 91b Plan 03 (#91), D-09
+} from "../../platform";
 import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../arbzg";
 import { getEffectiveBreakDuration } from "../break-effective";
@@ -875,7 +882,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     },
   });
 
-  // GET /api/v1/time-entries  (eigene oder alle für Manager)
+  // GET /api/v1/time-entries  (eigene oder alle im Scope für Manager — Phase 91b Plan 03,
+  // Issue #91, D-09: a SALONS/PERSONS-scoped manager sees only in-scope entries, never the whole
+  // Mandant)
   app.get("/", {
     schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
@@ -897,6 +906,23 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             d.setDate(d.getDate() - 90);
             return d;
           })();
+      const defaultTo = to ? new Date(to) : new Date();
+
+      // Phase 91b Plan 03 (#91), D-09: a manager's reach narrows the list to in-scope entries
+      // (own salon OR Stammsalon-at-the-entry's-own-date). `wholeTenant` (TENANT-scope managers,
+      // today's behaviour) and the EIGENE (non-manager) branch below issue no extra query at all.
+      let scopedIds: "all" | string[] = "all";
+      if (isManager) {
+        const access = accessContextFromRequest(req);
+        const reach = await resolveAccessReach(app.prisma, access, "time-entry:read:ZUGEWIESEN");
+        scopedIds = await scopedTimeEntryIds(
+          app.prisma,
+          user.tenantId,
+          reach,
+          defaultFrom,
+          defaultTo,
+        );
+      }
 
       // PERF-V1814-03: hard cap. WR-01 — the cap can silently truncate for callers that
       // omit tight bounds (batch scripts / external API consumers). Web callers always pass
@@ -914,6 +940,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             gte: defaultFrom,
             lte: to ? new Date(to) : undefined,
           },
+          ...(scopedIds !== "all" ? { id: { in: scopedIds } } : {}),
         },
         include: {
           employee: { select: { firstName: true, lastName: true } },
