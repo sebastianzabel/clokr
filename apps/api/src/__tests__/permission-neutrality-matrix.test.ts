@@ -149,8 +149,54 @@ const PINNED_NOW = new Date("2026-06-17T08:00:00.000Z");
 
 const PHASE_ORDER: readonly CellPhase[] = ["read", "mutate", "self-destructive"];
 
-/** The shortest acceptable written reason of an exclusion or a coinciding handler-check pair. */
+/** The shortest acceptable written reason of an exclusion, a coinciding handler-check pair, or an
+ * amendment (below). */
 const MIN_REASON_LENGTH = 20;
+
+/**
+ * Issue #360 — the amendments register. A generic, checked-in escape hatch for a NAMED cell whose
+ * correct value changes because of an unrelated bug fix, not a role→permission access change.
+ *
+ * `RECORD` mode is permanently refused once `ROLE_GUARD_DEFINITION` is gone from
+ * `middleware/auth.ts` (see the `beforeAll` guard below) — the recording can only ever be
+ * VERIFIED from here on, by design (D-18/D-20): re-recording after the switch would compare the
+ * new code with itself. `MERGE` (D-24) only adds cells of ROUTES the recording does not know yet;
+ * it never changes an existing cell's value, by the same design. Neither mechanism can carry a
+ * cell whose value changes for a reason that has nothing to do with the role→permission switch —
+ * e.g. Issue #333's audit-actor fix, which turned 71 pre-existing 500/400 cells (an unrelated,
+ * pre-existing bug, `matrix-config.ts` names it at each affected route) into their true, correct
+ * status.
+ *
+ * `recorded/matrix.json` stays byte-identical. Instead, each amendment names the exact cell KEY,
+ * the exact `from` (checked against the recording — a mismatch means the recording moved out from
+ * under the amendment and it is stale), the exact `to` (checked against the actual swept result
+ * exactly like an unamended cell, so an amendment that no longer matches reality is its own
+ * failure), the GitHub issue that justifies the change, a written reason (`MIN_REASON_LENGTH`),
+ * and the date. An unamended cell is completely unaffected — this file changes nothing about the
+ * default comparison unless a key names it explicitly.
+ *
+ * Generic on purpose (ADR 0001 "no generalization on spec" does not apply: this is the SECOND use
+ * — Issue #333 is the first, Issues #346/#358/#359 the concrete second/third/fourth) — any future
+ * issue that needs to amend a named cell for a reason unrelated to Issue #75's own switch adds an
+ * entry here instead of building its own escape hatch.
+ */
+interface MatrixAmendment {
+  readonly key: string;
+  readonly from: CellResult;
+  readonly to: CellResult;
+  readonly issue: number;
+  readonly reason: string;
+  readonly date: string;
+}
+const AMENDMENTS_PATH = join(__dirname, "neutrality", "recorded", "matrix-amendments.json");
+const amendments: readonly MatrixAmendment[] = (
+  JSON.parse(readFileSync(AMENDMENTS_PATH, "utf8")) as { amendments: MatrixAmendment[] }
+).amendments;
+/** Last-wins lookup for the sweep below. A duplicate KEY is its own validation failure (the
+ * "amendments register" describe below), never silently resolved by this map. */
+const amendmentByKey: ReadonlyMap<string, MatrixAmendment> = new Map(
+  amendments.map((a) => [a.key, a]),
+);
 
 const derivedRoutes = deriveMatrixRoutes();
 
@@ -361,6 +407,54 @@ describe("permission neutrality matrix (Issue #75)", () => {
     });
   });
 
+  describe("amendments register (Issue #360) — recorded/matrix.json stays byte-identical; named cells amend instead", () => {
+    it("the amendments file parses to an array before anything else is asserted (anti-vacuity)", () => {
+      expect(Array.isArray(amendments)).toBe(true);
+    });
+
+    it("no two amendments name the same cell key", () => {
+      const counts = new Map<string, number>();
+      for (const a of amendments) counts.set(a.key, (counts.get(a.key) ?? 0) + 1);
+      const duplicates = [...counts.entries()].filter(([, n]) => n > 1).map(([key]) => key);
+      expect(duplicates).toEqual([]);
+    });
+
+    it("every amendment names a positive integer GitHub issue, an ISO date, and a written reason of at least MIN_REASON_LENGTH characters", () => {
+      const problems = amendments
+        .filter(
+          (a) =>
+            !Number.isInteger(a.issue) ||
+            a.issue <= 0 ||
+            typeof a.reason !== "string" ||
+            a.reason.trim().length < MIN_REASON_LENGTH ||
+            !/^\d{4}-\d{2}-\d{2}$/.test(a.date),
+        )
+        .map((a) => a.key);
+      expect(problems).toEqual([]);
+    });
+
+    it("every amendment's cell key exists in the checked-in recording — an amendment for a route/actor/variant the recording never held is stale or invalid", () => {
+      if (recording === undefined) return; // MODE=record: the beforeAll guard above already refused.
+      const currentRecording = recording;
+      const missing = amendments.filter((a) => !(a.key in currentRecording)).map((a) => a.key);
+      expect(missing).toEqual([]);
+    });
+
+    it("every amendment's 'from' matches the recording BYTE-FOR-BYTE — a mismatch means the recording moved on and the amendment must be re-derived, never trusted as-is", () => {
+      if (recording === undefined) return;
+      const currentRecording = recording;
+      const stale = amendments
+        .filter((a) => a.key in currentRecording)
+        .filter((a) => !isDeepStrictEqual(a.from, currentRecording[a.key]))
+        .map(
+          (a) =>
+            `${a.key}: amendment 'from' ${JSON.stringify(a.from)} does not match the recorded ` +
+            `${JSON.stringify(currentRecording[a.key])}`,
+        );
+      expect(stale).toEqual([]);
+    });
+  });
+
   describe("fallback actors (D-21)", () => {
     it("hold zero stored role assignments at run start, so every cell of theirs uses the legacy-role fallback", async () => {
       const fallbackUsers = ACTOR_ORDER.filter((a) => FALLBACK_ACTORS.has(a)).map((actor) => {
@@ -425,9 +519,20 @@ describe("permission neutrality matrix (Issue #75)", () => {
               if (expected !== undefined) expect.soft(result, key).toEqual(expected);
             }
             if (MODE === "verify") {
-              const expected = recording?.[key];
-              expect.soft(expected, `${key}: not recorded`).toBeDefined();
-              if (expected !== undefined) expect.soft(result, key).toEqual(expected);
+              // Issue #360: an amended cell compares against its amendment's `to`, not the
+              // recording's raw value — everything else is unchanged from before #360.
+              const amendment = amendmentByKey.get(key);
+              const expected = amendment ? amendment.to : recording?.[key];
+              const notRecordedMsg = amendment
+                ? `${key}: amendment (issue #${amendment.issue}) names a cell with no 'to' value`
+                : `${key}: not recorded`;
+              expect.soft(expected, notRecordedMsg).toBeDefined();
+              if (expected !== undefined) {
+                const mismatchMsg = amendment
+                  ? `${key}: AMENDED (issue #${amendment.issue}) — actual result no longer matches the amendment's 'to' value; re-derive the amendment or fix the regression`
+                  : key;
+                expect.soft(result, mismatchMsg).toEqual(expected);
+              }
             }
           }
         });

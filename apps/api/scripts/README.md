@@ -553,6 +553,35 @@ text detector (`user.role`, `role ===`) forces every such line to be classified 
 a catalog permission and map it in `docs/permissions.md` (Pflege section), or move a role-literal
 read that decides nothing behind a helper in `compat-role.ts`.
 
+### `permission-neutrality-matrix.test.ts` amendments register (Issue #360)
+
+Not a script under this directory — the test lives at
+`apps/api/src/__tests__/permission-neutrality-matrix.test.ts` — but it follows the same
+exception-register shape as the gates above, so it is noted here for discoverability.
+
+The matrix's `RECORD` mode is permanently refused once `requireRole` is gone from
+`middleware/auth.ts` (Phase 75b, D-18: re-recording the switched code would compare it with
+itself), and its `MERGE` mode (D-24) only ever adds cells of routes the recording does not know
+yet — neither can update an EXISTING cell whose correct value changes for a reason unrelated to
+the role→permission switch, e.g. a bug fix elsewhere that used to make the cell 500. Issue #333's
+audit-actor fix was the first such case (71 cells, `contexts/platform/plugins/audit.ts`).
+
+`neutrality/recorded/matrix-amendments.json` (a checked-in array, next to `matrix.json`, which
+stays byte-identical) is the generic escape hatch: each entry names the exact cell `key`
+(`<actor> | <METHOD path> | <variant>`), the exact `from` (checked against the recording — a
+mismatch is a stale amendment) and `to` (checked against the actual swept result exactly like an
+unamended cell), a GitHub `issue` number, a written `reason` (≥ `MIN_REASON_LENGTH`, 20 chars) and
+a `date`. The test's own "amendments register (Issue #360)" describe block validates the register
+itself (no duplicate keys, no missing issue/reason/date, no orphaned or stale entry) before the
+sweep ever runs. An unamended cell is unaffected — this is additive only.
+
+- **Run locally:** `pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts`
+  (after `test:setup`)
+- **A stale, duplicate, or orphaned amendment fails its own dedicated test** — named separately
+  from "not recorded" and from a plain cell mismatch, so the three causes are never confused
+- **Generic on purpose:** any future issue whose fix changes a matrix cell's correct value for a
+  reason unrelated to Issue #75 adds an entry here instead of building its own mechanism
+
 ## Invocation
 
 All scripts run via `tsx` with the `apps/api` workspace:
