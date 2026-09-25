@@ -46,9 +46,11 @@ import { roleGrants } from "./access-role";
 import { systemRoleIdForLegacyRole } from "./compat-role";
 import {
   PERMISSIONS,
+  PERMISSION_RESOURCES,
   permissionKey,
   type PermissionKey,
   type PermissionReach,
+  type PermissionRelation,
   type PermissionResource,
 } from "./permission-catalog";
 import { storedRoleAssignmentScope } from "./role-assignment";
@@ -57,6 +59,16 @@ import { SYSTEM_ROLE_IDS } from "./system-roles";
 /** What the caller of one request may do (see the module docblock). */
 export interface EffectiveGrants {
   readonly zugewiesen: ReadonlySet<PermissionKey>;
+  /**
+   * D-05 (Phase 91b, Issue #91): every ZUGEWIESEN key granted by ANY well-formed assignment —
+   * TENANT, or a non-empty SALONS/PERSONS scope — not just a tenant-wide one. `hasPermission`
+   * gates a PERSON-relation ZUGEWIESEN key on THIS set; a MANDANT-relation one still gates on the
+   * narrower `zugewiesen` above, unchanged. Completes 75b's D-09 ("SALONS/PERSONS scopes grant
+   * nothing tenant-wide until #91 enforces scopes at the API"), it does not contradict it: the
+   * row-level narrowing to which salon/person a resource belongs still happens downstream, in
+   * each context's own scope-filter call (`contexts/platform/scope-filter.ts`, Plan 91b-02).
+   */
+  readonly zugewiesenAnyScope: ReadonlySet<PermissionKey>;
   readonly eigene: ReadonlySet<PermissionKey>;
   readonly ownEmployeeId: string | undefined;
 }
@@ -68,9 +80,16 @@ interface GrantingRole {
   readonly permissions: readonly string[];
 }
 
-const CATALOG: readonly { key: PermissionKey; reach: PermissionReach }[] = PERMISSIONS.map(
-  (permission) => ({ key: permissionKey(permission), reach: permission.reach }),
-);
+const CATALOG: readonly {
+  key: PermissionKey;
+  reach: PermissionReach;
+  relation: PermissionRelation;
+}[] = PERMISSIONS.map((permission) => ({
+  key: permissionKey(permission),
+  reach: permission.reach,
+  relation: PERMISSION_RESOURCES[permission.resource].relation,
+}));
+const CATALOG_BY_KEY = new Map(CATALOG.map((entry) => [entry.key, entry]));
 const KNOWN_KEYS: ReadonlySet<string> = new Set(CATALOG.map((entry) => entry.key));
 
 const memo = new WeakMap<FastifyRequest, Promise<EffectiveGrants>>();
@@ -81,17 +100,27 @@ function assertKnownKey(key: string): asserts key is PermissionKey {
   }
 }
 
-/** Adds what `role` grants: EIGENE keys always, ZUGEWIESEN keys only for a tenant-wide source. */
+/**
+ * Adds what `role` grants: EIGENE keys always; a ZUGEWIESEN key always into `zugewiesenAnyScope`
+ * (D-05 — the row reaching here is already known well-formed, by every call site's own filtering
+ * or by being the inherently well-formed API-key/legacy-fallback path), and additionally into the
+ * narrower `zugewiesen` only for a tenant-wide source, exactly as before D-05.
+ */
 function collect(
   role: GrantingRole,
   tenantWide: boolean,
   zugewiesen: Set<PermissionKey>,
+  zugewiesenAnyScope: Set<PermissionKey>,
   eigene: Set<PermissionKey>,
 ): void {
   for (const { key, reach } of CATALOG) {
     if (!roleGrants(role, key)) continue;
-    if (reach === "EIGENE") eigene.add(key);
-    else if (tenantWide) zugewiesen.add(key);
+    if (reach === "EIGENE") {
+      eigene.add(key);
+      continue;
+    }
+    zugewiesenAnyScope.add(key);
+    if (tenantWide) zugewiesen.add(key);
   }
 }
 
@@ -110,14 +139,15 @@ async function loadSystemRole(req: FastifyRequest, id: string): Promise<Granting
 
 async function resolveGrants(req: FastifyRequest): Promise<EffectiveGrants> {
   const zugewiesen = new Set<PermissionKey>();
+  const zugewiesenAnyScope = new Set<PermissionKey>();
   const eigene = new Set<PermissionKey>();
 
   if (req.apiKeyScopes !== undefined) {
     const roleId = req.apiKeyScopes.includes("admin")
       ? SYSTEM_ROLE_IDS.ADMIN
       : SYSTEM_ROLE_IDS.MANAGER;
-    collect(await loadSystemRole(req, roleId), true, zugewiesen, eigene);
-    return { zugewiesen, eigene, ownEmployeeId: undefined };
+    collect(await loadSystemRole(req, roleId), true, zugewiesen, zugewiesenAnyScope, eigene);
+    return { zugewiesen, zugewiesenAnyScope, eigene, ownEmployeeId: undefined };
   }
 
   const tenantId = req.user.tenantId;
@@ -137,12 +167,12 @@ async function resolveGrants(req: FastifyRequest): Promise<EffectiveGrants> {
       },
     },
   });
-  if (!user) return { zugewiesen, eigene, ownEmployeeId };
+  if (!user) return { zugewiesen, zugewiesenAnyScope, eigene, ownEmployeeId };
 
   if (user.roleAssignments.length === 0) {
     const fallback = await loadSystemRole(req, systemRoleIdForLegacyRole(user.role));
-    collect(fallback, true, zugewiesen, eigene);
-    return { zugewiesen, eigene, ownEmployeeId };
+    collect(fallback, true, zugewiesen, zugewiesenAnyScope, eigene);
+    return { zugewiesen, zugewiesenAnyScope, eigene, ownEmployeeId };
   }
 
   for (const row of user.roleAssignments) {
@@ -151,9 +181,9 @@ async function resolveGrants(req: FastifyRequest): Promise<EffectiveGrants> {
     if (!roleBelongsHere) continue;
     const scope = storedRoleAssignmentScope(row);
     if (scope === null) continue;
-    collect(row.accessRole, scope.scopeType === "TENANT", zugewiesen, eigene);
+    collect(row.accessRole, scope.scopeType === "TENANT", zugewiesen, zugewiesenAnyScope, eigene);
   }
-  return { zugewiesen, eigene, ownEmployeeId };
+  return { zugewiesen, zugewiesenAnyScope, eigene, ownEmployeeId };
 }
 
 /**
@@ -170,14 +200,24 @@ export function effectiveGrants(req: FastifyRequest): Promise<EffectiveGrants> {
 }
 
 /**
- * Does the caller hold `key`? A ZUGEWIESEN key is answered from the tenant-wide set, an EIGENE key
- * from the own set — the caller still has to compare the target with `ownEmployeeId`. An unknown
- * key throws (a typo must never read as "denied").
+ * Does the caller hold `key`? An EIGENE key is answered from the own set — the caller still has to
+ * compare the target with `ownEmployeeId`. A ZUGEWIESEN key is answered from ONE of two sets,
+ * depending on the resource's relation (D-05, Phase 91b/Issue #91): `MANDANT` (tenant-wide
+ * configuration) reads the narrow `zugewiesen` set — only a TENANT-scope assignment can ever
+ * satisfy it, same as before this phase; `PERSON` reads `zugewiesenAnyScope`, so a well-formed
+ * SALONS/PERSONS assignment now also passes here, narrowed to its actual scope downstream by the
+ * owning context's own scope-filter call, never by this gate. An unknown key throws (a typo must
+ * never read as "denied").
  */
 export async function hasPermission(req: FastifyRequest, key: PermissionKey): Promise<boolean> {
   assertKnownKey(key);
   const grants = await effectiveGrants(req);
-  return key.endsWith(":ZUGEWIESEN") ? grants.zugewiesen.has(key) : grants.eigene.has(key);
+  if (!key.endsWith(":ZUGEWIESEN")) return grants.eigene.has(key);
+  // assertKnownKey already guarantees a CATALOG entry exists for `key`.
+  const entry = CATALOG_BY_KEY.get(key) as (typeof CATALOG)[number];
+  return entry.relation === "MANDANT"
+    ? grants.zugewiesen.has(key)
+    : grants.zugewiesenAnyScope.has(key);
 }
 
 /**

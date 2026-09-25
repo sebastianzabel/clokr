@@ -287,6 +287,61 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
     expect(sorted(grants.eigene)).toEqual(["time-entry:read:EIGENE"]);
   });
 
+  // ── D-05 (Phase 91b, Issue #91): zugewiesenAnyScope admits PERSON-relation ZUGEWIESEN
+  // for a SALONS/PERSONS holder, keeps MANDANT-relation ZUGEWIESEN closed ─────────────
+
+  it("a SALONS-only holder passes hasPermission/requirePermission for a PERSON-relation ZUGEWIESEN key, still fails a MANDANT-relation one", async () => {
+    const { user, employee } = await createUser(tA.tenant.id, "EMPLOYEE", "d05-salons");
+    await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS.MANAGER, {
+      scopeType: "SALONS",
+      salonIds: [tA.salonId],
+    });
+    const req = requestFor(user, employee);
+    expect(await hasPermission(req, "time-entry:read:ZUGEWIESEN")).toBe(true);
+
+    const req2 = requestFor(user, employee);
+    const admitted = fakeReply();
+    await requirePermission("time-entry:read:ZUGEWIESEN")(
+      req2,
+      admitted as unknown as FastifyReply,
+    );
+    expect(admitted.sent).toBe(false);
+
+    const req3 = requestFor(user, employee);
+    const denied = fakeReply();
+    await requirePermission("shift-config:manage:ZUGEWIESEN")(
+      req3,
+      denied as unknown as FastifyReply,
+    );
+    expect(denied.statusCode).toBe(403);
+    expect(denied.body).toEqual({ error: "Forbidden" });
+  });
+
+  it("a PERSONS-only holder passes hasPermission for a PERSON-relation ZUGEWIESEN key, still fails a MANDANT-relation one", async () => {
+    const { user, employee } = await createUser(tA.tenant.id, "EMPLOYEE", "d05-persons");
+    await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS.MANAGER, {
+      scopeType: "PERSONS",
+      employeeIds: [tA.employee.id],
+    });
+    const req = requestFor(user, employee);
+    expect(await hasPermission(req, "time-entry:read:ZUGEWIESEN")).toBe(true);
+    const req2 = requestFor(user, employee);
+    expect(await hasPermission(req2, "shift-config:manage:ZUGEWIESEN")).toBe(false);
+  });
+
+  it("a TENANT holder is unaffected: both PERSON and MANDANT ZUGEWIESEN keys their role grants stay true", async () => {
+    const req = requestFor(tA.adminUser, tA.adminEmployee);
+    expect(await hasPermission(req, "time-entry:read:ZUGEWIESEN")).toBe(true);
+    const req2 = requestFor(tA.adminUser, tA.adminEmployee);
+    expect(await hasPermission(req2, "shift-config:manage:ZUGEWIESEN")).toBe(true);
+  });
+
+  it("EIGENE keys are unaffected by the relation branch", async () => {
+    const { user, employee } = await createUser(tA.tenant.id, "EMPLOYEE", "d05-eigene");
+    const req = requestFor(user, employee);
+    expect(await hasPermission(req, "time-entry:read:EIGENE")).toBe(true);
+  });
+
   // ── fail closed ──────────────────────────────────────────────────────────────
 
   it("a malformed stored row (TENANT with salon ids) contributes nothing and suppresses the fallback", async () => {
