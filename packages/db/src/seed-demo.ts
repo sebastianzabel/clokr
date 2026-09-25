@@ -351,6 +351,7 @@ async function main() {
     data: {
       tenantId: tenant.id,
       name: tenant.name,
+      federalState: tenant.federalState, // Phase 71b (issue #71)
       openingHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
       isActive: true,
     },
@@ -1171,6 +1172,7 @@ async function main() {
     await prisma.publicHoliday.create({
       data: {
         tenantId: tenant.id,
+        salonId: salon.id, // Phase 71b (issue #71)
         date: d0(Y, mm, dd),
         name,
         federalState: "NIEDERSACHSEN",

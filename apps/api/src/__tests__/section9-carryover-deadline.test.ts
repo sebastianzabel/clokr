@@ -20,7 +20,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 
@@ -63,6 +63,7 @@ describe("recalculateCarryOver / autoCarryOver — ILLNESS deadline protection (
       data: { name: `S9 CarryDeadline ${s}`, slug: `s9cd-${s}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 71b (issue #71): holiday resolution needs the tenant's salon
     await prisma.tenantConfig.create({
       data: { tenantId: tenant.id, defaultVacationDays: 20, timezone: "Europe/Berlin" },
     });
@@ -413,6 +414,7 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
       data: { name: `S9 PutVacation ${s}`, slug: `s9pv-${s}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 71b (issue #71): holiday resolution needs the tenant's salon
     await prisma.tenantConfig.create({
       data: { tenantId: tenant.id, defaultVacationDays: 20, timezone: "Europe/Berlin" },
     });

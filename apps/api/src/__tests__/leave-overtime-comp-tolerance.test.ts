@@ -18,7 +18,7 @@
  * confirmed-check suite.
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -97,6 +97,7 @@ describe("POST /leave/requests OVERTIME_COMP + GET /leave/overtime-balance — m
       data: { name: `TOL ${suffix}`, slug: `tol-${suffix}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 71b (issue #71): holiday resolution needs the tenant's salon
     // No TenantConfig auto-created for a hand-rolled tenant.create() — create one explicitly,
     // leaving maxNegativeBalanceMinutes unset (null) as the baseline "unconfigured" state.
     await prisma.tenantConfig.create({ data: { tenantId } });

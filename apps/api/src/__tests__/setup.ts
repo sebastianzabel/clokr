@@ -19,6 +19,8 @@ import {
   findDefaultSalon,
   type SalonOpeningHours,
 } from "../contexts/platform";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 
 // Keep JsonValue reachable from this module's public types (intentional no-op type alias)
 export type _SeedJsonValue = Prisma.JsonValue;
@@ -136,6 +138,64 @@ export async function createTestSalon(
       ...(overrides?.createdAt ? { createdAt: overrides.createdAt } : {}),
     },
   });
+}
+
+/**
+ * Phase 71b (issue #71), Task 2 — reproduces the REAL migration history for a historical data
+ * section (64b/325/68b/65b) that does `INSERT INTO "Salon"` WITHOUT a `federalState` column: those
+ * four applied migrations predate this phase and insert salons the post-71b schema's NOT NULL,
+ * default-less `federalState` column would reject outright. This helper recreates the legacy,
+ * pre-71b shape for the DURATION of `replay()` — DROP NOT NULL, run `replay()` (which executes the
+ * historical INSERT), then apply the 71b migration's OWN `UPDATE "Salon"` backfill statement (read
+ * verbatim from the `*_holidays_per_salon` migration file, never restated here), then SET NOT NULL
+ * again — instead of editing an applied migration (checksums would break) or giving the column a
+ * schema default (see the column's own comment in schema.prisma for why not).
+ *
+ * `tx` MUST be an INTERACTIVE transaction's client — Postgres DDL is transactional, so a rolled-
+ * back replay leaks nothing and a committed one restores the schema before commit. The DDL takes
+ * an ACCESS EXCLUSIVE lock on Salon for the duration, same caveat as the 68b/325 replay tests'
+ * own `DROP NOT NULL` calls (only one worker file runs against a given test database at a time).
+ */
+export async function withPre71bSalonSchema(
+  tx: Prisma.TransactionClient,
+  replay: () => Promise<void>,
+): Promise<void> {
+  const migrationsDir = join(__dirname, "..", "..", "..", "..", "packages/db/prisma/migrations");
+  const migrationDirs = readdirSync(migrationsDir);
+  if (migrationDirs.length === 0) {
+    throw new Error(`withPre71bSalonSchema: ${migrationsDir} is empty — anti-vacuity guard`);
+  }
+  const dirName = migrationDirs.find((d) => d.endsWith("_holidays_per_salon"));
+  if (!dirName) {
+    throw new Error(
+      "withPre71bSalonSchema: no packages/db/prisma/migrations/*_holidays_per_salon directory found",
+    );
+  }
+  const sql = readFileSync(join(migrationsDir, dirName, "migration.sql"), "utf8");
+  const beginIdx = sql.indexOf("-- 71b-data-migration:begin");
+  const endIdx = sql.indexOf("-- 71b-data-migration:end");
+  if (beginIdx === -1 || endIdx === -1) {
+    throw new Error("withPre71bSalonSchema: 71b-data-migration markers not found in migration.sql");
+  }
+  const section = sql.slice(beginIdx, endIdx);
+  const statements = section
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("--"))
+    .join("\n")
+    .split(/;\s*\n/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  const updateSalonStmt = statements.find((s) => s.startsWith('UPDATE "Salon"'));
+  if (!updateSalonStmt) {
+    throw new Error(
+      'withPre71bSalonSchema: no UPDATE "Salon" statement found in the 71b data section',
+    );
+  }
+
+  await tx.$executeRawUnsafe(`ALTER TABLE "Salon" ALTER COLUMN "federalState" DROP NOT NULL`);
+  await replay();
+  await tx.$executeRawUnsafe(updateSalonStmt);
+  await tx.$executeRawUnsafe(`ALTER TABLE "Salon" ALTER COLUMN "federalState" SET NOT NULL`);
 }
 
 /**

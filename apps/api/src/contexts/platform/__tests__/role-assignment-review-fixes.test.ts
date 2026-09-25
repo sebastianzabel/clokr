@@ -197,6 +197,7 @@ describe("Phase 74b review fixes", () => {
     salonA1 = await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon Review A1",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,

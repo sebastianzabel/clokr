@@ -409,6 +409,7 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       testHoliday = await app.prisma.publicHoliday.create({
         data: {
           tenantId: data.tenant.id,
+          salonId: data.salonId, // Phase 71b (issue #71)
           date: new Date(WORKDAY_HOLIDAY + "T00:00:00Z"),
           name: "Test-Feiertag",
           federalState: "NIEDERSACHSEN",

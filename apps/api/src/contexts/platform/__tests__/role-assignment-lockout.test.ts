@@ -160,6 +160,7 @@ describe("Role lockout protection (Phase 74b, Issue #74)", () => {
     salonA = await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon SA",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,

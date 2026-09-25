@@ -70,6 +70,7 @@ import2-${uid}@test.de;Import;Zwei;IM2-${uid};15.03.2026;EMPLOYEE;38.5;test1234`
           data: {
             tenantId: multi.tenant.id,
             name: "Zweiter Salon",
+            federalState: "NIEDERSACHSEN",
             openingHours: DEFAULT_SALON_OPENING_HOURS,
             isActive: true,
           },

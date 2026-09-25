@@ -12,7 +12,7 @@
  * Test pattern: shared singleton Fastify app via getTestApp, per-suite tenant slug.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 
@@ -47,6 +47,7 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
       },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 71b (issue #71): holiday resolution needs the tenant's salon
     await prisma.tenantConfig.create({
       data: { tenantId: tenant.id, defaultVacationDays: 20, timezone: "Europe/Berlin" },
     });
@@ -292,6 +293,7 @@ describe("selfHealUsedDays resolves the VACATION aggregation scope by code (Phas
       data: { name: `P97 SelfHeal ${s}`, slug: s, federalState: "NIEDERSACHSEN" },
     });
     tenantIds.push(tenant.id);
+    await createTestSalon(prisma, tenant.id); // Phase 71b (issue #71): holiday resolution needs the tenant's salon
     await prisma.tenantConfig.create({
       data: { tenantId: tenant.id, defaultVacationDays: 20, timezone: "Europe/Berlin" },
     });
@@ -670,6 +672,7 @@ describe("selfHealUsedDays is Section9Credit-aware (Phase 104, Pitfall 2)", () =
       data: { name: `S9 SelfHeal ${s}`, slug: `s9sh-${s}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 71b (issue #71): holiday resolution needs the tenant's salon
     await prisma.tenantConfig.create({
       data: { tenantId: tenant.id, defaultVacationDays: 20, timezone: "Europe/Berlin" },
     });
@@ -947,6 +950,7 @@ describe("carryover expiry gate (COMP-V1814-03)", () => {
       data: { name: `CEG Tenant ${s}`, slug: `ceg-${s}`, federalState: "NIEDERSACHSEN" },
     });
     gateTenantId = tenant.id;
+    await createTestSalon(prisma, gateTenantId); // Phase 71b (issue #71): holiday resolution needs the tenant's salon
     await prisma.tenantConfig.create({
       data: { tenantId: tenant.id, defaultVacationDays: 20, timezone: "Europe/Berlin" },
     });

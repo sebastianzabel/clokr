@@ -32,7 +32,7 @@
  * observed.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
+import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -608,6 +608,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     await app.prisma.publicHoliday.create({
       data: {
         tenantId,
+        salonId: await salonIdForEmployee(app.prisma, emp.id), // Phase 71b (issue #71)
         date: utcMidnight(wednesday),
         name: "SLR Test-Feiertag",
         federalState: "NIEDERSACHSEN",

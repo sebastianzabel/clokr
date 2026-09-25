@@ -353,6 +353,7 @@ async function seedGoldenAzubiJan2026(app: FastifyApp): Promise<ScenarioFixture>
     data: {
       tenantId,
       name: tenant.name,
+      federalState: tenant.federalState, // Phase 71b (issue #71)
       openingHours: MEASURE_SCRIPT_SALON_OPENING_HOURS,
       isActive: true,
     },
@@ -510,6 +511,7 @@ async function seedGoldenAzubiJan2026(app: FastifyApp): Promise<ScenarioFixture>
   await prisma.publicHoliday.create({
     data: {
       tenantId,
+      salonId: salon.id, // Phase 71b (issue #71)
       date: new Date("2026-01-01T00:00:00Z"),
       name: "Neujahr",
       federalState: "NIEDERSACHSEN",

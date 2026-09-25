@@ -71,6 +71,7 @@ async function main() {
       data: {
         tenantId: tenant.id,
         name: tenant.name,
+        federalState: tenant.federalState, // Phase 71b (issue #71)
         openingHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
         isActive: true,
       },

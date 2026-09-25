@@ -77,6 +77,7 @@ describe("GET /api/v1/salons", () => {
     const active = await app.prisma.salon.create({
       data: {
         tenantId: tenant.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Aktiver Salon",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -86,6 +87,7 @@ describe("GET /api/v1/salons", () => {
     const inactive = await app.prisma.salon.create({
       data: {
         tenantId: tenant.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Inaktiver Salon",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: false,
@@ -152,6 +154,7 @@ describe("GET /api/v1/salons", () => {
     const secondActive = await app.prisma.salon.create({
       data: {
         tenantId: tenant.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Zweiter aktiver Salon",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -259,6 +262,7 @@ describe("Salon lifecycle: read by id, create, update, deactivate, activate (Pha
     salonA = await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon A",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -534,6 +538,7 @@ describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
     salonA1 = await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon A1",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -542,6 +547,7 @@ describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
     salonA2 = await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon A2",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -550,6 +556,7 @@ describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
     foreignSalon = await app.prisma.salon.create({
       data: {
         tenantId: tenantB.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Fremder Salon",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -647,6 +654,7 @@ describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
     const created = await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Vorbereiteter Salon",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: false,
@@ -701,6 +709,7 @@ describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
     const salonX = await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon X (Konkurrenz)",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -709,6 +718,7 @@ describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
     const salonY = await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon Y (Konkurrenz)",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -849,6 +859,7 @@ describe("Salon routes with an API-key caller (Phase 64b review, WR-01)", () => 
     await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon Bestand",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -857,6 +868,7 @@ describe("Salon routes with an API-key caller (Phase 64b review, WR-01)", () => 
     foreignSalon = await app.prisma.salon.create({
       data: {
         tenantId: tenantB.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Fremder Salon (API-Key)",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,

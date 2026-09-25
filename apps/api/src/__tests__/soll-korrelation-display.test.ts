@@ -22,7 +22,13 @@
  * (weeksAhead=8) to avoid collision with shifts-under-coverage.test.ts (6 weeks ahead).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+} from "./setup"; // Phase 325 (issue #325)
 import { holidayFreeMondayStr } from "./test-dates";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
@@ -764,6 +770,7 @@ describe("WR-01 RED→GREEN: DB PublicHoliday must be federalState-scoped per bu
     await prisma.publicHoliday.create({
       data: {
         tenantId,
+        salonId: await salonIdForEmployee(prisma, niEmpId), // Phase 71b (issue #71)
         date: new Date(BY_HOLIDAY_DATE + "T00:00:00Z"),
         name: "Bayern-only Feiertag (WR-01 test)",
         federalState: "BAYERN",

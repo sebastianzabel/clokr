@@ -53,6 +53,7 @@ describe("POST /api/v1/employees/:id/salon-assignments — create Einsatzsalon (
       app.prisma.salon.create({
         data: {
           tenantId: tenantA.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name,
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive,
@@ -67,6 +68,7 @@ describe("POST /api/v1/employees/:id/salon-assignments — create Einsatzsalon (
     foreignSalon = await app.prisma.salon.create({
       data: {
         tenantId: tenantB.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Fremder Salon",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -694,6 +696,7 @@ describe("POST .../salon-assignments/home & .../:assignmentId/end — Stammsalon
       app.prisma.salon.create({
         data: {
           tenantId: tenantA.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name,
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
@@ -1213,6 +1216,7 @@ describe("POST .../salon-assignments/home & .../:assignmentId/end — Stammsalon
       const foreignSalon = await app.prisma.salon.create({
         data: {
           tenantId: tenantB.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "D-19 Foreign Salon",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,

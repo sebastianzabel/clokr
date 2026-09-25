@@ -25,7 +25,7 @@
  * bomb in this repo (`shifts.test.ts` expired exactly that way).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -81,6 +81,7 @@ describe("GET /api/v1/dashboard/open-items — configured window (issue #141)", 
       },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 71b (issue #71): holiday resolution needs the tenant's salon
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ, missingEntriesDays: 14 },
     });
