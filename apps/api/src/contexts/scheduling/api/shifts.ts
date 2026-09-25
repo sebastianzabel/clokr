@@ -14,6 +14,7 @@ import {
   findDefaultSalon, // Phase 325 (issue #325), D-04/D-05
   findSalon, // Phase 325 (issue #325) Plan 02, D-06 (explicit salonId resolution)
   listSalons, // Phase 325 (issue #325), D-08 (copy-week fallback)
+  permissionReach,
   requirePermission,
 } from "../../platform";
 import {
@@ -1736,15 +1737,20 @@ export async function shiftRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Ungültiges Datumsformat (YYYY-MM-DD)" });
       }
 
-      // EMPLOYEE role: force own employeeId — ignore any passed param (T-188-02 IDOR guard).
+      // Only a caller holding shift:read:ZUGEWIESEN sees the everyone-else branch (issue #75, D-13);
+      // everyone else is forced onto their own employeeId — ignoring any passed param (T-188-02 IDOR guard).
+      const shiftReadReach = await permissionReach(req, "shift:read");
       let targetEmployeeId: string | undefined;
-      if (req.user.role === "EMPLOYEE") {
+      if (shiftReadReach !== "ZUGEWIESEN") {
+        if (shiftReadReach === null) {
+          return reply.code(403).send({ error: "Forbidden" });
+        }
         targetEmployeeId = req.user.employeeId ?? undefined;
         if (!targetEmployeeId) {
           return reply.code(410).send({ error: "Kein Mitarbeiter-Profil verknüpft" });
         }
       } else {
-        // MANAGER / ADMIN: employeeId param is required
+        // A caller with shift:read:ZUGEWIESEN: employeeId param is required
         if (!queryEmployeeId) {
           return reply.code(400).send({ error: "employeeId erforderlich" });
         }

@@ -12,7 +12,7 @@ import {
 import type { PhorestStaffItem } from "../../../services/phorest/types";
 // Phase 65b (issue #65): every salon read from Schichtplanung goes through the Unterbau's public
 // facade — never a direct `prisma.salon.*` call from this context (ADR 0001).
-import { findSalon, listSalons, requirePermission } from "../../platform";
+import { findSalon, listSalons, permissionReach, requirePermission } from "../../platform";
 
 /**
  * Phorest API Integration
@@ -984,7 +984,13 @@ export async function integrationRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const q = collisionQuerySchema.parse(req.query);
       const tenantId = req.user.tenantId;
-      const isManager = req.user.role === "ADMIN" || req.user.role === "MANAGER";
+      // One permissionReach feeds both decisions below (issue #75, D-13): the shiftId shape's
+      // manager-only gate and the range shape's foreign-employeeId gate.
+      const shiftReadReach = await permissionReach(req, "shift:read");
+      if (shiftReadReach === null) {
+        return reply.code(403).send({ error: "Keine Berechtigung" });
+      }
+      const isManager = shiftReadReach === "ZUGEWIESEN";
 
       // Resolve the tenant-proven employeeId + inclusive [from,to] window for both input shapes.
       let employeeId: string;

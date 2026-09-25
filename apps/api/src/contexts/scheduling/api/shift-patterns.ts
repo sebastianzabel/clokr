@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
-import { requirePermission } from "../../platform";
+import { permissionReach, requirePermission } from "../../platform";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -40,8 +40,12 @@ export async function shiftPatternRoutes(app: FastifyInstance) {
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
-      // Permission: EMPLOYEE may only read their own patterns
-      if (req.user.role === "EMPLOYEE" && req.user.employeeId !== id) {
+      // Permission: only a caller holding shift-pattern:read:ZUGEWIESEN may read another's (issue #75, D-13)
+      const shiftPatternReach = await permissionReach(req, "shift-pattern:read");
+      if (shiftPatternReach !== "ZUGEWIESEN" && req.user.employeeId !== id) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+      if (shiftPatternReach === null) {
         return reply.code(403).send({ error: "Forbidden" });
       }
 

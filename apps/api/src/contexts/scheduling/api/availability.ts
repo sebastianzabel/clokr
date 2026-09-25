@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
+import { permissionReach } from "../../platform";
 import { isAvailabilityEnabled } from "../tenant-availability";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
@@ -121,8 +122,12 @@ export async function availabilityRoutes(app: FastifyInstance) {
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
-      // Permission: EMPLOYEE may only read own availability
-      if (req.user.role === "EMPLOYEE" && req.user.employeeId !== id) {
+      // Permission: only a caller holding availability:read:ZUGEWIESEN may read another's (issue #75, D-13)
+      const availabilityReadReach = await permissionReach(req, "availability:read");
+      if (availabilityReadReach !== "ZUGEWIESEN" && req.user.employeeId !== id) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+      if (availabilityReadReach === null) {
         return reply.code(403).send({ error: "Forbidden" });
       }
 
@@ -161,8 +166,12 @@ export async function availabilityRoutes(app: FastifyInstance) {
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
-      // Permission: EMPLOYEE may only PUT on OWN row
-      if (req.user.role === "EMPLOYEE" && req.user.employeeId !== id) {
+      // Permission: only a caller holding availability:update:ZUGEWIESEN may PUT on another's row
+      const availabilityUpdateReach = await permissionReach(req, "availability:update");
+      if (availabilityUpdateReach !== "ZUGEWIESEN" && req.user.employeeId !== id) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+      if (availabilityUpdateReach === null) {
         return reply.code(403).send({ error: "Forbidden" });
       }
 
