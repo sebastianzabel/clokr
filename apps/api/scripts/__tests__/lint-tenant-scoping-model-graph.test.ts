@@ -78,6 +78,16 @@ describe("classifyModel (live DMMF from @clokr/db)", () => {
     });
   });
 
+  // Phase 68b (issue #68): TimeEntry gained a `salon` relation. It must stay declared AFTER
+  // `employee`, or Break's two-hop path (timeEntry.employee, checked below) and every existing
+  // `employee: { tenantId }` scoping call in the codebase stop counting as scoped.
+  it("Phase 68b: classifies TimeEntry as relation via employee, NOT via salon — the new salon relation must stay declared after employee", () => {
+    expect(classifyModel("TimeEntry", liveModels)).toEqual({
+      kind: "relation",
+      path: ["employee"],
+    });
+  });
+
   it("classifies Break as relation via timeEntry.employee (two hops, no own tenantId on Break or TimeEntry directly)", () => {
     expect(classifyModel("Break", liveModels)).toEqual({
       kind: "relation",

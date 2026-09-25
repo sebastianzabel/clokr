@@ -272,6 +272,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             resolution,
           });
         }
+        // Phase 68b (issue #68, D-08): the resolver's START branch could not resolve a salon
+        // for this employee/day (no assignment and no active tenant default).
+        if (resolution.reason === "NO_ACTIVE_SALON") {
+          return reply.code(409).send({
+            error: "Kein aktiver Salon vorhanden.",
+            code: "NO_ACTIVE_SALON",
+            resolution,
+          });
+        }
         return reply.code(409).send({ error: "Konflikt", resolution });
       }
 
@@ -483,6 +492,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         if (resolution.reason === "RETRO_PENDING") {
           return reply.code(409).send({
             error: "Für diesen Tag liegt ein offener Zeitnachtrag zur Genehmigung vor.",
+            resolution,
+          });
+        }
+        // Phase 68b (issue #68, D-08): the resolver's START branch could not resolve a salon
+        // for this employee/day (no assignment and no active tenant default).
+        if (resolution.reason === "NO_ACTIVE_SALON") {
+          return reply.code(409).send({
+            error: "Kein aktiver Salon vorhanden.",
+            code: "NO_ACTIVE_SALON",
             resolution,
           });
         }

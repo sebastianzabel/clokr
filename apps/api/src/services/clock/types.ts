@@ -55,7 +55,11 @@ export type ConflictReason =
   // "already clocked in". NOT produced by `decide()`, but by the resolver BEFORE
   // building state (D-05: the state machine stays a pure function with no DB
   // knowledge).
-  | "RETRO_PENDING";
+  | "RETRO_PENDING"
+  // Phase 68b (issue #68, D-08): the employee has no salon for the day and the tenant has no
+  // active salon to fall back to — a new entry cannot carry the required salonId. NOT produced
+  // by `decide()`, but by the resolver's START branch before it writes anything.
+  | "NO_ACTIVE_SALON";
 
 export type ClockState =
   | { kind: "NO_OPEN_ENTRY" }

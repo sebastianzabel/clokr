@@ -325,10 +325,10 @@ export async function presenceRoutes(app: FastifyInstance) {
             return reply.code(200).send({ ok: true });
           }
           // Other CONFLICTs (LEAVE_APPROVED, MONTH_LOCKED, RETRO_PENDING, NOT_CLOCKED_IN —
-          // NOT_CLOCKED_IN shouldn't fire on IN) — log + still return 200 to preserve the
-          // adapter's idempotent contract (Pitfall 4 — never 409 on /events). Phase 118:
-          // that new reason deliberately gets no branch of its own here — the /events
-          // adapter never responds with 409.
+          // NOT_CLOCKED_IN shouldn't fire on IN — and Phase 68b's NO_ACTIVE_SALON) — log +
+          // still return 200 to preserve the adapter's idempotent contract (Pitfall 4 — never
+          // 409 on /events). Phase 118: that new reason deliberately gets no branch of its own
+          // here — the /events adapter never responds with 409.
           app.log.warn(
             { employeeId: employee.id, mac, reason: resolution.reason },
             "WIFI_CONNECTED_UNEXPECTED_CONFLICT",

@@ -15,6 +15,7 @@ import {
   CLEARED_INVALID_REASON,
 } from "../../contexts/time-tracking/invalid-reason";
 import { findEntriesOfDay } from "../../contexts/time-tracking/day-entries"; // Phase 69b
+import { resolveEntrySalon } from "../../contexts/time-tracking/entry-salon"; // Phase 68b
 
 export async function resolveClockEvent(
   app: FastifyInstance,
@@ -133,8 +134,30 @@ export async function resolveClockEvent(
 
       switch (decision.kind) {
         case "START": {
+          // Phase 68b (issue #68, D-08/D-09): the salon of a NEW entry is resolved here, inside
+          // the transaction, from the punch INSTANT (never `event.date`). Clock paths accept no
+          // explicit salon (#87), so the only possible non-ok result is NO_ACTIVE_SALON. REOPEN,
+          // STOP, CONFIRM and consolidation never re-derive the salon of an existing entry.
+          const salon = await resolveEntrySalon(tx, {
+            tenantId: event.tenantId,
+            employeeId: event.employeeId,
+            startTime: event.timestamp,
+          });
+          if (!salon.ok) {
+            app.log.warn(
+              {
+                employeeId: event.employeeId,
+                source: event.source,
+                intent: event.intent,
+                reason: "NO_ACTIVE_SALON",
+              },
+              "clock_event_conflict",
+            );
+            return { kind: "CONFLICT", reason: "NO_ACTIVE_SALON" } as const;
+          }
           const entry = await tx.timeEntry.create({
             data: {
+              salonId: salon.salonId,
               employeeId: event.employeeId,
               date: event.date,
               startTime: event.timestamp,
