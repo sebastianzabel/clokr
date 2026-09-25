@@ -1,4 +1,4 @@
-import { FastifyInstance } from "fastify";
+import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { createHash } from "crypto";
 import { requireAuth } from "../../../middleware/auth";
@@ -6,10 +6,12 @@ import {
   permissionReach,
   requirePermission,
   userIdsHoldingPermission, // Phase 75b Plan 10 (#75), D-16
-  accessContextFromRequest, // Phase 91b Plan 03 (#91), D-09
-  resolveAccessReach, // Phase 91b Plan 03 (#91), D-09
+  accessContextFromRequest, // Phase 91b Plan 03 (#91), D-09/D-14
+  resolveAccessReach, // Phase 91b Plan 03 (#91), D-09/D-14
+  isTimeEntryInScope, // Phase 91b Plan 03 (#91), D-09/D-14
   scopedTimeEntryIds, // Phase 91b Plan 03 (#91), D-09
 } from "../../platform";
+import type { PermissionKey } from "../../platform";
 import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../arbzg";
 import { getEffectiveBreakDuration } from "../break-effective";
@@ -204,6 +206,41 @@ function validateBreakSlots(
     }
   }
   return null;
+}
+
+/**
+ * Phase 91b Plan 03 (Issue #91), D-09/D-14 — the single place every single-`TimeEntry`
+ * `isOnBehalfOf && reach === "ZUGEWIESEN"` route site (clock-out, PUT/DELETE/:id, revalidate,
+ * breaks, break-status) checks salon/person scope on an already-fetched entry row. Returns
+ * `true` when the caller may proceed; on `false` it has ALREADY sent the 404 (byte-identical to
+ * a non-existent id, T-100-09) and written the `SCOPE_ACCESS_DENIED` audit entry — the caller
+ * must `return` immediately without sending anything else.
+ */
+async function enforceTimeEntryScope(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  reply: FastifyReply,
+  entry: { id: string; salonId: string; employeeId: string; date: Date },
+  permission: PermissionKey,
+  notFoundMessage: string,
+): Promise<boolean> {
+  const access = accessContextFromRequest(req);
+  const scopeReach = await resolveAccessReach(app.prisma, access, permission);
+  const inScope = await isTimeEntryInScope(app.prisma, req.user.tenantId, scopeReach, {
+    salonId: entry.salonId,
+    employeeId: entry.employeeId,
+    date: entry.date,
+  });
+  if (inScope) return true;
+  await app.audit({
+    userId: req.user.sub,
+    action: "SCOPE_ACCESS_DENIED",
+    entity: "TimeEntry",
+    entityId: entry.id,
+    request: { ip: req.ip, headers: req.headers as Record<string, string> },
+  });
+  reply.code(404).send({ error: notFoundMessage });
+  return false;
 }
 
 export async function timeEntryRoutes(app: FastifyInstance) {
@@ -578,6 +615,20 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         if (clockOutUpdateReach !== "ZUGEWIESEN") {
           return reply.code(404).send({ error: "Eintrag nicht gefunden" });
         }
+        // Phase 91b Plan 03 (#91), D-09/D-14: a ZUGEWIESEN reach may still be scoped to
+        // salons/persons — enforce it here, same 404, on the entry already fetched above.
+        if (
+          !(await enforceTimeEntryScope(
+            app,
+            req,
+            reply,
+            entry,
+            "time-entry:update:ZUGEWIESEN",
+            "Eintrag nicht gefunden",
+          ))
+        ) {
+          return;
+        }
       } else if (clockOutUpdateReach === null) {
         return reply.code(403).send({ error: "Forbidden" });
       }
@@ -821,6 +872,23 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
       if (breaksUpdateReach === null) {
         return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+      // Phase 91b Plan 03 (#91), D-09/D-14: a ZUGEWIESEN reach acting on someone else's entry may
+      // still be scoped to salons/persons — enforce it, same 404 as a non-existent id, on the
+      // entry already fetched above.
+      if (breaksUpdateReach === "ZUGEWIESEN" && entry.employeeId !== user.employeeId) {
+        if (
+          !(await enforceTimeEntryScope(
+            app,
+            req,
+            reply,
+            entry,
+            "time-entry:update:ZUGEWIESEN",
+            "Eintrag nicht gefunden",
+          ))
+        ) {
+          return;
+        }
       }
 
       // Locked months are immutable (audit-proof, see CLAUDE.md).
@@ -1555,6 +1623,24 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
+      // Phase 91b Plan 03 (#91), D-09/D-14: a ZUGEWIESEN reach acting on someone else's entry may
+      // still be scoped to salons/persons — enforce it, same 404 as a non-existent id, on the
+      // entry already fetched above.
+      if (isManager && existing.employeeId !== user.employeeId) {
+        if (
+          !(await enforceTimeEntryScope(
+            app,
+            req,
+            reply,
+            existing,
+            "time-entry:update:ZUGEWIESEN",
+            "Eintrag nicht gefunden",
+          ))
+        ) {
+          return;
+        }
+      }
+
       // Gesperrte Einträge dürfen nicht bearbeitet werden
       if (existing.isLocked) {
         return reply
@@ -2024,6 +2110,21 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Eintrag nicht gefunden" });
       }
 
+      // Phase 91b Plan 03 (#91), D-09/D-14: this route is ZUGEWIESEN-only (preHandler above) — the
+      // reach may still be scoped to salons/persons, enforce it on the entry already fetched above.
+      if (
+        !(await enforceTimeEntryScope(
+          app,
+          req,
+          reply,
+          existing,
+          "time-entry:revalidate:ZUGEWIESEN",
+          "Eintrag nicht gefunden",
+        ))
+      ) {
+        return;
+      }
+
       if (!existing.isInvalid)
         return reply.code(400).send({ error: "Eintrag ist nicht invalidiert" });
 
@@ -2130,6 +2231,24 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
+      // Phase 91b Plan 03 (#91), D-09/D-14: a ZUGEWIESEN reach acting on someone else's entry may
+      // still be scoped to salons/persons — enforce it, same 404 as a non-existent id, on the
+      // entry already fetched above.
+      if (isManager && existing.employeeId !== user.employeeId) {
+        if (
+          !(await enforceTimeEntryScope(
+            app,
+            req,
+            reply,
+            existing,
+            "time-entry:delete:ZUGEWIESEN",
+            "Eintrag nicht gefunden",
+          ))
+        ) {
+          return;
+        }
+      }
+
       if (existing.isLocked) {
         return reply
           .code(403)
@@ -2226,6 +2345,24 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
       if (breakStatusReach === null) {
         return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+
+      // Phase 91b Plan 03 (#91), D-09/D-14: a ZUGEWIESEN reach acting on someone else's entry may
+      // still be scoped to salons/persons — enforce it, same 404 as a non-existent id, on the
+      // entry already fetched above.
+      if (breakStatusReach === "ZUGEWIESEN" && entry.employeeId !== user.employeeId) {
+        if (
+          !(await enforceTimeEntryScope(
+            app,
+            req,
+            reply,
+            entry,
+            "time-entry:update:ZUGEWIESEN",
+            "Eintrag nicht gefunden",
+          ))
+        ) {
+          return;
+        }
       }
 
       // Lock wins (Revisionssicherheit) — checked BEFORE any write, even for admins.
