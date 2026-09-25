@@ -1320,7 +1320,8 @@ nicht behauptet, sondern gegen eine Aufnahme des alten Codes geprüft (unten, �
   76 Zellen weichen deshalb von der Aufnahme ab — jede nur um die zusätzliche Salon-Id, Status und
   Fehlertext gleich. Eine vollständige Neuaufnahme auf dem Stand VOR der Umstellung (`origin/main`
   `704b1ee5` plus Harness, dreimal byte-gleich) stimmt mit dem umgestellten Code in allen 2250
-  Zellen überein. Die Matrix-Fixture legt den zweiten Salon seitdem eine Minute nach dem
+  Zellen überein. Die 76 Zellen wurden daraus allein im Commit `55492603` übernommen; ohne jede
+  Salon-Id sind alte und neue Aufnahme byte-gleich. Die Matrix-Fixture legt den zweiten Salon seitdem eine Minute nach dem
   Standardsalon an; vorher entschied bei gleichem Zeitstempel die zufällige Id, welcher Salon der
   Standardsalon war.
 - **Rot gesehen:** Entzieht man der Manager-Systemrolle `shift:plan:ZUGEWIESEN` (D-22), werden
