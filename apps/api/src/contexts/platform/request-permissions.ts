@@ -30,9 +30,9 @@
  * - Lives in the platform root, not under `facade/`: its signatures take Fastify types, which
  *   `lint-facade-signatures` (F2) forbids there. Other contexts import it only through
  *   `contexts/platform/index.ts`.
- * - Does not use `accessContextFromRequest`: that throws on an empty tenant, and a user without
- *   Employee legitimately carries `tenantId: ""` — the legacy role guard let them through, so the
- *   resolver must too (it falls back to their column's system role).
+ * - Does not build a 77b access context (`access-context.ts`): its request constructor throws on an
+ *   empty tenant, and a user without Employee legitimately carries `tenantId: ""` — the legacy role
+ *   guard let them through, so the resolver must too (falling back to their column's system role).
  * - Does not re-check `User.isActive`: a valid access token of a since-deactivated user passed the
  *   legacy guard; changing that is not neutral and is deferred hardening (D-10).
  * - Memoized per request in a `WeakMap`, never globally: a cache of role rows would hide a role
