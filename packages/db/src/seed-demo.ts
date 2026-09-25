@@ -22,6 +22,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import bcrypt from "bcryptjs";
 import { DEFAULT_SALON_OPENING_HOURS, createDefaultHomeAssignment } from "./default-salon";
+import { ADMIN_EMAIL } from "./seed-credentials";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool as any);
@@ -359,9 +360,14 @@ async function main() {
 
   // ── Employees + Users + WorkSchedule + OvertimeAccount ─────────────────────
   for (const s of EMPLOYEES) {
+    // Issue #343: the admin's address comes from the shared ADMIN_EMAIL constant (not the
+    // per-employee EMAIL_DOMAIN pattern) so reset-demo.ts can find the admin after this seed.
     const user = await prisma.user.create({
       data: {
-        email: `${s.first.toLowerCase()}.${s.last.toLowerCase()}@${EMAIL_DOMAIN}`,
+        email:
+          s.handle === "admin"
+            ? ADMIN_EMAIL
+            : `${s.first.toLowerCase()}.${s.last.toLowerCase()}@${EMAIL_DOMAIN}`,
         passwordHash,
         role: s.role,
         isActive: true,
@@ -1224,7 +1230,7 @@ async function main() {
     console.log(`   ${k.padEnd(24)} ${stats[k]}`);
   }
   console.log("\n🔑 Demo-Login (alle Nutzer, Passwort identisch):");
-  console.log(`   Admin:    admin.demo@${EMAIL_DOMAIN}`);
+  console.log(`   Admin:    ${ADMIN_EMAIL}`);
   console.log(`   Manager:  lena.vogel@${EMAIL_DOMAIN} · jonas.berg@${EMAIL_DOMAIN}`);
   console.log(`   Passwort: ${DEMO_PASSWORD}`);
   console.log(`   Tenant:   Clokr Demo GmbH (slug: ${TENANT_SLUG})`);
