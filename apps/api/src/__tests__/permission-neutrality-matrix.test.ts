@@ -30,8 +30,11 @@
  * is still a recording of the unchanged code), then build the fallback tenants, then run the cells.
  *
  * Re-recording AFTER the switch is forbidden: it would replace the old code's answers with the new
- * code's and prove nothing. The only exception is D-24 — routes that arrive from `origin/main`
- * after the recording get their NEW rows recorded on pre-switch semantics, documented per route.
+ * code's and prove nothing. RECORD mode therefore refuses to run once the role guard's definition
+ * (`ROLE_GUARD_DEFINITION`) is gone from `middleware/auth.ts` — plan 75b-12 deletes it (D-18), so
+ * from then on this file can only verify. The only sanctioned re-record is D-24 — routes that
+ * arrive from `origin/main` after the recording get their NEW rows recorded on pre-switch
+ * semantics, on a pre-switch tree, documented per route (plan 75b-13).
  *
  * ── Completeness (AC-75-10) ─────────────────────────────────────────────────────────────────────
  * The derived route set must equal ROUTE_SPECS ∪ EXCLUDED_ROUTES in both directions, and every
@@ -39,9 +42,15 @@
  *
  * ── Discriminating check (anti-vacuity for handler checks) ─────────────────────────────────────
  * A handler that decides by role itself is only covered if the request reaches that decision. For
- * every such route (`handlerCheck`, reads and mutations alike) the EMPLOYEE and ADMIN records of the same variant must
- * differ; if they coincided, the request most likely failed before the check (e.g. a 400) and the
- * cell would prove nothing.
+ * every such route (`handlerCheck`, reads and mutations alike) the EMPLOYEE and ADMIN records of
+ * the same variant must differ; if they coincided, the request most likely failed before the
+ * check (e.g. a 400) and the cell would prove nothing.
+ *
+ * ── Locks (AC-75-17, D-13) ──────────────────────────────────────────────────────────────────────
+ * The self-approval lock (own leave request, own retro request), the cancellation 4-eyes lock
+ * (approving a cancellation the actor requested) and the hard-delete 4-eyes lock are cells like
+ * any other, so their German refusals are part of the recording; one test pins the ADMIN leave
+ * self-approval message explicitly.
  *
  * ── Determinism ─────────────────────────────────────────────────────────────────────────────────
  * Only `Date` is faked (PINNED_NOW). Prisma 7 fills `@default(now())` on the client, so every row
@@ -49,10 +58,11 @@
  * file's `now()`) carries the real database time, and no read route compares against that. The
  * ADMIN activity feed also reads global `userId: null` audit rows, which other files leave behind;
  * the fixture's feed pins (`ACTIVITY_FEED_LIMIT` far-future rows per tenant) keep those out of the
- * cell. Known limit: `GET /holidays` falls back to an unordered `tenant.findFirst()` for an API-key
- * caller (`holidays.ts`, pre-existing, recorded as-is), so its API-key cells name the database's
- * first tenant — the matrix's first actor tenant on a freshly provisioned worker database
- * (`test:setup`), which is how every recording and verification of this file is run.
+ * cell. `GET`/`POST /holidays` fall back to an unordered `tenant.findFirst()` for an API-key
+ * caller (Issue #345, pre-existing, not fixed here), so what a key gets back depends on the other
+ * tenants of the database; those API-key cells record the status code only (`statusOnly`).
+ * Mutating cells run in the actor's own tenant, in a fixed order, so the ids they create are
+ * `<new>` in both runs.
  *
  * ── Cell order within an actor (Pitfall 4) ──────────────────────────────────────────────────────
  * All `read` cells first, then all `mutate` cells, then the `self-destructive` cells (anything
@@ -94,6 +104,17 @@ import {
 } from "./neutrality/cell-runner";
 
 const MODE = process.env.NEUTRALITY_MATRIX_MODE === "record" ? "record" : "verify";
+
+/**
+ * The definition line of the legacy role guard. RECORD mode requires it in `middleware/auth.ts`:
+ * its presence is what "the access code is still the pre-switch code" means for this file (D-20,
+ * D-24). Searched as plain text, so a rename, a removal or a rewrite as `const` all count as gone.
+ */
+const ROLE_GUARD_DEFINITION = "export function requireRole";
+const AUTH_MIDDLEWARE = join(__dirname, "..", "middleware", "auth.ts");
+
+/** The German refusal the leave self-approval lock answers with (leave.ts, AC-75-17). */
+const LEAVE_SELF_APPROVAL_LOCK = "Eigene Anträge können nicht selbst genehmigt werden";
 const DEFAULT_RECORDING = join(__dirname, "neutrality", "recorded", "matrix.json");
 const RECORD_OUT = process.env.NEUTRALITY_MATRIX_OUT || DEFAULT_RECORDING;
 const VERIFY_IN = process.env.NEUTRALITY_MATRIX_IN || DEFAULT_RECORDING;
@@ -134,6 +155,9 @@ describe("permission neutrality matrix (Issue #75)", () => {
   const fixtures = new Map<ActorKind, ActorFixture>();
   const collected = new Map<string, CellResult>();
   let recording: Record<string, CellResult> | undefined;
+  /** Set when `beforeAll` finished: a refused or failed setup must never overwrite a recording
+   * with an empty cell set. */
+  let setupComplete = false;
 
   /** Registers the rows the migration SQL created for this tenant's users. */
   async function registerMigrationRows(fixture: ActorFixture): Promise<void> {
@@ -157,6 +181,17 @@ describe("permission neutrality matrix (Issue #75)", () => {
   }
 
   beforeAll(async () => {
+    if (
+      MODE === "record" &&
+      !readFileSync(AUTH_MIDDLEWARE, "utf8").includes(ROLE_GUARD_DEFINITION)
+    ) {
+      throw new Error(
+        `matrix: RECORD refused — "${ROLE_GUARD_DEFINITION}" is no longer defined in ` +
+          `${AUTH_MIDDLEWARE}. The recording must come from the pre-switch access code; recording ` +
+          `the switched code would make the neutrality proof compare the new code with itself. ` +
+          `Re-record only per D-24 on a pre-switch tree (plan 75b-13).`,
+      );
+    }
     app = await getTestApp();
     vi.useFakeTimers({ now: PINNED_NOW, toFake: ["Date"] });
 
@@ -183,12 +218,13 @@ describe("permission neutrality matrix (Issue #75)", () => {
         JSON.parse(readFileSync(VERIFY_IN, "utf8")) as { cells: Record<string, CellResult> }
       ).cells;
     }
+    setupComplete = true;
   }, 600_000);
 
   afterAll(async () => {
     vi.useRealTimers();
     stubs?.restore();
-    if (MODE === "record") {
+    if (MODE === "record" && setupComplete) {
       const cells = Object.fromEntries(
         [...collected.entries()].sort(([a], [b]) => a.localeCompare(b)),
       );
@@ -252,6 +288,13 @@ describe("permission neutrality matrix (Issue #75)", () => {
       const short = [
         ...EXCLUDED_ROUTES.filter((e) => e.reason.trim().length < MIN_REASON_LENGTH),
         ...OUTSIDE_DERIVATION.filter((e) => e.reason.trim().length < MIN_REASON_LENGTH),
+        ...Object.entries(ROUTE_SPECS)
+          .filter(
+            ([, spec]) =>
+              spec.statusOnly !== undefined &&
+              spec.statusOnly.reason.trim().length < MIN_REASON_LENGTH,
+          )
+          .map(([route]) => ({ route, reason: "" })),
         ...Object.entries(ROUTE_SPECS)
           .filter(
             ([, spec]) =>
@@ -326,6 +369,15 @@ describe("permission neutrality matrix (Issue #75)", () => {
       }
     });
   }
+
+  describe("locks (AC-75-17)", () => {
+    it("records the ADMIN's review of its own leave request as the self-approval refusal", () => {
+      const cell = collected.get(
+        cellKey("ADMIN", "PATCH /api/v1/leave/requests/:id/review", "own"),
+      );
+      expect(cell).toEqual({ status: 403, error: LEAVE_SELF_APPROVAL_LOCK, ids: [] });
+    });
+  });
 
   describe("external effects", () => {
     it("no cell reached a network host the stubs do not answer", () => {

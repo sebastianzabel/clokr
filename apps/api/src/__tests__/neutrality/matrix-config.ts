@@ -80,12 +80,30 @@ export type ProjectionName = "leaveTypeMask" | "pendingApprovalsCount" | "collis
  */
 export const ACTIVITY_FEED_LIMIT = 20;
 
+/** A multipart upload with one file part (field `file`), built by hand with a fixed boundary. */
+export interface MultipartSpec {
+  filename: string;
+  contentType: string;
+  /** Which fixed file content the part carries (see `cell-runner.ts`). */
+  content: "png" | "pdf";
+}
+
 /** One request shape of a route. `name` is part of the cell key and must be unique per route. */
 export interface VariantSpec {
   name: string;
   target: Variant;
+  /** Path parameter name → fixture kind, overriding the route's `params` for this variant only
+   * (e.g. a lock cell that needs a request in a special state). */
+  params?: Record<string, string>;
   query?: Record<string, string>;
   body?: unknown;
+  multipart?: MultipartSpec;
+}
+
+/** Actors whose cells of a route record the status code only, with the reason why. */
+export interface StatusOnly {
+  actors: readonly ActorKind[];
+  reason: string;
 }
 
 export interface RouteSpec {
@@ -106,6 +124,11 @@ export interface RouteSpec {
   handlerCheck?: true | string;
   /** The variant the discriminating check compares (default `foreign`). */
   checkVariant?: string;
+  /**
+   * Record only the status code for these actors — the body is not a stable function of the
+   * actor's own tenant. Only for pre-existing, filed defects; the reason names the issue.
+   */
+  statusOnly?: StatusOnly;
 }
 
 /** Fixture kinds that exist once per tenant (resolved as `tenant.<kind>`). Every other kind is
@@ -128,6 +151,7 @@ export const TENANT_LEVEL_KINDS: ReadonlySet<string> = new Set<string>([
   "salon",
   "salonInactive",
   "auditLog",
+  "hardDeleteTarget.employee",
 ]);
 
 export interface RouteReason {
@@ -247,11 +271,40 @@ const MAY = { year: "2026", month: "5" };
 const YEAR = { year: "2026" };
 const JUNE_RANGE = { from: "2026-06-01", to: "2026-06-30" };
 
+/**
+ * Issue #345 (pre-existing, not fixed in #75): `GET` and `POST /holidays` resolve the caller's
+ * federal state through `tenant.findFirst({ employees: { some: { userId: sub } } })`, which finds
+ * nothing for an API key (`sub` is `apikey:<id>`), and then fall back to an UNFILTERED, UNORDERED
+ * `tenant.findFirst()` — some other tenant of the database. What an API key gets back therefore
+ * depends on which tenants exist and in which order the database returns them, not on the key's
+ * own tenant, so only the status code of those cells is recorded. JWT actors keep the full record.
+ */
+const HOLIDAYS_API_KEY_FALLBACK =
+  "Issue #345: for an API key the handler falls back to an unordered tenant.findFirst() over " +
+  "all tenants, so the body names a foreign, database-order-dependent tenant — status only.";
+
 const mutate = (params?: Record<string, string>): RouteSpec => ({ phase: "mutate", params });
 const selfDestructive = (params: Record<string, string>): RouteSpec => ({
   phase: "self-destructive",
   params,
 });
+
+/** A mutating route whose every default variant (see `variantsOf`) sends the same body. */
+function mutateWith(params: Record<string, string> | undefined, body: unknown): RouteSpec {
+  const kinds = Object.values(params ?? {});
+  let variants: VariantSpec[];
+  if (kinds.length === 0) {
+    variants = [{ name: "none", target: "none", body }];
+  } else if (kinds.every((kind) => TENANT_LEVEL_KINDS.has(kind))) {
+    variants = [{ name: "tenant", target: "tenant", body }];
+  } else {
+    variants = [
+      { name: "own", target: "own", body },
+      { name: "foreign", target: "foreign", body },
+    ];
+  }
+  return { phase: "mutate", params, variants };
+}
 
 export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
   // ── read ─────────────────────────────────────────────────────────────────────────────────────
@@ -313,7 +366,11 @@ export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
     handlerCheck: true,
   },
   "GET /api/v1/employees/me/wifi": { phase: "read" },
-  "GET /api/v1/holidays": { phase: "read", variants: none(YEAR) },
+  "GET /api/v1/holidays": {
+    phase: "read",
+    variants: none(YEAR),
+    statusOnly: { actors: ["APIKEY_PLAIN", "APIKEY_ADMIN"], reason: HOLIDAYS_API_KEY_FALLBACK },
+  },
   "GET /api/v1/integrations/phorest/appointment-collisions": {
     phase: "read",
     variants: [
@@ -501,85 +558,235 @@ export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
     handlerCheck: true,
   },
 
-  // ── mutate (cells built by plan 75b-03) ───────────────────────────────────────────────────────
-  "DELETE /api/v1/admin/presence-sources/:id": mutate({ id: "presenceSource" }),
-  "DELETE /api/v1/admin/presence-sources/:id/devices/:mac": mutate({
-    id: "presenceSource",
-    mac: "presenceDevice.mac",
-  }),
-  "DELETE /api/v1/api-keys/:id": mutate({ id: "apiKey.secondary" }),
-  "DELETE /api/v1/avatars/:employeeId": mutate({ employeeId: "employee" }),
-  "DELETE /api/v1/company-shutdowns/:id": mutate({ id: "companyShutdown" }),
-  "DELETE /api/v1/company-shutdowns/:id/exceptions/:employeeId": mutate({
-    id: "companyShutdown",
-    employeeId: "employee",
-  }),
-  "DELETE /api/v1/employees/me/wifi/devices/:id": mutate({ id: "wifiDevice" }),
-  "DELETE /api/v1/holidays/:id": mutate({ id: "holiday" }),
-  "DELETE /api/v1/integrations/phorest/mappings/:phorestStaffId": mutate({
-    phorestStaffId: "phorestMapping",
-  }),
-  "DELETE /api/v1/leave/requests/:id": mutate({ id: "leaveRequest.pending" }),
-  "DELETE /api/v1/notifications/:id": mutate({ id: "notification" }),
-  "DELETE /api/v1/notifications/dismiss-all": mutate(),
-  "DELETE /api/v1/retro-entry-requests/:id": mutate({ id: "retroRequest.pending" }),
-  "DELETE /api/v1/role-assignments/:id": mutate({ id: "roleAssignment.customer" }),
-  "DELETE /api/v1/roles/:id": mutate({ id: "customRole.free" }),
-  "DELETE /api/v1/shifts/:id": mutate({ id: "shift" }),
-  "DELETE /api/v1/shifts/coverage-rules/:id": mutate({ id: "coverageRule" }),
-  "DELETE /api/v1/shifts/templates/:id": mutate({ id: "shiftTemplate" }),
-  "DELETE /api/v1/special-leave/rules/:id": mutate({ id: "specialLeaveRule" }),
-  "DELETE /api/v1/terminals/:id": mutate({ id: "terminal" }),
-  "DELETE /api/v1/time-entries/:id": mutate({ id: "timeEntry.closed" }),
-  "DELETE /api/v1/vocational-school/:absenceId": mutate({ absenceId: "vocationalSchool.absence" }),
-  "PATCH /api/v1/admin/presence-sources/:id": mutate({ id: "presenceSource" }),
-  "PATCH /api/v1/company-shutdowns/:id": mutate({ id: "companyShutdown" }),
-  "PATCH /api/v1/employees/:id": mutate({ id: "employee" }),
-  "PATCH /api/v1/employees/:id/reactivate": mutate({ id: "employee" }),
-  "PATCH /api/v1/employees/:id/unlock": mutate({ id: "employee" }),
-  "PATCH /api/v1/employees/me/wifi": mutate(),
-  "PATCH /api/v1/leave/requests/:id": mutate({ id: "leaveRequest.pending" }),
-  "PATCH /api/v1/leave/requests/:id/attest": mutate({ id: "leaveRequest.sick" }),
-  "PATCH /api/v1/leave/requests/:id/correct": mutate({ id: "leaveRequest.approved" }),
-  "PATCH /api/v1/leave/requests/:id/review": mutate({ id: "leaveRequest.pending" }),
-  "PATCH /api/v1/notifications/:id/read": mutate({ id: "notification" }),
-  "PATCH /api/v1/notifications/read-all": mutate(),
-  "PATCH /api/v1/retro-entry-requests/:id/review": mutate({ id: "retroRequest.pending" }),
-  "PATCH /api/v1/role-assignments/:id": mutate({ id: "roleAssignment.customer" }),
-  "PATCH /api/v1/roles/:id": mutate({ id: "customRole.free" }),
-  "PATCH /api/v1/salons/:id": mutate({ id: "salon" }),
-  "PATCH /api/v1/time-entries/:id/break-status": mutate({ id: "timeEntry.closed" }),
-  "PATCH /api/v1/time-entries/:id/revalidate": mutate({ id: "timeEntry.invalid" }),
+  // ── mutate ──────────────────────────────────────────────────────────────────────────────────
+  // Declaration order is execution order (per actor, after every read cell). Within a family,
+  // creates and updates come first and deletes last, a child is deleted before its parent, and a
+  // restore follows its delete — so every cell addresses the fixture state it was written for.
+  // Guard-only routes (a route guard decides, the handler does not look at the role) keep a
+  // minimal body: an allowed actor's 400 against a denied actor's 403 is a falsifiable cell.
+  // Routes whose HANDLER decides by role (75b-RESEARCH Q2) get valid own/foreign bodies and
+  // `handlerCheck`, so the request reaches that decision.
+  //
+  // API-key actors: many writes answer 500 because the route writes `req.user.sub`
+  // (`apikey:<id>`) into `AuditLog.userId`, a foreign key onto User — Issue #333, pre-existing,
+  // recorded as-is (a later fix changes those cells on purpose, not by accident).
+
+  // presence sources (Unterbau / Zeiterfassung)
   "POST /api/v1/admin/presence-sources": mutate(),
+  "PATCH /api/v1/admin/presence-sources/:id": mutate({ id: "presenceSource" }),
   "POST /api/v1/admin/presence-sources/:id/devices/:mac/assign": mutate({
     id: "presenceSource",
     mac: "presenceDevice.mac",
   }),
-  "POST /api/v1/admin/school-holidays/refresh": mutate(),
-  "POST /api/v1/api-keys": mutate(),
-  "POST /api/v1/avatars/:employeeId": mutate({ employeeId: "employee" }),
-  "POST /api/v1/company-shutdowns": mutate(),
-  "POST /api/v1/company-shutdowns/:id/exceptions": mutate({ id: "companyShutdown" }),
-  "POST /api/v1/employees": mutate(),
-  "POST /api/v1/employees/:id/hard-delete/authorize": mutate({ id: "employee" }),
-  "POST /api/v1/employees/:id/resend-invitation": mutate({ id: "employee" }),
-  "POST /api/v1/employees/:id/salon-assignments": mutate({ id: "employee" }),
-  "POST /api/v1/employees/:id/salon-assignments/:assignmentId/end": mutate({
-    id: "employee",
-    assignmentId: "salonAssignment",
+  "DELETE /api/v1/admin/presence-sources/:id/devices/:mac": mutate({
+    id: "presenceSource",
+    mac: "presenceDevice.mac",
   }),
-  "POST /api/v1/employees/:id/salon-assignments/home": mutate({ id: "employee" }),
-  "POST /api/v1/employees/me/wifi/devices": mutate(),
-  "POST /api/v1/holidays": mutate(),
+  "DELETE /api/v1/admin/presence-sources/:id": mutate({ id: "presenceSource" }),
+
+  // school holidays: the refresh reaches the stubbed OpenHolidays reply (external-stubs.ts)
+  "POST /api/v1/admin/school-holidays/refresh": mutate(),
+
+  // API keys: the DELETE target is the tenant's SECOND key, never the acting one (Pitfall 4)
+  "POST /api/v1/api-keys": mutate(),
+  "DELETE /api/v1/api-keys/:id": mutate({ id: "apiKey.secondary" }),
+
+  // company shutdowns (Betriebsurlaub): the exception is created for the own person and then
+  // deleted again; the foreign person's exception comes from the fixture
+  "POST /api/v1/company-shutdowns": mutate(),
+  "PATCH /api/v1/company-shutdowns/:id": mutate({ id: "companyShutdown" }),
+  // Without a body the handler destructures `undefined` and answers 500 — a harness artefact, so
+  // this guard-only route gets a valid body.
+  "POST /api/v1/company-shutdowns/:id/exceptions": mutateWith(
+    { id: "companyShutdown" },
+    { employeeId: "$own.employee", reason: "Matrix Ausnahme" },
+  ),
+  "DELETE /api/v1/company-shutdowns/:id/exceptions/:employeeId": mutate({
+    id: "companyShutdown",
+    employeeId: "employee",
+  }),
+  "DELETE /api/v1/company-shutdowns/:id": mutate({ id: "companyShutdown" }),
+
+  // employees (guard-only writes; the self-destructive ones are at the end of the file)
+  "POST /api/v1/employees": mutate(),
+  "PATCH /api/v1/employees/:id": mutate({ id: "employee" }),
+  "PATCH /api/v1/employees/:id/reactivate": mutate({ id: "employee" }),
+  "PATCH /api/v1/employees/:id/unlock": mutate({ id: "employee" }),
+  "POST /api/v1/employees/:id/resend-invitation": mutate({ id: "employee" }),
+  "PUT /api/v1/employees/:id/availability": {
+    ...mutateWith(
+      { id: "employee" },
+      { entries: [{ dayOfWeek: 1, status: "AVAILABLE", validFrom: "2026-07-01" }] },
+    ),
+    // Handler check #24: body parsed first, then EMPLOYEE-and-not-own → 403.
+    handlerCheck: true,
+  },
+  "PUT /api/v1/employees/:id/shift-patterns": mutate({ id: "employee" }),
+  "PUT /api/v1/employees/:id/vocational-school-pattern": mutate({ id: "employee" }),
+
+  // Salonzuordnung (67b): valid bodies, so an allowed actor really ends, creates and changes an
+  // assignment. The fixture's open deployment to the second salon ends on 30 June, a new July
+  // deployment to that salon follows it without overlap, and the default salon becomes the
+  // Stammsalon from the hire date (no assignment to it exists, so nothing overlaps).
+  "POST /api/v1/employees/:id/salon-assignments/:assignmentId/end": mutateWith(
+    { id: "employee", assignmentId: "salonAssignment" },
+    { validUntil: "2026-06-30" },
+  ),
+  "POST /api/v1/employees/:id/salon-assignments": mutateWith(
+    { id: "employee" },
+    {
+      salonId: "$tenant.salon",
+      validFrom: "2026-07-01",
+      validUntil: "2026-07-31",
+      weekdays: [1],
+    },
+  ),
+  "POST /api/v1/employees/:id/salon-assignments/home": mutateWith(
+    { id: "employee" },
+    { salonId: "$tenant.salon.default", validFrom: "2024-01-01" },
+  ),
+
+  // own Wi-Fi presence (self-service; an API key has no employee)
+  "PATCH /api/v1/employees/me/wifi": mutateWith(undefined, { wifiPresenceEnabled: true }),
+  "POST /api/v1/employees/me/wifi/devices": mutateWith(undefined, {
+    mac: "02:00:00:00:00:03",
+    label: "Matrix Neu",
+  }),
+  "DELETE /api/v1/employees/me/wifi/devices/:id": mutate({ id: "wifiDevice" }),
+
+  // holidays — a minimal body, so no API-key cell writes anything (Issue #345, see GET)
+  "POST /api/v1/holidays": {
+    ...mutate(),
+    statusOnly: { actors: ["APIKEY_PLAIN", "APIKEY_ADMIN"], reason: HOLIDAYS_API_KEY_FALLBACK },
+  },
+  "DELETE /api/v1/holidays/:id": mutate({ id: "holiday" }),
+
+  // CSV imports
   "POST /api/v1/imports/employees": mutate(),
   "POST /api/v1/imports/time-entries": mutate(),
+
+  // Phorest: the test and the sync stop at "not configured" / the body check, and the stubbed
+  // gateway answers anything that does get through
+  "PUT /api/v1/integrations/phorest/config": mutate(),
   "POST /api/v1/integrations/phorest/mappings": mutate(),
-  "POST /api/v1/integrations/phorest/sync-shifts": mutate(),
   "POST /api/v1/integrations/phorest/test": mutate(),
-  "POST /api/v1/leave/requests": mutate(),
-  "POST /api/v1/leave/section9/:id/confirm": mutate({ id: "section9.credit" }),
-  "POST /api/v1/leave/section9/:id/reject": mutate({ id: "section9.credit" }),
-  "POST /api/v1/leave/section9/:id/reopen": mutate({ id: "section9.credit" }),
+  "POST /api/v1/integrations/phorest/sync-shifts": mutate(),
+  "DELETE /api/v1/integrations/phorest/mappings/:phorestStaffId": mutate({
+    phorestStaffId: "phorestMapping",
+  }),
+
+  // leave requests
+  "POST /api/v1/leave/requests": {
+    phase: "mutate",
+    // Handler check #6: a foreign `employeeId` needs MANAGER/ADMIN (else the 403 refusing
+    // requests on behalf of others); without one the request is the caller's own, which an API
+    // key does not have (the 400 for a missing employee profile). Three free, non-overlapping
+    // periods.
+    variants: [
+      {
+        name: "self",
+        target: "none",
+        body: { type: "VACATION", startDate: "2026-07-20", endDate: "2026-07-21" },
+      },
+      {
+        name: "own",
+        target: "own",
+        body: {
+          type: "VACATION",
+          startDate: "2026-07-27",
+          endDate: "2026-07-28",
+          employeeId: "$own.employee",
+        },
+      },
+      {
+        name: "foreign",
+        target: "foreign",
+        body: {
+          type: "VACATION",
+          startDate: "2026-08-03",
+          endDate: "2026-08-04",
+          employeeId: "$foreign.employee",
+        },
+      },
+    ],
+    handlerCheck: true,
+  },
+  // Owner-only edit of a PENDING request (no manager path); before the review approves it.
+  "PATCH /api/v1/leave/requests/:id": mutateWith(
+    { id: "leaveRequest.pending" },
+    { startDate: "2026-07-06", endDate: "2026-07-07" },
+  ),
+  "PATCH /api/v1/leave/requests/:id/review": {
+    phase: "mutate",
+    params: { id: "leaveRequest.pending" },
+    // AC-75-17 lock cells: `own` is the actor's own PENDING request → the 403 self-approval
+    // refusal (leave.ts); `cancellation` is a foreign CANCELLATION_REQUESTED request whose
+    // cancellation the ACTOR requested → the 403 refusing a cancellation approval by its
+    // requester (4-eyes). `foreign` is the regular approval.
+    variants: [
+      { name: "own", target: "own", body: { status: "APPROVED" } },
+      { name: "foreign", target: "foreign", body: { status: "APPROVED" } },
+      {
+        name: "cancellation",
+        target: "foreign",
+        params: { id: "leaveRequest.cancellationByActor" },
+        body: { status: "APPROVED" },
+      },
+    ],
+  },
+  "PATCH /api/v1/leave/requests/:id/correct": mutate({ id: "leaveRequest.approved" }),
+  "PATCH /api/v1/leave/requests/:id/attest": mutate({ id: "leaveRequest.sick" }),
+  "DELETE /api/v1/leave/requests/:id": {
+    ...mutateWith({ id: "leaveRequest.withdrawable" }, { reason: "Matrix Storno" }),
+    // Handler check #9: owner or MANAGER/ADMIN, after the tenant 404.
+    handlerCheck: true,
+  },
+
+  // § 9 BUrlG: the upload needs AU_PENDING, so it runs first; reject → reopen → confirm then walks
+  // the case through every state an allowed actor can reach
+  "POST /api/v1/section9-documents/:creditId": {
+    phase: "mutate",
+    params: { creditId: "section9.credit" },
+    // Handler check #14 (multipart): self or MANAGER/ADMIN, else 403 "Keine Berechtigung".
+    variants: [
+      {
+        name: "own",
+        target: "own",
+        multipart: { filename: "au.pdf", contentType: "application/pdf", content: "pdf" },
+      },
+      {
+        name: "foreign",
+        target: "foreign",
+        multipart: { filename: "au.pdf", contentType: "application/pdf", content: "pdf" },
+      },
+    ],
+    handlerCheck: true,
+  },
+  "POST /api/v1/leave/section9/:id/reject": mutateWith(
+    { id: "section9.credit" },
+    { reason: "Matrix Ablehnung" },
+  ),
+  "POST /api/v1/leave/section9/:id/reopen": mutateWith(
+    { id: "section9.credit" },
+    { reason: "Matrix Wiedereröffnung" },
+  ),
+  "POST /api/v1/leave/section9/:id/confirm": mutateWith(
+    { id: "section9.credit" },
+    {
+      attestSource: "EAU",
+      attestValidFrom: "2026-05-13",
+      attestValidTo: "2026-05-13",
+      reason: "Matrix AU liegt vor",
+    },
+  ),
+
+  // notifications (own inbox only)
+  "PATCH /api/v1/notifications/:id/read": mutate({ id: "notification" }),
+  "PATCH /api/v1/notifications/read-all": mutate(),
+  "DELETE /api/v1/notifications/:id": mutate({ id: "notification" }),
+  "DELETE /api/v1/notifications/dismiss-all": mutate(),
+
+  // Arbeitszeitkonto
   "POST /api/v1/overtime/close-month": mutate(),
   "POST /api/v1/overtime/close-year": mutate(),
   "POST /api/v1/overtime/opening-balance": mutate(),
@@ -587,34 +794,119 @@ export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
   "POST /api/v1/overtime/plans": mutate(),
   "POST /api/v1/overtime/unlock-month": mutate(),
   "POST /api/v1/reports/carryover-warn": mutate(),
-  "POST /api/v1/retro-entry-requests": mutate(),
-  "POST /api/v1/role-assignments": mutate(),
-  "POST /api/v1/roles": mutate(),
-  "POST /api/v1/roles/:id/copy": mutate({ id: "customRole.assigned" }),
-  "POST /api/v1/salons": mutate(),
-  "POST /api/v1/salons/:id/activate": mutate({ id: "salonInactive" }),
-  "POST /api/v1/salons/:id/deactivate": mutate({ id: "salon" }),
-  "POST /api/v1/section9-documents/:creditId": mutate({ creditId: "section9.credit" }),
-  "POST /api/v1/settings/smtp/test": mutate(),
-  "POST /api/v1/shifts": mutate(),
-  "POST /api/v1/shifts/:id/restore": mutate({ id: "shift" }),
-  "POST /api/v1/shifts/bulk": mutate(),
-  "POST /api/v1/shifts/copy-week": mutate(),
-  "POST /api/v1/shifts/coverage-rules": mutate(),
-  "POST /api/v1/shifts/generate-week": mutate(),
-  "POST /api/v1/shifts/templates": mutate(),
-  "POST /api/v1/special-leave/rules": mutate(),
-  "POST /api/v1/terminals": mutate(),
-  "POST /api/v1/time-entries": {
+
+  // retro entry requests (Zeitnachtrag)
+  "POST /api/v1/retro-entry-requests": {
     phase: "mutate",
-    // Handler check #33: a non-manager's `employeeId` is silently replaced by the own person,
-    // a manager's is honoured. Two different days, both inside the retro window and free of
-    // fixture entries, so the EMPLOYEE's foreign request can succeed for itself instead of
-    // colliding with its own-variant entry — the ids show whose entry was created.
+    // Handler check #28: a non-manager's `employeeId` silently falls back to the own person (no
+    // 403 — the ids show it); an API key has no own person (400).
     variants: [
       {
-        name: "own",
-        target: "own",
+        name: "self",
+        target: "none",
+        body: {
+          targetDate: "2026-06-09",
+          reason: "Matrix Nachtrag",
+          startTime: "08:00",
+          endTime: "16:00",
+          breakMinutes: 30,
+        },
+      },
+      {
+        name: "foreign",
+        target: "foreign",
+        body: {
+          employeeId: "$foreign.employee",
+          targetDate: "2026-06-08",
+          reason: "Matrix Nachtrag",
+          startTime: "08:00",
+          endTime: "16:00",
+          breakMinutes: 30,
+        },
+      },
+    ],
+    handlerCheck: true,
+  },
+  "PATCH /api/v1/retro-entry-requests/:id/review": {
+    // Handler check #29, after the self-approval lock (AC-75-17): `own` → the 403 self-approval
+    // refusal for every actor with an employee; `foreign` → the second, role-based 403 for an
+    // EMPLOYEE (managers and admins only) — two different error strings, both recorded.
+    ...mutateWith({ id: "retroRequest.pending" }, { status: "APPROVED" }),
+    handlerCheck: true,
+  },
+  "DELETE /api/v1/retro-entry-requests/:id": mutate({ id: "retroRequest.pending" }),
+
+  // roles and role assignments (74/74b)
+  "POST /api/v1/roles": mutate(),
+  "PATCH /api/v1/roles/:id": mutate({ id: "customRole.free" }),
+  "POST /api/v1/roles/:id/copy": mutate({ id: "customRole.assigned" }),
+  "POST /api/v1/role-assignments": mutate(),
+  "PATCH /api/v1/role-assignments/:id": mutate({ id: "roleAssignment.customer" }),
+  "DELETE /api/v1/role-assignments/:id": mutate({ id: "roleAssignment.customer" }),
+  "DELETE /api/v1/roles/:id": mutate({ id: "customRole.free" }),
+
+  // salons (64b)
+  "POST /api/v1/salons": mutate(),
+  "PATCH /api/v1/salons/:id": mutate({ id: "salon" }),
+  "POST /api/v1/salons/:id/activate": mutate({ id: "salonInactive" }),
+  "POST /api/v1/salons/:id/deactivate": mutate({ id: "salon" }),
+
+  // tenant settings
+  "POST /api/v1/settings/smtp/test": mutate(),
+  "PUT /api/v1/settings/leave-types/:id": mutate({ id: "leaveType.VACATION" }),
+  "PUT /api/v1/settings/security": mutate(),
+  "PUT /api/v1/settings/smtp": mutate(),
+  "PUT /api/v1/settings/vacation/:employeeId": mutate({ employeeId: "employee" }),
+  "PUT /api/v1/settings/work": mutate(),
+  "PUT /api/v1/settings/work/:employeeId": mutate({ employeeId: "employee" }),
+
+  // shifts (Schichtplanung): updates first, then the shift's delete and its restore, then the
+  // coverage rule before the template it references
+  "POST /api/v1/shifts": mutate(),
+  "POST /api/v1/shifts/bulk": mutate(),
+  "POST /api/v1/shifts/copy-week": mutate(),
+  "POST /api/v1/shifts/generate-week": mutate(),
+  "POST /api/v1/shifts/coverage-rules": mutate(),
+  "POST /api/v1/shifts/templates": mutate(),
+  "PUT /api/v1/shifts/:id": mutate({ id: "shift" }),
+  "PUT /api/v1/shifts/coverage-rules/:id": mutate({ id: "coverageRule" }),
+  "PUT /api/v1/shifts/templates/:id": mutate({ id: "shiftTemplate" }),
+  "DELETE /api/v1/shifts/:id": mutate({ id: "shift" }),
+  "POST /api/v1/shifts/:id/restore": mutate({ id: "shift" }),
+  "DELETE /api/v1/shifts/coverage-rules/:id": mutate({ id: "coverageRule" }),
+  "DELETE /api/v1/shifts/templates/:id": mutate({ id: "shiftTemplate" }),
+
+  // special leave rules (Sonderurlaub)
+  "POST /api/v1/special-leave/rules": mutate(),
+  "PUT /api/v1/special-leave/rules/:id": mutate({ id: "specialLeaveRule" }),
+  "DELETE /api/v1/special-leave/rules/:id": mutate({ id: "specialLeaveRule" }),
+
+  // NFC terminals
+  "POST /api/v1/terminals": mutate(),
+  "DELETE /api/v1/terminals/:id": mutate({ id: "terminal" }),
+
+  // time entries (Zeiterfassung): clock-in first (the fixture's entries of today are still
+  // open), the manual create, then everything on the closed entry, and its delete last
+  "POST /api/v1/time-entries/clock-in": {
+    phase: "mutate",
+    // Handler check #30: clocking in someone else needs a non-EMPLOYEE role (403 "Forbidden").
+    // Both persons are already clocked in today, so an allowed request ends in the 409.
+    variants: [
+      { name: "self", target: "none", body: {} },
+      { name: "foreign", target: "foreign", body: { employeeId: "$foreign.employee" } },
+    ],
+    handlerCheck: true,
+  },
+  "POST /api/v1/time-entries": {
+    phase: "mutate",
+    // Handler check #33: a non-manager's `employeeId` is silently replaced by the own person, a
+    // manager's is honoured. Two different days, both inside the retro window and free of
+    // fixture entries, so the EMPLOYEE's foreign request succeeds for itself instead of colliding
+    // with its self entry — the ids show whose entry was created. An API key has no own person.
+    variants: [
+      {
+        name: "self",
+        target: "none",
         body: {
           date: "2026-06-11",
           startTime: "2026-06-11T06:00:00.000Z",
@@ -636,33 +928,108 @@ export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
     ],
     handlerCheck: true,
   },
-  "POST /api/v1/time-entries/:id/breaks": mutate({ id: "timeEntry.closed" }),
-  "POST /api/v1/time-entries/:id/clock-out": mutate({ id: "timeEntry.open" }),
-  "POST /api/v1/time-entries/clock-in": mutate(),
+  "POST /api/v1/time-entries/:id/breaks": {
+    // Handler check #31: owner or MANAGER/ADMIN, else 403 "Kein Zugriff". A 15-minute break
+    // inside the closed entry that does not touch the fixture break.
+    ...mutateWith(
+      { id: "timeEntry.closed" },
+      { startTime: "2026-06-15T12:00:00.000Z", endTime: "2026-06-15T12:15:00.000Z" },
+    ),
+    handlerCheck: true,
+  },
+  "PUT /api/v1/time-entries/:id": {
+    // Handler check #34 (+ correction semantics: a manager editing someone else's entry must give
+    // a reason, which this body carries).
+    ...mutateWith({ id: "timeEntry.closed" }, { note: "Matrix Notiz", reason: "Matrix Korrektur" }),
+    handlerCheck: true,
+  },
+  "PATCH /api/v1/time-entries/:id/break-status": {
+    // Handler check #36.
+    ...mutateWith({ id: "timeEntry.closed" }, { action: "confirm" }),
+    handlerCheck: true,
+  },
+  "PATCH /api/v1/time-entries/:id/revalidate": mutate({ id: "timeEntry.invalid" }),
+  "POST /api/v1/time-entries/:id/clock-out": mutateWith({ id: "timeEntry.open" }, {}),
+  "DELETE /api/v1/time-entries/:id": {
+    // Handler check #35.
+    ...mutateWith({ id: "timeEntry.closed" }, { reason: "Matrix Löschung" }),
+    handlerCheck: true,
+  },
+
+  // vocational school (Berufsschule)
   "POST /api/v1/vocational-school/generate": mutate(),
   "POST /api/v1/vocational-school/manual-insert": mutate(),
   "POST /api/v1/vocational-school/retroactive-apply": mutate(),
-  "PUT /api/v1/employees/:id/availability": mutate({ id: "employee" }),
-  "PUT /api/v1/employees/:id/shift-patterns": mutate({ id: "employee" }),
-  "PUT /api/v1/employees/:id/vocational-school-pattern": mutate({ id: "employee" }),
-  "PUT /api/v1/integrations/phorest/config": mutate(),
-  "PUT /api/v1/me/availability": mutate(),
-  "PUT /api/v1/me/preferences": mutate(),
-  "PUT /api/v1/me/release-notes-seen": mutate(),
-  "PUT /api/v1/settings/leave-types/:id": mutate({ id: "leaveType.VACATION" }),
-  "PUT /api/v1/settings/security": mutate(),
-  "PUT /api/v1/settings/smtp": mutate(),
-  "PUT /api/v1/settings/vacation/:employeeId": mutate({ employeeId: "employee" }),
-  "PUT /api/v1/settings/work": mutate(),
-  "PUT /api/v1/settings/work/:employeeId": mutate({ employeeId: "employee" }),
-  "PUT /api/v1/shifts/:id": mutate({ id: "shift" }),
-  "PUT /api/v1/shifts/coverage-rules/:id": mutate({ id: "coverageRule" }),
-  "PUT /api/v1/shifts/templates/:id": mutate({ id: "shiftTemplate" }),
-  "PUT /api/v1/special-leave/rules/:id": mutate({ id: "specialLeaveRule" }),
-  "PUT /api/v1/time-entries/:id": mutate({ id: "timeEntry.closed" }),
+  "DELETE /api/v1/vocational-school/:absenceId": mutate({ absenceId: "vocationalSchool.absence" }),
+
+  // own settings (self-service)
+  "PUT /api/v1/me/availability": mutateWith(undefined, {
+    entries: [{ dayOfWeek: 2, status: "PREFERRED", validFrom: "2026-07-01" }],
+  }),
+  "PUT /api/v1/me/preferences": mutateWith(undefined, { theme: "wald" }),
+  "PUT /api/v1/me/release-notes-seen": mutateWith(undefined, { version: "1.11.1" }),
+
+  // avatars: upload (sharp needs a real image) before the delete
+  "POST /api/v1/avatars/:employeeId": {
+    phase: "mutate",
+    params: { employeeId: "employee" },
+    // Handler check #18 (before the tenant 404): self or MANAGER/ADMIN, else 403 "Keine
+    // Berechtigung".
+    variants: [
+      {
+        name: "own",
+        target: "own",
+        multipart: { filename: "avatar.png", contentType: "image/png", content: "png" },
+      },
+      {
+        name: "foreign",
+        target: "foreign",
+        multipart: { filename: "avatar.png", contentType: "image/png", content: "png" },
+      },
+    ],
+    handlerCheck: true,
+  },
+  "DELETE /api/v1/avatars/:employeeId": {
+    // Handler check #19.
+    ...mutate({ employeeId: "employee" }),
+    handlerCheck: true,
+  },
 
   // ── self-destructive (run last within an actor, Pitfall 4) ───────────────────────────────────
-  "DELETE /api/v1/employees/:id": selfDestructive({ id: "employee" }),
-  "DELETE /api/v1/employees/:id/hard-delete": selfDestructive({ id: "employee" }),
+  // Order: credential-revoking cells first (none exists under these bodies — the only credential
+  // a cell could revoke is an API key, and `DELETE /api-keys/:id` targets the tenant's second
+  // key), then deactivating the own person, then the hard-delete pair, then anonymizing the own
+  // person last. The anchor admin keeps the 74b lockout guard from tripping for the ADMIN actors.
   "PATCH /api/v1/employees/:id/deactivate": selfDestructive({ id: "employee" }),
+  "POST /api/v1/employees/:id/hard-delete/authorize": {
+    ...selfDestructive({ id: "employee" }),
+    // own/foreign are not anonymized (409); `hardDeleteTarget` is an anonymized former employee
+    // outside the two-year floor, which an ADMIN may authorize.
+    variants: [
+      { name: "own", target: "own" },
+      { name: "foreign", target: "foreign" },
+      {
+        name: "hardDeleteTarget",
+        target: "tenant",
+        params: { id: "hardDeleteTarget.employee" },
+      },
+    ],
+  },
+  "DELETE /api/v1/employees/:id/hard-delete": {
+    ...selfDestructive({ id: "employee" }),
+    // AC-75-17 lock cell `fourEyes`: a force-delete inside the retention window needs an
+    // authorization by a DIFFERENT admin; the only authorizations of the target are the actor's
+    // own (fixture + the cell above), so an ADMIN is refused with the 4-eyes message.
+    variants: [
+      { name: "own", target: "own" },
+      { name: "foreign", target: "foreign" },
+      {
+        name: "fourEyes",
+        target: "tenant",
+        params: { id: "hardDeleteTarget.employee" },
+        body: { forceDelete: true },
+      },
+    ],
+  },
+  "DELETE /api/v1/employees/:id": selfDestructive({ id: "employee" }),
 };

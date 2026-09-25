@@ -106,6 +106,10 @@ const DAY = {
   approvedLeaveEnd: "2026-06-23",
   pendingLeaveStart: "2026-07-06",
   pendingLeaveEnd: "2026-07-08",
+  cancellationLeaveStart: "2026-08-17",
+  cancellationLeaveEnd: "2026-08-18",
+  withdrawableLeaveStart: "2026-08-24",
+  withdrawableLeaveEnd: "2026-08-25",
   section9VacationStart: "2026-05-11",
   section9VacationEnd: "2026-05-15",
   section9Sick: "2026-05-13",
@@ -150,9 +154,21 @@ interface TenantContext {
  * ids under `<prefix>.user`, `<prefix>.employee`, `<prefix>.workSchedule`, `<prefix>.overtimeAccount`. */
 async function createPerson(
   t: TenantContext,
-  opts: { prefix: string; role: Role; lastName: string; anonymized?: boolean },
+  opts: {
+    prefix: string;
+    role: Role;
+    lastName: string;
+    anonymized?: boolean;
+    /** Distinguishes a second anonymized person's employee number (unique per tenant). */
+    anonymizedTag?: string;
+    hireDate?: Date;
+    exitDate?: Date;
+  },
 ): Promise<PersonRows> {
   const prisma = t.app.prisma;
+  const anonymizedNumber = opts.anonymizedTag
+    ? `GELÖSCHT-${opts.anonymizedTag}-${t.tenantSlug}`
+    : `GELÖSCHT-${t.tenantSlug}`;
   const user = await prisma.user.create({
     data: {
       email: opts.anonymized
@@ -168,11 +184,12 @@ async function createPerson(
       tenantId: t.tenantId,
       userId: user.id,
       employeeNumber: opts.anonymized
-        ? `GELÖSCHT-${t.tenantSlug}`
+        ? anonymizedNumber
         : `${opts.prefix.toUpperCase()}-${t.tenantSlug}`,
       firstName: opts.anonymized ? "Gelöscht" : "Matrix",
-      lastName: opts.anonymized ? `GELÖSCHT-${t.tenantSlug}` : opts.lastName,
-      hireDate: new Date("2024-01-01"),
+      lastName: opts.anonymized ? anonymizedNumber : opts.lastName,
+      hireDate: opts.hireDate ?? new Date("2024-01-01"),
+      exitDate: opts.exitDate,
     },
   });
   const schedule = await prisma.workSchedule.create({
@@ -497,6 +514,19 @@ async function createPersonEntities(
     },
   });
   reg("leaveRequest.pending", pending.id);
+  // A second PENDING request, the target of the withdraw cell (`DELETE /leave/requests/:id`), so
+  // the review cells keep `leaveRequest.pending` to themselves.
+  const withdrawable = await prisma.leaveRequest.create({
+    data: {
+      employeeId,
+      leaveTypeId: ids.vacationTypeId,
+      status: "PENDING",
+      days: 2,
+      startDate: day(DAY.withdrawableLeaveStart),
+      endDate: day(DAY.withdrawableLeaveEnd),
+    },
+  });
+  reg("leaveRequest.withdrawable", withdrawable.id);
   const approved = await prisma.leaveRequest.create({
     data: {
       employeeId,
@@ -661,7 +691,20 @@ async function createPersonEntities(
     },
   });
   reg("wifiDevice", device.id);
-  registry.register(`${prefix}.presenceDevice.mac`, device.mac);
+  // A second device for the admin presence-source routes (`/admin/presence-sources/:id/devices/
+  // :mac`), so the admin's device delete and the person's own self-service delete
+  // (`/employees/me/wifi/devices/:id`) never compete for the same row.
+  const adminDevice = await prisma.presenceDevice.create({
+    data: {
+      tenantId,
+      employeeId,
+      mac: `02:00:00:00:01:${macSuffix}`,
+      label: "Matrix Geraet Admin",
+      addedByUserId: person.userId,
+    },
+  });
+  reg("presenceDevice", adminDevice.id);
+  registry.register(`${prefix}.presenceDevice.mac`, adminDevice.mac);
 
   const assignment = await prisma.employeeSalonAssignment.create({
     data: {
@@ -674,6 +717,67 @@ async function createPersonEntities(
     },
   });
   reg("salonAssignment", assignment.id);
+}
+
+/**
+ * The rows the AC-75-17 lock cells need, which name the ACTOR and so can only be built once the
+ * actor exists (D-13: the locks must stay part of the recorded contract):
+ *   - `foreign.leaveRequest.cancellationByActor` — a foreign person's CANCELLATION_REQUESTED
+ *     request whose cancellation the actor requested (`cancellationRequestedBy` = the actor's
+ *     subject), approved originally by the anchor admin. Approving that cancellation must be
+ *     refused by the 4-eyes rule (the requester of a cancellation may not approve it).
+ *   - `tenant.hardDeleteTarget.*` — an anonymized former employee who left in 2023: outside the
+ *     two-year floor of § 16 Abs. 2 ArbZG, inside the ten-year retention, so a force-delete needs
+ *     a second admin's authorization (4-eyes). The only authorization on record is the actor's
+ *     own (`tenant.hardDeleteTarget.authorization`, user actors only — `AuditLog.userId` is a
+ *     foreign key onto User, which an API key is not).
+ */
+async function createActorBoundLockRows(
+  t: TenantContext,
+  opts: {
+    actorSubject: string;
+    actorUserId: string | undefined;
+    foreignEmployeeId: string;
+    vacationTypeId: string;
+  },
+): Promise<void> {
+  const prisma = t.app.prisma;
+  const cancellation = await prisma.leaveRequest.create({
+    data: {
+      employeeId: opts.foreignEmployeeId,
+      leaveTypeId: opts.vacationTypeId,
+      status: "CANCELLATION_REQUESTED",
+      days: 2,
+      startDate: day(DAY.cancellationLeaveStart),
+      endDate: day(DAY.cancellationLeaveEnd),
+      reviewedBy: t.anchorUserId,
+      reviewedAt: new Date("2026-06-02T09:00:00.000Z"),
+      cancellationRequestedBy: opts.actorSubject,
+    },
+  });
+  t.registry.register("foreign.leaveRequest.cancellationByActor", cancellation.id);
+
+  const target = await createPerson(t, {
+    prefix: "tenant.hardDeleteTarget",
+    role: "EMPLOYEE",
+    lastName: "",
+    anonymized: true,
+    anonymizedTag: "ALT",
+    hireDate: new Date("2015-01-01"),
+    exitDate: new Date("2023-03-31"),
+  });
+  if (opts.actorUserId !== undefined) {
+    const authorization = await prisma.auditLog.create({
+      data: {
+        userId: opts.actorUserId,
+        action: "HARD_DELETE_AUTHORIZED",
+        entity: "Employee",
+        entityId: target.employeeId,
+        newValue: { authorizedBy: opts.actorUserId, matrix: true },
+      },
+    });
+    t.registry.register("tenant.hardDeleteTarget.authorization", authorization.id);
+  }
 }
 
 /**
@@ -815,6 +919,14 @@ export async function buildActorTenant(
     actorUserId = own.userId;
   }
 
+  await createActorBoundLockRows(t, {
+    // The subject the API writes as `req.user.sub` for this actor.
+    actorSubject: actorUserId ?? `apikey:${registry.idOf("actor.apiKey")}`,
+    actorUserId,
+    foreignEmployeeId: foreign.employeeId,
+    vacationTypeId: seed.vacationType.id,
+  });
+
   return { actor, tenantId, authorization, actorUserId, registry };
 }
 
@@ -852,4 +964,6 @@ export async function cleanupMatrixExtras(app: FastifyInstance, tenantId: string
   await prisma.retroEntryRequest.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.openingBalance.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.presenceDevice.deleteMany({ where: { tenantId } });
+  // Written by the mutating cells (plan 75b-03): the school-holiday refresh.
+  await prisma.schoolHolidayPeriod.deleteMany({ where: { tenantId } });
 }

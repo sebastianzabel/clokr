@@ -13,6 +13,12 @@
  *     `<new>` (rows the request itself or the migration created);
  *   - `contentType` for non-JSON bodies;
  *   - route-specific `projections` where access decides masking rather than rows.
+ * A route's `statusOnly` actors get the status alone (a filed, pre-existing defect makes their body
+ * depend on other tenants — see `matrix-config.ts`).
+ *
+ * A request carries the variant's JSON `body` (with `$<label>` placeholders resolved) or a
+ * hand-built `multipart` upload with a fixed boundary and fixed file bytes; a variant's own
+ * `params` override the route's path-parameter kinds.
  *
  * Every request carries a UNIQUE `remoteAddress` and no X-Forwarded-For header: the global
  * `@fastify/rate-limit` store is keyed by `req.ip` (`trustProxy: true` resolves it to the inject
@@ -23,6 +29,7 @@ import type { ActorFixture, LabelRegistry } from "./fixture";
 import {
   API_KEY_ACTORS,
   TENANT_LEVEL_KINDS,
+  type MultipartSpec,
   type ProjectionName,
   type RouteSpec,
   type VariantSpec,
@@ -185,6 +192,33 @@ function project(route: string, name: ProjectionName, body: unknown, ctx: LabelC
     .sort();
 }
 
+/** The fixed boundary of every multipart request (deterministic payloads). */
+const MULTIPART_BOUNDARY = "----clokr-neutrality-matrix";
+
+/** A 1x1 PNG — the smallest image `sharp` accepts, for the avatar upload. */
+const PNG_1X1 = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+/** A minimal PDF header — the § 9 upload checks the declared type and the size, not the file. */
+const PDF_MINIMAL = Buffer.from("%PDF-1.4\n% neutrality matrix\n%%EOF\n", "utf8");
+
+/** One `file` part with the given name, type and fixed content. */
+function multipartPayload(spec: MultipartSpec): Buffer {
+  const content = spec.content === "png" ? PNG_1X1 : PDF_MINIMAL;
+  return Buffer.concat([
+    Buffer.from(
+      `--${MULTIPART_BOUNDARY}\r\n` +
+        `Content-Disposition: form-data; name="file"; filename="${spec.filename}"\r\n` +
+        `Content-Type: ${spec.contentType}\r\n\r\n`,
+      "utf8",
+    ),
+    content,
+    Buffer.from(`\r\n--${MULTIPART_BOUNDARY}--\r\n`, "utf8"),
+  ]);
+}
+
 export interface RunCellArgs {
   app: FastifyInstance;
   ctx: LabelContext;
@@ -201,7 +235,7 @@ export async function runCell(args: RunCellArgs): Promise<CellResult> {
 
   let url = template;
   for (const param of pathParams(route)) {
-    const kind = spec.params?.[param];
+    const kind = variant.params?.[param] ?? spec.params?.[param];
     if (kind === undefined) throw new Error(`cell-runner: ${route} has no kind for ":${param}"`);
     url = url.replace(`:${param}`, registry.idOf(paramLabel(kind, variant)));
   }
@@ -211,8 +245,14 @@ export async function runCell(args: RunCellArgs): Promise<CellResult> {
   }
 
   const headers: Record<string, string> = { authorization: ctx.self.authorization };
-  let payload: string | undefined;
-  if (variant.body !== undefined) {
+  let payload: string | Buffer | undefined;
+  if (variant.multipart !== undefined) {
+    if (variant.body !== undefined) {
+      throw new Error(`cell-runner: ${route} [${variant.name}] has both a body and a multipart`);
+    }
+    headers["content-type"] = `multipart/form-data; boundary=${MULTIPART_BOUNDARY}`;
+    payload = multipartPayload(variant.multipart);
+  } else if (variant.body !== undefined) {
     headers["content-type"] = "application/json";
     payload = JSON.stringify(resolvePlaceholders(registry, variant.body));
   }
@@ -226,6 +266,7 @@ export async function runCell(args: RunCellArgs): Promise<CellResult> {
   });
 
   const result: CellResult = { status: res.statusCode };
+  if (spec.statusOnly?.actors.includes(ctx.self.actor)) return result;
   const contentType = String(res.headers["content-type"] ?? "");
   const isJson = contentType.includes("application/json");
   const ids: string[] = [];
