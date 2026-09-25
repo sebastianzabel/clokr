@@ -43,6 +43,11 @@ const timeEntryRowSchema = z.object({
   endTime: z.string(),
   breakMinutes: z.coerce.number().min(0).default(0),
   note: z.string().optional(),
+  // Phase 68b (issue #68), D-11: an optional per-row salon column. The value is the salon's
+  // UUID, never a salon name (CLAUDE.md: no display string as a control value) — resolved
+  // through `resolveEntrySalon`, so a foreign and a nonexistent id produce the same per-row
+  // text. Missing/empty column falls back to the derived salon (salonForDay -> default).
+  salonId: z.string().uuid().optional(),
 });
 
 function parseDate(str: string): string {
@@ -267,6 +272,8 @@ export async function importRoutes(app: FastifyInstance) {
             endTime: raw.endTime || raw.end || raw.Ende || raw.bis || raw.Bis || "",
             breakMinutes: raw.breakMinutes || raw.pause || raw.Pause || "0",
             note: raw.note || raw.notiz || raw.Notiz || "",
+            // Phase 68b (issue #68), D-11: an empty cell falls back to the derived salon.
+            salonId: raw.salonId || raw["Salon-ID"] || undefined,
           });
 
           const employeeId = empMap.get(data.employeeNumber);
@@ -301,12 +308,13 @@ export async function importRoutes(app: FastifyInstance) {
 
           // Phase 68b (issue #68), D-11: resolve the row's salon the same way every other
           // TimeEntry writer does. A non-ok result throws so the existing per-row catch below
-          // reports the German error text and the import loop continues. No explicit
-          // `Salon-ID` CSV column yet (plan 02 adds it).
+          // reports the German error text and the import loop continues. An explicit
+          // `Salon-ID`/`salonId` CSV column is honoured; without it, the derived salon applies.
           const salonResolution = await resolveEntrySalon(app.prisma, {
             tenantId: req.user.tenantId,
             employeeId,
             startTime,
+            explicitSalonId: data.salonId,
           });
           if (!salonResolution.ok) throw new Error(salonResolution.body.error);
 
