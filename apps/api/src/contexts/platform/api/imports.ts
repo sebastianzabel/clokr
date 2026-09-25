@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { Prisma } from "@clokr/db";
 import { fromZonedTime } from "date-fns-tz";
-import { requireRole } from "../../../middleware/auth";
+import { requirePermission } from "../request-permissions";
 // eslint-disable-next-line no-restricted-imports -- E-2: the importer writes directly into time-tracking and working-time-account. Disappears in Block 2 (#102-#104). ADR 0001 Eintrag H.
 import {
   updateOvertimeAccount,
@@ -79,7 +79,7 @@ export async function importRoutes(app: FastifyInstance) {
   // POST /employees — bulk import employees from CSV
   app.post("/employees", {
     schema: { tags: ["Import"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:import:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { csv } = z.object({ csv: z.string() }).parse(req.body);
       const rows = parseCsv(csv);
@@ -233,7 +233,7 @@ export async function importRoutes(app: FastifyInstance) {
   // POST /time-entries — bulk import time entries from CSV
   app.post("/time-entries", {
     schema: { tags: ["Import"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("time-entry:import:ZUGEWIESEN"),
     handler: async (req, _reply) => {
       const { csv } = z.object({ csv: z.string() }).parse(req.body);
       const rows = parseCsv(csv);

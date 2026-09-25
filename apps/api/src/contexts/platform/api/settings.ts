@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireAuth, requireRole } from "../../../middleware/auth";
+import { requireAuth } from "../../../middleware/auth";
+import { requirePermission } from "../request-permissions";
 import { FederalState, type TenantConfig } from "@clokr/db";
 import { encrypt } from "../../../utils/crypto";
 // Phase 64b (issue #64, D-16): mirrors a storeHours change into the tenant's sole active salon.
@@ -643,7 +644,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   // PUT /api/v1/settings/work  — globale Vorgaben speichern (nur Admin)
   app.put("/work", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("tenant-settings:update:ZUGEWIESEN"),
     handler: async (req) => {
       const body = tenantConfigSchema.parse(req.body);
       const tenantId = req.user.tenantId;
@@ -988,7 +989,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   // PUT /api/v1/settings/work/:employeeId  — Arbeitszeit eines Mitarbeiters setzen
   app.put("/work/:employeeId", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("contract:update:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const access = accessContextFromRequest(req);
       const { employeeId } = req.params as { employeeId: string };
@@ -1299,7 +1300,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   // GET /api/v1/settings/smtp
   app.get("/smtp", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("tenant-settings:read:ZUGEWIESEN"),
     handler: async (req) => {
       const tenantId = req.user.tenantId;
       const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
@@ -1318,7 +1319,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   // PUT /api/v1/settings/smtp
   app.put("/smtp", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("tenant-settings:update:ZUGEWIESEN"),
     handler: async (req) => {
       const smtpSchema = z.object({
         smtpHost: z.string().min(1),
@@ -1378,7 +1379,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   // POST /api/v1/settings/smtp/test
   app.post("/smtp/test", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("tenant-settings:update:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { email } = z.object({ email: z.string().email() }).parse(req.body);
       try {
@@ -1394,7 +1395,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   // GET /api/v1/settings/security
   app.get("/security", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("tenant-settings:read:ZUGEWIESEN"),
     handler: async (req) => {
       const tenantId = req.user.tenantId;
       const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
@@ -1405,7 +1406,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   // PUT /api/v1/settings/security
   app.put("/security", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("tenant-settings:update:ZUGEWIESEN"),
     handler: async (req) => {
       const body = securitySettingsSchema.parse(req.body);
       const tenantId = req.user.tenantId;
@@ -1436,7 +1437,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   // GET /api/v1/settings/work/:employeeId/history  — alle Schedule-Versionen eines Mitarbeiters
   app.get("/work/:employeeId/history", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("contract:read:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { employeeId } = req.params as { employeeId: string };
 
@@ -1471,7 +1472,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   // GET /api/v1/settings/employees  — alle Mitarbeiter mit ihren Arbeitszeitmodellen
   app.get("/employees", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("employee:read:ZUGEWIESEN"),
     handler: async (req) => {
       const tenantId = req.user.tenantId;
 

@@ -3,7 +3,8 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto, { createHash } from "crypto";
 import { Prisma } from "@clokr/db";
-import { requireAuth, requireRole } from "../../../middleware/auth";
+import { requireAuth } from "../../../middleware/auth";
+import { requirePermission } from "../request-permissions";
 import { validatePassword, loadPasswordPolicy } from "../password-policy";
 // eslint-disable-next-line no-restricted-imports -- E-4: creating an employee computes the pro-rata leave entitlement as a side effect. Disappears in Block 2 via employee-created/employee-changed events. ADR 0001 Eintrag H.
 import { calculateProRataVacation } from "../../absence/vacation-calc";
@@ -256,7 +257,7 @@ const updateEmployeeSchema = z.object({
     .nullable()
     .optional(),
   // Phase 76.7 (D-11, EMP-V19-01) — § 18 ArbZG-Befreiung. ADMIN-only (route
-  // already gated by requireRole("ADMIN")). Boolean — null is NOT a valid value.
+  // already gated by employee:update:ZUGEWIESEN). Boolean — null is NOT a valid value.
   // undefined = no change. Audit row SET_TIME_TRACKING_EXEMPT fires only on
   // actual value change (see PATCH handler below).
   isTimeTrackingExempt: z.boolean().optional(),
@@ -314,7 +315,7 @@ export async function employeeRoutes(app: FastifyInstance) {
   // GET /api/v1/employees
   app.get("/", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("employee:read:ZUGEWIESEN"),
     handler: async (req) => {
       // v1.8.8 — anonymized rows are hidden by default (team picker etc. must stay clean).
       // ADMINs can opt in via ?includeAnonymized=true so the admin employee list can surface
@@ -389,7 +390,7 @@ export async function employeeRoutes(app: FastifyInstance) {
   // POST /api/v1/employees — Anlegen + Einladungsmail
   app.post("/", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:create:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const body = createEmployeeSchema.parse(req.body);
 
@@ -640,7 +641,7 @@ export async function employeeRoutes(app: FastifyInstance) {
   // PATCH /api/v1/employees/:id — Profil aktualisieren
   app.patch("/:id", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:update:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const body = updateEmployeeSchema.parse(req.body);
@@ -908,7 +909,7 @@ export async function employeeRoutes(app: FastifyInstance) {
   // PATCH /api/v1/employees/:id/unlock — Admin entsperrt gesperrten Account
   app.patch("/:id/unlock", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:manage-access:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
       const employee = await app.prisma.employee.findUnique({
@@ -947,7 +948,7 @@ export async function employeeRoutes(app: FastifyInstance) {
   // PATCH /api/v1/employees/:id/deactivate
   app.patch("/:id/deactivate", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:manage-access:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const { exitDate } = z.object({ exitDate: z.string().optional() }).parse(req.body ?? {});
@@ -1022,7 +1023,7 @@ export async function employeeRoutes(app: FastifyInstance) {
   // PATCH /api/v1/employees/:id/reactivate
   app.patch("/:id/reactivate", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:manage-access:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
 
@@ -1083,7 +1084,7 @@ export async function employeeRoutes(app: FastifyInstance) {
   // POST /api/v1/employees/:id/resend-invitation
   app.post("/:id/resend-invitation", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:manage-access:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
 
@@ -1143,7 +1144,7 @@ export async function employeeRoutes(app: FastifyInstance) {
   // Urlaubsanträge, Salden) bleiben für die gesetzlichen Aufbewahrungsfristen erhalten.
   app.delete("/:id", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:anonymize:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
 
@@ -1254,7 +1255,7 @@ export async function employeeRoutes(app: FastifyInstance) {
   // checks for a valid row by a DIFFERENT admin before proceeding when forceDelete=true inside the window.
   app.post("/:id/hard-delete/authorize", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:anonymize:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
 
@@ -1285,7 +1286,7 @@ export async function employeeRoutes(app: FastifyInstance) {
 
   app.delete("/:id/hard-delete", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:anonymize:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const { forceDelete } = forceDeleteBodySchema.parse(req.body ?? {}) ?? {};
