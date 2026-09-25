@@ -219,6 +219,31 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
 - API POST rejects with 409 if entry already exists for employee+date
 - **Every entry carries a required `salonId`** (FK onto `Salon`, `onDelete: Restrict`, Phase 68b / issue #68), decided by `resolveEntrySalon()` in `apps/api/src/contexts/time-tracking/entry-salon.ts` — the only place this rule lives: an explicit, active salon of the same tenant on manual entries, corrections, Zeitnachträge and the CSV import (400 `SALON_INACTIVE` when deactivated, 404 indistinguishable for a foreign or unknown id); otherwise `salonForDay()`, then the tenant's default salon, 409 `NO_ACTIVE_SALON` if none exists. The clock paths (NFC/MOBILE/WIFI) take no salon input until #87. `PUT` may change the salon (never on a locked entry, never re-derived from a changed date). The salon hangs on the entry, not the day (#70).
 
+## Public Holidays
+
+- **The Bundesland lives on the salon (Phase 71b, issue #71).** `Salon.federalState` is required;
+  `Tenant.federalState` is only the default a NEW salon inherits when none is given — no code reads
+  it for statutory holidays. `PublicHoliday` rows are manual additions per salon (`salonId`
+  required, unique `[salonId, date]`); statutory holidays are computed, never stored.
+- **One resolution, in the Unterbau:** `holidaysAtWorkLocation()` / `holidaysForSalon()` in
+  `apps/api/src/contexts/platform/facade/holiday-resolution.ts` are the ONLY place a holiday set is
+  built. A holiday applies at the work location of that day (§ 2 EFZG): the salon of the employee's
+  closed work entry on that day, else `salonForDay()`, else the tenant's default salon. Callers pass
+  the `getWorkedEntriesInRange()` rows of their range — the Unterbau never reads `TimeEntry`. No
+  active salon where one is needed → it throws (fail-closed).
+- Outside `contexts/platform/` no production code computes holidays itself or reads `PublicHoliday`
+  directly — `apps/api/src/__tests__/holiday-resolution-boundary.test.ts` fails on it, comments
+  included.
+- `Salon.federalState` is changeable only while no `TimeEntry` (soft-deleted ones included) and no
+  salon assignment references the salon — else 409 `FEDERAL_STATE_IN_USE`. A move is a new salon.
+- School holidays (`SchoolHolidayPeriod`, Berufsschule `federalStateOverride`) and the
+  Christmas-Eve / New-Year's-Eve company rules stay tenant-wide.
+- `GET /api/v1/holidays` never requires a salon (D-09, revised 2026-09-25): without `salonId` it
+  returns the holidays of ALL active salons of the tenant, each item tagged with its `salonId`;
+  with `salonId` only that salon (a foreign or unknown id gets the identical 404, T-100-09).
+  Writes (`POST /api/v1/holidays`) still require `salonId` when the tenant has more than one active
+  salon — 400 `SALON_REQUIRED` otherwise.
+
 ## ArbZG (Arbeitszeitgesetz) Rules
 
 These rules MUST be followed when implementing or modifying ArbZG compliance checks:
