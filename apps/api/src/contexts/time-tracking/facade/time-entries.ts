@@ -125,6 +125,11 @@ export async function getValidWorkedEntriesInRange(
  * per-month gap-readiness re-check, and `dashboard.ts`'s "heute"/"woche" worked-minutes cards (see
  * the module header for why `todayEntries` fits this shape despite its pre-facade `where` lacking
  * the `endTime` clause — a proven no-op there, not an approximation).
+ *
+ * Phase 71b (issue #71): `salonId` is selected additively — no existing reader is affected — so
+ * callers can hand these rows to the Unterbau's central holiday resolver
+ * (`contexts/platform`'s `holidaysAtWorkLocation`) as the per-day work location, without the
+ * Unterbau ever reading `TimeEntry` itself.
  */
 export async function getWorkedEntriesInRange(
   db: Prisma.TransactionClient,
@@ -149,6 +154,7 @@ export async function getWorkedEntriesInRange(
       breakMinutes: true,
       breakStatus: true,
       isLocked: true,
+      salonId: true,
     },
   });
 }

@@ -459,7 +459,15 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // (Phase 67b, 111): 325's one new function (findDefaultSalon in `salons.ts`) and 67b's 14 live in
   // disjoint functions, so the counts add — 97 + 1 (325) + 14 (67b) = 112, re-measured on the
   // merged tree.
-  it("the real tree has exactly 112 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  //
+  // 112 -> 115 in Phase 71b Plan 02 (Issue #71): `contexts/platform/facade/holiday-resolution.ts`
+  // added (matches the `contexts/*/facade/**/*.ts` glob directly, no KNOWN_FACADE_FILES entry
+  // needed) — 2 new exported functions (holidaysForSalon, holidaysAtWorkLocation), and
+  // `salon-assignments.ts` (same file already in the list above) gained 1 more (salonsForDays) —
+  // all three pass F1/F2/F3 directly (`db: Prisma.TransactionClient` first, every `*Id`/`*Ids`
+  // parameter — `salonId`, `employeeIds` — paired with a required `tenantId`), no new exception
+  // needed.
+  it("the real tree has exactly 115 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -469,6 +477,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
         "apps/api/src/contexts/platform/facade/salons.ts",
         "apps/api/src/contexts/platform/facade/salon-assignments.ts",
         "apps/api/src/contexts/platform/facade/salon-assignment-changes.ts",
+        "apps/api/src/contexts/platform/facade/holiday-resolution.ts",
         "apps/api/src/contexts/scheduling/facade/shifts.ts",
         "apps/api/src/contexts/scheduling/facade/availability.ts",
         "apps/api/src/contexts/time-tracking/facade/presence-devices.ts",
@@ -489,7 +498,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(112);
+    expect(functions).toHaveLength(115);
 
     const rawExceptions = JSON.parse(
       readFileSync(

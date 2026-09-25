@@ -37,6 +37,8 @@
  * and still imports both, for its actual anonymisation functions (E-5, DSGVO Art. 17) — ADR 0001
  * Eintrag H explains why anonymize.ts stays in the Unterbau rather than moving to composition/.
  */
+// Kept re-exported for now — plan 07 of Phase 71b removes this once every reader uses the
+// resolver below (Phase 71b, issue #71, D-04/D-05).
 export { getHolidays, STATE_MAP } from "./holidays";
 // Phase 292 (#292): the code STATE_MAP maps into. Declared public so a caller that carries a
 // state code between two platform calls (month-gap-check.ts) can name its type instead of
@@ -119,3 +121,13 @@ export type {
   RoleAssignmentTarget,
   NormalizedRoleAssignmentScope,
 } from "./role-assignment";
+// Phase 71b (issue #71, D-04): the central holiday resolution — § 2 EFZG, work location, not a
+// single tenant-wide federal state. After plan 07 of this phase rewires every one of the 13
+// existing readers onto it, this becomes the ONLY public holiday surface (the `getHolidays`/
+// `STATE_MAP` re-export above is removed at that point).
+export { holidaysForSalon, holidaysAtWorkLocation } from "./facade/holiday-resolution";
+export type {
+  SalonHoliday,
+  WorkLocationEntry,
+  HolidaysByEmployee,
+} from "./facade/holiday-resolution";

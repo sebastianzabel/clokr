@@ -88,6 +88,18 @@ export function isVoided(row: AssignmentPeriod): boolean {
 }
 
 /**
+ * Phase 71b (issue #71): the Monday-based weekday (0 = Monday … 6 = Sunday) of a CALENDAR day
+ * itself — timezone-free, unlike {@link mondayBasedWeekday} (which resolves the weekday of an
+ * INSTANT in a given timezone). A calendar date's day of the week never depends on a timezone once
+ * the date is fixed, so this reads the UTC-midnight `Date` {@link dayToDate} produces and converts
+ * `getUTCDay()` (0 = Sunday … 6 = Saturday) into the same 0 = Monday … 6 = Sunday encoding every
+ * other helper in this module uses.
+ */
+export function weekdayOfDay(day: CalendarDay): number {
+  return (dayToDate(day).getUTCDay() + 6) % 7;
+}
+
+/**
  * A row is effective on `day` iff `validFrom <= day AND (validUntil IS NULL OR validUntil >= day)`
  * — this is the ONE definition every read/overlap check uses (D-03). A voided row (validUntil <
  * validFrom) can never satisfy this for any day, because no day is both `>= validFrom` and
@@ -197,4 +209,55 @@ export function firstCommonWeekday(a: number[], b: number[]): number | null {
   const common = a.filter((day) => bSet.has(day));
   if (common.length === 0) return null;
   return Math.min(...common);
+}
+
+// ── Phase 71b (issue #71) addition — the ONE per-day salon pick rule (D-04) ──────────────────────
+
+/** The subset of {@link AssignmentRow} {@link pickSalonForDay} needs. */
+export type PickSalonForDayRow = Pick<
+  AssignmentRow,
+  "id" | "salonId" | "kind" | "weekdays" | "validFrom" | "validUntil"
+>;
+
+/** The answer to "which salon does an employee probably work in on this day?" — the shared return
+ * shape of {@link pickSalonForDay}, `salonForDay` (`facade/salon-assignments.ts`) and, per-day, the
+ * batched `salonsForDays`. */
+export interface PickedSalonForDay {
+  salonId: string;
+  kind: "HOME" | "DEPLOYMENT";
+  assignmentId: string;
+}
+
+/**
+ * D-16/D-04: the ONE statement of the per-day salon rule. Both `salonForDay` and `salonsForDays`
+ * (`facade/salon-assignments.ts`) call this — never re-implement it — so the single-employee and
+ * the batched form can never drift apart (a parity test in `holiday-resolution.test.ts` pins this).
+ *
+ * `rows` must already be the FULL set of one employee's assignment rows, in `validFrom asc, id asc`
+ * order — this function does not sort or filter by employee, it only picks among what it is given.
+ * Returns the first effective DEPLOYMENT whose `weekdays` contain the weekday of `day` itself
+ * ({@link weekdayOfDay} — timezone-free, a calendar date's weekday needs no conversion), else the
+ * first effective HOME row, else `null` (no matching row at all — e.g. a legacy fixture, or a day
+ * with no assignment rows loaded for it).
+ */
+export function pickSalonForDay(
+  rows: readonly PickSalonForDayRow[],
+  day: CalendarDay,
+): PickedSalonForDay | null {
+  const weekday = weekdayOfDay(day);
+  const effective = rows.filter((row) => isEffectiveOn(row, day));
+
+  const deployment = effective.find(
+    (row) => row.kind === "DEPLOYMENT" && row.weekdays.includes(weekday),
+  );
+  if (deployment) {
+    return { salonId: deployment.salonId, kind: "DEPLOYMENT", assignmentId: deployment.id };
+  }
+
+  const home = effective.find((row) => row.kind === "HOME");
+  if (home) {
+    return { salonId: home.salonId, kind: "HOME", assignmentId: home.id };
+  }
+
+  return null;
 }
