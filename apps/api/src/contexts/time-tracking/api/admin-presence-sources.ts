@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash, randomBytes } from "crypto";
-import { requireRole } from "../../../middleware/auth";
+import { requirePermission } from "../../platform";
 import { normalizeMac } from "../normalize-mac";
 
 function hashKey(key: string): string {
@@ -13,7 +13,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
   // IMPORTANT: Registered BEFORE /:id routes to avoid path collision
   app.get("/opted-in", {
     schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("presence-source:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const employees = await app.prisma.employee.findMany({
         where: {
@@ -37,7 +37,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
   // ── GET / — list presence sources for tenant ──────────────────
   app.get("/", {
     schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("presence-source:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const sources = await app.prisma.presenceSource.findMany({
         where: { tenantId: req.user.tenantId, deletedAt: null },
@@ -60,7 +60,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
   // ── POST / — create new presence source ───────────────────────
   app.post("/", {
     schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("presence-source:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const body = z
         .object({
@@ -110,7 +110,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
   // ── PATCH /:id — update name, adapterUrl, adapterSecret, and/or isActive ────
   app.patch("/:id", {
     schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("presence-source:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
       const body = z
@@ -184,7 +184,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
   // ── DELETE /:id — soft delete (deletedAt + isActive=false) ───
   app.delete("/:id", {
     schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("presence-source:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
 
@@ -216,7 +216,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
   // ── GET /:id/devices — proxy live device list from adapter ───
   app.get("/:id/devices", {
     schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("presence-source:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
 
@@ -327,7 +327,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
   // ── POST /:id/devices/:mac/assign — assign MAC to employee ───
   app.post("/:id/devices/:mac/assign", {
     schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("presence-source:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id, mac: rawMac } = z
         .object({ id: z.string().uuid(), mac: z.string() })
@@ -414,7 +414,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
   // ── DELETE /:id/devices/:mac — remove MAC ↔ employee mapping ───
   app.delete("/:id/devices/:mac", {
     schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("presence-source:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id, mac: rawMac } = z
         .object({ id: z.string().uuid(), mac: z.string() })

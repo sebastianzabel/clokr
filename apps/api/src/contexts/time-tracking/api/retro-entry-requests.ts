@@ -1,7 +1,8 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { fromZonedTime } from "date-fns-tz";
-import { requireAuth, requireRole } from "../../../middleware/auth";
+import { requireAuth } from "../../../middleware/auth";
+import { requirePermission } from "../../platform";
 import { checkArbZG, ArbZGWarning } from "../arbzg";
 import { checkJArbSchG } from "../../absence"; // Phase 101B (Issue #101, wave 7)
 import { getTenantTimezone, dateStrInTz, todayInTz } from "../../working-time-account"; // Phase 101B
@@ -173,7 +174,7 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
   // ── GET /  — list (manager-scoped, tenant-isolated) ──────────────────────
   app.get("/", {
     schema: { tags: ["Retro-Anfragen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("retro-request:read:ZUGEWIESEN"),
     handler: async (req) => {
       const user = req.user;
       const { status } = req.query as { status?: string };
