@@ -48,7 +48,13 @@ export interface AccessContext {
   readonly reach: AccessReach;
 }
 
-const API_KEY_SUBJECT_PREFIX = "apikey:";
+/**
+ * The `apikey:<id>` subject prefix `requireAuth` sets on `req.user.sub` for an API-key caller.
+ * Exported so `plugins/audit.ts` (Issue #333) can recognise the same prefix without duplicating
+ * the literal — that plugin is the single place a raw `req.user.sub` is ever written toward
+ * `AuditLog.userId`, so it must know exactly what this module considers an API-key subject.
+ */
+export const API_KEY_SUBJECT_PREFIX = "apikey:";
 
 /**
  * Build the access context of an authenticated request. Throws {@link AccessContextError} when
