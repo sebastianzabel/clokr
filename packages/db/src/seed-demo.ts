@@ -887,6 +887,7 @@ async function main() {
           isLocked: locked,
           lockedAt: locked ? addDays(todayUTC, -1) : null,
           createdBy: emp[handle].userId,
+          salonId: salon.id, // Phase 68b (issue #68): every demo employee's HOME salon
           breaks: {
             create: [
               {
@@ -935,6 +936,7 @@ async function main() {
         type: "WORK",
         source: "NFC",
         createdBy: emp.lena.userId,
+        salonId: salon.id, // Phase 68b (issue #68): every demo employee's HOME salon
       },
     });
     bump("timeEntry");

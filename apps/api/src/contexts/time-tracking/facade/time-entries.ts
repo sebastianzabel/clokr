@@ -443,6 +443,11 @@ export type ImportedTimeEntryData = {
   endTime: Date;
   breakMinutes: number;
   note: string | null;
+  /**
+   * Phase 68b (issue #68), D-11: the caller resolves this through `resolveEntrySalon` for the
+   * same tenant as `employeeId`, so the entry's salon and employee share a tenant by construction.
+   */
+  salonId: string;
 };
 
 /**
@@ -467,6 +472,7 @@ export async function createImportedTimeEntry(
       note: data.note,
       type: "WORK",
       source: "MANUAL",
+      salonId: data.salonId, // Phase 68b (issue #68), D-11
     },
   });
 }

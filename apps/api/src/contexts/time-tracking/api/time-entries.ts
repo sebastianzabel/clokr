@@ -7,6 +7,7 @@ import { checkArbZG } from "../arbzg";
 import { getEffectiveBreakDuration } from "../break-effective";
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { buildClockOutDebounceMessage } from "../clock-out-debounce-message"; // Phase 307 Plan 02 (D-03/D-05)
+import { resolveEntrySalon } from "../entry-salon"; // Phase 68b (issue #68), D-08/D-10
 import { resolveClockEvent } from "../../../services/clock/resolver";
 import { resolveActor } from "../../../services/clock/audit-actor";
 import type { ClockEvent } from "../../../services/clock/types";
@@ -1062,6 +1063,18 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         }
       }
 
+      // Phase 68b (issue #68), D-08/D-10: resolve the entry's salon BEFORE the grant flip,
+      // the RetroEntryRequest create and the plain create, so a rejection (404/400) leaves zero
+      // state change. Plan 02 adds the explicit `salonId` body field to this same call.
+      const salonResolution = await resolveEntrySalon(app.prisma, {
+        tenantId: user.tenantId,
+        employeeId,
+        startTime: newStart,
+      });
+      if (!salonResolution.ok) {
+        return reply.code(salonResolution.status).send(salonResolution.body);
+      }
+
       // Determine breakMinutes from break slots or body
       let finalBreakMinutes = body.breakMinutes;
       const breakSlots: { startTime: Date; endTime: Date }[] = [];
@@ -1167,6 +1180,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                 source: "CORRECTION", // grant-backed write is always a correction
                 createdBy: user.sub,
                 isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
+                salonId: salonResolution.salonId, // Phase 68b (issue #68), D-08/D-10
                 ...(manualLeave
                   ? invalidReasonFields("LEAVE_CANCELLATION_PENDING")
                   : CLEARED_INVALID_REASON),
@@ -1218,6 +1232,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                 source: "MANUAL",
                 createdBy: user.sub,
                 isInvalid: true,
+                salonId: salonResolution.salonId, // Phase 68b (issue #68), D-08/D-10
                 ...invalidReasonFields("RETRO_APPROVAL_PENDING"),
                 retroRequestId: request.id,
               },
@@ -1247,6 +1262,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               source: "MANUAL",
               createdBy: user.sub,
               isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
+              salonId: salonResolution.salonId, // Phase 68b (issue #68), D-08/D-10
               ...(manualLeave
                 ? invalidReasonFields("LEAVE_CANCELLATION_PENDING")
                 : CLEARED_INVALID_REASON),

@@ -32,6 +32,29 @@ function fatal(message: string): never {
   process.exit(1);
 }
 
+/**
+ * Phase 68b (issue #68), D-08/D-17: reads `employeeId`'s Stammsalon (HOME) row, which
+ * `createDefaultHomeAssignment` guarantees a few lines earlier in this script for every employee
+ * it touches. Demo data has no DEPLOYMENT rows, so HOME is exactly what `salonForDay` would answer
+ * at runtime — reusing it here keeps this script's TimeEntry rows consistent with the production
+ * rule without re-deriving it. Throws a plain English Error naming the employee when the HOME row
+ * is missing (should never happen — this script always calls `createDefaultHomeAssignment` first).
+ */
+async function homeSalonIdFor(
+  prisma: PrismaClient,
+  employeeId: string,
+  employeeLabel: string,
+): Promise<string> {
+  const home = await prisma.employeeSalonAssignment.findFirst({
+    where: { employeeId, kind: "HOME" },
+    select: { salonId: true },
+  });
+  if (!home) {
+    throw new Error(`homeSalonIdFor: ${employeeLabel} (${employeeId}) has no HOME salon row.`);
+  }
+  return home.salonId;
+}
+
 // ── Refusal gate (GH #213) — evaluated at import time, before the pool/client below ever
 // opens a connection or issues a query. Two independent conditions, both required:
 //   1. NODE_ENV must not be "production" — this is a development-only reset tool.
@@ -527,6 +550,7 @@ async function main() {
   // hire date.
   await prisma.employeeSalonAssignment.deleteMany({ where: { employeeId: adminEmp.id } });
   await createDefaultHomeAssignment(prisma, adminEmp.id);
+  const adminSalonId = await homeSalonIdFor(prisma, adminEmp.id, "Admin Clokr");
 
   // Leave entitlement
   await prisma.leaveEntitlement.create({
@@ -567,6 +591,7 @@ async function main() {
         type: "WORK" as const,
         source: "MANUAL" as const,
         createdBy: adminUser.id,
+        salonId: adminSalonId, // Phase 68b (issue #68)
       };
     }),
   });
@@ -604,6 +629,7 @@ async function main() {
     // Stammsalon (HOME) row, from its tenant-local hire day, to the tenant's existing
     // default salon.
     await createDefaultHomeAssignment(prisma, emp.id);
+    const empSalonId = await homeSalonIdFor(prisma, emp.id, `${def.firstName} ${def.lastName}`);
 
     // Work schedule
     await prisma.workSchedule.create({
@@ -703,6 +729,7 @@ async function main() {
             type: "WORK" as const,
             source: "MANUAL" as const,
             createdBy: adminUser.id,
+            salonId: empSalonId, // Phase 68b (issue #68)
           };
         })
         .filter(Boolean) as {
@@ -714,6 +741,7 @@ async function main() {
         type: "WORK";
         source: "MANUAL";
         createdBy: string;
+        salonId: string;
       }[],
     });
 
