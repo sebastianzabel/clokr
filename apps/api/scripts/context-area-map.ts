@@ -156,6 +156,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/request-permissions.ts": "unterbau", // Phase 75b (Issue #75) — request-scoped permission resolver plus requirePermission/requireAnyPermission/hasPermission/permissionReach; reads User/RoleAssignment/AccessRole, all Unterbau models
   "src/contexts/platform/compat-role.ts": "unterbau", // Phase 75b (Issue #75), D-14 — the one compat-role derivation (legacy User.role <-> system roles); reads RoleAssignment/AccessRole, and since Plan 11 writes RoleAssignment/User (fallback materialization, system-role replacement, column write-back) — all Unterbau models
   "src/contexts/platform/role-assignment-audit.ts": "unterbau", // Phase 75b Plan 11 (Issue #75) — shared audit helpers for RoleAssignment writes (moved out of api/role-assignments.ts) plus the compatRole-on-last-row rule (D-29); writes AuditLog only via app.audit, Unterbau models
+  "src/contexts/platform/scope-filter.ts": "unterbau", // Phase 91b (Issue #91), D-07 — the ONE shared module every context's scope check calls (TimeEntry/EmployeeSalonAssignment/Shift/Employee reads on behalf of all four contexts, per its own module docblock); same category as access-context.ts/request-permissions.ts — shared Unterbau substrate, owned by no single context, per ADR 0002
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────

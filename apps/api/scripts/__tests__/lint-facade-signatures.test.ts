@@ -466,7 +466,21 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // recipient holder lookup every one of the 17 recipient sites calls instead of a role predicate
   // — passes F1/F2/F3 directly (`db: Prisma.TransactionClient` first, required `tenantId` right
   // next to it, no `*Id`/`*Ids?` parameter besides `tenantId` itself), no new exception needed.
-  it("the real tree has exactly 113 exported facade functions today, 15 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  //
+  // 113 -> 123 in Phase 91b Plans 01/02 (Issue #91): (a) same file
+  // (`contexts/platform/facade/role-assignments.ts`) gained 1 more exported function —
+  // resolveAccessReach(db, ctx, permission), D-03/D-04's access-reach resolver (Plan 01) — passes
+  // F1/F2/F3 directly, no new exception needed; (b) `contexts/platform/facade/salon-assignments.ts`
+  // (already in the list above) gained 1 more — homeSalonAt(db, tenantId, employeeId, date), the
+  // Stichtag-based Stammsalon read (Plan 02 Task 1) — passes F1/F2/F3 directly, no new exception
+  // needed; (c) `contexts/platform/scope-filter.ts` — a NEW `KNOWN_FACADE_FILES` entry (Plan 02
+  // Task 3), 8 exported functions (isTimeEntryInScope, scopedTimeEntryIds,
+  // resolveStammsalonScopedEmployeeIds, isStammsalonScopeMatch, isShiftInScope, shiftScopeWhere,
+  // resolvePersonScopedEmployeeIds, isPersonMasterDataInScope) — 6 pass F1/F2/F3 directly
+  // (`db: Prisma.TransactionClient` first, `tenantId` required); `isShiftInScope`/`shiftScopeWhere`
+  // are pure (no `db`/`tenantId` at all, F1 does not apply) and each needed one new named exception
+  // — 1 (a) + 1 (b) + 8 (c) = 10, 113 + 10 = 123; exceptions 15 + 2 = 17.
+  it("the real tree has exactly 123 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -496,7 +510,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(113);
+    expect(functions).toHaveLength(123);
 
     const rawExceptions = JSON.parse(
       readFileSync(
@@ -507,7 +521,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     const validated = validateExceptionsDocument(rawExceptions, functions);
     expect(validated.ok).toBe(true);
     if (validated.ok) {
-      expect(validated.entries).toHaveLength(15);
+      expect(validated.entries).toHaveLength(17);
       const findings = computeFindings(functions, validated.entries);
       expect(findings).toEqual([]);
     }
