@@ -619,12 +619,12 @@ describe("Role bridge: employee form, compat column and fallback materialization
       ).toBe(0);
     });
 
-    // Issue #357 AC 3: "Test mit einem Token von vor der Anonymisierung, einmal rot gesehen" — a
-    // MANAGER's access token, minted BEFORE anonymization and still within its lifetime, must not
-    // resolve to any right afterwards. Before the fix this token kept full MANAGER access through
-    // the Altrollen-Rückfall (D-08) because `User.role` was left standing once the assignment was
-    // gone; RED against the pre-#357 code (`columnRole` stayed MANAGER, so `GET /employees`
-    // answered 200 for this very token after the DELETE below).
+    // Issue #357 AC 3: a test with a token minted BEFORE anonymization, seen red once, that
+    // proves a MANAGER's access token — still within its lifetime — must not resolve to any
+    // right afterwards. Before the fix this token kept full MANAGER access through the legacy-role
+    // fallback (D-08) because `User.role` was left standing once the assignment was gone; RED
+    // against the pre-#357 code (`columnRole` stayed MANAGER, so `GET /employees` answered 200
+    // for this very token after the DELETE below).
     it("a MANAGER's pre-anonymization access token holds no rights afterwards (Issue #357 sub-fix C)", async () => {
       const target = await createPerson(tenant.tenant.id, "Anonym Vorher-Token", "MANAGER");
       await executeLegacyRoleMigration(app.prisma);
