@@ -20,7 +20,13 @@
  * No PII — synthetic employees only.
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  salonIdForEmployee,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc } from "../contexts/working-time-account/timezone";
 import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
@@ -76,6 +82,7 @@ describe("saldo invariant E2E — all schedule types, Jan–Jul 2026", () => {
         endTime: new Date(dateStr + "T15:30:00Z"),
         breakMinutes: 30,
         type: "WORK",
+        salonId: await salonIdForEmployee(app.prisma, empId), // Phase 68b (issue #68)
       },
     });
   }

@@ -251,6 +251,7 @@ describe("Overtime Saldo Calculation", () => {
           breakMinutes: 60,
           source: "MANUAL",
           type: "WORK",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
 
@@ -436,6 +437,7 @@ describe("Overtime Saldo Calculation", () => {
         breakMinutes: 0,
         source: "MANUAL",
         type: "WORK",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 
@@ -643,6 +645,7 @@ describe("Overtime Saldo Calculation", () => {
           breakMinutes: 0,
           source: "MANUAL",
           type: "WORK",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
 

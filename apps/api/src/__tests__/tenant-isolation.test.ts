@@ -362,6 +362,7 @@ describe("Tenant Isolation", () => {
           date: new Date("2024-11-20"),
           startTime: new Date("2024-11-20T08:00:00.000Z"),
           source: "MANUAL",
+          salonId: tenantB.salonId, // Phase 68b (issue #68)
         },
       });
       tenantBOpenEntryId = bOpen.id;
@@ -373,6 +374,7 @@ describe("Tenant Isolation", () => {
           date: new Date("2024-11-21"),
           startTime: new Date("2024-11-21T08:00:00.000Z"),
           source: "MANUAL",
+          salonId: tenantA.salonId, // Phase 68b (issue #68)
         },
       });
       ownTenantOpenEntryId = aOpen.id;

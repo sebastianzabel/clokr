@@ -405,6 +405,7 @@ describe("Time Entry Validation Rules", () => {
           isInvalid: true,
           invalidReason: "Auto-invalidated open entry",
           source: "MANUAL",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
 
@@ -452,6 +453,7 @@ describe("Time Entry Validation Rules", () => {
           endTime: null,
           isInvalid: false,
           source: "MANUAL",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
 

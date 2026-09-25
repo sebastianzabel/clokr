@@ -54,6 +54,7 @@ describe("PATCH /:id/break-status", () => {
         date: today,
         startTime,
         source: "MANUAL",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 
@@ -201,6 +202,7 @@ describe("PATCH /:id/break-status", () => {
         breakMinutes: 30,
         breakStatus: "AUTO",
         source: "MANUAL",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
     await app.prisma.break.create({

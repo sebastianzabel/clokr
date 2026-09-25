@@ -255,6 +255,7 @@ async function seedFixedSick(app: FastifyInstance): Promise<SeededContext> {
   const SICK_DATE = "2026-02-16";
 
   // Time entries: 240 min on sick day, 480 on all others
+  const fixedSickSalonId = await salonIdForEmployee(prisma, employeeId); // Phase 68b (issue #68)
   for (const dateStr of FEB_MO_FR) {
     const netto = dateStr === SICK_DATE ? 240 : 480;
     const start = new Date(dateStr + "T08:00:00Z");
@@ -267,6 +268,7 @@ async function seedFixedSick(app: FastifyInstance): Promise<SeededContext> {
         endTime: end,
         breakMinutes: 0,
         type: "WORK",
+        salonId: fixedSickSalonId,
       },
     });
   }
@@ -422,6 +424,7 @@ async function seedShiftSick(app: FastifyInstance): Promise<SeededContext> {
   }
 
   // Time entries: 228 min on sick day, 456 on all other 21 days
+  const shiftSickSalonId = await salonIdForEmployee(prisma, employeeId); // Phase 68b (issue #68)
   for (const dateStr of JAN_MO_FR) {
     const netto = dateStr === SICK_DATE ? 228 : 456;
     const start = new Date(dateStr + "T08:00:00Z");
@@ -434,6 +437,7 @@ async function seedShiftSick(app: FastifyInstance): Promise<SeededContext> {
         endTime: end,
         breakMinutes: 0,
         type: "WORK",
+        salonId: shiftSickSalonId,
       },
     });
   }

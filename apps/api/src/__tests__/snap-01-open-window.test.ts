@@ -35,7 +35,7 @@
  * No PII — synthetic fixtures only.
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup"; // Phase 68b (issue #68)
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { monthRangeUtc, monthDayBounds } from "../contexts/working-time-account/timezone";
@@ -60,6 +60,7 @@ async function seedEntry(
       endTime: end,
       breakMinutes: 0,
       type: "WORK",
+      salonId: await salonIdForEmployee(app.prisma, empId), // Phase 68b (issue #68)
     },
   });
 }
@@ -89,6 +90,7 @@ async function createTenant(
   const tenant = await prisma.tenant.create({
     data: { name: `Snap01 ${slug}`, slug: s, federalState: "NIEDERSACHSEN" },
   });
+  await createTestSalon(prisma, tenant.id); // Phase 68b (issue #68)
   await prisma.tenantConfig.create({
     data: { tenantId: tenant.id, defaultVacationDays: 30, timezone: TZ },
   });

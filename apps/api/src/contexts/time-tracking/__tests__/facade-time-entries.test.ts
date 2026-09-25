@@ -70,6 +70,7 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
           endTime: new Date("2026-02-02T16:00:00Z"),
           type: "WORK",
           isInvalid: false,
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       await app.prisma.timeEntry.create({
@@ -80,6 +81,7 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
           endTime: new Date("2026-02-03T16:00:00Z"),
           type: "WORK",
           isInvalid: true,
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       await app.prisma.timeEntry.create({
@@ -90,6 +92,7 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
           endTime: null,
           type: "WORK",
           isInvalid: false,
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       await app.prisma.timeEntry.create({
@@ -101,6 +104,7 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
           type: "WORK",
           isInvalid: false,
           deletedAt: new Date(),
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       await app.prisma.timeEntry.create({
@@ -111,6 +115,7 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
           endTime: new Date("2026-02-06T16:00:00Z"),
           type: "OVERTIME",
           isInvalid: false,
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
     });
@@ -205,6 +210,7 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
           isInvalid: true,
           invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
           invalidReason: "Urlaubsstornierung ausstehend",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       await revalidateLeaveCancellationEntries(
@@ -231,6 +237,7 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
           invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
           invalidReason: "Urlaubsstornierung ausstehend",
           isLocked: true,
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       await revalidateLeaveCancellationEntries(
@@ -259,6 +266,7 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
           invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
           invalidReason: "Urlaubsstornierung ausstehend",
           deletedAt: new Date(),
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       await revalidateLeaveCancellationEntries(
@@ -284,6 +292,7 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
           startTime: new Date("2026-04-15T08:00:00Z"),
           endTime: new Date("2026-04-15T16:00:00Z"),
           type: "WORK",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
 
@@ -311,6 +320,7 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
           endTime: new Date("2026-05-10T16:00:00Z"),
           type: "WORK",
           isLocked: true,
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       const count = await countLockedEntries(
@@ -362,6 +372,7 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
           startTime: new Date("2019-06-01T08:00:00Z"),
           endTime: new Date("2019-06-01T16:00:00Z"),
           type: "WORK",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       const count = await archiveEntriesBefore(
@@ -385,6 +396,7 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
           type: "WORK",
           note: "personal note",
           deletedAt: new Date(),
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       await clearEntryNotesForEmployee(app.prisma, data.employee.id);
@@ -402,6 +414,7 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
         endTime: new Date("2026-07-01T16:00:00Z"),
         breakMinutes: 30,
         note: null,
+        salonId: data.salonId, // Phase 68b (issue #68)
       });
       expect(created.type).toBe("WORK");
       expect(created.source).toBe("MANUAL");
@@ -435,6 +448,7 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
           startTime: new Date("2026-08-01T08:00:00Z"),
           endTime: new Date("2026-08-01T16:00:00Z"),
           type: "WORK",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       await app.prisma.break.create({

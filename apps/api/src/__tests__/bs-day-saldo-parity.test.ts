@@ -22,7 +22,13 @@
  * No PII — synthetic employees only (memory: no PII in artifacts).
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  salonIdForEmployee,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc } from "../contexts/working-time-account/timezone";
 import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
@@ -93,6 +99,7 @@ describe("BBiG §15 — Berufsschultag is balance-neutral (live == closed)", () 
 
   // Seed a normal WORK entry (480 net) on every Tue–Fri in June EXCEPT the BS date.
   async function seedJuneWork(empId: string) {
+    const salonId = await salonIdForEmployee(app.prisma, empId); // Phase 68b (issue #68)
     const cur = new Date("2026-06-01T00:00:00Z");
     const end = new Date("2026-06-30T00:00:00Z");
     while (cur <= end) {
@@ -107,6 +114,7 @@ describe("BBiG §15 — Berufsschultag is balance-neutral (live == closed)", () 
             endTime: new Date(dateStr + "T15:30:00Z"),
             breakMinutes: 30,
             type: "WORK",
+            salonId,
           },
         });
       }

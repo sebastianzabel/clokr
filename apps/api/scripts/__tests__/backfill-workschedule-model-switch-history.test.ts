@@ -15,7 +15,12 @@
  * Uses initials-only for employee names (no PII per memory feedback_no_pii_in_github).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp } from "../../src/__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  createTestSalon,
+  salonIdForEmployee,
+} from "../../src/__tests__/setup"; // Phase 68b (issue #68)
 import { main, type BackfillSummary } from "../backfill-workschedule-model-switch-history";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
@@ -55,6 +60,7 @@ describe("backfill-workschedule-model-switch-history (Phase 76.24 Plan 03)", () 
       data: { name: `P7624-03 ${slug}`, slug, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 68b (issue #68)
     await prisma.tenantConfig.create({
       data: {
         tenantId,
@@ -196,6 +202,7 @@ describe("backfill-workschedule-model-switch-history (Phase 76.24 Plan 03)", () 
         breakMinutes: 0,
         type: "WORK",
         isLocked: false,
+        salonId: await salonIdForEmployee(prisma, empId), // Phase 68b (issue #68)
       },
     });
   }, 60_000);
@@ -357,6 +364,7 @@ describe("backfill-workschedule-model-switch-history (Phase 76.24 Plan 03)", () 
         type: "WORK",
         isLocked: true,
         lockedAt: new Date(),
+        salonId: await salonIdForEmployee(app.prisma, empId), // Phase 68b (issue #68)
       },
     });
 
@@ -409,6 +417,7 @@ describe("backfill-workschedule-model-switch-history (Phase 76.24 Plan 03)", () 
         type: "WORK",
         isLocked: true,
         lockedAt: new Date(),
+        salonId: await salonIdForEmployee(app.prisma, empId), // Phase 68b (issue #68)
       },
     });
 

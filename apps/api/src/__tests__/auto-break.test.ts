@@ -52,6 +52,7 @@ describe("Auto-Break on Clock-out", () => {
         date: today,
         startTime,
         source: "MANUAL",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 
@@ -80,6 +81,7 @@ describe("Auto-Break on Clock-out", () => {
         date: today,
         startTime,
         source: "MANUAL",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 
@@ -107,6 +109,7 @@ describe("Auto-Break on Clock-out", () => {
         date: today,
         startTime,
         source: "MANUAL",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 
@@ -136,6 +139,7 @@ describe("Auto-Break on Clock-out", () => {
         date: today,
         startTime,
         source: "MANUAL",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 
@@ -166,6 +170,7 @@ describe("Auto-Break on Clock-out", () => {
         startTime,
         endTime: new Date(),
         source: "MANUAL",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 

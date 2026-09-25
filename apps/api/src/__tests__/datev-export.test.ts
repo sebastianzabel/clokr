@@ -171,6 +171,7 @@ describe("DATEV export — FIRST automated coverage in its own file (Phase 104)"
           startTime: new Date("2026-07-01T07:00:00.000Z"),
           endTime: new Date("2026-07-01T15:30:00.000Z"),
           breakMinutes: 0,
+          salonId: d.salonId, // Phase 68b (issue #68)
         },
       });
 
@@ -274,6 +275,7 @@ describe("DATEV export — FIRST automated coverage in its own file (Phase 104)"
             startTime: new Date("2026-07-01T07:00:00.000Z"),
             endTime: new Date("2026-07-01T15:00:00.000Z"),
             breakMinutes: 0,
+            salonId: bare.salonId, // Phase 68b (issue #68)
           },
         });
 
@@ -410,6 +412,7 @@ describe("Personenkreis nach dem Abrechnungszeitraum (#256-02)", () => {
         startTime: new Date(`${JULY_WORK_DAY}T07:00:00.000Z`),
         endTime: new Date(`${JULY_WORK_DAY}T15:00:00.000Z`),
         breakMinutes: 0,
+        salonId: d.salonId, // Phase 68b (issue #68)
       },
     });
     return employee;

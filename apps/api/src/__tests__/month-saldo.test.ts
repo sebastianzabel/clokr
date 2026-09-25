@@ -92,6 +92,7 @@ describe("month-saldo endpoint + computeMonthSaldo", () => {
         source: "MANUAL",
         note: null,
         isInvalid: false,
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 
@@ -648,6 +649,7 @@ describe("workedDays (Phase 125, issue #125) — computeMonthSaldo", () => {
             type: "WORK",
             source: "MANUAL",
             isInvalid: false,
+            salonId, // Phase 68b (issue #68)
           },
         });
       }
@@ -662,6 +664,7 @@ describe("workedDays (Phase 125, issue #125) — computeMonthSaldo", () => {
           type: "WORK",
           source: "MANUAL",
           isInvalid: true,
+          salonId, // Phase 68b (issue #68)
         },
       });
       // A soft-deleted entry — must count toward neither number.
@@ -675,6 +678,7 @@ describe("workedDays (Phase 125, issue #125) — computeMonthSaldo", () => {
           type: "WORK",
           source: "MANUAL",
           isInvalid: false,
+          salonId, // Phase 68b (issue #68)
           deletedAt: new Date(),
         },
       });

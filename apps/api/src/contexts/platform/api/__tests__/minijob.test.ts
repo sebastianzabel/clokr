@@ -125,6 +125,7 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
           endTime: new Date(endTime),
           breakMinutes: 0,
           source: "MANUAL",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
 
@@ -424,6 +425,7 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
           endTime: new Date(ENTRY_DATE + "T14:00:00Z"),
           breakMinutes: 0,
           source: "MANUAL",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
 

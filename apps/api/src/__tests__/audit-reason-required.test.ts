@@ -173,6 +173,7 @@ describe("Quick 260824-cjd: mandatory Begründung on Korrektur/Storno endpoints"
           endTime: new Date(`${dateStr}T16:00:00Z`),
           breakMinutes: 30,
           source: "MANUAL",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
     }
@@ -216,6 +217,7 @@ describe("Quick 260824-cjd: mandatory Begründung on Korrektur/Storno endpoints"
           breakMinutes: 30,
           source: "MANUAL",
           isLocked: true,
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       const res = await app.inject({
@@ -240,6 +242,7 @@ describe("Quick 260824-cjd: mandatory Begründung on Korrektur/Storno endpoints"
           endTime: new Date(`${dateStr}T16:00:00Z`),
           breakMinutes: 30,
           source: "MANUAL",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
     }
@@ -287,6 +290,7 @@ describe("Quick 260824-cjd: mandatory Begründung on Korrektur/Storno endpoints"
           endTime: new Date(`${dateStr}T16:00:00Z`),
           breakMinutes: 30,
           source: "MANUAL",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       const res = await app.inject({

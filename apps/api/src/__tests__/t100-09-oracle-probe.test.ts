@@ -383,6 +383,7 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
           date: new Date("2026-01-05"),
           startTime: new Date("2026-01-05T08:00:00.000Z"),
           endTime: new Date("2026-01-05T16:00:00.000Z"),
+          salonId: tenantB.salonId, // Phase 68b (issue #68)
         },
       });
       tenantBTimeEntryId = timeEntry.id;

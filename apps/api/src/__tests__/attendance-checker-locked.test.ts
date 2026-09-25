@@ -14,7 +14,7 @@
  * untouched while the unlocked entry is set to isInvalid: true.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup";
 import type { FastifyInstance } from "fastify";
 
 describe("attendance-checker — auto-invalidate locked-entry guard (COMP-V1814-08)", () => {
@@ -35,6 +35,7 @@ describe("attendance-checker — auto-invalidate locked-entry guard (COMP-V1814-
       const tenant = await app.prisma.tenant.create({
         data: { name: `ACHKTest ${s}`, slug: `achk-${s}`, federalState: "NIEDERSACHSEN" },
       });
+      const salon = await createTestSalon(app.prisma, tenant.id); // Phase 68b (issue #68)
       // Set autoDeleteOpenHours = 12 so entries older than 12 h are found
       await app.prisma.tenantConfig.create({
         data: {
@@ -84,6 +85,7 @@ describe("attendance-checker — auto-invalidate locked-entry guard (COMP-V1814-
           date: new Date(dateDbyString + "T00:00:00.000Z"),
           isInvalid: false,
           isLocked: true, // closed-month entry that somehow lacks an endTime (defensive test)
+          salonId: salon.id, // Phase 68b (issue #68)
         },
       });
 
@@ -96,6 +98,7 @@ describe("attendance-checker — auto-invalidate locked-entry guard (COMP-V1814-
           date: new Date(dateYestString + "T00:00:00.000Z"),
           isInvalid: false,
           isLocked: false,
+          salonId: salon.id, // Phase 68b (issue #68)
         },
       });
 

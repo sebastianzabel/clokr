@@ -259,6 +259,7 @@ describe("PUT /api/v1/time-entries/:id — JArbSchG pre-check (Phase 63 Plan 03)
         breakMinutes: 0,
         source: "MANUAL",
         type: "WORK",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 
@@ -302,6 +303,7 @@ describe("PUT /api/v1/time-entries/:id — JArbSchG pre-check (Phase 63 Plan 03)
         type: "WORK",
         isLocked: true,
         lockedAt: new Date(),
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 
@@ -337,6 +339,7 @@ describe("PUT /api/v1/time-entries/:id — JArbSchG pre-check (Phase 63 Plan 03)
         breakMinutes: 0,
         source: "MANUAL",
         type: "WORK",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 

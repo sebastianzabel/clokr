@@ -15,7 +15,13 @@
  * Each case uses an ISOLATED tenant to avoid cross-contamination.
  */
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
@@ -29,6 +35,7 @@ async function seedIsolatedTenant(app: FastifyInstance, suffix: string) {
   const tenant = await prisma.tenant.create({
     data: { name: `ATCTest ${s}`, slug: `atc-${s}`, federalState: "NIEDERSACHSEN" },
   });
+  await createTestSalon(prisma, tenant.id); // Phase 68b (issue #68)
   await prisma.tenantConfig.create({
     data: { tenantId: tenant.id, defaultVacationDays: 30, timezone: "Europe/Berlin" },
   });
@@ -112,6 +119,7 @@ async function seedEntry(app: FastifyInstance, employeeId: string, dateStr: stri
       startTime: new Date(dateStr + "T08:00:00Z"),
       endTime: new Date(dateStr + "T16:00:00Z"),
       source: "MANUAL",
+      salonId: await salonIdForEmployee(app.prisma, employeeId), // Phase 68b (issue #68)
     },
   });
 }

@@ -22,7 +22,7 @@
  */
 
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc } from "../contexts/working-time-account/timezone";
 import bcrypt from "bcryptjs";
@@ -53,6 +53,7 @@ async function seedEntry(app: FastifyInstance, empId: string, dateStr: string) {
       endTime: new Date(dateStr + "T15:30:00Z"),
       breakMinutes: 30,
       type: "WORK",
+      salonId: await salonIdForEmployee(app.prisma, empId), // Phase 68b (issue #68)
     },
   });
 }
@@ -74,6 +75,7 @@ describe("close-month/status — snapshot month attribution (month-detail-shows-
       data: { name: `SnapAttr ${s}`, slug: `snapattr-${s}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 68b (issue #68)
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ },
     });

@@ -10,7 +10,13 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { getTestApp, closeTestApp, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+} from "../../../__tests__/setup"; // Phase 68b (issue #68)
 import { recalculateSnapshots } from "../recalculate-snapshots";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
@@ -67,6 +73,7 @@ describe("recalculateSnapshots (Phase 76.12 Plan 02) — Ø-Methode leave subtra
         data: { name: `Recalc 76.12 ${s}`, slug: `rc-${s}`, federalState: "NIEDERSACHSEN" },
       });
       tenantId = tenant.id;
+      await createTestSalon(prisma, tenantId); // Phase 68b (issue #68)
       await prisma.tenantConfig.create({
         data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
       });
@@ -325,6 +332,7 @@ describe("recalculateSnapshots — bridge/opening-balance snapshot protection (2
       data: { name: `Recalc Bridge ${s}`, slug: `rcb-${s}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 68b (issue #68)
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
     });
@@ -531,6 +539,7 @@ describe("recalculateSnapshots — injectedDelta preservation for real-activity 
       data: { name: `Recalc Delta ${s}`, slug: `rcd-${s}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 68b (issue #68)
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
     });
@@ -654,6 +663,7 @@ describe("recalculateSnapshots — injectedDelta preservation for real-activity 
         breakMinutes: 0,
         source: "MANUAL",
         type: "WORK",
+        salonId: await salonIdForEmployee(prisma, deltaEmpId), // Phase 68b (issue #68)
       },
     });
 
@@ -784,6 +794,7 @@ describe("recalculateSnapshots — well-behaved multi-month chain is a byte-iden
       data: { name: `Recalc Chain ${s}`, slug: `rcc-${s}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 68b (issue #68)
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
     });
@@ -843,6 +854,7 @@ describe("recalculateSnapshots — well-behaved multi-month chain is a byte-iden
           breakMinutes: 0,
           source: "MANUAL",
           type: "WORK",
+          salonId: await salonIdForEmployee(prisma, chainEmp.id), // Phase 68b (issue #68)
         },
       });
     }
@@ -963,6 +975,7 @@ describe("recalculateSnapshots — OB-06 opening-balance-seeded chain regression
       data: { name: `OB06 ${s}`, slug: `ob06-${s}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(app.prisma, tenantId); // Phase 68b (issue #68)
     await app.prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
     });
@@ -1077,6 +1090,7 @@ describe("recalculateSnapshots — OB-06 opening-balance-seeded chain regression
         breakMinutes: 0,
         source: "MANUAL",
         type: "WORK",
+        salonId: await salonIdForEmployee(prisma, emp.id), // Phase 68b (issue #68)
       },
     });
 
@@ -1254,6 +1268,7 @@ describe("recalculateSnapshots — OB-06 opening-balance-seeded chain regression
           breakMinutes: 0,
           source: "MANUAL",
           type: "WORK",
+          salonId: await salonIdForEmployee(prisma, emp.id), // Phase 68b (issue #68)
         },
       });
       await prisma.saldoSnapshot.create({
@@ -1350,6 +1365,7 @@ describe("recalculateSnapshots — locked-month skip-and-report (Phase 99 Plan 0
       data: { name: `Recalc Locked ${s}`, slug: `rcl-${s}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 68b (issue #68)
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
     });
@@ -1403,6 +1419,7 @@ describe("recalculateSnapshots — locked-month skip-and-report (Phase 99 Plan 0
         breakMinutes: 0,
         source: "MANUAL",
         type: "WORK",
+        salonId: await salonIdForEmployee(prisma, lockedEmp.id), // Phase 68b (issue #68)
       },
     });
 
@@ -1420,6 +1437,7 @@ describe("recalculateSnapshots — locked-month skip-and-report (Phase 99 Plan 0
         type: "WORK",
         isLocked: true,
         lockedAt: new Date("2026-11-01T00:00:00Z"),
+        salonId: await salonIdForEmployee(prisma, lockedEmp.id), // Phase 68b (issue #68)
       },
     });
 
@@ -1435,6 +1453,7 @@ describe("recalculateSnapshots — locked-month skip-and-report (Phase 99 Plan 0
         breakMinutes: 0,
         source: "MANUAL",
         type: "WORK",
+        salonId: await salonIdForEmployee(prisma, lockedEmp.id), // Phase 68b (issue #68)
       },
     });
 
@@ -1619,6 +1638,7 @@ describe("recalculateSnapshots — no locked months is a provable no-op for the 
       data: { name: `Recalc NoLock ${s}`, slug: `rcnl-${s}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 68b (issue #68)
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
     });
@@ -1675,6 +1695,7 @@ describe("recalculateSnapshots — no locked months is a provable no-op for the 
           breakMinutes: 0,
           source: "MANUAL",
           type: "WORK",
+          salonId: await salonIdForEmployee(prisma, emp.id), // Phase 68b (issue #68)
         },
       });
     }
@@ -1769,6 +1790,7 @@ describe("recalculateSnapshots — locked HEAD month with an active OpeningBalan
       data: { name: `Recalc OB Lock ${s}`, slug: `rcobl-${s}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 68b (issue #68)
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
     });
@@ -1825,6 +1847,7 @@ describe("recalculateSnapshots — locked HEAD month with an active OpeningBalan
         type: "WORK",
         isLocked: true,
         lockedAt: new Date("2026-10-01T00:00:00Z"),
+        salonId: await salonIdForEmployee(prisma, emp.id), // Phase 68b (issue #68)
       },
     });
     const sepSnap = await prisma.saldoSnapshot.create({
@@ -1867,6 +1890,7 @@ describe("recalculateSnapshots — locked HEAD month with an active OpeningBalan
         breakMinutes: 0,
         source: "MANUAL",
         type: "WORK",
+        salonId: await salonIdForEmployee(prisma, emp.id), // Phase 68b (issue #68)
       },
     });
     await prisma.saldoSnapshot.create({

@@ -148,6 +148,7 @@ describe("POST /overtime/unlock-month", () => {
         source: "MANUAL",
         isLocked: true,
         lockedAt: new Date(),
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 

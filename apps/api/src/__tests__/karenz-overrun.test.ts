@@ -20,7 +20,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+} from "./setup";
 import { daysAgoStrInTz } from "./test-dates";
 import {
   karenzOverrunFromRequests,
@@ -210,6 +216,7 @@ async function seedFullMonthEntry(app: FastifyInstance, empId: string, dateStr: 
       endTime: new Date(dateStr + "T15:30:00Z"),
       breakMinutes: 30,
       type: "WORK",
+      salonId: await salonIdForEmployee(app.prisma, empId), // Phase 68b (issue #68)
     },
   });
 }
@@ -225,6 +232,7 @@ async function seedKarenzFixture(app: FastifyInstance, suffix: string) {
       federalState: "NIEDERSACHSEN",
     },
   });
+  await createTestSalon(prisma, tenant.id); // Phase 68b (issue #68)
   await prisma.tenantConfig.create({
     data: { tenantId: tenant.id, defaultVacationDays: 30, timezone: "Europe/Berlin" },
   });

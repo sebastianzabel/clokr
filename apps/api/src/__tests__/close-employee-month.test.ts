@@ -48,6 +48,7 @@ async function seedEntry(app: FastifyInstance, empId: string, dateStr: string) {
       endTime: new Date(dateStr + "T15:30:00Z"),
       breakMinutes: 30,
       type: "WORK",
+      salonId: await salonIdForEmployee(app.prisma, empId), // Phase 68b (issue #68)
     },
   });
 }

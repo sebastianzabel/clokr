@@ -75,6 +75,7 @@ describe("POST /:id/clock-out — breakMinutes is derived from Break rows only (
         date: todayInTz(tz),
         startTime,
         source: "MANUAL",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
   }

@@ -7,7 +7,7 @@
  * after a single test TimeEntry was created.
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup";
 import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
 import { pastDateStr, dowOf, utcMidnight } from "./test-dates";
 import type { FastifyInstance } from "fastify";
@@ -40,6 +40,7 @@ describe("Overtime Absence Saldo — pre-tracking absence coverage", () => {
       data: { name: `Absence Saldo Test ${s}`, slug: `abs-${s}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 68b (issue #68)
     await prisma.tenantConfig.create({
       data: { tenantId: tenant.id, defaultVacationDays: 30, timezone: "Europe/Berlin" },
     });

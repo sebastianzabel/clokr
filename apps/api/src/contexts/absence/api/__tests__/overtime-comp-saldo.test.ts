@@ -334,6 +334,7 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
         isInvalid: true,
         invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
         invalidReason: "Urlaubsstornierung ausstehend",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 

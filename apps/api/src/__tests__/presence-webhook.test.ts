@@ -336,6 +336,7 @@ describe("POST /api/v1/presence/events", () => {
         date: TEST_DATE,
         startTime: new Date("2026-01-15T08:00:00Z"),
         source: "NFC",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 
@@ -437,6 +438,7 @@ describe("POST /api/v1/presence/events", () => {
         startTime: new Date(IN_WINDOW_TIMESTAMP),
         source: "WIFI",
         endTime: null,
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 
