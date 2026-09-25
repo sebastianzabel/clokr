@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { requireAuth } from "../../../middleware/auth";
+import { permissionReach } from "../request-permissions";
 import sharp from "sharp";
 
 const MAX_SIZE = 2 * 1024 * 1024; // 2 MB
@@ -13,19 +14,22 @@ export async function avatarRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { employeeId } = req.params as { employeeId: string };
 
-      // Only self or admin/manager can upload
+      // Only self or a caller holding employee:update-avatar:ZUGEWIESEN can upload (issue #75, D-13)
       const isSelf = req.user.employeeId === employeeId;
-      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
-      if (!isSelf && !isManager) {
+      const avatarReach = await permissionReach(req, "employee:update-avatar");
+      if (avatarReach !== "ZUGEWIESEN" && !isSelf) {
+        return reply.code(403).send({ error: "Keine Berechtigung" });
+      }
+      if (avatarReach === null) {
         return reply.code(403).send({ error: "Keine Berechtigung" });
       }
 
       // Same T-100-09 guard as GET/DELETE above (Issue #259, CLOSED-BY this change): the 404
       // body is IDENTICAL to the genuine not-found branch, so this endpoint cannot be used as
-      // a tenant-membership oracle. The isSelf/isManager check above stays where it is — it is
-      // existence-independent and therefore not an oracle; this guard is what an ADMIN/MANAGER
-      // of a FOREIGN tenant runs into. The attempt is not lost: it is recorded in the audit log
-      // via app.audit() below, where it belongs.
+      // a tenant-membership oracle. The ownership check above stays where it is — it is
+      // existence-independent and therefore not an oracle; this guard is what a caller lacking
+      // employee:update-avatar:ZUGEWIESEN for a FOREIGN tenant's employee runs into. The attempt
+      // is not lost: it is recorded in the audit log via app.audit() below, where it belongs.
       const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
       if (!employee || employee.tenantId !== req.user.tenantId) {
         if (employee) {
@@ -138,16 +142,19 @@ export async function avatarRoutes(app: FastifyInstance) {
       const { employeeId } = req.params as { employeeId: string };
 
       const isSelf = req.user.employeeId === employeeId;
-      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
-      if (!isSelf && !isManager) {
+      const avatarReach = await permissionReach(req, "employee:update-avatar");
+      if (avatarReach !== "ZUGEWIESEN" && !isSelf) {
+        return reply.code(403).send({ error: "Keine Berechtigung" });
+      }
+      if (avatarReach === null) {
         return reply.code(403).send({ error: "Keine Berechtigung" });
       }
 
       // Same T-100-09 guard as GET above: the 404 body is IDENTICAL to the genuine
       // not-found branch, so this endpoint cannot be used as a tenant-membership oracle.
-      // The isSelf/isManager check further up stays where it is — it is existence-
-      // independent and therefore not an oracle; this guard is what an ADMIN/MANAGER of a
-      // FOREIGN tenant runs into.
+      // The ownership check further up stays where it is — it is existence-independent and
+      // therefore not an oracle; this guard is what a caller lacking
+      // employee:update-avatar:ZUGEWIESEN for a FOREIGN tenant's employee runs into.
       const employee = await app.prisma.employee.findUnique({
         where: { id: employeeId },
         select: { tenantId: true, avatarPath: true },

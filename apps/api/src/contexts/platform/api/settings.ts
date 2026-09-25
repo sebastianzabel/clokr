@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
-import { requirePermission } from "../request-permissions";
+import { permissionReach, requirePermission } from "../request-permissions";
 import { FederalState, type TenantConfig } from "@clokr/db";
 import { encrypt } from "../../../utils/crypto";
 // Phase 64b (issue #64, D-16): mirrors a storeHours change into the tenant's sole active salon.
@@ -946,9 +946,12 @@ export async function settingsRoutes(app: FastifyInstance) {
     preHandler: requireAuth,
     handler: async (req, reply) => {
       const { employeeId } = req.params as { employeeId: string };
-      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
+      const contractReach = await permissionReach(req, "contract:read");
 
-      if (!isManager && req.user.employeeId !== employeeId) {
+      if (contractReach !== "ZUGEWIESEN" && req.user.employeeId !== employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+      if (contractReach === null) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 

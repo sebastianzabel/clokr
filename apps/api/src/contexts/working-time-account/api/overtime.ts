@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
-import { requirePermission } from "../../platform";
+import { permissionReach, requirePermission } from "../../platform";
 import {
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
@@ -132,8 +132,12 @@ export async function overtimeRoutes(app: FastifyInstance) {
         });
         return reply.code(404).send({ error: "Konto nicht gefunden" });
       }
-      // D-03: EMPLOYEE may only read their own overtime account
-      if (req.user.role === "EMPLOYEE" && req.user.employeeId !== employeeId) {
+      // D-03: only a caller holding overtime:read:ZUGEWIESEN may read another account (issue #75, D-13)
+      const overtimeReach = await permissionReach(req, "overtime:read");
+      if (overtimeReach !== "ZUGEWIESEN" && req.user.employeeId !== employeeId) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+      if (overtimeReach === null) {
         return reply.code(403).send({ error: "Forbidden" });
       }
 
@@ -1508,9 +1512,12 @@ export async function overtimeRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { employeeId } = req.params as { employeeId: string };
 
-      // Authorization: employees may only read their own snapshots; managers/admins may read any
-      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
-      if (!isManager && req.user.employeeId !== employeeId) {
+      // Authorization: only a caller holding overtime:read:ZUGEWIESEN may read another's snapshots
+      const overtimeReach = await permissionReach(req, "overtime:read");
+      if (overtimeReach !== "ZUGEWIESEN" && req.user.employeeId !== employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+      if (overtimeReach === null) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
@@ -1862,8 +1869,12 @@ export async function overtimeRoutes(app: FastifyInstance) {
         })
         .parse(req.query);
 
-      // D-03: EMPLOYEE may only read their own saldo (mirrors GET /:employeeId above)
-      if (req.user.role === "EMPLOYEE" && req.user.employeeId !== employeeId) {
+      // D-03: only a caller holding overtime:read:ZUGEWIESEN may read another's saldo (mirrors GET /:employeeId above)
+      const overtimeReach = await permissionReach(req, "overtime:read");
+      if (overtimeReach !== "ZUGEWIESEN" && req.user.employeeId !== employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+      if (overtimeReach === null) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 

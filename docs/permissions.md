@@ -436,15 +436,15 @@ benennt diesen Abschnitt um, wenn keine `requireRole`-Stelle mehr übrig ist.
 | `contexts/platform/api/audit-logs.ts:21`                   | `GET /`                                         | A       | `audit-log:read`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/audit-logs.ts:57`                   | `GET /:id`                                      | A       | `audit-log:read`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/employees.ts:318`                   | `GET /`                                         | A, M    | `employee:read`                | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:393`                   | `POST /`                                        | A       | `employee:create`              | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:644`                   | `PATCH /:id`                                    | A       | `employee:update`              | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:912`                   | `PATCH /:id/unlock`                             | A       | `employee:manage-access`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:951`                   | `PATCH /:id/deactivate`                         | A       | `employee:manage-access`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:1026`                  | `PATCH /:id/reactivate`                         | A       | `employee:manage-access`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:1087`                  | `POST /:id/resend-invitation`                   | A       | `employee:manage-access`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:1147`                  | `DELETE /:id`                                   | A       | `employee:anonymize`           | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:1258`                  | `POST /:id/hard-delete/authorize`               | A       | `employee:anonymize`           | ZUGEWIESEN                                   |
-| `contexts/platform/api/employees.ts:1289`                  | `DELETE /:id/hard-delete`                       | A       | `employee:anonymize`           | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:399`                   | `POST /`                                        | A       | `employee:create`              | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:650`                   | `PATCH /:id`                                    | A       | `employee:update`              | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:918`                   | `PATCH /:id/unlock`                             | A       | `employee:manage-access`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:957`                   | `PATCH /:id/deactivate`                         | A       | `employee:manage-access`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:1032`                  | `PATCH /:id/reactivate`                         | A       | `employee:manage-access`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:1093`                  | `POST /:id/resend-invitation`                   | A       | `employee:manage-access`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:1153`                  | `DELETE /:id`                                   | A       | `employee:anonymize`           | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:1264`                  | `POST /:id/hard-delete/authorize`               | A       | `employee:anonymize`           | ZUGEWIESEN                                   |
+| `contexts/platform/api/employees.ts:1295`                  | `DELETE /:id/hard-delete`                       | A       | `employee:anonymize`           | ZUGEWIESEN                                   |
 | `contexts/platform/api/salon-assignments.ts:166`           | `GET /:id/salon-assignments`                    | A, M    | `employee:read`                | ZUGEWIESEN                                   |
 | `contexts/platform/api/salon-assignments.ts:186`           | `POST /:id/salon-assignments`                   | A       | `employee:update`              | ZUGEWIESEN                                   |
 | `contexts/platform/api/salon-assignments.ts:251`           | `POST /:id/salon-assignments/home`              | A       | `employee:update`              | ZUGEWIESEN                                   |
@@ -471,14 +471,14 @@ benennt diesen Abschnitt um, wenn keine `requireRole`-Stelle mehr übrig ist.
 | `contexts/platform/api/salons.ts:221`                      | `POST /:id/deactivate`                          | A       | `salon:manage`                 | ZUGEWIESEN                                   |
 | `contexts/platform/api/salons.ts:278`                      | `POST /:id/activate`                            | A       | `salon:manage`                 | ZUGEWIESEN                                   |
 | `contexts/platform/api/settings.ts:647`                    | `PUT /work`                                     | A       | `tenant-settings:update`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/settings.ts:992`                    | `PUT /work/:employeeId`                         | A, M    | `contract:update`              | ZUGEWIESEN                                   |
-| `contexts/platform/api/settings.ts:1303`                   | `GET /smtp`                                     | A       | `tenant-settings:read`         | ZUGEWIESEN                                   |
-| `contexts/platform/api/settings.ts:1322`                   | `PUT /smtp`                                     | A       | `tenant-settings:update`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/settings.ts:1382`                   | `POST /smtp/test`                               | A       | `tenant-settings:update`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/settings.ts:1398`                   | `GET /security`                                 | A       | `tenant-settings:read`         | ZUGEWIESEN                                   |
-| `contexts/platform/api/settings.ts:1409`                   | `PUT /security`                                 | A       | `tenant-settings:update`       | ZUGEWIESEN                                   |
-| `contexts/platform/api/settings.ts:1440`                   | `GET /work/:employeeId/history`                 | A, M    | `contract:read`                | ZUGEWIESEN                                   |
-| `contexts/platform/api/settings.ts:1475`                   | `GET /employees`                                | A, M    | `employee:read`                | ZUGEWIESEN                                   |
+| `contexts/platform/api/settings.ts:995`                    | `PUT /work/:employeeId`                         | A, M    | `contract:update`              | ZUGEWIESEN                                   |
+| `contexts/platform/api/settings.ts:1306`                   | `GET /smtp`                                     | A       | `tenant-settings:read`         | ZUGEWIESEN                                   |
+| `contexts/platform/api/settings.ts:1325`                   | `PUT /smtp`                                     | A       | `tenant-settings:update`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/settings.ts:1385`                   | `POST /smtp/test`                               | A       | `tenant-settings:update`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/settings.ts:1401`                   | `GET /security`                                 | A       | `tenant-settings:read`         | ZUGEWIESEN                                   |
+| `contexts/platform/api/settings.ts:1412`                   | `PUT /security`                                 | A       | `tenant-settings:update`       | ZUGEWIESEN                                   |
+| `contexts/platform/api/settings.ts:1443`                   | `GET /work/:employeeId/history`                 | A, M    | `contract:read`                | ZUGEWIESEN                                   |
+| `contexts/platform/api/settings.ts:1478`                   | `GET /employees`                                | A, M    | `employee:read`                | ZUGEWIESEN                                   |
 | `contexts/scheduling/api/integrations.ts:258`              | `GET /phorest/couplings`                        | A       | `integration:manage`           | ZUGEWIESEN                                   |
 | `contexts/scheduling/api/integrations.ts:286`              | `POST /phorest/couplings`                       | A       | `integration:manage`           | ZUGEWIESEN                                   |
 | `contexts/scheduling/api/integrations.ts:376`              | `DELETE /phorest/couplings/:salonId`            | A       | `integration:manage`           | ZUGEWIESEN                                   |
@@ -521,15 +521,15 @@ benennt diesen Abschnitt um, wenn keine `requireRole`-Stelle mehr übrig ist.
 | `contexts/time-tracking/api/terminals.ts:35`               | `POST /`                                        | A       | `terminal:manage`              | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/terminals.ts:126`              | `DELETE /:id`                                   | A       | `terminal:manage`              | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/time-entries.ts:1849`          | `PATCH /:id/revalidate`                         | A, M    | `time-entry:revalidate`        | ZUGEWIESEN                                   |
-| `contexts/working-time-account/api/overtime.ts:240`        | `POST /plans`                                   | A, M    | `overtime:settle`              | ZUGEWIESEN                                   |
-| `contexts/working-time-account/api/overtime.ts:286`        | `POST /payout`                                  | A, M    | `overtime:settle`              | ZUGEWIESEN                                   |
-| `contexts/working-time-account/api/overtime.ts:405`        | `GET /close-month/deferred`                     | A, M    | `month-close:read`             | ZUGEWIESEN                                   |
-| `contexts/working-time-account/api/overtime.ts:420`        | `GET /close-month/status`                       | A, M    | `month-close:read`             | ZUGEWIESEN                                   |
-| `contexts/working-time-account/api/overtime.ts:655`        | `GET /close-month/year-status`                  | A, M    | `month-close:read`             | ZUGEWIESEN                                   |
-| `contexts/working-time-account/api/overtime.ts:962`        | `POST /close-month`                             | A, M    | `month-close:close`            | ZUGEWIESEN                                   |
-| `contexts/working-time-account/api/overtime.ts:1423`       | `POST /unlock-month`                            | A       | `month-close:unlock`           | ZUGEWIESEN                                   |
-| `contexts/working-time-account/api/overtime.ts:1542`       | `POST /close-year`                              | A       | `month-close:close-year`       | ZUGEWIESEN                                   |
-| `contexts/working-time-account/api/overtime.ts:1716`       | `POST /opening-balance`                         | A       | `overtime:set-opening-balance` | ZUGEWIESEN                                   |
+| `contexts/working-time-account/api/overtime.ts:245`        | `POST /plans`                                   | A, M    | `overtime:settle`              | ZUGEWIESEN                                   |
+| `contexts/working-time-account/api/overtime.ts:291`        | `POST /payout`                                  | A, M    | `overtime:settle`              | ZUGEWIESEN                                   |
+| `contexts/working-time-account/api/overtime.ts:410`        | `GET /close-month/deferred`                     | A, M    | `month-close:read`             | ZUGEWIESEN                                   |
+| `contexts/working-time-account/api/overtime.ts:425`        | `GET /close-month/status`                       | A, M    | `month-close:read`             | ZUGEWIESEN                                   |
+| `contexts/working-time-account/api/overtime.ts:661`        | `GET /close-month/year-status`                  | A, M    | `month-close:read`             | ZUGEWIESEN                                   |
+| `contexts/working-time-account/api/overtime.ts:969`        | `POST /close-month`                             | A, M    | `month-close:close`            | ZUGEWIESEN                                   |
+| `contexts/working-time-account/api/overtime.ts:1431`       | `POST /unlock-month`                            | A       | `month-close:unlock`           | ZUGEWIESEN                                   |
+| `contexts/working-time-account/api/overtime.ts:1553`       | `POST /close-year`                              | A       | `month-close:close-year`       | ZUGEWIESEN                                   |
+| `contexts/working-time-account/api/overtime.ts:1727`       | `POST /opening-balance`                         | A       | `overtime:set-opening-balance` | ZUGEWIESEN                                   |
 
 ## Handler-Prüfungen
 
@@ -555,11 +555,11 @@ nur `ZUGEWIESEN` schalten eine Funktion ganz frei oder ab.
 | `contexts/absence/api/section9-documents.ts:199`         | `GET /:creditId`                      | A, M: alle; E: nur eigene                     | `section9:read`          | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/absence/api/vocational-school-pattern.ts:136`  | `GET /:id/vocational-school-pattern`  | A, M: alle; E: nur eigene                     | `vocational-school:read` | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/absence/api/vocational-school.ts:205`          | `GET /upcoming`                       | A, M: alle; E: nur eigene                     | `vocational-school:read` | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/platform/api/avatars.ts:18`                    | `POST /:employeeId`                   | A, M: alle; E: nur eigenes Bild               | `employee:update-avatar` | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/platform/api/avatars.ts:141`                   | `DELETE /:employeeId`                 | A, M: alle; E: nur eigenes Bild               | `employee:update-avatar` | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/platform/api/employees.ts:326`                 | `GET /`                               | nur A: Anonymisierte einblenden               | `employee:anonymize`     | ZUGEWIESEN                               |
-| `contexts/platform/api/employees.ts:363`                 | `GET /:id`                            | A, M: alle; E: nur eigene                     | `employee:read`          | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/platform/api/settings.ts:894`                  | `GET /work/:employeeId`               | A, M: alle; E: nur eigene                     | `contract:read`          | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/platform/api/avatars.ts:19`                    | `POST /:employeeId`                   | A, M: alle; E: nur eigenes Bild               | `employee:update-avatar` | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/platform/api/avatars.ts:145`                   | `DELETE /:employeeId`                 | A, M: alle; E: nur eigenes Bild               | `employee:update-avatar` | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/platform/api/employees.ts:328`                 | `GET /`                               | nur A: Anonymisierte einblenden               | `employee:anonymize`     | ZUGEWIESEN                               |
+| `contexts/platform/api/employees.ts:365`                 | `GET /:id`                            | A, M: alle; E: nur eigene                     | `employee:read`          | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/platform/api/settings.ts:949`                  | `GET /work/:employeeId`               | A, M: alle; E: nur eigene                     | `contract:read`          | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/scheduling/api/availability.ts:125`            | `GET /:id/availability`               | A, M: alle; E: nur eigene                     | `availability:read`      | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/scheduling/api/availability.ts:165`            | `PUT /:id/availability`               | A, M: alle; E: nur eigene                     | `availability:update`    | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/scheduling/api/integrations.ts:987`            | `GET /phorest/appointment-collisions` | A, M: alle; E: nur eigene                     | `shift:read`             | ZUGEWIESEN; sonst EIGENE                 |
@@ -574,9 +574,9 @@ nur `ZUGEWIESEN` schalten eine Funktion ganz frei oder ab.
 | `contexts/time-tracking/api/time-entries.ts:1399`        | `PUT /:id`                            | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/time-tracking/api/time-entries.ts:1950`        | `DELETE /:id`                         | A, M: alle; E: nur eigene                     | `time-entry:delete`      | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/time-tracking/api/time-entries.ts:2058`        | `PATCH /:id/break-status`             | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/working-time-account/api/overtime.ts:135`      | `GET /:employeeId`                    | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/working-time-account/api/overtime.ts:1508`     | `GET /snapshots/:employeeId`          | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/working-time-account/api/overtime.ts:1862`     | `GET /month-saldo/:employeeId`        | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/working-time-account/api/overtime.ts:136`      | `GET /:employeeId`                    | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/working-time-account/api/overtime.ts:1516`     | `GET /snapshots/:employeeId`          | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/working-time-account/api/overtime.ts:1873`     | `GET /month-saldo/:employeeId`        | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                 |
 
 ## Nicht gezählte Treffer
 

@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import crypto, { createHash } from "crypto";
 import { Prisma } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
-import { requirePermission } from "../request-permissions";
+import { hasPermission, permissionReach, requirePermission } from "../request-permissions";
 import { validatePassword, loadPasswordPolicy } from "../password-policy";
 // eslint-disable-next-line no-restricted-imports -- E-4: creating an employee computes the pro-rata leave entitlement as a side effect. Disappears in Block 2 via employee-created/employee-changed events. ADR 0001 Eintrag H.
 import { calculateProRataVacation } from "../../absence/vacation-calc";
@@ -323,7 +323,9 @@ export async function employeeRoutes(app: FastifyInstance) {
       // is honored for ADMIN only; MANAGERs never receive anonymized rows. GET /:id (audit view)
       // is NOT filtered — anonymized rows must remain resolvable by UUID (T-188-06).
       const { includeAnonymized } = req.query as { includeAnonymized?: string };
-      const showAnonymized = req.user.role === "ADMIN" && includeAnonymized === "true";
+      // Lazy: the permission is checked only when the flag is actually set (issue #75, D-13)
+      const showAnonymized =
+        includeAnonymized === "true" && (await hasPermission(req, "employee:anonymize:ZUGEWIESEN"));
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId: req.user.tenantId,
@@ -360,7 +362,11 @@ export async function employeeRoutes(app: FastifyInstance) {
       if (!id) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       const user = req.user;
 
-      if (user.role === "EMPLOYEE" && user.employeeId !== id) {
+      const readReach = await permissionReach(req, "employee:read");
+      if (readReach !== "ZUGEWIESEN" && user.employeeId !== id) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+      if (readReach === null) {
         return reply.code(403).send({ error: "Forbidden" });
       }
 
