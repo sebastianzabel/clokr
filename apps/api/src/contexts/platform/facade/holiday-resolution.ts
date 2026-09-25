@@ -161,8 +161,9 @@ export async function holidaysForSalon(
 
 /**
  * D-04 function 2: "is day D a holiday for employee E?", answered by WORK LOCATION (§ 2 EFZG) —
- * batched over `employeeIds` and the whole `[fromDay, toDay]` range, per issue #71's own wording
- * ("Feiertage eines Mitarbeiters in einem Zeitraum nach dem Recht am Arbeitsort").
+ * batched over `employeeIds` and the whole `[fromDay, toDay]` range, matching issue #71's own
+ * framing of the question as a RANGE form ("an employee's holidays over a period, by the law of
+ * the work location").
  *
  * Per employee and day, the salon in effect is:
  *   1. the caller-supplied closed work `entries` of that employee on that day — if more than one
