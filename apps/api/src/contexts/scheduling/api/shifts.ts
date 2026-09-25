@@ -17,6 +17,11 @@ import {
   permissionReach,
   requirePermission,
   salonForDay, // Phase 344 (issue #344) — the employee's actual per-day salon assignment
+  resolveAccessReach, // Phase 91b Plan 08 (#91), D-11/D-13/D-14
+  isShiftInScope, // Phase 91b Plan 08 (#91), D-11/D-14
+  shiftScopeWhere, // Phase 91b Plan 08 (#91), D-11
+  resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 08 (#91), D-10 (GET /week's leave/absence facade calls)
+  resolvePersonScopedEmployeeIds, // Phase 91b Plan 08 (#91), D-12 (GET /week's plannable-staff list)
 } from "../../platform";
 import {
   isMonthClosed, // Phase 100B Plan 07 — W1
@@ -925,6 +930,28 @@ export async function shiftRoutes(app: FastifyInstance) {
 
       const tenantId = req.user.tenantId;
 
+      // Phase 91b Plan 08 (Issue #91), D-11/D-12/D-13 — narrow to in-scope BEFORE the Promise.all
+      // fan-out below. Three DIFFERENT resource types feed this one handler, each with its own
+      // rule (determined by reading what each downstream call actually consumes, not assumed):
+      //   - `shifts` below is a raw shift.findMany (D-11: the shift's OWN salon, no Stammsalon
+      //     fallback) — `shiftScopeWhere` folds directly into its `where`.
+      //   - `employees` below is the "plannable staff" list — WHICH employees this manager may
+      //     see/assign at all, a person-master-data question (D-12: Stammsalon-TODAY OR an
+      //     active-DEPLOYMENT-TODAY row), not a shift-instance question — `resolvePersonScopedEmployeeIds`.
+      //   - The 2 `employeeScopeFor(access)` sites feed `getApprovedLeaveOverlapping`/
+      //     `getAbsencesOverlapping` (D-10, Stammsalon-only, no entry-salon fallback) — narrowed via
+      //     `resolveStammsalonScopedEmployeeIds` at the week's Monday, fed through a `scopedAccess`.
+      const weekScopeReach = await resolveAccessReach(app.prisma, access, "shift:read:ZUGEWIESEN");
+      const weekScopedAccess = { ...access, reach: weekScopeReach };
+      const weekPersonScopedIds =
+        weekScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolvePersonScopedEmployeeIds(app.prisma, tenantId, weekScopeReach);
+      const weekLeaveAbsenceScopedIds =
+        weekScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(app.prisma, tenantId, weekScopeReach, monday);
+
       // Phase 47.3 — Verfügbarkeits-System toggle. When false, the EmployeeAvailability
       // merge passes are skipped (Leave + Absence still apply).
       const availabilityOn = await isAvailabilityEnabled(app.prisma, tenantId);
@@ -958,6 +985,8 @@ export async function shiftRoutes(app: FastifyInstance) {
             employee: { tenantId },
             date: { gte: monday, lte: sunday },
             deletedAt: null, // Phase 67.2 — hide soft-deleted shifts from /shifts/week
+            // Phase 91b Plan 08 (Issue #91), D-11 — `{}` for a wholeTenant reach, no narrowing.
+            ...shiftScopeWhere(weekScopeReach),
           },
           include: {
             employee: {
@@ -978,7 +1007,16 @@ export async function shiftRoutes(app: FastifyInstance) {
         app.prisma.employee.findMany({
           // Hide DSGVO-anonymized employees from shift planning — they keep their WorkSchedule
           // for retention but must never appear as plannable staff in the week grid.
-          where: { tenantId, ...NOT_ANONYMIZED_EMPLOYEE_WHERE },
+          //
+          // Phase 91b Plan 08 (Issue #91), D-12 — "plannable staff" is a person-master-data
+          // question (which employees this manager may see/assign at all), not a shift-instance
+          // question, so it narrows via `resolvePersonScopedEmployeeIds` (Stammsalon-TODAY OR an
+          // active-DEPLOYMENT-TODAY row), not `shiftScopeWhere`.
+          where: {
+            tenantId,
+            ...NOT_ANONYMIZED_EMPLOYEE_WHERE,
+            ...(weekPersonScopedIds !== "all" ? { id: { in: weekPersonScopedIds } } : {}),
+          },
           select: {
             id: true,
             firstName: true,
@@ -1024,9 +1062,23 @@ export async function shiftRoutes(app: FastifyInstance) {
         }),
         listLeaveTypes(app.prisma, tenantId),
         // Phase 100B Plan 13 — A1, contexts/absence facade.
-        getApprovedLeaveOverlapping(app.prisma, employeeScopeFor(access), monday, sunday),
+        getApprovedLeaveOverlapping(
+          app.prisma,
+          weekLeaveAbsenceScopedIds === "all"
+            ? employeeScopeFor(access)
+            : employeeScopeFor(weekScopedAccess, { employeeIds: weekLeaveAbsenceScopedIds }),
+          monday,
+          sunday,
+        ),
         // Phase 100B Plan 12 — A4, contexts/absence facade.
-        getAbsencesOverlapping(app.prisma, employeeScopeFor(access), monday, sunday),
+        getAbsencesOverlapping(
+          app.prisma,
+          weekLeaveAbsenceScopedIds === "all"
+            ? employeeScopeFor(access)
+            : employeeScopeFor(weekScopedAccess, { employeeIds: weekLeaveAbsenceScopedIds }),
+          monday,
+          sunday,
+        ),
         app.prisma.coverageRule.findMany({
           where: { tenantId },
           select: {
@@ -1785,6 +1837,11 @@ export async function shiftRoutes(app: FastifyInstance) {
       // everyone else is forced onto their own employeeId — ignoring any passed param (T-188-02 IDOR guard).
       const shiftReadReach = await permissionReach(req, "shift:read");
       let targetEmployeeId: string | undefined;
+      // Phase 91b Plan 08 (Issue #91), D-11 — a ZUGEWIESEN reach may still be scoped to
+      // salons/persons (Plan 91b-01's D-05 gate change means a SALONS/PERSONS holder now passes
+      // the check above too). `undefined` here means "no scope resolution needed" (the EIGENE
+      // branch below never uses it — no extra query for the common case).
+      let shiftRangeScopeReach: Awaited<ReturnType<typeof resolveAccessReach>> | undefined;
       if (shiftReadReach !== "ZUGEWIESEN") {
         if (shiftReadReach === null) {
           return reply.code(403).send({ error: "Forbidden" });
@@ -1799,6 +1856,12 @@ export async function shiftRoutes(app: FastifyInstance) {
           return reply.code(400).send({ error: "employeeId erforderlich" });
         }
         targetEmployeeId = queryEmployeeId;
+        const shiftRangeAccess = accessContextFromRequest(req);
+        shiftRangeScopeReach = await resolveAccessReach(
+          app.prisma,
+          shiftRangeAccess,
+          "shift:read:ZUGEWIESEN",
+        );
       }
 
       const fromDate = new Date(from + "T00:00:00Z");
@@ -1829,6 +1892,12 @@ export async function shiftRoutes(app: FastifyInstance) {
           employee: { tenantId: req.user.tenantId }, // T-188-01 tenant guard via relation
           date: { gte: fromDate, lte: toDate },
           deletedAt: null, // Phase 67.2 soft-delete contract
+          // Phase 91b Plan 08 (Issue #91), D-11 — an ADDITIONAL top-level key (Prisma ANDs them),
+          // never a replacement: a scoped manager naming an out-of-scope employeeId now gets an
+          // empty list (this route's own existing "no shifts" shape), never that employee's
+          // shifts at a salon outside the caller's reach. `{}` for a wholeTenant reach — no
+          // narrowing, byte-identical to today.
+          ...(shiftRangeScopeReach ? shiftScopeWhere(shiftRangeScopeReach) : {}),
         },
         select: { date: true, startTime: true, endTime: true },
         orderBy: [{ date: "asc" }, { startTime: "asc" }],
@@ -1894,6 +1963,27 @@ export async function shiftRoutes(app: FastifyInstance) {
         return reply.code(salonResolution.reply.status).send(salonResolution.reply.body);
       }
       const salon = salonResolution.salon;
+
+      // Phase 91b Plan 08 (Issue #91), D-11/D-14 — scope check on the TARGET salon/employee this
+      // new shift would be assigned to (the shift row does not exist yet, so there is no
+      // already-fetched row to read from — `salon.id` is the just-resolved target salon).
+      {
+        const postScopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "shift:plan:ZUGEWIESEN",
+        );
+        if (!isShiftInScope(postScopeReach, { salonId: salon.id, employeeId: body.employeeId })) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: body.employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+      }
 
       // Phase 47.1 — Eligibility gate: only SHIFT_BASED employees may receive shift assignments.
       const eligibility = await assertEmployeeShiftEligible(app.prisma, body.employeeId);
@@ -2208,6 +2298,27 @@ export async function shiftRoutes(app: FastifyInstance) {
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
         return reply.code(404).send({ error: "Schicht nicht gefunden" });
+      }
+
+      // Phase 91b Plan 08 (Issue #91), D-11/D-14 — scope check on the ALREADY-FETCHED row's own
+      // salon/employee (never the possibly-attacker-supplied new employeeId/salonId from `body`).
+      {
+        const putScopeReach = await resolveAccessReach(app.prisma, access, "shift:plan:ZUGEWIESEN");
+        if (
+          !isShiftInScope(putScopeReach, {
+            salonId: existing.salonId,
+            employeeId: existing.employeeId,
+          })
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Shift",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Schicht nicht gefunden" });
+        }
       }
 
       // Determine the effective (employeeId, date, startTime, endTime) after the update
@@ -2572,6 +2683,26 @@ export async function shiftRoutes(app: FastifyInstance) {
 
       const tenantId = req.user.tenantId;
 
+      // Phase 91b Plan 08 (Issue #91), D-11/D-12/D-13/D-14 — a NEW finding this task makes by
+      // reading the actual code: generate-week's patterns/templates carry no salon of their own —
+      // the salon each generated shift ends up at is resolved LATER, per (employeeId, date), via
+      // `activeSalonForDay()` falling back to `findDefaultSalon()` (see the "Phase 344" comment
+      // below, at the commit-mode salon-resolution loop). Narrowing the INITIAL `employees` query
+      // below (D-12, same "plannable staff" resolver GET /week uses) means an out-of-scope
+      // employee never enters pattern-matching at all, so `toCreate` can never contain them —
+      // structurally equivalent to, and simpler than, a second isShiftInScope check per target
+      // AFTER their actual salon is resolved.
+      const generateWeekScopeReach = await resolveAccessReach(
+        app.prisma,
+        access,
+        "shift:plan:ZUGEWIESEN",
+      );
+      const generateWeekScopedAccess = { ...access, reach: generateWeekScopeReach };
+      const generateWeekPersonScopedIds =
+        generateWeekScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolvePersonScopedEmployeeIds(app.prisma, tenantId, generateWeekScopeReach);
+
       // Phase 47.3 — Verfügbarkeits-System toggle. When disabled, UNAVAILABLE rows
       // do NOT skip the auto-gen (no `availability-unavailable` skip entries).
       const availabilityOn = await isAvailabilityEnabled(app.prisma, tenantId);
@@ -2585,6 +2716,9 @@ export async function shiftRoutes(app: FastifyInstance) {
               OR: [{ exitDate: null }, { exitDate: { gt: weekStartDate } }],
               // Never auto-generate shifts for DSGVO-anonymized employees.
               ...NOT_ANONYMIZED_EMPLOYEE_WHERE,
+              ...(generateWeekPersonScopedIds !== "all"
+                ? { id: { in: generateWeekPersonScopedIds } }
+                : {}),
             },
             select: { id: true, hireDate: true, exitDate: true },
           }),
@@ -2602,12 +2736,25 @@ export async function shiftRoutes(app: FastifyInstance) {
           // Phase 100B Plan 13 — A1, contexts/absence facade.
           getApprovedLeaveOverlapping(
             app.prisma,
-            employeeScopeFor(access),
+            generateWeekPersonScopedIds === "all"
+              ? employeeScopeFor(access)
+              : employeeScopeFor(generateWeekScopedAccess, {
+                  employeeIds: generateWeekPersonScopedIds,
+                }),
             weekStartDate,
             weekEndDate,
           ),
           // Phase 100B Plan 12 — A4, contexts/absence facade.
-          getAbsencesOverlapping(app.prisma, employeeScopeFor(access), weekStartDate, weekEndDate),
+          getAbsencesOverlapping(
+            app.prisma,
+            generateWeekPersonScopedIds === "all"
+              ? employeeScopeFor(access)
+              : employeeScopeFor(generateWeekScopedAccess, {
+                  employeeIds: generateWeekPersonScopedIds,
+                }),
+            weekStartDate,
+            weekEndDate,
+          ),
           app.prisma.shift.findMany({
             where: {
               employee: { tenantId },
@@ -2955,6 +3102,27 @@ export async function shiftRoutes(app: FastifyInstance) {
 
       const tenantId = req.user.tenantId;
 
+      // Phase 91b Plan 08 (Issue #91), D-11/D-12/D-13/D-14 — a NEW finding: copy-week's copied
+      // shift inherits the SOURCE shift's own salonId (see `sourceSalonByShiftId` further below),
+      // re-resolved via the SAME `activeSalonForDay()`/`findDefaultSalon()` fallback chain
+      // generate-week uses when the employee's salon assignment has changed by the target date.
+      // `sourceShifts` below is the primary D-11-shaped (shift) query — `shiftScopeWhere` folds
+      // directly into it; the candidate employee set for the leave/absence facade calls is the
+      // SAME `resolvePersonScopedEmployeeIds` (D-12) set generate-week uses, for the identical
+      // reason: all three queries here serve the one decision "should we copy a shift for this
+      // employee", so using one consistent candidate set (rather than a differently-scoped one per
+      // query) avoids a mismatch between "whose shifts we'd copy" and "whose leave we check".
+      const copyWeekScopeReach = await resolveAccessReach(
+        app.prisma,
+        access,
+        "shift:plan:ZUGEWIESEN",
+      );
+      const copyWeekScopedAccess = { ...access, reach: copyWeekScopeReach };
+      const copyWeekPersonScopedIds =
+        copyWeekScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolvePersonScopedEmployeeIds(app.prisma, tenantId, copyWeekScopeReach);
+
       // Phase 47.3 — Verfügbarkeits-System toggle. When disabled, UNAVAILABLE rows
       // do NOT skip copy-week.
       const availabilityOn = await isAvailabilityEnabled(app.prisma, tenantId);
@@ -2967,6 +3135,8 @@ export async function shiftRoutes(app: FastifyInstance) {
               employee: { tenantId },
               date: { gte: sourceStartDate, lte: sourceEndDate },
               deletedAt: null, // Phase 67.2 — copy-week must not propagate soft-deleted shifts
+              // D-11: the source shift's own salon, or its employee directly listed (PERSONS).
+              ...shiftScopeWhere(copyWeekScopeReach),
             },
             include: {
               template: { select: { id: true, name: true } },
@@ -2976,14 +3146,18 @@ export async function shiftRoutes(app: FastifyInstance) {
           // Phase 100B Plan 13 — A1, contexts/absence facade.
           getApprovedLeaveOverlapping(
             app.prisma,
-            employeeScopeFor(access),
+            copyWeekPersonScopedIds === "all"
+              ? employeeScopeFor(access)
+              : employeeScopeFor(copyWeekScopedAccess, { employeeIds: copyWeekPersonScopedIds }),
             targetStartDate,
             targetEndDate,
           ),
           // Phase 100B Plan 12 — A4, contexts/absence facade.
           getAbsencesOverlapping(
             app.prisma,
-            employeeScopeFor(access),
+            copyWeekPersonScopedIds === "all"
+              ? employeeScopeFor(access)
+              : employeeScopeFor(copyWeekScopedAccess, { employeeIds: copyWeekPersonScopedIds }),
             targetStartDate,
             targetEndDate,
           ),
@@ -3475,6 +3649,31 @@ export async function shiftRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Schicht nicht gefunden" });
       }
 
+      // Phase 91b Plan 08 (Issue #91), D-11/D-14 — scope check on the already-fetched row.
+      {
+        const deleteAccess = accessContextFromRequest(req);
+        const deleteScopeReach = await resolveAccessReach(
+          app.prisma,
+          deleteAccess,
+          "shift:plan:ZUGEWIESEN",
+        );
+        if (
+          !isShiftInScope(deleteScopeReach, {
+            salonId: existing.salonId,
+            employeeId: existing.employeeId,
+          })
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Shift",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Schicht nicht gefunden" });
+        }
+      }
+
       // Phase 47.2 — Past-immutable: no deletion of shifts dated before today.
       const pastGuard = assertShiftNotPast(existing.date.toISOString().slice(0, 10));
       if (pastGuard) {
@@ -3597,6 +3796,31 @@ export async function shiftRoutes(app: FastifyInstance) {
         where: { id, employee: { tenantId: req.user.tenantId } },
       });
       if (!shift) return reply.code(404).send({ error: "Schicht nicht gefunden" });
+
+      // Phase 91b Plan 08 (Issue #91), D-11/D-14 — scope check on the already-fetched row.
+      {
+        const restoreAccess = accessContextFromRequest(req);
+        const restoreScopeReach = await resolveAccessReach(
+          app.prisma,
+          restoreAccess,
+          "shift:plan:ZUGEWIESEN",
+        );
+        if (
+          !isShiftInScope(restoreScopeReach, {
+            salonId: shift.salonId,
+            employeeId: shift.employeeId,
+          })
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Shift",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Schicht nicht gefunden" });
+        }
+      }
 
       // Defensive locked-month guard (T-67.2-16). Phase 47.2 SHIFT_PAST_IMMUTABLE
       // already forbids past mutations, but a locked future month (early close
