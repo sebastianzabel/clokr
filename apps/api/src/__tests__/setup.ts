@@ -450,6 +450,10 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
     where: { employeeId: { in: employeeIds } },
   });
   await prisma.shift.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  // Issue #342: PhorestAppointment.employee AND .salon are onDelete: Restrict — these rows must
+  // go before prisma.employee.deleteMany and prisma.salon.deleteMany below, otherwise the delete
+  // fails and leaks fixture rows into the shared test database.
+  await prisma.phorestAppointment.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.absence.deleteMany({ where: { employeeId: { in: employeeIds } } });
   // Phase 104-05: Section9Credit's two LeaveRequest FKs (sickRequest/vacationRequest) are
   // onDelete: Restrict — must be deleted before leaveRequest.deleteMany, or the delete below
@@ -488,7 +492,8 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   // default salon for its tenant (opt-out via `{ withDefaultSalon: false }`) — this deleteMany
   // covers that row as well as any salon a suite created directly. Shift/PhorestAppointment ->
   // Salon and EmployeeSalonAssignment -> Salon are ALSO onDelete: Restrict, but the
-  // shift.deleteMany and employeeSalonAssignment.deleteMany above already run before this.
+  // shift.deleteMany, phorestAppointment.deleteMany, and employeeSalonAssignment.deleteMany above
+  // already run before this.
   await prisma.salon.deleteMany({ where: { tenantId } });
   await prisma.tenant.delete({ where: { id: tenantId } });
 }

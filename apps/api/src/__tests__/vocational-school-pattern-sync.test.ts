@@ -6,7 +6,7 @@
 // PUT handler triggers it exactly once on the first active pattern create and
 // NOT on subsequent PUTs.
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 
 const syncSpy = vi.fn();
@@ -55,6 +55,15 @@ describe("Phase 67.2 — first-pattern-create triggers on-demand sync (Test I)",
       where: { employeeId: data.employee.id },
     });
     await app.prisma.schoolHolidayPeriod.deleteMany({ where: { tenantId: data.tenant.id } });
+  });
+
+  // Issue #342: the PUT vocational-school-pattern handler fires a fire-and-forget background
+  // BS-generator run (`runVocationalSchoolGeneration`, tracked via `app.trackPendingBSGeneration`);
+  // without draining it after every test it can write Absence rows after the next test's
+  // beforeEach sweep or after afterAll's cleanupTestData has started, which leaks rows and fails
+  // the employee delete on Absence_employeeId_fkey.
+  afterEach(async () => {
+    await app.waitForPendingBSGenerations?.();
   });
 
   it("First PUT triggers syncSchoolHolidaysForTenant; second PUT does NOT", async () => {
