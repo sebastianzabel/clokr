@@ -440,7 +440,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       if (!employeeId) return reply.code(400).send({ error: "Mitarbeiter nicht gefunden" });
       // D-04: only a caller holding time-entry:create:ZUGEWIESEN may clock in on behalf of
       // others; the self path still requires at least time-entry:create:EIGENE (issue #75, D-13).
-      const isOnBehalfOf = !!body.employeeId && body.employeeId !== user.employeeId;
+      // Issue #358: judged on the RESOLVED employeeId, not `body.employeeId` alone — a caller can
+      // reach a colleague's record just as well via `body.nfcCardId` (a physically readable UID),
+      // and the nfcCardId branch above already overwrote `employeeId` with that colleague's id.
+      const isOnBehalfOf = employeeId !== user.employeeId;
       const timeEntryCreateReach = await permissionReach(req, "time-entry:create");
       if (isOnBehalfOf && timeEntryCreateReach !== "ZUGEWIESEN") {
         return reply.code(403).send({ error: "Forbidden" });
