@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto, { createHash } from "crypto";
-import { Prisma, type Role } from "@clokr/db";
+import { Prisma, type Role, type RoleAssignmentScopeType } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
 import { hasPermission, permissionReach, requirePermission } from "../request-permissions";
 import { validatePassword, loadPasswordPolicy } from "../password-policy";
@@ -19,10 +19,14 @@ import {
 import { requestAuditFields } from "../request-audit-fields";
 import { RoleLockoutError, ROLE_LOCKOUT_MESSAGE } from "../role-assignment";
 import {
+  assignmentsBlockingDemotionToEmployee,
+  isDemotionToEmployee,
   legacyFallbackAlreadyYields,
   materializeLegacyRoleAssignment,
   replaceSystemRoleAssignment,
   requestedRoleNeedsRoleAssignmentManage,
+  ROLE_DEMOTION_BLOCKED_MESSAGE_PREFIX,
+  RoleDemotionBlockedError,
   syncCompatRoleColumn,
 } from "../compat-role";
 import {
@@ -67,6 +71,13 @@ import { tenantLocalDay, toAssignmentDto } from "../salon-assignment-rules";
 
 // ── Retention constant ─────────────────────────────────────────────────────
 const DEFAULT_RETENTION_YEARS = 10;
+
+// Issue #357 sub-fix B: the German scope label for the demotion-blocked 409 message.
+const SCOPE_LABEL: Record<RoleAssignmentScopeType, string> = {
+  TENANT: "mandantenweit",
+  SALONS: "salonbezogen",
+  PERSONS: "personenbezogen",
+};
 
 // Phase 76.31 D-06 — per-employee bsSlot* override Zod fields (highest layer of
 // the 4-layer slot hierarchy). Nullable Int — explicit null CLEARS the employee
@@ -331,10 +342,15 @@ async function auditRemovedRoleAssignments(
  * holder of a guarded permission then rolls back this change, the employee-field update and every
  * audit row together (D-31).
  *
- * Order: a request that changes nothing (the fallback already yields `role`) writes nothing. Else
- * the fallback is materialized first (D-26), the system-role assignment is replaced (customer
- * roles untouched), the column is rewritten to the derived value, and the audit rows are written
- * in the order of the writes with the column change on the last one (D-29).
+ * Order: a request that changes nothing (the fallback already yields `role`) writes nothing. Else,
+ * for a demotion TO Mitarbeiter, {@link assignmentsBlockingDemotionToEmployee} runs first (Issue
+ * #357 sub-fix B) — a still-granting customer-role or salon/person-scoped assignment throws
+ * {@link RoleDemotionBlockedError} before any write, so the whole request (this role change AND
+ * every other field on the same PATCH) rolls back atomically rather than silently applying a
+ * partial demotion. Otherwise the fallback is materialized first (D-26), the system-role
+ * assignment is replaced (customer roles untouched), the column is rewritten to the derived value,
+ * and the audit rows are written in the order of the writes with the column change on the last one
+ * (D-29).
  */
 async function applyRoleFromEmployeeForm(
   app: FastifyInstance,
@@ -345,6 +361,10 @@ async function applyRoleFromEmployeeForm(
 ): Promise<void> {
   const tenantId = req.user.tenantId;
   if (await legacyFallbackAlreadyYields(tx, tenantId, userId, role)) return;
+  if (isDemotionToEmployee(role)) {
+    const blocking = await assignmentsBlockingDemotionToEmployee(tx, tenantId, userId);
+    if (blocking.length > 0) throw new RoleDemotionBlockedError(blocking);
+  }
   const materialized = await materializeLegacyRoleAssignment(tx, tenantId, userId);
   const { removed, created } = await replaceSystemRoleAssignment(tx, tenantId, userId, role);
   const compatRole = await syncCompatRoleColumn(tx, tenantId, userId);
@@ -876,6 +896,19 @@ export async function employeeRoutes(app: FastifyInstance) {
       } catch (err) {
         if (err instanceof RoleLockoutError) {
           return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
+        }
+        if (err instanceof RoleDemotionBlockedError) {
+          // Issue #357 sub-fix B: name the surviving assignments so the admin knows what to
+          // remove first, instead of the API silently deleting a customer-role assignment (an
+          // unrequested rights change of its own) or silently leaving it in place (the bug
+          // reported in #357).
+          const names = err.blocking
+            .map((a) => `${a.roleName} (${SCOPE_LABEL[a.scopeType]})`)
+            .join(", ");
+          return reply.code(409).send({
+            error: `${ROLE_DEMOTION_BLOCKED_MESSAGE_PREFIX}: ${names}. Bitte diese Zuweisungen zuerst entfernen oder beenden.`,
+            remainingAssignments: err.blocking,
+          });
         }
         throw err;
       }

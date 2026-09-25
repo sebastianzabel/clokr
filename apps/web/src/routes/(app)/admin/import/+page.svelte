@@ -16,6 +16,9 @@
     total: number;
     imported: number;
     errors: number;
+    // Issue #356: hints for CSV headers the importer did not recognize — additive,
+    // omitted/empty when every header matched a known column.
+    warnings?: string[];
     details: ImportResult[];
   }
 
@@ -255,6 +258,17 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
           {/if}
         </div>
 
+        {#if importResponse.warnings && importResponse.warnings.length > 0}
+          <div class="callout warnings-callout" role="status">
+            <span class="ico">&#x26A0;</span>
+            <div>
+              {#each importResponse.warnings as warning (warning)}
+                <p>{warning}</p>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
         {#if importResponse.details.length > 0}
           <div class="table-wrapper result-table">
             <table class="data-table">
@@ -358,6 +372,18 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
 
   .result-table {
     margin-top: 1rem;
+  }
+
+  .warnings-callout {
+    margin-top: 0.75rem;
+  }
+
+  .warnings-callout p {
+    margin: 0;
+  }
+
+  .warnings-callout p + p {
+    margin-top: 0.25rem;
   }
 
   .row-num {

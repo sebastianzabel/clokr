@@ -1259,6 +1259,22 @@ nicht behauptet, sondern gegen eine Aufnahme des alten Codes geprüft (unten, �
   sich selbst anonymisiert, mitten in der Sitzung seine Rechte — zwei aufgenommene Zellen der Matrix
   (`DELETE /api/v1/employees/:id`, fremd, ADMIN und FALLBACK_ADMIN) wären von 204 auf 403 gekippt.
   Die Anmeldung ist so oder so weg (Passwort und Refresh-Tokens werden entfernt).
+
+  **Nachtrag 2026-09-25 — Issue #357 (Sicherheitsreview zu #354/75b):** Diese Abweichung ist
+  aufgehoben. `anonymizeEmployeeData` (`contexts/platform/anonymize.ts`) schreibt `User.role`
+  jetzt zusammen mit `isActive: false` auf EMPLOYEE zurück. Der oben genannte Vorteil (ein noch
+  gültiges Token behält seine Rechte) war der eigentliche Befund von #357: mit entfernten
+  Zuweisungen UND stehengelassener Spalte hält ein vor der Anonymisierung ausgestelltes,
+  noch gültiges Zugriffstoken eines MANAGER/ADMIN über den Alt-Rollen-Rückfall (D-08) volle Rechte
+  bis zum Token-Ablauf — obwohl die Person anonymisiert und `isActive: false` ist (das nichts je
+  Anfrage neu prüft, D-10). Die zwei genannten Matrix-Zellen kippen jetzt tatsächlich von 204 auf
+  403 (Test: `apps/api/src/__tests__/employee-role-bridge.test.ts`, "a MANAGER's
+  pre-anonymization access token holds no rights afterwards"); die Abweichung ist als Amendment
+  in `apps/api/src/__tests__/neutrality/recorded/matrix-amendments.json` (Issue #357) verzeichnet,
+  `recorded/matrix.json` bleibt unverändert. `docs/permissions.md` bekam dafür keine neue Zeile —
+  es ist kein neuer Rollenvergleich außerhalb von `compat-role.ts`, sondern derselbe
+  `tx.user.update()`-Aufruf, der schon `isActive` schreibt.
+
 - **Das Token eines gelöschten Nutzers hält nichts** (T-75b-28): Gibt es die `User`-Zeile nicht
   mehr, ergibt der Auflöser keine Permission (`request-permissions.ts:140`). Vorher ließ der
   `role`-Claim das Token bis zu seinem Ablauf durch. Das ist die einzige beabsichtigte Verengung.

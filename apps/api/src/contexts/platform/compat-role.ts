@@ -14,11 +14,16 @@
  *   and the only other allowed reader of `User.role` values.
  * - {@link deriveCompatRole}: stored assignments → the legacy value to publish. ADMIN only for a
  *   well-formed TENANT assignment on the Admin system role (identified by id, D-01 — never by the
- *   display name); MANAGER when any assignment's role grants at least one ZUGEWIESEN permission;
- *   EMPLOYEE otherwise. Every row passes the same filters the 74b resolution applies: the role
- *   must belong to the tenant (a system role or a customer role of that tenant) and the stored
- *   scope must be well-formed (`storedRoleAssignmentScope`, fail closed). A role grants through
- *   `roleGrants` only (AK-73-7).
+ *   display name); MANAGER when any well-formed TENANT assignment's role grants at least one
+ *   ZUGEWIESEN permission; EMPLOYEE otherwise. Every row passes the same filters the 74b
+ *   resolution applies: the role must belong to the tenant (a system role or a customer role of
+ *   that tenant) and the stored scope must be well-formed (`storedRoleAssignmentScope`, fail
+ *   closed). A row at SALONS or PERSONS scope contributes nothing here — the live resolver
+ *   (`request-permissions.ts`) grants ZUGEWIESEN permissions from a TENANT-scope source only
+ *   (D-09), so a compat role derived over a wider scope would overstate what the caller can
+ *   actually do at the API (Issue #357 sub-fix A; before the fix a SALONS/PERSONS assignment
+ *   holding a ZUGEWIESEN key wrongly derived MANAGER). A role grants through `roleGrants` only
+ *   (AK-73-7).
  *
  * {@link compatRoleForUser} combines both for token issuance: a user without a stored assignment
  * in the tenant (every user without Employee, whose tenant is "", and every fallback user) keeps
@@ -32,6 +37,11 @@
  *   the first assignment write, so a first customer role never silently removes a legacy role;
  * - {@link replaceSystemRoleAssignment} swaps the user's tenant-wide system role, leaving every
  *   customer-role assignment untouched;
+ * - {@link assignmentsBlockingDemotionToEmployee} (Issue #357 sub-fix B): the employee-form PATCH
+ *   handler calls this BEFORE replacing the system role with Mitarbeiter — a non-empty result
+ *   throws {@link RoleDemotionBlockedError} and the whole request is rejected with 409, naming the
+ *   still-granting assignments, instead of leaving them in place unnoticed OR silently deleting
+ *   a customer-role assignment (itself an unrequested rights change);
  * - {@link syncCompatRoleColumn} rewrites `User.role` to the value derived over the STORED rows and
  *   reports the change, so the caller records it on the triggering audit row.
  * None of them audits: this module has no `app`. Each returns what it wrote, and the caller (a
@@ -97,16 +107,29 @@ export function requestedRoleNeedsRoleAssignmentManage(role: Role): boolean {
 }
 
 /**
+ * Issue #357 sub-fix B: does the employee form's requested `role` demote its target TO Mitarbeiter
+ * — the case {@link assignmentsBlockingDemotionToEmployee} must guard? Same shape and same reason
+ * as {@link requestedRoleNeedsRoleAssignmentManage} just above: the compared value is a REQUEST
+ * field, not the caller's own role, but `lint-role-checks.ts` flags any `role`-named comparison
+ * regardless — so the comparison lives here, the allowlisted module, instead of a bare
+ * `role === "EMPLOYEE"` at the call site in `employees.ts`.
+ */
+export function isDemotionToEmployee(role: Role): boolean {
+  return role === "EMPLOYEE";
+}
+
+/**
  * The compat role derived from a user's stored assignments in `tenantId` (D-14). Rows whose role
- * belongs to another tenant, and rows with a malformed scope, contribute nothing. An empty (or
- * fully filtered) input yields EMPLOYEE — the column write-back of a user whose last assignment
- * was revoked (D-08).
+ * belongs to another tenant, rows with a malformed scope, and rows at SALONS or PERSONS scope
+ * (Issue #357 sub-fix A — only a TENANT-scope assignment grants anything tenant-wide, D-09)
+ * contribute nothing. An empty (or fully filtered) input yields EMPLOYEE — the column write-back
+ * of a user whose last assignment was revoked (D-08).
  */
 export function deriveCompatRole(tenantId: string, rows: readonly CompatRoleAssignmentRow[]): Role {
   const effective = rows.filter((row) => {
     const roleBelongsHere =
       row.accessRole.tenantId === null || row.accessRole.tenantId === tenantId;
-    return roleBelongsHere && storedRoleAssignmentScope(row) !== null;
+    return roleBelongsHere && row.scopeType === "TENANT" && storedRoleAssignmentScope(row) !== null;
   });
   if (
     effective.some(
@@ -328,6 +351,94 @@ export async function replaceSystemRoleAssignment(
   }
 
   return { removed: remove.map(toWrittenAssignment), created };
+}
+
+// ── Demotion guard (Issue #357 sub-fix B) ──────────────────────────────────────────────────────
+
+/** An assignment named in the 409 the employee-form demotion guard answers with. */
+export interface BlockingRoleAssignment {
+  id: string;
+  roleName: string;
+  scopeType: RoleAssignmentScopeType;
+  salonIds: string[];
+  employeeIds: string[];
+}
+
+const BLOCKING_ASSIGNMENT_INCLUDE = {
+  accessRole: { select: { id: true, tenantId: true, name: true, permissions: true } },
+} as const;
+
+/**
+ * True when `row` grants more than the Mitarbeiter system role ever does. Mitarbeiter is
+ * EIGENE-only (`EMPLOYEE_PERMISSION_KEYS` in `system-roles.ts`, D-03), so any well-formed,
+ * tenant-relevant row that grants at least one ZUGEWIESEN key is strictly more — Admin included,
+ * since the Admin system role's permission set grants ZUGEWIESEN keys too.
+ *
+ * Deliberately does NOT restrict itself to TENANT scope the way {@link deriveCompatRole} does
+ * (Issue #357 sub-fix A): a SALONS or PERSONS assignment on such a role still hands out real, if
+ * scoped, power (`decideUserMayApply` in `role-assignment.ts`) — exactly the kind of leftover
+ * right Issue #357 sub-fix B must catch before a demotion to Mitarbeiter in the employee form.
+ */
+export function assignmentExceedsEmployee(tenantId: string, row: CompatRoleAssignmentRow): boolean {
+  const roleBelongsHere = row.accessRole.tenantId === null || row.accessRole.tenantId === tenantId;
+  if (!roleBelongsHere || storedRoleAssignmentScope(row) === null) return false;
+  return ZUGEWIESEN_KEYS.some((key) => roleGrants(row.accessRole, key));
+}
+
+/**
+ * Issue #357 sub-fix B: the assignments that would still grant `userId` more than the Mitarbeiter
+ * system role even AFTER {@link replaceSystemRoleAssignment} replaces the user's TENANT
+ * system-role row with Mitarbeiter — every OTHER stored assignment (a customer role at any scope,
+ * or a system role kept at SALONS/PERSONS scope, since `replaceSystemRoleAssignment` only ever
+ * touches TENANT-scope system-role rows) for which {@link assignmentExceedsEmployee} holds.
+ *
+ * Called by the employee-form PATCH handler BEFORE any write, when the requested role is
+ * Mitarbeiter: a non-empty result means the whole request must be rejected (409, naming these
+ * rows) rather than the API silently deleting a customer-role assignment (an unrequested rights
+ * change of its own) or silently leaving it in place (the bug this issue reports) — see the
+ * issue's decision comment for the reasoning.
+ */
+export async function assignmentsBlockingDemotionToEmployee(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  userId: string,
+): Promise<BlockingRoleAssignment[]> {
+  const rows = await db.roleAssignment.findMany({
+    where: { tenantId, userId },
+    include: BLOCKING_ASSIGNMENT_INCLUDE,
+  });
+  return rows
+    .filter((row) => !(row.scopeType === "TENANT" && isSystemRoleId(row.accessRoleId)))
+    .filter((row) => assignmentExceedsEmployee(tenantId, row))
+    .map((row) => ({
+      id: row.id,
+      roleName: row.accessRole.name,
+      scopeType: row.scopeType,
+      salonIds: row.salonIds,
+      employeeIds: row.employeeIds,
+    }));
+}
+
+/** The German 409 message the employee-form PATCH handler answers with (Issue #357 sub-fix B). */
+export const ROLE_DEMOTION_BLOCKED_MESSAGE_PREFIX =
+  "Rückstufung auf Mitarbeiter nicht möglich: Es bestehen noch weitere Rechte über zusätzliche Rollenzuweisungen";
+
+/**
+ * Thrown inside the employee-form's transaction when a demotion to Mitarbeiter would leave
+ * `blocking` assignments in place (Issue #357 sub-fix B). Throwing rolls back the write AND its
+ * audit row, same pattern as {@link RoleLockoutError} in `role-assignment.ts`. Callers branch on
+ * `instanceof RoleDemotionBlockedError`, never on the message text.
+ */
+export class RoleDemotionBlockedError extends Error {
+  readonly blocking: BlockingRoleAssignment[];
+
+  constructor(blocking: BlockingRoleAssignment[]) {
+    super(
+      `RoleDemotionBlockedError: ${blocking.length} assignment(s) would still grant more than Mitarbeiter`,
+    );
+    this.name = "RoleDemotionBlockedError";
+    this.blocking = blocking;
+  }
 }
 
 /**
