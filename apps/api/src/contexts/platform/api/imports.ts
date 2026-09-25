@@ -21,6 +21,10 @@ import {
   resolveHomeSalonForNewEmployee,
 } from "../facade/salon-assignments";
 import { auditSalonAssignmentEvent } from "../salon-assignment-audit";
+// Phase 75b Plan 11 (issue #75, D-15) — the imported user's system-role assignment.
+import { lockTenantForRoleChanges } from "../facade/role-assignments";
+import { replaceSystemRoleAssignment, syncCompatRoleColumn } from "../compat-role";
+import { auditRoleAssignmentChange, createdAssignmentAuditEntry } from "../role-assignment-audit";
 import { tenantLocalDay, toAssignmentDto } from "../salon-assignment-rules";
 
 const employeeRowSchema = z.object({
@@ -187,6 +191,24 @@ export async function importRoutes(app: FastifyInstance) {
             });
 
             await createOvertimeAccount(tx, emp.id, req.user.tenantId);
+
+            // Phase 75b (D-15): the imported user's system-role assignment and its audit row, in
+            // this row's transaction — a failing row leaves no assignment behind. A grant takes
+            // the tenant lock but needs no holder count; the actor is resolved API-key safe
+            // (never `req.user.sub` as userId, #333). The column already holds the role, so the
+            // write-back is a no-op kept for one uniform path.
+            await lockTenantForRoleChanges(tx, req.user.tenantId);
+            const { created: roleAssignment } = await replaceSystemRoleAssignment(
+              tx,
+              req.user.tenantId,
+              user.id,
+              data.role,
+            );
+            await auditRoleAssignmentChange(app, req, tx, {
+              userId: user.id,
+              entries: roleAssignment !== null ? [createdAssignmentAuditEntry(roleAssignment)] : [],
+              compatRole: await syncCompatRoleColumn(tx, req.user.tenantId, user.id),
+            });
 
             // D-23: the imported employee's Stammsalon (HOME) row, open-ended from its
             // tenant-local hire day, in the SAME per-row transaction — audited CREATE.

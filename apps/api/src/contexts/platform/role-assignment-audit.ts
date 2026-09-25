@@ -124,19 +124,12 @@ export function createdAssignmentAuditEntry(row: WrittenAssignment): RoleAssignm
   };
 }
 
-/**
- * The DELETE row of a removed assignment: the D-12 value as `oldValue`, and `newValue` only when
- * the caller names the trigger (e.g. `{ reason: "Anonymisierung" }`, 74b D-22).
- */
-export function removedAssignmentAuditEntry(
-  row: WrittenAssignment,
-  newValue?: object,
-): RoleAssignmentAuditEntry {
+/** The DELETE row of a removed assignment: the D-12 value as `oldValue` (74b shape). */
+export function removedAssignmentAuditEntry(row: WrittenAssignment): RoleAssignmentAuditEntry {
   return {
     action: "DELETE",
     entityId: row.id,
     oldValue: roleAssignmentAuditValue(row, row.roleName),
-    ...(newValue !== undefined ? { newValue } : {}),
   };
 }
 
@@ -145,8 +138,8 @@ export function removedAssignmentAuditEntry(
  * compat-column change the change caused (D-29): `compatRole: { from, to }` is merged into the
  * `newValue` of the LAST row, so the column is never rewritten without an audit trace and without
  * a second row for the same change. When the change wrote no assignment row but still rewrote the
- * column (anonymizing a user who relied on the fallback, or a column that disagreed with its
- * stored rows), one UPDATE row on entity `User` records `{ compatRole, reason? }` instead.
+ * column (a column that disagreed with its stored rows, e.g. after a 74b-era assignment write that
+ * did not sync it), one UPDATE row on entity `User` records `{ compatRole }` instead.
  */
 export async function auditRoleAssignmentChange(
   app: FastifyInstance,
@@ -156,7 +149,6 @@ export async function auditRoleAssignmentChange(
     userId: string;
     entries: RoleAssignmentAuditEntry[];
     compatRole: { from: string; to: string } | null;
-    reason?: string;
   },
 ): Promise<void> {
   const { entries, compatRole } = change;
@@ -165,10 +157,7 @@ export async function auditRoleAssignmentChange(
       action: "UPDATE",
       entity: "User",
       entityId: change.userId,
-      ...requestAuditFields(req, {
-        compatRole,
-        ...(change.reason !== undefined ? { reason: change.reason } : {}),
-      }),
+      ...requestAuditFields(req, { compatRole }),
       tx,
     });
     return;

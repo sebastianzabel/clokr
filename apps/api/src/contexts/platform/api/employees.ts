@@ -11,6 +11,7 @@ import { calculateProRataVacation } from "../../absence/vacation-calc";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { anonymizeEmployeeData, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../anonymize";
 import {
+  lockTenantForRoleChanges,
   removeRoleAssignmentsOfUser,
   withRoleLockoutGuard,
   type RemovedRoleAssignment,
@@ -563,6 +564,23 @@ export async function employeeRoutes(app: FastifyInstance) {
         });
 
         await createOvertimeAccount(tx, emp.id, req.user.tenantId);
+
+        // Phase 75b (D-15): the new user's system-role assignment and its audit row, in this same
+        // transaction. A grant cannot lower any holder count, so it takes the tenant lock (which
+        // serialises it with every guarded role change) but needs no before/after count. The
+        // column already holds `body.role`, so the write-back is a no-op kept for one uniform path.
+        await lockTenantForRoleChanges(tx, req.user.tenantId);
+        const { created: roleAssignment } = await replaceSystemRoleAssignment(
+          tx,
+          req.user.tenantId,
+          user.id,
+          body.role,
+        );
+        await auditRoleAssignmentChange(app, req, tx, {
+          userId: user.id,
+          entries: roleAssignment !== null ? [createdAssignmentAuditEntry(roleAssignment)] : [],
+          compatRole: await syncCompatRoleColumn(tx, req.user.tenantId, user.id),
+        });
 
         // D-22: the new employee's Stammsalon (HOME) row, open-ended from its tenant-local hire
         // day, in the SAME transaction — audited CREATE right after, still inside the tx.

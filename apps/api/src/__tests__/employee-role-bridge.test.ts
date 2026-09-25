@@ -25,6 +25,8 @@ import { SYSTEM_ROLE_IDS, normalizeRolePermissions, roleNameKey } from "../conte
 import { ROLE_LOCKOUT_MESSAGE } from "../contexts/platform/role-assignment";
 
 const PASSWORD = "test1234";
+// POST /employees validates the tenant password policy; the fixture users bypass it.
+const POLICY_PASSWORD = "Test@1234567!";
 const MATERIALIZATION_REASON = "Übernahme der Alt-Rolle (#75)";
 
 type AuditRow = {
@@ -431,5 +433,153 @@ describe("Role bridge: employee form, compat column and fallback materialization
       expect(row.newValue?.actor).toEqual({ type: "API_KEY", apiKeyId: apiKey.id });
     }
     expect(await columnRole(target.user.id)).toBe("EMPLOYEE");
+  });
+
+  describe("creation paths and the anonymization (D-15, D-14/D-29)", () => {
+    it("POST /employees creates the system-role assignment with one CREATE audit in the user's transaction", async () => {
+      const uid = crypto.randomBytes(4).toString("hex");
+      const email = `bridge-post-${uid}@test.de`;
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${tenant.adminToken}` },
+        payload: {
+          email,
+          firstName: "Anlage",
+          lastName: "Manager",
+          employeeNumber: `BP-${uid}`,
+          hireDate: "2026-01-01T00:00:00.000Z",
+          role: "MANAGER",
+          password: POLICY_PASSWORD,
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const user = await app.prisma.user.findUniqueOrThrow({ where: { email } });
+
+      const rows = await storedAssignments(tenant.tenant.id, user.id);
+      expect(rows.map((row) => [row.accessRoleId, row.scopeType])).toEqual([
+        [SYSTEM_ROLE_IDS.MANAGER, "TENANT"],
+      ]);
+      const audits = await roleAssignmentAudits(user.id);
+      expect(audits).toHaveLength(1);
+      expect(audits[0]).toMatchObject({
+        action: "CREATE",
+        entityId: rows[0].id,
+        userId: tenant.adminUser.id,
+        newValue: {
+          userId: user.id,
+          accessRoleId: SYSTEM_ROLE_IDS.MANAGER,
+          roleName: "Manager",
+          scopeType: "TENANT",
+          salonIds: [],
+          employeeIds: [],
+        },
+      });
+      // The column already holds the created role — no compat change to record.
+      expect(audits[0].newValue?.compatRole).toBeUndefined();
+      expect(user.role).toBe("MANAGER");
+
+      const loginRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email, password: POLICY_PASSWORD },
+        remoteAddress: nextRemoteAddress(),
+      });
+      expect(loginRes.statusCode).toBe(200);
+      const loginBody = JSON.parse(loginRes.body);
+      expect(loginBody.user.role).toBe("MANAGER");
+      expect(claimsOf(loginBody.accessToken).role).toBe("MANAGER");
+    });
+
+    it("the CSV import gives every new user its system-role assignment; a failing row leaves none", async () => {
+      const uid = crypto.randomBytes(4).toString("hex");
+      const csv = [
+        // "Rolle" (capitalised): the importer reads `role` or `Rolle` as the role column.
+        "email;vorname;nachname;nr;eintrittsdatum;Rolle;wochenstunden;passwort",
+        `bridge-imp1-${uid}@test.de;Import;Eins;BI1-${uid};01.01.2026;EMPLOYEE;40;${PASSWORD}`,
+        `bridge-imp2-${uid}@test.de;Import;Zwei;BI2-${uid};01.01.2026;MANAGER;40;${PASSWORD}`,
+        // Same employee number as row 1: user.create succeeds, employee.create fails, the row's
+        // transaction rolls back — including anything written for its user.
+        `bridge-imp3-${uid}@test.de;Import;Drei;BI1-${uid};01.01.2026;ADMIN;40;${PASSWORD}`,
+      ].join("\n");
+      const adminRoleAssignmentAuditCount = () =>
+        app.prisma.auditLog.count({
+          where: { entity: "RoleAssignment", userId: tenant.adminUser.id },
+        });
+      const auditsBefore = await adminRoleAssignmentAuditCount();
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/imports/employees",
+        headers: { authorization: `Bearer ${tenant.adminToken}` },
+        payload: { csv },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toMatchObject({ total: 3, imported: 2, errors: 1 });
+
+      for (const [n, role, roleId, roleName] of [
+        [1, "EMPLOYEE", SYSTEM_ROLE_IDS.EMPLOYEE, "Mitarbeiter"],
+        [2, "MANAGER", SYSTEM_ROLE_IDS.MANAGER, "Manager"],
+      ] as const) {
+        const user = await app.prisma.user.findUniqueOrThrow({
+          where: { email: `bridge-imp${n}-${uid}@test.de` },
+        });
+        expect(user.role).toBe(role);
+        const rows = await storedAssignments(tenant.tenant.id, user.id);
+        expect(rows.map((row) => [row.accessRoleId, row.scopeType])).toEqual([[roleId, "TENANT"]]);
+        const audits = await roleAssignmentAudits(user.id);
+        expect(audits).toHaveLength(1);
+        expect(audits[0]).toMatchObject({
+          action: "CREATE",
+          entityId: rows[0].id,
+          userId: tenant.adminUser.id,
+          newValue: { userId: user.id, accessRoleId: roleId, roleName, scopeType: "TENANT" },
+        });
+      }
+      expect(
+        await app.prisma.user.findUnique({ where: { email: `bridge-imp3-${uid}@test.de` } }),
+      ).toBeNull();
+      // Exactly the two successful rows' CREATE audits — the failed row's rolled back with it.
+      expect(await adminRoleAssignmentAuditCount()).toBe(auditsBefore + 2);
+    });
+
+    it("the anonymization keeps 74b's behaviour and deliberately leaves the column (neutrality, AC-75-11)", async () => {
+      // The anonymization removes every stored assignment (74b D-22) but does NOT rewrite
+      // `User.role` (D-14 write-back withheld): with no stored row left the column is the fallback
+      // a still-valid access token resolves through, and the neutrality recording's cells
+      // "ADMIN | DELETE /api/v1/employees/:id | foreign" and the same for FALLBACK_ADMIN require a
+      // self-anonymizing admin's live token to keep its rights, as it did before #75.
+      const migrated = await createPerson(tenant.tenant.id, "Anonym Manager", "MANAGER");
+      await executeLegacyRoleMigration(app.prisma);
+      const fallback = await createPerson(tenant.tenant.id, "Anonym Rueckfall", "ADMIN");
+      const [managerRow] = await storedAssignments(tenant.tenant.id, migrated.user.id);
+      const before = await roleAssignmentAudits(migrated.user.id);
+
+      for (const person of [migrated, fallback]) {
+        const res = await app.inject({
+          method: "DELETE",
+          url: `/api/v1/employees/${person.employee.id}`,
+          headers: { authorization: `Bearer ${tenant.adminToken}` },
+        });
+        expect(res.statusCode).toBe(204);
+        expect(await storedAssignments(tenant.tenant.id, person.user.id)).toEqual([]);
+      }
+
+      expect(await columnRole(migrated.user.id)).toBe("MANAGER");
+      expect(await columnRole(fallback.user.id)).toBe("ADMIN");
+      const audits = await newAuditsSince(migrated.user.id, before);
+      expect(audits).toHaveLength(1);
+      expect(audits[0]).toMatchObject({
+        action: "DELETE",
+        entityId: managerRow.id,
+        oldValue: { accessRoleId: SYSTEM_ROLE_IDS.MANAGER, roleName: "Manager" },
+      });
+      expect(audits[0].newValue).toEqual({ reason: "Anonymisierung" });
+      expect(await roleAssignmentAudits(fallback.user.id)).toEqual([]);
+      expect(
+        await app.prisma.auditLog.count({
+          where: { entity: "User", entityId: { in: [migrated.user.id, fallback.user.id] } },
+        }),
+      ).toBe(0);
+    });
   });
 });
