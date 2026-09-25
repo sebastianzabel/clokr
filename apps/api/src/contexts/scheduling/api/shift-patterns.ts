@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireAuth, requireRole } from "../../../middleware/auth";
+import { requireAuth } from "../../../middleware/auth";
+import { requirePermission } from "../../platform";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -67,7 +68,7 @@ export async function shiftPatternRoutes(app: FastifyInstance) {
   // Existing patterns for this employee are deactivated; new ones are inserted.
   app.put("/:id/shift-patterns", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("shift-pattern:update:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = putPatternsSchema.parse(req.body);
@@ -167,7 +168,7 @@ export async function shiftPatternTenantRoutes(app: FastifyInstance) {
   // Wochentag state in one round-trip instead of N per-employee calls.
   app.get("/tenant", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("shift-pattern:read:ZUGEWIESEN"),
     handler: async (req) => {
       const rows = await app.prisma.employeeShiftPattern.findMany({
         where: {

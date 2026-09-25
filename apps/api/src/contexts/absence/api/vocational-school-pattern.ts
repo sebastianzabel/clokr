@@ -1,8 +1,8 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { FederalState } from "@clokr/db";
-import { requireAuth, requireRole } from "../../../middleware/auth";
-import { syncSchoolHolidaysForTenant } from "../../platform";
+import { requireAuth } from "../../../middleware/auth";
+import { syncSchoolHolidaysForTenant, requirePermission } from "../../platform";
 import { runVocationalSchoolGeneration } from "../vocational-school-generator";
 import { BS_PATTERN_ORDER_BY } from "../vocational-school-pattern-order";
 import {
@@ -165,7 +165,7 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
   // Existing patterns for this employee are deactivated; new ones are inserted.
   app.put("/:id/vocational-school-pattern", {
     schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("vocational-school:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = putPatternsSchema.parse(req.body);

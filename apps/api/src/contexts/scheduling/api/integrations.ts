@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireRole, requireAuth } from "../../../middleware/auth";
+import { requireAuth } from "../../../middleware/auth";
 import { encrypt, decryptSafe } from "../../../utils/crypto";
 import { withAdvisoryLock, tenantAdvisoryKey } from "../../../utils/with-advisory-lock";
 import { phorestFetch, PhorestApiError } from "../../../services/phorest/client";
@@ -410,7 +410,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   // TenantConfig column is no longer selected.
   app.get("/phorest/config", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("integration:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const tenantId = req.user.tenantId;
       const cfg = await app.prisma.tenantConfig.findUnique({
@@ -455,7 +455,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   // BRANCH_ALREADY_COUPLED. The PhorestConfig audit no longer carries a branch.
   app.put("/phorest/config", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("integration:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       const body = configSchema.parse(req.body);
@@ -591,7 +591,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   // T-85-11: the raw upstream body / password is NEVER echoed — only classified German reason codes.
   app.post("/phorest/test", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("integration:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       // `.optional().nullable()` — Clokr frontends send an explicit `null` for an empty optional
@@ -683,7 +683,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   // GET /phorest/staff — Phorest-Mitarbeiter abrufen + Mapping anzeigen
   app.get("/phorest/staff", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("integration:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       const { salonId } = z.object({ salonId: z.string().uuid().optional() }).parse(req.query);
@@ -768,7 +768,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   // GET /phorest/mappings — persistierte Zuordnungen des Mandanten
   app.get("/phorest/mappings", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("integration:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const mappings = await app.prisma.phorestStaffMapping.findMany({
         where: { tenantId: req.user.tenantId },
@@ -789,7 +789,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   // POST /phorest/mappings — Zuordnung anlegen/aktualisieren (upsert)
   app.post("/phorest/mappings", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("integration:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const body = mappingCreateSchema.parse(req.body);
 
@@ -852,7 +852,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   // DELETE /phorest/mappings/:phorestStaffId — Zuordnung aufheben
   app.delete("/phorest/mappings/:phorestStaffId", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("integration:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { phorestStaffId } = mappingParamSchema.parse(req.params);
 
@@ -887,7 +887,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   // Unterbau facade (a run's salon may since have been deactivated, so `includeInactive: true`).
   app.get("/phorest/sync-runs", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("integration:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const tenantId = req.user.tenantId;
       const { limit, page } = syncRunsQuerySchema.parse(req.query);
@@ -926,7 +926,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   // POST /phorest/sync-shifts — Schichten aus Phorest importieren
   app.post("/phorest/sync-shifts", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("integration:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { startDate, endDate } = syncSchema.parse(req.body);
 

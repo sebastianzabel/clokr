@@ -16,7 +16,8 @@
 
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireAuth, requireRole } from "../../../middleware/auth";
+import { requireAuth } from "../../../middleware/auth";
+import { requirePermission, requireAnyPermission } from "../../platform";
 import {
   runVocationalSchoolGeneration,
   previewVocationalSchoolGeneration,
@@ -122,7 +123,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
   // POST /api/v1/vocational-school/generate — manual trigger (ADMIN/MANAGER)
   app.post("/generate", {
     schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("vocational-school:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
 
@@ -144,7 +145,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
   // GET /api/v1/vocational-school/preview?weeks=N — dry-run (ADMIN/MANAGER)
   app.get("/preview", {
     schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("vocational-school:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       const q = previewQuerySchema.parse(req.query);
@@ -187,7 +188,10 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
   //     visible, no error noise.
   app.get("/upcoming", {
     schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER", "EMPLOYEE"),
+    preHandler: requireAnyPermission(
+      "vocational-school:read:ZUGEWIESEN",
+      "vocational-school:read:EIGENE",
+    ),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       const q = upcomingQuerySchema.parse(req.query);
@@ -258,7 +262,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
   // audit row carrying the originator's userId + new value snapshot.
   app.post("/manual-insert", {
     schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("vocational-school:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       const body = manualInsertSchema.parse(req.body);
@@ -384,7 +388,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
   // (canonical for DELETE in this codebase — see apps/api/src/routes/shifts.ts).
   app.delete("/:absenceId", {
     schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("vocational-school:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       const { absenceId } = deleteParamsSchema.parse(req.params);
@@ -477,7 +481,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
   // Dry run only (ADMIN/MANAGER) — mutates nothing.
   app.get("/retroactive-preview", {
     schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("vocational-school:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       const q = retroactivePreviewQuerySchema.parse(req.query);
@@ -519,7 +523,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
   // the client must be able to see it (RESEARCH § Locked-Months Mechanism, race note).
   app.post("/retroactive-apply", {
     schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("vocational-school:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       const body = retroactiveApplySchema.parse(req.body);

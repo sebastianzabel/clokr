@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireAuth, requireRole } from "../../../middleware/auth";
+import { requireAuth } from "../../../middleware/auth";
+import { requirePermission } from "../../platform";
 import {
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
@@ -237,7 +238,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
   // POST /api/v1/overtime/plans  – Abbauplan erstellen
   app.post("/plans", {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("overtime:settle:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const body = createPlanSchema.parse(req.body);
 
@@ -283,7 +284,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
   // POST /api/v1/overtime/payout  – Auszahlung beantragen
   app.post("/payout", {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("overtime:settle:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const body = payoutSchema.parse(req.body);
 
@@ -402,7 +403,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
   // the shape a dashboard-sized caller wants.
   app.get("/close-month/deferred", {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("month-close:read:ZUGEWIESEN"),
     handler: async (req, _reply) => {
       const { detailed } = z
         .object({ detailed: z.coerce.boolean().optional() })
@@ -417,7 +418,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
   // GET /api/v1/overtime/close-month/status?year=2026&month=2  – Status aller MA
   app.get("/close-month/status", {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("month-close:read:ZUGEWIESEN"),
     handler: async (req, _reply) => {
       const access = accessContextFromRequest(req);
       const { year, month } = z
@@ -653,7 +654,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
   // GET /api/v1/overtime/close-month/year-status?year=2026  – Year overview for all months
   app.get("/close-month/year-status", {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("month-close:read:ZUGEWIESEN"),
     handler: async (req, _reply) => {
       const access = accessContextFromRequest(req);
       const { year } = z
@@ -961,7 +962,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
   // POST /api/v1/overtime/close-month  – Monat abschließen (Snapshot erzeugen)
   app.post("/close-month", {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("month-close:close:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const access = accessContextFromRequest(req);
       const body = closeMonthSchema.parse(req.body);
@@ -1423,7 +1424,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
   // COMP-V1814-04: ADMIN-only; supersedes snapshot (not hard-delete); mandatory reason required.
   app.post("/unlock-month", {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("month-close:unlock:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { employeeId, year, month, reason } = unlockMonthSchema.parse(req.body);
 
@@ -1542,7 +1543,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
   // POST /api/v1/overtime/close-year  – Jahresübertrag erstellen
   app.post("/close-year", {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("month-close:close-year:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { employeeId, year } = closeYearSchema.parse(req.body);
 
@@ -1716,7 +1717,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
   // before tracking began, not manager routine.
   app.post("/opening-balance", {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("overtime:set-opening-balance:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const {
         employeeId,
