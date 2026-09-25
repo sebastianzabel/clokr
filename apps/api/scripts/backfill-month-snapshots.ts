@@ -124,7 +124,9 @@ export type BackfillSummary = {
   employeesWithOpenMonths: number;
   totalMonthsClosed: number;
   employees: BackfillEmployeeSummary[];
-  errors: Array<{ employeeId: string; tenantId: string; error: string }>;
+  /** `employeeId: null` marks a TENANT-level refusal (Phase 71b, issue #71) — a multi-salon
+   * tenant this script cannot process (see the ONE-TENANT-WIDE-HOLIDAY-SET warning below). */
+  errors: Array<{ employeeId: string | null; tenantId: string; error: string }>;
 };
 
 // ── Internal helper: computeFirstOpenMonth ───────────────────────────────────
@@ -228,6 +230,19 @@ export async function main(app: FastifyInstance, opts: BackfillOptions): Promise
 
   for (const tenant of tenants) {
     try {
+      // Phase 71b (issue #71): this script computes ONE tenant-wide holiday set
+      // (below) and would silently write WRONG snapshots for a tenant whose salons
+      // span more than one Bundesland (§ 2 EFZG — holidays apply by work location,
+      // not a single tenant-wide federal state). Refuse such a tenant outright
+      // rather than backfill with the wrong holidays.
+      const salonCount = await app.prisma.salon.count({ where: { tenantId: tenant.id } });
+      if (salonCount > 1) {
+        const message = `backfill-month-snapshots: tenant ${tenant.id} has ${salonCount} salons — this operator script computes ONE tenant-wide holiday set and would write wrong snapshots for a multi-salon tenant (Phase 71b, issue #71); refusing.`;
+        summary.errors.push({ employeeId: null, tenantId: tenant.id, error: message });
+        console.error(`[ERROR] ${message}`);
+        continue;
+      }
+
       const tz = tenant.config?.timezone ?? "Europe/Berlin";
       const stateCode = STATE_MAP[tenant.federalState] ?? "NI";
 

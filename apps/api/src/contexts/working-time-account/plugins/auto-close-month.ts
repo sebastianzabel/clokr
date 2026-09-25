@@ -1,7 +1,7 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../timezone";
-import { getHolidays, STATE_MAP } from "../../platform";
+import { holidaysAtWorkLocation } from "../../platform"; // Phase 71b (issue #71) — work-location resolution
 import { periodStartWindow } from "../snapshot-period";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared pure saldo core
@@ -24,6 +24,7 @@ import { getCarryOverBase } from "../carry-over-base"; // Phase 99 (OB-02) — s
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
 import {
   getValidWorkedEntriesInRange,
+  getWorkedEntriesInRange, // Phase 71b (issue #71) — T2, fed into the holiday resolver
   lockEntriesForMonth,
   getEffectiveSchedule,
   findUnconfirmedBreakDays, // Phase 92 Plan 04 — BREAK-05 single source of truth
@@ -101,9 +102,6 @@ export const autoCloseMonthPlugin = fp(async (app) => {
         }
 
         const { start: prevMonthStart, end: prevMonthEnd } = monthRangeUtc(prevYear, prevMonth, tz);
-
-        // Pre-compute holiday date strings for the current cron-target month
-        const acmStateCode = STATE_MAP[tenant.federalState] ?? "NI";
 
         // Get all active employees
         const employees = await app.prisma.employee.findMany({
@@ -369,26 +367,25 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   ? empHireDateNorm
                   : monthFirstDay;
 
-              const closeMonthComputedHolidays = getHolidays(monthKey.year, acmStateCode).filter(
-                (h) =>
-                  h.date >= dateStrInTz(empEffectiveStart, tz) &&
-                  h.date <= dateStrInTz(monthEnd, tz),
+              // Phase 71b (issue #71): holiday set by WORK LOCATION (§ 2 EFZG) instead of a
+              // tenant-wide federal state — fed with this employee's own closed work entries (T2).
+              const closeMonthEntries = await getWorkedEntriesInRange(
+                app.prisma,
+                { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
+                empEffectiveStart,
+                monthLastDay,
               );
-              const closeMonthDbHolidays = await app.prisma.publicHoliday.findMany({
-                where: {
-                  tenant: { employees: { some: { id: emp.id } } },
-                  date: { gte: empEffectiveStart, lte: monthLastDay },
-                },
-              });
-              const closeMonthHolidayDateSet = new Set<string>(
-                closeMonthComputedHolidays.map((h) => h.date),
+              const closeMonthHolidaysByEmployee = await holidaysAtWorkLocation(
+                app.prisma,
+                tenant.id,
+                [emp.id],
+                dateStrInTz(empEffectiveStart, tz),
+                dateStrInTz(monthEnd, tz),
+                closeMonthEntries,
               );
-              const closeHolidayDateStrings = new Set<string>([
-                ...closeMonthComputedHolidays.map((h) => h.date),
-                ...closeMonthDbHolidays
-                  .filter((h) => !closeMonthHolidayDateSet.has(dateStrInTz(h.date, tz)))
-                  .map((h) => dateStrInTz(h.date, tz)),
-              ]);
+              const closeHolidayDateStrings = new Set<string>(
+                closeMonthHolidaysByEmployee.get(emp.id)?.keys() ?? [],
+              );
 
               // Pre-fetch all collections needed by closeEmployeeMonth
               const [closeEntries, closeShifts, closeApprovedLeave, closeAbsences] =

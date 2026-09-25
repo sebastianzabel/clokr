@@ -347,6 +347,10 @@ describe("auto-close-month plugin — per-tenant fault isolation (D-04)", () => 
     const tenant = await prisma.tenant.create({
       data: { name: `Fault ${label} ${s}`, slug: `fault-${s}`, federalState: "NIEDERSACHSEN" },
     });
+    // Phase 71b (issue #71): every tenant needs an active salon (Phase 64b D-18) — without one,
+    // the holiday resolver's fail-closed default-salon fallback throws before this test's
+    // injected publicHoliday.findMany failure is ever reached.
+    await createTestSalon(prisma, tenant.id);
     await prisma.tenantConfig.create({
       data: { tenantId: tenant.id, defaultVacationDays: 30, timezone: "Europe/Berlin" },
     });
@@ -413,6 +417,18 @@ describe("auto-close-month plugin — per-tenant fault isolation (D-04)", () => 
         (call) => (call[0] as { where?: { tenantId?: string } })?.where?.tenantId === tenant2Id,
       );
       expect(processedTenant2).toBe(true);
+
+      // Premise assertion (Phase 71b, issue #71): the injected mock's condition
+      // (`args.where.tenantId === tenant1Id`) must actually have matched at least
+      // once, or the "failure" it injects never fires and this test would pass
+      // vacuously regardless of whether tenant1's processing is ever reached. The
+      // holiday resolver's own manual-holiday query (contexts/platform's
+      // holidaysAtWorkLocation, now called from this per-month close block) carries
+      // a top-level `tenantId` — the pre-Phase-71b query here did not.
+      const injectionReachedTenant1 = holidaySpy.mock.calls.some(
+        (call) => (call[0] as { where?: { tenantId?: string } })?.where?.tenantId === tenant1Id,
+      );
+      expect(injectionReachedTenant1).toBe(true);
     } finally {
       holidaySpy.mockRestore();
       employeeFindManySpy.mockRestore();

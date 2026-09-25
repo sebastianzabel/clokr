@@ -9,7 +9,7 @@ import {
 import { getConfirmedCarryOver } from "../confirmed-saldo"; // Phase 97-01
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "../timezone";
-import { getHolidays, STATE_MAP, accessContextFromRequest, employeeScopeFor } from "../../platform";
+import { holidaysAtWorkLocation, accessContextFromRequest, employeeScopeFor } from "../../platform"; // Phase 71b (issue #71) — work-location resolution
 import { fetchCloseMonthData } from "../close-month-data"; // PERF-V1814-01
 import { periodStartWindow, isPeriodStartInMonth } from "../snapshot-period";
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared saldo core
@@ -21,6 +21,7 @@ import { recalculateSnapshots } from "../recalculate-snapshots"; // Phase 99 (OB
 import { resolveNegativeBalanceTolerance } from "../negative-balance-tolerance"; // Phase 100 (OTC-01) — the one shared precedence chain
 import {
   getValidWorkedEntriesInRange,
+  getWorkedEntriesInRange, // Phase 71b (issue #71) — T2, fed into the holiday resolver
   lockEntriesForMonth,
   unlockEntriesForMonth,
   getEffectiveSchedule,
@@ -953,7 +954,6 @@ export async function overtimeRoutes(app: FastifyInstance) {
           isTimeTrackingExempt: true, // Phase 76.7 (D-07, SALDO-V19-04a)
           breakOver6hOverride: true, // v1.8.9 — SHIFT_BASED netto saldo
           breakOver9hOverride: true, // v1.8.9 — SHIFT_BASED netto saldo
-          tenant: { select: { federalState: true } },
         },
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
@@ -1114,30 +1114,25 @@ export async function overtimeRoutes(app: FastifyInstance) {
         where: { tenantId: employee.tenantId },
       });
 
-      // Build holiday set: merge computed German Feiertage + DB manual holidays.
-      // Byte-identical to the previous inline path (overtime.ts old lines 1090–1113).
-      const closeMonthStateCode = employee.tenant
-        ? (STATE_MAP[employee.tenant.federalState] ?? "NI")
-        : "NI";
-      const closeMonthComputedHolidays = getHolidays(year, closeMonthStateCode).filter(
-        (h) => h.date >= dateStrInTz(effectiveStart, tz) && h.date <= dateStrInTz(monthEnd, tz),
+      // Phase 71b (issue #71): holiday set by WORK LOCATION (§ 2 EFZG) instead of a
+      // tenant-wide federal state — fed with this employee's own closed work entries (T2).
+      const closeMonthEntries = await getWorkedEntriesInRange(
+        app.prisma,
+        employeeScopeFor(access, { employeeId }),
+        effectiveStart,
+        monthLastDay,
       );
-      const closeMonthDbHolidays = await app.prisma.publicHoliday.findMany({
-        where: {
-          tenant: { employees: { some: { id: employeeId } } },
-          date: { gte: effectiveStart, lte: monthLastDay },
-        },
-      });
-      // Deduplicate by date string — same as the inline path had.
-      const closeMonthHolidayDateSet = new Set<string>(
-        closeMonthComputedHolidays.map((h) => h.date),
+      const closeMonthHolidaysByEmployee = await holidaysAtWorkLocation(
+        app.prisma,
+        employee.tenantId,
+        [employeeId],
+        dateStrInTz(effectiveStart, tz),
+        dateStrInTz(monthEnd, tz),
+        closeMonthEntries,
       );
-      const holidayDateStrings = new Set<string>([
-        ...closeMonthComputedHolidays.map((h) => h.date),
-        ...closeMonthDbHolidays
-          .filter((h) => !closeMonthHolidayDateSet.has(dateStrInTz(h.date, tz)))
-          .map((h) => dateStrInTz(h.date, tz)),
-      ]);
+      const holidayDateStrings = new Set<string>(
+        closeMonthHolidaysByEmployee.get(employeeId)?.keys() ?? [],
+      );
 
       // Pre-fetch all collections needed by closeEmployeeMonth.
       // Queries are byte-identical to those in the removed inline block.
