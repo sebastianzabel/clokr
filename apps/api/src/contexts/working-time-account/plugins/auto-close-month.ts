@@ -237,7 +237,6 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   schedule: scheduleForMonth as unknown as Record<string, unknown>,
                   month: monthKey,
                   tz,
-                  stateCode: acmStateCode,
                 });
 
                 // gapRuleApplies === false for MONTHLY_HOURS / FLEXTIME (D-01) — such an

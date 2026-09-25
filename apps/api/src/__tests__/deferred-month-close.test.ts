@@ -236,7 +236,6 @@ describe("Phase 292 A — Messung: was genau zählt als Lücke im Monatsabschlus
       schedule: await scheduleRowFor(app, shiftEmp),
       month: { year: 2026, month: 5 },
       tz: TZ,
-      stateCode: "NI",
     });
     expect(res.gapRuleApplies).toBe(true);
     // 05-04 carries a TimeEntry — but it has no endTime, and the Monatsabschluss reads the
@@ -252,7 +251,6 @@ describe("Phase 292 A — Messung: was genau zählt als Lücke im Monatsabschlus
       schedule: await scheduleRowFor(app, shiftEmp),
       month: { year: 2026, month: 5 },
       tz: TZ,
-      stateCode: "NI",
     });
     // 2026-05-11 has an open entry too, but no roster shift — for SHIFT_BASED the roster, never
     // {day}Hours, decides which days are expected. A missing clock-out therefore blocks the
@@ -268,7 +266,6 @@ describe("Phase 292 A — Messung: was genau zählt als Lücke im Monatsabschlus
       schedule: await scheduleRowFor(app, shiftEmp),
       month: { year: 2026, month: 5 },
       tz: TZ,
-      stateCode: "NI",
     });
     expect(res.gapDates).not.toContain("2026-05-05");
     // …while the rostered day with no entry at all of course is one.
@@ -285,7 +282,6 @@ describe("Phase 292 A — Messung: was genau zählt als Lücke im Monatsabschlus
       schedule: await scheduleRowFor(app, fixedEmp),
       month: { year: 2026, month: 5 },
       tz: TZ,
-      stateCode: "NI",
     });
     expect(res.gapRuleApplies).toBe(true);
     expect(res.gapDates).toContain("2026-05-04");
@@ -299,7 +295,6 @@ describe("Phase 292 A — Messung: was genau zählt als Lücke im Monatsabschlus
       schedule: await scheduleRowFor(app, flexEmp),
       month: { year: 2026, month: 5 },
       tz: TZ,
-      stateCode: "NI",
     });
     // This is why the deferral state must NOT be keyed on "has gaps": a FLEXTIME employee can
     // sit unclosed for months without a single gap ever being reported for them.
