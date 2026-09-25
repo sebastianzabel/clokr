@@ -17,7 +17,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
-import { requirePermission, requireAnyPermission } from "../../platform";
+import { requirePermission, requireAnyPermission, permissionReach } from "../../platform";
 import {
   runVocationalSchoolGeneration,
   previewVocationalSchoolGeneration,
@@ -196,11 +196,14 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const q = upcomingQuerySchema.parse(req.query);
 
-      // Role-branched employeeId scoping (260611-ly6).
-      // EMPLOYEE callers are forced to self-scope; any client-supplied ?employeeId is
-      // dropped. ADMIN/MANAGER may optionally narrow the result via ?employeeId.
+      // Reach-branched employeeId scoping (260611-ly6; Phase 75b, Issue #75, D-13).
+      // A caller without ZUGEWIESEN is forced to self-scope; any client-supplied
+      // ?employeeId is dropped. A ZUGEWIESEN caller may optionally narrow via ?employeeId.
+      // `null` is unreachable here — the route's own requireAnyPermission preHandler above
+      // already rejects a caller holding neither reach.
       let employeeIdFilter: string | undefined;
-      if (req.user.role === "EMPLOYEE") {
+      const upcomingReach = await permissionReach(req, "vocational-school:read");
+      if (upcomingReach !== "ZUGEWIESEN") {
         if (!req.user.employeeId) {
           // User without linked employee row — nothing they can see. Return empty
           // rather than 4xx so the frontend renders an empty list without an error

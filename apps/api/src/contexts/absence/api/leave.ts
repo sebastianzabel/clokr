@@ -39,7 +39,12 @@ import {
   calcLeaveAbsenceMinutesTz, // Issue #293 — receipt shares the saldo's own Ø-Methode entry point
   type OvertimeBalanceBreakdown,
 } from "../../working-time-account"; // Phase 100B Plan 06 — W8/W11/W12; Plan 07 — W1; Phase 101B
-import { auditReasonSchema, requirePermission } from "../../platform"; // Quick 260824-cjd
+import {
+  auditReasonSchema,
+  requirePermission,
+  hasPermission,
+  permissionReach,
+} from "../../platform"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
 import { isSickLeaveTypeCode } from "../leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
@@ -320,19 +325,19 @@ function formatDateDe(d: Date): string {
  * (Phase 262, GitHub issue #262, D-06): may this viewer learn `typeCode`/`typeName` (and, for
  * /calendar, `section9`/`section9Days`) for this entry, or must it be masked to `null`?
  *
- * The role comparison is exact and case-sensitive on purpose — mirrors the reasoning in
- * `apps/web/src/lib/leave/team-calendar-visibility.ts`'s `canSeeLeaveType` (Phase 257, D-06 in
- * 262-CONTEXT.md): the JWT carries the Prisma `Role` enum verbatim (`ADMIN` | `MANAGER` |
- * `EMPLOYEE`), and a relaxed comparison (`toUpperCase()`, `includes()`) would let an unexpected
- * value through on the PERMISSIVE side — the side that leaks.
+ * `canSeeAll` is `hasPermission(req, "leave-request:read:ZUGEWIESEN")`, computed once per request
+ * by the caller (Phase 75b, Issue #75, D-13) rather than re-derived per row — mirrors the
+ * reasoning in `apps/web/src/lib/leave/team-calendar-visibility.ts`'s `canSeeLeaveType` (Phase
+ * 257, D-06 in 262-CONTEXT.md): the masking decision must not silently widen for an unexpected
+ * value on the PERMISSIVE side — the side that leaks.
  *
  * Deliberately module-private, NOT exported via `contexts/absence/index.ts`: no caller outside
  * this file exists yet (D-15b). GitHub issue #267 (`GET /shifts/week`'s ungated "sick" bucket)
  * is the case that would change that — making it public is issue #267's first task, not this
  * one's, per "no generalization on spec" (ADR 0001).
  */
-function canSeeLeaveType(isOwn: boolean, role: string | null | undefined): boolean {
-  return isOwn === true || role === "MANAGER" || role === "ADMIN";
+function canSeeLeaveType(isOwn: boolean, canSeeAll: boolean): boolean {
+  return isOwn === true || canSeeAll;
 }
 
 export async function leaveRoutes(app: FastifyInstance) {
@@ -348,7 +353,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       let employeeId: string | null | undefined;
       let isOnBehalfOf = false;
       if (body.employeeId && body.employeeId !== req.user.employeeId) {
-        if (req.user.role !== "MANAGER" && req.user.role !== "ADMIN") {
+        if (!(await hasPermission(req, "leave-request:create:ZUGEWIESEN"))) {
           return reply.code(403).send({ error: "Nur Manager dürfen Anträge für andere stellen" });
         }
         const target = await app.prisma.employee.findFirst({
@@ -782,7 +787,7 @@ export async function leaveRoutes(app: FastifyInstance) {
     preHandler: requireAuth,
     handler: async (req) => {
       const user = req.user;
-      const isManager = ["ADMIN", "MANAGER"].includes(user.role);
+      const isManager = await hasPermission(req, "leave-request:read:ZUGEWIESEN");
       const { status, employeeId, year, upcoming } = req.query as {
         status?: string;
         employeeId?: string;
@@ -943,7 +948,10 @@ export async function leaveRoutes(app: FastifyInstance) {
       // already excludes the caller's own entries (`employeeId: { not: ... }`), so the isOwn
       // branch is structurally dead on this endpoint; forcing it to `false` keeps the masking
       // fail-safe (if that exclusion were ever removed, this would over-mask, never under-mask).
-      const canSeeType = canSeeLeaveType(false, req.user.role);
+      const canSeeType = canSeeLeaveType(
+        false,
+        await hasPermission(req, "leave-request:read:ZUGEWIESEN"),
+      );
 
       return rows.map((r) => ({
         id: r.id,
@@ -2103,8 +2111,9 @@ export async function leaveRoutes(app: FastifyInstance) {
       }
 
       const isOwner = existing.employeeId === req.user.employeeId;
-      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
-      if (!isOwner && !isManager) return reply.code(403).send({ error: "Forbidden" });
+      const reach = await permissionReach(req, "leave-request:cancel");
+      if (reach !== "ZUGEWIESEN" && !isOwner) return reply.code(403).send({ error: "Forbidden" });
+      if (reach === null) return reply.code(403).send({ error: "Forbidden" });
       if (!["PENDING", "APPROVED"].includes(existing.status)) {
         return reply.code(409).send({ error: "Antrag kann nicht mehr zurückgezogen werden" });
       }
@@ -2326,9 +2335,11 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
       }
 
+      // Computed once per request (not per row, Pitfall 10) — hoisted above the loop below.
+      const canSeeAll = await hasPermission(req, "leave-request:read:ZUGEWIESEN");
       const leaveEntries = rows.map((r) => {
         const isOwn = r.employee.userId === req.user.sub;
-        const showDetails = canSeeLeaveType(isOwn, req.user.role);
+        const showDetails = canSeeLeaveType(isOwn, canSeeAll);
         return {
           id: r.id,
           isOwn,
@@ -2675,7 +2686,11 @@ export async function leaveRoutes(app: FastifyInstance) {
       // caller's own employeeId for EMPLOYEE-role tokens (the admin-facing report
       // paths use ADMIN/MANAGER tokens), so this is not a behaviour change for any
       // existing legitimate caller.
-      if (req.user.role === "EMPLOYEE" && req.user.employeeId !== employeeId) {
+      const entitlementReach = await permissionReach(req, "leave-entitlement:read");
+      if (entitlementReach !== "ZUGEWIESEN" && req.user.employeeId !== employeeId) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+      if (entitlementReach === null) {
         return reply.code(403).send({ error: "Forbidden" });
       }
 
@@ -2857,7 +2872,7 @@ export async function leaveRoutes(app: FastifyInstance) {
     preHandler: requireAuth,
     handler: async (req) => {
       const { status } = section9StatusQuerySchema.parse(req.query);
-      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
+      const isManager = await hasPermission(req, "section9:read:ZUGEWIESEN");
       const rows = await app.prisma.section9Credit.findMany({
         where: {
           employee: { tenantId: req.user.tenantId },
@@ -2918,7 +2933,11 @@ export async function leaveRoutes(app: FastifyInstance) {
     preHandler: requireAuth,
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
-      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
+      // reach === null answered here, BEFORE the lookup below: it is id-independent, so
+      // answering it here (rather than alongside the row.employeeId check further down)
+      // never creates a 403-vs-404 oracle on the id (Phase 75b, Issue #75, D-13).
+      const section9Reach = await permissionReach(req, "section9:read");
+      if (section9Reach === null) return reply.code(403).send({ error: "Forbidden" });
 
       const row = await app.prisma.section9Credit.findFirst({
         where: { id },
@@ -2951,7 +2970,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Vorgang nicht gefunden" });
       }
 
-      if (!isManager && row.employeeId !== req.user.employeeId) {
+      if (section9Reach !== "ZUGEWIESEN" && row.employeeId !== req.user.employeeId) {
         return reply.code(404).send({ error: "Vorgang nicht gefunden" });
       }
 

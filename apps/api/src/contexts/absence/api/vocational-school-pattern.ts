@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { FederalState } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
-import { syncSchoolHolidaysForTenant, requirePermission } from "../../platform";
+import { syncSchoolHolidaysForTenant, requirePermission, permissionReach } from "../../platform";
 import { runVocationalSchoolGeneration } from "../vocational-school-generator";
 import { BS_PATTERN_ORDER_BY } from "../vocational-school-pattern-order";
 import {
@@ -133,7 +133,11 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
       // Permission: EMPLOYEE may only read their own patterns
-      if (req.user.role === "EMPLOYEE" && req.user.employeeId !== id) {
+      const patternReach = await permissionReach(req, "vocational-school:read");
+      if (patternReach !== "ZUGEWIESEN" && req.user.employeeId !== id) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+      if (patternReach === null) {
         return reply.code(403).send({ error: "Forbidden" });
       }
 
