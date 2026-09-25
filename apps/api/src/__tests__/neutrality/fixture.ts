@@ -35,7 +35,7 @@ import { configureDatevKanzlei, seedTestData } from "../setup";
 import { leaveTypeFields } from "../../contexts/absence/leave-type";
 import { DEFAULT_SALON_OPENING_HOURS } from "../../contexts/platform";
 import type { JwtPayload } from "../../middleware/auth";
-import { API_KEY_ACTORS, type ActorKind } from "./matrix-config";
+import { ACTIVITY_FEED_LIMIT, API_KEY_ACTORS, type ActorKind } from "./matrix-config";
 
 /** A bijective id ↔ label map for one actor's tenant. */
 export class LabelRegistry {
@@ -366,15 +366,51 @@ async function createTenantEntities(
   };
 }
 
-/** Every person-bound kind for one person (`<prefix>.<kind>`). `macSuffix` keeps the per-tenant
- * unique device MAC distinct between the own and the foreign person. */
+/** The first feed-pin instant: far after any real clock a run can see, so the pins are the newest
+ * audit rows of the database whatever other files or earlier runs left behind. */
+const FEED_PIN_BASE_MS = Date.UTC(2100, 0, 1, 0, 0, 0);
+
+/**
+ * `ACTIVITY_FEED_LIMIT` audit rows of the tenant's anchor admin, dated in the far future with an
+ * explicit `createdAt` (1 s apart, no ties). The ADMIN activity feed takes the newest
+ * `ACTIVITY_FEED_LIMIT` rows of "own tenant OR userId null (global)"; with these pins it returns
+ * exactly them, never a leftover row of another file (see `ACTIVITY_FEED_LIMIT`). They are
+ * deleted again by `cleanupMatrixExtras`, so they cannot pin a later file's feed.
+ */
+async function createActivityFeedPins(t: TenantContext): Promise<void> {
+  for (let i = 0; i < ACTIVITY_FEED_LIMIT; i++) {
+    const row = await t.app.prisma.auditLog.create({
+      data: {
+        userId: t.anchorUserId,
+        action: "UPDATE",
+        entity: "MatrixFeedPin",
+        entityId: t.tenantId,
+        newValue: { pin: i },
+        createdAt: new Date(FEED_PIN_BASE_MS + i * 1000),
+      },
+    });
+    t.registry.register(`tenant.auditLog.feedPin.${String(i).padStart(2, "0")}`, row.id);
+  }
+}
+
+/** What differs between the own and the foreign person's entities. `macSuffix` keeps the
+ * per-tenant unique device MAC distinct; the shift times differ so that routes whose rows carry
+ * no id (`GET /shifts/range`) still show WHOSE shifts they returned. */
+interface PersonVariation {
+  macSuffix: string;
+  shiftStart: string;
+  shiftEnd: string;
+}
+
+/** Every person-bound kind for one person (`<prefix>.<kind>`). */
 async function createPersonEntities(
   t: TenantContext,
   prefix: string,
   person: PersonRows,
   ids: TenantLevelIds,
-  macSuffix: string,
+  variation: PersonVariation,
 ): Promise<void> {
+  const { macSuffix } = variation;
   const prisma = t.app.prisma;
   const { registry, tenantId } = t;
   const employeeId = person.employeeId;
@@ -552,8 +588,8 @@ async function createPersonEntities(
       templateId: ids.shiftTemplateId,
       salonId: ids.defaultSalonId,
       date: day(DAY.shift),
-      startTime: "08:00",
-      endTime: "16:00",
+      startTime: variation.shiftStart,
+      endTime: variation.shiftEnd,
       createdBy: t.anchorUserId,
     },
   });
@@ -693,8 +729,17 @@ export async function buildActorTenant(
     defaultSalonId: seed.salonId,
     foreignEmployeeId: foreign.employeeId,
   });
-  await createPersonEntities(t, "own", own, ids, "01");
-  await createPersonEntities(t, "foreign", foreign, ids, "02");
+  await createPersonEntities(t, "own", own, ids, {
+    macSuffix: "01",
+    shiftStart: "08:00",
+    shiftEnd: "16:00",
+  });
+  await createPersonEntities(t, "foreign", foreign, ids, {
+    macSuffix: "02",
+    shiftStart: "09:00",
+    shiftEnd: "17:00",
+  });
+  await createActivityFeedPins(t);
 
   // Customer roles: one held by the holder (TENANT scope), one held by nobody.
   const assignedRole = await app.prisma.accessRole.create({
@@ -768,6 +813,22 @@ export async function cleanupMatrixExtras(app: FastifyInstance, tenantId: string
     select: { id: true, userId: true },
   });
   const employeeIds = employees.map((e) => e.id);
+  const userIds = employees.map((e) => e.userId);
+  // Audit rows are deleted, not left to `onDelete: SetNull`: a row whose user is gone becomes a
+  // global `userId: null` row that every later ADMIN activity feed of the worker database shows
+  // (the feed pins above most of all). The migration's SYSTEM rows already carry `userId: null`
+  // and are found through the assignment they describe.
+  const assignmentIds = (
+    await prisma.roleAssignment.findMany({ where: { tenantId }, select: { id: true } })
+  ).map((a) => a.id);
+  await prisma.auditLog.deleteMany({
+    where: {
+      OR: [
+        { userId: { in: userIds } },
+        { entity: "RoleAssignment", entityId: { in: assignmentIds } },
+      ],
+    },
+  });
   await prisma.roleAssignment.deleteMany({ where: { tenantId } });
   await prisma.accessRole.deleteMany({ where: { tenantId } });
   await prisma.phorestAppointment.deleteMany({ where: { employeeId: { in: employeeIds } } });

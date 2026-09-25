@@ -143,17 +143,32 @@ export function actorRunsVariant(actor: ActorFixture, variant: VariantSpec): boo
   return !(API_KEY_ACTORS.has(actor.actor) && variant.target === "own");
 }
 
-function project(name: ProjectionName, body: unknown, ctx: LabelContext): unknown {
+/** A top-level field of a 2xx JSON body. Throws when it is absent: a projection that reads a key
+ * the response does not have would record `undefined` for every actor and prove nothing. */
+function field(route: string, name: ProjectionName, body: unknown, key: string): unknown {
+  if (body === null || typeof body !== "object" || !(key in body)) {
+    throw new Error(`cell-runner: projection "${name}" of ${route} found no "${key}" in the body`);
+  }
+  return (body as Record<string, unknown>)[key];
+}
+
+function project(route: string, name: ProjectionName, body: unknown, ctx: LabelContext): unknown {
   if (name === "pendingApprovalsCount") {
-    return (body as { pendingApprovalsCount?: unknown } | null)?.pendingApprovalsCount ?? null;
+    // `composition/dashboard.ts` answers the team-wide count as `pendingApprovals`.
+    return field(route, name, body, "pendingApprovals");
   }
   if (name === "collisionTotal") {
-    return (body as { total?: unknown } | null)?.total ?? null;
+    return field(route, name, body, "total");
+  }
+  if (name === "body") {
+    return JSON.parse(relabel(ctx, JSON.stringify(body ?? null)));
+  }
+  if (!Array.isArray(body)) {
+    throw new Error(`cell-runner: projection "${name}" of ${route} expects an array body`);
   }
   // leaveTypeMask: per leave item "<label of the request>:<typeCode or null>:<typeName present?>",
   // plus the § 9 marker where the item carries one (the calendar masks it together with the type).
-  const items = Array.isArray(body) ? body : [];
-  return items
+  return body
     .map((raw) => {
       const item = raw as {
         id?: string;
@@ -229,7 +244,7 @@ export async function runCell(args: RunCellArgs): Promise<CellResult> {
   result.ids = ids.sort();
   if (spec.projections && res.statusCode < 300) {
     result.projections = Object.fromEntries(
-      spec.projections.map((name) => [name, project(name, body, ctx)]),
+      spec.projections.map((name) => [name, project(route, name, body, ctx)]),
     );
   }
   return result;

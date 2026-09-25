@@ -64,7 +64,17 @@ export const PHASES_ENABLED: ReadonlySet<CellPhase> = new Set<CellPhase>(["read"
 
 /** Named per-route projections, recorded next to the id multiset (Pitfall 1: masking changes must
  * show as a cell difference, not hide behind equal ids). */
-export type ProjectionName = "leaveTypeMask" | "pendingApprovalsCount" | "collisionTotal";
+export type ProjectionName = "leaveTypeMask" | "pendingApprovalsCount" | "collisionTotal" | "body";
+
+/**
+ * The `limit` of the activity-feed cells, and the number of feed-pin audit rows every fixture
+ * tenant holds. The ADMIN branch of `GET /activity` reads the newest `limit` audit rows of the
+ * tenant PLUS every `userId: null` row of the whole database (`composition/activity.ts`) — rows
+ * that other test files and earlier runs leave behind (cleanup nulls `AuditLog.userId`). With
+ * `limit` own rows newer than anything else, `take: limit` never reaches a foreign row and the
+ * cell is deterministic in a shared worker database.
+ */
+export const ACTIVITY_FEED_LIMIT = 20;
 
 /** One request shape of a route. `name` is part of the cell key and must be unique per route. */
 export interface VariantSpec {
@@ -243,7 +253,7 @@ export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
   // ── read ─────────────────────────────────────────────────────────────────────────────────────
   "GET /api/v1/activity": {
     phase: "read",
-    variants: none({ limit: "20" }),
+    variants: none({ limit: String(ACTIVITY_FEED_LIMIT) }),
     handlerCheck: true,
     checkVariant: "none",
   },
@@ -461,6 +471,9 @@ export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
   "GET /api/v1/shifts/range": {
     phase: "read",
     variants: personQuery("employeeId", JUNE_RANGE),
+    // The rows carry no ids; the body shows WHOSE shifts came back (own and foreign shifts have
+    // different times), which is how an EMPLOYEE's silent fallback to the own person shows.
+    projections: ["body"],
     handlerCheck: true,
   },
   "GET /api/v1/shifts/templates": { phase: "read" },
