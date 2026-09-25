@@ -709,6 +709,22 @@ export async function buildActorTenant(
   });
   const foreign = { userId: seed.empUser.id, employeeId: seed.employee.id };
   await registerSeedPerson(t, "foreign", foreign);
+  // seedTestData logs both of its users in once through the API (a LOGIN audit row each).
+  for (const [prefix, userId] of [
+    ["anchor.admin", seed.adminUser.id],
+    ["foreign", seed.empUser.id],
+  ] as const) {
+    const logins = await app.prisma.auditLog.findMany({
+      where: { userId, action: "LOGIN" },
+      select: { id: true },
+    });
+    if (logins.length !== 1) {
+      throw new Error(
+        `fixture: expected one seed LOGIN audit of ${prefix}, found ${logins.length}`,
+      );
+    }
+    registry.register(`${prefix}.login.audit`, logins[0].id);
+  }
 
   const ownRole = ownPersonRole(actor);
   const own = await createPerson(t, {

@@ -43,6 +43,17 @@
  * differ; if they coincided, the request most likely failed before the check (e.g. a 400) and the
  * cell would prove nothing.
  *
+ * ── Determinism ─────────────────────────────────────────────────────────────────────────────────
+ * Only `Date` is faked (PINNED_NOW). Prisma 7 fills `@default(now())` on the client, so every row
+ * the fixture or a cell creates through Prisma carries the pinned time; only raw SQL (the migration
+ * file's `now()`) carries the real database time, and no read route compares against that. The
+ * ADMIN activity feed also reads global `userId: null` audit rows, which other files leave behind;
+ * the fixture's feed pins (`ACTIVITY_FEED_LIMIT` far-future rows per tenant) keep those out of the
+ * cell. Known limit: `GET /holidays` falls back to an unordered `tenant.findFirst()` for an API-key
+ * caller (`holidays.ts`, pre-existing, recorded as-is), so its API-key cells name the database's
+ * first tenant — the matrix's first actor tenant on a freshly provisioned worker database
+ * (`test:setup`), which is how every recording and verification of this file is run.
+ *
  * ── Side effects ────────────────────────────────────────────────────────────────────────────────
  * Object storage is replaced by an in-memory stub (avatars and § 9 documents are served from it)
  * and `fetch` fails deterministically, so no cell depends on MinIO or on an external API.
