@@ -36,10 +36,13 @@
  * Phase 355 (Issue #355): the exited ADMIN/MANAGER used to be deliberately part of the recording
  * (most sites did not filter on `exitDate`, only the missing-entries scan did). #355 made
  * `userIdsHoldingPermission` exclude a departed holder centrally, so they are now `NEVER_RECIPIENTS`
- * for every site, same as the missing-entries scan always treated them — the recorded fixture
- * (`neutrality/recorded/recipients.json`) was hand-updated to drop them from every site's
- * `recipients`, since RECORD mode has been permanently refused since `requireRole` was removed
- * (see below) and cannot regenerate it.
+ * for every site, same as the missing-entries scan always treated them. RECORD mode has been
+ * permanently refused since `requireRole` was removed (see below) and cannot regenerate the
+ * recording, so `neutrality/recorded/recipients.json` stays byte-identical to before #355; the 16
+ * affected sites (every one except #9, which excluded them already) amend instead, through the
+ * same mechanism `matrix-amendments.json` established for the permission matrix (Issue #360) —
+ * see `neutrality/recorded/recipients-amendments.json` and the "amendments register" describe
+ * block below.
  *
  * ── RECORD vs VERIFY ────────────────────────────────────────────────────────────────────────────
  *   NEUTRALITY_RECIPIENTS_MODE=record  write every site's record (default
@@ -68,6 +71,7 @@
  */
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
@@ -157,6 +161,38 @@ function serializeRecording(sites: ReadonlyMap<string, SiteRecord>): string {
   const lines = keys.map((key) => `    ${JSON.stringify(key)}: ${JSON.stringify(sites.get(key))}`);
   return `{\n  "sites": {\n${lines.join(",\n")}\n  }\n}\n`;
 }
+
+/**
+ * Issue #355 — the recipients amendments register, the same escape hatch `matrix-amendments.json`
+ * gives the permission matrix (Issue #360/#361): a NAMED site's `recipients` value changes for a
+ * reason unrelated to the role→permission switch this file otherwise proves neutral (here: the
+ * centralized `exitDate` exclusion in `userIdsHoldingPermission`,
+ * `contexts/platform/facade/role-assignments.ts:385-389`). `recorded/recipients.json` stays
+ * byte-identical to its pre-#355 recording; each amendment instead names the exact site KEY, the
+ * exact `from` (checked against the recording — a mismatch means the recording moved out from
+ * under the amendment and it is stale), the exact `to` (checked against the actual measured result
+ * exactly like an unamended site), the GitHub issue, a written reason (`MIN_REASON_LENGTH`), and
+ * the date. An unnamed site is completely unaffected.
+ */
+interface RecipientsAmendment {
+  readonly key: string;
+  readonly from: readonly string[];
+  readonly to: readonly string[];
+  readonly issue: number;
+  readonly reason: string;
+  readonly date: string;
+}
+const AMENDMENTS_PATH = join(__dirname, "neutrality", "recorded", "recipients-amendments.json");
+const amendments: readonly RecipientsAmendment[] = (
+  JSON.parse(readFileSync(AMENDMENTS_PATH, "utf8")) as { amendments: RecipientsAmendment[] }
+).amendments;
+/** Last-wins lookup for the comparison below. A duplicate KEY is its own validation failure (the
+ * "amendments register" describe below), never silently resolved by this map. */
+const amendmentByKey: ReadonlyMap<string, RecipientsAmendment> = new Map(
+  amendments.map((a) => [a.key, a]),
+);
+/** The shortest acceptable written reason of an amendment (same threshold as the matrix's). */
+const MIN_REASON_LENGTH = 20;
 
 interface Person {
   userId: string;
@@ -359,9 +395,23 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
       [],
     );
     if (MODE === "verify") {
-      const expected = recording?.[key];
-      expect(expected, `${key}: not recorded`).toBeDefined();
-      expect(record, key).toEqual(expected);
+      // Issue #355: an amended site compares against its amendment's `to` recipients, not the
+      // recording's raw value — `type`/`actor`/`subjectRows`/`tenantS` are unaffected, since the
+      // amendment only ever names the `recipients` field the exitDate exclusion changed.
+      const amendment = amendmentByKey.get(key);
+      const expected = recording?.[key]
+        ? amendment
+          ? { ...recording[key], recipients: [...amendment.to] }
+          : recording[key]
+        : undefined;
+      const notRecordedMsg = amendment
+        ? `${key}: amendment (issue #${amendment.issue}) names a site with no recording`
+        : `${key}: not recorded`;
+      expect(expected, notRecordedMsg).toBeDefined();
+      const mismatchMsg = amendment
+        ? `${key}: AMENDED (issue #${amendment.issue}) — actual result no longer matches the amendment's 'to' value; re-derive the amendment or fix the regression`
+        : key;
+      expect(record, mismatchMsg).toEqual(expected);
     }
     return record;
   }
@@ -1039,6 +1089,49 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
       if (MODE === "verify") {
         expect(Object.keys(recording ?? {}).sort()).toEqual([...collected.keys()].sort());
       }
+    });
+  });
+
+  describe("amendments register (Issue #355) — recorded/recipients.json stays byte-identical; named cells amend instead", () => {
+    it("the amendments file parses to an array before anything else is asserted (anti-vacuity)", () => {
+      expect(Array.isArray(amendments)).toBe(true);
+    });
+
+    it("no two amendments name the same site key", () => {
+      const counts = new Map<string, number>();
+      for (const a of amendments) counts.set(a.key, (counts.get(a.key) ?? 0) + 1);
+      const duplicates = [...counts.entries()].filter(([, n]) => n > 1).map(([key]) => key);
+      expect(duplicates).toEqual([]);
+    });
+
+    it("every amendment names a positive integer GitHub issue, an ISO date, and a written reason of at least MIN_REASON_LENGTH characters", () => {
+      const problems = amendments
+        .filter(
+          (a) =>
+            !Number.isInteger(a.issue) ||
+            a.issue <= 0 ||
+            typeof a.reason !== "string" ||
+            a.reason.trim().length < MIN_REASON_LENGTH ||
+            !/^\d{4}-\d{2}-\d{2}$/.test(a.date),
+        )
+        .map((a) => a.key);
+      expect(problems).toEqual([]);
+    });
+
+    it("every amendment's site key exists in the checked-in recording, and its 'from' matches the recording BYTE-FOR-BYTE", () => {
+      if (recording === undefined) return; // MODE=record: the beforeAll guard above already refused.
+      const currentRecording = recording;
+      const missing = amendments.filter((a) => !(a.key in currentRecording)).map((a) => a.key);
+      expect(missing).toEqual([]);
+      const stale = amendments
+        .filter((a) => a.key in currentRecording)
+        .filter((a) => !isDeepStrictEqual(a.from, currentRecording[a.key]?.recipients))
+        .map(
+          (a) =>
+            `${a.key}: amendment 'from' ${JSON.stringify(a.from)} does not match the recorded ` +
+            `${JSON.stringify(currentRecording[a.key]?.recipients)}`,
+        );
+      expect(stale).toEqual([]);
     });
   });
 });
