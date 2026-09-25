@@ -349,6 +349,11 @@ async function createTenantEntities(
       name: "Matrix Salon Zwei",
       openingHours: DEFAULT_SALON_OPENING_HOURS,
       isActive: true,
+      // Created one minute after the (pinned) seed salon, so `findDefaultSalon` (createdAt, then
+      // id) always answers the seed salon. With both rows on the pinned instant the tie fell to
+      // the random uuids, and since origin/main 704b1ee5 (Phase 68b) a new time entry without an
+      // assignment for its day takes that default salon — the matrix recorded either salon.
+      createdAt: new Date(Date.now() + 60_000),
     },
   });
   registry.register("tenant.salon", secondSalon.id);
