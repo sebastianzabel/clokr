@@ -30,10 +30,16 @@
  *
  * Never a recipient, before or after the switch: the inactive users, the exited EMPLOYEE, the
  * SALONS-scope user (a SALONS assignment grants nothing at the API in 75b, D-09) and tenant S.
- * The exited ADMIN/MANAGER are deliberately part of the recording: most sites do not filter on
- * `exitDate`, the missing-entries scan does — the switch must keep exactly that difference.
  * No TENANT customer-role holder is in the fixture: that such a holder is notified after the
  * switch is the intended new behaviour (D-16), not a neutrality question.
+ *
+ * Phase 355 (Issue #355): the exited ADMIN/MANAGER used to be deliberately part of the recording
+ * (most sites did not filter on `exitDate`, only the missing-entries scan did). #355 made
+ * `userIdsHoldingPermission` exclude a departed holder centrally, so they are now `NEVER_RECIPIENTS`
+ * for every site, same as the missing-entries scan always treated them — the recorded fixture
+ * (`neutrality/recorded/recipients.json`) was hand-updated to drop them from every site's
+ * `recipients`, since RECORD mode has been permanently refused since `requireRole` was removed
+ * (see below) and cannot regenerate it.
  *
  * ── RECORD vs VERIFY ────────────────────────────────────────────────────────────────────────────
  *   NEUTRALITY_RECIPIENTS_MODE=record  write every site's record (default
@@ -118,10 +124,20 @@ function at(iso: string, time: string): Date {
   return new Date(`${iso}T${time}:00.000Z`);
 }
 
-/** Labels that must never receive a notification from any site, before or after the switch. */
+/**
+ * Labels that must never receive a notification from any site.
+ *
+ * Phase 355 (Issue #355): `R.admin.exited` / `R.manager.exited` moved into this list. Before #355
+ * they were deliberately part of the recording (16 of 17 sites notified them — the personal-data
+ * leak the issue reports); `userIdsHoldingPermission` (`contexts/platform/facade/role-assignments.ts`)
+ * now excludes a departed (`exitDate` in the past) holder centrally, so every site is affected the
+ * same way #9's missing-entries scan already was.
+ */
 const NEVER_RECIPIENTS: readonly string[] = [
   "R.admin.inactive",
   "R.manager.inactive",
+  "R.admin.exited",
+  "R.manager.exited",
   "R.employee.exited",
   "R.salonsScope",
 ];
