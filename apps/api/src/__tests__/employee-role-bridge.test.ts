@@ -288,7 +288,12 @@ describe("Role bridge: employee form, compat column and fallback materialization
     expect(await roleAssignmentAudits(fallback.user.id)).toEqual([]);
   });
 
-  it("a customer-role assignment survives a role change untouched", async () => {
+  // Issue #357 sub-fix B (before the fix this test was named "a customer-role assignment survives
+  // a role change untouched" and asserted exactly that survival with a 200 — the employee form
+  // showed "Mitarbeiter" while the ZUGEWIESEN-granting customer role kept working). The decision
+  // (see the issue's comment): the API rejects the whole demotion with 409 and names the surviving
+  // assignment, rather than silently deleting a customer-role assignment on the caller's behalf.
+  it("a demotion to Mitarbeiter is rejected with 409 when a customer-role assignment would survive it (Issue #357 sub-fix B)", async () => {
     const target = await createPerson(tenant.tenant.id, "Kunde Manager", "MANAGER");
     await executeLegacyRoleMigration(app.prisma);
     const name = `Bruecke Kundenrolle ${crypto.randomBytes(3).toString("hex")}`;
@@ -310,22 +315,44 @@ describe("Role bridge: employee form, compat column and fallback materialization
         employeeIds: [],
       },
     });
+    const rowsBefore = await storedAssignments(tenant.tenant.id, target.user.id);
     const before = await roleAssignmentAudits(target.user.id);
+    const employeeBefore = await app.prisma.employee.findUniqueOrThrow({
+      where: { id: target.employee.id },
+    });
+
+    const res = await patchEmployee(tenant.adminToken, target.employee.id, {
+      firstName: "Nicht Gespeichert",
+      role: "EMPLOYEE",
+    });
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.body) as { error: string; remainingAssignments: unknown[] };
+    expect(body.error).toContain(name);
+    expect(body.remainingAssignments).toMatchObject([{ id: customerRow.id, roleName: name }]);
+
+    // Nothing committed — not the field update either (same atomicity as the lockout guard below).
+    expect(
+      await app.prisma.employee.findUniqueOrThrow({ where: { id: target.employee.id } }),
+    ).toEqual(employeeBefore);
+    const rows = await storedAssignments(tenant.tenant.id, target.user.id);
+    expect(rows).toEqual(rowsBefore);
+    expect(rows.find((row) => row.id === customerRow.id)).toEqual(customerRow);
+    // The customer role still grants a ZUGEWIESEN permission, so the derived compat role is still
+    // MANAGER — no column change, since nothing was written.
+    expect(await columnRole(target.user.id)).toBe("MANAGER");
+    expect(await newAuditsSince(target.user.id, before)).toEqual([]);
+  });
+
+  it("a demotion to Mitarbeiter succeeds when only the system-role assignment exists (no other rights left behind)", async () => {
+    const target = await createPerson(tenant.tenant.id, "Nur Systemrolle Manager", "MANAGER");
+    await executeLegacyRoleMigration(app.prisma);
 
     const res = await patchEmployee(tenant.adminToken, target.employee.id, { role: "EMPLOYEE" });
     expect(res.statusCode).toBe(200);
 
     const rows = await storedAssignments(tenant.tenant.id, target.user.id);
-    expect(rows.find((row) => row.id === customerRow.id)).toEqual(customerRow);
-    expect(rows.map((row) => row.accessRoleId).sort()).toEqual(
-      [customerRole.id, SYSTEM_ROLE_IDS.EMPLOYEE].sort(),
-    );
-    // The customer role grants a ZUGEWIESEN permission, so the derived compat role stays MANAGER
-    // (D-14) — no column change, no compatRole on any row.
-    expect(await columnRole(target.user.id)).toBe("MANAGER");
-    const audits = await newAuditsSince(target.user.id, before);
-    expect(audits.map((row) => row.action).sort()).toEqual(["CREATE", "DELETE"]);
-    for (const row of audits) expect(row.newValue?.compatRole).toBeUndefined();
+    expect(rows.map((row) => row.accessRoleId)).toEqual([SYSTEM_ROLE_IDS.EMPLOYEE]);
+    expect(await columnRole(target.user.id)).toBe("EMPLOYEE");
   });
 
   it("demoting the last stored Admin holder answers 409 and commits nothing — not the field update either (D-31)", async () => {
@@ -542,12 +569,19 @@ describe("Role bridge: employee form, compat column and fallback materialization
       expect(await adminRoleAssignmentAuditCount()).toBe(auditsBefore + 2);
     });
 
-    it("the anonymization keeps 74b's behaviour and deliberately leaves the column (neutrality, AC-75-11)", async () => {
-      // The anonymization removes every stored assignment (74b D-22) but does NOT rewrite
-      // `User.role` (D-14 write-back withheld): with no stored row left the column is the fallback
-      // a still-valid access token resolves through, and the neutrality recording's cells
-      // "ADMIN | DELETE /api/v1/employees/:id | foreign" and the same for FALLBACK_ADMIN require a
-      // self-anonymizing admin's live token to keep its rights, as it did before #75.
+    it("the anonymization now also rewrites the column to EMPLOYEE (Issue #357 sub-fix C, revises AC-75-11)", async () => {
+      // Phase 75b removed every stored assignment (74b D-22) but deliberately left `User.role`
+      // standing: with no stored row left the column is the fallback (D-08) a still-valid access
+      // token resolves through, and rewriting it would have flipped two neutrality cells ("ADMIN |
+      // DELETE /api/v1/employees/:id | foreign" and the same for FALLBACK_ADMIN) from 204 to 403 —
+      // a self-anonymizing admin's live token would lose its rights mid-run.
+      //
+      // Issue #357's security review named exactly this as the bug: the SAME still-valid token of
+      // an anonymized MANAGER/ADMIN keeps full rights for the rest of its lifetime, because nothing
+      // re-checks `isActive` per request either (D-10). The fix (anonymize.ts) now rewrites the
+      // column to EMPLOYEE in the same update as `isActive: false` — the two neutrality cells DO
+      // flip from 204 to 403 (a self-anonymizing admin loses tenant-wide rights immediately, which
+      // is the point of the fix), and matrix-amendments.json records that flip.
       const migrated = await createPerson(tenant.tenant.id, "Anonym Manager", "MANAGER");
       await executeLegacyRoleMigration(app.prisma);
       const fallback = await createPerson(tenant.tenant.id, "Anonym Rueckfall", "ADMIN");
@@ -564,8 +598,11 @@ describe("Role bridge: employee form, compat column and fallback materialization
         expect(await storedAssignments(tenant.tenant.id, person.user.id)).toEqual([]);
       }
 
-      expect(await columnRole(migrated.user.id)).toBe("MANAGER");
-      expect(await columnRole(fallback.user.id)).toBe("ADMIN");
+      // Both actors held a MANAGER-or-higher role before anonymization; both are EMPLOYEE now, no
+      // matter which system role they started from — the Altrollen-Rückfall (D-08) can therefore
+      // never again hand an anonymized user's still-valid token anything above Mitarbeiter.
+      expect(await columnRole(migrated.user.id)).toBe("EMPLOYEE");
+      expect(await columnRole(fallback.user.id)).toBe("EMPLOYEE");
       const audits = await newAuditsSince(migrated.user.id, before);
       expect(audits).toHaveLength(1);
       expect(audits[0]).toMatchObject({
@@ -580,6 +617,33 @@ describe("Role bridge: employee form, compat column and fallback materialization
           where: { entity: "User", entityId: { in: [migrated.user.id, fallback.user.id] } },
         }),
       ).toBe(0);
+    });
+
+    // Issue #357 AC 3: "Test mit einem Token von vor der Anonymisierung, einmal rot gesehen" — a
+    // MANAGER's access token, minted BEFORE anonymization and still within its lifetime, must not
+    // resolve to any right afterwards. Before the fix this token kept full MANAGER access through
+    // the Altrollen-Rückfall (D-08) because `User.role` was left standing once the assignment was
+    // gone; RED against the pre-#357 code (`columnRole` stayed MANAGER, so `GET /employees`
+    // answered 200 for this very token after the DELETE below).
+    it("a MANAGER's pre-anonymization access token holds no rights afterwards (Issue #357 sub-fix C)", async () => {
+      const target = await createPerson(tenant.tenant.id, "Anonym Vorher-Token", "MANAGER");
+      await executeLegacyRoleMigration(app.prisma);
+      const { accessToken } = await login(target.email);
+      // Sanity: the token actually carries MANAGER-level access before anonymization.
+      expect((await listEmployees(accessToken)).statusCode).toBe(200);
+
+      const del = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/employees/${target.employee.id}`,
+        headers: { authorization: `Bearer ${tenant.adminToken}` },
+      });
+      expect(del.statusCode).toBe(204);
+
+      // The SAME still-valid JWT, unrefreshed, now resolves through the Altrollen-Rückfall over
+      // the rewritten EMPLOYEE column — no stored assignment, no rights above Mitarbeiter.
+      const after = await listEmployees(accessToken);
+      expect(after.statusCode).toBe(403);
+      expect(JSON.parse(after.body)).toEqual({ error: "Forbidden" });
     });
   });
 
