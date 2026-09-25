@@ -62,9 +62,18 @@ describe("integrations phorest routes", () => {
       where: { tenantId: seed.tenant.id },
       data: {
         phorestBusinessId: "biz-1",
-        phorestBranchId: "branch-1",
         phorestUsername: "user@salon.de",
         phorestPassword: "secret-pw",
+      },
+    });
+    // Phase 65b (issue #65, D-19): the branch lives on the seed salon's coupling, not on
+    // TenantConfig.phorestBranchId (deprecated).
+    await app.prisma.salonCoupling.create({
+      data: {
+        tenantId: seed.tenant.id,
+        salonId: seed.salonId,
+        provider: "PHOREST",
+        externalBranchId: "branch-1",
       },
     });
   });
@@ -163,7 +172,7 @@ describe("integrations phorest routes", () => {
       headers: auth(),
       payload: {
         phorestBusinessId: "biz-changed",
-        phorestBranchId: "branch-changed",
+        branchId: "branch-changed",
         phorestUsername: "user@salon.de",
         // NOTE: no phorestPassword — this must NOT 400 and must NOT wipe the stored password.
       },
@@ -190,7 +199,7 @@ describe("integrations phorest routes", () => {
       headers: auth(),
       payload: {
         phorestBusinessId: "biz-1",
-        phorestBranchId: "branch-1",
+        branchId: "branch-1",
         phorestUsername: "user@salon.de",
         phorestPassword: "new-secret",
       },
@@ -220,7 +229,7 @@ describe("integrations phorest routes", () => {
       headers: auth(),
       payload: {
         phorestBusinessId: "biz-1",
-        phorestBranchId: "branch-1",
+        branchId: "branch-1",
         phorestUsername: "user@salon.de",
         phorestPassword: "", // masked field left blank → empty string, not undefined
         phorestAutoSync: true,
@@ -352,7 +361,7 @@ describe("integrations phorest routes", () => {
 
   // ── Sync-run history (SS-05) ──────────────────────────────────────────
 
-  it("GET /phorest/sync-runs returns latest + history", async () => {
+  it("GET /phorest/sync-runs returns latest + history, each carrying salonId and salonName (Phase 65b, D-21)", async () => {
     await app.prisma.phorestSyncRun.create({
       data: {
         tenantId: seed.tenant.id,
@@ -372,6 +381,539 @@ describe("integrations phorest routes", () => {
     expect(body.latest).not.toBeNull();
     expect(Array.isArray(body.history)).toBe(true);
     expect(body.total).toBeGreaterThanOrEqual(1);
+    expect(body.latest.salonId).toBe(seed.salonId);
+    expect(body.latest.salonName).toBe(seed.tenant.name);
+    for (const run of body.history) {
+      expect(run.salonId).toBe(seed.salonId);
+      expect(run.salonName).toBe(seed.tenant.name);
+    }
+  });
+});
+
+// ── Salon resolution for test/staff (Phase 65b, issue #65, D-18) ──────────────────────────────
+
+describe("POST /phorest/test + GET /phorest/staff resolve the coupling per salon (Phase 65b, issue #65, D-18)", () => {
+  let app: FastifyInstance;
+  let seed: Awaited<ReturnType<typeof seedTestData>>;
+  let other: Awaited<ReturnType<typeof seedTestData>>;
+  let salonB: { id: string; name: string };
+
+  const auth = () => ({ authorization: `Bearer ${seed.adminToken}` });
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    seed = await seedTestData(app, "intphres");
+    other = await seedTestData(app, "intphres-other");
+    await app.prisma.tenantConfig.update({
+      where: { tenantId: seed.tenant.id },
+      data: {
+        phorestBusinessId: "biz-1",
+        phorestUsername: "user@salon.de",
+        phorestPassword: "secret-pw",
+      },
+    });
+    salonB = await createTestSalon(app.prisma, seed.tenant.id, {
+      name: "Resolve Salon B",
+      createdAt: new Date(Date.now() + 60_000),
+    });
+    await app.prisma.salonCoupling.create({
+      data: {
+        tenantId: seed.tenant.id,
+        salonId: seed.salonId,
+        provider: "PHOREST",
+        externalBranchId: "resolve-a",
+      },
+    });
+    await app.prisma.salonCoupling.create({
+      data: {
+        tenantId: seed.tenant.id,
+        salonId: salonB.id,
+        provider: "PHOREST",
+        externalBranchId: "resolve-b",
+      },
+    });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, seed.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed (seed):", err);
+    }
+    try {
+      await cleanupTestData(app, other.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed (other):", err);
+    }
+  });
+
+  it("test: two couplings, no salonId -> 400 SALON_REQUIRED", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: `${PREFIX}/phorest/test`,
+      headers: auth(),
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({
+      error: "Bitte einen Salon angeben — der Mandant hat mehrere Phorest-Kopplungen.",
+      code: "SALON_REQUIRED",
+    });
+  });
+
+  it("test: two couplings, explicit salonId: null in the body -> 400 SALON_REQUIRED (an explicit null is treated as absent)", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: `${PREFIX}/phorest/test`,
+      headers: { ...auth(), "content-type": "application/json" },
+      payload: JSON.stringify({ salonId: null }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("test: two couplings, salon B's id -> the recorded fetch URL uses B's branch", async () => {
+    const requested = mockPhorestByBranch({
+      "resolve-a": { staff: { _embedded: { staffs: [] } } },
+      "resolve-b": { staff: { _embedded: { staffs: [] } } },
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: `${PREFIX}/phorest/test`,
+      headers: auth(),
+      payload: { salonId: salonB.id },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).ok).toBe(true);
+    expect(requested.some((u) => u.includes("/branch/resolve-b/staff"))).toBe(true);
+  });
+
+  it("test: a foreign tenant's salon id and an unknown UUID both answer byte-identical 404 'Salon nicht gefunden'", async () => {
+    const foreignRes = await app.inject({
+      method: "POST",
+      url: `${PREFIX}/phorest/test`,
+      headers: auth(),
+      payload: { salonId: other.salonId },
+    });
+    const unknownRes = await app.inject({
+      method: "POST",
+      url: `${PREFIX}/phorest/test`,
+      headers: auth(),
+      payload: { salonId: "00000000-0000-4000-8000-000000000010" },
+    });
+    expect(foreignRes.statusCode).toBe(404);
+    expect(unknownRes.statusCode).toBe(404);
+    expect(foreignRes.body).toBe(unknownRes.body);
+    expect(JSON.parse(foreignRes.body)).toEqual({ error: "Salon nicht gefunden" });
+  });
+
+  it("test: an own uncoupled salon -> 404 'Salon ist nicht mit Phorest gekoppelt.'", async () => {
+    const uncoupled = await createTestSalon(app.prisma, seed.tenant.id, {
+      name: "Resolve Uncoupled",
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: `${PREFIX}/phorest/test`,
+      headers: auth(),
+      payload: { salonId: uncoupled.id },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body)).toEqual({ error: "Salon ist nicht mit Phorest gekoppelt." });
+  });
+
+  it("test: zero couplings (credentials configured) -> 200 { ok: false, reason: 'not-configured' }", async () => {
+    const zero = await seedTestData(app, "intphres-zero");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: zero.tenant.id },
+        data: {
+          phorestBusinessId: "biz-z",
+          phorestUsername: "z@salon.de",
+          phorestPassword: "pw-z",
+        },
+      });
+      const res = await app.inject({
+        method: "POST",
+        url: `${PREFIX}/phorest/test`,
+        headers: { authorization: `Bearer ${zero.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.ok).toBe(false);
+      expect(body.reason).toBe("not-configured");
+    } finally {
+      await cleanupTestData(app, zero.tenant.id);
+    }
+  });
+
+  it("test: a coupling only on an INACTIVE salon, no salonId -> 200 not-configured (inactive salons don't count toward the single-coupling rule)", async () => {
+    const inactiveOnly = await seedTestData(app, "intphres-inactive");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: inactiveOnly.tenant.id },
+        data: {
+          phorestBusinessId: "biz-i",
+          phorestUsername: "i@salon.de",
+          phorestPassword: "pw-i",
+        },
+      });
+      await app.prisma.salon.update({
+        where: { id: inactiveOnly.salonId },
+        data: { isActive: false, deactivatedAt: new Date() },
+      });
+      await app.prisma.salonCoupling.create({
+        data: {
+          tenantId: inactiveOnly.tenant.id,
+          salonId: inactiveOnly.salonId,
+          provider: "PHOREST",
+          externalBranchId: "inactive-branch",
+        },
+      });
+      const res = await app.inject({
+        method: "POST",
+        url: `${PREFIX}/phorest/test`,
+        headers: { authorization: `Bearer ${inactiveOnly.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.ok).toBe(false);
+      expect(body.reason).toBe("not-configured");
+    } finally {
+      await cleanupTestData(app, inactiveOnly.tenant.id);
+    }
+  });
+
+  it("staff: two couplings, no salonId -> 400 SALON_REQUIRED", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `${PREFIX}/phorest/staff`,
+      headers: auth(),
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({
+      error: "Bitte einen Salon angeben — der Mandant hat mehrere Phorest-Kopplungen.",
+      code: "SALON_REQUIRED",
+    });
+  });
+
+  it("staff: salon B's id via ?salonId= -> the recorded fetch URL uses B's branch", async () => {
+    const requested = mockPhorestByBranch({
+      "resolve-a": { staff: { _embedded: { staffs: [] } } },
+      "resolve-b": { staff: { _embedded: { staffs: [] } } },
+    });
+    const res = await app.inject({
+      method: "GET",
+      url: `${PREFIX}/phorest/staff?salonId=${salonB.id}`,
+      headers: auth(),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(requested.some((u) => u.includes("/branch/resolve-b/staff"))).toBe(true);
+  });
+
+  it("staff: a foreign tenant's salon id and an unknown UUID both answer byte-identical 404 'Salon nicht gefunden'", async () => {
+    const foreignRes = await app.inject({
+      method: "GET",
+      url: `${PREFIX}/phorest/staff?salonId=${other.salonId}`,
+      headers: auth(),
+    });
+    const unknownRes = await app.inject({
+      method: "GET",
+      url: `${PREFIX}/phorest/staff?salonId=00000000-0000-4000-8000-000000000011`,
+      headers: auth(),
+    });
+    expect(foreignRes.statusCode).toBe(404);
+    expect(unknownRes.statusCode).toBe(404);
+    expect(foreignRes.body).toBe(unknownRes.body);
+    expect(JSON.parse(foreignRes.body)).toEqual({ error: "Salon nicht gefunden" });
+  });
+
+  it("staff: zero couplings -> { error: 'Phorest nicht konfiguriert' }", async () => {
+    const zero = await seedTestData(app, "intphres-zero2");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: zero.tenant.id },
+        data: {
+          phorestBusinessId: "biz-z2",
+          phorestUsername: "z2@salon.de",
+          phorestPassword: "pw-z2",
+        },
+      });
+      const res = await app.inject({
+        method: "GET",
+        url: `${PREFIX}/phorest/staff`,
+        headers: { authorization: `Bearer ${zero.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ error: "Phorest nicht konfiguriert" });
+    } finally {
+      await cleanupTestData(app, zero.tenant.id);
+    }
+  });
+});
+
+// ── Config branchId / branchIdEditable (Phase 65b, issue #65, D-19) ───────────────────────────
+
+describe("GET/PUT /phorest/config branchId / branchIdEditable (Phase 65b, issue #65, D-19)", () => {
+  let app: FastifyInstance;
+  let seed: Awaited<ReturnType<typeof seedTestData>>;
+  const auth = () => ({ authorization: `Bearer ${seed.adminToken}` });
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    seed = await seedTestData(app, "intphcfg");
+    await app.prisma.tenantConfig.update({
+      where: { tenantId: seed.tenant.id },
+      data: { phorestBusinessId: "biz-cfg", phorestUsername: "cfg@salon.de" },
+    });
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, seed.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  it("GET with exactly one active salon coupled 'cfg-branch-1' -> branchId + branchIdEditable true, no deprecated key", async () => {
+    await app.prisma.salonCoupling.create({
+      data: {
+        tenantId: seed.tenant.id,
+        salonId: seed.salonId,
+        provider: "PHOREST",
+        externalBranchId: "cfg-branch-1",
+      },
+    });
+    const res = await app.inject({
+      method: "GET",
+      url: `${PREFIX}/phorest/config`,
+      headers: auth(),
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.branchId).toBe("cfg-branch-1");
+    expect(body.branchIdEditable).toBe(true);
+    expect("phorestBranchId" in body).toBe(false);
+  });
+
+  it("PUT the same branchId writes no SalonCoupling UPDATE audit; a different branchId updates the SAME coupling id + UPDATE audit with old/new", async () => {
+    const before = await app.prisma.salonCoupling.findUnique({ where: { salonId: seed.salonId } });
+    const beforeUpdateAudits = await app.prisma.auditLog.count({
+      where: { entity: "SalonCoupling", action: "UPDATE" },
+    });
+
+    const same = await app.inject({
+      method: "PUT",
+      url: `${PREFIX}/phorest/config`,
+      headers: auth(),
+      payload: {
+        phorestBusinessId: "biz-cfg",
+        branchId: "cfg-branch-1",
+        phorestUsername: "cfg@salon.de",
+      },
+    });
+    expect(same.statusCode).toBe(200);
+    expect(
+      await app.prisma.auditLog.count({ where: { entity: "SalonCoupling", action: "UPDATE" } }),
+    ).toBe(beforeUpdateAudits);
+
+    const changed = await app.inject({
+      method: "PUT",
+      url: `${PREFIX}/phorest/config`,
+      headers: auth(),
+      payload: {
+        phorestBusinessId: "biz-cfg",
+        branchId: "cfg-branch-2",
+        phorestUsername: "cfg@salon.de",
+      },
+    });
+    expect(changed.statusCode).toBe(200);
+    const afterUpdateAudits = await app.prisma.auditLog.count({
+      where: { entity: "SalonCoupling", action: "UPDATE" },
+    });
+    expect(afterUpdateAudits).toBe(beforeUpdateAudits + 1);
+
+    const after = await app.prisma.salonCoupling.findUnique({ where: { salonId: seed.salonId } });
+    expect(after?.id).toBe(before?.id);
+    expect(after?.externalBranchId).toBe("cfg-branch-2");
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: { entity: "SalonCoupling", entityId: after!.id, action: "UPDATE" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(audit?.oldValue).toEqual({ externalBranchId: "cfg-branch-1" });
+    expect(audit?.newValue).toEqual({ externalBranchId: "cfg-branch-2" });
+
+    const configAudit = await app.prisma.auditLog.findFirst({
+      where: { entity: "PhorestConfig" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(configAudit?.newValue).not.toHaveProperty("branchId");
+    expect(configAudit?.newValue).not.toHaveProperty("branch");
+  });
+
+  it("PUT without branchId leaves the coupling untouched", async () => {
+    const before = await app.prisma.salonCoupling.findUnique({ where: { salonId: seed.salonId } });
+    const res = await app.inject({
+      method: "PUT",
+      url: `${PREFIX}/phorest/config`,
+      headers: auth(),
+      payload: { phorestBusinessId: "biz-cfg", phorestUsername: "cfg@salon.de" },
+    });
+    expect(res.statusCode).toBe(200);
+    const after = await app.prisma.salonCoupling.findUnique({ where: { salonId: seed.salonId } });
+    expect(after).toEqual(before);
+  });
+
+  it("PUT with a branchId creates the coupling when none exists yet + CREATE audit", async () => {
+    const fresh = await seedTestData(app, "intphcfg-create");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: fresh.tenant.id },
+        data: { phorestBusinessId: "biz-fresh", phorestUsername: "fresh@salon.de" },
+      });
+      const res = await app.inject({
+        method: "PUT",
+        url: `${PREFIX}/phorest/config`,
+        headers: { authorization: `Bearer ${fresh.adminToken}` },
+        payload: {
+          phorestBusinessId: "biz-fresh",
+          branchId: "fresh-branch",
+          phorestUsername: "fresh@salon.de",
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const created = await app.prisma.salonCoupling.findUnique({
+        where: { salonId: fresh.salonId },
+      });
+      expect(created?.externalBranchId).toBe("fresh-branch");
+      const audit = await app.prisma.auditLog.findFirst({
+        where: { entity: "SalonCoupling", entityId: created!.id, action: "CREATE" },
+      });
+      expect(audit?.newValue).toEqual({
+        salonId: fresh.salonId,
+        provider: "PHOREST",
+        externalBranchId: "fresh-branch",
+      });
+    } finally {
+      await cleanupTestData(app, fresh.tenant.id);
+    }
+  });
+
+  it("GET with two active salons -> branchId null, branchIdEditable false; PUT with a branchId -> 400 BRANCH_PER_SALON, config unchanged; PUT without branchId -> 200", async () => {
+    const twoSalon = await seedTestData(app, "intphcfg-two");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: twoSalon.tenant.id },
+        data: { phorestBusinessId: "biz-two", phorestUsername: "two@salon.de" },
+      });
+      await app.prisma.salonCoupling.create({
+        data: {
+          tenantId: twoSalon.tenant.id,
+          salonId: twoSalon.salonId,
+          provider: "PHOREST",
+          externalBranchId: "two-branch-1",
+        },
+      });
+      await createTestSalon(app.prisma, twoSalon.tenant.id, { name: "Config Two Salon B" });
+
+      const res = await app.inject({
+        method: "GET",
+        url: `${PREFIX}/phorest/config`,
+        headers: { authorization: `Bearer ${twoSalon.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.branchId).toBeNull();
+      expect(body.branchIdEditable).toBe(false);
+
+      const before = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: twoSalon.tenant.id },
+      });
+      const put = await app.inject({
+        method: "PUT",
+        url: `${PREFIX}/phorest/config`,
+        headers: { authorization: `Bearer ${twoSalon.adminToken}` },
+        payload: {
+          phorestBusinessId: "biz-two-should-not-persist",
+          branchId: "should-fail",
+          phorestUsername: "two@salon.de",
+        },
+      });
+      expect(put.statusCode).toBe(400);
+      expect(JSON.parse(put.body)).toEqual({
+        error: "Mehrere aktive Salons: die Phorest-Filiale wird je Salon gekoppelt.",
+        code: "BRANCH_PER_SALON",
+      });
+      const afterRejected = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: twoSalon.tenant.id },
+      });
+      expect(afterRejected).toEqual(before);
+
+      const putWithoutBranch = await app.inject({
+        method: "PUT",
+        url: `${PREFIX}/phorest/config`,
+        headers: { authorization: `Bearer ${twoSalon.adminToken}` },
+        payload: { phorestBusinessId: "biz-two-updated", phorestUsername: "two@salon.de" },
+      });
+      expect(putWithoutBranch.statusCode).toBe(200);
+    } finally {
+      await cleanupTestData(app, twoSalon.tenant.id);
+    }
+  });
+
+  it("PUT with a branchId already coupled to ANOTHER (inactive) salon of the same tenant -> 409 BRANCH_ALREADY_COUPLED, nothing written", async () => {
+    const dup = await seedTestData(app, "intphcfg-dup");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: dup.tenant.id },
+        data: { phorestBusinessId: "biz-dup", phorestUsername: "dup@salon.de" },
+      });
+      const inactiveSalon = await createTestSalon(app.prisma, dup.tenant.id, {
+        name: "Dup Inactive",
+        isActive: false,
+      });
+      await app.prisma.salonCoupling.create({
+        data: {
+          tenantId: dup.tenant.id,
+          salonId: inactiveSalon.id,
+          provider: "PHOREST",
+          externalBranchId: "dup-branch",
+        },
+      });
+      const before = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: dup.tenant.id },
+      });
+
+      const res = await app.inject({
+        method: "PUT",
+        url: `${PREFIX}/phorest/config`,
+        headers: { authorization: `Bearer ${dup.adminToken}` },
+        payload: {
+          phorestBusinessId: "biz-dup-changed",
+          branchId: "dup-branch",
+          phorestUsername: "dup@salon.de",
+        },
+      });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body)).toEqual({
+        error: "Diese Phorest-Filiale ist bereits mit einem anderen Salon gekoppelt.",
+        code: "BRANCH_ALREADY_COUPLED",
+      });
+      const after = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: dup.tenant.id },
+      });
+      expect(after).toEqual(before);
+      const ownCoupling = await app.prisma.salonCoupling.findUnique({
+        where: { salonId: dup.salonId },
+      });
+      expect(ownCoupling).toBeNull();
+    } finally {
+      await cleanupTestData(app, dup.tenant.id);
+    }
   });
 });
 

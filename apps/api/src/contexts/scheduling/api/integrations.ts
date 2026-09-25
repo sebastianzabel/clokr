@@ -56,7 +56,10 @@ const syncRunsQuerySchema = z.object({
 
 const configSchema = z.object({
   phorestBusinessId: z.string().min(1),
-  phorestBranchId: z.string().min(1),
+  // Phase 65b (issue #65, D-19): the branch moved to the salon's coupling. Optional — it is sent
+  // only while the tenant has exactly one active salon (branchIdEditable); PUT re-checks that
+  // count itself rather than trusting the client's decision to send or omit the key.
+  branchId: z.string().trim().min(1).optional(),
   phorestUsername: z.string().min(1),
   // Password is OPTIONAL on update: GET /phorest/config never returns it (masked), so an admin who
   // edits any OTHER field and re-saves would otherwise be forced to re-type it. The masked field
@@ -84,6 +87,10 @@ const collisionQuerySchema = z.union([
     employeeId: z.string().uuid(),
     from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    // Phase 65b (issue #65, D-18): optional deep-link salon for the range shape. Absent, the
+    // resolver falls back to the tenant's single active coupling (graceful degrade — never a 400
+    // here, the count/groupBy never depends on it).
+    salonId: z.string().uuid().optional(),
   }),
   z.object({ shiftId: z.string().uuid() }),
 ]);
@@ -138,6 +145,77 @@ function isPrismaErrorCode(err: unknown, code: string): boolean {
   );
 }
 
+// Phase 65b (issue #65, D-18): every route that talks to Phorest on a tenant's behalf resolves
+// its branch through this ONE function — never re-implemented per route.
+type CouplingResolution =
+  | { kind: "ok"; salonId: string; externalBranchId: string }
+  | { kind: "none" }
+  | { kind: "reject"; status: 400 | 404; body: Record<string, unknown> };
+
+/**
+ * Resolves which salon's Phorest branch a request should use.
+ *
+ * - An EXPLICIT `salonId`: `findSalon` null → reject 404 `SALON_NOT_FOUND` (foreign ≡ unknown, same
+ *   shape everywhere in this file). A found salon without a coupling → reject 404 with the "salon
+ *   not coupled to Phorest" message (see `SALON_NOT_FOUND_REPLY`'s sibling literal below) —
+ *   deliberately NOT gated on `isActive` here: an explicit id may name an inactive own salon (the
+ *   caller asked for it by name), unlike the no-`salonId` path below, whose "exactly one" rule
+ *   counts ACTIVE salons only.
+ * - No `salonId`: among the tenant's ACTIVE salons (D-18), the ones with a PHOREST coupling —
+ *   exactly one → `ok`; zero → `none` (existing "not configured" shapes); more than one → reject
+ *   400 `SALON_REQUIRED`.
+ */
+async function resolvePhorestCoupling(
+  app: FastifyInstance,
+  tenantId: string,
+  salonId: string | null | undefined,
+): Promise<CouplingResolution> {
+  if (salonId) {
+    const salon = await findSalon(app.prisma, tenantId, salonId);
+    if (!salon) {
+      return {
+        kind: "reject",
+        status: SALON_NOT_FOUND_REPLY.status,
+        body: SALON_NOT_FOUND_REPLY.body,
+      };
+    }
+    const coupling = await app.prisma.salonCoupling.findFirst({
+      where: { salonId, tenantId, provider: "PHOREST" },
+    });
+    if (!coupling) {
+      return {
+        kind: "reject",
+        status: 404,
+        body: { error: "Salon ist nicht mit Phorest gekoppelt." },
+      };
+    }
+    return { kind: "ok", salonId: coupling.salonId, externalBranchId: coupling.externalBranchId };
+  }
+
+  const activeSalons = await listSalons(app.prisma, tenantId, { includeInactive: false });
+  const activeSalonIds = activeSalons.map((s) => s.id);
+  const couplings =
+    activeSalonIds.length === 0
+      ? []
+      : await app.prisma.salonCoupling.findMany({
+          where: { tenantId, provider: "PHOREST", salonId: { in: activeSalonIds } },
+        });
+
+  if (couplings.length === 0) return { kind: "none" };
+  if (couplings.length > 1) {
+    return {
+      kind: "reject",
+      status: 400,
+      body: {
+        error: "Bitte einen Salon angeben — der Mandant hat mehrere Phorest-Kopplungen.",
+        code: "SALON_REQUIRED",
+      },
+    };
+  }
+  const [only] = couplings;
+  return { kind: "ok", salonId: only.salonId, externalBranchId: only.externalBranchId };
+}
+
 /**
  * Build the Phorest web-calendar deep-link for a staff member on a date, or null when it cannot be
  * built (graceful degrade — the UI omits the link).
@@ -149,12 +227,15 @@ function isPrismaErrorCode(err: unknown, code: string): boolean {
  * Phorest web-calendar URL shape, this returns null. The function signature already carries everything a
  * real URL needs (business/branch + employee + date), so a URL can be dropped in here WITHOUT changing
  * the endpoint's `deepLink: string | null` response contract.
+ *
+ * Phase 65b (issue #65): `branchId` is now the RESOLVED coupling's external branch id — the
+ * salon-level concept — not the deprecated tenant-level column; the parameter name changed to match.
  */
 function buildPhorestCalendarDeepLink(
   _cfg: {
-    phorestBusinessId: string | null;
-    phorestBranchId: string | null;
-    phorestBaseUrl: string | null;
+    businessId: string | null;
+    branchId: string | null;
+    baseUrl: string | null;
   } | null,
   _employeeId: string,
   _date: Date,
@@ -323,15 +404,19 @@ export async function integrationRoutes(app: FastifyInstance) {
   // ── Phorest Config ────────────────────────────────────────────────────
 
   // GET /phorest/config — aktuelle Phorest-Konfiguration
+  //
+  // Phase 65b (issue #65, D-19): `branchId` is the sole active salon's coupling (null otherwise),
+  // `branchIdEditable` is true iff the tenant has exactly one active salon. The deprecated
+  // TenantConfig column is no longer selected.
   app.get("/phorest/config", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
     handler: async (req) => {
+      const tenantId = req.user.tenantId;
       const cfg = await app.prisma.tenantConfig.findUnique({
-        where: { tenantId: req.user.tenantId },
+        where: { tenantId },
         select: {
           phorestBusinessId: true,
-          phorestBranchId: true,
           phorestUsername: true,
           phorestBaseUrl: true,
           phorestAutoSync: true,
@@ -342,52 +427,152 @@ export async function integrationRoutes(app: FastifyInstance) {
           // Passwort nicht zurückgeben
         },
       });
+
+      const activeSalons = await listSalons(app.prisma, tenantId, { includeInactive: false });
+      const branchIdEditable = activeSalons.length === 1;
+      let branchId: string | null = null;
+      if (branchIdEditable) {
+        const coupling = await app.prisma.salonCoupling.findFirst({
+          where: { salonId: activeSalons[0].id, tenantId, provider: "PHOREST" },
+        });
+        branchId = coupling?.externalBranchId ?? null;
+      }
+
       return {
         configured: !!(cfg?.phorestBusinessId && cfg?.phorestUsername),
         ...cfg,
+        branchId,
+        branchIdEditable,
       };
     },
   });
 
   // PUT /phorest/config — Phorest-Zugangsdaten speichern
+  //
+  // Phase 65b (issue #65, D-19): `branchId` creates or in-place-updates the sole active salon's
+  // coupling, in the SAME transaction as the TenantConfig write. Refused (400 BRANCH_PER_SALON)
+  // unless the tenant has exactly one active salon; a same-tenant branch collision answers 409
+  // BRANCH_ALREADY_COUPLED. The PhorestConfig audit no longer carries a branch.
   app.put("/phorest/config", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
-    handler: async (req) => {
+    handler: async (req, reply) => {
+      const tenantId = req.user.tenantId;
       const body = configSchema.parse(req.body);
-      await app.prisma.tenantConfig.update({
-        where: { tenantId: req.user.tenantId },
-        data: {
-          phorestBusinessId: body.phorestBusinessId,
-          phorestBranchId: body.phorestBranchId,
-          phorestUsername: body.phorestUsername,
-          // Only re-encrypt/overwrite when a new password was actually supplied (see schema note).
-          ...(body.phorestPassword ? { phorestPassword: encrypt(body.phorestPassword) } : {}),
-          ...(body.phorestBaseUrl ? { phorestBaseUrl: body.phorestBaseUrl } : {}),
-          ...(body.phorestAutoSync !== undefined ? { phorestAutoSync: body.phorestAutoSync } : {}),
-          ...(body.phorestSyncCron ? { phorestSyncCron: body.phorestSyncCron } : {}),
-          ...(body.phorestSyncWindowDays !== undefined
-            ? { phorestSyncWindowDays: body.phorestSyncWindowDays }
-            : {}),
-          ...(body.phorestPrepMinutes !== undefined
-            ? { phorestPrepMinutes: body.phorestPrepMinutes }
-            : {}),
-          ...(body.phorestWrapupMinutes !== undefined
-            ? { phorestWrapupMinutes: body.phorestWrapupMinutes }
-            : {}),
-        },
-      });
 
-      await app.audit({
-        userId: req.user.sub,
-        action: "UPDATE",
-        entity: "PhorestConfig",
-        newValue: {
-          businessId: body.phorestBusinessId,
-          branchId: body.phorestBranchId,
-          autoSync: body.phorestAutoSync,
-        },
-      });
+      let soleActiveSalonId: string | undefined;
+      if (body.branchId !== undefined) {
+        const activeSalons = await listSalons(app.prisma, tenantId, { includeInactive: false });
+        if (activeSalons.length !== 1) {
+          return reply.code(400).send({
+            error: "Mehrere aktive Salons: die Phorest-Filiale wird je Salon gekoppelt.",
+            code: "BRANCH_PER_SALON",
+          });
+        }
+        soleActiveSalonId = activeSalons[0].id;
+
+        const branchUsedElsewhere = await app.prisma.salonCoupling.findFirst({
+          where: {
+            tenantId,
+            provider: "PHOREST",
+            externalBranchId: body.branchId,
+            salonId: { not: soleActiveSalonId },
+          },
+        });
+        if (branchUsedElsewhere) {
+          return reply
+            .code(BRANCH_ALREADY_COUPLED_REPLY.status)
+            .send(BRANCH_ALREADY_COUPLED_REPLY.body);
+        }
+      }
+
+      try {
+        await app.prisma.$transaction(async (tx) => {
+          await tx.tenantConfig.update({
+            where: { tenantId },
+            data: {
+              phorestBusinessId: body.phorestBusinessId,
+              phorestUsername: body.phorestUsername,
+              // Only re-encrypt/overwrite when a new password was actually supplied (see schema note).
+              ...(body.phorestPassword ? { phorestPassword: encrypt(body.phorestPassword) } : {}),
+              ...(body.phorestBaseUrl ? { phorestBaseUrl: body.phorestBaseUrl } : {}),
+              ...(body.phorestAutoSync !== undefined
+                ? { phorestAutoSync: body.phorestAutoSync }
+                : {}),
+              ...(body.phorestSyncCron ? { phorestSyncCron: body.phorestSyncCron } : {}),
+              ...(body.phorestSyncWindowDays !== undefined
+                ? { phorestSyncWindowDays: body.phorestSyncWindowDays }
+                : {}),
+              ...(body.phorestPrepMinutes !== undefined
+                ? { phorestPrepMinutes: body.phorestPrepMinutes }
+                : {}),
+              ...(body.phorestWrapupMinutes !== undefined
+                ? { phorestWrapupMinutes: body.phorestWrapupMinutes }
+                : {}),
+            },
+          });
+
+          if (soleActiveSalonId !== undefined && body.branchId !== undefined) {
+            const existingCoupling = await tx.salonCoupling.findFirst({
+              where: { salonId: soleActiveSalonId, tenantId },
+            });
+            if (!existingCoupling) {
+              const created = await tx.salonCoupling.create({
+                data: {
+                  tenantId,
+                  salonId: soleActiveSalonId,
+                  provider: "PHOREST",
+                  externalBranchId: body.branchId,
+                },
+              });
+              await app.audit({
+                userId: req.user.sub,
+                action: "CREATE",
+                entity: "SalonCoupling",
+                entityId: created.id,
+                newValue: {
+                  salonId: created.salonId,
+                  provider: created.provider,
+                  externalBranchId: created.externalBranchId,
+                },
+                tx,
+              });
+            } else if (existingCoupling.externalBranchId !== body.branchId) {
+              const updated = await tx.salonCoupling.update({
+                where: { id: existingCoupling.id },
+                data: { externalBranchId: body.branchId },
+              });
+              await app.audit({
+                userId: req.user.sub,
+                action: "UPDATE",
+                entity: "SalonCoupling",
+                entityId: updated.id,
+                oldValue: { externalBranchId: existingCoupling.externalBranchId },
+                newValue: { externalBranchId: updated.externalBranchId },
+                tx,
+              });
+            }
+          }
+
+          await app.audit({
+            userId: req.user.sub,
+            action: "UPDATE",
+            entity: "PhorestConfig",
+            newValue: {
+              businessId: body.phorestBusinessId,
+              autoSync: body.phorestAutoSync,
+            },
+            tx,
+          });
+        });
+      } catch (err: unknown) {
+        if (isPrismaErrorCode(err, "P2002")) {
+          return reply
+            .code(BRANCH_ALREADY_COUPLED_REPLY.status)
+            .send(BRANCH_ALREADY_COUPLED_REPLY.body);
+        }
+        throw err;
+      }
 
       // Scheduler neu laden wenn Auto-Sync geändert
       if (body.phorestAutoSync !== undefined && app.refreshScheduler) {
@@ -407,12 +592,27 @@ export async function integrationRoutes(app: FastifyInstance) {
   app.post("/phorest/test", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
-    handler: async (req) => {
-      const cfg = await app.prisma.tenantConfig.findUnique({
-        where: { tenantId: req.user.tenantId },
-      });
+    handler: async (req, reply) => {
+      const tenantId = req.user.tenantId;
+      // `.optional().nullable()` — Clokr frontends send an explicit `null` for an empty optional
+      // field (CLAUDE.md "Zod .optional() vs .nullable()"); plain `.optional()` would 400 that.
+      const { salonId } = z
+        .object({ salonId: z.string().uuid().optional().nullable() })
+        .parse(req.body ?? {});
+
+      const resolution = await resolvePhorestCoupling(app, tenantId, salonId);
+      if (resolution.kind === "reject") {
+        return reply.code(resolution.status).send(resolution.body);
+      }
+
+      const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
       const phorestPwd = decryptSafe(cfg?.phorestPassword);
-      if (!cfg?.phorestBusinessId || !cfg?.phorestUsername || !phorestPwd) {
+      if (
+        resolution.kind === "none" ||
+        !cfg?.phorestBusinessId ||
+        !cfg?.phorestUsername ||
+        !phorestPwd
+      ) {
         return {
           ok: false,
           reason: "not-configured",
@@ -423,7 +623,7 @@ export async function integrationRoutes(app: FastifyInstance) {
       try {
         const staff = await phorestFetch(
           cfg.phorestBaseUrl ?? "https://api-gateway-eu.phorest.com/third-party-api-server",
-          `/api/business/${cfg.phorestBusinessId}/branch/${cfg.phorestBranchId}/staff`,
+          `/api/business/${cfg.phorestBusinessId}/branch/${resolution.externalBranchId}/staff`,
           cfg.phorestUsername,
           phorestPwd,
           { size: "1", page: "0" },
@@ -484,19 +684,30 @@ export async function integrationRoutes(app: FastifyInstance) {
   app.get("/phorest/staff", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
-    handler: async (req) => {
-      const cfg = await app.prisma.tenantConfig.findUnique({
-        where: { tenantId: req.user.tenantId },
-      });
+    handler: async (req, reply) => {
+      const tenantId = req.user.tenantId;
+      const { salonId } = z.object({ salonId: z.string().uuid().optional() }).parse(req.query);
+
+      const resolution = await resolvePhorestCoupling(app, tenantId, salonId);
+      if (resolution.kind === "reject") {
+        return reply.code(resolution.status).send(resolution.body);
+      }
+
+      const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
       const staffPwd = decryptSafe(cfg?.phorestPassword);
-      if (!cfg?.phorestBusinessId || !cfg?.phorestUsername || !staffPwd) {
+      if (
+        resolution.kind === "none" ||
+        !cfg?.phorestBusinessId ||
+        !cfg?.phorestUsername ||
+        !staffPwd
+      ) {
         return { error: "Phorest nicht konfiguriert" };
       }
 
       // Phorest-Mitarbeiter laden
       const phorestData = await phorestFetch(
         cfg.phorestBaseUrl ?? "https://api-gateway-eu.phorest.com/third-party-api-server",
-        `/api/business/${cfg.phorestBusinessId}/branch/${cfg.phorestBranchId}/staff`,
+        `/api/business/${cfg.phorestBusinessId}/branch/${resolution.externalBranchId}/staff`,
         cfg.phorestUsername,
         staffPwd,
         { size: "200", page: "0" },
@@ -671,12 +882,16 @@ export async function integrationRoutes(app: FastifyInstance) {
   // ── Phorest Sync-Run History (SS-05) ──────────────────────────────────
 
   // GET /phorest/sync-runs — letzter Lauf + Verlauf (Observability)
+  //
+  // Phase 65b (issue #65, D-21): every run row is enriched with `salonName`, resolved via the
+  // Unterbau facade (a run's salon may since have been deactivated, so `includeInactive: true`).
   app.get("/phorest/sync-runs", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
     handler: async (req) => {
+      const tenantId = req.user.tenantId;
       const { limit, page } = syncRunsQuerySchema.parse(req.query);
-      const where = { tenantId: req.user.tenantId };
+      const where = { tenantId };
 
       const [latest, history, total] = await Promise.all([
         app.prisma.phorestSyncRun.findFirst({ where, orderBy: { startedAt: "desc" } }),
@@ -689,7 +904,20 @@ export async function integrationRoutes(app: FastifyInstance) {
         app.prisma.phorestSyncRun.count({ where }),
       ]);
 
-      return { latest, history, total, page, limit };
+      const salons = await listSalons(app.prisma, tenantId, { includeInactive: true });
+      const salonNameById = new Map(salons.map((s) => [s.id, s.name]));
+      const withSalonName = <T extends { salonId: string }>(run: T) => ({
+        ...run,
+        salonName: salonNameById.get(run.salonId) ?? null,
+      });
+
+      return {
+        latest: latest ? withSalonName(latest) : null,
+        history: history.map(withSalonName),
+        total,
+        page,
+        limit,
+      };
     },
   });
 
@@ -755,12 +983,16 @@ export async function integrationRoutes(app: FastifyInstance) {
     preHandler: requireAuth,
     handler: async (req, reply) => {
       const q = collisionQuerySchema.parse(req.query);
+      const tenantId = req.user.tenantId;
       const isManager = req.user.role === "ADMIN" || req.user.role === "MANAGER";
 
       // Resolve the tenant-proven employeeId + inclusive [from,to] window for both input shapes.
       let employeeId: string;
       let from: Date;
       let to: Date;
+      // The salon whose coupling backs the deep link (Phase 65b, D-18). Left undefined only for
+      // the range shape without an explicit salonId — resolved via the graceful fallback below.
+      let deepLinkSalonId: string | undefined;
 
       if ("shiftId" in q) {
         // Shift removal is a manager/admin action (mirrors DELETE /shifts/:id = requireRole ADMIN,MANAGER).
@@ -769,8 +1001,8 @@ export async function integrationRoutes(app: FastifyInstance) {
         }
         // Tenant gate: the shift MUST belong to an employee of the caller's tenant (else 404).
         const shift = await app.prisma.shift.findFirst({
-          where: { id: q.shiftId, employee: { tenantId: req.user.tenantId }, deletedAt: null },
-          select: { employeeId: true, date: true },
+          where: { id: q.shiftId, employee: { tenantId }, deletedAt: null },
+          select: { employeeId: true, date: true, salonId: true },
         });
         if (!shift) {
           return reply.code(404).send({ error: "Schicht nicht gefunden" });
@@ -778,6 +1010,7 @@ export async function integrationRoutes(app: FastifyInstance) {
         employeeId = shift.employeeId;
         from = shift.date;
         to = shift.date; // single-day window
+        deepLinkSalonId = shift.salonId;
       } else {
         // A non-manager may only pre-check their OWN leave window.
         if (q.employeeId !== req.user.employeeId && !isManager) {
@@ -785,7 +1018,7 @@ export async function integrationRoutes(app: FastifyInstance) {
         }
         // Tenant gate: this scoped lookup IS the isolation boundary (404 on cross-tenant / unknown id).
         const emp = await app.prisma.employee.findFirst({
-          where: { id: q.employeeId, tenantId: req.user.tenantId },
+          where: { id: q.employeeId, tenantId },
           select: { id: true },
         });
         if (!emp) {
@@ -794,6 +1027,18 @@ export async function integrationRoutes(app: FastifyInstance) {
         employeeId = emp.id;
         from = new Date(q.from);
         to = new Date(q.to);
+
+        if (q.salonId) {
+          // Phase 65b (issue #65, D-18): an explicit salonId on the range shape IS validated —
+          // foreign/unknown answers the same byte-identical 404 as every other salon lookup here.
+          // This is the one case that DOES fail the request on salon resolution; the no-salonId
+          // fallback below never does.
+          const salon = await findSalon(app.prisma, tenantId, q.salonId);
+          if (!salon) {
+            return reply.code(SALON_NOT_FOUND_REPLY.status).send(SALON_NOT_FOUND_REPLY.body);
+          }
+          deepLinkSalonId = salon.id;
+        }
       }
 
       // Overlap: PhorestAppointment.date is @db.Date (UTC midnight). gte/lte is inclusive on both ends.
@@ -811,15 +1056,37 @@ export async function integrationRoutes(app: FastifyInstance) {
       }));
       const total = collisions.reduce((sum, c) => sum + c.count, 0);
 
-      // Deep-link (graceful degrade). Load the tenant's Phorest identifiers and hand them to the
-      // builder, which currently returns null (owner-gated: the web-calendar URL shape is not exposed
-      // by the v3 API) but keeps the response contract stable (`deepLink: string | null`) for when the
-      // real calendar URL format is pinned.
+      // Deep-link (graceful degrade, D-18): resolving the salon for the link NEVER fails the
+      // collision check itself — a missing coupling, or (range shape, no salonId) more than one
+      // active coupling, just means no link, never a 400/404 for THIS reason.
+      let externalBranchId: string | null = null;
+      if (deepLinkSalonId) {
+        const coupling = await app.prisma.salonCoupling.findFirst({
+          where: { salonId: deepLinkSalonId, tenantId, provider: "PHOREST" },
+        });
+        externalBranchId = coupling?.externalBranchId ?? null;
+      } else if (!("shiftId" in q)) {
+        const resolution = await resolvePhorestCoupling(app, tenantId, undefined);
+        if (resolution.kind === "ok") externalBranchId = resolution.externalBranchId;
+      }
+
+      // Load the tenant's Phorest identifiers and hand them to the builder, which currently
+      // returns null (owner-gated: the web-calendar URL shape is not exposed by the v3 API) but
+      // keeps the response contract stable (`deepLink: string | null`) for when the real calendar
+      // URL format is pinned.
       const cfg = await app.prisma.tenantConfig.findUnique({
-        where: { tenantId: req.user.tenantId },
-        select: { phorestBusinessId: true, phorestBranchId: true, phorestBaseUrl: true },
+        where: { tenantId },
+        select: { phorestBusinessId: true, phorestBaseUrl: true },
       });
-      const deepLink = buildPhorestCalendarDeepLink(cfg, employeeId, from);
+      const deepLink = buildPhorestCalendarDeepLink(
+        {
+          businessId: cfg?.phorestBusinessId ?? null,
+          branchId: externalBranchId,
+          baseUrl: cfg?.phorestBaseUrl ?? null,
+        },
+        employeeId,
+        from,
+      );
 
       return { total, collisions, deepLink };
     },

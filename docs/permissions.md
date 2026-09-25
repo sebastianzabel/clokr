@@ -466,6 +466,9 @@ Branch `feat/74-rollenzuweisung`, nach dem Einbau des Aussperrschutzes neu gemes
 | `contexts/platform/api/settings.ts:1353`                   | `PUT /security`                            | A       | `tenant-settings:update`       | ZUGEWIESEN                                   |
 | `contexts/platform/api/settings.ts:1384`                   | `GET /work/:employeeId/history`            | A, M    | `contract:read`                | ZUGEWIESEN                                   |
 | `contexts/platform/api/settings.ts:1419`                   | `GET /employees`                           | A, M    | `employee:read`                | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/integrations.ts:251`              | `GET /phorest/couplings`                   | A       | `integration:manage`           | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/integrations.ts:279`              | `POST /phorest/couplings`                  | A       | `integration:manage`           | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/integrations.ts:369`              | `DELETE /phorest/couplings/:salonId`       | A       | `integration:manage`           | ZUGEWIESEN                                   |
 | `contexts/scheduling/api/integrations.ts:119`              | `GET /phorest/config`                      | A       | `integration:manage`           | ZUGEWIESEN                                   |
 | `contexts/scheduling/api/integrations.ts:146`              | `PUT /phorest/config`                      | A       | `integration:manage`           | ZUGEWIESEN                                   |
 | `contexts/scheduling/api/integrations.ts:200`              | `POST /phorest/test`                       | A       | `integration:manage`           | ZUGEWIESEN                                   |
