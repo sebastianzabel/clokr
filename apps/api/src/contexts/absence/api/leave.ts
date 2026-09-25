@@ -37,6 +37,7 @@ import {
   computeOvertimeBalanceHours, // Issue #294 — pure read, run BEFORE the booking+persist transaction
   persistOvertimeBalance, // Issue #294 — booking + recompute in one $transaction
   calcLeaveAbsenceMinutesTz, // Issue #293 — receipt shares the saldo's own Ø-Methode entry point
+  todayInTz, // Phase 91b Plan 04 (#91), D-10 — Stichtag for the general leave-requests list
   type OvertimeBalanceBreakdown,
 } from "../../working-time-account"; // Phase 100B Plan 06 — W8/W11/W12; Plan 07 — W1; Phase 101B
 import {
@@ -45,6 +46,10 @@ import {
   hasPermission,
   permissionReach,
   userIdsHoldingPermission, // Phase 75b Plan 10 (#75), D-16: notification-recipient lookups
+  accessContextFromRequest, // Phase 91b Plan 04 (#91), D-10/D-14
+  resolveAccessReach, // Phase 91b Plan 04 (#91), D-10/D-14
+  resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 04 (#91), D-10
+  isStammsalonScopeMatch, // Phase 91b Plan 04 (#91), D-10/D-14
 } from "../../platform"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
@@ -816,13 +821,50 @@ export async function leaveRoutes(app: FastifyInstance) {
           : (status as LeaveRequestStatus)
         : undefined;
 
+      // Phase 91b Plan 04 (Issue #91), D-10 — narrow a ZUGEWIESEN manager to Stammsalon-scoped
+      // employees. This is a general list with no single natural period (unlike a period-bound
+      // read, D-10's own Stichtag case), so the Stichtag is: tenant-local TODAY for the
+      // unfiltered/status-filtered/`upcoming` shapes, or January 1st of `year` (tenant-local) when
+      // a `year` param is given — the plan's own explicit decision, not left to guesswork. Skipped
+      // entirely for the EMPLOYEE (EIGENE) branch: no new query for the common case.
+      let scopedEmployeeIds: "all" | string[] = "all";
+      if (isManager) {
+        const access = accessContextFromRequest(req);
+        const reach = await resolveAccessReach(app.prisma, access, "leave-request:read:ZUGEWIESEN");
+        if (reach.kind !== "wholeTenant") {
+          const stichtag = year
+            ? new Date(`${year}-01-01T00:00:00Z`)
+            : todayInTz(await getTenantTimezone(app.prisma, user.tenantId));
+          scopedEmployeeIds = await resolveStammsalonScopedEmployeeIds(
+            app.prisma,
+            user.tenantId,
+            reach,
+            stichtag,
+          );
+        }
+      }
+
       const rows = await app.prisma.leaveRequest.findMany({
         where: {
           deletedAt: null,
           ...(isManager
             ? {
                 employee: { tenantId: user.tenantId },
-                ...(employeeId ? { employeeId } : {}),
+                // Both constraints must combine when a manager supplies an explicit `employeeId`
+                // param WHILE being scope-restricted: an out-of-scope named employeeId must yield
+                // nothing, not bypass the scope filter. A plain object-literal spread of two
+                // `employeeId` keys would let the second silently overwrite the first, so this
+                // uses Prisma's own `AND` array to intersect both conditions on the same field.
+                ...(employeeId || scopedEmployeeIds !== "all"
+                  ? {
+                      AND: [
+                        ...(employeeId ? [{ employeeId }] : []),
+                        ...(scopedEmployeeIds !== "all"
+                          ? [{ employeeId: { in: scopedEmployeeIds } }]
+                          : []),
+                      ],
+                    }
+                  : {}),
               }
             : { employeeId: user.employeeId ?? "" }),
           ...(statusFilter !== undefined ? { status: statusFilter } : {}),
