@@ -598,9 +598,16 @@ Umstellung ausgewählt hat — der Neutralitätsvertrag von D-16, geprüft von
 `src/contexts/platform/__tests__/system-roles.test.ts` gegen dieselben Buchstaben, die jede andere
 Zeile für dieselbe Permission nennt (D-03 Regel (i)).
 
-| Stelle                              | Benachrichtigung | heute | Permission              | Reichweite |
-| ----------------------------------- | ---------------- | ----- | ----------------------- | ---------- |
-| `contexts/absence/api/leave.ts:755` | `LEAVE_REQUEST`  | A, M  | `leave-request:approve` | ZUGEWIESEN |
+| Stelle                                                                       | Benachrichtigung              | heute | Permission              | Reichweite |
+| ---------------------------------------------------------------------------- | ----------------------------- | ----- | ----------------------- | ---------- |
+| `contexts/absence/api/leave.ts:755`                                          | `LEAVE_REQUEST`               | A, M  | `leave-request:approve` | ZUGEWIESEN |
+| `contexts/absence/api/leave.ts:1411`                                         | `SECTION9_AU_PENDING_MANAGER` | A, M  | `section9:decide`       | ZUGEWIESEN |
+| `contexts/absence/api/leave.ts:1540`                                         | `SHIFT_LEAVE_CONFLICT`        | A, M  | `shift:plan`            | ZUGEWIESEN |
+| `contexts/absence/api/leave.ts:3450`                                         | `SECTION9_AU_PENDING_MANAGER` | A, M  | `section9:decide`       | ZUGEWIESEN |
+| `contexts/absence/vocational-school-generator.ts:897`                        | `SHIFT_BS_CLEANUP`            | A, M  | `shift:plan`            | ZUGEWIESEN |
+| `contexts/absence/plugins/carryover-warning.ts:124`                          | `CARRYOVER_EXPIRING`          | A     | `leave-config:manage`   | ZUGEWIESEN |
+| `contexts/working-time-account/plugins/auto-close-month.ts:133`              | `MONTH_CLOSE_BLOCKED`         | A, M  | `month-close:close`     | ZUGEWIESEN |
+| `contexts/working-time-account/plugins/deferred-month-close-reminder.ts:118` | `MONTH_CLOSE_DEFERRED`        | A, M  | `month-close:close`     | ZUGEWIESEN |
 
 ## Nicht gezählte Treffer
 

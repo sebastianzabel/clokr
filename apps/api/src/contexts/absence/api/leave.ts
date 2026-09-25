@@ -1405,13 +1405,20 @@ export async function leaveRoutes(app: FastifyInstance) {
               });
             }
             // User has no tenantId column — tenant scoping goes through Employee.
+            // Phase 75b Plan 10 (#75), D-16: holders of section9:decide replace the legacy A,M
+            // role predicate — the recorded recipient set (skipping the acting manager) is
+            // unchanged (docs/permissions.md § Empfängersuchen).
+            const section9DecideHolderIds = await userIdsHoldingPermission(
+              app.prisma,
+              employeeUser.tenantId,
+              "section9:decide:ZUGEWIESEN",
+            );
             const section9Managers = await app.prisma.employee.findMany({
               where: {
                 tenantId: employeeUser.tenantId,
                 user: {
-                  role: { in: ["ADMIN", "MANAGER"] },
+                  id: { in: section9DecideHolderIds, not: req.user.sub }, // Phase-91 idiom: never notify the actor
                   isActive: true,
-                  id: { not: req.user.sub }, // Phase-91 idiom: never notify the actor
                 },
               },
               select: { userId: true },
@@ -1528,10 +1535,17 @@ export async function leaveRoutes(app: FastifyInstance) {
                 select: { firstName: true, lastName: true, tenantId: true },
               });
               if (empName) {
+                // Phase 75b Plan 10 (#75), D-16: holders of shift:plan replace the legacy A,M
+                // role predicate — the recorded recipient set is unchanged.
+                const shiftPlanHolderIds = await userIdsHoldingPermission(
+                  app.prisma,
+                  empName.tenantId,
+                  "shift:plan:ZUGEWIESEN",
+                );
                 const managers = await app.prisma.user.findMany({
                   where: {
                     isActive: true,
-                    role: { in: ["MANAGER", "ADMIN"] },
+                    id: { in: shiftPlanHolderIds },
                     employee: { tenantId: empName.tenantId },
                   },
                   select: { id: true },
@@ -3431,13 +3445,19 @@ export async function leaveRoutes(app: FastifyInstance) {
           relatedId: credit.id,
         });
       }
+      // Phase 75b Plan 10 (#75), D-16: holders of section9:decide replace the legacy A,M role
+      // predicate — the recorded recipient set (skipping the acting manager) is unchanged.
+      const reopenSection9DecideHolderIds = await userIdsHoldingPermission(
+        app.prisma,
+        credit.employee.tenantId,
+        "section9:decide:ZUGEWIESEN",
+      );
       const section9Managers = await app.prisma.employee.findMany({
         where: {
           tenantId: credit.employee.tenantId,
           user: {
-            role: { in: ["ADMIN", "MANAGER"] },
+            id: { in: reopenSection9DecideHolderIds, not: req.user.sub },
             isActive: true,
-            id: { not: req.user.sub },
           },
         },
         select: { userId: true },
