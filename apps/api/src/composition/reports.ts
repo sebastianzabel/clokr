@@ -11,6 +11,10 @@ import {
   parseCompatRoleFilter,
   compatRoleUserWhere,
   type CompatRoleFilter,
+  accessContextFromRequest, // Phase 91b Plan 07 (#91), D-10/D-14
+  resolveAccessReach, // Phase 91b Plan 07 (#91), D-10/D-14
+  resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 07 (#91), D-10
+  isStammsalonScopeMatch, // Phase 91b Plan 07 (#91), D-10/D-14
 } from "../contexts/platform";
 import {
   SECTION9_LEGEND,
@@ -961,13 +965,38 @@ export async function reportRoutes(app: FastifyInstance) {
         stateCode: tenantRow?.federalState ? (STATE_MAP[tenantRow.federalState] ?? null) : null,
       };
 
+      // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
+      // building the report body. Stichtag = the report period's own last day (`end`, already
+      // computed above). This is the template every other list route in this file follows.
+      const access = accessContextFromRequest(req);
+      const scopeReach = await resolveAccessReach(app.prisma, access, "report:read:ZUGEWIESEN");
+      const scopedEmployeeIds =
+        scopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              req.user.tenantId,
+              scopeReach,
+              end,
+            );
+
       // Alle Mitarbeiter des Tenants (oder nur einen)
       const employees = (await app.prisma.employee.findMany({
         where: {
           tenantId: req.user.tenantId,
-          ...(employeeId ? { id: employeeId } : {}),
           exitDate: null,
           user: { isActive: true },
+          // Both constraints must combine when a manager ALSO supplies an explicit employeeId
+          // (same AND-array idiom as leave.ts's GET /requests, Plan 91b-04 Task 1): an
+          // out-of-scope named employeeId must yield zero rows, not bypass the scope filter.
+          ...(employeeId || scopedEmployeeIds !== "all"
+            ? {
+                AND: [
+                  ...(employeeId ? [{ id: employeeId }] : []),
+                  ...(scopedEmployeeIds !== "all" ? [{ id: { in: scopedEmployeeIds } }] : []),
+                ],
+              }
+            : {}),
         },
         include: buildEmployeeInclude(start, end),
         orderBy: { lastName: "asc" },
@@ -1033,7 +1062,33 @@ export async function reportRoutes(app: FastifyInstance) {
       const { year } = req.query as { year: string };
       const y = parseInt(year ?? new Date().getFullYear().toString());
 
-      const entitlements = await listEntitlementsForYear(app.prisma, req.user.tenantId, y);
+      const allEntitlements = await listEntitlementsForYear(app.prisma, req.user.tenantId, y);
+
+      // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
+      // self-healing (an out-of-scope employee's usedDays must not even be WRITTEN by this route,
+      // let alone returned). `listEntitlementsForYear` has no employeeIds parameter, so this
+      // filters immediately after the fetch — same pattern Plan 91b-06 used for
+      // listOvertimeAccountsForTenant. Stichtag = Dec 31 of the requested year (the period's own
+      // last day, same as every period-bound list route in this file).
+      const leaveOverviewAccess = accessContextFromRequest(req);
+      const leaveOverviewScopeReach = await resolveAccessReach(
+        app.prisma,
+        leaveOverviewAccess,
+        "report:read:ZUGEWIESEN",
+      );
+      const leaveOverviewScopedIds =
+        leaveOverviewScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              req.user.tenantId,
+              leaveOverviewScopeReach,
+              new Date(`${y}-12-31T23:59:59.999Z`),
+            );
+      const entitlements =
+        leaveOverviewScopedIds === "all"
+          ? allEntitlements
+          : allEntitlements.filter((e) => leaveOverviewScopedIds.includes(e.employeeId));
 
       // Self-heal usedDays from Σ approved LeaveRequest.days BEFORE we shape the response.
       // Mirrors the heal that GET /entitlements/:employeeId has done since v1.4.
@@ -1082,7 +1137,37 @@ export async function reportRoutes(app: FastifyInstance) {
       const cutoff = new Date(now.getTime() + horizon * 24 * 60 * 60 * 1000);
       const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-      const entitlements = await getExpiringCarryOver(app.prisma, req.user.tenantId, now, cutoff);
+      const allExpiringEntitlements = await getExpiringCarryOver(
+        app.prisma,
+        req.user.tenantId,
+        now,
+        cutoff,
+      );
+
+      // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
+      // the audit-log lookups below. `getExpiringCarryOver` has no employeeIds parameter, so this
+      // filters immediately after the fetch. Stichtag = today (tenant-local) — this route has no
+      // period of its own, only a forward-looking deadline window, same "no natural period"
+      // precedent as the sibling plans.
+      const carryoverAccess = accessContextFromRequest(req);
+      const carryoverScopeReach = await resolveAccessReach(
+        app.prisma,
+        carryoverAccess,
+        "report:read:ZUGEWIESEN",
+      );
+      const carryoverScopedIds =
+        carryoverScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              req.user.tenantId,
+              carryoverScopeReach,
+              now,
+            );
+      const entitlements =
+        carryoverScopedIds === "all"
+          ? allExpiringEntitlements
+          : allExpiringEntitlements.filter((e) => carryoverScopedIds.includes(e.employeeId));
 
       // Look up the most recent CARRYOVER_WARNED audit log per entitlement,
       // so the UI can show "Letzter Hinweis" without N+1 queries.
@@ -1169,6 +1254,38 @@ export async function reportRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Anspruch nicht gefunden" });
       }
 
+      // Phase 91b Plan 07 (Issue #91), D-10/D-14 — this is a NEW finding: the plan's own text
+      // groups this route among "list/bulk" routes, but it acts on ONE entitlement (by id), the
+      // same single-target shape every other plan in this phase gives a boolean scope check, not
+      // the list resolver. Stichtag = today (tenant-local) — triggering a reminder is a NOW
+      // action, not tied to the entitlement's own year boundaries.
+      {
+        const carryoverWarnAccess = accessContextFromRequest(req);
+        const carryoverWarnScopeReach = await resolveAccessReach(
+          app.prisma,
+          carryoverWarnAccess,
+          "report:notify:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            carryoverWarnScopeReach,
+            ent.employeeId,
+            new Date(),
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "LeaveEntitlement",
+            entityId: entitlementId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Anspruch nicht gefunden" });
+        }
+      }
+
       const result = await runCarryoverWarningOnce(app, { onlyEntitlementId: entitlementId });
 
       // Audit the manual trigger separately so we can distinguish operator
@@ -1207,11 +1324,30 @@ export async function reportRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, m, tz);
 
+      // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
+      // building the export. Stichtag = the payroll period's own last day (`end`).
+      const datevAccess = accessContextFromRequest(req);
+      const datevScopeReach = await resolveAccessReach(
+        app.prisma,
+        datevAccess,
+        "report:export:ZUGEWIESEN",
+      );
+      const datevScopedIds =
+        datevScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              req.user.tenantId,
+              datevScopeReach,
+              end,
+            );
+
       // Issue #256 (Befund 2): employed DURING the Abrechnungszeitraum, not employed today.
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId: req.user.tenantId,
           ...datevPayrollPeriodEmployeeFilter(start, end),
+          ...(datevScopedIds !== "all" ? { id: { in: datevScopedIds } } : {}),
         },
         include: {
           workSchedules: { orderBy: { validFrom: "asc" } },
@@ -1407,6 +1543,36 @@ export async function reportRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
+      // Phase 91b Plan 07 (Issue #91), D-10/D-14 — a NEW finding: the plan groups this route among
+      // "list/bulk" routes, but it acts on ONE named employeeId — a single-target route needing a
+      // boolean scope check. Stichtag = the payroll period's own last day (`end`).
+      {
+        const datevEmpAccess = accessContextFromRequest(req);
+        const datevEmpScopeReach = await resolveAccessReach(
+          app.prisma,
+          datevEmpAccess,
+          "report:export:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            datevEmpScopeReach,
+            employeeId,
+            end,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+      }
+
       const section9ByEmpDatevSingle = await fetchConfirmedSection9CreditsByEmp(
         app,
         req.user.tenantId,
@@ -1497,6 +1663,38 @@ export async function reportRoutes(app: FastifyInstance) {
       if (!emp) {
         reply.code(404);
         return { error: "Mitarbeiter nicht gefunden" };
+      }
+
+      // Phase 91b Plan 07 (Issue #91), D-10/D-14 — a ZUGEWIESEN reach may still be scoped to
+      // salons/persons (Plan 91b-01's D-05 gate change). Only runs for the "someone else" branch
+      // — the EIGENE self-download path above is untouched. Stichtag = the report period's own
+      // last day (`end`).
+      if (reach === "ZUGEWIESEN" && req.user.employeeId !== employeeId) {
+        const monthlyPdfAccess = accessContextFromRequest(req);
+        const monthlyPdfScopeReach = await resolveAccessReach(
+          app.prisma,
+          monthlyPdfAccess,
+          "report:export:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            monthlyPdfScopeReach,
+            employeeId,
+            end,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          reply.code(404);
+          return { error: "Mitarbeiter nicht gefunden" };
+        }
       }
 
       // Phase 104 (D-30): the PDF (Arbeitszeitnachweis handed to the employee/auditor)
@@ -1608,11 +1806,30 @@ export async function reportRoutes(app: FastifyInstance) {
         stateCode: tenant?.federalState ? (STATE_MAP[tenant.federalState] ?? null) : null,
       };
 
+      // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
+      // building the company-wide PDF. Stichtag = the report period's own last day (`end`).
+      const pdfAllAccess = accessContextFromRequest(req);
+      const pdfAllScopeReach = await resolveAccessReach(
+        app.prisma,
+        pdfAllAccess,
+        "report:export:ZUGEWIESEN",
+      );
+      const pdfAllScopedIds =
+        pdfAllScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              req.user.tenantId,
+              pdfAllScopeReach,
+              end,
+            );
+
       const employees = (await app.prisma.employee.findMany({
         where: {
           tenantId: req.user.tenantId,
           exitDate: null,
           user: { isActive: true, ...compatRoleUserWhere(roleFilter) },
+          ...(pdfAllScopedIds !== "all" ? { id: { in: pdfAllScopedIds } } : {}),
         },
         include: buildEmployeeInclude(start, end),
         orderBy: { lastName: "asc" },
@@ -1712,11 +1929,30 @@ export async function reportRoutes(app: FastifyInstance) {
         select: { name: true },
       });
 
+      // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
+      // building the PDF. Stichtag = Dec 31 of the requested year (`yearEnd`).
+      const leaveListPdfAccess = accessContextFromRequest(req);
+      const leaveListPdfScopeReach = await resolveAccessReach(
+        app.prisma,
+        leaveListPdfAccess,
+        "report:export:ZUGEWIESEN",
+      );
+      const leaveListPdfScopedIds =
+        leaveListPdfScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              req.user.tenantId,
+              leaveListPdfScopeReach,
+              yearEnd,
+            );
+
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId: req.user.tenantId,
           exitDate: null,
           user: { isActive: true },
+          ...(leaveListPdfScopedIds !== "all" ? { id: { in: leaveListPdfScopedIds } } : {}),
         },
         include: {
           leaveRequests: {
@@ -1793,13 +2029,32 @@ export async function reportRoutes(app: FastifyInstance) {
         select: { name: true },
       });
 
+      // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
+      // building the PDF, applied to BOTH datasets below. Stichtag = Dec 31 of the requested year.
+      const vacationPdfAccess = accessContextFromRequest(req);
+      const vacationPdfScopeReach = await resolveAccessReach(
+        app.prisma,
+        vacationPdfAccess,
+        "report:export:ZUGEWIESEN",
+      );
+      const vacationPdfScopedIds =
+        vacationPdfScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              req.user.tenantId,
+              vacationPdfScopeReach,
+              yearEnd,
+            );
+
       // Fetch both datasets in parallel
-      const [employees, entitlements] = await Promise.all([
+      const [employees, allVacationEntitlements] = await Promise.all([
         app.prisma.employee.findMany({
           where: {
             tenantId: req.user.tenantId,
             exitDate: null,
             user: { isActive: true },
+            ...(vacationPdfScopedIds !== "all" ? { id: { in: vacationPdfScopedIds } } : {}),
           },
           include: {
             leaveRequests: {
@@ -1817,6 +2072,10 @@ export async function reportRoutes(app: FastifyInstance) {
         }),
         listEntitlementsForYear(app.prisma, req.user.tenantId, y),
       ]);
+      const entitlements =
+        vacationPdfScopedIds === "all"
+          ? allVacationEntitlements
+          : allVacationEntitlements.filter((e) => vacationPdfScopedIds.includes(e.employeeId));
 
       // Build leave list data
       const leaveListData = {
@@ -1922,7 +2181,35 @@ export async function reportRoutes(app: FastifyInstance) {
         select: { name: true },
       });
 
-      const entitlements = await listEntitlementsForYear(app.prisma, req.user.tenantId, y);
+      const allLeaveOverviewPdfEntitlements = await listEntitlementsForYear(
+        app.prisma,
+        req.user.tenantId,
+        y,
+      );
+
+      // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
+      // building the PDF. Stichtag = Dec 31 of the requested year.
+      const leaveOverviewPdfAccess = accessContextFromRequest(req);
+      const leaveOverviewPdfScopeReach = await resolveAccessReach(
+        app.prisma,
+        leaveOverviewPdfAccess,
+        "report:export:ZUGEWIESEN",
+      );
+      const leaveOverviewPdfScopedIds =
+        leaveOverviewPdfScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              req.user.tenantId,
+              leaveOverviewPdfScopeReach,
+              new Date(`${y}-12-31T23:59:59.999Z`),
+            );
+      const entitlements =
+        leaveOverviewPdfScopedIds === "all"
+          ? allLeaveOverviewPdfEntitlements
+          : allLeaveOverviewPdfEntitlements.filter((e) =>
+              leaveOverviewPdfScopedIds.includes(e.employeeId),
+            );
 
       // Group by employee and aggregate (VACATION entitlement only, selected by code)
       const empMap = new Map<

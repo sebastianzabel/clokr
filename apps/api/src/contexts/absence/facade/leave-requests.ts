@@ -552,17 +552,38 @@ export interface TeamLeaveSubmissionItem {
  * duplicate their own "own leave requests" feed entries). Sole site:
  * `contexts/platform/api/activity.ts`'s "recent team leave submissions" feed.
  */
+/**
+ * Phase 91b Plan 07 (Issue #91), D-10 — `employeeIds`, when given, narrows to that set INSIDE this
+ * SAME `where`, before `take: limit` runs. `undefined` (every caller before this plan) is
+ * byte-identical to today. An empty array correctly yields zero rows via Prisma's own
+ * `{ in: [] }` builder semantics (confirmed by a dedicated test — this is Prisma's normal query
+ * builder, not the raw-SQL `Prisma.join` case Plan 91b-02 had to guard). Filtering the RETURNED
+ * rows after `take` would under-fill the page whenever an in-scope row exists beyond the
+ * tenant-wide top-`limit` cut — the narrowing MUST happen inside the query.
+ */
 export async function getTeamLeaveSubmissions(
   db: Prisma.TransactionClient,
   tenantId: string,
   excludeEmployeeId: string | undefined,
   limit: number,
+  employeeIds?: string[],
 ): Promise<TeamLeaveSubmissionItem[]> {
   return db.leaveRequest.findMany({
     where: {
       deletedAt: null,
       employee: { tenantId },
-      employeeId: excludeEmployeeId ? { not: excludeEmployeeId } : undefined,
+      // Both constraints must combine when both are given: a plain object-literal spread of two
+      // `employeeId` keys would let the second silently overwrite the first, re-admitting the
+      // caller's OWN submissions (already covered by getOwnLeaveActivity above) into this "team"
+      // feed the moment a scope filter is also supplied. Prisma's `AND` array intersects both.
+      ...(excludeEmployeeId || employeeIds
+        ? {
+            AND: [
+              ...(excludeEmployeeId ? [{ employeeId: { not: excludeEmployeeId } }] : []),
+              ...(employeeIds ? [{ employeeId: { in: employeeIds } }] : []),
+            ],
+          }
+        : {}),
     },
     orderBy: { createdAt: "desc" },
     take: limit,
