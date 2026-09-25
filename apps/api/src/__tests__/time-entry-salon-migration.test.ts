@@ -841,10 +841,14 @@ describe("Phase 68b — saldo neutrality of the backfill (D-05, AC-4)", () => {
 });
 
 /**
- * Phase 68b (issue #68), D-05 structural half — Arbeitszeitkonto must stay salon-blind. #71/#91
- * are the phases that will legitimately read the column and must update this guard on purpose.
+ * Phase 68b/71b (issues #68/#71), D-05 structural half — Arbeitszeitkonto never interprets a
+ * salon itself. #71 made it salon-AWARE only through the Unterbau's central holiday resolver: it
+ * forwards the closed work entries it already loads (which carry the salon) to
+ * `holidaysAtWorkLocation`, and never names, reads or branches on the salon field itself — the
+ * token ban below still holds and still matters. #91 (scope) is the next phase that may need the
+ * field directly and must update this guard on purpose, same as #71 did here.
  */
-describe("Phase 68b — working-time-account never reads salonId (D-05 structural)", () => {
+describe("Phase 68b/71b — working-time-account never interprets a salon itself (D-05 structural)", () => {
   it("every production .ts file under contexts/working-time-account/ (excluding tests) is free of the token salonId", () => {
     const root = join(__dirname, "..", "contexts", "working-time-account");
 
@@ -871,5 +875,13 @@ describe("Phase 68b — working-time-account never reads salonId (D-05 structura
 
     const offenders = files.filter((f) => /\bsalonId\b/.test(readFileSync(f, "utf8")));
     expect(offenders).toEqual([]);
+
+    // Phase 71b (issue #71): the salon-aware path exists and goes through the resolver — at
+    // least one walked file calls the central holiday resolver, fed with the salon it never
+    // names itself.
+    const resolverCallers = files.filter((f) =>
+      readFileSync(f, "utf8").includes("holidaysAtWorkLocation("),
+    );
+    expect(resolverCallers.length).toBeGreaterThan(0);
   });
 });
