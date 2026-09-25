@@ -967,10 +967,18 @@ export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
     handlerCheck: true,
   },
   "PATCH /api/v1/time-entries/:id/revalidate": mutate({ id: "timeEntry.invalid" }),
-  // No ownership check exists on this route today: any authenticated caller of the tenant,
-  // an EMPLOYEE included, can clock out a colleague's open entry by its id (the `foreign` cells
-  // answer 200). Pre-existing, no role decision involved, recorded as-is.
-  "POST /api/v1/time-entries/:id/clock-out": mutateWith({ id: "timeEntry.open" }, {}),
+  // Issue #346/#359 (fixed after this recording): this route used to have NO ownership check at
+  // all — any authenticated caller of the tenant, an EMPLOYEE included, could clock out a
+  // colleague's open entry by its id (the `foreign` cell used to answer 200). The fix makes the
+  // `foreign` cell of an EIGENE-only actor 404 "Eintrag nicht gefunden" — byte-identical to a
+  // non-existent id, T-100-09 — instead of a 403, because the ownership check now runs BEFORE the
+  // entry's state (open/closed) is revealed. Handler check #37: EMPLOYEE and FALLBACK_EMPLOYEE
+  // (EIGENE only) get 404 on `foreign`; MANAGER/ADMIN/APIKEY_* and the matching FALLBACK actors
+  // (ZUGEWIESEN) keep 200 — unchanged.
+  "POST /api/v1/time-entries/:id/clock-out": {
+    ...mutateWith({ id: "timeEntry.open" }, {}),
+    handlerCheck: true,
+  },
   "DELETE /api/v1/time-entries/:id": {
     // Handler check #35.
     ...mutateWith({ id: "timeEntry.closed" }, { reason: "Matrix Löschung" }),

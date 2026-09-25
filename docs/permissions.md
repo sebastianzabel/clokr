@@ -551,7 +551,7 @@ schlägt fehl, wenn er oder ein Rollenvergleich zurückkommt (D-19).
 | `contexts/time-tracking/api/terminals.ts:14`               | `GET /`                                         | A       | `terminal:manage`              | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/terminals.ts:35`               | `POST /`                                        | A       | `terminal:manage`              | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/terminals.ts:126`              | `DELETE /:id`                                   | A       | `terminal:manage`              | ZUGEWIESEN                                   |
-| `contexts/time-tracking/api/time-entries.ts:1959`          | `PATCH /:id/revalidate`                         | A, M    | `time-entry:revalidate`        | ZUGEWIESEN                                   |
+| `contexts/time-tracking/api/time-entries.ts:1977`          | `PATCH /:id/revalidate`                         | A, M    | `time-entry:revalidate`        | ZUGEWIESEN                                   |
 | `contexts/working-time-account/api/overtime.ts:245`        | `POST /plans`                                   | A, M    | `overtime:settle`              | ZUGEWIESEN                                   |
 | `contexts/working-time-account/api/overtime.ts:291`        | `POST /payout`                                  | A, M    | `overtime:settle`              | ZUGEWIESEN                                   |
 | `contexts/working-time-account/api/overtime.ts:410`        | `GET /close-month/deferred`                     | A, M    | `month-close:read`             | ZUGEWIESEN                                   |
@@ -607,12 +607,13 @@ der Umstellung (#75) durften.
 | `contexts/time-tracking/api/retro-entry-requests.ts:102` | `POST /`                              | A, M: auch für andere; E: nur für sich        | `retro-request:create`   | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/time-tracking/api/retro-entry-requests.ts:275` | `PATCH /:id/review`                   | nur A, M                                      | `retro-request:approve`  | ZUGEWIESEN                               |
 | `contexts/time-tracking/api/time-entries.ts:447`         | `POST /clock-in`                      | A, M: auch für andere; E: nur für sich        | `time-entry:create`      | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/time-tracking/api/time-entries.ts:793`         | `POST /:id/breaks`                    | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/time-tracking/api/time-entries.ts:872`         | `GET /`                               | A, M: alle; E: nur eigene                     | `time-entry:read`        | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/time-tracking/api/time-entries.ts:933`         | `POST /`                              | A, M: auch für andere; E: nur für sich        | `time-entry:create`      | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/time-tracking/api/time-entries.ts:1474`        | `PUT /:id`                            | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/time-tracking/api/time-entries.ts:2061`        | `DELETE /:id`                         | A, M: alle; E: nur eigene                     | `time-entry:delete`      | ZUGEWIESEN; sonst EIGENE                 |
-| `contexts/time-tracking/api/time-entries.ts:2173`        | `PATCH /:id/break-status`             | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/time-tracking/api/time-entries.ts:569`         | `POST /:id/clock-out`                 | A, M: alle; E: nur eigene (Issue #346/#359)   | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/time-tracking/api/time-entries.ts:811`         | `POST /:id/breaks`                    | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/time-tracking/api/time-entries.ts:890`         | `GET /`                               | A, M: alle; E: nur eigene                     | `time-entry:read`        | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/time-tracking/api/time-entries.ts:951`         | `POST /`                              | A, M: auch für andere; E: nur für sich        | `time-entry:create`      | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/time-tracking/api/time-entries.ts:1492`        | `PUT /:id`                            | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/time-tracking/api/time-entries.ts:2079`        | `DELETE /:id`                         | A, M: alle; E: nur eigene                     | `time-entry:delete`      | ZUGEWIESEN; sonst EIGENE                 |
+| `contexts/time-tracking/api/time-entries.ts:2191`        | `PATCH /:id/break-status`             | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/working-time-account/api/overtime.ts:136`      | `GET /:employeeId`                    | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/working-time-account/api/overtime.ts:1516`     | `GET /snapshots/:employeeId`          | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                 |
 | `contexts/working-time-account/api/overtime.ts:1873`     | `GET /month-saldo/:employeeId`        | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                 |
@@ -651,9 +652,9 @@ Zeile für dieselbe Permission nennt (D-03 Regel (i)).
 | `contexts/time-tracking/plugins/attendance-checker.ts:308`                   | `OPEN_ENTRY_INVALIDATED`      | A, M  | `team-overview:read`     | ZUGEWIESEN |
 | `contexts/time-tracking/plugins/attendance-checker.ts:418`                   | `PENDING_LEAVE_REMINDER`      | A, M  | `leave-request:approve`  | ZUGEWIESEN |
 | `contexts/time-tracking/plugins/attendance-checker.ts:825`                   | `GAP_WARNING_MANAGER`         | A, M  | `team-overview:read`     | ZUGEWIESEN |
-| `contexts/time-tracking/api/time-entries.ts:1428`                            | `RETRO_ENTRY_REQUESTED`       | A, M  | `retro-request:approve`  | ZUGEWIESEN |
-| `contexts/time-tracking/api/time-entries.ts:1911`                            | `RETRO_ENTRY_UPDATED`         | A, M  | `retro-request:approve`  | ZUGEWIESEN |
-| `contexts/time-tracking/api/time-entries.ts:2266`                            | `BREAK_COMPLIANCE_ALERT`      | A, M  | `team-overview:read`     | ZUGEWIESEN |
+| `contexts/time-tracking/api/time-entries.ts:1446`                            | `RETRO_ENTRY_REQUESTED`       | A, M  | `retro-request:approve`  | ZUGEWIESEN |
+| `contexts/time-tracking/api/time-entries.ts:1929`                            | `RETRO_ENTRY_UPDATED`         | A, M  | `retro-request:approve`  | ZUGEWIESEN |
+| `contexts/time-tracking/api/time-entries.ts:2284`                            | `BREAK_COMPLIANCE_ALERT`      | A, M  | `team-overview:read`     | ZUGEWIESEN |
 | `contexts/time-tracking/api/retro-entry-requests.ts:759`                     | `RETRO_ENTRY_WITHDRAWN`       | A, M  | `retro-request:approve`  | ZUGEWIESEN |
 | `contexts/platform/api/auth.ts:122`                                          | `ACCOUNT_LOCKED`              | A     | `employee:manage-access` | ZUGEWIESEN |
 

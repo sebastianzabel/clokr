@@ -557,6 +557,24 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Eintrag nicht gefunden" });
       }
 
+      // Issue #346/#359: this route had NO ownership or permission check at all — any
+      // authenticated caller of the tenant, an EMPLOYEE included, could clock out a colleague's
+      // open entry, and a caller holding neither reach of `time-entry:update` could clock out
+      // even their own. Mirrors PUT/:id and DELETE/:id's ownership pattern (ZUGEWIESEN for a
+      // foreign entry, EIGENE otherwise), except the foreign-entry rejection reuses THIS route's
+      // own "Eintrag nicht gefunden" 404 (already used above for cross-tenant) instead of a 403 —
+      // deliberately indistinguishable from a non-existent id (T-100-09), decided in the PR that
+      // closed #346 because this check runs before any state of the entry is revealed.
+      const isOnBehalfOf = entry.employeeId !== req.user.employeeId;
+      const clockOutUpdateReach = await permissionReach(req, "time-entry:update");
+      if (isOnBehalfOf) {
+        if (clockOutUpdateReach !== "ZUGEWIESEN") {
+          return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+        }
+      } else if (clockOutUpdateReach === null) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+
       // Pre-guard: already-closed entry shortcuts to 409 without paying the lock cost.
       if (entry.endTime) return reply.code(409).send({ error: "Bereits ausgestempelt" });
 
