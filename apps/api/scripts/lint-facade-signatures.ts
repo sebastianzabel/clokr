@@ -88,6 +88,11 @@ export const EXCEPTIONS_FILE = "apps/api/scripts/lint-facade-signatures-exceptio
 export const KNOWN_FACADE_FILES: readonly string[] = [
   "apps/api/src/contexts/absence/leave-check.ts",
   "apps/api/src/contexts/working-time-account/confirmed-saldo.ts",
+  // Phase 91b Plan 02 (Issue #91, D-07): the scope-narrowing module every context calls for
+  // "is this resource in scope" / "which rows are in scope for a list" — it lives directly under
+  // contexts/platform/, not under facade/, so the glob walk above never finds it on its own. Named
+  // here for the same defense-in-depth reasoning employeeScopeWhere already carries.
+  "apps/api/src/contexts/platform/scope-filter.ts",
 ];
 
 export type FacadeRule = "F1" | "F2" | "F3";

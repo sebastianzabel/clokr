@@ -215,9 +215,9 @@ export async function salonForDay(
  * assumed by reasoning about it.
  *
  * Returns `null` when no HOME row covers `date` — the fail-closed input every scope-filter.ts
- * Stammsalon check treats as "not in scope for this branch" (D-08's "kein Stammsalon am Stichtag ⇒
- * nicht im Scope"). A foreign or nonexistent `employeeId` also yields `null` (T-100-09 — this
- * function never distinguishes the two cases).
+ * Stammsalon check treats as "not in scope for this branch" (D-08's own rule: no Stammsalon on the
+ * Stichtag means out of scope). A foreign or nonexistent `employeeId` also yields `null` (T-100-09 —
+ * this function never distinguishes the two cases).
  */
 export async function homeSalonAt(
   db: Prisma.TransactionClient,

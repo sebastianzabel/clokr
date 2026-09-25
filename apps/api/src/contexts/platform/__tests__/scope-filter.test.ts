@@ -16,7 +16,16 @@ import type { FastifyInstance } from "fastify";
 import { getTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import { DEFAULT_SALON_OPENING_HOURS } from "../facade/salons";
 import type { AccessReach } from "../access-context";
-import { isTimeEntryInScope, scopedTimeEntryIds } from "../scope-filter";
+import {
+  isTimeEntryInScope,
+  scopedTimeEntryIds,
+  resolveStammsalonScopedEmployeeIds,
+  isStammsalonScopeMatch,
+  isShiftInScope,
+  shiftScopeWhere,
+  resolvePersonScopedEmployeeIds,
+  isPersonMasterDataInScope,
+} from "../scope-filter";
 
 type Seed = Awaited<ReturnType<typeof seedTestData>>;
 
@@ -354,6 +363,487 @@ describe("scope-filter.ts — TimeEntry (Phase 91b Plan 02 Task 2, Issue #91, D-
         new Date("2026-12-31"),
       );
       expect(result).toEqual([]);
+    });
+  });
+});
+
+describe("scope-filter.ts — Stammsalon-only: leave/absence/saldo/exports (Phase 91b Plan 02 Task 3, Issue #91, D-10)", () => {
+  let app: FastifyInstance;
+  let tenantA: Seed;
+  let salonX: { id: string };
+  let salonY: { id: string };
+
+  async function createEmployee(namePrefix: string) {
+    const s = uniqueSuffix(namePrefix);
+    const user = await app.prisma.user.create({
+      data: { email: `${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+    });
+    return app.prisma.employee.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        userId: user.id,
+        employeeNumber: s.toUpperCase(),
+        firstName: namePrefix,
+        lastName: "ScopeFilterD10",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+  }
+
+  function createHome(
+    employeeId: string,
+    salonId: string,
+    validFrom: string,
+    validUntil: string | null,
+  ) {
+    return app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        employeeId,
+        salonId,
+        kind: "HOME",
+        validFrom: new Date(validFrom),
+        validUntil: validUntil ? new Date(validUntil) : null,
+        weekdays: [],
+      },
+    });
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    tenantA = await seedTestData(app, "sf-d10-a");
+
+    const makeSalon = (name: string) =>
+      app.prisma.salon.create({
+        data: {
+          tenantId: tenantA.tenant.id,
+          name,
+          openingHours: DEFAULT_SALON_OPENING_HOURS,
+          isActive: true,
+        },
+      });
+    salonX = await makeSalon("SF D10 Salon X");
+    salonY = await makeSalon("SF D10 Salon Y");
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantA.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  describe("resolveStammsalonScopedEmployeeIds", () => {
+    it("wholeTenant reach returns the sentinel 'all', with ZERO database reads", async () => {
+      const result = await resolveStammsalonScopedEmployeeIds(
+        dbThatMustNotBeTouched(),
+        tenantA.tenant.id,
+        wholeTenant,
+        new Date("2026-01-01"),
+      );
+      expect(result).toBe("all");
+    });
+
+    it("a scoped reach with BOTH arrays empty returns [], with ZERO database reads", async () => {
+      const result = await resolveStammsalonScopedEmployeeIds(
+        dbThatMustNotBeTouched(),
+        tenantA.tenant.id,
+        scoped([], []),
+        new Date("2026-01-01"),
+      );
+      expect(result).toEqual([]);
+    });
+
+    it("the union of Stammsalon-at-Stichtag employees (salonIds) and reach.employeeIds, deduplicated", async () => {
+      const empHome = await createEmployee("d10-home-match");
+      await createHome(empHome.id, salonX.id, "2024-01-01", null);
+      const empOther = await createEmployee("d10-employee-only");
+      await createHome(empOther.id, salonY.id, "2024-01-01", null); // not in salonIds
+
+      const result = await resolveStammsalonScopedEmployeeIds(
+        app.prisma,
+        tenantA.tenant.id,
+        scoped([salonX.id], [empOther.id]),
+        new Date("2026-01-01"),
+      );
+      expect((result as string[]).sort()).toEqual([empHome.id, empOther.id].sort());
+    });
+  });
+
+  describe("isStammsalonScopeMatch", () => {
+    it("wholeTenant reach is always true", async () => {
+      const result = await isStammsalonScopeMatch(
+        dbThatMustNotBeTouched(),
+        tenantA.tenant.id,
+        wholeTenant,
+        "00000000-0000-4000-8000-000000000010",
+        new Date("2026-01-01"),
+      );
+      expect(result).toBe(true);
+    });
+
+    it("employeeId in reach.employeeIds -> true, with ZERO database reads", async () => {
+      const result = await isStammsalonScopeMatch(
+        dbThatMustNotBeTouched(),
+        tenantA.tenant.id,
+        scoped([], ["00000000-0000-4000-8000-000000000011"]),
+        "00000000-0000-4000-8000-000000000011",
+        new Date("2026-01-01"),
+      );
+      expect(result).toBe(true);
+    });
+
+    it("salonIds empty and employeeId not in employeeIds -> false, with ZERO database reads", async () => {
+      const result = await isStammsalonScopeMatch(
+        dbThatMustNotBeTouched(),
+        tenantA.tenant.id,
+        scoped([], []),
+        "00000000-0000-4000-8000-000000000012",
+        new Date("2026-01-01"),
+      );
+      expect(result).toBe(false);
+    });
+
+    it("the Stichtag actually matters: the SAME reach gives a DIFFERENT answer for two different Stichtag values", async () => {
+      const employee = await createEmployee("d10-stichtag-matters");
+      await createHome(employee.id, salonX.id, "2024-01-01", "2025-12-31");
+      await createHome(employee.id, salonY.id, "2026-01-01", null);
+
+      const reach = scoped([salonX.id], []);
+      const before = await isStammsalonScopeMatch(
+        app.prisma,
+        tenantA.tenant.id,
+        reach,
+        employee.id,
+        new Date("2025-06-01"),
+      );
+      const after = await isStammsalonScopeMatch(
+        app.prisma,
+        tenantA.tenant.id,
+        reach,
+        employee.id,
+        new Date("2026-06-01"),
+      );
+      expect(before).toBe(true);
+      expect(after).toBe(false);
+    });
+  });
+});
+
+describe("scope-filter.ts — Shift (Phase 91b Plan 02 Task 3, Issue #91, D-11)", () => {
+  let app: FastifyInstance;
+  let tenantA: Seed;
+  let salonX: { id: string };
+  let salonY: { id: string };
+  let employeeInReach: { id: string };
+  let employeeOutOfReach: { id: string };
+
+  async function createShift(salonId: string, employeeId: string, date: string) {
+    return app.prisma.shift.create({
+      data: {
+        employeeId,
+        salonId,
+        date: new Date(date),
+        startTime: "08:00",
+        endTime: "16:00",
+      },
+    });
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    tenantA = await seedTestData(app, "sf-d11-a");
+
+    const makeSalon = (name: string) =>
+      app.prisma.salon.create({
+        data: {
+          tenantId: tenantA.tenant.id,
+          name,
+          openingHours: DEFAULT_SALON_OPENING_HOURS,
+          isActive: true,
+        },
+      });
+    salonX = await makeSalon("SF D11 Salon X");
+    salonY = await makeSalon("SF D11 Salon Y");
+
+    const mkEmployee = async (namePrefix: string) => {
+      const s = uniqueSuffix(namePrefix);
+      const user = await app.prisma.user.create({
+        data: { email: `${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      });
+      return app.prisma.employee.create({
+        data: {
+          tenantId: tenantA.tenant.id,
+          userId: user.id,
+          employeeNumber: s.toUpperCase(),
+          firstName: namePrefix,
+          lastName: "ScopeFilterD11",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+    };
+    employeeInReach = await mkEmployee("d11-in-reach");
+    employeeOutOfReach = await mkEmployee("d11-out-of-reach");
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantA.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  describe("isShiftInScope (pure — no db/tenantId parameter)", () => {
+    it("wholeTenant reach is always true", () => {
+      expect(isShiftInScope(wholeTenant, { salonId: salonY.id, employeeId: null })).toBe(true);
+    });
+
+    it("shift.salonId in reach.salonIds -> true", () => {
+      expect(
+        isShiftInScope(scoped([salonX.id], []), { salonId: salonX.id, employeeId: null }),
+      ).toBe(true);
+    });
+
+    it("shift.employeeId non-null and in reach.employeeIds -> true", () => {
+      expect(
+        isShiftInScope(scoped([], [employeeInReach.id]), {
+          salonId: salonY.id,
+          employeeId: employeeInReach.id,
+        }),
+      ).toBe(true);
+    });
+
+    it("an UNASSIGNED shift (employeeId: null) with a salon NOT in reach.salonIds -> false (no Stammsalon fallback for shifts, D-11)", () => {
+      expect(
+        isShiftInScope(scoped([salonX.id], [employeeInReach.id]), {
+          salonId: salonY.id,
+          employeeId: null,
+        }),
+      ).toBe(false);
+    });
+
+    it("neither salon nor employee match -> false", () => {
+      expect(
+        isShiftInScope(scoped([salonX.id], [employeeInReach.id]), {
+          salonId: salonY.id,
+          employeeId: employeeOutOfReach.id,
+        }),
+      ).toBe(false);
+    });
+  });
+
+  describe("shiftScopeWhere (pure — integration-tested against a real shift.findMany call)", () => {
+    it("wholeTenant reach: {} adds no filter — both salons' shifts are returned", async () => {
+      const shiftX = await createShift(salonX.id, employeeInReach.id, "2026-08-01");
+      const shiftY = await createShift(salonY.id, employeeOutOfReach.id, "2026-08-02");
+
+      const rows = await app.prisma.shift.findMany({
+        where: { ...shiftScopeWhere(wholeTenant), id: { in: [shiftX.id, shiftY.id] } },
+      });
+      expect(rows.map((r) => r.id).sort()).toEqual([shiftX.id, shiftY.id].sort());
+    });
+
+    it("a scoped reach with BOTH arrays empty matches ZERO real rows (Prisma's own empty-in-array behavior, no manual FALSE guard needed)", async () => {
+      const shift = await createShift(salonX.id, employeeInReach.id, "2026-08-03");
+
+      const rows = await app.prisma.shift.findMany({
+        where: { ...shiftScopeWhere(scoped([], [])), id: shift.id },
+      });
+      expect(rows).toEqual([]);
+    });
+
+    it("scoped, salonIds non-empty: only the matching-salon shift is returned", async () => {
+      const shiftX = await createShift(salonX.id, employeeOutOfReach.id, "2026-08-04");
+      const shiftY = await createShift(salonY.id, employeeOutOfReach.id, "2026-08-05");
+
+      const rows = await app.prisma.shift.findMany({
+        where: { ...shiftScopeWhere(scoped([salonX.id], [])), id: { in: [shiftX.id, shiftY.id] } },
+      });
+      expect(rows.map((r) => r.id)).toEqual([shiftX.id]);
+    });
+
+    it("scoped, employeeIds non-empty: only the matching-employee shift is returned, regardless of salon", async () => {
+      const shiftMatch = await createShift(salonY.id, employeeInReach.id, "2026-08-06");
+      const shiftOther = await createShift(salonY.id, employeeOutOfReach.id, "2026-08-07");
+
+      const rows = await app.prisma.shift.findMany({
+        where: {
+          ...shiftScopeWhere(scoped([], [employeeInReach.id])),
+          id: { in: [shiftMatch.id, shiftOther.id] },
+        },
+      });
+      expect(rows.map((r) => r.id)).toEqual([shiftMatch.id]);
+    });
+  });
+});
+
+describe("scope-filter.ts — Person master data (Phase 91b Plan 02 Task 3, Issue #91, D-12)", () => {
+  let app: FastifyInstance;
+  let tenantA: Seed;
+  let salonP: { id: string };
+  let salonUnrelated: { id: string };
+  let empHomeToday: { id: string };
+  let empDeployToday: { id: string };
+  let empPersonOnly: { id: string };
+  let empOutOfScope: { id: string };
+
+  async function createEmployee(namePrefix: string) {
+    const s = uniqueSuffix(namePrefix);
+    const user = await app.prisma.user.create({
+      data: { email: `${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+    });
+    return app.prisma.employee.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        userId: user.id,
+        employeeNumber: s.toUpperCase(),
+        firstName: namePrefix,
+        lastName: "ScopeFilterD12",
+        hireDate: new Date("2020-01-01"),
+      },
+    });
+  }
+
+  function createAssignment(
+    employeeId: string,
+    salonId: string,
+    kind: "HOME" | "DEPLOYMENT",
+    validFrom: string,
+  ) {
+    return app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        employeeId,
+        salonId,
+        kind,
+        validFrom: new Date(validFrom),
+        validUntil: null, // open-ended — always valid "today", whenever this test actually runs
+        weekdays: [],
+      },
+    });
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    tenantA = await seedTestData(app, "sf-d12-a");
+
+    const makeSalon = (name: string) =>
+      app.prisma.salon.create({
+        data: {
+          tenantId: tenantA.tenant.id,
+          name,
+          openingHours: DEFAULT_SALON_OPENING_HOURS,
+          isActive: true,
+        },
+      });
+    salonP = await makeSalon("SF D12 Salon P");
+    salonUnrelated = await makeSalon("SF D12 Salon Unrelated");
+
+    empHomeToday = await createEmployee("d12-home-today");
+    await createAssignment(empHomeToday.id, salonP.id, "HOME", "2020-01-01");
+
+    empDeployToday = await createEmployee("d12-deploy-today");
+    await createAssignment(empDeployToday.id, salonUnrelated.id, "HOME", "2020-01-01");
+    await createAssignment(empDeployToday.id, salonP.id, "DEPLOYMENT", "2020-01-01");
+
+    empPersonOnly = await createEmployee("d12-person-only");
+    await createAssignment(empPersonOnly.id, salonUnrelated.id, "HOME", "2020-01-01");
+
+    empOutOfScope = await createEmployee("d12-out-of-scope");
+    await createAssignment(empOutOfScope.id, salonUnrelated.id, "HOME", "2020-01-01");
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantA.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  describe("resolvePersonScopedEmployeeIds", () => {
+    it("wholeTenant reach returns the sentinel 'all', with ZERO database reads", async () => {
+      const result = await resolvePersonScopedEmployeeIds(
+        dbThatMustNotBeTouched(),
+        tenantA.tenant.id,
+        wholeTenant,
+      );
+      expect(result).toBe("all");
+    });
+
+    it("a scoped reach with BOTH arrays empty returns [], with ZERO database reads", async () => {
+      const result = await resolvePersonScopedEmployeeIds(
+        dbThatMustNotBeTouched(),
+        tenantA.tenant.id,
+        scoped([], []),
+      );
+      expect(result).toEqual([]);
+    });
+
+    it("the union of Stammsalon-TODAY, active-DEPLOYMENT-TODAY and reach.employeeIds, deduplicated", async () => {
+      const result = await resolvePersonScopedEmployeeIds(
+        app.prisma,
+        tenantA.tenant.id,
+        scoped([salonP.id], [empPersonOnly.id]),
+      );
+      expect((result as string[]).sort()).toEqual(
+        [empHomeToday.id, empDeployToday.id, empPersonOnly.id].sort(),
+      );
+      expect(result).not.toContain(empOutOfScope.id);
+    });
+  });
+
+  describe("isPersonMasterDataInScope", () => {
+    it("wholeTenant reach is always true", async () => {
+      const result = await isPersonMasterDataInScope(
+        dbThatMustNotBeTouched(),
+        tenantA.tenant.id,
+        wholeTenant,
+        empOutOfScope.id,
+      );
+      expect(result).toBe(true);
+    });
+
+    it("employeeId in reach.employeeIds -> true, with ZERO database reads", async () => {
+      const result = await isPersonMasterDataInScope(
+        dbThatMustNotBeTouched(),
+        tenantA.tenant.id,
+        scoped([], [empPersonOnly.id]),
+        empPersonOnly.id,
+      );
+      expect(result).toBe(true);
+    });
+
+    it("Stammsalon-today match -> true", async () => {
+      const result = await isPersonMasterDataInScope(
+        app.prisma,
+        tenantA.tenant.id,
+        scoped([salonP.id], []),
+        empHomeToday.id,
+      );
+      expect(result).toBe(true);
+    });
+
+    it("active-deployment-today match -> true", async () => {
+      const result = await isPersonMasterDataInScope(
+        app.prisma,
+        tenantA.tenant.id,
+        scoped([salonP.id], []),
+        empDeployToday.id,
+      );
+      expect(result).toBe(true);
+    });
+
+    it("neither Stammsalon-today, deployment-today, nor employeeIds match -> false", async () => {
+      const result = await isPersonMasterDataInScope(
+        app.prisma,
+        tenantA.tenant.id,
+        scoped([salonP.id], []),
+        empOutOfScope.id,
+      );
+      expect(result).toBe(false);
     });
   });
 });

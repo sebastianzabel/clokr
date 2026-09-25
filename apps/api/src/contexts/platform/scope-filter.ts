@@ -30,7 +30,7 @@ import type { AccessReach } from "./access-context";
 import { homeSalonAt, readTenantTimezone } from "./facade/salon-assignments";
 import { dayToDate, tenantLocalDay } from "./salon-assignment-rules";
 
-// ── TimeEntry (D-09): "Salon des Eintrags ODER Stammsalon-am-Eintragsdatum" ─────────────────────
+// ── TimeEntry (D-09): the entry's own salon OR its Stammsalon at the entry's own date ───────────
 
 /** The facts about one `TimeEntry` row {@link isTimeEntryInScope} needs — read from the row itself,
  * never from client input directly. */
@@ -130,4 +130,194 @@ export async function scopedTimeEntryIds(
       AND (${salonBranch} OR ${employeeBranch} OR ${homeSalonBranch})
   `);
   return rows.map((r) => r.id);
+}
+
+// ── Stammsalon-only (D-10): leave/absence/saldo/exports — NO entry-salon fallback ───────────────
+
+/**
+ * D-10, list mode: every employee whose Stammsalon AT `stichtag` ({@link homeSalonAt}'s underlying
+ * HOME-row query, run in bulk here rather than per-employee) is in `reach.salonIds`, UNIONED with
+ * `reach.employeeIds`, deduplicated. `wholeTenant` -> `"all"`. Both arrays empty -> `[]`, no query —
+ * unlike TimeEntry's per-row Stichtag, this resource type's Stichtag is a single request-level date,
+ * so a plain Prisma `where` suffices (no raw SQL needed, 91b-RESEARCH.md's own Summary).
+ */
+export async function resolveStammsalonScopedEmployeeIds(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  reach: AccessReach,
+  stichtag: Date,
+): Promise<"all" | string[]> {
+  if (reach.kind === "wholeTenant") return "all";
+  if (reach.salonIds.length === 0 && reach.employeeIds.length === 0) return [];
+
+  let homeIds: string[] = [];
+  if (reach.salonIds.length > 0) {
+    const rows = await db.employeeSalonAssignment.findMany({
+      where: {
+        tenantId,
+        kind: "HOME",
+        salonId: { in: [...reach.salonIds] },
+        validFrom: { lte: stichtag },
+        OR: [{ validUntil: null }, { validUntil: { gte: stichtag } }],
+      },
+      select: { employeeId: true },
+    });
+    homeIds = rows.map((r) => r.employeeId);
+  }
+
+  return Array.from(new Set([...homeIds, ...reach.employeeIds]));
+}
+
+/**
+ * D-10, single-row mode: `wholeTenant` -> `true`. `employeeId` in `reach.employeeIds` -> `true`,
+ * with no database read. Otherwise, only when `reach.salonIds` is non-empty, the employee's
+ * Stammsalon AT `stichtag` ({@link homeSalonAt}) is checked against `reach.salonIds`. `stichtag`
+ * genuinely matters here — the same reach can answer differently for two different Stichtag values
+ * around a Stammsalon change, proven by this module's own test.
+ */
+export async function isStammsalonScopeMatch(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  reach: AccessReach,
+  employeeId: string,
+  stichtag: Date,
+): Promise<boolean> {
+  if (reach.kind === "wholeTenant") return true;
+  if (reach.employeeIds.includes(employeeId)) return true;
+  if (reach.salonIds.length === 0) return false;
+
+  const home = await homeSalonAt(db, tenantId, employeeId, stichtag);
+  return home !== null && reach.salonIds.includes(home.salonId);
+}
+
+// ── Shifts (D-11): the shift's OWN salon only — NO Stammsalon fallback ──────────────────────────
+
+/** The facts about one `Shift` row {@link isShiftInScope} needs. `employeeId` is `string | null` —
+ * the current schema's `Shift.employeeId` column is NOT NULL (no "unassigned shift" concept exists
+ * today), but this fact-shape and predicate keep the null case for D-11's own explicit "an
+ * unassigned/open shift has no employee-scope path" wording and for forward compatibility; the null
+ * case is exercised here with a directly-constructed fact object, never a real `Shift` row. */
+export interface ShiftScopeFacts {
+  readonly salonId: string;
+  readonly employeeId: string | null;
+}
+
+/**
+ * D-11: pure, no `db`/`tenantId` parameter — nothing to query. `wholeTenant` -> `true`.
+ * `shift.salonId` in `reach.salonIds` -> `true`. `shift.employeeId` non-null and in
+ * `reach.employeeIds` -> `true`. Otherwise `false` — deliberately NO Stammsalon fallback, unlike
+ * TimeEntry (D-09): an unassigned shift in an out-of-scope salon is never in scope via any
+ * employee-based path.
+ */
+export function isShiftInScope(reach: AccessReach, shift: ShiftScopeFacts): boolean {
+  if (reach.kind === "wholeTenant") return true;
+  if (reach.salonIds.includes(shift.salonId)) return true;
+  if (shift.employeeId !== null && reach.employeeIds.includes(shift.employeeId)) return true;
+  return false;
+}
+
+/**
+ * D-11, list mode: pure `where`-fragment builder. `wholeTenant` -> `{}` (no added filter — spread
+ * onto a base `where`, it narrows nothing). `scoped` -> `{ OR: [salonId in salonIds, employeeId in
+ * employeeIds] }`. Both arrays empty still yields zero matches when spread into a real
+ * `shift.findMany` call — Prisma's own query builder turns an empty `in` array into a no-match
+ * condition, so (unlike {@link scopedTimeEntryIds}'s raw-SQL branches) no manual `FALSE` guard is
+ * needed here; confirmed by this module's own integration test against a real query, not merely
+ * asserted about the returned object's shape.
+ */
+export function shiftScopeWhere(reach: AccessReach): Prisma.ShiftWhereInput {
+  if (reach.kind === "wholeTenant") return {};
+  return {
+    OR: [{ salonId: { in: [...reach.salonIds] } }, { employeeId: { in: [...reach.employeeIds] } }],
+  };
+}
+
+// ── Person master data (D-12): Stammsalon-TODAY OR active-DEPLOYMENT-TODAY ──────────────────────
+
+/**
+ * D-12, list mode: `wholeTenant` -> `"all"`. Both arrays empty -> `[]`, no query. Otherwise the
+ * union of (employees whose Stammsalon TODAY is in `reach.salonIds`), (employees with a currently
+ * valid DEPLOYMENT row TODAY whose `salonId` is in `reach.salonIds` — validity-WINDOW check only, no
+ * weekday filter: D-12's own text says "currently valid DEPLOYMENT row", not "scheduled to work
+ * there today"; 91b-RESEARCH.md leaves the interpretation to the planner, and this is the pinned,
+ * documented choice, not an open question left for a later reader), and `reach.employeeIds`,
+ * deduplicated. "Today" is computed ONCE, tenant-local, via {@link readTenantTimezone} +
+ * `tenantLocalDay` + `dayToDate` — the same pattern {@link homeSalonUsageFrom} already uses for its
+ * own "today".
+ */
+export async function resolvePersonScopedEmployeeIds(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  reach: AccessReach,
+): Promise<"all" | string[]> {
+  if (reach.kind === "wholeTenant") return "all";
+  if (reach.salonIds.length === 0 && reach.employeeIds.length === 0) return [];
+
+  let homeIds: string[] = [];
+  let deploymentIds: string[] = [];
+  if (reach.salonIds.length > 0) {
+    const tz = await readTenantTimezone(db, tenantId);
+    const todayDate = dayToDate(tenantLocalDay(new Date(), tz));
+    const salonIdsIn = [...reach.salonIds];
+
+    const [homeRows, deploymentRows] = await Promise.all([
+      db.employeeSalonAssignment.findMany({
+        where: {
+          tenantId,
+          kind: "HOME",
+          salonId: { in: salonIdsIn },
+          validFrom: { lte: todayDate },
+          OR: [{ validUntil: null }, { validUntil: { gte: todayDate } }],
+        },
+        select: { employeeId: true },
+      }),
+      db.employeeSalonAssignment.findMany({
+        where: {
+          tenantId,
+          kind: "DEPLOYMENT",
+          salonId: { in: salonIdsIn },
+          validFrom: { lte: todayDate },
+          OR: [{ validUntil: null }, { validUntil: { gte: todayDate } }],
+        },
+        select: { employeeId: true },
+      }),
+    ]);
+    homeIds = homeRows.map((r) => r.employeeId);
+    deploymentIds = deploymentRows.map((r) => r.employeeId);
+  }
+
+  return Array.from(new Set([...homeIds, ...deploymentIds, ...reach.employeeIds]));
+}
+
+/**
+ * D-12, single-row mode: `wholeTenant` -> `true`. `employeeId` in `reach.employeeIds` -> `true`,
+ * with no database read. Otherwise Stammsalon-TODAY ({@link homeSalonAt}) OR an active-DEPLOYMENT-
+ * TODAY row in `reach.salonIds` -> `true`; neither -> `false`.
+ */
+export async function isPersonMasterDataInScope(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  reach: AccessReach,
+  employeeId: string,
+): Promise<boolean> {
+  if (reach.kind === "wholeTenant") return true;
+  if (reach.employeeIds.includes(employeeId)) return true;
+  if (reach.salonIds.length === 0) return false;
+
+  const home = await homeSalonAt(db, tenantId, employeeId, new Date());
+  if (home !== null && reach.salonIds.includes(home.salonId)) return true;
+
+  const tz = await readTenantTimezone(db, tenantId);
+  const todayDate = dayToDate(tenantLocalDay(new Date(), tz));
+  const deployment = await db.employeeSalonAssignment.findFirst({
+    where: {
+      tenantId,
+      employeeId,
+      kind: "DEPLOYMENT",
+      salonId: { in: [...reach.salonIds] },
+      validFrom: { lte: todayDate },
+      OR: [{ validUntil: null }, { validUntil: { gte: todayDate } }],
+    },
+  });
+  return deployment !== null;
 }
