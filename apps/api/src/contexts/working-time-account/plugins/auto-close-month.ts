@@ -1,7 +1,13 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../timezone";
-import { getHolidays, STATE_MAP, userIdsHoldingPermission } from "../../platform"; // Phase 75b Plan 10 (#75), D-16
+import {
+  getHolidays,
+  STATE_MAP,
+  userIdsHoldingPermission, // Phase 75b Plan 10 (#75), D-16
+  resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
+  isStammsalonScopeMatch, // Phase 91b Plan 09 (#91), D-10/D-17
+} from "../../platform";
 import { periodStartWindow } from "../snapshot-period";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared pure saldo core
@@ -135,13 +141,10 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           tenant.id,
           "month-close:close:ZUGEWIESEN",
         );
-        const managers = await app.prisma.employee.findMany({
-          where: {
-            tenantId: tenant.id,
-            user: { isActive: true, id: { in: monthCloseCloseHolderIds } },
-          },
-          include: { user: true },
-        });
+        // Phase 91b Plan 09 (Issue #91), D-17: `managers` is resolved (and narrowed) further
+        // below, once `missing` — the tenant-wide list of gap-blocked employees this run's
+        // notification is actually about — is known; narrowing needs that list as its Stichtag
+        // source (see the block below `if (missing.length > 0)`).
 
         const missing: {
           employee: (typeof employees)[0];
@@ -733,6 +736,41 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           const blockedMonth = oldestMonth(missing.map((m) => ({ year: m.year, month: m.month })));
           const monthName = monthLabelDe(blockedMonth);
           const link = monthCloseDeepLink(blockedMonth);
+
+          // Phase 91b Plan 09 (Issue #91), D-10/D-17: `missing` spans potentially several
+          // employees — a holder is kept if their reach covers AT LEAST ONE of them, Stichtag =
+          // this run's own oldest blocked month's end (one Stichtag for the whole batch, same
+          // simplification as the sibling weekly-escalation plugin).
+          const blockedMonthEnd = monthRangeUtc(blockedMonth.year, blockedMonth.month, tz).end;
+          const scopedMonthCloseCloseHolderIds = await resolveScopedHolderIds(
+            app.prisma,
+            tenant.id,
+            monthCloseCloseHolderIds,
+            "month-close:close:ZUGEWIESEN",
+            async (reach) => {
+              for (const m of missing) {
+                if (
+                  await isStammsalonScopeMatch(
+                    app.prisma,
+                    tenant.id,
+                    reach,
+                    m.employee.id,
+                    blockedMonthEnd,
+                  )
+                ) {
+                  return true;
+                }
+              }
+              return false;
+            },
+          );
+          const managers = await app.prisma.employee.findMany({
+            where: {
+              tenantId: tenant.id,
+              user: { isActive: true, id: { in: scopedMonthCloseCloseHolderIds } },
+            },
+            include: { user: true },
+          });
 
           // Phase 292: one notification per CHANGE of the blocked set, not one per run. The
           // recurring duty belongs to the weekly MONTH_CLOSE_DEFERRED escalation

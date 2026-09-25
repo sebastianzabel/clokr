@@ -11,6 +11,7 @@ import {
   resolveAccessReach, // Phase 91b Plan 03 (#91), D-10/D-14
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 03 (#91), D-10
   isStammsalonScopeMatch, // Phase 91b Plan 03 (#91), D-10/D-14
+  resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
 } from "../../platform";
 import { checkArbZG, ArbZGWarning } from "../arbzg";
 import { checkJArbSchG } from "../../absence"; // Phase 101B (Issue #101, wave 7)
@@ -832,10 +833,26 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
           user.tenantId,
           "retro-request:approve:ZUGEWIESEN",
         );
+        // Phase 91b Plan 09 (Issue #91), D-10/D-17: RetroEntryRequest has no salonId of its own
+        // (Plan 91b-03's own finding) — Stammsalon-only, Stichtag = the request's own targetDate.
+        const scopedWithdrawnRetroApproveHolderIds = await resolveScopedHolderIds(
+          app.prisma,
+          user.tenantId,
+          withdrawnRetroApproveHolderIds,
+          "retro-request:approve:ZUGEWIESEN",
+          (reach) =>
+            isStammsalonScopeMatch(
+              app.prisma,
+              user.tenantId,
+              reach,
+              existing.employeeId,
+              existing.targetDate,
+            ),
+        );
         const managers = await app.prisma.employee.findMany({
           where: {
             tenantId: user.tenantId,
-            user: { isActive: true, id: { in: withdrawnRetroApproveHolderIds } },
+            user: { isActive: true, id: { in: scopedWithdrawnRetroApproveHolderIds } },
           },
           include: { user: { select: { id: true } } },
         });

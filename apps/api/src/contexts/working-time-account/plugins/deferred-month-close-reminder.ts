@@ -7,7 +7,12 @@ import {
   monthCloseDeepLink,
   monthLabelDe,
 } from "../month-close-notification";
-import { userIdsHoldingPermission } from "../../platform"; // Phase 75b Plan 10 (#75), D-16
+import {
+  userIdsHoldingPermission,
+  resolveScopedHolderIds,
+  isStammsalonScopeMatch,
+} from "../../platform"; // Phase 75b Plan 10 (#75), D-16; Phase 91b Plan 09 (#91), D-10/D-17
+import { getTenantTimezone, monthRangeUtc } from "../timezone";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -120,10 +125,36 @@ export const deferredMonthCloseReminderPlugin = fp(async (app) => {
           tenant.id,
           "month-close:close:ZUGEWIESEN",
         );
+        // Phase 91b Plan 09 (Issue #91), D-10/D-17: this reminder is a tenant-wide AGGREGATE
+        // across every employee behind on Monatsabschluss (`state.employees`), not one single
+        // employee — a holder is kept if their reach covers AT LEAST ONE of the affected
+        // employees' Stammsalon, Stichtag = the aggregate's own oldest open month's end (one
+        // Stichtag for the whole batch, the same single-Stichtag simplification D-10's list
+        // routes already use).
+        const tz = await getTenantTimezone(app.prisma, tenant.id);
+        const stichtag = state.oldestOpenMonth
+          ? monthRangeUtc(state.oldestOpenMonth.year, state.oldestOpenMonth.month, tz).end
+          : now;
+        const scopedMonthCloseCloseHolderIds = await resolveScopedHolderIds(
+          app.prisma,
+          tenant.id,
+          monthCloseCloseHolderIds,
+          "month-close:close:ZUGEWIESEN",
+          async (reach) => {
+            for (const e of state.employees) {
+              if (
+                await isStammsalonScopeMatch(app.prisma, tenant.id, reach, e.employeeId, stichtag)
+              ) {
+                return true;
+              }
+            }
+            return false;
+          },
+        );
         const recipients = await app.prisma.employee.findMany({
           where: {
             tenantId: tenant.id,
-            user: { isActive: true, id: { in: monthCloseCloseHolderIds } },
+            user: { isActive: true, id: { in: scopedMonthCloseCloseHolderIds } },
           },
           select: { user: { select: { id: true } } },
         });

@@ -480,7 +480,15 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // (`db: Prisma.TransactionClient` first, `tenantId` required); `isShiftInScope`/`shiftScopeWhere`
   // are pure (no `db`/`tenantId` at all, F1 does not apply) and each needed one new named exception
   // — 1 (a) + 1 (b) + 8 (c) = 10, 113 + 10 = 123; exceptions 15 + 2 = 17.
-  it("the real tree has exactly 123 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  //
+  // 123 -> 124 in Phase 91b Plan 09 (Issue #91), D-17: same file
+  // (`contexts/platform/facade/role-assignments.ts`) gained 1 more exported function —
+  // resolveScopedHolderIds(db, tenantId, candidateUserIds, permission, isInScope), the one shared
+  // narrowing point every notification-recipient site in the plan composes with
+  // userIdsHoldingPermission — passes F1/F2/F3 directly (`db` first, required `tenantId` right
+  // next to it, `candidateUserIds` is a `*Ids`-shaped parameter with a `tenantId` sibling), no new
+  // exception needed; exceptions unchanged at 17.
+  it("the real tree has exactly 124 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -510,7 +518,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(123);
+    expect(functions).toHaveLength(124);
 
     const rawExceptions = JSON.parse(
       readFileSync(

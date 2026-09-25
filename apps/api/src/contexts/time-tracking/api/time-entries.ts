@@ -10,6 +10,8 @@ import {
   resolveAccessReach, // Phase 91b Plan 03 (#91), D-09/D-14
   isTimeEntryInScope, // Phase 91b Plan 03 (#91), D-09/D-14
   scopedTimeEntryIds, // Phase 91b Plan 03 (#91), D-09
+  isStammsalonScopeMatch, // Phase 91b Plan 09 (#91), D-10/D-17
+  resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
 } from "../../platform";
 import type { PermissionKey } from "../../platform";
 import { TimeEntrySource, Prisma } from "@clokr/db";
@@ -950,9 +952,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     },
   });
 
-  // GET /api/v1/time-entries  (eigene oder alle im Scope für Manager — Phase 91b Plan 03,
-  // Issue #91, D-09: a SALONS/PERSONS-scoped manager sees only in-scope entries, never the whole
-  // Mandant)
+  // GET /api/v1/time-entries (own entries, or every in-scope entry for a manager — Phase 91b
+  // Plan 03, Issue #91, D-09: a SALONS/PERSONS-scoped manager sees only in-scope entries, never
+  // the whole tenant)
   app.get("/", {
     schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
@@ -1548,10 +1550,26 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             targetEmployee.tenantId,
             "retro-request:approve:ZUGEWIESEN",
           );
+          // Phase 91b Plan 09 (Issue #91), D-10/D-17: RetroEntryRequest has no salonId of its
+          // own (Plan 91b-03's own finding) — Stammsalon-only, Stichtag = the entry's own date.
+          const scopedRetroRequestedApproveHolderIds = await resolveScopedHolderIds(
+            app.prisma,
+            targetEmployee.tenantId,
+            retroRequestedApproveHolderIds,
+            "retro-request:approve:ZUGEWIESEN",
+            (reach) =>
+              isStammsalonScopeMatch(
+                app.prisma,
+                targetEmployee.tenantId,
+                reach,
+                employeeId,
+                new Date(body.date),
+              ),
+          );
           const submitManagers = await app.prisma.employee.findMany({
             where: {
               tenantId: targetEmployee.tenantId,
-              user: { isActive: true, id: { in: retroRequestedApproveHolderIds } },
+              user: { isActive: true, id: { in: scopedRetroRequestedApproveHolderIds } },
             },
             include: { user: { select: { id: true } } },
           });
@@ -2049,10 +2067,25 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             existing.employee.tenantId,
             "retro-request:approve:ZUGEWIESEN",
           );
+          // Phase 91b Plan 09 (Issue #91), D-10/D-17: same rule as the submit-notify site above.
+          const scopedRetroUpdatedApproveHolderIds = await resolveScopedHolderIds(
+            app.prisma,
+            existing.employee.tenantId,
+            retroUpdatedApproveHolderIds,
+            "retro-request:approve:ZUGEWIESEN",
+            (reach) =>
+              isStammsalonScopeMatch(
+                app.prisma,
+                existing.employee.tenantId,
+                reach,
+                existing.employeeId,
+                existing.date,
+              ),
+          );
           const editManagers = await app.prisma.employee.findMany({
             where: {
               tenantId: existing.employee.tenantId,
-              user: { isActive: true, id: { in: retroUpdatedApproveHolderIds } },
+              user: { isActive: true, id: { in: scopedRetroUpdatedApproveHolderIds } },
             },
             include: { user: { select: { id: true } } },
           });
@@ -2455,10 +2488,25 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         entry.employee.tenantId,
         "team-overview:read:ZUGEWIESEN",
       );
+      // Phase 91b Plan 09 (Issue #91), D-09/D-17: `entry` is a TimeEntry — the entry's own
+      // salon/employee/date is the scope resource (same rule as attendance-checker.ts's
+      // OPEN_ENTRY_INVALIDATED site).
+      const scopedBreakComplianceTeamOverviewHolderIds = await resolveScopedHolderIds(
+        app.prisma,
+        entry.employee.tenantId,
+        breakComplianceTeamOverviewHolderIds,
+        "team-overview:read:ZUGEWIESEN",
+        (reach) =>
+          isTimeEntryInScope(app.prisma, entry.employee.tenantId, reach, {
+            salonId: entry.salonId,
+            employeeId: entry.employeeId,
+            date: entry.date,
+          }),
+      );
       const managers = await app.prisma.employee.findMany({
         where: {
           tenantId: entry.employee.tenantId,
-          user: { isActive: true, id: { in: breakComplianceTeamOverviewHolderIds } },
+          user: { isActive: true, id: { in: scopedBreakComplianceTeamOverviewHolderIds } },
         },
         include: { user: { select: { id: true } } },
       });

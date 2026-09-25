@@ -340,6 +340,7 @@ export async function getOwnPendingLeaveRequests(
 export interface StalePendingLeaveRequestForReminder {
   id: string;
   employeeId: string;
+  startDate: Date;
   employee: { firstName: string; lastName: string };
   leaveType: { name: string };
 }
@@ -367,6 +368,9 @@ export async function getStalePendingLeaveRequestsForReminder(
     select: {
       id: true,
       employeeId: true,
+      // Phase 91b Plan 09 (Issue #91), D-17: the request's own startDate is the caller's
+      // notification-recipient narrowing Stichtag (D-10, isStammsalonScopeMatch).
+      startDate: true,
       employee: { select: { firstName: true, lastName: true } },
       leaveType: { select: { name: true } },
     },
