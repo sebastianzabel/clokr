@@ -13,7 +13,7 @@
 // verifies the wire-format contract: GET returns defaults, PUT validates range, PUT
 // persists, GET reads back.
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 
@@ -209,6 +209,14 @@ describe("Berufsschule bsSlot* override hierarchy (Phase 76.31 Plan 06)", () => 
       console.error("Test cleanup failed:", err);
     }
     await closeTestApp();
+  });
+
+  // Mirrors vocational-school.test.ts's own afterEach: two tests in this block PUT
+  // /employees/:id/vocational-school-pattern, which fires a fire-and-forget background
+  // BS-generator run. Drain it after every test so it can never leak Absence rows into
+  // the next test's beforeEach baseline or race afterAll's cleanupTestData (issue #350).
+  afterEach(async () => {
+    await app.waitForPendingBSGenerations?.();
   });
 
   // Reset all 4 tenant bsSlot* to null between tests so range/null tests are isolated.
