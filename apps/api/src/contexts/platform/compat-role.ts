@@ -82,6 +82,21 @@ export function systemRoleIdForLegacyRole(role: Role): string {
 }
 
 /**
+ * Issue #354 (pre-merge security review of #75): does a request's `role` field ask for anything
+ * other than the schema default EMPLOYEE? `employee:create` (`POST /employees`) and
+ * `employee:import` (`POST /imports/employees`) cover the new hire's profile, never handing out a
+ * system role — a value other than EMPLOYEE additionally needs `role-assignment:manage`, the same
+ * rule `PATCH /employees/:id` already applies. The comparison lives here, the allowlisted module
+ * (D-19/D-14): a plain `body.role !== "EMPLOYEE"` at the call site is a role check the gate rejects
+ * regardless of the fact that the compared value describes a request payload, not the caller's own
+ * role — this is the sanctioned way to move it behind a helper instead of converting it to a
+ * permission (there is nothing to ask a permission FOR here; the decision is what the value IS).
+ */
+export function requestedRoleNeedsRoleAssignmentManage(role: Role): boolean {
+  return role !== "EMPLOYEE";
+}
+
+/**
  * The compat role derived from a user's stored assignments in `tenantId` (D-14). Rows whose role
  * belongs to another tenant, and rows with a malformed scope, contribute nothing. An empty (or
  * fully filtered) input yields EMPLOYEE — the column write-back of a user whose last assignment

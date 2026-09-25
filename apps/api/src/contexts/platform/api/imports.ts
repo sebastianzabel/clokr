@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { Prisma } from "@clokr/db";
 import { fromZonedTime } from "date-fns-tz";
-import { requirePermission } from "../request-permissions";
+import { hasPermission, requirePermission } from "../request-permissions";
 // eslint-disable-next-line no-restricted-imports -- E-2: the importer writes directly into time-tracking and working-time-account. Disappears in Block 2 (#102-#104). ADR 0001 Eintrag H.
 import {
   updateOvertimeAccount,
@@ -23,7 +23,11 @@ import {
 import { auditSalonAssignmentEvent } from "../salon-assignment-audit";
 // Phase 75b Plan 11 (issue #75, D-15) — the imported user's system-role assignment.
 import { lockTenantForRoleChanges } from "../facade/role-assignments";
-import { replaceSystemRoleAssignment, syncCompatRoleColumn } from "../compat-role";
+import {
+  replaceSystemRoleAssignment,
+  requestedRoleNeedsRoleAssignmentManage,
+  syncCompatRoleColumn,
+} from "../compat-role";
 import { auditRoleAssignmentChange, createdAssignmentAuditEntry } from "../role-assignment-audit";
 import { tenantLocalDay, toAssignmentDto } from "../salon-assignment-rules";
 
@@ -142,6 +146,20 @@ export async function importRoutes(app: FastifyInstance) {
               undefined,
             password: raw.password || raw.Passwort || undefined,
           });
+
+          // Issue #354 (pre-merge security review of #75): `employee:import` covers the imported
+          // profile, never handing out a system role — same rule as the single-employee create
+          // above (D-15 extension). A row asking for a role other than the schema default
+          // EMPLOYEE additionally needs role-assignment:manage; the row is rejected on its own,
+          // the rest of the import continues (the existing per-row error convention).
+          if (
+            requestedRoleNeedsRoleAssignmentManage(data.role) &&
+            !(await hasPermission(req, "role-assignment:manage:ZUGEWIESEN"))
+          ) {
+            throw new Error(
+              "Zum Vergeben einer Rolle außer Mitarbeiter fehlt die Berechtigung role-assignment:manage.",
+            );
+          }
 
           const hasPassword = !!data.password;
           const passwordHash = hasPassword

@@ -22,6 +22,7 @@ import {
   legacyFallbackAlreadyYields,
   materializeLegacyRoleAssignment,
   replaceSystemRoleAssignment,
+  requestedRoleNeedsRoleAssignmentManage,
   syncCompatRoleColumn,
 } from "../compat-role";
 import {
@@ -446,6 +447,17 @@ export async function employeeRoutes(app: FastifyInstance) {
     preHandler: requirePermission("employee:create:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const body = createEmployeeSchema.parse(req.body);
+
+      // Issue #354 (pre-merge security review of #75): `employee:create` covers the new hire's
+      // profile, never handing out a system role — mirrors the PATCH /:id check above (D-15
+      // extension). A role other than the schema default EMPLOYEE additionally needs
+      // role-assignment:manage, checked before any write.
+      if (
+        requestedRoleNeedsRoleAssignmentManage(body.role) &&
+        !(await hasPermission(req, "role-assignment:manage:ZUGEWIESEN"))
+      ) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
 
       const directPassword = !!body.password;
       if (directPassword) {

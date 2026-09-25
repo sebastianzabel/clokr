@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import crypto, { createHash } from "crypto";
-import { requirePermission } from "../request-permissions";
+import { hasPermission, requirePermission } from "../request-permissions";
 
 const VALID_SCOPES = [
   "read:employees",
@@ -50,8 +50,21 @@ export async function apiKeyRoutes(app: FastifyInstance) {
   app.post("/", {
     schema: { tags: ["API Keys"], security: [{ bearerAuth: [] }] },
     preHandler: requirePermission("api-key:manage:ZUGEWIESEN"),
-    handler: async (req) => {
+    handler: async (req, reply) => {
       const body = createKeySchema.parse(req.body);
+
+      // Issue #354 (pre-merge security review of #75): the `admin` scope maps an API key onto the
+      // full Admin system role (request-permissions.ts's `resolveGrants`), so minting or widening
+      // a key to it is handing out Admin — same rule as setting a system role on a user
+      // (employees.ts D-15). `api-key:manage` alone must not reach that; it additionally needs
+      // role-assignment:manage.
+      if (
+        body.scopes.includes("admin") &&
+        !(await hasPermission(req, "role-assignment:manage:ZUGEWIESEN"))
+      ) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+
       const tenantId = req.user.tenantId;
 
       // Generate key: clk_ prefix + 40 random hex chars

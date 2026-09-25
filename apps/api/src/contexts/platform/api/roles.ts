@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { Prisma } from "@clokr/db";
-import { requirePermission } from "../request-permissions";
+import { hasPermission, requirePermission } from "../request-permissions";
 import {
   ROLE_NAME_MAX_LENGTH,
   roleNameKey,
@@ -23,6 +23,11 @@ const ROLE_ASSIGNED_DELETE_MESSAGE =
   "Die Rolle ist noch Nutzern zugewiesen und kann nicht gelöscht werden.";
 /** The `onDelete: Restrict` backstop of D-21 (migration 20260924145050_role_assignment). */
 const ROLE_ASSIGNMENT_ROLE_FOREIGN_KEY = "RoleAssignment_accessRoleId_fkey";
+// Issue #354 (pre-merge security review of #75): a `role:manage` holder who also currently holds
+// the target role via an assignment could otherwise add rights to it and grant itself more —
+// self-service escalation. Rejected unless the caller additionally holds role-assignment:manage.
+const ROLE_SELF_HELD_UPDATE_MESSAGE =
+  "Eine Ihnen selbst zugewiesene Rolle können Sie ohne die Berechtigung role-assignment:manage nicht ändern.";
 
 const nameSchema = z.string().trim().min(1).max(ROLE_NAME_MAX_LENGTH);
 
@@ -231,7 +236,7 @@ export async function roleRoutes(app: FastifyInstance) {
       security: [{ bearerAuth: [] }],
       summary: "Update a customer role",
       description:
-        "Changes name and/or permissions of a customer role of the caller's own tenant. A no-op request (nothing actually changes) writes nothing and audits nothing. A system role is never changeable and answers 409. A change that would remove the last tenant-wide holder of role:manage or role-assignment:manage answers 409 and changes nothing (lockout protection). A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
+        "Changes name and/or permissions of a customer role of the caller's own tenant. A no-op request (nothing actually changes) writes nothing and audits nothing. A system role is never changeable and answers 409. A change that would remove the last tenant-wide holder of role:manage or role-assignment:manage answers 409 and changes nothing (lockout protection). A role the caller currently holds via any own assignment answers 403 unless the caller also holds role-assignment:manage (self-service escalation, issue #354). A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
     },
     preHandler: requirePermission("role:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
@@ -251,6 +256,21 @@ export async function roleRoutes(app: FastifyInstance) {
       }
       if (existing.tenantId === null) {
         return reply.code(409).send({ error: ROLE_SYSTEM_UPDATE_MESSAGE });
+      }
+
+      // Issue #354 (pre-merge security review of #75): a `role:manage` holder who is themselves
+      // assigned this role could edit it to add rights and grant themselves more — checked on
+      // ANY literal assignment (even a malformed one), not only an EFFECTIVE one, and before the
+      // no-op diff below so an attempted change is refused regardless of whether it would net out
+      // to nothing.
+      const selfAssignment = await app.prisma.roleAssignment.findFirst({
+        where: { userId: req.user.sub, accessRoleId: id, tenantId: req.user.tenantId },
+      });
+      if (
+        selfAssignment !== null &&
+        !(await hasPermission(req, "role-assignment:manage:ZUGEWIESEN"))
+      ) {
+        return reply.code(403).send({ error: ROLE_SELF_HELD_UPDATE_MESSAGE });
       }
 
       const nextName = body.name ?? existing.name;
