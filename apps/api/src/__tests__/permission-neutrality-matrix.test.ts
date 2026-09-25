@@ -36,6 +36,16 @@
  * arrive from `origin/main` after the recording get their NEW rows recorded on pre-switch
  * semantics, on a pre-switch tree, documented per route (plan 75b-13).
  *
+ * ── MERGE (D-24 only) ───────────────────────────────────────────────────────────────────────────
+ *   NEUTRALITY_MATRIX_MODE=record NEUTRALITY_MATRIX_MERGE=1
+ *                                  add the cells of routes that are ABSENT from the existing
+ *                                  recording (NEUTRALITY_MATRIX_IN, default path) and nothing else.
+ * Every cell of a route the recording already knows is compared exactly as in VERIFY; a single
+ * difference, or a cell key of a known route that the recording lacks, fails the run and writes
+ * NOTHING. The written file is the existing cell set plus the new routes' cells, serialized the
+ * same way, so every existing line stays byte-identical and the diff names only the added cells.
+ * The RECORD guard applies unchanged: the new routes must still carry their pre-switch guard.
+ *
  * ── Completeness (AC-75-10) ─────────────────────────────────────────────────────────────────────
  * The derived route set must equal ROUTE_SPECS ∪ EXCLUDED_ROUTES in both directions, and every
  * OUTSIDE_DERIVATION route must be registered, so a new route cannot slip past the matrix.
@@ -77,6 +87,7 @@
  */
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, cleanupTestData } from "./setup";
@@ -104,6 +115,8 @@ import {
 } from "./neutrality/cell-runner";
 
 const MODE = process.env.NEUTRALITY_MATRIX_MODE === "record" ? "record" : "verify";
+/** D-24 merge: RECORD that adds only the cells of routes the recording does not know yet. */
+const MERGE = MODE === "record" && process.env.NEUTRALITY_MATRIX_MERGE === "1";
 
 /**
  * The definition line of the legacy role guard. RECORD mode requires it in `middleware/auth.ts`:
@@ -154,6 +167,13 @@ function cellKey(actor: ActorKind, route: string, variant: string): string {
   return `${actor} | ${route} | ${variant}`;
 }
 
+/** The route part of a cell key (`<actor> | <METHOD path> | <variant>`). */
+function routeOfKey(key: string): string {
+  const parts = key.split(" | ");
+  if (parts.length !== 3) throw new Error(`matrix: malformed cell key ${JSON.stringify(key)}`);
+  return parts[1];
+}
+
 const GLOBAL_LABELS: ReadonlyMap<string, string> = new Map([
   [SYSTEM_ROLE_IDS.ADMIN, "system.role.admin"],
   [SYSTEM_ROLE_IDS.MANAGER, "system.role.manager"],
@@ -166,6 +186,10 @@ describe("permission neutrality matrix (Issue #75)", () => {
   const fixtures = new Map<ActorKind, ActorFixture>();
   const collected = new Map<string, CellResult>();
   let recording: Record<string, CellResult> | undefined;
+  /** MERGE: the routes the existing recording already holds cells for. */
+  let recordedRoutes: ReadonlySet<string> = new Set();
+  /** MERGE: every key of a known route whose cell differs from, or is missing in, the recording. */
+  const mergeRefusals: string[] = [];
   /** Set when `beforeAll` finished: a refused or failed setup must never overwrite a recording
    * with an empty cell set. */
   let setupComplete = false;
@@ -219,7 +243,7 @@ describe("permission neutrality matrix (Issue #75)", () => {
       fixtures.set(actor, await buildActorTenant(app, actor));
     }
 
-    if (MODE === "verify") {
+    if (MODE === "verify" || MERGE) {
       if (!existsSync(VERIFY_IN)) {
         throw new Error(
           `matrix: no recording at ${VERIFY_IN} — run with NEUTRALITY_MATRIX_MODE=record first`,
@@ -228,6 +252,7 @@ describe("permission neutrality matrix (Issue #75)", () => {
       recording = (
         JSON.parse(readFileSync(VERIFY_IN, "utf8")) as { cells: Record<string, CellResult> }
       ).cells;
+      recordedRoutes = new Set(Object.keys(recording).map(routeOfKey));
     }
     setupComplete = true;
   }, 600_000);
@@ -235,7 +260,28 @@ describe("permission neutrality matrix (Issue #75)", () => {
   afterAll(async () => {
     vi.useRealTimers();
     stubs?.restore();
-    if (MODE === "record" && setupComplete) {
+    if (MERGE && setupComplete) {
+      if (mergeRefusals.length > 0 || recording === undefined) {
+        console.error(
+          `matrix: MERGE refused — ${mergeRefusals.length} cell(s) of already recorded routes ` +
+            `differ from or are missing in the recording; nothing was written:\n` +
+            mergeRefusals.map((key) => `  ${key}`).join("\n"),
+        );
+      } else {
+        const merged = new Map<string, CellResult>(Object.entries(recording));
+        const added = [...collected.entries()].filter(
+          ([key]) => !recordedRoutes.has(routeOfKey(key)),
+        );
+        for (const [key, result] of added) merged.set(key, result);
+        mkdirSync(dirname(RECORD_OUT), { recursive: true });
+        writeFileSync(RECORD_OUT, serializeRecording(merged));
+        const addedRoutes = [...new Set(added.map(([key]) => routeOfKey(key)))].sort();
+        console.warn(
+          `matrix: MERGE added ${added.length} cell(s) for ${addedRoutes.length} new route(s):\n` +
+            addedRoutes.map((route) => `  ${route}`).join("\n"),
+        );
+      }
+    } else if (MODE === "record" && setupComplete) {
       mkdirSync(dirname(RECORD_OUT), { recursive: true });
       writeFileSync(RECORD_OUT, serializeRecording(collected));
       const serverErrors = [...collected.entries()].filter(([, r]) => r.status >= 500);
@@ -367,6 +413,17 @@ describe("permission neutrality matrix (Issue #75)", () => {
               variant,
             });
             collected.set(key, result);
+            if (MERGE && recordedRoutes.has(route)) {
+              // A known route: its cells must match the recording exactly — MERGE never changes
+              // or adds a cell of a route the recording already holds.
+              const expected = recording?.[key];
+              const normalized = JSON.parse(JSON.stringify(result)) as CellResult;
+              if (expected === undefined || !isDeepStrictEqual(normalized, expected)) {
+                mergeRefusals.push(key);
+              }
+              expect.soft(expected, `${key}: not recorded`).toBeDefined();
+              if (expected !== undefined) expect.soft(result, key).toEqual(expected);
+            }
             if (MODE === "verify") {
               const expected = recording?.[key];
               expect.soft(expected, `${key}: not recorded`).toBeDefined();

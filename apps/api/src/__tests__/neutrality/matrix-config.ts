@@ -680,6 +680,18 @@ export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
   "DELETE /api/v1/integrations/phorest/mappings/:phorestStaffId": mutate({
     phorestStaffId: "phorestMapping",
   }),
+  // Salon coupling (65b, arrived with origin/main after the recording; D-24). The fixture holds no
+  // coupling — one would change what the config, test, staff and sync cells above resolve. So the
+  // three cells run back to back: create a coupling of the second salon, list it (a GET placed in
+  // the mutate phase on purpose, so its record carries the coupling rather than an empty list),
+  // delete it again. Nothing between them reads couplings, and after the delete the tenant is as
+  // before. No route here calls Phorest.
+  "POST /api/v1/integrations/phorest/couplings": mutateWith(undefined, {
+    salonId: "$tenant.salon",
+    externalBranchId: "matrix-branch",
+  }),
+  "GET /api/v1/integrations/phorest/couplings": mutate(),
+  "DELETE /api/v1/integrations/phorest/couplings/:salonId": mutate({ salonId: "salon" }),
 
   // leave requests
   "POST /api/v1/leave/requests": {
