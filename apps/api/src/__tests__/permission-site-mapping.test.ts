@@ -76,7 +76,6 @@ const EXCLUDE_DIRS = new Set(["__tests__", "node_modules", "dist"]);
 const REQUIRE_ROLE_DETECTOR = /requireRole\(|requirePermission\(|requireAnyPermission\(/;
 /** The guards' own definition lines — never a call site. */
 const REQUIRE_ROLE_DEFINITION_MARKERS = [
-  "export function requireRole",
   "export function requirePermission",
   "export function requireAnyPermission",
 ];

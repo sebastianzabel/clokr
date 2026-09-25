@@ -141,5 +141,11 @@ export {
   requireAnyPermission,
 } from "./request-permissions";
 export type { EffectiveGrants } from "./request-permissions";
-export { systemRoleIdForLegacyRole, deriveCompatRole, compatRoleForUser } from "./compat-role";
-export type { CompatRoleAssignmentRow } from "./compat-role";
+export {
+  systemRoleIdForLegacyRole,
+  deriveCompatRole,
+  compatRoleForUser,
+  parseCompatRoleFilter,
+  compatRoleUserWhere,
+} from "./compat-role";
+export type { CompatRoleAssignmentRow, CompatRoleFilter } from "./compat-role";

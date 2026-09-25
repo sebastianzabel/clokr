@@ -3,7 +3,15 @@ import PDFDocument from "pdfkit";
 import iconv from "iconv-lite";
 import { formatInTimeZone } from "date-fns-tz";
 import { requireAuth } from "../middleware/auth";
-import { getHolidays, STATE_MAP, requirePermission, permissionReach } from "../contexts/platform";
+import {
+  getHolidays,
+  STATE_MAP,
+  requirePermission,
+  permissionReach,
+  parseCompatRoleFilter,
+  compatRoleUserWhere,
+  type CompatRoleFilter,
+} from "../contexts/platform";
 import {
   SECTION9_LEGEND,
   generateMonthlyReportPdf,
@@ -1575,9 +1583,11 @@ export async function reportRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Ungültige Jahr- oder Monatsangabe" });
       }
 
-      // ALLOWLIST validation — never pass untrusted string to Prisma enum
-      const roleFilter: "EMPLOYEE" | "MANAGER" | undefined =
-        role === "MANAGER" ? "MANAGER" : role === "EMPLOYEE" ? "EMPLOYEE" : undefined;
+      // ALLOWLIST validation — never pass untrusted string to Prisma enum. The parse and the
+      // where-fragment live in contexts/platform/compat-role.ts, the one module that compares role
+      // values (Phase 75b, Issue #75, D-19): this filters the LISTED employees, it decides nothing
+      // about the caller.
+      const roleFilter: CompatRoleFilter | undefined = parseCompatRoleFilter(role);
 
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, m, tz);
@@ -1602,7 +1612,7 @@ export async function reportRoutes(app: FastifyInstance) {
         where: {
           tenantId: req.user.tenantId,
           exitDate: null,
-          user: { isActive: true, ...(roleFilter ? { role: roleFilter } : {}) },
+          user: { isActive: true, ...compatRoleUserWhere(roleFilter) },
         },
         include: buildEmployeeInclude(start, end),
         orderBy: { lastName: "asc" },

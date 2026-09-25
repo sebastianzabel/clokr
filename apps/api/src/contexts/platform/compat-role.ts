@@ -131,6 +131,31 @@ export async function compatRoleForUser(
   return deriveCompatRole(tenantId, rows);
 }
 
+// ── Report data filter (Phase 75b Plan 12) ──────────────────────────────────────────────────────
+
+/** The compat roles a report may filter its LISTED employees by (the company monthly PDF). */
+export type CompatRoleFilter = "EMPLOYEE" | "MANAGER";
+
+/**
+ * Allowlist parse of a report's `role` query parameter: `MANAGER` or `EMPLOYEE`, anything else
+ * (absent, `ADMIN`, garbage) → no filter. The untrusted string never reaches a Prisma enum. This
+ * is a data filter on the listed employees, not an access decision about the caller — it lives
+ * here because this module is the one place that compares role values (D-14, D-19).
+ */
+export function parseCompatRoleFilter(value: unknown): CompatRoleFilter | undefined {
+  return value === "MANAGER" ? "MANAGER" : value === "EMPLOYEE" ? "EMPLOYEE" : undefined;
+}
+
+/**
+ * The `User` where-fragment "users whose compat role is `filter`" (`{}` without a filter), to be
+ * spread into a `user: { … }` relation filter. The column `User.role` IS the compat role: the
+ * legacy value for a fallback user, the derived value written back on every assignment change
+ * (D-14) for everyone else.
+ */
+export function compatRoleUserWhere(filter: CompatRoleFilter | undefined): { role?: Role } {
+  return filter ? { role: filter } : {};
+}
+
 // ── Write half (Phase 75b Plan 11) ──────────────────────────────────────────────────────────────
 
 /** A stored role assignment a write-half function created or removed, for the caller's audit. */

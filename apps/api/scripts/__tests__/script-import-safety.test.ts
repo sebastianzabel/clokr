@@ -102,3 +102,30 @@ describe("importing lint-tenant-scoping.ts for its exports (GH #203 regression)"
     }
   });
 });
+
+/**
+ * Phase 75b Plan 12 (Issue #75, D-19) — `lint-role-checks.ts` walks `apps/api/src` and prints a
+ * report from its guarded `main()`. Same proof as the tenant-scoping block above: importing it for
+ * `findRoleChecks` (as `lint-role-checks.test.ts` does) must not scan, print or set an exit code.
+ */
+describe("importing lint-role-checks.ts for its exports (GH #203 regression)", () => {
+  it("never scans the repository or prints a report as a side effect of import", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const previousExitCode = process.exitCode;
+    try {
+      const mod = await import("../lint-role-checks");
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(typeof mod.findRoleChecks).toBe("function");
+      expect(typeof mod.run).toBe("function");
+      expect(logSpy).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(previousExitCode);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      process.exitCode = previousExitCode;
+    }
+  });
+});

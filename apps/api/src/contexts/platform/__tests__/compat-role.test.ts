@@ -16,7 +16,9 @@ import type { Role } from "@clokr/db";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import {
   compatRoleForUser,
+  compatRoleUserWhere,
   deriveCompatRole,
+  parseCompatRoleFilter,
   legacyFallbackAlreadyYields,
   materializeLegacyRoleAssignment,
   replaceSystemRoleAssignment,
@@ -130,6 +132,23 @@ describe("compat role — pure derivation (D-14)", () => {
       expect(deriveCompatRole(TENANT, [systemRow(slot as SystemRoleSlot)])).toBe(role);
     },
   );
+});
+
+describe("compat role — report data filter (Phase 75b Plan 12, D-19)", () => {
+  it("parseCompatRoleFilter allowlists MANAGER and EMPLOYEE; everything else is no filter", () => {
+    expect(parseCompatRoleFilter("MANAGER")).toBe("MANAGER");
+    expect(parseCompatRoleFilter("EMPLOYEE")).toBe("EMPLOYEE");
+    for (const other of ["ADMIN", "SUPERADMIN", "manager", "", undefined, null, 1, ["MANAGER"]]) {
+      expect(parseCompatRoleFilter(other)).toBeUndefined();
+    }
+  });
+
+  it("compatRoleUserWhere yields exactly the fragment the company PDF spread before the move", () => {
+    expect(compatRoleUserWhere("MANAGER")).toEqual({ role: "MANAGER" });
+    expect(compatRoleUserWhere("EMPLOYEE")).toEqual({ role: "EMPLOYEE" });
+    expect(compatRoleUserWhere(undefined)).toEqual({});
+    expect(Object.keys(compatRoleUserWhere(undefined))).toEqual([]);
+  });
 });
 
 describe("compat role — compatRoleForUser against the database (D-14, AC-75-5)", () => {
