@@ -37,9 +37,20 @@
  * only compares bytes would call that "conform" without the guard ever running. The sweep below
  * requires BOTH arms to be exactly 404 with byte-equal bodies; any other agreeing status is reported
  * as AMBIGUOUS, naming the route, both statuses, and both bodies.
+ *
+ * ── Issue #333 — the same sweep, with an API-key bearer instead of a JWT ─────────────────────────
+ * Before #333's fix, an API-key caller's `apikey:<id>` subject failed the AuditLog.userId foreign
+ * key on the very `CROSS_TENANT_ACCESS_DENIED` audit write this probe's tenant guard makes, turning
+ * an otherwise-identical 404 into a 500 — a tenant-membership oracle the original JWT-only sweep
+ * could not see. `runOracleSweep()` below is the JWT sweep's own loop body, extracted so it can run
+ * unchanged a second time against `tenantA`'s admin-scoped API key. Both sweeps hit the SAME
+ * fixtures; that is safe only because a conformant tenant guard rejects before any mutation runs
+ * (proven by the "fixture integrity after the sweep" tests further down), so two passes against the
+ * same foreign-tenant rows cannot compound state.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { randomBytes, createHash } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
@@ -353,11 +364,29 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
     let app: FastifyInstance;
     let tenantA: FixtureBundle;
     let tenantB: FixtureBundle;
+    // Issue #333: an admin-scoped API key for tenantA, so the sweep below can run a second time
+    // with a `clk_` bearer instead of a JWT — same permission reach as tenantA.adminToken
+    // (request-permissions.ts maps the "admin" scope to the ADMIN system role), but a subject
+    // shaped `apikey:<id>` rather than a User.id.
+    let tenantAApiKeyToken: string;
 
     beforeAll(async () => {
       app = await getTestApp();
       tenantA = await seedTestData(app, "t10009-a");
       tenantB = await seedTestData(app, "t10009-b");
+
+      const rawApiKey = `clk_${randomBytes(24).toString("hex")}`;
+      await app.prisma.apiKey.create({
+        data: {
+          tenantId: tenantA.tenant.id,
+          name: "t10009-api-key",
+          keyHash: createHash("sha256").update(rawApiKey).digest("hex"),
+          keyPrefix: rawApiKey.slice(0, 8),
+          scopes: ["admin"],
+          createdBy: tenantA.adminUser.id,
+        },
+      });
+      tenantAApiKeyToken = rawApiKey;
 
       // Issue #309 fixture: a real, PENDING LeaveRequest owned by tenantB's employee. Fixed
       // dates (not `toISOString().slice(0,10)`-relative — this project's known time-bomb fixture
@@ -503,7 +532,9 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
       }
     });
 
-    it(`sweeps all ${probeEntries.length} probe route(s) against a foreign-tenant id and an unknown id with tenantA's ADMIN token — destructive routes run last so a broken guard only ever damages this probe's own disposable fixture (D-03b/D-07); every mismatch or ambiguity accumulates and is reported together so one non-conformant route does not hide the rest`, async () => {
+    /** The sweep body shared by the JWT run and the API-key run (Issue #333): every `probe` route,
+     * foreign-tenant id vs. unknown id, byte-compared. `token` is the only thing that varies. */
+    async function runOracleSweep(token: string): Promise<string[]> {
       const failures: string[] = [];
       let unknownCounter = 0;
 
@@ -561,20 +592,8 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         const query = entry.route === MONTH_SALDO_ROUTE ? "?year=2026&month=1" : "";
 
         const [foreignRes, unknownRes] = await Promise.all([
-          sendProbe(
-            app,
-            method as ProbeMethod,
-            foreignUrl + query,
-            tenantA.adminToken,
-            entry.minimalBody,
-          ),
-          sendProbe(
-            app,
-            method as ProbeMethod,
-            unknownUrl + query,
-            tenantA.adminToken,
-            entry.minimalBody,
-          ),
+          sendProbe(app, method as ProbeMethod, foreignUrl + query, token, entry.minimalBody),
+          sendProbe(app, method as ProbeMethod, unknownUrl + query, token, entry.minimalBody),
         ]);
 
         const bothNotFound = foreignRes.statusCode === 404 && unknownRes.statusCode === 404;
@@ -598,6 +617,16 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         }
       }
 
+      return failures;
+    }
+
+    it(`sweeps all ${probeEntries.length} probe route(s) against a foreign-tenant id and an unknown id with tenantA's ADMIN token — destructive routes run last so a broken guard only ever damages this probe's own disposable fixture (D-03b/D-07); every mismatch or ambiguity accumulates and is reported together so one non-conformant route does not hide the rest`, async () => {
+      const failures = await runOracleSweep(tenantA.adminToken);
+      expect(failures.join("\n\n")).toBe("");
+    });
+
+    it(`sweeps all ${probeEntries.length} probe route(s) a second time with tenantA's admin-scoped API key instead of a JWT (Issue #333) — before the fix, the CROSS_TENANT_ACCESS_DENIED audit write on a foreign-tenant hit failed the AuditLog.userId foreign key (apikey:<id> is not a User.id), turning the 404 into a distinguishable 500; same fixtures, same guard, only the caller's subject shape differs`, async () => {
+      const failures = await runOracleSweep(tenantAApiKeyToken);
       expect(failures.join("\n\n")).toBe("");
     });
 

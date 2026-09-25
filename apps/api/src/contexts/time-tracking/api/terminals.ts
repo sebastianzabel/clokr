@@ -48,16 +48,16 @@ export async function terminalRoutes(app: FastifyInstance) {
         },
       });
 
-      // Audit log
-      await app.prisma.auditLog.create({
-        data: {
-          userId: req.user.sub,
-          action: "CREATE",
-          entity: "TerminalApiKey",
-          entityId: key.id,
-          newValue: { name: body.name, keyPrefix },
-          ipAddress: req.ip,
-        },
+      // Audit log — routed through app.audit() (Issue #333): a direct auditLog.create would
+      // write an API-key caller's `apikey:<id>` subject straight into AuditLog.userId, a
+      // foreign key onto User.
+      await app.audit({
+        userId: req.user.sub,
+        action: "CREATE",
+        entity: "TerminalApiKey",
+        entityId: key.id,
+        newValue: { name: body.name, keyPrefix },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       return { id: key.id, name: key.name, keyPrefix, rawKey, createdAt: key.createdAt };
@@ -137,14 +137,13 @@ export async function terminalRoutes(app: FastifyInstance) {
         data: { revokedAt: new Date() },
       });
 
-      await app.prisma.auditLog.create({
-        data: {
-          userId: req.user.sub,
-          action: "REVOKE",
-          entity: "TerminalApiKey",
-          entityId: id,
-          ipAddress: req.ip,
-        },
+      // Issue #333: routed through app.audit() — see the POST / handler's comment above.
+      await app.audit({
+        userId: req.user.sub,
+        action: "REVOKE",
+        entity: "TerminalApiKey",
+        entityId: id,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       return { success: true };
