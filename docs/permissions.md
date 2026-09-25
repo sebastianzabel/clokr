@@ -378,6 +378,13 @@ Die Dateien `contexts/platform/api/salons.ts` (Präfix `/api/v1/salons`, Phase 6
 `employees.ts` und `imports.ts` sind auf dem im Kopf genannten Stand von Phase 67b neu gemessen; jede
 Zeilennummer zeigt auf den `requireRole`-Aufruf der Route.
 
+Übergang in Phase 75b (Issue #75): Die Aufrufstellen werden Datei für Datei auf die Permission-Guards
+`requirePermission` / `requireAnyPermission` (`contexts/platform/request-permissions.ts`) umgestellt.
+Eine umgestellte Stelle behält ihre Zeile hier; die Spalte „heute“ bleibt der Neutralitätsvertrag,
+die Spalte „Permission“ ist jetzt die tatsächlich geprüfte. Umgestellt und auf Branch
+`feat/75-permissions-umstellung` neu gemessen: `contexts/platform/api/audit-logs.ts`. Plan 75b-12
+benennt diesen Abschnitt um, wenn keine `requireRole`-Stelle mehr übrig ist.
+
 | Stelle                                                     | Route                                           | heute   | Permission                     | Reichweite                                   |
 | ---------------------------------------------------------- | ----------------------------------------------- | ------- | ------------------------------ | -------------------------------------------- |
 | `composition/dashboard.ts:347`                             | `GET /team-week`                                | A, M    | `team-overview:read`           | ZUGEWIESEN                                   |
@@ -426,8 +433,8 @@ Zeilennummer zeigt auf den `requireRole`-Aufruf der Route.
 | `contexts/platform/api/api-keys.ts:52`                     | `POST /`                                        | A       | `api-key:manage`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/api-keys.ts:91`                     | `DELETE /:id`                                   | A       | `api-key:manage`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/api-keys.ts:121`                    | `GET /scopes`                                   | A       | `api-key:manage`               | ZUGEWIESEN                                   |
-| `contexts/platform/api/audit-logs.ts:19`                   | `GET /`                                         | A       | `audit-log:read`               | ZUGEWIESEN                                   |
-| `contexts/platform/api/audit-logs.ts:51`                   | `GET /:id`                                      | A       | `audit-log:read`               | ZUGEWIESEN                                   |
+| `contexts/platform/api/audit-logs.ts:21`                   | `GET /`                                         | A       | `audit-log:read`               | ZUGEWIESEN                                   |
+| `contexts/platform/api/audit-logs.ts:57`                   | `GET /:id`                                      | A       | `audit-log:read`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/employees.ts:317`                   | `GET /`                                         | A, M    | `employee:read`                | ZUGEWIESEN                                   |
 | `contexts/platform/api/employees.ts:392`                   | `POST /`                                        | A       | `employee:create`              | ZUGEWIESEN                                   |
 | `contexts/platform/api/employees.ts:643`                   | `PATCH /:id`                                    | A       | `employee:update`              | ZUGEWIESEN                                   |
@@ -576,20 +583,25 @@ oder `role` vergleicht. Die folgenden Treffer treffen keine Zugriffsentscheidung
 hier, damit jeder NEUE Treffer derselben Suche eingeordnet werden muss — als Handler-Prüfung oder
 hier, mit Begründung.
 
-| Stelle                                                     | Grund                                                                                                                        |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `app.ts:213`                                               | Die Rolle wird nur in den Log-Kontext der Anfrage geschrieben; keine Zugriffsentscheidung.                                   |
-| `composition/activity.ts:59`                               | Die Rolle wird nur in eine lokale Variable gelesen; die Entscheidung fällt in :67 und :212 und ist dort gezählt.             |
-| `composition/dashboard.ts:1032`                            | Die Rolle wird nur in eine lokale Variable gelesen; die Entscheidung fällt in der nächsten Zeile :1033 und ist dort gezählt. |
-| `composition/reports.ts:1577`                              | Filterparameter nach der Rolle der aufgelisteten Mitarbeiter im Sammel-PDF; keine Zugriffsentscheidung über den Aufrufer.    |
-| `composition/reports.ts:1650`                              | Die Rolle des aufgelisteten Mitarbeiters wird in die Berichtsdaten übernommen; keine Zugriffsentscheidung.                   |
-| `contexts/absence/api/leave.ts:735`                        | Die Rolle des Antragstellers wird in den Audit-Eintrag geschrieben; keine Zugriffsentscheidung.                              |
-| `contexts/platform/api/auth.ts:304`                        | Die Rolle wird beim Token-Refresh in das JWT übernommen; keine Zugriffsentscheidung.                                         |
-| `contexts/platform/api/auth.ts:563`                        | Die Rolle wird im Helfer issueTokens (Anmeldung, OTP-Bestätigung) in das JWT übernommen; keine Zugriffsentscheidung.         |
-| `contexts/platform/api/auth.ts:620`                        | Die Rolle wird im Helfer issueTokens in der Antwort an den Client zurückgegeben; keine Zugriffsentscheidung.                 |
-| `contexts/platform/api/employees.ts:725`                   | Die Rolle wird hier gesetzt, nicht geprüft; künftig `role-assignment:manage`, die Route selbst ist über :643 erfasst.        |
-| `contexts/time-tracking/plugins/attendance-checker.ts:169` | Auswahl der Benachrichtigungsempfänger im Cron-Job, kein Anfragekontext; gehört zu #75.                                      |
-| `middleware/auth.ts:76`                                    | Die Implementierung des Rollen-Guards selbst; jede Aufrufstelle steht einzeln im Abschnitt zu requireRole.                   |
+| Stelle                                                     | Grund                                                                                                                                                                                                                          |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `app.ts:213`                                               | Die Rolle wird nur in den Log-Kontext der Anfrage geschrieben; keine Zugriffsentscheidung.                                                                                                                                     |
+| `composition/activity.ts:59`                               | Die Rolle wird nur in eine lokale Variable gelesen; die Entscheidung fällt in :67 und :212 und ist dort gezählt.                                                                                                               |
+| `composition/dashboard.ts:1032`                            | Die Rolle wird nur in eine lokale Variable gelesen; die Entscheidung fällt in der nächsten Zeile :1033 und ist dort gezählt.                                                                                                   |
+| `composition/reports.ts:1577`                              | Filterparameter nach der Rolle der aufgelisteten Mitarbeiter im Sammel-PDF; keine Zugriffsentscheidung über den Aufrufer.                                                                                                      |
+| `composition/reports.ts:1650`                              | Die Rolle des aufgelisteten Mitarbeiters wird in die Berichtsdaten übernommen; keine Zugriffsentscheidung.                                                                                                                     |
+| `contexts/absence/api/leave.ts:735`                        | Die Rolle des Antragstellers wird in den Audit-Eintrag geschrieben; keine Zugriffsentscheidung.                                                                                                                                |
+| `contexts/platform/api/auth.ts:304`                        | Die Rolle wird beim Token-Refresh in das JWT übernommen; keine Zugriffsentscheidung.                                                                                                                                           |
+| `contexts/platform/api/auth.ts:563`                        | Die Rolle wird im Helfer issueTokens (Anmeldung, OTP-Bestätigung) in das JWT übernommen; keine Zugriffsentscheidung.                                                                                                           |
+| `contexts/platform/api/auth.ts:620`                        | Die Rolle wird im Helfer issueTokens in der Antwort an den Client zurückgegeben; keine Zugriffsentscheidung.                                                                                                                   |
+| `contexts/platform/api/employees.ts:725`                   | Die Rolle wird hier gesetzt, nicht geprüft; künftig `role-assignment:manage`, die Route selbst ist über :643 erfasst.                                                                                                          |
+| `contexts/platform/request-permissions.ts:143`             | Implementierung der Permission-Prüfung: Der Altrollen-Rückfall (D-08) liest die Spalte `User.role` eines Nutzers ohne gespeicherte Zuweisung und übergibt sie an `systemRoleIdForLegacyRole`; keine eigene Rollenentscheidung. |
+| `contexts/platform/request-permissions.ts:200`             | Implementierung der Permission-Prüfung: `permissionReach` fragt die ZUGEWIESEN-Permission über `hasPermission` ab; jede Aufrufstelle steht einzeln in ihrem Abschnitt.                                                         |
+| `contexts/platform/request-permissions.ts:201`             | Implementierung der Permission-Prüfung: `permissionReach` fragt die EIGENE-Permission über `hasPermission` ab; jede Aufrufstelle steht einzeln in ihrem Abschnitt.                                                             |
+| `contexts/platform/request-permissions.ts:216`             | Implementierung der Permission-Prüfung: der Guard `requirePermission` selbst; jede Aufrufstelle steht einzeln im Abschnitt zu den Guards.                                                                                      |
+| `contexts/platform/request-permissions.ts:236`             | Implementierung der Permission-Prüfung: der Guard `requireAnyPermission` selbst; jede Aufrufstelle steht einzeln im Abschnitt zu den Guards.                                                                                   |
+| `contexts/time-tracking/plugins/attendance-checker.ts:169` | Auswahl der Benachrichtigungsempfänger im Cron-Job, kein Anfragekontext; gehört zu #75.                                                                                                                                        |
+| `middleware/auth.ts:76`                                    | Die Implementierung des Rollen-Guards selbst; jede Aufrufstelle steht einzeln im Abschnitt zu requireRole.                                                                                                                     |
 
 ## Keine Permissions
 

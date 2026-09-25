@@ -1023,7 +1023,7 @@
       "category": "nicht anwendbar",
       "params": null,
       "minimalBody": null,
-      "reason": "`:id` addresses an AuditLog, not Employee/LeaveType — fixture cannot produce a foreign instance. audit-logs.ts:54-57 uses a SCOPED `findFirst({id, user: {employee: {tenantId}}})`, byte-identical `{ error: \"Audit-Eintrag nicht gefunden\" }` 404 — conformant.",
+      "reason": "`:id` addresses an AuditLog, not Employee/LeaveType — fixture cannot produce a foreign instance. audit-logs.ts:60-63 uses a SCOPED `findFirst({id, user: {employee: {tenantId}}})`, byte-identical `{ error: \"Audit-Eintrag nicht gefunden\" }` 404 — conformant.",
       "ticket": null,
       "validatedAt": null
     }

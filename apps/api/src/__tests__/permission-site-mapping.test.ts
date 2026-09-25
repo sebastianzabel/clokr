@@ -13,6 +13,9 @@
  *   one row in either the `HANDLER_HEADING` section (an access decision) or the `EXCLUDED_HEADING`
  *   section (a hit that decides nothing, with a reason). The detector is deliberately broad: a NEW
  *   role check in any of these shapes turns this test red until someone classifies it.
+ * - Phase 75b (#75): during the call-site switch both detectors ALSO match the permission shapes
+ *   (`requirePermission(`/`requireAnyPermission(` resp. `hasPermission(`/`permissionReach(`), see
+ *   the constants below — a transitional union that plan 75b-12 replaces.
  *
  * Why per-file COUNTS and not line numbers: a fail-closed list pinned to line numbers goes stale
  * through unrelated edits in the same file (#309/#310 turned a branch red twice that way). An added
@@ -56,9 +59,32 @@ const DOC_PATH = join(REPO_ROOT, "docs", "permissions.md");
 const DOC_NAME = "docs/permissions.md";
 const EXCLUDE_DIRS = new Set(["__tests__", "node_modules", "dist"]);
 
-const REQUIRE_ROLE_DETECTOR = /requireRole\(/;
-const REQUIRE_ROLE_DEFINITION_MARKER = "export function requireRole";
-const HANDLER_DETECTOR = /\buser\.role\b|\brole\s*[!=]==/;
+/**
+ * Phase 75b (#75), TRANSITIONAL until plan 75b-12 finalises this gate: while the call sites move
+ * from the role guard to the permission guards one file at a time, a site counts as a guard hit
+ * in either shape. A mechanical same-line switch (`requireRole("ADMIN")` →
+ * `requirePermission("…")`) therefore keeps the per-file count, so the doc rows stay valid; a
+ * site that disappears, or a new one in either shape, still changes the count and turns this red.
+ * The doc section keeps its old heading until 75b-12 renames it together with this detector.
+ */
+const REQUIRE_ROLE_DETECTOR = /requireRole\(|requirePermission\(|requireAnyPermission\(/;
+/** The guards' own definition lines — never a call site. */
+const REQUIRE_ROLE_DEFINITION_MARKERS = [
+  "export function requireRole",
+  "export function requirePermission",
+  "export function requireAnyPermission",
+];
+/**
+ * Role reads and comparisons, plus (Phase 75b, transitional like the guard detector) the
+ * handler-level permission checks that replace them — so a handler check switched on the same
+ * line keeps its row, and every new check must be classified.
+ */
+const HANDLER_DETECTOR = /\buser\.role\b|\brole\s*[!=]==|\bhasPermission\(|\bpermissionReach\(/;
+/** The checks' own definition lines — never a handler check. */
+const HANDLER_DEFINITION_MARKERS = [
+  "export async function hasPermission",
+  "export async function permissionReach",
+];
 
 const REQUIRE_ROLE_HEADING = "## Aufrufstellen von requireRole";
 const HANDLER_HEADING = "## Handler-Prüfungen";
@@ -103,11 +129,17 @@ function isCommentLine(line: string): boolean {
 }
 
 function isRequireRoleHit(line: string): boolean {
-  return REQUIRE_ROLE_DETECTOR.test(line) && !line.includes(REQUIRE_ROLE_DEFINITION_MARKER);
+  return (
+    REQUIRE_ROLE_DETECTOR.test(line) &&
+    !REQUIRE_ROLE_DEFINITION_MARKERS.some((marker) => line.includes(marker))
+  );
 }
 
 function isHandlerHit(line: string): boolean {
-  return HANDLER_DETECTOR.test(line);
+  return (
+    HANDLER_DETECTOR.test(line) &&
+    !HANDLER_DEFINITION_MARKERS.some((marker) => line.includes(marker))
+  );
 }
 
 /** Matching LINES per file (a line counts once even if the pattern occurs twice on it). */

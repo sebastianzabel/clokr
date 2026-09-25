@@ -128,3 +128,15 @@ export {
   isSystemRoleId,
 } from "./system-roles";
 export type { SystemRoleSlot } from "./system-roles";
+// Phase 75b (#75): the request-scoped permission resolver and the guards/checks every call site
+// uses instead of a legacy role (D-08..D-12, D-30), plus the ONE compat-role derivation (D-14).
+export {
+  effectiveGrants,
+  hasPermission,
+  permissionReach,
+  requirePermission,
+  requireAnyPermission,
+} from "./request-permissions";
+export type { EffectiveGrants } from "./request-permissions";
+export { systemRoleIdForLegacyRole, deriveCompatRole, compatRoleForUser } from "./compat-role";
+export type { CompatRoleAssignmentRow } from "./compat-role";
