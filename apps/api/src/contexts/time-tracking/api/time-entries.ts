@@ -88,6 +88,11 @@ const manualEntrySchema = z.object({
   breaks: z.array(breakSlotSchema).optional(),
   grantId: z.string().uuid().optional(), // Phase 76.29 Plan 03: pre-approved RetroEntryRequest id
   reason: z.string().trim().min(1).optional(), // Phase 96 (RETRO-10): entry-first Nachtrag reason
+  // Phase 68b (issue #68), D-07/D-10: the place of work, honoured on all three POST branches
+  // (plain manual, grant/CORRECTION, pending Zeitnachtrag). `null` is deliberately not accepted —
+  // a caller either names a salon or leaves the field out entirely. Validated tenant-scoped and
+  // active-only by `resolveEntrySalon`.
+  salonId: z.string().uuid().optional(),
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
@@ -1063,13 +1068,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         }
       }
 
-      // Phase 68b (issue #68), D-08/D-10: resolve the entry's salon BEFORE the grant flip,
+      // Phase 68b (issue #68), D-07/D-08/D-10: resolve the entry's salon BEFORE the grant flip,
       // the RetroEntryRequest create and the plain create, so a rejection (404/400) leaves zero
-      // state change. Plan 02 adds the explicit `salonId` body field to this same call.
+      // state change. An explicit salon (body.salonId) is stored UNCHANGED even when
+      // `salonForDay` would suggest another, and the entry is not marked invalid for it (issue
+      // #68: "Ein Abweichen vom Muster aus #67 ist kein Fehler") — any caller allowed to use this
+      // route, including an employee filing their own Zeitnachtrag, may name a salon.
       const salonResolution = await resolveEntrySalon(app.prisma, {
         tenantId: user.tenantId,
         employeeId,
         startTime: newStart,
+        explicitSalonId: body.salonId,
       });
       if (!salonResolution.ok) {
         return reply.code(salonResolution.status).send(salonResolution.body);
