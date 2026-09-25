@@ -347,7 +347,7 @@ Folge-Issue: [#206](https://github.com/sebastianzabel/clokr/issues/206).
 
 ## Phase 75b — Systemrollen und Migration der Alt-Rollen (Issue #75)
 
-**Was die Migration tut.** `packages/db/prisma/migrations/20260925003815_system_roles_and_legacy_role_assignments`
+**Was die Migration tut.** `packages/db/prisma/migrations/20260925070842_system_roles_and_legacy_role_assignments`
 ist eine reine Datenmigration — keine Tabelle, keine Spalte, kein Index, kein Typ wird angelegt,
 geändert oder gelöscht (`prisma migrate diff` bleibt leer). Sie
 

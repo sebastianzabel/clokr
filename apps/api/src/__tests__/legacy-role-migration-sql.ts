@@ -43,7 +43,7 @@ function locateMigrationDir(): string {
   return matches[0];
 }
 
-/** The migration directory's name, e.g. `20260925003815_system_roles_and_legacy_role_assignments`. */
+/** The migration directory's name, e.g. `20260925070842_system_roles_and_legacy_role_assignments`. */
 export const LEGACY_ROLE_MIGRATION_DIR = locateMigrationDir();
 
 const MIGRATION_PATH = join(MIGRATIONS_ROOT, LEGACY_ROLE_MIGRATION_DIR, "migration.sql");
