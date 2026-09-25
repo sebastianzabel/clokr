@@ -1,5 +1,5 @@
 /**
- * Phase 68b (issue #68) — D-02/D-03/D-04, AC-1/AC-2/AC-3/AC-5.
+ * Phase 68b (issue #68) — D-02/D-03/D-04, AC-1/AC-2/AC-3/AC-5 (Task 1), D-05/AC-4 (Task 2).
  *
  * Executes the REAL migration text (never a restatement of it) — same pattern as
  * `shift-salon-migration.test.ts` (Phase 325): `readDataSection()` resolves the migration file by
@@ -13,16 +13,21 @@
  * transaction (Postgres DDL is transactional) to recreate the legacy, pre-migration shape. That
  * `ALTER TABLE ... DROP NOT NULL` takes an ACCESS EXCLUSIVE lock on TimeEntry until the transaction
  * ends — while it is open, nothing on another connection may read TimeEntry (in particular no
- * `app.inject`). Plan 03's Task 2 (D-05/AC-4 saldo neutrality + the working-time-account structural
- * guard) extends this same file with two more `describe` blocks that reuse the module-scoped
- * `readDataSection`/`splitDataSectionStatements` helpers below.
+ * `app.inject`). This is why the saldo-neutrality proof (Task 2, below) uses a SEPARATE, COMMITTED,
+ * schema-neutral replay instead and reads the saldo only before the transaction starts and after it
+ * has committed.
+ *
+ * Second half of this file (Task 2): a committed, schema-neutral replay of ONLY the backfill's
+ * `UPDATE "TimeEntry"` statement proves the backfill moves no saldo, no `SaldoSnapshot` row and no
+ * lock flag; a structural walk proves `contexts/working-time-account/` never reads `salonId`.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { readdirSync, statSync } from "node:fs";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS, findDefaultSalon } from "../contexts/platform";
 import { invalidReasonFields } from "../contexts/time-tracking/invalid-reason";
 
@@ -648,5 +653,205 @@ describe("Phase 68b — partial unique index untouched (AC-5)", () => {
     expect(uniqueIdx.indexdef).toContain('WHERE ("deletedAt" IS NULL)');
     const salonIdx = indexes.find((i) => i.indexname === "TimeEntry_salonId_idx")!;
     expect(salonIdx.indexdef).toContain('"salonId"');
+  });
+});
+
+/**
+ * Phase 68b (issue #68), D-05/AC-4 (Task 2) — the backfill's `UPDATE "TimeEntry"` statement is
+ * proven to move no saldo, no `SaldoSnapshot` row and no lock flag.
+ *
+ * Deliberately COMMITTED and schema-neutral: the `ALTER TABLE ... DROP NOT NULL` above takes an
+ * ACCESS EXCLUSIVE lock on TimeEntry that forbids any HTTP read (`app.inject`) while the
+ * transaction is open — so the saldo can only be read BEFORE the replay starts and AFTER it has
+ * committed. The final `SET NOT NULL` inside the SAME transaction restores the schema, and any
+ * failure anywhere in the transaction rolls the whole thing back (nothing is left half-migrated).
+ */
+describe("Phase 68b — saldo neutrality of the backfill (D-05, AC-4)", () => {
+  let app: FastifyInstance;
+  let seed: Awaited<ReturnType<typeof seedTestData>>;
+  let salonZ: { id: string };
+  let fixtureEntryIds: string[];
+
+  // A fixed, PAST "now" inside month M (March 2026) — Feb 2026 (M-1) is closeable, March is the
+  // still-open month. Only PAST instants are used (a fake "now" beyond the access token's expiry
+  // would answer 401).
+  const PINNED_NOW = new Date("2026-03-16T10:00:00.000Z");
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    seed = await seedTestData(app, "temig-saldo"); // seed.salonId = the tenant's default salon (D)
+    salonZ = await createTestSalon(app.prisma, seed.tenant.id, { name: "Salon Z" });
+
+    // Hire date at the start of month M-1 (Feb 2026) so close-month's "close sequentially from
+    // Jan 1 of the year" guard has nothing earlier in the year to demand first.
+    await app.prisma.employee.update({
+      where: { id: seed.employee.id },
+      data: { hireDate: new Date("2026-02-01T00:00:00Z") },
+    });
+
+    // Workdays in Feb 2026 (closed month) and March 2026 (open month), all stored on Z.
+    const febDates = ["2026-02-03", "2026-02-04", "2026-02-05"];
+    const marchDates = ["2026-03-02", "2026-03-03"];
+    const ids: string[] = [];
+    for (const d of [...febDates, ...marchDates]) {
+      const entry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: seed.employee.id,
+          salonId: salonZ.id,
+          date: new Date(`${d}T00:00:00Z`),
+          startTime: new Date(`${d}T07:00:00Z`),
+          endTime: new Date(`${d}T15:30:00Z`),
+          breakMinutes: 30,
+        },
+      });
+      ids.push(entry.id);
+    }
+    fixtureEntryIds = ids;
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(PINNED_NOW);
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/overtime/close-month",
+        headers: { authorization: `Bearer ${seed.adminToken}` },
+        payload: { employeeId: seed.employee.id, year: 2026, month: 2, confirmGaps: true },
+      });
+      expect(res.statusCode).toBe(201);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, seed.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  async function fetchOvertimeBody(): Promise<unknown> {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/overtime/${seed.employee.id}`,
+      headers: { authorization: `Bearer ${seed.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    return JSON.parse(res.body);
+  }
+
+  async function fetchSnapshots() {
+    return app.prisma.saldoSnapshot.findMany({
+      where: { employeeId: seed.employee.id },
+      orderBy: [{ periodStart: "asc" }, { id: "asc" }],
+    });
+  }
+
+  async function fetchEntryFlags() {
+    return app.prisma.timeEntry.findMany({
+      where: { id: { in: fixtureEntryIds } },
+      select: { id: true, isLocked: true, lockedAt: true, updatedAt: true, salonId: true },
+      orderBy: { id: "asc" },
+    });
+  }
+
+  it("replaying only the backfill UPDATE, committed and schema-neutral, changes no saldo/SaldoSnapshot/lock-flag but does move the fixture entries' salon", async () => {
+    const dataSection = readDataSection();
+    const statements = splitDataSectionStatements(dataSection);
+    const updateStmt = statements.find((s) => s.trim().startsWith('UPDATE "TimeEntry"'));
+    expect(updateStmt).toBeDefined();
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(PINNED_NOW);
+    try {
+      // Warm-up GET first, so any self-healing snapshot/account write it performs has already
+      // happened before the "before" capture below.
+      await fetchOvertimeBody();
+
+      const bodyBefore = await fetchOvertimeBody();
+      const snapshotsBefore = await fetchSnapshots();
+      const flagsBefore = await fetchEntryFlags();
+      const auditCountBefore = await app.prisma.auditLog.count();
+
+      // Null the fixture entries' own salonId, then replay ONLY the backfill UPDATE — the global
+      // "INSERT INTO Salon WHERE NOT EXISTS" step is deliberately NOT run against committed data
+      // (it would create a real, permanent salon for every salonless tenant in the shared test DB).
+      await app.prisma.$transaction(
+        async (tx) => {
+          await tx.$executeRawUnsafe(
+            `ALTER TABLE "TimeEntry" ALTER COLUMN "salonId" DROP NOT NULL`,
+          );
+          for (const id of fixtureEntryIds) {
+            await tx.$executeRaw`UPDATE "TimeEntry" SET "salonId" = NULL WHERE "id" = ${id}`;
+          }
+          await tx.$executeRawUnsafe(updateStmt!);
+          await tx.$executeRawUnsafe(`ALTER TABLE "TimeEntry" ALTER COLUMN "salonId" SET NOT NULL`);
+        },
+        { timeout: 30000 },
+      );
+
+      const col = await app.prisma.$queryRaw<{ is_nullable: string }[]>`
+        SELECT is_nullable FROM information_schema.columns
+        WHERE table_name = 'TimeEntry' AND column_name = 'salonId'
+      `;
+      expect(col[0].is_nullable).toBe("NO");
+
+      const bodyAfter = await fetchOvertimeBody();
+      const snapshotsAfter = await fetchSnapshots();
+      const flagsAfter = await fetchEntryFlags();
+      const auditCountAfter = await app.prisma.auditLog.count();
+
+      // The backfill really re-assigned the nulled fixture entries — to D, the tenant default
+      // (Z had no TimeEntry rows left with salonId IS NULL of any OTHER tenant, so D is the
+      // unambiguous default-salon-rule answer for this tenant, per the migration's own ORDER BY).
+      for (const flag of flagsAfter) {
+        expect(flag.salonId).toBe(seed.salonId);
+      }
+
+      expect(bodyAfter).toEqual(bodyBefore);
+      expect(snapshotsAfter).toEqual(snapshotsBefore);
+      expect(snapshotsAfter.length).toBeGreaterThan(0);
+      expect(flagsAfter.map(({ salonId: _salonId, ...rest }) => rest)).toEqual(
+        flagsBefore.map(({ salonId: _salonId, ...rest }) => rest),
+      );
+      expect(auditCountAfter).toBe(auditCountBefore);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+/**
+ * Phase 68b (issue #68), D-05 structural half — Arbeitszeitkonto must stay salon-blind. #71/#91
+ * are the phases that will legitimately read the column and must update this guard on purpose.
+ */
+describe("Phase 68b — working-time-account never reads salonId (D-05 structural)", () => {
+  it("every production .ts file under contexts/working-time-account/ (excluding tests) is free of the token salonId", () => {
+    const root = join(__dirname, "..", "contexts", "working-time-account");
+
+    function walk(dir: string): string[] {
+      const out: string[] = [];
+      for (const entry of readdirSync(dir)) {
+        if (entry === "__tests__") continue;
+        const full = join(dir, entry);
+        const stat = statSync(full);
+        if (stat.isDirectory()) {
+          out.push(...walk(full));
+        } else if (entry.endsWith(".ts") && !entry.endsWith(".test.ts")) {
+          out.push(full);
+        }
+      }
+      return out;
+    }
+
+    const files = walk(root);
+    // Non-vacuous walk proof (anti-vacuity gate): a known file must be present and the count must
+    // be well above zero before the "no offenders" assertion is trusted.
+    expect(files.length).toBeGreaterThanOrEqual(20);
+    expect(files.some((f) => f.endsWith("close-employee-month.ts"))).toBe(true);
+
+    const offenders = files.filter((f) => /\bsalonId\b/.test(readFileSync(f, "utf8")));
+    expect(offenders).toEqual([]);
   });
 });
