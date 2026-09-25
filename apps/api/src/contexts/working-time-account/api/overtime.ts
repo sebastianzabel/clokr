@@ -9,8 +9,22 @@ import {
 } from "../overtime-balance"; // Phase 101B — same-context sibling now that the pair moved here
 import { getConfirmedCarryOver } from "../confirmed-saldo"; // Phase 97-01
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
-import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "../timezone";
-import { getHolidays, STATE_MAP, accessContextFromRequest, employeeScopeFor } from "../../platform";
+import {
+  getTenantTimezone,
+  dateStrInTz,
+  monthRangeUtc,
+  monthDayBounds,
+  todayInTz,
+} from "../timezone"; // Phase 91b Plan 05 (#91), D-10
+import {
+  getHolidays,
+  STATE_MAP,
+  accessContextFromRequest,
+  employeeScopeFor,
+  resolveAccessReach, // Phase 91b Plan 05 (#91), D-10/D-14
+  isStammsalonScopeMatch, // Phase 91b Plan 05 (#91), D-10/D-14
+  resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 05 (#91), D-10
+} from "../../platform";
 import { fetchCloseMonthData } from "../close-month-data"; // PERF-V1814-01
 import { periodStartWindow, isPeriodStartInMonth } from "../snapshot-period";
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared saldo core
@@ -139,6 +153,36 @@ export async function overtimeRoutes(app: FastifyInstance) {
       }
       if (overtimeReach === null) {
         return reply.code(403).send({ error: "Forbidden" });
+      }
+
+      // Phase 91b Plan 05 (Issue #91), D-10/D-14 — a ZUGEWIESEN reach may still be scoped to
+      // salons/persons (Plan 91b-01's D-05 gate change means a SALONS/PERSONS holder now passes
+      // the check above too). Only runs for the "reading someone else" branch — the EIGENE
+      // self-path above is untouched. Stichtag = today (tenant-local): this is a running/
+      // current-state saldo, D-10's own "no closed-period Stichtag" precedent.
+      if (overtimeReach === "ZUGEWIESEN" && req.user.employeeId !== employeeId) {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(app.prisma, access, "overtime:read:ZUGEWIESEN");
+        const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+        const today = todayInTz(tz);
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            employeeId,
+            today,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "OvertimeAccount",
+            entityId: account.id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Konto nicht gefunden" });
+        }
       }
 
       const threshold = Number(schedule?.overtimeThreshold ?? 60);
