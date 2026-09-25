@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { Prisma } from "@clokr/db";
 import { fromZonedTime } from "date-fns-tz";
-import { requireRole } from "../../../middleware/auth";
+import { hasPermission, requirePermission } from "../request-permissions";
 // eslint-disable-next-line no-restricted-imports -- E-2: the importer writes directly into time-tracking and working-time-account. Disappears in Block 2 (#102-#104). ADR 0001 Eintrag H.
 import {
   updateOvertimeAccount,
@@ -21,6 +21,14 @@ import {
   resolveHomeSalonForNewEmployee,
 } from "../facade/salon-assignments";
 import { auditSalonAssignmentEvent } from "../salon-assignment-audit";
+// Phase 75b Plan 11 (issue #75, D-15) — the imported user's system-role assignment.
+import { lockTenantForRoleChanges } from "../facade/role-assignments";
+import {
+  replaceSystemRoleAssignment,
+  requestedRoleNeedsRoleAssignmentManage,
+  syncCompatRoleColumn,
+} from "../compat-role";
+import { auditRoleAssignmentChange, createdAssignmentAuditEntry } from "../role-assignment-audit";
 import { tenantLocalDay, toAssignmentDto } from "../salon-assignment-rules";
 
 const employeeRowSchema = z.object({
@@ -84,7 +92,7 @@ export async function importRoutes(app: FastifyInstance) {
   // POST /employees — bulk import employees from CSV
   app.post("/employees", {
     schema: { tags: ["Import"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:import:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { csv } = z.object({ csv: z.string() }).parse(req.body);
       const rows = parseCsv(csv);
@@ -138,6 +146,20 @@ export async function importRoutes(app: FastifyInstance) {
               undefined,
             password: raw.password || raw.Passwort || undefined,
           });
+
+          // Issue #354 (pre-merge security review of #75): `employee:import` covers the imported
+          // profile, never handing out a system role — same rule as the single-employee create
+          // above (D-15 extension). A row asking for a role other than the schema default
+          // EMPLOYEE additionally needs role-assignment:manage; the row is rejected on its own,
+          // the rest of the import continues (the existing per-row error convention).
+          if (
+            requestedRoleNeedsRoleAssignmentManage(data.role) &&
+            !(await hasPermission(req, "role-assignment:manage:ZUGEWIESEN"))
+          ) {
+            throw new Error(
+              "Zum Vergeben einer Rolle außer Mitarbeiter fehlt die Berechtigung role-assignment:manage.",
+            );
+          }
 
           const hasPassword = !!data.password;
           const passwordHash = hasPassword
@@ -193,6 +215,24 @@ export async function importRoutes(app: FastifyInstance) {
 
             await createOvertimeAccount(tx, emp.id, req.user.tenantId);
 
+            // Phase 75b (D-15): the imported user's system-role assignment and its audit row, in
+            // this row's transaction — a failing row leaves no assignment behind. A grant takes
+            // the tenant lock but needs no holder count; the actor is resolved API-key safe
+            // (never `req.user.sub` as userId, #333). The column already holds the role, so the
+            // write-back is a no-op kept for one uniform path.
+            await lockTenantForRoleChanges(tx, req.user.tenantId);
+            const { created: roleAssignment } = await replaceSystemRoleAssignment(
+              tx,
+              req.user.tenantId,
+              user.id,
+              data.role,
+            );
+            await auditRoleAssignmentChange(app, req, tx, {
+              userId: user.id,
+              entries: roleAssignment !== null ? [createdAssignmentAuditEntry(roleAssignment)] : [],
+              compatRole: await syncCompatRoleColumn(tx, req.user.tenantId, user.id),
+            });
+
             // D-23: the imported employee's Stammsalon (HOME) row, open-ended from its
             // tenant-local hire day, in the SAME per-row transaction — audited CREATE.
             const homeAssignment = await createInitialHomeAssignment(
@@ -238,7 +278,7 @@ export async function importRoutes(app: FastifyInstance) {
   // POST /time-entries — bulk import time entries from CSV
   app.post("/time-entries", {
     schema: { tags: ["Import"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("time-entry:import:ZUGEWIESEN"),
     handler: async (req, _reply) => {
       const { csv } = z.object({ csv: z.string() }).parse(req.body);
       const rows = parseCsv(csv);

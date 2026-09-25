@@ -633,8 +633,24 @@ import { readFileSync } from "node:fs";
 // measured AFTER those same 65b commits landed on `feat/65-phorest-kopplung`, so most of that
 // content was already counted there) is not reconstructed file-by-file here; the authoritative
 // numbers are the reporter's own count on the actually-merged tree, not a summed diff.
-const MIN_FILES = 321;
-const MIN_TESTS = 3990;
+//
+// Phase 75b (Issue #75) Plan 13, 2026-09-25: re-measured on `feat/75-permissions-umstellung` after
+// merging `origin/main` @ 704b1ee5 (#353, phase 68b — the 321 / 3990 floor above) — `pnpm --filter
+// @clokr/api test`: `Test Files 331 passed (331)`, `Tests 5880 passed | 3 skipped (5883)`, zero
+// failures — `vitest-report.json` agrees (`testResults.length` 331, `numTotalTests` 5883). Phase
+// 75b's own baseline before any change was 301 / 3725 (2f6765cd); its branch measured 325 / 5825
+// before this merge. The ten test files 75b adds, with their case counts read from the same report:
+// `permission-neutrality-matrix.test.ts` 1707 (one case per actor × route, 2250 recorded cells),
+// `lint-role-checks.test.ts` 37, `compat-role.test.ts` 33, `request-permissions.test.ts` 26,
+// `notification-recipients-neutrality.test.ts` 19, `activity-auth-neutrality.test.ts` 17,
+// `employee-role-bridge.test.ts` 15, `system-roles-migration.test.ts` 12, `system-roles.test.ts` 10,
+// `user-ids-holding-permission.test.ts` 10 — 321 + 10 = 331 files, 3990 + 1886 = 5876 tests; the
+// remaining 7 are new cases in test files that already existed on `origin/main` (75b-12 names four
+// of them: the lint-guard-vacuity whole-set row for `lint-role-checks.ts`, two in
+// `permission-site-mapping.test.ts`, one in `script-import-safety.test.ts`; the rest of the split is
+// not reconstructed here). Numbers read from the reporter, not summed from a diff.
+const MIN_FILES = 331;
+const MIN_TESTS = 5883;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

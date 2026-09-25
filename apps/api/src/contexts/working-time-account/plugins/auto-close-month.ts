@@ -1,7 +1,7 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../timezone";
-import { getHolidays, STATE_MAP } from "../../platform";
+import { getHolidays, STATE_MAP, userIdsHoldingPermission } from "../../platform"; // Phase 75b Plan 10 (#75), D-16
 import { periodStartWindow } from "../snapshot-period";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared pure saldo core
@@ -127,11 +127,18 @@ export const autoCloseMonthPlugin = fp(async (app) => {
         // actually runs the Monatsabschluss — was silently not a recipient, so on such a tenant
         // the "Monatsabschluss nicht möglich" notification was written for nobody at all. Measured
         // while building the test fixture for #292: with an exempt ADMIN as the only manager, zero
-        // notifications were created. Recipients are therefore selected by ROLE only.
+        // notifications were created. Recipients are therefore selected by PERMISSION only
+        // (Phase 75b Plan 10, #75, D-16: holders of month-close:close — the recorded recipient
+        // set is unchanged), never by `isTimeTrackingExempt`.
+        const monthCloseCloseHolderIds = await userIdsHoldingPermission(
+          app.prisma,
+          tenant.id,
+          "month-close:close:ZUGEWIESEN",
+        );
         const managers = await app.prisma.employee.findMany({
           where: {
             tenantId: tenant.id,
-            user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+            user: { isActive: true, id: { in: monthCloseCloseHolderIds } },
           },
           include: { user: true },
         });

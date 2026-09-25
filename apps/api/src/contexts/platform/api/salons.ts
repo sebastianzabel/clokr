@@ -11,7 +11,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Prisma } from "@clokr/db";
-import { requireRole } from "../../../middleware/auth";
+import { requirePermission } from "../request-permissions";
 import { accessContextFromRequest } from "../access-context";
 import { auditSalonAssignmentEvent } from "../salon-assignment-audit";
 import { toAssignmentDto } from "../salon-assignment-rules";
@@ -120,7 +120,7 @@ export async function salonRoutes(app: FastifyInstance) {
       summary: "List the caller's tenant's salons",
       security: [{ bearerAuth: [] }],
     },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("salon:read:ZUGEWIESEN"),
     handler: async (req) => {
       const { includeInactive } = listQuerySchema.parse(req.query);
 
@@ -138,7 +138,7 @@ export async function salonRoutes(app: FastifyInstance) {
       summary: "Get a single salon by id",
       security: [{ bearerAuth: [] }],
     },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("salon:read:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const salon = await findSalon(app.prisma, req.user.tenantId, id);
@@ -154,7 +154,7 @@ export async function salonRoutes(app: FastifyInstance) {
       summary: "Create a salon",
       security: [{ bearerAuth: [] }],
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("salon:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const body = createSalonSchema.parse(req.body);
 
@@ -180,7 +180,7 @@ export async function salonRoutes(app: FastifyInstance) {
       summary: "Update a salon's master data",
       security: [{ bearerAuth: [] }],
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("salon:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       // D-07/D-13: validated BEFORE the lookup, so the register's `probe` minimalBody for this
@@ -218,7 +218,7 @@ export async function salonRoutes(app: FastifyInstance) {
       summary: "Deactivate a salon",
       security: [{ bearerAuth: [] }],
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("salon:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
 
@@ -275,7 +275,7 @@ export async function salonRoutes(app: FastifyInstance) {
       summary: "Re-activate an inactive salon",
       security: [{ bearerAuth: [] }],
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("salon:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
 

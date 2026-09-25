@@ -164,7 +164,7 @@ When an employee is "deleted" (DSGVO Art. 17), the system **anonymizes** instead
 - **Documents**: Absence documentPath → null
 - **§ 9-Vorgänge**: Section9Credit documentPath → null, reason → null (Zeilen bleiben erhalten — Korrektureintrag nach R7)
 - **Auth tokens**: Invitations, OTP, RefreshTokens are hard-deleted (not retention-relevant)
-- **Role assignments** (Phase 74b, #74): the user's `RoleAssignment` rows are hard-deleted inside the anonymization transaction, each with a `DELETE` audit entry (`newValue.reason` "Anonymisierung"); person-scope lists that contain the employee's id stay unchanged (ids only — the resolution ignores anonymized targets).
+- **Role assignments** (Phase 74b, #74): the user's `RoleAssignment` rows are hard-deleted inside the anonymization transaction, each with a `DELETE` audit entry (`newValue.reason` "Anonymisierung"); person-scope lists that contain the employee's id stay unchanged (ids only — the resolution ignores anonymized targets). `User.role` is deliberately NOT rewritten (Phase 75b, #75): with no stored assignment left it is the legacy-role fallback a still-valid access token resolves through, and rewriting it would change a recorded neutrality cell (`contexts/platform/anonymize.ts`, ADR 0001-abweichungen Eintrag N).
 - **Preserved**: TimeEntries, LeaveRequests, Absences, Schedules, OvertimeAccount (for retention compliance)
 - **AuditLog**: userId → null (anonymized, not deleted)
 
@@ -683,6 +683,30 @@ is scoped, not that the REJECTION is indistinguishable:
 Verify with `pnpm --filter @clokr/api run lint:t100-09-routes --check` (completeness) and
 `pnpm --filter @clokr/api exec vitest run src/__tests__/t100-09-oracle-probe.test.ts` (behavior). A
 hit on a clean tree is a finding to report, not an exception to add.
+
+### Role-check gate and neutrality recordings (Issue #75)
+
+Since Phase 75b the API decides access by permission, never by role. `User.role` (and the JWT
+`role` claim) is a **compat field derived from the user's role assignments** — written back by
+`deriveCompatRole()` in `apps/api/src/contexts/platform/compat-role.ts` after every assignment
+change, read only for display, logging and the legacy-role fallback (a user with no stored
+assignment resolves through the system role of `User.role`). Both the column and the fallback are
+removed with #83. A role comparison, a `requireRole(` call or a Prisma `where` on a role value in
+non-test `apps/api/src` fails CI and `.husky/pre-commit`:
+
+| Source | What it governs |
+| --- | --- |
+| `apps/api/scripts/lint-role-checks.ts` | The gate itself — AST scan, the single allowlisted file `contexts/platform/compat-role.ts`, no exceptions file |
+| `docs/permissions.md` | Every guard, handler check and recipient lookup with its permission; `permission-site-mapping.test.ts` compares counts and permissions per file |
+| `apps/api/src/__tests__/permission-neutrality-matrix.test.ts` + `neutrality/recorded/matrix.json` | Every route × eight actors, recorded on the code BEFORE the switch |
+| `notification-recipients-neutrality.test.ts` / `activity-auth-neutrality.test.ts` + `recorded/*.json` | The 17 recipient lookups; activity feed and login role, same rule |
+| `docs/adr/0001-abweichungen.md` Eintrag N | What changed, the transition rules, and what was measured |
+
+Verify with `pnpm --filter @clokr/api run lint:role-checks` and (after `test:setup`)
+`pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts`.
+**Never re-record a neutrality file to make it green** — the recorders refuse once `requireRole`
+is gone, and a red VERIFY is a finding (an access change), not a stale fixture. A new route gets
+`requirePermission` and a row in `docs/permissions.md`; a new role check is never the answer.
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->
@@ -746,9 +770,9 @@ hit on a clean tree is a finding to report, not an exception to add.
 - Purpose: Group related API endpoints by domain
 - Examples: `apps/api/src/contexts/time-tracking/api/time-entries.ts`, `apps/api/src/contexts/platform/api/employees.ts`, `apps/api/src/contexts/absence/api/leave.ts`, `apps/api/src/contexts/platform/api/auth.ts`
 - Pattern: Each exports an `async function xxxRoutes(app: FastifyInstance)` that registers GET/POST/PUT/DELETE handlers. Registered in `apps/api/src/app.ts` with URL prefix (e.g., `{ prefix: "/api/v1/time-entries" }`).
-- Purpose: JWT/API-key authentication and role-based authorization
-- Location: `apps/api/src/middleware/auth.ts`
-- Pattern: `requireAuth` verifies JWT or API key (`clk_` prefix). `requireRole(...roles)` combines auth + role check. Used as `preHandler` on routes.
+- Purpose: JWT/API-key authentication and permission-based authorization (Phase 75b, Issue #75)
+- Location: `apps/api/src/middleware/auth.ts` (authentication only) + `apps/api/src/contexts/platform/request-permissions.ts` (authorization), reached through `contexts/platform/index.ts`
+- Pattern: `requireAuth` verifies JWT or API key (`clk_` prefix). Access decisions use catalog permissions (`docs/permissions.md`): `requirePermission("<resource>:<action>:<reach>")` / `requireAnyPermission(...)` as `preHandler`, `hasPermission(req, key)` / `permissionReach(req, "<resource>:<action>")` inside a handler, `userIdsHoldingPermission(db, tenantId, key)` for notification recipients. `requireRole` no longer exists, and a role comparison in `apps/api/src` fails `lint:role-checks` (see "Role-check gate" below). A new route states its permission and gets a row in `docs/permissions.md`.
 - Purpose: Cron-based background tasks running in the API process
 - Plugins: `apps/api/src/contexts/time-tracking/plugins/attendance-checker.ts` (6 cron jobs), `apps/api/src/contexts/scheduling/plugins/scheduler.ts` (Phorest sync), `apps/api/src/contexts/working-time-account/plugins/auto-close-month.ts` (monthly close), `apps/api/src/contexts/platform/plugins/data-retention.ts` (annual archival)
 - Pattern: Each plugin registers cron tasks via `node-cron`, starts in `onReady` hook, stops in `onClose` hook. Tasks are tenant-aware (loop over all tenants).

@@ -12,7 +12,8 @@
 // still seed MANUAL rows directly via DB if needed.
 
 import { FastifyInstance } from "fastify";
-import { requireAuth, requireRole } from "../../../../middleware/auth";
+import { requireAuth } from "../../../../middleware/auth";
+import { requirePermission } from "../../request-permissions";
 import { FederalState } from "@clokr/db";
 import { syncSchoolHolidaysForTenant } from "../../plugins/school-holidays-sync";
 import { listActiveBsPatternsWithFederalStateOverride } from "../../../absence"; // Phase 100B Plan 11 — A21b
@@ -23,7 +24,7 @@ export async function adminSchoolHolidaysRoutes(app: FastifyInstance) {
   // ── GET / — cache inspection ──────────────────────────────────
   app.get("/", {
     schema: { tags: ["Admin - School Holidays"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("holiday:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const rows = await app.prisma.schoolHolidayPeriod.findMany({
         where: { tenantId: req.user.tenantId },
@@ -45,7 +46,7 @@ export async function adminSchoolHolidaysRoutes(app: FastifyInstance) {
   // ── POST /refresh — on-demand sync ────────────────────────────
   app.post("/refresh", {
     schema: { tags: ["Admin - School Holidays"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("holiday:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenant = await app.prisma.tenant.findUniqueOrThrow({
         where: { id: req.user.tenantId },

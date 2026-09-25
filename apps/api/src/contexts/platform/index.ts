@@ -109,6 +109,9 @@ export { roleGrants, normalizeRolePermissions, roleNameKey } from "./access-role
 // permission P to a target described by employee and/or salon?" — plus the scope normalisation
 // every role-assignment write path uses.
 export { userMayApply } from "./facade/role-assignments";
+// Phase 75b (#75), D-16/D-17: the holders of a ZUGEWIESEN permission in a tenant — the Unterbau
+// answer every notification-recipient site asks instead of a role-based Prisma predicate.
+export { userIdsHoldingPermission } from "./facade/role-assignments";
 export {
   decideUserMayApply,
   normalizeRoleAssignmentScope,
@@ -119,3 +122,30 @@ export type {
   RoleAssignmentTarget,
   NormalizedRoleAssignmentScope,
 } from "./role-assignment";
+// Phase 75b (#75): the three global system roles — fixed ids, display names and the permission
+// sets derived from docs/permissions.md. Code identifies a system role by id only.
+export {
+  SYSTEM_ROLE_IDS,
+  SYSTEM_ROLE_NAMES,
+  SYSTEM_ROLE_PERMISSIONS,
+  isSystemRoleId,
+} from "./system-roles";
+export type { SystemRoleSlot } from "./system-roles";
+// Phase 75b (#75): the request-scoped permission resolver and the guards/checks every call site
+// uses instead of a legacy role (D-08..D-12, D-30), plus the ONE compat-role derivation (D-14).
+export {
+  effectiveGrants,
+  hasPermission,
+  permissionReach,
+  requirePermission,
+  requireAnyPermission,
+} from "./request-permissions";
+export type { EffectiveGrants } from "./request-permissions";
+export {
+  systemRoleIdForLegacyRole,
+  deriveCompatRole,
+  compatRoleForUser,
+  parseCompatRoleFilter,
+  compatRoleUserWhere,
+} from "./compat-role";
+export type { CompatRoleAssignmentRow, CompatRoleFilter } from "./compat-role";

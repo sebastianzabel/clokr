@@ -339,6 +339,21 @@ jobs:
         # a gate a path filter can skip is not a gate, and the cost is ~1s.
         run: pnpm --filter @clokr/api run lint:t100-09-routes --check
 
+      - name: Lint role checks (Issue #75 — no role comparison outside the compat derivation)
+        # Since #75 every access decision asks for a catalog permission (requirePermission /
+        # requireAnyPermission / hasPermission / permissionReach / userIdsHoldingPermission from
+        # contexts/platform); the legacy role survives only as a compat field until #83. This AST
+        # gate fails on any call of the removed role guard and on any comparison of a role value
+        # (`.role`, or an identifier bound to one) with ADMIN / MANAGER / EMPLOYEE — ===/!==/==/!=,
+        # switch cases, .includes/.indexOf/.has, and role-literal Prisma predicates under `where` —
+        # in non-test apps/api/src. Exactly ONE file is allowlisted, as a constant in the script:
+        # contexts/platform/compat-role.ts, the single place that derives the compat role (D-14).
+        # There is no exceptions file on purpose: a second allowlisted file would be a second
+        # derivation. Unconditional, no path filter — a gate a path filter can skip is not a gate,
+        # and the cost is ~1s. What it structurally cannot see is listed in the script's header
+        # and in apps/api/scripts/README.md § lint-role-checks.ts.
+        run: pnpm --filter @clokr/api run lint:role-checks
+
       - name: Lint saldo-lock periodStart derivation (Issue #241 — five sites found by hand)
         # A periodType:"MONTHLY" SaldoSnapshot where-comparison on periodStart whose value does
         # not trace back to monthRangeUtc() is the exact defect class of #241 (three route gates

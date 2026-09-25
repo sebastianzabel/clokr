@@ -132,6 +132,14 @@ export async function anonymizeEmployeeData(
 
   // Phase 74b (D-22): an anonymized person holds no rights — remove every role assignment.
   const removedRoleAssignments = await removeRoleAssignmentsOfUser(tx, employee.tenantId, userId);
+  // Phase 75b Plan 11 (Issue #75): deliberately NO compat-column write-back (D-14) here. With no
+  // stored assignment left, `User.role` is the fallback (D-08) that a still-valid access token of
+  // this user resolves through; rewriting it to EMPLOYEE would strip a self-anonymizing admin's
+  // live token of its rights mid-request-sequence — a behaviour change the neutrality recording
+  // (AC-75-11, cells "DELETE /api/v1/employees/:id | foreign" of ADMIN and FALLBACK_ADMIN)
+  // forbids, the same class as D-10's "no isActive re-check". The login is gone either way
+  // (password and refresh tokens removed below). Whether to trade that neutrality for the
+  // rewrite is an owner decision on #75, not taken here.
 
   // Notizen in Zeiteinträgen anonymisieren (können persönliche Daten enthalten)
   // Phase 100B Plan 08 — T10, contexts/time-tracking facade (reaches soft-deleted rows too).

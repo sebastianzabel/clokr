@@ -1,10 +1,12 @@
 import { FastifyInstance } from "fastify";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { requireAuth } from "../middleware/auth";
+import { requirePermission } from "../contexts/platform";
 import {
   getHolidays,
   STATE_MAP,
   accessContextFromRequest,
   employeeScopeFor,
+  hasPermission,
 } from "../contexts/platform";
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
 import {
@@ -354,7 +356,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard/team-week — Wochenübersicht für Admins/Manager
   app.get("/team-week", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
     handler: async (req) => {
       const access = accessContextFromRequest(req);
       const tenantId = req.user.tenantId;
@@ -583,7 +585,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard/today-attendance — Tages-Anwesenheitsübersicht (RPT-03)
   app.get("/today-attendance", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
     handler: async (req) => {
       const access = accessContextFromRequest(req);
       const tenantId = req.user.tenantId;
@@ -761,7 +763,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard/overtime-overview — Überstunden-Übersicht (RPT-01 + SALDO-03)
   app.get("/overtime-overview", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
     handler: async (req) => {
       const tenantId = req.user.tenantId;
 
@@ -1043,8 +1045,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const access = accessContextFromRequest(req);
       const employeeId = req.user.employeeId;
       const tenantId = req.user.tenantId;
-      const role = req.user.role;
-      const isManager = role === "ADMIN" || role === "MANAGER";
+      const isManager = await hasPermission(req, "team-overview:read:ZUGEWIESEN");
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const today = todayInTz(tz);
       // GitHub issue #141: hoisted here (rather than fetched separately below) so the Karte and

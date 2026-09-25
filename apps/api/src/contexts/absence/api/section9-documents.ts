@@ -16,6 +16,7 @@
  */
 import { FastifyInstance } from "fastify";
 import { requireAuth } from "../../../middleware/auth";
+import { permissionReach } from "../../platform";
 
 /** Art. 9 DSGVO / V12: enge Allowlist. Kein SVG (aktive Inhalte), kein Office-Format. */
 const ALLOWED_TYPES: Record<string, string> = {
@@ -70,8 +71,11 @@ export async function section9DocumentRoutes(app: FastifyInstance) {
       // Authz: own case (a privately-insured employee handing in their own certificate)
       // or manager/admin.
       const isSelf = req.user.employeeId === credit.employeeId;
-      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
-      if (!isSelf && !isManager) {
+      const uploadReach = await permissionReach(req, "section9:upload");
+      if (uploadReach !== "ZUGEWIESEN" && !isSelf) {
+        return reply.code(403).send({ error: "Keine Berechtigung" });
+      }
+      if (uploadReach === null) {
         return reply.code(403).send({ error: "Keine Berechtigung" });
       }
 
@@ -192,8 +196,11 @@ export async function section9DocumentRoutes(app: FastifyInstance) {
       }
 
       const isSelf = req.user.employeeId === credit.employeeId;
-      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
-      if (!isSelf && !isManager) {
+      const readReach = await permissionReach(req, "section9:read");
+      if (readReach !== "ZUGEWIESEN" && !isSelf) {
+        return reply.code(403).send({ error: "Keine Berechtigung" });
+      }
+      if (readReach === null) {
         return reply.code(403).send({ error: "Keine Berechtigung" });
       }
 

@@ -1,7 +1,8 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { Prisma } from "@clokr/db";
-import { requireAuth, requireRole } from "../../../middleware/auth";
+import { requireAuth } from "../../../middleware/auth";
+import { requirePermission } from "../../platform";
 
 const shutdownBodySchema = z.object({
   name: z.string().min(1).max(100),
@@ -44,145 +45,161 @@ export async function companyShutdownRoutes(app: FastifyInstance) {
   });
 
   // ── POST /company-shutdowns ─────────────────────────────────────────────────
-  app.post("/", { preHandler: requireRole("ADMIN") }, async (req, reply) => {
-    const tenantId = req.user.tenantId;
-    const body = shutdownBodySchema.parse(req.body);
+  app.post(
+    "/",
+    { preHandler: requirePermission("company-shutdown:manage:ZUGEWIESEN") },
+    async (req, reply) => {
+      const tenantId = req.user.tenantId;
+      const body = shutdownBodySchema.parse(req.body);
 
-    if (body.startDate > body.endDate) {
-      return reply.status(400).send({ message: "startDate muss vor endDate liegen" });
-    }
+      if (body.startDate > body.endDate) {
+        return reply.status(400).send({ message: "startDate muss vor endDate liegen" });
+      }
 
-    const shutdown = await app.prisma.companyShutdown.create({
-      data: {
-        tenantId,
-        name: body.name,
-        startDate: new Date(body.startDate),
-        endDate: new Date(body.endDate),
-        deductsFromVacation: body.deductsFromVacation,
-        notes: body.notes ?? null,
-      },
-      include: { exceptions: true },
-    });
+      const shutdown = await app.prisma.companyShutdown.create({
+        data: {
+          tenantId,
+          name: body.name,
+          startDate: new Date(body.startDate),
+          endDate: new Date(body.endDate),
+          deductsFromVacation: body.deductsFromVacation,
+          notes: body.notes ?? null,
+        },
+        include: { exceptions: true },
+      });
 
-    await app.audit({
-      userId: req.user.sub,
-      action: "CREATE",
-      entity: "CompanyShutdown",
-      entityId: shutdown.id,
-      newValue: { name: shutdown.name, startDate: shutdown.startDate, endDate: shutdown.endDate },
-      request: { ip: req.ip, headers: req.headers as Record<string, string> },
-    });
+      await app.audit({
+        userId: req.user.sub,
+        action: "CREATE",
+        entity: "CompanyShutdown",
+        entityId: shutdown.id,
+        newValue: { name: shutdown.name, startDate: shutdown.startDate, endDate: shutdown.endDate },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
 
-    return reply.status(201).send(shutdown);
-  });
+      return reply.status(201).send(shutdown);
+    },
+  );
 
   // ── PATCH /company-shutdowns/:id ────────────────────────────────────────────
-  app.patch("/:id", { preHandler: requireRole("ADMIN") }, async (req, reply) => {
-    const tenantId = req.user.tenantId;
-    const { id } = req.params as { id: string };
-    const body = shutdownBodySchema.partial().parse(req.body);
+  app.patch(
+    "/:id",
+    { preHandler: requirePermission("company-shutdown:manage:ZUGEWIESEN") },
+    async (req, reply) => {
+      const tenantId = req.user.tenantId;
+      const { id } = req.params as { id: string };
+      const body = shutdownBodySchema.partial().parse(req.body);
 
-    const existing = await app.prisma.companyShutdown.findFirst({ where: { id, tenantId } });
-    if (!existing) return reply.status(404).send({ message: "Nicht gefunden" });
+      const existing = await app.prisma.companyShutdown.findFirst({ where: { id, tenantId } });
+      if (!existing) return reply.status(404).send({ message: "Nicht gefunden" });
 
-    const updated = await app.prisma.companyShutdown.update({
-      where: { id },
-      data: {
-        ...(body.name !== undefined && { name: body.name }),
-        ...(body.startDate !== undefined && { startDate: new Date(body.startDate) }),
-        ...(body.endDate !== undefined && { endDate: new Date(body.endDate) }),
-        ...(body.deductsFromVacation !== undefined && {
-          deductsFromVacation: body.deductsFromVacation,
-        }),
-        ...(body.notes !== undefined && { notes: body.notes }),
-      },
-      include: {
-        exceptions: {
-          include: {
-            employee: {
-              select: { id: true, firstName: true, lastName: true, employeeNumber: true },
+      const updated = await app.prisma.companyShutdown.update({
+        where: { id },
+        data: {
+          ...(body.name !== undefined && { name: body.name }),
+          ...(body.startDate !== undefined && { startDate: new Date(body.startDate) }),
+          ...(body.endDate !== undefined && { endDate: new Date(body.endDate) }),
+          ...(body.deductsFromVacation !== undefined && {
+            deductsFromVacation: body.deductsFromVacation,
+          }),
+          ...(body.notes !== undefined && { notes: body.notes }),
+        },
+        include: {
+          exceptions: {
+            include: {
+              employee: {
+                select: { id: true, firstName: true, lastName: true, employeeNumber: true },
+              },
             },
           },
         },
-      },
-    });
+      });
 
-    await app.audit({
-      userId: req.user.sub,
-      action: "UPDATE",
-      entity: "CompanyShutdown",
-      entityId: id,
-      oldValue: { name: existing.name, startDate: existing.startDate, endDate: existing.endDate },
-      newValue: { name: updated.name, startDate: updated.startDate, endDate: updated.endDate },
-      request: { ip: req.ip, headers: req.headers as Record<string, string> },
-    });
+      await app.audit({
+        userId: req.user.sub,
+        action: "UPDATE",
+        entity: "CompanyShutdown",
+        entityId: id,
+        oldValue: { name: existing.name, startDate: existing.startDate, endDate: existing.endDate },
+        newValue: { name: updated.name, startDate: updated.startDate, endDate: updated.endDate },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
 
-    return updated;
-  });
+      return updated;
+    },
+  );
 
   // ── DELETE /company-shutdowns/:id ───────────────────────────────────────────
-  app.delete("/:id", { preHandler: requireRole("ADMIN") }, async (req, reply) => {
-    const tenantId = req.user.tenantId;
-    const { id } = req.params as { id: string };
+  app.delete(
+    "/:id",
+    { preHandler: requirePermission("company-shutdown:manage:ZUGEWIESEN") },
+    async (req, reply) => {
+      const tenantId = req.user.tenantId;
+      const { id } = req.params as { id: string };
 
-    const existing = await app.prisma.companyShutdown.findFirst({ where: { id, tenantId } });
-    if (!existing) return reply.status(404).send({ message: "Nicht gefunden" });
+      const existing = await app.prisma.companyShutdown.findFirst({ where: { id, tenantId } });
+      if (!existing) return reply.status(404).send({ message: "Nicht gefunden" });
 
-    await app.prisma.companyShutdown.delete({ where: { id } });
+      await app.prisma.companyShutdown.delete({ where: { id } });
 
-    await app.audit({
-      userId: req.user.sub,
-      action: "DELETE",
-      entity: "CompanyShutdown",
-      entityId: id,
-      oldValue: { name: existing.name, startDate: existing.startDate, endDate: existing.endDate },
-      request: { ip: req.ip, headers: req.headers as Record<string, string> },
-    });
+      await app.audit({
+        userId: req.user.sub,
+        action: "DELETE",
+        entity: "CompanyShutdown",
+        entityId: id,
+        oldValue: { name: existing.name, startDate: existing.startDate, endDate: existing.endDate },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
 
-    return reply.status(204).send();
-  });
+      return reply.status(204).send();
+    },
+  );
 
   // ── POST /company-shutdowns/:id/exceptions ──────────────────────────────────
   // Mitarbeiter zur Ausnahmeliste hinzufügen
-  app.post("/:id/exceptions", { preHandler: requireRole("ADMIN") }, async (req, reply) => {
-    const tenantId = req.user.tenantId;
-    const { id } = req.params as { id: string };
-    const { employeeId, reason } = req.body as { employeeId: string; reason?: string };
+  app.post(
+    "/:id/exceptions",
+    { preHandler: requirePermission("company-shutdown:manage:ZUGEWIESEN") },
+    async (req, reply) => {
+      const tenantId = req.user.tenantId;
+      const { id } = req.params as { id: string };
+      const { employeeId, reason } = req.body as { employeeId: string; reason?: string };
 
-    const shutdown = await app.prisma.companyShutdown.findFirst({ where: { id, tenantId } });
-    if (!shutdown) return reply.status(404).send({ message: "Betriebsurlaub nicht gefunden" });
+      const shutdown = await app.prisma.companyShutdown.findFirst({ where: { id, tenantId } });
+      if (!shutdown) return reply.status(404).send({ message: "Betriebsurlaub nicht gefunden" });
 
-    const employee = await app.prisma.employee.findFirst({ where: { id: employeeId, tenantId } });
-    if (!employee) return reply.status(404).send({ message: "Mitarbeiter nicht gefunden" });
+      const employee = await app.prisma.employee.findFirst({ where: { id: employeeId, tenantId } });
+      if (!employee) return reply.status(404).send({ message: "Mitarbeiter nicht gefunden" });
 
-    const exception = await app.prisma.companyShutdownException.upsert({
-      where: { shutdownId_employeeId: { shutdownId: id, employeeId } },
-      create: { shutdownId: id, employeeId, reason: reason ?? null },
-      update: { reason: reason ?? null },
-      include: {
-        employee: { select: { id: true, firstName: true, lastName: true, employeeNumber: true } },
-      },
-    });
+      const exception = await app.prisma.companyShutdownException.upsert({
+        where: { shutdownId_employeeId: { shutdownId: id, employeeId } },
+        create: { shutdownId: id, employeeId, reason: reason ?? null },
+        update: { reason: reason ?? null },
+        include: {
+          employee: { select: { id: true, firstName: true, lastName: true, employeeNumber: true } },
+        },
+      });
 
-    // IN-01: exceptions affect which employees are exempt from a shutdown (leave deduction /
-    // payroll impact) — they are audit-relevant (Revisionssicherheit).
-    await app.audit({
-      userId: req.user.sub,
-      action: "CREATE",
-      entity: "CompanyShutdownException",
-      entityId: `${id}_${employeeId}`,
-      newValue: { shutdownId: id, employeeId, reason: reason ?? null },
-      request: { ip: req.ip, headers: req.headers as Record<string, string> },
-    });
+      // IN-01: exceptions affect which employees are exempt from a shutdown (leave deduction /
+      // payroll impact) — they are audit-relevant (Revisionssicherheit).
+      await app.audit({
+        userId: req.user.sub,
+        action: "CREATE",
+        entity: "CompanyShutdownException",
+        entityId: `${id}_${employeeId}`,
+        newValue: { shutdownId: id, employeeId, reason: reason ?? null },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
 
-    return reply.status(201).send(exception);
-  });
+      return reply.status(201).send(exception);
+    },
+  );
 
   // ── DELETE /company-shutdowns/:id/exceptions/:employeeId ────────────────────
   // Ausnahme entfernen
   app.delete(
     "/:id/exceptions/:employeeId",
-    { preHandler: requireRole("ADMIN") },
+    { preHandler: requirePermission("company-shutdown:manage:ZUGEWIESEN") },
     async (req, reply) => {
       const tenantId = req.user.tenantId;
       const { id, employeeId } = req.params as { id: string; employeeId: string };

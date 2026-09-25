@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash, randomBytes } from "crypto";
-import { requireRole } from "../../../middleware/auth";
+import { requirePermission } from "../../platform";
 
 function hashKey(key: string): string {
   return createHash("sha256").update(key).digest("hex");
@@ -11,7 +11,7 @@ export async function terminalRoutes(app: FastifyInstance) {
   // GET / — list terminal keys for tenant (ADMIN only)
   app.get("/", {
     schema: { tags: ["Terminals"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("terminal:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const keys = await app.prisma.terminalApiKey.findMany({
         where: { tenantId: req.user.tenantId },
@@ -32,7 +32,7 @@ export async function terminalRoutes(app: FastifyInstance) {
   // POST / — create new terminal key (ADMIN only)
   app.post("/", {
     schema: { tags: ["Terminals"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("terminal:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const body = z.object({ name: z.string().min(1).max(100) }).parse(req.body);
       const rawKey = `clk_${randomBytes(32).toString("hex")}`;
@@ -123,7 +123,7 @@ export async function terminalRoutes(app: FastifyInstance) {
   // DELETE /:id — revoke terminal key (ADMIN only)
   app.delete("/:id", {
     schema: { tags: ["Terminals"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("terminal:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
 
