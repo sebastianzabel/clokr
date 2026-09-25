@@ -2,8 +2,8 @@
  * Phase 75b (Issue #75), D-03 / D-32 — the system roles' permission sets are DERIVED from
  * `docs/permissions.md`, not chosen by intuition.
  *
- * The site tables of the doc ("Aufrufstellen von requireRole", "Handler-Prüfungen" and, since
- * Phase 75b Plan 10, "Empfängersuchen") name, per call site, the permission it will ask for and —
+ * The site tables of the doc ("Aufrufstellen der Permission-Guards", "Handler-Prüfungen" and, since
+ * Phase 75b Plan 10, "Empfängersuchen") name, per call site, the permission it asks for and —
  * in the "heute" column — which legacy roles the site admits today (A = ADMIN, M = MANAGER,
  * E = EMPLOYEE). That column is the neutrality contract of #75. This test reads it and proves:
  *   (i)   every row naming the same `resource:action` agrees on the letters admitted through the
@@ -52,7 +52,8 @@ const REPO_ROOT = join(__dirname, "..", "..", "..", "..", "..", "..");
 const DOC_PATH = join(REPO_ROOT, "docs", "permissions.md");
 const DOC_NAME = "docs/permissions.md";
 
-const GUARD_HEADING = "## Aufrufstellen von requireRole";
+/** Renamed in Phase 75b Plan 12 (D-18) once the role guard was gone; the rules read it unchanged. */
+const GUARD_HEADING = "## Aufrufstellen der Permission-Guards";
 const HANDLER_HEADING = "## Handler-Prüfungen";
 /**
  * Phase 75b Plan 10 (#75), D-16: the notification-recipient sites. Their "heute" cell has the

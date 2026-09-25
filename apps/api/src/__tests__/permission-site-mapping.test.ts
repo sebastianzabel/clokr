@@ -1,38 +1,52 @@
 /**
- * Completeness guard: every role check in `apps/api/src` is mapped in `docs/permissions.md`
- * (issue #72, AK-72-6; phase 72b decisions D-09..D-11, D-16).
+ * Completeness guard: every permission check in `apps/api/src` is mapped in `docs/permissions.md`
+ * (issue #72, AK-72-6, phase 72b decisions D-09..D-11/D-16; final form: phase 75b, issue #75,
+ * D-18, AC-75-1).
  *
- * #75 will switch every role check to a permission from the catalog in
- * `contexts/platform/permission-catalog.ts`. That switch can only be rights-neutral if every
- * current check is mapped — so this test keeps the checked-in mapping true against the source tree.
+ * Since #75 every access decision asks for a permission from the catalog in
+ * `contexts/platform/permission-catalog.ts`. The removed role guard is no longer this file's job —
+ * `apps/api/scripts/lint-role-checks.ts` (D-19) fails on any call of it and on any role comparison
+ * outside `contexts/platform/compat-role.ts`. This test keeps the checked-in mapping true against
+ * the source tree, in two ways.
  *
- * Three detectors run over every non-test `.ts` file under `apps/api/src` (comment lines skipped):
- * - `REQUIRE_ROLE_DETECTOR` finds each call of the role guard helper (its own definition excluded);
- *   each hit must have one row in the section named by `REQUIRE_ROLE_HEADING`.
- * - `HANDLER_DETECTOR` finds any line that reads `user.role` or compares `role`; each hit must have
- *   one row in either the `HANDLER_HEADING` section (an access decision) or the `EXCLUDED_HEADING`
- *   section (a hit that decides nothing, with a reason). The detector is deliberately broad: a NEW
- *   role check in any of these shapes turns this test red until someone classifies it.
- * - Phase 75b Plan 10 (#75), D-16/D-17: `RECIPIENT_DETECTOR` finds each call of the notification-
- *   recipient facade `userIdsHoldingPermission(` (its own `export async function` definition
- *   excluded); each hit must have one row in `RECIPIENT_HEADING` — the site → permission mapping
- *   for the 17 notification-recipient lookups that used to be plain role queries (see "Keine
- *   Permissions" in the doc for their pre-75b history).
- * - Phase 75b (#75): during the call-site switch both the role-guard and handler detectors ALSO
- *   match the permission shapes (`requirePermission(`/`requireAnyPermission(` resp.
- *   `hasPermission(`/`permissionReach(`), see the constants below — a transitional union that plan
- *   75b-12 replaces.
+ * 1. Per-file COUNTS. Three detectors run over every non-test `.ts` file under `apps/api/src`
+ *    (comment lines skipped; a line counts once):
+ *    - `GUARD_DETECTOR` finds each call of the route guards `requirePermission(` /
+ *      `requireAnyPermission(` (their own definitions excluded); each hit must have one row in
+ *      the section named by `GUARD_HEADING`.
+ *    - `HANDLER_DETECTOR` finds each handler check `hasPermission(` / `permissionReach(` and,
+ *      deliberately broad, any line that reads `user.role` or compares `role`; each hit must have
+ *      one row in either the `HANDLER_HEADING` section (an access decision) or the
+ *      `EXCLUDED_HEADING` section (a hit that decides nothing, with a reason). A role read that
+ *      comes back therefore has to be classified here even where `lint:role-checks` cannot see it.
+ *    - `RECIPIENT_DETECTOR` finds each call of the notification-recipient facade
+ *      `userIdsHoldingPermission(`; each hit must have one row in `RECIPIENT_HEADING` (D-16/D-17).
  *
- * Why per-file COUNTS and not line numbers: a fail-closed list pinned to line numbers goes stale
- * through unrelated edits in the same file (#309/#310 turned a branch red twice that way). An added
- * or removed check changes the count and turns this red; a pure line shift does not. Line numbers
- * in the doc are evidence against the commit named in its header, not an address.
+ * 2. Per-file PERMISSION-KEY MULTISETS (D-18). Counts alone miss a check that moved to a different
+ *    permission. The TypeScript AST of every file yields, per call of the five helpers, the
+ *    `resource:action` it asks for (from its string-literal key: `requirePermission`,
+ *    `hasPermission`, `userIdsHoldingPermission` — the full key; `permissionReach` — its
+ *    `resource:action` argument; `requireAnyPermission` — the distinct `resource:action` of its
+ *    keys, which must be exactly one, since one doc row maps one call). Per file and per section,
+ *    that multiset must equal the multiset of the Permission column of the file's rows — so
+ *    swapping `shift:read` for `shift:plan` turns this red even when every count still matches.
+ *    A helper call whose key is not a string literal is only allowed in the module that DEFINES
+ *    the helpers (the implementation, whose lines stand under "Nicht gezählte Treffer"); anywhere
+ *    else it fails, because its permission could not be checked against the doc.
+ *
+ * Why counts and multisets, never line numbers: a fail-closed list pinned to line numbers goes
+ * stale through unrelated edits in the same file (#309/#310 turned a branch red twice that way).
+ * Line numbers in the doc are evidence against the commit named in its header, not an address.
  *
  * Known limits (accepted, see threat T-72b-09):
- * - Moving a check from one route to another inside the same file without changing the count is
- *   not detected.
- * - A role check in a shape neither detector matches — e.g. a destructured role compared through
- *   `.includes(...)` — is invisible. That is why `HANDLER_DETECTOR` is kept broad.
+ * - Moving a check from one route to another inside the same file without changing its count or
+ *   its permission is not detected.
+ * - The reach part of a key (`EIGENE` / `ZUGEWIESEN`) is checked against the catalog, not against
+ *   the individual call; which reach a site grants is the matrix's job
+ *   (`permission-neutrality-matrix.test.ts`).
+ * - A role read in a shape the handler detector does not match — e.g. a destructured role
+ *   compared through `.includes(...)` — is invisible here; `lint:role-checks` covers most such
+ *   shapes by AST and names its own blind spots.
  *
  * Two more guards hold the descriptive half of the doc to the catalog (AK-72-8, D-12, D-15):
  * - The section named by `PERMISSIONS_HEADING` has exactly one row per catalog permission — full key
@@ -51,6 +65,7 @@
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, extname } from "node:path";
+import * as ts from "typescript";
 import { describe, it, expect } from "vitest";
 import {
   PERMISSIONS,
@@ -66,23 +81,18 @@ const DOC_NAME = "docs/permissions.md";
 const EXCLUDE_DIRS = new Set(["__tests__", "node_modules", "dist"]);
 
 /**
- * Phase 75b (#75), TRANSITIONAL until plan 75b-12 finalises this gate: while the call sites move
- * from the role guard to the permission guards one file at a time, a site counts as a guard hit
- * in either shape. A mechanical same-line switch (`requireRole("ADMIN")` →
- * `requirePermission("…")`) therefore keeps the per-file count, so the doc rows stay valid; a
- * site that disappears, or a new one in either shape, still changes the count and turns this red.
- * The doc section keeps its old heading until 75b-12 renames it together with this detector.
+ * The route guards (D-18). The removed role guard is not matched any more: a call of it is
+ * `lint:role-checks`' finding, not an unmapped site.
  */
-const REQUIRE_ROLE_DETECTOR = /requireRole\(|requirePermission\(|requireAnyPermission\(/;
+const GUARD_DETECTOR = /\brequirePermission\(|\brequireAnyPermission\(/;
 /** The guards' own definition lines — never a call site. */
-const REQUIRE_ROLE_DEFINITION_MARKERS = [
+const GUARD_DEFINITION_MARKERS = [
   "export function requirePermission",
   "export function requireAnyPermission",
 ];
 /**
- * Role reads and comparisons, plus (Phase 75b, transitional like the guard detector) the
- * handler-level permission checks that replace them — so a handler check switched on the same
- * line keeps its row, and every new check must be classified.
+ * The handler checks, plus — deliberately broad — every role read or comparison, so a role read
+ * that comes back must be classified (as a check, or under "Nicht gezählte Treffer").
  */
 const HANDLER_DETECTOR = /\buser\.role\b|\brole\s*[!=]==|\bhasPermission\(|\bpermissionReach\(/;
 /** The checks' own definition lines — never a handler check. */
@@ -90,16 +100,28 @@ const HANDLER_DEFINITION_MARKERS = [
   "export async function hasPermission",
   "export async function permissionReach",
 ];
-/**
- * Phase 75b Plan 10 (#75), D-16: every call of the notification-recipient facade. Unlike the two
- * detectors above this one is NOT transitional — it has no legacy shape to also match, since the
- * facade did not exist before #75b-10.
- */
+/** Phase 75b Plan 10 (#75), D-16: every call of the notification-recipient facade. */
 const RECIPIENT_DETECTOR = /\buserIdsHoldingPermission\(/;
 /** The facade's own definition line — never a call site. */
 const RECIPIENT_DEFINITION_MARKERS = ["export async function userIdsHoldingPermission"];
 
-const REQUIRE_ROLE_HEADING = "## Aufrufstellen von requireRole";
+type SiteSection = "guard" | "handler" | "recipient";
+
+/**
+ * Which doc section maps a call of each helper (key multisets, D-18). A Map, not an object
+ * literal: a lookup by an arbitrary callee name must not hit `Object.prototype` (`toString`).
+ */
+const HELPER_SECTION: ReadonlyMap<string, SiteSection> = new Map([
+  ["requirePermission", "guard"],
+  ["requireAnyPermission", "guard"],
+  ["hasPermission", "handler"],
+  ["permissionReach", "handler"],
+  ["userIdsHoldingPermission", "recipient"],
+]);
+/** A key literal: `resource:action`, optionally with `:REACH`. */
+const KEY_LITERAL = /^([a-z0-9-]+:[a-z0-9-]+)(?::(?:EIGENE|ZUGEWIESEN))?$/;
+
+const GUARD_HEADING = "## Aufrufstellen der Permission-Guards";
 const HANDLER_HEADING = "## Handler-Prüfungen";
 const RECIPIENT_HEADING = "## Empfängersuchen";
 const EXCLUDED_HEADING = "## Nicht gezählte Treffer";
@@ -142,10 +164,9 @@ function isCommentLine(line: string): boolean {
   return trimmed.startsWith("//") || trimmed.startsWith("*");
 }
 
-function isRequireRoleHit(line: string): boolean {
+function isGuardHit(line: string): boolean {
   return (
-    REQUIRE_ROLE_DETECTOR.test(line) &&
-    !REQUIRE_ROLE_DEFINITION_MARKERS.some((marker) => line.includes(marker))
+    GUARD_DETECTOR.test(line) && !GUARD_DEFINITION_MARKERS.some((marker) => line.includes(marker))
   );
 }
 
@@ -182,6 +203,119 @@ function total(counts: Map<string, number>): number {
   let sum = 0;
   for (const n of counts.values()) sum += n;
   return sum;
+}
+
+// ── Source side: the permission each call asks for (AST, D-18) ───────────────
+
+interface KeyedCall {
+  file: string;
+  line: number;
+  helper: string;
+  section: SiteSection;
+  /** The `resource:action` this call asks for, or null when no key is a string literal. */
+  permission: string | null;
+  /** Set when the call's keys cannot be mapped to exactly one doc row. */
+  problem?: string;
+}
+
+/** Whether the file DEFINES one of the helpers (the implementation module, not a call site). */
+function definesHelper(text: string): boolean {
+  return [
+    ...GUARD_DEFINITION_MARKERS,
+    ...HANDLER_DEFINITION_MARKERS,
+    ...RECIPIENT_DEFINITION_MARKERS,
+  ].some((marker) => text.includes(marker));
+}
+
+function literalText(node: ts.Expression): string | null {
+  return ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) ? node.text : null;
+}
+
+/** Every call of the five permission helpers in one file, with the permission it asks for. */
+function keyedCalls(file: string, text: string): KeyedCall[] {
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const calls: KeyedCall[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      const helper = ts.isIdentifier(callee)
+        ? callee.text
+        : ts.isPropertyAccessExpression(callee)
+          ? callee.name.text
+          : "";
+      const section = HELPER_SECTION.get(helper);
+      if (section !== undefined) {
+        const line = sf.getLineAndCharacterOfPosition(callee.getStart(sf)).line + 1;
+        const literals = node.arguments.map(literalText).filter((t): t is string => t !== null);
+        const permissions = [
+          ...new Set(literals.map((t) => KEY_LITERAL.exec(t)?.[1]).filter((p): p is string => !!p)),
+        ];
+        const call: KeyedCall = { file, line, helper, section, permission: permissions[0] ?? null };
+        if (permissions.length > 1) {
+          call.problem = `${helper} asks for ${permissions.join(" and ")} — one doc row maps one permission; split the call`;
+        } else if (literals.length > 0 && permissions.length === 0) {
+          call.problem = `${helper} has a string key that is not a resource:action[:REACH] literal`;
+        }
+        calls.push(call);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return calls;
+}
+
+function collectKeyedCalls(files: string[]): { calls: KeyedCall[]; implementationFiles: string[] } {
+  const calls: KeyedCall[] = [];
+  const implementationFiles: string[] = [];
+  for (const abs of files) {
+    const text = readFileSync(abs, "utf8");
+    const file = srcRel(abs);
+    if (definesHelper(text)) implementationFiles.push(file);
+    calls.push(...keyedCalls(file, text));
+  }
+  return { calls, implementationFiles };
+}
+
+/** `resource:action` → count, per file. */
+function multisetPerFile(
+  entries: { file: string; permission: string }[],
+): Map<string, Map<string, number>> {
+  const out = new Map<string, Map<string, number>>();
+  for (const { file, permission } of entries) {
+    let perFile = out.get(file);
+    if (!perFile) {
+      perFile = new Map();
+      out.set(file, perFile);
+    }
+    perFile.set(permission, (perFile.get(permission) ?? 0) + 1);
+  }
+  return out;
+}
+
+function renderMultiset(m: Map<string, number> | undefined): string {
+  if (!m || m.size === 0) return "{}";
+  const parts = [...m.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, n]) => `${k} x${n}`);
+  return `{ ${parts.join(", ")} }`;
+}
+
+function compareMultisets(
+  source: Map<string, Map<string, number>>,
+  doc: Map<string, Map<string, number>>,
+  section: string,
+): string[] {
+  const files = [...new Set([...source.keys(), ...doc.keys()])].sort();
+  const mismatches: string[] = [];
+  for (const file of files) {
+    const s = renderMultiset(source.get(file));
+    const d = renderMultiset(doc.get(file));
+    if (s !== d) {
+      mismatches.push(`${file}: source asks for ${s}, ${DOC_NAME} § ${section} maps ${d}`);
+    }
+  }
+  return mismatches;
 }
 
 // ── Doc side ─────────────────────────────────────────────────────────────────
@@ -395,20 +529,20 @@ function compareCounts(
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-describe("permission site mapping — docs/permissions.md against apps/api/src (issue #72)", () => {
-  it("the source walk is non-empty and both detectors find hits (D-11)", () => {
+describe("permission site mapping — docs/permissions.md against apps/api/src (issues #72, #75)", () => {
+  it("the source walk is non-empty and every detector finds hits (D-11)", () => {
     const files = collectSourceFiles();
     expect(
       files.length,
       "no .ts file found under apps/api/src — the source root moved or the walker is broken",
     ).toBeGreaterThan(0);
     expect(
-      total(countPerFile(files, isRequireRoleHit)),
-      "REQUIRE_ROLE_DETECTOR found nothing — the role guard helper was renamed; update the detector",
+      total(countPerFile(files, isGuardHit)),
+      "GUARD_DETECTOR found nothing — the permission guards were renamed; update the detector",
     ).toBeGreaterThan(0);
     expect(
       total(countPerFile(files, isHandlerHit)),
-      "HANDLER_DETECTOR found nothing — the role property was renamed; update the detector",
+      "HANDLER_DETECTOR found nothing — the handler checks were renamed; update the detector",
     ).toBeGreaterThan(0);
     expect(
       total(countPerFile(files, isRecipientHit)),
@@ -422,7 +556,7 @@ describe("permission site mapping — docs/permissions.md against apps/api/src (
     const parsers: [string, (row: DocRow) => object | string][] = [
       [RESOURCES_HEADING, parseResourceRow],
       [PERMISSIONS_HEADING, parsePermissionRow],
-      [REQUIRE_ROLE_HEADING, parseSiteRow],
+      [GUARD_HEADING, parseSiteRow],
       [HANDLER_HEADING, parseSiteRow],
       [RECIPIENT_HEADING, parseSiteRow],
       [EXCLUDED_HEADING, parseExcludedRow],
@@ -440,14 +574,14 @@ describe("permission site mapping — docs/permissions.md against apps/api/src (
     expect(errors, `unparseable rows in ${DOC_NAME} — fix the row format`).toEqual([]);
   });
 
-  it("requireRole: per-file source count equals the doc row count, both directions (D-10)", () => {
+  it("guards: per-file source count equals the doc row count, both directions (D-10, D-18)", () => {
     const files = collectSourceFiles();
     expect(files.length, "no .ts file found under apps/api/src").toBeGreaterThan(0);
-    const source = countPerFile(files, isRequireRoleHit);
-    const doc = countRowsPerFile(parsedSiteRows(readDoc(), REQUIRE_ROLE_HEADING));
+    const source = countPerFile(files, isGuardHit);
+    const doc = countRowsPerFile(parsedSiteRows(readDoc(), GUARD_HEADING));
     expect(
-      compareCounts(source, doc, "requireRole", REQUIRE_ROLE_HEADING.replace(/^## /, "")),
-      `a requireRole call site was added or removed — update ${DOC_NAME}`,
+      compareCounts(source, doc, "permission-guard", GUARD_HEADING.replace(/^## /, "")),
+      `a permission guard call site was added or removed — update ${DOC_NAME}`,
     ).toEqual([]);
   });
 
@@ -481,7 +615,7 @@ describe("permission site mapping — docs/permissions.md against apps/api/src (
   it("every Datei:Zeile occurs at most once across the four site sections", () => {
     const text = readDoc();
     const all = [
-      ...parsedSiteRows(text, REQUIRE_ROLE_HEADING),
+      ...parsedSiteRows(text, GUARD_HEADING),
       ...parsedSiteRows(text, HANDLER_HEADING),
       ...parsedSiteRows(text, RECIPIENT_HEADING),
       ...parsedExcludedRows(text),
@@ -508,7 +642,7 @@ describe("permission site mapping — docs/permissions.md against apps/api/src (
     const reaches = PERMISSION_REACHES as readonly string[];
     const violations: string[] = [];
     for (const row of [
-      ...parsedSiteRows(text, REQUIRE_ROLE_HEADING),
+      ...parsedSiteRows(text, GUARD_HEADING),
       ...parsedSiteRows(text, HANDLER_HEADING),
       ...parsedSiteRows(text, RECIPIENT_HEADING),
     ]) {
@@ -524,6 +658,74 @@ describe("permission site mapping — docs/permissions.md against apps/api/src (
     expect(
       violations,
       `${DOC_NAME} names a permission the catalog does not have — fix the row or the catalog`,
+    ).toEqual([]);
+  });
+
+  it("every permission-helper call outside the implementation names its permission as one resource:action literal (D-18)", () => {
+    const files = collectSourceFiles();
+    expect(files.length, "no .ts file found under apps/api/src").toBeGreaterThan(0);
+    const { calls, implementationFiles } = collectKeyedCalls(files);
+    expect(
+      implementationFiles.length,
+      "no file defines the permission helpers — the definition markers are stale; update them",
+    ).toBeGreaterThan(0);
+    expect(
+      calls.filter((c) => c.permission !== null).length,
+      "the AST found no permission-helper call with a literal key — the helper names changed; update HELPER_SECTION",
+    ).toBeGreaterThan(0);
+    const implementation = new Set(implementationFiles);
+    const problems = calls
+      .filter((c) => !implementation.has(c.file))
+      .flatMap((c) =>
+        c.problem !== undefined
+          ? [`${c.file}:${c.line}: ${c.problem}`]
+          : c.permission === null
+            ? [
+                `${c.file}:${c.line}: ${c.helper} without a string-literal key — the permission cannot be checked against ${DOC_NAME}`,
+              ]
+            : [],
+      );
+    expect(problems, "permission-helper calls that cannot be mapped to a doc row").toEqual([]);
+  });
+
+  it("per file and per section, the permissions the code asks for equal the doc's Permission column, as multisets (D-18, AC-75-1)", () => {
+    const files = collectSourceFiles();
+    expect(files.length, "no .ts file found under apps/api/src").toBeGreaterThan(0);
+    const { calls, implementationFiles } = collectKeyedCalls(files);
+    const implementation = new Set(implementationFiles);
+    const text = readDoc();
+    const sections: [SiteSection, string][] = [
+      ["guard", GUARD_HEADING],
+      ["handler", HANDLER_HEADING],
+      ["recipient", RECIPIENT_HEADING],
+    ];
+    const mismatches: string[] = [];
+    let compared = 0;
+    for (const [section, heading] of sections) {
+      const sourceEntries = calls
+        .filter((c) => c.section === section && !implementation.has(c.file))
+        .filter((c): c is KeyedCall & { permission: string } => c.permission !== null);
+      const docEntries = parsedSiteRows(text, heading).map((r) => ({
+        file: r.file,
+        permission: `${r.resource}:${r.action}`,
+      }));
+      expect(
+        sourceEntries.length,
+        `no ${section} call with a literal key found — the AST extraction is broken`,
+      ).toBeGreaterThan(0);
+      compared += sourceEntries.length;
+      mismatches.push(
+        ...compareMultisets(
+          multisetPerFile(sourceEntries),
+          multisetPerFile(docEntries),
+          heading.replace(/^## /, ""),
+        ),
+      );
+    }
+    expect(compared, "no call compared — the multiset check proved nothing").toBeGreaterThan(100);
+    expect(
+      mismatches,
+      `a check asks for a different permission than ${DOC_NAME} maps — fix the row (or the check)`,
     ).toEqual([]);
   });
 
