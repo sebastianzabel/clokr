@@ -325,7 +325,6 @@ async function main() {
       emailNotificationsEnabled: true,
       // Phorest integration (demo placeholders — NO real credentials)
       phorestBusinessId: "demo-business-0001",
-      phorestBranchId: "demo-branch-0001",
       phorestUsername: "demo-integration@demo.clokr.de",
       // phorestPassword intentionally left null/unset
       phorestAutoSync: true,
@@ -356,6 +355,17 @@ async function main() {
     },
   });
   bump("salon");
+
+  // Phase 65b (issue #65): the demo tenant's Phorest branch lives on its demo salon's coupling.
+  await prisma.salonCoupling.create({
+    data: {
+      tenantId: tenant.id,
+      salonId: salon.id,
+      provider: "PHOREST",
+      externalBranchId: "demo-branch-0001",
+    },
+  });
+  bump("salonCoupling");
 
   // ── Employees + Users + WorkSchedule + OvertimeAccount ─────────────────────
   for (const s of EMPLOYEES) {
@@ -1082,6 +1092,7 @@ async function main() {
   await prisma.phorestSyncRun.create({
     data: {
       tenantId: tenant.id,
+      salonId: salon.id, // Phase 65b (issue #65): the salon whose branch the run synced
       startedAt: new Date(addDays(todayUTC, -1).getTime() + 3 * 3_600_000),
       finishedAt: new Date(addDays(todayUTC, -1).getTime() + 3 * 3_600_000 + 42_000),
       status: "SUCCESS",
@@ -1098,6 +1109,7 @@ async function main() {
   await prisma.phorestSyncRun.create({
     data: {
       tenantId: tenant.id,
+      salonId: salon.id, // Phase 65b (issue #65): the salon whose branch the run synced
       startedAt: new Date(todayUTC.getTime() + 3 * 3_600_000),
       finishedAt: new Date(todayUTC.getTime() + 3 * 3_600_000 + 37_000),
       status: "SUCCESS",

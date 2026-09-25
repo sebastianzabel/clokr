@@ -8,14 +8,19 @@
 // the sync must ignore implicit name/email matching and rely only on explicit mapping.
 
 import type { FastifyInstance } from "fastify";
+import { vi } from "vitest";
 import { leaveTypeFields } from "../../../contexts/absence/leave-type";
 import { createTestSalon } from "../../../__tests__/setup"; // Phase 325 (issue #325), D-17
+import type { PhorestSyncTarget } from "../types";
+import staffFixture from "./fixtures/staff.json";
 
 export const MAPPED_STAFF_ID = "ph-staff-mapped";
 export const UNMAPPED_STAFF_ID = "ph-staff-unmapped";
 // Phase 85.1.1 (D-02/D-05) — a SECOND genuinely-mapped employee for the two-mapped-same-run test.
 // Do NOT repurpose Max/UNMAPPED_STAFF_ID — that fixture guards the SS-01 negative-match test.
 export const MAPPED_STAFF_ID_2 = "ph-staff-mapped-2";
+// Phase 65b (issue #65, D-23): the branch id of the seed salon's PHOREST coupling.
+export const DEFAULT_TEST_BRANCH_ID = "branch-1";
 
 export interface PhorestSeed {
   tenantId: string;
@@ -23,6 +28,8 @@ export interface PhorestSeed {
   unmappedEmployeeId: string; // Max — name/email matches staff.json but NO mapping (SS-01)
   mappedEmployeeId2: string; // Bea — a second genuinely-mapped employee (85.1.1 two-mapped tests)
   salonId: string; // Phase 325 (issue #325), D-17 — the tenant's default salon
+  // Phase 65b (issue #65, D-23): the seed salon's coupling as a sync target (branch-1).
+  target: PhorestSyncTarget;
 }
 
 // The Phorest staff emails/names are NOT suffixed — the SS-01 negative-match test needs them to
@@ -62,7 +69,6 @@ export async function seedPhorestTenant(app: FastifyInstance, suffix = ""): Prom
       tenantId: tenant.id,
       timezone: "Europe/Berlin",
       phorestBusinessId: "biz-1",
-      phorestBranchId: "branch-1",
       phorestUsername: "user@salon.de",
       phorestPassword: "secret-pw", // decryptSafe tolerates plaintext
       phorestSyncWindowDays: 7,
@@ -72,6 +78,15 @@ export async function seedPhorestTenant(app: FastifyInstance, suffix = ""): Prom
   // Phase 325 (issue #325), D-17: the required Shift/PhorestAppointment salonId FK needs this
   // tenant's default salon — created right after TenantConfig, mirroring seedTestData's own order.
   const salon = await createTestSalon(prisma, tenant.id, { name: tenant.name });
+  // Phase 65b (issue #65, D-23): the branch lives on the salon's coupling, not on TenantConfig.
+  await prisma.salonCoupling.create({
+    data: {
+      tenantId: tenant.id,
+      salonId: salon.id,
+      provider: "PHOREST",
+      externalBranchId: DEFAULT_TEST_BRANCH_ID,
+    },
+  });
 
   // Mapped employee — matches staff.json "ph-staff-mapped".
   const erikaUser = await prisma.user.create({
@@ -133,7 +148,77 @@ export async function seedPhorestTenant(app: FastifyInstance, suffix = ""): Prom
     unmappedEmployeeId: max.id,
     mappedEmployeeId2: bea.id,
     salonId: salon.id,
+    target: { salonId: salon.id, externalBranchId: DEFAULT_TEST_BRANCH_ID },
   };
+}
+
+/**
+ * Phase 65b (issue #65): add a further salon to a seeded tenant plus its PHOREST coupling to
+ * `externalBranchId`. Default `createdAt` = now + 60 s so it sorts AFTER the seed's salon in
+ * listSalons order; `isActive: false` creates a deactivated (but coupled) salon.
+ */
+export async function addCoupledSalon(
+  app: FastifyInstance,
+  tenantId: string,
+  externalBranchId: string,
+  overrides?: { name?: string; isActive?: boolean; createdAt?: Date },
+): Promise<{ salonId: string; target: PhorestSyncTarget }> {
+  const salon = await createTestSalon(app.prisma, tenantId, {
+    name: overrides?.name ?? `Salon ${externalBranchId}`,
+    isActive: overrides?.isActive,
+    createdAt: overrides?.createdAt ?? new Date(Date.now() + 60_000),
+  });
+  await app.prisma.salonCoupling.create({
+    data: { tenantId, salonId: salon.id, provider: "PHOREST", externalBranchId },
+  });
+  return { salonId: salon.id, target: { salonId: salon.id, externalBranchId } };
+}
+
+export interface PhorestBranchRoute {
+  staff?: unknown;
+  worktimetables?: unknown;
+  appointments?: unknown;
+  status?: number; // when set, EVERY request to this branch answers this (non-ok) status
+}
+
+const EMPTY_WORKTIMETABLES = {
+  _embedded: { workTimeTables: [] },
+  page: { size: 200, totalElements: 0, totalPages: 1, number: 0 },
+};
+const EMPTY_APPOINTMENTS = {
+  _embedded: { appointments: [] },
+  page: { size: 200, totalElements: 0, totalPages: 1, number: 0 },
+};
+
+/**
+ * Phase 65b (issue #65): a per-branch Phorest fetch mock. The branch id is parsed from
+ * `/branch/<id>/` in the URL; the route answers `status` when given, else the worktimetable body
+ * for worktimetable URLs, the appointment body for `/appointment`, otherwise the staff body.
+ * Every requested URL is appended to the returned array FIRST; an unknown branch id then THROWS
+ * (phorestFetch turns that into a NETWORK error on the run), so a fetch for an uncoupled or
+ * inactive salon is visible both in the URL list and as an unexpected run row.
+ */
+export function mockPhorestByBranch(routes: Record<string, PhorestBranchRoute>): string[] {
+  const requested: string[] = [];
+  global.fetch = vi.fn(async (url: string | URL) => {
+    const u = url.toString();
+    requested.push(u);
+    const branch = /\/branch\/([^/]+)\//.exec(u)?.[1];
+    const route = branch !== undefined ? routes[branch] : undefined;
+    if (!route) throw new Error(`mockPhorestByBranch: unknown branch in ${u}`);
+    if (route.status !== undefined) {
+      return new Response("upstream unavailable", { status: route.status });
+    }
+    let body: unknown;
+    if (u.includes("worktimetable")) body = route.worktimetables ?? EMPTY_WORKTIMETABLES;
+    else if (u.includes("/appointment")) body = route.appointments ?? EMPTY_APPOINTMENTS;
+    else body = route.staff ?? staffFixture;
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as unknown as typeof fetch;
+  return requested;
 }
 
 // Phase 85.1 (D-06) — seed a single-day VOCATIONAL_SCHOOL Absence for the "BS gewinnt" tests.
@@ -231,6 +316,9 @@ export async function cleanupPhorestTenant(app: FastifyInstance, tenantId: strin
   await prisma.employee.deleteMany({ where: { tenantId } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
   await prisma.tenantConfig.deleteMany({ where: { tenantId } });
+  // Phase 65b (issue #65): SalonCoupling -> Salon is onDelete: Restrict (the runs, also Restrict
+  // onto Salon, are already gone above), so the couplings go before the salons.
+  await prisma.salonCoupling.deleteMany({ where: { tenantId } });
   // Phase 325 (issue #325): Shift/PhorestAppointment -> Salon is onDelete: Restrict, so the salon
   // must be removed after those deletes above and before the tenant delete below.
   await prisma.salon.deleteMany({ where: { tenantId } });

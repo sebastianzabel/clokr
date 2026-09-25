@@ -489,6 +489,10 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   // covers that row as well as any salon a suite created directly. Shift/PhorestAppointment ->
   // Salon and EmployeeSalonAssignment -> Salon are ALSO onDelete: Restrict, but the
   // shift.deleteMany and employeeSalonAssignment.deleteMany above already run before this.
+  // Phase 65b (issue #65): SalonCoupling -> Salon and PhorestSyncRun.salonId -> Salon are Restrict
+  // too, so both must also be cleared before the salon delete below.
+  await prisma.salonCoupling.deleteMany({ where: { tenantId } });
+  await prisma.phorestSyncRun.deleteMany({ where: { tenantId } });
   await prisma.salon.deleteMany({ where: { tenantId } });
   await prisma.tenant.delete({ where: { id: tenantId } });
 }

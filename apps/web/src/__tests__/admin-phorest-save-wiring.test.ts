@@ -72,9 +72,12 @@ describe("D-07 — Phorest credentials stay button-gated", () => {
 
 describe("savePhorest payload census — the field list plan 109-12 must snapshot", () => {
   // Measured against apps/web/src/routes/(app)/admin/phorest/+page.svelte on 2026-08-30.
+  // Phase 65b (issue #65, D-20): the branch moved to the salon coupling — it is no longer an
+  // unconditional key. It is sent (as `branchId`) only while exactly one salon is active
+  // (`phBranchIdEditable`); the census below therefore pins the EIGHT unconditional keys plus a
+  // separate pin for the conditional ninth.
   const PHOREST_KEYS = [
     "phorestBusinessId",
-    "phorestBranchId",
     "phorestUsername",
     "phorestPassword",
     "phorestAutoSync",
@@ -84,7 +87,7 @@ describe("savePhorest payload census — the field list plan 109-12 must snapsho
     "phorestWrapupMinutes",
   ] as const;
 
-  it("PUT /integrations/phorest/config carries exactly the nine known keys", () => {
+  it("PUT /integrations/phorest/config carries exactly the eight unconditional keys", () => {
     const body = fnBody("async function savePhorest");
     const bodyStart = body.indexOf('api.put("/integrations/phorest/config", {');
     expect(
@@ -96,9 +99,28 @@ describe("savePhorest payload census — the field list plan 109-12 must snapsho
     expect(keys).toEqual([...PHOREST_KEYS].sort());
   });
 
-  it("both Section footers that trigger savePhorest save all nine fields — 109-12 must re-take both snapshots on success", () => {
+  it("the ninth field, branchId, is sent only via the conditional spread on phBranchIdEditable", () => {
+    const body = fnBody("async function savePhorest");
+    expect(body).toContain("...(phBranchIdEditable ? { branchId: phBranchId } : {})");
+  });
+
+  it("both Section footers that trigger savePhorest save all eight unconditional fields (plus the conditional branchId) — 109-12 must re-take both snapshots on success", () => {
     const matches = PAGE.match(/\{#snippet footer\(\)\}[\s\S]*?onclick=\{savePhorest\}/g) ?? [];
     expect(matches.length).toBe(2);
+  });
+});
+
+describe("D-20 — Branch-ID input locks for multi-salon tenants (Phase 65b, issue #65)", () => {
+  it("the Branch-ID input is disabled when phBranchIdEditable is false", () => {
+    expect(PAGE).toContain("disabled={!phBranchIdEditable}");
+  });
+
+  it("the multi-salon hint renders under the Branch-ID input", () => {
+    expect(PAGE).toContain("Mehrere aktive Salons — die Phorest-Filiale wird je Salon gekoppelt.");
+  });
+
+  it("the page contains no reference to the deprecated TenantConfig branch key", () => {
+    expect(PAGE).not.toContain("phorestBranchId");
   });
 });
 
