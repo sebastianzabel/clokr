@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { fromZonedTime } from "date-fns-tz";
 import { requireAuth } from "../../../middleware/auth";
-import { requirePermission } from "../../platform";
+import { hasPermission, permissionReach, requirePermission } from "../../platform";
 import { checkArbZG, ArbZGWarning } from "../arbzg";
 import { checkJArbSchG } from "../../absence"; // Phase 101B (Issue #101, wave 7)
 import { getTenantTimezone, dateStrInTz, todayInTz } from "../../working-time-account"; // Phase 101B
@@ -92,12 +92,16 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const body = createRetroRequestSchema.parse(req.body);
       const user = req.user;
-      const isManager = ["ADMIN", "MANAGER"].includes(user.role);
+      // A caller without retro-request:create:ZUGEWIESEN silently falls back to their own
+      // employeeId below — no 403 (issue #75, D-13).
+      const retroCreateReach = await permissionReach(req, "retro-request:create");
 
-      // Resolve target employee: managers may submit for themselves (own empId);
-      // employees always submit for themselves.
+      // Resolve target employee: a caller holding retro-request:create:ZUGEWIESEN may submit for
+      // someone else; everyone else always submits for themselves.
       const employeeId =
-        body.employeeId && isManager ? body.employeeId : (user.employeeId ?? undefined);
+        body.employeeId && retroCreateReach === "ZUGEWIESEN"
+          ? body.employeeId
+          : (user.employeeId ?? undefined);
 
       if (!employeeId) {
         return reply.code(400).send({ error: "Mitarbeiter nicht ermittelbar" });
@@ -261,8 +265,9 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
           .send({ error: "Eigene Anträge können nicht selbst genehmigt werden" });
       }
 
-      // Role check: only ADMIN and MANAGER may approve/reject
-      if (!["ADMIN", "MANAGER"].includes(user.role)) {
+      // Permission check: only a caller holding retro-request:approve:ZUGEWIESEN may
+      // approve/reject (issue #75, D-13) — checked AFTER the C3-a/C3-b self-approval block above.
+      if (!(await hasPermission(req, "retro-request:approve:ZUGEWIESEN"))) {
         return reply.code(403).send({ error: "Nur Manager oder Admins können Anträge genehmigen" });
       }
 

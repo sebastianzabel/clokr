@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "crypto";
 import { requireAuth } from "../../../middleware/auth";
-import { requirePermission } from "../../platform";
+import { permissionReach, requirePermission } from "../../platform";
 import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../arbzg";
 import { getEffectiveBreakDuration } from "../break-effective";
@@ -420,9 +420,14 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         employeeId = emp.id;
       }
       if (!employeeId) return reply.code(400).send({ error: "Mitarbeiter nicht gefunden" });
-      // D-04: EMPLOYEE may only clock themselves in (not on behalf of others)
+      // D-04: only a caller holding time-entry:create:ZUGEWIESEN may clock in on behalf of
+      // others; the self path still requires at least time-entry:create:EIGENE (issue #75, D-13).
       const isOnBehalfOf = !!body.employeeId && body.employeeId !== user.employeeId;
-      if (isOnBehalfOf && user.role === "EMPLOYEE") {
+      const timeEntryCreateReach = await permissionReach(req, "time-entry:create");
+      if (isOnBehalfOf && timeEntryCreateReach !== "ZUGEWIESEN") {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+      if (timeEntryCreateReach === null) {
         return reply.code(403).send({ error: "Forbidden" });
       }
       const employeeRecord = await app.prisma.employee.findUnique({
@@ -754,9 +759,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Eintrag nicht gefunden" });
       }
 
-      // Only the entry's owner or a manager/admin may append breaks.
-      const isManager = user.role === "MANAGER" || user.role === "ADMIN";
-      if (!isManager && entry.employeeId !== user.employeeId) {
+      // Only the entry's owner or a caller holding time-entry:update:ZUGEWIESEN may append breaks.
+      const breaksUpdateReach = await permissionReach(req, "time-entry:update");
+      if (breaksUpdateReach !== "ZUGEWIESEN" && entry.employeeId !== user.employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+      if (breaksUpdateReach === null) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
@@ -831,7 +839,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       };
 
       const user = req.user;
-      const isManager = ["ADMIN", "MANAGER"].includes(user.role);
+      const isManager = (await permissionReach(req, "time-entry:read")) === "ZUGEWIESEN";
 
       // PERF-V1814-03: cap + defaulted 90d window (non-breaking; web callers always pass bounds)
       const defaultFrom = from
@@ -891,7 +899,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const body = manualEntrySchema.parse(req.body);
       const user = req.user;
-      const isManager = ["ADMIN", "MANAGER"].includes(user.role);
+      // Feeds both the employeeId selection below and postIsCorrectionByManager (issue #75, D-13)
+      const postCreateReach = await permissionReach(req, "time-entry:create");
+      const isManager = postCreateReach === "ZUGEWIESEN";
 
       // Mitarbeiter ID ermitteln
       const employeeId =
@@ -1404,7 +1414,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const { id } = idParamSchema.parse(req.params);
       const body = updateEntrySchema.parse(req.body);
       const user = req.user;
-      const isManager = ["ADMIN", "MANAGER"].includes(user.role);
+      // Feeds both the ownership check below and putIsCorrectionByManager (issue #75, D-13)
+      const putUpdateReach = await permissionReach(req, "time-entry:update");
+      const isManager = putUpdateReach === "ZUGEWIESEN";
 
       const existing = await app.prisma.timeEntry.findUnique({
         where: { id },
@@ -1431,6 +1443,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       // Nur eigene Einträge für normale Mitarbeiter
       if (!isManager && existing.employeeId !== user.employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+      if (putUpdateReach === null) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
@@ -1955,7 +1970,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const user = req.user;
-      const isManager = ["ADMIN", "MANAGER"].includes(user.role);
+      // Feeds both the ownership check below and deleteIsCorrectionByManager (issue #75, D-13)
+      const deleteReach = await permissionReach(req, "time-entry:delete");
+      const isManager = deleteReach === "ZUGEWIESEN";
 
       const existing = await app.prisma.timeEntry.findUnique({
         where: { id },
@@ -1970,6 +1987,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
 
       if (!isManager && existing.employeeId !== user.employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+      if (deleteReach === null) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
@@ -2062,9 +2082,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Eintrag nicht gefunden" });
       }
 
-      // Owner or manager/admin.
-      const isManager = user.role === "MANAGER" || user.role === "ADMIN";
-      if (!isManager && entry.employeeId !== user.employeeId) {
+      // Owner or a caller holding time-entry:update:ZUGEWIESEN.
+      const breakStatusReach = await permissionReach(req, "time-entry:update");
+      if (breakStatusReach !== "ZUGEWIESEN" && entry.employeeId !== user.employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+      if (breakStatusReach === null) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
