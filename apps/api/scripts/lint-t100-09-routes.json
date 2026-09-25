@@ -591,6 +591,18 @@
       "validatedAt": null
     },
     {
+      "route": "DELETE /api/v1/integrations/phorest/couplings/:salonId",
+      "file": "apps/api/src/contexts/scheduling/api/integrations.ts",
+      "category": "probe",
+      "params": {
+        "salonId": "salon"
+      },
+      "minimalBody": null,
+      "reason": "Phase 65b Plan 03 (Issue #65, D-16): ONE tenant-scoped `salonCoupling.findFirst({ where: { salonId, tenantId } })` returns null for a foreign tenant's real salon, an id that exists nowhere, AND an own salon that was never coupled — all three are indistinguishable by construction, and the route answers the byte-identical 404 `{ error: \"Kopplung nicht gefunden\" }` for all of them. No body is parsed by this route. Body/query-carried salon ids on the OTHER coupling-adjacent routes (POST /phorest/couplings, POST /phorest/test, GET /phorest/staff, GET /phorest/appointment-collisions) are outside this register's path-parameter scope (they never appear as a `:param`) and are pinned directly in the API tests (salon-couplings.test.ts, integrations-phorest.test.ts, appointment-collisions.test.ts) instead.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "DELETE /api/v1/leave/requests/:id",
       "file": "apps/api/src/contexts/absence/api/leave.ts",
       "category": "nicht anwendbar",

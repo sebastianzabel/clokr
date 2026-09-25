@@ -10,6 +10,9 @@ import {
   type SalonSyncResult,
 } from "../../../services/phorest/sync-tenant";
 import type { PhorestStaffItem } from "../../../services/phorest/types";
+// Phase 65b (issue #65): every salon read from Schichtplanung goes through the Unterbau's public
+// facade — never a direct `prisma.salon.*` call from this context (ADR 0001).
+import { findSalon, listSalons } from "../../platform";
 
 /**
  * Phorest API Integration
@@ -85,6 +88,56 @@ const collisionQuerySchema = z.union([
   z.object({ shiftId: z.string().uuid() }),
 ]);
 
+// ── Phorest Salon Coupling (Phase 65b, issue #65) ────────────────────────────────────────────
+//
+// D-14/D-15/D-16: a SalonCoupling is the branch a salon syncs against. `provider` is fixed to
+// "PHOREST" by the routes below — a client never chooses it. There is deliberately NO update
+// route (D-17): the only in-place update of a coupling is the single-salon admin-page path
+// (PUT /phorest/config, Task 2) — everything else is create-or-delete.
+
+const couplingCreateSchema = z.object({
+  salonId: z.string().uuid(),
+  externalBranchId: z.string().trim().min(1).max(100),
+});
+
+const couplingParamSchema = z.object({ salonId: z.string().uuid() });
+
+// Fixed reply bodies shared by the coupling routes AND (Task 2) the salon-aware
+// test/staff/collision resolver and the config PUT — one place for every wording.
+const SALON_NOT_FOUND_REPLY = { status: 404 as const, body: { error: "Salon nicht gefunden" } };
+const SALON_INACTIVE_REPLY = {
+  status: 422 as const,
+  body: { error: "Salon ist deaktiviert", code: "SALON_INACTIVE" as const },
+};
+const SALON_ALREADY_COUPLED_REPLY = {
+  status: 409 as const,
+  body: {
+    error: "Dieser Salon ist bereits mit Phorest gekoppelt.",
+    code: "SALON_ALREADY_COUPLED" as const,
+  },
+};
+const BRANCH_ALREADY_COUPLED_REPLY = {
+  status: 409 as const,
+  body: {
+    error: "Diese Phorest-Filiale ist bereits mit einem anderen Salon gekoppelt.",
+    code: "BRANCH_ALREADY_COUPLED" as const,
+  },
+};
+const COUPLING_NOT_FOUND_REPLY = {
+  status: 404 as const,
+  body: { error: "Kopplung nicht gefunden" },
+};
+
+/** Source: apps/api/src/contexts/platform/api/role-assignments.ts (structural P2002 idiom). */
+function isPrismaErrorCode(err: unknown, code: string): boolean {
+  return (
+    err !== null &&
+    typeof err === "object" &&
+    "code" in err &&
+    (err as { code: unknown }).code === code
+  );
+}
+
 /**
  * Build the Phorest web-calendar deep-link for a staff member on a date, or null when it cannot be
  * built (graceful degrade — the UI omits the link).
@@ -116,6 +169,157 @@ declare module "fastify" {
 }
 
 export async function integrationRoutes(app: FastifyInstance) {
+  // ── Phorest Salon Coupling (Phase 65b, issue #65, D-14/D-15/D-16) ──────
+
+  // GET /phorest/couplings — the tenant's couplings, one row per coupled salon.
+  app.get("/phorest/couplings", {
+    schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req) => {
+      const tenantId = req.user.tenantId;
+      const salons = await listSalons(app.prisma, tenantId, { includeInactive: true });
+      const couplings = await app.prisma.salonCoupling.findMany({ where: { tenantId } });
+      const couplingBySalon = new Map(couplings.map((c) => [c.salonId, c]));
+
+      const result = [];
+      for (const salon of salons) {
+        const coupling = couplingBySalon.get(salon.id);
+        if (!coupling) continue;
+        result.push({
+          id: coupling.id,
+          salonId: salon.id,
+          salonName: salon.name,
+          salonIsActive: salon.isActive,
+          provider: coupling.provider,
+          externalBranchId: coupling.externalBranchId,
+          createdAt: coupling.createdAt,
+        });
+      }
+      return { couplings: result };
+    },
+  });
+
+  // POST /phorest/couplings — couple a salon to a Phorest branch (provider fixed by the route).
+  app.post("/phorest/couplings", {
+    schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const tenantId = req.user.tenantId;
+      const body = couplingCreateSchema.parse(req.body);
+
+      const salon = await findSalon(app.prisma, tenantId, body.salonId);
+      if (!salon) {
+        return reply.code(SALON_NOT_FOUND_REPLY.status).send(SALON_NOT_FOUND_REPLY.body);
+      }
+      if (!salon.isActive) {
+        return reply.code(SALON_INACTIVE_REPLY.status).send(SALON_INACTIVE_REPLY.body);
+      }
+      const salonAlreadyCoupled = await app.prisma.salonCoupling.findFirst({
+        where: { salonId: body.salonId, tenantId },
+      });
+      if (salonAlreadyCoupled) {
+        return reply
+          .code(SALON_ALREADY_COUPLED_REPLY.status)
+          .send(SALON_ALREADY_COUPLED_REPLY.body);
+      }
+      const branchAlreadyCoupled = await app.prisma.salonCoupling.findFirst({
+        where: { tenantId, provider: "PHOREST", externalBranchId: body.externalBranchId },
+      });
+      if (branchAlreadyCoupled) {
+        return reply
+          .code(BRANCH_ALREADY_COUPLED_REPLY.status)
+          .send(BRANCH_ALREADY_COUPLED_REPLY.body);
+      }
+
+      let coupling;
+      try {
+        coupling = await app.prisma.salonCoupling.create({
+          data: {
+            tenantId,
+            salonId: body.salonId,
+            provider: "PHOREST",
+            externalBranchId: body.externalBranchId,
+          },
+        });
+      } catch (err: unknown) {
+        if (isPrismaErrorCode(err, "P2002")) {
+          // A concurrent identical POST won the race — re-check which unique constraint the
+          // loser (this request) hit and answer the SAME 409 a sequential retry would get.
+          const bySalon = await app.prisma.salonCoupling.findFirst({
+            where: { salonId: body.salonId, tenantId },
+          });
+          if (bySalon) {
+            return reply
+              .code(SALON_ALREADY_COUPLED_REPLY.status)
+              .send(SALON_ALREADY_COUPLED_REPLY.body);
+          }
+          return reply
+            .code(BRANCH_ALREADY_COUPLED_REPLY.status)
+            .send(BRANCH_ALREADY_COUPLED_REPLY.body);
+        }
+        throw err;
+      }
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "CREATE",
+        entity: "SalonCoupling",
+        entityId: coupling.id,
+        newValue: {
+          salonId: coupling.salonId,
+          provider: coupling.provider,
+          externalBranchId: coupling.externalBranchId,
+        },
+      });
+
+      return reply.code(201).send({
+        coupling: {
+          id: coupling.id,
+          salonId: coupling.salonId,
+          provider: coupling.provider,
+          externalBranchId: coupling.externalBranchId,
+        },
+      });
+    },
+  });
+
+  // DELETE /phorest/couplings/:salonId — remove a salon's coupling (hard delete: configuration,
+  // not time data — owner decision, issue #65). Shifts, appointments and sync runs are untouched;
+  // the FK on those points at the SALON, not the coupling.
+  //
+  // T-100-09 (D-16): ONE tenant-scoped lookup makes a foreign salon, an unknown id, and an own
+  // salon that was never coupled indistinguishable by construction — see
+  // `apps/api/scripts/lint-t100-09-routes.json`'s entry for this route.
+  app.delete("/phorest/couplings/:salonId", {
+    schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const tenantId = req.user.tenantId;
+      const { salonId } = couplingParamSchema.parse(req.params);
+
+      const existing = await app.prisma.salonCoupling.findFirst({ where: { salonId, tenantId } });
+      if (!existing) {
+        return reply.code(COUPLING_NOT_FOUND_REPLY.status).send(COUPLING_NOT_FOUND_REPLY.body);
+      }
+
+      await app.prisma.salonCoupling.delete({ where: { id: existing.id } });
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "DELETE",
+        entity: "SalonCoupling",
+        entityId: existing.id,
+        oldValue: {
+          salonId: existing.salonId,
+          provider: existing.provider,
+          externalBranchId: existing.externalBranchId,
+        },
+      });
+
+      return { success: true };
+    },
+  });
+
   // ── Phorest Config ────────────────────────────────────────────────────
 
   // GET /phorest/config — aktuelle Phorest-Konfiguration

@@ -449,6 +449,18 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         },
       });
       tenantBRoleAssignmentId = roleAssignment.id;
+
+      // Phase 65b Plan 03 (Issue #65, D-16) fixture: a real PHOREST coupling on tenantB's active
+      // Salon — the target of DELETE /phorest/couplings/:salonId. Reuses the "salon" fixture key
+      // (tenantBSalonId) — the eight-key vocabulary does not grow.
+      await app.prisma.salonCoupling.create({
+        data: {
+          tenantId: tenantB.tenant.id,
+          salonId: tenantBSalonId!,
+          provider: "PHOREST",
+          externalBranchId: "t10009-branch",
+        },
+      });
     });
 
     afterAll(async () => {
@@ -635,6 +647,15 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         where: { tenantId: tenantA.tenant.id },
       });
       expect(tenantARoleAssignmentCount).toBe(0);
+    });
+
+    it("fixture integrity after the sweep: tenantB's PHOREST coupling (Phase 65b, Issue #65) still exists with externalBranchId 't10009-branch' — a guard that answers 404 while still deleting the coupling would otherwise pass the byte comparison", async () => {
+      const after = await app.prisma.salonCoupling.findUnique({
+        where: { salonId: tenantBSalonId },
+      });
+      expect(after).not.toBeNull();
+      expect(after?.externalBranchId).toBe("t10009-branch");
+      expect(after?.provider).toBe("PHOREST");
     });
   });
 });
