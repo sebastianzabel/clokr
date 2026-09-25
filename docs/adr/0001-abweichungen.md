@@ -1351,3 +1351,79 @@ nicht behauptet, sondern gegen eine Aufnahme des alten Codes geprüft (unten, �
   Phase einschließlich des Merges von `origin/main` `704b1ee5` 331 Dateien / 5883 Tests (5880
   bestanden, 3 übersprungen); davon zehn neue Testdateien der Phase mit 1886 Fällen, 1707 davon die
   Matrix.
+
+---
+
+## O — Bundesland und manuelle Feiertage wandern an den Salon (Phase 71b, Issue #71)
+
+**Schwere: informativ. Nachtrag 2026-09-25 — Semantikänderung des Unterbaus nach ADR 0002,
+Entscheidung 7, und ein neuer Fremdschlüssel auf den Unterbau.**
+
+**Was sich geändert hat:** Das Bundesland gehört jetzt dem Salon (`Salon.federalState`, Pflicht,
+ohne Schema-Vorgabe). Die Migration
+`packages/db/prisma/migrations/20260925123734_holidays_per_salon/` gab jedem bestehenden Salon das
+`Tenant.federalState` seines Mandanten. `Tenant.federalState` bleibt als Spalte und ist nur noch die
+Vorgabe, die ein neuer Salon ohne eigene Angabe erbt (`createSalon()`); für gesetzliche Feiertage
+liest es kein Code mehr. `PublicHoliday.salonId` ist ein Pflicht-Fremdschlüssel auf `Salon` mit
+`onDelete: Restrict`, eindeutig ist `[salonId, date]` statt `[tenantId, date]`. Bestehende manuelle
+Feiertage gehören dem Default-Salon ihres Mandanten (frühester aktiver Salon, in der Migration als
+Rückfall der früheste überhaupt). `PublicHoliday.tenantId`, `federalState` und `year` bleiben als
+denormalisierte Spalten. Die Migration schreibt keine `SaldoSnapshot`-Zeile
+(`apps/api/src/__tests__/holiday-salon-migration.test.ts`).
+
+**Eine Auflösung im Unterbau:** `holidaysForSalon()` und `holidaysAtWorkLocation()` in
+`apps/api/src/contexts/platform/facade/holiday-resolution.ts` bilden als einzige Stelle eine
+Feiertagsmenge. Maßgeblich ist der Arbeitsort des Tages (§ 2 EFZG): der Salon des abgeschlossenen
+Arbeitseintrags an diesem Tag, sonst `salonForDay()`, sonst der Default-Salon. Der Unterbau liest
+keine Zeiteinträge; Aufrufer übergeben die Zeilen aus `getWorkedEntriesInRange()`, die dafür
+`salonId` mitliefert. Bei mehreren Einträgen an einem Tag entscheidet übergangsweise der früheste
+(`// MULTI-ENTRY:`, #70). Die Auflösung braucht eine feste Zahl von Abfragen, unabhängig von der
+Zahl der Mitarbeiter und Tage (PERF-V1814-01 gilt weiter). Die Berechnung selbst ist nicht mehr über
+`contexts/platform/index.ts` erreichbar; `apps/api/src/__tests__/holiday-resolution-boundary.test.ts`
+hält fest, dass außerhalb von `contexts/platform/` kein Produktivcode sie aufruft oder
+`PublicHoliday` direkt liest — einmal rot gesehen gegen 13 Dateien.
+
+**Korrekturen, offen ausgesprochen:** `composition/dashboard.ts` und `composition/reports.ts`
+berücksichtigen manuelle Feiertage erst seit dieser Phase. `attendance-checker.ts` hatte sie
+entgegen dem Issue-Text schon vorher über `fetchCloseMonthData()` berücksichtigt; dort ändert sich
+nur der Arbeitsort. Die Schichtwoche nimmt für gesetzliche Feiertage den Arbeitsort statt
+`federalStateOverride`; der Override gilt nur noch für Berufsschul-Schulferien. `GET
+/api/v1/holidays` griff für Aufrufer ohne Mitarbeiterdatensatz auf einen beliebigen Mandanten
+zurück; der Mandant kommt jetzt nur aus dem Token.
+
+**Sperre:** Das Bundesland eines Salons ist nur änderbar, solange weder ein Zeiteintrag (auch ein
+gelöschter) noch eine Salonzuordnung auf ihn verweist; sonst 409 `FEDERAL_STATE_IN_USE`. Die
+Zählung der Zeiteinträge liefert die Zeiterfassung über `countEntriesForSalon()`;
+`contexts/platform` greift nicht auf deren Tabelle zu.
+
+**Bewusst nicht:** keine Neuberechnung geschlossener Monate; Schulferien sowie die Heiligabend- und
+Silvester-Regeln bleiben mandantenweit; keine Oberfläche (Block D, #82 ff.). Die
+Betreiber-Skripte `backfill-month-snapshots.ts` und
+`recalculate-snapshots-after-bs-doublecount-fix.ts` rechnen weiter mit einer mandantenweiten Menge
+und verweigern deshalb Mandanten mit mehr als einem Salon.
+
+**Zusammentreffen mit dem `origin/main`-Merge (Phase 75b, Issue #75, Eintrag N; Issue #361):** Diese
+Phase wurde vor dem Abschluss mit den zwischenzeitlich auf `origin/main` gelandeten Commits
+zusammengeführt, darunter das Permission-System aus Eintrag N. Die AC-9-Neutralitätsbasis (Einzelsalon-
+Mandant, keine manuellen Feiertage) blieb dabei byte-identisch. Die gemergte Permission-Matrix aus
+Eintrag N (`permission-neutrality-matrix.test.ts`) prüft dagegen einen Mandanten mit mehreren
+aktiven Salons; dort liefert `GET /api/v1/holidays` jetzt die Feiertage beider Salons (siehe
+„Lesen ohne Salon“ unten) — acht Zellen wurden über den bestehenden Mechanismus aus Issue #361
+(`neutrality/recorded/matrix-amendments.json`) mit Verweis auf Issue #71 als bewusste
+Verhaltensänderung dokumentiert, nicht als Regression der Berechtigungsprüfung; `matrix.json`
+blieb unverändert. Ein echter, vom
+Merge unabhängiger Fehler (`GET /api/v1/dashboard/my-week` 500 für API-Schlüssel-Akteure ohne
+`employeeId`, ausgelöst durch den neuen `holidaysAtWorkLocation()`-Aufruf dieser Phase) wurde als
+solcher erkannt und im Code behoben, nicht dokumentiert.
+
+**Lesen ohne Salon (D-09, revidiert 2026-09-25):** Der Plan sah ursprünglich vor, dass `GET
+/api/v1/holidays` bei einem Mandanten mit mehr als einem aktiven Salon ohne `salonId` mit 400
+`SALON_REQUIRED` antwortet. Das wurde vor der Auslieferung verworfen, weil ein Lesezugriff keinen
+Salon voraussetzen darf: Ohne `salonId` liefert die Route jetzt die Feiertage ALLER aktiven Salons
+des Mandanten, jeder Eintrag mit seiner `salonId` (`apps/api/src/contexts/platform/api/holidays.ts`,
+`computeHolidaysForSalon()`). Bei einem Mandanten mit genau einem Salon ändert sich die Antwort
+nicht. Mit `salonId` bleibt es bei genau diesem Salon; eine fremde und eine unbekannte Id bekommen
+dieselbe 404 (T-100-09). Schreibende Aufrufe (`POST /api/v1/holidays`) verlangen bei mehr als einem
+aktiven Salon weiterhin eine `salonId` (400 `SALON_REQUIRED`). Die beiden Web-Seiten, die ohne
+Salon fragen, zeigen bei mehreren Salons damit die Feiertage aller Salons, bis Block D (#82 ff.)
+eine Salonauswahl bringt.

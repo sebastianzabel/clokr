@@ -85,7 +85,13 @@ async function createRole(
 
 async function createSalon(app: FastifyInstance, tenantId: string, name: string) {
   return app.prisma.salon.create({
-    data: { tenantId, name, openingHours: DEFAULT_SALON_OPENING_HOURS, isActive: true },
+    data: {
+      tenantId,
+      name,
+      federalState: "NIEDERSACHSEN",
+      openingHours: DEFAULT_SALON_OPENING_HOURS,
+      isActive: true,
+    },
   });
 }
 

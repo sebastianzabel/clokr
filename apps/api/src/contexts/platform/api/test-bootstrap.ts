@@ -144,6 +144,8 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
         data: {
           tenantId: tenant.id,
           name: tenant.name,
+          // Phase 71b (issue #71), D-01: the bootstrap tenant's salon inherits the tenant's state.
+          federalState: tenant.federalState,
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
         },

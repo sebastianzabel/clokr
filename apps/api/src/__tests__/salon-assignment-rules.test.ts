@@ -10,12 +10,15 @@ import {
   dateToDay,
   tenantLocalDay,
   mondayBasedWeekday,
+  weekdayOfDay,
   isVoided,
   isEffectiveOn,
   periodsOverlap,
   toAssignmentDto,
+  pickSalonForDay,
   FAR_FUTURE_DAY,
   type AssignmentRow,
+  type PickSalonForDayRow,
 } from "../contexts/platform/salon-assignment-rules";
 
 describe("addDays", () => {
@@ -183,5 +186,68 @@ describe("toAssignmentDto", () => {
 describe("FAR_FUTURE_DAY", () => {
   it("is a sentinel far in the future, never a real assignment date", () => {
     expect(FAR_FUTURE_DAY).toBe("9999-12-31");
+  });
+});
+
+describe("weekdayOfDay (Phase 71b, issue #71, D-04)", () => {
+  it("is timezone-free and agrees with mondayBasedWeekday at UTC midnight", () => {
+    // 2026-06-01 is a Monday, 2026-06-04 a Thursday (both ISO-checked below via mondayBasedWeekday
+    // at UTC, since a calendar date's weekday needs no timezone).
+    expect(weekdayOfDay("2026-06-01")).toBe(0);
+    expect(weekdayOfDay("2026-06-04")).toBe(3);
+    expect(weekdayOfDay("2026-06-07")).toBe(6); // Sunday
+    expect(weekdayOfDay("2026-06-04")).toBe(mondayBasedWeekday(dayToDate("2026-06-04"), "UTC"));
+  });
+});
+
+describe("pickSalonForDay (Phase 71b, issue #71, D-04)", () => {
+  const home: PickSalonForDayRow = {
+    id: "home-1",
+    salonId: "salon-home",
+    kind: "HOME",
+    weekdays: [],
+    validFrom: dayToDate("2026-01-01"),
+    validUntil: null,
+  };
+  const thursdayDeployment: PickSalonForDayRow = {
+    id: "dep-1",
+    salonId: "salon-deployment",
+    kind: "DEPLOYMENT",
+    weekdays: [3], // Thursday
+    validFrom: dayToDate("2026-01-01"),
+    validUntil: null,
+  };
+  const monday = "2026-06-01";
+  const thursday = "2026-06-04";
+
+  it("picks the effective DEPLOYMENT whose weekdays contain the day's weekday", () => {
+    const result = pickSalonForDay([home, thursdayDeployment], thursday);
+    expect(result).toEqual({
+      salonId: "salon-deployment",
+      kind: "DEPLOYMENT",
+      assignmentId: "dep-1",
+    });
+  });
+
+  it("falls back to HOME when the DEPLOYMENT's weekdays do not match the day", () => {
+    const result = pickSalonForDay([home, thursdayDeployment], monday);
+    expect(result).toEqual({ salonId: "salon-home", kind: "HOME", assignmentId: "home-1" });
+  });
+
+  it("ignores a voided DEPLOYMENT row even on its matching weekday", () => {
+    const voidedDeployment: PickSalonForDayRow = {
+      ...thursdayDeployment,
+      id: "dep-voided",
+      validFrom: dayToDate("2026-06-04"),
+      validUntil: dayToDate("2026-06-03"), // validUntil < validFrom, D-03
+    };
+    const result = pickSalonForDay([home, voidedDeployment], thursday);
+    expect(result).toEqual({ salonId: "salon-home", kind: "HOME", assignmentId: "home-1" });
+  });
+
+  it("returns null when no row is effective on the day", () => {
+    expect(pickSalonForDay([], thursday)).toBeNull();
+    const notYetEffective: PickSalonForDayRow = { ...home, validFrom: dayToDate("2027-01-01") };
+    expect(pickSalonForDay([notYetEffective], thursday)).toBeNull();
   });
 });

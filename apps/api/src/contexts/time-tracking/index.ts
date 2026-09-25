@@ -85,6 +85,14 @@ export {
 export { resolveEntrySalon } from "./entry-salon";
 export type { ResolveEntrySalonInput, ResolveEntrySalonResult } from "./entry-salon";
 
+// ── Phase 71b (issue #71), D-12 — "a salon does not move" guard ─────────────────────────────────
+// contexts/platform/facade/salons.ts's updateSalon() needs to know whether any TimeEntry
+// references a salon before letting its federalState change. platform's own facade module must
+// import no other context (ADR 0001/0002), so the ROUTE (platform/api/salons.ts) imports this
+// count from here and injects it as a callback — no boundary exception needed for a platform
+// ROUTE file (settings.ts, employees.ts, imports.ts already import this same index).
+export { countEntriesForSalon } from "./facade/time-entries";
+
 // validateTimeEntryInvariants is deliberately NOT exported here. Its only caller outside this
 // context is platform/api/imports.ts, which is E-2 in ADR 0001 Eintrag H — the importer writing
 // directly into time-tracking, a defect Block 2 (#102-#104) replaces with an event. Exporting it

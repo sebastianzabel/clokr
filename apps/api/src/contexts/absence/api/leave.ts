@@ -380,7 +380,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Startdatum muss vor Enddatum liegen" });
 
       const tenantId = req.user.tenantId;
-      const holidayMap = await getHolidayMap(app.prisma, tenantId, start, end);
+      const holidayMap = await getHolidayMap(app.prisma, tenantId, employeeId, start, end);
       const holidays = new Set(holidayMap.keys());
       // workDays (the array, not just the count) is still needed below for splitDaysAcrossYears.
       const workDays = await resolveWorkDays(app.prisma, employeeId, tenantId);
@@ -1083,6 +1083,7 @@ export async function leaveRoutes(app: FastifyInstance) {
             const hMap = await getHolidayMap(
               app.prisma,
               tenantIdForReversal,
+              existing.employeeId,
               existing.startDate,
               existing.endDate,
             );
@@ -1199,6 +1200,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         holidayMapForDeduct = await getHolidayMap(
           app.prisma,
           existing.employee.tenantId,
+          existing.employeeId,
           existing.startDate,
           existing.endDate,
         );
@@ -1280,6 +1282,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           const hMap = await getHolidayMap(
             app.prisma,
             tenantIdForBooking,
+            existing.employeeId,
             existing.startDate,
             existing.endDate,
           );
@@ -1729,7 +1732,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Startdatum muss vor Enddatum liegen" });
 
       const tenantId = req.user.tenantId;
-      const holidayMap = await getHolidayMap(app.prisma, tenantId, start, end);
+      const holidayMap = await getHolidayMap(app.prisma, tenantId, existing.employeeId, start, end);
       const holidays = new Set(holidayMap.keys());
       // Phase 107 (D-09): roster-aware recompute of this still-PENDING request's own edit.
       const { days } = await resolveLeaveDays(
@@ -1916,7 +1919,13 @@ export async function leaveRoutes(app: FastifyInstance) {
       // range, the apply + day recompute need the NEW range.
       const unionStart = existing.startDate < start ? existing.startDate : start;
       const unionEnd = existing.endDate > end ? existing.endDate : end;
-      const holidayMap = await getHolidayMap(app.prisma, tenantId, unionStart, unionEnd);
+      const holidayMap = await getHolidayMap(
+        app.prisma,
+        tenantId,
+        existing.employeeId,
+        unionStart,
+        unionEnd,
+      );
       const holidays = new Set(holidayMap.keys());
       // Phase 107 (D-09/D-10): roster-aware recompute of the corrected (NEW) range. Unlike
       // POST /requests and the PENDING edit above, this path produces a new APPROVED value, so
@@ -2308,7 +2317,11 @@ export async function leaveRoutes(app: FastifyInstance) {
           },
           orderBy: { startDate: "asc" },
         }),
-        getHolidayMap(app.prisma, req.user.tenantId, start, end),
+        // Interim (Phase 71b, issue #71): a tenant-wide calendar has no single employee to
+        // resolve a work location for, so it shows the REQUESTER's own work-location holidays
+        // (or the tenant's default salon's, for a profile-less admin) until Block D (#82 ff.)
+        // designs a salon-aware calendar.
+        getHolidayMap(app.prisma, req.user.tenantId, req.user.employeeId ?? null, start, end),
       ]);
 
       // Phase 104-10 (D-28/D-29): bulk-load § 9 credits overlapping the visible month — ONE
@@ -2428,7 +2441,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       const isHalf = halfDay === "true";
 
       const tenantId = req.user.tenantId;
-      const holidayMap = await getHolidayMap(app.prisma, tenantId, start, end);
+      const holidayMap = await getHolidayMap(app.prisma, tenantId, employeeId, start, end);
       const holidays = new Set(holidayMap.keys());
 
       // Phase 107 (D-09): roster-aware live estimate, read-only, no persistence.
@@ -3127,7 +3140,13 @@ export async function leaveRoutes(app: FastifyInstance) {
       }
 
       const tenantId = req.user.tenantId;
-      const holidayMap = await getHolidayMap(app.prisma, tenantId, credited.start, credited.end);
+      const holidayMap = await getHolidayMap(
+        app.prisma,
+        tenantId,
+        credit.employeeId,
+        credited.start,
+        credited.end,
+      );
       const holidays = new Set(holidayMap.keys());
       // D-08: Halber Urlaubstag + ganztägige Krankheit → Gutschrift 0,5. Zurückgegeben wird
       // ausschließlich, was angerechnet war — der halfDay-Flag stammt daher vom URLAUBSantrag,

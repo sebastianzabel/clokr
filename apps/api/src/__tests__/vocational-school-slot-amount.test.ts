@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc, monthDayBounds } from "../contexts/working-time-account/timezone";
 import bcrypt from "bcryptjs";
@@ -160,6 +160,7 @@ describe("closeEmployeeMonth — slot-resolved BS amount (daily Soll for LONG da
       data: { name: `BSSlot ${s}`, slug: s, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 71b (issue #71): holiday resolution needs the tenant's salon
     await prisma.tenantConfig.create({ data: { tenantId, defaultVacationDays: 30, timezone: TZ } });
 
     const empUser = await prisma.user.create({

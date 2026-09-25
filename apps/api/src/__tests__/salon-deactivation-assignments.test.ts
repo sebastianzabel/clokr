@@ -49,6 +49,7 @@ describe("POST /api/v1/salons/:id/deactivate — Stammsalon in use, Einsatzsalon
     return app.prisma.salon.create({
       data: {
         tenantId: tenant.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name,
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -638,6 +639,7 @@ describe("POST /api/v1/salons/:id/deactivate — Stammsalon in use, Einsatzsalon
         data: {
           id: highId,
           tenantId: lockTenant.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "WR-01 early createdAt, high id",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
@@ -648,6 +650,7 @@ describe("POST /api/v1/salons/:id/deactivate — Stammsalon in use, Einsatzsalon
         data: {
           id: lowId,
           tenantId: lockTenant.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "WR-01 late createdAt, low id",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,

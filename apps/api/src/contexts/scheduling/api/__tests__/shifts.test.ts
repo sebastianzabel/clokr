@@ -490,6 +490,7 @@ describe("GET /shifts/week — day-based Soll dedup (Phase 104, D-15 Tier 2)", (
     await app.prisma.publicHoliday.create({
       data: {
         tenantId: data.tenant.id,
+        salonId: data.salonId, // Phase 71b (issue #71)
         date: wednesday,
         name: "D-15 Test Feiertag",
         federalState: "NIEDERSACHSEN",

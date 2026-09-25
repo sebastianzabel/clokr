@@ -575,19 +575,25 @@ describe("WR-02 RED→GREEN: leave inside Feiertag week — leave credit must ex
   });
 });
 
-// ── WR-01 RED: DB PublicHoliday must be scoped per federalState bucket ──────
+// ── WR-01 RED→GREEN (rewritten, Phase 71b Plan 03, issue #71, D-07) — a manual PublicHoliday
+// applies by WORK LOCATION (salon), not by a federal-state bucket ───────────────────────────
 //
-// Scenario: Two SHIFT_BASED AZUBIs in same tenant.
-//   niEmp — NIEDERSACHSEN (via tenant default, no pattern override)
-//   byEmp — BAYERN (via EmployeeVocationalSchoolPattern.federalStateOverride)
-// A PublicHoliday row is seeded for BAYERN on a Monday in the visible week.
-// baseSoll for NIEDERSACHSEN should be UNAFFECTED (2280 = full week).
-// baseSoll for BAYERN should be reduced by one day (1824 = 4×456).
+// Scenario: Two SHIFT_BASED AZUBIs in the same tenant, each HOME to a different salon:
+//   niEmp — HOME salon NIEDERSACHSEN (the tenant's default salon, created first)
+//   byEmp — HOME salon BAYERN
+// A PublicHoliday row is seeded on the BAYERN salon for a Monday in the visible week.
+// baseSoll for niEmp should be UNAFFECTED (2280 = full week).
+// baseSoll for byEmp should be reduced by one day (1824 = 4×456).
 //
-// BUG  (before fix): DB holidays are merged into ALL state buckets → niEmp Soll = 1824 (wrong).
-// FIX  (after fix):  DB holiday filtered to BAYERN bucket only → niEmp Soll = 2280 (correct).
-// RED assertion: expect(niEmpSoll).toBe(2280) — FAILS today (returns 1824).
-describe("WR-01 RED→GREEN: DB PublicHoliday must be federalState-scoped per bucket", () => {
+// This describe used to give byEmp their "Bayern-ness" via
+// `EmployeeVocationalSchoolPattern.federalStateOverride` — a per-AZUBI field meant for
+// SchoolHolidayPeriod resolution (Block A of the /shifts/week handler, unchanged) — and pinned
+// the SAME two numbers through that mechanism. Issue #71 (D-07) abolished the override as the
+// LEGAL-holiday mechanism: a manual holiday now applies only to employees actually resolved to
+// the salon it belongs to on that day (work location, § 2 EFZG). The expected numbers are
+// unchanged; only what produces them is — byEmp's Bayern-ness now comes from their HOME salon
+// assignment, and the override is gone from this fixture entirely.
+describe("WR-01 RED→GREEN: manual PublicHoliday applies by the employee's work location (salon), not a federal-state bucket", () => {
   let app: FastifyInstance;
   let tenantId: string;
   let adminToken: string;
@@ -617,7 +623,11 @@ describe("WR-01 RED→GREEN: DB PublicHoliday must be federalState-scoped per bu
       },
     });
     tenantId = tenant.id;
-    await createTestSalon(prisma, tenantId); // Phase 325 (issue #325)
+    // Phase 71b (issue #71), D-07: two salons — NIEDERSACHSEN created FIRST (the tenant's
+    // default salon), BAYERN second. Each AZUBI's HOME assignment below is what now decides
+    // whether the manual holiday applies to them, not a federal-state bucket.
+    const salonNi = await createTestSalon(prisma, tenantId, { federalState: "NIEDERSACHSEN" });
+    const salonBy = await createTestSalon(prisma, tenantId, { federalState: "BAYERN" });
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ },
     });
@@ -704,8 +714,21 @@ describe("WR-01 RED→GREEN: DB PublicHoliday must be federalState-scoped per bu
       },
     });
     await prisma.overtimeAccount.create({ data: { employeeId: niEmpId, balanceHours: 0 } });
+    // Phase 71b (issue #71), D-07: niEmp's HOME salon is NIEDERSACHSEN — this, not a
+    // federal-state bucket, is what now keeps the BAYERN-only holiday off their Soll.
+    await prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId,
+        employeeId: niEmpId,
+        salonId: salonNi.id,
+        kind: "HOME",
+        validFrom: new Date("2024-01-01"),
+        validUntil: null,
+        weekdays: [],
+      },
+    });
 
-    // ── byEmp — BAYERN employee (via vocSchoolPattern federalStateOverride) ──
+    // ── byEmp — BAYERN employee (via HOME salon assignment) ──
     const byUser = await prisma.user.create({
       data: {
         email: `by-${suffix}@wr01.test`,
@@ -745,25 +768,29 @@ describe("WR-01 RED→GREEN: DB PublicHoliday must be federalState-scoped per bu
       },
     });
     await prisma.overtimeAccount.create({ data: { employeeId: byEmpId, balanceHours: 0 } });
-
-    // EmployeeVocationalSchoolPattern giving byEmp a BAYERN override
-    await prisma.employeeVocationalSchoolPattern.create({
+    // Phase 71b (issue #71), D-07: byEmp's HOME salon is BAYERN — this is what now makes the
+    // manual holiday apply to them; the old EmployeeVocationalSchoolPattern.federalStateOverride
+    // (still used elsewhere for SchoolHolidayPeriod resolution, Block A of /shifts/week) plays
+    // no role in the legal-holiday mechanism this describe tests, and is deliberately absent
+    // from this fixture.
+    await prisma.employeeSalonAssignment.create({
       data: {
+        tenantId,
         employeeId: byEmpId,
-        federalStateOverride: "BAYERN",
-        isActive: true,
+        salonId: salonBy.id,
+        kind: "HOME",
         validFrom: new Date("2024-01-01"),
         validUntil: null,
-        daysOfWeek: [2], // Tue (placeholder — only federalStateOverride matters here)
-        blockWeeks: [],
+        weekdays: [],
       },
     });
 
-    // ── PublicHoliday for BAYERN on the test week Monday ────────────────────
+    // ── PublicHoliday on the BAYERN salon for the test week Monday ──────────
     const byHolidayYear = new Date(BY_HOLIDAY_DATE + "T00:00:00Z").getUTCFullYear();
     await prisma.publicHoliday.create({
       data: {
         tenantId,
+        salonId: salonBy.id, // Phase 71b (issue #71), D-07 — salon-scoped, not tenant-wide
         date: new Date(BY_HOLIDAY_DATE + "T00:00:00Z"),
         name: "Bayern-only Feiertag (WR-01 test)",
         federalState: "BAYERN",
@@ -781,7 +808,7 @@ describe("WR-01 RED→GREEN: DB PublicHoliday must be federalState-scoped per bu
     await closeTestApp();
   });
 
-  it("WR-01: BY-only PublicHoliday must NOT reduce NI employee Soll (niEmp=2280, byEmp=1824)", async () => {
+  it("WR-01: a BAYERN-salon PublicHoliday must NOT reduce the NIEDERSACHSEN-salon employee's Soll (niEmp=2280, byEmp=1824)", async () => {
     const res = await app.inject({
       method: "GET",
       url: `/api/v1/shifts/week?date=${TEST_WEEK_MONDAY}`,
@@ -792,8 +819,9 @@ describe("WR-01 RED→GREEN: DB PublicHoliday must be federalState-scoped per bu
       contractSollMinutesByEmp?: Record<string, number>;
     };
 
-    // BUG (before fix): both employees share the same holiday set → niEmpSoll = 1824 (FAILS)
-    // FIX (after fix): DB holiday filtered to BAYERN bucket → niEmpSoll = 2280, byEmpSoll = 1824
+    // Phase 71b (issue #71), D-07: the holiday is scoped to the BAYERN salon — only an
+    // employee actually resolved to that salon on that day (byEmp, via HOME assignment) has
+    // their Soll reduced; niEmp (HOME NIEDERSACHSEN) is unaffected.
     expect(
       body.contractSollMinutesByEmp?.[niEmpId],
       "NI employee Soll must be 2280 (no BY holiday)",

@@ -40,7 +40,13 @@ function postEmployee(app: FastifyInstance, token: string, body: Record<string, 
 
 async function makeActiveSalon(app: FastifyInstance, tenantId: string, name: string) {
   return app.prisma.salon.create({
-    data: { tenantId, name, openingHours: DEFAULT_SALON_OPENING_HOURS, isActive: true },
+    data: {
+      tenantId,
+      name,
+      federalState: "NIEDERSACHSEN", // Phase 71b (issue #71): seedTestData's tenants are all NI
+      openingHours: DEFAULT_SALON_OPENING_HOURS,
+      isActive: true,
+    },
   });
 }
 
@@ -64,6 +70,7 @@ describe("POST /api/v1/employees — Stammsalon resolution (Phase 67b Plan 03, D
       data: {
         tenantId: multi.tenant.id,
         name: "Inaktiver Salon",
+        federalState: "NIEDERSACHSEN",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: false,
         deactivatedAt: new Date(),

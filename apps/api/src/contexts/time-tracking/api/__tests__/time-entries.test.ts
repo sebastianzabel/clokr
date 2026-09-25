@@ -14,7 +14,12 @@
  * No PII — initials only (memory feedback_no_pii_in_github).
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "../../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+} from "../../../../__tests__/setup";
 import { updateOvertimeAccount } from "../time-entries";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
@@ -43,6 +48,7 @@ describe("Saldo Ø-Methode (Phase 76.12) — time-entries leave/absence subtract
       data: { name: `Saldo Ø-Methode ${s}`, slug: `te-${s}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 71b (issue #71): holiday resolution needs the tenant's salon
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
     });

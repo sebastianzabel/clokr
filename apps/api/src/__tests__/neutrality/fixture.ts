@@ -283,6 +283,7 @@ async function createTenantEntities(
   const holiday = await prisma.publicHoliday.create({
     data: {
       tenantId,
+      salonId: seed.defaultSalonId,
       date: day(DAY.holiday),
       name: "Matrix Feiertag",
       federalState: "NIEDERSACHSEN",
@@ -347,6 +348,7 @@ async function createTenantEntities(
     data: {
       tenantId,
       name: "Matrix Salon Zwei",
+      federalState: "NIEDERSACHSEN",
       openingHours: DEFAULT_SALON_OPENING_HOURS,
       isActive: true,
       // Created one minute after the (pinned) seed salon, so `findDefaultSalon` (createdAt, then
@@ -361,6 +363,7 @@ async function createTenantEntities(
     data: {
       tenantId,
       name: "Matrix Salon inaktiv",
+      federalState: "NIEDERSACHSEN",
       openingHours: DEFAULT_SALON_OPENING_HOURS,
       isActive: false,
       deactivatedAt: new Date("2026-06-01T10:00:00.000Z"),

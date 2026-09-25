@@ -35,7 +35,6 @@
 
 import type { PrismaClient } from "@clokr/db";
 import { findUnconfirmedBreakDays } from "../time-tracking";
-import { STATE_MAP } from "../platform";
 import { detectMonthGaps } from "./month-gap-check";
 import {
   DEFAULT_RETRO_ENTRY_WINDOW_DAYS,
@@ -97,7 +96,6 @@ export function severityForMonthsBehind(monthsBehind: number): DeferredMonthClos
 
 type TenantRow = {
   id: string;
-  federalState: string;
   config: {
     timezone: string | null;
     retroEntryWindowDays: number | null;
@@ -126,7 +124,6 @@ export async function getDeferredMonthCloseState(
     where: { id: tenantId },
     select: {
       id: true,
-      federalState: true,
       config: {
         select: {
           timezone: true,
@@ -152,7 +149,6 @@ export async function getDeferredMonthCloseState(
 
   const tz = tenant.config?.timezone ?? "Europe/Berlin";
   const retroWindowDays = tenant.config?.retroEntryWindowDays ?? DEFAULT_RETRO_ENTRY_WINDOW_DAYS;
-  const stateCode = STATE_MAP[tenant.federalState] ?? "NI";
 
   // Ceiling = previous calendar month in tenant TZ — the current month is never closable.
   const zonedNow = new Date(dateStrInTz(now, tz) + "T12:00:00Z");
@@ -218,7 +214,6 @@ export async function getDeferredMonthCloseState(
           schedule: scheduleForMonth as unknown as Record<string, unknown>,
           month: oldestOpenMonth,
           tz,
-          stateCode,
         });
         gapDates = gapResult.gapDates;
         if (gapDates.length > 0) {

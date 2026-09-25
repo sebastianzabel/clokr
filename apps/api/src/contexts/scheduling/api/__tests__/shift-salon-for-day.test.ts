@@ -43,6 +43,7 @@ describe("POST /shifts — omitted salonId resolves via salonForDay() (Phase 344
     salonA = await app.prisma.salon.create({
       data: {
         tenantId: data.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon A",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -51,6 +52,7 @@ describe("POST /shifts — omitted salonId resolves via salonForDay() (Phase 344
     salonB = await app.prisma.salon.create({
       data: {
         tenantId: data.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon B",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,

@@ -97,6 +97,7 @@ async function createSalon(
     data: {
       tenantId,
       name,
+      federalState: "NIEDERSACHSEN",
       openingHours: DEFAULT_SALON_OPENING_HOURS,
       isActive,
       ...(isActive ? {} : { deactivatedAt: new Date() }),

@@ -1629,6 +1629,7 @@ async function seedGoldenScenario(app: FastifyInstance, cell: Cell): Promise<See
     await prisma.publicHoliday.create({
       data: {
         tenantId,
+        salonId: await salonIdForEmployee(prisma, employeeId), // Phase 71b (issue #71)
         date: new Date(h.date + "T00:00:00Z"),
         name: h.name,
         federalState: "NIEDERSACHSEN",

@@ -2,10 +2,11 @@ import { FastifyInstance } from "fastify";
 import { requireAuth } from "../middleware/auth";
 import { requirePermission } from "../contexts/platform";
 import {
-  getHolidays,
-  STATE_MAP,
+  holidaysAtWorkLocation,
   accessContextFromRequest,
   employeeScopeFor,
+  type WorkLocationEntry,
+  type HolidaysByEmployee,
   hasPermission,
 } from "../contexts/platform";
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
@@ -108,21 +109,13 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const schedule = await getEffectiveSchedule(app, employeeId);
       const isMonthlyHoursSchedule = String(schedule.type ?? "") === "MONTHLY_HOURS";
 
-      // Fetch tenant info (federal state for holidays; holiday deduction config for MONTHLY_HOURS)
-      const [personalTenant, tenantConfig] = await Promise.all([
-        app.prisma.tenant.findUnique({
-          where: { id: tenantId },
-          select: { federalState: true },
-        }),
-        isMonthlyHoursSchedule
-          ? app.prisma.tenantConfig.findUnique({
-              where: { tenantId },
-              select: { monthlyHoursHolidayDeduction: true },
-            })
-          : Promise.resolve(null),
-      ]);
-      const personalStateCode = personalTenant?.federalState
-        ? (STATE_MAP[personalTenant.federalState] ?? null)
+      // Holiday deduction config for MONTHLY_HOURS (the tenant's federal state is no longer
+      // read here — holidays are resolved by work location, Phase 71b, issue #71).
+      const tenantConfig = isMonthlyHoursSchedule
+        ? await app.prisma.tenantConfig.findUnique({
+            where: { tenantId },
+            select: { monthlyHoursHolidayDeduction: true },
+          })
         : null;
 
       // ── Diese Woche / Dieser Monat: gearbeitete Stunden ──────────────
@@ -166,6 +159,29 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // Keep weekMinutes for backwards-compat (used as week.workedHours for FIXED_SCHEDULE / FLEXTIME / SHIFT_BASED)
       const weekMinutes = isMonthlyHoursSchedule ? 0 : periodWorkedMinutes;
 
+      // ── Holidays by work location (Phase 71b, issue #71) ─────────────────
+      // Resolved ONCE per request, over the full range the Soll computation below needs (the
+      // whole month for MONTHLY_HOURS, the whole week otherwise) — fed with the SAME T2 rows
+      // already loaded above (`periodEntries`), per § 2 EFZG (work location, not a single
+      // tenant-wide federal state).
+      const holidayRangeStart = isMonthlyHoursSchedule && monthStart ? monthStart : weekStart;
+      const holidayRangeEnd = isMonthlyHoursSchedule && monthEnd ? monthEnd : weekEnd;
+      const workLocationEntries: WorkLocationEntry[] = periodEntries.map((e) => ({
+        employeeId,
+        date: e.date,
+        startTime: e.startTime,
+        salonId: e.salonId,
+      }));
+      const employeeHolidaysMap = await holidaysAtWorkLocation(
+        app.prisma,
+        tenantId,
+        [employeeId],
+        dateStrInTz(holidayRangeStart, tz),
+        dateStrInTz(holidayRangeEnd, tz),
+        workLocationEntries,
+      );
+      const holidayDates = employeeHolidaysMap.get(employeeId) ?? new Map<string, string>();
+
       // ── Soll-Stunden ──────────────────────────────────────────────────
 
       let weekSollMinutes = 0;
@@ -177,7 +193,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         if (mh > 0 && monthStart && monthEnd) {
           const holidayDeductionEnabled = tenantConfig?.monthlyHoursHolidayDeduction === true;
 
-          if (holidayDeductionEnabled && personalStateCode !== undefined) {
+          if (holidayDeductionEnabled) {
             // Replicate reports.ts calcShouldMinutes holiday deduction logic:
             // dailySoll = budget / workdays_in_month; deduct dailySoll for each holiday on a workday.
             const DOW_KEYS_MH = [
@@ -197,14 +213,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
             if (monthWorkdays > 0) {
               const dailySollMin = (mh * 60) / monthWorkdays;
-              const monthYear = monthStart.getUTCFullYear();
-              const monthEndYear = monthEnd.getUTCFullYear();
-              const monthHolidays = getHolidays(monthYear, personalStateCode);
-              if (monthEndYear !== monthYear)
-                monthHolidays.push(...getHolidays(monthEndYear, personalStateCode));
               let holidayDeductionMin = 0;
-              for (const h of monthHolidays) {
-                const hDate = new Date(h.date + "T12:00:00Z");
+              for (const dateStr of holidayDates.keys()) {
+                const hDate = new Date(dateStr + "T12:00:00Z");
                 if (hDate >= monthStart && hDate <= monthEnd) {
                   const dow = getDayOfWeekInTz(hDate, tz);
                   if (Number((schedule as Record<string, unknown>)[DOW_KEYS_MH[dow]] ?? 0) > 0) {
@@ -224,18 +235,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
       } else {
         // FIXED_SCHEDULE / FLEXTIME / SHIFT_BASED: sum scheduled hours from week start up to today (inclusive).
         // clampedEnd = today limits to hours that "should have been worked by now".
-        const personalStartYear = new Date(weekStart).getFullYear();
-        const personalEndYear = new Date(weekEnd).getFullYear();
-        const personalHolidays = getHolidays(personalStartYear, personalStateCode);
-        if (personalEndYear !== personalStartYear)
-          personalHolidays.push(...getHolidays(personalEndYear, personalStateCode));
-
         const clampedEnd = new Date(Math.min(today.getTime(), weekEnd.getTime()));
         weekSollMinutes = calcExpectedMinutesTz(schedule, weekStart, clampedEnd, tz);
 
         // Subtract holidays that fall within [weekStart, clampedEnd]
-        for (const h of personalHolidays) {
-          const hDate = new Date(h.date + "T12:00:00Z");
+        for (const dateStr of holidayDates.keys()) {
+          const hDate = new Date(dateStr + "T12:00:00Z");
           if (hDate >= weekStart && hDate <= clampedEnd) {
             const dow = getDayOfWeekInTz(hDate, tz);
             weekSollMinutes -=
@@ -366,25 +371,39 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       const { start: weekStart, end: weekEnd, days: weekDays } = weekRangeUtc(refDate, tz);
 
-      // Holiday detection for the week
-      const tenant = await app.prisma.tenant.findUnique({
-        where: { id: tenantId },
-        select: { federalState: true },
-      });
-      const stateCode = tenant?.federalState ? (STATE_MAP[tenant.federalState] ?? null) : null;
-      // Week can span two years (e.g. Dec 30 – Jan 5), fetch both if needed
-      const startYear = new Date(weekStart).getFullYear();
-      const endYear = new Date(weekEnd).getFullYear();
-      const weekHolidays = getHolidays(startYear, stateCode);
-      if (endYear !== startYear) weekHolidays.push(...getHolidays(endYear, stateCode));
-      const holidayMap = new Map(weekHolidays.map((h) => [h.date, h.name]));
-
       // Alle aktiven, nicht-anonymisierten Mitarbeiter
       const employees = await app.prisma.employee.findMany({
         where: { tenantId, exitDate: null, user: { isActive: true } },
         select: { id: true, firstName: true, lastName: true, employeeNumber: true },
         orderBy: { lastName: "asc" },
       });
+      const employeeIds = employees.map((e) => e.id);
+
+      // Holidays by work location (Phase 71b, issue #71) — resolved ONCE per employee for the
+      // whole week, fed with a dedicated T2 (closed WORK entries, carries salonId) read. This is
+      // deliberately SEPARATE from `timeEntries` below (`getRecordedWorkEntriesInRange`, T2's
+      // OPEN/INVALID-inclusive sibling) — that read has no `salonId` column and widening it is
+      // out of scope for this plan.
+      const weekWorkEntries = await getWorkedEntriesInRange(
+        app.prisma,
+        employeeScopeFor(access),
+        weekStart,
+        weekEnd,
+      );
+      const weekWorkLocationEntries: WorkLocationEntry[] = weekWorkEntries.map((e) => ({
+        employeeId: e.employeeId,
+        date: e.date,
+        startTime: e.startTime,
+        salonId: e.salonId,
+      }));
+      const holidaysByEmployee = await holidaysAtWorkLocation(
+        app.prisma,
+        tenantId,
+        employeeIds,
+        weekDays[0],
+        weekDays[6],
+        weekWorkLocationEntries,
+      );
 
       // Zeiteinträge der Woche — OPEN (still clocked in) and INVALID rows included on purpose
       // (Phase 100B Plan 08 — getRecordedWorkEntriesInRange, not T2): the per-day loop below
@@ -541,6 +560,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
           const presenceAbsence: PresenceAbsence | null = absence ? { type: absence.type } : null;
 
+          const empHolidayName = holidaysByEmployee.get(emp.id)?.get(dayStr) ?? null;
+
           const { status, reason } = resolvePresenceState({
             entries: presenceEntries,
             leave: presenceLeave,
@@ -548,8 +569,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
             isWorkday,
             isFuture,
             hasShift: shift !== null,
-            isHoliday: holidayMap.has(dayStr),
-            holidayName: holidayMap.get(dayStr) ?? null,
+            isHoliday: empHolidayName !== null,
+            holidayName: empHolidayName,
           });
 
           // Issue #205 finding 3: `reason` has TWO sources — a tenant-renamable
@@ -593,17 +614,6 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const today = todayInTz(tz);
       const todayStr = dateStrInTz(today, tz);
 
-      // Fetch tenant federal state for holiday detection
-      const tenant = await app.prisma.tenant.findUnique({
-        where: { id: tenantId },
-        select: { federalState: true },
-      });
-      const stateCode = tenant?.federalState ? (STATE_MAP[tenant.federalState] ?? null) : null;
-      const holidays = getHolidays(today.getFullYear(), stateCode);
-      const todayHoliday = holidays.find((h) => h.date === todayStr) ?? null;
-      const isHoliday = todayHoliday !== null;
-      const holidayName = todayHoliday?.name ?? null;
-
       // Bulk fetch 1 — active employees for this tenant
       const employees = await app.prisma.employee.findMany({
         where: { tenantId, exitDate: null, user: { isActive: true } },
@@ -612,6 +622,30 @@ export async function dashboardRoutes(app: FastifyInstance) {
       });
 
       const employeeIds = employees.map((e) => e.id);
+
+      // Holidays by work location, for today (Phase 71b, issue #71) — per employee, fed with a
+      // dedicated T2 read (see the team-week handler above for why this is separate from
+      // `getRecordedWorkEntriesInRange` below, which has no `salonId` column).
+      const todayWorkEntries = await getWorkedEntriesInRange(
+        app.prisma,
+        employeeScopeFor(access),
+        today,
+        today,
+      );
+      const todayWorkLocationEntries: WorkLocationEntry[] = todayWorkEntries.map((e) => ({
+        employeeId: e.employeeId,
+        date: e.date,
+        startTime: e.startTime,
+        salonId: e.salonId,
+      }));
+      const holidaysByEmployee = await holidaysAtWorkLocation(
+        app.prisma,
+        tenantId,
+        employeeIds,
+        todayStr,
+        todayStr,
+        todayWorkLocationEntries,
+      );
 
       // Bulk fetch 2 — WORK time entries for today, OPEN and INVALID included (Phase 100B Plan
       // 08 — getRecordedWorkEntriesInRange, not T2): `isClockedIn` below needs the open row.
@@ -725,6 +759,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
           ? { type: rawAbsence.type }
           : null;
 
+        const empHolidayName = holidaysByEmployee.get(emp.id)?.get(todayStr) ?? null;
+
         const { status, reason } = resolvePresenceState({
           entries: presenceEntries,
           leave: presenceLeave,
@@ -732,8 +768,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
           isWorkday,
           isFuture: false, // today is never future
           hasShift: false,
-          isHoliday,
-          holidayName,
+          isHoliday: empHolidayName !== null,
+          holidayName: empHolidayName,
         });
 
         // Accumulate summary counters
@@ -894,19 +930,36 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       const schedule = await getEffectiveSchedule(app, employeeId);
 
-      // Holiday detection for the week
-      const myWeekTenant = await app.prisma.tenant.findUnique({
-        where: { id: tenantId },
-        select: { federalState: true },
-      });
-      const myWeekStateCode = myWeekTenant?.federalState
-        ? (STATE_MAP[myWeekTenant.federalState] ?? null)
-        : null;
-      const startYear = new Date(start).getFullYear();
-      const endYear = new Date(end).getFullYear();
-      const myWeekHolidays = getHolidays(startYear, myWeekStateCode);
-      if (endYear !== startYear) myWeekHolidays.push(...getHolidays(endYear, myWeekStateCode));
-      const myWeekHolidayMap = new Map(myWeekHolidays.map((h) => [h.date, h.name]));
+      // Holidays by work location, for the week (Phase 71b, issue #71) — a dedicated T2 read
+      // feeds the resolver (carries salonId); `entries` below (getRecordedWorkEntriesInRange)
+      // stays as-is for OPEN/INVALID detection, mirroring the team-week/today-attendance sites.
+      const myWeekWorkEntries = await getWorkedEntriesInRange(
+        app.prisma,
+        employeeScopeFor(access, { employeeId }),
+        start,
+        end,
+      );
+      const myWeekWorkLocationEntries: WorkLocationEntry[] = myWeekWorkEntries.map((e) => ({
+        employeeId,
+        date: e.date,
+        startTime: e.startTime,
+        salonId: e.salonId,
+      }));
+      // An API-key actor has no backing employee (req.user.employeeId is undefined despite the
+      // `!` assertion above) — skip the resolver rather than pass it a one-element array holding
+      // `undefined`, which failed the underlying Prisma query with a 500.
+      const myWeekHolidaysByEmployee = employeeId
+        ? await holidaysAtWorkLocation(
+            app.prisma,
+            tenantId,
+            [employeeId],
+            weekDays[0],
+            weekDays[6],
+            myWeekWorkLocationEntries,
+          )
+        : (new Map() as HolidaysByEmployee);
+      const myWeekHolidayMap =
+        myWeekHolidaysByEmployee.get(employeeId) ?? new Map<string, string>();
 
       // OPEN and INVALID rows included on purpose (Phase 100B Plan 08 —
       // getRecordedWorkEntriesInRange, not T2): `isClockedIn` below needs the open row present.
@@ -1103,20 +1156,34 @@ export async function dashboardRoutes(app: FastifyInstance) {
           );
           const entryDates = new Set(recentEntries.map((e) => dateStrInTz(e.date, tz)));
 
-          // Fetch holidays for the configured window (can span two years near Jan 1)
-          const openItemsTenant = await app.prisma.tenant.findUnique({
-            where: { id: tenantId },
-            select: { federalState: true },
-          });
-          const openItemsStateCode = openItemsTenant?.federalState
-            ? (STATE_MAP[openItemsTenant.federalState] ?? null)
-            : null;
-          const startYear = windowStart.getFullYear();
-          const endYear = today.getFullYear();
-          const openItemsHolidays = getHolidays(startYear, openItemsStateCode);
-          if (endYear !== startYear)
-            openItemsHolidays.push(...getHolidays(endYear, openItemsStateCode));
-          const openItemsHolidaySet = new Set(openItemsHolidays.map((h) => h.date));
+          // Holidays by work location, for the configured window (Phase 71b, issue #71) — a
+          // dedicated T2 read feeds the resolver (carries salonId); `recentEntries` above
+          // (getRecordedWorkEntriesInRange) stays as-is for the entry-date detection.
+          const openItemsWorkEntries = await getWorkedEntriesInRange(
+            app.prisma,
+            employeeScopeFor(access, { employeeId }),
+            windowStart,
+            today,
+          );
+          const openItemsWorkLocationEntries: WorkLocationEntry[] = openItemsWorkEntries.map(
+            (e) => ({
+              employeeId,
+              date: e.date,
+              startTime: e.startTime,
+              salonId: e.salonId,
+            }),
+          );
+          const openItemsHolidaysByEmployee = await holidaysAtWorkLocation(
+            app.prisma,
+            tenantId,
+            [employeeId],
+            dateStrInTz(windowStart, tz),
+            dateStrInTz(today, tz),
+            openItemsWorkLocationEntries,
+          );
+          const openItemsHolidaySet = new Set(
+            (openItemsHolidaysByEmployee.get(employeeId) ?? new Map<string, string>()).keys(),
+          );
 
           // Approved leave + Absences in the configured window cover the day too
           // (mirrors overtime.ts close-month/status logic — a day is only "missing"

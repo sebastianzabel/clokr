@@ -26,11 +26,15 @@
 
 import type { FastifyInstance } from "fastify";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
-import { getHolidays, STATE_MAP } from "../platform";
+import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — central resolver
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "./close-employee-month";
-import { getValidWorkedEntriesInRange, getEffectiveBreakDuration } from "../time-tracking"; // Phase 100B Plan 08 — T1; Phase 101B wave 8 merged in
+import {
+  getValidWorkedEntriesInRange, // Phase 100B Plan 08 — T1; Phase 101B wave 8 merged in
+  getWorkedEntriesInRange, // Phase 71b (issue #71) — T2, feeds the holiday resolver below
+  getEffectiveBreakDuration,
+} from "../time-tracking";
 import {
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
   getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
@@ -101,7 +105,6 @@ export async function computeMonthSaldo(
       isTimeTrackingExempt: true,
       breakOver6hOverride: true,
       breakOver9hOverride: true,
-      tenant: { select: { federalState: true } },
     },
   });
   if (!employee) {
@@ -153,25 +156,25 @@ export async function computeMonthSaldo(
     where: { tenantId: employee.tenantId },
   });
 
-  const stateCode = employee.tenant ? (STATE_MAP[employee.tenant.federalState] ?? "NI") : "NI";
-
-  // Holiday set: computed Feiertage + DB manual holidays for this month
-  const computedHolidays = getHolidays(year, stateCode).filter(
-    (h) => h.date >= dateStrInTz(effectiveStart, tz) && h.date <= dateStrInTz(monthEnd, tz),
+  // Phase 71b (issue #71) — holidays by work location per day (§ 2 EFZG), from the Unterbau's
+  // central resolver instead of a single tenant-wide federal state. The entries passed are the
+  // employee's own closed work entries (facade T2) — the Unterbau never reads them itself. The
+  // resulting Set still feeds closeEmployeeMonth completely unchanged (D-08).
+  const workLocationEntries = await getWorkedEntriesInRange(
+    app.prisma,
+    { kind: "employee", employeeId, tenantId: employee.tenantId },
+    effectiveStart,
+    monthLastDay,
   );
-  const dbHolidays = await app.prisma.publicHoliday.findMany({
-    where: {
-      tenant: { employees: { some: { id: employeeId } } },
-      date: { gte: effectiveStart, lte: monthLastDay },
-    },
-  });
-  const computedHolidaySet = new Set<string>(computedHolidays.map((h) => h.date));
-  const holidayDateStrings = new Set<string>([
-    ...computedHolidays.map((h) => h.date),
-    ...dbHolidays
-      .filter((h) => !computedHolidaySet.has(dateStrInTz(h.date, tz)))
-      .map((h) => dateStrInTz(h.date, tz)),
-  ]);
+  const holidaysByEmployee = await holidaysAtWorkLocation(
+    app.prisma,
+    employee.tenantId,
+    [employeeId],
+    dateStrInTz(effectiveStart, tz),
+    dateStrInTz(monthEnd, tz),
+    workLocationEntries,
+  );
+  const holidayDateStrings = new Set<string>(holidaysByEmployee.get(employeeId)?.keys() ?? []);
 
   // Effective schedule
   const schedule = await app.prisma.workSchedule.findFirst({

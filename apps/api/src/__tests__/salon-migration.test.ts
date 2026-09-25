@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, withPre71bSalonSchema } from "./setup";
 import {
   DEFAULT_SALON_OPENING_HOURS,
   salonOpeningHoursSchema,
@@ -74,7 +74,14 @@ describe("Phase 64b tracer — default-salon migration + GET /api/v1/salons", ()
 
     // Execute the migration's own data section (D-14), committed — this is what a real migration
     // run does once. NOT EXISTS makes running it again later (Task 2's cases) safe.
-    await app.prisma.$executeRawUnsafe(readDataSection());
+    // Phase 71b (issue #71): wrapped in withPre71bSalonSchema — this data section's own
+    // `INSERT INTO "Salon"` predates federalState and would fail NOT NULL against the post-71b
+    // schema otherwise (Task 2, D-05 reproduces-real-history helper).
+    await app.prisma.$transaction(async (tx) => {
+      await withPre71bSalonSchema(tx, async () => {
+        await tx.$executeRawUnsafe(readDataSection());
+      });
+    });
   });
 
   afterAll(async () => {
@@ -218,27 +225,40 @@ describe("Phase 64b — migration data-section cases A-C (D-14) + idempotency, r
           const preexistingSalon = await tx.salon.create({
             data: {
               tenantId: tenantC.id,
+              federalState: "NIEDERSACHSEN",
               name: "Bereits vorhandener Salon",
               openingHours: DEFAULT_SALON_OPENING_HOURS,
               isActive: true,
             },
           });
 
-          // First run of the real migration data section.
-          await tx.$executeRawUnsafe(dataSection);
-          const afterFirst = {
-            a: await tx.salon.findMany({ where: { tenantId: tenantA.id } }),
-            b: await tx.salon.findMany({ where: { tenantId: tenantB.id } }),
-            c: await tx.salon.findMany({ where: { tenantId: tenantC.id } }),
+          // Phase 71b (issue #71): both runs happen inside ONE withPre71bSalonSchema window — the
+          // data section's INSERT predates federalState and would NOT NULL-fail against the
+          // post-71b schema otherwise. afterFirst/afterSecond only read name/openingHours/id, so
+          // deferring the 71b backfill+SET NOT NULL to the end of the window is safe.
+          let afterFirst!: {
+            a: Array<{ name: string; openingHours: unknown }>;
+            b: Array<{ name: string; openingHours: unknown }>;
+            c: Array<{ id: string }>;
           };
+          let afterSecond!: typeof afterFirst;
+          await withPre71bSalonSchema(tx, async () => {
+            // First run of the real migration data section.
+            await tx.$executeRawUnsafe(dataSection);
+            afterFirst = {
+              a: await tx.salon.findMany({ where: { tenantId: tenantA.id } }),
+              b: await tx.salon.findMany({ where: { tenantId: tenantB.id } }),
+              c: await tx.salon.findMany({ where: { tenantId: tenantC.id } }),
+            };
 
-          // Second run — NOT EXISTS must make this a no-op for every tenant.
-          await tx.$executeRawUnsafe(dataSection);
-          const afterSecond = {
-            a: await tx.salon.findMany({ where: { tenantId: tenantA.id } }),
-            b: await tx.salon.findMany({ where: { tenantId: tenantB.id } }),
-            c: await tx.salon.findMany({ where: { tenantId: tenantC.id } }),
-          };
+            // Second run — NOT EXISTS must make this a no-op for every tenant.
+            await tx.$executeRawUnsafe(dataSection);
+            afterSecond = {
+              a: await tx.salon.findMany({ where: { tenantId: tenantA.id } }),
+              b: await tx.salon.findMany({ where: { tenantId: tenantB.id } }),
+              c: await tx.salon.findMany({ where: { tenantId: tenantC.id } }),
+            };
+          });
 
           snapshot = {
             tenantAName: tenantA.name,

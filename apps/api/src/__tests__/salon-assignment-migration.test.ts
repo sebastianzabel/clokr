@@ -66,6 +66,7 @@ describe("Phase 67b tracer — AC-Stamm-1 migration + GET /api/v1/employees/:id/
     await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon A",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -74,6 +75,7 @@ describe("Phase 67b tracer — AC-Stamm-1 migration + GET /api/v1/employees/:id/
     await app.prisma.salon.create({
       data: {
         tenantId: tenantB.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon B",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -226,6 +228,7 @@ describe("Phase 67b — migration data-section cases A-D (D-25) + idempotency, r
           await tx.salon.create({
             data: {
               tenantId: tenantA.id,
+              federalState: "NIEDERSACHSEN",
               name: "Inactive (earliest overall)",
               openingHours: DEFAULT_SALON_OPENING_HOURS,
               isActive: false,
@@ -235,6 +238,7 @@ describe("Phase 67b — migration data-section cases A-D (D-25) + idempotency, r
           const s1 = await tx.salon.create({
             data: {
               tenantId: tenantA.id,
+              federalState: "NIEDERSACHSEN",
               name: "S1 (earliest active)",
               openingHours: DEFAULT_SALON_OPENING_HOURS,
               isActive: true,
@@ -244,6 +248,7 @@ describe("Phase 67b — migration data-section cases A-D (D-25) + idempotency, r
           await tx.salon.create({
             data: {
               tenantId: tenantA.id,
+              federalState: "NIEDERSACHSEN",
               name: "S2 (later active)",
               openingHours: DEFAULT_SALON_OPENING_HOURS,
               isActive: true,
@@ -259,6 +264,7 @@ describe("Phase 67b — migration data-section cases A-D (D-25) + idempotency, r
           await tx.salon.create({
             data: {
               tenantId: tenantNY.id,
+              federalState: "NIEDERSACHSEN",
               name: "NY Salon",
               openingHours: DEFAULT_SALON_OPENING_HOURS,
               isActive: true,
@@ -272,6 +278,7 @@ describe("Phase 67b — migration data-section cases A-D (D-25) + idempotency, r
           await tx.salon.create({
             data: {
               tenantId: tenantBerlin.id,
+              federalState: "NIEDERSACHSEN",
               name: "Berlin Salon",
               openingHours: DEFAULT_SALON_OPENING_HOURS,
               isActive: true,
@@ -285,6 +292,7 @@ describe("Phase 67b — migration data-section cases A-D (D-25) + idempotency, r
           await tx.salon.create({
             data: {
               tenantId: tenantNoConfig.id,
+              federalState: "NIEDERSACHSEN",
               name: "NoConfig Salon",
               openingHours: DEFAULT_SALON_OPENING_HOURS,
               isActive: true,
@@ -299,6 +307,7 @@ describe("Phase 67b — migration data-section cases A-D (D-25) + idempotency, r
           await tx.salon.create({
             data: {
               tenantId: tenantC.id,
+              federalState: "NIEDERSACHSEN",
               name: "C Salon",
               openingHours: DEFAULT_SALON_OPENING_HOURS,
               isActive: true,
@@ -318,6 +327,7 @@ describe("Phase 67b — migration data-section cases A-D (D-25) + idempotency, r
           const d1Salon = await tx.salon.create({
             data: {
               tenantId: tenantD1.id,
+              federalState: "NIEDERSACHSEN",
               name: "D1 Salon",
               openingHours: DEFAULT_SALON_OPENING_HOURS,
               isActive: true,
@@ -343,6 +353,7 @@ describe("Phase 67b — migration data-section cases A-D (D-25) + idempotency, r
           const inactiveOnlySalon = await tx.salon.create({
             data: {
               tenantId: tenantD2.id,
+              federalState: "NIEDERSACHSEN",
               name: "D2 Inactive-only",
               openingHours: DEFAULT_SALON_OPENING_HOURS,
               isActive: false,

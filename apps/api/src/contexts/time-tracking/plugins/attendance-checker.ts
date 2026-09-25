@@ -1,7 +1,7 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
-import { getHolidays, STATE_MAP, userIdsHoldingPermission } from "../../platform"; // Phase 75b Plan 10 (#75), D-16
+import { userIdsHoldingPermission } from "../../platform"; // Phase 75b Plan 10 (#75), D-16
 import { findUnconfirmedBreakEntries } from "../find-unconfirmed-break-days";
 import {
   getTenantTimezone,
@@ -628,27 +628,17 @@ export const attendanceCheckerPlugin = fp(async (app) => {
             include: {
               user: { select: { id: true } },
               workSchedules: { orderBy: { validFrom: "desc" } },
-              tenant: { select: { federalState: true } },
             },
           });
 
           if (employees.length === 0) continue;
 
-          const stateCode =
-            STATE_MAP[employees[0]?.tenant?.federalState ?? "NIEDERSACHSEN"] ?? "NI";
-          const holidayDateStrings = new Set<string>(
-            getHolidays(todayYear, stateCode).map((h) => h.date),
-          );
+          // Phase 71b (issue #71): holidays by WORK LOCATION instead of a tenant-wide federal
+          // state. This plugin already honored manual PublicHoliday rows before this phase
+          // (via the same bulk fetch) — only the location rule is new.
           const employeeIds = employees.map((e) => e.id);
-          const {
-            entriesByEmp,
-            leaveByEmp,
-            absencesByEmp,
-            holidays: dbHolidays,
-          } = await fetchCloseMonthData(app.prisma, tenant.id, employeeIds, monthStart, monthEnd);
-          for (const h of dbHolidays) {
-            holidayDateStrings.add(dateStrInTz(h.date, tz));
-          }
+          const { entriesByEmp, leaveByEmp, absencesByEmp, holidaysByEmp } =
+            await fetchCloseMonthData(app.prisma, tenant.id, employeeIds, monthStart, monthEnd, tz);
 
           const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
           const monthLabel = new Date(todayYear, todayMonth - 1, 1).toLocaleDateString("de-DE", {
@@ -699,7 +689,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
                 halfDay: Boolean(lr.halfDay),
               })),
               absences: absences.map((ab) => ({ startDate: ab.startDate, endDate: ab.endDate })),
-              holidayDateStrings,
+              holidayDateStrings: holidaysByEmp.get(emp.id) ?? new Set<string>(),
               rosterDates,
             });
 
@@ -791,33 +781,24 @@ export const attendanceCheckerPlugin = fp(async (app) => {
             include: {
               user: { select: { id: true } },
               workSchedules: { orderBy: { validFrom: "desc" } },
-              tenant: { select: { federalState: true } },
             },
           });
 
           if (employees.length === 0) continue;
 
-          const stateCode =
-            STATE_MAP[employees[0]?.tenant?.federalState ?? "NIEDERSACHSEN"] ?? "NI";
-          const holidayDateStrings = new Set<string>(
-            getHolidays(prevYear, stateCode).map((h) => h.date),
-          );
+          // Phase 71b (issue #71): holidays by WORK LOCATION instead of a tenant-wide federal
+          // state. This plugin already honored manual PublicHoliday rows before this phase
+          // (via the same bulk fetch) — only the location rule is new.
           const employeeIds = employees.map((e) => e.id);
-          const {
-            entriesByEmp,
-            leaveByEmp,
-            absencesByEmp,
-            holidays: dbHolidays,
-          } = await fetchCloseMonthData(
-            app.prisma,
-            tenant.id,
-            employeeIds,
-            prevMonthStart,
-            prevMonthEnd,
-          );
-          for (const h of dbHolidays) {
-            holidayDateStrings.add(dateStrInTz(h.date, tz));
-          }
+          const { entriesByEmp, leaveByEmp, absencesByEmp, holidaysByEmp } =
+            await fetchCloseMonthData(
+              app.prisma,
+              tenant.id,
+              employeeIds,
+              prevMonthStart,
+              prevMonthEnd,
+              tz,
+            );
 
           // Find managers/admins for this tenant. Phase 75b Plan 10 (#75), D-16: holders of
           // team-overview:read replace the legacy A,M role predicate — the recorded recipient
@@ -882,7 +863,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
                 halfDay: Boolean(lr.halfDay),
               })),
               absences: absences.map((ab) => ({ startDate: ab.startDate, endDate: ab.endDate })),
-              holidayDateStrings,
+              holidayDateStrings: holidaysByEmp.get(emp.id) ?? new Set<string>(),
               rosterDates,
             });
 

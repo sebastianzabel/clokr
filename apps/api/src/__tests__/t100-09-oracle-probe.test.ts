@@ -422,6 +422,7 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
       const salon = await app.prisma.salon.create({
         data: {
           tenantId: tenantB.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "T-100-09 Salon",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
@@ -437,6 +438,7 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
       const salon2 = await app.prisma.salon.create({
         data: {
           tenantId: tenantB.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "T-100-09 Salon 2",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
@@ -462,6 +464,7 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         await app.prisma.salon.create({
           data: {
             tenantId: tenantA.tenant.id,
+            federalState: "NIEDERSACHSEN",
             name,
             openingHours: DEFAULT_SALON_OPENING_HOURS,
             isActive: true,
@@ -474,6 +477,7 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
       const inactiveSalon = await app.prisma.salon.create({
         data: {
           tenantId: tenantB.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "T-100-09 Salon inaktiv",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: false,

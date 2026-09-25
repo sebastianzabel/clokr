@@ -23,7 +23,7 @@ import {
   getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
   loadBsSlotOverrides, // Phase 76.31 — D-06 slot overrides
 } from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports (plan-04 carry-over row)
-import { getHolidays, STATE_MAP } from "../platform";
+import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — central resolver
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "./close-employee-month"; // SNAP-03 — Phase 76.27
 import { getConfirmedCarryOver } from "./confirmed-saldo"; // Phase 97-06
@@ -37,6 +37,7 @@ import {
 import { setOvertimeAccountBalance } from "./facade/overtime-account";
 import {
   getValidWorkedEntriesInRange, // Phase 100B Plan 08 — T1
+  getWorkedEntriesInRange, // Phase 71b (issue #71) — T2, feeds the holiday resolver below
   getEffectiveBreakDuration,
   getEffectiveSchedule,
 } from "../time-tracking"; // Phase 101B (Issue #101, wave 8) — merged from three deep imports (plan-04 carry-over)
@@ -89,7 +90,6 @@ export async function computeOvertimeBalanceBreakdown(
       isTimeTrackingExempt: true, // Phase 76.7 (D-04, SALDO-V19-04)
       breakOver6hOverride: true, // v1.8.9 — SHIFT_BASED netto saldo
       breakOver9hOverride: true, // v1.8.9 — SHIFT_BASED netto saldo
-      tenant: { select: { federalState: true } },
     },
   });
 
@@ -176,13 +176,10 @@ export async function computeOvertimeBalanceBreakdown(
   // inline (F-01 Option A — SHIFT_BASED: roster-prorated; non-SHIFT: flat calcExpectedMinutesTz).
   const scheduleType = String(schedule.type ?? "");
 
-  // Tenant config + state code are needed by both holiday + closeEmployeeMonth branches
+  // Tenant config is needed by the closeEmployeeMonth branches
   const tenantConfig = await app.prisma.tenantConfig.findUnique({
     where: { tenantId: employee!.tenantId },
   });
-  const updateStateCode = employee?.tenant
-    ? (STATE_MAP[employee.tenant.federalState] ?? "NI")
-    : "NI";
 
   // Hoisted holiday block — FULL-YEAR coverage (not filtered to [rangeStart, effectiveEnd]).
   //
@@ -193,36 +190,55 @@ export async function computeOvertimeBalanceBreakdown(
   // partial month close. Only covering holidays within [rangeStart, effectiveEnd] would cause the
   // live path to subtract fewer holidays than the close path, breaking parity.
   //
-  // We therefore build the holiday set for ALL calendar years spanned by the open range (typically
-  // just one year, but can span two). No date-range filtering — include all holidays for each year.
-  //
-  // DB manual holidays: still filter to [rangeStart, effectiveEnd] for the inline current-month
-  // branch (those are already included in the year-wide computed set for the close calls).
+  // Phase 71b (issue #71) — holidays by work location per day (§ 2 EFZG), from the Unterbau's
+  // central resolver instead of a single tenant-wide federal state. The resolver call covers
+  // the SAME full calendar-year window as the old computed-holiday set did; every consumer below
+  // filters this Set to its own month/partial window, all inside [rangeStart, effectiveEnd], so
+  // the consumed days are unchanged. Manual holidays are now resolved by salon over that same
+  // full-year window (previously only manual rows in [rangeStart, effectiveEnd] were loaded — no
+  // consumer ever read a day outside that range, so no value changes). The entries passed are the
+  // employee's own closed work entries (facade T2) — the Unterbau never reads them itself.
   const rangeYear = rangeStart.getUTCFullYear();
   const effectiveEndYear = effectiveEnd.getUTCFullYear();
-  const computedHolidaysByDate = new Map<string, { date: Date }>();
-  for (let yr = rangeYear; yr <= effectiveEndYear; yr++) {
-    for (const h of getHolidays(yr, updateStateCode)) {
-      // Full year — NO date-range filter (SNAP-03: match close-path convention).
-      computedHolidaysByDate.set(h.date, { date: new Date(h.date + "T00:00:00Z") });
-    }
-  }
-  const dbHolidays = await app.prisma.publicHoliday.findMany({
-    where: {
-      tenant: { employees: { some: { id: employeeId } } },
-      date: { gte: rangeStart, lte: effectiveEnd },
-    },
-  });
-  const allHolidays: { date: Date }[] = [...computedHolidaysByDate.values()];
-  for (const h of dbHolidays) {
-    if (!computedHolidaysByDate.has(dateStrInTz(h.date, tz))) {
-      allHolidays.push({ date: h.date });
-    }
+  const holidayFromDay = `${rangeYear}-01-01`;
+  const holidayToDay = `${effectiveEndYear}-12-31`;
+  const workLocationEntries = await getWorkedEntriesInRange(
+    app.prisma,
+    employeeScope,
+    new Date(`${holidayFromDay}T00:00:00Z`),
+    new Date(`${holidayToDay}T00:00:00Z`),
+  );
+  // This function has NO surrounding try/catch at many of its ~20 call sites (e.g. shifts.ts's
+  // PUT handler: "no try/catch — saldo divergence must be loud", updateOvertimeAccount() runs as
+  // a side effect of unrelated mutations) — it must not itself become a new way for an UNRELATED
+  // write to 500. The resolver is fail-closed when a tenant has no active salon at all (Phase 64b
+  // D-18 calls this state unreachable THROUGH the app's own guarded routes) — but a tenant CAN
+  // reach it via a direct data change that bypasses those routes (shift-salon.test.ts's D-05/D-07
+  // fixture deliberately does this to test unrelated shift behavior, and hit exactly this throw).
+  // Before Phase 71b this function never depended on salon presence at all, so degrading to "no
+  // work-location holiday resolvable this window" on that ONE specific, identified failure —
+  // rather than throwing — restores that pre-71b resilience without swallowing unrelated bugs.
+  let holidaysByEmployee: Awaited<ReturnType<typeof holidaysAtWorkLocation>>;
+  try {
+    holidaysByEmployee = await holidaysAtWorkLocation(
+      app.prisma,
+      employee?.tenantId ?? "",
+      [employeeId],
+      holidayFromDay,
+      holidayToDay,
+      workLocationEntries,
+    );
+  } catch (err) {
+    app.log.warn(
+      { err, employeeId },
+      "computeOvertimeBalanceBreakdown: holidaysAtWorkLocation failed (tenant likely has no active salon) — continuing with no work-location holidays for this window",
+    );
+    holidaysByEmployee = new Map();
   }
   // D-06: holiday dates as tenant-TZ YYYY-MM-DD, passed to calcLeaveAbsenceMinutesTz so a
   // holiday inside approved leave/absence is NOT double-deducted (holidayMinutes already
   // subtracts it separately). Full-year set used for all closeEmployeeMonth calls.
-  const holidayDateStrSet = new Set(allHolidays.map((h) => dateStrInTz(h.date, tz)));
+  const holidayDateStrSet = new Set<string>(holidaysByEmployee.get(employeeId)?.keys() ?? []);
 
   // ── SNAP-03 (Phase 76.27): Per-month iteration via closeEmployeeMonth() ────────
   //

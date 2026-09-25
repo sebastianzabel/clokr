@@ -9,8 +9,14 @@
 
 import { FastifyInstance } from "fastify";
 import { Prisma } from "@clokr/db";
-import { getHolidays, STATE_MAP, calculateWorkDays } from "../platform";
+import {
+  calculateWorkDays,
+  findDefaultSalon,
+  holidaysAtWorkLocation,
+  holidaysForSalon,
+} from "../platform"; // Phase 71b (issue #71, D-04) — the engine/state map are gone from this file, see getHolidayMap()
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
+import { getWorkedEntriesInRange } from "../time-tracking"; // Phase 71b (issue #71) — T2, the work-location rule's entry half
 import { splitDaysAcrossYears, countShiftBasedLeaveDays, mondayOfWeekUtc } from "./vacation-calc"; // Phase 107 (D-04/D-09)
 import { preserveIllnessDeadline } from "./illness-carryover-guard"; // Phase 104
 
@@ -174,8 +180,17 @@ export async function recalculateCarryOver(
 }
 
 /**
- * Gibt eine Map<dateStr, holidayName> für den angegebenen Zeitraum zurück.
- * Berücksichtigt das Bundesland des Tenants sowie manuell eingetragene Feiertage.
+ * Returns a Map<dateStr, holidayName> for the given period.
+ *
+ * Phase 71b (issue #71, D-04): resolves by WORK LOCATION (§ 2 EFZG) through the Unterbau's
+ * central resolver — not a single tenant-wide federal state. With an `employeeId`, the entry
+ * half of the work-location rule is that employee's own closed work entries in the range (T2,
+ * `getWorkedEntriesInRange`); the fallback for a day without one comes from the resolver itself
+ * (salon assignment, then the tenant's default salon). `employeeId: null` means a display with
+ * no single employee (GET /leave/calendar's tenant-wide view) — the tenant's default salon
+ * stands in for every day, an interim choice until Block D (#82 ff.) designs a salon-aware
+ * calendar. The result stays a day → name map, so every caller's `new Set(map.keys())` is
+ * unchanged.
  *
  * Exported + widened to `DbClient` (Phase 107, D-14): the shift-leave-recalc resolver calls
  * this through the SAME `tx` as its shift mutation (D-15), so the parameter type was widened
@@ -186,29 +201,42 @@ export async function recalculateCarryOver(
 export async function getHolidayMap(
   prisma: DbClient,
   tenantId: string,
+  employeeId: string | null,
   start: Date,
   end: Date,
 ): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   if (!tenantId) return map;
 
-  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
-  const stateCode = tenant?.federalState ? STATE_MAP[tenant.federalState] : undefined;
+  const fromDay = start.toISOString().split("T")[0];
+  const toDay = end.toISOString().split("T")[0];
 
-  const startStr = start.toISOString().split("T")[0];
-  const endStr = end.toISOString().split("T")[0];
-
-  for (let y = start.getFullYear(); y <= end.getFullYear(); y++) {
-    for (const h of getHolidays(y, stateCode ?? null)) {
-      if (h.date >= startStr && h.date <= endStr) map.set(h.date, h.name);
-    }
+  if (employeeId) {
+    const entries = await getWorkedEntriesInRange(
+      prisma,
+      { kind: "employee", employeeId, tenantId },
+      start,
+      end,
+    );
+    const byEmployee = await holidaysAtWorkLocation(
+      prisma,
+      tenantId,
+      [employeeId],
+      fromDay,
+      toDay,
+      entries,
+    );
+    return byEmployee.get(employeeId) ?? map;
   }
 
-  // Manuelle Feiertage aus der DB
-  const manual = await prisma.publicHoliday.findMany({
-    where: { tenantId, date: { gte: start, lte: end } },
-  });
-  for (const h of manual) map.set(h.date.toISOString().split("T")[0], h.name);
+  const defaultSalon = await findDefaultSalon(prisma, tenantId);
+  if (!defaultSalon) {
+    throw new Error(
+      `getHolidayMap: tenant ${tenantId} has no active salon — every tenant must have one (Phase 64b D-18)`,
+    );
+  }
+  const holidays = await holidaysForSalon(prisma, tenantId, defaultSalon.id, fromDay, toDay);
+  for (const h of holidays) map.set(h.date, h.name);
 
   return map;
 }

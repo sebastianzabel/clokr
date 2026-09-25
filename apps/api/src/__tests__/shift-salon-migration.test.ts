@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, withPre71bSalonSchema } from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS, findDefaultSalon } from "../contexts/platform/facade/salons";
 
 // __dirname is apps/api/src/__tests__ — four levels up is the repo root, same resolution as
@@ -303,6 +303,7 @@ describe("Phase 325 — shift-salon migration replay (D-03/D-04/AC-2/AC-8)", () 
               data: {
                 id: qSalon0Id,
                 tenantId: tenantQ.tenant.id,
+                federalState: "NIEDERSACHSEN",
                 name: "Q0 inactive earliest",
                 openingHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
                 isActive: false,
@@ -314,6 +315,7 @@ describe("Phase 325 — shift-salon migration replay (D-03/D-04/AC-2/AC-8)", () 
               data: {
                 id: qSalon1Id,
                 tenantId: tenantQ.tenant.id,
+                federalState: "NIEDERSACHSEN",
                 name: "Q1 active early",
                 openingHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
                 isActive: true,
@@ -324,6 +326,7 @@ describe("Phase 325 — shift-salon migration replay (D-03/D-04/AC-2/AC-8)", () 
               data: {
                 id: qSalon2Id,
                 tenantId: tenantQ.tenant.id,
+                federalState: "NIEDERSACHSEN",
                 name: "Q2 active late",
                 openingHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
                 isActive: true,
@@ -334,6 +337,7 @@ describe("Phase 325 — shift-salon migration replay (D-03/D-04/AC-2/AC-8)", () 
               data: {
                 id: rSalon0Id,
                 tenantId: tenantR.tenant.id,
+                federalState: "NIEDERSACHSEN",
                 name: "R0 inactive (only salon)",
                 openingHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
                 isActive: false,
@@ -345,6 +349,7 @@ describe("Phase 325 — shift-salon migration replay (D-03/D-04/AC-2/AC-8)", () 
               data: {
                 id: sSalonAId,
                 tenantId: tenantS.tenant.id,
+                federalState: "NIEDERSACHSEN",
                 name: "S tie A (lower id)",
                 openingHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
                 isActive: true,
@@ -355,6 +360,7 @@ describe("Phase 325 — shift-salon migration replay (D-03/D-04/AC-2/AC-8)", () 
               data: {
                 id: sSalonBId,
                 tenantId: tenantS.tenant.id,
+                federalState: "NIEDERSACHSEN",
                 name: "S tie B (higher id)",
                 openingHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
                 isActive: true,
@@ -453,76 +459,82 @@ describe("Phase 325 — shift-salon migration replay (D-03/D-04/AC-2/AC-8)", () 
               appts: await Promise.all(allApptIds.map((id) => selectAppointment(tx, id))),
             };
 
-            // 4. Execute the REAL data section, statement by statement (extended-protocol pitfall
-            //    — a single multi-statement raw call can be rejected by the driver).
-            for (const stmt of statements) {
-              await tx.$executeRawUnsafe(stmt);
-            }
+            // Phase 71b (issue #71): the data section's own `INSERT INTO "Salon"` predates
+            // federalState and would NOT NULL-fail against the post-71b schema otherwise — wrap
+            // both runs (and everything reading Salon rows in between) in ONE
+            // withPre71bSalonSchema window.
+            await withPre71bSalonSchema(tx, async () => {
+              // 4. Execute the REAL data section, statement by statement (extended-protocol
+              //    pitfall — a single multi-statement raw call can be rejected by the driver).
+              for (const stmt of statements) {
+                await tx.$executeRawUnsafe(stmt);
+              }
 
-            const afterFirst: Snapshot = {
-              shifts: await Promise.all(allShiftIds.map((id) => selectShift(tx, id))),
-              appts: await Promise.all(allApptIds.map((id) => selectAppointment(tx, id))),
-            };
+              const afterFirst: Snapshot = {
+                shifts: await Promise.all(allShiftIds.map((id) => selectShift(tx, id))),
+                appts: await Promise.all(allApptIds.map((id) => selectAppointment(tx, id))),
+              };
 
-            // 5. Whole-database invariants (AC-2): zero NULLs left anywhere, no row whose salon
-            //    belongs to a different tenant than its own employee.
-            const [{ count: nullShiftCount }] = await tx.$queryRaw<{ count: number }[]>`
-              SELECT count(*)::int AS count FROM "Shift" WHERE "salonId" IS NULL
-            `;
-            const [{ count: nullApptCount }] = await tx.$queryRaw<{ count: number }[]>`
-              SELECT count(*)::int AS count FROM "PhorestAppointment" WHERE "salonId" IS NULL
-            `;
-            const [{ count: crossTenantShiftCount }] = await tx.$queryRaw<{ count: number }[]>`
-              SELECT count(*)::int AS count FROM "Shift" sh
-              JOIN "Employee" e ON e."id" = sh."employeeId"
-              JOIN "Salon" sa ON sa."id" = sh."salonId"
-              WHERE sa."tenantId" != e."tenantId"
-            `;
-            const [{ count: crossTenantApptCount }] = await tx.$queryRaw<{ count: number }[]>`
-              SELECT count(*)::int AS count FROM "PhorestAppointment" pa
-              JOIN "Employee" e ON e."id" = pa."employeeId"
-              JOIN "Salon" sa ON sa."id" = pa."salonId"
-              WHERE sa."tenantId" != e."tenantId"
-            `;
+              // 5. Whole-database invariants (AC-2): zero NULLs left anywhere, no row whose salon
+              //    belongs to a different tenant than its own employee.
+              const [{ count: nullShiftCount }] = await tx.$queryRaw<{ count: number }[]>`
+                SELECT count(*)::int AS count FROM "Shift" WHERE "salonId" IS NULL
+              `;
+              const [{ count: nullApptCount }] = await tx.$queryRaw<{ count: number }[]>`
+                SELECT count(*)::int AS count FROM "PhorestAppointment" WHERE "salonId" IS NULL
+              `;
+              const [{ count: crossTenantShiftCount }] = await tx.$queryRaw<{ count: number }[]>`
+                SELECT count(*)::int AS count FROM "Shift" sh
+                JOIN "Employee" e ON e."id" = sh."employeeId"
+                JOIN "Salon" sa ON sa."id" = sh."salonId"
+                WHERE sa."tenantId" != e."tenantId"
+              `;
+              const [{ count: crossTenantApptCount }] = await tx.$queryRaw<{ count: number }[]>`
+                SELECT count(*)::int AS count FROM "PhorestAppointment" pa
+                JOIN "Employee" e ON e."id" = pa."employeeId"
+                JOIN "Salon" sa ON sa."id" = pa."salonId"
+                WHERE sa."tenantId" != e."tenantId"
+              `;
 
-            // 6. D-04 rule pin — findDefaultSalon(tx, ...) vs. the migration's own choice.
-            const defaultSalonQ = await findDefaultSalon(tx, tenantQ.tenant.id);
-            const defaultSalonR = await findDefaultSalon(tx, tenantR.tenant.id);
-            const defaultSalonS = await findDefaultSalon(tx, tenantS.tenant.id);
+              // 6. D-04 rule pin — findDefaultSalon(tx, ...) vs. the migration's own choice.
+              const defaultSalonQ = await findDefaultSalon(tx, tenantQ.tenant.id);
+              const defaultSalonR = await findDefaultSalon(tx, tenantR.tenant.id);
+              const defaultSalonS = await findDefaultSalon(tx, tenantS.tenant.id);
 
-            // 7. P now has exactly one (new) salon.
-            const pSalons = await tx.salon.findMany({ where: { tenantId: tenantP.tenant.id } });
+              // 7. P now has exactly one (new) salon.
+              const pSalons = await tx.salon.findMany({ where: { tenantId: tenantP.tenant.id } });
 
-            // 8. Run the section a SECOND time — idempotency (NOT EXISTS / salonId IS NULL guards).
-            for (const stmt of statements) {
-              await tx.$executeRawUnsafe(stmt);
-            }
-            const afterSecond: Snapshot = {
-              shifts: await Promise.all(allShiftIds.map((id) => selectShift(tx, id))),
-              appts: await Promise.all(allApptIds.map((id) => selectAppointment(tx, id))),
-            };
-            const pSalonsAfterSecond = await tx.salon.findMany({
-              where: { tenantId: tenantP.tenant.id },
+              // 8. Run the section a SECOND time — idempotency (NOT EXISTS / salonId IS NULL guards).
+              for (const stmt of statements) {
+                await tx.$executeRawUnsafe(stmt);
+              }
+              const afterSecond: Snapshot = {
+                shifts: await Promise.all(allShiftIds.map((id) => selectShift(tx, id))),
+                appts: await Promise.all(allApptIds.map((id) => selectAppointment(tx, id))),
+              };
+              const pSalonsAfterSecond = await tx.salon.findMany({
+                where: { tenantId: tenantP.tenant.id },
+              });
+
+              captured = {
+                before,
+                afterFirst,
+                afterSecond,
+                nullShiftCount,
+                nullApptCount,
+                crossTenantShiftCount,
+                crossTenantApptCount,
+                defaultSalonQId: defaultSalonQ?.id ?? null,
+                defaultSalonRId: defaultSalonR?.id ?? null,
+                defaultSalonSId: defaultSalonS?.id ?? null,
+                pSalons: pSalons.map((sal) => ({
+                  id: sal.id,
+                  name: sal.name,
+                  isActive: sal.isActive,
+                })),
+                pSalonsAfterSecond: pSalonsAfterSecond.map((sal) => ({ id: sal.id })),
+              };
             });
-
-            captured = {
-              before,
-              afterFirst,
-              afterSecond,
-              nullShiftCount,
-              nullApptCount,
-              crossTenantShiftCount,
-              crossTenantApptCount,
-              defaultSalonQId: defaultSalonQ?.id ?? null,
-              defaultSalonRId: defaultSalonR?.id ?? null,
-              defaultSalonSId: defaultSalonS?.id ?? null,
-              pSalons: pSalons.map((sal) => ({
-                id: sal.id,
-                name: sal.name,
-                isActive: sal.isActive,
-              })),
-              pSalonsAfterSecond: pSalonsAfterSecond.map((sal) => ({ id: sal.id })),
-            };
 
             throw new ShiftSalonMigrationReplayRollback(
               "deliberate rollback — this fixture must never be committed",

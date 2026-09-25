@@ -59,6 +59,13 @@ model Salon {
   postalCode     String?
   city           String?
   openingHours   Json
+  // Phase 71b (issue #71): the Bundesland whose statutory holidays apply to work done in this
+  // salon (§ 2 EFZG, work location) — required, deliberately WITHOUT a schema default (a new
+  // salon without an explicit state inherits Tenant.federalState in createSalon(), D-01, so a
+  // default here would silently give a salon that skipped that path the wrong state for a
+  // non-NI tenant). Changeable only while no TimeEntry and no EmployeeSalonAssignment references
+  // the salon (plan 06, D-12).
+  federalState   FederalState
   isActive       Boolean   @default(true)
   deactivatedAt  DateTime? @db.Timestamptz
   createdAt      DateTime  @default(now()) @db.Timestamptz
@@ -76,6 +83,8 @@ model Salon {
   // Phase 65b (issue #65): Prisma-only back-relations, no column on Salon.
   coupling            SalonCoupling?
   phorestSyncRuns     PhorestSyncRun[]
+  // Phase 71b (issue #71): Prisma-only back-relation — manual holidays are now salon-scoped.
+  publicHolidays      PublicHoliday[]
 
   @@index([tenantId])
 }
@@ -1001,14 +1010,22 @@ model Absence {
 model PublicHoliday {
   id           String       @id @default(uuid())
   tenantId     String
+  // Phase 71b (issue #71), D-02: manual holidays are salon-scoped — a Stadtfeiertag applies to a
+  // place, not the whole chain. tenantId/federalState/year stay as denormalized columns
+  // (research A3) — tenantId is still the tenant filter every reader scopes on;
+  // federalState/year are unrelated to this change and are still written on create.
+  salonId      String
   date         DateTime     @db.Date
   name         String
   federalState FederalState
   year         Int
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // Restrict because a salon is never hard-deleted (ADR 0002 "Neuer Fremdschlüssel auf den
+  // Unterbau") — deactivation only.
+  salon  Salon  @relation(fields: [salonId], references: [id], onDelete: Restrict)
 
-  @@unique([tenantId, date])
+  @@unique([salonId, date])
   @@index([tenantId, year])
 }
 
