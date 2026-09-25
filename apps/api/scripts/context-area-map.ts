@@ -112,6 +112,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/api/roles.ts": "unterbau", // Phase 73b (#73): role = permission bundle, writes/reads AccessRole only — an Unterbau model
   "src/contexts/platform/api/settings.ts": "unterbau", // writes WorkSchedule/TenantConfig primarily (PUT /settings/work); tx.shift.deleteMany is a side effect of a schedule change, not the primary subject. Phase 243 Plan 02 (B1) moved the LeaveEntitlement/LeaveType routes out to contexts/absence/api/leave-settings.ts, so that clause no longer applies here
   "src/contexts/platform/api/salons.ts": "unterbau", // Phase 64b (issue #64) — reads Salon, Unterbau's own model per ADR 0001
+  "src/contexts/platform/api/salon-assignments.ts": "unterbau", // Phase 67b (issue #67) — reads/writes EmployeeSalonAssignment, an Unterbau model per ADR 0002
   "src/contexts/platform/api/test-bootstrap.ts": "unterbau", // full-tenant dataset reset for e2e bootstrapping; under src/routes/ so cannot be rahmen despite being test-only — Tenant is the root model a full-tenant reset operates against, no single business context owns it
   "src/contexts/platform/api/admin/school-holidays.ts": "unterbau", // reads/writes SchoolHolidayPeriod (Unterbau model, matches the file name directly)
   "src/contexts/platform/plugins/audit.ts": "unterbau", // writes AuditLog — its own Unterbau model
@@ -124,6 +125,10 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/facade/employee-scope.ts": "unterbau", // EmployeeScope discriminated union + employeeScopeWhere() (Phase 100B Plan 04, D-10) — Employee is Unterbau's own model; no Prisma call in this file
   "src/contexts/platform/facade/salons.ts": "unterbau", // Phase 64b (issue #64) — reads Salon, Unterbau's own model per ADR 0001
   "src/contexts/platform/facade/role-assignments.ts": "unterbau", // Phase 74b (issue #74) — userMayApply() reads RoleAssignment/AccessRole/Salon/Employee/User, all Unterbau models
+  "src/contexts/platform/facade/salon-assignments.ts": "unterbau", // Phase 67b (issue #67) — reads/writes EmployeeSalonAssignment, an Unterbau model per ADR 0002
+  "src/contexts/platform/facade/salon-assignment-changes.ts": "unterbau", // Phase 67b Plan 02 (issue #67) — lock-checked writes to EmployeeSalonAssignment, an Unterbau model per ADR 0002
+  "src/contexts/platform/salon-assignment-rules.ts": "unterbau", // Phase 67b (issue #67) — pure day/weekday/period rules for EmployeeSalonAssignment, an Unterbau model per ADR 0002
+  "src/contexts/platform/salon-assignment-audit.ts": "unterbau", // Phase 67b (issue #67) — shared WR-01 audit helper for EmployeeSalonAssignment, an Unterbau model per ADR 0002
   "src/contexts/platform/access-role.ts": "unterbau", // Phase 73b (#73): role = permission bundle, writes/reads AccessRole only — an Unterbau model
   "src/contexts/platform/access-context.ts": "unterbau", // Phase 77b (Issue #77) — AccessContext + its two constructors + employeeScopeFor(); pure module, no Prisma call
   "src/contexts/platform/access-context-error.ts": "unterbau", // Phase 77b (Issue #77) — AccessContextError + requireTenantId(); zero-import leaf, pure module, no Prisma call

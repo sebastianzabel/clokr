@@ -50,6 +50,63 @@
       "validatedAt": null
     },
     {
+      "route": "GET /api/v1/employees/:id/salon-assignments",
+      "file": "apps/api/src/contexts/platform/api/salon-assignments.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": null,
+      "reason": "Phase 67b Plan 01 (Issue #67, D-19): salon-assignments.ts:59 calls findEmployeeInTenant(app.prisma, tenantId, id), an inline tenant-scoped `findFirst({ where: { id, tenantId } })` — returns null for BOTH a foreign tenant's real employee and a nonexistent id; both fall through to the shared rejectUnknownEmployee(...) helper, which sends the byte-identical 404 {\"error\":\"Mitarbeiter nicht gefunden\"} and audits CROSS_TENANT_ACCESS_DENIED only when employeeExistsInForeignTenant(...) confirms the row exists in another tenant. GET has no body. API-key callers (`apikey:<id>` subject) get the same 404: rejectUnknownEmployee audits through auditSalonAssignmentEvent, which leaves AuditLog.userId unset and records the key id in newValue.actor, so the audit insert cannot fail on the User foreign key (WR-01 convention, same as auditSalon); the same defect in other routes is tracked in #333.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/employees/:id/salon-assignments",
+      "file": "apps/api/src/contexts/platform/api/salon-assignments.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": {
+        "salonId": "00000000-0000-4000-8000-0000000067b1",
+        "validFrom": "2026-01-05"
+      },
+      "reason": "Phase 67b Plan 02 (Issue #67, D-08/D-19): createDeploymentSchema.parse(req.body) runs BEFORE the lookup (D-19) — the minimalBody above is the smallest body it accepts (salonId + validFrom; validUntil/weekdays are optional). createDeploymentAssignment(tx, tenantId, id, ...) calls lockEmployee(db, tenantId, employeeId) first, a tenant-scoped `$queryRaw ... FOR UPDATE` returning null for BOTH a foreign tenant's real employee and a nonexistent id; both fall through to the shared rejectUnknownEmployee(...) helper, the same byte-identical 404 as GET, auditing CROSS_TENANT_ACCESS_DENIED only when the row exists in another tenant. API-key callers get the same 404 via auditSalonAssignmentEvent (WR-01 convention); the same defect in other routes is tracked in #333.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/employees/:id/salon-assignments/home",
+      "file": "apps/api/src/contexts/platform/api/salon-assignments.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": {
+        "salonId": "00000000-0000-4000-8000-0000000067b1",
+        "validFrom": "2026-01-05"
+      },
+      "reason": "Phase 67b Plan 02 (Issue #67, D-05/D-19): changeHomeSalonSchema.parse(req.body) runs BEFORE the lookup — the minimalBody above (salonId + validFrom) is the smallest body it accepts (validUntil/weekdays are rejected by the strict schema). changeHomeSalon(tx, tenantId, id, ...) calls lockEmployee(db, tenantId, employeeId) first, the same tenant-scoped `$queryRaw ... FOR UPDATE` as the DEPLOYMENT create route, returning null for BOTH a foreign tenant's real employee and a nonexistent id; both fall through to the shared rejectUnknownEmployee(...) helper, the same byte-identical 404. API-key callers get the same 404 via auditSalonAssignmentEvent (WR-01 convention); the same defect in other routes is tracked in #333.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/employees/:id/salon-assignments/:assignmentId/end",
+      "file": "apps/api/src/contexts/platform/api/salon-assignments.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee",
+        "assignmentId": "salonAssignment"
+      },
+      "minimalBody": {
+        "validUntil": "2026-01-05"
+      },
+      "reason": "Phase 67b Plan 02 (Issue #67, D-11/D-19): endAssignmentSchema.parse(req.body) runs BEFORE the lookup — `{\"validUntil\":\"2026-01-05\"}` is the smallest body it accepts. This is a TWO-fixture-kind route (D-19 forbids classifying it `nicht anwendbar` per the company-shutdowns.ts precedent): the probe's all-params substitution swaps BOTH `:id` and `:assignmentId` at once with either the foreign or the unknown value, so it stops at endSalonAssignment's FIRST guard — lockEmployee(db, tenantId, employeeId), returning null for BOTH a foreign tenant's real employee and a nonexistent id, byte-identical 404 via the shared rejectUnknownEmployee(...) helper. The assignment-level guard (own employee id, a foreign or another-employee's real assignmentId vs. a nonexistent one) is proven separately by `salon-assignments.test.ts` via `rejectUnknownAssignment(...)`, which scopes the lookup by `{ id: assignmentId, tenantId, employeeId }` in one `findFirst` — a row belonging to another employee is indistinguishable from none by construction. API-key callers get the same 404 via auditSalonAssignmentEvent (WR-01 convention); the same defect in other routes is tracked in #333.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "PATCH /api/v1/employees/:id",
       "file": "apps/api/src/contexts/platform/api/employees.ts",
       "category": "probe",
@@ -956,7 +1013,7 @@
         "id": "salon"
       },
       "minimalBody": null,
-      "reason": "Phase 64b Plan 02 (Issue #64, D-08/D-13): deactivateSalon(tx, tenantId, id) locks the tenant's Salon rows FOR UPDATE, then a tenant-scoped findFirst returns NOT_FOUND for a foreign or nonexistent id (before any active-count/conflict check runs) — the route maps NOT_FOUND to the shared rejectUnknownSalon(...) helper, the same byte-identical 404 as every other /:id route, auditing CROSS_TENANT_ACCESS_DENIED only when the row exists in another tenant. No body is parsed by this route. API-key callers (`apikey:<id>` subject) get the same 404: rejectUnknownSalon audits through auditSalon, which leaves AuditLog.userId unset and records the key id in newValue.actor, so the audit insert cannot fail on the User foreign key (Phase 64b review WR-01); the same defect in other routes is tracked in #333. Probed against an active foreign salon while both the calling and the owning tenant have a second active salon (Phase 64b review WR-04): with a single active salon a deactivate that bypassed the guard would stop at LAST_ACTIVE_SALON, so the probe's fixture-integrity check could not see it.",
+      "reason": "Phase 64b Plan 02 (Issue #64, D-08/D-13): deactivateSalon(tx, tenantId, id) locks the tenant's Salon rows FOR UPDATE, then a tenant-scoped findFirst returns NOT_FOUND for a foreign or nonexistent id (before any active-count/conflict check runs) — the route maps NOT_FOUND to the shared rejectUnknownSalon(...) helper, the same byte-identical 404 as every other /:id route, auditing CROSS_TENANT_ACCESS_DENIED only when the row exists in another tenant. No body is parsed by this route. API-key callers (`apikey:<id>` subject) get the same 404: rejectUnknownSalon audits through auditSalon, which leaves AuditLog.userId unset and records the key id in newValue.actor, so the audit insert cannot fail on the User foreign key (Phase 64b review WR-01); the same defect in other routes is tracked in #333. Probed against an active foreign salon while both the calling and the owning tenant have a second active salon (Phase 64b review WR-04): with a single active salon a deactivate that bypassed the guard would stop at LAST_ACTIVE_SALON, so the probe's fixture-integrity check could not see it. Phase 67b Plan 05 (Issue #67, D-14) added a HOME_SALON_IN_USE check between ALREADY_INACTIVE and LAST_ACTIVE_SALON — it runs only AFTER the NOT_FOUND guard above, so it cannot mask a broken tenant guard, and the probe's fixture keeps it inert: tenantB's employee (`seedTestData`, Phase 67b Plan 03 D-24) has no HOME row at all, and the probe's own EmployeeSalonAssignment fixture (`salonAssignment`, used by the `end` route below) is a DEPLOYMENT to the SECOND salon (`T-100-09 Salon 2`), never to this route's target (`T-100-09 Salon`) — so a bypassed guard reaching real business logic would still fall through to LAST_ACTIVE_SALON exactly as before, WR-04's reasoning extended rather than replaced.",
       "ticket": null,
       "validatedAt": null
     },

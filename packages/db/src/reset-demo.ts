@@ -25,6 +25,7 @@ import { PrismaClient } from "../generated/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import bcrypt from "bcryptjs";
+import { createDefaultHomeAssignment } from "./default-salon";
 
 function fatal(message: string): never {
   console.error(message);
@@ -436,6 +437,11 @@ async function main() {
     await prisma.leaveRequest.deleteMany({ where: { employeeId: { in: ids } } });
     await prisma.absence.deleteMany({ where: { employeeId: { in: ids } } });
     await prisma.saldoSnapshot.deleteMany({ where: { employeeId: { in: ids } } });
+    // D-24 (Phase 67b Plan 04, issue #67): EmployeeSalonAssignment -> Employee is
+    // onDelete: Restrict — delete these employees' assignment rows before the employees
+    // themselves, same as this script re-creates their workSchedule below (D-24 names
+    // this script among the deleting paths).
+    await prisma.employeeSalonAssignment.deleteMany({ where: { employeeId: { in: ids } } });
     await prisma.employee.deleteMany({ where: { id: { in: ids } } });
     await prisma.user.deleteMany({ where: { id: { in: uids } } });
     console.log(`Cleaned up ${ids.length} employees from wrong tenant.\n`);
@@ -459,6 +465,9 @@ async function main() {
     await prisma.leaveRequest.deleteMany({ where: { employeeId: { in: empIds } } });
     await prisma.absence.deleteMany({ where: { employeeId: { in: empIds } } });
     await prisma.saldoSnapshot.deleteMany({ where: { employeeId: { in: empIds } } });
+    // D-24 (Phase 67b Plan 04, issue #67): EmployeeSalonAssignment -> Employee is
+    // onDelete: Restrict — same reasoning as the wrongTenantEmps block above.
+    await prisma.employeeSalonAssignment.deleteMany({ where: { employeeId: { in: empIds } } });
 
     // Delete employees (WorkSchedule, OvertimeAccount, LeaveEntitlement, etc. cascade)
     await prisma.employee.deleteMany({ where: { id: { in: empIds } } });
@@ -511,6 +520,13 @@ async function main() {
     where: { id: adminEmp.id },
     data: { hireDate: parseDate(HIRE_DATE_STR) },
   });
+
+  // D-24 (Phase 67b Plan 04, issue #67): this script resets demo data wholesale, exactly
+  // like it re-creates the admin's workSchedule a few lines above — delete the admin's
+  // own (now stale, pre-reset hireDate) HOME row and re-create it so it starts at the new
+  // hire date.
+  await prisma.employeeSalonAssignment.deleteMany({ where: { employeeId: adminEmp.id } });
+  await createDefaultHomeAssignment(prisma, adminEmp.id);
 
   // Leave entitlement
   await prisma.leaveEntitlement.create({
@@ -583,6 +599,11 @@ async function main() {
         ...(def.nfcCardId ? { nfcCardId: def.nfcCardId } : {}),
       },
     });
+
+    // D-24 (Phase 67b Plan 04, issue #67): every re-created demo employee also gets its
+    // Stammsalon (HOME) row, from its tenant-local hire day, to the tenant's existing
+    // default salon.
+    await createDefaultHomeAssignment(prisma, emp.id);
 
     // Work schedule
     await prisma.workSchedule.create({

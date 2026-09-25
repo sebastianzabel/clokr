@@ -56,22 +56,23 @@ function writeFixture(relPath: string, content: string): void {
 // ── Model-ownership table exhaustiveness ─────────────────────────────────────────────────────
 
 describe("MODEL_OWNER", () => {
-  // Phase 65b (#65): + SalonCoupling (scheduling) — 44 -> 45 models, scheduling 8 -> 9.
-  it("assigns exactly 45 models, every owner one of the five OWNER_AREAS", () => {
+  // Merge of Phase 65b (#65: + SalonCoupling, scheduling 8 -> 9) and Phase 67b
+  // (#67: + EmployeeSalonAssignment, platform 16 -> 17) — 44 -> 46 models.
+  it("assigns exactly 46 models, every owner one of the five OWNER_AREAS", () => {
     const models = Object.keys(MODEL_OWNER);
-    expect(models).toHaveLength(45);
+    expect(models).toHaveLength(46);
     for (const owner of Object.values(MODEL_OWNER)) {
       expect(OWNER_AREAS).toContain(owner);
     }
   });
 
-  it("matches the measurement authority's per-owner model count (16/6/9/5/9)", () => {
+  it("matches the measurement authority's per-owner model count (17/6/9/5/9)", () => {
     const counts: Record<string, number> = {};
     for (const owner of Object.values(MODEL_OWNER)) {
       counts[owner] = (counts[owner] ?? 0) + 1;
     }
     expect(counts).toEqual({
-      platform: 16,
+      platform: 17,
       "time-tracking": 6,
       absence: 9,
       "working-time-account": 5,
