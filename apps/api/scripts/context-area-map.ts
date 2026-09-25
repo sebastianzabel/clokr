@@ -84,6 +84,12 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/utils/release-notes.ts": "rahmen", // bakes docs/release-notes/*.md into the image at build time; app-wide, tenant-agnostic, no model
   "src/__tests__/setup.ts": "rahmen", // full-suite fixture seeding across every model; test infra
   "src/__tests__/test-dates.ts": "rahmen", // test-only date helpers, no model
+  "src/__tests__/legacy-role-migration-sql.ts": "rahmen", // Phase 75b (Issue #75) — test infra that runs the checked-in legacy-role data migration verbatim; no model of its own
+  "src/__tests__/neutrality/route-derivation.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: parses the route set from source; test infra, no model
+  "src/__tests__/neutrality/matrix-config.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: checked-in route specs and exclusions; test infra, no model
+  "src/__tests__/neutrality/fixture.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: tenant-per-actor fixture across every context's models; test infra like setup.ts
+  "src/__tests__/neutrality/cell-runner.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: injects one cell and reduces the response; test infra, no model
+  "src/__tests__/neutrality/external-stubs.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: mailer, storage and fetch stubs; test infra, no model
 
   // ── komposition — D-17: dashboard.ts/reports.ts unconditionally, plus pdf.ts (no model, no
   //    Fachregel, reports.ts's only caller); Phase 243 (D-01/D-13) adds activity.ts and
@@ -147,6 +153,10 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/request-audit-fields.ts": "unterbau", // Phase 74b review WR-03/WR-06 — resolves an audit's actor (user vs. API key) via accessContextFromRequest and its IP/headers; pure module, no model, no Prisma call; audit-trail vocabulary like audit-reason.ts
   "src/contexts/platform/role-assignment.ts": "unterbau", // Phase 74b (issue #74) — pure core reasoning over RoleAssignment/AccessRole/Salon/Employee/User, all Unterbau models
   "src/contexts/platform/school-holidays-client.ts": "unterbau", // fetches SchoolHolidayPeriod data from the external OpenHolidays/schulferien-api
+  "src/contexts/platform/system-roles.ts": "unterbau", // Phase 75b (Issue #75) — fixed ids, names and permission sets of the three global system roles (AccessRole rows, an Unterbau model); pure module, no Prisma call
+  "src/contexts/platform/request-permissions.ts": "unterbau", // Phase 75b (Issue #75) — request-scoped permission resolver plus requirePermission/requireAnyPermission/hasPermission/permissionReach; reads User/RoleAssignment/AccessRole, all Unterbau models
+  "src/contexts/platform/compat-role.ts": "unterbau", // Phase 75b (Issue #75), D-14 — the one compat-role derivation (legacy User.role <-> system roles); reads RoleAssignment/AccessRole, and since Plan 11 writes RoleAssignment/User (fallback materialization, system-role replacement, column write-back) — all Unterbau models
+  "src/contexts/platform/role-assignment-audit.ts": "unterbau", // Phase 75b Plan 11 (Issue #75) — shared audit helpers for RoleAssignment writes (moved out of api/role-assignments.ts) plus the compatRole-on-last-row rule (D-29); writes AuditLog only via app.audit, Unterbau models
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────

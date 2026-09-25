@@ -1155,3 +1155,183 @@ Produktionszahlen.
 Der Satz "Phorest: Bis #65 schreibt die Synchronisation den Default-Salon; ohne aktiven Salon
 bricht der Lauf mit Fehler ab, bestehende Schichten werden nie umgehängt." am Ende des Nachtrags zu
 Eintrag L (Phase 325) ist mit diesem Eintrag abgelöst.
+
+---
+
+## N — Die API entscheidet über Permissions statt über Rollen (Phase 75b, Issue #75)
+
+**Schwere: informativ. Nachtrag 2026-09-25 — Semantikänderung des Unterbaus nach ADR 0002,
+Entscheidung 7.**
+
+**Warum dieser Eintrag existiert:** Bis Phase 75b entschied die API jede Zugriffsfrage über
+`User.role` (bzw. den `role`-Claim im JWT) und den Guard `requireRole(...)`. Seitdem entscheidet sie
+über die Permissions der gespeicherten Rollenzuweisungen (#72 Katalog, #73 Rollen, #74 Zuweisungen).
+`User.role` bleibt als Spalte stehen, ist aber kein Eingang einer Zugriffsentscheidung mehr, sondern
+ein aus den Zuweisungen abgeleitetes Kompatibilitätsfeld. Die Bedeutung eines Unterbau-Felds ändert
+sich also, und es kommen neue Exporte von `contexts/platform/index.ts` hinzu — eine Semantikänderung,
+die nach der Auslieferung hier nachgetragen wird. Der Umbau ist **rechteneutral**: Keine Person,
+kein API-Schlüssel und keine Benachrichtigung bekommt durch ihn mehr oder weniger Zugriff. Das ist
+nicht behauptet, sondern gegen eine Aufnahme des alten Codes geprüft (unten, „Gemessen“).
+
+### Was sich geändert hat
+
+- **Drei globale Systemrollen mit festen Ids** (D-01): Admin `00000000-0000-4000-8000-00000000a001`
+  (87 Permissions), Manager `…a002` (63), Mitarbeiter `…a003` (22),
+  `apps/api/src/contexts/platform/system-roles.ts:33`. Der Code erkennt eine Systemrolle nur an der
+  Id, nie am Namen. Die drei Mengen sind nicht ausgedacht, sondern aus der Spalte „heute“ von
+  `docs/permissions.md` abgeleitet (D-03); `system-roles.test.ts` parst das Dokument und vergleicht.
+- **Eine reine Datenmigration** (`packages/db/prisma/migrations/20260925070842_system_roles_and_legacy_role_assignments/`):
+  legt die drei Rollen an und gibt jedem Nutzer mit nicht anonymisiertem Mitarbeiter und ohne
+  bisherige Zuweisung genau eine `TENANT`-Zuweisung auf die Systemrolle seiner Alt-Rolle, mit je
+  einem Audit-Eintrag (`userId` NULL, `origin: "SYSTEM"`, `legacyRole`). Additiv (kein Schema-Diff,
+  `User.role` wird nicht geschrieben) und idempotent. Eine `RAISE NOTICE` meldet vier Zahlen, die
+  jeden `User` genau einmal zählen; `docs/migrations.md` § Phase 75b enthält die lesende Abfrage,
+  die dieselben Zahlen liefert, und ein Test liest sie aus dem Dokument.
+- **Ein Auflöser je Anfrage** (`apps/api/src/contexts/platform/request-permissions.ts:111-157`)
+  lädt einmal pro Anfrage die wirksamen Permissions des Aufrufers — getrennt nach ZUGEWIESEN und
+  EIGENE plus eigener Mitarbeiter-Id. Darauf bauen `requirePermission` / `requireAnyPermission`
+  (Guards, `:211`/`:227`, 401 und 403 `{ error: "Forbidden" }` byte-gleich zu früher),
+  `hasPermission` und `permissionReach` (Prüfungen im Handler, `:177`/`:187`) und
+  `userIdsHoldingPermission` (Empfängersuche, `contexts/platform/facade/role-assignments.ts:289`).
+  Alle sind nur über `contexts/platform/index.ts` erreichbar.
+- **`requireRole` ist gelöscht** (`middleware/auth.ts`, D-18). 143 Guard-Aufrufstellen, 39
+  Rollenprüfungen im Handler und 17 Empfängersuchen fragen Permissions ab; jede Stelle steht mit
+  ihrer Permission in `docs/permissions.md` (Abschnitte „Aufrufstellen der Permission-Guards“,
+  „Handler-Prüfungen“, „Empfängersuchen“), und `permission-site-mapping.test.ts` vergleicht je Datei
+  Anzahl und Permission-Multimenge mit dem Dokument.
+- **Neue Rollenprüfungen sind maschinell verboten** (D-19): `lint:role-checks`
+  (`apps/api/scripts/lint-role-checks.ts`, in CI und `.husky/pre-commit`) findet über den
+  TypeScript-AST jeden `requireRole(`-Aufruf und jeden Vergleich, jede Mengenprüfung, jeden
+  `switch` und jedes Prisma-`where` auf einen Rollenwert in `apps/api/src` (ohne Tests). Einzige
+  erlaubte Datei: `contexts/platform/compat-role.ts`. Eine Ausnahmeliste gibt es nicht.
+- **API-Schlüssel** (D-11/D-30): Ein Schlüssel mit Scope `admin` bekommt die Permissions der
+  Admin-Systemrolle, jeder andere die der Manager-Rolle, beides mandantenweit und ohne eigenen
+  Mitarbeiter (`request-permissions.ts:115-121`) — genau die Wirkung, die `requireAuth` einem
+  Schlüssel bisher über die Rolle gab (`middleware/auth.ts:52-58`). Andere Scopes wirken weiter nicht.
+- **`User.role` wird abgeleitet und zurückgeschrieben** (D-14): `deriveCompatRole()`
+  (`compat-role.ts:90`) ergibt ADMIN bei einer `TENANT`-Zuweisung auf die Admin-Systemrolle, sonst
+  MANAGER bei mindestens einer ZUGEWIESEN-Permission, sonst EMPLOYEE. Anmeldung, OTP und Refresh
+  stellen den `role`-Claim daraus aus; jede Änderung einer Zuweisung (POST/PATCH/DELETE
+  `/role-assignments`, Rollenwechsel in `POST`/`PATCH /employees`, CSV-Import) schreibt die Spalte
+  zurück. Ändert sich die Spalte, trägt der Audit-Eintrag der auslösenden Zuweisungsänderung
+  `compatRole: { from, to }` (D-29, `role-assignment-audit.ts:138-155`). `PATCH /employees/:id`
+  schreibt Rollenteil und Mitarbeiterfelder in einer Transaktion (D-31): Ein 409 der
+  Aussperr-Sperre aus #74 hinterlässt nichts.
+- **17 Empfängersuchen, nicht 16** (D-16/D-17): Das Issue nannte 16; die Admin-Benachrichtigung
+  bei gesperrtem Konto (`ACCOUNT_LOCKED`, `contexts/platform/api/auth.ts`) ist die siebzehnte und
+  ebenfalls umgestellt. Jede Stelle behält alle übrigen Filter und ersetzt nur das Rollenprädikat
+  durch die Menge der Halter einer Permission.
+
+### Was bewusst NICHT geschah
+
+- **Keine Salon- oder Personengrenze an der API** (#91). Eine Zuweisung mit Scope `SALONS` oder
+  `PERSONS` gewährt in 75b mandantenweit nichts (D-09, fail-closed); ZUGEWIESEN-Permissions wirken
+  nur aus einer `TENANT`-Zuweisung.
+- **Keine Umstellung der Oberfläche und kein Entfernen von `User.role` / Enum `Role`** (#83). Das
+  Frontend liest weiter den `role`-Claim.
+- **Keine neuen Systemrollen** (#76) und **kein Permission-System für API-Schlüssel-Scopes**.
+- **Keine erneute Prüfung von `User.isActive` je Anfrage.** Ein noch gültiges Zugriffstoken eines
+  inzwischen deaktivierten Nutzers wirkt wie vorher bis zu seinem Ablauf; das zu ändern wäre nicht
+  rechteneutral (Härtungs-Kandidat).
+- **#333 unangetastet:** Der Audit-Eintrag eines API-Schlüssels verletzt weiter den Fremdschlüssel
+  auf `User` (500 nach dem Schreiben). Die Matrix hat diese 500 so aufgenommen, wie sie vorher war.
+- **Die Sperren blieben byte-gleich und unabhängig von Permissions** (AC-75-17): Selbstgenehmigung
+  von Urlaub und Zeitnachtrag, das Vier-Augen-Prinzip bei der Stornierung und beim endgültigen
+  Löschen. Die Matrix nimmt ihre deutschen Ablehnungstexte als Zellen auf.
+
+### Übergangs- und Randregeln
+
+- **Alt-Rollen-Rückfall** (D-08): Hat ein Nutzer im Mandanten KEINE gespeicherte Zuweisung, gilt
+  eine implizite `TENANT`-Zuweisung auf die Systemrolle von `User.role`
+  (`request-permissions.ts:142-145`). Für jeden migrierten Nutzer ist der Rückfall damit ruhend; er
+  existiert für Nutzer, die ein Weg ohne Zuweisung anlegt (Test-Fixtures, Seeds,
+  `test-bootstrap.ts`) und für die Zeit eines Rolling Deploys. Eine einzige gespeicherte Zeile
+  schaltet ihn ab, auch eine fehlerhafte (die trägt dann nichts bei). Der Rückfall wird mit
+  `User.role` in #83 entfernt.
+- **Materialisierung beim ersten Schreiben** (D-26): Ändert ein Schreibweg die Zuweisungen eines
+  Nutzers ohne gespeicherte Zuweisung, legt er zuerst in derselben Transaktion die Rückfall-Zuweisung
+  als echte Zeile an (Audit mit `reason: "Übernahme der Alt-Rolle (#75)"`,
+  `role-assignment-audit.ts:83`) und wendet erst dann die Änderung an. Eine erste Kundenrolle nimmt
+  so nie still die Alt-Rolle weg. Ändert sich die wirksame Rolle nicht, schreibt der Weg nichts.
+- **Anonymisierung lässt `User.role` stehen** (Abweichung von D-14): Die Anonymisierung löscht wie
+  seit #74 alle Zuweisungen, schreibt die Spalte aber NICHT auf EMPLOYEE zurück
+  (`contexts/platform/anonymize.ts:135-143`). Sonst verlöre das noch gültige Token eines Admins, der
+  sich selbst anonymisiert, mitten in der Sitzung seine Rechte — zwei aufgenommene Zellen der Matrix
+  (`DELETE /api/v1/employees/:id`, fremd, ADMIN und FALLBACK_ADMIN) wären von 204 auf 403 gekippt.
+  Die Anmeldung ist so oder so weg (Passwort und Refresh-Tokens werden entfernt).
+- **Das Token eines gelöschten Nutzers hält nichts** (T-75b-28): Gibt es die `User`-Zeile nicht
+  mehr, ergibt der Auflöser keine Permission (`request-permissions.ts:140`). Vorher ließ der
+  `role`-Claim das Token bis zu seinem Ablauf durch. Das ist die einzige beabsichtigte Verengung.
+  Betroffen ist nur ein Zugriffstoken, das nach dem endgültigen Löschen seines Nutzers bis zum
+  Ablauf weiterbenutzt wird; keine aufgenommene Zelle der Matrix ändert sich dadurch.
+- **Rolling Deploy:** `apps/api/docker-entrypoint.sh` fährt `migrate deploy` beim Start des neuen
+  Containers, während der alte noch Anfragen bedient. Ändert der alte Pod in diesem Fenster eine
+  Rolle, schreibt er nur `User.role`. `docs/migrations.md` § Phase 75b, Schritt 3, enthält die lesende
+  Konsistenzabfrage, die genau diese Nutzer findet, und die Abhilfe (die Rolle über den neuen Code
+  erneut speichern).
+- **Rollback:** Das vorige Release liest weder `AccessRole` noch `RoleAssignment`; `User.role` ist
+  für jeden migrierten Nutzer unverändert (AC-75-8). **Einschränkung:** Sobald ein Nutzer eine
+  Kundenrolle mit mindestens einer ZUGEWIESEN-Permission hält, steht in `User.role` MANAGER — ein
+  Rollback über 75b hinweg läse ihn als vollen Manager. Vor 75b hält kein produktiver Nutzer eine
+  Kundenrolle; das Risiko entsteht erst mit der Nutzung von #73/#74.
+- **Anonymisierte Nutzer sind von der Migration ausgenommen** (D-28, Abweichung vom Wortlaut der
+  Akzeptanzkriterien, die „jeden Nutzer“ nennen): Ein anonymisierter Mitarbeiter hat keine Anmeldung
+  mehr und seit #74 keine Zuweisung; eine neue Zuweisung gäbe ihm wieder Rechte. Die NOTICE zählt
+  diese Nutzer in einer eigenen Zahl.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** Guards und die Eigentumsprüfungen in `time-entries.ts`,
+  `retro-entry-requests.ts`, `terminals.ts`, `admin-presence-sources.ts` fragen Permissions ab;
+  acht Empfängersuchen (drei in `time-entries.ts`, eine in `retro-entry-requests.ts`, vier in
+  `attendance-checker.ts`) gehen über `userIdsHoldingPermission`. Verhalten unverändert.
+- **Abwesenheiten:** Guards und Handler-Prüfungen in `leave.ts`, `special-leave.ts`,
+  `leave-settings.ts`, `company-shutdowns.ts`, `vocational-school*.ts`; `canSeeLeaveType` nimmt ein
+  `canSeeAll` statt einer Rolle. Die Empfängersuchen für Anträge, Erinnerungen und den
+  Übertrag-Hinweis sind umgestellt. Die Selbstgenehmigungs- und Stornier-Sperren sind unverändert.
+- **Schichtplanung:** `shifts.ts`, `shift-patterns.ts`, `integrations.ts` fragen Permissions ab
+  (`shift:plan`, `shift:read`, `shift-config:manage`, `integration:manage`); die Matrix-Mutation
+  unten zeigt, dass die Planungsrouten wirklich an `shift:plan:ZUGEWIESEN` hängen.
+- **Arbeitszeitkonto:** `overtime.ts` fragt Permissions ab; die Monatsabschluss-Erinnerungen
+  (`auto-close-month.ts`, `deferred-month-close-reminder.ts`) suchen ihre Empfänger über
+  `month-close:close`. Keine Rechenregel berührt.
+- **Kompositionsschicht:** `composition/dashboard.ts`, `reports.ts` und `activity.ts` fragen
+  Permissions ab; der Aktivitäts-Feed bleibt exklusiv (`audit-log:read` hat Vorrang vor
+  `team-overview:read`). Der Rollenfilter des Firmen-PDFs liest `User.role` nur noch über
+  `compatRoleUserWhere()` aus `compat-role.ts`.
+- **Unterbau:** trägt Systemrollen, Auflöser, Guards, `userIdsHoldingPermission`, die
+  Kompatibilitätsrolle und die Datenmigration; `middleware/auth.ts` verliert `requireRole`.
+
+### Gemessen
+
+- **Aufnahme vor der Umstellung:** Die Neutralitätsmatrix
+  (`apps/api/src/__tests__/permission-neutrality-matrix.test.ts`) ruft jede aus dem Quelltext
+  abgeleitete Route mit acht Akteuren auf (Mitarbeiter, API-Schlüssel ohne und mit `admin`, Manager,
+  Admin, dazu drei Akteure ohne gespeicherte Zuweisung für den Rückfall) und hält je Zelle Status,
+  Fehlertext und die Multimenge der IDs im Antwortkörper fest. Aufgenommen auf dem unveränderten
+  Code in Commit `83279acb` (2226 Zellen, 209 Routen), bevor irgendeine Zugriffsentscheidung
+  umgestellt war; die drei Salonkopplungs-Routen aus `origin/main` kamen nach demselben Verfahren
+  auf dem Stand vor ihrer Umstellung dazu (`7e964d75`, +24 Zellen). Empfänger aller 17 Suchen
+  sowie Aktivitäts-Feed und Anmelderolle: `69b5a4fa` (17 Stellen, 23 Einträge). Nach der Umstellung
+  prüften alle drei Dateien grün (Plan 75b-12, vor dem letzten Merge).
+- **Merge von `origin/main` `704b1ee5` (Phase 68b):** Seitdem trägt ein Zeiteintrag seinen Salon,
+  und die Antworten von sechs Zeiterfassungsrouten (`GET`/`POST /time-entries`, `PUT /:id`,
+  `PATCH /:id/break-status`, `PATCH /:id/revalidate`, `POST /:id/clock-out`) enthalten diese Id.
+  76 Zellen weichen deshalb von der Aufnahme ab — jede nur um die zusätzliche Salon-Id, Status und
+  Fehlertext gleich. Eine vollständige Neuaufnahme auf dem Stand VOR der Umstellung (`origin/main`
+  `704b1ee5` plus Harness, dreimal byte-gleich) stimmt mit dem umgestellten Code in allen 2250
+  Zellen überein. Die 76 Zellen wurden daraus allein im Commit `55492603` übernommen; ohne jede
+  Salon-Id sind alte und neue Aufnahme byte-gleich. Die Matrix-Fixture legt den zweiten Salon seitdem eine Minute nach dem
+  Standardsalon an; vorher entschied bei gleichem Zeitstempel die zufällige Id, welcher Salon der
+  Standardsalon war.
+- **Rot gesehen:** Entzieht man der Manager-Systemrolle `shift:plan:ZUGEWIESEN` (D-22), werden
+  genau 27 Zellen rot, alle auf den sieben Schichtplanungsrouten (`POST /shifts`, `PUT`/`DELETE
+/shifts/:id`, `POST /shifts/:id/restore`, `/generate-week`, `/copy-week`, `/bulk`) und nur für
+  Manager, den Rückfall-Manager und den API-Schlüssel ohne `admin`. `lint:role-checks` war zweimal
+  auf dem echten Baum rot (ein wieder eingefügter `requireRole`-Aufruf, ein wieder eingefügter
+  Vergleich `req.user.role === "ADMIN"`), der Per-Datei-Vergleich der Permission-Multimengen einmal
+  (eine Stelle mit falscher Permission).
+- **Testzahlen** (Reporter, voller API-Lauf): vor der Phase 301 Dateien / 3725 Tests, nach der
+  Phase einschließlich des Merges von `origin/main` `704b1ee5` 331 Dateien / 5883 Tests (5880
+  bestanden, 3 übersprungen); davon zehn neue Testdateien der Phase mit 1886 Fällen, 1707 davon die
+  Matrix.

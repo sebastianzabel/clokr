@@ -7,6 +7,7 @@ import {
   monthCloseDeepLink,
   monthLabelDe,
 } from "../month-close-notification";
+import { userIdsHoldingPermission } from "../../platform"; // Phase 75b Plan 10 (#75), D-16
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -112,10 +113,17 @@ export const deferredMonthCloseReminderPlugin = fp(async (app) => {
         });
         if (state.employeeCount === 0 || state.oldestOpenMonth === null) continue;
 
+        // Phase 75b Plan 10 (#75), D-16: holders of month-close:close replace the legacy A,M
+        // role predicate — the recorded recipient set is unchanged.
+        const monthCloseCloseHolderIds = await userIdsHoldingPermission(
+          app.prisma,
+          tenant.id,
+          "month-close:close:ZUGEWIESEN",
+        );
         const recipients = await app.prisma.employee.findMany({
           where: {
             tenantId: tenant.id,
-            user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+            user: { isActive: true, id: { in: monthCloseCloseHolderIds } },
           },
           select: { user: { select: { id: true } } },
         });

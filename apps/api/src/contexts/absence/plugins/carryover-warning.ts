@@ -2,6 +2,7 @@ import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import type { FastifyInstance } from "fastify";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
+import { userIdsHoldingPermission } from "../../platform"; // Phase 75b Plan 10 (#75), D-16
 
 /**
  * BUrlG § 7 Hinweispflicht (EuGH C-684/16 "Max-Planck").
@@ -116,10 +117,18 @@ export async function runCarryoverWarningOnce(
 
       if (entitlements.length === 0) continue;
 
-      // Tenant admins → manager CC. Single fetch per tenant.
+      // Tenant admins → manager CC. Single fetch per tenant. Phase 75b Plan 10 (#75), D-16:
+      // holders of leave-config:manage replace the legacy Admin-only role predicate — the only
+      // Admin-only permission of the absence context (report:notify is A,M and would widen the
+      // set) — the recorded recipient set is unchanged.
+      const leaveConfigManageHolderIds = await userIdsHoldingPermission(
+        app.prisma,
+        tenant.id,
+        "leave-config:manage:ZUGEWIESEN",
+      );
       const admins = await app.prisma.user.findMany({
         where: {
-          role: "ADMIN",
+          id: { in: leaveConfigManageHolderIds },
           isActive: true,
           employee: { tenantId: tenant.id },
         },

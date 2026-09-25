@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { requireAuth, requireRole } from "../../../middleware/auth";
+import { requireAuth } from "../../../middleware/auth";
 import { isAvailabilityEnabled } from "../tenant-availability";
 import { getEffectiveBreakDuration, getWorkedEntriesInRange } from "../../time-tracking"; // Phase 101B (Issue #101, wave 8); getWorkedEntriesInRange (T2) added Phase 71b (issue #71, D-07)
 import { classifyLeaveTypeCode, type AvailabilityBucket } from "../shift-availability"; // Phase 98 (T3, plan 03) — the two classifiers' new home
@@ -12,6 +12,8 @@ import {
   findDefaultSalon, // Phase 325 (issue #325), D-04/D-05
   findSalon, // Phase 325 (issue #325) Plan 02, D-06 (explicit salonId resolution)
   listSalons, // Phase 325 (issue #325), D-08 (copy-week fallback)
+  permissionReach,
+  requirePermission,
   salonForDay, // Phase 344 (issue #344) — the employee's actual per-day salon assignment
   holidaysAtWorkLocation, // Phase 71b (issue #71, D-07) — legal holidays by work location, week view only
 } from "../../platform";
@@ -699,7 +701,7 @@ export async function shiftRoutes(app: FastifyInstance) {
   // POST /templates — ADMIN only (config)
   app.post("/templates", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("shift-config:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const body = templateSchema.parse(req.body);
       const template = await app.prisma.shiftTemplate.create({
@@ -720,7 +722,7 @@ export async function shiftRoutes(app: FastifyInstance) {
   // PUT /templates/:id — ADMIN only — edit name/start/end/color
   app.put("/templates/:id", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("shift-config:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = templateSchema.partial().parse(req.body);
@@ -753,7 +755,7 @@ export async function shiftRoutes(app: FastifyInstance) {
   // DELETE /templates/:id — ADMIN only
   app.delete("/templates/:id", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("shift-config:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
       const existing = await app.prisma.shiftTemplate.findFirst({
@@ -789,7 +791,7 @@ export async function shiftRoutes(app: FastifyInstance) {
   // POST /coverage-rules — ADMIN only
   app.post("/coverage-rules", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("shift-config:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const body = coverageRuleSchema.parse(req.body);
       // If templateId is provided, ensure it belongs to the tenant
@@ -823,7 +825,7 @@ export async function shiftRoutes(app: FastifyInstance) {
   // PUT /coverage-rules/:id — ADMIN only
   app.put("/coverage-rules/:id", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("shift-config:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = coverageRuleSchema.partial().parse(req.body);
@@ -859,7 +861,7 @@ export async function shiftRoutes(app: FastifyInstance) {
   // DELETE /coverage-rules/:id — ADMIN only
   app.delete("/coverage-rules/:id", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("shift-config:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
       const existing = await app.prisma.coverageRule.findFirst({
@@ -888,7 +890,7 @@ export async function shiftRoutes(app: FastifyInstance) {
   //   T-267-01 (Info Leak):    the response carries the `availability` bucket — "sick" is a
   //     health datum under Art. 9 GDPR — for EVERY employee of the tenant to ANY authenticated
   //     caller. GitHub Issue #267.
-  //   T-267-03 (Elevation):    requireRole("ADMIN", "MANAGER") makes the check server-side; the
+  //   T-267-03 (Elevation):    the shift:read:ZUGEWIESEN permission guard makes the check server-side; the
   //     `/shifts` and `/admin/shifts` pages only gated client-side before this
   //     (shifts/+page.svelte:477-481, admin/shifts/+page.svelte:64-71) — defense in depth, no
   //     behavior change for them.
@@ -900,7 +902,7 @@ export async function shiftRoutes(app: FastifyInstance) {
   //     visible, now fetches its own shift via GET /my-week instead (Plan 04).
   app.get("/week", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("shift:read:ZUGEWIESEN"),
     handler: async (req) => {
       const access = accessContextFromRequest(req);
       // Phase 47.1 verify-check (2026-05-20): GET /week resolver merges APPROVED LeaveRequest
@@ -1760,15 +1762,20 @@ export async function shiftRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Ungültiges Datumsformat (YYYY-MM-DD)" });
       }
 
-      // EMPLOYEE role: force own employeeId — ignore any passed param (T-188-02 IDOR guard).
+      // Only a caller holding shift:read:ZUGEWIESEN sees the everyone-else branch (issue #75, D-13);
+      // everyone else is forced onto their own employeeId — ignoring any passed param (T-188-02 IDOR guard).
+      const shiftReadReach = await permissionReach(req, "shift:read");
       let targetEmployeeId: string | undefined;
-      if (req.user.role === "EMPLOYEE") {
+      if (shiftReadReach !== "ZUGEWIESEN") {
+        if (shiftReadReach === null) {
+          return reply.code(403).send({ error: "Forbidden" });
+        }
         targetEmployeeId = req.user.employeeId ?? undefined;
         if (!targetEmployeeId) {
           return reply.code(410).send({ error: "Kein Mitarbeiter-Profil verknüpft" });
         }
       } else {
-        // MANAGER / ADMIN: employeeId param is required
+        // A caller with shift:read:ZUGEWIESEN: employeeId param is required
         if (!queryEmployeeId) {
           return reply.code(400).send({ error: "employeeId erforderlich" });
         }
@@ -1839,7 +1846,7 @@ export async function shiftRoutes(app: FastifyInstance) {
   // (still writes the shift but emits a SHIFT_FORCED_OVER_LEAVE audit entry).
   app.post("/", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("shift:plan:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const access = accessContextFromRequest(req);
       const body = shiftSchema.parse(req.body);
@@ -2154,7 +2161,7 @@ export async function shiftRoutes(app: FastifyInstance) {
   // approved leave or absence day. Pass ?force=true to override with audit trail.
   app.put("/:id", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("shift:plan:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const access = accessContextFromRequest(req);
       const { id } = req.params as { id: string };
@@ -2517,7 +2524,7 @@ export async function shiftRoutes(app: FastifyInstance) {
   // existing shift on each day. Returns a diff; only commits when commit=true.
   app.post("/generate-week", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("shift:plan:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const access = accessContextFromRequest(req);
       const body = generateWeekSchema.parse(req.body);
@@ -2884,7 +2891,7 @@ export async function shiftRoutes(app: FastifyInstance) {
   // (distinct from CREATE so the audit trail records the copy provenance).
   app.post("/copy-week", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("shift:plan:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const access = accessContextFromRequest(req);
       const body = copyWeekSchema.parse(req.body);
@@ -3264,7 +3271,7 @@ export async function shiftRoutes(app: FastifyInstance) {
   // POST /bulk — create multiple shifts at once
   app.post("/bulk", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("shift:plan:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { shifts: shiftDefs } = bulkShiftSchema.parse(req.body);
 
@@ -3426,7 +3433,7 @@ export async function shiftRoutes(app: FastifyInstance) {
   // DELETE /:id
   app.delete("/:id", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("shift:plan:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
       const existing = await app.prisma.shift.findUnique({ where: { id } });
@@ -3502,7 +3509,7 @@ export async function shiftRoutes(app: FastifyInstance) {
   //   so the "why it was removed" trail survives (T-67.2-18).
   //
   // Threat coverage:
-  //   T-67.2-15 (Elevation):  requireRole("ADMIN", "MANAGER") on both endpoints.
+  //   T-67.2-15 (Elevation):  the shift:read:ZUGEWIESEN / shift:plan:ZUGEWIESEN permission guards on both endpoints.
   //   T-67.2-16 (Tampering):  Locked-month guard returns 422 (defensive).
   //   T-67.2-17 (Info Leak):  Queries scoped via employee.tenantId = req.user.tenantId.
   //   T-67.2-18 (Repudiation): oldValue preserved in audit.
@@ -3514,7 +3521,7 @@ export async function shiftRoutes(app: FastifyInstance) {
 
   app.get("/conflicts", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("shift:read:ZUGEWIESEN"),
     handler: async (req) => {
       const { from, to } = conflictsQuerySchema.parse(req.query);
       const fromDate = new Date(`${from}T00:00:00.000Z`);
@@ -3561,7 +3568,7 @@ export async function shiftRoutes(app: FastifyInstance) {
 
   app.post("/:id/restore", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("shift:plan:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
 

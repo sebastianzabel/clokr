@@ -16,7 +16,8 @@
 
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireAuth, requireRole } from "../../../middleware/auth";
+import { requireAuth } from "../../../middleware/auth";
+import { requirePermission, requireAnyPermission, permissionReach } from "../../platform";
 import {
   runVocationalSchoolGeneration,
   previewVocationalSchoolGeneration,
@@ -122,7 +123,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
   // POST /api/v1/vocational-school/generate — manual trigger (ADMIN/MANAGER)
   app.post("/generate", {
     schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("vocational-school:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
 
@@ -144,7 +145,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
   // GET /api/v1/vocational-school/preview?weeks=N — dry-run (ADMIN/MANAGER)
   app.get("/preview", {
     schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("vocational-school:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       const q = previewQuerySchema.parse(req.query);
@@ -187,16 +188,22 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
   //     visible, no error noise.
   app.get("/upcoming", {
     schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER", "EMPLOYEE"),
+    preHandler: requireAnyPermission(
+      "vocational-school:read:ZUGEWIESEN",
+      "vocational-school:read:EIGENE",
+    ),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       const q = upcomingQuerySchema.parse(req.query);
 
-      // Role-branched employeeId scoping (260611-ly6).
-      // EMPLOYEE callers are forced to self-scope; any client-supplied ?employeeId is
-      // dropped. ADMIN/MANAGER may optionally narrow the result via ?employeeId.
+      // Reach-branched employeeId scoping (260611-ly6; Phase 75b, Issue #75, D-13).
+      // A caller without ZUGEWIESEN is forced to self-scope; any client-supplied
+      // ?employeeId is dropped. A ZUGEWIESEN caller may optionally narrow via ?employeeId.
+      // `null` is unreachable here — the route's own requireAnyPermission preHandler above
+      // already rejects a caller holding neither reach.
       let employeeIdFilter: string | undefined;
-      if (req.user.role === "EMPLOYEE") {
+      const upcomingReach = await permissionReach(req, "vocational-school:read");
+      if (upcomingReach !== "ZUGEWIESEN") {
         if (!req.user.employeeId) {
           // User without linked employee row — nothing they can see. Return empty
           // rather than 4xx so the frontend renders an empty list without an error
@@ -258,7 +265,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
   // audit row carrying the originator's userId + new value snapshot.
   app.post("/manual-insert", {
     schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("vocational-school:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       const body = manualInsertSchema.parse(req.body);
@@ -384,7 +391,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
   // (canonical for DELETE in this codebase — see apps/api/src/routes/shifts.ts).
   app.delete("/:absenceId", {
     schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("vocational-school:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       const { absenceId } = deleteParamsSchema.parse(req.params);
@@ -477,7 +484,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
   // Dry run only (ADMIN/MANAGER) — mutates nothing.
   app.get("/retroactive-preview", {
     schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("vocational-school:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       const q = retroactivePreviewQuerySchema.parse(req.query);
@@ -519,7 +526,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
   // the client must be able to see it (RESEARCH § Locked-Months Mechanism, race note).
   app.post("/retroactive-apply", {
     schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("vocational-school:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       const body = retroactiveApplySchema.parse(req.body);

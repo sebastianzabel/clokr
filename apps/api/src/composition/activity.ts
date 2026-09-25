@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../middleware/auth";
+import { hasPermission } from "../contexts/platform";
 import {
   getMonthlySnapshotsInRange, // Phase 100B Plan 07 — W5
   getTenantTimezone,
@@ -56,7 +57,6 @@ export async function activityRoutes(app: FastifyInstance) {
     },
     async (req, _reply) => {
       const { limit } = querySchema.parse(req.query);
-      const role = req.user.role;
       const tenantId = req.user.tenantId;
       const userId = req.user.sub;
       const employeeId = req.user.employeeId ?? null;
@@ -64,7 +64,9 @@ export async function activityRoutes(app: FastifyInstance) {
       const items: ActivityItem[] = [];
 
       // ── ADMIN: full audit-log feed (last 7 days) ─────────────────────────
-      if (role === "ADMIN") {
+      // Vorrang: audit-log:read wins; the team branch below runs only for callers
+      // without it (issue #75, D-13).
+      if (await hasPermission(req, "audit-log:read:ZUGEWIESEN")) {
         const since = new Date();
         since.setDate(since.getDate() - 7);
 
@@ -209,7 +211,7 @@ export async function activityRoutes(app: FastifyInstance) {
       }
 
       // ── MANAGER: also include team events in tenant ──────────────────────
-      if (role === "MANAGER") {
+      if (await hasPermission(req, "team-overview:read:ZUGEWIESEN")) {
         // Leave approvals / rejections this manager performed
         // Phase 100B Plan 13 — A10b, contexts/absence facade (tenant defense-in-depth built in).
         const myReviews = await getReviewedLeaveActivity(app.prisma, userId, tenantId, fetchLimit);

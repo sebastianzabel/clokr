@@ -22,7 +22,7 @@ import {
 import { salonExistsInForeignTenant } from "../facade/salons";
 import { isCalendarDay, toAssignmentDto, WEEKDAY_ADVERB_DE } from "../salon-assignment-rules";
 import { auditSalonAssignmentEvent } from "../salon-assignment-audit";
-import { requireRole } from "../../../middleware/auth";
+import { requirePermission } from "../request-permissions";
 
 const idParamSchema = z.object({ id: z.string().uuid() });
 const assignmentIdParamSchema = z.object({
@@ -163,7 +163,7 @@ export async function salonAssignmentRoutes(app: FastifyInstance) {
       summary: "List an employee's full salon assignment history (HOME + DEPLOYMENT)",
       security: [{ bearerAuth: [] }],
     },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("employee:read:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const tenantId = req.user.tenantId;
@@ -183,7 +183,7 @@ export async function salonAssignmentRoutes(app: FastifyInstance) {
       summary: "Create an Einsatzsalon (DEPLOYMENT) assignment for an employee",
       security: [{ bearerAuth: [] }],
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:update:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       // D-19: the body is validated BEFORE any lookup, so the register's `probe` minimalBody
@@ -248,7 +248,7 @@ export async function salonAssignmentRoutes(app: FastifyInstance) {
       summary: "Change an employee's Stammsalon (HOME) as of a given date",
       security: [{ bearerAuth: [] }],
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:update:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       // D-19: validated BEFORE any lookup, same ordering as the DEPLOYMENT create route.
@@ -322,7 +322,7 @@ export async function salonAssignmentRoutes(app: FastifyInstance) {
       summary: "End (shorten) an existing salon assignment",
       security: [{ bearerAuth: [] }],
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:update:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id, assignmentId } = assignmentIdParamSchema.parse(req.params);
       const body = endAssignmentSchema.parse(req.body);

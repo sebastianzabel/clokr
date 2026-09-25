@@ -29,6 +29,7 @@ classified by lifecycle.
 | lint-guard-vacuity.ts                          | 2026-09-18 | CI/local/pre-commit gate: fails a file that walks the source tree and asserts on the result without proving the walked set non-empty (see § Lint gates below). AST classification lives in the sibling `lint-guard-vacuity-detect.ts`; exceptions in `lint-guard-vacuity-exceptions.json`                                                                                                                                                                                                                                                                           | Lint gate (Phase 235, Issues #235/#240/#245) |
 | lint-e2e-spec-registry.ts                      | 2026-09-21 | CI/local/pre-commit gate: fails unless every `apps/e2e/tests/*.spec.ts` file has exactly one entry in `lint-e2e-spec-registry.json` (category `in-ci`/`später-datum`/`später-seed` plus a mandatory reason) — see § Lint gates below. Pure validation/diff/extraction lives in the sibling `lint-e2e-spec-registry-validate.ts`                                                                                                                                                                                                                                     | Lint gate (Phase 275, Issue #275, D-07)      |
 | lint-t100-09-routes.ts                         | 2026-09-22 | CI/local/pre-commit gate: fails unless every path-parameter route in `apps/api/src/contexts/*/api/**/*.ts` has exactly one entry in `lint-t100-09-routes.json` (category `probe`/`nicht anwendbar`/`bekannt-abweichend` plus a mandatory reason) — see § Lint gates below. The behavioral half — hitting every `probe` route twice and byte-comparing — runs inside the `apps/api` integration suite as `src/__tests__/t100-09-oracle-probe.test.ts`, not as its own CI job. Pure validation/diff/extraction lives in the sibling `lint-t100-09-routes-validate.ts` | Lint gate (Phase 259, Issue #259, D-01/D-07) |
+| lint-role-checks.ts                            | 2026-09-25 | CI/local/pre-commit gate: fails on any call of the removed role guard (`requireRole`) and on any comparison of a role value (`.role`, or an identifier bound to one) with `ADMIN`/`MANAGER`/`EMPLOYEE` — equality, `switch` cases, `.includes`/`.indexOf`/`.has`, and role-literal Prisma predicates under `where` — in non-test `apps/api/src`; exactly one allowlisted file (`contexts/platform/compat-role.ts`), no exceptions file — see § Lint gates below                                                                                                     | Lint gate (Phase 75b, Issue #75, D-19)       |
 
 ## Migration artifacts
 
@@ -474,6 +475,112 @@ missing, stale, or genuinely non-conformant before touching the register. The on
 change is adding the missing entry, correcting a stale `route`/`file`, moving a route between
 categories once its actual situation changes, or re-validating a `bekannt-abweichend` entry's
 `validatedAt` — every such change carries its own measured reason, never a placeholder.
+
+### `lint-role-checks.ts` (Issue #75)
+
+Since Phase 75b every access decision in the API asks for a catalog permission —
+`requirePermission` / `requireAnyPermission` (route guards), `hasPermission` / `permissionReach`
+(handler checks) and `userIdsHoldingPermission` (notification recipients), all from
+`contexts/platform`. The legacy role (`User.role`, the JWT claim `role`) survives only as a compat
+field for the frontend until #83. This gate keeps role checks from coming back (D-19, AC-75-2).
+
+**What is flagged** (AST via `ts.createSourceFile` — comments and string literals never count), in
+every `.ts` file under `apps/api/src` outside `__tests__/` and `*.test.ts`:
+
+- `removed-role-guard-call` — any call of `requireRole(…)`, the guard deleted in Phase 75b (D-18);
+- `role-comparison` — `===`, `!==`, `==`, `!=` between a role-valued expression and a role literal
+  (`"ADMIN"`, `"MANAGER"`, `"EMPLOYEE"`), either side;
+- `role-switch` — `switch (<role-valued>)` with a `case <role literal>`;
+- `role-membership` — `.includes/.indexOf/.lastIndexOf/.has(<role-valued>)` on any receiver, or any
+  of these on an array literal (or `new Set([...])`) that contains a role literal;
+- `role-where-predicate` — a property `role` whose value is a role literal or a Prisma operator
+  object (`in`, `notIn`, `equals`, `not`) holding one, under a Prisma filter: an ancestor property
+  named `where`, or a variable named `…where` / typed `…WhereInput`.
+
+A **role-valued** expression is a property access named `role` (`req.user.role`, `e.user.role`,
+`x["role"]`); an identifier whose declaration is initialised from one (also through casts and
+further aliases) or is typed `Role`; or an identifier destructured as `role` out of `user` /
+`….user` or out of a parameter typed `JwtPayload`. Identifiers are resolved lexically, so a `role`
+destructured from `req.query` in one handler is never mistaken for one destructured from `req.user`
+in another.
+
+**What is tolerated, and why none of it is an access decision:** creation payloads
+(`data: { role: "ADMIN" }` in `test-bootstrap.ts` — no `where` ancestor); Zod enums
+(`z.enum(["ADMIN", "MANAGER", "EMPLOYEE"])`); type literals (report data types); a property merely
+named like a role (`data.roleFilter === "EMPLOYEE"`, the PDF label); a query parameter
+(`const { role } = req.query`); copies of the role into report data or audit values
+(`role: emp.user.role`, `actorRole: req.user.role`); the API-key compat assignment in
+`middleware/auth.ts` (`role: isAdmin ? "ADMIN" : "MANAGER"`, D-11) — it sets the compat field and
+decides nothing.
+
+**The single allowlist, and why there is no exceptions file.** Exactly one file may compare role
+values: `contexts/platform/compat-role.ts` (D-14), the one place that derives the compat role from
+assignments and maps legacy values back onto system roles. It is a constant in the script
+(`ALLOWLISTED_FILE`), not a JSON register: a second allowlisted file would be a second derivation,
+which D-14 forbids. A role-literal read that decides nothing moves behind a helper there — the
+company PDF's role filter did exactly that (`parseCompatRoleFilter` / `compatRoleUserWhere`). If
+the allowlisted file is renamed or moved without updating the constant, the gate fails rather than
+silently allowlisting nothing.
+
+- **Run locally:** `pnpm --filter @clokr/api run lint:role-checks` — prints
+  `OK — 0 finding(s) in N file(s)` or one `path:line: shape — source` line per finding, exit 1
+- **Fixture test:** `pnpm --filter @clokr/api exec vitest run scripts/__tests__/lint-role-checks.test.ts`
+  (one case per flagged and per tolerated shape, the file selection, and the live tree)
+- **Runs in CI as:** the `Lint role checks` step in `.github/workflows/ci.yml`, immediately after
+  `Lint T-100-09 routes`, unconditional
+- **Runs in `.husky/pre-commit` as:** a full-repo (not staged-only) invocation above
+  `pnpm exec lint-staged` (~1s measured)
+- **Anti-vacuity:** an empty walk exits 1, so `lint-guard-vacuity.ts` classifies the file as a
+  proved guard (`input-proof:empty-abort`) and its red proof covers it
+
+**What the gate structurally cannot see** (named so nobody mistakes a gap for coverage):
+
+1. A role value that reaches a comparison through a function call or return value
+   (`getRole(req) === "ADMIN"`), a reassignment (`let r; r = req.user.role`), a conditional
+   initialiser (`const r = a ? x.role : y.role`), a nested destructuring other than out of a `user`
+   property, or a spread/rest binding.
+2. A lookup table indexed by the role (`LEVEL[req.user.role] > 1`), and a comparison against a role
+   literal held in a variable or constant (`role === ADMIN_ROLE`).
+3. A role predicate built outside a `where` property or a `…where` / `…WhereInput` variable — e.g.
+   returned from a helper and spread into a query.
+4. Raw SQL (`$queryRaw` with `role = 'ADMIN'`) — SQL text is a string, not an expression.
+
+The second net for the first group is `src/__tests__/permission-site-mapping.test.ts`: its broad
+text detector (`user.role`, `role ===`) forces every such line to be classified in
+`docs/permissions.md`, either as a mapped check or under "Nicht gezählte Treffer" with a reason.
+
+**A hit on a clean tree is a FINDING, not an allowlist candidate** — convert the access decision to
+a catalog permission and map it in `docs/permissions.md` (Pflege section), or move a role-literal
+read that decides nothing behind a helper in `compat-role.ts`.
+
+### `permission-neutrality-matrix.test.ts` amendments register (Issue #360)
+
+Not a script under this directory — the test lives at
+`apps/api/src/__tests__/permission-neutrality-matrix.test.ts` — but it follows the same
+exception-register shape as the gates above, so it is noted here for discoverability.
+
+The matrix's `RECORD` mode is permanently refused once `requireRole` is gone from
+`middleware/auth.ts` (Phase 75b, D-18: re-recording the switched code would compare it with
+itself), and its `MERGE` mode (D-24) only ever adds cells of routes the recording does not know
+yet — neither can update an EXISTING cell whose correct value changes for a reason unrelated to
+the role→permission switch, e.g. a bug fix elsewhere that used to make the cell 500. Issue #333's
+audit-actor fix was the first such case (71 cells, `contexts/platform/plugins/audit.ts`).
+
+`neutrality/recorded/matrix-amendments.json` (a checked-in array, next to `matrix.json`, which
+stays byte-identical) is the generic escape hatch: each entry names the exact cell `key`
+(`<actor> | <METHOD path> | <variant>`), the exact `from` (checked against the recording — a
+mismatch is a stale amendment) and `to` (checked against the actual swept result exactly like an
+unamended cell), a GitHub `issue` number, a written `reason` (≥ `MIN_REASON_LENGTH`, 20 chars) and
+a `date`. The test's own "amendments register (Issue #360)" describe block validates the register
+itself (no duplicate keys, no missing issue/reason/date, no orphaned or stale entry) before the
+sweep ever runs. An unamended cell is unaffected — this is additive only.
+
+- **Run locally:** `pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts`
+  (after `test:setup`)
+- **A stale, duplicate, or orphaned amendment fails its own dedicated test** — named separately
+  from "not recorded" and from a plain cell mismatch, so the three causes are never confused
+- **Generic on purpose:** any future issue whose fix changes a matrix cell's correct value for a
+  reason unrelated to Issue #75 adds an entry here instead of building its own mechanism
 
 ## Invocation
 

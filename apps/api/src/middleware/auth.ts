@@ -69,12 +69,7 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
   }
 }
 
-export function requireRole(...roles: Role[]) {
-  return async (req: FastifyRequest, reply: FastifyReply) => {
-    await requireAuth(req, reply);
-    if (reply.sent) return; // Auth already failed
-    if (!roles.includes(req.user.role)) {
-      return reply.code(403).send({ error: "Forbidden" });
-    }
-  };
-}
+// The role guard that used to live here was removed in Phase 75b (Issue #75, D-18): every access
+// decision asks for a catalog permission via `requirePermission` / `requireAnyPermission` from
+// `contexts/platform`. `lint:role-checks` (apps/api/scripts/lint-role-checks.ts) fails on any
+// call of the old helper and on any role comparison outside `contexts/platform/compat-role.ts`.

@@ -25,6 +25,7 @@ import {
   monthRangeUtc,
 } from "../working-time-account"; // Phase 101B
 import { getClaimedEntryDatesInRange } from "../time-tracking"; // Phase 100B Plan 08
+import { userIdsHoldingPermission } from "../platform"; // Phase 75b Plan 10 (#75), D-16
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -891,10 +892,17 @@ export async function dispatchShiftCleanupForCreatedAbsences(
       select: { firstName: true, lastName: true },
     });
     const empName = emp ? `${emp.firstName} ${emp.lastName}` : employeeId;
+    // Phase 75b Plan 10 (#75), D-16: holders of shift:plan replace the legacy A,M role predicate
+    // — the recorded recipient set is unchanged.
+    const shiftPlanHolderIds = await userIdsHoldingPermission(
+      prisma,
+      tenantId,
+      "shift:plan:ZUGEWIESEN",
+    );
     const recipients = await prisma.employee.findMany({
       where: {
         tenantId,
-        user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+        user: { isActive: true, id: { in: shiftPlanHolderIds } },
       },
       include: { user: { select: { id: true } } },
     });

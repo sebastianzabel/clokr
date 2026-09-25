@@ -3,10 +3,9 @@
  * `/api/v1/role-assignments`.
  *
  * Grants, changes and revokes a `RoleAssignment` (74b-01: model, pure core, `userMayApply`
- * facade). Every route is guarded by the ADMIN role guard — the binding Ready decision "only
- * with tenant scope" is satisfied today by ADMIN being tenant-wide; the actual
- * `role-assignment:manage` permission check with tenant-scope enforcement is Issue #75's work,
- * not this phase's (D-14). (Never write the guard call's name directly followed by its opening
+ * facade). Every route is guarded by `role-assignment:manage:ZUGEWIESEN` (75b-06); tenant-scope
+ * enforcement of that permission (a TENANT-scope holder vs. a SALONS/PERSONS one) is Issue #91's
+ * work, not this plan's. (Never write the guard call's name directly followed by its opening
  * parenthesis in this docblock — this plan's verify step greps raw source lines to count guard
  * call sites, and a comment mention would inflate that count.)
  *
@@ -14,12 +13,16 @@
  * in the AuditLog. Every id referenced by a write (user, role, salon, employee) is tenant-validated
  * and answers the byte-identical 404 of its own kind (D-08) — the four "not found" messages below
  * are the entire vocabulary; a caller cannot distinguish "foreign tenant" from "does not exist".
+ *
+ * Phase 75b Plan 11 (Issue #75): a grant to a user who still relies on the legacy-role fallback
+ * first stores that fallback as an audited assignment (D-26), and every grant, change and revoke
+ * rewrites `User.role` to the role derived from the stored assignments, recorded as `compatRole`
+ * on the change's audit row (D-14/D-29).
  */
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import type { Prisma } from "@clokr/db";
-import { requireRole } from "../../../middleware/auth";
-import { accessContextFromRequest } from "../access-context";
+import { requirePermission } from "../request-permissions";
 import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../employee-anonymization-filter";
 import {
   ROLE_LOCKOUT_MESSAGE,
@@ -30,6 +33,12 @@ import {
 } from "../role-assignment";
 import { lockTenantForRoleChanges, withRoleLockoutGuard } from "../facade/role-assignments";
 import { foreignKeyConstraintOf } from "../prisma-foreign-key";
+import {
+  auditRoleAssignmentChange,
+  materializedAssignmentAuditEntry,
+  roleAssignmentAuditValue,
+} from "../role-assignment-audit";
+import { materializeLegacyRoleAssignment, syncCompatRoleColumn } from "../compat-role";
 
 // D-09: plain `z.string().min(1)`, NOT `.uuid()` — both T-100-09 probe arms (a real foreign id and
 // a shaped-but-nonexistent id) must pass the same validation, same idiom as `roles.ts`'s
@@ -121,27 +130,6 @@ function toRoleAssignmentResponse(row: RoleAssignmentRow) {
   };
 }
 
-/** D-12: the exact audit value shape for every CREATE/UPDATE/DELETE on `RoleAssignment`. */
-function toAuditValue(
-  row: {
-    userId: string;
-    accessRoleId: string;
-    scopeType: NormalizedRoleAssignmentScope["scopeType"];
-    salonIds: string[];
-    employeeIds: string[];
-  },
-  roleName: string,
-) {
-  return {
-    userId: row.userId,
-    accessRoleId: row.accessRoleId,
-    roleName,
-    scopeType: row.scopeType,
-    salonIds: row.salonIds,
-    employeeIds: row.employeeIds,
-  };
-}
-
 /** Source: apps/api/src/contexts/platform/api/roles.ts (structural P2002/P2025 check idiom). */
 function isPrismaErrorCode(err: unknown, code: string): boolean {
   return (
@@ -152,49 +140,22 @@ function isPrismaErrorCode(err: unknown, code: string): boolean {
   );
 }
 
-/**
- * Every RoleAssignment audit row goes through here (same reasoning as `salons.ts`'s `auditSalon`,
- * Phase 64b review WR-01): an API-key caller's `req.user.sub` is `apikey:<id>`, not a `User.id` —
- * `AuditLog.userId` has a foreign key to `User`, so passing it through would fail the audit insert.
- * The actor is resolved through the Unterbau's central access context (`accessContextFromRequest`,
- * #77) instead of parsing the subject here; a non-user actor leaves `userId` unset and is recorded
- * as `newValue.actor = { type: "API_KEY", apiKeyId }`.
- */
-async function auditRoleAssignment(
-  app: FastifyInstance,
-  req: FastifyRequest,
-  entry: {
-    action: string;
-    entityId: string;
-    oldValue?: unknown;
-    newValue?: object;
-    tx?: Prisma.TransactionClient;
-  },
-) {
-  const { actor } = accessContextFromRequest(req);
-  const apiKeyActor =
-    actor.kind === "apiKey" ? { type: "API_KEY" as const, apiKeyId: actor.apiKeyId } : null;
-
-  let newValue: object | undefined = entry.newValue;
-  if (apiKeyActor) newValue = { ...(entry.newValue ?? {}), actor: apiKeyActor };
-
-  await app.audit({
-    userId: actor.kind === "user" ? actor.userId : undefined,
-    action: entry.action,
-    entity: "RoleAssignment",
-    entityId: entry.entityId,
-    oldValue: entry.oldValue,
-    newValue,
-    request: { ip: req.ip, headers: req.headers as Record<string, string> },
-    tx: entry.tx,
-  });
-}
-
 /** What the POST transaction decided — mapped onto the reply outside the transaction. */
 type CreateOutcome =
   | { kind: "REFERENCE_NOT_FOUND"; resolution: ReferenceResolution }
-  | { kind: "DUPLICATE" }
   | { kind: "CREATED"; row: RoleAssignmentRow };
+
+/**
+ * Phase 75b (D-26): a duplicate found AFTER the fallback was materialized must roll the
+ * materialization back too, so the POST transaction throws this instead of returning — the
+ * handler maps it onto the same 409 as before.
+ */
+class DuplicateAssignmentRollback extends Error {
+  constructor() {
+    super("duplicate role assignment");
+    this.name = "DuplicateAssignmentRollback";
+  }
+}
 
 /** What the guarded PATCH transaction decided — mapped onto the reply outside the transaction. */
 type PatchOutcome =
@@ -282,7 +243,7 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       description:
         "Returns every role assignment of the caller's own tenant, ordered by creation time. An optional `?userId=` filters to that user's assignments.",
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("role-assignment:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const { userId } = listQuerySchema.parse(req.query);
       const tenantId = req.user.tenantId;
@@ -304,7 +265,7 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       description:
         "Assigns an access role (system or customer) to a user of the caller's own tenant, with exactly one scope: the whole tenant, an explicit salon list, or an explicit employee list. Every referenced id is validated against the caller's own tenant; a foreign or nonexistent id answers 404, one message per kind, byte-identical between the two cases (T-100-09). A duplicate (same user, role and scope type) answers 409.",
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("role-assignment:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const body = createAssignmentSchema.parse(req.body);
       const tenantId = req.user.tenantId;
@@ -328,6 +289,12 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
             });
             if (resolution.status !== "OK") return { kind: "REFERENCE_NOT_FOUND", resolution };
 
+            // Phase 75b (D-26): a grantee who still relies on the legacy-role fallback (no stored
+            // assignment) first gets that fallback stored as a real assignment, so this grant adds
+            // to the legacy rights instead of silently replacing them. A request equal to the
+            // materialized row is then a duplicate, and the throw below rolls both back.
+            const materialized = await materializeLegacyRoleAssignment(tx, tenantId, body.userId);
+
             const duplicate = await tx.roleAssignment.findFirst({
               where: {
                 tenantId,
@@ -336,7 +303,7 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
                 scopeType: scope.scopeType,
               },
             });
-            if (duplicate) return { kind: "DUPLICATE" };
+            if (duplicate) throw new DuplicateAssignmentRollback();
 
             const row = await tx.roleAssignment.create({
               data: {
@@ -349,11 +316,19 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
               },
               include: { accessRole: true },
             });
-            await auditRoleAssignment(app, req, {
-              action: "CREATE",
-              entityId: row.id,
-              newValue: toAuditValue(row, resolution.accessRole.name),
-              tx,
+            // D-14/D-29: the column follows the stored assignments; a change is recorded on this
+            // grant's CREATE row, the last row of the change.
+            await auditRoleAssignmentChange(app, req, tx, {
+              userId: body.userId,
+              entries: [
+                ...(materialized !== null ? [materializedAssignmentAuditEntry(materialized)] : []),
+                {
+                  action: "CREATE",
+                  entityId: row.id,
+                  newValue: roleAssignmentAuditValue(row, resolution.accessRole.name),
+                },
+              ],
+              compatRole: await syncCompatRoleColumn(tx, tenantId, body.userId),
             });
             return { kind: "CREATED", row };
           },
@@ -362,13 +337,11 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
         switch (outcome.kind) {
           case "REFERENCE_NOT_FOUND":
             return sendReferenceNotFound(reply, outcome.resolution);
-          case "DUPLICATE":
-            return reply.code(409).send({ error: DUPLICATE_ASSIGNMENT_MESSAGE });
           case "CREATED":
             return reply.code(201).send(toRoleAssignmentResponse(outcome.row));
         }
       } catch (err: unknown) {
-        if (isPrismaErrorCode(err, "P2002")) {
+        if (err instanceof DuplicateAssignmentRollback || isPrismaErrorCode(err, "P2002")) {
           return reply.code(409).send({ error: DUPLICATE_ASSIGNMENT_MESSAGE });
         }
         // 74b review WR-02: a referenced row that vanished between the check and the insert. A
@@ -400,7 +373,7 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       description:
         "Returns one role assignment of the caller's own tenant. A foreign tenant's real assignment and a nonexistent id both answer 404 with the same body (T-100-09).",
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("role-assignment:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const tenantId = req.user.tenantId;
@@ -427,7 +400,7 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       description:
         "Changes the access role and/or scope of a role assignment of the caller's own tenant. `userId` is not changeable — revoke and create a new assignment instead. A no-op request writes nothing and audits nothing. A foreign tenant's real assignment and a nonexistent id both answer 404 with the same body (T-100-09). A change that would create a duplicate (same user, role and scope type) answers 409. A change that would remove the last tenant-wide holder of role:manage or role-assignment:manage (narrowing a TENANT scope or switching the role) answers 409 and changes nothing (lockout protection).",
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("role-assignment:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       // Parsed BEFORE the lookup (roles.ts house convention) so an empty body `{}` still reaches
@@ -509,12 +482,20 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
               },
               include: { accessRole: true },
             });
-            await auditRoleAssignment(app, req, {
-              action: "UPDATE",
-              entityId: row.id,
-              oldValue: toAuditValue(current, current.accessRole.name),
-              newValue: toAuditValue(row, resolution.accessRole.name),
-              tx,
+            // D-14/D-29: the column follows the stored assignments, recorded on this UPDATE row.
+            // No materialization (D-26) here: the target is a stored row of the user, so the user
+            // never has zero stored assignments on this path.
+            await auditRoleAssignmentChange(app, req, tx, {
+              userId: current.userId,
+              entries: [
+                {
+                  action: "UPDATE",
+                  entityId: row.id,
+                  oldValue: roleAssignmentAuditValue(current, current.accessRole.name),
+                  newValue: roleAssignmentAuditValue(row, resolution.accessRole.name),
+                },
+              ],
+              compatRole: await syncCompatRoleColumn(tx, tenantId, current.userId),
             });
             return { kind: "UPDATED", row };
           }),
@@ -556,7 +537,7 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       description:
         "Hard-deletes a role assignment of the caller's own tenant, audited. A foreign tenant's real assignment and a nonexistent id both answer 404 with the same body (T-100-09). Revoking the last tenant-wide holder of role:manage or role-assignment:manage answers 409 and changes nothing (lockout protection).",
     },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("role-assignment:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const tenantId = req.user.tenantId;
@@ -576,11 +557,19 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
             });
             if (!current) return false;
             await tx.roleAssignment.delete({ where: { id, tenantId } });
-            await auditRoleAssignment(app, req, {
-              action: "DELETE",
-              entityId: current.id,
-              oldValue: toAuditValue(current, current.accessRole.name),
-              tx,
+            // D-14/D-29: the column follows the stored assignments — revoking the user's last one
+            // writes EMPLOYEE (D-08), so the fallback then yields Mitarbeiter, never a lingering
+            // Admin. No materialization (D-26): the revoked row was a stored row of the user.
+            await auditRoleAssignmentChange(app, req, tx, {
+              userId: current.userId,
+              entries: [
+                {
+                  action: "DELETE",
+                  entityId: current.id,
+                  oldValue: roleAssignmentAuditValue(current, current.accessRole.name),
+                },
+              ],
+              compatRole: await syncCompatRoleColumn(tx, tenantId, current.userId),
             });
             return true;
           }),

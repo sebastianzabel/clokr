@@ -1,0 +1,27 @@
+{
+  "entries": {
+    "activity | A.admin": {"status":200,"ids":["audit.00.A.admin","audit.01.A.manager","audit.02.global","audit.04.A.employee","audit.05.A.noEmployee","audit.06.A.fallback.admin","audit.07.A.admin","audit.08.global","audit.10.A.fallback.manager","audit.11.A.noEmployee","audit.12.A.manager","audit.13.A.employee","audit.14.global","audit.16.A.admin","audit.17.A.noEmployee","audit.18.A.fallback.admin","audit.19.A.manager","audit.20.global","audit.22.A.fallback.manager","audit.23.A.noEmployee"]},
+    "activity | A.employee": {"status":200,"ids":["lr-A.employee.leave.pending","lr-A.employee.leave.reviewed","ss-A.employee.monthClose","te-A.employee.timeEntry"]},
+    "activity | A.fallback.admin": {"status":200,"ids":["audit.00.A.admin","audit.01.A.manager","audit.02.global","audit.04.A.employee","audit.05.A.noEmployee","audit.06.A.fallback.admin","audit.07.A.admin","audit.08.global","audit.10.A.fallback.manager","audit.11.A.noEmployee","audit.12.A.manager","audit.13.A.employee","audit.14.global","audit.16.A.admin","audit.17.A.noEmployee","audit.18.A.fallback.admin","audit.19.A.manager","audit.20.global","audit.22.A.fallback.manager","audit.23.A.noEmployee"]},
+    "activity | A.fallback.employee": {"status":200,"ids":["te-A.fallback.employee.timeEntry"]},
+    "activity | A.fallback.manager": {"status":200,"ids":["te-A.fallback.manager.timeEntry","tlr-A.employee.leave.pending","tlr-A.employee.leave.reviewed","tlr-A.manager.leave.pending"]},
+    "activity | A.manager": {"status":200,"ids":["lr-A.manager.leave.pending","rev-A.employee.leave.reviewed","ss-A.manager.monthClose","te-A.manager.timeEntry","tlr-A.employee.leave.pending","tlr-A.employee.leave.reviewed"]},
+    "auth | A.admin | login": {"status":200,"bodyRole":"ADMIN","tokenRole":"ADMIN","tokenTenant":"A.tenant","tokenEmployee":"A.admin.employee"},
+    "auth | A.admin | refresh": {"status":200,"tokenRole":"ADMIN"},
+    "auth | A.employee | login": {"status":200,"bodyRole":"EMPLOYEE","tokenRole":"EMPLOYEE","tokenTenant":"A.tenant","tokenEmployee":"A.employee.employee"},
+    "auth | A.employee | refresh": {"status":200,"tokenRole":"EMPLOYEE"},
+    "auth | A.fallback.admin | login": {"status":200,"bodyRole":"ADMIN","tokenRole":"ADMIN","tokenTenant":"A.tenant","tokenEmployee":"A.fallback.admin.employee"},
+    "auth | A.fallback.admin | refresh": {"status":200,"tokenRole":"ADMIN"},
+    "auth | A.fallback.employee | login": {"status":200,"bodyRole":"EMPLOYEE","tokenRole":"EMPLOYEE","tokenTenant":"A.tenant","tokenEmployee":"A.fallback.employee.employee"},
+    "auth | A.fallback.employee | refresh": {"status":200,"tokenRole":"EMPLOYEE"},
+    "auth | A.fallback.manager | login": {"status":200,"bodyRole":"MANAGER","tokenRole":"MANAGER","tokenTenant":"A.tenant","tokenEmployee":"A.fallback.manager.employee"},
+    "auth | A.fallback.manager | refresh": {"status":200,"tokenRole":"MANAGER"},
+    "auth | A.manager | login": {"status":200,"bodyRole":"MANAGER","tokenRole":"MANAGER","tokenTenant":"A.tenant","tokenEmployee":"A.manager.employee"},
+    "auth | A.manager | refresh": {"status":200,"tokenRole":"MANAGER"},
+    "auth | A.noEmployee | login": {"status":200,"bodyRole":"ADMIN","tokenRole":"ADMIN","tokenTenant":"<empty>","tokenEmployee":"<none>"},
+    "auth | A.noEmployee | refresh": {"status":200,"tokenRole":"ADMIN"},
+    "auth | O.manager | otp": {"status":202},
+    "auth | O.manager | refresh": {"status":200,"tokenRole":"MANAGER"},
+    "auth | O.manager | verify-otp": {"status":200,"bodyRole":"MANAGER","tokenRole":"MANAGER","tokenTenant":"O.tenant","tokenEmployee":"O.manager.employee"}
+  }
+}

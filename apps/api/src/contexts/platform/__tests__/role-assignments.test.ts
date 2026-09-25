@@ -11,6 +11,7 @@ import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import { roleNameKey, normalizeRolePermissions } from "../access-role";
 import { DEFAULT_SALON_OPENING_HOURS } from "../facade/salons";
+import { SYSTEM_ROLE_IDS } from "../system-roles";
 import type { FastifyInstance } from "fastify";
 import type { RoleAssignment } from "@clokr/db";
 
@@ -235,13 +236,37 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
     expect(row?.salonIds).toEqual([]);
     expect(row?.employeeIds).toEqual([]);
 
+    // Phase 75b (D-26): the grantee still relied on the legacy-role fallback (no stored
+    // assignment), so the grant first stores that fallback as its own audited assignment — two
+    // CREATE rows instead of one: the materialized Mitarbeiter row and the requested grant.
     const auditCountAfter = await app.prisma.auditLog.count({
       where: { entity: "RoleAssignment", action: "CREATE" },
     });
-    expect(auditCountAfter - auditCountBefore).toBe(1);
+    expect(auditCountAfter - auditCountBefore).toBe(2);
+    const materializedAudit = await app.prisma.auditLog.findFirst({
+      where: {
+        entity: "RoleAssignment",
+        action: "CREATE",
+        entityId: { not: body.id },
+        newValue: { path: ["userId"], equals: granteeTenant.user.id },
+      },
+    });
+    expect(materializedAudit?.newValue).toEqual({
+      userId: granteeTenant.user.id,
+      accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE,
+      roleName: "Mitarbeiter",
+      scopeType: "TENANT",
+      salonIds: [],
+      employeeIds: [],
+      origin: "SYSTEM",
+      reason: "Übernahme der Alt-Rolle (#75)",
+      legacyRole: "EMPLOYEE",
+    });
     const auditRow = await app.prisma.auditLog.findFirst({
       where: { entity: "RoleAssignment", action: "CREATE", entityId: body.id },
     });
+    // Phase 75b (D-14/D-29): roleA grants a ZUGEWIESEN permission, so the derived compat role
+    // moves from EMPLOYEE to MANAGER, recorded on the grant's CREATE row (the change's last row).
     expect(auditRow?.newValue).toEqual({
       userId: granteeTenant.user.id,
       accessRoleId: roleA.id,
@@ -249,6 +274,7 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
       scopeType: "TENANT",
       salonIds: [],
       employeeIds: [],
+      compatRole: { from: "EMPLOYEE", to: "MANAGER" },
     });
 
     const listRes = await app.inject({

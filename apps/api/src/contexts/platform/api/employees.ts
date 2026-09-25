@@ -2,20 +2,35 @@ import { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto, { createHash } from "crypto";
-import { Prisma } from "@clokr/db";
-import { requireAuth, requireRole } from "../../../middleware/auth";
+import { Prisma, type Role } from "@clokr/db";
+import { requireAuth } from "../../../middleware/auth";
+import { hasPermission, permissionReach, requirePermission } from "../request-permissions";
 import { validatePassword, loadPasswordPolicy } from "../password-policy";
 // eslint-disable-next-line no-restricted-imports -- E-4: creating an employee computes the pro-rata leave entitlement as a side effect. Disappears in Block 2 via employee-created/employee-changed events. ADR 0001 Eintrag H.
 import { calculateProRataVacation } from "../../absence/vacation-calc";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { anonymizeEmployeeData, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../anonymize";
 import {
+  lockTenantForRoleChanges,
   removeRoleAssignmentsOfUser,
   withRoleLockoutGuard,
   type RemovedRoleAssignment,
 } from "../facade/role-assignments";
 import { requestAuditFields } from "../request-audit-fields";
 import { RoleLockoutError, ROLE_LOCKOUT_MESSAGE } from "../role-assignment";
+import {
+  legacyFallbackAlreadyYields,
+  materializeLegacyRoleAssignment,
+  replaceSystemRoleAssignment,
+  requestedRoleNeedsRoleAssignmentManage,
+  syncCompatRoleColumn,
+} from "../compat-role";
+import {
+  auditRoleAssignmentChange,
+  createdAssignmentAuditEntry,
+  materializedAssignmentAuditEntry,
+  removedAssignmentAuditEntry,
+} from "../role-assignment-audit";
 import {
   createOvertimeAccount,
   hardDeleteOvertimeDataForEmployee,
@@ -256,7 +271,7 @@ const updateEmployeeSchema = z.object({
     .nullable()
     .optional(),
   // Phase 76.7 (D-11, EMP-V19-01) — § 18 ArbZG-Befreiung. ADMIN-only (route
-  // already gated by requireRole("ADMIN")). Boolean — null is NOT a valid value.
+  // already gated by employee:update:ZUGEWIESEN). Boolean — null is NOT a valid value.
   // undefined = no change. Audit row SET_TIME_TRACKING_EXEMPT fires only on
   // actual value change (see PATCH handler below).
   isTimeTrackingExempt: z.boolean().optional(),
@@ -310,11 +325,45 @@ async function auditRemovedRoleAssignments(
   }
 }
 
+/**
+ * Phase 75b (D-15, D-26, D-29): the employee form's role setting on an EXISTING user. Must run
+ * inside `withRoleLockoutGuard` on the caller's transaction — demoting the tenant's last stored
+ * holder of a guarded permission then rolls back this change, the employee-field update and every
+ * audit row together (D-31).
+ *
+ * Order: a request that changes nothing (the fallback already yields `role`) writes nothing. Else
+ * the fallback is materialized first (D-26), the system-role assignment is replaced (customer
+ * roles untouched), the column is rewritten to the derived value, and the audit rows are written
+ * in the order of the writes with the column change on the last one (D-29).
+ */
+async function applyRoleFromEmployeeForm(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  tx: Prisma.TransactionClient,
+  userId: string,
+  role: Role,
+): Promise<void> {
+  const tenantId = req.user.tenantId;
+  if (await legacyFallbackAlreadyYields(tx, tenantId, userId, role)) return;
+  const materialized = await materializeLegacyRoleAssignment(tx, tenantId, userId);
+  const { removed, created } = await replaceSystemRoleAssignment(tx, tenantId, userId, role);
+  const compatRole = await syncCompatRoleColumn(tx, tenantId, userId);
+  await auditRoleAssignmentChange(app, req, tx, {
+    userId,
+    entries: [
+      ...(materialized !== null ? [materializedAssignmentAuditEntry(materialized)] : []),
+      ...removed.map((row) => removedAssignmentAuditEntry(row)),
+      ...(created !== null ? [createdAssignmentAuditEntry(created)] : []),
+    ],
+    compatRole,
+  });
+}
+
 export async function employeeRoutes(app: FastifyInstance) {
   // GET /api/v1/employees
   app.get("/", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("employee:read:ZUGEWIESEN"),
     handler: async (req) => {
       // v1.8.8 — anonymized rows are hidden by default (team picker etc. must stay clean).
       // ADMINs can opt in via ?includeAnonymized=true so the admin employee list can surface
@@ -322,7 +371,9 @@ export async function employeeRoutes(app: FastifyInstance) {
       // is honored for ADMIN only; MANAGERs never receive anonymized rows. GET /:id (audit view)
       // is NOT filtered — anonymized rows must remain resolvable by UUID (T-188-06).
       const { includeAnonymized } = req.query as { includeAnonymized?: string };
-      const showAnonymized = req.user.role === "ADMIN" && includeAnonymized === "true";
+      // Lazy: the permission is checked only when the flag is actually set (issue #75, D-13)
+      const showAnonymized =
+        includeAnonymized === "true" && (await hasPermission(req, "employee:anonymize:ZUGEWIESEN"));
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId: req.user.tenantId,
@@ -359,7 +410,11 @@ export async function employeeRoutes(app: FastifyInstance) {
       if (!id) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       const user = req.user;
 
-      if (user.role === "EMPLOYEE" && user.employeeId !== id) {
+      const readReach = await permissionReach(req, "employee:read");
+      if (readReach !== "ZUGEWIESEN" && user.employeeId !== id) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+      if (readReach === null) {
         return reply.code(403).send({ error: "Forbidden" });
       }
 
@@ -389,9 +444,20 @@ export async function employeeRoutes(app: FastifyInstance) {
   // POST /api/v1/employees — Anlegen + Einladungsmail
   app.post("/", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:create:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const body = createEmployeeSchema.parse(req.body);
+
+      // Issue #354 (pre-merge security review of #75): `employee:create` covers the new hire's
+      // profile, never handing out a system role — mirrors the PATCH /:id check above (D-15
+      // extension). A role other than the schema default EMPLOYEE additionally needs
+      // role-assignment:manage, checked before any write.
+      if (
+        requestedRoleNeedsRoleAssignmentManage(body.role) &&
+        !(await hasPermission(req, "role-assignment:manage:ZUGEWIESEN"))
+      ) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
 
       const directPassword = !!body.password;
       if (directPassword) {
@@ -510,6 +576,23 @@ export async function employeeRoutes(app: FastifyInstance) {
         });
 
         await createOvertimeAccount(tx, emp.id, req.user.tenantId);
+
+        // Phase 75b (D-15): the new user's system-role assignment and its audit row, in this same
+        // transaction. A grant cannot lower any holder count, so it takes the tenant lock (which
+        // serialises it with every guarded role change) but needs no before/after count. The
+        // column already holds `body.role`, so the write-back is a no-op kept for one uniform path.
+        await lockTenantForRoleChanges(tx, req.user.tenantId);
+        const { created: roleAssignment } = await replaceSystemRoleAssignment(
+          tx,
+          req.user.tenantId,
+          user.id,
+          body.role,
+        );
+        await auditRoleAssignmentChange(app, req, tx, {
+          userId: user.id,
+          entries: roleAssignment !== null ? [createdAssignmentAuditEntry(roleAssignment)] : [],
+          compatRole: await syncCompatRoleColumn(tx, req.user.tenantId, user.id),
+        });
 
         // D-22: the new employee's Stammsalon (HOME) row, open-ended from its tenant-local hire
         // day, in the SAME transaction — audited CREATE right after, still inside the tx.
@@ -640,10 +723,22 @@ export async function employeeRoutes(app: FastifyInstance) {
   // PATCH /api/v1/employees/:id — Profil aktualisieren
   app.patch("/:id", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:update:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const body = updateEmployeeSchema.parse(req.body);
+
+      // Phase 75b (D-15): setting the role replaces a role assignment, so it additionally needs
+      // role-assignment:manage — today both that and employee:update are Admin-only, so the check
+      // changes nothing for the legacy roles. Checked before the lookup: a caller without it gets
+      // the same 403 for a foreign and an unknown id (T-100-09).
+      const requestedRole = body.role;
+      if (
+        requestedRole !== undefined &&
+        !(await hasPermission(req, "role-assignment:manage:ZUGEWIESEN"))
+      ) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
 
       const employee = await app.prisma.employee.findUnique({
         where: { id, tenantId: req.user.tenantId },
@@ -719,57 +814,71 @@ export async function employeeRoutes(app: FastifyInstance) {
       // never leave a real day without a Stammsalon row, nor an audited gap-fill without its audited
       // hire-date move (review IN-05). The pro-rata warning below stays OUTSIDE this transaction: it
       // only reads and shapes a response field, and must not roll back a successful write.
-      const updated = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-        const updatedEmp = await tx.employee.update({ where: { id }, data: updates });
+      // Phase 75b (D-31): the role part runs under the lockout guard in this SAME transaction, so a
+      // RoleLockoutError (mapped to 409 below) leaves nothing committed — not the field update either.
+      let updated;
+      try {
+        updated = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          const updatedEmp = await tx.employee.update({ where: { id }, data: updates });
 
-        if (body.role !== undefined) {
-          await tx.user.update({ where: { id: employee.userId }, data: { role: body.role } });
-        }
-
-        if (body.hireDate !== undefined && tz !== null) {
-          const gapOutcome = await fillHomeGapBeforeHireDate(
-            tx,
-            req.user.tenantId,
-            id,
-            tenantLocalDay(new Date(body.hireDate), tz),
-          );
-          if (gapOutcome.status === "FILLED") {
-            await auditSalonAssignmentEvent(app, req, {
-              entity: "EmployeeSalonAssignment",
-              action: "CREATE",
-              entityId: gapOutcome.created.id,
-              newValue: { ...toAssignmentDto(gapOutcome.created), trigger: "HIRE_DATE_CHANGED" },
-              tx,
-            });
+          // D-15/D-26/D-29: the role is no longer written into the column directly — it replaces
+          // the system-role assignment, and the column follows the stored assignments.
+          if (requestedRole !== undefined) {
+            await withRoleLockoutGuard(tx, req.user.tenantId, () =>
+              applyRoleFromEmployeeForm(app, req, tx, employee.userId, requestedRole),
+            );
           }
-        }
 
-        // Review IN-05: the Employee UPDATE audit commits or rolls back with the update it
-        // describes (and with the gap-fill's CREATE audit above). Inside the transaction a failing
-        // audit rolls the write back, so the actor is resolved through requestAuditFields — an API
-        // key's `apikey:<id>` subject would otherwise fail the AuditLog.userId foreign key.
-        await app.audit({
-          action: "UPDATE",
-          entity: "Employee",
-          entityId: id,
-          oldValue: {
-            ...employee,
-            exitDate: employee.exitDate?.toISOString() ?? null,
-            // Personalstruktur (Phase 41) — Decimal → string for stable JSON
-            coverageWeight: employee.coverageWeight.toString(),
-          },
-          ...requestAuditFields(req, {
-            ...updatedEmp,
-            role: body.role,
-            exitDate: updatedEmp.exitDate?.toISOString() ?? null,
-            // Personalstruktur (Phase 41) — Decimal → string for stable JSON
-            coverageWeight: updatedEmp.coverageWeight.toString(),
-          }),
-          tx,
+          if (body.hireDate !== undefined && tz !== null) {
+            const gapOutcome = await fillHomeGapBeforeHireDate(
+              tx,
+              req.user.tenantId,
+              id,
+              tenantLocalDay(new Date(body.hireDate), tz),
+            );
+            if (gapOutcome.status === "FILLED") {
+              await auditSalonAssignmentEvent(app, req, {
+                entity: "EmployeeSalonAssignment",
+                action: "CREATE",
+                entityId: gapOutcome.created.id,
+                newValue: { ...toAssignmentDto(gapOutcome.created), trigger: "HIRE_DATE_CHANGED" },
+                tx,
+              });
+            }
+          }
+
+          // Review IN-05: the Employee UPDATE audit commits or rolls back with the update it
+          // describes (and with the gap-fill's CREATE audit above). Inside the transaction a failing
+          // audit rolls the write back, so the actor is resolved through requestAuditFields — an API
+          // key's `apikey:<id>` subject would otherwise fail the AuditLog.userId foreign key.
+          await app.audit({
+            action: "UPDATE",
+            entity: "Employee",
+            entityId: id,
+            oldValue: {
+              ...employee,
+              exitDate: employee.exitDate?.toISOString() ?? null,
+              // Personalstruktur (Phase 41) — Decimal → string for stable JSON
+              coverageWeight: employee.coverageWeight.toString(),
+            },
+            ...requestAuditFields(req, {
+              ...updatedEmp,
+              role: body.role,
+              exitDate: updatedEmp.exitDate?.toISOString() ?? null,
+              // Personalstruktur (Phase 41) — Decimal → string for stable JSON
+              coverageWeight: updatedEmp.coverageWeight.toString(),
+            }),
+            tx,
+          });
+
+          return updatedEmp;
         });
-
-        return updatedEmp;
-      });
+      } catch (err) {
+        if (err instanceof RoleLockoutError) {
+          return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
+        }
+        throw err;
+      }
 
       // ── Pro-rata Urlaubswarnung ──────────────────────────────────────────────
       // Compute warning when exitDate is set (or was just set) within the current year.
@@ -908,7 +1017,7 @@ export async function employeeRoutes(app: FastifyInstance) {
   // PATCH /api/v1/employees/:id/unlock — Admin entsperrt gesperrten Account
   app.patch("/:id/unlock", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:manage-access:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
       const employee = await app.prisma.employee.findUnique({
@@ -947,7 +1056,7 @@ export async function employeeRoutes(app: FastifyInstance) {
   // PATCH /api/v1/employees/:id/deactivate
   app.patch("/:id/deactivate", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:manage-access:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const { exitDate } = z.object({ exitDate: z.string().optional() }).parse(req.body ?? {});
@@ -1022,7 +1131,7 @@ export async function employeeRoutes(app: FastifyInstance) {
   // PATCH /api/v1/employees/:id/reactivate
   app.patch("/:id/reactivate", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:manage-access:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
 
@@ -1083,7 +1192,7 @@ export async function employeeRoutes(app: FastifyInstance) {
   // POST /api/v1/employees/:id/resend-invitation
   app.post("/:id/resend-invitation", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:manage-access:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
 
@@ -1143,7 +1252,7 @@ export async function employeeRoutes(app: FastifyInstance) {
   // Urlaubsanträge, Salden) bleiben für die gesetzlichen Aufbewahrungsfristen erhalten.
   app.delete("/:id", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:anonymize:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
 
@@ -1254,7 +1363,7 @@ export async function employeeRoutes(app: FastifyInstance) {
   // checks for a valid row by a DIFFERENT admin before proceeding when forceDelete=true inside the window.
   app.post("/:id/hard-delete/authorize", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:anonymize:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
 
@@ -1285,7 +1394,7 @@ export async function employeeRoutes(app: FastifyInstance) {
 
   app.delete("/:id/hard-delete", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("employee:anonymize:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const { forceDelete } = forceDeleteBodySchema.parse(req.body ?? {}) ?? {};

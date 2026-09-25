@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash, randomBytes } from "crypto";
-import { requireRole } from "../../../middleware/auth";
+import { requirePermission } from "../../platform";
 
 function hashKey(key: string): string {
   return createHash("sha256").update(key).digest("hex");
@@ -11,7 +11,7 @@ export async function terminalRoutes(app: FastifyInstance) {
   // GET / — list terminal keys for tenant (ADMIN only)
   app.get("/", {
     schema: { tags: ["Terminals"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("terminal:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const keys = await app.prisma.terminalApiKey.findMany({
         where: { tenantId: req.user.tenantId },
@@ -32,7 +32,7 @@ export async function terminalRoutes(app: FastifyInstance) {
   // POST / — create new terminal key (ADMIN only)
   app.post("/", {
     schema: { tags: ["Terminals"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("terminal:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const body = z.object({ name: z.string().min(1).max(100) }).parse(req.body);
       const rawKey = `clk_${randomBytes(32).toString("hex")}`;
@@ -48,16 +48,16 @@ export async function terminalRoutes(app: FastifyInstance) {
         },
       });
 
-      // Audit log
-      await app.prisma.auditLog.create({
-        data: {
-          userId: req.user.sub,
-          action: "CREATE",
-          entity: "TerminalApiKey",
-          entityId: key.id,
-          newValue: { name: body.name, keyPrefix },
-          ipAddress: req.ip,
-        },
+      // Audit log — routed through app.audit() (Issue #333): a direct auditLog.create would
+      // write an API-key caller's `apikey:<id>` subject straight into AuditLog.userId, a
+      // foreign key onto User.
+      await app.audit({
+        userId: req.user.sub,
+        action: "CREATE",
+        entity: "TerminalApiKey",
+        entityId: key.id,
+        newValue: { name: body.name, keyPrefix },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       return { id: key.id, name: key.name, keyPrefix, rawKey, createdAt: key.createdAt };
@@ -123,7 +123,7 @@ export async function terminalRoutes(app: FastifyInstance) {
   // DELETE /:id — revoke terminal key (ADMIN only)
   app.delete("/:id", {
     schema: { tags: ["Terminals"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("terminal:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
 
@@ -137,14 +137,13 @@ export async function terminalRoutes(app: FastifyInstance) {
         data: { revokedAt: new Date() },
       });
 
-      await app.prisma.auditLog.create({
-        data: {
-          userId: req.user.sub,
-          action: "REVOKE",
-          entity: "TerminalApiKey",
-          entityId: id,
-          ipAddress: req.ip,
-        },
+      // Issue #333: routed through app.audit() — see the POST / handler's comment above.
+      await app.audit({
+        userId: req.user.sub,
+        action: "REVOKE",
+        entity: "TerminalApiKey",
+        entityId: id,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       return { success: true };

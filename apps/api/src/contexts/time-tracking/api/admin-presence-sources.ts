@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash, randomBytes } from "crypto";
-import { requireRole } from "../../../middleware/auth";
+import { requirePermission } from "../../platform";
 import { normalizeMac } from "../normalize-mac";
 
 function hashKey(key: string): string {
@@ -13,7 +13,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
   // IMPORTANT: Registered BEFORE /:id routes to avoid path collision
   app.get("/opted-in", {
     schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("presence-source:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const employees = await app.prisma.employee.findMany({
         where: {
@@ -37,7 +37,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
   // ── GET / — list presence sources for tenant ──────────────────
   app.get("/", {
     schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("presence-source:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const sources = await app.prisma.presenceSource.findMany({
         where: { tenantId: req.user.tenantId, deletedAt: null },
@@ -60,7 +60,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
   // ── POST / — create new presence source ───────────────────────
   app.post("/", {
     schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("presence-source:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const body = z
         .object({
@@ -84,15 +84,15 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
         },
       });
 
-      await app.prisma.auditLog.create({
-        data: {
-          userId: req.user.sub,
-          action: "CREATE",
-          entity: "PresenceSource",
-          entityId: source.id,
-          newValue: { name: body.name, keyPrefix, adapterUrl: body.adapterUrl ?? null },
-          ipAddress: req.ip,
-        },
+      // Issue #333: routed through app.audit() (not a direct auditLog.create) so an API-key
+      // caller's `apikey:<id>` subject never hits AuditLog.userId's foreign key onto User.
+      await app.audit({
+        userId: req.user.sub,
+        action: "CREATE",
+        entity: "PresenceSource",
+        entityId: source.id,
+        newValue: { name: body.name, keyPrefix, adapterUrl: body.adapterUrl ?? null },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       return reply.code(201).send({
@@ -110,7 +110,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
   // ── PATCH /:id — update name, adapterUrl, adapterSecret, and/or isActive ────
   app.patch("/:id", {
     schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("presence-source:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
       const body = z
@@ -157,24 +157,23 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
         },
       });
 
-      await app.prisma.auditLog.create({
-        data: {
-          userId: req.user.sub,
-          action: "UPDATE",
-          entity: "PresenceSource",
-          entityId: id,
-          oldValue,
-          newValue: {
-            ...(body.name !== undefined && { name: body.name }),
-            ...(body.adapterUrl !== undefined && { adapterUrl: body.adapterUrl }),
-            // Note: adapterSecret intentionally omitted from audit log (not logged in plaintext)
-            ...(body.adapterSecret !== undefined && {
-              adapterSecret: body.adapterSecret !== null ? "[set]" : null,
-            }),
-            ...(body.isActive !== undefined && { isActive: body.isActive }),
-          },
-          ipAddress: req.ip,
+      // Issue #333: routed through app.audit() — see the POST / handler's comment above.
+      await app.audit({
+        userId: req.user.sub,
+        action: "UPDATE",
+        entity: "PresenceSource",
+        entityId: id,
+        oldValue,
+        newValue: {
+          ...(body.name !== undefined && { name: body.name }),
+          ...(body.adapterUrl !== undefined && { adapterUrl: body.adapterUrl }),
+          // Note: adapterSecret intentionally omitted from audit log (not logged in plaintext)
+          ...(body.adapterSecret !== undefined && {
+            adapterSecret: body.adapterSecret !== null ? "[set]" : null,
+          }),
+          ...(body.isActive !== undefined && { isActive: body.isActive }),
         },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       return updated;
@@ -184,7 +183,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
   // ── DELETE /:id — soft delete (deletedAt + isActive=false) ───
   app.delete("/:id", {
     schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("presence-source:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
 
@@ -198,15 +197,14 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
         data: { deletedAt: new Date(), isActive: false },
       });
 
-      await app.prisma.auditLog.create({
-        data: {
-          userId: req.user.sub,
-          action: "DELETE",
-          entity: "PresenceSource",
-          entityId: id,
-          oldValue: { name: source.name },
-          ipAddress: req.ip,
-        },
+      // Issue #333: routed through app.audit() — see the POST / handler's comment above.
+      await app.audit({
+        userId: req.user.sub,
+        action: "DELETE",
+        entity: "PresenceSource",
+        entityId: id,
+        oldValue: { name: source.name },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       return { success: true };
@@ -216,7 +214,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
   // ── GET /:id/devices — proxy live device list from adapter ───
   app.get("/:id/devices", {
     schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("presence-source:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
 
@@ -327,7 +325,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
   // ── POST /:id/devices/:mac/assign — assign MAC to employee ───
   app.post("/:id/devices/:mac/assign", {
     schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("presence-source:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id, mac: rawMac } = z
         .object({ id: z.string().uuid(), mac: z.string() })
@@ -379,28 +377,25 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
         });
         optInWasEnabled = true;
 
-        await app.prisma.auditLog.create({
-          data: {
-            userId: req.user.sub,
-            action: "WIFI_OPT_IN_BY_ADMIN",
-            entity: "Employee",
-            entityId: body.employeeId,
-            oldValue: { wifiPresenceEnabled: false },
-            newValue: { wifiPresenceEnabled: true, source: "admin-device-assignment" },
-            ipAddress: req.ip,
-          },
+        // Issue #333: routed through app.audit() — see the POST / handler's comment above.
+        await app.audit({
+          userId: req.user.sub,
+          action: "WIFI_OPT_IN_BY_ADMIN",
+          entity: "Employee",
+          entityId: body.employeeId,
+          oldValue: { wifiPresenceEnabled: false },
+          newValue: { wifiPresenceEnabled: true, source: "admin-device-assignment" },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
       }
 
-      await app.prisma.auditLog.create({
-        data: {
-          userId: req.user.sub,
-          action: "ASSIGN_DEVICE",
-          entity: "PresenceDevice",
-          entityId: device.id,
-          newValue: { mac, employeeId: body.employeeId, optInAutoEnabled: optInWasEnabled },
-          ipAddress: req.ip,
-        },
+      await app.audit({
+        userId: req.user.sub,
+        action: "ASSIGN_DEVICE",
+        entity: "PresenceDevice",
+        entityId: device.id,
+        newValue: { mac, employeeId: body.employeeId, optInAutoEnabled: optInWasEnabled },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       return {
@@ -414,7 +409,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
   // ── DELETE /:id/devices/:mac — remove MAC ↔ employee mapping ───
   app.delete("/:id/devices/:mac", {
     schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requirePermission("presence-source:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id, mac: rawMac } = z
         .object({ id: z.string().uuid(), mac: z.string() })
@@ -458,30 +453,27 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
             data: { wifiPresenceEnabled: false },
           });
           optInWasDisabled = true;
-          await app.prisma.auditLog.create({
-            data: {
-              userId: req.user.sub,
-              action: "WIFI_OPT_OUT_BY_ADMIN",
-              entity: "Employee",
-              entityId: device.employeeId,
-              oldValue: { wifiPresenceEnabled: true },
-              newValue: { wifiPresenceEnabled: false, source: "last-device-unassigned" },
-              ipAddress: req.ip,
-            },
+          // Issue #333: routed through app.audit() — see the POST / handler's comment above.
+          await app.audit({
+            userId: req.user.sub,
+            action: "WIFI_OPT_OUT_BY_ADMIN",
+            entity: "Employee",
+            entityId: device.employeeId,
+            oldValue: { wifiPresenceEnabled: true },
+            newValue: { wifiPresenceEnabled: false, source: "last-device-unassigned" },
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
           });
         }
       }
 
-      await app.prisma.auditLog.create({
-        data: {
-          userId: req.user.sub,
-          action: "UNASSIGN_DEVICE",
-          entity: "PresenceDevice",
-          entityId: device.id,
-          oldValue: { mac: device.mac, employeeId: device.employeeId },
-          newValue: { optInAutoDisabled: optInWasDisabled, remainingDevices },
-          ipAddress: req.ip,
-        },
+      await app.audit({
+        userId: req.user.sub,
+        action: "UNASSIGN_DEVICE",
+        entity: "PresenceDevice",
+        entityId: device.id,
+        oldValue: { mac: device.mac, employeeId: device.employeeId },
+        newValue: { optInAutoDisabled: optInWasDisabled, remainingDevices },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       return { success: true, optInAutoDisabled: optInWasDisabled };

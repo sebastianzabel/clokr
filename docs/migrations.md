@@ -345,6 +345,155 @@ ALTER TABLE "LeaveType" ALTER COLUMN "code" SET NOT NULL;
 und im Schema `code LeaveTypeCode?` zu `code LeaveTypeCode` ändern.
 Folge-Issue: [#206](https://github.com/sebastianzabel/clokr/issues/206).
 
+## Phase 75b — Systemrollen und Migration der Alt-Rollen (Issue #75)
+
+**Was die Migration tut.** `packages/db/prisma/migrations/20260925070842_system_roles_and_legacy_role_assignments`
+ist eine reine Datenmigration — keine Tabelle, keine Spalte, kein Index, kein Typ wird angelegt,
+geändert oder gelöscht (`prisma migrate diff` bleibt leer). Sie
+
+1. legt die drei globalen Systemrollen an (`AccessRole` mit `tenantId` NULL): Admin
+   (`00000000-0000-4000-8000-00000000a001`, 87 Permissions), Manager (`…a002`, 63) und
+   Mitarbeiter (`…a003`, 22). Der Code erkennt sie ausschließlich an diesen festen Ids, nie am
+   Namen (`apps/api/src/contexts/platform/system-roles.ts`);
+2. gibt jedem Nutzer mit `Employee`, dessen Mitarbeiter NICHT anonymisiert ist und der noch
+   keine `RoleAssignment` hat, genau eine Zuweisung mit Scope `TENANT` (leere Salon- und
+   Personenliste, `tenantId` = Mandant des Mitarbeiters) auf die Systemrolle seiner Alt-Rolle
+   `User.role` (ADMIN → Admin, MANAGER → Manager, EMPLOYEE → Mitarbeiter);
+3. schreibt pro angelegter Zuweisung genau einen Audit-Eintrag: `action` `CREATE`, `entity`
+   `RoleAssignment`, `userId` NULL (Akteur ist das System), `newValue` mit
+   `origin: "SYSTEM"`, `reason: "Migration der Alt-Rolle (#75)"`, `legacyRole` und den
+   Schlüsseln der Phase-74b-Audits (`userId`, `accessRoleId`, `roleName`, `scopeType`,
+   `salonIds`, `employeeIds`);
+4. meldet per `RAISE NOTICE` vier Zahlen, die zusammen jeden `User` genau einmal zählen:
+   angelegte Zuweisungen, Nutzer ohne `Employee` (bekommen keine Zuweisung — ohne Mitarbeiter
+   gibt es keinen Mandanten), übersprungene Anonymisierte und übersprungene Nutzer, die schon
+   eine Zuweisung hatten.
+
+Sie ist **additiv** und **idempotent**: Die Rollen werden mit `ON CONFLICT ("id") DO NOTHING`
+eingefügt, eine Zuweisung entsteht nur für Nutzer ohne jede Zuweisung — ein zweiter Lauf legt
+nichts an und schreibt kein Audit. `User.role` wird nirgends geschrieben; jeder Nutzer behält
+seine Alt-Rolle byte-gleich.
+
+**1. Vor `migrate deploy` — Namensprüfung (lesend).** Heißt eine Kundenrolle wie eine
+Systemrolle, wäre der Name nach der Namensregel aus Phase 73b nicht mehr eindeutig:
+
+```sql
+-- Customer roles whose case-insensitive name collides with a system role. Expected: 0 rows.
+SELECT "id", "tenantId", "name", "nameKey"
+FROM "AccessRole"
+WHERE "tenantId" IS NOT NULL
+  AND "nameKey" IN ('admin', 'manager', 'mitarbeiter');
+```
+
+Liefert sie Zeilen: melden und mit dem Betreiber klären, **nicht** still umbenennen — der Name
+einer Kundenrolle gehört dem Mandanten.
+
+**2. Vor und nach `migrate deploy` — die Zahlen der NOTICE nachrechnen (lesend).** Prisma gibt
+`RAISE NOTICE` nicht aus; im Deploy-Log steht die Meldung deshalb nicht. Diese Abfrage liefert
+dieselben vier Zahlen. **Vor** dem Deploy zeigt `created`, wie viele Zuweisungen die Migration
+anlegen wird; **nach** dem Deploy muss `created` 0 sein und `already_assigned` um genau diese
+Zahl gewachsen sein. Ein `created` größer 0 nach dem Deploy heißt: Ein alter Pod hat im
+Deploy-Fenster Nutzer ohne Zuweisung angelegt. Für sie gilt weiter ihre Alt-Rolle (der
+Alt-Rollen-Rückfall aus Issue #75); ein erneuter Lauf der Migration ist nicht nötig. Der Testfall in `apps/api/src/__tests__/system-roles-migration.test.ts`
+liest die Abfrage aus diesem Dokument (zwischen den beiden Markierungen) und vergleicht sie mit
+der NOTICE — sie kann deshalb nicht unbemerkt von der Migration abweichen.
+
+<!-- 75b-count-selects:begin -->
+
+```sql
+-- Read-only. Every "User" row lands in exactly one bucket; "created" counts the users the
+-- migration assigns (Employee present, not anonymized, no RoleAssignment yet).
+SELECT
+  count(*) FILTER (WHERE has_employee AND NOT anonymized AND NOT assigned) AS created,
+  count(*) FILTER (WHERE NOT has_employee) AS without_employee,
+  count(*) FILTER (WHERE has_employee AND anonymized) AS anonymized,
+  count(*) FILTER (WHERE has_employee AND NOT anonymized AND assigned) AS already_assigned
+FROM (
+  SELECT
+    e."id" IS NOT NULL AS has_employee,
+    -- The anonymization sentinel (firstName 'Gelöscht', lastName 'GELÖSCHT-…'), umlauts escaped.
+    coalesce(e."firstName" = U&'Gel\00F6scht' AND e."lastName" LIKE U&'GEL\00D6SCHT-%', false) AS anonymized,
+    EXISTS (SELECT 1 FROM "RoleAssignment" ra WHERE ra."userId" = u."id") AS assigned
+  FROM "User" u
+  LEFT JOIN "Employee" e ON e."userId" = u."id"
+) AS buckets;
+```
+
+<!-- 75b-count-selects:end -->
+
+Nach dem Deploy zusätzlich, beides lesend:
+
+```sql
+-- One System audit row per assignment the migration created. Expected: the "created" number
+-- measured before the deploy.
+SELECT count(*)
+FROM "AuditLog"
+WHERE "entity" = 'RoleAssignment'
+  AND "userId" IS NULL
+  AND "newValue"->>'reason' = 'Migration der Alt-Rolle (#75)';
+
+-- The three system roles. Expected: 3 rows, 87 / 63 / 22 permissions, tenantId NULL.
+SELECT "id", "name", cardinality("permissions") AS permissions, "tenantId"
+FROM "AccessRole"
+WHERE "id" IN (
+  '00000000-0000-4000-8000-00000000a001',
+  '00000000-0000-4000-8000-00000000a002',
+  '00000000-0000-4000-8000-00000000a003'
+)
+ORDER BY "id";
+```
+
+**3. Nach dem Rollout, sobald der ALTE Pod vollständig terminiert ist — Konsistenzprüfung
+(lesend).** `apps/api/docker-entrypoint.sh` fährt `migrate deploy` beim Start des NEUEN
+Containers, während der alte noch Anfragen bedient (auf int ein echtes Rolling Deploy). Ändert der
+alte Pod in diesem Fenster über `PATCH /employees/:id` eine Rolle, schreibt er nur `User.role` —
+die gespeicherte Zuweisung, nach der der neue Code entscheidet, bleibt die alte. Diese Abfrage
+findet genau solche Nutzer: die Rolle, die sich aus den GESPEICHERTEN Zuweisungen ergibt (Admin
+bei einer `TENANT`-Zuweisung auf die Admin-Systemrolle, sonst Manager bei mindestens einer
+ZUGEWIESEN-Permission, sonst Mitarbeiter), weicht von `User.role` ab. Nutzer ohne Zuweisung
+fehlen darin absichtlich — für sie gilt `User.role` unverändert.
+
+<!-- 75b-consistency-select:begin -->
+
+```sql
+-- Read-only. Users whose role derived from their STORED assignments differs from "User"."role".
+-- Expected right after this migration: 0 rows.
+WITH derived AS (
+  SELECT
+    ra."userId",
+    CASE
+      WHEN bool_or(ra."accessRoleId" = '00000000-0000-4000-8000-00000000a001'
+                   AND ra."scopeType" = 'TENANT') THEN 'ADMIN'
+      WHEN bool_or(EXISTS (SELECT 1 FROM unnest(ar."permissions") AS p(key)
+                           WHERE p.key LIKE '%:ZUGEWIESEN')) THEN 'MANAGER'
+      ELSE 'EMPLOYEE'
+    END AS derived_role
+  FROM "RoleAssignment" ra
+  JOIN "AccessRole" ar ON ar."id" = ra."accessRoleId"
+  GROUP BY ra."userId"
+)
+SELECT u."id", u."role"::text AS column_role, d.derived_role
+FROM derived d
+JOIN "User" u ON u."id" = d."userId"
+WHERE u."role"::text <> d.derived_role;
+```
+
+<!-- 75b-consistency-select:end -->
+
+Abhilfe für jede gefundene Zeile: die gewünschte Rolle über den NEUEN Code erneut speichern
+(`PATCH /employees/:id` mit `role`). Im selben Release (Issue #75) ersetzt dieser Aufruf die
+Systemrollen-Zuweisung und schreibt `User.role` aus den Zuweisungen zurück — danach ist die Zeile
+aus der Abfrage verschwunden.
+
+**4. Rollback.** Das vorige Release liest weder `AccessRole` noch `RoleAssignment` für eine
+Zugriffsentscheidung; es ignoriert die neuen Zeilen. `User.role` ist für jeden Nutzer, den die
+Migration berührt hat, unverändert — ein Rollback auf das vorige Image funktioniert ohne
+Datenkorrektur (AC-75-8). **Eine Einschränkung gilt erst später:** Sobald ein Nutzer eine
+Kundenrolle mit mindestens einer ZUGEWIESEN-Permission hält, schreibt der neue Code `MANAGER` in
+`User.role` (D-14). Ein Rollback würde diesen Nutzer als vollen Manager lesen. Vor 75b hält kein
+produktiver Nutzer eine Kundenrolle — das ist deshalb kein Risiko des Deploys selbst, wohl aber
+eines jedes späteren Rollbacks über 75b hinweg.
+
 ## Retention EOL policy (COMP-V1814-07)
 
 Clokr uses a **two-stage retention lifecycle** for employee data:

@@ -13,6 +13,7 @@
     "lint:saldo-lock-derivation": "tsx scripts/lint-saldo-lock-derivation.ts",
     "lint:guard-vacuity": "tsx scripts/lint-guard-vacuity.ts",
     "lint:t100-09-routes": "tsx scripts/lint-t100-09-routes.ts",
+    "lint:role-checks": "tsx scripts/lint-role-checks.ts",
     "measure:context-access": "tsx scripts/measure-foreign-context-access.ts",
     "measure:boundary-imports": "tsx scripts/measure-context-boundary-imports.ts",
     "typecheck": "tsc --noEmit",

@@ -313,9 +313,15 @@ describe("Phase 74b review fixes", () => {
   it("WR-02: a customer role deleted between the reference check and the insert answers 404 'Rolle nicht gefunden', not 500", async () => {
     const grantee = await createUserWithEmployee(app, tenantA.tenant.id, "Grantee");
     const doomedRole = await createRole(app, tenantA.tenant.id, "RDoomed", [TIME_ENTRY_READ]);
+    // Phase 75b (D-26): the grantee relies on the legacy-role fallback, so the POST transaction now
+    // calls roleAssignment.create twice — first for the materialized Mitarbeiter row, then for the
+    // grant. The hook fires before each call; `deleteMany` keeps the second firing a no-op instead
+    // of a P2025 from deleting the already deleted role. The role is gone before the grant's
+    // insert either way, and its foreign-key 404 must roll the materialization back as well (the
+    // two counts below).
     wrapNextTransactionClient((tx) =>
       beforeDelegateCall(tx, "roleAssignment", "create", () =>
-        app.prisma.accessRole.delete({ where: { id: doomedRole.id } }),
+        app.prisma.accessRole.deleteMany({ where: { id: doomedRole.id } }),
       ),
     );
 

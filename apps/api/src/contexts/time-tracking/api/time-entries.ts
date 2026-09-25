@@ -1,7 +1,8 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "crypto";
-import { requireAuth, requireRole } from "../../../middleware/auth";
+import { requireAuth } from "../../../middleware/auth";
+import { permissionReach, requirePermission, userIdsHoldingPermission } from "../../platform"; // Phase 75b Plan 10 (#75), D-16 adds userIdsHoldingPermission
 import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../arbzg";
 import { getEffectiveBreakDuration } from "../break-effective";
@@ -437,9 +438,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         employeeId = emp.id;
       }
       if (!employeeId) return reply.code(400).send({ error: "Mitarbeiter nicht gefunden" });
-      // D-04: EMPLOYEE may only clock themselves in (not on behalf of others)
-      const isOnBehalfOf = !!body.employeeId && body.employeeId !== user.employeeId;
-      if (isOnBehalfOf && user.role === "EMPLOYEE") {
+      // D-04: only a caller holding time-entry:create:ZUGEWIESEN may clock in on behalf of
+      // others; the self path still requires at least time-entry:create:EIGENE (issue #75, D-13).
+      // Issue #358: judged on the RESOLVED employeeId, not `body.employeeId` alone — a caller can
+      // reach a colleague's record just as well via `body.nfcCardId` (a physically readable UID),
+      // and the nfcCardId branch above already overwrote `employeeId` with that colleague's id.
+      const isOnBehalfOf = employeeId !== user.employeeId;
+      const timeEntryCreateReach = await permissionReach(req, "time-entry:create");
+      if (isOnBehalfOf && timeEntryCreateReach !== "ZUGEWIESEN") {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+      if (timeEntryCreateReach === null) {
         return reply.code(403).send({ error: "Forbidden" });
       }
       const employeeRecord = await app.prisma.employee.findUnique({
@@ -546,6 +555,24 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
         return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      }
+
+      // Issue #346/#359: this route had NO ownership or permission check at all — any
+      // authenticated caller of the tenant, an EMPLOYEE included, could clock out a colleague's
+      // open entry, and a caller holding neither reach of `time-entry:update` could clock out
+      // even their own. Mirrors PUT/:id and DELETE/:id's ownership pattern (ZUGEWIESEN for a
+      // foreign entry, EIGENE otherwise), except the foreign-entry rejection reuses THIS route's
+      // own "Eintrag nicht gefunden" 404 (already used above for cross-tenant) instead of a 403 —
+      // deliberately indistinguishable from a non-existent id (T-100-09), decided in the PR that
+      // closed #346 because this check runs before any state of the entry is revealed.
+      const isOnBehalfOf = entry.employeeId !== req.user.employeeId;
+      const clockOutUpdateReach = await permissionReach(req, "time-entry:update");
+      if (isOnBehalfOf) {
+        if (clockOutUpdateReach !== "ZUGEWIESEN") {
+          return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+        }
+      } else if (clockOutUpdateReach === null) {
+        return reply.code(403).send({ error: "Forbidden" });
       }
 
       // Pre-guard: already-closed entry shortcuts to 409 without paying the lock cost.
@@ -780,9 +807,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Eintrag nicht gefunden" });
       }
 
-      // Only the entry's owner or a manager/admin may append breaks.
-      const isManager = user.role === "MANAGER" || user.role === "ADMIN";
-      if (!isManager && entry.employeeId !== user.employeeId) {
+      // Only the entry's owner or a caller holding time-entry:update:ZUGEWIESEN may append breaks.
+      const breaksUpdateReach = await permissionReach(req, "time-entry:update");
+      if (breaksUpdateReach !== "ZUGEWIESEN" && entry.employeeId !== user.employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+      if (breaksUpdateReach === null) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
@@ -857,7 +887,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       };
 
       const user = req.user;
-      const isManager = ["ADMIN", "MANAGER"].includes(user.role);
+      const isManager = (await permissionReach(req, "time-entry:read")) === "ZUGEWIESEN";
 
       // PERF-V1814-03: cap + defaulted 90d window (non-breaking; web callers always pass bounds)
       const defaultFrom = from
@@ -917,7 +947,14 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const body = manualEntrySchema.parse(req.body);
       const user = req.user;
-      const isManager = ["ADMIN", "MANAGER"].includes(user.role);
+      // Feeds both the employeeId selection below and postIsCorrectionByManager (issue #75, D-13)
+      const postCreateReach = await permissionReach(req, "time-entry:create");
+      const isManager = postCreateReach === "ZUGEWIESEN";
+      // Issue #359: a caller holding neither time-entry:create:ZUGEWIESEN nor :EIGENE fell through
+      // to the self-create branch below with no rejection at all.
+      if (postCreateReach === null) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
 
       // Mitarbeiter ID ermitteln
       const employeeId =
@@ -1409,10 +1446,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // skipping the actor).
       if (pendingRetroCreate && entry.retroRequestId) {
         try {
+          // Phase 75b Plan 10 (#75), D-16: holders of retro-request:approve replace the legacy
+          // A,M role predicate — the recorded recipient set is unchanged.
+          const retroRequestedApproveHolderIds = await userIdsHoldingPermission(
+            app.prisma,
+            targetEmployee.tenantId,
+            "retro-request:approve:ZUGEWIESEN",
+          );
           const submitManagers = await app.prisma.employee.findMany({
             where: {
               tenantId: targetEmployee.tenantId,
-              user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+              user: { isActive: true, id: { in: retroRequestedApproveHolderIds } },
             },
             include: { user: { select: { id: true } } },
           });
@@ -1449,7 +1493,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const { id } = idParamSchema.parse(req.params);
       const body = updateEntrySchema.parse(req.body);
       const user = req.user;
-      const isManager = ["ADMIN", "MANAGER"].includes(user.role);
+      // Feeds both the ownership check below and putIsCorrectionByManager (issue #75, D-13)
+      const putUpdateReach = await permissionReach(req, "time-entry:update");
+      const isManager = putUpdateReach === "ZUGEWIESEN";
 
       const existing = await app.prisma.timeEntry.findUnique({
         where: { id },
@@ -1476,6 +1522,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       // Nur eigene Einträge für normale Mitarbeiter
       if (!isManager && existing.employeeId !== user.employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+      if (putUpdateReach === null) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
@@ -1880,10 +1929,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // manager-iteration precedent (:2042-2052), skipping the actor.
       if (isOwnPendingNachtragEdit && existing.retroRequestId) {
         try {
+          // Phase 75b Plan 10 (#75), D-16: holders of retro-request:approve replace the legacy
+          // A,M role predicate — the recorded recipient set is unchanged.
+          const retroUpdatedApproveHolderIds = await userIdsHoldingPermission(
+            app.prisma,
+            existing.employee.tenantId,
+            "retro-request:approve:ZUGEWIESEN",
+          );
           const editManagers = await app.prisma.employee.findMany({
             where: {
               tenantId: existing.employee.tenantId,
-              user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+              user: { isActive: true, id: { in: retroUpdatedApproveHolderIds } },
             },
             include: { user: { select: { id: true } } },
           });
@@ -1923,7 +1979,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
   app.patch("/:id/revalidate", {
     schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requirePermission("time-entry:revalidate:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = revalidateSchema.parse(req.body ?? {});
@@ -2024,7 +2080,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const user = req.user;
-      const isManager = ["ADMIN", "MANAGER"].includes(user.role);
+      // Feeds both the ownership check below and deleteIsCorrectionByManager (issue #75, D-13)
+      const deleteReach = await permissionReach(req, "time-entry:delete");
+      const isManager = deleteReach === "ZUGEWIESEN";
 
       const existing = await app.prisma.timeEntry.findUnique({
         where: { id },
@@ -2039,6 +2097,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
 
       if (!isManager && existing.employeeId !== user.employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+      if (deleteReach === null) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
@@ -2131,9 +2192,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Eintrag nicht gefunden" });
       }
 
-      // Owner or manager/admin.
-      const isManager = user.role === "MANAGER" || user.role === "ADMIN";
-      if (!isManager && entry.employeeId !== user.employeeId) {
+      // Owner or a caller holding time-entry:update:ZUGEWIESEN.
+      const breakStatusReach = await permissionReach(req, "time-entry:update");
+      if (breakStatusReach !== "ZUGEWIESEN" && entry.employeeId !== user.employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+      if (breakStatusReach === null) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
@@ -2220,10 +2284,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // Manager alert: also emails via the toggle field emailOnMissingEntries — see the
       // explicit BREAK_COMPLIANCE_ALERT policy entry in
       // apps/api/src/utils/notification-email-policy.ts (quick-260825-k3g).
+      // Phase 75b Plan 10 (#75), D-16: holders of team-overview:read replace the legacy A,M role
+      // predicate — the recorded recipient set is unchanged.
+      const breakComplianceTeamOverviewHolderIds = await userIdsHoldingPermission(
+        app.prisma,
+        entry.employee.tenantId,
+        "team-overview:read:ZUGEWIESEN",
+      );
       const managers = await app.prisma.employee.findMany({
         where: {
           tenantId: entry.employee.tenantId,
-          user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+          user: { isActive: true, id: { in: breakComplianceTeamOverviewHolderIds } },
         },
         include: { user: { select: { id: true } } },
       });

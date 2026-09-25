@@ -1,6 +1,7 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
+import { userIdsHoldingPermission } from "../../platform"; // Phase 75b Plan 10 (#75), D-16
 import { findUnconfirmedBreakEntries } from "../find-unconfirmed-break-days";
 import {
   getTenantTimezone,
@@ -36,6 +37,10 @@ declare module "fastify" {
     /** Phase 205 Plan 02 (Issue #205, finding 1): exposed for integration tests — invokes the
      *  § 7 BUrlG / EuGH C-684/16 vacation-expiry scan without cron/advisory-lock. */
     tryVacationExpiry: () => Promise<void>;
+    /** Phase 75b (D-27): test invocability, pattern mirrors tryAutoInvalidate. */
+    tryMissingEntriesCheck: () => Promise<void>;
+    /** Phase 75b (D-27): test invocability, pattern mirrors tryAutoInvalidate. */
+    tryPendingLeaveReminder: () => Promise<void>;
   }
 }
 
@@ -159,14 +164,17 @@ export const attendanceCheckerPlugin = fp(async (app) => {
               exitDate: null,
             },
             include: {
-              user: { select: { id: true, role: true } },
+              user: { select: { id: true } },
             },
           });
 
-          // Find managers for this tenant
-          const managers = employees.filter(
-            (e) => e.user.role === "ADMIN" || e.user.role === "MANAGER",
+          // Find managers for this tenant. Phase 75b Plan 10 (#75), D-16: holders of
+          // team-overview:read replace the legacy A,M in-memory role filter — the recorded
+          // recipient set is unchanged (docs/permissions.md § Empfängersuchen).
+          const teamOverviewReadHolderIds = new Set(
+            await userIdsHoldingPermission(app.prisma, tenant.id, "team-overview:read:ZUGEWIESEN"),
           );
+          const managers = employees.filter((e) => teamOverviewReadHolderIds.has(e.user.id));
 
           for (const emp of employees) {
             // Count time entries in the last X days
@@ -294,11 +302,18 @@ export const attendanceCheckerPlugin = fp(async (app) => {
 
           if (openEntries.length === 0) continue;
 
-          // Find managers/admins for this tenant
+          // Find managers/admins for this tenant. Phase 75b Plan 10 (#75), D-16: holders of
+          // team-overview:read replace the legacy A,M role predicate — the recorded recipient
+          // set is unchanged.
+          const openEntryTeamOverviewHolderIds = await userIdsHoldingPermission(
+            app.prisma,
+            tenant.id,
+            "team-overview:read:ZUGEWIESEN",
+          );
           const managers = await app.prisma.employee.findMany({
             where: {
               tenantId: tenant.id,
-              user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+              user: { isActive: true, id: { in: openEntryTeamOverviewHolderIds } },
             },
             include: { user: { select: { id: true } } },
           });
@@ -398,9 +413,16 @@ export const attendanceCheckerPlugin = fp(async (app) => {
 
           if (pendingRequests.length === 0) continue;
 
+          // Phase 75b Plan 10 (#75), D-16: holders of leave-request:approve replace the legacy
+          // A,M role predicate — the recorded recipient set is unchanged.
+          const pendingLeaveApproveHolderIds = await userIdsHoldingPermission(
+            app.prisma,
+            tenant.id,
+            "leave-request:approve:ZUGEWIESEN",
+          );
           const managers = await app.prisma.user.findMany({
             where: {
-              role: { in: ["ADMIN", "MANAGER"] },
+              id: { in: pendingLeaveApproveHolderIds },
               isActive: true,
               employee: { tenantId: tenant.id },
             },
@@ -778,11 +800,18 @@ export const attendanceCheckerPlugin = fp(async (app) => {
               tz,
             );
 
-          // Find managers/admins for this tenant
+          // Find managers/admins for this tenant. Phase 75b Plan 10 (#75), D-16: holders of
+          // team-overview:read replace the legacy A,M role predicate — the recorded recipient
+          // set is unchanged.
+          const gapWarningTeamOverviewHolderIds = await userIdsHoldingPermission(
+            app.prisma,
+            tenant.id,
+            "team-overview:read:ZUGEWIESEN",
+          );
           const managers = await app.prisma.employee.findMany({
             where: {
               tenantId: tenant.id,
-              user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+              user: { isActive: true, id: { in: gapWarningTeamOverviewHolderIds } },
             },
             include: { user: { select: { id: true } } },
           });
@@ -1023,6 +1052,11 @@ export const attendanceCheckerPlugin = fp(async (app) => {
   // test invocability — it had none before this plan. Pattern mirrors tryEndOfMonthGapReminder
   // above.
   app.decorate("tryVacationExpiry", checkVacationExpiry);
+
+  // Phase 75b (D-27): test invocability, pattern mirrors tryAutoInvalidate.
+  app.decorate("tryMissingEntriesCheck", checkMissingEntries);
+  // Phase 75b (D-27): test invocability, pattern mirrors tryAutoInvalidate.
+  app.decorate("tryPendingLeaveReminder", checkPendingLeaveRequests);
 
   app.addHook("onReady", async () => {
     try {
