@@ -29,6 +29,8 @@
  *   cannot be deactivated.
  * - Multisalon means MORE THAN ONE active salon (`isMultiSalonTenant()`) — a derived read, never
  *   a config flag.
+ * - Phase 71b (issue #71): every salon carries the Bundesland of its work location; a new salon
+ *   without one inherits Tenant.federalState, which is otherwise no longer read for holidays.
  * - `TenantConfig.storeHours` is deprecated: no new code reads it. Since Phase 325 (issue #325)
  *   the shift check (`contexts/scheduling/api/shifts.ts`) reads the shift's own `Salon.openingHours`
  *   instead; `PUT /api/v1/settings/work` still mirrors a `storeHours` write into a tenant's single
@@ -43,7 +45,7 @@
  *   (DEPLOYMENT) assignment to that salon at the deactivation date, voiding any that had not
  *   started yet, in the SAME transaction as the deactivation itself.
  */
-import type { Prisma, Salon } from "@clokr/db";
+import { FederalState, type Prisma, type Salon } from "@clokr/db";
 import { z } from "zod";
 import type { CalendarDay } from "../salon-assignment-rules";
 import {
@@ -217,6 +219,10 @@ export const createSalonSchema = z
     city: addressField(CITY_MAX_LENGTH, "Ort"),
     openingHours: salonOpeningHoursSchema,
     isActive: z.boolean().optional(),
+    // Phase 71b (issue #71), D-01: optional — a new salon without an explicit state inherits
+    // the tenant's CURRENT federalState (see createSalon() below), which is otherwise no longer
+    // read for holiday resolution.
+    federalState: z.nativeEnum(FederalState).optional(),
   })
   .strict();
 
@@ -277,6 +283,10 @@ export async function salonExistsInForeignTenant(
  * tenant it creates into). `isActive: false` on create sets `deactivatedAt` to now in the SAME
  * write, keeping the isActive <-> deactivatedAt invariant true from row zero; the default
  * (`isActive` omitted, or explicitly `true`) leaves `deactivatedAt` null.
+ *
+ * Phase 71b (issue #71), D-01: when `input.federalState` is absent, the new salon inherits the
+ * tenant's CURRENT `federalState`, read through the SAME `db` (Tenant is an Unterbau model, same
+ * context — no cross-context read).
  */
 export async function createSalon(
   db: Prisma.TransactionClient,
@@ -284,6 +294,14 @@ export async function createSalon(
   input: CreateSalonInput,
 ): Promise<Salon> {
   const isActive = input.isActive ?? true;
+  const federalState =
+    input.federalState ??
+    (
+      await db.tenant.findUniqueOrThrow({
+        where: { id: tenantId },
+        select: { federalState: true },
+      })
+    ).federalState;
   return db.salon.create({
     data: {
       tenantId,
@@ -292,6 +310,7 @@ export async function createSalon(
       postalCode: input.postalCode ?? null,
       city: input.city ?? null,
       openingHours: input.openingHours as unknown as Prisma.InputJsonValue,
+      federalState,
       isActive,
       deactivatedAt: isActive ? null : new Date(),
     },

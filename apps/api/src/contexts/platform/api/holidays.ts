@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../../../middleware/auth";
 import { getHolidays, FederalStateCode, STATE_MAP } from "../holidays";
+import { findDefaultSalon } from "../facade/salons";
 // eslint-disable-next-line no-restricted-imports -- E-1: creating a holiday loops over every employee and calls the saldo recalculation directly. Disappears in Block 2 (#102-#104), where a holiday-created event replaces the direct call. ADR 0001 Eintrag H.
 import { recalculateSnapshots } from "../../working-time-account/recalculate-snapshots";
 
@@ -115,9 +116,20 @@ export async function holidayRoutes(app: FastifyInstance) {
           where: { employees: { some: { userId: req.user.sub } } },
         })) ?? (await app.prisma.tenant.findFirst());
 
+      // Phase 71b (issue #71), D-02: PublicHoliday.salonId is now required. Compile fix only —
+      // plan 06 (D-09) replaces this whole handler with the salon-aware create; until then every
+      // manual holiday created here lands on the tenant's default salon.
+      const defaultSalon = await findDefaultSalon(app.prisma, req.user.tenantId);
+      if (!defaultSalon) {
+        return reply
+          .code(409)
+          .send({ error: "Kein aktiver Salon vorhanden.", code: "NO_ACTIVE_SALON" });
+      }
+
       const holiday = await app.prisma.publicHoliday.create({
         data: {
           tenantId: req.user.tenantId,
+          salonId: defaultSalon.id,
           date: new Date(body.date),
           name: body.name,
           year: parseInt(body.date.slice(0, 4)),

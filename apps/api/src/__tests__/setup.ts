@@ -12,7 +12,7 @@ import bcrypt from "bcryptjs";
 // Re-export Prisma.JsonValue to keep it nameable in the inferred return type of
 // seedTestData(). Adding `uiPreferences Json?` to User caused TS2883 because the
 // inferred return type implicitly references JsonValue without a local binding.
-import { Prisma } from "@clokr/db";
+import { Prisma, type FederalState } from "@clokr/db";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import {
   DEFAULT_SALON_OPENING_HOURS,
@@ -100,6 +100,10 @@ export async function closeTestApp(): Promise<void> {
  * isActive<->deactivatedAt invariant, see `contexts/platform/facade/salons.ts`'s `createSalon`).
  * `createdAt` is accepted for deterministic ordering fixtures (e.g. proving "earliest active
  * salon wins" against a second, later-created salon).
+ *
+ * Phase 71b (issue #71), D-01: `federalState` defaults to the TENANT's own federalState (mirrors
+ * `createSalon()`'s production default) — never a hardcoded value, so a fixture never silently
+ * gets NIEDERSACHSEN for a tenant configured with a different state.
  */
 export async function createTestSalon(
   db: Prisma.TransactionClient,
@@ -109,13 +113,23 @@ export async function createTestSalon(
     openingHours?: SalonOpeningHours;
     isActive?: boolean;
     createdAt?: Date;
+    federalState?: FederalState;
   },
 ) {
   const isActive = overrides?.isActive ?? true;
+  const federalState =
+    overrides?.federalState ??
+    (
+      await db.tenant.findUniqueOrThrow({
+        where: { id: tenantId },
+        select: { federalState: true },
+      })
+    ).federalState;
   return db.salon.create({
     data: {
       tenantId,
       name: overrides?.name ?? "Test Salon",
+      federalState,
       openingHours: overrides?.openingHours ?? DEFAULT_SALON_OPENING_HOURS,
       isActive,
       deactivatedAt: isActive ? null : new Date(),
