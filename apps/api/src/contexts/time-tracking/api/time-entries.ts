@@ -950,6 +950,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // Feeds both the employeeId selection below and postIsCorrectionByManager (issue #75, D-13)
       const postCreateReach = await permissionReach(req, "time-entry:create");
       const isManager = postCreateReach === "ZUGEWIESEN";
+      // Issue #359: a caller holding neither time-entry:create:ZUGEWIESEN nor :EIGENE fell through
+      // to the self-create branch below with no rejection at all.
+      if (postCreateReach === null) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
 
       // Mitarbeiter ID ermitteln
       const employeeId =
