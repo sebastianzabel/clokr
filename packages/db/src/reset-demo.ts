@@ -5,20 +5,22 @@
  * and creates 5 realistic employees with time entries, leave requests,
  * and absences from 2026-01-01 through 2026-04-10 (last workday).
  *
- * Hard-deletes TimeEntry/LeaveRequest/Absence/SaldoSnapshot/Employee/User rows for every
- * non-admin employee, AND (:397-412) for any OTHER tenant whose employees collide by email —
- * exactly the models CLAUDE.md § Audit-Proof forbids hard-deleting. This is a development-only
- * reset tool, never a production maintenance script (GH #213). The refusal gate below is a
- * module-level check (not inside main()) so it runs before any Prisma/pg call is even
- * constructed, and it does NOT live behind an --confirm argv flag the way
- * apps/api/scripts/reset-test-databases.ts does — an accidental bare invocation against a
- * production DATABASE_URL must fail immediately, not require the caller to have additionally
- * forgotten a flag.
+ * Hard-deletes TimeEntry/LeaveRequest/Absence/SaldoSnapshot/EmployeeSalonAssignment/
+ * PhorestStaffMapping/PhorestAppointment/Employee/User rows for every non-admin employee, AND
+ * (:397-412) for any OTHER tenant whose employees collide by email — exactly the models
+ * CLAUDE.md § Audit-Proof forbids hard-deleting. This is a development-only reset tool, never a
+ * production maintenance script (GH #213). The refusal gate below is a module-level check (not
+ * inside main()) so it runs before any Prisma/pg call is even constructed, and it does NOT live
+ * behind an --confirm argv flag the way apps/api/scripts/reset-test-databases.ts does — an
+ * accidental bare invocation against a production DATABASE_URL must fail immediately, not
+ * require the caller to have additionally forgotten a flag.
  *
  * Run:
  *   DATABASE_URL="postgresql://clokr:password@localhost:5432/clokr" \
  *   CONFIRM_RESET_DEMO=yes \
  *   pnpm --filter @clokr/db tsx src/reset-demo.ts
+ *
+ * See packages/db/README.md for the full seed-demo.ts -> reset-demo.ts command sequence.
  */
 
 import { PrismaClient } from "../generated/client";
@@ -26,6 +28,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import bcrypt from "bcryptjs";
 import { createDefaultHomeAssignment } from "./default-salon";
+import { ADMIN_EMAIL } from "./seed-credentials";
 
 function fatal(message: string): never {
   console.error(message);
@@ -400,7 +403,7 @@ async function main() {
 
   // ── Locate tenant & admin ────────────────────────────────────────────────
 
-  const adminUser = await prisma.user.findUnique({ where: { email: "admin@clokr.de" } });
+  const adminUser = await prisma.user.findUnique({ where: { email: ADMIN_EMAIL } });
   if (!adminUser) throw new Error("Admin user not found.");
 
   const adminEmp = await prisma.employee.findUnique({ where: { userId: adminUser.id } });
@@ -465,6 +468,11 @@ async function main() {
     // themselves, same as this script re-creates their workSchedule below (D-24 names
     // this script among the deleting paths).
     await prisma.employeeSalonAssignment.deleteMany({ where: { employeeId: { in: ids } } });
+    // Issue #343 — PhorestStaffMapping -> Employee and PhorestAppointment -> Employee are
+    // onDelete: Restrict as well; seed-demo.ts creates both, and without these deletes the
+    // employee delete below fails.
+    await prisma.phorestStaffMapping.deleteMany({ where: { employeeId: { in: ids } } });
+    await prisma.phorestAppointment.deleteMany({ where: { employeeId: { in: ids } } });
     await prisma.employee.deleteMany({ where: { id: { in: ids } } });
     await prisma.user.deleteMany({ where: { id: { in: uids } } });
     console.log(`Cleaned up ${ids.length} employees from wrong tenant.\n`);
@@ -491,6 +499,10 @@ async function main() {
     // D-24 (Phase 67b Plan 04, issue #67): EmployeeSalonAssignment -> Employee is
     // onDelete: Restrict — same reasoning as the wrongTenantEmps block above.
     await prisma.employeeSalonAssignment.deleteMany({ where: { employeeId: { in: empIds } } });
+    // Issue #343 — PhorestStaffMapping -> Employee and PhorestAppointment -> Employee are
+    // onDelete: Restrict as well; same reasoning as the wrongTenantEmps block above.
+    await prisma.phorestStaffMapping.deleteMany({ where: { employeeId: { in: empIds } } });
+    await prisma.phorestAppointment.deleteMany({ where: { employeeId: { in: empIds } } });
 
     // Delete employees (WorkSchedule, OvertimeAccount, LeaveEntitlement, etc. cascade)
     await prisma.employee.deleteMany({ where: { id: { in: empIds } } });
@@ -763,7 +775,7 @@ async function main() {
 
   console.log("\n=== Fertig! ===\n");
   console.log("Login-Daten (Passwort: DemoPass1234!):");
-  console.log("  admin@clokr.de          Admin Clokr       (ADMIN)");
+  console.log(`  ${ADMIN_EMAIL.padEnd(24)}Admin Clokr       (ADMIN)`);
   console.log("  lena.berger@clokr.de    Lena Berger       (EMPLOYEE) – leichtes Minus ~-10h");
   console.log(
     "  markus.klein@clokr.de   Markus Klein      (EMPLOYEE) – deutliche Überstunden ~+35h",

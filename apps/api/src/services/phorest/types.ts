@@ -165,6 +165,17 @@ export interface SyncOpts {
   actorUserId?: string; // req.user.sub (manual) | undefined (cron = SYSTEM)
 }
 
+/**
+ * Phase 65b (issue #65, D-08): the coupled salon one sync run works for, and the external branch
+ * id taken from that salon's SalonCoupling. Resolved by the orchestrator
+ * (services/phorest/sync-tenant.ts), never by the sync itself — every Phorest URL uses
+ * `externalBranchId`, and every reconcile query of the run is delimited by `salonId`.
+ */
+export interface PhorestSyncTarget {
+  salonId: string;
+  externalBranchId: string;
+}
+
 export interface SyncResult {
   runId: string;
   // SUSPECT (Plan 02, GATE 3): an HTTP-200 fetch whose in-window set is empty while the DB
@@ -200,6 +211,12 @@ export interface SyncResult {
   // response body (routes/integrations.ts returns the whole SyncResult) — "the run reports the
   // failure rather than swallowing it silently" (107-06-PLAN.md). Not touched by finalizeRun.
   leaveRecalcFailures: number;
+  // Phase 65b (issue #65, D-10): count of worktime slots whose externalId already belongs to a
+  // Shift row of ANOTHER salon (active or soft-deleted) — phorestShiftKey() carries no branch, so
+  // two branches can deliver the same key. The run leaves that row untouched (no update, no
+  // revive) and does not count the slot as covered. IN-MEMORY ONLY, mirroring
+  // protectedPendingLeave: no PhorestSyncRun DB column is written for it. Not touched by finalizeRun.
+  skippedOtherSalon: number;
   error?: string;
 }
 

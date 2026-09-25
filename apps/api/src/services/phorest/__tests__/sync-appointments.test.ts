@@ -8,12 +8,13 @@
 
 import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, createTestSalon } from "../../../__tests__/setup"; // Phase 325 (issue #325)
+import { getTestApp } from "../../../__tests__/setup";
 import { todayInTz, dateStrInTz } from "../../../contexts/working-time-account/timezone";
 import { syncPhorestAppointments } from "../sync-appointments";
 import {
   seedPhorestTenant,
   cleanupPhorestTenant,
+  addCoupledSalon,
   MAPPED_STAFF_ID,
   UNMAPPED_STAFF_ID,
 } from "./helpers";
@@ -140,7 +141,7 @@ describe("phorest sync-appointments", () => {
       const dateStr = targetDateStr(3);
       mockPhorestAppointments(dateStr);
 
-      const res = await syncPhorestAppointments(app, seed.tenantId, {});
+      const res = await syncPhorestAppointments(app, seed.tenantId, seed.target, {});
       expect(res.status).toBe("SUCCESS");
       expect(res.appointmentsStored).toBe(2); // two mapped appointment items → two rows
 
@@ -185,10 +186,10 @@ describe("phorest sync-appointments", () => {
 
       // Simulate the shift run the shift sync creates; the appointment sync must record onto it.
       const run = await app.prisma.phorestSyncRun.create({
-        data: { tenantId: seed.tenantId, status: "SUCCESS" },
+        data: { tenantId: seed.tenantId, salonId: seed.salonId, status: "SUCCESS" },
       });
 
-      const res = await syncPhorestAppointments(app, seed.tenantId, { runId: run.id });
+      const res = await syncPhorestAppointments(app, seed.tenantId, seed.target, { runId: run.id });
       expect(res.status).toBe("SUCCESS");
       expect(res.appointmentsStored).toBe(2);
 
@@ -210,13 +211,13 @@ describe("phorest sync-appointments", () => {
 
       // First sync: the full two-slot window → two rows.
       mockPhorestAppointments(dateStr, appointmentsFixture);
-      const first = await syncPhorestAppointments(app, seed.tenantId, {});
+      const first = await syncPhorestAppointments(app, seed.tenantId, seed.target, {});
       expect(first.status).toBe("SUCCESS");
       expect(first.appointmentsStored).toBe(2);
 
       // Re-sync against the same window MINUS the appt-mapped-2 slot → it must be gone (hard delete).
       mockPhorestAppointments(dateStr, appointmentsCancelledFixture);
-      const second = await syncPhorestAppointments(app, seed.tenantId, {});
+      const second = await syncPhorestAppointments(app, seed.tenantId, seed.target, {});
       expect(second.status).toBe("SUCCESS");
       expect(second.appointmentsStored).toBe(1);
       expect(second.appointmentsRemoved).toBeGreaterThanOrEqual(1);
@@ -243,12 +244,14 @@ describe("phorest sync-appointments", () => {
     try {
       const dateStr = targetDateStr(4);
       const run = await app.prisma.phorestSyncRun.create({
-        data: { tenantId: seed.tenantId, status: "SUCCESS" },
+        data: { tenantId: seed.tenantId, salonId: seed.salonId, status: "SUCCESS" },
       });
 
       // Seed two rows via a successful sync so a false-wipe would have something to destroy.
       mockPhorestAppointments(dateStr, appointmentsFixture);
-      const seededRes = await syncPhorestAppointments(app, seed.tenantId, { runId: run.id });
+      const seededRes = await syncPhorestAppointments(app, seed.tenantId, seed.target, {
+        runId: run.id,
+      });
       expect(seededRes.appointmentsStored).toBe(2);
 
       const before = await app.prisma.phorestAppointment.findMany({
@@ -259,7 +262,7 @@ describe("phorest sync-appointments", () => {
 
       // Now every appointment fetch 503s → GATE-1: status ERROR, ZERO deletes/inserts.
       mockPhorestAppointments503();
-      const res = await syncPhorestAppointments(app, seed.tenantId, { runId: run.id });
+      const res = await syncPhorestAppointments(app, seed.tenantId, seed.target, { runId: run.id });
       expect(res.status).toBe("ERROR");
       expect(res.appointmentsRemoved).toBe(0);
       expect(res.appointmentsStored).toBe(0);
@@ -292,7 +295,9 @@ describe("phorest sync-appointments", () => {
       const outOfWindow = targetDateStr(5);
       mockPhorestAppointments(outOfWindow, appointmentsFixture);
 
-      const res = await syncPhorestAppointments(app, seed.tenantId, { horizonDays: 2 });
+      const res = await syncPhorestAppointments(app, seed.tenantId, seed.target, {
+        horizonDays: 2,
+      });
       expect(res.status).toBe("SUCCESS");
       expect(res.appointmentsStored).toBe(0);
 
@@ -338,7 +343,7 @@ describe("phorest sync-appointments", () => {
         },
       });
 
-      const res = await syncPhorestAppointments(app, seed.tenantId, {});
+      const res = await syncPhorestAppointments(app, seed.tenantId, seed.target, {});
       expect(res.status).toBe("SUCCESS");
       expect(res.appointmentsStored).toBe(0);
 
@@ -361,7 +366,7 @@ describe("phorest sync-appointments", () => {
     try {
       const dateStr = targetDateStr(3);
       const run = await app.prisma.phorestSyncRun.create({
-        data: { tenantId: seed.tenantId, status: "SUCCESS" },
+        data: { tenantId: seed.tenantId, salonId: seed.salonId, status: "SUCCESS" },
       });
 
       // Two mapped-staff appointments that collapse to the SAME externalId: a genuinely
@@ -395,7 +400,7 @@ describe("phorest sync-appointments", () => {
         },
       });
 
-      const res = await syncPhorestAppointments(app, seed.tenantId, { runId: run.id });
+      const res = await syncPhorestAppointments(app, seed.tenantId, seed.target, { runId: run.id });
       // The duplicate did NOT abort the hard-replace: run is SUCCESS, not ERROR.
       expect(res.status).toBe("SUCCESS");
       // appointmentsStored counts rows actually written (deduped), not the two fetched items.
@@ -423,7 +428,7 @@ describe("phorest sync-appointments", () => {
       const dateStr = targetDateStr(3);
       mockPhorestAppointmentsPaged(dateStr);
 
-      const res = await syncPhorestAppointments(app, seed.tenantId, {});
+      const res = await syncPhorestAppointments(app, seed.tenantId, seed.target, {});
       expect(res.status).toBe("SUCCESS");
       // Page 1 (09:00) + page 2 (14:00) → BOTH stored (page-2 slot not lost).
       expect(res.appointmentsStored).toBe(2);
@@ -439,9 +444,12 @@ describe("phorest sync-appointments", () => {
   });
 });
 
-// Phase 325 (issue #325), AC-6/D-14/D-15 — every inserted row carries the coupling's (default)
-// salon; a tenant with no active salon fails the run loudly with zero deletes/inserts.
-describe("phorest sync-appointments salon behavior (AC-6/D-14/D-15)", () => {
+// Phase 65b (issue #65), D-08/D-11 — replaces the Phase 325 (AC-6/D-14/D-15) default-salon premise.
+// Since #65 the sync no longer resolves the tenant's default salon: every inserted row carries the
+// run TARGET's salon (its SalonCoupling). The former "no active salon fails the run loudly" case
+// is gone with its premise — its replacement is sync-tenant.test.ts's case (h) and its
+// zero-coupled case (an uncoupled or inactive salon is never synced; no coupling, no run).
+describe("phorest sync-appointments salon behavior (Phase 65b, D-08/D-11; replaces the 325 default-salon premise)", () => {
   let app: FastifyInstance;
 
   beforeAll(async () => {
@@ -453,67 +461,23 @@ describe("phorest sync-appointments salon behavior (AC-6/D-14/D-15)", () => {
     vi.restoreAllMocks();
   });
 
-  it("D-14: every synced appointment row carries the tenant's default (earliest active) salon", async () => {
+  it("D-08: every stored appointment row carries the run target's salon", async () => {
     const seed = await seedPhorestTenant(app, "apptsalon");
     try {
-      // A second, LATER active salon — proves the sync picks the EARLIEST active one
-      // (seed.salonId), not merely "some" salon (mutation proof (d) makes this observable, see
-      // SUMMARY: swapping in the last active salon here would turn this assertion RED).
-      await createTestSalon(app.prisma, seed.tenantId, {
-        name: "Salon B",
-        createdAt: new Date(Date.now() + 60_000),
-      });
+      // A second coupled salon as the target — a LATER salon, never the tenant's default, so the
+      // assertion below can only hold if the row takes the target's salon.
+      const salonB = await addCoupledSalon(app, seed.tenantId, "branch-2", { name: "Salon B" });
 
       const dateStr = targetDateStr(3);
       mockPhorestAppointments(dateStr);
-      const res = await syncPhorestAppointments(app, seed.tenantId, {});
+      const res = await syncPhorestAppointments(app, seed.tenantId, salonB.target, {});
       expect(res.status).toBe("SUCCESS");
 
       const rows = await app.prisma.phorestAppointment.findMany({
         where: { employeeId: seed.mappedEmployeeId },
       });
       expect(rows.length).toBeGreaterThan(0);
-      expect(rows.every((row) => row.salonId === seed.salonId)).toBe(true);
-    } finally {
-      await cleanupPhorestTenant(app, seed.tenantId);
-    }
-  });
-
-  it("D-15: no active salon → appointmentError set, zero deletes/inserts, no Phorest fetch", async () => {
-    const seed = await seedPhorestTenant(app, "apptnosalon");
-    try {
-      const dateStr = targetDateStr(3);
-
-      // Pre-existing rows via a successful sync, so a false-wipe would have something to destroy.
-      mockPhorestAppointments(dateStr);
-      const seeded = await syncPhorestAppointments(app, seed.tenantId, {});
-      expect(seeded.appointmentsStored).toBe(2);
-
-      const run = await app.prisma.phorestSyncRun.create({
-        data: { tenantId: seed.tenantId, status: "SUCCESS" },
-      });
-
-      await app.prisma.salon.update({
-        where: { id: seed.salonId },
-        data: { isActive: false, deactivatedAt: new Date() },
-      });
-
-      const fetchSpy = vi.fn();
-      global.fetch = fetchSpy as unknown as typeof fetch;
-
-      const res = await syncPhorestAppointments(app, seed.tenantId, { runId: run.id });
-      expect(res.status).toBe("ERROR");
-      expect(res.error).toBe("Kein aktiver Salon vorhanden.");
-      expect(fetchSpy).not.toHaveBeenCalled();
-
-      const reloaded = await app.prisma.phorestSyncRun.findUniqueOrThrow({ where: { id: run.id } });
-      expect(reloaded.appointmentError).toBe("Kein aktiver Salon vorhanden.");
-      expect(reloaded.status).toBe("SUCCESS"); // shift-owned status untouched
-
-      const rows = await app.prisma.phorestAppointment.findMany({
-        where: { employeeId: seed.mappedEmployeeId },
-      });
-      expect(rows.length).toBe(2); // pre-existing rows untouched — no delete, no insert
+      expect(rows.every((row) => row.salonId === salonB.salonId)).toBe(true);
     } finally {
       await cleanupPhorestTenant(app, seed.tenantId);
     }

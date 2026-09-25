@@ -18,10 +18,10 @@ import {
 
 const liveModels = Prisma.dmmf.datamodel.models as unknown as readonly DmmfModel[];
 
-// The 19 models measured directly against schema.prisma (204-RESEARCH.md §Schema Derivation,
+// The 20 models measured directly against schema.prisma (204-RESEARCH.md §Schema Derivation,
 // D-19; AccessRole added Phase 73b, Issue #73; Salon added Phase 64b, Issue #64; RoleAssignment
-// added Phase 74b, Issue #74; EmployeeSalonAssignment added Phase 67b, Issue #67) to carry their
-// own `tenantId` scalar column.
+// added Phase 74b, Issue #74; SalonCoupling added Phase 65b, Issue #65; EmployeeSalonAssignment
+// added Phase 67b, Issue #67) to carry their own `tenantId` scalar column.
 const EXPECTED_OWN_MODELS = [
   "TenantConfig",
   "Employee",
@@ -41,6 +41,7 @@ const EXPECTED_OWN_MODELS = [
   "CoverageRule",
   "Salon",
   "RoleAssignment",
+  "SalonCoupling",
   "EmployeeSalonAssignment",
 ].sort();
 
@@ -122,8 +123,10 @@ describe("classifyModel (live DMMF from @clokr/db)", () => {
 describe("buildModelGraph (live DMMF from @clokr/db)", () => {
   const graph = buildModelGraph();
 
-  it("classifies exactly 45 models with no residual category (D-05)", () => {
-    expect(graph.size).toBe(45);
+  // Merge of Phase 65b (#65: + SalonCoupling, own) and Phase 67b (#67: + EmployeeSalonAssignment,
+  // own) — 44 -> 46 models, 18 -> 20 own.
+  it("classifies exactly 46 models with no residual category (D-05)", () => {
+    expect(graph.size).toBe(46);
     for (const [, tenancy] of graph) {
       expect(["own", "relation", "none"]).toContain(tenancy.kind);
     }
@@ -135,7 +138,7 @@ describe("buildModelGraph (live DMMF from @clokr/db)", () => {
     expect(graph.has("apiKey")).toBe(true);
   });
 
-  it("marks exactly the 19 measured models as own, by NAME (not just count)", () => {
+  it("marks exactly the 20 measured models as own, by NAME (not just count)", () => {
     const ownDelegateNames = [...graph]
       .filter(([, v]) => v.kind === "own")
       .map(([k]) => k)

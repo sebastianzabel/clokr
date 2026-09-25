@@ -13,6 +13,7 @@ import {
   cleanupPhorestTenant,
   seedVocationalSchoolAbsence,
   seedPendingLeaveRequest,
+  addCoupledSalon,
   UNMAPPED_STAFF_ID,
 } from "./helpers";
 import staffFixture from "./fixtures/staff.json";
@@ -90,7 +91,7 @@ describe("phorest sync-shifts", () => {
     const seed = await seedPhorestTenant(app, "idem");
     try {
       mockPhorest();
-      const first = await syncPhorestShifts(app, seed.tenantId);
+      const first = await syncPhorestShifts(app, seed.tenantId, seed.target);
       expect(first.status).toBe("SUCCESS");
       expect(first.created).toBe(2); // two mapped worktime entries → two shifts
 
@@ -101,7 +102,7 @@ describe("phorest sync-shifts", () => {
 
       // Re-run against the identical fixtures — upsert by externalId, not insert.
       mockPhorest();
-      const second = await syncPhorestShifts(app, seed.tenantId);
+      const second = await syncPhorestShifts(app, seed.tenantId, seed.target);
       expect(second.status).toBe("SUCCESS");
       expect(second.created).toBe(0);
       expect(second.updated).toBe(2);
@@ -125,7 +126,7 @@ describe("phorest sync-shifts", () => {
     const seed = await seedPhorestTenant(app, "ss01");
     try {
       mockPhorest();
-      const res = await syncPhorestShifts(app, seed.tenantId);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target);
       expect(res.status).toBe("SUCCESS");
 
       // Max's name + email equal the "ph-staff-unmapped" fixture entry, but he has NO mapping.
@@ -148,13 +149,13 @@ describe("phorest sync-shifts", () => {
     try {
       // Seed: full window → two mapped shifts (07-30, 07-31).
       mockPhorest(wttFixture);
-      const first = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const first = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(first.created).toBe(2);
       expect(first.cancelled).toBe(0);
 
       // Re-sync against the same window minus the 07-31 entry → it must be soft-cancelled.
       mockPhorest(wttDeletedFixture);
-      const second = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const second = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(second.status).toBe("SUCCESS");
       expect(second.cancelled).toBe(1);
 
@@ -187,10 +188,10 @@ describe("phorest sync-shifts", () => {
     try {
       // Seed active PHOREST shifts first so a false-cancel would have something to hit.
       mockPhorest(wttFixture);
-      await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
 
       mockPhorestWttStatus(503);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("ERROR");
       expect(res.cancelled).toBe(0);
       expect(res.replaced).toBe(0); // D-11a: a fetch-error must delete ZERO shifts, not just cancel
@@ -209,11 +210,11 @@ describe("phorest sync-shifts", () => {
     const seed = await seedPhorestTenant(app, "suspect");
     try {
       mockPhorest(wttFixture);
-      await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
 
       // A 200 with an EMPTY window (e.g. wrong branchId) must NOT be read as "everything deleted".
       mockPhorest({ _embedded: { workTimeTables: [] } });
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUSPECT");
       expect(res.cancelled).toBe(0);
       expect(res.replaced).toBe(0); // D-11a: an empty-200 SUSPECT run must delete ZERO shifts
@@ -239,13 +240,13 @@ describe("phorest sync-shifts", () => {
     try {
       // Seed both shifts (07-30, 07-31) via the full single-page fixture.
       mockPhorest(wttFixture);
-      const first = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const first = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(first.created).toBe(2);
 
       // Re-sync against a PAGINATED response: page 1 alone omits the 07-31 entry (it is on page 2).
       // The sync MUST exhaust both pages before diffing → the page-2 shift is NOT cancelled.
       mockPhorestPaged();
-      const second = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const second = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(second.status).toBe("SUCCESS");
       expect(second.cancelled).toBe(0);
 
@@ -280,7 +281,7 @@ describe("phorest sync-shifts", () => {
       });
 
       mockPhorest(wttFixture);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
       expect(res.replaced).toBe(0);
 
@@ -315,7 +316,7 @@ describe("phorest sync-shifts", () => {
 
       // windowDays = 7 (seed default): today+10 is OUT of window → NOT cancelled.
       mockPhorest(wttFixture);
-      const narrow = await syncPhorestShifts(app, seed.tenantId);
+      const narrow = await syncPhorestShifts(app, seed.tenantId, seed.target);
       expect(narrow.status).toBe("SUCCESS");
       const afterNarrow = await app.prisma.shift.findUnique({ where: { id: far.id } });
       expect(afterNarrow?.deletedAt).toBeNull();
@@ -326,7 +327,7 @@ describe("phorest sync-shifts", () => {
         data: { phorestSyncWindowDays: 30 },
       });
       mockPhorest(wttFixture);
-      const wide = await syncPhorestShifts(app, seed.tenantId);
+      const wide = await syncPhorestShifts(app, seed.tenantId, seed.target);
       expect(wide.cancelled).toBeGreaterThanOrEqual(1);
       const afterWide = await app.prisma.shift.findUnique({ where: { id: far.id } });
       expect(afterWide?.deletedReason).toBe("PHOREST_REMOVED");
@@ -354,7 +355,7 @@ describe("phorest sync-shifts", () => {
       });
 
       mockPhorest(wttFixture);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
 
       // Exactly ONE active shift for that slot — adopted in place, not duplicated.
@@ -373,7 +374,7 @@ describe("phorest sync-shifts", () => {
 
       // Idempotent: a second sync finds it via the externalId upsert and does not re-adopt/duplicate.
       mockPhorest(wttFixture);
-      await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       const slotAgain = await app.prisma.shift.count({
         where: {
           employeeId: seed.mappedEmployeeId,
@@ -412,7 +413,7 @@ describe("phorest sync-shifts", () => {
       });
 
       mockPhorest(wttFixture);
-      const first = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const first = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(first.status).toBe("SUCCESS");
       expect(first.replaced).toBe(1);
 
@@ -481,7 +482,7 @@ describe("phorest sync-shifts Phorest-master replace (85.1)", () => {
       });
 
       mockPhorest(wttFixture);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
       expect(res.replaced).toBe(1);
 
@@ -511,7 +512,7 @@ describe("phorest sync-shifts Phorest-master replace (85.1)", () => {
       });
 
       mockPhorest(wttFixture);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
       expect(res.skippedVocationalSchool).toBe(1);
       expect(res.replaced).toBe(0); // 07-31 was skipped, never entered freshCoveredDays
@@ -528,7 +529,7 @@ describe("phorest sync-shifts Phorest-master replace (85.1)", () => {
     const seed = await seedPhorestTenant(app, "replaceerr");
     try {
       mockPhorest(wttFixture);
-      await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
 
       // A MANUAL shift on a day the first sync already covers — would be a replace candidate
       // IF the second run reached the replace pass.
@@ -545,7 +546,7 @@ describe("phorest sync-shifts Phorest-master replace (85.1)", () => {
       });
 
       mockPhorestWttStatus(503);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("ERROR");
       expect(res.replaced).toBe(0);
 
@@ -574,7 +575,7 @@ describe("phorest sync-shifts padding (85.1)", () => {
     const seed = await seedPhorestTenant(app, "puffer");
     try {
       mockPhorest(wttFixture);
-      const first = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const first = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(first.status).toBe("SUCCESS");
       expect(first.created).toBe(2);
 
@@ -593,7 +594,7 @@ describe("phorest sync-shifts padding (85.1)", () => {
         data: { phorestPrepMinutes: 15, phorestWrapupMinutes: 15 },
       });
       mockPhorest(wttFixture);
-      const second = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const second = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(second.status).toBe("SUCCESS");
       expect(second.cancelled).toBe(0); // D-03: NO mass cancel/recreate from the puffer change
       expect(second.replaced).toBe(0); // a puffer change must NOT trip the D-11 replace pass
@@ -636,7 +637,7 @@ describe("phorest sync-shifts padding (85.1)", () => {
       });
 
       mockPhorest(wttFixture);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
 
       // Same id, adopted in place, origin flipped, stored times now padded.
@@ -685,7 +686,7 @@ describe("phorest sync-shifts per-employee puffer override (85.1.1)", () => {
       });
 
       mockPhorest(wttFixture);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
 
       const jul31 = new Date("2026-07-31");
@@ -711,7 +712,7 @@ describe("phorest sync-shifts per-employee puffer override (85.1.1)", () => {
       // No override set for the mapped employee — must inherit the tenant default.
 
       mockPhorest(wttFixture);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
 
       const jul31 = new Date("2026-07-31");
@@ -739,7 +740,7 @@ describe("phorest sync-shifts per-employee puffer override (85.1.1)", () => {
       });
 
       mockPhorest(wttTwoMapped);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
       expect(res.created).toBe(2);
 
@@ -771,7 +772,7 @@ describe("phorest sync-shifts per-employee puffer override (85.1.1)", () => {
 
       // Initial sync: no override → tenant-default-padded stored times.
       mockPhorest(wttFixture);
-      const first = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const first = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(first.status).toBe("SUCCESS");
 
       const jul31 = new Date("2026-07-31");
@@ -789,7 +790,7 @@ describe("phorest sync-shifts per-employee puffer override (85.1.1)", () => {
         data: { phorestPrepMinutesOverride: 0, phorestWrapupMinutesOverride: 0 },
       });
       mockPhorest(wttFixture);
-      const second = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const second = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(second.status).toBe("SUCCESS");
       expect(second.cancelled).toBe(0);
       expect(second.replaced).toBe(0);
@@ -809,7 +810,7 @@ describe("phorest sync-shifts per-employee puffer override (85.1.1)", () => {
         data: { phorestPrepMinutesOverride: null, phorestWrapupMinutesOverride: null },
       });
       mockPhorest(wttFixture);
-      const third = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const third = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(third.status).toBe("SUCCESS");
       expect(third.cancelled).toBe(0);
       expect(third.replaced).toBe(0);
@@ -847,7 +848,7 @@ describe("phorest sync-shifts BS-gewinnt skip (85.1)", () => {
       await seedVocationalSchoolAbsence(app, seed.mappedEmployeeId, "2026-07-31");
 
       mockPhorest(wttFixture);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
       expect(res.skippedVocationalSchool).toBe(1);
       expect(res.created).toBe(1); // only the 07-30 slot is created; 07-31 is skipped
@@ -878,7 +879,7 @@ describe("phorest sync-shifts BS-gewinnt skip (85.1)", () => {
     try {
       // No VOCATIONAL_SCHOOL absence seeded — Ferien-aware generator produces none during holidays.
       mockPhorest(wttFixture);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
       expect(res.skippedVocationalSchool).toBe(0);
       expect(res.created).toBe(2); // both fixture slots apply
@@ -908,7 +909,7 @@ describe("phorest sync-shifts BS-gewinnt skip (85.1)", () => {
       await seedVocationalSchoolAbsence(app, seed.mappedEmployeeId, "2026-07-31");
 
       mockPhorest(wttFixture);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
       expect(res.skippedVocationalSchool).toBe(1);
       expect(res.cancelled).toBe(0); // NOT false-soft-cancelled
@@ -973,7 +974,7 @@ describe("SHIFT-02 pending-leave protection", () => {
       );
 
       mockPhorest(wttFixture);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
       expect(res.cancelled).toBe(0); // NOT soft-cancelled — pending leave protects the day
       expect(res.protectedPendingLeave).toBe(1);
@@ -1015,7 +1016,7 @@ describe("SHIFT-02 pending-leave protection", () => {
       );
 
       mockPhorest(wttFixture);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
       expect(res.cancelled).toBe(0);
       expect(res.protectedPendingLeave).toBe(1);
@@ -1044,7 +1045,7 @@ describe("SHIFT-02 pending-leave protection", () => {
       );
 
       mockPhorest(wttFixture);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
       expect(res.cancelled).toBe(1); // APPROVED → normal removal
       expect(res.protectedPendingLeave).toBe(0);
@@ -1078,7 +1079,7 @@ describe("SHIFT-02 pending-leave protection", () => {
       );
 
       mockPhorest(wttFixture);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
       expect(res.cancelled).toBe(1); // soft-deleted leave → no protection → normal removal
       expect(res.protectedPendingLeave).toBe(0);
@@ -1109,7 +1110,7 @@ describe("SHIFT-02 pending-leave protection", () => {
       );
 
       mockPhorest(wttFixture);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
       expect(res.cancelled).toBe(0); // every day in the range is protected
       expect(res.protectedPendingLeave).toBe(3);
@@ -1148,7 +1149,7 @@ describe("SHIFT-02 pending-leave protection", () => {
       );
 
       mockPhorest(wttFixture);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
       expect(res.cancelled).toBe(0); // ONE protecting status (PENDING) is enough
       expect(res.protectedPendingLeave).toBe(1);
@@ -1206,10 +1207,14 @@ describe("extractWorkTimes slot-type allow-list (WR-01)", () => {
   });
 });
 
-// Phase 325 (issue #325), AC-6/D-14/D-15 — the sync writes the coupling's (default) salon on
-// every CREATED shift, never re-homes an existing one, and fails loudly with zero writes when the
-// tenant has no active salon.
-describe("phorest sync-shifts salon behavior (AC-6/D-14/D-15)", () => {
+// Phase 65b (issue #65), D-08/D-10 — replaces the Phase 325 (AC-6/D-14/D-15) default-salon premise.
+// Since #65 the sync no longer resolves the tenant's default salon: the run target names the salon
+// (its SalonCoupling), every CREATED shift lands on that salon, an existing row is never re-homed,
+// and a slot whose key already belongs to ANOTHER salon's row is skipped (D-10). The former
+// "no active salon fails the sync loudly" case is gone with its premise — its replacement is
+// sync-tenant.test.ts's case (h) and its zero-coupled case (an uncoupled or inactive salon is
+// never synced; no coupled active salon means no run at all).
+describe("phorest sync-shifts salon behavior (Phase 65b, D-08/D-10; replaces the 325 default-salon premise)", () => {
   let app: FastifyInstance;
 
   beforeAll(async () => {
@@ -1221,11 +1226,11 @@ describe("phorest sync-shifts salon behavior (AC-6/D-14/D-15)", () => {
     vi.restoreAllMocks();
   });
 
-  it("D-14: creates on the earliest ACTIVE salon by default; after it is deactivated, new (different-slot) shifts land on the next earliest active salon", async () => {
-    const seed = await seedPhorestTenant(app, "salon-default");
+  it("D-08: a run creates on its target's salon; a run for a second coupled salon creates there, and the first run's rows keep their salon", async () => {
+    const seed = await seedPhorestTenant(app, "salon-target");
     try {
       mockPhorest(wttFixture);
-      const first = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const first = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(first.status).toBe("SUCCESS");
       expect(first.created).toBe(2);
 
@@ -1235,51 +1240,42 @@ describe("phorest sync-shifts salon behavior (AC-6/D-14/D-15)", () => {
       expect(firstShifts.length).toBeGreaterThan(0);
       expect(firstShifts.every((shift) => shift.salonId === seed.salonId)).toBe(true);
 
-      // A second, LATER-created active salon — still not the default (seed.salonId is earlier).
-      const salonB = await createTestSalon(app.prisma, seed.tenantId, {
-        name: "Salon B",
-        createdAt: new Date(Date.now() + 60_000),
-      });
-
-      // Deactivate the original default — B becomes the earliest ACTIVE salon.
-      await app.prisma.salon.update({
-        where: { id: seed.salonId },
-        data: { isActive: false, deactivatedAt: new Date() },
-      });
-
-      // A genuinely NEW slot (different time on the same day → a different externalId, not an
-      // update of the existing rows) for BOTH mapped employees.
+      // A second coupled salon; its branch delivers genuinely NEW slots (09:00 on 2026-07-30 is a
+      // different externalId than the first run's 08:00 slot) for BOTH mapped employees.
+      const salonB = await addCoupledSalon(app, seed.tenantId, "branch-2", { name: "Salon B" });
       mockPhorest(wttTwoMapped);
-      const second = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const second = await syncPhorestShifts(app, seed.tenantId, salonB.target, WIDE_WINDOW);
       expect(second.status).toBe("SUCCESS");
-      expect(second.created).toBeGreaterThanOrEqual(1);
+      expect(second.created).toBe(2);
 
       const newShifts = await app.prisma.shift.findMany({
         where: {
           employeeId: { in: [seed.mappedEmployeeId, seed.mappedEmployeeId2] },
           origin: "PHOREST",
+          date: new Date("2026-07-30"),
           startTime: "09:00",
           deletedAt: null,
         },
       });
-      expect(newShifts.length).toBeGreaterThanOrEqual(1);
-      expect(newShifts.every((shift) => shift.salonId === salonB.id)).toBe(true);
+      expect(newShifts).toHaveLength(2);
+      expect(newShifts.every((shift) => shift.salonId === salonB.salonId)).toBe(true);
 
-      // The FIRST sync's shifts (on the now-inactive original salon) keep it — no re-homing.
+      // The FIRST run's shifts keep the seed's salon and are untouched by salon B's run.
       const originalShiftsAfter = await app.prisma.shift.findMany({
         where: { id: { in: firstShifts.map((shift) => shift.id) } },
       });
       expect(originalShiftsAfter.every((shift) => shift.salonId === seed.salonId)).toBe(true);
+      expect(originalShiftsAfter.every((shift) => shift.deletedAt === null)).toBe(true);
     } finally {
       await cleanupPhorestTenant(app, seed.tenantId);
     }
   });
 
-  it("D-14: an existing shift manually moved to another salon keeps that salon through a re-sync that hits the UPDATE branch", async () => {
-    const seed = await seedPhorestTenant(app, "no-rehome");
+  it("D-10: a slot whose shift was moved to another salon is skipped by the seed salon's re-sync — row untouched, counted in skippedOtherSalon", async () => {
+    const seed = await seedPhorestTenant(app, "other-salon");
     try {
       mockPhorest(wttFixture);
-      const first = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const first = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(first.created).toBe(2);
 
       const salonB = await createTestSalon(app.prisma, seed.tenantId, { name: "Salon B" });
@@ -1291,25 +1287,35 @@ describe("phorest sync-shifts salon behavior (AC-6/D-14/D-15)", () => {
         },
       });
       await app.prisma.shift.update({ where: { id: shift.id }, data: { salonId: salonB.id } });
+      const before = await app.prisma.shift.findUniqueOrThrow({ where: { id: shift.id } });
 
-      // Re-sync against the identical fixture → hits the UPDATE branch of the upsert (same externalId).
+      // A puffer change makes an UPDATE of that row visible (it would pad the stored times), so
+      // "untouched" is observable, not just vacuously equal.
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: seed.tenantId },
+        data: { phorestPrepMinutes: 15 },
+      });
+
       mockPhorest(wttFixture);
-      const second = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const second = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(second.status).toBe("SUCCESS");
-      expect(second.updated).toBeGreaterThanOrEqual(1);
+      expect(second.skippedOtherSalon).toBe(1);
 
       const reloaded = await app.prisma.shift.findUniqueOrThrow({ where: { id: shift.id } });
-      expect(reloaded.salonId).toBe(salonB.id); // still B — the update branch never touches salonId
+      expect(reloaded.salonId).toBe(salonB.id);
+      expect(reloaded.startTime).toBe(before.startTime);
+      expect(reloaded.endTime).toBe(before.endTime);
+      expect(reloaded.deletedAt).toEqual(before.deletedAt);
     } finally {
       await cleanupPhorestTenant(app, seed.tenantId);
     }
   });
 
-  it("D-14: a MANUAL shift on a non-default salon keeps that salon when adopted (adopt-on-match)", async () => {
-    const seed = await seedPhorestTenant(app, "adopt-salon");
+  it("D-09: a legacy label='Phorest' MANUAL row in another salon is NOT adopted — the seed salon's run creates its own PHOREST row", async () => {
+    const seed = await seedPhorestTenant(app, "adopt-other-salon");
     try {
       const salonB = await createTestSalon(app.prisma, seed.tenantId, { name: "Salon B" });
-      await app.prisma.shift.create({
+      const legacy = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
           salonId: salonB.id,
@@ -1322,49 +1328,27 @@ describe("phorest sync-shifts salon behavior (AC-6/D-14/D-15)", () => {
       });
 
       mockPhorest(wttFixture);
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
 
-      const adopted = await app.prisma.shift.findFirstOrThrow({
+      const legacyAfter = await app.prisma.shift.findUniqueOrThrow({ where: { id: legacy.id } });
+      expect(legacyAfter.origin).toBe("MANUAL");
+      expect(legacyAfter.externalId).toBeNull();
+      expect(legacyAfter.salonId).toBe(salonB.id);
+      expect(legacyAfter.deletedAt).toBeNull();
+
+      const own = await app.prisma.shift.findFirstOrThrow({
         where: {
           employeeId: seed.mappedEmployeeId,
           date: new Date("2026-07-30"),
           startTime: "08:00",
           endTime: "16:00",
+          origin: "PHOREST",
           deletedAt: null,
         },
       });
-      expect(adopted.origin).toBe("PHOREST");
-      expect(adopted.salonId).toBe(salonB.id); // adopt-on-match never touches salonId (D-14)
-    } finally {
-      await cleanupPhorestTenant(app, seed.tenantId);
-    }
-  });
-
-  it("D-15: a tenant with no active salon fails the sync loudly before any Phorest fetch, writes zero shifts", async () => {
-    const seed = await seedPhorestTenant(app, "no-active-salon");
-    try {
-      await app.prisma.salon.update({
-        where: { id: seed.salonId },
-        data: { isActive: false, deactivatedAt: new Date() },
-      });
-
-      const fetchSpy = vi.fn();
-      global.fetch = fetchSpy as unknown as typeof fetch;
-
-      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
-      expect(res.status).toBe("ERROR");
-      expect(res.error).toBe("Kein aktiver Salon vorhanden.");
-      expect(fetchSpy).not.toHaveBeenCalled();
-
-      const run = await app.prisma.phorestSyncRun.findUniqueOrThrow({ where: { id: res.runId } });
-      expect(run.status).toBe("ERROR");
-      expect(run.error).toBe("Kein aktiver Salon vorhanden.");
-
-      const shiftCount = await app.prisma.shift.count({
-        where: { employeeId: seed.mappedEmployeeId },
-      });
-      expect(shiftCount).toBe(0);
+      expect(own.salonId).toBe(seed.salonId);
+      expect(own.id).not.toBe(legacy.id);
     } finally {
       await cleanupPhorestTenant(app, seed.tenantId);
     }
