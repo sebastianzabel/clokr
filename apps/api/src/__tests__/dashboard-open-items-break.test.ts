@@ -17,7 +17,13 @@
  * known time bomb in this repo (shifts.test.ts expired exactly that way).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+} from "./setup";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import { todayInTz } from "../contexts/working-time-account/timezone";
@@ -160,6 +166,7 @@ describe("GET /api/v1/dashboard/open-items — unconfirmedBreakDays contract (is
         breakStatus: "AUTO",
         isLocked: false,
         deletedAt: null,
+        salonId: await salonIdForEmployee(app.prisma, employeeId), // Phase 68b (issue #68)
         ...over,
       } as never,
     });
@@ -174,6 +181,7 @@ describe("GET /api/v1/dashboard/open-items — unconfirmedBreakDays contract (is
       data: { name: `OPEN-ITEMS-126-A ${suffix}`, slug: `oi-126-a-${suffix}` },
     });
     tenantAId = tenantA.id;
+    await createTestSalon(prisma, tenantAId); // Phase 68b (issue #68)
     await prisma.tenantConfig.create({
       data: {
         tenantId: tenantAId,
@@ -187,6 +195,7 @@ describe("GET /api/v1/dashboard/open-items — unconfirmedBreakDays contract (is
       data: { name: `OPEN-ITEMS-126-B ${suffix}`, slug: `oi-126-b-${suffix}` },
     });
     tenantBId = tenantB.id;
+    await createTestSalon(prisma, tenantBId); // Phase 68b (issue #68)
     await prisma.tenantConfig.create({
       data: {
         tenantId: tenantBId,

@@ -50,6 +50,7 @@ describe("PERF-V1814-03 — bound/cap regression for list endpoints", () => {
         breakMinutes: 30,
         type: "WORK",
         source: "MANUAL",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 
@@ -63,6 +64,7 @@ describe("PERF-V1814-03 — bound/cap regression for list endpoints", () => {
         breakMinutes: 30,
         type: "WORK",
         source: "MANUAL",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
   });

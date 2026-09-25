@@ -29,7 +29,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { dateStrInTz } from "../contexts/working-time-account/timezone";
 
@@ -138,6 +138,7 @@ describe("RETRO-15: pending Nachtrag excluded from saldo/reports, included in Ar
       data: { name: `RetroSaldo ${s}`, slug: `resaldo-${s}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(app.prisma, tenantId); // Phase 68b (issue #68)
     await app.prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ },
     });

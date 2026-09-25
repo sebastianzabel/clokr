@@ -11,7 +11,13 @@
 // These are the ArbZG-parity counterparts to the saldo-side slot rewire (76.31-04).
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  salonIdForEmployee,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import { checkArbZG } from "../contexts/time-tracking/arbzg";
 
@@ -50,6 +56,7 @@ async function seedTimeEntry(
       breakMinutes: 0,
       source: "MANUAL",
       type: "WORK",
+      salonId: await salonIdForEmployee(app.prisma, employeeId), // Phase 68b (issue #68)
     },
   });
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import {
+  salonIdForEmployee, // Phase 68b (issue #68)
   getTestApp,
   closeTestApp,
   seedTestData,
@@ -128,6 +129,7 @@ describe("POST /overtime/opening-balance (OB-03)", () => {
         breakMinutes: 60,
         source: "MANUAL",
         type: "WORK",
+        salonId: await salonIdForEmployee(app.prisma, employeeId), // Phase 68b (issue #68)
       },
     });
   }
@@ -392,6 +394,7 @@ describe("POST /overtime/opening-balance (OB-03)", () => {
         type: "WORK",
         isLocked: true,
         lockedAt: new Date("2025-07-01T00:00:00Z"),
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
 

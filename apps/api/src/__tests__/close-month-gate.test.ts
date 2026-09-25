@@ -29,7 +29,7 @@
  */
 
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc } from "../contexts/working-time-account/timezone";
 import bcrypt from "bcryptjs";
@@ -62,6 +62,7 @@ async function seedEntry(app: FastifyInstance, empId: string, dateStr: string) {
       endTime: new Date(dateStr + "T15:30:00Z"),
       breakMinutes: 30,
       type: "WORK",
+      salonId: await salonIdForEmployee(app.prisma, empId), // Phase 68b (issue #68)
     },
   });
 }
@@ -142,6 +143,7 @@ describe("close-month-gate — HTTP confirmGaps gate (Cases 1/2/3/4)", () => {
       },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 68b (issue #68)
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ },
     });
@@ -458,6 +460,7 @@ describe("close-month-gate — BREAK-05 unconfirmedBreakDays gate (RED, Phase 92
     });
     await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
 
+    const bgSalonId = await salonIdForEmployee(prisma, emp.id); // Phase 68b (issue #68)
     for (const d of JUNE_WORKDAYS) {
       const isAutoDay = opts.autoBreakDate === d;
       await prisma.timeEntry.create({
@@ -470,6 +473,7 @@ describe("close-month-gate — BREAK-05 unconfirmedBreakDays gate (RED, Phase 92
           breakStatus: isAutoDay ? (opts.autoBreakWaived ? "WAIVED" : "AUTO") : "CONFIRMED",
           type: "WORK",
           isLocked: isAutoDay && opts.autoBreakLocked === true,
+          salonId: bgSalonId,
         },
       });
     }
@@ -486,6 +490,7 @@ describe("close-month-gate — BREAK-05 unconfirmedBreakDays gate (RED, Phase 92
       data: { name: `BreakGate ${s}`, slug: `bg-${s}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 68b (issue #68)
     await prisma.tenantConfig.create({
       data: {
         tenantId,

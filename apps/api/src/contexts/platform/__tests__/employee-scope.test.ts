@@ -74,6 +74,7 @@ describe("employeeScopeWhere — a foreign employeeId never passes the facade fi
         endTime: new Date("2026-02-02T16:00:00Z"),
         type: "WORK",
         isInvalid: false,
+        salonId: tenantB.salonId, // Phase 68b (issue #68)
       },
     });
   });

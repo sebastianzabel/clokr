@@ -15,7 +15,13 @@
  * try/catch cleanup in afterAll.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+} from "./setup";
 import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
 import { checkArbZG } from "../contexts/time-tracking/arbzg";
 import { recalculateSnapshots } from "../contexts/working-time-account/recalculate-snapshots";
@@ -50,6 +56,7 @@ describe("Phase 76.7 — § 18 ArbZG tracking exemption", () => {
       },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 68b (issue #68)
     await prisma.tenantConfig.create({
       data: { tenantId: tenant.id, defaultVacationDays: 30, timezone: TZ },
     });
@@ -207,6 +214,7 @@ describe("Phase 76.7 — § 18 ArbZG tracking exemption", () => {
           endTime: end,
           breakMinutes: 0,
           type: "WORK",
+          salonId: await salonIdForEmployee(app.prisma, exemptEmpId), // Phase 68b (issue #68)
         },
       });
     }
@@ -236,6 +244,7 @@ describe("Phase 76.7 — § 18 ArbZG tracking exemption", () => {
         endTime: new Date("2025-03-10T19:00:00Z"), // 12h
         breakMinutes: 0,
         type: "WORK",
+        salonId: await salonIdForEmployee(app.prisma, exemptEmpId), // Phase 68b (issue #68)
       },
     });
 
@@ -346,6 +355,7 @@ describe("Phase 76.7 — § 18 ArbZG tracking exemption", () => {
           endTime: new Date("2025-03-04T16:00:00Z"), // 8h
           breakMinutes: 0,
           type: "WORK",
+          salonId: await salonIdForEmployee(app.prisma, nonExemptEmpId), // Phase 68b (issue #68)
         },
       });
 
@@ -382,6 +392,7 @@ describe("Phase 76.7 — § 18 ArbZG tracking exemption", () => {
           endTime: new Date("2025-03-11T19:00:00Z"), // 12h
           breakMinutes: 0,
           type: "WORK",
+          salonId: await salonIdForEmployee(app.prisma, nonExemptEmpId), // Phase 68b (issue #68)
         },
       });
 
@@ -428,6 +439,7 @@ describe("Phase 76.7 — PATCH /employees/:id exemption toggle", () => {
       },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 68b (issue #68)
     await prisma.tenantConfig.create({
       data: { tenantId: tenant.id, defaultVacationDays: 30, timezone: TZ },
     });

@@ -655,6 +655,7 @@ describe("Leave correction — reverse-OLD/apply-NEW saldo (94-02)", () => {
           isInvalid: true,
           invalidReason: "Urlaubsstornierung ausstehend",
           invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
+          salonId: data.salonId, // Phase 68b (issue #68)
           ...extra,
         },
       });

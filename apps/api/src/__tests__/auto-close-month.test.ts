@@ -26,6 +26,7 @@ import {
   seedTestData,
   cleanupTestData,
   createTestSalon, // Phase 325 (issue #325)
+  salonIdForEmployee, // Phase 68b (issue #68)
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc } from "../contexts/working-time-account/timezone";
@@ -350,6 +351,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
           endTime: new Date(dateStr + "T16:00:00Z"),
           breakMinutes: 30,
           type: "WORK",
+          salonId: await salonIdForEmployee(app.prisma, empId), // Phase 68b (issue #68)
         },
       });
     }
@@ -1355,6 +1357,7 @@ describe("cron gap-note (closeMonthWithGapsAllowed)", () => {
         endTime: new Date(dateStr + "T15:30:00Z"),
         breakMinutes: 30,
         type: "WORK",
+        salonId: await salonIdForEmployee(app.prisma, empId), // Phase 68b (issue #68)
       },
     });
   }
@@ -1552,6 +1555,7 @@ describe("cron day-N window boundary (76.29-00 RED — SUPERSEDES day-15 grace)"
         endTime: new Date(dateStr + "T15:30:00Z"),
         breakMinutes: 30,
         type: "WORK",
+        salonId: await salonIdForEmployee(app.prisma, empId), // Phase 68b (issue #68)
       },
     });
   }
@@ -2041,6 +2045,7 @@ describe("auto-close-month — BREAK-05 unconfirmed-break defer (RED, Phase 92 W
     await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
 
     // Full January — no gaps, but AUTO_DAY carries breakStatus AUTO instead of CONFIRMED.
+    const bdSalonId = await salonIdForEmployee(prisma, emp.id); // Phase 68b (issue #68)
     for (const d of janMonFriLocal()) {
       await prisma.timeEntry.create({
         data: {
@@ -2051,6 +2056,7 @@ describe("auto-close-month — BREAK-05 unconfirmed-break defer (RED, Phase 92 W
           breakMinutes: 30,
           breakStatus: d === AUTO_DAY ? "AUTO" : "CONFIRMED",
           type: "WORK",
+          salonId: bdSalonId,
         },
       });
     }
@@ -2181,6 +2187,7 @@ describe("auto-close-month — BREAK-05 unconfirmed-break defer (RED, Phase 92 W
       if (dow >= 1 && dow <= 5) febDates.push(cur.toISOString().slice(0, 10));
       cur.setUTCDate(cur.getUTCDate() + 1);
     }
+    const integritySalonId = await salonIdForEmployee(app.prisma, seed.empId); // Phase 68b (issue #68)
     for (const d of febDates) {
       await app.prisma.timeEntry.create({
         data: {
@@ -2191,6 +2198,7 @@ describe("auto-close-month — BREAK-05 unconfirmed-break defer (RED, Phase 92 W
           breakMinutes: 30,
           breakStatus: "CONFIRMED",
           type: "WORK",
+          salonId: integritySalonId,
         },
       });
     }
@@ -2288,6 +2296,7 @@ describe("auto-close-month — BREAK-05 unconfirmed-break defer (RED, Phase 92 W
         breakMinutes: 30,
         breakStatus: "AUTO",
         type: "WORK",
+        salonId: await salonIdForEmployee(prisma, emp.id), // Phase 68b (issue #68)
       },
     });
 

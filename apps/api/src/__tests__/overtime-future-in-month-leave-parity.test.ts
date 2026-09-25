@@ -172,6 +172,7 @@ describe("v1.8.26 — future-in-month approved leave: header == month-saldo (SHI
           type: "WORK",
           source: "MANUAL",
           isInvalid: false,
+          salonId, // Phase 68b (issue #68)
         },
       });
     }

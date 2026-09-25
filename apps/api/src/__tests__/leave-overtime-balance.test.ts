@@ -78,6 +78,7 @@ describe("GET /api/v1/leave/overtime-balance (Phase 97-06)", () => {
           endTime: new Date(d + "T16:30:00Z"),
           breakMinutes: 30,
           type: "WORK",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
     }

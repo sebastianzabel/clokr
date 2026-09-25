@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  salonIdForEmployee,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 /**
@@ -47,6 +53,7 @@ describe("Saldo Snapshot & Monatsabschluss", () => {
         breakMinutes: breakMin,
         source: "MANUAL",
         type: "WORK",
+        salonId: await salonIdForEmployee(app.prisma, employeeId), // Phase 68b (issue #68)
       },
     });
   }

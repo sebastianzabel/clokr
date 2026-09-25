@@ -80,6 +80,7 @@ describe("POST /clock-in, /:id/clock-out, /nfc-punch — D-11 HTTP-level proof (
         source: "MOBILE",
         isInvalid: true,
         invalidReason,
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
   }
@@ -108,6 +109,7 @@ describe("POST /clock-in, /:id/clock-out, /nfc-punch — D-11 HTTP-level proof (
         isInvalid: true,
         invalidReason: "Nachtrag – Genehmigung ausstehend",
         retroRequestId: request.id,
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
     return { request, entry };

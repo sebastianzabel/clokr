@@ -111,6 +111,7 @@ describe("services/clock/resolver — D-11 invalid-entry generator paths + retro
         isInvalid: true,
         invalidReason: "Nachtrag – Genehmigung ausstehend",
         retroRequestId: request.id,
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
     return { request, entry };

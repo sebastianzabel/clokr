@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, salonIdForEmployee } from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 import { salonForDay } from "../contexts/platform";
 
@@ -389,6 +389,7 @@ describe("POST /api/v1/employees/:id/salon-assignments — create Einsatzsalon (
           startTime: new Date(`${date}T08:00:00.000Z`),
           endTime: new Date(`${date}T16:00:00.000Z`),
           isLocked: true,
+          salonId: await salonIdForEmployee(app.prisma, employeeId), // Phase 68b (issue #68)
         },
       });
     }
@@ -1062,6 +1063,7 @@ describe("POST .../salon-assignments/home & .../:assignmentId/end — Stammsalon
           startTime: new Date(`${date}T08:00:00.000Z`),
           endTime: new Date(`${date}T16:00:00.000Z`),
           isLocked: true,
+          salonId: await salonIdForEmployee(app.prisma, id), // Phase 68b (issue #68)
         },
       });
     }

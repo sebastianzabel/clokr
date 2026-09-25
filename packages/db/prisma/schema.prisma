@@ -71,6 +71,8 @@ model Salon {
   // Phase 325 (issue #325): Prisma-only back-relations, no column on Salon.
   shifts              Shift[]
   phorestAppointments PhorestAppointment[]
+  // Phase 68b (issue #68): Prisma-only back-relation, no column on Salon (no Unterbau column change).
+  timeEntries         TimeEntry[]
   // Phase 65b (issue #65): Prisma-only back-relations, no column on Salon.
   coupling            SalonCoupling?
   phorestSyncRuns     PhorestSyncRun[]
@@ -545,12 +547,23 @@ model TimeEntry {
 
   retroRequestId String? @unique // Phase 96 (RETRO-18) — 1:1 coupling to the Nachtrag request
 
+  salonId String // Phase 68b (issue #68) — see the `salon` relation below
+
   employee     Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   breaks       Break[]
   retroRequest RetroEntryRequest? @relation(fields: [retroRequestId], references: [id], onDelete: Restrict)
+  // Phase 68b (issue #68): where the work was done (the Ist-Ort). Same tenant as the employee —
+  // enforced by the application through resolveEntrySalon, not by the database. Hangs on the ENTRY,
+  // not on the day, so several entries per day in different salons (#70) stay possible. Restrict
+  // because a salon is never hard-deleted (ADR 0002 "Neuer Fremdschlüssel auf den Unterbau").
+  // Declared AFTER `employee` on purpose: lint-tenant-scoping-model-graph classifies a model by its
+  // first tenant-bearing relation in declaration order, and TimeEntry/Break must keep resolving
+  // through `employee`.
+  salon        Salon              @relation(fields: [salonId], references: [id], onDelete: Restrict)
 
   @@unique([employeeId, date], map: "TimeEntry_employeeId_date_unique_not_deleted")
   @@index([date])
+  @@index([salonId])
 }
 
 model Break {

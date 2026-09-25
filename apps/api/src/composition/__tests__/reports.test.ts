@@ -75,6 +75,7 @@ describe("Reports API", () => {
           startTime: new Date("2026-04-07T07:00:00.000Z"),
           endTime: new Date("2026-04-07T15:00:00.000Z"),
           breakMinutes: 0,
+          salonId: datevData.salonId, // Phase 68b (issue #68)
         },
       });
 
@@ -1294,6 +1295,7 @@ describe("Reports API", () => {
           type: "WORK",
           source: "MANUAL",
           isInvalid: false,
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
 
@@ -1419,6 +1421,7 @@ describe("Reports API", () => {
           endTime: null, // open
           breakMinutes: 0,
           type: "WORK",
+          salonId: attData.salonId, // Phase 68b (issue #68)
         },
       });
       empClockedIn = { id: empCIRecord.id, employeeNumber: empCIRecord.employeeNumber };
@@ -1452,6 +1455,7 @@ describe("Reports API", () => {
           endTime: new Date(todayUtc.getTime() + 15 * 3600000),
           breakMinutes: 30,
           type: "WORK",
+          salonId: attData.salonId, // Phase 68b (issue #68)
         },
       });
       empPresent = { id: empPRecord.id, employeeNumber: empPRecord.employeeNumber };

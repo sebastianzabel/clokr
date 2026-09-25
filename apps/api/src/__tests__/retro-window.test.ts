@@ -18,7 +18,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { dateStrInTz } from "../contexts/working-time-account/timezone";
 
@@ -57,6 +57,7 @@ async function seedRetroTenant(
   const tenant = await prisma.tenant.create({
     data: { name: `RetroTest ${s}`, slug: `retro-${s}`, federalState: "NIEDERSACHSEN" },
   });
+  await createTestSalon(prisma, tenant.id); // Phase 68b (issue #68)
 
   // retroEntryWindowDays: Plan 01 adds this column (additive migration).
   // For Wave 0 RED scaffold we create the config with current known fields only;

@@ -79,6 +79,12 @@ export {
   unconfirmedDaysFromEntries,
 } from "./find-unconfirmed-break-days";
 
+// ── Phase 68b (issue #68) — the entry-salon rule ──────────────────────────────────────────────
+// The platform CSV importer creates TimeEntry rows too and must resolve their salon through the
+// same rule; importing it from this index needs no boundary exception.
+export { resolveEntrySalon } from "./entry-salon";
+export type { ResolveEntrySalonInput, ResolveEntrySalonResult } from "./entry-salon";
+
 // validateTimeEntryInvariants is deliberately NOT exported here. Its only caller outside this
 // context is platform/api/imports.ts, which is E-2 in ADR 0001 Eintrag H — the importer writing
 // directly into time-tracking, a defect Block 2 (#102-#104) replaces with an event. Exporting it

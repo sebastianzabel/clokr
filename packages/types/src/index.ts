@@ -44,6 +44,8 @@ export interface TimeEntry {
   source: TimeEntrySource;
   note?: string;
   isLocked: boolean;
+  // Phase 68b (issue #68) — the salon the work was done in; additive.
+  salonId: string;
 }
 
 export interface LeaveRequest {

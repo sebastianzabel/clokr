@@ -191,6 +191,7 @@ describe("Bug 5 — live overtime helper == month-saldo lastCumulative (SHIFT_BA
           type: "WORK",
           source: "MANUAL",
           isInvalid: false,
+          salonId, // Phase 68b (issue #68)
         },
       });
     }

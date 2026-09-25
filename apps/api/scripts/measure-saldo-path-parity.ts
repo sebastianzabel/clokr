@@ -304,6 +304,7 @@ async function seedEntry(
   empId: string,
   dateStr: string,
   netto: number,
+  salonId: string, // Phase 68b (issue #68)
 ): Promise<void> {
   const start = new Date(dateStr + "T08:00:00Z");
   const end = new Date(start.getTime() + netto * 60_000);
@@ -315,6 +316,7 @@ async function seedEntry(
       endTime: end,
       breakMinutes: 0,
       type: "WORK",
+      salonId,
     },
   });
 }
@@ -472,8 +474,8 @@ async function seedGoldenAzubiJan2026(app: FastifyApp): Promise<ScenarioFixture>
 
   for (const d of SHIFTS_576) await seedShift(app, empId, d, 576, salon.id);
   for (const d of SHIFTS_480) await seedShift(app, empId, d, 480, salon.id);
-  for (const d of SHIFTS_576) await seedEntry(app, empId, d, 576);
-  for (const d of SHIFTS_480) await seedEntry(app, empId, d, 480);
+  for (const d of SHIFTS_576) await seedEntry(app, empId, d, 576, salon.id);
+  for (const d of SHIFTS_480) await seedEntry(app, empId, d, 480, salon.id);
 
   // VOCATIONAL_SCHOOL absence — sole BS day in its ISO week → FIRST_LONG_DAY slot.
   await prisma.absence.create({

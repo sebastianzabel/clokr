@@ -9,7 +9,13 @@
 //   - NO new warning codes — only the existing 5 are returned (D-08)
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  salonIdForEmployee,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import { checkArbZG } from "../contexts/time-tracking/arbzg";
 
@@ -58,6 +64,7 @@ async function seedTimeEntry(
       breakMinutes,
       source: "MANUAL",
       type: "WORK",
+      salonId: await salonIdForEmployee(app.prisma, employeeId), // Phase 68b (issue #68)
     },
   });
 }

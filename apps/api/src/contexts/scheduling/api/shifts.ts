@@ -16,6 +16,7 @@ import {
   listSalons, // Phase 325 (issue #325), D-08 (copy-week fallback)
   permissionReach,
   requirePermission,
+  salonForDay, // Phase 344 (issue #344) — the employee's actual per-day salon assignment
 } from "../../platform";
 import {
   isMonthClosed, // Phase 100B Plan 07 — W1
@@ -116,6 +117,49 @@ async function resolveShiftSalon(
     return { reply: { status: 409, body: NO_ACTIVE_SALON_REPLY } };
   }
   return { salon };
+}
+
+/**
+ * Phase 344 (issue #344): the employee's `salonForDay()` assignment for `date`, resolved to a
+ * full, currently-ACTIVE `Salon` row — `null` when there is no assignment (e.g. a day before
+ * `hireDate`) OR the assigned salon is no longer active. `salonForDay()` itself does not filter
+ * `isActive` (its own docblock: it answers "which salon was this employee assigned to", not "is
+ * that salon currently operating") — treating an inactive result the same as "no assignment" here
+ * keeps #325's invariant that a new shift never lands on an inactive salon intact for this new
+ * path too (issue #344 decision, recorded in the issue comment).
+ */
+async function activeSalonForDay(
+  prisma: import("@clokr/db").PrismaClient,
+  tenantId: string,
+  employeeId: string,
+  date: Date,
+): Promise<import("@clokr/db").Salon | null> {
+  const forDay = await salonForDay(prisma, tenantId, employeeId, date);
+  if (!forDay) return null;
+  const salon = await findSalon(prisma, tenantId, forDay.salonId);
+  return salon && salon.isActive ? salon : null;
+}
+
+/**
+ * Phase 344 (issue #344): `resolveShiftSalon()`'s drop-in replacement for callers that also know
+ * the shift's employeeId/date — an explicit `requestedSalonId` still always wins (delegated to
+ * `resolveShiftSalon` unchanged); with none given, the employee's `salonForDay()` assignment for
+ * that date wins over the tenant's oldest-active-salon default (`resolveShiftSalon(…, undefined)`,
+ * also delegated unchanged so its existing 409 NO_ACTIVE_SALON handling is reused verbatim).
+ */
+async function resolveShiftSalonForEmployeeDay(
+  prisma: import("@clokr/db").PrismaClient,
+  tenantId: string,
+  requestedSalonId: string | undefined,
+  employeeId: string,
+  date: Date,
+): Promise<ShiftSalonResolution> {
+  if (requestedSalonId !== undefined) {
+    return resolveShiftSalon(prisma, tenantId, requestedSalonId);
+  }
+  const salon = await activeSalonForDay(prisma, tenantId, employeeId, date);
+  if (salon) return { salon };
+  return resolveShiftSalon(prisma, tenantId, undefined);
 }
 
 // Phase 43 — Auto-Gen
@@ -1836,9 +1880,16 @@ export async function shiftRoutes(app: FastifyInstance) {
       if (!targetEmp) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
       // Phase 325 (issue #325) Plan 02, D-05/D-06/D-07: an explicit salonId is resolved
-      // tenant-scoped and must be one of the caller's own ACTIVE salons; with none given the
-      // shift lands on the tenant's default salon. No active salon -> 409 before any write.
-      const salonResolution = await resolveShiftSalon(app.prisma, req.user.tenantId, body.salonId);
+      // tenant-scoped and must be one of the caller's own ACTIVE salons. Phase 344 (issue #344):
+      // an omitted salonId now resolves via salonForDay(employee, date) before falling back to
+      // the tenant default. No active salon -> 409 before any write.
+      const salonResolution = await resolveShiftSalonForEmployeeDay(
+        app.prisma,
+        req.user.tenantId,
+        body.salonId,
+        body.employeeId,
+        new Date(body.date),
+      );
       if ("reply" in salonResolution) {
         return reply.code(salonResolution.reply.status).send(salonResolution.reply.body);
       }
@@ -2733,14 +2784,33 @@ export async function shiftRoutes(app: FastifyInstance) {
         return { weekStart: weekStartIso, create: toCreate, skip, committed: false };
       }
 
-      // Phase 325 (issue #325), D-08: generate-week's patterns/templates carry no salon —
-      // every generated shift lands on the tenant's default salon. Resolved once, before the
-      // transaction, only when there is something to write.
-      let generateWeekSalonId: string | null = null;
-      if (toCreate.length > 0) {
-        const salon = await findDefaultSalon(app.prisma, tenantId);
-        if (!salon) return reply.code(409).send(NO_ACTIVE_SALON_REPLY);
-        generateWeekSalonId = salon.id;
+      // Phase 344 (issue #344): generate-week's patterns/templates carry no salon — each
+      // generated shift now resolves via salonForDay(employee, date) first, per (employeeId,
+      // date), falling back to the tenant's default salon (resolved at most once and cached, since
+      // it is tenant-wide and date-independent). Resolved once, before the transaction, only when
+      // there is something to write.
+      const generateWeekSalonByEmployeeDate = new Map<string, string>();
+      let generateWeekCachedDefault: import("@clokr/db").Salon | null | undefined = undefined;
+      for (const c of toCreate) {
+        const key = `${c.employeeId}::${c.date}`;
+        if (generateWeekSalonByEmployeeDate.has(key)) continue;
+
+        const forDaySalon = await activeSalonForDay(
+          app.prisma,
+          tenantId,
+          c.employeeId,
+          new Date(c.date),
+        );
+        if (forDaySalon) {
+          generateWeekSalonByEmployeeDate.set(key, forDaySalon.id);
+          continue;
+        }
+
+        if (generateWeekCachedDefault === undefined) {
+          generateWeekCachedDefault = await findDefaultSalon(app.prisma, tenantId);
+        }
+        if (!generateWeekCachedDefault) return reply.code(409).send(NO_ACTIVE_SALON_REPLY);
+        generateWeekSalonByEmployeeDate.set(key, generateWeekCachedDefault.id);
       }
 
       // Commit mode — write everything in one transaction
@@ -2751,7 +2821,7 @@ export async function shiftRoutes(app: FastifyInstance) {
             data: {
               employeeId: c.employeeId,
               templateId: c.templateId,
-              salonId: generateWeekSalonId as string, // Phase 325 (issue #325), D-08
+              salonId: generateWeekSalonByEmployeeDate.get(`${c.employeeId}::${c.date}`) as string, // Phase 344 (issue #344)
               date: new Date(c.date),
               startTime: c.startTime,
               endTime: c.endTime,
@@ -3070,21 +3140,42 @@ export async function shiftRoutes(app: FastifyInstance) {
         };
       }
 
-      // Phase 325 (issue #325), D-08: a copy keeps the SOURCE shift's salon when that salon is
-      // still active by commit time; otherwise (D-07 spirit: never a new shift on an inactive
-      // salon) it falls back to the tenant's default salon. Resolved once, before the
-      // transaction, only when there is something to write.
-      const activeSalons =
+      // Phase 325 (issue #325) / Phase 344 (issue #344): a copy keeps the SOURCE shift's salon
+      // when that salon is still active by commit time — UNCHANGED. Only when it is no longer
+      // active does the fallback change (#344): instead of the tenant's oldest active salon, it
+      // now resolves via salonForDay(employee, targetDate) first, per (employeeId, targetDate),
+      // falling back to the tenant default (resolved at most once and cached). Resolved once,
+      // before the transaction, only when there is something to write.
+      const activeSalonIds = new Set(
         toCreate.length > 0
-          ? await listSalons(app.prisma, tenantId, { includeInactive: false })
-          : [];
-      const activeSalonIds = new Set(activeSalons.map((s) => s.id));
-      const copyWeekDefaultSalonId = activeSalons[0]?.id ?? null;
-      const needsFallbackSalon = toCreate.some(
-        (c) => !activeSalonIds.has(sourceSalonByShiftId.get(c.sourceShiftId) ?? ""),
+          ? (await listSalons(app.prisma, tenantId, { includeInactive: false })).map((s) => s.id)
+          : [],
       );
-      if (needsFallbackSalon && !copyWeekDefaultSalonId) {
-        return reply.code(409).send(NO_ACTIVE_SALON_REPLY);
+      const copyWeekFallbackSalonByEmployeeDate = new Map<string, string>();
+      let copyWeekCachedDefault: import("@clokr/db").Salon | null | undefined = undefined;
+      for (const c of toCreate) {
+        const sourceSalonId = sourceSalonByShiftId.get(c.sourceShiftId);
+        if (sourceSalonId && activeSalonIds.has(sourceSalonId)) continue; // keeps source salon — no fallback needed
+
+        const key = `${c.employeeId}::${c.date}`;
+        if (copyWeekFallbackSalonByEmployeeDate.has(key)) continue;
+
+        const forDaySalon = await activeSalonForDay(
+          app.prisma,
+          tenantId,
+          c.employeeId,
+          new Date(c.date),
+        );
+        if (forDaySalon) {
+          copyWeekFallbackSalonByEmployeeDate.set(key, forDaySalon.id);
+          continue;
+        }
+
+        if (copyWeekCachedDefault === undefined) {
+          copyWeekCachedDefault = await findDefaultSalon(app.prisma, tenantId);
+        }
+        if (!copyWeekCachedDefault) return reply.code(409).send(NO_ACTIVE_SALON_REPLY);
+        copyWeekFallbackSalonByEmployeeDate.set(key, copyWeekCachedDefault.id);
       }
 
       // Commit mode — write everything in one transaction
@@ -3096,7 +3187,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           const salonId =
             sourceSalonId && activeSalonIds.has(sourceSalonId)
               ? sourceSalonId
-              : (copyWeekDefaultSalonId as string);
+              : copyWeekFallbackSalonByEmployeeDate.get(`${c.employeeId}::${c.date}`)!;
           const row = await tx.shift.create({
             data: {
               employeeId: c.employeeId,
@@ -3237,14 +3328,43 @@ export async function shiftRoutes(app: FastifyInstance) {
         bulkSalonByRequestedId.set(requestedSalonId, salonResolution.salon);
       }
 
-      // (c) the default salon resolved once, only when at least one item has no explicit salonId.
-      let bulkDefaultSalonId: string | null = null;
-      if (shiftDefs.some((s) => s.salonId === undefined)) {
-        const salonResolution = await resolveShiftSalon(app.prisma, req.user.tenantId, undefined);
-        if ("reply" in salonResolution) {
-          return reply.code(salonResolution.reply.status).send(salonResolution.reply.body);
+      // (c) Phase 344 (issue #344): each item WITHOUT an explicit salonId resolves via
+      // salonForDay(employee, date) — batch items can span different employees AND dates, so this
+      // can no longer be one shared default for the whole batch. Keyed by employeeId::date since
+      // salonForDay's answer depends only on that pair; the tenant default (resolveShiftSalon's
+      // existing 409 NO_ACTIVE_SALON handling, reused unchanged) is resolved at most once and
+      // cached, since it is tenant-wide and date-independent.
+      const bulkResolvedSalonByEmployeeDate = new Map<string, string>();
+      let bulkCachedTenantDefault: ShiftSalonResolution | null = null;
+      for (const s of shiftDefs) {
+        if (s.salonId !== undefined) continue;
+        const key = `${s.employeeId}::${s.date}`;
+        if (bulkResolvedSalonByEmployeeDate.has(key)) continue;
+
+        const forDaySalon = await activeSalonForDay(
+          app.prisma,
+          req.user.tenantId,
+          s.employeeId,
+          new Date(s.date),
+        );
+        if (forDaySalon) {
+          bulkResolvedSalonByEmployeeDate.set(key, forDaySalon.id);
+          continue;
         }
-        bulkDefaultSalonId = salonResolution.salon.id;
+
+        if (bulkCachedTenantDefault === null) {
+          bulkCachedTenantDefault = await resolveShiftSalon(
+            app.prisma,
+            req.user.tenantId,
+            undefined,
+          );
+        }
+        if ("reply" in bulkCachedTenantDefault) {
+          return reply
+            .code(bulkCachedTenantDefault.reply.status)
+            .send(bulkCachedTenantDefault.reply.body);
+        }
+        bulkResolvedSalonByEmployeeDate.set(key, bulkCachedTenantDefault.salon.id);
       }
 
       // Phase 107 (D-14/D-15): converted from the batch `$transaction([...])` form to the
@@ -3259,7 +3379,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           // explicit choice, or the tenant default resolved above.
           const salonId = s.salonId
             ? bulkSalonByRequestedId.get(s.salonId)!.id
-            : (bulkDefaultSalonId as string);
+            : bulkResolvedSalonByEmployeeDate.get(`${s.employeeId}::${s.date}`)!;
           const row = await tx.shift.create({
             data: {
               employeeId: s.employeeId,

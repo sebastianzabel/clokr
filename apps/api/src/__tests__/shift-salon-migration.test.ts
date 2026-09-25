@@ -606,7 +606,6 @@ describe("Phase 325 — Restrict FK proof (AC-3)", () => {
   let app: FastifyInstance;
   let seed: Awaited<ReturnType<typeof seedTestData>>;
   let shiftId: string;
-  let appointmentId: string;
 
   beforeAll(async () => {
     app = await getTestApp();
@@ -621,7 +620,7 @@ describe("Phase 325 — Restrict FK proof (AC-3)", () => {
       },
     });
     shiftId = shift.id;
-    const appointment = await app.prisma.phorestAppointment.create({
+    await app.prisma.phorestAppointment.create({
       data: {
         employeeId: seed.employee.id,
         salonId: seed.salonId,
@@ -630,17 +629,9 @@ describe("Phase 325 — Restrict FK proof (AC-3)", () => {
         endTime: "10:00",
       },
     });
-    appointmentId = appointment.id;
   });
 
   afterAll(async () => {
-    try {
-      // cleanupTestData does not delete PhorestAppointment rows (D-17 setup.ts note) — remove it
-      // ourselves before the tenant/employee cleanup below.
-      await app.prisma.phorestAppointment.delete({ where: { id: appointmentId } });
-    } catch (err) {
-      console.error("Test cleanup failed (appointment):", err);
-    }
     try {
       await cleanupTestData(app, seed.tenant.id);
     } catch (err) {
@@ -674,5 +665,62 @@ describe("Phase 325 — Restrict FK proof (AC-3)", () => {
       where: { id: seed.salonId },
     });
     expect(stillThereWithAppointmentOnly).not.toBeNull();
+  });
+});
+
+// Issue #342: cleanupTestData used to skip PhorestAppointment rows, so a tenant whose employee
+// still had one failed to delete on PhorestAppointment_employeeId_fkey (both employeeId and
+// salonId are onDelete: Restrict) and leaked fixture rows into the shared test database.
+describe("Issue #342 — cleanupTestData removes PhorestAppointment rows", () => {
+  let app: FastifyInstance;
+  let seed: Awaited<ReturnType<typeof seedTestData>>;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    seed = await seedTestData(app, "cleanup-phorest-appt");
+    await app.prisma.phorestAppointment.create({
+      data: {
+        employeeId: seed.employee.id,
+        salonId: seed.salonId,
+        date: new Date(),
+        startTime: "09:00",
+        endTime: "10:00",
+      },
+    });
+  });
+
+  afterAll(async () => {
+    try {
+      // Safety net for the RED run (before the setup.ts fix): remove the appointment ourselves
+      // so a failed cleanupTestData does not leak this fixture into the shared test database.
+      await app.prisma.phorestAppointment.deleteMany({ where: { employeeId: seed.employee.id } });
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+    try {
+      // On the green path the test below already removed the tenant; only clean up if it's
+      // still there, or cleanupTestData's tenant.delete throws P2025 (record not found).
+      const stillThere = await app.prisma.tenant.findUnique({ where: { id: seed.tenant.id } });
+      if (stillThere) {
+        await cleanupTestData(app, seed.tenant.id);
+      }
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  it("cleanupTestData deletes a tenant whose employee still has a PhorestAppointment", async () => {
+    const employeeId = seed.employee.id;
+    const tenantId = seed.tenant.id;
+
+    await expect(cleanupTestData(app, tenantId)).resolves.toBeUndefined();
+
+    const remainingAppointments = await app.prisma.phorestAppointment.count({
+      where: { employeeId },
+    });
+    expect(remainingAppointments).toBe(0);
+
+    const tenantRow = await app.prisma.tenant.findUnique({ where: { id: tenantId } });
+    expect(tenantRow).toBeNull();
   });
 });

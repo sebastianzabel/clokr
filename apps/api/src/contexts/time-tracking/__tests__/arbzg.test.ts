@@ -42,6 +42,7 @@ describe("ArbZG Compliance Checks", () => {
         endTime,
         breakMinutes: breakMin,
         source: "MANUAL",
+        salonId: data.salonId, // Phase 68b (issue #68)
       },
     });
   }
@@ -142,6 +143,7 @@ describe("ArbZG Compliance Checks", () => {
           endTime: new Date(`${date}T15:30:00.000Z`),
           breakMinutes: 150, // 2.5h gap stored as break (76.19.1 D-01)
           source: "MANUAL",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       await app.prisma.break.create({
@@ -172,6 +174,7 @@ describe("ArbZG Compliance Checks", () => {
           endTime: new Date(`${date}T16:45:00.000Z`),
           breakMinutes: 45, // 45-min gap stored as break (76.19.1 D-01)
           source: "MANUAL",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
       await app.prisma.break.create({
@@ -243,6 +246,7 @@ describe("ArbZG Compliance Checks", () => {
           endTime,
           breakMinutes: breakMin,
           source: "MANUAL",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
     }
@@ -302,6 +306,7 @@ describe("ArbZG Compliance Checks", () => {
               endTime,
               breakMinutes: 0,
               source: "MANUAL",
+              salonId: data.salonId, // Phase 68b (issue #68)
             },
           });
         }
@@ -360,6 +365,7 @@ describe("ArbZG Compliance Checks", () => {
               endTime,
               breakMinutes: 0,
               source: "MANUAL",
+              salonId: data.salonId, // Phase 68b (issue #68)
             },
           });
         }
@@ -422,6 +428,7 @@ describe("ArbZG Compliance Checks", () => {
               // endTime intentionally omitted (null)
               breakMinutes: 0,
               source: "MANUAL",
+              salonId: data.salonId, // Phase 68b (issue #68)
             },
           });
         }
@@ -463,6 +470,7 @@ describe("ArbZG Compliance Checks", () => {
             endTime: new Date(`${date}T18:01:00.000Z`),
             breakMinutes: 0,
             source: "MANUAL",
+            salonId: data.salonId, // Phase 68b (issue #68)
           },
         });
 
@@ -498,6 +506,7 @@ describe("ArbZG Compliance Checks", () => {
             endTime: new Date(`${date}T14:01:00.000Z`),
             breakMinutes: 0,
             source: "MANUAL",
+            salonId: data.salonId, // Phase 68b (issue #68)
           },
         });
 
@@ -519,6 +528,7 @@ describe("ArbZG Compliance Checks", () => {
             endTime: new Date(`${date}T18:01:00.000Z`),
             breakMinutes: 30,
             source: "MANUAL",
+            salonId: data.salonId, // Phase 68b (issue #68)
           },
         });
 
@@ -540,6 +550,7 @@ describe("ArbZG Compliance Checks", () => {
             endTime: new Date(`${date}T18:01:00.000Z`),
             breakMinutes: 45,
             source: "MANUAL",
+            salonId: data.salonId, // Phase 68b (issue #68)
           },
         });
 
@@ -567,6 +578,7 @@ describe("ArbZG Compliance Checks", () => {
             endTime: new Date(`${date1}T18:00:00.000Z`),
             breakMinutes: 0,
             source: "MANUAL",
+            salonId: data.salonId, // Phase 68b (issue #68)
           },
         });
         await app.prisma.timeEntry.create({
@@ -577,6 +589,7 @@ describe("ArbZG Compliance Checks", () => {
             endTime: new Date(`${date2}T13:00:00.000Z`),
             breakMinutes: 0,
             source: "MANUAL",
+            salonId: data.salonId, // Phase 68b (issue #68)
           },
         });
 
@@ -602,6 +615,7 @@ describe("ArbZG Compliance Checks", () => {
             endTime: new Date(`${date1}T18:00:00.000Z`),
             breakMinutes: 0,
             source: "MANUAL",
+            salonId: data.salonId, // Phase 68b (issue #68)
           },
         });
         await app.prisma.timeEntry.create({
@@ -612,6 +626,7 @@ describe("ArbZG Compliance Checks", () => {
             endTime: new Date(`${date2}T12:59:00.000Z`),
             breakMinutes: 0,
             source: "MANUAL",
+            salonId: data.salonId, // Phase 68b (issue #68)
           },
         });
 
@@ -673,6 +688,7 @@ describe("ArbZG Compliance Checks", () => {
             endTime: new Date("2025-03-24T16:01:00.000Z"),
             breakMinutes: 0,
             source: "MANUAL",
+            salonId: data.salonId, // Phase 68b (issue #68)
           },
         });
         // Remaining 5 days get exactly 8h each
@@ -722,6 +738,7 @@ describe("ArbZG Compliance Checks", () => {
             endTime,
             breakMinutes: 0,
             source: "MANUAL",
+            salonId: data.salonId, // Phase 68b (issue #68)
           },
         });
 
@@ -759,6 +776,7 @@ describe("ArbZG Compliance Checks", () => {
             endTime,
             breakMinutes: 0,
             source: "MANUAL",
+            salonId: data.salonId, // Phase 68b (issue #68)
           },
         });
 
@@ -790,6 +808,7 @@ describe("ArbZG Compliance Checks", () => {
             endTime: new Date(`${dateMorning}T06:00:00.000Z`),
             breakMinutes: 0,
             source: "MANUAL",
+            salonId: data.salonId, // Phase 68b (issue #68)
           },
         });
 
@@ -819,6 +838,7 @@ describe("ArbZG Compliance Checks", () => {
             endTime: new Date(`${dateMorning}T07:00:00.000Z`),
             breakMinutes: 0,
             source: "MANUAL",
+            salonId: data.salonId, // Phase 68b (issue #68)
           },
         });
 
@@ -862,6 +882,7 @@ describe("ArbZG Compliance Checks", () => {
             endTime: new Date(`${date1}T18:00:00.000Z`),
             breakMinutes: 0,
             source: "MANUAL",
+            salonId: data.salonId, // Phase 68b (issue #68)
           },
         });
         await app.prisma.timeEntry.create({
@@ -872,6 +893,7 @@ describe("ArbZG Compliance Checks", () => {
             endTime: new Date(`${date2}T12:59:00.000Z`),
             breakMinutes: 0,
             source: "MANUAL",
+            salonId: data.salonId, // Phase 68b (issue #68)
           },
         });
 
@@ -957,6 +979,7 @@ describe("ArbZG Compliance Checks", () => {
               endTime: new Date(`${dateStr}T18:00:00.000Z`),
               breakMinutes: 0,
               source: "MANUAL",
+              salonId: data.salonId, // Phase 68b (issue #68)
             },
           });
         }
@@ -980,6 +1003,7 @@ describe("ArbZG Compliance Checks", () => {
           endTime: new Date(`${date}T17:00:00.000Z`), // 11h net
           breakMinutes: 0,
           source: "MANUAL",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
 
@@ -999,6 +1023,7 @@ describe("ArbZG Compliance Checks", () => {
           endTime: new Date(`${date}T14:30:00.000Z`), // 6.5h net, 0 break
           breakMinutes: 0,
           source: "MANUAL",
+          salonId: data.salonId, // Phase 68b (issue #68)
         },
       });
 
@@ -1032,6 +1057,7 @@ describe("ArbZG Compliance Checks", () => {
               endTime: new Date(`${dateStr}T18:00:00.000Z`), // 10h
               breakMinutes: 0,
               source: "MANUAL",
+              salonId: data.salonId, // Phase 68b (issue #68)
             },
           });
         }

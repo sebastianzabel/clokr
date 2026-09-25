@@ -230,6 +230,7 @@ describe("GET /api/v1/dashboard/open-items — work obligation per schedule type
         endTime: new Date(ROSTER_DAY + "T15:00:00Z"),
         type: "WORK",
         isInvalid: false,
+        salonId, // Phase 68b (issue #68)
       },
     });
 
@@ -315,6 +316,7 @@ describe("GET /api/v1/dashboard/open-items — work obligation per schedule type
           endTime: new Date(day + "T15:00:00Z"),
           type: "WORK",
           isInvalid: false,
+          salonId, // Phase 68b (issue #68)
         },
       });
     }
