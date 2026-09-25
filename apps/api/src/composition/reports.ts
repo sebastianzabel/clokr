@@ -3,7 +3,7 @@ import PDFDocument from "pdfkit";
 import iconv from "iconv-lite";
 import { formatInTimeZone } from "date-fns-tz";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { getHolidays, STATE_MAP } from "../contexts/platform";
+import { holidaysAtWorkLocation, type WorkLocationEntry } from "../contexts/platform";
 import {
   SECTION9_LEGEND,
   generateMonthlyReportPdf,
@@ -107,6 +107,10 @@ type TimeEntryRecord = {
   startTime: Date;
   endTime: Date | null;
   breakMinutes: number | bigint | null;
+  // Phase 71b (issue #71): carried so the caller can hand these rows to the Unterbau's central
+  // holiday resolver (`holidaysAtWorkLocation`) as the per-day work location.
+  employeeId: string;
+  salonId: string;
   [key: string]: unknown;
 };
 
@@ -133,7 +137,7 @@ function computeEmployeeSummary(
   start: Date,
   end: Date,
   tz: string,
-  holidayDeductionOpts?: { enabled: boolean; stateCode: string | null },
+  holidayDeductionOpts?: { enabled: boolean; holidayDates: ReadonlySet<string> },
   // Phase 104 (D-30): confirmed § 9 credits overlapping the report month, bulk-fetched
   // ONCE by the caller (no per-employee query — T-104-09-N1) and pre-filtered to
   // pre-filtered to CONFIRMED-only (T-104-09-PENDING: an AU_PENDING credit changes nothing).
@@ -182,7 +186,7 @@ function computeEmployeeSummary(
       if (mh <= 0) return 0;
 
       // Phase 15: apply holiday deduction when tenant toggle is enabled
-      if (holidayDeductionOpts?.enabled && holidayDeductionOpts.stateCode !== undefined) {
+      if (holidayDeductionOpts?.enabled) {
         const DOW_KEYS_MH = [
           "sundayHours",
           "mondayHours",
@@ -199,23 +203,11 @@ function computeEmployeeSummary(
         });
         if (monthWorkdays > 0) {
           const dailySollMin = (mh * 60) / monthWorkdays;
-          // Fetch holidays in the month and count those falling on configured workdays
-          const startYear = start.getUTCFullYear();
-          const endYear = end.getUTCFullYear();
-          const holidays = getHolidays(
-            startYear,
-            holidayDeductionOpts.stateCode as Parameters<typeof getHolidays>[1],
-          );
-          if (endYear !== startYear)
-            holidays.push(
-              ...getHolidays(
-                endYear,
-                holidayDeductionOpts.stateCode as Parameters<typeof getHolidays>[1],
-              ),
-            );
+          // Phase 71b (issue #71): holidays resolved by work location (§ 2 EFZG), batched ONCE
+          // per report request by the caller — see the three GET handlers below.
           let holidayDeductionMin = 0;
-          for (const h of holidays) {
-            const hDate = new Date(h.date + "T12:00:00Z");
+          for (const dateStr of holidayDeductionOpts.holidayDates) {
+            const hDate = new Date(dateStr + "T12:00:00Z");
             if (hDate >= start && hDate <= end) {
               const dow = getDayOfWeekInTz(hDate, tz);
               if (Number(latestSchedule[DOW_KEYS_MH[dow]] ?? 0) > 0) {
@@ -938,20 +930,11 @@ export async function reportRoutes(app: FastifyInstance) {
       const { start, end } = monthRangeUtc(y, m, tz);
 
       // Phase 15: fetch tenant config for MONTHLY_HOURS holiday deduction
-      const [tenantCfg, tenantRow] = await Promise.all([
-        app.prisma.tenantConfig.findUnique({
-          where: { tenantId: req.user.tenantId },
-          select: { monthlyHoursHolidayDeduction: true },
-        }),
-        app.prisma.tenant.findUnique({
-          where: { id: req.user.tenantId },
-          select: { federalState: true },
-        }),
-      ]);
-      const monthlyHolidayDeductionOpts = {
-        enabled: tenantCfg?.monthlyHoursHolidayDeduction === true,
-        stateCode: tenantRow?.federalState ? (STATE_MAP[tenantRow.federalState] ?? null) : null,
-      };
+      const tenantCfg = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: req.user.tenantId },
+        select: { monthlyHoursHolidayDeduction: true },
+      });
+      const monthlyHolidayDeductionEnabled = tenantCfg?.monthlyHoursHolidayDeduction === true;
 
       // Alle Mitarbeiter des Tenants (oder nur einen)
       const employees = (await app.prisma.employee.findMany({
@@ -964,6 +947,27 @@ export async function reportRoutes(app: FastifyInstance) {
         include: buildEmployeeInclude(start, end),
         orderBy: { lastName: "asc" },
       })) as unknown as EmployeeWithIncludes[];
+
+      // Holidays by work location (Phase 71b, issue #71) — ONE batched resolver call for the
+      // whole request, fed with the T2-shaped rows already loaded via buildEmployeeInclude's
+      // `timeEntries` include (carries salonId additively).
+      const monthlyHolidaysByEmployee = monthlyHolidayDeductionEnabled
+        ? await holidaysAtWorkLocation(
+            app.prisma,
+            req.user.tenantId,
+            employees.map((e) => e.id),
+            dateStrInTz(start, tz),
+            dateStrInTz(end, tz),
+            employees.flatMap((emp): WorkLocationEntry[] =>
+              emp.timeEntries.map((e) => ({
+                employeeId: emp.id,
+                date: e.date,
+                startTime: e.startTime,
+                salonId: e.salonId,
+              })),
+            ),
+          )
+        : new Map<string, Map<string, string>>();
 
       // Phase 104 (D-30): bulk-fetched once, keyed by employeeId — see the function's
       // own doc block above for the tenant/status/N1 rationale.
@@ -980,7 +984,10 @@ export async function reportRoutes(app: FastifyInstance) {
           start,
           end,
           tz,
-          monthlyHolidayDeductionOpts,
+          {
+            enabled: monthlyHolidayDeductionEnabled,
+            holidayDates: new Set(monthlyHolidaysByEmployee.get(emp.id)?.keys() ?? []),
+          },
           section9ByEmp.get(emp.id) ?? [],
         );
         return {
@@ -1462,18 +1469,14 @@ export async function reportRoutes(app: FastifyInstance) {
       const [tenant, pdfTenantCfg] = await Promise.all([
         app.prisma.tenant.findUnique({
           where: { id: req.user.tenantId },
-          select: { name: true, federalState: true },
+          select: { name: true },
         }),
         app.prisma.tenantConfig.findUnique({
           where: { tenantId: req.user.tenantId },
           select: { monthlyHoursHolidayDeduction: true },
         }),
       ]);
-
-      const pdfHolidayDeductionOpts = {
-        enabled: pdfTenantCfg?.monthlyHoursHolidayDeduction === true,
-        stateCode: tenant?.federalState ? (STATE_MAP[tenant.federalState] ?? null) : null,
-      };
+      const pdfHolidayDeductionEnabled = pdfTenantCfg?.monthlyHoursHolidayDeduction === true;
 
       const emp = (await app.prisma.employee.findFirst({
         where: {
@@ -1488,6 +1491,26 @@ export async function reportRoutes(app: FastifyInstance) {
         return { error: "Mitarbeiter nicht gefunden" };
       }
 
+      // Holidays by work location (Phase 71b, issue #71) — see GET /monthly above for the general
+      // shape; here there is only a single employee.
+      const pdfHolidaysByEmployee = pdfHolidayDeductionEnabled
+        ? await holidaysAtWorkLocation(
+            app.prisma,
+            req.user.tenantId,
+            [emp.id],
+            dateStrInTz(start, tz),
+            dateStrInTz(end, tz),
+            emp.timeEntries.map(
+              (e): WorkLocationEntry => ({
+                employeeId: emp.id,
+                date: e.date,
+                startTime: e.startTime,
+                salonId: e.salonId,
+              }),
+            ),
+          )
+        : new Map<string, Map<string, string>>();
+
       // Phase 104 (D-30): the PDF (Arbeitszeitnachweis handed to the employee/auditor)
       // must show the identical § 9 attribution as the JSON Monatsbericht.
       const section9ByEmpPdf = await fetchConfirmedSection9CreditsByEmp(
@@ -1501,7 +1524,10 @@ export async function reportRoutes(app: FastifyInstance) {
         start,
         end,
         tz,
-        pdfHolidayDeductionOpts,
+        {
+          enabled: pdfHolidayDeductionEnabled,
+          holidayDates: new Set(pdfHolidaysByEmployee.get(emp.id)?.keys() ?? []),
+        },
         section9ByEmpPdf.get(emp.id) ?? [],
       );
       // §615-correct Überstunden for the legal Stundennachweis (SHIFT_BASED / closed-month snapshot);
@@ -1582,18 +1608,14 @@ export async function reportRoutes(app: FastifyInstance) {
       const [tenant, allPdfTenantCfg] = await Promise.all([
         app.prisma.tenant.findUnique({
           where: { id: req.user.tenantId },
-          select: { name: true, federalState: true },
+          select: { name: true },
         }),
         app.prisma.tenantConfig.findUnique({
           where: { tenantId: req.user.tenantId },
           select: { monthlyHoursHolidayDeduction: true },
         }),
       ]);
-
-      const allPdfHolidayDeductionOpts = {
-        enabled: allPdfTenantCfg?.monthlyHoursHolidayDeduction === true,
-        stateCode: tenant?.federalState ? (STATE_MAP[tenant.federalState] ?? null) : null,
-      };
+      const allPdfHolidayDeductionEnabled = allPdfTenantCfg?.monthlyHoursHolidayDeduction === true;
 
       const employees = (await app.prisma.employee.findMany({
         where: {
@@ -1610,6 +1632,26 @@ export async function reportRoutes(app: FastifyInstance) {
         return { error: "Keine Mitarbeiter gefunden" };
       }
 
+      // Holidays by work location (Phase 71b, issue #71) — ONE batched resolver call for the
+      // whole company PDF, mirroring GET /monthly above.
+      const allPdfHolidaysByEmployee = allPdfHolidayDeductionEnabled
+        ? await holidaysAtWorkLocation(
+            app.prisma,
+            req.user.tenantId,
+            employees.map((e) => e.id),
+            dateStrInTz(start, tz),
+            dateStrInTz(end, tz),
+            employees.flatMap((emp): WorkLocationEntry[] =>
+              emp.timeEntries.map((e) => ({
+                employeeId: emp.id,
+                date: e.date,
+                startTime: e.startTime,
+                salonId: e.salonId,
+              })),
+            ),
+          )
+        : new Map<string, Map<string, string>>();
+
       // Phase 104 (D-30): one bulk fetch for the whole company PDF, not per employee.
       const section9ByEmpAll = await fetchConfirmedSection9CreditsByEmp(
         app,
@@ -1625,7 +1667,10 @@ export async function reportRoutes(app: FastifyInstance) {
             start,
             end,
             tz,
-            allPdfHolidayDeductionOpts,
+            {
+              enabled: allPdfHolidayDeductionEnabled,
+              holidayDates: new Set(allPdfHolidaysByEmployee.get(emp.id)?.keys() ?? []),
+            },
             section9ByEmpAll.get(emp.id) ?? [],
           );
           // §615-correct Überstunden (SHIFT_BASED / closed-month snapshot); non-SHIFT open months
