@@ -466,6 +466,9 @@ export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
     params: { employeeId: "employee" },
     handlerCheck: true,
   },
+  // Report exports: every export writes an EXPORT audit row with `userId: req.user.sub`, which
+  // for an API key is `apikey:<id>` and violates the foreign key onto User — the API-key cells of
+  // the export routes below answer 500. Issue #333, pre-existing, recorded as-is.
   "GET /api/v1/reports/carryover-at-risk": { phase: "read" },
   "GET /api/v1/reports/datev": { phase: "read", variants: none(MAY) },
   "GET /api/v1/reports/datev/employee": {
@@ -647,6 +650,9 @@ export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
   ),
 
   // own Wi-Fi presence (self-service; an API key has no employee)
+  // API keys answer 500 here, and not because of #333: a key has no employee, and the handler
+  // passes `id: undefined` to `employee.findUnique`, which Prisma rejects as a validation error.
+  // Pre-existing, recorded as-is (its sibling POST answers 401 for the same situation).
   "PATCH /api/v1/employees/me/wifi": mutateWith(undefined, { wifiPresenceEnabled: true }),
   "POST /api/v1/employees/me/wifi/devices": mutateWith(undefined, {
     mac: "02:00:00:00:00:03",
@@ -949,6 +955,9 @@ export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
     handlerCheck: true,
   },
   "PATCH /api/v1/time-entries/:id/revalidate": mutate({ id: "timeEntry.invalid" }),
+  // No ownership check exists on this route today: any authenticated caller of the tenant,
+  // an EMPLOYEE included, can clock out a colleague's open entry by its id (the `foreign` cells
+  // answer 200). Pre-existing, no role decision involved, recorded as-is.
   "POST /api/v1/time-entries/:id/clock-out": mutateWith({ id: "timeEntry.open" }, {}),
   "DELETE /api/v1/time-entries/:id": {
     // Handler check #35.
