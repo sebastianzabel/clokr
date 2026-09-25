@@ -7,6 +7,8 @@ import {
   accessContextFromRequest,
   employeeScopeFor,
   hasPermission,
+  resolveAccessReach, // Phase 91b Plan 06 (#91), D-09/D-10/D-13
+  resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 06 (#91), D-10/D-13
 } from "../contexts/platform";
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
 import {
@@ -379,12 +381,40 @@ export async function dashboardRoutes(app: FastifyInstance) {
       if (endYear !== startYear) weekHolidays.push(...getHolidays(endYear, stateCode));
       const holidayMap = new Map(weekHolidays.map((h) => [h.date, h.name]));
 
+      // Phase 91b Plan 06 (Issue #91), D-09/D-10/D-13 — narrow to in-scope employees BEFORE any of
+      // the per-employee facade calls below (D-13: aggregate only over visible rows). Resolver
+      // choice, justified: `employeeScopeFor`'s target shape only ever accepts an
+      // employeeId/employeeIds set — it has no concept of a raw TimeEntry-row id set — so
+      // `scopedTimeEntryIds`/`isTimeEntryInScope` (D-09's per-row-Stichtag resolver) cannot compose
+      // with any of the 4 `employeeScopeFor(access)` call sites below, all of which take the SAME
+      // `EmployeeScope`. `resolveStammsalonScopedEmployeeIds` (D-10, employee-level, Stichtag =
+      // weekEnd) is therefore the only resolver that composes with this handler's actual API
+      // surface, a deliberate simplification for a short, RECENT window (this week), not a
+      // historical audit where an employee's Stammsalon-at-entry-date could plausibly differ from
+      // their Stammsalon-at-weekEnd.
+      const scopeReach = await resolveAccessReach(
+        app.prisma,
+        access,
+        "team-overview:read:ZUGEWIESEN",
+      );
+      const scopedAccess = { ...access, reach: scopeReach };
+      const teamWeekScopedIds =
+        scopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(app.prisma, tenantId, scopeReach, weekEnd);
+
       // Alle aktiven, nicht-anonymisierten Mitarbeiter
       const employees = await app.prisma.employee.findMany({
-        where: { tenantId, exitDate: null, user: { isActive: true } },
+        where: {
+          tenantId,
+          exitDate: null,
+          user: { isActive: true },
+          ...(teamWeekScopedIds !== "all" ? { id: { in: teamWeekScopedIds } } : {}),
+        },
         select: { id: true, firstName: true, lastName: true, employeeNumber: true },
         orderBy: { lastName: "asc" },
       });
+      const teamWeekEmployeeIds = employees.map((e) => e.id);
 
       // Zeiteinträge der Woche — OPEN (still clocked in) and INVALID rows included on purpose
       // (Phase 100B Plan 08 — getRecordedWorkEntriesInRange, not T2): the per-day loop below
@@ -392,7 +422,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // itself) and other call sites of this same function need `isClockedIn` detection.
       const timeEntries = await getRecordedWorkEntriesInRange(
         app.prisma,
-        employeeScopeFor(access),
+        employeeScopeFor(scopedAccess, { employeeIds: teamWeekEmployeeIds }),
         weekStart,
         weekEnd,
       );
@@ -402,7 +432,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // Phase 100B Plan 13 — A3, contexts/absence facade.
       const leaveRequests = await getCalendarLeaveOverlapping(
         app.prisma,
-        employeeScopeFor(access),
+        employeeScopeFor(scopedAccess, { employeeIds: teamWeekEmployeeIds }),
         weekStart,
         weekEnd,
       );
@@ -411,7 +441,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // Phase 100B Plan 12 — A4, contexts/absence facade.
       const absences = await getAbsencesOverlapping(
         app.prisma,
-        employeeScopeFor(access),
+        employeeScopeFor(scopedAccess, { employeeIds: teamWeekEmployeeIds }),
         weekStart,
         weekEnd,
       );
@@ -419,7 +449,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // Schichten der Woche (Phase 100B Plan 05 — S1, contexts/scheduling facade)
       const shifts = await getShiftsInRange(
         app.prisma,
-        employeeScopeFor(access),
+        employeeScopeFor(scopedAccess, { employeeIds: teamWeekEmployeeIds }),
         weekStart,
         weekEnd,
       );
@@ -604,9 +634,34 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const isHoliday = todayHoliday !== null;
       const holidayName = todayHoliday?.name ?? null;
 
+      // Phase 91b Plan 06 (Issue #91), D-09/D-10/D-13 — same resolver-choice justification as
+      // GET /team-week above: `employeeScopeFor` only accepts an employeeId/employeeIds target, so
+      // the employee-level `resolveStammsalonScopedEmployeeIds` (Stichtag = today) is the only
+      // resolver that composes with the 3 `employeeScopeFor` call sites below.
+      const attendanceScopeReach = await resolveAccessReach(
+        app.prisma,
+        access,
+        "team-overview:read:ZUGEWIESEN",
+      );
+      const attendanceScopedAccess = { ...access, reach: attendanceScopeReach };
+      const attendanceScopedIds =
+        attendanceScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              tenantId,
+              attendanceScopeReach,
+              today,
+            );
+
       // Bulk fetch 1 — active employees for this tenant
       const employees = await app.prisma.employee.findMany({
-        where: { tenantId, exitDate: null, user: { isActive: true } },
+        where: {
+          tenantId,
+          exitDate: null,
+          user: { isActive: true },
+          ...(attendanceScopedIds !== "all" ? { id: { in: attendanceScopedIds } } : {}),
+        },
         select: { id: true, firstName: true, lastName: true, employeeNumber: true },
         orderBy: { lastName: "asc" },
       });
@@ -617,7 +672,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // 08 — getRecordedWorkEntriesInRange, not T2): `isClockedIn` below needs the open row.
       const timeEntries = await getRecordedWorkEntriesInRange(
         app.prisma,
-        employeeScopeFor(access),
+        employeeScopeFor(attendanceScopedAccess, { employeeIds }),
         today,
         today,
       );
@@ -626,7 +681,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // Phase 100B Plan 13 — A2, contexts/absence facade.
       const leaveRequests = await getActiveLeaveOverlapping(
         app.prisma,
-        employeeScopeFor(access),
+        employeeScopeFor(attendanceScopedAccess, { employeeIds }),
         today,
         today,
       );
@@ -635,7 +690,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // Phase 100B Plan 12 — A4, contexts/absence facade.
       const absences = await getAbsencesOverlapping(
         app.prisma,
-        employeeScopeFor(access),
+        employeeScopeFor(attendanceScopedAccess, { employeeIds }),
         today,
         today,
       );
@@ -768,7 +823,35 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
 
       // Query 1: all OvertimeAccount rows joined with employee (tenant-scoped, active only)
-      const accounts = await listOvertimeAccountsForTenant(app.prisma, tenantId);
+      const allAccounts = await listOvertimeAccountsForTenant(app.prisma, tenantId);
+
+      // Phase 91b Plan 06 (Issue #91), D-10/D-13 — a NEW finding: this route had ZERO scope
+      // narrowing of any kind before this plan (confirmed: no `employeeScopeFor` call anywhere in
+      // this handler). `listOvertimeAccountsForTenant` does not accept an employeeIds filter (its
+      // only other caller, `getBalances` below, is unrelated), so this filters the CHEAP initial
+      // list immediately, BEFORE `employeeIds` is computed and BEFORE the expensive per-employee
+      // `computeOvertimeBalanceBreakdown` fan-out below ever runs for an out-of-scope employee —
+      // the property D-13 actually cares about (cost, not just the response shape). Stichtag =
+      // today (tenant-local): a live saldo overview, same precedent as GET /overtime/:employeeId.
+      const overviewAccess = accessContextFromRequest(req);
+      const overviewScopeReach = await resolveAccessReach(
+        app.prisma,
+        overviewAccess,
+        "team-overview:read:ZUGEWIESEN",
+      );
+      const overviewScopedIds =
+        overviewScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              tenantId,
+              overviewScopeReach,
+              new Date(),
+            );
+      const accounts =
+        overviewScopedIds === "all"
+          ? allAccounts
+          : allAccounts.filter((a) => overviewScopedIds.includes(a.employeeId));
 
       const employeeIds = accounts.map((a) => a.employeeId);
 
