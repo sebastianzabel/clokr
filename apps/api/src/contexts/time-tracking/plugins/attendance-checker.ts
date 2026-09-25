@@ -37,6 +37,10 @@ declare module "fastify" {
     /** Phase 205 Plan 02 (Issue #205, finding 1): exposed for integration tests — invokes the
      *  § 7 BUrlG / EuGH C-684/16 vacation-expiry scan without cron/advisory-lock. */
     tryVacationExpiry: () => Promise<void>;
+    /** Phase 75b (D-27): test invocability, pattern mirrors tryAutoInvalidate. */
+    tryMissingEntriesCheck: () => Promise<void>;
+    /** Phase 75b (D-27): test invocability, pattern mirrors tryAutoInvalidate. */
+    tryPendingLeaveReminder: () => Promise<void>;
   }
 }
 
@@ -1043,6 +1047,11 @@ export const attendanceCheckerPlugin = fp(async (app) => {
   // test invocability — it had none before this plan. Pattern mirrors tryEndOfMonthGapReminder
   // above.
   app.decorate("tryVacationExpiry", checkVacationExpiry);
+
+  // Phase 75b (D-27): test invocability, pattern mirrors tryAutoInvalidate.
+  app.decorate("tryMissingEntriesCheck", checkMissingEntries);
+  // Phase 75b (D-27): test invocability, pattern mirrors tryAutoInvalidate.
+  app.decorate("tryPendingLeaveReminder", checkPendingLeaveRequests);
 
   app.addHook("onReady", async () => {
     try {
