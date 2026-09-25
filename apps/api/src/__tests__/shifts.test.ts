@@ -261,6 +261,8 @@ describe("Shift Planning API", () => {
     const WED = _iso(2); // leave day 2 / bulk shift (was 2026-06-17)
     const SAT = _iso(5); // delete-test shift (was 2026-06-20)
     const NEXT_MON = _iso(7); // EMPLOYEE-403 test (was 2026-06-22)
+    const THU = _iso(3); // bulk audit-log test (issue #341)
+    const FRI = _iso(4); // bulk audit-log test (issue #341)
 
     it("MANAGER creates a shift", async () => {
       const res = await app.inject({
@@ -483,6 +485,46 @@ describe("Shift Planning API", () => {
       expect(res.statusCode).toBe(201);
       const body = JSON.parse(res.body);
       expect(body.created).toBe(2);
+    });
+
+    it("POST /bulk emits a CREATE AuditLog per shift, matching POST /shifts' shape (issue #341)", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/shifts/bulk",
+        headers: { authorization: `Bearer ${managerToken}` },
+        payload: {
+          shifts: [
+            { employeeId: data.employee.id, date: THU, startTime: "08:00", endTime: "16:00" },
+            { employeeId: data.employee.id, date: FRI, startTime: "09:00", endTime: "17:00" },
+          ],
+        },
+      });
+
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+      expect(body.created).toBe(2);
+
+      const shifts = await app.prisma.shift.findMany({
+        where: { employeeId: data.employee.id, date: { in: [new Date(THU), new Date(FRI)] } },
+      });
+      expect(shifts).toHaveLength(2);
+
+      // One AuditLog row per shift — no single collective entry for the whole batch.
+      const audit = await app.prisma.auditLog.findMany({
+        where: { entity: "Shift", entityId: { in: shifts.map((s) => s.id) }, action: "CREATE" },
+      });
+      expect(audit.length).toBe(2);
+
+      for (const shift of shifts) {
+        const entry = audit.find((a) => a.entityId === shift.id);
+        expect(entry).toBeDefined();
+        const newValue = entry!.newValue as Record<string, unknown>;
+        expect(newValue.id).toBe(shift.id);
+        expect(newValue.employeeId).toBe(shift.employeeId);
+        expect(newValue.startTime).toBe(shift.startTime);
+        expect(newValue.endTime).toBe(shift.endTime);
+        expect(newValue.date).toBe(shift.date.toISOString());
+      }
     });
 
     it("MANAGER deletes a shift", async () => {

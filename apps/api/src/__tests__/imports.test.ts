@@ -161,6 +161,60 @@ not-an-email;Max;Mustermann;ERR-001;01.01.2026`;
 
       expect(res.statusCode).toBe(403);
     });
+
+    // ── Issue #356: header matching must be case/whitespace neutral ──────────
+    describe.each([
+      { label: "lower-case `rolle`", header: "rolle" },
+      { label: "capitalized `Rolle`", header: "Rolle" },
+      { label: "padded ` ROLLE `", header: " ROLLE " },
+    ])("$label role column", ({ header }) => {
+      it("assigns the role from that column instead of silently defaulting", async () => {
+        const uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        const csv = `email;vorname;nachname;nr;eintrittsdatum;${header}
+role-${uid}@test.de;Role;Test;ROLE-${uid};01.01.2026;MANAGER`;
+
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/imports/employees",
+          headers: { authorization: `Bearer ${data.adminToken}` },
+          payload: { csv },
+        });
+
+        expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body.imported).toBe(1);
+
+        const emp = await app.prisma.employee.findFirst({
+          where: { employeeNumber: `ROLE-${uid}` },
+          include: { user: true },
+        });
+        expect(emp).not.toBeNull();
+        // Before the fix, an unrecognized header (only exact "Rolle" matched) silently fell
+        // back to the schema default EMPLOYEE instead of the CSV's MANAGER value.
+        expect(emp!.user.role).toBe("MANAGER");
+      });
+    });
+
+    it("Issue #356: an unknown column produces a hint in the response instead of being silently dropped", async () => {
+      const uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      const csv = `email;vorname;nachname;nr;eintrittsdatum;voellig_unbekannte_spalte
+unknown-col-${uid}@test.de;Unknown;Column;UC-${uid};01.01.2026;irgendwas`;
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/imports/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { csv },
+      });
+
+      expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.imported).toBe(1);
+      expect(Array.isArray(body.warnings)).toBe(true);
+      expect(
+        body.warnings.some((w: string) => w.toLowerCase().includes("voellig_unbekannte_spalte")),
+      ).toBe(true);
+    });
   });
 
   describe("POST /api/v1/imports/time-entries", () => {

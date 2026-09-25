@@ -3375,6 +3375,21 @@ export async function shiftRoutes(app: FastifyInstance) {
             },
           });
           rows.push(row);
+          // Issue #341: unlike generate-week/copy-week (whose per-shift CREATE audit loop
+          // runs AFTER the transaction commits), /bulk writes its audit entry INSIDE this
+          // same transaction via app.audit()'s `tx` param — a failing audit insert here
+          // rolls the whole batch back instead of leaving shifts committed with no trail.
+          // Same shape as POST /shifts' CREATE audit: one entry per shift, entityId + the
+          // created row as newValue, no single collective entry for the whole batch.
+          await app.audit({
+            userId: req.user.sub,
+            action: "CREATE",
+            entity: "Shift",
+            entityId: row.id,
+            newValue: row,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            tx,
+          });
         }
         // Unlike generate-week/copy-week, /bulk shifts can span multiple employees AND
         // multiple weeks in one call — dedupe by (employeeId, weekStart) pair.
@@ -3410,7 +3425,8 @@ export async function shiftRoutes(app: FastifyInstance) {
 
       // Phase 76.5 (D-03, D-04) — saldo refresh per unique employee.
       // D-04: No p-limit cap — POOL_MAX=10 implicit bound; revisit if /bulk regresses >10%.
-      // D-10: Audit-log loop intentionally absent (separate audit-proof gap; out of 76.5 scope).
+      // D-10 (the audit-log gap this note used to describe) is closed by issue #341 — the
+      // per-shift CREATE audit now happens inside the transaction above, not here.
       const uniqueIds = Array.from(new Set(created.map((r) => r.employeeId)));
       const settled = await Promise.allSettled(
         uniqueIds.map((id) => updateOvertimeAccount(app, id)),

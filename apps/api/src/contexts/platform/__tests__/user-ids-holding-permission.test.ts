@@ -10,6 +10,11 @@
  * NOT filter `isActive` itself — every site keeps that filter (and every other filter) on its own
  * side; this test proves an inactive holder is still returned here.
  *
+ * Phase 355 (Issue #355): the facade DOES filter a departed holder — `Employee.exitDate` set and
+ * in the past — itself, through either path (a stored assignment or the D-08 fallback), because no
+ * site filtered `exitDate` on its own before this (the personal-data leak #355 reports). A holder
+ * whose `exitDate` is in the future (not yet effective) is unaffected.
+ *
  * No person names in fixtures (CLAUDE.md PII rule).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -35,7 +40,7 @@ async function createUserWithEmployee(
   app: FastifyInstance,
   tenantId: string,
   label: string,
-  options: { role?: Role; isActive?: boolean } = {},
+  options: { role?: Role; isActive?: boolean; exitDate?: Date } = {},
 ) {
   const s = uniqueSuffix(label);
   const passwordHash = await bcrypt.hash("test1234", 10);
@@ -55,6 +60,7 @@ async function createUserWithEmployee(
       firstName: label,
       lastName: "Test",
       hireDate: new Date("2024-01-01"),
+      exitDate: options.exitDate,
     },
   });
   return { user, employee };
@@ -135,6 +141,12 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
   let inactiveHolder: Awaited<ReturnType<typeof createUserWithEmployee>>;
 
   let dedupeHolder: Awaited<ReturnType<typeof createUserWithEmployee>>;
+
+  // Phase 355 (Issue #355): a departed ADMIN/MANAGER — active user, but `exitDate` in the past —
+  // must not be returned, via either the stored TENANT-scope assignment or the D-08 fallback.
+  let departedStoredAdmin: Awaited<ReturnType<typeof createUserWithEmployee>>;
+  let departedFallbackManager: Awaited<ReturnType<typeof createUserWithEmployee>>;
+  let futureExitAdmin: Awaited<ReturnType<typeof createUserWithEmployee>>;
 
   beforeAll(async () => {
     app = await getTestApp();
@@ -241,6 +253,29 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
     dedupeHolder = await createUserWithEmployee(app, tenantA.tenant.id, "DedupeHolder");
     await assignTenant(app, tenantA.tenant.id, dedupeHolder.user.id, SYSTEM_ROLE_IDS.ADMIN);
     await assignTenant(app, tenantA.tenant.id, dedupeHolder.user.id, customerRoleGranting.id);
+
+    // Phase 355 (Issue #355): departed (exitDate in the past), still active — a stored TENANT
+    // assignment and a D-08 fallback holder respectively.
+    departedStoredAdmin = await createUserWithEmployee(
+      app,
+      tenantA.tenant.id,
+      "DepartedStoredAdmin",
+      {
+        exitDate: new Date("2020-01-01"),
+      },
+    );
+    await assignTenant(app, tenantA.tenant.id, departedStoredAdmin.user.id, SYSTEM_ROLE_IDS.ADMIN);
+    departedFallbackManager = await createUserWithEmployee(
+      app,
+      tenantA.tenant.id,
+      "DepartedFallbackManager",
+      { role: "MANAGER", exitDate: new Date("2020-01-01") },
+    );
+    // A planned, not-yet-effective departure must still be a holder.
+    futureExitAdmin = await createUserWithEmployee(app, tenantA.tenant.id, "FutureExitAdmin", {
+      exitDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+    });
+    await assignTenant(app, tenantA.tenant.id, futureExitAdmin.user.id, SYSTEM_ROLE_IDS.ADMIN);
   });
 
   afterAll(async () => {
@@ -332,6 +367,33 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
       LEAVE_REQUEST_APPROVE,
     );
     expect(ids).toContain(inactiveHolder.user.id);
+  });
+
+  it("a departed holder (exitDate in the past) is NOT returned, stored assignment (Issue #355)", async () => {
+    const ids = await userIdsHoldingPermission(
+      app.prisma,
+      tenantA.tenant.id,
+      LEAVE_REQUEST_APPROVE,
+    );
+    expect(ids).not.toContain(departedStoredAdmin.user.id);
+  });
+
+  it("a departed holder (exitDate in the past) is NOT returned, D-08 fallback (Issue #355)", async () => {
+    const ids = await userIdsHoldingPermission(
+      app.prisma,
+      tenantA.tenant.id,
+      LEAVE_REQUEST_APPROVE,
+    );
+    expect(ids).not.toContain(departedFallbackManager.user.id);
+  });
+
+  it("a holder with a FUTURE exitDate (not yet departed) IS returned (Issue #355)", async () => {
+    const ids = await userIdsHoldingPermission(
+      app.prisma,
+      tenantA.tenant.id,
+      LEAVE_REQUEST_APPROVE,
+    );
+    expect(ids).toContain(futureExitAdmin.user.id);
   });
 
   it("an EIGENE key throws", async () => {

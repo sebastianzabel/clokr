@@ -622,6 +622,12 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
       salonIds: before!.salonIds,
       employeeIds: before!.employeeIds,
     });
+    // Issue #357 sub-fix A: deriveCompatRole now only considers TENANT-scoped assignments, so
+    // moving this assignment's scope from TENANT (Task2-1's create) to SALONS drops it out of
+    // compat-role consideration — the user's only assignment no longer grants a tenant-wide
+    // compat role, and User.role is rewritten from MANAGER to EMPLOYEE alongside the scope
+    // change, which the same audit-write records as an additional `compatRole` delta (D-29's
+    // "column change on the last write" — same audit row, not a separate one).
     expect(auditRow?.newValue).toEqual({
       userId: before!.userId,
       accessRoleId: before!.accessRoleId,
@@ -629,6 +635,7 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
       scopeType: "SALONS",
       salonIds: expectedSalonIds,
       employeeIds: [],
+      compatRole: { from: "MANAGER", to: "EMPLOYEE" },
     });
   });
 
