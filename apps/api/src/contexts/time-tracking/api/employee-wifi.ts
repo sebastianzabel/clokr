@@ -66,6 +66,7 @@ export async function employeeWifiRoutes(app: FastifyInstance) {
       const body = meWifiPatchSchema.parse(req.body);
       const employeeId = req.user.employeeId;
       const tenantId = req.user.tenantId;
+      if (!employeeId) return reply.code(401).send({ error: "Nicht authentifiziert" });
 
       const employee = await app.prisma.employee.findUnique({
         where: { id: employeeId, tenantId },

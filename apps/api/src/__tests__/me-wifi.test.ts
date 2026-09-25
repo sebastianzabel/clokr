@@ -1,3 +1,4 @@
+import { randomBytes, createHash } from "crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
@@ -9,6 +10,21 @@ describe("Employee self-service WiFi API", () => {
   // IDs created during tests — used for cross-test references and cleanup guards
   let device1Id: string;
 
+  async function createApiKey(tenantId: string, createdBy: string, scopes: string[]) {
+    const raw = `clk_${randomBytes(24).toString("hex")}`;
+    const row = await app.prisma.apiKey.create({
+      data: {
+        tenantId,
+        name: `mw-347-${Date.now().toString(36)}`,
+        keyHash: createHash("sha256").update(raw).digest("hex"),
+        keyPrefix: raw.slice(0, 8),
+        scopes,
+        createdBy,
+      },
+    });
+    return { raw, id: row.id };
+  }
+
   beforeAll(async () => {
     app = await getTestApp();
     data = await seedTestData(app, "mw");
@@ -16,6 +32,7 @@ describe("Employee self-service WiFi API", () => {
 
   afterAll(async () => {
     try {
+      await app.prisma.apiKey.deleteMany({ where: { tenantId: data.tenant.id } });
       await cleanupTestData(app, data.tenant.id);
     } catch (err) {
       console.error("Test cleanup failed:", err);
@@ -41,6 +58,22 @@ describe("Employee self-service WiFi API", () => {
         payload: { mac: "AA:BB:CC:DD:EE:FF" },
       });
       expect(res.statusCode).toBe(401);
+    });
+
+    it("Issue #347 — PATCH /me/wifi as an API key (no employeeId) → 401, same as its GET twin, not a 500", async () => {
+      const key = await createApiKey(data.tenant.id, data.adminUser.id, ["admin"]);
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: "/api/v1/employees/me/wifi",
+        headers: { authorization: `Bearer ${key.raw}`, "content-type": "application/json" },
+        payload: { wifiPresenceEnabled: true },
+      });
+
+      expect(res.statusCode).toBe(401);
+      expect(JSON.parse(res.body).error).toBe("Nicht authentifiziert");
+
+      await app.prisma.apiKey.delete({ where: { id: key.id } });
     });
   });
 
