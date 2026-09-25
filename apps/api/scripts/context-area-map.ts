@@ -89,6 +89,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/__tests__/neutrality/matrix-config.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: checked-in route specs and exclusions; test infra, no model
   "src/__tests__/neutrality/fixture.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: tenant-per-actor fixture across every context's models; test infra like setup.ts
   "src/__tests__/neutrality/cell-runner.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: injects one cell and reduces the response; test infra, no model
+  "src/__tests__/neutrality/external-stubs.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: mailer, storage and fetch stubs; test infra, no model
 
   // ── komposition — D-17: dashboard.ts/reports.ts unconditionally, plus pdf.ts (no model, no
   //    Fachregel, reports.ts's only caller); Phase 243 (D-01/D-13) adds activity.ts and

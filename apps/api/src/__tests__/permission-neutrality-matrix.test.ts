@@ -39,7 +39,7 @@
  *
  * ── Discriminating check (anti-vacuity for handler checks) ─────────────────────────────────────
  * A handler that decides by role itself is only covered if the request reaches that decision. For
- * every such GET route (`handlerCheck`) the EMPLOYEE and ADMIN records of the same variant must
+ * every such route (`handlerCheck`, reads and mutations alike) the EMPLOYEE and ADMIN records of the same variant must
  * differ; if they coincided, the request most likely failed before the check (e.g. a 400) and the
  * cell would prove nothing.
  *
@@ -54,9 +54,16 @@
  * first tenant — the matrix's first actor tenant on a freshly provisioned worker database
  * (`test:setup`), which is how every recording and verification of this file is run.
  *
+ * ── Cell order within an actor (Pitfall 4) ──────────────────────────────────────────────────────
+ * All `read` cells first, then all `mutate` cells, then the `self-destructive` cells (anything
+ * that deactivates, anonymizes or deletes the actor's own person or revokes its credentials) —
+ * so no mutation can change what a read cell sees and no self-destruction can change what a later
+ * cell of the same actor is allowed to do. Inside a phase the cells run in the DECLARATION order
+ * of `ROUTE_SPECS`, which is how the config orders creates and updates before deletes.
+ *
  * ── Side effects ────────────────────────────────────────────────────────────────────────────────
- * Object storage is replaced by an in-memory stub (avatars and § 9 documents are served from it)
- * and `fetch` fails deterministically, so no cell depends on MinIO or on an external API.
+ * Mailer, object storage and `fetch` are stubbed in both modes (`neutrality/external-stubs.ts`),
+ * so no cell depends on SMTP, MinIO or an external API, and none performs network I/O.
  */
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -77,6 +84,7 @@ import {
   type CellPhase,
 } from "./neutrality/matrix-config";
 import { buildActorTenant, cleanupMatrixExtras, type ActorFixture } from "./neutrality/fixture";
+import { installExternalStubs, type ExternalStubs } from "./neutrality/external-stubs";
 import {
   actorRunsVariant,
   runCell,
@@ -101,11 +109,13 @@ const MIN_REASON_LENGTH = 20;
 
 const derivedRoutes = deriveMatrixRoutes();
 
-/** Enabled routes in cell order: read first, then mutate, then self-destructive (Pitfall 4). */
+/** Enabled routes in cell order: read first, then mutate, then self-destructive (Pitfall 4);
+ * within a phase in the declaration order of `ROUTE_SPECS` (deterministic, and the config lists
+ * creates and updates before deletes). */
 const orderedRoutes = PHASE_ORDER.flatMap((phase) =>
-  Object.keys(ROUTE_SPECS)
-    .filter((route) => ROUTE_SPECS[route].phase === phase && PHASES_ENABLED.has(phase))
-    .sort(),
+  Object.keys(ROUTE_SPECS).filter(
+    (route) => ROUTE_SPECS[route].phase === phase && PHASES_ENABLED.has(phase),
+  ),
 );
 
 function cellKey(actor: ActorKind, route: string, variant: string): string {
@@ -120,7 +130,7 @@ const GLOBAL_LABELS: ReadonlyMap<string, string> = new Map([
 
 describe("permission neutrality matrix (Issue #75)", () => {
   let app: FastifyInstance;
-  let originalStorage: FastifyInstance["storage"] | undefined;
+  let stubs: ExternalStubs | undefined;
   const fixtures = new Map<ActorKind, ActorFixture>();
   const collected = new Map<string, CellResult>();
   let recording: Record<string, CellResult> | undefined;
@@ -150,20 +160,7 @@ describe("permission neutrality matrix (Issue #75)", () => {
     app = await getTestApp();
     vi.useFakeTimers({ now: PINNED_NOW, toFake: ["Date"] });
 
-    originalStorage = app.storage;
-    const stored = new Map<string, Buffer>();
-    app.storage = {
-      upload: async (path, buffer) => {
-        stored.set(path, buffer);
-      },
-      getBuffer: async (path) => stored.get(path) ?? Buffer.from("matrix-fixture-object"),
-      delete: async (path) => {
-        stored.delete(path);
-      },
-    };
-    vi.stubGlobal("fetch", async () => {
-      throw new Error("network access is disabled in the neutrality matrix");
-    });
+    stubs = installExternalStubs(app);
 
     for (const actor of ACTOR_ORDER.filter((a) => !FALLBACK_ACTORS.has(a))) {
       fixtures.set(actor, await buildActorTenant(app, actor));
@@ -190,8 +187,7 @@ describe("permission neutrality matrix (Issue #75)", () => {
 
   afterAll(async () => {
     vi.useRealTimers();
-    vi.unstubAllGlobals();
-    if (originalStorage) app.storage = originalStorage;
+    stubs?.restore();
     if (MODE === "record") {
       const cells = Object.fromEntries(
         [...collected.entries()].sort(([a], [b]) => a.localeCompare(b)),
@@ -331,8 +327,14 @@ describe("permission neutrality matrix (Issue #75)", () => {
     });
   }
 
+  describe("external effects", () => {
+    it("no cell reached a network host the stubs do not answer", () => {
+      expect(stubs?.unexpectedFetches ?? ["<stubs not installed>"]).toEqual([]);
+    });
+  });
+
   describe("discriminating check", () => {
-    it("every handler-check GET route separates the EMPLOYEE from the ADMIN record, or names why not", () => {
+    it("every handler-check route separates the EMPLOYEE from the ADMIN record, or names why not", () => {
       const checked = Object.entries(ROUTE_SPECS).filter(
         ([, spec]) => spec.handlerCheck !== undefined && PHASES_ENABLED.has(spec.phase),
       );

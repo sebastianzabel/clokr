@@ -59,8 +59,12 @@ export type Variant = "own" | "foreign" | "tenant" | "none";
 /** `read` cells run first, `mutate` cells after them, `self-destructive` cells last (Pitfall 4). */
 export type CellPhase = "read" | "mutate" | "self-destructive";
 
-/** The phases this plan runs. Plan 75b-03 widens it to the mutating phases. */
-export const PHASES_ENABLED: ReadonlySet<CellPhase> = new Set<CellPhase>(["read"]);
+/** The phases the matrix runs: all of them (plan 75b-03 widened it from `read`). */
+export const PHASES_ENABLED: ReadonlySet<CellPhase> = new Set<CellPhase>([
+  "read",
+  "mutate",
+  "self-destructive",
+]);
 
 /** Named per-route projections, recorded next to the id multiset (Pitfall 1: masking changes must
  * show as a cell difference, not hide behind equal ids). */
@@ -601,7 +605,37 @@ export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
   "POST /api/v1/shifts/templates": mutate(),
   "POST /api/v1/special-leave/rules": mutate(),
   "POST /api/v1/terminals": mutate(),
-  "POST /api/v1/time-entries": mutate(),
+  "POST /api/v1/time-entries": {
+    phase: "mutate",
+    // Handler check #33: a non-manager's `employeeId` is silently replaced by the own person,
+    // a manager's is honoured. Two different days, both inside the retro window and free of
+    // fixture entries, so the EMPLOYEE's foreign request can succeed for itself instead of
+    // colliding with its own-variant entry — the ids show whose entry was created.
+    variants: [
+      {
+        name: "own",
+        target: "own",
+        body: {
+          date: "2026-06-11",
+          startTime: "2026-06-11T06:00:00.000Z",
+          endTime: "2026-06-11T14:00:00.000Z",
+          breakMinutes: 30,
+        },
+      },
+      {
+        name: "foreign",
+        target: "foreign",
+        body: {
+          employeeId: "$foreign.employee",
+          date: "2026-06-12",
+          startTime: "2026-06-12T06:00:00.000Z",
+          endTime: "2026-06-12T14:00:00.000Z",
+          breakMinutes: 30,
+        },
+      },
+    ],
+    handlerCheck: true,
+  },
   "POST /api/v1/time-entries/:id/breaks": mutate({ id: "timeEntry.closed" }),
   "POST /api/v1/time-entries/:id/clock-out": mutate({ id: "timeEntry.open" }),
   "POST /api/v1/time-entries/clock-in": mutate(),
