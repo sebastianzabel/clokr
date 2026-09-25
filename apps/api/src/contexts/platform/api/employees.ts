@@ -6,6 +6,9 @@ import { Prisma, type Role } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
 import { hasPermission, permissionReach, requirePermission } from "../request-permissions";
 import { validatePassword, loadPasswordPolicy } from "../password-policy";
+import { accessContextFromRequest } from "../access-context"; // Phase 91b Plan 10 (#91), D-12/D-14
+import { resolveAccessReach } from "../facade/role-assignments"; // Phase 91b Plan 10 (#91), D-12/D-14
+import { isPersonMasterDataInScope, isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 10 (#91), D-10/D-12/D-14
 // eslint-disable-next-line no-restricted-imports -- E-4: creating an employee computes the pro-rata leave entitlement as a side effect. Disappears in Block 2 via employee-created/employee-changed events. ADR 0001 Eintrag H.
 import { calculateProRataVacation } from "../../absence/vacation-calc";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
@@ -359,6 +362,83 @@ async function applyRoleFromEmployeeForm(
   });
 }
 
+/**
+ * Phase 91b Plan 10 (Issue #91), D-12/D-14: enforces person-master-data scope on a single,
+ * already-tenant-checked employee row. Returns `true` when the caller may proceed; on a scope
+ * miss it writes the `SCOPE_ACCESS_DENIED` audit entry and sends the SAME 404 body the route
+ * already uses for a genuinely nonexistent id (never a distinguishable 403 — T-100-09), then
+ * returns `false` so the caller returns immediately. Mirrors `time-entries.ts`'s
+ * `enforceTimeEntryScope` shape. Callers pass their own EIGENE/self bypass decision — this
+ * function only decides scope, never ownership.
+ */
+async function enforcePersonScope(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  reply: import("fastify").FastifyReply,
+  employeeId: string,
+  permission: import("../permission-catalog").PermissionKey,
+  notFoundMessage: string,
+): Promise<boolean> {
+  const access = accessContextFromRequest(req);
+  const scopeReach = await resolveAccessReach(app.prisma, access, permission);
+  const inScope = await isPersonMasterDataInScope(
+    app.prisma,
+    req.user.tenantId,
+    scopeReach,
+    employeeId,
+  );
+  if (inScope) return true;
+  await app.audit({
+    userId: req.user.sub,
+    action: "SCOPE_ACCESS_DENIED",
+    entity: "Employee",
+    entityId: employeeId,
+    request: { ip: req.ip, headers: req.headers as Record<string, string> },
+  });
+  reply.code(404).send({ error: notFoundMessage });
+  return false;
+}
+
+/**
+ * Phase 91b Plan 10 (Issue #91), D-10/D-14: enforces Stammsalon-only scope for
+ * account-lifecycle/administrative actions on an employee (unlock, deactivate, reactivate,
+ * resend-invitation, anonymize/hard-delete) — deliberately NARROWER than {@link
+ * enforcePersonScope}'s D-12 rule (Stammsalon-OR-active-deployment): a manager at a salon where an
+ * employee is only temporarily DEPLOYED can see their basic identity data (D-12), but account
+ * state changes stay a HOME-salon manager's decision, mirroring the same distinction Plan 91b-09
+ * already drew for this exact permission's ACCOUNT_LOCKED notification narrowing
+ * (`platform/api/auth.ts`). Stichtag = today (a live administrative action, no other natural
+ * period).
+ */
+async function enforcePersonAdminScope(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  reply: import("fastify").FastifyReply,
+  employeeId: string,
+  permission: import("../permission-catalog").PermissionKey,
+  notFoundMessage: string,
+): Promise<boolean> {
+  const access = accessContextFromRequest(req);
+  const scopeReach = await resolveAccessReach(app.prisma, access, permission);
+  const inScope = await isStammsalonScopeMatch(
+    app.prisma,
+    req.user.tenantId,
+    scopeReach,
+    employeeId,
+    new Date(),
+  );
+  if (inScope) return true;
+  await app.audit({
+    userId: req.user.sub,
+    action: "SCOPE_ACCESS_DENIED",
+    entity: "Employee",
+    entityId: employeeId,
+    request: { ip: req.ip, headers: req.headers as Record<string, string> },
+  });
+  reply.code(404).send({ error: notFoundMessage });
+  return false;
+}
+
 export async function employeeRoutes(app: FastifyInstance) {
   // GET /api/v1/employees
   app.get("/", {
@@ -430,6 +510,26 @@ export async function employeeRoutes(app: FastifyInstance) {
       });
 
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+
+      // Phase 91b Plan 10 (Issue #91), D-12/D-14: a ZUGEWIESEN reach viewing someone else's
+      // profile may still be scoped to salons/persons — person master data is in scope under
+      // Stammsalon-TODAY OR an active DEPLOYMENT-TODAY at one of the reach's salons, OR a listed
+      // employeeId (D-12), never Stammsalon-only (D-10) — a temporarily deployed employee's basic
+      // identity data is visible to their current salon's manager too.
+      if (readReach === "ZUGEWIESEN" && user.employeeId !== id) {
+        if (
+          !(await enforcePersonScope(
+            app,
+            req,
+            reply,
+            id,
+            "employee:read:ZUGEWIESEN",
+            "Mitarbeiter nicht gefunden",
+          ))
+        ) {
+          return;
+        }
+      }
 
       return {
         ...employee,
@@ -745,6 +845,20 @@ export async function employeeRoutes(app: FastifyInstance) {
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
+      // Phase 91b Plan 10 (Issue #91), D-12/D-14: same person-master-data scope rule as GET /:id.
+      if (
+        !(await enforcePersonScope(
+          app,
+          req,
+          reply,
+          id,
+          "employee:update:ZUGEWIESEN",
+          "Mitarbeiter nicht gefunden",
+        ))
+      ) {
+        return;
+      }
+
       const updates: Record<string, unknown> = {};
       if (body.firstName !== undefined) updates.firstName = body.firstName;
       if (body.lastName !== undefined) updates.lastName = body.lastName;
@@ -1035,6 +1149,19 @@ export async function employeeRoutes(app: FastifyInstance) {
         });
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: account-lifecycle action, Stammsalon-only.
+      if (
+        !(await enforcePersonAdminScope(
+          app,
+          req,
+          reply,
+          id,
+          "employee:manage-access:ZUGEWIESEN",
+          "Mitarbeiter nicht gefunden",
+        ))
+      ) {
+        return;
+      }
 
       await app.prisma.user.update({
         where: { id: employee.userId },
@@ -1075,6 +1202,21 @@ export async function employeeRoutes(app: FastifyInstance) {
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: account-lifecycle action, Stammsalon-only —
+      // runs BEFORE the isActive branch below, so an out-of-scope employee's current state never
+      // leaks through a distinguishable 409 (T-100-09).
+      if (
+        !(await enforcePersonAdminScope(
+          app,
+          req,
+          reply,
+          id,
+          "employee:manage-access:ZUGEWIESEN",
+          "Mitarbeiter nicht gefunden",
+        ))
+      ) {
+        return;
       }
       if (!employee.user.isActive)
         return reply.code(409).send({ error: "Mitarbeiter ist bereits deaktiviert" });
@@ -1150,6 +1292,19 @@ export async function employeeRoutes(app: FastifyInstance) {
         });
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: same rule as deactivate above.
+      if (
+        !(await enforcePersonAdminScope(
+          app,
+          req,
+          reply,
+          id,
+          "employee:manage-access:ZUGEWIESEN",
+          "Mitarbeiter nicht gefunden",
+        ))
+      ) {
+        return;
+      }
       if (employee.user.isActive)
         return reply.code(409).send({ error: "Mitarbeiter ist bereits aktiv" });
 
@@ -1211,6 +1366,19 @@ export async function employeeRoutes(app: FastifyInstance) {
         });
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: same rule as unlock/deactivate/reactivate above.
+      if (
+        !(await enforcePersonAdminScope(
+          app,
+          req,
+          reply,
+          id,
+          "employee:manage-access:ZUGEWIESEN",
+          "Mitarbeiter nicht gefunden",
+        ))
+      ) {
+        return;
+      }
       if (employee.user.isActive) {
         return reply.code(409).send({ error: "Mitarbeiter hat Einladung bereits akzeptiert" });
       }
@@ -1270,6 +1438,20 @@ export async function employeeRoutes(app: FastifyInstance) {
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: DSGVO anonymization is an account-lifecycle
+      // action, same Stammsalon-only rule as unlock/deactivate/reactivate above.
+      if (
+        !(await enforcePersonAdminScope(
+          app,
+          req,
+          reply,
+          id,
+          "employee:anonymize:ZUGEWIESEN",
+          "Mitarbeiter nicht gefunden",
+        ))
+      ) {
+        return;
       }
 
       // Pre-fetch MinIO object paths BEFORE the tx (anonymizeEmployeeData nulls documentPath
@@ -1371,6 +1553,21 @@ export async function employeeRoutes(app: FastifyInstance) {
         where: { id, tenantId: req.user.tenantId },
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: same rule as the other account-lifecycle
+      // actions above — runs before the "already anonymized" state check so an out-of-scope
+      // employee's state never leaks (T-100-09).
+      if (
+        !(await enforcePersonAdminScope(
+          app,
+          req,
+          reply,
+          id,
+          "employee:anonymize:ZUGEWIESEN",
+          "Mitarbeiter nicht gefunden",
+        ))
+      ) {
+        return;
+      }
 
       // Must already be anonymized to be eligible for force-delete authorization
       if (employee.firstName !== "Gelöscht") {
@@ -1404,6 +1601,19 @@ export async function employeeRoutes(app: FastifyInstance) {
         include: { user: true },
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: same rule as hard-delete/authorize above.
+      if (
+        !(await enforcePersonAdminScope(
+          app,
+          req,
+          reply,
+          id,
+          "employee:anonymize:ZUGEWIESEN",
+          "Mitarbeiter nicht gefunden",
+        ))
+      ) {
+        return;
+      }
 
       // Guard: must be already anonymized — forceDelete does NOT bypass this rule
       if (employee.firstName !== "Gelöscht") {

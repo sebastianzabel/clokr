@@ -2927,6 +2927,34 @@ export async function leaveRoutes(app: FastifyInstance) {
       if (entitlementReach === null) {
         return reply.code(403).send({ error: "Forbidden" });
       }
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: leave-entitlement is Stammsalon-only, same rule
+      // as settings/vacation/:employeeId, Stichtag = Dec 31 of the queried year.
+      if (entitlementReach === "ZUGEWIESEN" && req.user.employeeId !== employeeId) {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "leave-entitlement:read:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            tenantId,
+            scopeReach,
+            employeeId,
+            new Date(Date.UTC(targetYear, 11, 31)),
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "LeaveEntitlement",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+      }
 
       // Resturlaub auto-übertragen falls nötig
       const vacTypeId = await ensureLeaveType(app.prisma, app.log, tenantId, "VACATION");

@@ -1,6 +1,9 @@
 import { FastifyInstance } from "fastify";
 import { requireAuth } from "../../../middleware/auth";
 import { permissionReach } from "../request-permissions";
+import { accessContextFromRequest } from "../access-context"; // Phase 91b Plan 10 (#91), D-12/D-14
+import { resolveAccessReach } from "../facade/role-assignments"; // Phase 91b Plan 10 (#91), D-12/D-14
+import { isPersonMasterDataInScope } from "../scope-filter"; // Phase 91b Plan 10 (#91), D-12/D-14
 import sharp from "sharp";
 
 const MAX_SIZE = 2 * 1024 * 1024; // 2 MB
@@ -42,6 +45,31 @@ export async function avatarRoutes(app: FastifyInstance) {
           });
         }
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
+      // Phase 91b Plan 10 (Issue #91), D-12/D-14: a ZUGEWIESEN reach uploading someone else's
+      // avatar may still be scoped to salons/persons — D-12 (Stammsalon-OR-active-deployment),
+      // same rule as `employees.ts` GET /:id, since a temporarily-deployed employee's avatar is
+      // (like their name) basic identity data.
+      if (avatarReach === "ZUGEWIESEN" && !isSelf) {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "employee:update-avatar:ZUGEWIESEN",
+        );
+        if (
+          !(await isPersonMasterDataInScope(app.prisma, req.user.tenantId, scopeReach, employeeId))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
       }
 
       const data = await req.file();
@@ -170,6 +198,29 @@ export async function avatarRoutes(app: FastifyInstance) {
           });
         }
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
+      // Phase 91b Plan 10 (Issue #91), D-12/D-14: same rule as POST above — runs before the
+      // "no avatar" check so an out-of-scope employee's avatar state never leaks (T-100-09).
+      if (avatarReach === "ZUGEWIESEN" && !isSelf) {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "employee:update-avatar:ZUGEWIESEN",
+        );
+        if (
+          !(await isPersonMasterDataInScope(app.prisma, req.user.tenantId, scopeReach, employeeId))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
       }
 
       // Unlike GET, DELETE keeps the 404 here: "nothing to delete" really is a failed
