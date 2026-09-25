@@ -3,11 +3,19 @@
  * guards/checks every call site uses instead of a legacy role.
  *
  * ── What a caller holds ──────────────────────────────────────────────────────────────────────
- * {@link effectiveGrants} computes, once per request, two sets of catalog keys plus the caller's
+ * {@link effectiveGrants} computes, once per request, three sets of catalog keys plus the caller's
  * own employee id:
  * - `zugewiesen`: ZUGEWIESEN keys, effective tenant-wide. Only a well-formed TENANT assignment
- *   feeds this set — SALONS/PERSONS scopes grant nothing tenant-wide until #91 enforces scopes at
- *   the API (D-09, fail closed).
+ *   feeds this set.
+ * - `zugewiesenAnyScope` (Phase 91b, Issue #91, D-05): ZUGEWIESEN keys granted by ANY well-formed
+ *   assignment — TENANT, or a non-empty SALONS/PERSONS scope. `hasPermission` gates a
+ *   PERSON-relation ZUGEWIESEN key (e.g. `time-entry:read:ZUGEWIESEN`) on THIS set — so a
+ *   SALONS/PERSONS assignment now passes the 403 gate for its own resource type, narrowed to its
+ *   actual scope downstream by the owning context's own `contexts/platform/scope-filter.ts` call
+ *   (Plan 91b-02), never by this module. A MANDANT-relation ZUGEWIESEN key (e.g.
+ *   `shift-config:manage:ZUGEWIESEN`) still gates on the narrower `zugewiesen` above — a
+ *   SALONS/PERSONS assignment never grants a tenant-wide resource; this completes 75b's D-09
+ *   ("SALONS/PERSONS scopes grant nothing tenant-wide"), it does not contradict it.
  * - `eigene`: EIGENE keys, from any well-formed assignment; they apply to `ownEmployeeId` only.
  *
  * Sources, in this order:
