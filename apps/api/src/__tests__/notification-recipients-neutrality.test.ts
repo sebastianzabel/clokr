@@ -71,6 +71,8 @@ import { executeLegacyRoleMigration } from "./legacy-role-migration-sql";
 import { LabelRegistry, cleanupMatrixExtras } from "./neutrality/fixture";
 import { installExternalStubs, type ExternalStubs } from "./neutrality/external-stubs";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
+import { runVocationalSchoolGeneration } from "../contexts/absence/vocational-school-generator";
+import { runCarryoverWarningOnce } from "../contexts/absence/plugins/carryover-warning";
 import { PERMISSIONS, permissionKey } from "../contexts/platform";
 import type { JwtPayload } from "../middleware/auth";
 
@@ -452,7 +454,41 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
     await createPerson(tenantR, "R.fallback.employee", { role: "EMPLOYEE" });
 
     // Everyone the missing-entries scan (#9) would otherwise report — every active, non-exited R
-    // person except the colleague, who is that site's subject.
+    // person except the colleague, who is that site's subject. The requester's two entries below
+    // count as well.
+    const requester = person("R.requester");
+    // #10: an open entry (no clock-out) older than the tenant's 14h auto-invalidate threshold.
+    const openEntry = await app.prisma.timeEntry.create({
+      data: {
+        employeeId: requester.employeeId,
+        date: day(DAY.recentEntry),
+        startTime: at(DAY.recentEntry, "07:00"),
+        endTime: null,
+        breakMinutes: 0,
+        source: "MANUAL",
+      },
+    });
+    registry.register("R.requester.openEntry", openEntry.id);
+    // #15: an entry whose break was inserted automatically (breakStatus AUTO), waivable.
+    const autoBreakEntry = await app.prisma.timeEntry.create({
+      data: {
+        employeeId: requester.employeeId,
+        date: day(DAY.autoBreakEntry),
+        startTime: at(DAY.autoBreakEntry, "07:00"),
+        endTime: at(DAY.autoBreakEntry, "15:00"),
+        breakMinutes: 30,
+        breakStatus: "AUTO",
+        source: "MANUAL",
+      },
+    });
+    registry.register("R.requester.autoBreakEntry", autoBreakEntry.id);
+    await app.prisma.break.create({
+      data: {
+        timeEntryId: autoBreakEntry.id,
+        startTime: at(DAY.autoBreakEntry, "11:00"),
+        endTime: at(DAY.autoBreakEntry, "11:30"),
+      },
+    });
     for (const label of [
       "R.admin",
       "R.manager",
@@ -497,6 +533,10 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
       if (!tenantId) continue;
       try {
         await deleteGlobalAuditRows(tenantId);
+        // The Nachtrag's time entry references its request (Restrict), so it goes first.
+        await app.prisma.timeEntry.deleteMany({
+          where: { employee: { tenantId }, retroRequestId: { not: null } },
+        });
         await cleanupMatrixExtras(app, tenantId);
         await cleanupTestData(app, tenantId);
       } catch (err) {
@@ -592,6 +632,391 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           registry.register("R.leaveRequest.new", JSON.parse(res.body).id as string);
         },
       );
+    });
+
+    it("#2 SECTION9_AU_PENDING_MANAGER — approving a SICK request inside approved leave (leave.ts review)", async () => {
+      // Actor: the active MANAGER approves; the site skips the actor.
+      const requester = person("R.requester");
+      const vacation = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: requester.employeeId,
+          leaveTypeId: vacationTypeR,
+          startDate: day(DAY.section9VacationStart),
+          endDate: day(DAY.section9VacationEnd),
+          days: 5,
+          status: "APPROVED",
+          reviewedBy: person("R.admin").userId,
+          reviewedAt: PINNED_NOW,
+        },
+      });
+      registry.register("R.leaveRequest.section9Vacation", vacation.id);
+      const sick = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: requester.employeeId,
+          leaveTypeId: sickTypeR,
+          startDate: day(DAY.section9Sick),
+          endDate: day(DAY.section9Sick),
+          days: 1,
+        },
+      });
+      registry.register("R.leaveRequest.section9Sick", sick.id);
+      await measureSite(
+        "#02 leave.ts PATCH /leave/requests/:id/review (section 9 detection)",
+        { type: "SECTION9_AU_PENDING_MANAGER", actor: "R.manager" },
+        async () => {
+          const res = await inject({
+            method: "PATCH",
+            url: `/api/v1/leave/requests/${sick.id}/review`,
+            authorization: bearer("R.manager", "MANAGER"),
+            payload: { status: "APPROVED" },
+          });
+          expect(res.statusCode, res.body).toBe(200);
+        },
+      );
+      const credit = await app.prisma.section9Credit.findFirstOrThrow({
+        where: { sickRequestId: sick.id },
+      });
+      registry.register("R.section9Credit", credit.id);
+    });
+
+    it("#3 SHIFT_LEAVE_CONFLICT — approving leave over a planned shift (leave.ts review)", async () => {
+      // Actor: the active MANAGER approves; the site does NOT skip the actor.
+      const requester = person("R.requester");
+      const shift = await app.prisma.shift.create({
+        data: {
+          employeeId: requester.employeeId,
+          salonId: salonR,
+          date: day(DAY.conflictLeave),
+          startTime: "08:00",
+          endTime: "16:00",
+        },
+      });
+      registry.register("R.shift.conflict", shift.id);
+      const leave = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: requester.employeeId,
+          leaveTypeId: vacationTypeR,
+          startDate: day(DAY.conflictLeave),
+          endDate: day(DAY.conflictLeave),
+          days: 1,
+        },
+      });
+      registry.register("R.leaveRequest.conflict", leave.id);
+      await measureSite(
+        "#03 leave.ts PATCH /leave/requests/:id/review (shift conflict)",
+        { type: "SHIFT_LEAVE_CONFLICT", actor: "R.manager" },
+        async () => {
+          const res = await inject({
+            method: "PATCH",
+            url: `/api/v1/leave/requests/${leave.id}/review`,
+            authorization: bearer("R.manager", "MANAGER"),
+            payload: { status: "APPROVED" },
+          });
+          expect(res.statusCode, res.body).toBe(200);
+        },
+      );
+    });
+
+    it("#4 SECTION9_AU_PENDING_MANAGER — POST /leave/section9/:id/reopen (leave.ts)", async () => {
+      // Actor: the active MANAGER reopens; the site skips the actor. Precondition: the § 9 case
+      // of #2, set to REJECTED directly (the rejection is not what this site is about).
+      const creditId = registry.idOf("R.section9Credit");
+      await app.prisma.section9Credit.update({
+        where: { id: creditId },
+        data: {
+          status: "REJECTED",
+          reason: "Keine AU vorgelegt",
+          reviewedBy: person("R.admin").userId,
+          reviewedAt: PINNED_NOW,
+        },
+      });
+      await measureSite(
+        "#04 leave.ts POST /leave/section9/:id/reopen",
+        { type: "SECTION9_AU_PENDING_MANAGER", actor: "R.manager" },
+        async () => {
+          const res = await inject({
+            method: "POST",
+            url: `/api/v1/leave/section9/${creditId}/reopen`,
+            authorization: bearer("R.manager", "MANAGER"),
+          });
+          expect(res.statusCode, res.body).toBe(200);
+        },
+      );
+    });
+
+    it("#5 SHIFT_BS_CLEANUP — runVocationalSchoolGeneration over a planned shift (vocational-school-generator.ts)", async () => {
+      // Actor: none (generator). A Tuesday school pattern for the requester and a future shift on
+      // the next Tuesday; the generator creates the school day and soft-deletes the shift.
+      const requester = person("R.requester");
+      const pattern = await app.prisma.employeeVocationalSchoolPattern.create({
+        data: {
+          employeeId: requester.employeeId,
+          dayOfWeek: 1,
+          daysOfWeek: [1],
+          blockWeeks: [],
+          validFrom: day("2026-06-01"),
+          isActive: true,
+        },
+      });
+      registry.register("R.vocationalSchoolPattern", pattern.id);
+      const shift = await app.prisma.shift.create({
+        data: {
+          employeeId: requester.employeeId,
+          salonId: salonR,
+          date: day(DAY.bsShift),
+          startTime: "08:00",
+          endTime: "16:00",
+        },
+      });
+      registry.register("R.shift.bsDay", shift.id);
+      await measureSite(
+        "#05 vocational-school-generator.ts runVocationalSchoolGeneration",
+        { type: "SHIFT_BS_CLEANUP", actor: "<generator>" },
+        async () => {
+          const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+            tenantId: tenantR,
+            weeksAhead: 4,
+          });
+          expect(result.created).toBeGreaterThan(0);
+          const after = await app.prisma.shift.findUniqueOrThrow({ where: { id: shift.id } });
+          expect(after.deletedAt).not.toBeNull();
+        },
+      );
+    });
+
+    it("#6 CARRYOVER_EXPIRING (admin CC) — runCarryoverWarningOnce (carryover-warning.ts)", async () => {
+      // Actor: none (cron). The colleague's carry-over expires in exactly 30 days (a default
+      // threshold); the colleague's own warning is the subject row, the CC goes to admins only.
+      const entitlement = await app.prisma.leaveEntitlement.create({
+        data: {
+          employeeId: person("R.colleague").employeeId,
+          leaveTypeId: vacationTypeR,
+          year: 2026,
+          totalDays: 30,
+          usedDays: 0,
+          carriedOverDays: 3,
+          carryOverDeadline: new Date(DAY.carryOverDeadline),
+        },
+      });
+      registry.register("R.colleague.entitlement", entitlement.id);
+      await measureSite(
+        "#06 carryover-warning.ts runCarryoverWarningOnce",
+        { type: "CARRYOVER_EXPIRING", actor: "<cron>", subjects: ["R.colleague"] },
+        async () => {
+          const result = await runCarryoverWarningOnce(app);
+          expect(result.warned).toBeGreaterThan(0);
+        },
+      );
+    });
+
+    it("#7 MONTH_CLOSE_BLOCKED — app.tryAutoCloseMonth (auto-close-month.ts)", async () => {
+      // Actor: none (cron). Tenant R forbids closing a gap month (closeMonthWithGapsAllowed:
+      // false), and nobody has entries in the first month after hiring, so every R person's
+      // month is deferred and the managers are told once.
+      await measureSite(
+        "#07 auto-close-month.ts tryAutoCloseMonth",
+        { type: "MONTH_CLOSE_BLOCKED", actor: "<cron>" },
+        async () => {
+          await app.tryAutoCloseMonth();
+        },
+      );
+    });
+
+    it("#8 MONTH_CLOSE_DEFERRED — app.remindDeferredMonthClose (deferred-month-close-reminder.ts)", async () => {
+      // Actor: none (cron). The months #7 deferred are past their window, so the escalation fires.
+      await measureSite(
+        "#08 deferred-month-close-reminder.ts remindDeferredMonthClose",
+        { type: "MONTH_CLOSE_DEFERRED", actor: "<cron>" },
+        async () => {
+          await app.remindDeferredMonthClose();
+        },
+      );
+    });
+
+    it("#9 MISSING_ENTRIES (manager copy) — app.tryMissingEntriesCheck (attendance-checker.ts)", async () => {
+      // Actor: none (cron). The colleague is the only active, non-exited R person without a
+      // recent entry; the colleague's own reminder is the subject row. The managers come from the
+      // scan's own employee list (active, exitDate null) filtered by role in memory.
+      await measureSite(
+        "#09 attendance-checker.ts checkMissingEntries",
+        { type: "MISSING_ENTRIES", actor: "<cron>", subjects: ["R.colleague"] },
+        async () => {
+          await app.tryMissingEntriesCheck();
+        },
+      );
+    });
+
+    it("#10 OPEN_ENTRY_INVALIDATED — app.tryAutoInvalidate (attendance-checker.ts)", async () => {
+      // Actor: none (cron). The requester's open entry from yesterday 07:00 is older than 14h;
+      // the requester's own row is the subject row, the owner is skipped among the managers.
+      await measureSite(
+        "#10 attendance-checker.ts autoInvalidateOpenEntries",
+        { type: "OPEN_ENTRY_INVALIDATED", actor: "<cron>", subjects: ["R.requester"] },
+        async () => {
+          await app.tryAutoInvalidate();
+          const entry = await app.prisma.timeEntry.findUniqueOrThrow({
+            where: { id: registry.idOf("R.requester.openEntry") },
+          });
+          expect(entry.isInvalid).toBe(true);
+        },
+      );
+    });
+
+    it("#11 PENDING_LEAVE_REMINDER — app.tryPendingLeaveReminder (attendance-checker.ts)", async () => {
+      // Actor: none (cron). One PENDING request older than the 48h threshold.
+      const stale = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: person("R.requester").employeeId,
+          leaveTypeId: vacationTypeR,
+          startDate: day(DAY.staleLeaveStart),
+          endDate: day(DAY.staleLeaveEnd),
+          days: 2,
+          createdAt: new Date(DAY.stalePendingCreatedAt),
+        },
+      });
+      registry.register("R.leaveRequest.stale", stale.id);
+      await measureSite(
+        "#11 attendance-checker.ts checkPendingLeaveRequests",
+        { type: "PENDING_LEAVE_REMINDER", actor: "<cron>" },
+        async () => {
+          await app.tryPendingLeaveReminder();
+        },
+      );
+    });
+
+    it("#12 GAP_WARNING_MANAGER — app.tryBeginningOfMonthGapReminder (attendance-checker.ts)", async () => {
+      // Actor: none (cron). Month-edge logic: the scan acts only on days 1-3 of a month, so the
+      // clock moves to 2 July for this trigger only; June has gap days for the R persons.
+      await measureSite(
+        "#12 attendance-checker.ts checkBeginningOfMonthGaps",
+        { type: "GAP_WARNING_MANAGER", actor: "<cron>" },
+        async () => {
+          vi.setSystemTime(new Date(DAY.beginningOfMonth));
+          try {
+            await app.tryBeginningOfMonthGapReminder();
+          } finally {
+            vi.setSystemTime(PINNED_NOW);
+          }
+        },
+      );
+    });
+
+    it("#13 RETRO_ENTRY_REQUESTED — POST /time-entries beyond the retro window (time-entries.ts)", async () => {
+      // Actor: the requester submits a Nachtrag with a reason; the site skips the target.
+      await measureSite(
+        "#13 time-entries.ts POST /time-entries (pending Nachtrag)",
+        { type: "RETRO_ENTRY_REQUESTED", actor: "R.requester" },
+        async () => {
+          const res = await inject({
+            method: "POST",
+            url: "/api/v1/time-entries",
+            authorization: bearer("R.requester", "EMPLOYEE"),
+            payload: {
+              date: DAY.retroTarget,
+              startTime: `${DAY.retroTarget}T07:00:00.000Z`,
+              endTime: `${DAY.retroTarget}T15:00:00.000Z`,
+              breakMinutes: 30,
+              reason: "Eintrag vergessen",
+            },
+          });
+          expect(res.statusCode, res.body).toBe(201);
+          const entry = (JSON.parse(res.body) as { entry: { id: string; retroRequestId: string } })
+            .entry;
+          registry.register("R.requester.retroEntry", entry.id);
+          registry.register("R.requester.retroRequest", entry.retroRequestId);
+        },
+      );
+    });
+
+    it("#14 RETRO_ENTRY_UPDATED — PUT own pending Nachtrag (time-entries.ts)", async () => {
+      // Actor: the requester edits the pending entry of #13; the site skips the actor.
+      await measureSite(
+        "#14 time-entries.ts PUT /time-entries/:id (own pending Nachtrag)",
+        { type: "RETRO_ENTRY_UPDATED", actor: "R.requester" },
+        async () => {
+          const res = await inject({
+            method: "PUT",
+            url: `/api/v1/time-entries/${registry.idOf("R.requester.retroEntry")}`,
+            authorization: bearer("R.requester", "EMPLOYEE"),
+            payload: {
+              startTime: `${DAY.retroTarget}T08:00:00.000Z`,
+              endTime: `${DAY.retroTarget}T16:00:00.000Z`,
+              breakMinutes: 30,
+            },
+          });
+          expect(res.statusCode, res.body).toBe(200);
+        },
+      );
+    });
+
+    it("#15 BREAK_COMPLIANCE_ALERT — PATCH /time-entries/:id/break-status waive (time-entries.ts)", async () => {
+      // Actor: the requester declares "durchgearbeitet" on the AUTO entry; the site skips the owner.
+      await measureSite(
+        "#15 time-entries.ts PATCH /time-entries/:id/break-status (waive)",
+        { type: "BREAK_COMPLIANCE_ALERT", actor: "R.requester" },
+        async () => {
+          const res = await inject({
+            method: "PATCH",
+            url: `/api/v1/time-entries/${registry.idOf("R.requester.autoBreakEntry")}/break-status`,
+            authorization: bearer("R.requester", "EMPLOYEE"),
+            payload: { action: "waive", reason: "Durchgearbeitet" },
+          });
+          expect(res.statusCode, res.body).toBe(200);
+        },
+      );
+    });
+
+    it("#16 RETRO_ENTRY_WITHDRAWN — DELETE /retro-entry-requests/:id (retro-entry-requests.ts)", async () => {
+      // Actor: the requester withdraws the pending request of #13; the site skips the actor.
+      await measureSite(
+        "#16 retro-entry-requests.ts DELETE /retro-entry-requests/:id",
+        { type: "RETRO_ENTRY_WITHDRAWN", actor: "R.requester" },
+        async () => {
+          const res = await inject({
+            method: "DELETE",
+            url: `/api/v1/retro-entry-requests/${registry.idOf("R.requester.retroRequest")}`,
+            authorization: bearer("R.requester", "EMPLOYEE"),
+          });
+          expect(res.statusCode, res.body).toBe(200);
+        },
+      );
+    });
+
+    it("#17 ACCOUNT_LOCKED — failed logins up to the tenant's max attempts (auth.ts, D-17)", async () => {
+      // Actor: an anonymous caller with the requester's e-mail and a wrong password, five times
+      // (TenantConfig.loginMaxAttempts default). The site notifies ADMINs only.
+      const { email } = await app.prisma.user.findUniqueOrThrow({
+        where: { id: person("R.requester").userId },
+        select: { email: true },
+      });
+      await measureSite(
+        "#17 auth.ts POST /auth/login (ACCOUNT_LOCKED)",
+        { type: "ACCOUNT_LOCKED", actor: "<anonymous>" },
+        async () => {
+          for (let attempt = 1; attempt <= 5; attempt++) {
+            const res = await inject({
+              method: "POST",
+              url: "/api/v1/auth/login",
+              payload: { email, password: `${FIXTURE_PASSWORD}-wrong` },
+            });
+            expect(res.statusCode, res.body).toBe(401);
+          }
+          const locked = await app.prisma.user.findUniqueOrThrow({
+            where: { id: person("R.requester").userId },
+            select: { lockedUntil: true },
+          });
+          expect(locked.lockedUntil).not.toBeNull();
+        },
+      );
+    });
+  });
+
+  describe("completeness", () => {
+    it("recorded all 17 recipient sites", () => {
+      expect([...collected.keys()].sort()).toHaveLength(17);
+      if (MODE === "verify") {
+        expect(Object.keys(recording ?? {}).sort()).toEqual([...collected.keys()].sort());
+      }
     });
   });
 });
