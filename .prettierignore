@@ -12,3 +12,8 @@ pnpm-lock.yaml
 # without lint-staged coverage; this exclusion keeps them consistent.
 charts/**/templates/*.yaml
 charts/**/templates/*.tpl
+
+# Phase 75b (Issue #75): the neutrality-matrix recording is written by the test itself, one cell
+# per line in code-point key order, so a diff names exactly the cells that changed. Prettier would
+# re-wrap it on commit and make the next RECORD run differ from the committed bytes.
+apps/api/src/__tests__/neutrality/recorded/

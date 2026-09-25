@@ -113,6 +113,17 @@ const MODE = process.env.NEUTRALITY_MATRIX_MODE === "record" ? "record" : "verif
 const ROLE_GUARD_DEFINITION = "export function requireRole";
 const AUTH_MIDDLEWARE = join(__dirname, "..", "middleware", "auth.ts");
 
+/**
+ * The recording file: `{ "cells": { ... } }` with the cell keys in code-point order (never
+ * `localeCompare`, whose order depends on the machine's ICU locale) and ONE CELL PER LINE, so a
+ * later diff of the file names exactly the cells that changed. Still plain JSON.
+ */
+function serializeRecording(cells: ReadonlyMap<string, CellResult>): string {
+  const keys = [...cells.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const lines = keys.map((key) => `    ${JSON.stringify(key)}: ${JSON.stringify(cells.get(key))}`);
+  return `{\n  "cells": {\n${lines.join(",\n")}\n  }\n}\n`;
+}
+
 /** The German refusal the leave self-approval lock answers with (leave.ts, AC-75-17). */
 const LEAVE_SELF_APPROVAL_LOCK = "Eigene Anträge können nicht selbst genehmigt werden";
 const DEFAULT_RECORDING = join(__dirname, "neutrality", "recorded", "matrix.json");
@@ -225,11 +236,8 @@ describe("permission neutrality matrix (Issue #75)", () => {
     vi.useRealTimers();
     stubs?.restore();
     if (MODE === "record" && setupComplete) {
-      const cells = Object.fromEntries(
-        [...collected.entries()].sort(([a], [b]) => a.localeCompare(b)),
-      );
       mkdirSync(dirname(RECORD_OUT), { recursive: true });
-      writeFileSync(RECORD_OUT, `${JSON.stringify({ cells }, null, 2)}\n`);
+      writeFileSync(RECORD_OUT, serializeRecording(collected));
       const serverErrors = [...collected.entries()].filter(([, r]) => r.status >= 500);
       if (serverErrors.length > 0) {
         console.warn(
