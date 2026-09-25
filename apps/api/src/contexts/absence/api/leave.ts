@@ -365,6 +365,11 @@ export async function leaveRoutes(app: FastifyInstance) {
         employeeId = body.employeeId;
         isOnBehalfOf = true;
       } else {
+        // Issue #359: the self-create path never checked leave-request:create:EIGENE at all — a
+        // caller with neither reach fell straight through to creating their own request.
+        if (!(await hasPermission(req, "leave-request:create:EIGENE"))) {
+          return reply.code(403).send({ error: "Forbidden" });
+        }
         employeeId = req.user.employeeId;
       }
       if (!employeeId) return reply.code(400).send({ error: "Kein Mitarbeiter-Profil" });

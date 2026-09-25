@@ -440,7 +440,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       if (!employeeId) return reply.code(400).send({ error: "Mitarbeiter nicht gefunden" });
       // D-04: only a caller holding time-entry:create:ZUGEWIESEN may clock in on behalf of
       // others; the self path still requires at least time-entry:create:EIGENE (issue #75, D-13).
-      const isOnBehalfOf = !!body.employeeId && body.employeeId !== user.employeeId;
+      // Issue #358: judged on the RESOLVED employeeId, not `body.employeeId` alone — a caller can
+      // reach a colleague's record just as well via `body.nfcCardId` (a physically readable UID),
+      // and the nfcCardId branch above already overwrote `employeeId` with that colleague's id.
+      const isOnBehalfOf = employeeId !== user.employeeId;
       const timeEntryCreateReach = await permissionReach(req, "time-entry:create");
       if (isOnBehalfOf && timeEntryCreateReach !== "ZUGEWIESEN") {
         return reply.code(403).send({ error: "Forbidden" });
@@ -552,6 +555,24 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
         return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      }
+
+      // Issue #346/#359: this route had NO ownership or permission check at all — any
+      // authenticated caller of the tenant, an EMPLOYEE included, could clock out a colleague's
+      // open entry, and a caller holding neither reach of `time-entry:update` could clock out
+      // even their own. Mirrors PUT/:id and DELETE/:id's ownership pattern (ZUGEWIESEN for a
+      // foreign entry, EIGENE otherwise), except the foreign-entry rejection reuses THIS route's
+      // own "Eintrag nicht gefunden" 404 (already used above for cross-tenant) instead of a 403 —
+      // deliberately indistinguishable from a non-existent id (T-100-09), decided in the PR that
+      // closed #346 because this check runs before any state of the entry is revealed.
+      const isOnBehalfOf = entry.employeeId !== req.user.employeeId;
+      const clockOutUpdateReach = await permissionReach(req, "time-entry:update");
+      if (isOnBehalfOf) {
+        if (clockOutUpdateReach !== "ZUGEWIESEN") {
+          return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+        }
+      } else if (clockOutUpdateReach === null) {
+        return reply.code(403).send({ error: "Forbidden" });
       }
 
       // Pre-guard: already-closed entry shortcuts to 409 without paying the lock cost.
@@ -929,6 +950,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // Feeds both the employeeId selection below and postIsCorrectionByManager (issue #75, D-13)
       const postCreateReach = await permissionReach(req, "time-entry:create");
       const isManager = postCreateReach === "ZUGEWIESEN";
+      // Issue #359: a caller holding neither time-entry:create:ZUGEWIESEN nor :EIGENE fell through
+      // to the self-create branch below with no rejection at all.
+      if (postCreateReach === null) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
 
       // Mitarbeiter ID ermitteln
       const employeeId =

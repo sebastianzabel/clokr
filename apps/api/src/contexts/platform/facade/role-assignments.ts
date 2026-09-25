@@ -285,6 +285,13 @@ export async function withRoleLockoutGuard<T>(
  * the permission", scoped to `tenantId`'s employees; it does not filter `isActive` itself, so an
  * inactive holder is still returned here — exactly what lets a site's own `isActive` filter (or
  * its absence) be the thing the neutrality recording actually exercises, per site.
+ *
+ * Issue #359: a tenant user who falls into the (b) fallback throws if the system role their
+ * `User.role` maps to is missing, instead of silently contributing nothing — the same fail-closed
+ * choice `loadSystemRole` in `request-permissions.ts` makes for every other permission decision.
+ * Before this fix a missing system-role row made this function answer a too-small (possibly
+ * empty) recipient list, so a notification would silently go to no one instead of surfacing the
+ * incomplete migration.
  */
 export async function userIdsHoldingPermission(
   db: Prisma.TransactionClient,
@@ -342,8 +349,19 @@ export async function userIdsHoldingPermission(
   const fallbackHolderIds = new Set<string>();
   for (const user of tenantUsers) {
     if (usersWithStoredAssignment.has(user.id)) continue;
-    const systemRole = systemRoleById.get(systemRoleIdForLegacyRole(user.role));
-    if (systemRole !== undefined && roleGrants(systemRole, permission)) {
+    const roleId = systemRoleIdForLegacyRole(user.role);
+    const systemRole = systemRoleById.get(roleId);
+    // Issue #359: a missing system-role row used to be treated as "grants nothing", so a
+    // notification recipient lookup silently returned an empty (or too-small) list — a
+    // request/leave/retro notification would go to no one instead of surfacing the misconfigured
+    // migration. `loadSystemRole` in request-permissions.ts throws on the same condition; mirror
+    // that here so both resolution paths fail the same way.
+    if (systemRole === undefined) {
+      throw new Error(
+        `userIdsHoldingPermission: system role ${roleId} is missing — the migration that inserts the system roles has not been applied`,
+      );
+    }
+    if (roleGrants(systemRole, permission)) {
       fallbackHolderIds.add(user.id);
     }
   }

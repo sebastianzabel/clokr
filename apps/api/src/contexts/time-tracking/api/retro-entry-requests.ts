@@ -98,8 +98,12 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
       const body = createRetroRequestSchema.parse(req.body);
       const user = req.user;
       // A caller without retro-request:create:ZUGEWIESEN silently falls back to their own
-      // employeeId below — no 403 (issue #75, D-13).
+      // employeeId below — no 403 (issue #75, D-13). A caller with NEITHER reach is rejected
+      // outright (issue #359 — this route never checked that at all before).
       const retroCreateReach = await permissionReach(req, "retro-request:create");
+      if (retroCreateReach === null) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
 
       // Resolve target employee: a caller holding retro-request:create:ZUGEWIESEN may submit for
       // someone else; everyone else always submits for themselves.

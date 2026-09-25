@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import type { Role } from "@clokr/db";
+import type { Prisma, Role } from "@clokr/db";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import { roleNameKey, normalizeRolePermissions } from "../access-role";
 import { DEFAULT_SALON_OPENING_HOURS } from "../facade/salons";
@@ -342,5 +342,25 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
     );
     expect(ids.filter((id) => id === dedupeHolder.user.id)).toHaveLength(1);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  // ── Issue #359 ───────────────────────────────────────────────────────────────
+  // A fallback-eligible user's system role used to be looked up with `Map.get`, and a miss just
+  // dropped that user from the result — a too-small (possibly empty) recipient list instead of a
+  // surfaced misconfiguration. A fake `db` (never `app.prisma`, never a real delete) mirrors the
+  // technique `request-permissions.test.ts` uses for the same failure mode in `loadSystemRole`, so
+  // no other test in this shared-fixture file is put at risk.
+  it("Issue #359: throws when the fallback's mapped system role is missing, instead of silently returning an empty list", async () => {
+    const fakeDb = {
+      roleAssignment: { findMany: async () => [] },
+      accessRole: { findMany: async () => [] }, // every system role row "missing"
+      user: {
+        findMany: async () => [{ id: "fake-user-id", role: "EMPLOYEE" as Role }],
+      },
+    } as unknown as Prisma.TransactionClient;
+
+    await expect(
+      userIdsHoldingPermission(fakeDb, tenantA.tenant.id, LEAVE_REQUEST_APPROVE),
+    ).rejects.toThrow(/system role .* is missing/);
   });
 });
