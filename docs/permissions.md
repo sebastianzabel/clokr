@@ -16,7 +16,12 @@ für den jetzt durchgesetzten Scope aktualisiert. Phase 76b (Issue #76) hat den 
 „Systemrollen-Templates" ergänzt, die Systemrollen-Prose auf sieben Rollen erweitert, die
 `role-assignment:manage:ZUGEWIESEN`- und `overtime:read:ZUGEWIESEN`-/`team-overview:read:ZUGEWIESEN`-Zeilen
 ergänzt und die Reichweiten-Zelle von `GET /time-entries` (Zeile `:890`) erweitert — ebenfalls ohne
-die übrigen Zeilennummern neu zu zählen.
+die übrigen Zeilennummern neu zu zählen. Phase 78b (Issue #78) hat den neuen Abschnitt „Vier-Augen-
+Kombination bei der Rollenzusammenstellung" ergänzt, die `role:manage`- und `audit-log:read`-Zeilen
+erweitert und die Zitate der Selbstgenehmigungs-Sperren in `leave.ts`/`retro-entry-requests.ts`
+sowie der `role-assignment:manage`-Prüfung in `roles.ts` neu gemessen; die Zeilenverschiebung, die
+der D-10-Fix (`fix(78b-02)`) in `time-entries.ts` ausgelöst hat, wurde bewusst NICHT neu gezählt
+(dieselbe Konvention wie bei 91b/76b oben).
 
 Alle Datei- und Zeilenangaben in diesem Dokument beziehen sich auf diesen Commit. Sie sind Belege,
 keine Wegbeschreibung — in einem späteren Stand kann die Zeile verschoben sein, die Zuordnung muss
@@ -169,9 +174,9 @@ Routen, die nur eine Anmeldung verlangen und auf die eigenen Daten filtern. `sal
 
 ### `audit-log` — Audit-Protokoll
 
-| Permission                  | erlaubt                                                                                                                            | erlaubt ausdrücklich nicht                                                                                                                                                                                               |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `audit-log:read:ZUGEWIESEN` | Das Audit-Protokoll des Mandanten lesen (`GET /audit-logs`, `GET /audit-logs/:id`) und den Audit-Feed der Aktivitätsansicht sehen. | Audit-Einträge ändern oder löschen — das erlaubt keine Permission; die Team-Ereignisse der Aktivitätsansicht (`team-overview:read`). Wirkt nur bei einer Zuweisung mit Scope Mandant (seit Phase 91b durchgesetzt, #91). |
+| Permission                  | erlaubt                                                                                                                            | erlaubt ausdrücklich nicht                                                                                                                                                                                                                                                                |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `audit-log:read:ZUGEWIESEN` | Das Audit-Protokoll des Mandanten lesen (`GET /audit-logs`, `GET /audit-logs/:id`) und den Audit-Feed der Aktivitätsansicht sehen. | Audit-Einträge ändern oder löschen — das erlaubt keine Permission, mechanisch geprüft durch `audit-log-immutability.test.ts` (#78); die Team-Ereignisse der Aktivitätsansicht (`team-overview:read`). Wirkt nur bei einer Zuweisung mit Scope Mandant (seit Phase 91b durchgesetzt, #91). |
 
 ### `holiday` — Feiertage und Schulferien
 
@@ -188,10 +193,10 @@ Routen, die nur eine Anmeldung verlangen und auf die eigenen Daten filtern. `sal
 
 ### `role` — Rollen
 
-| Permission               | erlaubt                                                                                                                                                                                                                                                  | erlaubt ausdrücklich nicht                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `role:read:ZUGEWIESEN`   | Die Rollen des Mandanten und die darin gebündelten Permissions lesen (Systemrollen und die eigenen Rollen): `GET /roles`, `GET /roles/:id`.                                                                                                              | Rollen anlegen oder ändern (`role:manage`); Rollen Personen zuweisen (`role-assignment:manage`). Wirkt nur bei einer Zuweisung mit Scope Mandant (seit Phase 91b durchgesetzt, #91).                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `role:manage:ZUGEWIESEN` | Rollen anlegen, ändern, kopieren und löschen, also Permissions zu Rollen bündeln: `POST /roles`, `PATCH /roles/:id`, `POST /roles/:id/copy`, `DELETE /roles/:id`; ändern einer eigenen Rolle, die der Aufrufer nicht selbst über eine Zuweisung innehat. | Rollen zuweisen (`role-assignment:manage`); die Sperren abschalten, die keine Permissions sind (Selbstgenehmigung, Vier-Augen-Regel) — sie gelten für jede Rolle (#78); Systemrollen ändern oder löschen — die sind gesperrt (409), nur Kopieren ist erlaubt; eine Rolle löschen, die noch Nutzern zugewiesen ist (409, #74); eine Rolle ändern, die der Aufrufer selbst über eine Zuweisung innehat — das könnte eigene Rechte erweitern, dafür prüft dieselbe Route zusätzlich `role-assignment:manage` (`roles.ts:271`, Issue #354, Fix MEDIUM). Wirkt nur bei einer Zuweisung mit Scope Mandant (seit Phase 91b durchgesetzt, #91). |
+| Permission               | erlaubt                                                                                                                                                                                                                                                  | erlaubt ausdrücklich nicht                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `role:read:ZUGEWIESEN`   | Die Rollen des Mandanten und die darin gebündelten Permissions lesen (Systemrollen und die eigenen Rollen): `GET /roles`, `GET /roles/:id`.                                                                                                              | Rollen anlegen oder ändern (`role:manage`); Rollen Personen zuweisen (`role-assignment:manage`). Wirkt nur bei einer Zuweisung mit Scope Mandant (seit Phase 91b durchgesetzt, #91).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `role:manage:ZUGEWIESEN` | Rollen anlegen, ändern, kopieren und löschen, also Permissions zu Rollen bündeln: `POST /roles`, `PATCH /roles/:id`, `POST /roles/:id/copy`, `DELETE /roles/:id`; ändern einer eigenen Rolle, die der Aufrufer nicht selbst über eine Zuweisung innehat. | Rollen zuweisen (`role-assignment:manage`); die Sperren abschalten, die keine Permissions sind (Selbstgenehmigung, Vier-Augen-Regel) — sie gelten für jede Rolle (#78); Systemrollen ändern oder löschen — die sind gesperrt (409), nur Kopieren ist erlaubt; eine Rolle löschen, die noch Nutzern zugewiesen ist (409, #74); eine Rolle ändern, die der Aufrufer selbst über eine Zuweisung innehat — das könnte eigene Rechte erweitern, dafür prüft dieselbe Route zusätzlich `role-assignment:manage` (`roles.ts:303`, Issue #354, Fix MEDIUM); eine Rolle mit der Vier-Augen-Kombination ohne ausdrückliche Bestätigung speichern (409 `FOUR_EYES_CONFIRMATION_REQUIRED`, #78). Wirkt nur bei einer Zuweisung mit Scope Mandant (seit Phase 91b durchgesetzt, #91). |
 
 **Systemrollen (umgesetzt mit #75):** Es gibt sieben Systemrollen: die drei aus #75 — Admin,
 Manager und Mitarbeiter — und, seit Phase 76b (#76), vier weitere Templates — Inhaber,
@@ -823,12 +828,15 @@ Zusammenstellung einer Rolle abschalten ließen — und genau das darf nicht geh
 Genehmigungs-Permission hat, bleibt an sie gebunden:
 
 - **Keine Selbstgenehmigung von Urlaubs- und Abwesenheitsanträgen** —
-  `contexts/absence/api/leave.ts:1005-1014`: Wer einen Antrag prüft, darf nicht der Antragsteller
+  `contexts/absence/api/leave.ts:1100-1108`: Wer einen Antrag prüft, darf nicht der Antragsteller
   sein.
 - **Keine Selbstgenehmigung von Zeitnachträgen** —
-  `contexts/time-tracking/api/retro-entry-requests.ts:264`: dieselbe Sperre für Zeitnachträge.
-- **Stornierung durch einen anderen Manager** — `contexts/absence/api/leave.ts:1017`: Eine
-  Stornierung genehmigt nie die Person, die sie beantragt hat.
+  `contexts/time-tracking/api/retro-entry-requests.ts:296-311` (zwei Prüfungen: über die
+  `employeeId` und, unabhängig davon, über die `userId`): dieselbe Sperre für Zeitnachträge.
+- **Stornierung durch einen anderen Manager** — `contexts/absence/api/leave.ts:1112-1116`
+  (nicht durch die Person, die die Stornierung beantragt hat) und `:1118-1121` (nicht durch die
+  Person, die die Abwesenheit ursprünglich genehmigt hat): Eine Stornierung genehmigt nie dieselbe
+  Person, die sie ausgelöst hat, gleich ob als Antragsteller oder als ursprünglicher Genehmiger.
 - **Vier-Augen-Regel bei der endgültigen Löschung** — `contexts/platform/api/employees.ts:1352`
   (Freigabe durch einen Administrator) und `:1435` (die Löschung prüft, dass die Freigabe von einem
   ANDEREN Administrator stammt und höchstens 15 Minuten alt ist): Innerhalb der Aufbewahrungsfrist
@@ -854,6 +862,43 @@ Genehmigungs-Permission hat, bleibt an sie gebunden:
   Abschnitt „Empfängersuchen“, nicht hier.
 - **Ein Superadmin oberhalb des Mandanten** — das ist #88.
 
+### Vier-Augen-Kombination bei der Rollenzusammenstellung
+
+Eine Rolle kann zugleich zwei Rechte bündeln, die einzeln unauffällig sind, zusammen aber die
+Trennung von Erfassung und Genehmigung aufheben: „Eigene Zeiten ändern“ (`time-entry:create:EIGENE`
+oder `time-entry:update:EIGENE` — eigene Zeiteinträge anlegen oder ändern) und „Zeiten genehmigen“
+(`retro-request:approve:ZUGEWIESEN` — heute die einzige Genehmigung fremder zeitbezogener Anträge).
+Wer beides in derselben Rolle hält, erfasst und genehmigt Arbeitszeiten mit derselben Rolle; die
+Trennung hängt dann allein an den Sperren gegen Selbstgenehmigung oben. Die Kombination ist EINMAL
+definiert, in `contexts/platform/four-eyes.ts` (`FOUR_EYES_COMBINATION`); eine künftige
+zeitbezogene Genehmigung, die zu „Zeiten genehmigen“ hinzukommt, wird dort ergänzt, nirgendwo sonst
+(kein generischer Regel-Motor, ADR 0002 Entscheidung 2).
+
+**Rollen-API (#73):** `POST /roles`, `PATCH /roles/:id` und `POST /roles/:id/copy` antworten mit
+409 und `code: "FOUR_EYES_CONFIRMATION_REQUIRED"`, wenn das Ergebnis der Speicherung beide Hälften
+hält und der vorherige Zustand sie nicht hielt. Ein Kopiervorgang zählt dabei immer als Neuanlage —
+auch das Kopieren einer bereits bestätigten Rolle verlangt eine eigene Bestätigung. Mit `confirm:
+true` im Request-Body geht die Speicherung durch, und der Audit-Eintrag der Rolle trägt zusätzlich
+`fourEyesWarningConfirmed: true`. Hält eine Rolle die Kombination bereits, oder ergibt die
+Speicherung sie nicht, wird `confirm: true` ignoriert und nicht vermerkt — keine erneute
+Bestätigung für eine bereits bestätigte oder unveränderte Kombination. Die bestehenden Prüfungen
+(Validierung, Namenskonflikt, Systemrolle, eigene Rolle #354, Lockout-Schutz) laufen zuerst und
+haben Vorrang, wenn mehrere zugleich zuträfen. Die Kontrolle erfolgt über den Code, nie über den
+Nachrichtentext. Die Oberfläche für diese Bestätigung ist #83.
+
+**Systemrollen:** Von den sieben Systemrollen halten nur Admin, Manager (#75 — rechteneutrale
+Altrolle: erfasst heute eigene Nachträge im Nachtragsfenster und genehmigt fremde Zeitnachträge,
+die Laufzeitsperre deckt das Risiko ab) und Inhaber (#76 — der arbeitende Inhaber erfasst eigene
+Zeiten und genehmigt die des Teams) die Kombination, jede mit eigener Begründung.
+`system-roles.test.ts` prüft alle sieben Systemrollen gegen eine explizite, begründete
+Ausnahmeliste — eine fehlende Ausnahme (eine Rolle hält die Kombination ohne Begründung) und eine
+tote Ausnahme (eine gelistete Rolle hält die Kombination nicht mehr) schlagen beide fehl.
+
+**Laufzeitsperren unverändert:** Die Sperren gegen Selbstgenehmigung oben ändern sich durch diese
+Kombination nicht und sind bewusst keine eigenen Permissions — für eine über die Rollen-API mit
+`confirm: true` bestätigte Kombinationsrolle bleiben sie in Kraft, geprüft in
+`four-eyes-runtime-locks.test.ts`.
+
 ## Pflege
 
 Dieses Dokument wird von drei Tests und einem Lint-Gate gegen den Code gehalten:
@@ -868,7 +913,10 @@ Dieses Dokument wird von drei Tests und einem Lint-Gate gegen den Code gehalten:
 - `apps/api/src/contexts/platform/__tests__/system-roles.test.ts` leitet die Permissions der drei
   Systemrollen aus der Spalte „heute“ ab und vergleicht sie mit `SYSTEM_ROLE_PERMISSIONS`; seit
   Phase 76b (D-14) prüft ein eigener Testblock im selben Datei zusätzlich die Tabelle im Abschnitt
-  „Systemrollen-Templates“ gegen `SYSTEM_ROLE_PERMISSIONS`/`SYSTEM_ROLE_IDS`/`SYSTEM_ROLE_NAMES`.
+  „Systemrollen-Templates“ gegen `SYSTEM_ROLE_PERMISSIONS`/`SYSTEM_ROLE_IDS`/`SYSTEM_ROLE_NAMES`;
+  seit Phase 78b (D-13) prüft ein weiterer, unabhängiger Testblock im selben Datei den Abschnitt
+  „Vier-Augen-Kombination bei der Rollenzusammenstellung“ gegen `FOUR_EYES_COMBINATION`,
+  `FOUR_EYES_CONFIRMATION_REQUIRED` und die Namen der Ausnahmeliste `FOUR_EYES_EXCEPTIONS`.
 - `lint:role-checks` (`apps/api/scripts/lint-role-checks.ts`, in CI und im Pre-Commit-Hook) schlägt
   fehl, wenn der Rollen-Guard oder ein Rollenvergleich außerhalb von
   `contexts/platform/compat-role.ts` zurückkommt.

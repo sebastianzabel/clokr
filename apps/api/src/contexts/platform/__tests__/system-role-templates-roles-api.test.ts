@@ -102,11 +102,15 @@ describe("System-role templates through the role API (Phase 76b, Issue #76)", ()
   });
 
   it("(AK-76b-1) copying the Inhaber template creates an editable customer role with identical permissions", async () => {
+    // Phase 78b (issue #78, D-04): the Inhaber template holds the four-eyes combination
+    // (changing one's own time entries plus approving time corrections) — copying it is a new
+    // creation and needs its own explicit confirmation, same as any other combination-creating
+    // save on the role API.
     const copyRes = await app.inject({
       method: "POST",
       url: `/api/v1/roles/${SYSTEM_ROLE_IDS.OWNER}/copy`,
       headers: { authorization: `Bearer ${dataA.adminToken}` },
-      payload: {},
+      payload: { confirm: true },
     });
     expect(copyRes.statusCode).toBe(201);
     const copy = JSON.parse(copyRes.body);

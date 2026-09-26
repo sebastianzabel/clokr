@@ -662,11 +662,15 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
 
         const action = body.status === "APPROVED" ? "RETRO_ENTRY_APPROVED" : "RETRO_ENTRY_REJECTED";
 
+        // D-09 / issue #78 (plan 78b-05, P-04): a decision changes an existing row, so both
+        // before and after are recorded here too, same as the coupled approve/reject branches
+        // above (`oldValue` param, set from the pre-decision `existing` row read earlier).
         await app.audit({
           userId: user.sub,
           action,
           entity: "RetroEntryRequest",
           entityId: id,
+          oldValue: existing,
           newValue: {
             requesterId: existing.employee.userId ?? existing.employeeId,
             approverId: user.sub,

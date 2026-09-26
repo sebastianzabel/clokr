@@ -114,6 +114,8 @@ describe("services/clock/audit-actor — integration (sub-req A / GH #215)", () 
 
   // ── Block A — Terminal API key on /nfc-punch (closes #215) ─────────────────
   it("Block A — /nfc-punch with Terminal API key → AuditLog.userId null + newValue.actor.type === 'TERMINAL' (closes #215)", async () => {
+    const beforeTs = new Date();
+
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/time-entries/nfc-punch",
@@ -138,6 +140,9 @@ describe("services/clock/audit-actor — integration (sub-req A / GH #215)", () 
     const newValue = audits[0].newValue as { actor?: { type?: string; terminalApiKeyId?: string } };
     expect(newValue.actor?.type).toBe("TERMINAL");
     expect(newValue.actor?.terminalApiKeyId).toBe(terminalApiKeyId);
+    // D-09: createdAt in the request window, and newValue non-null with the entry's startTime.
+    expect(audits[0].createdAt.getTime()).toBeGreaterThanOrEqual(beforeTs.getTime());
+    expect(audits[0].createdAt.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
   });
 
   // ── Block B — Programmatic API key (clk_-prefix) on /clock-in (Mode A) ─────
@@ -172,6 +177,8 @@ describe("services/clock/audit-actor — integration (sub-req A / GH #215)", () 
 
   // ── Block C — Cross-actor consistency: JWT path preserves legacy AuditLog.userId ─
   it("Block C — /clock-in with JWT → AuditLog.userId === JWT.sub, no actor embedding (legacy USER-path semantics preserved)", async () => {
+    const beforeTs = new Date();
+
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/time-entries/clock-in",
@@ -193,8 +200,89 @@ describe("services/clock/audit-actor — integration (sub-req A / GH #215)", () 
     // JWT-path: userId is set (NOT null), and the actor is NOT embedded in newValue (USER type
     // is the implicit default — only non-USER actors get embedded by emitClockAudit).
     expect(audits[0].userId).toBe(data.empUser.id);
-    const newValue = audits[0].newValue as { actor?: unknown };
+    const newValue = audits[0].newValue as { actor?: unknown; startTime?: unknown };
     // Legacy semantics preserved — USER actor not embedded
     expect(newValue.actor).toBeUndefined();
+    // D-09: createdAt in the request window, and newValue non-null with the entry's startTime.
+    expect(newValue).not.toBeNull();
+    expect(newValue.startTime).not.toBeUndefined();
+    expect(audits[0].createdAt.getTime()).toBeGreaterThanOrEqual(beforeTs.getTime());
+    expect(audits[0].createdAt.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
+  });
+
+  // ── Block D — /:id/clock-out with JWT (own entry) ──────────────────────────
+  it("Block D — /:id/clock-out with JWT → CLOCK_OUT row with userId, createdAt window, oldValue.endTime null, newValue.endTime set", async () => {
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const startTime = new Date(Date.now() - 2.5 * 60 * 60 * 1000); // 2.5h ago — clear of the 60s debounce
+    const openEntry = await app.prisma.timeEntry.create({
+      data: {
+        employeeId: data.employee.id,
+        date: today,
+        startTime,
+        source: "MANUAL",
+        salonId: data.salonId,
+      },
+    });
+
+    const beforeTs = new Date();
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/time-entries/${openEntry.id}/clock-out`,
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(200);
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: { entity: "TimeEntry", entityId: openEntry.id, action: "CLOCK_OUT" },
+    });
+    expect(audit).not.toBeNull();
+    expect(audit!.userId).toBe(data.empUser.id);
+    expect(audit!.createdAt.getTime()).toBeGreaterThanOrEqual(beforeTs.getTime());
+    expect(audit!.createdAt.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
+    expect((audit!.oldValue as { endTime?: unknown } | null)?.endTime).toBeNull();
+    expect((audit!.newValue as { endTime?: unknown } | null)?.endTime).not.toBeNull();
+  });
+
+  // ── Block E — NFC punch-out (toggle) with Terminal API key ─────────────────
+  it("Block E — NFC punch-out with Terminal API key → CLOCK_OUT row with userId null, actor.type TERMINAL, createdAt window, oldValue.endTime null, newValue.endTime set", async () => {
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const startTime = new Date(Date.now() - 2.5 * 60 * 60 * 1000); // 2.5h ago — clear of the 60s debounce
+    const openEntry = await app.prisma.timeEntry.create({
+      data: {
+        employeeId: data.employee.id,
+        date: today,
+        startTime,
+        source: "NFC",
+        salonId: data.salonId,
+      },
+    });
+
+    const beforeTs = new Date();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/time-entries/nfc-punch",
+      headers: { authorization: `Bearer ${terminalApiKey}` },
+      payload: { nfcCardId: NFC_CARD_ID },
+    });
+
+    expect(res.statusCode).toBe(200);
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: { entity: "TimeEntry", entityId: openEntry.id, action: "CLOCK_OUT" },
+    });
+    expect(audit).not.toBeNull();
+    expect(audit!.userId).toBeNull();
+    const newValue = audit!.newValue as { actor?: { type?: string }; endTime?: unknown };
+    expect(newValue.actor?.type).toBe("TERMINAL");
+    expect(newValue.endTime).not.toBeNull();
+    expect((audit!.oldValue as { endTime?: unknown } | null)?.endTime).toBeNull();
+    expect(audit!.createdAt.getTime()).toBeGreaterThanOrEqual(beforeTs.getTime());
+    expect(audit!.createdAt.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
   });
 });

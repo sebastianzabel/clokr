@@ -159,6 +159,15 @@ export {
   isSystemRoleId,
 } from "./system-roles";
 export type { SystemRoleSlot } from "./system-roles";
+// Phase 78b (#78): the four-eyes combination — a role that can both change its own holder's own
+// time entries and approve time corrections needs an explicit, audited confirmation on the role
+// API (#73); the error class, the message and the transition predicate stay module-internal
+// (`./four-eyes`), reached only by `api/roles.ts` in this same context.
+export {
+  FOUR_EYES_COMBINATION,
+  holdsFourEyesCombination,
+  FOUR_EYES_CONFIRMATION_REQUIRED,
+} from "./four-eyes";
 // Phase 75b (#75): the request-scoped permission resolver and the guards/checks every call site
 // uses instead of a legacy role (D-08..D-12, D-30), plus the ONE compat-role derivation (D-14).
 export {
