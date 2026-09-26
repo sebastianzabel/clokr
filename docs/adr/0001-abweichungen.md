@@ -1427,3 +1427,178 @@ dieselbe 404 (T-100-09). Schreibende Aufrufe (`POST /api/v1/holidays`) verlangen
 aktiven Salon weiterhin eine `salonId` (400 `SALON_REQUIRED`). Die beiden Web-Seiten, die ohne
 Salon fragen, zeigen bei mehreren Salons damit die Feiertage aller Salons, bis Block D (#82 ff.)
 eine Salonauswahl bringt.
+
+---
+
+## P — Salon-/Personen-Scope in der Datenzugriffsschicht durchgesetzt (Phase 91b, Issue #91)
+
+**Schwere: informativ. Nachtrag 2026-09-26 (Issue #91, Phase 91b) — Semantikänderung zweier
+Unterbau-Exporte nach ADR 0002, Entscheidung 7.**
+
+**Warum dieser Eintrag existiert:** Eintrag K (Phase 77b) legte den Zugriffskontext an und benannte
+ausdrücklich die eine Stelle, an der eine spätere Phase die Reichweite auf Salon oder Personen
+einschränken würde (`employeeScopeFor()`). Eintrag N (Phase 75b) stellte die Zugriffsentscheidung
+selbst von Rollen auf Permissions um, hielt aber ausdrücklich fest: „Keine Salon- oder
+Personengrenze an der API (#91). Eine Zuweisung mit Scope SALONS oder PERSONS gewährt in 75b
+mandantenweit nichts (D-09, fail-closed).“ Diese Phase vervollständigt genau das — sie widerspricht
+Eintrag N nicht, sie erfüllt seine eigene Vorhersage. Zwei Exporte von `contexts/platform/index.ts`
+ändern dabei ihre Bedeutung (`AccessReach`, die 403-Gate-Logik in `request-permissions.ts`) — eine
+Semantikänderung nach ADR 0002, Entscheidung 7, die hier nachgetragen wird. Ein Zufallsfund während
+der Ausführung (`## O` — Phase 71b, Bundesland/Feiertage pro Salon) belegte den nächsten freien
+Buchstaben bereits, bevor dieser Eintrag geschrieben wurde; er heißt deshalb P, nicht O, wie die
+Phase ursprünglich vorsah.
+
+### Was sich geändert hat
+
+- **`AccessReach` bekommt eine `scoped`-Variante** (`apps/api/src/contexts/platform/access-
+context.ts:61`): `{ kind: "scoped"; salonIds: readonly string[]; employeeIds: readonly string[] }`
+  — die Vereinigung jeder wohlgeformten `SALONS`-/`PERSONS`-Zuweisung, die die gefragte Permission
+  gewährt, niemals zwei getrennte Varianten (eine Person mit `SALONS`-Zuweisung auf Salon A UND
+  `PERSONS`-Zuweisung auf Mitarbeiter C erreicht „A ODER C“ in einer Anfrage).
+- **`resolveAccessReach(db, ctx, permission)`** (`facade/role-assignments.ts:168`) löst die
+  Reichweite je Permission auf, einschließlich des Alt-Rollen-Rückfalls (D-08 aus Phase 75b): Ein
+  Nutzer ganz ohne gespeicherte Zuweisung bekommt dieselbe implizite `TENANT`-Zuweisung, die
+  `userIdsHoldingPermission()` bereits kennt — ein während Plan 91b-01 gefundenes Risiko, im
+  Kontext/Research-Dokument nicht benannt: Ohne diesen Rückfall hätte jeder vor #91 migrierte Nutzer
+  ohne eigene Zuweisung in dem Moment JEDE Reichweite verloren, in dem irgendein Scope-Filter zum
+  ersten Mal lief (`resolve-access-reach.test.ts`, Mutationsnachweis M2).
+- **Das 403-Gate unterscheidet seit D-05 nach Bezug** (`request-permissions.ts:220-229`,
+  `hasPermission()`): Eine `MANDANT`-Ressource liest weiter nur die enge `zugewiesen`-Menge (nur
+  eine `TENANT`-Zuweisung gewährt sie, byte-gleich zu vorher); eine `PERSON`-Ressource liest jetzt
+  `zugewiesenAnyScope` — eine wohlgeformte `SALONS`- oder `PERSONS`-Zuweisung besteht das Gate
+  erstmals, die Zeilenfilterung entscheidet danach, was sie tatsächlich sieht.
+- **`contexts/platform/scope-filter.ts`** ist die eine Stelle, an der die Sichtbarkeitsregel einer
+  Ressource entschieden wird — ein Funktionspaar je Ressourcenzeile (D-07): `isTimeEntryInScope`/
+  `scopedTimeEntryIds` (:53/:93, D-09, Zeiteintrag: eigener Salon ODER Stammsalon am Eintragsdatum),
+  `resolveStammsalonScopedEmployeeIds`/`isStammsalonScopeMatch` (:144/:178, D-10, Urlaub/
+  Abwesenheit/Saldo/Exporte: Stammsalon-only, kein Salon-des-Eintrags-Rückfall),
+  `isShiftInScope`/`shiftScopeWhere` (:212/:228, D-11, Schicht: nur der eigene Salon der Schicht,
+  rein, kein `db`), `resolvePersonScopedEmployeeIds`/`isPersonMasterDataInScope` (:248/:297, D-12,
+  Mitarbeiter-Stammdaten: Stammsalon-HEUTE ODER aktiver Einsatzsalon-HEUTE).
+- **`SCOPE_ACCESS_DENIED`** ist eine neue, reine String-Audit-Aktion (keine Migration, D-02): Sie
+  wird nur geschrieben, wenn die zugrunde liegende Zeile wirklich existiert, aber außerhalb der
+  aufgelösten Reichweite liegt, und antwortet danach mit derselben 404, die die Route für eine
+  nirgends existierende Id ohnehin gibt (T-100-09-Orakel-Gleichheit).
+- **Drei bereits vor der Phase bestehende, ungescopte Routen sind geschlossen:** `GET
+/time-entries` und `GET /leave/requests` (im Issue benannt, D-09/D-10) sowie `GET /dashboard/
+overtime-overview` (ein eigener Fund dieser Phase, Plan 91b-06, `composition/dashboard.ts:862` —
+  vor der Phase ohne jede Scope-Einschränkung).
+- **`homeSalonAt(db, tenantId, employeeId, date)`** (`facade/salon-assignments.ts:296`) ist die eine
+  Stammsalon-zu-einem-Stichtag-Grundfunktion, absichtlich NICHT `salonForDay()` (die zusätzlich
+  Wochentag/Einsatzsalon abgleicht — eine andere Frage als „wo ist der Stammsalon an diesem Tag“).
+- **`scopedTimeEntryIds()`** (`scope-filter.ts:93`) ist die einzige der acht Funktionen, die eine
+  parametrisierte Roh-SQL-Abfrage braucht: Ein reiner Prisma-`where` kann den
+  Stammsalon-ODER-Zweig nicht ausdrücken, weil er `TimeEntry.date` (die eigene Spalte der ZEILE)
+  gegen `EmployeeSalonAssignment.validFrom`/`validUntil` (eine SCHWESTERTABELLE) vergleichen müsste
+  — Prisma kennt keinen relationalen Filter, der auf ein Feld DERSELBEN Zeile Bezug nimmt.
+- **17 Empfängersuchen sind über EINEN gemeinsamen Helfer eingeschränkt** —
+  `resolveScopedHolderIds(db, tenantId, candidateUserIds, permission, isInScope)`
+  (`facade/role-assignments.ts:538`): Eine `wholeTenant`-Reichweite wird IMMER behalten, unabhängig
+  vom `isInScope`-Callback — im Helfer selbst erzwungen, nie einem einzelnen Callback überlassen.
+
+### Was bewusst NICHT geschah
+
+- **Keine Oberfläche** (#83–#86, durch diese Phase blockiert gewesen).
+- **Keine Härtung der Mandantengrenze** (#226, unverändert seit Eintrag K).
+- **Keine Scope-Einschränkung unter dem Mandanten für API-Schlüssel** (D-04, unverändert seit Phase
+  75b): Ein API-Schlüssel bleibt mandantenweit, ungeachtet einer eventuellen künftigen
+  Personen-/Salon-Zuweisung auf sein zugehöriges Systemkonto.
+- **`GET /dashboard/overtime-trend`s fehlendes Permission-Gate** (`composition/dashboard.ts:1433`,
+  `preHandler: requireAuth` ohne jede Permission-Prüfung) ist ein eigener, VORBESTEHENDER Fund
+  (Plan 91b-06) — keine fehlende Scope-Einschränkung, sondern ein fehlendes Gate überhaupt (jeder
+  angemeldete Mitarbeiter sieht heute den mandantenweiten Überstunden-Trend). Absichtlich NICHT in
+  dieser Phase mitkorrigiert: Das Vermischen eines Gate-Funds mit einer Scope-Phase hätte den
+  rechteneutralen Charakter dieser Phase verlassen — ein neues Gate ändert, WER überhaupt zugreifen
+  darf, nicht nur WELCHE Zeilen ein bereits berechtigter Zugriff sieht.
+- **`carryover-warning.ts`s `leave-config:manage`-Empfängersuche braucht keine Änderung**
+  (Plan 91b-09): `leave-config` hat Bezug `MANDANT` (`permission-catalog.ts:94`) — eine
+  `SALONS`-/`PERSONS`-Zuweisung kann diese Permission wegen D-05 strukturell nie gewähren, jeder
+  Halter, den `userIdsHoldingPermission()` zurückgibt, hält sie bereits mandantenweit.
+
+### Übergangs- und Randregeln
+
+- **`employeeScopeFor()` wirft bei einer gescopten Reichweite ohne Ziel** (D-06,
+  `access-context.ts:148-151`): „a scoped reach has no tenant-wide EmployeeScope — resolve an
+  explicit employeeId/employeeIds set via contexts/platform/scope-filter.ts first“. Eine
+  `wholeTenant`-Reichweite ohne Ziel ergibt weiterhin `{ kind: "tenant", tenantId }` (unverändert).
+- **Mitarbeiter-Stammdaten prüfen nur den GÜLTIGKEITSZEITRAUM, nie den Wochentag** (D-12, Plan
+  91b-02s eigene, dokumentierte Entscheidung): Ein Einsatzsalon zählt an jedem Tag innerhalb seines
+  `validFrom`/`validUntil`-Fensters, auch an einem Wochentag, an dem laut `weekdays` gar nicht dort
+  gearbeitet wird — die Frage ist „ist diese Zuordnung heute aktiv“, nicht „arbeitet die Person
+  heute dort“.
+- **Der Stichtag für `GET /leave/requests`s allgemeine Liste ist HEUTE** (Plan 91b-04s eigene,
+  dokumentierte Entscheidung), obwohl die Route keinen eigenen Zeitraum kennt — dieselbe
+  Vereinfachung, die D-10 für jede andere Stichtag-lose Listenroute dieser Phase trifft.
+- **Ein wiederkehrendes AND-Array-Muster beim Kombinieren zweier Filter auf demselben Feld**
+  (mehrfach gefunden und behoben, u. a. `leave.ts:879`, `vocational-school.ts`, `reports.ts`s
+  `GET /monthly`, die `getTeamLeaveSubmissions`-Fassade): Ein client-seitig gesetzter expliziter
+  Filter (z. B. ein `?employeeId=`) und der aufgelöste Scope-Filter dürfen niemals als zwei Schlüssel
+  desselben Feld-Namens in einem Objekt-Spread stehen — der später gespreizte Schlüssel überschreibt
+  den früheren still. Das eigentliche Muster ist `AND: [...(x ? [{...}] : []), ...(y ? [{...}] : [])]`,
+  nie ein Objekt-Spread mit demselben Feld zweimal.
+- **`getTeamLeaveSubmissions()`** (`contexts/absence/facade/leave-requests.ts:568`) bekam einen
+  optionalen fünften Parameter `employeeIds?: string[]` (Plan 91b-07) — der erste Entwurf hätte den
+  bestehenden `excludeEmployeeId`-Filter durch das AND-Array-Muster oben still überschrieben und den
+  aufrufenden Manager wieder in sein eigenes „Team“-Feed aufgenommen, gefangen VOR der Auslieferung.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** `time-entries.ts` (Liste + Einzelrouten, D-09), `retro-entry-requests.ts`
+  (D-10, RetroEntryRequest hat kein eigenes `salonId`), `attendance-checker.ts` (vier
+  Cron-Empfängersuchen, D-17) scopen jetzt; die Vier-Augen- und Selbstgenehmigungs-Sperren bleiben
+  unverändert.
+- **Abwesenheiten:** `leave.ts`, `vocational-school*.ts`, `leave-settings.ts` scopen jetzt
+  (D-09/D-10); `LeaveRequest`/`Section9Credit` bleiben Stammsalon-only, `carryover-warning.ts`
+  bleibt unverändert (MANDANT-Bezug).
+- **Schichtplanung:** `shifts.ts` (D-11, sieben Routen inkl. `GET /week`s Drei-Resolver-Aufteilung),
+  `salon-assignments.ts` (D-10/D-12) scopen jetzt; `shift-config:manage` bleibt unverändert
+  (MANDANT-Bezug).
+- **Arbeitszeitkonto:** `overtime.ts` (D-10, alle Einzelrouten), `auto-close-month.ts`/
+  `deferred-month-close-reminder.ts` (D-10/D-17, tenantweite Aggregate über mehrere Mitarbeiter,
+  EIN Stichtag je Lauf) scopen jetzt.
+- **Kompositionsschicht:** `dashboard.ts` (D-09/D-10/D-13, `GET /team-week`/`/today-attendance`/
+  `/overtime-overview`), `reports.ts` (D-10, zehn Routen) scopen jetzt; `overtime-trend`s fehlendes
+  Gate ist ein eigener, unkorrigierter Fund (siehe oben).
+- **Unterbau:** trägt `access-context.ts`, `scope-filter.ts`, die Gate-Änderung in
+  `request-permissions.ts`, `resolveScopedHolderIds()` und die neuen Routen in `employees.ts`/
+  `avatars.ts`/`availability.ts`/`shift-patterns.ts`/`settings.ts` (D-10/D-12, vorher OHNE jede
+  Zeilenfilterung — ein während Plan 91b-10 gefundener, größerer Nachholbedarf, als die
+  Ausgangsliste des Issues vermuten ließ).
+
+### Gemessen
+
+- **`requireRole(` außerhalb `compat-role.ts`:** 0 vorher, 0 nachher (unverändert, kein
+  Rollenvergleich kam durch diese Phase zurück).
+- **`CROSS_TENANT_ACCESS_DENIED`:** 51 Vorkommen in 15 Produktionsdateien, vorher und nachher
+  unverändert — diese Phase ändert keine bestehende Mandantengrenzen-Prüfung.
+- **`SCOPE_ACCESS_DENIED`:** 0 vorher, 49 Vorkommen in 15 Produktionsdateien nachher (neu, diese
+  Phase).
+- **`userIdsHoldingPermission(`-Aufrufstellen** (außerhalb der Fassade selbst): 17 vorher, 17
+  nachher — nur das VERHALTEN jeder Stelle änderte sich (D-17 engt die Empfängermenge ein, fügt
+  keine Aufrufstelle hinzu und entfernt keine).
+- **T-100-09-Sonde:** 46 `probe`-Routen vor und nach dieser Phase (unverändert); 33 davon
+  mitarbeiterbezogen (`t100-09-oracle-probe.test.ts`s Scope-Sonde, Plan 91b-10), 31 davon jetzt
+  scope-geprüft, 2 ausdrücklich ausgenommen (EIGENE-only bzw. kein Permission-Gate).
+- **`measure-context-boundary-imports.ts --check 0`:** 56 Ausnahmen/0 Arbeitslast vor und nach
+  dieser Phase unverändert.
+- **`measure-context-boundary-imports.ts --cycles --check 22`:** 22 Module/1 Komponente vor und
+  nach dieser Phase unverändert.
+- **Testzahlen** (Reporter, voller API-Lauf, nach dem Merge von `origin/main` `fbf8047b`): 361
+  Dateien / 6202 Fälle (6199 bestanden, 3 übersprungen), gegenüber dem Stand vor dieser Phase
+  (`40d8cdf2`, Basis dieses Branches) — die Zunahme stammt teils aus `origin/main`s eigenen neuen
+  Testdateien (Bundesland/Feiertage pro Salon, Phase 71b), teils aus den in dieser Phase neu
+  geschriebenen Scope-Tests.
+
+### Nachrechnen
+
+```bash
+grep -rn "requireRole(" apps/api/src --include="*.ts" | grep -v compat-role.ts | grep -v __tests__ | wc -l
+grep -rn "CROSS_TENANT_ACCESS_DENIED" apps/api/src --include="*.ts" | grep -v __tests__ | wc -l
+grep -rn "SCOPE_ACCESS_DENIED" apps/api/src --include="*.ts" | grep -v __tests__ | wc -l
+grep -rn "userIdsHoldingPermission(" apps/api/src --include="*.ts" | grep -v __tests__ | grep -v "facade/role-assignments.ts" | wc -l
+pnpm --filter @clokr/api run lint:tenant-scoping
+pnpm --filter @clokr/api run lint:t100-09-routes --check
+pnpm --filter @clokr/api exec tsx scripts/measure-context-boundary-imports.ts --check 0
+pnpm --filter @clokr/api exec tsx scripts/measure-context-boundary-imports.ts --cycles --check 22
+pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api test:coverage
+```
