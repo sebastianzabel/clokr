@@ -1059,5 +1059,120 @@ describe("Role bridge: employee form, compat column and fallback materialization
         expect(after).toEqual(before);
       },
     );
+
+    // Phase 76b Plan 08, Task 2: a genuine role change (a value that DIFFERS from the column)
+    // still runs the bridge exactly as before D-16.
+    it("(c1) a genuine change on a migrated legacy user still runs the bridge: DELETE the Mitarbeiter row, CREATE Manager, compatRole recorded", async () => {
+      const target = await templatePerson("Echt Migriert");
+      await executeLegacyRoleMigration(app.prisma);
+      const before = await roleAssignmentAudits(target.user.id);
+
+      const res = await patchEmployee(tenant.adminToken, target.employee.id, {
+        role: "MANAGER",
+        firstName: "Echt Geaendert",
+      });
+      expect(res.statusCode).toBe(200);
+
+      const audits = await newAuditsSince(target.user.id, before);
+      expect(audits).toHaveLength(2);
+      const deleted = audits.find((row) => row.action === "DELETE")!;
+      const created = audits.find((row) => row.action === "CREATE")!;
+      expect(deleted.oldValue).toMatchObject({
+        accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE,
+        roleName: "Mitarbeiter",
+      });
+      expect(created.newValue).toMatchObject({
+        accessRoleId: SYSTEM_ROLE_IDS.MANAGER,
+        roleName: "Manager",
+        scopeType: "TENANT",
+        compatRole: { from: "EMPLOYEE", to: "MANAGER" },
+      });
+      for (const row of audits) expect(row.userId).toBe(tenant.adminUser.id);
+
+      const rows = await storedAssignments(tenant.tenant.id, target.user.id);
+      expect(rows.map((row) => [row.accessRoleId, row.scopeType])).toEqual([
+        [SYSTEM_ROLE_IDS.MANAGER, "TENANT"],
+      ]);
+      expect(await columnRole(target.user.id)).toBe("MANAGER");
+      expect(
+        (await app.prisma.employee.findUniqueOrThrow({ where: { id: target.employee.id } }))
+          .firstName,
+      ).toBe("Echt Geaendert");
+    });
+
+    it("(c2) a genuine change on an HR + Mitarbeiter holder replaces only the legacy row; the HR row survives untouched (P-01, production-shaped)", async () => {
+      const target = await templatePerson("Echt Personalabteilung");
+      await grant(target.user.id, SYSTEM_ROLE_IDS.HR);
+      const rowsAfterGrant = await storedAssignments(tenant.tenant.id, target.user.id);
+      const hrRow = rowsAfterGrant.find((row) => row.accessRoleId === SYSTEM_ROLE_IDS.HR)!;
+      const mitarbeiterRow = rowsAfterGrant.find(
+        (row) => row.accessRoleId === SYSTEM_ROLE_IDS.EMPLOYEE,
+      )!;
+      expect(await columnRole(target.user.id)).toBe("MANAGER");
+      const before = await roleAssignmentAudits(target.user.id);
+
+      const res = await patchEmployee(tenant.adminToken, target.employee.id, { role: "ADMIN" });
+      expect(res.statusCode).toBe(200);
+
+      const audits = await newAuditsSince(target.user.id, before);
+      expect(audits.map((row) => row.action).sort()).toEqual(["CREATE", "DELETE"]);
+      const deleted = audits.find((row) => row.action === "DELETE")!;
+      const created = audits.find((row) => row.action === "CREATE")!;
+      expect(deleted.entityId).toBe(mitarbeiterRow.id);
+      expect(created.newValue).toMatchObject({
+        accessRoleId: SYSTEM_ROLE_IDS.ADMIN,
+        roleName: "Admin",
+        compatRole: { from: "MANAGER", to: "ADMIN" },
+      });
+      for (const audit of audits) {
+        expect(audit.entityId).not.toBe(hrRow.id);
+        expect(audit.oldValue?.accessRoleId).not.toBe(SYSTEM_ROLE_IDS.HR);
+        expect(audit.newValue?.accessRoleId).not.toBe(SYSTEM_ROLE_IDS.HR);
+      }
+
+      const rows = await storedAssignments(tenant.tenant.id, target.user.id);
+      expect(rows.find((row) => row.id === hrRow.id)).toEqual(hrRow);
+      expect(rows.map((row) => row.accessRoleId).sort()).toEqual(
+        [SYSTEM_ROLE_IDS.ADMIN, SYSTEM_ROLE_IDS.HR].sort(),
+      );
+      expect(await columnRole(target.user.id)).toBe("ADMIN");
+    });
+
+    it("(c3) the role-assignment:manage gate still fires for an unchanged role — D-16 does not relax it", async () => {
+      const caller = await createPerson(tenant.tenant.id, "Echt Stammdaten Pflege", "EMPLOYEE");
+      const target = await templatePerson("Echt Stammdaten Ziel");
+      const name = `Echt Bruecke Stammdaten ${crypto.randomBytes(3).toString("hex")}`;
+      const updateOnly = await app.prisma.accessRole.create({
+        data: {
+          tenantId: tenant.tenant.id,
+          name,
+          nameKey: roleNameKey(name),
+          permissions: normalizeRolePermissions(["employee:update:ZUGEWIESEN"]),
+        },
+      });
+      await app.prisma.roleAssignment.create({
+        data: {
+          tenantId: tenant.tenant.id,
+          userId: caller.user.id,
+          accessRoleId: updateOnly.id,
+          scopeType: "TENANT",
+          salonIds: [],
+          employeeIds: [],
+        },
+      });
+      const { accessToken } = await login(caller.email);
+
+      const res = await patchEmployee(accessToken, target.employee.id, {
+        role: "EMPLOYEE",
+        firstName: "Echt Verboten",
+      });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body)).toEqual({ error: "Forbidden" });
+      expect(
+        (await app.prisma.employee.findUniqueOrThrow({ where: { id: target.employee.id } }))
+          .firstName,
+      ).not.toBe("Echt Verboten");
+      expect(await storedAssignments(tenant.tenant.id, target.user.id)).toEqual([]);
+    });
   });
 });
