@@ -902,11 +902,10 @@ export async function dispatchShiftCleanupForCreatedAbsences(
     // Phase 91b Plan 09 (Issue #91), D-11/D-17: narrow to holders whose OWN reach covers AT
     // LEAST ONE of the affected shifts' salons — all affected shifts share `employeeId`, only
     // their salons may differ, and this ONE batched notification summarizes all of them.
-    const affectedSalons = await prisma.shift.findMany({
-      where: { id: { in: r.affectedShiftIds } },
-      select: { salonId: true },
-    });
-    const affectedSalonIds = [...new Set(affectedSalons.map((s) => s.salonId))];
+    // `Shift` is owned by Schichtplanung — `affectedSalonIds` comes back from
+    // `cleanupShiftsForBSAbsence` (which already read these rows) rather than a raw
+    // `prisma.shift.findMany()` here, which would cross the context boundary directly.
+    const { affectedSalonIds } = r;
     const scopedShiftPlanHolderIds = await resolveScopedHolderIds(
       prisma,
       tenantId,

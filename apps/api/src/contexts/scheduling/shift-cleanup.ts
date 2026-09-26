@@ -43,6 +43,14 @@ export interface ShiftCleanupResult {
   lockedSkipped: number;
   /** Ids of shifts that were touched OR already flagged — for caller-side batched notification. */
   affectedShiftIds: string[];
+  /**
+   * Distinct `salonId`s of the shifts in `affectedShiftIds` — Phase 91b Plan 09 (Issue #91),
+   * D-11/D-17: the caller's batched-notification recipient narrowing needs the affected shifts'
+   * salons, and `Shift` is owned by this context (Schichtplanung), so the answer is returned here
+   * rather than the caller running its own raw `prisma.shift.findMany()` across the context
+   * boundary (`measure-foreign-context-access.ts`'s "no direct table access across contexts" gate).
+   */
+  affectedSalonIds: string[];
 }
 
 export interface ShiftCleanupParams {
@@ -126,6 +134,7 @@ export async function cleanupShiftsForBSAbsence(
       pastFlagged: 0,
       lockedSkipped: 0,
       affectedShiftIds: [],
+      affectedSalonIds: [],
     };
   }
   if (params.dates.length === 0) {
@@ -135,6 +144,7 @@ export async function cleanupShiftsForBSAbsence(
       pastFlagged: 0,
       lockedSkipped: 0,
       affectedShiftIds: [],
+      affectedSalonIds: [],
     };
   }
 
@@ -155,6 +165,7 @@ export async function cleanupShiftsForBSAbsence(
       pastFlagged: 0,
       lockedSkipped: 0,
       affectedShiftIds: [],
+      affectedSalonIds: [],
     };
   }
 
@@ -189,6 +200,7 @@ export async function cleanupShiftsForBSAbsence(
   let pastFlagged = 0;
   let lockedSkipped = 0;
   const affectedShiftIds: string[] = [];
+  const affectedSalonIds = new Set<string>();
 
   for (const shift of shifts) {
     const shiftDate = dateOnlyUtc(shift.date);
@@ -226,6 +238,7 @@ export async function cleanupShiftsForBSAbsence(
       });
       futureSoftDeleted++;
       affectedShiftIds.push(shift.id);
+      affectedSalonIds.add(shift.salonId);
     } else {
       // Past or today: flag only — Phase 47.2 SHIFT_PAST_IMMUTABLE.
       // No-op suppression: if the row is already flagged, count it as
@@ -247,8 +260,16 @@ export async function cleanupShiftsForBSAbsence(
       }
       pastFlagged++;
       affectedShiftIds.push(shift.id);
+      affectedSalonIds.add(shift.salonId);
     }
   }
 
-  return { skipped: false, futureSoftDeleted, pastFlagged, lockedSkipped, affectedShiftIds };
+  return {
+    skipped: false,
+    futureSoftDeleted,
+    pastFlagged,
+    lockedSkipped,
+    affectedShiftIds,
+    affectedSalonIds: [...affectedSalonIds],
+  };
 }
