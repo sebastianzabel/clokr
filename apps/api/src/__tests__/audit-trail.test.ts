@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { daysAgoStrInTz, utcMidnight } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 
 describe("Audit Trail Completeness", () => {
@@ -40,6 +41,33 @@ describe("Audit Trail Completeness", () => {
   // ── TimeEntry mutations ───────────────────────────────────────────────────
 
   describe("TimeEntry mutations", () => {
+    // Shared by plans 78b-02 and 78b-05 (D-09): asserts actor, time window and — when
+    // oldValue/newValue are given — that the stored value is non-null and matches the given
+    // fields. `toBeDefined()` alone would pass for a `null` Json column, which is exactly what
+    // let the old assertions in this file pass without proving a before/after value existed.
+    function expectAuditRow(
+      log: { userId: string | null; createdAt: Date; oldValue: unknown; newValue: unknown } | null,
+      opts: {
+        userId: string | null;
+        beforeTs: Date;
+        oldValue?: Record<string, unknown>;
+        newValue?: Record<string, unknown>;
+      },
+    ) {
+      expect(log, "expected an AuditLog row to exist").not.toBeNull();
+      expect(log!.userId).toBe(opts.userId);
+      expect(log!.createdAt.getTime()).toBeGreaterThanOrEqual(opts.beforeTs.getTime());
+      expect(log!.createdAt.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
+      if (opts.oldValue !== undefined) {
+        expect(log!.oldValue, "oldValue must not be null").not.toBeNull();
+        expect(log!.oldValue).toMatchObject(opts.oldValue);
+      }
+      if (opts.newValue !== undefined) {
+        expect(log!.newValue, "newValue must not be null").not.toBeNull();
+        expect(log!.newValue).toMatchObject(opts.newValue);
+      }
+    }
+
     it("POST /api/v1/time-entries writes AuditLog with action CREATE", async () => {
       const beforeTs = new Date();
 
@@ -143,6 +171,64 @@ describe("Audit Trail Completeness", () => {
       expect(log.userId).toBe(data.adminUser.id);
       expect(log.action).toBe("DELETE");
       expect(log.oldValue).toBeDefined();
+    });
+
+    // D-10 (issue #310/#78): POST /:id/breaks recomputes and persists the entry's
+    // breakMinutes/breakStatus but, before this fix, never audited that TimeEntry change — only
+    // the appended Break row itself was audited (BREAK_APPEND, entity Break). Action is "UPDATE"
+    // per P-03 (78b-CONTEXT.md): consistent with PUT /:id's self-edit UPDATE, not BREAK_CONFIRMED
+    // (a different act — the employee confirming an auto-inserted break on /break-status).
+    it("(D-10) POST /:id/breaks writes a second AuditLog row (entity TimeEntry, action UPDATE) with breakMinutes/breakStatus before and after", async () => {
+      const dateStr = daysAgoStrInTz(new Date(), 3);
+      const entry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: utcMidnight(dateStr),
+          startTime: new Date(`${dateStr}T07:00:00.000Z`),
+          endTime: new Date(`${dateStr}T15:00:00.000Z`),
+          breakMinutes: 30,
+          breakStatus: "AUTO",
+          salonId: data.salonId,
+          source: "MANUAL",
+        },
+      });
+
+      const beforeTs = new Date();
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/time-entries/${entry.id}/breaks`,
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          startTime: `${dateStr}T11:00:00.000Z`,
+          endTime: `${dateStr}T11:45:00.000Z`,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.breakMinutes).toBe(45);
+
+      const timeEntryLog = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "TimeEntry",
+          entityId: entry.id,
+          action: "UPDATE",
+          createdAt: { gte: beforeTs },
+        },
+      });
+      expectAuditRow(timeEntryLog, {
+        userId: data.empUser.id,
+        beforeTs,
+        oldValue: { breakMinutes: 30, breakStatus: "AUTO" },
+        newValue: { breakMinutes: 45, breakStatus: "CONFIRMED" },
+      });
+
+      // The pre-existing BREAK_APPEND audit (entity Break) for the new break must still exist.
+      const breakAppendLog = await app.prisma.auditLog.findFirst({
+        where: { entity: "Break", entityId: body.break.id, action: "BREAK_APPEND" },
+      });
+      expect(breakAppendLog).not.toBeNull();
     });
   });
 
