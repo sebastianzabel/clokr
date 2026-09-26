@@ -13,6 +13,12 @@ import { ROLE_LOCKOUT_MESSAGE, RoleLockoutError } from "../role-assignment";
 import { withRoleLockoutGuard } from "../facade/role-assignments";
 import { foreignKeyConstraintOf } from "../prisma-foreign-key";
 import { requestAuditFields } from "../request-audit-fields";
+import {
+  createsFourEyesCombination,
+  FourEyesConfirmationRequiredError,
+  FOUR_EYES_CONFIRMATION_MESSAGE,
+  FOUR_EYES_CONFIRMATION_REQUIRED,
+} from "../four-eyes";
 
 const ROLE_NAME_CONFLICT_MESSAGE = "Eine Rolle mit diesem Namen existiert bereits.";
 const ROLE_NOT_FOUND_MESSAGE = "Rolle nicht gefunden";
@@ -28,6 +34,13 @@ const ROLE_ASSIGNMENT_ROLE_FOREIGN_KEY = "RoleAssignment_accessRoleId_fkey";
 // self-service escalation. Rejected unless the caller additionally holds role-assignment:manage.
 const ROLE_SELF_HELD_UPDATE_MESSAGE =
   "Eine Ihnen selbst zugewiesene Rolle können Sie ohne die Berechtigung role-assignment:manage nicht ändern.";
+// Phase 78b (issue #78, D-05): the fixed 409 reply for a save that would newly create the
+// four-eyes combination without confirm: true — same `{ error, code }` shape as
+// SALON_ALREADY_COUPLED_REPLY (contexts/scheduling/api/integrations.ts).
+const FOUR_EYES_CONFIRMATION_REPLY = {
+  error: FOUR_EYES_CONFIRMATION_MESSAGE,
+  code: FOUR_EYES_CONFIRMATION_REQUIRED,
+};
 
 const nameSchema = z.string().trim().min(1).max(ROLE_NAME_MAX_LENGTH);
 
@@ -44,6 +57,9 @@ const permissionsSchema = z.array(z.string()).superRefine((keys, ctx) => {
 const createRoleSchema = z.object({
   name: nameSchema,
   permissions: permissionsSchema,
+  // Phase 78b (issue #78, D-05): explicit confirmation of a combination-creating save. `.nullish()`
+  // matches this file's own idiom — a frontend sends explicit `null` as much as it omits the key.
+  confirm: z.boolean().nullish(),
 });
 
 // D-08: plain `z.string().min(1)`, NOT `.uuid()` — both T-100-09 probe arms (a real foreign id
@@ -157,7 +173,7 @@ export async function roleRoutes(app: FastifyInstance) {
       security: [{ bearerAuth: [] }],
       summary: "Create a customer role",
       description:
-        "Creates a customer role of the caller's own tenant from a name and a set of catalog permission keys. Unknown permission keys are rejected with 400; a name that collides case-insensitively with an existing role of the same tenant, or with any system role, is rejected with 409.",
+        "Creates a customer role of the caller's own tenant from a name and a set of catalog permission keys. Unknown permission keys are rejected with 400; a name that collides case-insensitively with an existing role of the same tenant, or with any system role, is rejected with 409. A permission set that newly combines changing one's own time entries with approving time corrections (the four-eyes combination, issue #78) answers 409 FOUR_EYES_CONFIRMATION_REQUIRED unless the body carries confirm: true; the confirmation is then recorded in the CREATE audit entry.",
     },
     preHandler: requirePermission("role:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
@@ -165,11 +181,18 @@ export async function roleRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const permissions = normalizeRolePermissions(body.permissions);
       const nameKey = roleNameKey(body.name);
+      // D-04: a create has no previous state — "before" is always empty.
+      const createsCombination = createsFourEyesCombination([], permissions);
 
       try {
         const created = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
           if (await nameTaken(tx, tenantId, nameKey, null)) {
             return null;
+          }
+          // Pitfall 1: run this LAST, after the name-conflict check, so a request that fails both
+          // answers 409 name-conflict (existing precedence wins, D-06).
+          if (createsCombination && body.confirm !== true) {
+            throw new FourEyesConfirmationRequiredError();
           }
           const source = await tx.accessRole.create({
             data: { tenantId, name: body.name, nameKey, permissions },
@@ -183,6 +206,8 @@ export async function roleRoutes(app: FastifyInstance) {
               name: source.name,
               permissions: source.permissions,
               tenantId: source.tenantId,
+              // Gated on the computed transition, never on body.confirm alone (Pitfall 2).
+              ...(createsCombination ? { fourEyesWarningConfirmed: true } : {}),
             }),
           });
           return source;
@@ -193,6 +218,9 @@ export async function roleRoutes(app: FastifyInstance) {
         }
         return reply.code(201).send(toRoleResponse(created));
       } catch (err: unknown) {
+        if (err instanceof FourEyesConfirmationRequiredError) {
+          return reply.code(409).send(FOUR_EYES_CONFIRMATION_REPLY);
+        }
         if (isPrismaErrorCode(err, "P2002")) {
           return reply.code(409).send({ error: ROLE_NAME_CONFLICT_MESSAGE });
         }
