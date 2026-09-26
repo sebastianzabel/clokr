@@ -1717,8 +1717,7 @@ Personalabteilung-Vorlage erstmals sichtbar machte, aber unabhängig von den Tem
   `GET /time-entries`s ungefilterte Liste (ohne `?employeeId`) beim eigenen Datensatz des
   Aufrufers, statt den SALONS-/PERSONS-Scope eines ZUGEWIESEN-Halters anzuwenden
   (`time-entries.ts:1017`, gefunden in den Plänen 76b-05/76b-06) — jede explizite
-  `?employeeId`-Abfrage ist davon nicht betroffen. Alle drei Funde sind als Issue #<PLACEHOLDER-ISSUE>
-  registriert.
+  `?employeeId`-Abfrage ist davon nicht betroffen. Alle drei Funde sind als Issue #368 registriert.
 
 ### Übergangs- und Randregeln
 
