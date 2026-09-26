@@ -432,6 +432,253 @@ describe("Audit Trail Completeness", () => {
         "correction must show startTime actually changed",
       ).not.toEqual(decision.correction!.after.startTime);
     });
+
+    // D-09 (issue #78): every remaining Zeitnachtrag write path — entry-first reject/withdraw,
+    // and the grant-first (legacy) create/approve/reject flow.
+    it("entry-first: admin rejects a pending Nachtrag — RETRO_ENTRY_REJECTED with actor/before-after, and the coupled TimeEntry is DELETEd with audit", async () => {
+      const windowDays = await getRetroEntryWindowDays(app.prisma, data.tenant.id);
+      const dateStr = daysAgoStrInTz(new Date(), windowDays + 6);
+      const beforeTs = new Date();
+
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: dateStr,
+          startTime: `${dateStr}T08:00:00.000Z`,
+          endTime: `${dateStr}T16:00:00.000Z`,
+          breakMinutes: 30,
+          reason: "Einstempeln vergessen (D-09 reject test)",
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const createBody = JSON.parse(createRes.body);
+      const requestId = createBody.entry.retroRequestId as string;
+      const entryId = createBody.entry.id as string;
+
+      const reviewRes = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/retro-entry-requests/${requestId}/review`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { status: "REJECTED", reviewNote: "Begründung fehlt (D-09 reject test)" },
+      });
+      expect(reviewRes.statusCode).toBe(200);
+
+      const requestLog = await app.prisma.auditLog.findFirst({
+        where: { entity: "RetroEntryRequest", entityId: requestId, action: "RETRO_ENTRY_REJECTED" },
+      });
+      expectAuditRow(requestLog, {
+        userId: data.adminUser.id,
+        beforeTs,
+        oldValue: { status: "PENDING" },
+        newValue: { status: "REJECTED", approverId: data.adminUser.id },
+      });
+
+      const entryLog = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "TimeEntry",
+          entityId: entryId,
+          action: "DELETE",
+          createdAt: { gte: beforeTs },
+        },
+      });
+      expectAuditRow(entryLog, {
+        userId: data.adminUser.id,
+        beforeTs,
+        oldValue: { deletedAt: null },
+      });
+      expect(
+        (entryLog!.newValue as { deletedAt: unknown }).deletedAt,
+        "the coupled entry's deletedAt must be set (not null) after reject",
+      ).not.toBeNull();
+    });
+
+    it("entry-first: the requesting employee withdraws their own pending Nachtrag — RETRO_ENTRY_WITHDRAWN with actor/before-after, and the coupled TimeEntry is DELETEd with audit", async () => {
+      const windowDays = await getRetroEntryWindowDays(app.prisma, data.tenant.id);
+      const dateStr = daysAgoStrInTz(new Date(), windowDays + 7);
+      const beforeTs = new Date();
+
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: dateStr,
+          startTime: `${dateStr}T08:00:00.000Z`,
+          endTime: `${dateStr}T16:00:00.000Z`,
+          breakMinutes: 30,
+          reason: "Einstempeln vergessen (D-09 withdraw test)",
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const createBody = JSON.parse(createRes.body);
+      const requestId = createBody.entry.retroRequestId as string;
+      const entryId = createBody.entry.id as string;
+
+      const withdrawRes = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/retro-entry-requests/${requestId}`,
+        headers: { authorization: `Bearer ${data.empToken}` },
+      });
+      expect(withdrawRes.statusCode).toBe(200);
+
+      const requestLog = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "RetroEntryRequest",
+          entityId: requestId,
+          action: "RETRO_ENTRY_WITHDRAWN",
+        },
+      });
+      expectAuditRow(requestLog, {
+        userId: data.empUser.id,
+        beforeTs,
+        oldValue: { deletedAt: null },
+      });
+      expect(
+        (requestLog!.newValue as { deletedAt: unknown }).deletedAt,
+        "the withdrawn request's deletedAt must be set (not null)",
+      ).not.toBeNull();
+
+      const entryLog = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "TimeEntry",
+          entityId: entryId,
+          action: "DELETE",
+          createdAt: { gte: beforeTs },
+        },
+      });
+      expectAuditRow(entryLog, {
+        userId: data.empUser.id,
+        beforeTs,
+        oldValue: { deletedAt: null },
+      });
+      expect(
+        (entryLog!.newValue as { deletedAt: unknown }).deletedAt,
+        "the coupled entry's deletedAt must be set (not null) after withdraw",
+      ).not.toBeNull();
+    });
+
+    it("grant-first: POST /api/v1/retro-entry-requests writes RETRO_ENTRY_REQUESTED with the requester's own userId", async () => {
+      const windowDays = await getRetroEntryWindowDays(app.prisma, data.tenant.id);
+      const targetDate = daysAgoStrInTz(new Date(), windowDays + 8);
+      const beforeTs = new Date();
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/retro-entry-requests",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          targetDate,
+          reason: "Grant-first Nachtrag (D-09 create test)",
+          startTime: "08:00",
+          endTime: "16:00",
+          breakMinutes: 30,
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+
+      const log = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "RetroEntryRequest",
+          entityId: body.id,
+          action: "RETRO_ENTRY_REQUESTED",
+        },
+      });
+      expectAuditRow(log, {
+        userId: data.empUser.id,
+        beforeTs,
+        newValue: { requesterId: data.empUser.id },
+      });
+    });
+
+    it("grant-first (legacy) approve: RETRO_ENTRY_APPROVED records oldValue (status PENDING) alongside newValue (status APPROVED, requesterId != approverId) — P-04/D-09", async () => {
+      const windowDays = await getRetroEntryWindowDays(app.prisma, data.tenant.id);
+      const targetDate = daysAgoStrInTz(new Date(), windowDays + 9);
+      const beforeTs = new Date();
+
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/retro-entry-requests",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          targetDate,
+          reason: "Grant-first Nachtrag (D-09 approve test)",
+          startTime: "08:00",
+          endTime: "16:00",
+          breakMinutes: 30,
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const requestId = JSON.parse(createRes.body).id as string;
+
+      const reviewRes = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/retro-entry-requests/${requestId}/review`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { status: "APPROVED", reviewNote: "Freigegeben (D-09 approve test)" },
+      });
+      expect(reviewRes.statusCode).toBe(200);
+
+      const log = await app.prisma.auditLog.findFirst({
+        where: { entity: "RetroEntryRequest", entityId: requestId, action: "RETRO_ENTRY_APPROVED" },
+      });
+      expectAuditRow(log, {
+        userId: data.adminUser.id,
+        beforeTs,
+        oldValue: { status: "PENDING" },
+        newValue: { status: "APPROVED" },
+      });
+      const newVal = log!.newValue as { requesterId?: string; approverId?: string };
+      expect(newVal.requesterId).toBe(data.empUser.id);
+      expect(newVal.approverId).toBe(data.adminUser.id);
+      expect(newVal.requesterId).not.toBe(newVal.approverId);
+    });
+
+    it("grant-first (legacy) reject: RETRO_ENTRY_REJECTED records oldValue (status PENDING) alongside newValue (status REJECTED) — P-04/D-09", async () => {
+      const windowDays = await getRetroEntryWindowDays(app.prisma, data.tenant.id);
+      const targetDate = daysAgoStrInTz(new Date(), windowDays + 10);
+      const beforeTs = new Date();
+
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/retro-entry-requests",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          targetDate,
+          reason: "Grant-first Nachtrag (D-09 reject test)",
+          startTime: "08:00",
+          endTime: "16:00",
+          breakMinutes: 30,
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const requestId = JSON.parse(createRes.body).id as string;
+
+      const reviewRes = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/retro-entry-requests/${requestId}/review`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { status: "REJECTED", reviewNote: "Begründung fehlt (D-09 reject test)" },
+      });
+      expect(reviewRes.statusCode).toBe(200);
+
+      const log = await app.prisma.auditLog.findFirst({
+        where: { entity: "RetroEntryRequest", entityId: requestId, action: "RETRO_ENTRY_REJECTED" },
+      });
+      expectAuditRow(log, {
+        userId: data.adminUser.id,
+        beforeTs,
+        oldValue: { status: "PENDING" },
+        newValue: { status: "REJECTED" },
+      });
+    });
   });
 
   // ── Employee mutations ────────────────────────────────────────────────────
