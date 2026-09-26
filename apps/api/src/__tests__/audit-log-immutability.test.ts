@@ -26,6 +26,13 @@
  *   - The database-level `ON DELETE SET NULL` on `AuditLog.userId` (migration 0_init) is not a
  *     code call and is invisible to a source scan. It only fires on a hard User delete, which the
  *     application never performs (the DSGVO path anonymizes instead — see CLAUDE.md).
+ *   - A raw-SQL statement whose table identifier is built from a runtime string rather than the
+ *     literal `AuditLog` (e.g. `` $executeRawUnsafe(`UPDATE "${tableName}" SET ...`) `` with
+ *     `tableName` resolving to `"AuditLog"` at runtime, or an `INSERT ... ON CONFLICT DO UPDATE`
+ *     upsert whose `UPDATE` keyword is not immediately followed by the table name) is not matched
+ *     by `RAW_SQL_RE` below. No such pattern exists in the codebase today (no `$executeRaw`/
+ *     `$queryRaw` touches `AuditLog` anywhere in `apps/api/src`) — this is a documentation
+ *     completeness gap, not a currently-exploitable hole (phase 78b review, IN-01).
  * Comments are DELIBERATELY NOT exempt from the delegate-use / raw-SQL rules below: naming a
  * forbidden call in a comment turns this guard red too, mirroring
  * `holiday-resolution-boundary.test.ts`'s own rule.
