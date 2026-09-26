@@ -21,90 +21,90 @@
       "calls": [
         {
           "call": "overtimeAccount.create",
-          "line": 215
+          "line": 217
         },
         {
           "call": "leaveType.create",
-          "line": 222
+          "line": 224
         },
         {
           "call": "leaveEntitlement.create",
-          "line": 230
+          "line": 232
         },
         {
           "call": "employeeAvailability.deleteMany",
-          "line": 284
+          "line": 286
         },
         {
           "call": "employeeShiftPattern.deleteMany",
-          "line": 287
+          "line": 289
         },
         {
           "call": "employeeVocationalSchoolPattern.deleteMany",
-          "line": 290
+          "line": 292
         },
         {
           "call": "shift.deleteMany",
-          "line": 293
-        },
-        {
-          "call": "absence.deleteMany",
-          "line": 294
-        },
-        {
-          "call": "leaveRequest.deleteMany",
           "line": 295
         },
         {
-          "call": "leaveEntitlement.deleteMany",
+          "call": "absence.deleteMany",
           "line": 296
         },
         {
+          "call": "leaveRequest.deleteMany",
+          "line": 297
+        },
+        {
+          "call": "leaveEntitlement.deleteMany",
+          "line": 298
+        },
+        {
           "call": "saldoSnapshot.deleteMany",
-          "line": 299
-        },
-        {
-          "call": "timeEntry.deleteMany",
-          "line": 300
-        },
-        {
-          "call": "overtimeTransaction.deleteMany",
           "line": 301
         },
         {
+          "call": "timeEntry.deleteMany",
+          "line": 302
+        },
+        {
+          "call": "overtimeTransaction.deleteMany",
+          "line": 303
+        },
+        {
           "call": "overtimeAccount.deleteMany",
-          "line": 304
+          "line": 306
         },
         {
           "call": "overtimePlan.deleteMany",
-          "line": 307
+          "line": 309
         },
         {
           "call": "leaveType.deleteMany",
-          "line": 321
-        },
-        {
-          "call": "coverageRule.deleteMany",
           "line": 323
         },
         {
-          "call": "shiftTemplate.deleteMany",
-          "line": 324
-        },
-        {
-          "call": "companyShutdown.deleteMany",
+          "call": "coverageRule.deleteMany",
           "line": 325
         },
         {
-          "call": "terminalApiKey.deleteMany",
+          "call": "shiftTemplate.deleteMany",
           "line": 326
         },
         {
+          "call": "companyShutdown.deleteMany",
+          "line": 327
+        },
+        {
+          "call": "terminalApiKey.deleteMany",
+          "line": 328
+        },
+        {
           "call": "terminalApiKey.create",
-          "line": 396
+          "line": 398
         }
       ],
-      "reason": "D-03 (Phase 100b): this route resets a single test-only tenant's full dataset for e2e bootstrapping. The 17 deleteMany calls (lines 260-295 as originally pinned) are the teardown: giving every context its own destructive resetForTests() on its PERMANENT public surface would be the worse trade in an audit-proof system, so this direct-access path is excepted instead of facaded. The route is gated behind ALLOW_TEST_BOOTSTRAP, never registers on int or prod, and its teardown only ever matches tenant IDs of the form ^test-[a-zA-Z0-9_-]{8}$, so the exception exists for something that is not reachable in a real environment at all. The 4 create calls (overtimeAccount, leaveType, leaveEntitlement, terminalApiKey) are seeding calls for the same test-only bootstrap route and are excepted on the same grounds; terminalApiKey.create is a separate seeding block outside the teardown handler proper but serves the identical test-bootstrap purpose. Salon is platform-owned (Phase 64b, issue #64) \u2014 platform-to-platform access via salon.create/salon.deleteMany is not a foreign-context read and needs no entry here, only the re-pin below. EmployeeSalonAssignment is likewise platform-owned (Phase 67b, issue #67) \u2014 the new employeeSalonAssignment.create/deleteMany calls added by Phase 67b Plan 04 are platform-to-platform access and need no entry here either. Lines shifted +24 in Phase 67b Plan 04 (GitHub issue #67): D-24's default-salon-timezone hoist plus the new Stammsalon (HOME) EmployeeSalonAssignment.create block were added to the POST /bootstrap-tenant handler above every teardown-block anchor in this entry, and the D-24 salon-resolution block plus a second EmployeeSalonAssignment.create were added above terminalApiKey.create in POST /bootstrap-terminal (which shifted a further +18, total +42, because it also sits after the whole teardown handler's own +24 growth) \u2014 mechanical only, no finding. Lines previously shifted +18 in Phase 64b Plan 03 (GitHub issue #64): a new import plus a default-salon salon.create block (D-18) were added right after the TenantConfig create in the POST handler, above every listed call \u2014 mechanical only, no finding. terminalApiKey.create shifted a further +4 (total +22) because the DELETE handler also gained a 3-line comment plus a salon.deleteMany call (D-18 teardown) immediately above it, upstream of that line. Lines previously shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context absence/leave-type import, E-8) \u2014 no finding, mechanical only."
+      "reason": "D-03 (Phase 100b): this route resets a single test-only tenant's full dataset for e2e bootstrapping. The 17 deleteMany calls (lines 260-295 as originally pinned) are the teardown: giving every context its own destructive resetForTests() on its PERMANENT public surface would be the worse trade in an audit-proof system, so this direct-access path is excepted instead of facaded. The route is gated behind ALLOW_TEST_BOOTSTRAP, never registers on int or prod, and its teardown only ever matches tenant IDs of the form ^test-[a-zA-Z0-9_-]{8}$, so the exception exists for something that is not reachable in a real environment at all. The 4 create calls (overtimeAccount, leaveType, leaveEntitlement, terminalApiKey) are seeding calls for the same test-only bootstrap route and are excepted on the same grounds; terminalApiKey.create is a separate seeding block outside the teardown handler proper but serves the identical test-bootstrap purpose. Salon is platform-owned (Phase 64b, issue #64) — platform-to-platform access via salon.create/salon.deleteMany is not a foreign-context read and needs no entry here, only the re-pin below. EmployeeSalonAssignment is likewise platform-owned (Phase 67b, issue #67) — the new employeeSalonAssignment.create/deleteMany calls added by Phase 67b Plan 04 are platform-to-platform access and need no entry here either. Lines shifted +24 in Phase 67b Plan 04 (GitHub issue #67): D-24's default-salon-timezone hoist plus the new Stammsalon (HOME) EmployeeSalonAssignment.create block were added to the POST /bootstrap-tenant handler above every teardown-block anchor in this entry, and the D-24 salon-resolution block plus a second EmployeeSalonAssignment.create were added above terminalApiKey.create in POST /bootstrap-terminal (which shifted a further +18, total +42, because it also sits after the whole teardown handler's own +24 growth) — mechanical only, no finding. Lines previously shifted +18 in Phase 64b Plan 03 (GitHub issue #64): a new import plus a default-salon salon.create block (D-18) were added right after the TenantConfig create in the POST handler, above every listed call — mechanical only, no finding. terminalApiKey.create shifted a further +4 (total +22) because the DELETE handler also gained a 3-line comment plus a salon.deleteMany call (D-18 teardown) immediately above it, upstream of that line. Lines previously shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context absence/leave-type import, E-8) — no finding, mechanical only. Lines shifted +2 in Phase 71b Plan 01 (issue #71, 2026-09-25): the bootstrap tenant's default salon.create gained its required federalState field above every anchor in this entry — mechanical only, no finding."
     }
   ]
 }

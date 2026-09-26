@@ -90,6 +90,7 @@ export type ResolveLeaveDaysFn = (
 export type GetHolidayMapFn = (
   prisma: Prisma.TransactionClient,
   tenantId: string,
+  employeeId: string | null,
   start: Date,
   end: Date,
 ) => Promise<Map<string, string>>;
@@ -226,6 +227,7 @@ export async function recalcProvisionalLeaveForShiftChange(
     const holidayMap = await deps.getHolidayMap(
       tx,
       tenantId,
+      employeeId,
       candidate.startDate,
       candidate.endDate,
     );

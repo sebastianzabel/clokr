@@ -450,6 +450,7 @@ describe("Phase 76.32 — GOLDEN Azubi Jan 2026: BS + Urlaub + Feiertag", () => 
     await prisma.publicHoliday.create({
       data: {
         tenantId,
+        salonId: await salonIdForEmployee(prisma, empId), // Phase 71b (issue #71)
         date: new Date("2026-01-01T00:00:00Z"),
         name: "Neujahr",
         federalState: "NIEDERSACHSEN",

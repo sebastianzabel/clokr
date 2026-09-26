@@ -34,7 +34,7 @@
  * for a reason unrelated to what it tests.
  */
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -134,6 +134,7 @@ describe("POST /leave/requests OVERTIME_COMP — validates against confirmed car
       data: { name: `OCC ${suffix}`, slug: `occ-${suffix}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 71b (issue #71): holiday resolution needs the tenant's salon
     const passwordHash = await bcrypt.hash("test1234", 10);
 
     const user = await prisma.user.create({

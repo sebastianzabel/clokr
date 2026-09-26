@@ -289,6 +289,7 @@ describe("legacy-role backfill edge cases (AC-75-4..AC-75-8, D-07, D-28)", () =>
       data: {
         tenantId,
         name: "Salon Migration",
+        federalState: "NIEDERSACHSEN",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
       },

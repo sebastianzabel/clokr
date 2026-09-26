@@ -649,8 +649,15 @@ import { readFileSync } from "node:fs";
 // of them: the lint-guard-vacuity whole-set row for `lint-role-checks.ts`, two in
 // `permission-site-mapping.test.ts`, one in `script-import-safety.test.ts`; the rest of the split is
 // not reconstructed here). Numbers read from the reporter, not summed from a diff.
-const MIN_FILES = 331;
-const MIN_TESTS = 5883;
+//
+// Re-measured 2026-09-25 on `feat/71-feiertage-pro-salon` @ 24b4198f (Phase 71b, issue #71, after
+// merging `origin/main` @ 4ce0f1b8, #363) — `pnpm --filter @clokr/api test`: `Test Files 346 passed
+// (346)`, `Tests 6016 passed | 3 skipped (6019)`, zero failures. MIN_FILES rises from 331 to 346 and
+// MIN_TESTS from 5883 to 6019; the delta mixes Phase 71b's new test files (resolver matrix,
+// migration replay, per-salon holiday API, work-location readers, D-05 boundary guard) with the
+// test files #361/#362/#363 added on `origin/main`. Numbers read from the reporter, not summed.
+const MIN_FILES = 346;
+const MIN_TESTS = 6019;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

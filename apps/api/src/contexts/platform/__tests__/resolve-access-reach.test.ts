@@ -120,6 +120,7 @@ describe("resolveAccessReach (Phase 91b Plan 01, Issue #91, D-03/D-04)", () => {
         name,
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive,
+        federalState: "NIEDERSACHSEN", // Phase 71b (issue #71) — required since the merge; irrelevant to this test's own assertions
         ...(isActive ? {} : { deactivatedAt: new Date() }),
       },
     });

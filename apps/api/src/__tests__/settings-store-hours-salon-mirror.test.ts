@@ -51,6 +51,7 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
       const salon = await app.prisma.salon.create({
         data: {
           tenantId: data.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "Einziger Salon",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
@@ -91,6 +92,7 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
       const salonA = await app.prisma.salon.create({
         data: {
           tenantId: data.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "Salon A",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
@@ -99,6 +101,7 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
       const salonB = await app.prisma.salon.create({
         data: {
           tenantId: data.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "Salon B",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
@@ -135,6 +138,7 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
       const active = await app.prisma.salon.create({
         data: {
           tenantId: data.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "Aktiv",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
@@ -143,6 +147,7 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
       const inactive = await app.prisma.salon.create({
         data: {
           tenantId: data.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "Inaktiv",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: false,
@@ -170,6 +175,7 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
       const salon = await app.prisma.salon.create({
         data: {
           tenantId: data.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "Unberührt",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
@@ -197,6 +203,7 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
       const salon = await app.prisma.salon.create({
         data: {
           tenantId: data.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "Per PATCH geändert",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
@@ -250,6 +257,7 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
       const salon = await app.prisma.salon.create({
         data: {
           tenantId: data.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "Legacy-Zeiten",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
@@ -289,6 +297,7 @@ describe("PUT /api/v1/settings/work — D-16 storeHours <-> salon mirror", () =>
       const salon = await app.prisma.salon.create({
         data: {
           tenantId: data.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "Bleibt beim alten Namen",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,

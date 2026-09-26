@@ -27,7 +27,13 @@ import { readdirSync, statSync } from "node:fs";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
-import { getTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  withPre71bSalonSchema,
+} from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS, findDefaultSalon } from "../contexts/platform";
 import { invalidReasonFields } from "../contexts/time-tracking/invalid-reason";
 
@@ -260,6 +266,7 @@ describe("Phase 68b — time-entry-salon migration replay (D-03/D-04, AC-2/AC-3)
               data: {
                 id: qSalon0Id,
                 tenantId: tenantQ.tenant.id,
+                federalState: "NIEDERSACHSEN",
                 name: "Q0 inactive earliest",
                 openingHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
                 isActive: false,
@@ -271,6 +278,7 @@ describe("Phase 68b — time-entry-salon migration replay (D-03/D-04, AC-2/AC-3)
               data: {
                 id: qSalon1Id,
                 tenantId: tenantQ.tenant.id,
+                federalState: "NIEDERSACHSEN",
                 name: "Q1 active early",
                 openingHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
                 isActive: true,
@@ -281,6 +289,7 @@ describe("Phase 68b — time-entry-salon migration replay (D-03/D-04, AC-2/AC-3)
               data: {
                 id: qSalon2Id,
                 tenantId: tenantQ.tenant.id,
+                federalState: "NIEDERSACHSEN",
                 name: "Q2 active late",
                 openingHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
                 isActive: true,
@@ -291,6 +300,7 @@ describe("Phase 68b — time-entry-salon migration replay (D-03/D-04, AC-2/AC-3)
               data: {
                 id: rSalon0Id,
                 tenantId: tenantR.tenant.id,
+                federalState: "NIEDERSACHSEN",
                 name: "R0 inactive (only salon)",
                 openingHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
                 isActive: false,
@@ -302,6 +312,7 @@ describe("Phase 68b — time-entry-salon migration replay (D-03/D-04, AC-2/AC-3)
               data: {
                 id: sSalonAId,
                 tenantId: tenantS.tenant.id,
+                federalState: "NIEDERSACHSEN",
                 name: "S tie A (lower id)",
                 openingHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
                 isActive: true,
@@ -312,6 +323,7 @@ describe("Phase 68b — time-entry-salon migration replay (D-03/D-04, AC-2/AC-3)
               data: {
                 id: sSalonBId,
                 tenantId: tenantS.tenant.id,
+                federalState: "NIEDERSACHSEN",
                 name: "S tie B (higher id)",
                 openingHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
                 isActive: true,
@@ -452,68 +464,74 @@ describe("Phase 68b — time-entry-salon migration replay (D-03/D-04, AC-2/AC-3)
               SELECT count(*)::int AS count FROM "AuditLog"
             `;
 
-            // 6. Execute the REAL data section, statement by statement (extended-protocol pitfall
-            //    — a single multi-statement raw call can be rejected by the driver).
-            for (const stmt of statements) {
-              await tx.$executeRawUnsafe(stmt);
-            }
+            // Phase 71b (issue #71): the data section's own `INSERT INTO "Salon"` predates
+            // federalState and would NOT NULL-fail against the post-71b schema otherwise — wrap
+            // both runs (and everything reading Salon rows in between) in ONE
+            // withPre71bSalonSchema window.
+            await withPre71bSalonSchema(tx, async () => {
+              // 6. Execute the REAL data section, statement by statement (extended-protocol
+              //    pitfall — a single multi-statement raw call can be rejected by the driver).
+              for (const stmt of statements) {
+                await tx.$executeRawUnsafe(stmt);
+              }
 
-            const afterFirst: Snapshot = await Promise.all(
-              allIds.map((id) => selectTimeEntry(tx, id)),
-            );
-            const [{ count: auditCountAfter }] = await tx.$queryRaw<{ count: number }[]>`
-              SELECT count(*)::int AS count FROM "AuditLog"
-            `;
+              const afterFirst: Snapshot = await Promise.all(
+                allIds.map((id) => selectTimeEntry(tx, id)),
+              );
+              const [{ count: auditCountAfter }] = await tx.$queryRaw<{ count: number }[]>`
+                SELECT count(*)::int AS count FROM "AuditLog"
+              `;
 
-            // 7. Whole-database invariants (AC-2): zero NULLs left anywhere, no row whose salon
-            //    belongs to a different tenant than its own employee.
-            const [{ count: nullCount }] = await tx.$queryRaw<{ count: number }[]>`
-              SELECT count(*)::int AS count FROM "TimeEntry" WHERE "salonId" IS NULL
-            `;
-            const [{ count: crossTenantCount }] = await tx.$queryRaw<{ count: number }[]>`
-              SELECT count(*)::int AS count FROM "TimeEntry" te
-              JOIN "Employee" e ON e."id" = te."employeeId"
-              JOIN "Salon" sa ON sa."id" = te."salonId"
-              WHERE sa."tenantId" != e."tenantId"
-            `;
+              // 7. Whole-database invariants (AC-2): zero NULLs left anywhere, no row whose salon
+              //    belongs to a different tenant than its own employee.
+              const [{ count: nullCount }] = await tx.$queryRaw<{ count: number }[]>`
+                SELECT count(*)::int AS count FROM "TimeEntry" WHERE "salonId" IS NULL
+              `;
+              const [{ count: crossTenantCount }] = await tx.$queryRaw<{ count: number }[]>`
+                SELECT count(*)::int AS count FROM "TimeEntry" te
+                JOIN "Employee" e ON e."id" = te."employeeId"
+                JOIN "Salon" sa ON sa."id" = te."salonId"
+                WHERE sa."tenantId" != e."tenantId"
+              `;
 
-            // 8. D-04 rule pin — findDefaultSalon(tx, ...) vs. the migration's own choice.
-            const defaultSalonQ = await findDefaultSalon(tx, tenantQ.tenant.id);
-            const defaultSalonR = await findDefaultSalon(tx, tenantR.tenant.id);
-            const defaultSalonS = await findDefaultSalon(tx, tenantS.tenant.id);
+              // 8. D-04 rule pin — findDefaultSalon(tx, ...) vs. the migration's own choice.
+              const defaultSalonQ = await findDefaultSalon(tx, tenantQ.tenant.id);
+              const defaultSalonR = await findDefaultSalon(tx, tenantR.tenant.id);
+              const defaultSalonS = await findDefaultSalon(tx, tenantS.tenant.id);
 
-            // 9. P now has exactly one (new) salon.
-            const pSalons = await tx.salon.findMany({ where: { tenantId: tenantP.tenant.id } });
+              // 9. P now has exactly one (new) salon.
+              const pSalons = await tx.salon.findMany({ where: { tenantId: tenantP.tenant.id } });
 
-            // 10. Run the section a SECOND time — idempotency (NOT EXISTS / salonId IS NULL guards).
-            for (const stmt of statements) {
-              await tx.$executeRawUnsafe(stmt);
-            }
-            const afterSecond: Snapshot = await Promise.all(
-              allIds.map((id) => selectTimeEntry(tx, id)),
-            );
-            const pSalonsAfterSecond = await tx.salon.findMany({
-              where: { tenantId: tenantP.tenant.id },
+              // 10. Run the section a SECOND time — idempotency (NOT EXISTS / salonId IS NULL guards).
+              for (const stmt of statements) {
+                await tx.$executeRawUnsafe(stmt);
+              }
+              const afterSecond: Snapshot = await Promise.all(
+                allIds.map((id) => selectTimeEntry(tx, id)),
+              );
+              const pSalonsAfterSecond = await tx.salon.findMany({
+                where: { tenantId: tenantP.tenant.id },
+              });
+
+              captured = {
+                before,
+                afterFirst,
+                afterSecond,
+                nullCount,
+                crossTenantCount,
+                auditCountBefore,
+                auditCountAfter,
+                defaultSalonQId: defaultSalonQ?.id ?? null,
+                defaultSalonRId: defaultSalonR?.id ?? null,
+                defaultSalonSId: defaultSalonS?.id ?? null,
+                pSalons: pSalons.map((sal) => ({
+                  id: sal.id,
+                  name: sal.name,
+                  isActive: sal.isActive,
+                })),
+                pSalonsAfterSecond: pSalonsAfterSecond.map((sal) => ({ id: sal.id })),
+              };
             });
-
-            captured = {
-              before,
-              afterFirst,
-              afterSecond,
-              nullCount,
-              crossTenantCount,
-              auditCountBefore,
-              auditCountAfter,
-              defaultSalonQId: defaultSalonQ?.id ?? null,
-              defaultSalonRId: defaultSalonR?.id ?? null,
-              defaultSalonSId: defaultSalonS?.id ?? null,
-              pSalons: pSalons.map((sal) => ({
-                id: sal.id,
-                name: sal.name,
-                isActive: sal.isActive,
-              })),
-              pSalonsAfterSecond: pSalonsAfterSecond.map((sal) => ({ id: sal.id })),
-            };
 
             throw new TimeEntrySalonMigrationReplayRollback(
               "deliberate rollback — this fixture must never be committed",
@@ -823,10 +841,14 @@ describe("Phase 68b — saldo neutrality of the backfill (D-05, AC-4)", () => {
 });
 
 /**
- * Phase 68b (issue #68), D-05 structural half — Arbeitszeitkonto must stay salon-blind. #71/#91
- * are the phases that will legitimately read the column and must update this guard on purpose.
+ * Phase 68b/71b (issues #68/#71), D-05 structural half — Arbeitszeitkonto never interprets a
+ * salon itself. #71 made it salon-AWARE only through the Unterbau's central holiday resolver: it
+ * forwards the closed work entries it already loads (which carry the salon) to
+ * `holidaysAtWorkLocation`, and never names, reads or branches on the salon field itself — the
+ * token ban below still holds and still matters. #91 (scope) is the next phase that may need the
+ * field directly and must update this guard on purpose, same as #71 did here.
  */
-describe("Phase 68b — working-time-account never reads salonId (D-05 structural)", () => {
+describe("Phase 68b/71b — working-time-account never interprets a salon itself (D-05 structural)", () => {
   it("every production .ts file under contexts/working-time-account/ (excluding tests) is free of the token salonId", () => {
     const root = join(__dirname, "..", "contexts", "working-time-account");
 
@@ -853,5 +875,13 @@ describe("Phase 68b — working-time-account never reads salonId (D-05 structura
 
     const offenders = files.filter((f) => /\bsalonId\b/.test(readFileSync(f, "utf8")));
     expect(offenders).toEqual([]);
+
+    // Phase 71b (issue #71): the salon-aware path exists and goes through the resolver — at
+    // least one walked file calls the central holiday resolver, fed with the salon it never
+    // names itself.
+    const resolverCallers = files.filter((f) =>
+      readFileSync(f, "utf8").includes("holidaysAtWorkLocation("),
+    );
+    expect(resolverCallers.length).toBeGreaterThan(0);
   });
 });

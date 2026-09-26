@@ -15,13 +15,17 @@ import type { FastifyInstance } from "fastify";
 import type { Role } from "@clokr/db";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import {
+  assignmentExceedsEmployee,
+  assignmentsBlockingDemotionToEmployee,
   compatRoleForUser,
   compatRoleUserWhere,
   deriveCompatRole,
+  isDemotionToEmployee,
   parseCompatRoleFilter,
   legacyFallbackAlreadyYields,
   materializeLegacyRoleAssignment,
   replaceSystemRoleAssignment,
+  RoleDemotionBlockedError,
   syncCompatRoleColumn,
   systemRoleIdForLegacyRole,
   type CompatRoleAssignmentRow,
@@ -70,16 +74,22 @@ describe("compat role — pure derivation (D-14)", () => {
     expect(systemRoleIdForLegacyRole("EMPLOYEE")).toBe(SYSTEM_ROLE_IDS.EMPLOYEE);
   });
 
+  it("isDemotionToEmployee is true only for a requested role of EMPLOYEE (Issue #357 sub-fix B)", () => {
+    expect(isDemotionToEmployee("EMPLOYEE")).toBe(true);
+    expect(isDemotionToEmployee("MANAGER")).toBe(false);
+    expect(isDemotionToEmployee("ADMIN")).toBe(false);
+  });
+
   it("Admin system role at TENANT scope → ADMIN", () => {
     expect(deriveCompatRole(TENANT, [systemRow("ADMIN")])).toBe("ADMIN");
   });
 
-  it("Admin system role via SALONS scope → MANAGER (never ADMIN below tenant scope)", () => {
+  it("Admin system role via SALONS scope → EMPLOYEE (Issue #357 sub-fix A: never below TENANT scope, not even MANAGER)", () => {
     expect(
       deriveCompatRole(TENANT, [
         systemRow("ADMIN", { scopeType: "SALONS", salonIds: ["salon-1"], employeeIds: [] }),
       ]),
-    ).toBe("MANAGER");
+    ).toBe("EMPLOYEE");
   });
 
   it("Manager → MANAGER; Mitarbeiter → EMPLOYEE", () => {
@@ -87,14 +97,29 @@ describe("compat role — pure derivation (D-14)", () => {
     expect(deriveCompatRole(TENANT, [systemRow("EMPLOYEE")])).toBe("EMPLOYEE");
   });
 
-  it.each(["TENANT", "SALONS", "PERSONS"] as const)(
-    "a customer role with a ZUGEWIESEN key at %s scope → MANAGER",
+  it("a customer role with a ZUGEWIESEN key at TENANT scope → MANAGER", () => {
+    expect(
+      deriveCompatRole(TENANT, [
+        customerRow(["time-entry:read:EIGENE", "audit-log:read:ZUGEWIESEN"], {
+          scopeType: "TENANT",
+        }),
+      ]),
+    ).toBe("MANAGER");
+  });
+
+  // Issue #357 sub-fix A: before the fix `deriveCompatRole` ignored scope entirely for the
+  // MANAGER check, so a SALONS/PERSONS-scoped customer role holding a ZUGEWIESEN key wrongly
+  // derived MANAGER even though `request-permissions.ts` grants that key tenant-wide from a
+  // TENANT-scope source only (D-09) — the assignment holder could do NOTHING tenant-wide at the
+  // API, yet the compat role (JWT claim, login body, company-PDF filter) reported MANAGER.
+  it.each(["SALONS", "PERSONS"] as const)(
+    "a customer role with a ZUGEWIESEN key at %s scope → EMPLOYEE (grants nothing tenant-wide)",
     (scopeType) => {
       expect(
         deriveCompatRole(TENANT, [
           customerRow(["time-entry:read:EIGENE", "audit-log:read:ZUGEWIESEN"], { scopeType }),
         ]),
-      ).toBe("MANAGER");
+      ).toBe("EMPLOYEE");
     },
   );
 
@@ -132,6 +157,67 @@ describe("compat role — pure derivation (D-14)", () => {
       expect(deriveCompatRole(TENANT, [systemRow(slot as SystemRoleSlot)])).toBe(role);
     },
   );
+});
+
+describe("compat role — assignmentExceedsEmployee (Issue #357 sub-fix B)", () => {
+  it("a TENANT customer role with a ZUGEWIESEN key exceeds Mitarbeiter", () => {
+    expect(
+      assignmentExceedsEmployee(
+        TENANT,
+        customerRow(["time-entry:read:EIGENE", "audit-log:read:ZUGEWIESEN"], {
+          scopeType: "TENANT",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  // Unlike deriveCompatRole (sub-fix A), this check does NOT restrict itself to TENANT scope: a
+  // salon- or person-scoped assignment still hands out real, if scoped, power that a demotion to
+  // Mitarbeiter in the employee form must not leave behind unnoticed.
+  it.each(["SALONS", "PERSONS"] as const)(
+    "a %s-scoped customer role with a ZUGEWIESEN key ALSO exceeds Mitarbeiter",
+    (scopeType) => {
+      expect(
+        assignmentExceedsEmployee(
+          TENANT,
+          customerRow(["time-entry:read:EIGENE", "audit-log:read:ZUGEWIESEN"], { scopeType }),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it("a salon-scoped Admin system-role assignment exceeds Mitarbeiter", () => {
+    expect(
+      assignmentExceedsEmployee(
+        TENANT,
+        systemRow("ADMIN", { scopeType: "SALONS", salonIds: ["salon-1"], employeeIds: [] }),
+      ),
+    ).toBe(true);
+  });
+
+  it("a customer role with EIGENE keys only does NOT exceed Mitarbeiter", () => {
+    expect(
+      assignmentExceedsEmployee(
+        TENANT,
+        customerRow(["time-entry:read:EIGENE", "overtime:read:EIGENE"]),
+      ),
+    ).toBe(false);
+  });
+
+  it("a foreign tenant's role and a malformed row contribute nothing", () => {
+    expect(
+      assignmentExceedsEmployee(
+        TENANT,
+        customerRow(["audit-log:read:ZUGEWIESEN"], { tenantId: OTHER_TENANT }),
+      ),
+    ).toBe(false);
+    expect(
+      assignmentExceedsEmployee(
+        TENANT,
+        systemRow("ADMIN", { scopeType: "TENANT", salonIds: ["salon-1"], employeeIds: [] }),
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("compat role — report data filter (Phase 75b Plan 12, D-19)", () => {
@@ -610,6 +696,70 @@ describe("compat role — write half against the database (D-14, D-15, D-26)", (
     expect(
       await replaceSystemRoleAssignment(app.prisma, seed.tenant.id, user.id, "EMPLOYEE"),
     ).toEqual({ removed: [], created: null });
+  });
+
+  // Issue #357 sub-fix B: before this fix nothing stopped `replaceSystemRoleAssignment` (called by
+  // the employee-form PATCH handler) from demoting a user to Mitarbeiter while a customer-role
+  // TENANT assignment and a salon-scoped Manager assignment survived untouched (proven by the
+  // PREVIOUS test above, which asserts exactly that survival) — the form showed "Mitarbeiter", the
+  // rights stayed. `assignmentsBlockingDemotionToEmployee` is the guard the handler now runs FIRST.
+  it("assignmentsBlockingDemotionToEmployee finds the customer-role and salon-scoped assignments a demotion would leave behind", async () => {
+    const user = await createUser(seed.tenant.id, "ADMIN", "blocking");
+    const name = `Blockierend ${user.id.slice(0, 8)}`;
+    const customerRole = await app.prisma.accessRole.create({
+      data: {
+        tenantId: seed.tenant.id,
+        name,
+        nameKey: roleNameKey(name),
+        permissions: ["role:read:ZUGEWIESEN"],
+      },
+    });
+    await assign(user.id, SYSTEM_ROLE_IDS.ADMIN); // the TENANT system row about to be replaced
+    const customerRow = await assign(user.id, customerRole.id);
+    const salonRow = await assign(user.id, SYSTEM_ROLE_IDS.MANAGER, {
+      scopeType: "SALONS",
+      salonIds: [seed.salonId],
+    });
+
+    const blocking = await assignmentsBlockingDemotionToEmployee(
+      app.prisma,
+      seed.tenant.id,
+      user.id,
+    );
+    expect(blocking.map((row) => row.id).sort()).toEqual([customerRow.id, salonRow.id].sort());
+    expect(blocking.find((row) => row.id === customerRow.id)).toMatchObject({
+      roleName: name,
+      scopeType: "TENANT",
+    });
+    expect(blocking.find((row) => row.id === salonRow.id)).toMatchObject({
+      roleName: "Manager",
+      scopeType: "SALONS",
+      salonIds: [seed.salonId],
+    });
+  });
+
+  it("assignmentsBlockingDemotionToEmployee is empty for a user with only the TENANT system row", async () => {
+    const user = await createUser(seed.tenant.id, "ADMIN", "unblocked");
+    await assign(user.id, SYSTEM_ROLE_IDS.ADMIN);
+    expect(
+      await assignmentsBlockingDemotionToEmployee(app.prisma, seed.tenant.id, user.id),
+    ).toEqual([]);
+  });
+
+  it("RoleDemotionBlockedError carries the blocking rows for the caller's 409", () => {
+    const blocking = [
+      {
+        id: "ra-1",
+        roleName: "Kundenrolle",
+        scopeType: "TENANT" as const,
+        salonIds: [],
+        employeeIds: [],
+      },
+    ];
+    const err = new RoleDemotionBlockedError(blocking);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe("RoleDemotionBlockedError");
+    expect(err.blocking).toBe(blocking);
   });
 
   it("replaceSystemRoleAssignment replaces a malformed TENANT row on the target role", async () => {

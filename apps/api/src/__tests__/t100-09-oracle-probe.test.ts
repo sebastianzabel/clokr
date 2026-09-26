@@ -424,6 +424,7 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
       const salon = await app.prisma.salon.create({
         data: {
           tenantId: tenantB.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "T-100-09 Salon",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
@@ -439,6 +440,7 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
       const salon2 = await app.prisma.salon.create({
         data: {
           tenantId: tenantB.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "T-100-09 Salon 2",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
@@ -464,6 +466,7 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         await app.prisma.salon.create({
           data: {
             tenantId: tenantA.tenant.id,
+            federalState: "NIEDERSACHSEN",
             name,
             openingHours: DEFAULT_SALON_OPENING_HOURS,
             isActive: true,
@@ -476,6 +479,7 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
       const inactiveSalon = await app.prisma.salon.create({
         data: {
           tenantId: tenantB.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "T-100-09 Salon inaktiv",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: false,
@@ -782,6 +786,7 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
           name: "T-100-09-Scope In",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
+          federalState: "NIEDERSACHSEN", // Phase 71b (issue #71) — required since the merge; irrelevant to this test's own assertions
         },
       });
       salonOutOfScope = await scopeApp.prisma.salon.create({
@@ -790,6 +795,7 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
           name: "T-100-09-Scope Out",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
+          federalState: "NIEDERSACHSEN", // Phase 71b (issue #71) — required since the merge; irrelevant to this test's own assertions
         },
       });
 

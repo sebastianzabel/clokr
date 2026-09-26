@@ -26,7 +26,12 @@ import {
   main,
   type BackfillOptions,
 } from "../backfill-month-snapshots";
-import { getTestApp, closeTestApp } from "../../src/__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  createTestSalon,
+  cleanupTestData,
+} from "../../src/__tests__/setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 
@@ -434,4 +439,92 @@ describe("backfill-month-snapshots main() — DB-backed", () => {
     // Chain integrity: Jul.carryOver = Jun.carryOver + Jul.balanceMinutes
     expect(julSnap!.carryOver).toBe(junSnap!.carryOver + julSnap!.balanceMinutes);
   }, 120_000);
+});
+
+// ── Phase 71b (issue #71) — multi-salon tenant refusal ──────────────────────────
+describe("backfill-month-snapshots main() — multi-salon tenant refusal (Phase 71b, issue #71)", () => {
+  let app: FastifyInstance;
+  let tenantId: string;
+  let empId: string;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const prisma = app.prisma;
+    const slug = "p71b05-" + Date.now().toString(36);
+
+    const tenant = await prisma.tenant.create({
+      data: { name: `P71b05 ${slug}`, slug, federalState: "NIEDERSACHSEN" },
+    });
+    tenantId = tenant.id;
+    await prisma.tenantConfig.create({
+      data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
+    });
+    // A SECOND createTestSalon call on this fixture tenant — two salons, so the operator
+    // script's ONE-tenant-wide-holiday-set assumption is no longer safe (§ 2 EFZG).
+    await createTestSalon(prisma, tenantId, { federalState: "NIEDERSACHSEN", name: "Salon 1" });
+    await createTestSalon(prisma, tenantId, { federalState: "BAYERN", name: "Salon 2" });
+
+    const empUser = await prisma.user.create({
+      data: {
+        email: `emp-${slug}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const emp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: empUser.id,
+        employeeNumber: `EMP-${slug}`,
+        firstName: "E.",
+        lastName: "M.",
+        hireDate: new Date("2026-01-01T00:00:00Z"),
+      },
+    });
+    empId = emp.id;
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: empId,
+        type: "FIXED_SCHEDULE",
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date("2026-01-01"),
+      },
+    });
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("backfill-month-snapshots multi-salon refusal cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  it("refuses a multi-salon tenant, writes nothing, and records the refusal by tenant", async () => {
+    const opts: BackfillOptions = {
+      apply: true,
+      tenantId,
+      until: { year: 2026, month: 3 },
+    };
+    const summary = await main(app, opts);
+
+    expect(summary.tenantsScanned).toBe(1);
+    expect(summary.employeesScanned).toBe(0); // refused before any employee was resolved
+    expect(summary.errors).toHaveLength(1);
+    expect(summary.errors[0]?.tenantId).toBe(tenantId);
+    expect(summary.errors[0]?.employeeId).toBeNull();
+    expect(summary.errors[0]?.error).toContain("has 2 salons");
+
+    const snaps = await app.prisma.saldoSnapshot.findMany({ where: { employeeId: empId } });
+    expect(snaps).toHaveLength(0);
+  });
 });

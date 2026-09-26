@@ -130,6 +130,7 @@ describe("Role assignment resolution (Phase 74b, Issue #74)", () => {
     salonA = await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon A",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -138,6 +139,7 @@ describe("Role assignment resolution (Phase 74b, Issue #74)", () => {
     salonB = await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon B",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -146,6 +148,7 @@ describe("Role assignment resolution (Phase 74b, Issue #74)", () => {
     salonC = await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon C",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -154,6 +157,7 @@ describe("Role assignment resolution (Phase 74b, Issue #74)", () => {
     salonD = await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon D (inaktiv erstellt)",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: false,

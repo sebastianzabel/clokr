@@ -16,14 +16,18 @@
  */
 import { FastifyInstance } from "fastify";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
-import { getHolidays, STATE_MAP } from "../platform";
+import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — central resolver
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "./close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { isBridgeSnapshot } from "./saldo-snapshot-cleanup"; // 2026-08 hardening — SNAP-04 bridge guard
 import { computeInjectedDelta } from "./saldo-chain-integrity"; // Phase 98 — shared delta formula
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { isSnapshotLocked } from "./snapshot-lock"; // Phase 99 (OB-03/D-09) — immutability after lock
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
-import { getValidWorkedEntriesInRange, getEffectiveSchedule } from "../time-tracking"; // Phase 100B Plan 08 — T1; Phase 101B wave 8 merged in
+import {
+  getValidWorkedEntriesInRange, // Phase 100B Plan 08 — T1; Phase 101B wave 8 merged in
+  getWorkedEntriesInRange, // Phase 71b (issue #71) — T2, feeds the holiday resolver below
+  getEffectiveSchedule,
+} from "../time-tracking";
 import {
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
   getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
@@ -76,7 +80,6 @@ export async function recalculateSnapshots(
       isTimeTrackingExempt: true, // Phase 76.7 (D-06, SALDO-V19-04b)
       breakOver6hOverride: true, // SHIFT_BASED netto (parity with overtime.ts close-month)
       breakOver9hOverride: true,
-      tenant: { select: { federalState: true } },
     },
   });
   if (!employee) return { lockedMonthsSkipped };
@@ -312,37 +315,33 @@ export async function recalculateSnapshots(
     // Year from MID-month — monthStart.getUTCFullYear() is the PREVIOUS year for
     // January in UTC+ timezones (2025-12-31T23:00Z), which silently skipped all
     // January holidays (Neujahr) in the recalc.
-    const snapYear = midMonth.getUTCFullYear();
-    const snapStateCode = employee.tenant
-      ? (STATE_MAP[employee.tenant.federalState] ?? "NI")
-      : "NI";
-
     // Effective start: hire date or first day of month, whichever is later — used for
-    // the holiday filter to match the inline path's filter (byte-identical query range).
+    // the holiday resolver window to match the inline path's filter (byte-identical query range).
     const hireDateNorm = employee.hireDate
       ? new Date(dateStrInTz(employee.hireDate, tz) + "T00:00:00Z")
       : null;
     const effectiveStartForHolidayFilter =
       hireDateNorm && hireDateNorm > monthFirstDay ? hireDateNorm : monthFirstDay;
 
-    const computedHolidays = getHolidays(snapYear, snapStateCode).filter(
-      (h) =>
-        h.date >= dateStrInTz(effectiveStartForHolidayFilter, tz) &&
-        h.date <= dateStrInTz(monthEnd, tz),
+    // Phase 71b (issue #71) — holidays by work location per day (§ 2 EFZG), from the Unterbau's
+    // central resolver instead of a single tenant-wide federal state. The entries passed are the
+    // employee's own closed work entries (facade T2) — the Unterbau never reads them itself. The
+    // resulting Set still feeds closeEmployeeMonth completely unchanged (D-08).
+    const workLocationEntries = await getWorkedEntriesInRange(
+      app.prisma,
+      { kind: "employee", employeeId, tenantId: employee.tenantId },
+      effectiveStartForHolidayFilter,
+      monthLastDay,
     );
-    const computedDateSet = new Set(computedHolidays.map((h) => h.date));
-    const dbSnapHolidays = await app.prisma.publicHoliday.findMany({
-      where: {
-        tenant: { employees: { some: { id: employeeId } } },
-        date: { gte: effectiveStartForHolidayFilter, lte: monthLastDay },
-      },
-    });
-    const holidayDateStrings = new Set<string>([
-      ...computedHolidays.map((h) => h.date),
-      ...dbSnapHolidays
-        .filter((h) => !computedDateSet.has(dateStrInTz(h.date, tz)))
-        .map((h) => dateStrInTz(h.date, tz)),
-    ]);
+    const holidaysByEmployee = await holidaysAtWorkLocation(
+      app.prisma,
+      employee.tenantId,
+      [employeeId],
+      dateStrInTz(effectiveStartForHolidayFilter, tz),
+      dateStrInTz(monthEnd, tz),
+      workLocationEntries,
+    );
+    const holidayDateStrings = new Set<string>(holidaysByEmployee.get(employeeId)?.keys() ?? []);
 
     // Pre-fetch all collections needed by closeEmployeeMonth (parallel for PERF).
     // SHIFT_BASED: shifts also fetched for non-SHIFT; core ignores them for non-SHIFT types.

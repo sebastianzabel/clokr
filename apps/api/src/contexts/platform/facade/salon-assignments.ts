@@ -39,7 +39,7 @@ import {
   dateToDay,
   dayToDate,
   isVoided,
-  mondayBasedWeekday,
+  pickSalonForDay,
   tenantLocalDay,
   type AssignmentRow,
   type CalendarDay,
@@ -155,7 +155,6 @@ export async function salonForDay(
 ): Promise<SalonForDay | null> {
   const tz = await readTenantTimezone(db, tenantId);
   const day = tenantLocalDay(date, tz);
-  const weekday = mondayBasedWeekday(date, tz);
   const dayAsDate = dayToDate(day);
 
   const employee = await db.employee.findFirst({
@@ -175,19 +174,94 @@ export async function salonForDay(
     orderBy: [{ validFrom: "asc" }, { id: "asc" }],
   });
 
-  const deployment = rows.find(
-    (row) => row.kind === "DEPLOYMENT" && row.weekdays.includes(weekday),
-  );
-  if (deployment) {
-    return { salonId: deployment.salonId, kind: "DEPLOYMENT", assignmentId: deployment.id };
+  // Phase 71b (issue #71, D-04): the per-day pick itself is the ONE shared rule in
+  // `salon-assignment-rules.ts` — this function's own contribution is only the tenant-timezone
+  // day conversion and the hire-date/query steps above, never a re-implementation of the pick.
+  return pickSalonForDay(rows, day);
+}
+
+/**
+ * Phase 71b (issue #71, D-04): the BATCHED form of {@link salonForDay} — the central holiday
+ * resolver's (`facade/holiday-resolution.ts`) no-entry fallback needs "which salon for employee E
+ * on day D" for many employees and many days at once, and must never turn into an N+1 of
+ * `salonForDay` calls (research Anti-Patterns; PERF-V1814-01 discipline). Built on the SAME pure
+ * {@link pickSalonForDay} rule `salonForDay` uses — a parity test in `holiday-resolution.test.ts`
+ * proves the two never disagree for any employee/day.
+ *
+ * Exactly ONE `db.employee.findMany` and ONE `db.employeeSalonAssignment.findMany`, regardless of
+ * how many employees or days are asked for. `readTenantTimezone` runs once too. A day before an
+ * employee's tenant-local `hireDate` maps to `null` — same rule as `salonForDay`. A foreign or
+ * unknown `employeeId` is ABSENT from the returned map entirely (not present with an empty inner
+ * map) — `salonsForDays` never claims to have an answer for someone it never queried employee data
+ * for.
+ *
+ * An Einsatzsalon can differ by weekday (D-10) — never memoize one day's answer for another day;
+ * each day is picked independently via {@link pickSalonForDay}.
+ *
+ * NOT re-exported from `contexts/platform/index.ts` (like `readTenantTimezone`) — this is a
+ * building block of the holiday resolver, not a question another context asks directly.
+ */
+export async function salonsForDays(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  employeeIds: readonly string[],
+  fromDay: CalendarDay,
+  toDay: CalendarDay,
+): Promise<Map<string, Map<CalendarDay, string | null>>> {
+  const result = new Map<string, Map<CalendarDay, string | null>>();
+  if (employeeIds.length === 0 || fromDay > toDay) return result;
+
+  const tz = await readTenantTimezone(db, tenantId);
+  const idList = [...employeeIds];
+  const fromDate = dayToDate(fromDay);
+  const toDate = dayToDate(toDay);
+
+  const employees = await db.employee.findMany({
+    where: { tenantId, id: { in: idList } },
+    select: { id: true, hireDate: true },
+  });
+  const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
+
+  const rows = await db.employeeSalonAssignment.findMany({
+    where: {
+      tenantId,
+      employeeId: { in: idList },
+      validFrom: { lte: toDate },
+      OR: [{ validUntil: null }, { validUntil: { gte: fromDate } }],
+    },
+    orderBy: [{ validFrom: "asc" }, { id: "asc" }],
+  });
+  const rowsByEmployee = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const list = rowsByEmployee.get(row.employeeId);
+    if (list) {
+      list.push(row);
+    } else {
+      rowsByEmployee.set(row.employeeId, [row]);
+    }
   }
 
-  const home = rows.find((row) => row.kind === "HOME");
-  if (home) {
-    return { salonId: home.salonId, kind: "HOME", assignmentId: home.id };
+  const days: CalendarDay[] = [];
+  for (let day = fromDay; day <= toDay; day = addDays(day, 1)) days.push(day);
+
+  for (const employeeId of idList) {
+    const employee = employeeById.get(employeeId);
+    if (!employee) continue; // foreign/unknown employeeId — absent from the result (T-100-09 safe)
+
+    const hireDay = tenantLocalDay(employee.hireDate, tz);
+    const employeeRows = rowsByEmployee.get(employeeId) ?? [];
+    const dayMap = new Map<CalendarDay, string | null>();
+    for (const day of days) {
+      if (day < hireDay) {
+        dayMap.set(day, null);
+      } else {
+        dayMap.set(day, pickSalonForDay(employeeRows, day)?.salonId ?? null);
+      }
+    }
+    result.set(employeeId, dayMap);
   }
 
-  return null;
+  return result;
 }
 
 /**

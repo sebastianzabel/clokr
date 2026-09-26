@@ -20,7 +20,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 
@@ -41,6 +41,7 @@ describe("close-month/status & year-status — employee with no WorkSchedule row
       data: { name: `NoSchedule ${s}`, slug: `noschedule-${s}`, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 71b (issue #71): holiday resolution needs the tenant's salon
     await prisma.tenantConfig.create({
       data: { tenantId, defaultVacationDays: 30, timezone: TZ },
     });

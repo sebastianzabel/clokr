@@ -78,7 +78,13 @@ describe("resolveScopedHolderIds (Phase 91b Plan 09, Issue #91, D-17)", () => {
 
   async function createSalon(tenantId: string, name: string) {
     return app.prisma.salon.create({
-      data: { tenantId, name, openingHours: DEFAULT_SALON_OPENING_HOURS, isActive: true },
+      data: {
+        tenantId,
+        name,
+        openingHours: DEFAULT_SALON_OPENING_HOURS,
+        isActive: true,
+        federalState: "NIEDERSACHSEN", // Phase 71b (issue #71) — required since the merge; irrelevant to this test's own assertions
+      },
     });
   }
 

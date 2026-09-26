@@ -127,6 +127,7 @@ describe("scope-filter.ts — TimeEntry (Phase 91b Plan 02 Task 2, Issue #91, D-
           name,
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
+          federalState: "NIEDERSACHSEN", // Phase 71b (issue #71) — required since the merge; irrelevant to this test's own assertions
         },
       });
     salonOld = await makeSalon("SF Salon Old");
@@ -340,6 +341,7 @@ describe("scope-filter.ts — TimeEntry (Phase 91b Plan 02 Task 2, Issue #91, D-
           name: "SF Foreign Salon",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
+          federalState: "NIEDERSACHSEN", // Phase 71b (issue #71) — required since the merge; irrelevant to this test's own assertions
         },
       });
       await app.prisma.timeEntry.create({
@@ -420,6 +422,7 @@ describe("scope-filter.ts — Stammsalon-only: leave/absence/saldo/exports (Phas
           name,
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
+          federalState: "NIEDERSACHSEN", // Phase 71b (issue #71) — required since the merge; irrelevant to this test's own assertions
         },
       });
     salonX = await makeSalon("SF D10 Salon X");
@@ -562,6 +565,7 @@ describe("scope-filter.ts — Shift (Phase 91b Plan 02 Task 3, Issue #91, D-11)"
           name,
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
+          federalState: "NIEDERSACHSEN", // Phase 71b (issue #71) — required since the merge; irrelevant to this test's own assertions
         },
       });
     salonX = await makeSalon("SF D11 Salon X");
@@ -736,6 +740,7 @@ describe("scope-filter.ts — Person master data (Phase 91b Plan 02 Task 3, Issu
           name,
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
+          federalState: "NIEDERSACHSEN", // Phase 71b (issue #71) — required since the merge; irrelevant to this test's own assertions
         },
       });
     salonP = await makeSalon("SF D12 Salon P");

@@ -127,6 +127,7 @@ describe("Issue #91 (Phase 91b Plan 04) — LeaveRequest/Section9Credit decision
         name: "LDSC Salon A",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
+        federalState: "NIEDERSACHSEN", // Phase 71b (issue #71) — required since the merge; irrelevant to this test's own assertions
       },
     });
     salonB = await app.prisma.salon.create({
@@ -135,6 +136,7 @@ describe("Issue #91 (Phase 91b Plan 04) — LeaveRequest/Section9Credit decision
         name: "LDSC Salon B",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
+        federalState: "NIEDERSACHSEN", // Phase 71b (issue #71) — required since the merge; irrelevant to this test's own assertions
       },
     });
     sickType = await app.prisma.leaveType.create({

@@ -15,7 +15,8 @@
  *   2. the day is EXPECTED — for `SHIFT_BASED` that means a roster `Shift` exists on it (never
  *      `{day}Hours`); for the FIXED family it means `isObligatedWorkday()` says so,
  *      `workDays`-primary;
- *   3. no approved leave, no absence and no public holiday covers the day;
+ *   3. no approved leave, no absence and no public holiday AT THE EMPLOYEE'S WORK LOCATION OF
+ *      THAT DAY covers the day (Phase 71b, § 2 EFZG);
  *   4. the day carries no entry in `entryDates`.
  *
  * Point 4 is the sharp one. `entryDates` is built from {@link getWorkedEntriesInRange} (facade
@@ -34,7 +35,7 @@
  */
 
 import type { Prisma } from "@clokr/db";
-import { getHolidays, type FederalStateCode } from "../platform";
+import { holidaysAtWorkLocation } from "../platform";
 import { getShiftsInRange } from "../scheduling";
 import { getWorkedEntriesInRange } from "../time-tracking";
 import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../absence";
@@ -55,8 +56,6 @@ export type MonthGapCheckInput = {
   schedule: Record<string, unknown>;
   month: MonthKey;
   tz: string;
-  /** Federal-state code for `getHolidays()` (e.g. "NI") — the value `STATE_MAP` yields. */
-  stateCode: FederalStateCode;
 };
 
 export type MonthGapCheckResult = {
@@ -76,7 +75,7 @@ export async function detectMonthGaps(
   db: Prisma.TransactionClient,
   input: MonthGapCheckInput,
 ): Promise<MonthGapCheckResult> {
-  const { tenantId, employeeId, hireDate, schedule, month, tz, stateCode } = input;
+  const { tenantId, employeeId, hireDate, schedule, month, tz } = input;
   const scheduleType = String(schedule.type ?? "");
 
   if (!hasDailyGapRule(scheduleType)) {
@@ -98,13 +97,17 @@ export async function detectMonthGaps(
   const approvedLeave = await getApprovedLeaveOverlapping(db, scope, monthStart, monthEnd);
   const absences = await getAbsencesOverlapping(db, scope, monthStart, monthEnd);
 
-  const holidayDateStrings = new Set<string>(getHolidays(month.year, stateCode).map((h) => h.date));
-  const dbHolidays = await db.publicHoliday.findMany({
-    where: { tenantId, date: { gte: monthStart, lte: monthEnd } },
-  });
-  for (const h of dbHolidays) {
-    holidayDateStrings.add(dateStrInTz(h.date, tz));
-  }
+  // Phase 71b (issue #71): holidays by WORK LOCATION (§ 2 EFZG) instead of a tenant-wide
+  // federal state — the entries this function already loaded (T2) decide the salon per day.
+  const holidaysByEmployee = await holidaysAtWorkLocation(
+    db,
+    tenantId,
+    [employeeId],
+    dateStrInTz(monthFirstDay, tz),
+    dateStrInTz(monthLastDay, tz),
+    entries,
+  );
+  const holidayDateStrings = new Set<string>(holidaysByEmployee.get(employeeId)?.keys() ?? []);
 
   // SHIFT_BASED obligation comes from the roster, never from {day}Hours (pitfall A4).
   let rosterDates: Set<string> | undefined;

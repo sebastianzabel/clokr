@@ -54,6 +54,7 @@ describe("POST /api/v1/employees/:id/salon-assignments — create Einsatzsalon (
       app.prisma.salon.create({
         data: {
           tenantId: tenantA.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name,
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive,
@@ -68,6 +69,7 @@ describe("POST /api/v1/employees/:id/salon-assignments — create Einsatzsalon (
     foreignSalon = await app.prisma.salon.create({
       data: {
         tenantId: tenantB.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Fremder Salon",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -695,6 +697,7 @@ describe("POST .../salon-assignments/home & .../:assignmentId/end — Stammsalon
       app.prisma.salon.create({
         data: {
           tenantId: tenantA.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name,
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
@@ -1214,6 +1217,7 @@ describe("POST .../salon-assignments/home & .../:assignmentId/end — Stammsalon
       const foreignSalon = await app.prisma.salon.create({
         data: {
           tenantId: tenantB.tenant.id,
+          federalState: "NIEDERSACHSEN",
           name: "D-19 Foreign Salon",
           openingHours: DEFAULT_SALON_OPENING_HOURS,
           isActive: true,
@@ -1337,6 +1341,7 @@ describe("homeSalonAt (Phase 91b, Issue #91, D-08)", () => {
         name: "HSA Salon A",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
+        federalState: "NIEDERSACHSEN", // Phase 71b (issue #71) — required since the merge; irrelevant to this test's own assertions
       },
     });
     salonB = await app.prisma.salon.create({
@@ -1345,6 +1350,7 @@ describe("homeSalonAt (Phase 91b, Issue #91, D-08)", () => {
         name: "HSA Salon B",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
+        federalState: "NIEDERSACHSEN", // Phase 71b (issue #71) — required since the merge; irrelevant to this test's own assertions
       },
     });
     salonDeploy = await app.prisma.salon.create({
@@ -1353,6 +1359,7 @@ describe("homeSalonAt (Phase 91b, Issue #91, D-08)", () => {
         name: "HSA Salon Deploy",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
+        federalState: "NIEDERSACHSEN", // Phase 71b (issue #71) — required since the merge; irrelevant to this test's own assertions
       },
     });
   });
@@ -1512,6 +1519,7 @@ describe("homeSalonAt (Phase 91b, Issue #91, D-08)", () => {
         name: "HSA Foreign Salon",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
+        federalState: "NIEDERSACHSEN", // Phase 71b (issue #71) — required since the merge; irrelevant to this test's own assertions
       },
     });
     await app.prisma.employeeSalonAssignment.create({

@@ -125,6 +125,11 @@ export async function getValidWorkedEntriesInRange(
  * per-month gap-readiness re-check, and `dashboard.ts`'s "heute"/"woche" worked-minutes cards (see
  * the module header for why `todayEntries` fits this shape despite its pre-facade `where` lacking
  * the `endTime` clause — a proven no-op there, not an approximation).
+ *
+ * Phase 71b (issue #71): `salonId` is selected additively — no existing reader is affected — so
+ * callers can hand these rows to the Unterbau's central holiday resolver
+ * (`contexts/platform`'s `holidaysAtWorkLocation`) as the per-day work location, without the
+ * Unterbau ever reading `TimeEntry` itself.
  */
 export async function getWorkedEntriesInRange(
   db: Prisma.TransactionClient,
@@ -149,6 +154,7 @@ export async function getWorkedEntriesInRange(
       breakMinutes: true,
       breakStatus: true,
       isLocked: true,
+      salonId: true,
     },
   });
 }
@@ -475,4 +481,28 @@ export async function createImportedTimeEntry(
       salonId: data.salonId, // Phase 68b (issue #68), D-11
     },
   });
+}
+
+// ── D-12 — "does any TimeEntry reference this salon?" ───────────────────────────────────────────
+
+/**
+ * Phase 71b (issue #71), D-12: does any `TimeEntry` — including a soft-deleted one — reference
+ * `salonId`? `contexts/platform/facade/salons.ts`'s `updateSalon` calls this (via a
+ * `contexts/time-tracking` index re-export injected by the ROUTE, `api/salons.ts` — this module
+ * imports no other context, ADR 0001/0002) to decide whether a `Salon.federalState` change is a
+ * silent recompute of already-recorded time or genuinely unreferenced.
+ *
+ * Deliberately WITHOUT `deletedAt: null` — the named soft-delete carve-out of this facade's D-08
+ * rule (same shape as {@link clearEntryNotesForEmployee}'s and
+ * {@link hardDeleteTimeDataForEmployee}'s own docblocks above): a soft-deleted entry still carries
+ * the salon as its recorded work location (Revisionssicherheit) and blocks the state change
+ * exactly like a live one — a hard-deleted salon reference is never possible (`onDelete: Restrict`
+ * on `TimeEntry.salon`), so "soft-deleted or live" is already every row that can exist.
+ */
+export async function countEntriesForSalon(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  salonId: string,
+): Promise<number> {
+  return db.timeEntry.count({ where: { salonId, employee: { tenantId } } });
 }

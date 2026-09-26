@@ -37,11 +37,6 @@
  * and still imports both, for its actual anonymisation functions (E-5, DSGVO Art. 17) — ADR 0001
  * Eintrag H explains why anonymize.ts stays in the Unterbau rather than moving to composition/.
  */
-export { getHolidays, STATE_MAP } from "./holidays";
-// Phase 292 (#292): the code STATE_MAP maps into. Declared public so a caller that carries a
-// state code between two platform calls (month-gap-check.ts) can name its type instead of
-// widening it to `string` and casting at the `getHolidays()` boundary.
-export type { FederalStateCode } from "./holidays";
 export { employeeScopeWhere } from "./facade/employee-scope";
 export type { EmployeeScope } from "./facade/employee-scope";
 export { auditReasonSchema, AUDIT_REASON_REQUIRED } from "./audit-reason";
@@ -94,6 +89,7 @@ export type {
   SalonOpeningHours,
   CreateSalonInput,
   UpdateSalonInput,
+  UpdateSalonOutcome,
   SalonStateChange,
   SalonDeactivation,
 } from "./facade/salons";
@@ -142,6 +138,17 @@ export type {
   RoleAssignmentTarget,
   NormalizedRoleAssignmentScope,
 } from "./role-assignment";
+// Phase 71b (issue #71, D-04/D-05): the central holiday resolution — § 2 EFZG, work location,
+// not a single tenant-wide federal state. This is now the ONLY public holiday surface: since
+// plan 07 rewired every one of the 13 former readers onto it, the computed-holiday engine in
+// `./holidays` (and its state-code type) is module-internal to `contexts/platform` — reach
+// holidays only through the two functions below.
+export { holidaysForSalon, holidaysAtWorkLocation } from "./facade/holiday-resolution";
+export type {
+  SalonHoliday,
+  WorkLocationEntry,
+  HolidaysByEmployee,
+} from "./facade/holiday-resolution";
 // Phase 75b (#75): the three global system roles — fixed ids, display names and the permission
 // sets derived from docs/permissions.md. Code identifies a system role by id only.
 export {

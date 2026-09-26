@@ -92,7 +92,15 @@ export type RecalcSummary = {
     deltaExpectedMinutes: number;
     deltaBalanceMinutes: number;
   }>;
-  errors: Array<{ snapshotId: string; employeeId: string; tenantId: string; error: string }>;
+  /** `snapshotId: null, employeeId: null` marks a TENANT-level refusal (Phase 71b, issue #71) —
+   * a multi-salon tenant this script cannot process (see the ONE-TENANT-WIDE-HOLIDAY-SET
+   * warning below). */
+  errors: Array<{
+    snapshotId: string | null;
+    employeeId: string | null;
+    tenantId: string;
+    error: string;
+  }>;
 };
 
 // ── Usage ─────────────────────────────────────────────────────────────────────
@@ -231,6 +239,18 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
     summary.tenantsScanned = tenants.length;
 
     for (const t of tenants) {
+      // Phase 71b (issue #71): this script derives each employee's holiday set from ONE
+      // tenant-wide federal state (below) and would silently write WRONG snapshots for a
+      // tenant whose salons span more than one Bundesland (§ 2 EFZG — holidays apply by work
+      // location, not a single tenant-wide state). Refuse such a tenant outright.
+      const salonCount = await prisma.salon.count({ where: { tenantId: t.id } });
+      if (salonCount > 1) {
+        const message = `recalculate-snapshots-after-bs-doublecount-fix: tenant ${t.id} has ${salonCount} salons — this operator script computes holidays from ONE tenant-wide federal state and would write wrong snapshots for a multi-salon tenant (Phase 71b, issue #71); refusing.`;
+        summary.errors.push({ snapshotId: null, employeeId: null, tenantId: t.id, error: message });
+        console.error(`[recalc] ${message}`);
+        continue;
+      }
+
       const tz = await getTenantTimezone(prisma, t.id);
       const yearStart = args.year ? monthRangeUtc(args.year, 1, tz).start : null;
       const yearEnd = args.year ? monthRangeUtc(args.year, 12, tz).end : null;

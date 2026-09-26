@@ -19,7 +19,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  withPre71bSalonSchema,
+} from "./setup";
 import { findDefaultSalon } from "../contexts/platform/facade/salons";
 
 // __dirname is apps/api/src/__tests__ — four levels up is the repo root, same resolution as
@@ -259,54 +265,60 @@ describe("Phase 65b — salon-coupling migration replay (D-06, AC-3)", () => {
 
             const runSalonsBefore = await runSalons();
 
-            // 3. Execute the REAL data section, statement by statement.
-            for (const stmt of statements) {
-              await tx.$executeRawUnsafe(stmt);
-            }
+            // Phase 71b (issue #71): this data section's own `INSERT INTO "Salon"` predates
+            // federalState and would NOT NULL-fail against the post-71b schema otherwise — wrap
+            // both runs (and everything reading Salon rows in between) in ONE
+            // withPre71bSalonSchema window.
+            await withPre71bSalonSchema(tx, async () => {
+              // 3. Execute the REAL data section, statement by statement.
+              for (const stmt of statements) {
+                await tx.$executeRawUnsafe(stmt);
+              }
 
-            const runSalonsAfterFirst = await runSalons();
-            const couplingsAfterFirst = await couplings();
-            const [{ count: nullRunCount }] = await tx.$queryRaw<{ count: number }[]>`
-              SELECT count(*)::int AS count FROM "PhorestSyncRun" WHERE "salonId" IS NULL
-            `;
-            const [{ count: crossTenantCouplingCount }] = await tx.$queryRaw<{ count: number }[]>`
-              SELECT count(*)::int AS count FROM "SalonCoupling" sc
-              JOIN "Salon" sa ON sa."id" = sc."salonId"
-              WHERE sa."tenantId" != sc."tenantId"
-            `;
+              const runSalonsAfterFirst = await runSalons();
+              const couplingsAfterFirst = await couplings();
+              const [{ count: nullRunCount }] = await tx.$queryRaw<{ count: number }[]>`
+                SELECT count(*)::int AS count FROM "PhorestSyncRun" WHERE "salonId" IS NULL
+              `;
+              const [{ count: crossTenantCouplingCount }] = await tx.$queryRaw<{ count: number }[]>`
+                SELECT count(*)::int AS count FROM "SalonCoupling" sc
+                JOIN "Salon" sa ON sa."id" = sc."salonId"
+                WHERE sa."tenantId" != sc."tenantId"
+              `;
 
-            // 4. D-06 rule pin — the runtime resolver vs. the migration's own choice.
-            const defaultSalon: Record<string, string | null> = {};
-            for (const tenantId of fixtureTenantIds) {
-              defaultSalon[tenantId] = (await findDefaultSalon(tx, tenantId))?.id ?? null;
-            }
-            const pSalons = await tx.salon.findMany({ where: { tenantId: tenantP.tenant.id } });
+              // 4. D-06 rule pin — the runtime resolver vs. the migration's own choice.
+              const defaultSalon: Record<string, string | null> = {};
+              for (const tenantId of fixtureTenantIds) {
+                defaultSalon[tenantId] = (await findDefaultSalon(tx, tenantId))?.id ?? null;
+              }
+              const pSalons = await tx.salon.findMany({ where: { tenantId: tenantP.tenant.id } });
 
-            const configs = await tx.tenantConfig.findMany({
-              where: { tenantId: { in: fixtureTenantIds } },
-              select: { tenantId: true, phorestBranchId: true },
+              const configs = await tx.tenantConfig.findMany({
+                where: { tenantId: { in: fixtureTenantIds } },
+                select: { tenantId: true, phorestBranchId: true },
+              });
+              const branchIdsAfter = Object.fromEntries(
+                configs.map((c) => [c.tenantId, c.phorestBranchId]),
+              );
+
+              // 5. Idempotency — run the section a SECOND time in the same transaction.
+              for (const stmt of statements) {
+                await tx.$executeRawUnsafe(stmt);
+              }
+
+              captured = {
+                runSalonsBefore,
+                runSalonsAfterFirst,
+                runSalonsAfterSecond: await runSalons(),
+                couplingsAfterFirst,
+                couplingsAfterSecond: await couplings(),
+                pSalonIds: pSalons.map((sal) => sal.id),
+                defaultSalon,
+                nullRunCount,
+                crossTenantCouplingCount,
+                branchIdsAfter,
+              };
             });
-            const branchIdsAfter = Object.fromEntries(
-              configs.map((c) => [c.tenantId, c.phorestBranchId]),
-            );
-
-            // 5. Idempotency — run the section a SECOND time in the same transaction.
-            for (const stmt of statements) {
-              await tx.$executeRawUnsafe(stmt);
-            }
-
-            captured = {
-              runSalonsBefore,
-              runSalonsAfterFirst,
-              runSalonsAfterSecond: await runSalons(),
-              couplingsAfterFirst,
-              couplingsAfterSecond: await couplings(),
-              pSalonIds: pSalons.map((sal) => sal.id),
-              defaultSalon,
-              nullRunCount,
-              crossTenantCouplingCount,
-              branchIdsAfter,
-            };
 
             throw new SalonCouplingMigrationReplayRollback(
               "deliberate rollback — this fixture must never be committed",

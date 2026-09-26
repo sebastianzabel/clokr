@@ -399,10 +399,23 @@ export async function withRoleLockoutGuard<T>(
  *     matching system role, kept when THAT role grants `permission`.
  *
  * Every recipient site (D-16, D-17) keeps its OWN other filters — `isActive`, the employee's
- * tenant, `exitDate`, an actor/target skip, the select shape. This facade answers only "who holds
- * the permission", scoped to `tenantId`'s employees; it does not filter `isActive` itself, so an
+ * tenant, an actor/target skip, the select shape. This facade answers only "who holds the
+ * permission", scoped to `tenantId`'s employees; it does not filter `isActive` itself, so an
  * inactive holder is still returned here — exactly what lets a site's own `isActive` filter (or
  * its absence) be the thing the neutrality recording actually exercises, per site.
+ *
+ * Phase 355 (Issue #355): a departed holder — `Employee.exitDate` set AND in the past, the same
+ * "employed as of a date" convention `homeSalonUsageFrom` (`facade/salon-assignments.ts`) uses —
+ * is dropped here, the ONE place every one of the 17 recipient lookups (D-16/D-17) resolves
+ * through, so a departed ADMIN/MANAGER stops being a notification recipient everywhere at once
+ * instead of needing a fix at each of the 17 call sites. Unlike `isActive`, no site filtered
+ * `exitDate` on its own before this (docs/permissions.md § Empfängersuchen), which is exactly
+ * the personal-data leak #355 reports. An anonymized employee is unaffected by this new filter —
+ * DSGVO anonymization already sets `User.isActive` to `false` (see "DSGVO Employee Deletion" in
+ * CLAUDE.md), which every site's own `isActive` filter already excludes; anonymization does not
+ * set `exitDate`, so this filter does not need to special-case it. A holder whose `exitDate` is in
+ * the FUTURE (a planned, not-yet-effective departure) is still a holder — only a past `exitDate`
+ * counts as departed.
  *
  * Issue #359: a tenant user who falls into the (b) fallback throws if the system role their
  * `User.role` maps to is missing, instead of silently contributing nothing — the same fail-closed
@@ -484,7 +497,19 @@ export async function userIdsHoldingPermission(
     }
   }
 
-  return [...new Set([...storedHolderIds, ...fallbackHolderIds])].sort();
+  const candidateIds = [...new Set([...storedHolderIds, ...fallbackHolderIds])];
+  if (candidateIds.length === 0) return [];
+
+  // Phase 355 (Issue #355): drop a departed candidate — `exitDate` set and in the past — the ONE
+  // place this is checked for every recipient lookup. `isActive` stays each site's own job
+  // (unchanged, see the docstring above).
+  const departedEmployees = await db.employee.findMany({
+    where: { tenantId, userId: { in: candidateIds }, exitDate: { lt: new Date() } },
+    select: { userId: true },
+  });
+  const departedUserIds = new Set(departedEmployees.map((employee) => employee.userId));
+
+  return candidateIds.filter((id) => !departedUserIds.has(id)).sort();
 }
 
 /**

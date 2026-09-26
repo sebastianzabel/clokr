@@ -488,7 +488,26 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // userIdsHoldingPermission — passes F1/F2/F3 directly (`db` first, required `tenantId` right
   // next to it, `candidateUserIds` is a `*Ids`-shaped parameter with a `tenantId` sibling), no new
   // exception needed; exceptions unchanged at 17.
-  it("the real tree has exactly 124 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  //
+  // 112 -> 115 in Phase 71b Plan 02 (Issue #71), developed on `origin/main` in parallel with this
+  // branch's own 91b work: `contexts/platform/facade/holiday-resolution.ts` added (matches the
+  // `contexts/*/facade/**/*.ts` glob directly, no KNOWN_FACADE_FILES entry needed) — 2 new exported
+  // functions (holidaysForSalon, holidaysAtWorkLocation), and `salon-assignments.ts` (same file
+  // already in the list above, ALSO touched by 91b Plan 02's own homeSalonAt — a DIFFERENT function
+  // in the same file, so both additions stand) gained 1 more (salonsForDays) — all three pass
+  // F1/F2/F3 directly, no new exception needed.
+  //
+  // 115 -> 116 in Phase 71b Plan 06 (Issue #71, D-12), same parallel `origin/main` line:
+  // `contexts/time-tracking/facade/time-entries.ts` gained 1 more exported function
+  // (countEntriesForSalon) — passes F1/F2/F3 directly, no new exception needed.
+  //
+  // 124 + 4 = 128 in the merge of `origin/main` (Phase 71b, +4 on top of the shared 112/113
+  // baseline: holiday-resolution.ts's 2 + salon-assignments.ts's 1 + time-entries.ts's 1) into
+  // `feat/91-scope-grenze` (Phase 91b, 124): the two phases' new functions live in disjoint FILES
+  // except `salon-assignments.ts`, where they add two DIFFERENT functions (salonsForDays vs.
+  // homeSalonAt) — counts still add, re-measured on the merged tree. Exceptions unchanged at 17
+  // (71b added none).
+  it("the real tree has exactly 128 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -498,6 +517,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
         "apps/api/src/contexts/platform/facade/salons.ts",
         "apps/api/src/contexts/platform/facade/salon-assignments.ts",
         "apps/api/src/contexts/platform/facade/salon-assignment-changes.ts",
+        "apps/api/src/contexts/platform/facade/holiday-resolution.ts",
         "apps/api/src/contexts/scheduling/facade/shifts.ts",
         "apps/api/src/contexts/scheduling/facade/availability.ts",
         "apps/api/src/contexts/time-tracking/facade/presence-devices.ts",
@@ -518,7 +538,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(124);
+    expect(functions).toHaveLength(128);
 
     const rawExceptions = JSON.parse(
       readFileSync(

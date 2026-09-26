@@ -33,6 +33,7 @@ describe("salonForDay / listSalonAssignments (Phase 67b Plan 01 Task 2, issue #6
     salonA = await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon A",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -41,6 +42,7 @@ describe("salonForDay / listSalonAssignments (Phase 67b Plan 01 Task 2, issue #6
     salonB = await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon B",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -49,6 +51,7 @@ describe("salonForDay / listSalonAssignments (Phase 67b Plan 01 Task 2, issue #6
     salonC = await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon C",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -57,6 +60,7 @@ describe("salonForDay / listSalonAssignments (Phase 67b Plan 01 Task 2, issue #6
     salonS = await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon S",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,
@@ -65,6 +69,7 @@ describe("salonForDay / listSalonAssignments (Phase 67b Plan 01 Task 2, issue #6
     salonM = await app.prisma.salon.create({
       data: {
         tenantId: tenantA.tenant.id,
+        federalState: "NIEDERSACHSEN",
         name: "Salon M",
         openingHours: DEFAULT_SALON_OPENING_HOURS,
         isActive: true,

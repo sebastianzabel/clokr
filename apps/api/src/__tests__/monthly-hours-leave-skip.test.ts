@@ -13,7 +13,7 @@
  * shared singleton Fastify app via getTestApp, per-suite tenant slug, no Date mocking.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup";
 import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
 import { dateStrInTz } from "../contexts/working-time-account/timezone";
 import type { FastifyInstance } from "fastify";
@@ -79,6 +79,7 @@ describe("updateOvertimeAccount — MONTHLY_HOURS leave-skip (#192)", () => {
       },
     });
     tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 71b (issue #71): holiday resolution needs the tenant's salon
     await prisma.tenantConfig.create({
       data: { tenantId: tenant.id, defaultVacationDays: 30, timezone: TZ },
     });

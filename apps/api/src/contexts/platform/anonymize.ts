@@ -16,6 +16,8 @@
  *   - User.email               → "deleted-{id-prefix}@anonymized.local"
  *   - User.passwordHash        → "ANONYMIZED"
  *   - User.isActive            → false
+ *   - User.role                → EMPLOYEE (Issue #357 sub-fix C, revises Phase 75b D-14 — see
+ *     below and CLAUDE.md "DSGVO Employee Deletion = Anonymization")
  *   - TimeEntry.note           → null (for that employee)
  *   - LeaveRequest.note        → null (for that employee)
  *   - Absence.note             → null AND Absence.documentPath → null
@@ -121,25 +123,27 @@ export async function anonymizeEmployeeData(
   });
 
   // User: deaktivieren + anonymisieren (kein Login mehr möglich)
+  // Issue #357 sub-fix C (revises Phase 75b D-14 / ADR 0001-abweichungen Eintrag N): `role` is
+  // rewritten to EMPLOYEE here too. Phase 75b deliberately left it standing so a still-valid
+  // access token of a self-anonymizing admin would not lose its rights mid-request-sequence — but
+  // that is exactly the security-review finding of #357: with the role assignments removed below
+  // and the column left at MANAGER/ADMIN, the Altrollen-Rückfall (D-08, `request-permissions.ts`)
+  // hands that still-valid token FULL Manager/Admin rights for the rest of its lifetime (up to the
+  // access-token TTL), even though the person is anonymized and `isActive: false` (which nothing
+  // re-checks per request, D-10). Anonymization must not leave a live grant behind, so the column
+  // is reset in the SAME update as `isActive`.
   await tx.user.update({
     where: { id: userId },
     data: {
       email: `deleted-${employeeId.slice(0, 8)}@anonymized.local`,
       passwordHash: "ANONYMIZED",
       isActive: false,
+      role: "EMPLOYEE",
     },
   });
 
   // Phase 74b (D-22): an anonymized person holds no rights — remove every role assignment.
   const removedRoleAssignments = await removeRoleAssignmentsOfUser(tx, employee.tenantId, userId);
-  // Phase 75b Plan 11 (Issue #75): deliberately NO compat-column write-back (D-14) here. With no
-  // stored assignment left, `User.role` is the fallback (D-08) that a still-valid access token of
-  // this user resolves through; rewriting it to EMPLOYEE would strip a self-anonymizing admin's
-  // live token of its rights mid-request-sequence — a behaviour change the neutrality recording
-  // (AC-75-11, cells "DELETE /api/v1/employees/:id | foreign" of ADMIN and FALLBACK_ADMIN)
-  // forbids, the same class as D-10's "no isActive re-check". The login is gone either way
-  // (password and refresh tokens removed below). Whether to trade that neutrality for the
-  // rewrite is an owner decision on #75, not taken here.
 
   // Notizen in Zeiteinträgen anonymisieren (können persönliche Daten enthalten)
   // Phase 100B Plan 08 — T10, contexts/time-tracking facade (reaches soft-deleted rows too).

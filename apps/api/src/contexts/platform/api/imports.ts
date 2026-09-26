@@ -67,25 +67,93 @@ function parseDate(str: string): string {
   return str;
 }
 
-function parseCsv(text: string): Record<string, string>[] {
+// Issue #356: a CSV header cell is matched case-insensitively and with leading/trailing
+// whitespace stripped — this is the ONE place that normalization happens, both for the row keys
+// produced by parseCsv() below and for the alias lists (EMPLOYEE_COLUMN_ALIASES,
+// TIME_ENTRY_COLUMN_ALIASES) matched against them. `rolle`, `Rolle` and ` ROLLE ` all normalize
+// to the same key.
+function normalizeHeaderKey(header: string): string {
+  return header.trim().toLowerCase();
+}
+
+interface ParsedCsv {
+  // Keyed by normalizeHeaderKey(header) — never the raw header text.
+  rows: Record<string, string>[];
+  // Raw header text (trimmed, quote-stripped) in file order — kept unnormalized for display in
+  // the "unknown column" hint (unknownColumnHints below).
+  headers: string[];
+}
+
+function parseCsv(text: string): ParsedCsv {
   const lines = text.trim().split(/\r?\n/);
-  if (lines.length < 2) return [];
+  if (lines.length < 2) return { rows: [], headers: [] };
 
   // Detect separator (semicolon or comma)
   const sep = lines[0].includes(";") ? ";" : ",";
   const headers = lines[0].split(sep).map((h) => h.trim().replace(/^["']|["']$/g, ""));
 
-  return lines
+  const rows = lines
     .slice(1)
     .filter((l) => l.trim())
     .map((line) => {
       const values = line.split(sep).map((v) => v.trim().replace(/^["']|["']$/g, ""));
       const row: Record<string, string> = {};
       headers.forEach((h, i) => {
-        row[h] = values[i] ?? "";
+        row[normalizeHeaderKey(h)] = values[i] ?? "";
       });
       return row;
     });
+
+  return { rows, headers };
+}
+
+// A CSV row, keyed by normalizeHeaderKey(header) (see parseCsv). Returns the first alias with a
+// non-empty value, or undefined if the column is missing or empty everywhere it was tried.
+function pickColumn(row: Record<string, string>, aliases: readonly string[]): string | undefined {
+  for (const alias of aliases) {
+    const value = row[alias];
+    if (value !== undefined && value !== "") return value;
+  }
+  return undefined;
+}
+
+// Every column POST /employees understands, one alias list per schema field, each alias already
+// normalized to normalizeHeaderKey's output. A header cell matching none of these is reported via
+// unknownColumnHints instead of being silently dropped (Issue #356).
+const EMPLOYEE_COLUMN_ALIASES: Record<string, readonly string[]> = {
+  email: ["email", "e-mail"],
+  firstName: ["firstname", "vorname"],
+  lastName: ["lastname", "nachname"],
+  employeeNumber: ["employeenumber", "nr", "mitarbeiter-nr", "mitarbeiter-nr."],
+  hireDate: ["hiredate", "eintrittsdatum"],
+  role: ["role", "rolle"],
+  weeklyHours: ["weeklyhours", "wochenstunden"],
+  scheduleType: ["scheduletype", "schedule_type", "modell"],
+  monthlyHours: ["monthlyhours", "monthly_hours", "monatsstunden"],
+  password: ["password", "passwort"],
+};
+
+// Every column POST /time-entries understands — same shape as EMPLOYEE_COLUMN_ALIASES above.
+const TIME_ENTRY_COLUMN_ALIASES: Record<string, readonly string[]> = {
+  employeeNumber: ["employeenumber", "nr", "mitarbeiter-nr", "mitarbeiter-nr."],
+  date: ["date", "datum"],
+  startTime: ["starttime", "start", "von"],
+  endTime: ["endtime", "end", "ende", "bis"],
+  breakMinutes: ["breakminutes", "pause"],
+  note: ["note", "notiz"],
+  // Phase 68b (issue #68), D-11.
+  salonId: ["salonid", "salon-id"],
+};
+
+// Issue #356 AC 2: an uploaded header that matches none of the given aliases produces a hint in
+// the import response instead of being silently ignored. Matching is case/whitespace-normalized
+// (normalizeHeaderKey); the hint quotes the ORIGINAL header text for readability.
+function unknownColumnHints(headers: string[], known: Record<string, readonly string[]>): string[] {
+  const knownKeys = new Set(Object.values(known).flat());
+  return headers
+    .map((h) => h.trim())
+    .filter((h) => h !== "" && !knownKeys.has(normalizeHeaderKey(h)))
+    .map((h) => `Unbekannte Spalte "${h}" wurde ignoriert.`);
 }
 
 export async function importRoutes(app: FastifyInstance) {
@@ -95,7 +163,9 @@ export async function importRoutes(app: FastifyInstance) {
     preHandler: requirePermission("employee:import:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { csv } = z.object({ csv: z.string() }).parse(req.body);
-      const rows = parseCsv(csv);
+      const { rows, headers } = parseCsv(csv);
+      // Issue #356 AC 2: computed once from the header row, not per data row.
+      const warnings = unknownColumnHints(headers, EMPLOYEE_COLUMN_ALIASES);
 
       // Phase 67b Plan 03 (D-23, issue #67): every imported employee needs a Stammsalon (HOME)
       // row, and this endpoint has no per-row salon column (deferred to #82) — so it only works
@@ -120,31 +190,18 @@ export async function importRoutes(app: FastifyInstance) {
 
       for (let i = 0; i < rows.length; i++) {
         try {
-          const raw = rows[i];
+          const row = rows[i];
           const data = employeeRowSchema.parse({
-            ...raw,
-            hireDate: parseDate(raw.hireDate || raw.eintrittsdatum || raw.Eintrittsdatum || ""),
-            email: raw.email || raw.Email || raw["E-Mail"] || "",
-            firstName: raw.firstName || raw.vorname || raw.Vorname || "",
-            lastName: raw.lastName || raw.nachname || raw.Nachname || "",
-            employeeNumber:
-              raw.employeeNumber ||
-              raw.nr ||
-              raw.Nr ||
-              raw["Mitarbeiter-Nr"] ||
-              raw["Mitarbeiter-Nr."] ||
-              "",
-            role: raw.role || raw.Rolle || "EMPLOYEE",
-            weeklyHours: raw.weeklyHours || raw.wochenstunden || raw.Wochenstunden || "40",
-            scheduleType:
-              raw.schedule_type || raw.scheduleType || raw.modell || raw.Modell || "FIXED_SCHEDULE",
-            monthlyHours:
-              raw.monthly_hours ||
-              raw.monthlyHours ||
-              raw.monatsstunden ||
-              raw.Monatsstunden ||
-              undefined,
-            password: raw.password || raw.Passwort || undefined,
+            hireDate: parseDate(pickColumn(row, EMPLOYEE_COLUMN_ALIASES.hireDate) ?? ""),
+            email: pickColumn(row, EMPLOYEE_COLUMN_ALIASES.email) ?? "",
+            firstName: pickColumn(row, EMPLOYEE_COLUMN_ALIASES.firstName) ?? "",
+            lastName: pickColumn(row, EMPLOYEE_COLUMN_ALIASES.lastName) ?? "",
+            employeeNumber: pickColumn(row, EMPLOYEE_COLUMN_ALIASES.employeeNumber) ?? "",
+            role: pickColumn(row, EMPLOYEE_COLUMN_ALIASES.role) ?? "EMPLOYEE",
+            weeklyHours: pickColumn(row, EMPLOYEE_COLUMN_ALIASES.weeklyHours) ?? "40",
+            scheduleType: pickColumn(row, EMPLOYEE_COLUMN_ALIASES.scheduleType) ?? "FIXED_SCHEDULE",
+            monthlyHours: pickColumn(row, EMPLOYEE_COLUMN_ALIASES.monthlyHours),
+            password: pickColumn(row, EMPLOYEE_COLUMN_ALIASES.password),
           });
 
           // Issue #354 (pre-merge security review of #75): `employee:import` covers the imported
@@ -271,7 +328,14 @@ export async function importRoutes(app: FastifyInstance) {
         newValue: { total: rows.length, ok: okCount, errors: errorCount },
       });
 
-      return { total: rows.length, imported: okCount, errors: errorCount, details: results };
+      return {
+        total: rows.length,
+        imported: okCount,
+        errors: errorCount,
+        // Issue #356 AC 2: additive field, empty array when every header was recognized.
+        warnings,
+        details: results,
+      };
     },
   });
 
@@ -281,7 +345,9 @@ export async function importRoutes(app: FastifyInstance) {
     preHandler: requirePermission("time-entry:import:ZUGEWIESEN"),
     handler: async (req, _reply) => {
       const { csv } = z.object({ csv: z.string() }).parse(req.body);
-      const rows = parseCsv(csv);
+      const { rows, headers } = parseCsv(csv);
+      // Issue #356 AC 2: computed once from the header row, not per data row.
+      const warnings = unknownColumnHints(headers, TIME_ENTRY_COLUMN_ALIASES);
 
       // Pre-load employee number → id mapping for this tenant
       const employees = await app.prisma.employee.findMany({
@@ -298,22 +364,16 @@ export async function importRoutes(app: FastifyInstance) {
 
       for (let i = 0; i < rows.length; i++) {
         try {
-          const raw = rows[i];
+          const row = rows[i];
           const data = timeEntryRowSchema.parse({
-            employeeNumber:
-              raw.employeeNumber ||
-              raw.nr ||
-              raw.Nr ||
-              raw["Mitarbeiter-Nr"] ||
-              raw["Mitarbeiter-Nr."] ||
-              "",
-            date: parseDate(raw.date || raw.datum || raw.Datum || ""),
-            startTime: raw.startTime || raw.start || raw.Start || raw.von || raw.Von || "",
-            endTime: raw.endTime || raw.end || raw.Ende || raw.bis || raw.Bis || "",
-            breakMinutes: raw.breakMinutes || raw.pause || raw.Pause || "0",
-            note: raw.note || raw.notiz || raw.Notiz || "",
+            employeeNumber: pickColumn(row, TIME_ENTRY_COLUMN_ALIASES.employeeNumber) ?? "",
+            date: parseDate(pickColumn(row, TIME_ENTRY_COLUMN_ALIASES.date) ?? ""),
+            startTime: pickColumn(row, TIME_ENTRY_COLUMN_ALIASES.startTime) ?? "",
+            endTime: pickColumn(row, TIME_ENTRY_COLUMN_ALIASES.endTime) ?? "",
+            breakMinutes: pickColumn(row, TIME_ENTRY_COLUMN_ALIASES.breakMinutes) ?? "0",
+            note: pickColumn(row, TIME_ENTRY_COLUMN_ALIASES.note) ?? "",
             // Phase 68b (issue #68), D-11: an empty cell falls back to the derived salon.
-            salonId: raw.salonId || raw["Salon-ID"] || undefined,
+            salonId: pickColumn(row, TIME_ENTRY_COLUMN_ALIASES.salonId),
           });
 
           const employeeId = empMap.get(data.employeeNumber);
@@ -418,7 +478,14 @@ export async function importRoutes(app: FastifyInstance) {
         newValue: { total: rows.length, ok: okCount, errors: errorCount },
       });
 
-      return { total: rows.length, imported: okCount, errors: errorCount, details: results };
+      return {
+        total: rows.length,
+        imported: okCount,
+        errors: errorCount,
+        // Issue #356 AC 2: additive field, empty array when every header was recognized.
+        warnings,
+        details: results,
+      };
     },
   });
 }

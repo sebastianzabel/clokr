@@ -133,6 +133,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/facade/role-assignments.ts": "unterbau", // Phase 74b (issue #74) — userMayApply() reads RoleAssignment/AccessRole/Salon/Employee/User, all Unterbau models
   "src/contexts/platform/facade/salon-assignments.ts": "unterbau", // Phase 67b (issue #67) — reads/writes EmployeeSalonAssignment, an Unterbau model per ADR 0002
   "src/contexts/platform/facade/salon-assignment-changes.ts": "unterbau", // Phase 67b Plan 02 (issue #67) — lock-checked writes to EmployeeSalonAssignment, an Unterbau model per ADR 0002
+  "src/contexts/platform/facade/holiday-resolution.ts": "unterbau", // Phase 71b (issue #71) — builds holiday sets from Salon/PublicHoliday, Unterbau models; reads no TimeEntry
   "src/contexts/platform/salon-assignment-rules.ts": "unterbau", // Phase 67b (issue #67) — pure day/weekday/period rules for EmployeeSalonAssignment, an Unterbau model per ADR 0002
   "src/contexts/platform/salon-assignment-audit.ts": "unterbau", // Phase 67b (issue #67) — shared WR-01 audit helper for EmployeeSalonAssignment, an Unterbau model per ADR 0002
   "src/contexts/platform/access-role.ts": "unterbau", // Phase 73b (#73): role = permission bundle, writes/reads AccessRole only — an Unterbau model
