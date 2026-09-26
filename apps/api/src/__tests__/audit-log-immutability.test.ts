@@ -201,3 +201,37 @@ describe("Issue #78 (D-12) — AuditLog rows are mutated only at two justified, 
     ).toEqual([]);
   });
 });
+
+// The mutation-site rule above already covers every route handler in every route file (a mutating
+// call inside audit-logs.ts would be caught there too), but issue #78's acceptance criteria states
+// the audit-log API's read-only status explicitly — this block adds that direct, named assertion.
+const AUDIT_LOGS_ROUTE_FILE = "apps/api/src/contexts/platform/api/audit-logs.ts";
+// Measured 2026-09-26 (Phase 78b Plan 03): exactly 2 `app.get(` registrations, 0 of any other
+// HTTP-method registration.
+const EXPECTED_GET_REGISTRATIONS = 2;
+const WRITE_METHOD_RE = /\bapp\s*\.\s*(post|put|patch|delete|route)\s*\(/g;
+const GET_METHOD_RE = /\bapp\s*\.\s*get\s*\(/g;
+
+describe("no API endpoint changes or deletes AuditLog rows (issue #78)", () => {
+  it("audit-logs.ts registers GET routes only", () => {
+    const abs = join(REPO_ROOT, AUDIT_LOGS_ROUTE_FILE);
+    // A missing file must fail this test, not silently pass with an empty match count — readFileSync
+    // throws ENOENT on its own, which vitest reports as a failure, satisfying that requirement.
+    const source = readFileSync(abs, "utf8");
+
+    const writeCount = (source.match(WRITE_METHOD_RE) ?? []).length;
+    expect(
+      writeCount,
+      `${AUDIT_LOGS_ROUTE_FILE} must register zero POST/PUT/PATCH/DELETE/generic route() handlers — found ${writeCount}`,
+    ).toBe(0);
+
+    // Positive control: if this count is 0 too, either the file was not actually read (a silent
+    // no-op) or the registration idiom changed (a rename or a different Fastify call style) — either
+    // way the test must fail instead of vacuously passing on an empty match.
+    const getCount = (source.match(GET_METHOD_RE) ?? []).length;
+    expect(
+      getCount,
+      `expected exactly ${EXPECTED_GET_REGISTRATIONS} app.get( registrations in ${AUDIT_LOGS_ROUTE_FILE} — found ${getCount} (0 would mean the read/registration idiom did not match at all, not that the file is read-only)`,
+    ).toBe(EXPECTED_GET_REGISTRATIONS);
+  });
+});
