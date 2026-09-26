@@ -72,6 +72,7 @@ describe("PATCH /:id/break-status", () => {
 
   it("confirm: AUTO entry -> 200, breakStatus CONFIRMED, BREAK_CONFIRMED audit row", async () => {
     const entry = await createAutoEntry();
+    const beforeTs = new Date();
 
     const res = await app.inject({
       method: "PATCH",
@@ -88,10 +89,17 @@ describe("PATCH /:id/break-status", () => {
       where: { action: "BREAK_CONFIRMED", entityId: entry.id },
     });
     expect(audit).not.toBeNull();
+    // D-09: actor, time window and before/after — not just row existence.
+    expect(audit!.userId).toBe(data.empUser.id);
+    expect(audit!.createdAt.getTime()).toBeGreaterThanOrEqual(beforeTs.getTime());
+    expect(audit!.createdAt.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
+    expect(audit!.oldValue).toMatchObject({ breakStatus: "AUTO" });
+    expect(audit!.newValue).toMatchObject({ breakStatus: "CONFIRMED" });
   });
 
   it("waive: AUTO entry -> 200, breakMinutes 0, Break[] deleted, WAIVED + reason, BREAK_WAIVED audit, manager BREAK_COMPLIANCE_ALERT notification", async () => {
     const entry = await createAutoEntry();
+    const beforeTs = new Date();
 
     const res = await app.inject({
       method: "PATCH",
@@ -113,6 +121,12 @@ describe("PATCH /:id/break-status", () => {
       where: { action: "BREAK_WAIVED", entityId: entry.id },
     });
     expect(audit).not.toBeNull();
+    // D-09: actor, time window and before/after — not just row existence.
+    expect(audit!.userId).toBe(data.empUser.id);
+    expect(audit!.createdAt.getTime()).toBeGreaterThanOrEqual(beforeTs.getTime());
+    expect(audit!.createdAt.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
+    expect(audit!.oldValue).toMatchObject({ breakStatus: "AUTO" });
+    expect(audit!.newValue).toMatchObject({ breakStatus: "WAIVED", breakMinutes: 0 });
     expect((audit?.oldValue as { breakMinutes?: number } | null)?.breakMinutes).toBeDefined();
     // WR-01: the pre-waive Break slots must be captured in the audit oldValue so a later
     // "durchgearbeitet" dispute is reconstructable (Break is not a soft-delete model).
