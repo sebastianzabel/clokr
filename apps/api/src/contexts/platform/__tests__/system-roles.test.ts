@@ -337,29 +337,38 @@ describe("Phase 75b — system-role permission sets derived from docs/permission
 });
 
 describe("Phase 75b — system-role identity (D-01, D-02)", () => {
-  it("has three distinct fixed ids of uuid shape", () => {
+  it("has seven distinct fixed ids of uuid shape", () => {
     const ids = Object.values(SYSTEM_ROLE_IDS);
     expect(ids).toEqual([
       "00000000-0000-4000-8000-00000000a001",
       "00000000-0000-4000-8000-00000000a002",
       "00000000-0000-4000-8000-00000000a003",
+      "00000000-0000-4000-8000-00000000a004",
+      "00000000-0000-4000-8000-00000000a005",
+      "00000000-0000-4000-8000-00000000a006",
+      "00000000-0000-4000-8000-00000000a007",
     ]);
     for (const id of ids) {
       expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     }
   });
 
-  it("names the roles Admin, Manager, Mitarbeiter", () => {
+  it("names the roles Admin, Manager, Mitarbeiter, Inhaber, Salonmanager, Personalabteilung, Ausbilder", () => {
     expect(SYSTEM_ROLE_NAMES).toEqual({
       ADMIN: "Admin",
       MANAGER: "Manager",
       EMPLOYEE: "Mitarbeiter",
+      OWNER: "Inhaber",
+      SALON_MANAGER: "Salonmanager",
+      HR: "Personalabteilung",
+      TRAINER: "Ausbilder",
     });
   });
 
   it("isSystemRoleId answers by id only", () => {
     for (const id of Object.values(SYSTEM_ROLE_IDS)) expect(isSystemRoleId(id)).toBe(true);
-    expect(isSystemRoleId("00000000-0000-4000-8000-00000000a004")).toBe(false);
+    // Genuinely unused id (…a004 is now the real OWNER id) — the negative-case fixture (D-01).
+    expect(isSystemRoleId("00000000-0000-4000-8000-00000000a008")).toBe(false);
     expect(isSystemRoleId("Admin")).toBe(false);
     expect(isSystemRoleId("")).toBe(false);
   });

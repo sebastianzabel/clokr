@@ -149,8 +149,9 @@ export type {
   WorkLocationEntry,
   HolidaysByEmployee,
 } from "./facade/holiday-resolution";
-// Phase 75b (#75): the three global system roles — fixed ids, display names and the permission
-// sets derived from docs/permissions.md. Code identifies a system role by id only.
+// Phase 75b (#75) + Phase 76b (#76): the seven global system roles (Admin, Manager, Mitarbeiter,
+// plus the four templates Inhaber, Salonmanager, Personalabteilung, Ausbilder) — fixed ids,
+// display names and the permission sets. Code identifies a system role by id only.
 export {
   SYSTEM_ROLE_IDS,
   SYSTEM_ROLE_NAMES,
