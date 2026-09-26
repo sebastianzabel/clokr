@@ -15,6 +15,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import { daysAgoStrInTz, utcMidnight } from "./test-dates";
 import { invalidReasonFields } from "../contexts/time-tracking/invalid-reason";
+import { getRetroEntryWindowDays } from "../contexts/time-tracking/retro-config";
 import type { FastifyInstance } from "fastify";
 
 describe("Audit Trail Completeness", () => {
@@ -39,36 +40,38 @@ describe("Audit Trail Completeness", () => {
     await closeTestApp();
   });
 
+  // Shared by plans 78b-02 and 78b-05 (D-09): asserts actor, time window and — when
+  // oldValue/newValue are given — that the stored value is non-null and matches the given
+  // fields. `toBeDefined()` alone would pass for a `null` Json column, which is exactly what
+  // let the old assertions in this file pass without proving a before/after value existed.
+  // Hoisted to the outer describe scope in 78b-05 so the new "Zeitnachtrag" describe block
+  // (a sibling of "TimeEntry mutations", not nested inside it) can reuse it too.
+  function expectAuditRow(
+    log: { userId: string | null; createdAt: Date; oldValue: unknown; newValue: unknown } | null,
+    opts: {
+      userId: string | null;
+      beforeTs: Date;
+      oldValue?: Record<string, unknown>;
+      newValue?: Record<string, unknown>;
+    },
+  ) {
+    expect(log, "expected an AuditLog row to exist").not.toBeNull();
+    expect(log!.userId).toBe(opts.userId);
+    expect(log!.createdAt.getTime()).toBeGreaterThanOrEqual(opts.beforeTs.getTime());
+    expect(log!.createdAt.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
+    if (opts.oldValue !== undefined) {
+      expect(log!.oldValue, "oldValue must not be null").not.toBeNull();
+      expect(log!.oldValue).toMatchObject(opts.oldValue);
+    }
+    if (opts.newValue !== undefined) {
+      expect(log!.newValue, "newValue must not be null").not.toBeNull();
+      expect(log!.newValue).toMatchObject(opts.newValue);
+    }
+  }
+
   // ── TimeEntry mutations ───────────────────────────────────────────────────
 
   describe("TimeEntry mutations", () => {
-    // Shared by plans 78b-02 and 78b-05 (D-09): asserts actor, time window and — when
-    // oldValue/newValue are given — that the stored value is non-null and matches the given
-    // fields. `toBeDefined()` alone would pass for a `null` Json column, which is exactly what
-    // let the old assertions in this file pass without proving a before/after value existed.
-    function expectAuditRow(
-      log: { userId: string | null; createdAt: Date; oldValue: unknown; newValue: unknown } | null,
-      opts: {
-        userId: string | null;
-        beforeTs: Date;
-        oldValue?: Record<string, unknown>;
-        newValue?: Record<string, unknown>;
-      },
-    ) {
-      expect(log, "expected an AuditLog row to exist").not.toBeNull();
-      expect(log!.userId).toBe(opts.userId);
-      expect(log!.createdAt.getTime()).toBeGreaterThanOrEqual(opts.beforeTs.getTime());
-      expect(log!.createdAt.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
-      if (opts.oldValue !== undefined) {
-        expect(log!.oldValue, "oldValue must not be null").not.toBeNull();
-        expect(log!.oldValue).toMatchObject(opts.oldValue);
-      }
-      if (opts.newValue !== undefined) {
-        expect(log!.newValue, "newValue must not be null").not.toBeNull();
-        expect(log!.newValue).toMatchObject(opts.newValue);
-      }
-    }
-
     it("POST /api/v1/time-entries writes AuditLog with action CREATE", async () => {
       const beforeTs = new Date();
 
@@ -280,6 +283,154 @@ describe("Audit Trail Completeness", () => {
         where: { entity: "Break", entityId: body.break.id, action: "BREAK_APPEND" },
       });
       expect(breakAppendLog).not.toBeNull();
+    });
+  });
+
+  // ── Zeitnachtrag (retro request) mutations ────────────────────────────────
+  // Plan 78b-05, issue #78 (D-09/D-11): every Zeitnachtrag write path (both the
+  // entry-first and the grant-first/legacy flow) audited with actor, time and
+  // before/after — and a reconstruction proof for D-11 (requester != approver,
+  // correction before/after, from the AuditLog alone).
+
+  describe("Zeitnachtrag (retro request) mutations", () => {
+    /**
+     * Reconstructs a retro-request decision READING ONLY `auditLog` — no
+     * `retroEntryRequest.` and no `timeEntry.` Prisma call — so the test states
+     * in code exactly what "from the AuditLog alone" (D-11) means. The coupled
+     * entry's id is taken from the RETRO_ENTRY_REQUESTED row's own `newValue`,
+     * never from the TimeEntry table.
+     */
+    async function reconstructRetroDecision(requestId: string): Promise<{
+      requesterId: string | null;
+      approverId: string | null;
+      correction: { before: Record<string, unknown>; after: Record<string, unknown> } | null;
+    }> {
+      const requestedLog = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "RetroEntryRequest",
+          entityId: requestId,
+          action: "RETRO_ENTRY_REQUESTED",
+        },
+        orderBy: { createdAt: "asc" },
+      });
+      const approvedLog = await app.prisma.auditLog.findFirst({
+        where: { entity: "RetroEntryRequest", entityId: requestId, action: "RETRO_ENTRY_APPROVED" },
+        orderBy: { createdAt: "desc" },
+      });
+
+      const requesterId = requestedLog?.userId ?? null;
+      const approverId = approvedLog?.userId ?? null;
+
+      const requestedNewValue = requestedLog?.newValue as { timeEntryId?: string } | null;
+      const timeEntryId = requestedNewValue?.timeEntryId ?? null;
+
+      let correction: { before: Record<string, unknown>; after: Record<string, unknown> } | null =
+        null;
+      if (timeEntryId) {
+        const correctionLog = await app.prisma.auditLog.findFirst({
+          where: { entity: "TimeEntry", entityId: timeEntryId, action: "MANAGER_CORRECTION" },
+          orderBy: { createdAt: "desc" },
+        });
+        if (correctionLog) {
+          correction = {
+            before: correctionLog.oldValue as Record<string, unknown>,
+            after: correctionLog.newValue as Record<string, unknown>,
+          };
+        }
+      }
+
+      return { requesterId, approverId, correction };
+    }
+
+    it("(D-11) an approved, corrected Zeitnachtrag is reconstructable from the AuditLog alone — requester != approver, correction before/after", async () => {
+      const windowDays = await getRetroEntryWindowDays(app.prisma, data.tenant.id);
+      const dateStr = daysAgoStrInTz(new Date(), windowDays + 5);
+      const beforeTs = new Date();
+
+      // Entry-first: the employee's own out-of-window POST /time-entries with a
+      // reason creates a PENDING RetroEntryRequest coupled to a pending TimeEntry.
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: dateStr,
+          startTime: `${dateStr}T08:00:00.000Z`,
+          endTime: `${dateStr}T16:00:00.000Z`,
+          breakMinutes: 30,
+          reason: "Einstempeln vergessen (D-11 Reconstruction Test)",
+        },
+      });
+      expect(createRes.statusCode, "entry-first POST must create a pending Nachtrag").toBe(201);
+      const createBody = JSON.parse(createRes.body);
+      const requestId = createBody.entry.retroRequestId as string | null;
+      expect(requestId, "the coupled entry must carry the RetroEntryRequest id").toBeTruthy();
+
+      // The admin approves WITH corrected times — the requester (employee) and the
+      // approver (admin) are two different people.
+      const reviewRes = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/retro-entry-requests/${requestId}/review`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          status: "APPROVED",
+          reviewNote: "Genehmigt mit Korrektur (D-11 Reconstruction Test)",
+          startTime: "07:30",
+          endTime: "15:30",
+          breakMinutes: 15,
+        },
+      });
+      expect(reviewRes.statusCode, "approve with correction must succeed").toBe(200);
+
+      // The two individual audit rows, checked with expectAuditRow (shared with 78b-02).
+      const requestedLog = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "RetroEntryRequest",
+          entityId: requestId!,
+          action: "RETRO_ENTRY_REQUESTED",
+        },
+      });
+      expectAuditRow(requestedLog, { userId: data.empUser.id, beforeTs });
+
+      const approvedLog = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "RetroEntryRequest",
+          entityId: requestId!,
+          action: "RETRO_ENTRY_APPROVED",
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      expectAuditRow(approvedLog, {
+        userId: data.adminUser.id,
+        beforeTs,
+        oldValue: { status: "PENDING" },
+        newValue: { status: "APPROVED" },
+      });
+
+      // Reconstruction from the AuditLog alone (D-11).
+      const decision = await reconstructRetroDecision(requestId!);
+      expect(decision.requesterId, "requester = the employee who created the Nachtrag").toBe(
+        data.empUser.id,
+      );
+      expect(decision.approverId, "approver = the admin who reviewed it").toBe(data.adminUser.id);
+      expect(decision.approverId, "requester and approver must be provably different").not.toBe(
+        decision.requesterId,
+      );
+      expect(decision.requesterId).toBe(requestedLog!.userId);
+      expect(decision.approverId).toBe(approvedLog!.userId);
+
+      expect(decision.correction, "the manager correction must be reconstructable").not.toBeNull();
+      expect(decision.correction!.before, "correction oldValue = as-submitted").toMatchObject({
+        breakMinutes: 30,
+      });
+      expect(decision.correction!.after, "correction newValue = corrected").toMatchObject({
+        breakMinutes: 15,
+      });
+      expect(
+        decision.correction!.before.startTime,
+        "correction must show startTime actually changed",
+      ).not.toEqual(decision.correction!.after.startTime);
     });
   });
 
