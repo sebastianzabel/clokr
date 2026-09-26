@@ -861,7 +861,17 @@ export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard/overtime-overview — Überstunden-Übersicht (RPT-01 + SALDO-03)
   app.get("/overtime-overview", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
-    preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
+    preHandler: [
+      requirePermission("team-overview:read:ZUGEWIESEN"),
+      // Phase 76b (Issue #76), D-06: saldo IS the overtime resource — a team-overview:read
+      // holder alone (e.g. a Salonmanager template) must not see it. No new catalog permission;
+      // reuses the existing overtime:read:ZUGEWIESEN key as a SECOND, required preHandler.
+      // Fastify runs a preHandler array in order; the first hook that calls reply.code(403).send()
+      // sets reply.sent, and every later hook (incl. requirePermission's own requireAuth() call)
+      // short-circuits on it — this IS an AND, not an OR (request-permissions.ts's `if
+      // (reply.sent) return;` idiom).
+      requirePermission("overtime:read:ZUGEWIESEN"),
+    ],
     handler: async (req) => {
       const tenantId = req.user.tenantId;
 
@@ -891,10 +901,36 @@ export async function dashboardRoutes(app: FastifyInstance) {
               overviewScopeReach,
               new Date(),
             );
-      const accounts =
-        overviewScopedIds === "all"
-          ? allAccounts
-          : allAccounts.filter((a) => overviewScopedIds.includes(a.employeeId));
+
+      // Phase 76b (Issue #76), D-06/P-04 — a SECOND, INDEPENDENT reach for the overtime:read
+      // permission this route now also requires. An account is kept only if it passes BOTH the
+      // team-overview reach above AND this overtime reach (intersection), so a caller whose
+      // team-overview:read scope is WIDER than their overtime:read scope (e.g. TENANT
+      // team-overview:read + SALONS-only overtime:read) can never see more saldo than their
+      // overtime:read grants — a narrower scope on either permission can only ever narrow the
+      // result, never widen it through the other.
+      const overtimeScopeReach = await resolveAccessReach(
+        app.prisma,
+        overviewAccess,
+        "overtime:read:ZUGEWIESEN",
+      );
+      const overtimeScopedIds =
+        overtimeScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              tenantId,
+              overtimeScopeReach,
+              new Date(),
+            );
+
+      const accounts = allAccounts.filter((a) => {
+        const inOverviewScope =
+          overviewScopedIds === "all" || overviewScopedIds.includes(a.employeeId);
+        const inOvertimeScope =
+          overtimeScopedIds === "all" || overtimeScopedIds.includes(a.employeeId);
+        return inOverviewScope && inOvertimeScope;
+      });
 
       const employeeIds = accounts.map((a) => a.employeeId);
 
