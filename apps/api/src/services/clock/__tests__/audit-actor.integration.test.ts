@@ -2,6 +2,16 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { createHash, randomBytes } from "crypto";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import { todayInTz } from "../../../contexts/working-time-account/timezone";
+
+// seedTestData provisions the tenant with TenantConfig.timezone = "Europe/Berlin" (setup.ts:249).
+// Blocks D/E build a fixture entry dated "today" and it MUST match what production computes as
+// "today" for that tenant — the NFC punch route (time-entries.ts) derives `event.date` via
+// `todayInTz(tz)`, a tenant-LOCAL calendar day, never a UTC one. `new Date(); setUTCHours(0,0,0,0)`
+// truncates to the UTC calendar day instead, which diverges from the tenant-local day for the ~1-2h
+// window each night between UTC midnight and CET/CEST local midnight — deterministically red in
+// that window (see .planning/debug/nfc-punchout-audit-test-red.md).
+const TEST_TZ = "Europe/Berlin";
 
 // Phase 76.2 (ARCH-V19-01 sub-req A / GH #215) — End-to-end audit-actor resolution coverage.
 //
@@ -212,8 +222,7 @@ describe("services/clock/audit-actor — integration (sub-req A / GH #215)", () 
 
   // ── Block D — /:id/clock-out with JWT (own entry) ──────────────────────────
   it("Block D — /:id/clock-out with JWT → CLOCK_OUT row with userId, createdAt window, oldValue.endTime null, newValue.endTime set", async () => {
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
+    const today = todayInTz(TEST_TZ);
     const startTime = new Date(Date.now() - 2.5 * 60 * 60 * 1000); // 2.5h ago — clear of the 60s debounce
     const openEntry = await app.prisma.timeEntry.create({
       data: {
@@ -249,8 +258,7 @@ describe("services/clock/audit-actor — integration (sub-req A / GH #215)", () 
 
   // ── Block E — NFC punch-out (toggle) with Terminal API key ─────────────────
   it("Block E — NFC punch-out with Terminal API key → CLOCK_OUT row with userId null, actor.type TERMINAL, createdAt window, oldValue.endTime null, newValue.endTime set", async () => {
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
+    const today = todayInTz(TEST_TZ);
     const startTime = new Date(Date.now() - 2.5 * 60 * 60 * 1000); // 2.5h ago — clear of the 60s debounce
     const openEntry = await app.prisma.timeEntry.create({
       data: {
