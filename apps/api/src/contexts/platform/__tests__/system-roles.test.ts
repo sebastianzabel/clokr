@@ -47,9 +47,29 @@ import {
   SYSTEM_ROLE_PERMISSIONS,
   isSystemRoleId,
   holdsFourEyesCombination,
+  FOUR_EYES_COMBINATION,
+  FOUR_EYES_CONFIRMATION_REQUIRED,
   type PermissionKey,
   type SystemRoleSlot,
 } from "..";
+
+/**
+ * Phase 78b (Issue #78), P-08 — the four-eyes exception list, module-level so both the
+ * all-system-roles check below and the docs/permissions.md drift test at the end of this file
+ * can reuse the SAME set without duplicating it. It lives in the TEST as a test allowlist
+ * (Planner decision P-08, 78b-04-PLAN.md) — production code never branches on it.
+ */
+const FOUR_EYES_EXCEPTIONS: Readonly<Partial<Record<SystemRoleSlot, string>>> = {
+  ADMIN:
+    "#75 rights-neutral legacy role: today an admin edits own entries inside the retro window " +
+    "and approves colleagues' Zeitnachträge; the runtime self-approval lock covers the risk.",
+  MANAGER:
+    "#75 rights-neutral legacy role: today a manager edits own entries inside the retro window " +
+    "and approves colleagues' Zeitnachträge; the runtime self-approval lock covers the risk.",
+  OWNER:
+    "#76 working owner (Inhaber): records own times and approves the team's; the runtime lock " +
+    "covers self-approval.",
+};
 
 // __dirname is apps/api/src/contexts/platform/__tests__ — six levels up is the repo root.
 const REPO_ROOT = join(__dirname, "..", "..", "..", "..", "..", "..");
@@ -528,20 +548,11 @@ describe("Phase 76b — system-role templates (Issue #76)", () => {
  * — production code never branches on it. The system roles are immutable (`roles.ts` rejects any
  * PATCH/DELETE where `tenantId === null`), and the role API's own 409 confirmation gate
  * (78b-01) never fires for them.
+ *
+ * `FOUR_EYES_EXCEPTIONS` is defined at module level above (78b-06) so the docs/permissions.md
+ * drift test at the end of this file can reuse it.
  */
 describe("Phase 78b — the four-eyes combination on system roles (Issue #78, D-03)", () => {
-  const FOUR_EYES_EXCEPTIONS: Readonly<Partial<Record<SystemRoleSlot, string>>> = {
-    ADMIN:
-      "#75 rights-neutral legacy role: today an admin edits own entries inside the retro window " +
-      "and approves colleagues' Zeitnachträge; the runtime self-approval lock covers the risk.",
-    MANAGER:
-      "#75 rights-neutral legacy role: today a manager edits own entries inside the retro window " +
-      "and approves colleagues' Zeitnachträge; the runtime self-approval lock covers the risk.",
-    OWNER:
-      "#76 working owner (Inhaber): records own times and approves the team's; the runtime lock " +
-      "covers self-approval.",
-  };
-
   it("(input proof) SYSTEM_ROLE_IDS has 7 slots, matching SYSTEM_ROLE_PERMISSIONS' key set", () => {
     const idSlots = Object.keys(SYSTEM_ROLE_IDS).sort();
     const permSlots = Object.keys(SYSTEM_ROLE_PERMISSIONS).sort();
@@ -673,5 +684,93 @@ describe("Phase 76b — docs/permissions.md § Systemrollen-Templates matches th
     const row = rowForSlot("OWNER");
     expect(row[3]).toBe("jede Permission des Katalogs");
     expect(row[3]).not.toMatch(TEMPLATE_KEY);
+  });
+});
+
+/**
+ * Phase 78b (Issue #78), D-13 — `docs/permissions.md` § "Vier-Augen-Kombination bei der
+ * Rollenzusammenstellung" (a `###` subsection at the end of `## Keine Permissions`, before
+ * `## Pflege`) pinned to the code by test, so the doc cannot silently drift (MEMORY: "Begründungen
+ * in LEBENDE Assertions statt Kommentare"). `## Keine Permissions` is read by neither
+ * `readSectionRows`/`splitCells` above (which only walk the `##`-level guard/handler/recipient
+ * tables) nor `permission-site-mapping.test.ts` — so this describe block carries its OWN small
+ * section reader, an independent copy of the same parsing idea, per this file's own
+ * file-independence rule (top-of-file docblock, "mirrors ... as an independent copy"). A `###`
+ * heading does not end a parsed section — only a line starting with `# ` does — so the reader below
+ * stops at the next line starting with `#`, not at the next `##`.
+ */
+describe("Phase 78b — docs/permissions.md § Vier-Augen-Kombination matches the code (D-13)", () => {
+  const FOUR_EYES_HEADING = "### Vier-Augen-Kombination bei der Rollenzusammenstellung";
+
+  const doc = readFileSync(DOC_PATH, "utf8");
+  const docLines = doc.split("\n");
+  const headingIdxs = docLines
+    .map((line, idx) => ({ line: line.trimEnd(), idx }))
+    .filter((entry) => entry.line === FOUR_EYES_HEADING)
+    .map((entry) => entry.idx);
+
+  it(`exactly one line equals "${FOUR_EYES_HEADING}" (input proof)`, () => {
+    expect(
+      headingIdxs.length,
+      `${DOC_NAME} must contain the heading "${FOUR_EYES_HEADING}" exactly once`,
+    ).toBe(1);
+  });
+
+  /** The lines strictly between the heading and the next line starting with "#" (input proof). */
+  function readFourEyesSection(): string[] {
+    if (headingIdxs.length !== 1) return [];
+    const start = headingIdxs[0];
+    const section: string[] = [];
+    for (let i = start + 1; i < docLines.length; i++) {
+      if (docLines[i].startsWith("#")) break;
+      section.push(docLines[i]);
+    }
+    return section;
+  }
+
+  const section = readFourEyesSection();
+  const nonEmptySection = section.filter((l) => l.trim().length > 0);
+  const sectionText = section.join("\n");
+
+  it("the section has at least 5 non-empty lines (input proof)", () => {
+    expect(
+      nonEmptySection.length,
+      `${DOC_NAME} § "${FOUR_EYES_HEADING}" is missing, empty, or too short`,
+    ).toBeGreaterThanOrEqual(5);
+  });
+
+  it("every key of FOUR_EYES_COMBINATION appears backticked in the section", () => {
+    const allKeys = [
+      ...FOUR_EYES_COMBINATION.changeOwnTimes,
+      ...FOUR_EYES_COMBINATION.approveTimes,
+    ];
+    for (const key of allKeys) {
+      expect(
+        sectionText.includes(`\`${key}\``),
+        `${DOC_NAME} § "${FOUR_EYES_HEADING}" is missing the backticked key \`${key}\``,
+      ).toBe(true);
+    }
+  });
+
+  it("FOUR_EYES_CONFIRMATION_REQUIRED appears in the section", () => {
+    expect(
+      sectionText.includes(FOUR_EYES_CONFIRMATION_REQUIRED),
+      `${DOC_NAME} § "${FOUR_EYES_HEADING}" is missing the code ${FOUR_EYES_CONFIRMATION_REQUIRED}`,
+    ).toBe(true);
+  });
+
+  it("every FOUR_EYES_EXCEPTIONS slot's system-role name appears in the section", () => {
+    for (const slot of Object.keys(FOUR_EYES_EXCEPTIONS) as SystemRoleSlot[]) {
+      const name = SYSTEM_ROLE_NAMES[slot];
+      expect(
+        sectionText.includes(name),
+        `${DOC_NAME} § "${FOUR_EYES_HEADING}" is missing the exception role name "${name}" (${slot})`,
+      ).toBe(true);
+    }
+  });
+
+  it("no line of the section is a table row (starts with |)", () => {
+    const tableLines = section.filter((l) => l.trim().startsWith("|"));
+    expect(tableLines, `${DOC_NAME} § "${FOUR_EYES_HEADING}" must contain no table`).toEqual([]);
   });
 });
