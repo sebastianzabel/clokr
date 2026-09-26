@@ -11,6 +11,8 @@
  * and filter auditLog by createdAt >= beforeTs to isolate only the logs
  * produced by the test action.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import { daysAgoStrInTz, utcMidnight } from "./test-dates";
@@ -965,5 +967,240 @@ describe("Audit Trail Completeness", () => {
       expect(log.action).toBe("UPDATE");
       expect(log.newValue).toBeDefined();
     });
+  });
+});
+
+// ── Completeness index: every time-entry write route has a named audit test ──
+// Plan 78b-05, issue #78 (D-09/P-05). Parses the two route files' actual `app.post|put|
+// patch|delete(` registrations and compares the resulting route set against a hand-maintained
+// index of the (file, test title) pairs that actually assert on that route's audit row. A route
+// added to either file without a matching entry here fails the suite — this is the mechanical
+// half of "every write path has an audit test" for FUTURE routes, not just the ones enumerated
+// by D-09 today.
+//
+// No DB/app dependency (pure static analysis) — a plain top-level describe, mirroring
+// holiday-resolution-boundary.test.ts's source-scan pattern, not nested inside "Audit Trail
+// Completeness" above.
+
+// __dirname is apps/api/src/__tests__ — four levels up is the repo root.
+const AUDIT_INDEX_REPO_ROOT = join(__dirname, "..", "..", "..", "..");
+
+const TIME_ENTRIES_FILE = "apps/api/src/contexts/time-tracking/api/time-entries.ts";
+const RETRO_ENTRY_REQUESTS_FILE = "apps/api/src/contexts/time-tracking/api/retro-entry-requests.ts";
+
+/**
+ * Parses `app.post|put|patch|delete("...")` registrations out of a route file and returns
+ * "METHOD /full/path" strings, prefixed exactly the way `app.ts` registers the file
+ * (`app.register(fooRoutes, { prefix: "..." })`).
+ */
+function extractWriteRoutes(relFile: string, prefix: string): string[] {
+  const content = readFileSync(join(AUDIT_INDEX_REPO_ROOT, relFile), "utf8");
+  const re = /\bapp\s*\.\s*(post|put|patch|delete)\s*\(\s*"([^"]*)"/g;
+  const routes: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    const method = m[1].toUpperCase();
+    const path = m[2] === "/" ? prefix : `${prefix}${m[2]}`;
+    routes.push(`${method} ${path}`);
+  }
+  return routes;
+}
+
+// Measured 2026-09-26 (Phase 78b Plan 05, issue #78): 9 write routes in time-entries.ts, 3 in
+// retro-entry-requests.ts — 12 total. A changed registration idiom (e.g. a route built from a
+// variable path instead of a string literal) would silently yield fewer matches instead of
+// failing loudly, which is exactly what this input proof exists to catch.
+const MEASURED_WRITE_ROUTE_COUNT = 12;
+
+/**
+ * "METHOD /full/path" -> the (file, test title) pairs that assert on that route's AuditLog
+ * row. Adding a new write route to either file requires adding its own entry here — a missing
+ * entry is the finding this guard exists for, never something to silence.
+ */
+const TIME_ENTRY_WRITE_PATH_AUDIT_TESTS: Record<string, { file: string; title: string }[]> = {
+  "POST /api/v1/time-entries/nfc-punch": [
+    {
+      file: "apps/api/src/services/clock/__tests__/audit-actor.integration.test.ts",
+      title:
+        "Block A — /nfc-punch with Terminal API key → AuditLog.userId null + newValue.actor.type === 'TERMINAL' (closes #215)",
+    },
+    {
+      file: "apps/api/src/services/clock/__tests__/audit-actor.integration.test.ts",
+      title:
+        "Block E — NFC punch-out with Terminal API key → CLOCK_OUT row with userId null, actor.type TERMINAL, createdAt window, oldValue.endTime null, newValue.endTime set",
+    },
+  ],
+  "POST /api/v1/time-entries/clock-in": [
+    {
+      file: "apps/api/src/services/clock/__tests__/audit-actor.integration.test.ts",
+      title:
+        "Block B — /clock-in with programmatic API key (clk_-prefix) → AuditLog.userId null + newValue.actor.type === 'API_KEY' (sub-req A end-to-end)",
+    },
+    {
+      file: "apps/api/src/services/clock/__tests__/audit-actor.integration.test.ts",
+      title:
+        "Block C — /clock-in with JWT → AuditLog.userId === JWT.sub, no actor embedding (legacy USER-path semantics preserved)",
+    },
+  ],
+  "POST /api/v1/time-entries/:id/clock-out": [
+    {
+      file: "apps/api/src/services/clock/__tests__/audit-actor.integration.test.ts",
+      title:
+        "Block D — /:id/clock-out with JWT → CLOCK_OUT row with userId, createdAt window, oldValue.endTime null, newValue.endTime set",
+    },
+  ],
+  "POST /api/v1/time-entries/:id/breaks": [
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "(D-10) POST /:id/breaks writes a second AuditLog row (entity TimeEntry, action UPDATE) with breakMinutes/breakStatus before and after",
+    },
+  ],
+  "POST /api/v1/time-entries": [
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title: "POST /api/v1/time-entries writes AuditLog with action CREATE",
+    },
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "(D-11) an approved, corrected Zeitnachtrag is reconstructable from the AuditLog alone — requester != approver, correction before/after",
+    },
+  ],
+  "PUT /api/v1/time-entries/:id": [
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title: "PUT /api/v1/time-entries/:id writes AuditLog with action UPDATE",
+    },
+  ],
+  "PATCH /api/v1/time-entries/:id/revalidate": [
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "PATCH /api/v1/time-entries/:id/revalidate writes AuditLog with action REVALIDATE and oldValue/newValue.isInvalid before/after",
+    },
+  ],
+  "DELETE /api/v1/time-entries/:id": [
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title: "DELETE /api/v1/time-entries/:id writes AuditLog with action DELETE",
+    },
+  ],
+  "PATCH /api/v1/time-entries/:id/break-status": [
+    {
+      file: "apps/api/src/__tests__/break-status.test.ts",
+      title: "confirm: AUTO entry -> 200, breakStatus CONFIRMED, BREAK_CONFIRMED audit row",
+    },
+    {
+      file: "apps/api/src/__tests__/break-status.test.ts",
+      title:
+        "waive: AUTO entry -> 200, breakMinutes 0, Break[] deleted, WAIVED + reason, BREAK_WAIVED audit, manager BREAK_COMPLIANCE_ALERT notification",
+    },
+  ],
+  "POST /api/v1/retro-entry-requests": [
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "grant-first: POST /api/v1/retro-entry-requests writes RETRO_ENTRY_REQUESTED with the requester's own userId",
+    },
+  ],
+  "PATCH /api/v1/retro-entry-requests/:id/review": [
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "(D-11) an approved, corrected Zeitnachtrag is reconstructable from the AuditLog alone — requester != approver, correction before/after",
+    },
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "entry-first: admin rejects a pending Nachtrag — RETRO_ENTRY_REJECTED with actor/before-after, and the coupled TimeEntry is DELETEd with audit",
+    },
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "grant-first (legacy) approve: RETRO_ENTRY_APPROVED records oldValue (status PENDING) alongside newValue (status APPROVED, requesterId != approverId) — P-04/D-09",
+    },
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "grant-first (legacy) reject: RETRO_ENTRY_REJECTED records oldValue (status PENDING) alongside newValue (status REJECTED) — P-04/D-09",
+    },
+  ],
+  "DELETE /api/v1/retro-entry-requests/:id": [
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "entry-first: the requesting employee withdraws their own pending Nachtrag — RETRO_ENTRY_WITHDRAWN with actor/before-after, and the coupled TimeEntry is DELETEd with audit",
+    },
+  ],
+};
+
+describe("every time-entry write route has an audit test (issue #78, D-09)", () => {
+  it("input proof: parsing the two route files yields exactly the measured route set", () => {
+    const routes = [
+      ...extractWriteRoutes(TIME_ENTRIES_FILE, "/api/v1/time-entries"),
+      ...extractWriteRoutes(RETRO_ENTRY_REQUESTS_FILE, "/api/v1/retro-entry-requests"),
+    ];
+    expect(
+      routes.length,
+      "no write route parsed at all — the scan itself is broken",
+    ).toBeGreaterThan(0);
+    expect(
+      routes.length,
+      "the parsed write-route count moved off the measured value — a changed registration idiom " +
+        "(or a genuinely new/removed route) needs this guard's index updated, never silenced",
+    ).toBe(MEASURED_WRITE_ROUTE_COUNT);
+    // How to add a new route: write its audit test first, then add "METHOD /full/path" to
+    // TIME_ENTRY_WRITE_PATH_AUDIT_TESTS with the {file, title} of that test.
+    expect(new Set(routes).size, "duplicate route parsed — regex or route file drifted").toBe(
+      routes.length,
+    );
+  });
+
+  it("the completeness index's key set equals the parsed route set exactly", () => {
+    const routes = [
+      ...extractWriteRoutes(TIME_ENTRIES_FILE, "/api/v1/time-entries"),
+      ...extractWriteRoutes(RETRO_ENTRY_REQUESTS_FILE, "/api/v1/retro-entry-requests"),
+    ];
+    const routeSet = new Set(routes);
+    const indexKeys = Object.keys(TIME_ENTRY_WRITE_PATH_AUDIT_TESTS);
+
+    const missingFromIndex = routes.filter((r) => !(r in TIME_ENTRY_WRITE_PATH_AUDIT_TESTS));
+    expect(
+      missingFromIndex,
+      "route(s) registered in time-entries.ts/retro-entry-requests.ts with no entry in " +
+        "TIME_ENTRY_WRITE_PATH_AUDIT_TESTS — write the audit test, then add the entry",
+    ).toEqual([]);
+
+    const staleInIndex = indexKeys.filter((k) => !routeSet.has(k));
+    expect(
+      staleInIndex,
+      "index entry no longer matches a registered route — the route was renamed/removed; update " +
+        "or delete the stale entry",
+    ).toEqual([]);
+  });
+
+  it("every index entry points to an existing file that contains that exact test title", () => {
+    // Looks for the actual `it("<title>"` declaration syntax, not a bare substring — a bare
+    // `content.includes(title)` would trivially "pass" for THIS file (audit-trail.test.ts),
+    // because a typo'd title is itself still literally present here as the index entry's own
+    // string value, even with no matching `it(...)` anywhere in the file.
+    for (const [route, entries] of Object.entries(TIME_ENTRY_WRITE_PATH_AUDIT_TESTS)) {
+      expect(entries.length, `route ${route} has an empty audit-test list`).toBeGreaterThan(0);
+      for (const { file, title } of entries) {
+        const abs = join(AUDIT_INDEX_REPO_ROOT, file);
+        let content: string;
+        try {
+          content = readFileSync(abs, "utf8");
+        } catch {
+          throw new Error(`${route}: index points to a non-existent file "${file}"`);
+        }
+        const declaration = `it("${title}"`;
+        expect(
+          content.includes(declaration),
+          `${route}: "${file}" has no it("${title}" declaration`,
+        ).toBe(true);
+      }
+    }
   });
 });
