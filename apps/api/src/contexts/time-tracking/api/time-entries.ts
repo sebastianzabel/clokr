@@ -958,7 +958,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
   app.get("/", {
     schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
-    handler: async (req) => {
+    handler: async (req, reply) => {
       const { from, to, employeeId } = req.query as {
         from?: string;
         to?: string;
@@ -966,7 +966,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       };
 
       const user = req.user;
-      const isManager = (await permissionReach(req, "time-entry:read")) === "ZUGEWIESEN";
+      // Phase 76b Plan 04 (Issue #76), P-02: a caller holding NEITHER reach (e.g. the
+      // Personalabteilung template, which deliberately carries no time-entry permission at all)
+      // must not fall into the own-entries branch below — that branch answered 200 with the
+      // caller's own entries even for someone with zero time-entry:read grant. Every other
+      // handler in this codebase already answers 403 for a null reach; this route was the one
+      // exception (grep of `= (await permissionReach(req, …)) === "ZUGEWIESEN"` before this fix).
+      const readReach = await permissionReach(req, "time-entry:read");
+      if (readReach === null) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+      const isManager = readReach === "ZUGEWIESEN";
 
       // PERF-V1814-03: cap + defaulted 90d window (non-breaking; web callers always pass bounds)
       const defaultFrom = from

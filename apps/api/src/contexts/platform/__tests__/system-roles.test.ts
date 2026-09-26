@@ -41,10 +41,13 @@ import { describe, it, expect } from "vitest";
 import {
   PERMISSIONS,
   permissionKey,
+  PERMISSION_RESOURCES,
   SYSTEM_ROLE_IDS,
   SYSTEM_ROLE_NAMES,
   SYSTEM_ROLE_PERMISSIONS,
   isSystemRoleId,
+  type PermissionKey,
+  type SystemRoleSlot,
 } from "..";
 
 // __dirname is apps/api/src/contexts/platform/__tests__ — six levels up is the repo root.
@@ -337,30 +340,269 @@ describe("Phase 75b — system-role permission sets derived from docs/permission
 });
 
 describe("Phase 75b — system-role identity (D-01, D-02)", () => {
-  it("has three distinct fixed ids of uuid shape", () => {
+  it("has seven distinct fixed ids of uuid shape", () => {
     const ids = Object.values(SYSTEM_ROLE_IDS);
     expect(ids).toEqual([
       "00000000-0000-4000-8000-00000000a001",
       "00000000-0000-4000-8000-00000000a002",
       "00000000-0000-4000-8000-00000000a003",
+      "00000000-0000-4000-8000-00000000a004",
+      "00000000-0000-4000-8000-00000000a005",
+      "00000000-0000-4000-8000-00000000a006",
+      "00000000-0000-4000-8000-00000000a007",
     ]);
     for (const id of ids) {
       expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     }
   });
 
-  it("names the roles Admin, Manager, Mitarbeiter", () => {
+  it("names the roles Admin, Manager, Mitarbeiter, Inhaber, Salonmanager, Personalabteilung, Ausbilder", () => {
     expect(SYSTEM_ROLE_NAMES).toEqual({
       ADMIN: "Admin",
       MANAGER: "Manager",
       EMPLOYEE: "Mitarbeiter",
+      OWNER: "Inhaber",
+      SALON_MANAGER: "Salonmanager",
+      HR: "Personalabteilung",
+      TRAINER: "Ausbilder",
     });
   });
 
   it("isSystemRoleId answers by id only", () => {
     for (const id of Object.values(SYSTEM_ROLE_IDS)) expect(isSystemRoleId(id)).toBe(true);
-    expect(isSystemRoleId("00000000-0000-4000-8000-00000000a004")).toBe(false);
+    // Genuinely unused id (…a004 is now the real OWNER id) — the negative-case fixture (D-01).
+    expect(isSystemRoleId("00000000-0000-4000-8000-00000000a008")).toBe(false);
     expect(isSystemRoleId("Admin")).toBe(false);
     expect(isSystemRoleId("")).toBe(false);
+  });
+});
+
+describe("Phase 76b — system-role templates (Issue #76)", () => {
+  // Catalog order, transcribed from CONTEXT.md D-05/D-07/D-08 — never computed from
+  // SYSTEM_ROLE_PERMISSIONS, so a typo in the production list turns this red.
+  const SALON_MANAGER_EXPECTED: PermissionKey[] = [
+    "employee:read:ZUGEWIESEN",
+    "time-entry:read:ZUGEWIESEN",
+    "time-entry:create:ZUGEWIESEN",
+    "time-entry:update:ZUGEWIESEN",
+    "time-entry:delete:ZUGEWIESEN",
+    "time-entry:revalidate:ZUGEWIESEN",
+    "retro-request:read:ZUGEWIESEN",
+    "retro-request:create:ZUGEWIESEN",
+    "retro-request:approve:ZUGEWIESEN",
+    "leave-request:read:ZUGEWIESEN",
+    "leave-request:create:ZUGEWIESEN",
+    "leave-request:approve:ZUGEWIESEN",
+    "leave-request:attest:ZUGEWIESEN",
+    "leave-request:cancel:ZUGEWIESEN",
+    "section9:read:ZUGEWIESEN",
+    "section9:upload:ZUGEWIESEN",
+    "section9:decide:ZUGEWIESEN",
+    "leave-entitlement:read:ZUGEWIESEN",
+    "vocational-school:read:ZUGEWIESEN",
+    "shift:read:ZUGEWIESEN",
+    "shift:plan:ZUGEWIESEN",
+    "shift-pattern:read:ZUGEWIESEN",
+    "availability:read:ZUGEWIESEN",
+    "team-overview:read:ZUGEWIESEN",
+  ];
+
+  const HR_EXPECTED: PermissionKey[] = [
+    "employee:read:ZUGEWIESEN",
+    "employee:create:ZUGEWIESEN",
+    "employee:update:ZUGEWIESEN",
+    "employee:update-avatar:ZUGEWIESEN",
+    "contract:read:ZUGEWIESEN",
+    "contract:update:ZUGEWIESEN",
+    "leave-request:read:ZUGEWIESEN",
+    "section9:read:ZUGEWIESEN",
+    "leave-entitlement:read:ZUGEWIESEN",
+    "leave-entitlement:update:ZUGEWIESEN",
+    "vocational-school:read:ZUGEWIESEN",
+    "overtime:read:ZUGEWIESEN",
+    "month-close:read:ZUGEWIESEN",
+  ];
+
+  const TRAINER_EXPECTED: PermissionKey[] = [
+    "employee:read:ZUGEWIESEN",
+    "time-entry:read:ZUGEWIESEN",
+    "leave-request:read:ZUGEWIESEN",
+    "vocational-school:read:ZUGEWIESEN",
+    "shift:read:ZUGEWIESEN",
+  ];
+
+  it("(D-05) Salonmanager equals the hand-written literal list, 24 entries", () => {
+    expect(SALON_MANAGER_EXPECTED).toHaveLength(24);
+    expect([...SYSTEM_ROLE_PERMISSIONS.SALON_MANAGER]).toEqual(SALON_MANAGER_EXPECTED);
+  });
+
+  it("(D-07) Personalabteilung equals the hand-written literal list, 13 entries", () => {
+    expect(HR_EXPECTED).toHaveLength(13);
+    expect([...SYSTEM_ROLE_PERMISSIONS.HR]).toEqual(HR_EXPECTED);
+  });
+
+  it("(D-08) Ausbilder equals the hand-written literal list, 5 entries", () => {
+    expect(TRAINER_EXPECTED).toHaveLength(5);
+    expect([...SYSTEM_ROLE_PERMISSIONS.TRAINER]).toEqual(TRAINER_EXPECTED);
+  });
+
+  it("(D-04) Inhaber equals the full live catalog enumeration, not a literal count", () => {
+    expect([...SYSTEM_ROLE_PERMISSIONS.OWNER]).toEqual(PERMISSIONS.map(permissionKey));
+  });
+
+  it(
+    "(principle, D-05/D-07/D-08) Salonmanager/Personalabteilung/Ausbilder hold only " +
+      "ZUGEWIESEN permissions on PERSON-relation resources — no EIGENE, no MANDANT",
+    () => {
+      for (const slot of ["SALON_MANAGER", "HR", "TRAINER"] as const) {
+        for (const key of SYSTEM_ROLE_PERMISSIONS[slot]) {
+          const [resource, , reach] = key.split(":");
+          expect(reach, `${slot} key ${key}`).toBe("ZUGEWIESEN");
+          expect(
+            PERMISSION_RESOURCES[resource as keyof typeof PERMISSION_RESOURCES].relation,
+            `${slot} key ${key}`,
+          ).toBe("PERSON");
+        }
+      }
+    },
+  );
+
+  it("(named exclusions) Salonmanager holds none of the excluded keys (D-05)", () => {
+    const keys = SYSTEM_ROLE_PERMISSIONS.SALON_MANAGER;
+    expect(keys).not.toContain("leave-request:correct:ZUGEWIESEN");
+    expect(keys.some((k) => k.startsWith("overtime:"))).toBe(false);
+    expect(keys.some((k) => k.startsWith("month-close:"))).toBe(false);
+    expect(keys.some((k) => k.startsWith("contract:"))).toBe(false);
+    expect(keys.some((k) => k.startsWith("report:"))).toBe(false);
+  });
+
+  it("(named exclusions) Personalabteilung holds none of the excluded keys (D-07)", () => {
+    const keys = SYSTEM_ROLE_PERMISSIONS.HR;
+    expect(keys.some((k) => k.startsWith("time-entry:"))).toBe(false);
+    expect(keys.some((k) => k.startsWith("retro-request:"))).toBe(false);
+    expect(keys.some((k) => k.startsWith("report:"))).toBe(false);
+    expect(keys).not.toContain("team-overview:read:ZUGEWIESEN");
+    expect(keys).not.toContain("employee:anonymize:ZUGEWIESEN");
+    expect(keys).not.toContain("employee:import:ZUGEWIESEN");
+    expect(keys).not.toContain("employee:manage-access:ZUGEWIESEN");
+    const forbiddenActions = new Set(["approve", "decide", "attest", "correct", "cancel"]);
+    for (const key of keys) {
+      const [, action] = key.split(":");
+      expect(forbiddenActions.has(action), key).toBe(false);
+    }
+  });
+
+  it("(named exclusions) Ausbilder holds only read actions (D-08)", () => {
+    for (const key of SYSTEM_ROLE_PERMISSIONS.TRAINER) {
+      const [, action] = key.split(":");
+      expect(action, key).toBe("read");
+    }
+  });
+
+  it(
+    "(D-09) only Inhaber holds both time-entry:update:EIGENE and retro-request:approve:ZUGEWIESEN " +
+      "among the four new templates",
+    () => {
+      const pair = ["time-entry:update:EIGENE", "retro-request:approve:ZUGEWIESEN"] as const;
+      const NEW_SLOTS: SystemRoleSlot[] = ["OWNER", "SALON_MANAGER", "HR", "TRAINER"];
+      for (const slot of NEW_SLOTS) {
+        const holds = pair.every((k) => SYSTEM_ROLE_PERMISSIONS[slot].includes(k as PermissionKey));
+        expect(holds, slot).toBe(slot === "OWNER");
+      }
+    },
+  );
+});
+
+/**
+ * Phase 76b Plan 07 (Issue #76), D-14 — `docs/permissions.md` § "Systemrollen-Templates" pinned
+ * to `SYSTEM_ROLE_PERMISSIONS` by test, so the doc cannot silently drift from the code (MEMORY:
+ * "Begründungen in LEBENDE Assertions statt Kommentare"). The table has FOUR columns (Template,
+ * Id, vorgesehener Scope, Permissions), not the five-cell guard/handler shape the module-level
+ * `readSectionRows`/`splitCells` above expect — this describe block therefore carries its OWN
+ * small row reader, an independent copy of the same parsing idea, per this file's own
+ * file-independence rule (docblock above, "mirrors ... as an independent copy").
+ */
+describe("Phase 76b — docs/permissions.md § Systemrollen-Templates matches the code (D-14)", () => {
+  const TEMPLATES_HEADING = "## Systemrollen-Templates";
+  const TEMPLATE_KEY = /`([a-z0-9-]+:[a-z0-9-]+:[A-Z]+)`/g;
+
+  function splitTemplateCells(line: string): string[] {
+    const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+    return trimmed.split("|").map((c) => c.trim());
+  }
+
+  function isTemplateSeparatorRow(cells: string[]): boolean {
+    return cells.length > 0 && cells.every((c) => /^:?-{3,}:?$/.test(c));
+  }
+
+  /** Data rows of the FIRST table under `## Systemrollen-Templates` — own reader, see above. */
+  function readTemplateRows(): string[][] {
+    const doc = readFileSync(DOC_PATH, "utf8");
+    const lines = doc.split("\n");
+    const start = lines.findIndex((l) => l.trimEnd() === TEMPLATES_HEADING);
+    if (start === -1) return [];
+    const tableLines: string[] = [];
+    for (let i = start + 1; i < lines.length; i++) {
+      if (lines[i].startsWith("## ")) break;
+      if (lines[i].trim().startsWith("|")) tableLines.push(lines[i]);
+    }
+    const drop = new Set<number>();
+    tableLines.forEach((line, idx) => {
+      if (isTemplateSeparatorRow(splitTemplateCells(line))) {
+        drop.add(idx);
+        if (idx > 0) drop.add(idx - 1);
+      }
+    });
+    return tableLines.filter((_, idx) => !drop.has(idx)).map(splitTemplateCells);
+  }
+
+  const templateRows = readTemplateRows();
+
+  it(`the section "${TEMPLATES_HEADING}" exists with exactly four data rows (input proof)`, () => {
+    expect(
+      templateRows.length,
+      `docs/permissions.md § "${TEMPLATES_HEADING}" is missing, or its row count changed`,
+    ).toBe(4);
+  });
+
+  /** Cells may be backtick-wrapped (the id and permission-key cells always are); unwrap once. */
+  function unwrapBackticks(cell: string): string {
+    return cell.replace(/^`(.*)`$/, "$1");
+  }
+
+  function rowForSlot(slot: SystemRoleSlot): string[] {
+    const row = templateRows.find((r) => unwrapBackticks(r[1]) === SYSTEM_ROLE_IDS[slot]);
+    if (!row) {
+      throw new Error(
+        `no row for ${slot} (id ${SYSTEM_ROLE_IDS[slot]}) in docs/permissions.md § "${TEMPLATES_HEADING}"`,
+      );
+    }
+    return row;
+  }
+
+  it("every row's id and template name equal SYSTEM_ROLE_IDS / SYSTEM_ROLE_NAMES", () => {
+    for (const slot of ["OWNER", "SALON_MANAGER", "HR", "TRAINER"] as const) {
+      const row = rowForSlot(slot);
+      expect(unwrapBackticks(row[1]), `${slot} id cell`).toBe(SYSTEM_ROLE_IDS[slot]);
+      expect(row[0], `${slot} template cell`).toBe(SYSTEM_ROLE_NAMES[slot]);
+    }
+  });
+
+  it(
+    "Salonmanager/Personalabteilung/Ausbilder's permission cell equals " +
+      "SYSTEM_ROLE_PERMISSIONS, same order",
+    () => {
+      for (const slot of ["SALON_MANAGER", "HR", "TRAINER"] as const) {
+        const row = rowForSlot(slot);
+        const keysInDoc = [...row[3].matchAll(TEMPLATE_KEY)].map((m) => m[1]);
+        expect(keysInDoc, slot).toEqual([...SYSTEM_ROLE_PERMISSIONS[slot]]);
+      }
+    },
+  );
+
+  it("Inhaber's permission cell names the whole catalog, not a key list", () => {
+    const row = rowForSlot("OWNER");
+    expect(row[3]).toBe("jede Permission des Katalogs");
+    expect(row[3]).not.toMatch(TEMPLATE_KEY);
   });
 });

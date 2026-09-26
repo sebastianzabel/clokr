@@ -18,7 +18,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
-  import { api } from "$api/client";
+  import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
   import { toasts } from "$stores/toast";
   import Pagination from "$components/ui/Pagination.svelte";
@@ -94,14 +94,19 @@
     // Phase 97-04 (SALDO-DISP-01/02/04) — additive confirmed/forecast split fields. Optional
     // so an older cached response (or the API-only no-employeeId branch) still type-checks;
     // the Überstundenkonto tile falls back to the single-value primitive when undefined.
+    //
+    // Phase 76b (Issue #76), CR-01/WR-01 (code review): `null` when the caller holds no
+    // overtime:read:EIGENE / leave-entitlement:read:EIGENE permission respectively (e.g. a bare
+    // Salonmanager/Ausbilder template holder) — the corresponding card is hidden, never rendered
+    // with a fabricated zero.
     overtime: {
       balanceHours: number;
       confirmedMinutes?: number;
       openMonthMinutes?: number | null;
       hasClosedMonth?: boolean;
       rosterIncomplete?: boolean;
-    };
-    vacation: { remaining: number; total: number; used: number };
+    } | null;
+    vacation: { remaining: number; total: number; used: number } | null;
   }
 
   interface TeamDay {
@@ -193,6 +198,12 @@
   // request had been made. `error={!loading}` itself is correct in that branch and is left alone.
   let loading = $state(true);
   let chartsLoading = $state(true);
+  // Phase 76b (Issue #76), D-15: whether the caller holds overtime:read (the trend endpoint's own
+  // gate, added by Phase 76b). No client-side permission list exists ($stores/auth carries only
+  // `role`), so a 403 from the endpoint itself is how we learn this — tolerated silently, never
+  // logged, never toasted (a missing overtime:read is expected for e.g. a Mitarbeiter or a
+  // Salonmanager template). Starts false so the card stays hidden until a successful load flips it.
+  let overtimeTrendAvailable = $state(false);
   let clockLoading = $state(false);
   let breakMinutes = $state(0);
   let currentTime = $state(new Date());
@@ -577,8 +588,15 @@
       // Load team overtime trend from the dedicated endpoint
       try {
         overtimeTrend = await api.get<OvertimeTrendResponse>("/dashboard/overtime-trend");
+        overtimeTrendAvailable = true;
       } catch (err) {
-        console.error("Failed to load overtime trend:", err);
+        overtimeTrendAvailable = false;
+        // Phase 76b (Issue #76), D-15: the endpoint now requires overtime:read, and a 403 for a
+        // caller without it is expected (Mitarbeiter, Salonmanager template, …) — not an error to
+        // report. Every other failure (network, 500, …) still logs as before.
+        if (!(err instanceof ApiError && err.status === 403)) {
+          console.error("Failed to load overtime trend:", err);
+        }
       }
 
       labels = months.map((m) => m.label);
@@ -1483,16 +1501,23 @@
       <!-- KPI pair -->
       <Card animate class="kpi-pair" style="--card-idx: 1;">
         {#if stats}
-          <KPIStat
-            label="Urlaubstage"
-            value={String(stats.vacation.remaining)}
-            unit={`/ ${stats.vacation.total}`}
-            delta={`verbleibend${stats.vacation.used > 0 ? ` · ${stats.vacation.used} verbraucht` : ""}`}
-          />
+          {#if stats.vacation}
+            <KPIStat
+              label="Urlaubstage"
+              value={String(stats.vacation.remaining)}
+              unit={`/ ${stats.vacation.total}`}
+              delta={`verbleibend${stats.vacation.used > 0 ? ` · ${stats.vacation.used} verbraucht` : ""}`}
+            />
+          {/if}
           <!-- Phase 76.7 (D-15, UI-V19-04): § 18 ArbZG-exempt employees see
                an em-dash "—" instead of a numeric saldo + no delta cue. Unchanged by
                Phase 97-04 — an exempt employee has no confirmed/forecast split to show. -->
-          {#if isExempt}
+          <!-- Phase 76b (Issue #76), CR-01 (code review): `stats.overtime === null` means the
+               caller holds no overtime:read:EIGENE permission (e.g. a bare Salonmanager/Ausbilder
+               template holder without the Mitarbeiter role) — hide the card, no error/toast. -->
+          {#if stats.overtime === null}
+            <!-- intentionally empty: no saldo card for this caller -->
+          {:else if isExempt}
             <KPIStat label="Überstundenkonto" value="—" delta="§ 18 ArbZG" deltaTone="neutral" />
           {:else if stats.overtime.confirmedMinutes !== undefined}
             <!-- Phase 97-04 (SALDO-DISP-02) — the split primitive replaces the inline KPIStat
@@ -1696,20 +1721,22 @@
         </div>
       </Card>
 
-      <Card animate class="chart-card" style="--card-idx: 8;">
-        <CardHeader title="Überstunden-Trend" sub="Saldo-Verlauf" />
-        <div class="chart-wrap">
-          {#if chartsLoading}
-            <div class="chart-skeleton" aria-hidden="true"></div>
-          {:else}
-            <canvas
-              bind:this={overtimeChartEl}
-              role="img"
-              aria-label="Liniendiagramm: Überstunden-Verlauf der letzten 6 Monate"
-            ></canvas>
-          {/if}
-        </div>
-      </Card>
+      {#if chartsLoading || overtimeTrendAvailable}
+        <Card animate class="chart-card" style="--card-idx: 8;">
+          <CardHeader title="Überstunden-Trend" sub="Saldo-Verlauf" />
+          <div class="chart-wrap">
+            {#if chartsLoading}
+              <div class="chart-skeleton" aria-hidden="true"></div>
+            {:else}
+              <canvas
+                bind:this={overtimeChartEl}
+                role="img"
+                aria-label="Liniendiagramm: Überstunden-Verlauf der letzten 6 Monate"
+              ></canvas>
+            {/if}
+          </div>
+        </Card>
+      {/if}
 
       <Card animate class="chart-card" style="--card-idx: 9;">
         <CardHeader title="Krankheitstage" sub="Letzte 6 Monate" />

@@ -2,8 +2,12 @@
  * Phase 75b (Issue #75) — the system roles and the legacy-role data migration, proven on REAL SQL
  * execution of the checked-in file (`legacy-role-migration-sql.ts`), never on a restatement of it.
  *
- * - D-04 drift: the three global rows in the migrated worker database equal
- *   `SYSTEM_ROLE_PERMISSIONS` — the code constant and the migration cannot silently diverge.
+ * - D-04 drift: the global rows in the migrated worker database equal `SYSTEM_ROLE_PERMISSIONS` —
+ *   the code constant and the migration cannot silently diverge. Since Phase 76b (Issue #76) this
+ *   covers all SEVEN global rows (the three 75b system roles plus the four 76b templates): the
+ *   76b migration also runs during `test:setup`'s `migrate deploy`, so this test would silently
+ *   start seeing seven rows the moment that migration merged, whether or not it was updated — it
+ *   is generalized over `Object.keys(SYSTEM_ROLE_IDS)` for exactly that reason (RESEARCH Pitfall 5).
  * - AC-75-4 / AC-75-6: a legacy MANAGER with an Employee receives exactly one TENANT assignment on
  *   the Manager system role, with exactly one CREATE audit row whose actor is the system.
  * - Edge cases (AC-75-4..AC-75-8, D-07, D-28): eligibility (anonymized, employee-less and
@@ -27,6 +31,7 @@ import {
   DEFAULT_SALON_OPENING_HOURS,
   normalizeRolePermissions,
   roleNameKey,
+  type SystemRoleSlot,
 } from "../contexts/platform";
 
 type LegacyRole = "ADMIN" | "MANAGER" | "EMPLOYEE";
@@ -172,22 +177,22 @@ describe("Phase 75b — system roles and legacy-role migration (Issue #75)", () 
     await closeTestApp();
   });
 
-  it("(a) D-04 drift: the three global rows equal SYSTEM_ROLE_PERMISSIONS", async () => {
+  it("(a) D-04 drift: all seven global rows equal SYSTEM_ROLE_PERMISSIONS", async () => {
     const rows = await app.prisma.accessRole.findMany({
       where: { id: { in: Object.values(SYSTEM_ROLE_IDS) } },
       orderBy: { id: "asc" },
     });
-    expect(rows).toHaveLength(3);
-    const bySlot = [
-      ["ADMIN", rows[0]],
-      ["MANAGER", rows[1]],
-      ["EMPLOYEE", rows[2]],
-    ] as const;
+    expect(rows).toHaveLength(7);
+    // Ids a001..a007 sort lexically in slot-declaration order (confirmed, RESEARCH Pitfall 5) —
+    // generalized over every slot so a merged 76b migration is covered without a hand-written
+    // tuple that would otherwise silently start comparing the wrong row to the wrong slot.
+    const slots = Object.keys(SYSTEM_ROLE_IDS) as SystemRoleSlot[];
+    const bySlot = slots.map((slot, i) => [slot, rows[i]] as const);
     for (const [slot, row] of bySlot) {
       expect(row.id).toBe(SYSTEM_ROLE_IDS[slot]);
       expect(row.tenantId).toBeNull();
       expect(row.name).toBe(SYSTEM_ROLE_NAMES[slot]);
-      expect(row.nameKey).toBe(SYSTEM_ROLE_NAMES[slot].toLowerCase());
+      expect(row.nameKey).toBe(roleNameKey(SYSTEM_ROLE_NAMES[slot]));
       expect(row.permissions).toEqual([...SYSTEM_ROLE_PERMISSIONS[slot]]);
     }
   });
@@ -468,7 +473,9 @@ describe("legacy-role backfill edge cases (AC-75-4..AC-75-8, D-07, D-28)", () =>
       select: { id: true, createdAt: true, updatedAt: true },
       orderBy: { id: "asc" },
     });
-    expect(after).toHaveLength(3);
+    // Since Phase 76b (Issue #76) this is seven rows (three 75b system roles plus four
+    // 76b templates), still unchanged by this 75b-file-only replay.
+    expect(after).toHaveLength(7);
     expect(after).toEqual(systemRolesBefore);
   });
 

@@ -1510,6 +1510,7 @@ overtime-overview` (ein eigener Fund dieser Phase, Plan 91b-06, `composition/das
   dieser Phase mitkorrigiert: Das Vermischen eines Gate-Funds mit einer Scope-Phase hätte den
   rechteneutralen Charakter dieser Phase verlassen — ein neues Gate ändert, WER überhaupt zugreifen
   darf, nicht nur WELCHE Zeilen ein bereits berechtigter Zugriff sieht.
+  **Nachtrag 2026-09-26:** mit Eintrag Q (Phase 76b, D-15) geschlossen.
 - **`carryover-warning.ts`s `leave-config:manage`-Empfängersuche braucht keine Änderung**
   (Plan 91b-09): `leave-config` hat Bezug `MANDANT` (`permission-catalog.ts:94`) — eine
   `SALONS`-/`PERSONS`-Zuweisung kann diese Permission wegen D-05 strukturell nie gewähren, jeder
@@ -1601,4 +1602,186 @@ pnpm --filter @clokr/api run lint:t100-09-routes --check
 pnpm --filter @clokr/api exec tsx scripts/measure-context-boundary-imports.ts --check 0
 pnpm --filter @clokr/api exec tsx scripts/measure-context-boundary-imports.ts --cycles --check 22
 pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api test:coverage
+```
+
+## Q — Systemrollen-Templates und zwei Saldo-Gates (Phase 76b, Issue #76)
+
+**Schwere: informativ. Unterbau-Erweiterung nach ADR 0002, Entscheidung 7 (additiv, kein
+bestehender Leser ändert seine Bedeutung); zwei rechte-ändernde Gate-Korrekturen (D-06, D-15),
+jeweils gegen die Neutralitätsmatrix gemessen und nur über das Amendment-Register erfasst (D-13).**
+
+### Warum dieser Eintrag existiert
+
+Issue #76 fügt dem Unterbau vier weitere globale Systemrollen hinzu — Templates, die ein Kunde
+kopiert, um eine skalierte SALONS-/PERSONS-Rolle zu bauen: Inhaber, Salonmanager,
+Personalabteilung, Ausbilder (Ids `…a004`–`…a007`, `system-roles.ts`). Das ist eine reine
+Erweiterung: `isSystemRoleId()` erkennt jetzt sieben statt drei Ids, kein bestehender Aufrufer
+ändert seine Bedeutung. Zwei Stellen mussten die Phase trotzdem ändern, weil die Templates sonst
+ihr eigenes Kriterium verletzt hätten (kein Salonmanager-Saldo): die Saldenübersicht
+(`GET /dashboard/overtime-overview`, D-06) und der Überstunden-Trend (`GET /dashboard/
+overtime-trend`, D-15) — Letzterer schließt den in Eintrag P selbst vorhergesagten,
+vorbestehenden Fund ab (Nachtrag dort). Eine dritte Korrektur (P-02) behebt einen in `GET
+/time-entries` gefundenen Vollzugslücken-Fehler, der AK-76b-4 durch die reine Existenz der
+Personalabteilung-Vorlage erstmals sichtbar machte, aber unabhängig von den Templates bestand.
+
+### Was sich geändert hat
+
+- **Vier neue globale `AccessRole`-Zeilen** (D-01/D-02, Plan 76b-01): Inhaber (87 Permissions,
+  volle Katalog-Aufzählung, kein fester Literal-Vergleich), Salonmanager (24), Personalabteilung
+  (13), Ausbilder (5) — angelegt durch eine neue, von der 75b-Migration getrennte, idempotente
+  Datenmigration (`…_system_role_templates`, `ON CONFLICT DO NOTHING`, keine Zuweisung, kein
+  Audit-Eintrag, AK-76b-8). `isSystemRoleId()` beantwortet jetzt sieben Ids; `docs/permissions.md`
+  bekam den neuen Abschnitt „Systemrollen-Templates", durch Test an `SYSTEM_ROLE_PERMISSIONS`
+  gebunden (D-14, Plan 76b-07).
+- **P-01 (Plan 76b-02): das Mitarbeiterformular ersetzt nur noch eine Zuweisung auf Admin, Manager
+  oder Mitarbeiter.** Eine neue, engere Prädikat-Funktion `isLegacySystemRoleId()`
+  (`compat-role.ts`) — bewusst NICHT die bestehende, sieben Ids kennende `isSystemRoleId()`
+  verändert — grenzt die Formular-Brücke (`replaceSystemRoleAssignment`,
+  `assignmentsBlockingDemotionToEmployee`) auf die drei Alt-Rollen ein. Eine Template-Zuweisung
+  übersteht seitdem einen Formular-Speichervorgang unverändert und zählt weiter als
+  Herabstufungs-Sperre (409). `deriveCompatRole()` (D-10) blieb dabei unverändert — ihre bestehende
+  Mandant-Scope-only-Ableitung ergab für alle vier Templates schon vorher das richtige Ergebnis
+  (Inhaber/Personalabteilung → `MANAGER`, Salonmanager/Ausbilder → trägt nichts bei); dieser Plan
+  bewies das nur mit Tests.
+- **D-16/P-05 (Plan 76b-08): eine unveränderte Formularrolle ist keine Rollenänderung.**
+  `requestedRoleUnchanged()` vergleicht die angeforderte Rolle gegen die `User.role`-SPALTE des
+  Ziels (P-05 — nie gegen `compatRoleForUser`/die Ableitung, siehe Mutationsnachweis M2 der
+  Plan-Summary) und lässt `applyRoleFromEmployeeForm` bei Gleichheit früh zurückkehren, VOR
+  Materialisierung und Herabstufungs-Sperre. Das schließt einen vorbestehenden, in Plan 76b-02
+  gefundenen Fehler in der Kompatibilitäts-Projektion: Das Mitarbeiterformular sendet bei jedem
+  Stammdaten-Speichern die abgeleitete Rolle erneut (`+page.svelte:740`), sodass ein Halter der
+  Personalabteilung-Vorlage oder einer Kundenrolle mit ZUGEWIESEN-Permission (Kompatibilitätsrolle
+  `MANAGER`) bei jedem unrelated Speichern eine NEUE Manager-Zuweisung bekam, und ein
+  Salonmanager-/Ausbilder-Halter mit Mitarbeiter beim Speichern fälschlich 409 erhielt. Fix-Commit
+  `483f737d` (`fix(76b-08)`). Die `role-assignment:manage`-Sperre bleibt unangetastet, auch für
+  eine unveränderte Rolle (Mutationsnachweis M3).
+- **P-02 (Plan 76b-04): `GET /time-entries` beantwortet 403 ohne jede `time-entry:read`-Reichweite.**
+  Der Handler kollabierte seine Reichweite auf `isManager = (permissionReach(...) ===
+"ZUGEWIESEN")` und fiel für einen Aufrufer OHNE jede Reichweite (die Personalabteilung-Vorlage
+  hält bewusst keine `time-entry:*`-Permission) in den Eigene-Einträge-Zweig — 200 mit den eigenen
+  (i. d. R. keinen) Einträgen statt 403. Fix: ein `readReach === null`-Guard vor jeder Abfrage,
+  derselbe Aufbau, den jeder andere Handler im Repository schon vorher hatte. Issue #76 erwartete
+  an dieser Stelle „Zeiterfassung: keine Codeänderung" — der Handler bewies das Gegenteil.
+- **D-06/P-04 (Plan 76b-03): Saldenübersicht — Schnittmenge, keine Vereinigung.**
+  `GET /dashboard/overtime-overview` verlangt zusätzlich zu `team-overview:read:ZUGEWIESEN` jetzt
+  `overtime:read:ZUGEWIESEN` (zweiter, unabhängiger `requirePermission()`-Eintrag im nativen
+  Fastify-`preHandler`-Array — keine neue Katalog-Permission, kein neuer AND-Kombinator). Ein
+  Mitarbeiter-Konto bleibt in der Liste nur, wenn es BEIDE unabhängig aufgelösten Reichweiten
+  besteht — eine weite `team-overview:read`-Reichweite kann eine engere `overtime:read`-Reichweite
+  nie überstimmen. Für D-06 selbst amendierte sich KEINE Matrixzelle, weil jeder Halter von
+  `team-overview:read` in der aufgezeichneten Matrix bereits `overtime:read` hält (vorab in
+  RESEARCH.md geprüft, live mit dem vollen 1712-Fälle-Lauf bestätigt); die drei amendierten
+  `GET /api/v1/roles`-Zellen unten (P-03) gehören zu AK-76b-1, nicht zu D-06.
+- **D-15 (Plan 76b-03): Überstunden-Trend — erstes Permission-Gate, gescopte Aggregation.**
+  `GET /dashboard/overtime-trend` verlangte bis zu dieser Phase nur `requireAuth` (`preHandler`
+  ohne jede Permission-Prüfung, `composition/dashboard.ts:1433` VOR dieser Phase — der in Eintrag P
+  benannte, dort bewusst zurückgestellte Fund). Seit D-15 verlangt die Route
+  `overtime:read:ZUGEWIESEN` und aggregiert (`sumCarryOverByMonth`, `getBalances`) nur noch über die
+  Mitarbeiter im aufgelösten Scope des Aufrufers, nie mandantenweit für einen SALONS-/
+  PERSONS-Halter. Zwei amendierte Matrixzellen, beide 200 → 403 (issue 76,
+  `matrix-amendments.json`): `EMPLOYEE | GET /api/v1/dashboard/overtime-trend | none` und
+  `FALLBACK_EMPLOYEE | GET /api/v1/dashboard/overtime-trend | none` — die Systemrolle Mitarbeiter
+  hält nur `overtime:read:EIGENE`, keine ZUGEWIESEN-Reichweite, und verliert dadurch den bisherigen
+  mandantenweiten Einblick. Das Web-Dashboard blendet die Überstunden-Trend-Karte bei 403 still aus
+  (kein Toast, kein `console.error` für genau diesen Statuscode) statt eine irreführende
+  Nulllinie zu zeichnen.
+- **P-03 (Plan 76b-01): drei `GET /api/v1/roles`-Amendments.** `GET /roles` listet konstruktionsbedingt
+  jede Systemrolle auf (AK-73-3) — die vier neuen Templates erscheinen deshalb in den drei
+  ADMIN-artigen Zellen als vier zusätzliche `<new>`-Einträge, alle 200 → 200 (issue 76,
+  `matrix-amendments.json`): `ADMIN | GET /api/v1/roles | none`,
+  `APIKEY_ADMIN | GET /api/v1/roles | none`, `FALLBACK_ADMIN | GET /api/v1/roles | none`. Route und
+  Prüfung (`role:read:ZUGEWIESEN`) sind unverändert — die beabsichtigte Folge von AK-76b-1, keine
+  Regression.
+
+### Was bewusst NICHT geschah
+
+- **Keine Oberfläche** (#83–#86, durch diese Phase weiterhin blockiert).
+- **Keine Zuweisung eines Templates an einen bestehenden Nutzer** und **keine Bindung eines
+  Templates an einen Scope-Typ** — der Scope gehört der Zuweisung (#74), nicht der Rolle.
+- **Keine #78-Laufzeitsperre** — die Selbstgenehmigungs-Prüfung (D-09: nur Inhaber hält von den
+  vier Templates beide Hälften des Paars) bleibt eine reine Test-Aussage dieser Phase, keine neue
+  Laufzeit-Sperre.
+- **Keine Empfängersuchen-Änderung für SALONS-/PERSONS-Halter** (#367, unverändert).
+- **Keine Aufteilung von `report:read`** (#86) — die Personalabteilung-Vorlage bleibt deshalb ohne
+  Urlaubsübersicht, obwohl sie fachlich dazu gehören würde.
+- **Die Formular-Kompatibilitäts-Projektion ist FERTIG, nicht offen:** Anders als in Plan 76b-02
+  zunächst vorgesehen, wurde der dort gefundene Fehler (Formular sendet die abgeleitete Rolle bei
+  jedem Speichern erneut) NICHT als eigenes Issue verschoben, sondern noch in dieser Phase behoben
+  (D-16/P-05, Plan 76b-08, oben) — die Templates machten ihn erstmals praktisch erreichbar, also
+  wurde er hier geschlossen statt vertagt.
+- **Zwei verwandte, VORBESTEHENDE Eigene-Daten-Rückfälle sind gefunden, aber NICHT behoben:**
+  `GET /leave/requests` (`leave.ts:828`) und `GET /section9` (`leave.ts:3150`) fallen für einen
+  Aufrufer ohne jede `…:read`-Reichweite auf die eigenen Daten zurück statt mit 403 zu antworten —
+  dieselbe Fehlerform wie P-02, aber außerhalb dieser Phase's `files_modified` und von keinem der
+  vier Templates ausgelöst (jedes hält irgendeine `leave-request:read`-Reichweite). Ebenso bleibt
+  `GET /time-entries`s ungefilterte Liste (ohne `?employeeId`) beim eigenen Datensatz des
+  Aufrufers, statt den SALONS-/PERSONS-Scope eines ZUGEWIESEN-Halters anzuwenden
+  (`time-entries.ts:1017`, gefunden in den Plänen 76b-05/76b-06) — jede explizite
+  `?employeeId`-Abfrage ist davon nicht betroffen. Alle drei Funde sind als Issue #368 registriert.
+
+### Übergangs- und Randregeln
+
+- **Die Namen der vier Templates sind ab der Migration für Kundenrollen reserviert** (case-insensitiv,
+  wie bei den drei 75b-Rollen): eine bestehende gleichnamige Kundenrolle bleibt funktionsfähig, kann
+  aber nicht mehr auf diesen Namen umbenannt oder neu angelegt werden (409).
+- **`requestedRoleUnchanged()` vergleicht ausschließlich gegen die `User.role`-Spalte, nie gegen die
+  Ableitung** (P-05) — bei einer veralteten Spalte (Datenbestand vor #75 oder eine seltene
+  Nachzügler-Zeile) gewinnt die Spalte; das entspricht dem bereits bekannten, akzeptierten
+  Restrisiko einer veralteten Spalte (T-76b-34, Plan 76b-08).
+- **Ein arbeitender Salonmanager/Ausbilder/Personalabteilung-Halter braucht zusätzlich die
+  Systemrolle Mitarbeiter (Scope Mandant), um überhaupt Reichweite EIGENE zu bekommen** — keines
+  der drei ZUGEWIESEN-only-Templates trägt selbst eine EIGENE-Permission.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** `time-entries.ts` — P-02 (`GET /`, ein neuer früher 403-Guard vor jeder
+  Abfrage, keine sonstige Verhaltensänderung für einen bestehenden EIGENE-/ZUGEWIESEN-Halter).
+- **Abwesenheiten:** keine Codeänderung — zwei vorbestehende, verwandte Funde derselben Fehlerform
+  sind oben unter „Was bewusst NICHT geschah" dokumentiert, nicht behoben.
+- **Schichtplanung:** keine Codeänderung.
+- **Arbeitszeitkonto:** keine Codeänderung — die Saldo-ROUTEN selbst (`overtime.ts`) waren bereits
+  korrekt gegate; die beiden neuen Gates (D-06, D-15) sitzen in der Kompositionsschicht, nicht im
+  Kontext.
+- **Kompositionsschicht:** `dashboard.ts` — D-06 (zweites Gate + Schnittmenge auf
+  `overtime-overview`), D-15 (erstes Gate + gescopte Aggregation auf `overtime-trend`), P-04 (die
+  Schnittmengen-Regel selbst); `apps/web/src/routes/(app)/dashboard/+page.svelte` (stiller
+  403-Rückzug der Trend-Karte).
+- **Unterbau:** `system-roles.ts` (vier neue Slots, D-01/D-02), `compat-role.ts`
+  (`isLegacySystemRoleId()`/P-01, `requestedRoleUnchanged()`/D-16/P-05), `employees.ts`
+  (`applyRoleFromEmployeeForm`s früher Rückkehrpunkt), die neue Migration
+  (`…_system_role_templates`), `docs/permissions.md` (D-14).
+
+### Gemessen
+
+- **`isSystemRoleId()` / `SYSTEM_ROLE_IDS`:** 3 Ids vor dieser Phase, 7 danach (Admin, Manager,
+  Mitarbeiter, Inhaber, Salonmanager, Personalabteilung, Ausbilder).
+- **Neutralitätsmatrix (`permission-neutrality-matrix.test.ts`, voller Lauf über alle Fälle):**
+  bleibt grün, mit genau fünf neuen, dokumentierten Amendments (Issue 76) in
+  `matrix-amendments.json`: drei `GET /api/v1/roles | none`-Zellen (`ADMIN`, `APIKEY_ADMIN`,
+  `FALLBACK_ADMIN`, P-03), zwei `GET /api/v1/dashboard/overtime-trend | none`-Zellen (`EMPLOYEE`,
+  `FALLBACK_EMPLOYEE`, D-15). `recorded/matrix.json` und die Testdatei selbst blieben über alle acht
+  Pläne dieser Phase byte-gleich (D-13).
+- **`permissionReach(req, "time-entry:read")`-Aufrufstellen in `time-entries.ts`:** 1 vor und nach
+  dem P-02-Fix (nur der Rückgabewert wird jetzt zusätzlich auf `null` geprüft, keine zweite
+  Aufrufstelle).
+- **Verhaltensmatrix-Testdateien gegen die ECHTEN Vorlagen** (nie eine Ad-hoc-`AccessRole`):
+  `system-role-template-personalabteilung.test.ts` (19 Fälle, AK-76b-4),
+  `system-role-template-ausbilder.test.ts` (15 Fälle, AK-76b-6),
+  `system-role-template-salonmanager.test.ts` (21 Fälle, AK-76b-5) — je mit mindestens einem
+  Mutationsnachweis (`TEMPLATE_SLOT` auf eine andere Vorlage umgestellt), beobachtet rot,
+  wiederhergestellt.
+- **`git log --format=%s main..HEAD` dieser Phase:** genau zwei `fix(`-Commits
+  (`5ab8dec8` P-02, `483f737d` D-16/P-05), der Rest `feat`/`chore` — passend zu den zwei
+  genuinen Bugfixes, die die acht Pläne dieser Phase gefunden haben.
+
+### Nachrechnen
+
+```bash
+grep -c '"' apps/api/src/contexts/platform/system-roles.ts  # SYSTEM_ROLE_IDS-Block überfliegen
+grep -rn "permissionReach(req, \"time-entry:read\")" apps/api/src/contexts/time-tracking/api/time-entries.ts
+grep -c '"issue": 76' apps/api/src/__tests__/neutrality/recorded/matrix-amendments.json
+git log --format=%s main..HEAD | grep -c '^fix('
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api test
+pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts src/__tests__/permission-site-mapping.test.ts src/contexts/platform/__tests__/system-roles.test.ts
 ```

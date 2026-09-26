@@ -23,6 +23,7 @@ import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup
 import { executeLegacyRoleMigration } from "./legacy-role-migration-sql";
 import { SYSTEM_ROLE_IDS, normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 import { ROLE_LOCKOUT_MESSAGE } from "../contexts/platform/role-assignment";
+import { ROLE_DEMOTION_BLOCKED_MESSAGE_PREFIX } from "../contexts/platform/compat-role";
 
 const PASSWORD = "test1234";
 // POST /employees validates the tenant password policy; the fixture users bypass it.
@@ -772,6 +773,406 @@ describe("Role bridge: employee form, compat column and fallback materialization
         newValue: { compatRole: { from: "MANAGER", to: "EMPLOYEE" } },
       });
       expect((await listEmployees(tokens.accessToken)).statusCode).toBe(403);
+    });
+  });
+
+  // Phase 76b (Issue #76), P-01: `isSystemRoleId()` covers all seven system roles once Plan 76b-01
+  // lands (D-03), but the employee-form bridge must keep narrowing itself to the THREE legacy ids
+  // it was built for (Admin, Manager, Mitarbeiter) — a Phase 76b template (Inhaber, Salonmanager,
+  // Personalabteilung, Ausbilder) is deliberately NOT a legacy role and must be left to #74's
+  // audited role-assignment API. Before the fix, `replaceSystemRoleAssignment` and
+  // `assignmentsBlockingDemotionToEmployee` used the seven-id `isSystemRoleId`, which wrongly
+  // treated a template row as one of the bridge's own rows.
+  describe("Phase 76b — the employee-form bridge leaves template assignments alone (P-01)", () => {
+    it("a TENANT Inhaber (OWNER) assignment survives a role-bridge save; only the legacy Mitarbeiter row is replaced", async () => {
+      const target = await createPerson(tenant.tenant.id, "Vorlage Inhaber", "EMPLOYEE");
+      const ownerRow = await app.prisma.roleAssignment.create({
+        data: {
+          tenantId: tenant.tenant.id,
+          userId: target.user.id,
+          accessRoleId: SYSTEM_ROLE_IDS.OWNER,
+          scopeType: "TENANT",
+          salonIds: [],
+          employeeIds: [],
+        },
+      });
+      const employeeRow = await app.prisma.roleAssignment.create({
+        data: {
+          tenantId: tenant.tenant.id,
+          userId: target.user.id,
+          accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE,
+          scopeType: "TENANT",
+          salonIds: [],
+          employeeIds: [],
+        },
+      });
+      const before = await roleAssignmentAudits(target.user.id);
+
+      const res = await patchEmployee(tenant.adminToken, target.employee.id, {
+        role: "MANAGER",
+        lastName: "Geaendert",
+      });
+      expect(res.statusCode).toBe(200);
+
+      const rows = await storedAssignments(tenant.tenant.id, target.user.id);
+      // The OWNER row is untouched — same id, same content — exactly as a customer-role row would be.
+      expect(rows.find((row) => row.id === ownerRow.id)).toEqual(ownerRow);
+      expect(rows.map((row) => row.accessRoleId).sort()).toEqual(
+        [SYSTEM_ROLE_IDS.OWNER, SYSTEM_ROLE_IDS.MANAGER].sort(),
+      );
+
+      const audits = await newAuditsSince(target.user.id, before);
+      expect(audits.length).toBeGreaterThan(0);
+      for (const audit of audits) {
+        expect(audit.entityId).not.toBe(ownerRow.id);
+        expect(audit.oldValue?.accessRoleId).not.toBe(SYSTEM_ROLE_IDS.OWNER);
+        expect(audit.newValue?.accessRoleId).not.toBe(SYSTEM_ROLE_IDS.OWNER);
+      }
+      const deleted = audits.find((row) => row.action === "DELETE");
+      expect(deleted?.entityId).toBe(employeeRow.id);
+      const created = audits.find((row) => row.action === "CREATE");
+      expect(created?.newValue).toMatchObject({ accessRoleId: SYSTEM_ROLE_IDS.MANAGER });
+    });
+
+    it("a demotion to Mitarbeiter is rejected while a TENANT Personalabteilung (HR) assignment survives it, naming that row (P-01)", async () => {
+      const target = await createPerson(tenant.tenant.id, "Vorlage Personalabteilung", "MANAGER");
+      await executeLegacyRoleMigration(app.prisma);
+      const [managerRow] = await storedAssignments(tenant.tenant.id, target.user.id);
+      expect(managerRow.accessRoleId).toBe(SYSTEM_ROLE_IDS.MANAGER);
+      const hrRow = await app.prisma.roleAssignment.create({
+        data: {
+          tenantId: tenant.tenant.id,
+          userId: target.user.id,
+          accessRoleId: SYSTEM_ROLE_IDS.HR,
+          scopeType: "TENANT",
+          salonIds: [],
+          employeeIds: [],
+        },
+      });
+      const rowsBefore = await storedAssignments(tenant.tenant.id, target.user.id);
+      const before = await roleAssignmentAudits(target.user.id);
+
+      const res = await patchEmployee(tenant.adminToken, target.employee.id, {
+        firstName: "Nicht Gespeichert",
+        role: "EMPLOYEE",
+      });
+      expect(res.statusCode).toBe(409);
+      const body = JSON.parse(res.body) as { error: string; remainingAssignments: unknown[] };
+      expect(body.error.startsWith(ROLE_DEMOTION_BLOCKED_MESSAGE_PREFIX)).toBe(true);
+      expect(body.remainingAssignments).toMatchObject([
+        { id: hrRow.id, roleName: "Personalabteilung", scopeType: "TENANT" },
+      ]);
+
+      expect(await storedAssignments(tenant.tenant.id, target.user.id)).toEqual(rowsBefore);
+      expect(await newAuditsSince(target.user.id, before)).toEqual([]);
+    });
+  });
+
+  // Phase 76b Plan 08 (Issue #76), D-16/P-05: the employee form always echoes back the compat
+  // column on every "Stammdaten speichern" (+page.svelte:602, :740). Before this fix, sending that
+  // SAME value back still ran replaceSystemRoleAssignment on every save for a user WITH stored
+  // rows — granting Manager to a Personalabteilung/customer-role holder (T-76b-28) and 409-ing a
+  // SALONS/PERSONS template holder's Stammdaten save (T-76b-29).
+  describe("Phase 76b — an unchanged form role is no role change (D-16)", () => {
+    let other: Awaited<ReturnType<typeof createPerson>>;
+    const entryWindow = { from: "2026-01-01", to: "2026-01-31" };
+
+    function assignmentRequestAsAdmin(method: "POST" | "DELETE", path: string, payload?: object) {
+      return app.inject({
+        method,
+        url: `/api/v1/role-assignments${path}`,
+        headers: { authorization: `Bearer ${tenant.adminToken}` },
+        ...(payload !== undefined ? { payload } : {}),
+      });
+    }
+
+    /** Grants through the audited role-assignment API, as production does — never a direct insert,
+     * so the column stays in sync with the stored rows exactly as it would in production. */
+    async function grant(
+      userId: string,
+      accessRoleId: string,
+      scope: object = { type: "TENANT" },
+    ): Promise<string> {
+      const res = await assignmentRequestAsAdmin("POST", "", { userId, accessRoleId, scope });
+      expect(res.statusCode).toBe(201);
+      return (JSON.parse(res.body) as { id: string }).id;
+    }
+
+    async function revoke(id: string): Promise<void> {
+      const res = await assignmentRequestAsAdmin("DELETE", `/${id}`);
+      expect(res.statusCode).toBe(204);
+    }
+
+    /** A fallback-EMPLOYEE person with no stored assignment yet (D-08). */
+    function templatePerson(label: string) {
+      return createPerson(tenant.tenant.id, label, "EMPLOYEE");
+    }
+
+    async function snapshot(userId: string) {
+      return {
+        rows: await storedAssignments(tenant.tenant.id, userId),
+        audits: await roleAssignmentAudits(userId),
+        userAudits: await app.prisma.auditLog.count({
+          where: { entity: "User", entityId: userId },
+        }),
+        column: await columnRole(userId),
+      };
+    }
+
+    function timeEntriesOf(token: string, employeeId: string) {
+      return app.inject({
+        method: "GET",
+        url: `/api/v1/time-entries?employeeId=${employeeId}&from=${entryWindow.from}&to=${entryWindow.to}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+    }
+
+    beforeAll(async () => {
+      other = await templatePerson("Unveraendert Fremd");
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: other.employee.id,
+          date: new Date("2026-01-15T00:00:00.000Z"),
+          startTime: new Date("2026-01-15T08:00:00.000Z"),
+          endTime: new Date("2026-01-15T16:00:00.000Z"),
+          breakMinutes: 0,
+          source: "MANUAL",
+          type: "WORK",
+          salonId: tenant.salonId,
+        },
+      });
+      // Input proof: the admin actually sees the other person's entry inside the fixed window.
+      const proof = await timeEntriesOf(tenant.adminToken, other.employee.id);
+      expect(proof.statusCode).toBe(200);
+      const proofBody = JSON.parse(proof.body) as { employeeId: string }[];
+      expect(proofBody.some((entry) => entry.employeeId === other.employee.id)).toBe(true);
+    });
+
+    it.each(["alone", "with Mitarbeiter"] as const)(
+      "Personalabteilung (HR) %s: PATCH echoing the column changes no assignment, and P-02's 403/own-only holds",
+      async (variant) => {
+        const target = await templatePerson(`Unveraendert HR ${variant}`);
+        expect(await storedAssignments(tenant.tenant.id, target.user.id)).toEqual([]);
+        await grant(target.user.id, SYSTEM_ROLE_IDS.HR);
+        const rowsAfterGrant = await storedAssignments(tenant.tenant.id, target.user.id);
+        const materialized = rowsAfterGrant.find(
+          (row) => row.accessRoleId === SYSTEM_ROLE_IDS.EMPLOYEE,
+        );
+        expect(materialized).toBeDefined();
+        if (variant === "alone") {
+          await revoke(materialized!.id);
+        }
+        expect(await columnRole(target.user.id)).toBe("MANAGER");
+        const before = await snapshot(target.user.id);
+
+        const res = await patchEmployee(tenant.adminToken, target.employee.id, {
+          role: "MANAGER",
+          lastName: "Unveraendert Geaendert",
+        });
+        expect(res.statusCode).toBe(200);
+
+        expect(
+          (await app.prisma.employee.findUniqueOrThrow({ where: { id: target.employee.id } }))
+            .lastName,
+        ).toBe("Unveraendert Geaendert");
+        const after = await snapshot(target.user.id);
+        expect(after.rows).toEqual(before.rows);
+        expect(
+          after.rows.find((row) => row.accessRoleId === SYSTEM_ROLE_IDS.MANAGER),
+        ).toBeUndefined();
+        expect(after.audits).toEqual(before.audits);
+        expect(after.userAudits).toBe(before.userAudits);
+        expect(after.column).toBe("MANAGER");
+
+        const { accessToken } = await login(target.email);
+        const timeEntriesRes = await timeEntriesOf(accessToken, other.employee.id);
+        if (variant === "alone") {
+          expect(timeEntriesRes.statusCode).toBe(403);
+          expect(JSON.parse(timeEntriesRes.body)).toEqual({ error: "Forbidden" });
+        } else {
+          expect(timeEntriesRes.statusCode).toBe(200);
+          const entries = JSON.parse(timeEntriesRes.body) as { employeeId: string }[];
+          expect(entries.every((entry) => entry.employeeId !== other.employee.id)).toBe(true);
+        }
+      },
+    );
+
+    it("a TENANT customer role granting role:read:ZUGEWIESEN, plus Mitarbeiter: PATCH echoing the column changes no assignment (D-16)", async () => {
+      const target = await templatePerson("Unveraendert Kundenrolle");
+      const name = `Unveraendert Kundenrolle ${crypto.randomBytes(3).toString("hex")}`;
+      const customerRole = await app.prisma.accessRole.create({
+        data: {
+          tenantId: tenant.tenant.id,
+          name,
+          nameKey: roleNameKey(name),
+          permissions: normalizeRolePermissions(["role:read:ZUGEWIESEN"]),
+        },
+      });
+      await grant(target.user.id, customerRole.id);
+      expect(await columnRole(target.user.id)).toBe("MANAGER");
+
+      const { accessToken } = await login(target.email);
+      expect((await listEmployees(accessToken)).statusCode).toBe(403);
+
+      const before = await snapshot(target.user.id);
+      const res = await patchEmployee(tenant.adminToken, target.employee.id, {
+        role: "MANAGER",
+        firstName: "Unveraendert Vorname",
+      });
+      expect(res.statusCode).toBe(200);
+
+      const after = await snapshot(target.user.id);
+      expect(after).toEqual(before);
+      expect((await listEmployees(accessToken)).statusCode).toBe(403);
+    });
+
+    it.each([
+      [
+        "Salonmanager",
+        SYSTEM_ROLE_IDS.SALON_MANAGER,
+        () => ({ type: "SALONS", salonIds: [tenant.salonId] }),
+      ],
+      [
+        "Ausbilder",
+        SYSTEM_ROLE_IDS.TRAINER,
+        () => ({ type: "PERSONS", employeeIds: [other.employee.id] }),
+      ],
+    ] as const)(
+      "%s at scope + Mitarbeiter: PATCH echoing EMPLOYEE answers 200, not 409 (D-16)",
+      async (label, accessRoleId, scope) => {
+        const target = await templatePerson(`Unveraendert ${label}`);
+        await grant(target.user.id, accessRoleId, scope());
+        expect(await columnRole(target.user.id)).toBe("EMPLOYEE");
+        const before = await snapshot(target.user.id);
+
+        const res = await patchEmployee(tenant.adminToken, target.employee.id, {
+          role: "EMPLOYEE",
+          lastName: "Unveraendert Vorlage",
+        });
+        expect(res.statusCode).toBe(200);
+
+        expect(
+          (await app.prisma.employee.findUniqueOrThrow({ where: { id: target.employee.id } }))
+            .lastName,
+        ).toBe("Unveraendert Vorlage");
+        const after = await snapshot(target.user.id);
+        expect(after).toEqual(before);
+      },
+    );
+
+    // Phase 76b Plan 08, Task 2: a genuine role change (a value that DIFFERS from the column)
+    // still runs the bridge exactly as before D-16.
+    it("(c1) a genuine change on a migrated legacy user still runs the bridge: DELETE the Mitarbeiter row, CREATE Manager, compatRole recorded", async () => {
+      const target = await templatePerson("Echt Migriert");
+      await executeLegacyRoleMigration(app.prisma);
+      const before = await roleAssignmentAudits(target.user.id);
+
+      const res = await patchEmployee(tenant.adminToken, target.employee.id, {
+        role: "MANAGER",
+        firstName: "Echt Geaendert",
+      });
+      expect(res.statusCode).toBe(200);
+
+      const audits = await newAuditsSince(target.user.id, before);
+      expect(audits).toHaveLength(2);
+      const deleted = audits.find((row) => row.action === "DELETE")!;
+      const created = audits.find((row) => row.action === "CREATE")!;
+      expect(deleted.oldValue).toMatchObject({
+        accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE,
+        roleName: "Mitarbeiter",
+      });
+      expect(created.newValue).toMatchObject({
+        accessRoleId: SYSTEM_ROLE_IDS.MANAGER,
+        roleName: "Manager",
+        scopeType: "TENANT",
+        compatRole: { from: "EMPLOYEE", to: "MANAGER" },
+      });
+      for (const row of audits) expect(row.userId).toBe(tenant.adminUser.id);
+
+      const rows = await storedAssignments(tenant.tenant.id, target.user.id);
+      expect(rows.map((row) => [row.accessRoleId, row.scopeType])).toEqual([
+        [SYSTEM_ROLE_IDS.MANAGER, "TENANT"],
+      ]);
+      expect(await columnRole(target.user.id)).toBe("MANAGER");
+      expect(
+        (await app.prisma.employee.findUniqueOrThrow({ where: { id: target.employee.id } }))
+          .firstName,
+      ).toBe("Echt Geaendert");
+    });
+
+    it("(c2) a genuine change on an HR + Mitarbeiter holder replaces only the legacy row; the HR row survives untouched (P-01, production-shaped)", async () => {
+      const target = await templatePerson("Echt Personalabteilung");
+      await grant(target.user.id, SYSTEM_ROLE_IDS.HR);
+      const rowsAfterGrant = await storedAssignments(tenant.tenant.id, target.user.id);
+      const hrRow = rowsAfterGrant.find((row) => row.accessRoleId === SYSTEM_ROLE_IDS.HR)!;
+      const mitarbeiterRow = rowsAfterGrant.find(
+        (row) => row.accessRoleId === SYSTEM_ROLE_IDS.EMPLOYEE,
+      )!;
+      expect(await columnRole(target.user.id)).toBe("MANAGER");
+      const before = await roleAssignmentAudits(target.user.id);
+
+      const res = await patchEmployee(tenant.adminToken, target.employee.id, { role: "ADMIN" });
+      expect(res.statusCode).toBe(200);
+
+      const audits = await newAuditsSince(target.user.id, before);
+      expect(audits.map((row) => row.action).sort()).toEqual(["CREATE", "DELETE"]);
+      const deleted = audits.find((row) => row.action === "DELETE")!;
+      const created = audits.find((row) => row.action === "CREATE")!;
+      expect(deleted.entityId).toBe(mitarbeiterRow.id);
+      expect(created.newValue).toMatchObject({
+        accessRoleId: SYSTEM_ROLE_IDS.ADMIN,
+        roleName: "Admin",
+        compatRole: { from: "MANAGER", to: "ADMIN" },
+      });
+      for (const audit of audits) {
+        expect(audit.entityId).not.toBe(hrRow.id);
+        expect(audit.oldValue?.accessRoleId).not.toBe(SYSTEM_ROLE_IDS.HR);
+        expect(audit.newValue?.accessRoleId).not.toBe(SYSTEM_ROLE_IDS.HR);
+      }
+
+      const rows = await storedAssignments(tenant.tenant.id, target.user.id);
+      expect(rows.find((row) => row.id === hrRow.id)).toEqual(hrRow);
+      expect(rows.map((row) => row.accessRoleId).sort()).toEqual(
+        [SYSTEM_ROLE_IDS.ADMIN, SYSTEM_ROLE_IDS.HR].sort(),
+      );
+      expect(await columnRole(target.user.id)).toBe("ADMIN");
+    });
+
+    it("(c3) the role-assignment:manage gate still fires for an unchanged role — D-16 does not relax it", async () => {
+      const caller = await createPerson(tenant.tenant.id, "Echt Stammdaten Pflege", "EMPLOYEE");
+      const target = await templatePerson("Echt Stammdaten Ziel");
+      const name = `Echt Bruecke Stammdaten ${crypto.randomBytes(3).toString("hex")}`;
+      const updateOnly = await app.prisma.accessRole.create({
+        data: {
+          tenantId: tenant.tenant.id,
+          name,
+          nameKey: roleNameKey(name),
+          permissions: normalizeRolePermissions(["employee:update:ZUGEWIESEN"]),
+        },
+      });
+      await app.prisma.roleAssignment.create({
+        data: {
+          tenantId: tenant.tenant.id,
+          userId: caller.user.id,
+          accessRoleId: updateOnly.id,
+          scopeType: "TENANT",
+          salonIds: [],
+          employeeIds: [],
+        },
+      });
+      const { accessToken } = await login(caller.email);
+
+      const res = await patchEmployee(accessToken, target.employee.id, {
+        role: "EMPLOYEE",
+        firstName: "Echt Verboten",
+      });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body)).toEqual({ error: "Forbidden" });
+      expect(
+        (await app.prisma.employee.findUniqueOrThrow({ where: { id: target.employee.id } }))
+          .firstName,
+      ).not.toBe("Echt Verboten");
+      expect(await storedAssignments(tenant.tenant.id, target.user.id)).toEqual([]);
     });
   });
 });

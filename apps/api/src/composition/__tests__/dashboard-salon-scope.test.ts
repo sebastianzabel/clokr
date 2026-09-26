@@ -182,7 +182,7 @@ describe("Issue #91 (Phase 91b Plan 06) — dashboard.ts salon/person scope", ()
     expect(ids).not.toContain(outOfScope.employee.id);
   });
 
-  it("GET /overtime-overview: a SALONS-scoped manager excludes an out-of-scope employee's account (NEW finding — this route had zero scope narrowing at all)", async () => {
+  it("GET /overtime-overview: a SALONS-scoped manager excludes an out-of-scope employee's account (NEW finding — this route had zero scope narrowing at all); the manager also needs overtime:read:ZUGEWIESEN since Phase 76b D-06", async () => {
     const inScope = await createEmployee("inscope-overview");
     await createHome(inScope.employee.id, salonA.id);
     await app.prisma.overtimeAccount.create({
@@ -194,10 +194,18 @@ describe("Issue #91 (Phase 91b Plan 06) — dashboard.ts salon/person scope", ()
       data: { employeeId: outOfScope.employee.id, balanceHours: 5 },
     });
 
-    const manager = await createScopedManager("mgr-overview", ["team-overview:read:ZUGEWIESEN"], {
-      scopeType: "SALONS",
-      salonIds: [salonA.id],
-    });
+    // Phase 76b (Issue #76), D-06: since this route additionally requires overtime:read:ZUGEWIESEN
+    // (saldo IS the overtime resource), this fixture's role now carries both permissions — the
+    // case still proves the exact same SALONS scope-narrowing behaviour as before D-06, this is
+    // NOT a loosened test (see the plan's own note on this).
+    const manager = await createScopedManager(
+      "mgr-overview",
+      ["team-overview:read:ZUGEWIESEN", "overtime:read:ZUGEWIESEN"],
+      {
+        scopeType: "SALONS",
+        salonIds: [salonA.id],
+      },
+    );
     const token = await login(manager.user.email);
 
     const res = await app.inject({
@@ -211,6 +219,89 @@ describe("Issue #91 (Phase 91b Plan 06) — dashboard.ts salon/person scope", ()
     );
     expect(ids).toContain(inScope.employee.id);
     expect(ids).not.toContain(outOfScope.employee.id);
+  });
+
+  it("GET /overtime-overview: a SALONS-scoped manager holding team-overview:read only gets 403 — the Salonmanager case (D-06)", async () => {
+    const manager = await createScopedManager(
+      "mgr-overview-no-overtime",
+      ["team-overview:read:ZUGEWIESEN"],
+      { scopeType: "SALONS", salonIds: [salonA.id] },
+    );
+    const token = await login(manager.user.email);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/dashboard/overtime-overview",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.body)).toEqual({ error: "Forbidden" });
+  });
+
+  it("GET /overtime-overview: a TENANT team-overview:read holder with a SALONS-only overtime:read assignment sees only the Stammsalon-A employee — intersection of both reaches (D-06, P-04)", async () => {
+    const stammsalonA = await createEmployee("inscope-intersection");
+    await createHome(stammsalonA.employee.id, salonA.id);
+    await app.prisma.overtimeAccount.create({
+      data: { employeeId: stammsalonA.employee.id, balanceHours: 4 },
+    });
+    const stammsalonB = await createEmployee("outscope-intersection");
+    await createHome(stammsalonB.employee.id, salonB.id);
+    await app.prisma.overtimeAccount.create({
+      data: { employeeId: stammsalonB.employee.id, balanceHours: 4 },
+    });
+
+    const { user } = await createEmployee("mgr-intersection");
+    const tenantRoleName = `DashboardScope ${crypto.randomBytes(3).toString("hex")}`;
+    const tenantRole = await app.prisma.accessRole.create({
+      data: {
+        tenantId: data.tenant.id,
+        name: tenantRoleName,
+        nameKey: roleNameKey(tenantRoleName),
+        permissions: normalizeRolePermissions(["team-overview:read:ZUGEWIESEN"]),
+      },
+    });
+    await app.prisma.roleAssignment.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        accessRoleId: tenantRole.id,
+        scopeType: "TENANT",
+        salonIds: [],
+        employeeIds: [],
+      },
+    });
+    const salonsRoleName = `DashboardScope ${crypto.randomBytes(3).toString("hex")}`;
+    const salonsRole = await app.prisma.accessRole.create({
+      data: {
+        tenantId: data.tenant.id,
+        name: salonsRoleName,
+        nameKey: roleNameKey(salonsRoleName),
+        permissions: normalizeRolePermissions(["overtime:read:ZUGEWIESEN"]),
+      },
+    });
+    await app.prisma.roleAssignment.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        accessRoleId: salonsRole.id,
+        scopeType: "SALONS",
+        salonIds: [salonA.id],
+        employeeIds: [],
+      },
+    });
+    const token = await login(user.email);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/dashboard/overtime-overview",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const ids = (JSON.parse(res.body) as { employees: Array<{ id: string }> }).employees.map(
+      (e) => e.id,
+    );
+    expect(ids).toContain(stammsalonA.employee.id);
+    expect(ids).not.toContain(stammsalonB.employee.id);
   });
 
   it("GET /overtime-overview: a TENANT-scope (wholeTenant) manager sees both employees — unaffected", async () => {

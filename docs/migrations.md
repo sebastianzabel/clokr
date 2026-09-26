@@ -494,6 +494,64 @@ Kundenrolle mit mindestens einer ZUGEWIESEN-Permission hält, schreibt der neue 
 produktiver Nutzer eine Kundenrolle — das ist deshalb kein Risiko des Deploys selbst, wohl aber
 eines jedes späteren Rollbacks über 75b hinweg.
 
+## Phase 76b — Systemrollen-Templates (Issue #76)
+
+**Was die Migration tut.** `packages/db/prisma/migrations/20260926074542_system_role_templates`
+ist eine reine Datenmigration — keine Tabelle, keine Spalte, kein Index, kein Typ wird angelegt,
+geändert oder gelöscht (`prisma migrate diff` bleibt leer). Sie legt vier weitere globale
+Systemrollen an (`AccessRole` mit `tenantId` NULL): Inhaber (`…a004`, 87 Permissions),
+Salonmanager (`…a005`, 24), Personalabteilung (`…a006`, 13) und Ausbilder (`…a007`, 5). Die Ids
+werden mit `ON CONFLICT ("id") DO NOTHING` eingefügt, ein zweiter Lauf legt nichts an. Die vier
+Zeilen weisen niemandem etwas zu — keine `RoleAssignment`-Zeile, kein Audit-Eintrag (AK-76b-8):
+Ein Kunde übernimmt ein Template nur über den bestehenden Endpunkt `POST /api/v1/roles/:id/copy`.
+
+**1. Vor `migrate deploy` — Namensprüfung (lesend).** Heißt eine Kundenrolle wie eines der vier
+neuen Templates, wäre der Name nach der Namensregel aus Phase 73b nicht mehr eindeutig:
+
+```sql
+-- Customer roles whose case-insensitive name collides with one of the four new templates.
+-- Expected: 0 rows.
+SELECT "id", "tenantId", "name", "nameKey"
+FROM "AccessRole"
+WHERE "tenantId" IS NOT NULL
+  AND "nameKey" IN ('inhaber', 'salonmanager', 'personalabteilung', 'ausbilder');
+```
+
+Liefert sie Zeilen: melden und mit dem Betreiber klären, **nicht** still umbenennen — der Name
+einer Kundenrolle gehört dem Mandanten. Eine bestehende Kundenrolle mit einem dieser Namen bleibt
+danach funktionsfähig, kann aber nicht mehr in diesen Namen umbenannt oder neu unter diesem Namen
+angelegt werden (409) — die vier Namen sind ab dieser Migration für Kundenrollen reserviert.
+
+**2. Nach `migrate deploy` — Kontrolle (lesend).**
+
+```sql
+-- The seven global system-role rows. Expected: 7 rows, 87/63/22/87/24/13/5 permissions, tenantId
+-- NULL for all.
+SELECT "id", "name", cardinality("permissions") AS permissions, "tenantId"
+FROM "AccessRole"
+WHERE "id" IN (
+  '00000000-0000-4000-8000-00000000a001',
+  '00000000-0000-4000-8000-00000000a002',
+  '00000000-0000-4000-8000-00000000a003',
+  '00000000-0000-4000-8000-00000000a004',
+  '00000000-0000-4000-8000-00000000a005',
+  '00000000-0000-4000-8000-00000000a006',
+  '00000000-0000-4000-8000-00000000a007'
+)
+ORDER BY "id";
+```
+
+**3. Rollback.** Das vorige Release trifft keine Zugriffsentscheidung anhand der vier neuen Ids —
+niemand kann ihnen zugewiesen sein, weil erst diese Phase sie überhaupt kennt (`SYSTEM_ROLE_IDS`
+des alten Codes hat nur drei Einträge). Ein Rollback auf das vorige Image funktioniert ohne
+Datenkorrektur; eine Löschung der vier Zeilen ist nicht nötig. **Eine Einschränkung gilt für die
+Dauer eines Rollbacks:** Die alte `isSystemRoleId()` erkennt die vier neuen Zeilen nicht als
+Systemrolle, `GET /api/v1/roles` listet sie unter dem alten Code aber ganz normal mit auf (die
+Route selektiert jede globale Rolle, nicht nur die per Id bekannten) — der alte Code würde ein
+`PATCH`/`DELETE` auf eine der vier Ids deshalb nicht mit dem 409-Systemrollen-Schutz ablehnen. Kein
+Problem für einen kurzen Rollback ohne Bedienung dieser Rollen; bei einem längeren Rollback vorher
+mit dem Betreiber klären.
+
 ## Retention EOL policy (COMP-V1814-07)
 
 Clokr uses a **two-stage retention lifecycle** for employee data:

@@ -24,10 +24,10 @@ import { RoleLockoutError, ROLE_LOCKOUT_MESSAGE } from "../role-assignment";
 import {
   assignmentsBlockingDemotionToEmployee,
   isDemotionToEmployee,
-  legacyFallbackAlreadyYields,
   materializeLegacyRoleAssignment,
   replaceSystemRoleAssignment,
   requestedRoleNeedsRoleAssignmentManage,
+  requestedRoleUnchanged,
   ROLE_DEMOTION_BLOCKED_MESSAGE_PREFIX,
   RoleDemotionBlockedError,
   syncCompatRoleColumn,
@@ -345,9 +345,11 @@ async function auditRemovedRoleAssignments(
  * holder of a guarded permission then rolls back this change, the employee-field update and every
  * audit row together (D-31).
  *
- * Order: a request that changes nothing (the fallback already yields `role`) writes nothing. Else,
- * for a demotion TO Mitarbeiter, {@link assignmentsBlockingDemotionToEmployee} runs first (Issue
- * #357 sub-fix B) — a still-granting customer-role or salon/person-scoped assignment throws
+ * Order: a request whose role equals the target's `User.role` column is no role change (D-16,
+ * P-05) and writes nothing — regardless of whether the user has stored assignments. A different
+ * value runs the path below unchanged. For a demotion TO Mitarbeiter,
+ * {@link assignmentsBlockingDemotionToEmployee} runs first (Issue #357 sub-fix B) — a
+ * still-granting customer-role or salon/person-scoped assignment throws
  * {@link RoleDemotionBlockedError} before any write, so the whole request (this role change AND
  * every other field on the same PATCH) rolls back atomically rather than silently applying a
  * partial demotion. Otherwise the fallback is materialized first (D-26), the system-role
@@ -363,7 +365,7 @@ async function applyRoleFromEmployeeForm(
   role: Role,
 ): Promise<void> {
   const tenantId = req.user.tenantId;
-  if (await legacyFallbackAlreadyYields(tx, tenantId, userId, role)) return;
+  if (await requestedRoleUnchanged(tx, tenantId, userId, role)) return;
   if (isDemotionToEmployee(role)) {
     const blocking = await assignmentsBlockingDemotionToEmployee(tx, tenantId, userId);
     if (blocking.length > 0) throw new RoleDemotionBlockedError(blocking);

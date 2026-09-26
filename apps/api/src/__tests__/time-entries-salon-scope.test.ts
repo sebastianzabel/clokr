@@ -243,7 +243,14 @@ describe("Issue #91 (Phase 91b Plan 03) — TimeEntry salon/person scope", () =>
       expect(ids).toContain(listedEntry.id);
     });
 
-    it("a SALONS/PERSONS manager with an EMPTY reach gets an empty result for any named employeeId", async () => {
+    // Phase 76b Plan 04 (Issue #76), P-02: a `SALONS` row with `salonIds: []` is a MALFORMED
+    // scope — `storedRoleAssignmentScope()` (`role-assignment.ts:99-102`) returns `null` for it,
+    // so `resolveGrants()` skips the row entirely and this manager holds NEITHER reach for
+    // `time-entry:read` at all (confirmed: identical to a caller with zero `time-entry:*`
+    // permission). Before P-02 this fell into the route's own-entries fallback and happened to
+    // read as 200 + [] only because the manager also has no entries of their own — the exact
+    // bug P-02 closes. It now answers 403, same as any other caller with neither reach.
+    it("a SALONS manager with a malformed EMPTY scope holds no reach at all — 403, not the old own-entries fallback (P-02)", async () => {
       const someEmp = await createEmployee("empty-reach");
       await createEntry(someEmp.employee.id, salonA.id, "2026-05-06");
 
@@ -258,8 +265,8 @@ describe("Issue #91 (Phase 91b Plan 03) — TimeEntry salon/person scope", () =>
         url: `/api/v1/time-entries?from=2026-05-01&to=2026-05-10&employeeId=${someEmp.employee.id}`,
         headers: { authorization: `Bearer ${token}` },
       });
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.body)).toEqual([]);
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body)).toEqual({ error: "Forbidden" });
     });
 
     it("a TENANT-scope (wholeTenant) manager's response is unchanged — naming any employeeId still works", async () => {

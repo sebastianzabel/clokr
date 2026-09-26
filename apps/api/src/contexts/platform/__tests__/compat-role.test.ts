@@ -21,10 +21,11 @@ import {
   compatRoleUserWhere,
   deriveCompatRole,
   isDemotionToEmployee,
+  isLegacySystemRoleId,
   parseCompatRoleFilter,
-  legacyFallbackAlreadyYields,
   materializeLegacyRoleAssignment,
   replaceSystemRoleAssignment,
+  requestedRoleUnchanged,
   RoleDemotionBlockedError,
   syncCompatRoleColumn,
   systemRoleIdForLegacyRole,
@@ -217,6 +218,42 @@ describe("compat role — assignmentExceedsEmployee (Issue #357 sub-fix B)", () 
         systemRow("ADMIN", { scopeType: "TENANT", salonIds: ["salon-1"], employeeIds: [] }),
       ),
     ).toBe(false);
+  });
+});
+
+// Phase 76b (Issue #76), P-01: `isSystemRoleId()` covers all seven system roles once Plan 76b-01
+// lands (D-03), but the employee-form bridge (`replaceSystemRoleAssignment`,
+// `assignmentsBlockingDemotionToEmployee`) must keep narrowing itself to the THREE legacy ids
+// (Admin, Manager, Mitarbeiter). D-10 is a locked decision, pinned here unmodified: a TENANT
+// Inhaber or Personalabteilung assignment derives MANAGER (never ADMIN, never a new value); a
+// SALONS/PERSONS-scoped Salonmanager or Ausbilder assignment contributes nothing.
+describe("Phase 76b — templates in the compat module (P-01, D-10)", () => {
+  it("isLegacySystemRoleId is true only for Admin, Manager and Mitarbeiter", () => {
+    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.ADMIN)).toBe(true);
+    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.MANAGER)).toBe(true);
+    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.EMPLOYEE)).toBe(true);
+    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.OWNER)).toBe(false);
+    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.SALON_MANAGER)).toBe(false);
+    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.HR)).toBe(false);
+    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.TRAINER)).toBe(false);
+    expect(isLegacySystemRoleId("00000000-0000-4000-8000-000000000000")).toBe(false);
+    expect(isLegacySystemRoleId("")).toBe(false);
+  });
+
+  it("D-10 pinned: TENANT Inhaber and TENANT Personalabteilung derive MANAGER; SALONS Salonmanager and PERSONS Ausbilder contribute nothing", () => {
+    expect(deriveCompatRole(TENANT, [systemRow("OWNER")])).toBe("MANAGER");
+    expect(deriveCompatRole(TENANT, [systemRow("HR")])).toBe("MANAGER");
+    expect(
+      deriveCompatRole(TENANT, [
+        systemRow("SALON_MANAGER", { scopeType: "SALONS", salonIds: ["salon-1"], employeeIds: [] }),
+      ]),
+    ).toBe("EMPLOYEE");
+    expect(
+      deriveCompatRole(TENANT, [
+        systemRow("TRAINER", { scopeType: "PERSONS", salonIds: [], employeeIds: ["employee-1"] }),
+      ]),
+    ).toBe("EMPLOYEE");
+    expect(deriveCompatRole(TENANT, [systemRow("ADMIN"), systemRow("OWNER")])).toBe("ADMIN");
   });
 });
 
@@ -649,14 +686,45 @@ describe("compat role — write half against the database (D-14, D-15, D-26)", (
     expect(await app.prisma.roleAssignment.count({ where: { userId: foreign.id } })).toBe(0);
   });
 
-  it("legacyFallbackAlreadyYields is true only for a fallback user whose column equals the role", async () => {
-    const fallback = await createUser(seed.tenant.id, "EMPLOYEE", "yields");
-    const yields = (role: Role) =>
-      legacyFallbackAlreadyYields(app.prisma, seed.tenant.id, fallback.id, role);
-    expect(await yields("EMPLOYEE")).toBe(true);
-    expect(await yields("MANAGER")).toBe(false);
+  it("requestedRoleUnchanged compares with the User.role column, stored rows or not (D-16, P-05)", async () => {
+    const fallback = await createUser(seed.tenant.id, "EMPLOYEE", "unchanged");
+    const yields = (userId: string, role: Role) =>
+      requestedRoleUnchanged(app.prisma, seed.tenant.id, userId, role);
+    expect(await yields(fallback.id, "EMPLOYEE")).toBe(true);
+    expect(await yields(fallback.id, "MANAGER")).toBe(false);
+    expect(await yields(fallback.id, "ADMIN")).toBe(false);
+
     await assign(fallback.id, SYSTEM_ROLE_IDS.EMPLOYEE);
-    expect(await yields("EMPLOYEE")).toBe(false);
+    // Before D-16 the fallback-only predicate answered false here — it required no stored row at
+    // all — and that exclusion sent every form save of a user with stored rows through the bridge,
+    // including an unrelated save by a Personalabteilung/customer-role holder.
+    expect(await yields(fallback.id, "EMPLOYEE")).toBe(true);
+
+    const hrHolder = await createUser(seed.tenant.id, "EMPLOYEE", "unchanged-hr");
+    await assign(hrHolder.id, SYSTEM_ROLE_IDS.HR);
+    await assign(hrHolder.id, SYSTEM_ROLE_IDS.EMPLOYEE);
+    expect(await syncCompatRoleColumn(app.prisma, seed.tenant.id, hrHolder.id)).toEqual({
+      from: "EMPLOYEE",
+      to: "MANAGER",
+    });
+    expect(await yields(hrHolder.id, "MANAGER")).toBe(true);
+    expect(await yields(hrHolder.id, "EMPLOYEE")).toBe(false);
+    expect(await yields(hrHolder.id, "ADMIN")).toBe(false);
+
+    // P-05: a stale column wins over the derivation. The column stays EMPLOYEE (never synced)
+    // while the stored HR row derives MANAGER — input proof via compatRoleForUser.
+    const stale = await createUser(seed.tenant.id, "EMPLOYEE", "unchanged-stale");
+    await assign(stale.id, SYSTEM_ROLE_IDS.HR);
+    expect(await compatRoleForUser(app.prisma, stale.id, seed.tenant.id, "EMPLOYEE")).toBe(
+      "MANAGER",
+    );
+    expect(await yields(stale.id, "EMPLOYEE")).toBe(true);
+    expect(await yields(stale.id, "MANAGER")).toBe(false);
+
+    const foreign = await createUser(other.tenant.id, "EMPLOYEE", "unchanged-foreign");
+    expect(await yields(foreign.id, "EMPLOYEE")).toBe(false);
+    expect(await yields(foreign.id, "MANAGER")).toBe(false);
+    expect(await yields(foreign.id, "ADMIN")).toBe(false);
   });
 
   it("replaceSystemRoleAssignment swaps only the TENANT system row; customer and SALONS rows stay", async () => {
@@ -696,6 +764,37 @@ describe("compat role — write half against the database (D-14, D-15, D-26)", (
     expect(
       await replaceSystemRoleAssignment(app.prisma, seed.tenant.id, user.id, "EMPLOYEE"),
     ).toEqual({ removed: [], created: null });
+  });
+
+  // Phase 76b (Issue #76), P-01: a Phase 76b template (here Personalabteilung/HR) held at TENANT
+  // scope is NOT one of the three legacy system roles `replaceSystemRoleAssignment` swaps — it
+  // must survive a demotion to Mitarbeiter exactly like a customer-role row does, and it must be
+  // named by `assignmentsBlockingDemotionToEmployee` beforehand.
+  it("replaceSystemRoleAssignment leaves a TENANT Personalabteilung (HR) template row untouched; the guard names it first", async () => {
+    const user = await createUser(seed.tenant.id, "MANAGER", "template-replace");
+    const hrRow = await assign(user.id, SYSTEM_ROLE_IDS.HR);
+    const managerRow = await assign(user.id, SYSTEM_ROLE_IDS.MANAGER);
+
+    const blocking = await assignmentsBlockingDemotionToEmployee(
+      app.prisma,
+      seed.tenant.id,
+      user.id,
+    );
+    expect(blocking.map((row) => row.id)).toEqual([hrRow.id]);
+    expect(blocking[0]).toMatchObject({ roleName: "Personalabteilung", scopeType: "TENANT" });
+
+    const { removed, created } = await replaceSystemRoleAssignment(
+      app.prisma,
+      seed.tenant.id,
+      user.id,
+      "EMPLOYEE",
+    );
+    expect(removed.map((row) => row.id)).toEqual([managerRow.id]);
+    expect(created).toMatchObject({ accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE, scopeType: "TENANT" });
+
+    const rows = await rowsOf(user.id);
+    expect(rows.map((row) => row.id).sort()).toEqual([hrRow.id, created!.id].sort());
+    expect(rows.find((row) => row.id === hrRow.id)).toEqual(hrRow);
   });
 
   // Issue #357 sub-fix B: before this fix nothing stopped `replaceSystemRoleAssignment` (called by

@@ -83,6 +83,18 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // no tenant data and moving the guard above it would turn a documented 200 into a 500.
       const access = accessContextFromRequest(req);
       const tenantId = req.user.tenantId;
+      // Phase 76b (Issue #76), CR-01/WR-01 (code review): before this fix the route was gated
+      // only by requireAuth and unconditionally returned the caller's own overtime saldo and
+      // vacation-entitlement numbers. Salonmanager/Ausbilder (D-05/D-08) deliberately hold no
+      // EIGENE permission of any kind, so a bare holder of either template saw their own
+      // "Überstundenkonto"/"Urlaubstage" card on first login — the same leak D-06/D-15 close on
+      // the team-overview and overtime-trend routes. The route itself stays reachable for every
+      // authenticated user (today/week worked-hours remain legitimately visible to everyone);
+      // only the overtime/vacation sections are gated, degrading to `null` (never a fabricated
+      // zero) so the web dashboard can hide the corresponding card without a 403 for the whole
+      // route.
+      const canReadOwnOvertime = await hasPermission(req, "overtime:read:EIGENE");
+      const canReadOwnVacation = await hasPermission(req, "leave-entitlement:read:EIGENE");
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const now = new Date();
       const today = todayInTz(tz);
@@ -268,58 +280,93 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // forecast renders as unavailable — a fabricated 0 there would be indistinguishable from a
       // genuine zero forecast. That fallback query is itself never-500 (own try/catch): a failure
       // of getConfirmedCarryOver still yields the stored balanceHours.
-      let overtimeBalance: number;
-      let confirmedMinutes: number;
-      let openMonthMinutes: number | null;
-      let hasClosedMonth: boolean;
-      let rosterIncomplete: boolean | undefined;
+      // CR-01: computed only when the caller holds overtime:read:EIGENE — a bare
+      // Salonmanager/Ausbilder never triggers any of the live-saldo queries below, mirroring
+      // D-15's "no overtime:read, no saldo work" precedent.
+      let overtimeResult: {
+        balanceHours: number;
+        confirmedMinutes: number;
+        openMonthMinutes: number | null;
+        hasClosedMonth: boolean;
+        rosterIncomplete?: boolean;
+      } | null = null;
 
-      let breakdown: OvertimeBalanceBreakdown | null = null;
-      try {
-        breakdown = await computeOvertimeBalanceBreakdown(app, employeeId);
-      } catch (err) {
-        app.log.warn({ err, employeeId }, "dashboard: live overtime saldo failed, using stored");
-        // breakdown stays null (its declared initial value) — never reassigned here.
-      }
+      if (canReadOwnOvertime) {
+        let overtimeBalance: number;
+        let confirmedMinutes: number;
+        let openMonthMinutes: number | null;
+        let hasClosedMonth: boolean;
+        let rosterIncomplete: boolean | undefined;
 
-      if (breakdown !== null) {
-        overtimeBalance = breakdown.totalHours;
-        confirmedMinutes = breakdown.confirmedMinutes;
-        openMonthMinutes = breakdown.openMonthMinutes;
-        hasClosedMonth = breakdown.hasClosedMonth;
-        rosterIncomplete = breakdown.rosterIncomplete;
-      } else {
-        const acct = await getOvertimeAccount(app.prisma, employeeId, tenantId);
-        overtimeBalance = Number(acct?.balanceHours ?? 0);
+        let breakdown: OvertimeBalanceBreakdown | null = null;
         try {
-          const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, tenantId);
-          confirmedMinutes = confirmed.minutes;
-          hasClosedMonth = confirmed.hasClosedMonth;
-        } catch (fallbackErr) {
-          app.log.warn(
-            { err: fallbackErr, employeeId },
-            "dashboard: confirmed carry-over fallback failed",
-          );
-          confirmedMinutes = 0;
-          hasClosedMonth = false;
+          breakdown = await computeOvertimeBalanceBreakdown(app, employeeId);
+        } catch (err) {
+          app.log.warn({ err, employeeId }, "dashboard: live overtime saldo failed, using stored");
+          // breakdown stays null (its declared initial value) — never reassigned here.
         }
-        openMonthMinutes = null;
-        rosterIncomplete = undefined;
+
+        if (breakdown !== null) {
+          overtimeBalance = breakdown.totalHours;
+          confirmedMinutes = breakdown.confirmedMinutes;
+          openMonthMinutes = breakdown.openMonthMinutes;
+          hasClosedMonth = breakdown.hasClosedMonth;
+          rosterIncomplete = breakdown.rosterIncomplete;
+        } else {
+          const acct = await getOvertimeAccount(app.prisma, employeeId, tenantId);
+          overtimeBalance = Number(acct?.balanceHours ?? 0);
+          try {
+            const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, tenantId);
+            confirmedMinutes = confirmed.minutes;
+            hasClosedMonth = confirmed.hasClosedMonth;
+          } catch (fallbackErr) {
+            app.log.warn(
+              { err: fallbackErr, employeeId },
+              "dashboard: confirmed carry-over fallback failed",
+            );
+            confirmedMinutes = 0;
+            hasClosedMonth = false;
+          }
+          openMonthMinutes = null;
+          rosterIncomplete = undefined;
+        }
+
+        overtimeResult = {
+          balanceHours: round(overtimeBalance),
+          // Phase 97-04 (SALDO-DISP-01/02/04) — additive split fields. rosterIncomplete only
+          // present when defined (SHIFT_BASED open partial month) — never a fabricated `false`.
+          confirmedMinutes,
+          openMonthMinutes,
+          hasClosedMonth,
+          ...(rosterIncomplete !== undefined ? { rosterIncomplete } : {}),
+        };
       }
 
       // ── Resturlaub ────────────────────────────────────────────────────
-      const yearNow = parseInt(dateStrInTz(now, tz).slice(0, 4));
-      const entitlements = await getEntitlementsForEmployee(
-        app.prisma,
-        employeeId,
-        tenantId,
-        yearNow,
-      );
-      const totalVacation = entitlements.reduce(
-        (sum, e) => sum + Number(e.totalDays) + Number(e.carriedOverDays),
-        0,
-      );
-      const usedVacation = entitlements.reduce((sum, e) => sum + Number(e.usedDays), 0);
+      // WR-01: computed only when the caller holds leave-entitlement:read:EIGENE — Ausbilder
+      // (D-08) holds no leave-entitlement permission at all.
+      let vacationResult: { remaining: number; total: number; used: number } | null = null;
+
+      if (canReadOwnVacation) {
+        const yearNow = parseInt(dateStrInTz(now, tz).slice(0, 4));
+        const entitlements = await getEntitlementsForEmployee(
+          app.prisma,
+          employeeId,
+          tenantId,
+          yearNow,
+        );
+        const totalVacation = entitlements.reduce(
+          (sum, e) => sum + Number(e.totalDays) + Number(e.carriedOverDays),
+          0,
+        );
+        const usedVacation = entitlements.reduce((sum, e) => sum + Number(e.usedDays), 0);
+
+        vacationResult = {
+          remaining: totalVacation - usedVacation,
+          total: totalVacation,
+          used: usedVacation,
+        };
+      }
 
       return {
         today: { workedHours: round(todayMinutes / 60), entries: todayEntries.length },
@@ -342,20 +389,10 @@ export async function dashboardRoutes(app: FastifyInstance) {
               targetHours: round(monthSollMinutes / 60),
             }
           : undefined,
-        overtime: {
-          balanceHours: round(overtimeBalance),
-          // Phase 97-04 (SALDO-DISP-01/02/04) — additive split fields. rosterIncomplete only
-          // present when defined (SHIFT_BASED open partial month) — never a fabricated `false`.
-          confirmedMinutes,
-          openMonthMinutes,
-          hasClosedMonth,
-          ...(rosterIncomplete !== undefined ? { rosterIncomplete } : {}),
-        },
-        vacation: {
-          remaining: totalVacation - usedVacation,
-          total: totalVacation,
-          used: usedVacation,
-        },
+        // CR-01/WR-01: `null` (not a fabricated zero) when the caller lacks the corresponding
+        // EIGENE permission — the web dashboard hides the card instead of showing a zero saldo.
+        overtime: overtimeResult,
+        vacation: vacationResult,
       };
     },
   });
@@ -861,7 +898,17 @@ export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard/overtime-overview — Überstunden-Übersicht (RPT-01 + SALDO-03)
   app.get("/overtime-overview", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
-    preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
+    preHandler: [
+      requirePermission("team-overview:read:ZUGEWIESEN"),
+      // Phase 76b (Issue #76), D-06: saldo IS the overtime resource — a team-overview:read
+      // holder alone (e.g. a Salonmanager template) must not see it. No new catalog permission;
+      // reuses the existing overtime:read:ZUGEWIESEN key as a SECOND, required preHandler.
+      // Fastify runs a preHandler array in order; the first hook that calls reply.code(403).send()
+      // sets reply.sent, and every later hook (incl. requirePermission's own requireAuth() call)
+      // short-circuits on it — this IS an AND, not an OR (request-permissions.ts's `if
+      // (reply.sent) return;` idiom).
+      requirePermission("overtime:read:ZUGEWIESEN"),
+    ],
     handler: async (req) => {
       const tenantId = req.user.tenantId;
 
@@ -891,10 +938,36 @@ export async function dashboardRoutes(app: FastifyInstance) {
               overviewScopeReach,
               new Date(),
             );
-      const accounts =
-        overviewScopedIds === "all"
-          ? allAccounts
-          : allAccounts.filter((a) => overviewScopedIds.includes(a.employeeId));
+
+      // Phase 76b (Issue #76), D-06/P-04 — a SECOND, INDEPENDENT reach for the overtime:read
+      // permission this route now also requires. An account is kept only if it passes BOTH the
+      // team-overview reach above AND this overtime reach (intersection), so a caller whose
+      // team-overview:read scope is WIDER than their overtime:read scope (e.g. TENANT
+      // team-overview:read + SALONS-only overtime:read) can never see more saldo than their
+      // overtime:read grants — a narrower scope on either permission can only ever narrow the
+      // result, never widen it through the other.
+      const overtimeScopeReach = await resolveAccessReach(
+        app.prisma,
+        overviewAccess,
+        "overtime:read:ZUGEWIESEN",
+      );
+      const overtimeScopedIds =
+        overtimeScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              tenantId,
+              overtimeScopeReach,
+              new Date(),
+            );
+
+      const accounts = allAccounts.filter((a) => {
+        const inOverviewScope =
+          overviewScopedIds === "all" || overviewScopedIds.includes(a.employeeId);
+        const inOvertimeScope =
+          overtimeScopedIds === "all" || overtimeScopedIds.includes(a.employeeId);
+        return inOverviewScope && inOvertimeScope;
+      });
 
       const employeeIds = accounts.map((a) => a.employeeId);
 
@@ -1430,9 +1503,19 @@ export async function dashboardRoutes(app: FastifyInstance) {
   });
 
   // GET /api/v1/dashboard/overtime-trend — Team overtime saldo trend (last 6 months)
+  //
+  // Phase 76b (Issue #76), D-15: before this change the route had NO permission gate at all
+  // (`preHandler: requireAuth`) — a pre-existing finding already documented and deliberately
+  // deferred from Phase 91b Plan 06 (docs/adr/0001-abweichungen.md, "GET
+  // /dashboard/overtime-trend fehlendes Permission-Gate"). Every signed-in user, including a
+  // plain Mitarbeiter or any new Phase 76b template holder without overtime:read, could see the
+  // tenant-wide aggregate saldo. This closes that gap: the route now requires
+  // overtime:read:ZUGEWIESEN and aggregates only over the caller's in-scope employees, mirroring
+  // GET /overtime-overview's resolveAccessReach/resolveStammsalonScopedEmployeeIds pattern below,
+  // keyed on THIS route's own gate permission (not team-overview:read).
   app.get("/overtime-trend", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
-    preHandler: requireAuth,
+    preHandler: requirePermission("overtime:read:ZUGEWIESEN"),
     handler: async (req) => {
       const tenantId = req.user.tenantId;
 
@@ -1449,7 +1532,29 @@ export async function dashboardRoutes(app: FastifyInstance) {
         where: { tenantId, user: { isActive: true } },
         select: { id: true },
       });
-      const employeeIds = employees.map((e) => e.id);
+
+      // D-15 — narrow to the caller's scope BEFORE both aggregation queries below (same
+      // precedent as GET /overtime-overview), Stichtag = today.
+      const trendAccess = accessContextFromRequest(req);
+      const trendScopeReach = await resolveAccessReach(
+        app.prisma,
+        trendAccess,
+        "overtime:read:ZUGEWIESEN",
+      );
+      const trendScopedIds =
+        trendScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              tenantId,
+              trendScopeReach,
+              new Date(),
+            );
+      const scopedEmployees =
+        trendScopedIds === "all"
+          ? employees
+          : employees.filter((e) => trendScopedIds.includes(e.id));
+      const employeeIds = scopedEmployees.map((e) => e.id);
 
       // Query 1: SUM(carryOver) grouped by periodStart, MONTHLY only, within 6-month window.
       const grouped = await sumCarryOverByMonth(app.prisma, employeeIds, tenantId, sixMonthsAgo);
