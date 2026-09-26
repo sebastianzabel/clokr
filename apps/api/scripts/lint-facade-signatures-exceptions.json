@@ -88,5 +88,17 @@
     "function": "hardDeleteLeaveRequestsForEmployee",
     "rules": ["F3"],
     "reason": "Plan 100B-13 (Wave 5, LAST conversion plan, D-08): a HARD delete (LeaveRequest.deleteMany) invoked ONLY from platform/api/employees.ts's DELETE /:id/hard-delete sequence inside its own $transaction, whose handler validates id against req.user.tenantId at its own top BEFORE this transaction — and therefore before this function — is ever reached. Called IN PLACE in the existing onDelete:Restrict ORDER, unchanged. Same shape as hardDeleteAbsencesForEmployee (plan 12) and hardDeleteEntitlementsForEmployee (plan 10)."
+  },
+  {
+    "file": "apps/api/src/contexts/platform/scope-filter.ts",
+    "function": "isShiftInScope",
+    "rules": ["F1"],
+    "reason": "Plan 91b-02 (D-11): a pure, side-effect-free scope-predicate helper — no Prisma call, nothing to bind a transaction client to. shiftScopeWhere below is the list-mode equivalent, listed as a separate exception entry. F1's whole point (a write silently leaving the caller's $transaction through app.prisma) cannot occur here because there is no client to call through at all, not even the wrong kind."
+  },
+  {
+    "file": "apps/api/src/contexts/platform/scope-filter.ts",
+    "function": "shiftScopeWhere",
+    "rules": ["F1"],
+    "reason": "Plan 91b-02 (D-11): a pure, side-effect-free scope-predicate helper (AccessReach -> a Prisma 'where' fragment) — no Prisma call, nothing to bind a transaction client to. Same shape and reasoning as employeeScopeWhere's own exception above and as isShiftInScope's sibling entry: F1 is checked mechanically against every exported function declaration under contexts/*/facade/ (and this file, named in KNOWN_FACADE_FILES) regardless of whether it touches Prisma at all."
   }
 ]

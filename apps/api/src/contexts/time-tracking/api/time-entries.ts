@@ -1,8 +1,19 @@
-import { FastifyInstance } from "fastify";
+import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { createHash } from "crypto";
 import { requireAuth } from "../../../middleware/auth";
-import { permissionReach, requirePermission, userIdsHoldingPermission } from "../../platform"; // Phase 75b Plan 10 (#75), D-16 adds userIdsHoldingPermission
+import {
+  permissionReach,
+  requirePermission,
+  userIdsHoldingPermission, // Phase 75b Plan 10 (#75), D-16
+  accessContextFromRequest, // Phase 91b Plan 03 (#91), D-09/D-14
+  resolveAccessReach, // Phase 91b Plan 03 (#91), D-09/D-14
+  isTimeEntryInScope, // Phase 91b Plan 03 (#91), D-09/D-14
+  scopedTimeEntryIds, // Phase 91b Plan 03 (#91), D-09
+  isStammsalonScopeMatch, // Phase 91b Plan 09 (#91), D-10/D-17
+  resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
+} from "../../platform";
+import type { PermissionKey } from "../../platform";
 import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../arbzg";
 import { getEffectiveBreakDuration } from "../break-effective";
@@ -197,6 +208,41 @@ function validateBreakSlots(
     }
   }
   return null;
+}
+
+/**
+ * Phase 91b Plan 03 (Issue #91), D-09/D-14 — the single place every single-`TimeEntry`
+ * `isOnBehalfOf && reach === "ZUGEWIESEN"` route site (clock-out, PUT/DELETE/:id, revalidate,
+ * breaks, break-status) checks salon/person scope on an already-fetched entry row. Returns
+ * `true` when the caller may proceed; on `false` it has ALREADY sent the 404 (byte-identical to
+ * a non-existent id, T-100-09) and written the `SCOPE_ACCESS_DENIED` audit entry — the caller
+ * must `return` immediately without sending anything else.
+ */
+async function enforceTimeEntryScope(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  reply: FastifyReply,
+  entry: { id: string; salonId: string; employeeId: string; date: Date },
+  permission: PermissionKey,
+  notFoundMessage: string,
+): Promise<boolean> {
+  const access = accessContextFromRequest(req);
+  const scopeReach = await resolveAccessReach(app.prisma, access, permission);
+  const inScope = await isTimeEntryInScope(app.prisma, req.user.tenantId, scopeReach, {
+    salonId: entry.salonId,
+    employeeId: entry.employeeId,
+    date: entry.date,
+  });
+  if (inScope) return true;
+  await app.audit({
+    userId: req.user.sub,
+    action: "SCOPE_ACCESS_DENIED",
+    entity: "TimeEntry",
+    entityId: entry.id,
+    request: { ip: req.ip, headers: req.headers as Record<string, string> },
+  });
+  reply.code(404).send({ error: notFoundMessage });
+  return false;
 }
 
 export async function timeEntryRoutes(app: FastifyInstance) {
@@ -571,6 +617,20 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         if (clockOutUpdateReach !== "ZUGEWIESEN") {
           return reply.code(404).send({ error: "Eintrag nicht gefunden" });
         }
+        // Phase 91b Plan 03 (#91), D-09/D-14: a ZUGEWIESEN reach may still be scoped to
+        // salons/persons — enforce it here, same 404, on the entry already fetched above.
+        if (
+          !(await enforceTimeEntryScope(
+            app,
+            req,
+            reply,
+            entry,
+            "time-entry:update:ZUGEWIESEN",
+            "Eintrag nicht gefunden",
+          ))
+        ) {
+          return;
+        }
       } else if (clockOutUpdateReach === null) {
         return reply.code(403).send({ error: "Forbidden" });
       }
@@ -815,6 +875,23 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       if (breaksUpdateReach === null) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
+      // Phase 91b Plan 03 (#91), D-09/D-14: a ZUGEWIESEN reach acting on someone else's entry may
+      // still be scoped to salons/persons — enforce it, same 404 as a non-existent id, on the
+      // entry already fetched above.
+      if (breaksUpdateReach === "ZUGEWIESEN" && entry.employeeId !== user.employeeId) {
+        if (
+          !(await enforceTimeEntryScope(
+            app,
+            req,
+            reply,
+            entry,
+            "time-entry:update:ZUGEWIESEN",
+            "Eintrag nicht gefunden",
+          ))
+        ) {
+          return;
+        }
+      }
 
       // Locked months are immutable (audit-proof, see CLAUDE.md).
       if (entry.isLocked) {
@@ -875,7 +952,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     },
   });
 
-  // GET /api/v1/time-entries  (eigene oder alle für Manager)
+  // GET /api/v1/time-entries (own entries, or every in-scope entry for a manager — Phase 91b
+  // Plan 03, Issue #91, D-09: a SALONS/PERSONS-scoped manager sees only in-scope entries, never
+  // the whole tenant)
   app.get("/", {
     schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
@@ -897,6 +976,23 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             d.setDate(d.getDate() - 90);
             return d;
           })();
+      const defaultTo = to ? new Date(to) : new Date();
+
+      // Phase 91b Plan 03 (#91), D-09: a manager's reach narrows the list to in-scope entries
+      // (own salon OR Stammsalon-at-the-entry's-own-date). `wholeTenant` (TENANT-scope managers,
+      // today's behaviour) and the EIGENE (non-manager) branch below issue no extra query at all.
+      let scopedIds: "all" | string[] = "all";
+      if (isManager) {
+        const access = accessContextFromRequest(req);
+        const reach = await resolveAccessReach(app.prisma, access, "time-entry:read:ZUGEWIESEN");
+        scopedIds = await scopedTimeEntryIds(
+          app.prisma,
+          user.tenantId,
+          reach,
+          defaultFrom,
+          defaultTo,
+        );
+      }
 
       // PERF-V1814-03: hard cap. WR-01 — the cap can silently truncate for callers that
       // omit tight bounds (batch scripts / external API consumers). Web callers always pass
@@ -914,6 +1010,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             gte: defaultFrom,
             lte: to ? new Date(to) : undefined,
           },
+          ...(scopedIds !== "all" ? { id: { in: scopedIds } } : {}),
         },
         include: {
           employee: { select: { firstName: true, lastName: true } },
@@ -1453,10 +1550,26 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             targetEmployee.tenantId,
             "retro-request:approve:ZUGEWIESEN",
           );
+          // Phase 91b Plan 09 (Issue #91), D-10/D-17: RetroEntryRequest has no salonId of its
+          // own (Plan 91b-03's own finding) — Stammsalon-only, Stichtag = the entry's own date.
+          const scopedRetroRequestedApproveHolderIds = await resolveScopedHolderIds(
+            app.prisma,
+            targetEmployee.tenantId,
+            retroRequestedApproveHolderIds,
+            "retro-request:approve:ZUGEWIESEN",
+            (reach) =>
+              isStammsalonScopeMatch(
+                app.prisma,
+                targetEmployee.tenantId,
+                reach,
+                employeeId,
+                new Date(body.date),
+              ),
+          );
           const submitManagers = await app.prisma.employee.findMany({
             where: {
               tenantId: targetEmployee.tenantId,
-              user: { isActive: true, id: { in: retroRequestedApproveHolderIds } },
+              user: { isActive: true, id: { in: scopedRetroRequestedApproveHolderIds } },
             },
             include: { user: { select: { id: true } } },
           });
@@ -1526,6 +1639,24 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
       if (putUpdateReach === null) {
         return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+
+      // Phase 91b Plan 03 (#91), D-09/D-14: a ZUGEWIESEN reach acting on someone else's entry may
+      // still be scoped to salons/persons — enforce it, same 404 as a non-existent id, on the
+      // entry already fetched above.
+      if (isManager && existing.employeeId !== user.employeeId) {
+        if (
+          !(await enforceTimeEntryScope(
+            app,
+            req,
+            reply,
+            existing,
+            "time-entry:update:ZUGEWIESEN",
+            "Eintrag nicht gefunden",
+          ))
+        ) {
+          return;
+        }
       }
 
       // Gesperrte Einträge dürfen nicht bearbeitet werden
@@ -1936,10 +2067,25 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             existing.employee.tenantId,
             "retro-request:approve:ZUGEWIESEN",
           );
+          // Phase 91b Plan 09 (Issue #91), D-10/D-17: same rule as the submit-notify site above.
+          const scopedRetroUpdatedApproveHolderIds = await resolveScopedHolderIds(
+            app.prisma,
+            existing.employee.tenantId,
+            retroUpdatedApproveHolderIds,
+            "retro-request:approve:ZUGEWIESEN",
+            (reach) =>
+              isStammsalonScopeMatch(
+                app.prisma,
+                existing.employee.tenantId,
+                reach,
+                existing.employeeId,
+                existing.date,
+              ),
+          );
           const editManagers = await app.prisma.employee.findMany({
             where: {
               tenantId: existing.employee.tenantId,
-              user: { isActive: true, id: { in: retroUpdatedApproveHolderIds } },
+              user: { isActive: true, id: { in: scopedRetroUpdatedApproveHolderIds } },
             },
             include: { user: { select: { id: true } } },
           });
@@ -1995,6 +2141,21 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // Tenant isolation
       if (existing.employee.tenantId !== user.tenantId) {
         return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      }
+
+      // Phase 91b Plan 03 (#91), D-09/D-14: this route is ZUGEWIESEN-only (preHandler above) — the
+      // reach may still be scoped to salons/persons, enforce it on the entry already fetched above.
+      if (
+        !(await enforceTimeEntryScope(
+          app,
+          req,
+          reply,
+          existing,
+          "time-entry:revalidate:ZUGEWIESEN",
+          "Eintrag nicht gefunden",
+        ))
+      ) {
+        return;
       }
 
       if (!existing.isInvalid)
@@ -2103,6 +2264,24 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
+      // Phase 91b Plan 03 (#91), D-09/D-14: a ZUGEWIESEN reach acting on someone else's entry may
+      // still be scoped to salons/persons — enforce it, same 404 as a non-existent id, on the
+      // entry already fetched above.
+      if (isManager && existing.employeeId !== user.employeeId) {
+        if (
+          !(await enforceTimeEntryScope(
+            app,
+            req,
+            reply,
+            existing,
+            "time-entry:delete:ZUGEWIESEN",
+            "Eintrag nicht gefunden",
+          ))
+        ) {
+          return;
+        }
+      }
+
       if (existing.isLocked) {
         return reply
           .code(403)
@@ -2201,6 +2380,24 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
+      // Phase 91b Plan 03 (#91), D-09/D-14: a ZUGEWIESEN reach acting on someone else's entry may
+      // still be scoped to salons/persons — enforce it, same 404 as a non-existent id, on the
+      // entry already fetched above.
+      if (breakStatusReach === "ZUGEWIESEN" && entry.employeeId !== user.employeeId) {
+        if (
+          !(await enforceTimeEntryScope(
+            app,
+            req,
+            reply,
+            entry,
+            "time-entry:update:ZUGEWIESEN",
+            "Eintrag nicht gefunden",
+          ))
+        ) {
+          return;
+        }
+      }
+
       // Lock wins (Revisionssicherheit) — checked BEFORE any write, even for admins.
       if (entry.isLocked) {
         return reply
@@ -2291,10 +2488,25 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         entry.employee.tenantId,
         "team-overview:read:ZUGEWIESEN",
       );
+      // Phase 91b Plan 09 (Issue #91), D-09/D-17: `entry` is a TimeEntry — the entry's own
+      // salon/employee/date is the scope resource (same rule as attendance-checker.ts's
+      // OPEN_ENTRY_INVALIDATED site).
+      const scopedBreakComplianceTeamOverviewHolderIds = await resolveScopedHolderIds(
+        app.prisma,
+        entry.employee.tenantId,
+        breakComplianceTeamOverviewHolderIds,
+        "team-overview:read:ZUGEWIESEN",
+        (reach) =>
+          isTimeEntryInScope(app.prisma, entry.employee.tenantId, reach, {
+            salonId: entry.salonId,
+            employeeId: entry.employeeId,
+            date: entry.date,
+          }),
+      );
       const managers = await app.prisma.employee.findMany({
         where: {
           tenantId: entry.employee.tenantId,
-          user: { isActive: true, id: { in: breakComplianceTeamOverviewHolderIds } },
+          user: { isActive: true, id: { in: scopedBreakComplianceTeamOverviewHolderIds } },
         },
         include: { user: { select: { id: true } } },
       });

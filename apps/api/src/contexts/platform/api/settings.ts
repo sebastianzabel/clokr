@@ -16,6 +16,8 @@ import {
 } from "../month-first-date";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { accessContextFromRequest, employeeScopeFor } from "../access-context";
+import { resolveAccessReach } from "../facade/role-assignments"; // Phase 91b Plan 10 (#91), D-10/D-14
+import { isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 10 (#91), D-10/D-14
 import { DEFAULT_MISSING_ENTRIES_DAYS } from "../../working-time-account"; // issue #246, E-6
 import { getShiftsInRange, cancelOrphanShifts } from "../../scheduling"; // Phase 100B Plan 05 — S1/S3
 import {
@@ -978,6 +980,30 @@ export async function settingsRoutes(app: FastifyInstance) {
         }
         return reply.code(404).send({ error: "Kein Arbeitszeitmodell gefunden" });
       }
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: contract/schedule data is Stammsalon-only —
+      // Stichtag = today (a live "what is their contract right now" read).
+      if (contractReach === "ZUGEWIESEN" && req.user.employeeId !== employeeId) {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(app.prisma, access, "contract:read:ZUGEWIESEN");
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            employeeId,
+            new Date(),
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "WorkSchedule",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Kein Arbeitszeitmodell gefunden" });
+        }
+      }
 
       const schedule = await app.prisma.workSchedule.findFirst({
         where: { employeeId },
@@ -1012,6 +1038,25 @@ export async function settingsRoutes(app: FastifyInstance) {
         await app.audit({
           userId: req.user.sub,
           action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "WorkSchedule",
+          entityId: employeeId,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: same rule as GET /work/:employeeId above.
+      if (
+        !(await isStammsalonScopeMatch(
+          app.prisma,
+          req.user.tenantId,
+          await resolveAccessReach(app.prisma, access, "contract:update:ZUGEWIESEN"),
+          employeeId,
+          new Date(),
+        ))
+      ) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "SCOPE_ACCESS_DENIED",
           entity: "WorkSchedule",
           entityId: employeeId,
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
@@ -1462,6 +1507,29 @@ export async function settingsRoutes(app: FastifyInstance) {
           });
         }
         return reply.code(404).send({ error: "Kein Arbeitszeitmodell gefunden" });
+      }
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: same rule as GET /work/:employeeId above.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(app.prisma, access, "contract:read:ZUGEWIESEN");
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            employeeId,
+            new Date(),
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "WorkSchedule",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Kein Arbeitszeitmodell gefunden" });
+        }
       }
 
       const schedules = await app.prisma.workSchedule.findMany({

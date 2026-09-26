@@ -7,7 +7,12 @@
 
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requirePermission } from "../../platform";
+import {
+  requirePermission,
+  accessContextFromRequest, // Phase 91b Plan 10 (#91), D-10/D-14
+  resolveAccessReach, // Phase 91b Plan 10 (#91), D-10/D-14
+  isStammsalonScopeMatch, // Phase 91b Plan 10 (#91), D-10/D-14
+} from "../../platform";
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { getVacationEntitlement, upsertVacationEntitlement } from "../facade/entitlements"; // Phase 100B Plan 10 — A11/A16
 import { listLeaveTypes, updateLeaveType } from "../facade/leave-types"; // Phase 100B Plan 10 — A18/A19
@@ -45,6 +50,35 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: leave-entitlement is Stammsalon-only (same
+      // family as leave-request/absence, D-10), Stichtag = Dec 31 of the queried year — matches
+      // Plan 91b-07's own convention for entitlement/report-adjacent per-year data.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "leave-entitlement:read:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            employeeId,
+            new Date(Date.UTC(year, 11, 31)),
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "LeaveEntitlement",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
       }
 
       // Phase 97 (D-24): the vacation type is identified by its stable code. Issue #196's
@@ -92,6 +126,34 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: same rule as GET above, Stichtag = Dec 31 of
+      // the request's own body.year (the year being written).
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "leave-entitlement:update:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            employeeId,
+            new Date(Date.UTC(body.year, 11, 31)),
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "LeaveEntitlement",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
       }
 
       // Phase 97 (D-24): the vacation type is identified by its stable code. Issue #196's

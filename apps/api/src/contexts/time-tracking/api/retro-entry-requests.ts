@@ -7,6 +7,11 @@ import {
   permissionReach,
   requirePermission,
   userIdsHoldingPermission, // Phase 75b Plan 10 (#75), D-16
+  accessContextFromRequest, // Phase 91b Plan 03 (#91), D-10/D-14
+  resolveAccessReach, // Phase 91b Plan 03 (#91), D-10/D-14
+  resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 03 (#91), D-10
+  isStammsalonScopeMatch, // Phase 91b Plan 03 (#91), D-10/D-14
+  resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
 } from "../../platform";
 import { checkArbZG, ArbZGWarning } from "../arbzg";
 import { checkJArbSchG } from "../../absence"; // Phase 101B (Issue #101, wave 7)
@@ -204,13 +209,45 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
         orderBy: { createdAt: "desc" },
       });
 
+      // Phase 91b Plan 03 (Issue #91), D-10 — narrow to in-scope employees.
+      // RetroEntryRequest has NO `salonId` column (schema.prisma) — only `employeeId` +
+      // `targetDate` — so the Stammsalon-only rule applies, never the TimeEntry entry-salon
+      // fallback (D-09). A request's own Stichtag is its OWN `targetDate`, not a single
+      // request-level date, so `resolveStammsalonScopedEmployeeIds` is called once per DISTINCT
+      // `targetDate` present in the fetched rows (not once per row) and the result is used to
+      // filter the rows in memory. `wholeTenant` reach changes nothing (no extra query at all).
+      const access = accessContextFromRequest(req);
+      const reach = await resolveAccessReach(app.prisma, access, "retro-request:read:ZUGEWIESEN");
+      let scopedRows = rows;
+      if (reach.kind !== "wholeTenant") {
+        const scopedIdsByDate = new Map<number, "all" | string[]>();
+        for (const row of rows) {
+          const key = row.targetDate.getTime();
+          if (!scopedIdsByDate.has(key)) {
+            scopedIdsByDate.set(
+              key,
+              await resolveStammsalonScopedEmployeeIds(
+                app.prisma,
+                user.tenantId,
+                reach,
+                row.targetDate,
+              ),
+            );
+          }
+        }
+        scopedRows = rows.filter((r) => {
+          const scopedIds = scopedIdsByDate.get(r.targetDate.getTime());
+          return scopedIds === "all" || (scopedIds ?? []).includes(r.employeeId);
+        });
+      }
+
       // Compute the age of the backdated day (targetDate → today) per row so the
       // inbox can render "X Tage" instead of "?". Tenant-TZ, DST-safe (same as
       // POST/review). One TZ lookup for the whole list.
       const tz = await getTenantTimezone(app.prisma, user.tenantId);
       const todayStr = dateStrInTz(todayInTz(tz), tz);
 
-      return rows.map((r) => {
+      return scopedRows.map((r) => {
         const targetDateStr = r.targetDate.toISOString().split("T")[0];
         return {
           ...r,
@@ -278,6 +315,37 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
       // approve/reject (issue #75, D-13) — checked AFTER the C3-a/C3-b self-approval block above.
       if (!(await hasPermission(req, "retro-request:approve:ZUGEWIESEN"))) {
         return reply.code(403).send({ error: "Nur Manager oder Admins können Anträge genehmigen" });
+      }
+
+      // Phase 91b Plan 03 (Issue #91), D-10/D-14 — scope check: a ZUGEWIESEN-scoped manager may
+      // only decide a request for an in-scope employee (Stammsalon at the request's OWN
+      // targetDate, D-10 — RetroEntryRequest has no salonId, so there is no entry-salon fallback
+      // as there is for TimeEntry/D-09). Inserted AFTER the permission check above (which only
+      // proves the caller holds retro-request:approve:ZUGEWIESEN at SOME scope) and after the
+      // self-approval block, mirroring Task 2's SCOPE_ACCESS_DENIED + byte-identical-404 pattern.
+      const scopeAccess = accessContextFromRequest(req);
+      const scopeReach = await resolveAccessReach(
+        app.prisma,
+        scopeAccess,
+        "retro-request:approve:ZUGEWIESEN",
+      );
+      if (
+        !(await isStammsalonScopeMatch(
+          app.prisma,
+          user.tenantId,
+          scopeReach,
+          existing.employeeId,
+          existing.targetDate,
+        ))
+      ) {
+        await app.audit({
+          userId: user.sub,
+          action: "SCOPE_ACCESS_DENIED",
+          entity: "RetroEntryRequest",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Antrag nicht gefunden" });
       }
 
       // ── Phase 96 (RETRO-11/12) — coupled entry-first release/reject ───────────
@@ -765,10 +833,26 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
           user.tenantId,
           "retro-request:approve:ZUGEWIESEN",
         );
+        // Phase 91b Plan 09 (Issue #91), D-10/D-17: RetroEntryRequest has no salonId of its own
+        // (Plan 91b-03's own finding) — Stammsalon-only, Stichtag = the request's own targetDate.
+        const scopedWithdrawnRetroApproveHolderIds = await resolveScopedHolderIds(
+          app.prisma,
+          user.tenantId,
+          withdrawnRetroApproveHolderIds,
+          "retro-request:approve:ZUGEWIESEN",
+          (reach) =>
+            isStammsalonScopeMatch(
+              app.prisma,
+              user.tenantId,
+              reach,
+              existing.employeeId,
+              existing.targetDate,
+            ),
+        );
         const managers = await app.prisma.employee.findMany({
           where: {
             tenantId: user.tenantId,
-            user: { isActive: true, id: { in: withdrawnRetroApproveHolderIds } },
+            user: { isActive: true, id: { in: scopedWithdrawnRetroApproveHolderIds } },
           },
           include: { user: { select: { id: true } } },
         });

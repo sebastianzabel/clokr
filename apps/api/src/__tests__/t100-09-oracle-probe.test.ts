@@ -52,8 +52,10 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes, createHash } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import bcrypt from "bcryptjs";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
+import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 import type { FastifyInstance } from "fastify";
 
 // A narrower union than fastify's own `HTTPMethods` (which also includes "trace") — this probe
@@ -729,6 +731,313 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         where: { employeeId: tenantB.employee.id },
       });
       expect(count).toBe(1);
+    });
+  });
+
+  // ── Phase 91b Plan 10 (Issue #91), D-16 — the scope-variant sweep ────────────────────────────
+  //
+  // Every `probe` route whose entity belongs to an employee (identified here by the SAME register
+  // `params` vocabulary the sweep above uses: a fixture key of "employee", "timeEntry" or
+  // "salonAssignment" — all three ultimately resolve to one employee's own row) gets a SECOND
+  // sweep dimension: a SALONS-scoped actor querying a REAL employee within their OWN tenant who is
+  // outside their scope must get the SAME status and byte-identical body as querying a nonexistent
+  // id — the same T-100-09 discipline, one level down (salon/person, not tenant).
+  //
+  // Two of the register's employee-owned entries are deliberately EXCLUDED, with the reason
+  // recorded here rather than silently skipped:
+  //   - `PATCH /api/v1/leave/requests/:id` (fixture key "leaveRequest") is EIGENE-only
+  //     (`existing.employeeId !== req.user.employeeId` → 403) — no ZUGEWIESEN path exists at all,
+  //     so a manager can never reach another employee's request through this route regardless of
+  //     scope. There is nothing for a scope check to narrow.
+  //   - `GET /api/v1/avatars/:employeeId` carries no permission gate beyond `requireAuth` at all
+  //     (any authenticated tenant member may view any tenant member's avatar, by design — a
+  //     directory-style read, not a managed-employee-data one). Scope narrowing does not apply.
+  describe("scope-variant sweep — a SALONS-scoped actor vs. an in-tenant, out-of-scope employee (D-16)", () => {
+    const EXCLUDED_ROUTES = new Set([
+      "PATCH /api/v1/leave/requests/:id",
+      "GET /api/v1/avatars/:employeeId",
+    ]);
+    const EMPLOYEE_OWNING_KEYS = new Set(["employee", "timeEntry", "salonAssignment"]);
+
+    const scopeSweepEntries = orderedProbeEntries.filter((e) => {
+      if (EXCLUDED_ROUTES.has(e.route)) return false;
+      const params = e.params ?? {};
+      return Object.values(params).some((key) => EMPLOYEE_OWNING_KEYS.has(key));
+    });
+
+    let scopeApp: FastifyInstance;
+    let scopeTenant: FixtureBundle;
+    let salonInScope: { id: string };
+    let salonOutOfScope: { id: string };
+    let outOfScopeEmployeeId: string;
+    let outOfScopeTimeEntryId: string;
+    let outOfScopeDeploymentAssignmentId: string;
+    let scopedActorToken: string;
+
+    const SCOPE_SWEEP_PASSWORD = "test1234";
+
+    beforeAll(async () => {
+      scopeApp = await getTestApp();
+      scopeTenant = await seedTestData(scopeApp, "t10009-scope");
+
+      salonInScope = await scopeApp.prisma.salon.create({
+        data: {
+          tenantId: scopeTenant.tenant.id,
+          name: "T-100-09-Scope In",
+          openingHours: DEFAULT_SALON_OPENING_HOURS,
+          isActive: true,
+          federalState: "NIEDERSACHSEN", // Phase 71b (issue #71) — required since the merge; irrelevant to this test's own assertions
+        },
+      });
+      salonOutOfScope = await scopeApp.prisma.salon.create({
+        data: {
+          tenantId: scopeTenant.tenant.id,
+          name: "T-100-09-Scope Out",
+          openingHours: DEFAULT_SALON_OPENING_HOURS,
+          isActive: true,
+          federalState: "NIEDERSACHSEN", // Phase 71b (issue #71) — required since the merge; irrelevant to this test's own assertions
+        },
+      });
+
+      // The out-of-scope employee: Stammsalon = salonOutOfScope, never salonInScope.
+      const passwordHash = await bcrypt.hash(SCOPE_SWEEP_PASSWORD, 10);
+      const outOfScopeUser = await scopeApp.prisma.user.create({
+        data: {
+          email: `t10009-scope-target-${randomBytes(4).toString("hex")}@test.de`,
+          passwordHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const outOfScopeEmployee = await scopeApp.prisma.employee.create({
+        data: {
+          tenantId: scopeTenant.tenant.id,
+          userId: outOfScopeUser.id,
+          employeeNumber: `T10009SC${randomBytes(2).toString("hex")}`.slice(0, 20),
+          firstName: "ScopeTarget",
+          lastName: "T10009",
+          hireDate: new Date("2020-01-01"),
+        },
+      });
+      outOfScopeEmployeeId = outOfScopeEmployee.id;
+      await scopeApp.prisma.employeeSalonAssignment.create({
+        data: {
+          tenantId: scopeTenant.tenant.id,
+          employeeId: outOfScopeEmployeeId,
+          salonId: salonOutOfScope.id,
+          kind: "HOME",
+          validFrom: new Date("2020-01-01"),
+          validUntil: null,
+          weekdays: [],
+        },
+      });
+      // A second, DEPLOYMENT assignment (never HOME — D-19's own WR-04 precedent above: a HOME
+      // row cannot be the target of the "end" route without also being its own successor logic)
+      // for POST /:id/salon-assignments/:assignmentId/end's `salonAssignment` fixture key.
+      const deployment = await scopeApp.prisma.employeeSalonAssignment.create({
+        data: {
+          tenantId: scopeTenant.tenant.id,
+          employeeId: outOfScopeEmployeeId,
+          salonId: salonOutOfScope.id,
+          kind: "DEPLOYMENT",
+          validFrom: new Date("2020-06-01"),
+          validUntil: null,
+          weekdays: [],
+        },
+      });
+      outOfScopeDeploymentAssignmentId = deployment.id;
+
+      // An OvertimeAccount row — GET /overtime/:employeeId 404s BEFORE the scope check when none
+      // exists, which would make the byte-comparison pass for the wrong (vacuous) reason.
+      await scopeApp.prisma.overtimeAccount.create({
+        data: { employeeId: outOfScopeEmployeeId, balanceHours: 0 },
+      });
+
+      // A closed TimeEntry — POST /time-entries/:id/breaks's `timeEntry` fixture key.
+      const timeEntry = await scopeApp.prisma.timeEntry.create({
+        data: {
+          employeeId: outOfScopeEmployeeId,
+          date: new Date("2026-01-05"),
+          startTime: new Date("2026-01-05T08:00:00.000Z"),
+          endTime: new Date("2026-01-05T16:00:00.000Z"),
+          salonId: salonOutOfScope.id,
+        },
+      });
+      outOfScopeTimeEntryId = timeEntry.id;
+
+      // The scoped actor: a SALONS-scope assignment on salonInScope ONLY — the out-of-scope
+      // employee's Stammsalon/DEPLOYMENT is salonOutOfScope, never salonInScope, so every D-10/D-12
+      // check above must reject them. One role carries every permission this sweep's routes need.
+      const actorUser = await scopeApp.prisma.user.create({
+        data: {
+          email: `t10009-scope-actor-${randomBytes(4).toString("hex")}@test.de`,
+          passwordHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      await scopeApp.prisma.employee.create({
+        data: {
+          tenantId: scopeTenant.tenant.id,
+          userId: actorUser.id,
+          employeeNumber: `T10009SA${randomBytes(2).toString("hex")}`.slice(0, 20),
+          firstName: "ScopeActor",
+          lastName: "T10009",
+          hireDate: new Date("2020-01-01"),
+        },
+      });
+      const roleName = `T10009 Scope-Actor ${randomBytes(3).toString("hex")}`;
+      const scopedRole = await scopeApp.prisma.accessRole.create({
+        data: {
+          tenantId: scopeTenant.tenant.id,
+          name: roleName,
+          nameKey: roleNameKey(roleName),
+          permissions: normalizeRolePermissions([
+            "employee:read:ZUGEWIESEN",
+            "employee:update:ZUGEWIESEN",
+            "employee:manage-access:ZUGEWIESEN",
+            "employee:anonymize:ZUGEWIESEN",
+            "employee:update-avatar:ZUGEWIESEN",
+            "availability:read:ZUGEWIESEN",
+            "availability:update:ZUGEWIESEN",
+            "shift-pattern:read:ZUGEWIESEN",
+            "shift-pattern:update:ZUGEWIESEN",
+            "vocational-school:read:ZUGEWIESEN",
+            "vocational-school:manage:ZUGEWIESEN",
+            "contract:read:ZUGEWIESEN",
+            "contract:update:ZUGEWIESEN",
+            "leave-entitlement:read:ZUGEWIESEN",
+            "leave-entitlement:update:ZUGEWIESEN",
+            "overtime:read:ZUGEWIESEN",
+            "time-entry:update:ZUGEWIESEN",
+          ]),
+        },
+      });
+      await scopeApp.prisma.roleAssignment.create({
+        data: {
+          tenantId: scopeTenant.tenant.id,
+          userId: actorUser.id,
+          accessRoleId: scopedRole.id,
+          scopeType: "SALONS",
+          salonIds: [salonInScope.id],
+          employeeIds: [],
+        },
+      });
+
+      const loginRes = await scopeApp.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: actorUser.email, password: SCOPE_SWEEP_PASSWORD },
+      });
+      expect(loginRes.statusCode).toBe(200);
+      scopedActorToken = (JSON.parse(loginRes.body) as { accessToken: string }).accessToken;
+    });
+
+    afterAll(async () => {
+      try {
+        await cleanupTestData(scopeApp, scopeTenant.tenant.id);
+      } catch (err) {
+        console.error("Cleanup scopeTenant failed:", err);
+      }
+    });
+
+    it("the scope-owning subset is non-empty (D-03c-style anti-vacuity: a sweep over zero routes proves nothing)", () => {
+      expect(scopeSweepEntries.length).toBeGreaterThan(0);
+    });
+
+    it(`sweeps ${scopeSweepEntries.length} employee-owned probe route(s): the scoped actor's out-of-scope-but-real employee and a nonexistent id are byte-identical`, async () => {
+      const failures: string[] = [];
+      let unknownCounter = 0;
+
+      function scopeFixtureValue(fixtureKey: string): string | null {
+        if (fixtureKey === "employee") return outOfScopeEmployeeId;
+        if (fixtureKey === "timeEntry") return outOfScopeTimeEntryId;
+        if (fixtureKey === "salonAssignment") return outOfScopeDeploymentAssignmentId;
+        return null;
+      }
+
+      for (const entry of scopeSweepEntries) {
+        const [method, urlTemplate] = entry.route.split(" ");
+        const params = entry.params ?? {};
+        const paramNames = Object.keys(params);
+
+        let realUrl = urlTemplate;
+        let unknownUrl = urlTemplate;
+        let badFixtureKey: string | null = null;
+
+        for (const paramName of paramNames) {
+          const fixtureKey = params[paramName];
+          const realValue = scopeFixtureValue(fixtureKey);
+          if (realValue === null) {
+            badFixtureKey = fixtureKey;
+            break;
+          }
+          unknownCounter += 1;
+          const unknownValue = `00000000-0000-4000-9000-${String(unknownCounter).padStart(12, "0")}`;
+          realUrl = realUrl.replace(`:${paramName}`, realValue);
+          unknownUrl = unknownUrl.replace(`:${paramName}`, unknownValue);
+        }
+
+        if (badFixtureKey !== null) {
+          failures.push(
+            `${entry.route}: unrecognised fixture key '${badFixtureKey}' for the scope sweep — ` +
+              `EMPLOYEE_OWNING_KEYS filtering should have excluded this route already (D-03).`,
+          );
+          continue;
+        }
+
+        const query = entry.route === MONTH_SALDO_ROUTE ? "?year=2026&month=1" : "";
+
+        const [realRes, unknownRes] = await Promise.all([
+          sendProbe(
+            scopeApp,
+            method as ProbeMethod,
+            realUrl + query,
+            scopedActorToken,
+            entry.minimalBody,
+          ),
+          sendProbe(
+            scopeApp,
+            method as ProbeMethod,
+            unknownUrl + query,
+            scopedActorToken,
+            entry.minimalBody,
+          ),
+        ]);
+
+        const bothNotFound = realRes.statusCode === 404 && unknownRes.statusCode === 404;
+        const bytesEqual = realRes.body === unknownRes.body;
+
+        if (!bothNotFound || !bytesEqual) {
+          const sameStatusButNotFound =
+            realRes.statusCode === unknownRes.statusCode && !bothNotFound;
+          failures.push(
+            `${entry.route}: ${
+              sameStatusButNotFound
+                ? "AMBIGUOUS — both arms answered with the same non-404 status, which proves " +
+                  "nothing about scope isolation"
+                : "MISMATCH — the two arms are distinguishable"
+            }. real (${realUrl}) -> ${realRes.statusCode} ${realRes.body}; unknown (${unknownUrl}) ` +
+              `-> ${unknownRes.statusCode} ${unknownRes.body}.`,
+          );
+        }
+      }
+
+      expect(failures.join("\n\n")).toBe("");
+    });
+
+    it("fixture integrity after the sweep: the out-of-scope employee still exists, unanonymized, and its DEPLOYMENT assignment is unended — a guard that answers 404 while still performing the mutation would otherwise pass the byte comparison", async () => {
+      const employee = await scopeApp.prisma.employee.findUnique({
+        where: { id: outOfScopeEmployeeId },
+      });
+      expect(employee).not.toBeNull();
+      expect(employee?.firstName).not.toBe("Gelöscht");
+
+      const assignment = await scopeApp.prisma.employeeSalonAssignment.findUnique({
+        where: { id: outOfScopeDeploymentAssignmentId },
+      });
+      expect(assignment).not.toBeNull();
+      expect(assignment?.validUntil).toBeNull();
     });
   });
 });

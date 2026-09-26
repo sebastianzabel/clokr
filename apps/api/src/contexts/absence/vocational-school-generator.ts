@@ -25,7 +25,7 @@ import {
   monthRangeUtc,
 } from "../working-time-account"; // Phase 101B
 import { getClaimedEntryDatesInRange } from "../time-tracking"; // Phase 100B Plan 08
-import { userIdsHoldingPermission } from "../platform"; // Phase 75b Plan 10 (#75), D-16
+import { userIdsHoldingPermission, resolveScopedHolderIds, isShiftInScope } from "../platform"; // Phase 75b Plan 10 (#75), D-16; Phase 91b Plan 09 (#91), D-11/D-17
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -899,10 +899,24 @@ export async function dispatchShiftCleanupForCreatedAbsences(
       tenantId,
       "shift:plan:ZUGEWIESEN",
     );
+    // Phase 91b Plan 09 (Issue #91), D-11/D-17: narrow to holders whose OWN reach covers AT
+    // LEAST ONE of the affected shifts' salons — all affected shifts share `employeeId`, only
+    // their salons may differ, and this ONE batched notification summarizes all of them.
+    // `Shift` is owned by Schichtplanung — `affectedSalonIds` comes back from
+    // `cleanupShiftsForBSAbsence` (which already read these rows) rather than a raw
+    // `prisma.shift.findMany()` here, which would cross the context boundary directly.
+    const { affectedSalonIds } = r;
+    const scopedShiftPlanHolderIds = await resolveScopedHolderIds(
+      prisma,
+      tenantId,
+      shiftPlanHolderIds,
+      "shift:plan:ZUGEWIESEN",
+      (reach) => affectedSalonIds.some((salonId) => isShiftInScope(reach, { salonId, employeeId })),
+    );
     const recipients = await prisma.employee.findMany({
       where: {
         tenantId,
-        user: { isActive: true, id: { in: shiftPlanHolderIds } },
+        user: { isActive: true, id: { in: scopedShiftPlanHolderIds } },
       },
       include: { user: { select: { id: true } } },
     });

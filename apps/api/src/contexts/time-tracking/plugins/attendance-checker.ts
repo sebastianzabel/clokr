@@ -1,7 +1,12 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
-import { userIdsHoldingPermission } from "../../platform"; // Phase 75b Plan 10 (#75), D-16
+import {
+  userIdsHoldingPermission, // Phase 75b Plan 10 (#75), D-16
+  resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
+  isStammsalonScopeMatch, // Phase 91b Plan 09 (#91), D-10/D-17
+  isTimeEntryInScope, // Phase 91b Plan 09 (#91), D-09/D-17
+} from "../../platform";
 import { findUnconfirmedBreakEntries } from "../find-unconfirmed-break-days";
 import {
   getTenantTimezone,
@@ -216,8 +221,24 @@ export const attendanceCheckerPlugin = fp(async (app) => {
               "Fehlende-Einträge Erinnerung gesendet",
             );
 
+            // Phase 91b Plan 09 (Issue #91), D-10/D-17: "no entries at all" is an employee-level
+            // question, not a specific dated entry, so this is Stammsalon-only — Stichtag = today
+            // (the check runs "as of today").
+            const scopedManagerHolderIds = new Set(
+              await resolveScopedHolderIds(
+                app.prisma,
+                tenant.id,
+                [...teamOverviewReadHolderIds],
+                "team-overview:read:ZUGEWIESEN",
+                (reach) => isStammsalonScopeMatch(app.prisma, tenant.id, reach, emp.id, new Date()),
+              ),
+            );
+            const scopedManagers = managers.filter((mgr) =>
+              scopedManagerHolderIds.has(mgr.user.id),
+            );
+
             // Notify managers about this employee
-            for (const mgr of managers) {
+            for (const mgr of scopedManagers) {
               if (mgr.user.id === emp.user.id) continue; // Don't notify manager about themselves
 
               // Deduplicate manager notification too
@@ -357,9 +378,27 @@ export const attendanceCheckerPlugin = fp(async (app) => {
               link: `/time-entries?highlight=${entry.id}`,
             });
 
+            // Phase 91b Plan 09 (Issue #91), D-09/D-17: `entry` is a TimeEntry — the entry's own
+            // salon/employee/date is the scope resource, no Stammsalon-vs-entry ambiguity here.
+            const scopedOpenEntryManagerIds = new Set(
+              await resolveScopedHolderIds(
+                app.prisma,
+                tenant.id,
+                openEntryTeamOverviewHolderIds,
+                "team-overview:read:ZUGEWIESEN",
+                (reach) =>
+                  isTimeEntryInScope(app.prisma, tenant.id, reach, {
+                    salonId: entry.salonId,
+                    employeeId: entry.employeeId,
+                    date: entry.date,
+                  }),
+              ),
+            );
+
             // Notify managers/admins
             for (const mgr of managers) {
               if (mgr.user.id === entry.employee.userId) continue;
+              if (!scopedOpenEntryManagerIds.has(mgr.user.id)) continue;
 
               await app.notify({
                 userId: mgr.user.id,
@@ -430,7 +469,28 @@ export const attendanceCheckerPlugin = fp(async (app) => {
           });
 
           for (const req of pendingRequests) {
+            // Phase 91b Plan 09 (Issue #91), D-10/D-17: narrow to holders whose OWN reach
+            // covers this request's employee — Stammsalon-only, Stichtag = the request's own
+            // startDate (same rule as leave.ts's own leave-request:approve site).
+            const scopedPendingLeaveManagerIds = new Set(
+              await resolveScopedHolderIds(
+                app.prisma,
+                tenant.id,
+                pendingLeaveApproveHolderIds,
+                "leave-request:approve:ZUGEWIESEN",
+                (reach) =>
+                  isStammsalonScopeMatch(
+                    app.prisma,
+                    tenant.id,
+                    reach,
+                    req.employeeId,
+                    req.startDate,
+                  ),
+              ),
+            );
             for (const mgr of managers) {
+              if (!scopedPendingLeaveManagerIds.has(mgr.id)) continue;
+
               const existing = await app.prisma.notification.findFirst({
                 where: {
                   userId: mgr.id,
@@ -820,6 +880,9 @@ export const attendanceCheckerPlugin = fp(async (app) => {
 
           // Count employees with gaps in the previous month
           let gapEmployeeCount = 0;
+          // Phase 91b Plan 09 (Issue #91), D-17: the ids alongside the count, so the aggregate
+          // notification below can narrow recipients to holders covering at least one of them.
+          const gapEmployeeIds: string[] = [];
 
           for (const emp of employees) {
             // Skip hired after prev month ended
@@ -867,7 +930,10 @@ export const attendanceCheckerPlugin = fp(async (app) => {
               rosterDates,
             });
 
-            if (gaps.length > 0) gapEmployeeCount++;
+            if (gaps.length > 0) {
+              gapEmployeeCount++;
+              gapEmployeeIds.push(emp.id);
+            }
           }
 
           if (gapEmployeeCount === 0) continue;
@@ -878,7 +944,38 @@ export const attendanceCheckerPlugin = fp(async (app) => {
           const mitarbeiterWord = gapEmployeeCount === 1 ? "Mitarbeiter hat" : "Mitarbeiter haben";
           const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
+          // Phase 91b Plan 09 (Issue #91), D-10/D-17: this is a tenant-wide aggregate across
+          // every employee with a gap — a holder is kept if their reach covers AT LEAST ONE of
+          // them, Stichtag = the reported month's own end (one Stichtag for the whole batch,
+          // same simplification as the sibling month-close plugins above).
+          const scopedGapWarningManagerIds = new Set(
+            await resolveScopedHolderIds(
+              app.prisma,
+              tenant.id,
+              gapWarningTeamOverviewHolderIds,
+              "team-overview:read:ZUGEWIESEN",
+              async (reach) => {
+                for (const employeeId of gapEmployeeIds) {
+                  if (
+                    await isStammsalonScopeMatch(
+                      app.prisma,
+                      tenant.id,
+                      reach,
+                      employeeId,
+                      prevMonthEnd,
+                    )
+                  ) {
+                    return true;
+                  }
+                }
+                return false;
+              },
+            ),
+          );
+
           for (const mgr of managers) {
+            if (!scopedGapWarningManagerIds.has(mgr.user.id)) continue;
+
             // 7-day dedup per manager
             const existing = await app.prisma.notification.findFirst({
               where: {

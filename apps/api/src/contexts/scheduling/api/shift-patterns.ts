@@ -1,7 +1,13 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
-import { permissionReach, requirePermission } from "../../platform";
+import {
+  permissionReach,
+  requirePermission,
+  accessContextFromRequest, // Phase 91b Plan 10 (#91), D-10/D-14
+  resolveAccessReach, // Phase 91b Plan 10 (#91), D-10/D-14
+  isStammsalonScopeMatch, // Phase 91b Plan 10 (#91), D-10/D-14
+} from "../../platform";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -48,6 +54,28 @@ export async function shiftPatternRoutes(app: FastifyInstance) {
       if (shiftPatternReach === null) {
         return reply.code(403).send({ error: "Forbidden" });
       }
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: shift patterns are Stammsalon-only, same
+      // "per-employee pattern" rule as availability.ts / vocational-school-pattern.ts.
+      if (shiftPatternReach === "ZUGEWIESEN" && req.user.employeeId !== id) {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "shift-pattern:read:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(app.prisma, req.user.tenantId, scopeReach, id, new Date()))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "EmployeeShiftPattern",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+      }
 
       const patterns = await app.prisma.employeeShiftPattern.findMany({
         where: { employeeId: id, isActive: true },
@@ -82,6 +110,29 @@ export async function shiftPatternRoutes(app: FastifyInstance) {
         select: { id: true },
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: same rule as GET above. This route has no
+      // EIGENE bypass (ZUGEWIESEN-only preHandler), so the check always applies.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "shift-pattern:update:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(app.prisma, req.user.tenantId, scopeReach, id, new Date()))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "EmployeeShiftPattern",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+      }
 
       // Validate any provided templateIds belong to this tenant
       const templateIds = Array.from(

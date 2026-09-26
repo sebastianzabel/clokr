@@ -18,8 +18,14 @@
  * destructured object parameter has no per-property name the gate's AST walk can see, so the
  * object form would either fail F3 or need a new exception. Flat parameters pass F1/F2/F3
  * directly, with no new entry in `lint-facade-signatures-exceptions.json`.
+ *
+ * `resolveAccessReach` (Phase 91b, Issue #91) is the one exception to "a REQUIRED `tenantId`
+ * parameter": its tenant travels inside its second parameter, `ctx: AccessContext` — it has no
+ * `*Id`/`*Ids`-shaped parameter of its own, so F3 does not apply to it, and its signature carries
+ * no Fastify type either (F2), confirmed against `lint:facade-signatures` before this landed.
  */
 import type { Prisma } from "@clokr/db";
+import type { AccessContext, AccessReach } from "../access-context";
 import {
   PERMISSIONS,
   PERMISSION_RESOURCES,
@@ -124,6 +130,118 @@ export async function userMayApply(
     targetEmployeeValid,
     targetSalon,
   });
+}
+
+// ── Reach resolution (Phase 91b, Issue #91, D-03/D-04) ──────────────────────────────────────────
+
+/**
+ * D-04: how far does `ctx.actor` reach for `permission`, right now?
+ *
+ * Reach depends on WHICH permission is asked about — a SALONS assignment might grant
+ * `time-entry:read:ZUGEWIESEN` via one role while a separate TENANT assignment on the SAME user
+ * grants `leave-request:read:ZUGEWIESEN` — so this cannot be a static field of `AccessContext`
+ * (built once, before any permission is known); it is a new async, DB-touching function instead.
+ *
+ * - `ctx.actor.kind !== "user"` (apiKey, system) → `{ kind: "wholeTenant" }` unconditionally, no
+ *   `RoleAssignment` read at all — API keys stay out of scope in this phase (D-04).
+ * - No stored assignment at all → the SAME legacy-role fallback `resolveGrants()`/
+ *   `userIdsHoldingPermission()` already apply (the "Altrollen-Rückfall"): the system role of
+ *   `User.role` (`systemRoleIdForLegacyRole`) stands in as one implicit TENANT assignment. Without
+ *   this, every user created before a 91b-shaped assignment existed would lose ALL reach for every
+ *   ZUGEWIESEN permission the instant a scope filter runs, purely because they hold no stored row
+ *   — this is the single most consequential correctness property of this function (see
+ *   `resolve-access-reach.test.ts`'s mutation proof M2). A deleted user (no `User` row) fails
+ *   closed: `{ kind: "scoped", salonIds: [], employeeIds: [] }`.
+ * - Otherwise: union every well-formed assignment (`storedRoleAssignmentScope`, IN-02, fail closed
+ *   on a malformed row exactly like `userMayApply`/`userIdsHoldingPermission`) whose role belongs
+ *   to this tenant and grants `permission` via `roleGrants` (AK-73-7, the one role-evaluation
+ *   path). Any well-formed TENANT grant short-circuits to `{ kind: "wholeTenant" }` (matches
+ *   `decideUserMayApply`'s "any TENANT grant wins" precedence). Otherwise the SALONS ids and
+ *   PERSONS ids of every granting assignment are unioned into one `scoped` reach — the salon ids
+ *   are filtered to CURRENTLY active salons with one batched query (salon activity is evaluated
+ *   live, never stored on the assignment, same as `decideUserMayApply`'s `targetSalon.isActive`
+ *   check).
+ *
+ * An unknown `permission` throws — the same fail-loud philosophy as `request-permissions.ts`'s
+ * `assertKnownKey`; a typo must never silently read as "no reach".
+ */
+export async function resolveAccessReach(
+  db: Prisma.TransactionClient,
+  ctx: AccessContext,
+  permission: PermissionKey,
+): Promise<AccessReach> {
+  const catalogEntry = PERMISSIONS.find((candidate) => permissionKey(candidate) === permission);
+  if (!catalogEntry) {
+    throw new Error(`resolveAccessReach: unknown permission "${permission}" (not in the catalog)`);
+  }
+
+  if (ctx.actor.kind !== "user") {
+    return { kind: "wholeTenant" };
+  }
+  const userId = ctx.actor.userId;
+  const tenantId = ctx.tenantId;
+
+  const assignments = await db.roleAssignment.findMany({
+    where: { tenantId, userId },
+    include: { accessRole: true },
+  });
+
+  if (assignments.length === 0) {
+    // The "Altrollen-Rückfall" (D-08 of Phase 75b) — identical fallback rule to
+    // `resolveGrants()`/`userIdsHoldingPermission()`. Never diverge from it here.
+    const user = await db.user.findUnique({ where: { id: userId }, select: { role: true } });
+    if (!user) {
+      // Deleted user, still-valid token — fail closed, exactly like the two sibling resolvers.
+      return { kind: "scoped", salonIds: [], employeeIds: [] };
+    }
+    const fallbackRoleId = systemRoleIdForLegacyRole(user.role);
+    const fallbackRole = await db.accessRole.findUnique({
+      where: { id: fallbackRoleId },
+      select: { id: true, tenantId: true, permissions: true },
+    });
+    if (!fallbackRole) {
+      // Issue #359's fix, mirrored: a missing system-role row must surface the incomplete
+      // migration, never silently resolve to "no reach".
+      throw new Error(
+        `resolveAccessReach: system role ${fallbackRoleId} is missing — the migration that inserts the system roles has not been applied`,
+      );
+    }
+    return roleGrants(fallbackRole, permission)
+      ? { kind: "wholeTenant" }
+      : { kind: "scoped", salonIds: [], employeeIds: [] };
+  }
+
+  const salonIds = new Set<string>();
+  const employeeIds = new Set<string>();
+  for (const assignment of assignments) {
+    const accessRole = assignment.accessRole;
+    const roleBelongsHere = accessRole.tenantId === null || accessRole.tenantId === tenantId;
+    if (!roleBelongsHere) continue;
+    if (!roleGrants(accessRole, permission)) continue;
+    // 74b review IN-02, mirrored: a row that violates the D-03 shape contributes nothing.
+    const scope = storedRoleAssignmentScope(assignment);
+    if (scope === null) continue;
+    if (scope.scopeType === "TENANT") {
+      return { kind: "wholeTenant" };
+    }
+    for (const salonId of scope.salonIds) salonIds.add(salonId);
+    for (const employeeId of scope.employeeIds) employeeIds.add(employeeId);
+  }
+
+  let activeSalonIds: string[] = [];
+  if (salonIds.size > 0) {
+    const activeSalons = await db.salon.findMany({
+      where: { tenantId, id: { in: [...salonIds] }, isActive: true },
+      select: { id: true },
+    });
+    activeSalonIds = activeSalons.map((salon) => salon.id);
+  }
+
+  return {
+    kind: "scoped",
+    salonIds: activeSalonIds.sort(),
+    employeeIds: [...employeeIds].sort(),
+  };
 }
 
 // ── DSGVO removal (Phase 74b, D-22) ─────────────────────────────────────────────────────────────
@@ -392,4 +510,49 @@ export async function userIdsHoldingPermission(
   const departedUserIds = new Set(departedEmployees.map((employee) => employee.userId));
 
   return candidateIds.filter((id) => !departedUserIds.has(id)).sort();
+}
+
+/**
+ * Phase 91b (Issue #91), D-17: narrows `userIdsHoldingPermission`'s tenant-wide holder list to the
+ * holders whose OWN resolved reach for `permission` covers the affected resource — the ONE shared
+ * narrowing point every manager-notification site in this phase uses; no site re-implements the
+ * per-user reach resolution inline.
+ *
+ * For each `candidateUserIds` entry, resolves that user's own `AccessReach` for `permission` via
+ * {@link resolveAccessReach} against a freshly built `AccessContext` (its `reach` field is the
+ * constructor's static base, irrelevant here since `resolveAccessReach` ignores it and re-derives
+ * per permission from the user's stored `RoleAssignment` rows). A `wholeTenant` reach ALWAYS keeps
+ * the user, regardless of the specific `isInScope` callback — enforced HERE, in the one shared
+ * narrowing point, rather than trusted to every callback's own implementation (T-91b-38: a
+ * misbehaving or incomplete `isInScope` callback must never silently drop a whole-tenant holder
+ * from a notification). Every OTHER reach is kept only when `isInScope(reach)` resolves `true`.
+ *
+ * Callers pass `userIdsHoldingPermission`'s own output as `candidateUserIds` — a candidate that
+ * (defensively) holds nothing at all for `permission` still resolves without throwing (its reach
+ * fails every `isInScope` check and it is simply excluded). Order of `candidateUserIds` is
+ * preserved for ids that are kept (a stable filter, never a re-sort).
+ *
+ * Only narrows the recipient SET. Every existing lock or eligibility decision (self-approval,
+ * four-eyes, cancellation) at a call site is untouched by this function.
+ */
+export async function resolveScopedHolderIds(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  candidateUserIds: readonly string[],
+  permission: PermissionKey,
+  isInScope: (reach: AccessReach) => Promise<boolean> | boolean,
+): Promise<string[]> {
+  const kept: string[] = [];
+  for (const userId of candidateUserIds) {
+    const ctx: AccessContext = {
+      tenantId,
+      actor: { kind: "user", userId },
+      reach: { kind: "wholeTenant" },
+    };
+    const reach = await resolveAccessReach(db, ctx, permission);
+    if (reach.kind === "wholeTenant" || (await isInScope(reach))) {
+      kept.push(userId);
+    }
+  }
+  return kept;
 }

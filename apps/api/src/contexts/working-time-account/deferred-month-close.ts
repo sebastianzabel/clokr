@@ -115,10 +115,15 @@ type TenantRow = {
 export async function getDeferredMonthCloseState(
   db: PrismaClient,
   tenantId: string,
-  opts: { now?: Date; detailed?: boolean } = {},
+  opts: { now?: Date; detailed?: boolean; employeeIds?: readonly string[] } = {},
 ): Promise<DeferredMonthCloseState> {
   const now = opts.now ?? new Date();
   const detailed = opts.detailed ?? false;
+  // Phase 91b Plan 05 (Issue #91), D-10/D-13 — an optional Stammsalon-resolved narrowing. `undefined`
+  // (every existing caller before this plan, including the cron reminder) means "every tenant
+  // employee", byte-identical to before. When given, applied to the SAME `employee.findMany` below
+  // that already gates every downstream computation, so an out-of-scope employee's snapshot is
+  // never even fetched, let alone gap-detected — narrowed before computing, not after.
 
   const tenant = (await db.tenant.findUnique({
     where: { id: tenantId },
@@ -165,6 +170,7 @@ export async function getDeferredMonthCloseState(
       tenantId,
       user: { isActive: true },
       isTimeTrackingExempt: false, // parity with auto-close-month.ts (D-02)
+      ...(opts.employeeIds ? { id: { in: [...opts.employeeIds] } } : {}),
     },
     select: {
       id: true,

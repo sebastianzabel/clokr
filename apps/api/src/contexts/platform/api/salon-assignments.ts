@@ -23,6 +23,10 @@ import { salonExistsInForeignTenant } from "../facade/salons";
 import { isCalendarDay, toAssignmentDto, WEEKDAY_ADVERB_DE } from "../salon-assignment-rules";
 import { auditSalonAssignmentEvent } from "../salon-assignment-audit";
 import { requirePermission } from "../request-permissions";
+import { accessContextFromRequest } from "../access-context"; // Phase 91b Plan 10 (#91), D-10/D-12/D-14
+import { resolveAccessReach } from "../facade/role-assignments"; // Phase 91b Plan 10 (#91), D-10/D-12/D-14
+import { isPersonMasterDataInScope, isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 10 (#91), D-10/D-12/D-14
+import type { PermissionKey } from "../permission-catalog";
 
 const idParamSchema = z.object({ id: z.string().uuid() });
 const assignmentIdParamSchema = z.object({
@@ -152,6 +156,61 @@ async function rejectUnknownAssignment(
   return reply.code(404).send({ error: ASSIGNMENT_NOT_FOUND });
 }
 
+/**
+ * Phase 91b Plan 10 (Issue #91), D-12/D-14: person-master-data scope for the READ route
+ * (Stammsalon-OR-active-deployment, same rule as `employees.ts` GET /:id — salon-history is basic
+ * identity data, visible to a temporarily-deployed employee's current salon manager too).
+ */
+async function rejectOutOfScopePersonRead(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  reply: FastifyReply,
+  employeeId: string,
+  permission: PermissionKey,
+): Promise<boolean> {
+  const access = accessContextFromRequest(req);
+  const scopeReach = await resolveAccessReach(app.prisma, access, permission);
+  if (await isPersonMasterDataInScope(app.prisma, req.user.tenantId, scopeReach, employeeId)) {
+    return true;
+  }
+  await auditSalonAssignmentEvent(app, req, {
+    entity: "Employee",
+    action: "SCOPE_ACCESS_DENIED",
+    entityId: employeeId,
+  });
+  reply.code(404).send({ error: EMPLOYEE_NOT_FOUND });
+  return false;
+}
+
+/**
+ * Phase 91b Plan 10 (Issue #91), D-10/D-14: Stammsalon-only scope for the WRITE routes below
+ * (create/change/end a salon assignment) — an administrative change to an employee's salon
+ * structure stays a HOME-salon manager's decision, same distinction `employees.ts`'s
+ * `enforcePersonAdminScope` draws for account-lifecycle actions. Stichtag = today.
+ */
+async function rejectOutOfScopePersonWrite(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  reply: FastifyReply,
+  employeeId: string,
+  permission: PermissionKey,
+): Promise<boolean> {
+  const access = accessContextFromRequest(req);
+  const scopeReach = await resolveAccessReach(app.prisma, access, permission);
+  if (
+    await isStammsalonScopeMatch(app.prisma, req.user.tenantId, scopeReach, employeeId, new Date())
+  ) {
+    return true;
+  }
+  await auditSalonAssignmentEvent(app, req, {
+    entity: "Employee",
+    action: "SCOPE_ACCESS_DENIED",
+    entityId: employeeId,
+  });
+  reply.code(404).send({ error: EMPLOYEE_NOT_FOUND });
+  return false;
+}
+
 // Rows are never deleted (D-03/D-11/AC-Aenderung-1) — this file registers no DELETE handler for
 // any assignment; the only permitted change to an existing row is `validUntil`, via `end` below.
 
@@ -170,6 +229,9 @@ export async function salonAssignmentRoutes(app: FastifyInstance) {
 
       const employee = await findEmployeeInTenant(app.prisma, tenantId, id);
       if (!employee) return rejectUnknownEmployee(app, req, reply, id);
+      if (!(await rejectOutOfScopePersonRead(app, req, reply, id, "employee:read:ZUGEWIESEN"))) {
+        return;
+      }
 
       const rows = await listSalonAssignments(app.prisma, tenantId, id);
       return { assignments: rows.map(toAssignmentDto) };
@@ -190,6 +252,18 @@ export async function salonAssignmentRoutes(app: FastifyInstance) {
       // reaches the employee guard rather than 400ing on both arms first.
       const body = createDeploymentSchema.parse(req.body);
       const tenantId = req.user.tenantId;
+
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: Stammsalon-only — a pre-check ahead of the
+      // transaction, since createDeploymentAssignment's own EMPLOYEE_NOT_FOUND branch runs INSIDE
+      // it and has no scope concept of its own; an unscoped caller never reaches the write.
+      const existingForScope = await findEmployeeInTenant(app.prisma, tenantId, id);
+      if (existingForScope) {
+        if (
+          !(await rejectOutOfScopePersonWrite(app, req, reply, id, "employee:update:ZUGEWIESEN"))
+        ) {
+          return;
+        }
+      }
 
       const outcome = await app.prisma.$transaction(async (tx) => {
         const result = await createDeploymentAssignment(tx, tenantId, id, {
@@ -254,6 +328,17 @@ export async function salonAssignmentRoutes(app: FastifyInstance) {
       // D-19: validated BEFORE any lookup, same ordering as the DEPLOYMENT create route.
       const body = changeHomeSalonSchema.parse(req.body);
       const tenantId = req.user.tenantId;
+
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: same pre-check as the DEPLOYMENT create route
+      // above — changeHomeSalon's own EMPLOYEE_NOT_FOUND branch runs inside the transaction.
+      const existingForScope = await findEmployeeInTenant(app.prisma, tenantId, id);
+      if (existingForScope) {
+        if (
+          !(await rejectOutOfScopePersonWrite(app, req, reply, id, "employee:update:ZUGEWIESEN"))
+        ) {
+          return;
+        }
+      }
 
       const outcome = await app.prisma.$transaction(async (tx) => {
         const result = await changeHomeSalon(tx, tenantId, id, {
@@ -327,6 +412,17 @@ export async function salonAssignmentRoutes(app: FastifyInstance) {
       const { id, assignmentId } = assignmentIdParamSchema.parse(req.params);
       const body = endAssignmentSchema.parse(req.body);
       const tenantId = req.user.tenantId;
+
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: same pre-check as the other two write routes
+      // above — endSalonAssignment's own not-found branch runs inside the transaction.
+      const existingForScope = await findEmployeeInTenant(app.prisma, tenantId, id);
+      if (existingForScope) {
+        if (
+          !(await rejectOutOfScopePersonWrite(app, req, reply, id, "employee:update:ZUGEWIESEN"))
+        ) {
+          return;
+        }
+      }
 
       const outcome = await app.prisma.$transaction(async (tx) => {
         const result = await endSalonAssignment(tx, tenantId, id, assignmentId, body.validUntil);

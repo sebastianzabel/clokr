@@ -37,6 +37,7 @@ import {
   computeOvertimeBalanceHours, // Issue #294 — pure read, run BEFORE the booking+persist transaction
   persistOvertimeBalance, // Issue #294 — booking + recompute in one $transaction
   calcLeaveAbsenceMinutesTz, // Issue #293 — receipt shares the saldo's own Ø-Methode entry point
+  todayInTz, // Phase 91b Plan 04 (#91), D-10 — Stichtag for the general leave-requests list
   type OvertimeBalanceBreakdown,
 } from "../../working-time-account"; // Phase 100B Plan 06 — W8/W11/W12; Plan 07 — W1; Phase 101B
 import {
@@ -45,6 +46,12 @@ import {
   hasPermission,
   permissionReach,
   userIdsHoldingPermission, // Phase 75b Plan 10 (#75), D-16: notification-recipient lookups
+  accessContextFromRequest, // Phase 91b Plan 04 (#91), D-10/D-14
+  resolveAccessReach, // Phase 91b Plan 04 (#91), D-10/D-14
+  resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 04 (#91), D-10
+  isStammsalonScopeMatch, // Phase 91b Plan 04 (#91), D-10/D-14
+  resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
+  isShiftInScope, // Phase 91b Plan 09 (#91), D-11/D-17
 } from "../../platform"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
@@ -762,9 +769,26 @@ export async function leaveRoutes(app: FastifyInstance) {
         req.user.tenantId,
         "leave-request:approve:ZUGEWIESEN",
       );
+      // Phase 91b Plan 09 (Issue #91), D-17: narrow the tenant-wide holder list to holders whose
+      // OWN reach covers the request's own employee — Stammsalon-only (D-10), Stichtag = the
+      // request's own startDate (the affected period, not "today").
+      const scopedLeaveRequestApproveHolderIds = await resolveScopedHolderIds(
+        app.prisma,
+        req.user.tenantId,
+        leaveRequestApproveHolderIds,
+        "leave-request:approve:ZUGEWIESEN",
+        (reach) =>
+          isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            reach,
+            request.employeeId,
+            request.startDate,
+          ),
+      );
       const managers = await app.prisma.user.findMany({
         where: {
-          id: { in: leaveRequestApproveHolderIds },
+          id: { in: scopedLeaveRequestApproveHolderIds },
           isActive: true,
           employee: { tenantId: req.user.tenantId },
         },
@@ -816,13 +840,50 @@ export async function leaveRoutes(app: FastifyInstance) {
           : (status as LeaveRequestStatus)
         : undefined;
 
+      // Phase 91b Plan 04 (Issue #91), D-10 — narrow a ZUGEWIESEN manager to Stammsalon-scoped
+      // employees. This is a general list with no single natural period (unlike a period-bound
+      // read, D-10's own Stichtag case), so the Stichtag is: tenant-local TODAY for the
+      // unfiltered/status-filtered/`upcoming` shapes, or January 1st of `year` (tenant-local) when
+      // a `year` param is given — the plan's own explicit decision, not left to guesswork. Skipped
+      // entirely for the EMPLOYEE (EIGENE) branch: no new query for the common case.
+      let scopedEmployeeIds: "all" | string[] = "all";
+      if (isManager) {
+        const access = accessContextFromRequest(req);
+        const reach = await resolveAccessReach(app.prisma, access, "leave-request:read:ZUGEWIESEN");
+        if (reach.kind !== "wholeTenant") {
+          const stichtag = year
+            ? new Date(`${year}-01-01T00:00:00Z`)
+            : todayInTz(await getTenantTimezone(app.prisma, user.tenantId));
+          scopedEmployeeIds = await resolveStammsalonScopedEmployeeIds(
+            app.prisma,
+            user.tenantId,
+            reach,
+            stichtag,
+          );
+        }
+      }
+
       const rows = await app.prisma.leaveRequest.findMany({
         where: {
           deletedAt: null,
           ...(isManager
             ? {
                 employee: { tenantId: user.tenantId },
-                ...(employeeId ? { employeeId } : {}),
+                // Both constraints must combine when a manager supplies an explicit `employeeId`
+                // param WHILE being scope-restricted: an out-of-scope named employeeId must yield
+                // nothing, not bypass the scope filter. A plain object-literal spread of two
+                // `employeeId` keys would let the second silently overwrite the first, so this
+                // uses Prisma's own `AND` array to intersect both conditions on the same field.
+                ...(employeeId || scopedEmployeeIds !== "all"
+                  ? {
+                      AND: [
+                        ...(employeeId ? [{ employeeId }] : []),
+                        ...(scopedEmployeeIds !== "all"
+                          ? [{ employeeId: { in: scopedEmployeeIds } }]
+                          : []),
+                      ],
+                    }
+                  : {}),
               }
             : { employeeId: user.employeeId ?? "" }),
           ...(statusFilter !== undefined ? { status: statusFilter } : {}),
@@ -1002,6 +1063,35 @@ export async function leaveRoutes(app: FastifyInstance) {
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
         return reply.code(404).send({ error: "Antrag nicht gefunden" });
+      }
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — scope check: a ZUGEWIESEN-scoped manager may
+      // only decide a request for an employee whose Stammsalon AT THE REQUEST'S OWN startDate is
+      // in scope. No entry-salon fallback (D-09) — LeaveRequest has no salonId.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "leave-request:approve:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            existing.employeeId,
+            existing.startDate,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "LeaveRequest",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Antrag nicht gefunden" });
+        }
       }
       if (!["PENDING", "CANCELLATION_REQUESTED"].includes(existing.status)) {
         return reply.code(409).send({ error: "Antrag kann nicht mehr geändert werden" });
@@ -1421,11 +1511,28 @@ export async function leaveRoutes(app: FastifyInstance) {
               employeeUser.tenantId,
               "section9:decide:ZUGEWIESEN",
             );
+            // Phase 91b Plan 09 (Issue #91), D-17: narrow to holders whose OWN reach covers this
+            // Section9Credit's employee — Stammsalon-only (D-10), Stichtag = the credit's own
+            // overlap period start.
+            const scopedSection9DecideHolderIds = await resolveScopedHolderIds(
+              app.prisma,
+              employeeUser.tenantId,
+              section9DecideHolderIds,
+              "section9:decide:ZUGEWIESEN",
+              (reach) =>
+                isStammsalonScopeMatch(
+                  app.prisma,
+                  employeeUser.tenantId,
+                  reach,
+                  existing.employeeId,
+                  ov.overlapStart,
+                ),
+            );
             const section9Managers = await app.prisma.employee.findMany({
               where: {
                 tenantId: employeeUser.tenantId,
                 user: {
-                  id: { in: section9DecideHolderIds, not: req.user.sub }, // Phase-91 idiom: never notify the actor
+                  id: { in: scopedSection9DecideHolderIds, not: req.user.sub }, // Phase-91 idiom: never notify the actor
                   isActive: true,
                 },
               },
@@ -1550,10 +1657,28 @@ export async function leaveRoutes(app: FastifyInstance) {
                   empName.tenantId,
                   "shift:plan:ZUGEWIESEN",
                 );
+                // Phase 91b Plan 09 (Issue #91), D-11/D-17: narrow to holders whose OWN reach
+                // covers AT LEAST ONE of the flagged conflicting shifts (the batch's own salon(s)
+                // — a single leave approval can conflict with shifts at different salons, and this
+                // ONE notification summarizes ALL of them, so a holder in scope for any one of the
+                // affected shifts is kept). No Stammsalon fallback (D-11).
+                const scopedShiftPlanHolderIds = await resolveScopedHolderIds(
+                  app.prisma,
+                  empName.tenantId,
+                  shiftPlanHolderIds,
+                  "shift:plan:ZUGEWIESEN",
+                  (reach) =>
+                    conflictingShifts.some((s) =>
+                      isShiftInScope(reach, {
+                        salonId: s.salonId,
+                        employeeId: existing.employeeId,
+                      }),
+                    ),
+                );
                 const managers = await app.prisma.user.findMany({
                   where: {
                     isActive: true,
-                    id: { in: shiftPlanHolderIds },
+                    id: { in: scopedShiftPlanHolderIds },
                     employee: { tenantId: empName.tenantId },
                   },
                   select: { id: true },
@@ -1802,6 +1927,34 @@ export async function leaveRoutes(app: FastifyInstance) {
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
         return reply.code(404).send({ error: "Antrag nicht gefunden" });
+      }
+
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — scope check, same pattern as /review above.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "leave-request:correct:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            existing.employeeId,
+            existing.startDate,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "LeaveRequest",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Antrag nicht gefunden" });
+        }
       }
 
       // Nur GENEHMIGTE Anträge sind direkt korrigierbar (EDIT-01, per CONTEXT).
@@ -2216,6 +2369,34 @@ export async function leaveRoutes(app: FastifyInstance) {
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
         return reply.code(404).send({ error: "Antrag nicht gefunden" });
+      }
+
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — scope check, same pattern as /review above.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "leave-request:attest:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            existing.employeeId,
+            existing.startDate,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "LeaveRequest",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Antrag nicht gefunden" });
+        }
       }
 
       const typeCode = existing.leaveType.code;
@@ -2640,13 +2821,38 @@ export async function leaveRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
 
+      // Phase 91b Plan 04 (Issue #91), D-10 — this feed has no date window of its own (it returns
+      // every APPROVED request + absence, unbounded) to use as a Stichtag, unlike the plan's own
+      // text assumed; treated the same as GET /requests's own "no single natural period" case:
+      // tenant-local today.
+      const access = accessContextFromRequest(req);
+      const reach = await resolveAccessReach(app.prisma, access, "leave-request:read:ZUGEWIESEN");
+      const scopedEmployeeIds =
+        reach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              tenantId,
+              reach,
+              todayInTz(await getTenantTimezone(app.prisma, tenantId)),
+            );
+
       const [requests, absences] = await Promise.all([
         app.prisma.leaveRequest.findMany({
-          where: { deletedAt: null, employee: { tenantId }, status: "APPROVED" },
+          where: {
+            deletedAt: null,
+            employee: { tenantId },
+            status: "APPROVED",
+            ...(scopedEmployeeIds !== "all" ? { employeeId: { in: scopedEmployeeIds } } : {}),
+          },
           include: { leaveType: true, employee: { select: { firstName: true, lastName: true } } },
         }),
         app.prisma.absence.findMany({
-          where: { deletedAt: null, employee: { tenantId } },
+          where: {
+            deletedAt: null,
+            employee: { tenantId },
+            ...(scopedEmployeeIds !== "all" ? { employeeId: { in: scopedEmployeeIds } } : {}),
+          },
           include: { employee: { select: { firstName: true, lastName: true } } },
         }),
       ]);
@@ -2733,6 +2939,34 @@ export async function leaveRoutes(app: FastifyInstance) {
       }
       if (entitlementReach === null) {
         return reply.code(403).send({ error: "Forbidden" });
+      }
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: leave-entitlement is Stammsalon-only, same rule
+      // as settings/vacation/:employeeId, Stichtag = Dec 31 of the queried year.
+      if (entitlementReach === "ZUGEWIESEN" && req.user.employeeId !== employeeId) {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "leave-entitlement:read:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            tenantId,
+            scopeReach,
+            employeeId,
+            new Date(Date.UTC(targetYear, 11, 31)),
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "LeaveEntitlement",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
       }
 
       // Resturlaub auto-übertragen falls nötig
@@ -3086,6 +3320,36 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
       }
 
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — scope check: a ZUGEWIESEN-scoped manager may
+      // only decide a § 9 case for an employee whose Stammsalon at the credit's own overlapStart
+      // (the credit's own period-start field, D-09-era computed at detection time) is in scope.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "section9:decide:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            credit.employeeId,
+            credit.overlapStart,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Section9Credit",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+        }
+      }
+
       if (credit.status === "CONFIRMED") {
         return reply.code(409).send({ error: "Vorgang wurde bereits bestätigt" });
       }
@@ -3349,6 +3613,36 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
       }
 
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — scope check: a ZUGEWIESEN-scoped manager may
+      // only decide a § 9 case for an employee whose Stammsalon at the credit's own overlapStart
+      // (the credit's own period-start field, D-09-era computed at detection time) is in scope.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "section9:decide:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            credit.employeeId,
+            credit.overlapStart,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Section9Credit",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+        }
+      }
+
       // D-11: eine bereits gebuchte Gutschrift kann nicht abgelehnt werden — eine
       // Korrektur wäre ein anderer Vorgang, außerhalb des Umfangs dieser Phase.
       if (credit.status === "CONFIRMED") {
@@ -3426,6 +3720,36 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
       }
 
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — scope check: a ZUGEWIESEN-scoped manager may
+      // only decide a § 9 case for an employee whose Stammsalon at the credit's own overlapStart
+      // (the credit's own period-start field, D-09-era computed at detection time) is in scope.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "section9:decide:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            credit.employeeId,
+            credit.overlapStart,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Section9Credit",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+        }
+      }
+
       if (credit.status !== "REJECTED") {
         return reply
           .code(400)
@@ -3476,11 +3800,27 @@ export async function leaveRoutes(app: FastifyInstance) {
         credit.employee.tenantId,
         "section9:decide:ZUGEWIESEN",
       );
+      // Phase 91b Plan 09 (Issue #91), D-17: same rule as the detection-time notification above —
+      // Stammsalon-only (D-10), Stichtag = the credit's own overlap period start.
+      const scopedReopenSection9DecideHolderIds = await resolveScopedHolderIds(
+        app.prisma,
+        credit.employee.tenantId,
+        reopenSection9DecideHolderIds,
+        "section9:decide:ZUGEWIESEN",
+        (reach) =>
+          isStammsalonScopeMatch(
+            app.prisma,
+            credit.employee.tenantId,
+            reach,
+            credit.employeeId,
+            credit.overlapStart,
+          ),
+      );
       const section9Managers = await app.prisma.employee.findMany({
         where: {
           tenantId: credit.employee.tenantId,
           user: {
-            id: { in: reopenSection9DecideHolderIds, not: req.user.sub },
+            id: { in: scopedReopenSection9DecideHolderIds, not: req.user.sub },
             isActive: true,
           },
         },

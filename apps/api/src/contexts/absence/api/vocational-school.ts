@@ -17,7 +17,15 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
-import { requirePermission, requireAnyPermission, permissionReach } from "../../platform";
+import {
+  requirePermission,
+  requireAnyPermission,
+  permissionReach,
+  accessContextFromRequest, // Phase 91b Plan 04 (#91), D-10/D-14
+  resolveAccessReach, // Phase 91b Plan 04 (#91), D-10/D-14
+  resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 04 (#91), D-10
+  isStammsalonScopeMatch, // Phase 91b Plan 04 (#91), D-10/D-14
+} from "../../platform";
 import {
   runVocationalSchoolGeneration,
   previewVocationalSchoolGeneration,
@@ -29,6 +37,7 @@ import {
   isMonthClosed, // Phase 100B Plan 07 — W1
   getTenantTimezone,
   monthRangeUtc,
+  todayInTz, // Phase 91b Plan 04 (#91), D-10
 } from "../../working-time-account"; // Phase 101B
 
 const previewQuerySchema = z.object({
@@ -215,6 +224,29 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
         employeeIdFilter = q.employeeId;
       }
 
+      // Phase 91b Plan 04 (Issue #91), D-10 — narrow a ZUGEWIESEN caller (only branch that can
+      // reach this point without an explicit self-employeeId) to Stammsalon-scoped employees.
+      // "Upcoming" is forward-looking with no other natural Stichtag — tenant-local today, same
+      // precedent as GET /requests (leave.ts) and GET /ical/team. The EIGENE branch above never
+      // reaches here with employeeIdFilter unset, so it issues no extra query.
+      let scopedEmployeeIds: "all" | string[] = "all";
+      if (upcomingReach === "ZUGEWIESEN") {
+        const access = accessContextFromRequest(req);
+        const reach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "vocational-school:read:ZUGEWIESEN",
+        );
+        if (reach.kind !== "wholeTenant") {
+          scopedEmployeeIds = await resolveStammsalonScopedEmployeeIds(
+            app.prisma,
+            tenantId,
+            reach,
+            todayInTz(await getTenantTimezone(app.prisma, tenantId)),
+          );
+        }
+      }
+
       // Inclusive [from..to] in UTC. startDate is a DATE column, so a >= fromIso AND
       // <= toIso comparison is sufficient — no T00:00 / T23:59 fudge needed.
       const fromDate = new Date(q.from + "T00:00:00.000Z");
@@ -226,7 +258,21 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
           type: "VOCATIONAL_SCHOOL",
           startDate: { gte: fromDate, lte: toDate },
           employee: { tenantId },
-          ...(employeeIdFilter ? { employeeId: employeeIdFilter } : {}),
+          // Both constraints must combine when a ZUGEWIESEN caller ALSO supplies an explicit
+          // ?employeeId: an out-of-scope named employeeId must yield nothing, not bypass the
+          // scope filter (same AND-array idiom as leave.ts's GET /requests, Plan 91b-04 Task 1 —
+          // a plain object-literal spread of two `employeeId` keys would let the second silently
+          // overwrite the first).
+          ...(employeeIdFilter || scopedEmployeeIds !== "all"
+            ? {
+                AND: [
+                  ...(employeeIdFilter ? [{ employeeId: employeeIdFilter }] : []),
+                  ...(scopedEmployeeIds !== "all"
+                    ? [{ employeeId: { in: scopedEmployeeIds } } as const]
+                    : []),
+                ],
+              }
+            : {}),
         },
         select: {
           id: true,
@@ -281,6 +327,29 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
       });
       if (!employee) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — scope check: a ZUGEWIESEN-scoped manager may
+      // only insert a BS day for an employee whose Stammsalon AT THE BS DAY ITSELF is in scope.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "vocational-school:manage:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(app.prisma, tenantId, scopeReach, employee.id, dateUtc))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: employee.id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
       }
 
       // (4) AZUBI gate — server is the source of truth even when the UI hides the
@@ -413,6 +482,35 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Berufsschultag nicht gefunden" });
       }
 
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — scope check: Stammsalon at the BS day's own
+      // startDate. Same audit+404 pattern as the other single-row sites in this file.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "vocational-school:manage:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            tenantId,
+            scopeReach,
+            absence.employeeId,
+            absence.startDate,
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Absence",
+            entityId: absence.id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Berufsschultag nicht gefunden" });
+        }
+      }
+
       // (4) type guard — only BS-Tage are removable via this route.
       if (absence.type !== "VOCATIONAL_SCHOOL") {
         return reply.code(400).send({ error: "Eintrag ist kein Berufsschultag." });
@@ -497,6 +595,36 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — scope check: no single BS day is known yet at
+      // this point (the window is resolved below), so this checks the employee's Stammsalon TODAY
+      // (tenant-local) — the same "no natural Stichtag" precedent as GET /upcoming above.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "vocational-school:manage:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            tenantId,
+            scopeReach,
+            employee.id,
+            todayInTz(await getTenantTimezone(app.prisma, tenantId)),
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: employee.id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+      }
+
       const window = await resolveRetroactiveWindow(app.prisma, {
         tenantId,
         employeeId: employee.id,
@@ -537,6 +665,36 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
       });
       if (!employee) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — scope check: no single BS day is known yet at
+      // this point (the window is resolved below), so this checks the employee's Stammsalon TODAY
+      // (tenant-local) — the same "no natural Stichtag" precedent as GET /upcoming above.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "vocational-school:manage:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            tenantId,
+            scopeReach,
+            employee.id,
+            todayInTz(await getTenantTimezone(app.prisma, tenantId)),
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: employee.id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
       }
 
       const window = await resolveRetroactiveWindow(app.prisma, {

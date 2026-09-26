@@ -2,7 +2,15 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { FederalState } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
-import { syncSchoolHolidaysForTenant, requirePermission, permissionReach } from "../../platform";
+import {
+  syncSchoolHolidaysForTenant,
+  requirePermission,
+  permissionReach,
+  accessContextFromRequest, // Phase 91b Plan 04 (#91), D-10/D-14
+  resolveAccessReach, // Phase 91b Plan 04 (#91), D-10/D-14
+  isStammsalonScopeMatch, // Phase 91b Plan 04 (#91), D-10/D-14
+} from "../../platform";
+import { getTenantTimezone, todayInTz } from "../../working-time-account"; // Phase 91b Plan 04 (#91), D-10
 import { runVocationalSchoolGeneration } from "../vocational-school-generator";
 import { BS_PATTERN_ORDER_BY } from "../vocational-school-pattern-order";
 import {
@@ -141,6 +149,37 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Forbidden" });
       }
 
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — beyond this plan's literal task list (which
+      // names only the PUT route below), but the same unscoped-read shape: a ZUGEWIESEN caller
+      // could read ANY tenant employee's pattern. Stichtag = today (tenant-local) — reading a
+      // pattern is not tied to one BS day.
+      if (patternReach === "ZUGEWIESEN") {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "vocational-school:read:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            employee.id,
+            todayInTz(await getTenantTimezone(app.prisma, req.user.tenantId)),
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: employee.id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+      }
+
       const patterns = await app.prisma.employeeVocationalSchoolPattern.findMany({
         where: { employeeId: id, isActive: true },
         orderBy: BS_PATTERN_ORDER_BY,
@@ -179,6 +218,36 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
         select: { id: true },
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+
+      // Phase 91b Plan 04 (Issue #91), D-10/D-14 — scope check: a ZUGEWIESEN-scoped manager may
+      // only replace patterns for an employee whose Stammsalon TODAY (tenant-local) is in scope —
+      // this route sets the pattern going forward, not for one past BS day.
+      {
+        const access = accessContextFromRequest(req);
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          access,
+          "vocational-school:manage:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            employee.id,
+            todayInTz(await getTenantTimezone(app.prisma, req.user.tenantId)),
+          ))
+        ) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "Employee",
+            entityId: employee.id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+      }
 
       // Audit before-snapshot — include ALL rows (including inactive) so the audit trail
       // captures the full history at the time of the replace.

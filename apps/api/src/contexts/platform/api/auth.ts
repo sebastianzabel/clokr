@@ -6,7 +6,10 @@ import { Role } from "@clokr/db";
 import { JwtPayload } from "../../../middleware/auth";
 import { validatePassword, loadPasswordPolicy } from "../password-policy";
 import { compatRoleForUser } from "../compat-role";
-import { userIdsHoldingPermission } from "../facade/role-assignments"; // Phase 75b Plan 10 (#75), D-16/D-17
+import { userIdsHoldingPermission, resolveScopedHolderIds } from "../facade/role-assignments"; // Phase 75b Plan 10 (#75), D-16/D-17; Phase 91b Plan 09 (#91), D-17
+import { isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 09 (#91), D-10/D-17
+import { readTenantTimezone } from "../facade/salon-assignments";
+import { dayToDate, tenantLocalDay } from "../salon-assignment-rules";
 import { config } from "../../../config";
 
 /** SHA-256 hash for tokens stored in DB (refresh tokens, reset tokens). */
@@ -124,9 +127,29 @@ export async function authRoutes(app: FastifyInstance) {
                   user.employee!.tenantId,
                   "employee:manage-access:ZUGEWIESEN",
                 );
+                // Phase 91b Plan 09 (Issue #91), D-17: `employee` is a PERSON-relation
+                // permission — narrow to holders whose OWN reach covers the LOCKED-OUT
+                // employee, Stammsalon-only (D-10), Stichtag = today (a live access-management
+                // action, no other natural period).
+                const tz = await readTenantTimezone(app.prisma, user.employee!.tenantId);
+                const todayDate = dayToDate(tenantLocalDay(new Date(), tz));
+                const scopedEmployeeManageAccessHolderIds = await resolveScopedHolderIds(
+                  app.prisma,
+                  user.employee!.tenantId,
+                  employeeManageAccessHolderIds,
+                  "employee:manage-access:ZUGEWIESEN",
+                  (reach) =>
+                    isStammsalonScopeMatch(
+                      app.prisma,
+                      user.employee!.tenantId,
+                      reach,
+                      user.employee!.id,
+                      todayDate,
+                    ),
+                );
                 return app.prisma.user.findMany({
                   where: {
-                    id: { in: employeeManageAccessHolderIds },
+                    id: { in: scopedEmployeeManageAccessHolderIds },
                     isActive: true,
                     employee: { tenantId: user.employee!.tenantId },
                   },

@@ -1,7 +1,12 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../middleware/auth";
-import { hasPermission } from "../contexts/platform";
+import {
+  hasPermission,
+  accessContextFromRequest, // Phase 91b Plan 07 (#91), D-10
+  resolveAccessReach, // Phase 91b Plan 07 (#91), D-10
+  resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 07 (#91), D-10
+} from "../contexts/platform";
 import {
   getMonthlySnapshotsInRange, // Phase 100B Plan 07 — W5
   getTenantTimezone,
@@ -231,11 +236,32 @@ export async function activityRoutes(app: FastifyInstance) {
 
         // Recent team leave submissions (tenant-wide)
         // Phase 100B Plan 13 — A10c, contexts/absence facade.
+        //
+        // Phase 91b Plan 07 (Issue #91), D-10 — narrow to Stammsalon-scoped employees INSIDE the
+        // query, before `take: fetchLimit` runs (never a post-filter — see the facade function's
+        // own docblock for why that would under-fill the page). Stichtag = today (tenant-local): a
+        // live activity feed, same precedent as the running/current-state saldo reads.
+        const activityAccess = accessContextFromRequest(req);
+        const activityScopeReach = await resolveAccessReach(
+          app.prisma,
+          activityAccess,
+          "team-overview:read:ZUGEWIESEN",
+        );
+        const activityScopedIds =
+          activityScopeReach.kind === "wholeTenant"
+            ? "all"
+            : await resolveStammsalonScopedEmployeeIds(
+                app.prisma,
+                tenantId,
+                activityScopeReach,
+                new Date(),
+              );
         const teamLeaves = await getTeamLeaveSubmissions(
           app.prisma,
           tenantId,
           employeeId ?? undefined,
           fetchLimit,
+          activityScopedIds === "all" ? undefined : activityScopedIds,
         );
         for (const lr of teamLeaves) {
           const empName = `${lr.employee.firstName} ${lr.employee.lastName}`.trim();
