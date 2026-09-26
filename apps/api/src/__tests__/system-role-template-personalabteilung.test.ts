@@ -16,7 +16,7 @@ import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
 import { SYSTEM_ROLE_IDS, type SystemRoleSlot } from "../contexts/platform";
-import { pastDateStr, todayStr } from "./test-dates";
+import { pastDateStr, todayStr, futureDateStr } from "./test-dates";
 
 const PASSWORD = "test1234";
 
@@ -246,6 +246,214 @@ describe("Issue #76 (Phase 76b Plan 04), AK-76b-4 — Personalabteilung behaviou
         headers: { authorization: `Bearer ${hrToken}` },
       });
       expect(res.statusCode).toBe(403);
+    });
+  });
+
+  describe("Task 2: HR reads saldo, month-close, leave and Berufsschule absences of ANY employee (D-07)", () => {
+    let overtimeAccount: { id: string; employeeId: string };
+    let pendingLeaveRequest: { id: string };
+    let bsAbsence: { id: string };
+    const bsDate = futureDateStr(20);
+
+    beforeAll(async () => {
+      overtimeAccount = await app.prisma.overtimeAccount.create({
+        data: { employeeId: y.employee.id, balanceHours: 3.5 },
+      });
+      pendingLeaveRequest = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: y.employee.id,
+          leaveTypeId: data.vacationType.id,
+          startDate: new Date(futureDateStr(30)),
+          endDate: new Date(futureDateStr(30)),
+          days: 1,
+          status: "PENDING",
+        },
+      });
+      bsAbsence = await app.prisma.absence.create({
+        data: {
+          employeeId: y.employee.id,
+          type: "VOCATIONAL_SCHOOL",
+          source: "PATTERN",
+          startDate: new Date(bsDate),
+          endDate: new Date(bsDate),
+          days: 1,
+          createdBy: "SYSTEM",
+        },
+      });
+    });
+
+    it("GET /overtime/<Y> → 200 with Y's account (identity field, not a live-computed balance)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${y.employee.id}`,
+        headers: { authorization: `Bearer ${hrToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as { id: string; employeeId: string };
+      expect(body.id).toBe(overtimeAccount.id);
+      expect(body.employeeId).toBe(y.employee.id);
+    });
+
+    it("GET /overtime/close-month/status?year&month → 200", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/close-month/status?year=${year}&month=${month}`,
+        headers: { authorization: `Bearer ${hrToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it("GET /leave/requests?employeeId=<Y> → 200 containing Y's PENDING request", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/leave/requests?employeeId=${y.employee.id}`,
+        headers: { authorization: `Bearer ${hrToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const ids = (JSON.parse(res.body) as Array<{ id: string }>).map((r) => r.id);
+      expect(ids).toContain(pendingLeaveRequest.id);
+    });
+
+    it("GET /vocational-school/upcoming?employeeId=<Y> → 200 containing Y's absence", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/vocational-school/upcoming?from=${pastDateStr(1)}&to=${futureDateStr(60)}&employeeId=${y.employee.id}`,
+        headers: { authorization: `Bearer ${hrToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const ids = (JSON.parse(res.body) as Array<{ id: string }>).map((r) => r.id);
+      expect(ids).toContain(bsAbsence.id);
+    });
+
+    it("no approval: PATCH /leave/requests/<Y's pending id>/review → 403, status stays PENDING", async () => {
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${pendingLeaveRequest.id}/review`,
+        headers: { authorization: `Bearer ${hrToken}` },
+        payload: { status: "APPROVED" },
+      });
+      expect(res.statusCode).toBe(403);
+      const stored = await app.prisma.leaveRequest.findUniqueOrThrow({
+        where: { id: pendingLeaveRequest.id },
+      });
+      expect(stored.status).toBe("PENDING");
+    });
+  });
+
+  describe("Task 2: HR maintains Stammdaten and WorkSchedule for ANY employee, with audit (D-07)", () => {
+    beforeAll(async () => {
+      // GET/PUT /settings/work/:employeeId 404 without a stored WorkSchedule row — createEmployee()
+      // deliberately mirrors the *-salon-scope.test.ts fixtures (no WorkSchedule), so this describe
+      // block provisions Y's own contract row, same shape as seedTenantFixture's own employees.
+      await app.prisma.workSchedule.create({
+        data: {
+          employeeId: y.employee.id,
+          weeklyHours: 40,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+    });
+
+    it("GET /employees/<Y> → 200", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/employees/${y.employee.id}`,
+        headers: { authorization: `Bearer ${hrToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it("PATCH /employees/<Y> {employeeNumber} (no role) → 200, exactly one new Employee audit row by HR", async () => {
+      const newNumber = uniqueSuffix("upd").toUpperCase().slice(0, 20);
+      const before = await app.prisma.auditLog.count({
+        where: { entity: "Employee", entityId: y.employee.id },
+      });
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/employees/${y.employee.id}`,
+        headers: { authorization: `Bearer ${hrToken}` },
+        payload: { employeeNumber: newNumber },
+      });
+      expect(res.statusCode).toBe(200);
+
+      const after = await app.prisma.auditLog.count({
+        where: { entity: "Employee", entityId: y.employee.id },
+      });
+      expect(after - before).toBe(1);
+      const rows = await app.prisma.auditLog.findMany({
+        where: { entity: "Employee", entityId: y.employee.id },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+      });
+      expect(rows[0].userId).toBe(hr.user.id);
+    });
+
+    it("GET /settings/work/<Y> → 200", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/settings/work/${y.employee.id}`,
+        headers: { authorization: `Bearer ${hrToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it("PUT /settings/work/<Y> with validFrom = 1st of next month → 200, new WorkSchedule audit row by HR", async () => {
+      const d = new Date();
+      const nextMonthFirst = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1));
+      const validFrom = nextMonthFirst.toISOString().slice(0, 10);
+
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/v1/settings/work/${y.employee.id}`,
+        headers: { authorization: `Bearer ${hrToken}` },
+        payload: {
+          type: "FIXED_SCHEDULE",
+          weeklyHours: 40,
+          validFrom,
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as { id: string };
+
+      // The audit row's entityId is the WorkSchedule row's own id (settings.ts:1322), never the
+      // employeeId — a validFrom with no exact-match existing row creates a NEW row (CREATE),
+      // never an update-in-place, so there is exactly one audit row for this new id.
+      const rows = await app.prisma.auditLog.findMany({
+        where: { entity: "WorkSchedule", entityId: body.id },
+      });
+      expect(rows).toHaveLength(1);
+      expect(rows[0].userId).toBe(hr.user.id);
+      expect(rows[0].action).toBe("CREATE");
+    });
+  });
+
+  describe("Task 2: Personalabteilung + Mitarbeiter (working HR person) never sees another employee's entries", () => {
+    it("GET /time-entries?employeeId=<X> → 200 with only HR2's own entries", async () => {
+      const hr2 = await createEmployee("template-hr2");
+      await createEntry(hr2.employee.id, salonA.id, pastDateStr(2));
+      await assignSystemRole(hr2.user.id, "HR", { scopeType: "TENANT" });
+      await assignSystemRole(hr2.user.id, "EMPLOYEE", { scopeType: "TENANT" });
+      const hr2Token = await login(hr2.user.email);
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/time-entries?employeeId=${x.employee.id}&from=${from}&to=${to}`,
+        headers: { authorization: `Bearer ${hr2Token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const rows = JSON.parse(res.body) as Array<{ employeeId: string }>;
+      for (const row of rows) {
+        expect(row.employeeId).toBe(hr2.employee.id);
+      }
+      expect(rows.map((r) => r.employeeId)).not.toContain(x.employee.id);
     });
   });
 });
