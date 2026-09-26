@@ -1,0 +1,245 @@
+/**
+ * Phase 76b Plan 06 (Issue #76), AK-76b-5 — proves the SHIPPED Salonmanager template bundle
+ * (`SYSTEM_ROLE_IDS.SALON_MANAGER`, migrated in Plan 76b-01) against real routes: #91 salon-scope
+ * rules apply to time entries (Task 1), and NO saldo is reachable even for a Stammsalon-A
+ * colleague of the salon manager's own salon (Task 1). Task 2 extends this file with leave,
+ * shifts, master data and the remaining saldo/month-close/correction surfaces.
+ *
+ * D-05/D-12 anti-pattern (mirrors 76b-04/76b-05's own note): the role assignment below points at
+ * the REAL `SYSTEM_ROLE_IDS.SALON_MANAGER` row, never an ad-hoc custom `AccessRole` — the point is
+ * proving the shipped bundle, not a hand-picked permission set.
+ *
+ * No person names in fixtures (CLAUDE.md PII rule).
+ */
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import bcrypt from "bcryptjs";
+import type { FastifyInstance } from "fastify";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import { SYSTEM_ROLE_IDS, type SystemRoleSlot } from "../contexts/platform";
+
+const PASSWORD = "test1234";
+
+// Mutation-proof lever (Task 1's <action> sets this to "HR", Task 2's <action> sets this to
+// "OWNER"): flipping this single constant must make the corresponding saldo-403 case(s) fail —
+// that is the mutation proof itself, run and restored during execution, quoted in the SUMMARY,
+// never left flipped in the committed file.
+const TEMPLATE_SLOT: SystemRoleSlot = "SALON_MANAGER";
+
+// Fixed fixture window, inside 2026, well away from month boundaries — so the 90-day default
+// window used elsewhere in the suite never matters here (Task 1 <action>).
+const WINDOW_FROM = "2026-07-01";
+const WINDOW_TO = "2026-07-31";
+const X_ENTRY_DATE = "2026-07-05";
+const Y_ENTRY_DATE = "2026-07-06";
+const Z_ENTRY_DATE = "2026-07-07"; // Z worked in salon A although Z's Stammsalon is B
+
+describe("Issue #76 (Phase 76b Plan 06), AK-76b-5 — Salonmanager behavioural matrix", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+  let salonA: { id: string };
+  let salonB: { id: string };
+
+  function uniqueSuffix(label: string): string {
+    return `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  }
+
+  async function createEmployee(label: string) {
+    const s = uniqueSuffix(label);
+    const passwordHash = await bcrypt.hash(PASSWORD, 10);
+    const user = await app.prisma.user.create({
+      data: { email: `${s}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+    });
+    const employee = await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        employeeNumber: s.toUpperCase().slice(0, 20),
+        firstName: label,
+        lastName: "SalonManagerScopeTest",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    return { user, employee };
+  }
+
+  function createHome(employeeId: string, salonId: string) {
+    return app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: data.tenant.id,
+        employeeId,
+        salonId,
+        kind: "HOME",
+        validFrom: new Date("2020-01-01"),
+        validUntil: null,
+        weekdays: [],
+      },
+    });
+  }
+
+  function createEntry(employeeId: string, salonId: string, date: string) {
+    return app.prisma.timeEntry.create({
+      data: {
+        employeeId,
+        salonId,
+        date: new Date(date),
+        startTime: new Date(`${date}T08:00:00Z`),
+        endTime: new Date(`${date}T16:00:00Z`),
+        source: "MANUAL",
+      },
+    });
+  }
+
+  /**
+   * Assigns a REAL system-role slot (never an ad-hoc AccessRole) to `userId`. Defaults to the
+   * SALONS scope this plan proves (D-05's own intended scope for Salonmanager).
+   */
+  function assignSystemRole(
+    userId: string,
+    slot: SystemRoleSlot,
+    scope: {
+      scopeType?: "TENANT" | "SALONS" | "PERSONS";
+      salonIds?: string[];
+      employeeIds?: string[];
+    } = {},
+  ) {
+    return app.prisma.roleAssignment.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId,
+        accessRoleId: SYSTEM_ROLE_IDS[slot],
+        scopeType: scope.scopeType ?? "SALONS",
+        salonIds: scope.salonIds ?? [],
+        employeeIds: scope.employeeIds ?? [],
+      },
+    });
+  }
+
+  async function login(email: string): Promise<string> {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email, password: PASSWORD },
+    });
+    expect(res.statusCode).toBe(200);
+    return (JSON.parse(res.body) as { accessToken: string }).accessToken;
+  }
+
+  let x: Awaited<ReturnType<typeof createEmployee>>;
+  let y: Awaited<ReturnType<typeof createEmployee>>;
+  let z: Awaited<ReturnType<typeof createEmployee>>;
+  let s: Awaited<ReturnType<typeof createEmployee>>;
+  let sToken: string;
+  let xEntry: { id: string };
+  let zEntry: { id: string };
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "sprsm");
+    salonA = await createTestSalon(app.prisma, data.tenant.id, { name: "SPRSM Salon A" });
+    salonB = await createTestSalon(app.prisma, data.tenant.id, { name: "SPRSM Salon B" });
+
+    // X: Stammsalon A, one entry in A, OvertimeAccount.
+    x = await createEmployee("salonmgr-x");
+    await createHome(x.employee.id, salonA.id);
+    xEntry = await createEntry(x.employee.id, salonA.id, X_ENTRY_DATE);
+    await app.prisma.overtimeAccount.create({
+      data: { employeeId: x.employee.id, balanceHours: 2 },
+    });
+
+    // Y: Stammsalon B, one entry in B, OvertimeAccount.
+    y = await createEmployee("salonmgr-y");
+    await createHome(y.employee.id, salonB.id);
+    await createEntry(y.employee.id, salonB.id, Y_ENTRY_DATE);
+    await app.prisma.overtimeAccount.create({
+      data: { employeeId: y.employee.id, balanceHours: 1 },
+    });
+
+    // Z: Stammsalon B, but worked in salon A on Z_ENTRY_DATE (entry-salon rule, #91 D-09).
+    z = await createEmployee("salonmgr-z");
+    await createHome(z.employee.id, salonB.id);
+    zEntry = await createEntry(z.employee.id, salonA.id, Z_ENTRY_DATE);
+
+    // S: the salon manager, SALONS scope [A], on the real template.
+    s = await createEmployee("salonmgr-s");
+    await assignSystemRole(s.user.id, TEMPLATE_SLOT, {
+      scopeType: "SALONS",
+      salonIds: [salonA.id],
+    });
+    sToken = await login(s.user.email);
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  describe("Task 1 (tracer): #91 salon scope for time entries; saldo 403 even for a Stammsalon-A employee", () => {
+    // Queried per-employeeId (not the unfiltered list): 76b-05-SUMMARY.md documented that GET
+    // /time-entries without ?employeeId falls back to the CALLER's own employeeId
+    // (time-entries.ts:1017), ignoring the manager's scope entirely — a pre-existing, already
+    // recorded finding unrelated to this template. Every *-salon-scope.test.ts fixture (Stammsalon
+    // and entry-salon rules alike) exercises the route the same way, via an explicit employeeId.
+    it("GET /time-entries?employeeId=<X> → 200 with X's entry (Stammsalon A match)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/time-entries?employeeId=${x.employee.id}&from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+        headers: { authorization: `Bearer ${sToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const ids = (JSON.parse(res.body) as Array<{ id: string }>).map((e) => e.id);
+      expect(ids).toContain(xEntry.id);
+    });
+
+    it("GET /time-entries?employeeId=<Z> → 200 with Z's A-entry (entry salon A, although Z's Stammsalon is B)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/time-entries?employeeId=${z.employee.id}&from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+        headers: { authorization: `Bearer ${sToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const ids = (JSON.parse(res.body) as Array<{ id: string }>).map((e) => e.id);
+      expect(ids).toContain(zEntry.id);
+    });
+
+    it("GET /time-entries?employeeId=<Y> → 200 [] (Stammsalon B, entry in B — out of scope)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/time-entries?employeeId=${y.employee.id}&from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+        headers: { authorization: `Bearer ${sToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual([]);
+    });
+
+    it("GET /overtime/<X> → 403, although X's Stammsalon is A and X is fully in S's salon scope", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${x.employee.id}`,
+        headers: { authorization: `Bearer ${sToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it("GET /overtime/<Y> → 403", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${y.employee.id}`,
+        headers: { authorization: `Bearer ${sToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it("control: the tenant admin's identical request to GET /overtime/<X> still answers 200", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${x.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+    });
+  });
+});
