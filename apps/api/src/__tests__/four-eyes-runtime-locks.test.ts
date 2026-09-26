@@ -209,4 +209,122 @@ describe("Runtime self-approval locks hold for a confirmed four-eyes combination
       expect(JSON.parse(res.body).status).toBe("APPROVED");
     });
   });
+
+  describe("Urlaubsantrag — PATCH /api/v1/leave/requests/:id/review (Task 2)", () => {
+    it("a confirmed combination-holder cannot approve their own PENDING leave request", async () => {
+      const request = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: actor.employeeId,
+          leaveTypeId: data.vacationType.id,
+          startDate: new Date("2030-06-10"),
+          endDate: new Date("2030-06-10"),
+          days: 1,
+        },
+      });
+      leaveRequestIds.push(request.id);
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${request.id}/review`,
+        headers: { authorization: actor.bearer },
+        payload: { status: "APPROVED" },
+      });
+
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body).error).toBe(
+        "Eigene Anträge können nicht selbst genehmigt werden",
+      );
+      const stillPending = await app.prisma.leaveRequest.findUniqueOrThrow({
+        where: { id: request.id },
+      });
+      expect(stillPending.status).toBe("PENDING");
+    });
+
+    it("cannot decide a cancellation the combination-holder itself requested", async () => {
+      const request = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: data.employee.id,
+          leaveTypeId: data.vacationType.id,
+          startDate: new Date("2030-06-11"),
+          endDate: new Date("2030-06-11"),
+          days: 1,
+          status: "CANCELLATION_REQUESTED",
+          cancellationRequestedBy: actor.userId,
+          reviewedBy: data.adminUser.id,
+        },
+      });
+      leaveRequestIds.push(request.id);
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${request.id}/review`,
+        headers: { authorization: actor.bearer },
+        payload: { status: "APPROVED" },
+      });
+
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body).error).toBe(
+        "Stornierung kann nicht vom Antragsteller genehmigt werden",
+      );
+      const unchanged = await app.prisma.leaveRequest.findUniqueOrThrow({
+        where: { id: request.id },
+      });
+      expect(unchanged.status).toBe("CANCELLATION_REQUESTED");
+    });
+
+    it("cannot decide a cancellation of a leave the combination-holder originally approved", async () => {
+      const request = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: data.employee.id,
+          leaveTypeId: data.vacationType.id,
+          startDate: new Date("2030-06-12"),
+          endDate: new Date("2030-06-12"),
+          days: 1,
+          status: "CANCELLATION_REQUESTED",
+          cancellationRequestedBy: data.empUser.id,
+          reviewedBy: actor.userId,
+        },
+      });
+      leaveRequestIds.push(request.id);
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${request.id}/review`,
+        headers: { authorization: actor.bearer },
+        payload: { status: "APPROVED" },
+      });
+
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body).error).toBe(
+        "Stornierung kann nicht vom ursprünglichen Genehmiger genehmigt werden",
+      );
+      const unchanged = await app.prisma.leaveRequest.findUniqueOrThrow({
+        where: { id: request.id },
+      });
+      expect(unchanged.status).toBe("CANCELLATION_REQUESTED");
+    });
+
+    it("(positive control) the same combination-holder CAN decide a colleague's PENDING leave request", async () => {
+      const request = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: data.employee.id,
+          leaveTypeId: data.vacationType.id,
+          startDate: new Date("2030-06-13"),
+          endDate: new Date("2030-06-13"),
+          days: 1,
+        },
+      });
+      leaveRequestIds.push(request.id);
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${request.id}/review`,
+        headers: { authorization: actor.bearer },
+        payload: { status: "REJECTED", reviewNote: "Positivkontrolle (D-08)" },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body).status).toBe("REJECTED");
+    });
+  });
 });
