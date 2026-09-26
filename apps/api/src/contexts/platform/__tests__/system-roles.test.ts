@@ -689,15 +689,15 @@ describe("Phase 76b — docs/permissions.md § Systemrollen-Templates matches th
 
 /**
  * Phase 78b (Issue #78), D-13 — `docs/permissions.md` § "Vier-Augen-Kombination bei der
- * Rollenzusammenstellung" (a `###` subsection at the end of `## Keine Permissions`, before
- * `## Pflege`) pinned to the code by test, so the doc cannot silently drift (MEMORY: "Begründungen
- * in LEBENDE Assertions statt Kommentare"). `## Keine Permissions` is read by neither
- * `readSectionRows`/`splitCells` above (which only walk the `##`-level guard/handler/recipient
- * tables) nor `permission-site-mapping.test.ts` — so this describe block carries its OWN small
- * section reader, an independent copy of the same parsing idea, per this file's own
- * file-independence rule (top-of-file docblock, "mirrors ... as an independent copy"). A `###`
- * heading does not end a parsed section — only a line starting with `# ` does — so the reader below
- * stops at the next line starting with `#`, not at the next `##`.
+ * Rollenzusammenstellung" (a `###` subsection at the end of the surrounding "no permissions"
+ * section, right before `## Pflege`) pinned to the code by test, so the doc cannot silently
+ * drift (MEMORY: "Begründungen in LEBENDE Assertions statt Kommentare"). That surrounding
+ * section is read by neither `readSectionRows`/`splitCells` above (which only walk the
+ * `##`-level guard/handler/recipient tables) nor `permission-site-mapping.test.ts` — so this
+ * describe block carries its OWN small section reader, an independent copy of the same parsing
+ * idea, per this file's own file-independence rule (top-of-file docblock, "mirrors ... as an
+ * independent copy"). A `###` heading does not end a parsed section — only a line starting with
+ * `# ` does — so the reader below stops at the next line starting with `#`, not at the next `##`.
  */
 describe("Phase 78b — docs/permissions.md § Vier-Augen-Kombination matches the code (D-13)", () => {
   const FOUR_EYES_HEADING = "### Vier-Augen-Kombination bei der Rollenzusammenstellung";
