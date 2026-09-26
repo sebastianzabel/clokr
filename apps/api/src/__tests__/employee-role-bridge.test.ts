@@ -23,6 +23,7 @@ import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup
 import { executeLegacyRoleMigration } from "./legacy-role-migration-sql";
 import { SYSTEM_ROLE_IDS, normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 import { ROLE_LOCKOUT_MESSAGE } from "../contexts/platform/role-assignment";
+import { ROLE_DEMOTION_BLOCKED_MESSAGE_PREFIX } from "../contexts/platform/compat-role";
 
 const PASSWORD = "test1234";
 // POST /employees validates the tenant password policy; the fixture users bypass it.
@@ -772,6 +773,98 @@ describe("Role bridge: employee form, compat column and fallback materialization
         newValue: { compatRole: { from: "MANAGER", to: "EMPLOYEE" } },
       });
       expect((await listEmployees(tokens.accessToken)).statusCode).toBe(403);
+    });
+  });
+
+  // Phase 76b (Issue #76), P-01: `isSystemRoleId()` covers all seven system roles once Plan 76b-01
+  // lands (D-03), but the employee-form bridge must keep narrowing itself to the THREE legacy ids
+  // it was built for (Admin, Manager, Mitarbeiter) — a Phase 76b template (Inhaber, Salonmanager,
+  // Personalabteilung, Ausbilder) is deliberately NOT a legacy role and must be left to #74's
+  // audited role-assignment API. Before the fix, `replaceSystemRoleAssignment` and
+  // `assignmentsBlockingDemotionToEmployee` used the seven-id `isSystemRoleId`, which wrongly
+  // treated a template row as one of the bridge's own rows.
+  describe("Phase 76b — the employee-form bridge leaves template assignments alone (P-01)", () => {
+    it("a TENANT Inhaber (OWNER) assignment survives a role-bridge save; only the legacy Mitarbeiter row is replaced", async () => {
+      const target = await createPerson(tenant.tenant.id, "Vorlage Inhaber", "EMPLOYEE");
+      const ownerRow = await app.prisma.roleAssignment.create({
+        data: {
+          tenantId: tenant.tenant.id,
+          userId: target.user.id,
+          accessRoleId: SYSTEM_ROLE_IDS.OWNER,
+          scopeType: "TENANT",
+          salonIds: [],
+          employeeIds: [],
+        },
+      });
+      const employeeRow = await app.prisma.roleAssignment.create({
+        data: {
+          tenantId: tenant.tenant.id,
+          userId: target.user.id,
+          accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE,
+          scopeType: "TENANT",
+          salonIds: [],
+          employeeIds: [],
+        },
+      });
+      const before = await roleAssignmentAudits(target.user.id);
+
+      const res = await patchEmployee(tenant.adminToken, target.employee.id, {
+        role: "MANAGER",
+        lastName: "Geaendert",
+      });
+      expect(res.statusCode).toBe(200);
+
+      const rows = await storedAssignments(tenant.tenant.id, target.user.id);
+      // The OWNER row is untouched — same id, same content — exactly as a customer-role row would be.
+      expect(rows.find((row) => row.id === ownerRow.id)).toEqual(ownerRow);
+      expect(rows.map((row) => row.accessRoleId).sort()).toEqual(
+        [SYSTEM_ROLE_IDS.OWNER, SYSTEM_ROLE_IDS.MANAGER].sort(),
+      );
+
+      const audits = await newAuditsSince(target.user.id, before);
+      expect(audits.length).toBeGreaterThan(0);
+      for (const audit of audits) {
+        expect(audit.entityId).not.toBe(ownerRow.id);
+        expect(audit.oldValue?.accessRoleId).not.toBe(SYSTEM_ROLE_IDS.OWNER);
+        expect(audit.newValue?.accessRoleId).not.toBe(SYSTEM_ROLE_IDS.OWNER);
+      }
+      const deleted = audits.find((row) => row.action === "DELETE");
+      expect(deleted?.entityId).toBe(employeeRow.id);
+      const created = audits.find((row) => row.action === "CREATE");
+      expect(created?.newValue).toMatchObject({ accessRoleId: SYSTEM_ROLE_IDS.MANAGER });
+    });
+
+    it("a demotion to Mitarbeiter is rejected while a TENANT Personalabteilung (HR) assignment survives it, naming that row (P-01)", async () => {
+      const target = await createPerson(tenant.tenant.id, "Vorlage Personalabteilung", "MANAGER");
+      await executeLegacyRoleMigration(app.prisma);
+      const [managerRow] = await storedAssignments(tenant.tenant.id, target.user.id);
+      expect(managerRow.accessRoleId).toBe(SYSTEM_ROLE_IDS.MANAGER);
+      const hrRow = await app.prisma.roleAssignment.create({
+        data: {
+          tenantId: tenant.tenant.id,
+          userId: target.user.id,
+          accessRoleId: SYSTEM_ROLE_IDS.HR,
+          scopeType: "TENANT",
+          salonIds: [],
+          employeeIds: [],
+        },
+      });
+      const rowsBefore = await storedAssignments(tenant.tenant.id, target.user.id);
+      const before = await roleAssignmentAudits(target.user.id);
+
+      const res = await patchEmployee(tenant.adminToken, target.employee.id, {
+        firstName: "Nicht Gespeichert",
+        role: "EMPLOYEE",
+      });
+      expect(res.statusCode).toBe(409);
+      const body = JSON.parse(res.body) as { error: string; remainingAssignments: unknown[] };
+      expect(body.error.startsWith(ROLE_DEMOTION_BLOCKED_MESSAGE_PREFIX)).toBe(true);
+      expect(body.remainingAssignments).toMatchObject([
+        { id: hrRow.id, roleName: "Personalabteilung", scopeType: "TENANT" },
+      ]);
+
+      expect(await storedAssignments(tenant.tenant.id, target.user.id)).toEqual(rowsBefore);
+      expect(await newAuditsSince(target.user.id, before)).toEqual([]);
     });
   });
 });

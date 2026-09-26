@@ -53,7 +53,7 @@ import type { Prisma, Role, RoleAssignmentScopeType } from "@clokr/db";
 import { roleGrants } from "./access-role";
 import { PERMISSIONS, permissionKey, type PermissionKey } from "./permission-catalog";
 import { storedRoleAssignmentScope } from "./role-assignment";
-import { SYSTEM_ROLE_IDS, isSystemRoleId } from "./system-roles";
+import { SYSTEM_ROLE_IDS } from "./system-roles";
 
 /** A stored role assignment with the fields the derivation reads. */
 export interface CompatRoleAssignmentRow {
@@ -89,6 +89,35 @@ export function systemRoleIdForLegacyRole(role: Role): string {
       throw new Error(`systemRoleIdForLegacyRole: unknown role ${String(unreachable)}`);
     }
   }
+}
+
+/**
+ * Phase 76b (Issue #76), P-01: the three legacy system-role ids `User.role` can stand for — Admin,
+ * Manager and Mitarbeiter, exactly the ids {@link systemRoleIdForLegacyRole} can return. The
+ * Phase 76b templates (Inhaber, Salonmanager, Personalabteilung, Ausbilder) are deliberately NOT
+ * legacy roles: the employee-form bridge below ({@link replaceSystemRoleAssignment},
+ * {@link assignmentsBlockingDemotionToEmployee}) uses this predicate, not the seven-id
+ * `isSystemRoleId` from `system-roles.ts`, so it treats a template assignment like any other
+ * customer-role assignment — untouched, and counting as blocking on a demotion. Templates are
+ * assigned and removed only through #74's audited role-assignment API.
+ *
+ * The role-value tuple is typed `satisfies readonly Role[]`, so a future `Role` enum value that
+ * is not spelled out here fails the typecheck rather than silently widening or narrowing the set
+ * at runtime.
+ */
+const LEGACY_ROLE_VALUES = ["ADMIN", "MANAGER", "EMPLOYEE"] as const satisfies readonly Role[];
+
+const LEGACY_SYSTEM_ROLE_ID_SET: ReadonlySet<string> = new Set(
+  LEGACY_ROLE_VALUES.map(systemRoleIdForLegacyRole),
+);
+
+/**
+ * True when `id` is one of the three legacy system-role ids (Admin, Manager, Mitarbeiter) the
+ * legacy `User.role` column can stand for. See {@link LEGACY_SYSTEM_ROLE_ID_SET} for why this,
+ * not `isSystemRoleId`, is what the employee-form bridge narrows itself to (P-01).
+ */
+export function isLegacySystemRoleId(id: string): boolean {
+  return LEGACY_SYSTEM_ROLE_ID_SET.has(id);
 }
 
 /**
@@ -299,11 +328,15 @@ export async function legacyFallbackAlreadyYields(
 }
 
 /**
- * D-15: makes the system role of `role` the user's only tenant-wide system-role assignment in
- * `tenantId`. Among the user's TENANT rows on a system role (by id, D-01), every row that is not a
- * well-formed row on the target role is deleted, and the target row is created when none remains.
- * Customer-role rows and SALONS/PERSONS rows are left untouched. Returns the removed and the
- * created rows (removals are written first) for the caller's audit.
+ * D-15: makes the system role of `role` the user's only tenant-wide LEGACY system-role assignment
+ * in `tenantId` (Phase 76b P-01: only Admin, Manager and Mitarbeiter — never a template). Among
+ * the user's TENANT rows on a LEGACY system role (Admin, Manager, Mitarbeiter, by id — D-01,
+ * {@link isLegacySystemRoleId}), every row that is not a well-formed row on the target role is
+ * deleted, and the target row is created when none remains. Customer-role rows, Phase 76b template
+ * rows (Inhaber, Salonmanager, Personalabteilung, Ausbilder) and SALONS/PERSONS rows are left
+ * untouched — they count as blocking on a demotion (see
+ * {@link assignmentsBlockingDemotionToEmployee}). Returns the removed and the created rows
+ * (removals are written first) for the caller's audit.
  *
  * Does not materialize the fallback — a caller changing an existing user runs
  * {@link materializeLegacyRoleAssignment} first; a brand-new user has nothing to materialize.
@@ -321,7 +354,7 @@ export async function replaceSystemRoleAssignment(
       include: WRITTEN_ASSIGNMENT_INCLUDE,
       orderBy: { createdAt: "asc" },
     })
-  ).filter((row) => isSystemRoleId(row.accessRoleId));
+  ).filter((row) => isLegacySystemRoleId(row.accessRoleId));
 
   const keep = systemRows.filter(
     (row) => row.accessRoleId === targetRoleId && storedRoleAssignmentScope(row) !== null,
@@ -387,16 +420,18 @@ export function assignmentExceedsEmployee(tenantId: string, row: CompatRoleAssig
 
 /**
  * Issue #357 sub-fix B: the assignments that would still grant `userId` more than the Mitarbeiter
- * system role even AFTER {@link replaceSystemRoleAssignment} replaces the user's TENANT
+ * system role even AFTER {@link replaceSystemRoleAssignment} replaces the user's TENANT LEGACY
  * system-role row with Mitarbeiter — every OTHER stored assignment (a customer role at any scope,
- * or a system role kept at SALONS/PERSONS scope, since `replaceSystemRoleAssignment` only ever
- * touches TENANT-scope system-role rows) for which {@link assignmentExceedsEmployee} holds.
+ * a Phase 76b template — Inhaber, Salonmanager, Personalabteilung, Ausbilder — at any scope
+ * (P-01), or a legacy system role kept at SALONS/PERSONS scope, since
+ * `replaceSystemRoleAssignment` only ever touches TENANT-scope LEGACY system-role rows,
+ * {@link isLegacySystemRoleId}) for which {@link assignmentExceedsEmployee} holds.
  *
  * Called by the employee-form PATCH handler BEFORE any write, when the requested role is
  * Mitarbeiter: a non-empty result means the whole request must be rejected (409, naming these
- * rows) rather than the API silently deleting a customer-role assignment (an unrequested rights
- * change of its own) or silently leaving it in place (the bug this issue reports) — see the
- * issue's decision comment for the reasoning.
+ * rows) rather than the API silently deleting a customer-role or template assignment (an
+ * unrequested rights change of its own) or silently leaving it in place (the bug this issue
+ * reports) — see the issue's decision comment for the reasoning.
  */
 export async function assignmentsBlockingDemotionToEmployee(
   db: Prisma.TransactionClient,
@@ -408,7 +443,7 @@ export async function assignmentsBlockingDemotionToEmployee(
     include: BLOCKING_ASSIGNMENT_INCLUDE,
   });
   return rows
-    .filter((row) => !(row.scopeType === "TENANT" && isSystemRoleId(row.accessRoleId)))
+    .filter((row) => !(row.scopeType === "TENANT" && isLegacySystemRoleId(row.accessRoleId)))
     .filter((row) => assignmentExceedsEmployee(tenantId, row))
     .map((row) => ({
       id: row.id,
