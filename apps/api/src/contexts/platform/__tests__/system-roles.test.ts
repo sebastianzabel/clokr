@@ -512,3 +512,97 @@ describe("Phase 76b — system-role templates (Issue #76)", () => {
     },
   );
 });
+
+/**
+ * Phase 76b Plan 07 (Issue #76), D-14 — `docs/permissions.md` § "Systemrollen-Templates" pinned
+ * to `SYSTEM_ROLE_PERMISSIONS` by test, so the doc cannot silently drift from the code (MEMORY:
+ * "Begründungen in LEBENDE Assertions statt Kommentare"). The table has FOUR columns (Template,
+ * Id, vorgesehener Scope, Permissions), not the five-cell guard/handler shape the module-level
+ * `readSectionRows`/`splitCells` above expect — this describe block therefore carries its OWN
+ * small row reader, an independent copy of the same parsing idea, per this file's own
+ * file-independence rule (docblock above, "mirrors ... as an independent copy").
+ */
+describe("Phase 76b — docs/permissions.md § Systemrollen-Templates matches the code (D-14)", () => {
+  const TEMPLATES_HEADING = "## Systemrollen-Templates";
+  const TEMPLATE_KEY = /`([a-z0-9-]+:[a-z0-9-]+:[A-Z]+)`/g;
+
+  function splitTemplateCells(line: string): string[] {
+    const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+    return trimmed.split("|").map((c) => c.trim());
+  }
+
+  function isTemplateSeparatorRow(cells: string[]): boolean {
+    return cells.length > 0 && cells.every((c) => /^:?-{3,}:?$/.test(c));
+  }
+
+  /** Data rows of the FIRST table under `## Systemrollen-Templates` — own reader, see above. */
+  function readTemplateRows(): string[][] {
+    const doc = readFileSync(DOC_PATH, "utf8");
+    const lines = doc.split("\n");
+    const start = lines.findIndex((l) => l.trimEnd() === TEMPLATES_HEADING);
+    if (start === -1) return [];
+    const tableLines: string[] = [];
+    for (let i = start + 1; i < lines.length; i++) {
+      if (lines[i].startsWith("## ")) break;
+      if (lines[i].trim().startsWith("|")) tableLines.push(lines[i]);
+    }
+    const drop = new Set<number>();
+    tableLines.forEach((line, idx) => {
+      if (isTemplateSeparatorRow(splitTemplateCells(line))) {
+        drop.add(idx);
+        if (idx > 0) drop.add(idx - 1);
+      }
+    });
+    return tableLines.filter((_, idx) => !drop.has(idx)).map(splitTemplateCells);
+  }
+
+  const templateRows = readTemplateRows();
+
+  it(`the section "${TEMPLATES_HEADING}" exists with exactly four data rows (input proof)`, () => {
+    expect(
+      templateRows.length,
+      `docs/permissions.md § "${TEMPLATES_HEADING}" is missing, or its row count changed`,
+    ).toBe(4);
+  });
+
+  /** Cells may be backtick-wrapped (the id and permission-key cells always are); unwrap once. */
+  function unwrapBackticks(cell: string): string {
+    return cell.replace(/^`(.*)`$/, "$1");
+  }
+
+  function rowForSlot(slot: SystemRoleSlot): string[] {
+    const row = templateRows.find((r) => unwrapBackticks(r[1]) === SYSTEM_ROLE_IDS[slot]);
+    if (!row) {
+      throw new Error(
+        `no row for ${slot} (id ${SYSTEM_ROLE_IDS[slot]}) in docs/permissions.md § "${TEMPLATES_HEADING}"`,
+      );
+    }
+    return row;
+  }
+
+  it("every row's id and template name equal SYSTEM_ROLE_IDS / SYSTEM_ROLE_NAMES", () => {
+    for (const slot of ["OWNER", "SALON_MANAGER", "HR", "TRAINER"] as const) {
+      const row = rowForSlot(slot);
+      expect(unwrapBackticks(row[1]), `${slot} id cell`).toBe(SYSTEM_ROLE_IDS[slot]);
+      expect(row[0], `${slot} template cell`).toBe(SYSTEM_ROLE_NAMES[slot]);
+    }
+  });
+
+  it(
+    "Salonmanager/Personalabteilung/Ausbilder's permission cell equals " +
+      "SYSTEM_ROLE_PERMISSIONS, same order",
+    () => {
+      for (const slot of ["SALON_MANAGER", "HR", "TRAINER"] as const) {
+        const row = rowForSlot(slot);
+        const keysInDoc = [...row[3].matchAll(TEMPLATE_KEY)].map((m) => m[1]);
+        expect(keysInDoc, slot).toEqual([...SYSTEM_ROLE_PERMISSIONS[slot]]);
+      }
+    },
+  );
+
+  it("Inhaber's permission cell names the whole catalog, not a key list", () => {
+    const row = rowForSlot("OWNER");
+    expect(row[3]).toBe("jede Permission des Katalogs");
+    expect(row[3]).not.toMatch(TEMPLATE_KEY);
+  });
+});
