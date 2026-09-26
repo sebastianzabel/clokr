@@ -352,9 +352,9 @@
         // 260611-ly6 — Berufsschultage (BS) for the selected employee in the current
         // window. Failure tolerated (empty array) so the rest of the page renders.
         api
-          .get<
-            BsAbsence[]
-          >(`/vocational-school/upcoming?from=${fromDate}&to=${toDate}&employeeId=${empId}`)
+          .get<BsAbsence[]>(
+            `/vocational-school/upcoming?from=${fromDate}&to=${toDate}&employeeId=${empId}`,
+          )
           .catch(() => [] as BsAbsence[]),
       ]);
       entries = rawEntries;
@@ -402,9 +402,9 @@
 
       if (schedule?.type === "SHIFT_BASED") {
         const rawShifts = await api
-          .get<
-            Array<{ date: string; durationMin: number; durationMinNetto: number }>
-          >(`/shifts/range?from=${fromDate}&to=${toDate}&employeeId=${empId}`)
+          .get<Array<{ date: string; durationMin: number; durationMinNetto: number }>>(
+            `/shifts/range?from=${fromDate}&to=${toDate}&employeeId=${empId}`,
+          )
           .catch(
             () => [] as Array<{ date: string; durationMin: number; durationMinNetto: number }>,
           );

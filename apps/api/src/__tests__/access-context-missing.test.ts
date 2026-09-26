@@ -98,8 +98,7 @@ describe("access context missing -> 500 (Phase 77b, Issue #77)", () => {
 
       const guardLogs = logCalls.filter((args) => {
         const first = args[0] as
-          | { route?: unknown; method?: unknown; err?: { name?: unknown } }
-          | undefined;
+          { route?: unknown; method?: unknown; err?: { name?: unknown } } | undefined;
         return (
           typeof first?.route === "string" &&
           first.route.includes("/api/v1/dashboard") &&

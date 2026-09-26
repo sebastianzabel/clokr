@@ -6,14 +6,7 @@ import { DISPLAY_NAME } from "../absence"; // Phase 101B (Issue #101, wave 7)
 // Designed for unit testability (D-06, D-07).
 
 export type PresenceStatus =
-  | "present"
-  | "absent"
-  | "clocked_in"
-  | "missing"
-  | "holiday"
-  | "scheduled"
-  | "requested"
-  | "none";
+  "present" | "absent" | "clocked_in" | "missing" | "holiday" | "scheduled" | "requested" | "none";
 
 export interface PresenceEntry {
   endTime: Date | null;

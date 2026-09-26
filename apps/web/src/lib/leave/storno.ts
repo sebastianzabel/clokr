@@ -44,11 +44,7 @@
 //   Terminal states — the API would 409.
 
 export type LeaveStatus =
-  | "PENDING"
-  | "APPROVED"
-  | "REJECTED"
-  | "CANCELLED"
-  | "CANCELLATION_REQUESTED";
+  "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
 
 /** "withdraw" → API returns 204 (status → CANCELLED).
  *  "request-cancellation" → API returns 200 (status → CANCELLATION_REQUESTED). */

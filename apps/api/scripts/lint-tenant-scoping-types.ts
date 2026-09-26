@@ -204,8 +204,7 @@ export type RequestBindings = {
 
 /** D-14: is this call even a candidate? */
 export type Provenance =
-  | { clientSupplied: true; via: readonly string[] }
-  | { clientSupplied: false; reason: string };
+  { clientSupplied: true; via: readonly string[] } | { clientSupplied: false; reason: string };
 
 /**
  * D-13's three ways, with their sub-forms named so the report says HOW a call passed.
@@ -222,5 +221,4 @@ export type ScopedVia =
   | "guard-fetch";
 
 export type Verdict =
-  | { scoped: true; via: ScopedVia; detail: string }
-  | { scoped: false; detail: string };
+  { scoped: true; via: ScopedVia; detail: string } | { scoped: false; detail: string };

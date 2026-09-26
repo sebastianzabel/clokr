@@ -36,13 +36,7 @@ const EMAIL_DOMAIN = "demo.clokr.de";
 type RoleT = "ADMIN" | "MANAGER" | "EMPLOYEE";
 type SchedT = "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
 type ClsT =
-  | "VOLLZEIT"
-  | "TEILZEIT"
-  | "MINIJOB"
-  | "AZUBI"
-  | "AUSHILFE"
-  | "WERKSTUDENT"
-  | "PRAKTIKANT";
+  "VOLLZEIT" | "TEILZEIT" | "MINIJOB" | "AZUBI" | "AUSHILFE" | "WERKSTUDENT" | "PRAKTIKANT";
 
 // ── Date helpers (calendar math done at UTC midnight — DST-safe) ─────────────
 const DAY_MS = 86_400_000;

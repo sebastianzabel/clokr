@@ -25,12 +25,7 @@
 
 /** Mirror of `ClockResolution["kind"]` in `apps/api/src/services/clock/types.ts`. */
 export type ClockResolutionKind =
-  | "CLOCKED_IN"
-  | "CLOCKED_OUT"
-  | "CONSOLIDATED"
-  | "CONFIRMED"
-  | "DEBOUNCE_NOOP"
-  | "CONFLICT";
+  "CLOCKED_IN" | "CLOCKED_OUT" | "CONSOLIDATED" | "CONFIRMED" | "DEBOUNCE_NOOP" | "CONFLICT";
 
 /** The subset of a closed TimeEntry this module needs to pass through. */
 export interface ClockOutEntry {

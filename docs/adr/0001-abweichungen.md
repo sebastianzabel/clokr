@@ -608,9 +608,9 @@ Drei gemessene Gründe, nicht behauptete:
    `eslint src/ --no-warn-ignored` auf — `apps/api/scripts/` und `apps/web/scripts/` liegen
    außerhalb des übergebenen Pfads, unabhängig von jeder `ignores`-Konfiguration.
 2. **Die Flat-Config schließt beide Apps' `scripts/**`zusätzlich explizit aus** — der
-Typ-bewusste`files: ["**/*.ts"]`-Block in der Wurzel-`eslint.config.js`trägt`ignores: ["apps/web/scripts/**", "apps/api/scripts/**", ...]`mit derselben Begründung wie die
-bereits dort dokumentierten`packages/types/src/\*\*`-Zeilen: kein `tsconfig.json`-Projekt deckt
-diese Bäume ab. Selbst ein künftiger `eslint .`-Aufruf würde diese Dateien also weiterhin
+   Typ-bewusste`files: ["**/*.ts"]`-Block in der Wurzel-`eslint.config.js`trägt`ignores: ["apps/web/scripts/**", "apps/api/scripts/**", ...]`mit derselben Begründung wie die
+   bereits dort dokumentierten`packages/types/src/\*\*`-Zeilen: kein `tsconfig.json`-Projekt deckt
+   diese Bäume ab. Selbst ein künftiger `eslint .`-Aufruf würde diese Dateien also weiterhin
    überspringen, ohne dass jemand die Zeile bewusst gelesen haben müsste.
 3. **`lint-staged`s Glob (`*.{ts,js,svelte}`, Wurzel-`package.json`) trifft `.mjs` überhaupt
    nicht** — vier der 29 Riegel, die dieses Gate beweist (`lint-ui.mjs`, `lint-ui-classes.mjs`,

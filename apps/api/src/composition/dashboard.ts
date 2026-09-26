@@ -378,11 +378,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         // Returns null when no schedule exists (transient state for freshly created employees);
         // frontend treats null as "no daily/weekly target to display".
         scheduleType: (schedule.type ?? null) as
-          | "FIXED_SCHEDULE"
-          | "FLEXTIME"
-          | "MONTHLY_HOURS"
-          | "SHIFT_BASED"
-          | null,
+          "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED" | null,
         month: isMonthlyHoursSchedule
           ? {
               workedHours: round(periodWorkedMinutes / 60),

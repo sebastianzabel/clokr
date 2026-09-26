@@ -401,8 +401,7 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
         // Phase 96-review (WR-02) — carries the JArbSchG soft-warn (if any) out of the
         // block below so it can be folded into checkArbZG's warnings after the tx commits.
         let correctionSoftWarn:
-          | NonNullable<Awaited<ReturnType<typeof checkJArbSchG>>["softWarn"]>
-          | undefined;
+          NonNullable<Awaited<ReturnType<typeof checkJArbSchG>>["softWarn"]> | undefined;
         if (hasManagerCorrection) {
           const correctedStart = body.startTime
             ? fromZonedTime(`${targetDateStr}T${body.startTime}:00`, tz)
