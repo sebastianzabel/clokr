@@ -311,19 +311,38 @@ export async function materializeLegacyRoleAssignment(
 }
 
 /**
- * True when setting `role` on `userId` would change nothing: the user has no stored assignment in
- * `tenantId` and its `User.role` column already equals `role`, so the fallback (D-08) yields
- * exactly that system role. The employee form sends the role with every save, and a request that
- * changes nothing writes nothing — neither a materialized row nor an audit (74b D-07/D-12).
+ * Phase 76b (Issue #76) D-16, P-05: true when setting `role` on `userId` would request nothing new
+ * — the requested value equals the target's `User.role` **column**, whether or not the user has
+ * any stored assignment in `tenantId`. Replaces the pre-76b fallback-only no-op predicate, which
+ * excluded any user WITH stored rows and so let an unrelated employee-form save run the bridge
+ * (and its demotion guard) on every save of a Phase 76b template holder or TENANT customer-role
+ * holder.
+ *
+ * The column is what `GET /employees/:id` serves and what the employee form echoes back on every
+ * "Stammdaten speichern" (`+page.svelte:602`, `:740`). For a fallback user (D-08) the column IS the
+ * published compat role. For a user with stored rows, every assignment write path since 75b
+ * (D-14/D-29) keeps the column in sync with the derivation over those rows — but the two CAN
+ * disagree: a 74b-era write or a hand-inserted row can leave a stale column
+ * (`role-assignment-audit.ts:140-142` documents that case). When they disagree, the column is the
+ * only value the form has ever shown and sent back, so this compares against the column, never
+ * against {@link compatRoleForUser} or {@link deriveCompatRole} (P-05): comparing against the
+ * derivation would turn a stale-high column into an unrequested role change on an unrelated save —
+ * exactly the defect D-16 closes. Accepted residual: for a stale-low column, an admin cannot demote
+ * through the form in one step; the role-assignment API remains available for that.
+ *
+ * A request that changes nothing writes nothing: no materialized row, no demotion check, no audit
+ * (74b D-07/D-12). Returns false when `userId` does not belong to an employee of `tenantId` (the
+ * column lookup yields null), so that case always runs the ordinary path below.
+ *
+ * Lives here, not in employees.ts, because this module is the role-check gate's single allowlisted
+ * file (D-19).
  */
-export async function legacyFallbackAlreadyYields(
+export async function requestedRoleUnchanged(
   db: Prisma.TransactionClient,
   tenantId: string,
   userId: string,
   role: Role,
 ): Promise<boolean> {
-  const stored = await db.roleAssignment.count({ where: { tenantId, userId } });
-  if (stored > 0) return false;
   return (await legacyRoleColumn(db, tenantId, userId)) === role;
 }
 

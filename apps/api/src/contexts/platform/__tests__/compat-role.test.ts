@@ -23,9 +23,9 @@ import {
   isDemotionToEmployee,
   isLegacySystemRoleId,
   parseCompatRoleFilter,
-  legacyFallbackAlreadyYields,
   materializeLegacyRoleAssignment,
   replaceSystemRoleAssignment,
+  requestedRoleUnchanged,
   RoleDemotionBlockedError,
   syncCompatRoleColumn,
   systemRoleIdForLegacyRole,
@@ -686,14 +686,45 @@ describe("compat role — write half against the database (D-14, D-15, D-26)", (
     expect(await app.prisma.roleAssignment.count({ where: { userId: foreign.id } })).toBe(0);
   });
 
-  it("legacyFallbackAlreadyYields is true only for a fallback user whose column equals the role", async () => {
-    const fallback = await createUser(seed.tenant.id, "EMPLOYEE", "yields");
-    const yields = (role: Role) =>
-      legacyFallbackAlreadyYields(app.prisma, seed.tenant.id, fallback.id, role);
-    expect(await yields("EMPLOYEE")).toBe(true);
-    expect(await yields("MANAGER")).toBe(false);
+  it("requestedRoleUnchanged compares with the User.role column, stored rows or not (D-16, P-05)", async () => {
+    const fallback = await createUser(seed.tenant.id, "EMPLOYEE", "unchanged");
+    const yields = (userId: string, role: Role) =>
+      requestedRoleUnchanged(app.prisma, seed.tenant.id, userId, role);
+    expect(await yields(fallback.id, "EMPLOYEE")).toBe(true);
+    expect(await yields(fallback.id, "MANAGER")).toBe(false);
+    expect(await yields(fallback.id, "ADMIN")).toBe(false);
+
     await assign(fallback.id, SYSTEM_ROLE_IDS.EMPLOYEE);
-    expect(await yields("EMPLOYEE")).toBe(false);
+    // Before D-16 the fallback-only predicate answered false here — it required no stored row at
+    // all — and that exclusion sent every form save of a user with stored rows through the bridge,
+    // including an unrelated save by a Personalabteilung/customer-role holder.
+    expect(await yields(fallback.id, "EMPLOYEE")).toBe(true);
+
+    const hrHolder = await createUser(seed.tenant.id, "EMPLOYEE", "unchanged-hr");
+    await assign(hrHolder.id, SYSTEM_ROLE_IDS.HR);
+    await assign(hrHolder.id, SYSTEM_ROLE_IDS.EMPLOYEE);
+    expect(await syncCompatRoleColumn(app.prisma, seed.tenant.id, hrHolder.id)).toEqual({
+      from: "EMPLOYEE",
+      to: "MANAGER",
+    });
+    expect(await yields(hrHolder.id, "MANAGER")).toBe(true);
+    expect(await yields(hrHolder.id, "EMPLOYEE")).toBe(false);
+    expect(await yields(hrHolder.id, "ADMIN")).toBe(false);
+
+    // P-05: a stale column wins over the derivation. The column stays EMPLOYEE (never synced)
+    // while the stored HR row derives MANAGER — input proof via compatRoleForUser.
+    const stale = await createUser(seed.tenant.id, "EMPLOYEE", "unchanged-stale");
+    await assign(stale.id, SYSTEM_ROLE_IDS.HR);
+    expect(await compatRoleForUser(app.prisma, stale.id, seed.tenant.id, "EMPLOYEE")).toBe(
+      "MANAGER",
+    );
+    expect(await yields(stale.id, "EMPLOYEE")).toBe(true);
+    expect(await yields(stale.id, "MANAGER")).toBe(false);
+
+    const foreign = await createUser(other.tenant.id, "EMPLOYEE", "unchanged-foreign");
+    expect(await yields(foreign.id, "EMPLOYEE")).toBe(false);
+    expect(await yields(foreign.id, "MANAGER")).toBe(false);
+    expect(await yields(foreign.id, "ADMIN")).toBe(false);
   });
 
   it("replaceSystemRoleAssignment swaps only the TENANT system row; customer and SALONS rows stay", async () => {

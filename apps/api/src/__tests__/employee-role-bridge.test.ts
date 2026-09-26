@@ -867,4 +867,197 @@ describe("Role bridge: employee form, compat column and fallback materialization
       expect(await newAuditsSince(target.user.id, before)).toEqual([]);
     });
   });
+
+  // Phase 76b Plan 08 (Issue #76), D-16/P-05: the employee form always echoes back the compat
+  // column on every "Stammdaten speichern" (+page.svelte:602, :740). Before this fix, sending that
+  // SAME value back still ran replaceSystemRoleAssignment on every save for a user WITH stored
+  // rows — granting Manager to a Personalabteilung/customer-role holder (T-76b-28) and 409-ing a
+  // SALONS/PERSONS template holder's Stammdaten save (T-76b-29).
+  describe("Phase 76b — an unchanged form role is no role change (D-16)", () => {
+    let other: Awaited<ReturnType<typeof createPerson>>;
+    const entryWindow = { from: "2026-01-01", to: "2026-01-31" };
+
+    function assignmentRequestAsAdmin(method: "POST" | "DELETE", path: string, payload?: object) {
+      return app.inject({
+        method,
+        url: `/api/v1/role-assignments${path}`,
+        headers: { authorization: `Bearer ${tenant.adminToken}` },
+        ...(payload !== undefined ? { payload } : {}),
+      });
+    }
+
+    /** Grants through the audited role-assignment API, as production does — never a direct insert,
+     * so the column stays in sync with the stored rows exactly as it would in production. */
+    async function grant(
+      userId: string,
+      accessRoleId: string,
+      scope: object = { type: "TENANT" },
+    ): Promise<string> {
+      const res = await assignmentRequestAsAdmin("POST", "", { userId, accessRoleId, scope });
+      expect(res.statusCode).toBe(201);
+      return (JSON.parse(res.body) as { id: string }).id;
+    }
+
+    async function revoke(id: string): Promise<void> {
+      const res = await assignmentRequestAsAdmin("DELETE", `/${id}`);
+      expect(res.statusCode).toBe(204);
+    }
+
+    /** A fallback-EMPLOYEE person with no stored assignment yet (D-08). */
+    function templatePerson(label: string) {
+      return createPerson(tenant.tenant.id, label, "EMPLOYEE");
+    }
+
+    async function snapshot(userId: string) {
+      return {
+        rows: await storedAssignments(tenant.tenant.id, userId),
+        audits: await roleAssignmentAudits(userId),
+        userAudits: await app.prisma.auditLog.count({
+          where: { entity: "User", entityId: userId },
+        }),
+        column: await columnRole(userId),
+      };
+    }
+
+    function timeEntriesOf(token: string, employeeId: string) {
+      return app.inject({
+        method: "GET",
+        url: `/api/v1/time-entries?employeeId=${employeeId}&from=${entryWindow.from}&to=${entryWindow.to}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+    }
+
+    beforeAll(async () => {
+      other = await templatePerson("Unveraendert Fremd");
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: other.employee.id,
+          date: new Date("2026-01-15T00:00:00.000Z"),
+          startTime: new Date("2026-01-15T08:00:00.000Z"),
+          endTime: new Date("2026-01-15T16:00:00.000Z"),
+          breakMinutes: 0,
+          source: "MANUAL",
+          type: "WORK",
+          salonId: tenant.salonId,
+        },
+      });
+      // Input proof: the admin actually sees the other person's entry inside the fixed window.
+      const proof = await timeEntriesOf(tenant.adminToken, other.employee.id);
+      expect(proof.statusCode).toBe(200);
+      const proofBody = JSON.parse(proof.body) as { employeeId: string }[];
+      expect(proofBody.some((entry) => entry.employeeId === other.employee.id)).toBe(true);
+    });
+
+    it.each(["alone", "with Mitarbeiter"] as const)(
+      "Personalabteilung (HR) %s: PATCH echoing the column changes no assignment, and P-02's 403/own-only holds",
+      async (variant) => {
+        const target = await templatePerson(`Unveraendert HR ${variant}`);
+        expect(await storedAssignments(tenant.tenant.id, target.user.id)).toEqual([]);
+        await grant(target.user.id, SYSTEM_ROLE_IDS.HR);
+        const rowsAfterGrant = await storedAssignments(tenant.tenant.id, target.user.id);
+        const materialized = rowsAfterGrant.find(
+          (row) => row.accessRoleId === SYSTEM_ROLE_IDS.EMPLOYEE,
+        );
+        expect(materialized).toBeDefined();
+        if (variant === "alone") {
+          await revoke(materialized!.id);
+        }
+        expect(await columnRole(target.user.id)).toBe("MANAGER");
+        const before = await snapshot(target.user.id);
+
+        const res = await patchEmployee(tenant.adminToken, target.employee.id, {
+          role: "MANAGER",
+          lastName: "Unveraendert Geaendert",
+        });
+        expect(res.statusCode).toBe(200);
+
+        expect(
+          (await app.prisma.employee.findUniqueOrThrow({ where: { id: target.employee.id } }))
+            .lastName,
+        ).toBe("Unveraendert Geaendert");
+        const after = await snapshot(target.user.id);
+        expect(after.rows).toEqual(before.rows);
+        expect(
+          after.rows.find((row) => row.accessRoleId === SYSTEM_ROLE_IDS.MANAGER),
+        ).toBeUndefined();
+        expect(after.audits).toEqual(before.audits);
+        expect(after.userAudits).toBe(before.userAudits);
+        expect(after.column).toBe("MANAGER");
+
+        const { accessToken } = await login(target.email);
+        const timeEntriesRes = await timeEntriesOf(accessToken, other.employee.id);
+        if (variant === "alone") {
+          expect(timeEntriesRes.statusCode).toBe(403);
+          expect(JSON.parse(timeEntriesRes.body)).toEqual({ error: "Forbidden" });
+        } else {
+          expect(timeEntriesRes.statusCode).toBe(200);
+          const entries = JSON.parse(timeEntriesRes.body) as { employeeId: string }[];
+          expect(entries.every((entry) => entry.employeeId !== other.employee.id)).toBe(true);
+        }
+      },
+    );
+
+    it("a TENANT customer role granting role:read:ZUGEWIESEN, plus Mitarbeiter: PATCH echoing the column changes no assignment (D-16)", async () => {
+      const target = await templatePerson("Unveraendert Kundenrolle");
+      const name = `Unveraendert Kundenrolle ${crypto.randomBytes(3).toString("hex")}`;
+      const customerRole = await app.prisma.accessRole.create({
+        data: {
+          tenantId: tenant.tenant.id,
+          name,
+          nameKey: roleNameKey(name),
+          permissions: normalizeRolePermissions(["role:read:ZUGEWIESEN"]),
+        },
+      });
+      await grant(target.user.id, customerRole.id);
+      expect(await columnRole(target.user.id)).toBe("MANAGER");
+
+      const { accessToken } = await login(target.email);
+      expect((await listEmployees(accessToken)).statusCode).toBe(403);
+
+      const before = await snapshot(target.user.id);
+      const res = await patchEmployee(tenant.adminToken, target.employee.id, {
+        role: "MANAGER",
+        firstName: "Unveraendert Vorname",
+      });
+      expect(res.statusCode).toBe(200);
+
+      const after = await snapshot(target.user.id);
+      expect(after).toEqual(before);
+      expect((await listEmployees(accessToken)).statusCode).toBe(403);
+    });
+
+    it.each([
+      [
+        "Salonmanager",
+        SYSTEM_ROLE_IDS.SALON_MANAGER,
+        () => ({ type: "SALONS", salonIds: [tenant.salonId] }),
+      ],
+      [
+        "Ausbilder",
+        SYSTEM_ROLE_IDS.TRAINER,
+        () => ({ type: "PERSONS", employeeIds: [other.employee.id] }),
+      ],
+    ] as const)(
+      "%s at scope + Mitarbeiter: PATCH echoing EMPLOYEE answers 200, not 409 (D-16)",
+      async (label, accessRoleId, scope) => {
+        const target = await templatePerson(`Unveraendert ${label}`);
+        await grant(target.user.id, accessRoleId, scope());
+        expect(await columnRole(target.user.id)).toBe("EMPLOYEE");
+        const before = await snapshot(target.user.id);
+
+        const res = await patchEmployee(tenant.adminToken, target.employee.id, {
+          role: "EMPLOYEE",
+          lastName: "Unveraendert Vorlage",
+        });
+        expect(res.statusCode).toBe(200);
+
+        expect(
+          (await app.prisma.employee.findUniqueOrThrow({ where: { id: target.employee.id } }))
+            .lastName,
+        ).toBe("Unveraendert Vorlage");
+        const after = await snapshot(target.user.id);
+        expect(after).toEqual(before);
+      },
+    );
+  });
 });
