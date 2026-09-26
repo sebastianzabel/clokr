@@ -21,6 +21,7 @@ import {
   compatRoleUserWhere,
   deriveCompatRole,
   isDemotionToEmployee,
+  isLegacySystemRoleId,
   parseCompatRoleFilter,
   legacyFallbackAlreadyYields,
   materializeLegacyRoleAssignment,
@@ -217,6 +218,42 @@ describe("compat role — assignmentExceedsEmployee (Issue #357 sub-fix B)", () 
         systemRow("ADMIN", { scopeType: "TENANT", salonIds: ["salon-1"], employeeIds: [] }),
       ),
     ).toBe(false);
+  });
+});
+
+// Phase 76b (Issue #76), P-01: `isSystemRoleId()` covers all seven system roles once Plan 76b-01
+// lands (D-03), but the employee-form bridge (`replaceSystemRoleAssignment`,
+// `assignmentsBlockingDemotionToEmployee`) must keep narrowing itself to the THREE legacy ids
+// (Admin, Manager, Mitarbeiter). D-10 is a locked decision, pinned here unmodified: a TENANT
+// Inhaber or Personalabteilung assignment derives MANAGER (never ADMIN, never a new value); a
+// SALONS/PERSONS-scoped Salonmanager or Ausbilder assignment contributes nothing.
+describe("Phase 76b — templates in the compat module (P-01, D-10)", () => {
+  it("isLegacySystemRoleId is true only for Admin, Manager and Mitarbeiter", () => {
+    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.ADMIN)).toBe(true);
+    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.MANAGER)).toBe(true);
+    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.EMPLOYEE)).toBe(true);
+    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.OWNER)).toBe(false);
+    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.SALON_MANAGER)).toBe(false);
+    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.HR)).toBe(false);
+    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.TRAINER)).toBe(false);
+    expect(isLegacySystemRoleId("00000000-0000-4000-8000-000000000000")).toBe(false);
+    expect(isLegacySystemRoleId("")).toBe(false);
+  });
+
+  it("D-10 pinned: TENANT Inhaber and TENANT Personalabteilung derive MANAGER; SALONS Salonmanager and PERSONS Ausbilder contribute nothing", () => {
+    expect(deriveCompatRole(TENANT, [systemRow("OWNER")])).toBe("MANAGER");
+    expect(deriveCompatRole(TENANT, [systemRow("HR")])).toBe("MANAGER");
+    expect(
+      deriveCompatRole(TENANT, [
+        systemRow("SALON_MANAGER", { scopeType: "SALONS", salonIds: ["salon-1"], employeeIds: [] }),
+      ]),
+    ).toBe("EMPLOYEE");
+    expect(
+      deriveCompatRole(TENANT, [
+        systemRow("TRAINER", { scopeType: "PERSONS", salonIds: [], employeeIds: ["employee-1"] }),
+      ]),
+    ).toBe("EMPLOYEE");
+    expect(deriveCompatRole(TENANT, [systemRow("ADMIN"), systemRow("OWNER")])).toBe("ADMIN");
   });
 });
 
@@ -696,6 +733,37 @@ describe("compat role — write half against the database (D-14, D-15, D-26)", (
     expect(
       await replaceSystemRoleAssignment(app.prisma, seed.tenant.id, user.id, "EMPLOYEE"),
     ).toEqual({ removed: [], created: null });
+  });
+
+  // Phase 76b (Issue #76), P-01: a Phase 76b template (here Personalabteilung/HR) held at TENANT
+  // scope is NOT one of the three legacy system roles `replaceSystemRoleAssignment` swaps — it
+  // must survive a demotion to Mitarbeiter exactly like a customer-role row does, and it must be
+  // named by `assignmentsBlockingDemotionToEmployee` beforehand.
+  it("replaceSystemRoleAssignment leaves a TENANT Personalabteilung (HR) template row untouched; the guard names it first", async () => {
+    const user = await createUser(seed.tenant.id, "MANAGER", "template-replace");
+    const hrRow = await assign(user.id, SYSTEM_ROLE_IDS.HR);
+    const managerRow = await assign(user.id, SYSTEM_ROLE_IDS.MANAGER);
+
+    const blocking = await assignmentsBlockingDemotionToEmployee(
+      app.prisma,
+      seed.tenant.id,
+      user.id,
+    );
+    expect(blocking.map((row) => row.id)).toEqual([hrRow.id]);
+    expect(blocking[0]).toMatchObject({ roleName: "Personalabteilung", scopeType: "TENANT" });
+
+    const { removed, created } = await replaceSystemRoleAssignment(
+      app.prisma,
+      seed.tenant.id,
+      user.id,
+      "EMPLOYEE",
+    );
+    expect(removed.map((row) => row.id)).toEqual([managerRow.id]);
+    expect(created).toMatchObject({ accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE, scopeType: "TENANT" });
+
+    const rows = await rowsOf(user.id);
+    expect(rows.map((row) => row.id).sort()).toEqual([hrRow.id, created!.id].sort());
+    expect(rows.find((row) => row.id === hrRow.id)).toEqual(hrRow);
   });
 
   // Issue #357 sub-fix B: before this fix nothing stopped `replaceSystemRoleAssignment` (called by
