@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.12.0](https://github.com/sebastianzabel/clokr/compare/v1.11.1...v1.12.0) (2026-09-26)
+
+
+### Features
+
+* **325:** Schicht bekommt Salonbezug — Öffnungszeitprüfung pro Salon ([#339](https://github.com/sebastianzabel/clokr/issues/339)) ([5f77e92](https://github.com/sebastianzabel/clokr/commit/5f77e921a2c4bf91891fca40252bcb307f747b92))
+* **344-01:** Schicht ohne Salon übernimmt salonForDay() statt ältestem Salon ([#351](https://github.com/sebastianzabel/clokr/issues/351)) ([7f4b88e](https://github.com/sebastianzabel/clokr/commit/7f4b88e87117ee5fb4ebe6705ec7dd48c1ae4bb1)), closes [#344](https://github.com/sebastianzabel/clokr/issues/344)
+* **64b:** Salon als Ebene unter dem Mandanten ([#336](https://github.com/sebastianzabel/clokr/issues/336)) ([c3777eb](https://github.com/sebastianzabel/clokr/commit/c3777eb0c0a383f7556ce0681d08504718e673c8))
+* **65b:** Phorest-Kopplung pro Salon statt pro Mandant ([#348](https://github.com/sebastianzabel/clokr/issues/348)) ([5bab411](https://github.com/sebastianzabel/clokr/commit/5bab411f51a240ecacdcb04f43f59a03dd0adce6))
+* **67b:** Salonzuordnung — Stammsalon und Einsatzsalons mit Gültigkeitszeitraum ([#340](https://github.com/sebastianzabel/clokr/issues/340)) ([6ebcd13](https://github.com/sebastianzabel/clokr/commit/6ebcd133bf5474f947537ebe91db0b07586d44fe))
+* **68b:** Zeiteintrag bekommt Salonbezug ([#353](https://github.com/sebastianzabel/clokr/issues/353)) ([704b1ee](https://github.com/sebastianzabel/clokr/commit/704b1ee55c073ee39c19f72249de5f6668445c1a))
+* **69b:** Tageszugriffe auf Zeiteinträge über findEntriesOfDay kapseln ([#326](https://github.com/sebastianzabel/clokr/issues/326)) ([a03b4e3](https://github.com/sebastianzabel/clokr/commit/a03b4e3a29e57cac2b2cd27e6a9aae55601b5dcc))
+* **71b:** Bundesland und Feiertage pro Salon ([#364](https://github.com/sebastianzabel/clokr/issues/364)) ([c55ed15](https://github.com/sebastianzabel/clokr/commit/c55ed15e1e311fb0ed5295ab543f6897404fd491))
+* **72b:** Permission-Katalog — Ressource × Aktion × Reichweite als Code, mit Zuordnung aller Rollenprüfungen ([#328](https://github.com/sebastianzabel/clokr/issues/328)) ([b82e217](https://github.com/sebastianzabel/clokr/commit/b82e2179d86ad933a146d5941109a5daae59a416))
+* **73b:** Rollen als Permission-Bündel — Systemrollen nicht editierbar, Kundenrollen per API ([#335](https://github.com/sebastianzabel/clokr/issues/335)) ([6e36ac5](https://github.com/sebastianzabel/clokr/commit/6e36ac57709b1a095ea1be85da0804a90e24ff60))
+* **74b:** Rollenzuweisung mit Scope — Mandant, Salon, Personen; Aussperrschutz ([#337](https://github.com/sebastianzabel/clokr/issues/337)) ([2f6765c](https://github.com/sebastianzabel/clokr/commit/2f6765cdd7a1843b852cbdd40faac3ef36d74b7e))
+* **75b:** Rechteneutrale Migration und Umstellung der API auf Permissions ([#354](https://github.com/sebastianzabel/clokr/issues/354)) ([3c4e46c](https://github.com/sebastianzabel/clokr/commit/3c4e46cf197a2bd6a400c2df0fc0caf71b3a33fb))
+* **76b:** Systemrollen-Templates Inhaber, Salonmanager, Personalabteilung, Ausbilder ([#369](https://github.com/sebastianzabel/clokr/issues/369)) ([2de5ccf](https://github.com/sebastianzabel/clokr/commit/2de5ccf038e1fc8f4e4b05156cb8f4956e953f32))
+* **77b:** Zentraler, fail-closed Zugriffskontext — Fundament für [#91](https://github.com/sebastianzabel/clokr/issues/91) ([#329](https://github.com/sebastianzabel/clokr/issues/329)) ([d3ccf8c](https://github.com/sebastianzabel/clokr/commit/d3ccf8cb10623f75f8e27f3f3aaf7002a3ff5b09))
+* **91b:** Scope-Grenze Salon/Personen in der Datenzugriffsschicht ([#366](https://github.com/sebastianzabel/clokr/issues/366)) ([3db23d8](https://github.com/sebastianzabel/clokr/commit/3db23d8eb6e33b956429038bd727454769db4e80))
+
+
+### Bug Fixes
+
+* **259:** Existenz-Orakel in POST /avatars geschlossen — und ein Prüfer, der T-100-09 bewacht ([#311](https://github.com/sebastianzabel/clokr/issues/311)) ([e26f838](https://github.com/sebastianzabel/clokr/commit/e26f8381c1686fc7b09749599dbb73a2895c2f5f))
+* **293/294:** Überstundenausgleich — eine Soll-Quelle, Buchung und Neuberechnung atomar ([#324](https://github.com/sebastianzabel/clokr/issues/324)) ([bea6b5c](https://github.com/sebastianzabel/clokr/commit/bea6b5c76b2606e038e13c3ea1f19cc3900152a5)), closes [#294](https://github.com/sebastianzabel/clokr/issues/294)
+* **303:** Abwesenheitsart auf /leave — eine Sichtbarkeitsregel statt vier, und mobil nicht mehr nur Farbe ([#315](https://github.com/sebastianzabel/clokr/issues/315)) ([cb0fbcd](https://github.com/sebastianzabel/clokr/commit/cb0fbcd85e6c6325d1402287b1d7c062711c9bee))
+* **307:** Ausstempeln in der ersten Minute ist nicht mehr stumm — Kanal statt Herkunft, 409 statt 200 ([#316](https://github.com/sebastianzabel/clokr/issues/316)) ([f418c7a](https://github.com/sebastianzabel/clokr/commit/f418c7a232f1ca2a070b6656a020454a7f1f90d6))
+* **309/310:** Existenz-Orakel über Mandantengrenzen in /leave/requests/:id und /time-entries/:id/breaks geschlossen ([#317](https://github.com/sebastianzabel/clokr/issues/317)) ([c5f4fd2](https://github.com/sebastianzabel/clokr/commit/c5f4fd26da20f84155b35abdba4e2e684bf99e88))
+* **319:** Testdatum bleibt im laufenden Jahr, sonst lädt die Liste es nie ([#320](https://github.com/sebastianzabel/clokr/issues/320)) ([0bd1277](https://github.com/sebastianzabel/clokr/commit/0bd1277c8f05bc5d8b98e43d48ccf32ea197971b)), closes [#319](https://github.com/sebastianzabel/clokr/issues/319)
+* **330:** 5xx-Antworten geben keine internen Fehlertexte mehr an den Client ([#331](https://github.com/sebastianzabel/clokr/issues/331)) ([c5e6801](https://github.com/sebastianzabel/clokr/commit/c5e68016206f08b539fa44170d7c98bfb0a3fa3e))
+* **332:** Presence-Webhook antwortet bei ungültiger MAC mit 400 statt 500 ([#334](https://github.com/sebastianzabel/clokr/issues/334)) ([966921f](https://github.com/sebastianzabel/clokr/commit/966921fe3e33f1864f43be05635caa5f61ca6845))
+* **333:** API-Schlüssel-Audit-Einträge scheitern nicht mehr am Fremdschlüssel auf User ([#361](https://github.com/sebastianzabel/clokr/issues/361)) ([a0eaf66](https://github.com/sebastianzabel/clokr/commit/a0eaf66bd8be671bf4f411d6661d07d9540478f7)), closes [#360](https://github.com/sebastianzabel/clokr/issues/360)
+* **346/358/359:** Eigene-Reichweite-Lücken beim Ausstempeln, Einstempeln und Selbstbedienungs-Pfaden ([#362](https://github.com/sebastianzabel/clokr/issues/362)) ([40d8cdf](https://github.com/sebastianzabel/clokr/commit/40d8cdf26d3c5b979616d7b3c60d0e129a5f938a))
+* fünf Befunde aus Phase 75b ([#341](https://github.com/sebastianzabel/clokr/issues/341), [#347](https://github.com/sebastianzabel/clokr/issues/347), [#355](https://github.com/sebastianzabel/clokr/issues/355), [#356](https://github.com/sebastianzabel/clokr/issues/356), [#357](https://github.com/sebastianzabel/clokr/issues/357)) ([#363](https://github.com/sebastianzabel/clokr/issues/363)) ([4ce0f1b](https://github.com/sebastianzabel/clokr/commit/4ce0f1b880ccbfb3b8319027fd50e0d3a7c0c6ea))
+
 ## [1.11.1](https://github.com/sebastianzabel/clokr/compare/v1.11.0...v1.11.1) (2026-09-21)
 
 
