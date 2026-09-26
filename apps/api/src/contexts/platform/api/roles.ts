@@ -73,12 +73,16 @@ const idParamSchema = z.object({ id: z.string().min(1) });
 const updateRoleSchema = z.object({
   name: nameSchema.nullish(),
   permissions: permissionsSchema.nullish(),
+  // Phase 78b (issue #78, D-05): explicit confirmation of a combination-creating save.
+  confirm: z.boolean().nullish(),
 });
 
 // `.nullish()` on `name`: the route parses `req.body ?? {}`, so a bodyless copy still parses, and
 // the T-100-09 probe's `minimalBody: {}` reaches the tenant guard before anything is created.
 const copyRoleSchema = z.object({
   name: nameSchema.nullish(),
+  // Phase 78b (issue #78, D-05): a copy is a new creation (D-04) — its own confirmation.
+  confirm: z.boolean().nullish(),
 });
 
 /** Bound on the generated-name retry loop (D-06/D-07) — never actually reached in practice. */
@@ -264,7 +268,7 @@ export async function roleRoutes(app: FastifyInstance) {
       security: [{ bearerAuth: [] }],
       summary: "Update a customer role",
       description:
-        "Changes name and/or permissions of a customer role of the caller's own tenant. A no-op request (nothing actually changes) writes nothing and audits nothing. A system role is never changeable and answers 409. A change that would remove the last tenant-wide holder of role:manage or role-assignment:manage answers 409 and changes nothing (lockout protection). A role the caller currently holds via any own assignment answers 403 unless the caller also holds role-assignment:manage (self-service escalation, issue #354). A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
+        "Changes name and/or permissions of a customer role of the caller's own tenant. A no-op request (nothing actually changes) writes nothing and audits nothing. A system role is never changeable and answers 409. A change that would remove the last tenant-wide holder of role:manage or role-assignment:manage answers 409 and changes nothing (lockout protection). A role the caller currently holds via any own assignment answers 403 unless the caller also holds role-assignment:manage (self-service escalation, issue #354). A permission change that newly combines changing one's own time entries with approving time corrections (the four-eyes combination, issue #78) answers 409 FOUR_EYES_CONFIRMATION_REQUIRED unless the body carries confirm: true, checked after the lockout guard so a change that also causes a lockout answers the lockout 409 instead; the confirmation is then recorded in the UPDATE audit entry. A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
     },
     preHandler: requirePermission("role:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
@@ -311,9 +315,13 @@ export async function roleRoutes(app: FastifyInstance) {
         nextPermissions.length === existing.permissions.length &&
         nextPermissions.every((p, i) => p === existing.permissions[i]);
       if (nextName === existing.name && permissionsUnchanged) {
-        // A no-op is not a change (D-CONTEXT PATCH note): nothing to write, nothing to audit.
+        // A no-op is not a change (D-CONTEXT PATCH note): nothing to write, nothing to audit. A
+        // no-op can never create the combination, so this early return needs no four-eyes check.
         return toRoleResponse(existing);
       }
+
+      // D-04: PATCH's "before" is the stored permissions prior to this change.
+      const createsCombination = createsFourEyesCombination(existing.permissions, nextPermissions);
 
       const nextNameKey = roleNameKey(nextName);
 
@@ -328,8 +336,8 @@ export async function roleRoutes(app: FastifyInstance) {
           // tenant-wide holder. The guard runs on EVERY update (it can only fire on a >= 1 -> 0
           // transition), so no per-trigger "which permissions were removed" logic can drift. The
           // update and its audit run on the transaction client; RoleLockoutError rolls both back.
-          return withRoleLockoutGuard(tx, req.user.tenantId, async () => {
-            const row = await tx.accessRole.update({
+          const row = await withRoleLockoutGuard(tx, req.user.tenantId, async () => {
+            const updatedRow = await tx.accessRole.update({
               where: { id },
               data: { name: nextName, nameKey: nextNameKey, permissions: nextPermissions },
             });
@@ -337,12 +345,26 @@ export async function roleRoutes(app: FastifyInstance) {
               tx,
               action: "UPDATE",
               entity: "AccessRole",
-              entityId: row.id,
+              entityId: updatedRow.id,
               oldValue: { name: existing.name, permissions: existing.permissions },
-              ...requestAuditFields(req, { name: row.name, permissions: row.permissions }),
+              ...requestAuditFields(req, {
+                name: updatedRow.name,
+                permissions: updatedRow.permissions,
+                // Gated on the computed transition, never on body.confirm alone (Pitfall 2).
+                ...(createsCombination ? { fourEyesWarningConfirmed: true } : {}),
+              }),
             });
-            return row;
+            return updatedRow;
           });
+          // P-01: checked AFTER withRoleLockoutGuard returns, still inside this same transaction —
+          // a change that ALSO causes a lockout answers the lockout 409 instead (the lockout guard
+          // can only decide after the write; D-06 says the four-eyes 409 is only for an otherwise-
+          // valid request). The row is already updated and audited at this point; throwing here
+          // rolls back both.
+          if (createsCombination && body.confirm !== true) {
+            throw new FourEyesConfirmationRequiredError();
+          }
+          return row;
         });
 
         if (!updated) {
@@ -352,6 +374,9 @@ export async function roleRoutes(app: FastifyInstance) {
       } catch (err: unknown) {
         if (err instanceof RoleLockoutError) {
           return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
+        }
+        if (err instanceof FourEyesConfirmationRequiredError) {
+          return reply.code(409).send(FOUR_EYES_CONFIRMATION_REPLY);
         }
         if (isPrismaErrorCode(err, "P2002")) {
           return reply.code(409).send({ error: ROLE_NAME_CONFLICT_MESSAGE });
@@ -447,7 +472,7 @@ export async function roleRoutes(app: FastifyInstance) {
       security: [{ bearerAuth: [] }],
       summary: "Copy a role into an own customer role",
       description:
-        "Creates a customer role of the caller's own tenant with the same permissions as a system role or an own customer role. Without an explicit name, one is generated from the source name: '<Quelle> (Kopie)', then '(Kopie 2)', '(Kopie 3)' … An explicit name that collides is rejected with 409, same as create. A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
+        "Creates a customer role of the caller's own tenant with the same permissions as a system role or an own customer role. Without an explicit name, one is generated from the source name: '<Quelle> (Kopie)', then '(Kopie 2)', '(Kopie 3)' … An explicit name that collides is rejected with 409, same as create. A copy is treated as a new creation (issue #78, D-04): a source that holds the four-eyes combination (changing one's own time entries plus approving time corrections) answers 409 FOUR_EYES_CONFIRMATION_REQUIRED unless the body carries confirm: true, regardless of whether the source's own confirmation was already recorded; the confirmation is then recorded in the COPY audit entry. A foreign tenant's customer role and a nonexistent id both answer 404 with the same body (T-100-09).",
     },
     preHandler: requirePermission("role:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
@@ -471,6 +496,9 @@ export async function roleRoutes(app: FastifyInstance) {
 
       const tenantId = req.user.tenantId;
       const permissions = normalizeRolePermissions(source.permissions);
+      // D-04: a copy is a new creation — "before" is always empty, regardless of whether the
+      // source itself already holds the combination (with or without a recorded confirmation).
+      const createsCombination = createsFourEyesCombination([], permissions);
 
       try {
         const created = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -499,6 +527,12 @@ export async function roleRoutes(app: FastifyInstance) {
             nameKey = generatedNameKey;
           }
 
+          // Pitfall 1: run this LAST, after the name resolution above, so a request that fails
+          // both answers 409 name-conflict (existing precedence wins, D-06).
+          if (createsCombination && body.confirm !== true) {
+            throw new FourEyesConfirmationRequiredError();
+          }
+
           const row = await tx.accessRole.create({
             data: { tenantId, name, nameKey, permissions },
           });
@@ -513,6 +547,8 @@ export async function roleRoutes(app: FastifyInstance) {
               tenantId: row.tenantId,
               copiedFromId: source.id,
               copiedFromName: source.name,
+              // Gated on the computed transition, never on body.confirm alone (Pitfall 2).
+              ...(createsCombination ? { fourEyesWarningConfirmed: true } : {}),
             }),
           });
           return row;
@@ -523,6 +559,9 @@ export async function roleRoutes(app: FastifyInstance) {
         }
         return reply.code(201).send(toRoleResponse(created));
       } catch (err: unknown) {
+        if (err instanceof FourEyesConfirmationRequiredError) {
+          return reply.code(409).send(FOUR_EYES_CONFIRMATION_REPLY);
+        }
         if (isPrismaErrorCode(err, "P2002")) {
           return reply.code(409).send({ error: ROLE_NAME_CONFLICT_MESSAGE });
         }
