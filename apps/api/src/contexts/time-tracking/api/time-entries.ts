@@ -948,6 +948,22 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
+      // D-10 (issue #310/#78): the Break-entity audit above records the NEW break; this second,
+      // TimeEntry-entity audit records what appending it did to the entry itself
+      // (breakMinutes/breakStatus before/after) — previously unaudited (§ 16 Abs. 2 ArbZG,
+      // § 147 AO Revisionssicherheit). Action "UPDATE" per P-03 (78b-CONTEXT.md): consistent with
+      // PUT /:id's self-edit UPDATE, not BREAK_CONFIRMED (that records a different act — the
+      // employee confirming an already auto-inserted break on /break-status).
+      await app.audit({
+        userId: user.sub,
+        action: "UPDATE",
+        entity: "TimeEntry",
+        entityId: id,
+        oldValue: { breakMinutes: entry.breakMinutes, breakStatus: entry.breakStatus },
+        newValue: { breakMinutes: totalBreakMin, breakStatus: "CONFIRMED" },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
       return { success: true, break: created, breakMinutes: totalBreakMin };
     },
   });

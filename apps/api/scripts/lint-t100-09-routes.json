@@ -324,7 +324,7 @@
         "id": "customRole"
       },
       "minimalBody": null,
-      "reason": "roles.ts:213 fetch by id (findUnique, no tenant filter), then the nested guard at 213-222: line 217 `if (existing.tenantId !== null)` wraps line 218 `if (existing.tenantId !== req.user.tenantId)`, both returning the byte-identical 404 `{ error: \"Rolle nicht gefunden\" }`. System roles (tenantId null) are visible to every tenant by design (D-07), so the probe targets a customer role via the `customRole` fixture, not a system row.",
+      "reason": "roles.ts:250 fetch by id (findUnique, no tenant filter), then the nested guard at 250-259: line 254 `if (existing.tenantId !== null)` wraps line 255 `if (existing.tenantId !== req.user.tenantId)`, both returning the byte-identical 404 `{ error: \"Rolle nicht gefunden\" }`. System roles (tenantId null) are visible to every tenant by design (D-07), so the probe targets a customer role via the `customRole` fixture, not a system row.",
       "ticket": null,
       "validatedAt": null
     },
@@ -336,7 +336,7 @@
         "id": "customRole"
       },
       "minimalBody": {},
-      "reason": "roles.ts:243 fetch by id, nested guard at 247-251 (same shape as GET, byte-identical 404). updateRoleSchema.parse(req.body) at line 241 runs BEFORE the lookup (D-07 house convention); every field is `.nullish()` so `{}` satisfies it and reaches the guard. The system-role 409 branch (line 252) sits AFTER the tenant guard, so it never fires on the T-100-09 probe's customer-role/unknown-id pair; the lockout guard (409, Phase 74b-03) runs only inside the transaction after both.",
+      "reason": "roles.ts:280 fetch by id, nested guard at 284-288 (same shape as GET, byte-identical 404). updateRoleSchema.parse(req.body) at line 278 runs BEFORE the lookup (D-07 house convention); every field is `.nullish()` so `{}` satisfies it and reaches the guard. The system-role 409 branch (line 289) sits AFTER the tenant guard, so it never fires on the T-100-09 probe's customer-role/unknown-id pair; the lockout guard (409, Phase 74b-03) runs only inside the transaction after both. The four-eyes 409 (Phase 78b, issue #78) also runs inside the transaction after the tenant guard, so it never fires on the probe's customer-role/unknown-id pair.",
       "ticket": null,
       "validatedAt": null
     },
@@ -348,7 +348,7 @@
         "id": "customRole"
       },
       "minimalBody": null,
-      "reason": "roles.ts:333 fetch by id, nested guard at 337-341 (same shape as GET, byte-identical 404). DELETE carries no body, so minimalBody is null; the system-role 409 branch (line 342) sits after the tenant guard and never fires on this probe's pair. The assigned-role 409 (D-21, Phase 74b-03, count at 353-356) runs inside the transaction after both; the foreign customRole fixture IS assigned (the roleAssignment fixture references it), so moving that check before the tenant guard turns this sweep red (measured in 74b-03, mutation L11b).",
+      "reason": "roles.ts:406 fetch by id, nested guard at 410-414 (same shape as GET, byte-identical 404). DELETE carries no body, so minimalBody is null; the system-role 409 branch (line 415) sits after the tenant guard and never fires on this probe's pair. The assigned-role 409 (D-21, Phase 74b-03, count at 426-429) runs inside the transaction after both; the foreign customRole fixture IS assigned (the roleAssignment fixture references it), so moving that check before the tenant guard turns this sweep red (measured in 74b-03, mutation L11b).",
       "ticket": null,
       "validatedAt": null
     },
@@ -360,7 +360,7 @@
         "id": "customRole"
       },
       "minimalBody": {},
-      "reason": "roles.ts:412 fetch by id (findUnique, no tenant filter), nested guard at 416-417 (same shape as GET/PATCH/DELETE, byte-identical 404). copyRoleSchema.parse(req.body ?? {}) at line 410 runs BEFORE the lookup; its only field is `.nullish()` so `{}` (and no body at all) satisfies it and reaches the guard. Both a system role and an own customer role are valid sources (D-07), so, like GET/:id, the probe targets a customer role via the customRole fixture — nothing is created on the foreign-tenant arm since the guard runs before the transaction that would create the copy.",
+      "reason": "roles.ts:485 fetch by id (findUnique, no tenant filter), nested guard at 489-490 (same shape as GET/PATCH/DELETE, byte-identical 404). copyRoleSchema.parse(req.body ?? {}) at line 483 runs BEFORE the lookup; its only field is `.nullish()` so `{}` (and no body at all) satisfies it and reaches the guard. Both a system role and an own customer role are valid sources (D-07), so, like GET/:id, the probe targets a customer role via the customRole fixture — nothing is created on the foreign-tenant arm since the guard runs before the transaction that would create the copy. The four-eyes 409 (Phase 78b, issue #78) runs inside the transaction after the tenant guard, so it never fires on the probe's customer-role/unknown-id pair.",
       "ticket": null,
       "validatedAt": null
     },

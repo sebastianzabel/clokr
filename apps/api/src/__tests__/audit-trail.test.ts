@@ -11,8 +11,13 @@
  * and filter auditLog by createdAt >= beforeTs to isolate only the logs
  * produced by the test action.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { daysAgoStrInTz, utcMidnight } from "./test-dates";
+import { invalidReasonFields } from "../contexts/time-tracking/invalid-reason";
+import { getRetroEntryWindowDays } from "../contexts/time-tracking/retro-config";
 import type { FastifyInstance } from "fastify";
 
 describe("Audit Trail Completeness", () => {
@@ -36,6 +41,35 @@ describe("Audit Trail Completeness", () => {
     }
     await closeTestApp();
   });
+
+  // Shared by plans 78b-02 and 78b-05 (D-09): asserts actor, time window and — when
+  // oldValue/newValue are given — that the stored value is non-null and matches the given
+  // fields. `toBeDefined()` alone would pass for a `null` Json column, which is exactly what
+  // let the old assertions in this file pass without proving a before/after value existed.
+  // Hoisted to the outer describe scope in 78b-05 so the new "Zeitnachtrag" describe block
+  // (a sibling of "TimeEntry mutations", not nested inside it) can reuse it too.
+  function expectAuditRow(
+    log: { userId: string | null; createdAt: Date; oldValue: unknown; newValue: unknown } | null,
+    opts: {
+      userId: string | null;
+      beforeTs: Date;
+      oldValue?: Record<string, unknown>;
+      newValue?: Record<string, unknown>;
+    },
+  ) {
+    expect(log, "expected an AuditLog row to exist").not.toBeNull();
+    expect(log!.userId).toBe(opts.userId);
+    expect(log!.createdAt.getTime()).toBeGreaterThanOrEqual(opts.beforeTs.getTime());
+    expect(log!.createdAt.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
+    if (opts.oldValue !== undefined) {
+      expect(log!.oldValue, "oldValue must not be null").not.toBeNull();
+      expect(log!.oldValue).toMatchObject(opts.oldValue);
+    }
+    if (opts.newValue !== undefined) {
+      expect(log!.newValue, "newValue must not be null").not.toBeNull();
+      expect(log!.newValue).toMatchObject(opts.newValue);
+    }
+  }
 
   // ── TimeEntry mutations ───────────────────────────────────────────────────
 
@@ -70,19 +104,25 @@ describe("Audit Trail Completeness", () => {
       });
 
       expect(logs.length).toBeGreaterThanOrEqual(1);
-      const log = logs.find((l) => l.entityId === createdTimeEntryId);
-      expect(log).toBeDefined();
-      expect(log!.userId).toBe(data.adminUser.id);
+      const log = logs.find((l) => l.entityId === createdTimeEntryId) ?? null;
+      expectAuditRow(log, {
+        userId: data.adminUser.id,
+        beforeTs,
+        newValue: { id: createdTimeEntryId, note: "Audit trail test entry" },
+      });
       expect(log!.action).toBe("CREATE");
-      expect(log!.entityId).toBe(createdTimeEntryId);
-      expect(log!.newValue).toBeDefined();
     });
 
+    // D-09: tightened from `toBeDefined()` (which passes for a `null` Json column — Prisma's
+    // value for an empty AuditLog.oldValue/newValue — so it never actually proved a before/after
+    // value existed) to `expectAuditRow`'s non-null + field-content assertions, and from a
+    // `console.warn` + early `return` guard (which silently turned this test green whenever the
+    // preceding POST test had failed) to a hard `expect(...).toBeTruthy()`.
     it("PUT /api/v1/time-entries/:id writes AuditLog with action UPDATE", async () => {
-      if (!createdTimeEntryId) {
-        console.warn("Skipping: no time entry created by previous test");
-        return;
-      }
+      expect(
+        createdTimeEntryId,
+        "requires the time entry created by the POST test above",
+      ).toBeTruthy();
 
       const beforeTs = new Date();
 
@@ -95,28 +135,29 @@ describe("Audit Trail Completeness", () => {
 
       expect([200]).toContain(res.statusCode);
 
-      const logs = await app.prisma.auditLog.findMany({
+      const log = await app.prisma.auditLog.findFirst({
         where: {
           entity: "TimeEntry",
           entityId: createdTimeEntryId,
           createdAt: { gte: beforeTs },
         },
       });
-
-      expect(logs.length).toBeGreaterThanOrEqual(1);
-      const log = logs[0];
-      expect(log.userId).toBe(data.adminUser.id);
+      expectAuditRow(log, {
+        userId: data.adminUser.id,
+        beforeTs,
+        oldValue: { note: "Audit trail test entry" },
+        newValue: { note: "Updated note for audit trail" },
+      });
       // Action may be UPDATE or MANAGER_CORRECTION depending on role
-      expect(["UPDATE", "MANAGER_CORRECTION"]).toContain(log.action);
-      expect(log.oldValue).toBeDefined();
-      expect(log.newValue).toBeDefined();
+      expect(["UPDATE", "MANAGER_CORRECTION"]).toContain(log!.action);
     });
 
+    // D-09: same tightening as the PUT test above.
     it("DELETE /api/v1/time-entries/:id writes AuditLog with action DELETE", async () => {
-      if (!createdTimeEntryId) {
-        console.warn("Skipping: no time entry created by previous test");
-        return;
-      }
+      expect(
+        createdTimeEntryId,
+        "requires the time entry created by the POST test above",
+      ).toBeTruthy();
 
       const beforeTs = new Date();
 
@@ -129,7 +170,7 @@ describe("Audit Trail Completeness", () => {
 
       expect([200, 204]).toContain(res.statusCode);
 
-      const logs = await app.prisma.auditLog.findMany({
+      const log = await app.prisma.auditLog.findFirst({
         where: {
           entity: "TimeEntry",
           action: "DELETE",
@@ -137,12 +178,508 @@ describe("Audit Trail Completeness", () => {
           createdAt: { gte: beforeTs },
         },
       });
+      expectAuditRow(log, {
+        userId: data.adminUser.id,
+        beforeTs,
+        oldValue: { deletedAt: null },
+        newValue: { auditReason: "Storno wegen Fehleingabe" },
+      });
+    });
 
-      expect(logs.length).toBeGreaterThanOrEqual(1);
-      const log = logs[0];
-      expect(log.userId).toBe(data.adminUser.id);
-      expect(log.action).toBe("DELETE");
-      expect(log.oldValue).toBeDefined();
+    // D-09: revalidate was previously untested for audit-row content in this file.
+    it("PATCH /api/v1/time-entries/:id/revalidate writes AuditLog with action REVALIDATE and oldValue/newValue.isInvalid before/after", async () => {
+      const revalidateDate = new Date("2025-08-15T00:00:00.000Z");
+      const entry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: revalidateDate,
+          startTime: new Date("2025-08-15T08:00:00.000Z"),
+          endTime: new Date("2025-08-15T16:00:00.000Z"),
+          salonId: data.salonId,
+          source: "MANUAL",
+          isInvalid: true,
+          ...invalidReasonFields("MISSING_CLOCK_OUT"),
+        },
+      });
+
+      const beforeTs = new Date();
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/time-entries/${entry.id}/revalidate`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {},
+      });
+
+      expect(res.statusCode).toBe(200);
+
+      const log = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "TimeEntry",
+          entityId: entry.id,
+          createdAt: { gte: beforeTs },
+        },
+      });
+      expectAuditRow(log, {
+        userId: data.adminUser.id,
+        beforeTs,
+        oldValue: { isInvalid: true },
+        newValue: { isInvalid: false },
+      });
+      expect(log!.action).toBe("REVALIDATE");
+    });
+
+    // D-10 (issue #310/#78): POST /:id/breaks recomputes and persists the entry's
+    // breakMinutes/breakStatus but, before this fix, never audited that TimeEntry change — only
+    // the appended Break row itself was audited (BREAK_APPEND, entity Break). Action is "UPDATE"
+    // per P-03 (78b-CONTEXT.md): consistent with PUT /:id's self-edit UPDATE, not BREAK_CONFIRMED
+    // (a different act — the employee confirming an auto-inserted break on /break-status).
+    it("(D-10) POST /:id/breaks writes a second AuditLog row (entity TimeEntry, action UPDATE) with breakMinutes/breakStatus before and after", async () => {
+      const dateStr = daysAgoStrInTz(new Date(), 3);
+      const entry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: utcMidnight(dateStr),
+          startTime: new Date(`${dateStr}T07:00:00.000Z`),
+          endTime: new Date(`${dateStr}T15:00:00.000Z`),
+          breakMinutes: 30,
+          breakStatus: "AUTO",
+          salonId: data.salonId,
+          source: "MANUAL",
+        },
+      });
+
+      const beforeTs = new Date();
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/time-entries/${entry.id}/breaks`,
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          startTime: `${dateStr}T11:00:00.000Z`,
+          endTime: `${dateStr}T11:45:00.000Z`,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.breakMinutes).toBe(45);
+
+      const timeEntryLog = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "TimeEntry",
+          entityId: entry.id,
+          action: "UPDATE",
+          createdAt: { gte: beforeTs },
+        },
+      });
+      expectAuditRow(timeEntryLog, {
+        userId: data.empUser.id,
+        beforeTs,
+        oldValue: { breakMinutes: 30, breakStatus: "AUTO" },
+        newValue: { breakMinutes: 45, breakStatus: "CONFIRMED" },
+      });
+
+      // The pre-existing BREAK_APPEND audit (entity Break) for the new break must still exist.
+      const breakAppendLog = await app.prisma.auditLog.findFirst({
+        where: { entity: "Break", entityId: body.break.id, action: "BREAK_APPEND" },
+      });
+      expect(breakAppendLog).not.toBeNull();
+    });
+  });
+
+  // ── Zeitnachtrag (retro request) mutations ────────────────────────────────
+  // Plan 78b-05, issue #78 (D-09/D-11): every Zeitnachtrag write path (both the
+  // entry-first and the grant-first/legacy flow) audited with actor, time and
+  // before/after — and a reconstruction proof for D-11 (requester != approver,
+  // correction before/after, from the AuditLog alone).
+
+  describe("Zeitnachtrag (retro request) mutations", () => {
+    /**
+     * Reconstructs a retro-request decision READING ONLY `auditLog` — no
+     * `retroEntryRequest.` and no `timeEntry.` Prisma call — so the test states
+     * in code exactly what "from the AuditLog alone" (D-11) means. The coupled
+     * entry's id is taken from the RETRO_ENTRY_REQUESTED row's own `newValue`,
+     * never from the TimeEntry table.
+     */
+    async function reconstructRetroDecision(requestId: string): Promise<{
+      requesterId: string | null;
+      approverId: string | null;
+      correction: { before: Record<string, unknown>; after: Record<string, unknown> } | null;
+    }> {
+      const requestedLog = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "RetroEntryRequest",
+          entityId: requestId,
+          action: "RETRO_ENTRY_REQUESTED",
+        },
+        orderBy: { createdAt: "asc" },
+      });
+      const approvedLog = await app.prisma.auditLog.findFirst({
+        where: { entity: "RetroEntryRequest", entityId: requestId, action: "RETRO_ENTRY_APPROVED" },
+        orderBy: { createdAt: "desc" },
+      });
+
+      const requesterId = requestedLog?.userId ?? null;
+      const approverId = approvedLog?.userId ?? null;
+
+      const requestedNewValue = requestedLog?.newValue as { timeEntryId?: string } | null;
+      const timeEntryId = requestedNewValue?.timeEntryId ?? null;
+
+      let correction: { before: Record<string, unknown>; after: Record<string, unknown> } | null =
+        null;
+      if (timeEntryId) {
+        const correctionLog = await app.prisma.auditLog.findFirst({
+          where: { entity: "TimeEntry", entityId: timeEntryId, action: "MANAGER_CORRECTION" },
+          orderBy: { createdAt: "desc" },
+        });
+        if (correctionLog) {
+          correction = {
+            before: correctionLog.oldValue as Record<string, unknown>,
+            after: correctionLog.newValue as Record<string, unknown>,
+          };
+        }
+      }
+
+      return { requesterId, approverId, correction };
+    }
+
+    it("(D-11) an approved, corrected Zeitnachtrag is reconstructable from the AuditLog alone — requester != approver, correction before/after", async () => {
+      const windowDays = await getRetroEntryWindowDays(app.prisma, data.tenant.id);
+      const dateStr = daysAgoStrInTz(new Date(), windowDays + 5);
+      const beforeTs = new Date();
+
+      // Entry-first: the employee's own out-of-window POST /time-entries with a
+      // reason creates a PENDING RetroEntryRequest coupled to a pending TimeEntry.
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: dateStr,
+          startTime: `${dateStr}T08:00:00.000Z`,
+          endTime: `${dateStr}T16:00:00.000Z`,
+          breakMinutes: 30,
+          reason: "Einstempeln vergessen (D-11 Reconstruction Test)",
+        },
+      });
+      expect(createRes.statusCode, "entry-first POST must create a pending Nachtrag").toBe(201);
+      const createBody = JSON.parse(createRes.body);
+      const requestId = createBody.entry.retroRequestId as string | null;
+      expect(requestId, "the coupled entry must carry the RetroEntryRequest id").toBeTruthy();
+
+      // The admin approves WITH corrected times — the requester (employee) and the
+      // approver (admin) are two different people.
+      const reviewRes = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/retro-entry-requests/${requestId}/review`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          status: "APPROVED",
+          reviewNote: "Genehmigt mit Korrektur (D-11 Reconstruction Test)",
+          startTime: "07:30",
+          endTime: "15:30",
+          breakMinutes: 15,
+        },
+      });
+      expect(reviewRes.statusCode, "approve with correction must succeed").toBe(200);
+
+      // The two individual audit rows, checked with expectAuditRow (shared with 78b-02).
+      const requestedLog = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "RetroEntryRequest",
+          entityId: requestId!,
+          action: "RETRO_ENTRY_REQUESTED",
+        },
+      });
+      expectAuditRow(requestedLog, { userId: data.empUser.id, beforeTs });
+
+      const approvedLog = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "RetroEntryRequest",
+          entityId: requestId!,
+          action: "RETRO_ENTRY_APPROVED",
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      expectAuditRow(approvedLog, {
+        userId: data.adminUser.id,
+        beforeTs,
+        oldValue: { status: "PENDING" },
+        newValue: { status: "APPROVED" },
+      });
+
+      // Reconstruction from the AuditLog alone (D-11).
+      const decision = await reconstructRetroDecision(requestId!);
+      expect(decision.requesterId, "requester = the employee who created the Nachtrag").toBe(
+        data.empUser.id,
+      );
+      expect(decision.approverId, "approver = the admin who reviewed it").toBe(data.adminUser.id);
+      expect(decision.approverId, "requester and approver must be provably different").not.toBe(
+        decision.requesterId,
+      );
+      expect(decision.requesterId).toBe(requestedLog!.userId);
+      expect(decision.approverId).toBe(approvedLog!.userId);
+
+      expect(decision.correction, "the manager correction must be reconstructable").not.toBeNull();
+      expect(decision.correction!.before, "correction oldValue = as-submitted").toMatchObject({
+        breakMinutes: 30,
+      });
+      expect(decision.correction!.after, "correction newValue = corrected").toMatchObject({
+        breakMinutes: 15,
+      });
+      expect(
+        decision.correction!.before.startTime,
+        "correction must show startTime actually changed",
+      ).not.toEqual(decision.correction!.after.startTime);
+    });
+
+    // D-09 (issue #78): every remaining Zeitnachtrag write path — entry-first reject/withdraw,
+    // and the grant-first (legacy) create/approve/reject flow.
+    it("entry-first: admin rejects a pending Nachtrag — RETRO_ENTRY_REJECTED with actor/before-after, and the coupled TimeEntry is DELETEd with audit", async () => {
+      const windowDays = await getRetroEntryWindowDays(app.prisma, data.tenant.id);
+      const dateStr = daysAgoStrInTz(new Date(), windowDays + 6);
+      const beforeTs = new Date();
+
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: dateStr,
+          startTime: `${dateStr}T08:00:00.000Z`,
+          endTime: `${dateStr}T16:00:00.000Z`,
+          breakMinutes: 30,
+          reason: "Einstempeln vergessen (D-09 reject test)",
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const createBody = JSON.parse(createRes.body);
+      const requestId = createBody.entry.retroRequestId as string;
+      const entryId = createBody.entry.id as string;
+
+      const reviewRes = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/retro-entry-requests/${requestId}/review`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { status: "REJECTED", reviewNote: "Begründung fehlt (D-09 reject test)" },
+      });
+      expect(reviewRes.statusCode).toBe(200);
+
+      const requestLog = await app.prisma.auditLog.findFirst({
+        where: { entity: "RetroEntryRequest", entityId: requestId, action: "RETRO_ENTRY_REJECTED" },
+      });
+      expectAuditRow(requestLog, {
+        userId: data.adminUser.id,
+        beforeTs,
+        oldValue: { status: "PENDING" },
+        newValue: { status: "REJECTED", approverId: data.adminUser.id },
+      });
+
+      const entryLog = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "TimeEntry",
+          entityId: entryId,
+          action: "DELETE",
+          createdAt: { gte: beforeTs },
+        },
+      });
+      expectAuditRow(entryLog, {
+        userId: data.adminUser.id,
+        beforeTs,
+        oldValue: { deletedAt: null },
+      });
+      expect(
+        (entryLog!.newValue as { deletedAt: unknown }).deletedAt,
+        "the coupled entry's deletedAt must be set (not null) after reject",
+      ).not.toBeNull();
+    });
+
+    it("entry-first: the requesting employee withdraws their own pending Nachtrag — RETRO_ENTRY_WITHDRAWN with actor/before-after, and the coupled TimeEntry is DELETEd with audit", async () => {
+      const windowDays = await getRetroEntryWindowDays(app.prisma, data.tenant.id);
+      const dateStr = daysAgoStrInTz(new Date(), windowDays + 7);
+      const beforeTs = new Date();
+
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: dateStr,
+          startTime: `${dateStr}T08:00:00.000Z`,
+          endTime: `${dateStr}T16:00:00.000Z`,
+          breakMinutes: 30,
+          reason: "Einstempeln vergessen (D-09 withdraw test)",
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const createBody = JSON.parse(createRes.body);
+      const requestId = createBody.entry.retroRequestId as string;
+      const entryId = createBody.entry.id as string;
+
+      const withdrawRes = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/retro-entry-requests/${requestId}`,
+        headers: { authorization: `Bearer ${data.empToken}` },
+      });
+      expect(withdrawRes.statusCode).toBe(200);
+
+      const requestLog = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "RetroEntryRequest",
+          entityId: requestId,
+          action: "RETRO_ENTRY_WITHDRAWN",
+        },
+      });
+      expectAuditRow(requestLog, {
+        userId: data.empUser.id,
+        beforeTs,
+        oldValue: { deletedAt: null },
+      });
+      expect(
+        (requestLog!.newValue as { deletedAt: unknown }).deletedAt,
+        "the withdrawn request's deletedAt must be set (not null)",
+      ).not.toBeNull();
+
+      const entryLog = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "TimeEntry",
+          entityId: entryId,
+          action: "DELETE",
+          createdAt: { gte: beforeTs },
+        },
+      });
+      expectAuditRow(entryLog, {
+        userId: data.empUser.id,
+        beforeTs,
+        oldValue: { deletedAt: null },
+      });
+      expect(
+        (entryLog!.newValue as { deletedAt: unknown }).deletedAt,
+        "the coupled entry's deletedAt must be set (not null) after withdraw",
+      ).not.toBeNull();
+    });
+
+    it("grant-first: POST /api/v1/retro-entry-requests writes RETRO_ENTRY_REQUESTED with the requester's own userId", async () => {
+      const windowDays = await getRetroEntryWindowDays(app.prisma, data.tenant.id);
+      const targetDate = daysAgoStrInTz(new Date(), windowDays + 8);
+      const beforeTs = new Date();
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/retro-entry-requests",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          targetDate,
+          reason: "Grant-first Nachtrag (D-09 create test)",
+          startTime: "08:00",
+          endTime: "16:00",
+          breakMinutes: 30,
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+
+      const log = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "RetroEntryRequest",
+          entityId: body.id,
+          action: "RETRO_ENTRY_REQUESTED",
+        },
+      });
+      expectAuditRow(log, {
+        userId: data.empUser.id,
+        beforeTs,
+        newValue: { requesterId: data.empUser.id },
+      });
+    });
+
+    it("grant-first (legacy) approve: RETRO_ENTRY_APPROVED records oldValue (status PENDING) alongside newValue (status APPROVED, requesterId != approverId) — P-04/D-09", async () => {
+      const windowDays = await getRetroEntryWindowDays(app.prisma, data.tenant.id);
+      const targetDate = daysAgoStrInTz(new Date(), windowDays + 9);
+      const beforeTs = new Date();
+
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/retro-entry-requests",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          targetDate,
+          reason: "Grant-first Nachtrag (D-09 approve test)",
+          startTime: "08:00",
+          endTime: "16:00",
+          breakMinutes: 30,
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const requestId = JSON.parse(createRes.body).id as string;
+
+      const reviewRes = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/retro-entry-requests/${requestId}/review`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { status: "APPROVED", reviewNote: "Freigegeben (D-09 approve test)" },
+      });
+      expect(reviewRes.statusCode).toBe(200);
+
+      const log = await app.prisma.auditLog.findFirst({
+        where: { entity: "RetroEntryRequest", entityId: requestId, action: "RETRO_ENTRY_APPROVED" },
+      });
+      expectAuditRow(log, {
+        userId: data.adminUser.id,
+        beforeTs,
+        oldValue: { status: "PENDING" },
+        newValue: { status: "APPROVED" },
+      });
+      const newVal = log!.newValue as { requesterId?: string; approverId?: string };
+      expect(newVal.requesterId).toBe(data.empUser.id);
+      expect(newVal.approverId).toBe(data.adminUser.id);
+      expect(newVal.requesterId).not.toBe(newVal.approverId);
+    });
+
+    it("grant-first (legacy) reject: RETRO_ENTRY_REJECTED records oldValue (status PENDING) alongside newValue (status REJECTED) — P-04/D-09", async () => {
+      const windowDays = await getRetroEntryWindowDays(app.prisma, data.tenant.id);
+      const targetDate = daysAgoStrInTz(new Date(), windowDays + 10);
+      const beforeTs = new Date();
+
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/retro-entry-requests",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          targetDate,
+          reason: "Grant-first Nachtrag (D-09 reject test)",
+          startTime: "08:00",
+          endTime: "16:00",
+          breakMinutes: 30,
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const requestId = JSON.parse(createRes.body).id as string;
+
+      const reviewRes = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/retro-entry-requests/${requestId}/review`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { status: "REJECTED", reviewNote: "Begründung fehlt (D-09 reject test)" },
+      });
+      expect(reviewRes.statusCode).toBe(200);
+
+      const log = await app.prisma.auditLog.findFirst({
+        where: { entity: "RetroEntryRequest", entityId: requestId, action: "RETRO_ENTRY_REJECTED" },
+      });
+      expectAuditRow(log, {
+        userId: data.adminUser.id,
+        beforeTs,
+        oldValue: { status: "PENDING" },
+        newValue: { status: "REJECTED" },
+      });
     });
   });
 
@@ -430,5 +967,240 @@ describe("Audit Trail Completeness", () => {
       expect(log.action).toBe("UPDATE");
       expect(log.newValue).toBeDefined();
     });
+  });
+});
+
+// ── Completeness index: every time-entry write route has a named audit test ──
+// Plan 78b-05, issue #78 (D-09/P-05). Parses the two route files' actual `app.post|put|
+// patch|delete(` registrations and compares the resulting route set against a hand-maintained
+// index of the (file, test title) pairs that actually assert on that route's audit row. A route
+// added to either file without a matching entry here fails the suite — this is the mechanical
+// half of "every write path has an audit test" for FUTURE routes, not just the ones enumerated
+// by D-09 today.
+//
+// No DB/app dependency (pure static analysis) — a plain top-level describe, mirroring
+// holiday-resolution-boundary.test.ts's source-scan pattern, not nested inside "Audit Trail
+// Completeness" above.
+
+// __dirname is apps/api/src/__tests__ — four levels up is the repo root.
+const AUDIT_INDEX_REPO_ROOT = join(__dirname, "..", "..", "..", "..");
+
+const TIME_ENTRIES_FILE = "apps/api/src/contexts/time-tracking/api/time-entries.ts";
+const RETRO_ENTRY_REQUESTS_FILE = "apps/api/src/contexts/time-tracking/api/retro-entry-requests.ts";
+
+/**
+ * Parses `app.post|put|patch|delete("...")` registrations out of a route file and returns
+ * "METHOD /full/path" strings, prefixed exactly the way `app.ts` registers the file
+ * (`app.register(fooRoutes, { prefix: "..." })`).
+ */
+function extractWriteRoutes(relFile: string, prefix: string): string[] {
+  const content = readFileSync(join(AUDIT_INDEX_REPO_ROOT, relFile), "utf8");
+  const re = /\bapp\s*\.\s*(post|put|patch|delete)\s*\(\s*"([^"]*)"/g;
+  const routes: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    const method = m[1].toUpperCase();
+    const path = m[2] === "/" ? prefix : `${prefix}${m[2]}`;
+    routes.push(`${method} ${path}`);
+  }
+  return routes;
+}
+
+// Measured 2026-09-26 (Phase 78b Plan 05, issue #78): 9 write routes in time-entries.ts, 3 in
+// retro-entry-requests.ts — 12 total. A changed registration idiom (e.g. a route built from a
+// variable path instead of a string literal) would silently yield fewer matches instead of
+// failing loudly, which is exactly what this input proof exists to catch.
+const MEASURED_WRITE_ROUTE_COUNT = 12;
+
+/**
+ * "METHOD /full/path" -> the (file, test title) pairs that assert on that route's AuditLog
+ * row. Adding a new write route to either file requires adding its own entry here — a missing
+ * entry is the finding this guard exists for, never something to silence.
+ */
+const TIME_ENTRY_WRITE_PATH_AUDIT_TESTS: Record<string, { file: string; title: string }[]> = {
+  "POST /api/v1/time-entries/nfc-punch": [
+    {
+      file: "apps/api/src/services/clock/__tests__/audit-actor.integration.test.ts",
+      title:
+        "Block A — /nfc-punch with Terminal API key → AuditLog.userId null + newValue.actor.type === 'TERMINAL' (closes #215)",
+    },
+    {
+      file: "apps/api/src/services/clock/__tests__/audit-actor.integration.test.ts",
+      title:
+        "Block E — NFC punch-out with Terminal API key → CLOCK_OUT row with userId null, actor.type TERMINAL, createdAt window, oldValue.endTime null, newValue.endTime set",
+    },
+  ],
+  "POST /api/v1/time-entries/clock-in": [
+    {
+      file: "apps/api/src/services/clock/__tests__/audit-actor.integration.test.ts",
+      title:
+        "Block B — /clock-in with programmatic API key (clk_-prefix) → AuditLog.userId null + newValue.actor.type === 'API_KEY' (sub-req A end-to-end)",
+    },
+    {
+      file: "apps/api/src/services/clock/__tests__/audit-actor.integration.test.ts",
+      title:
+        "Block C — /clock-in with JWT → AuditLog.userId === JWT.sub, no actor embedding (legacy USER-path semantics preserved)",
+    },
+  ],
+  "POST /api/v1/time-entries/:id/clock-out": [
+    {
+      file: "apps/api/src/services/clock/__tests__/audit-actor.integration.test.ts",
+      title:
+        "Block D — /:id/clock-out with JWT → CLOCK_OUT row with userId, createdAt window, oldValue.endTime null, newValue.endTime set",
+    },
+  ],
+  "POST /api/v1/time-entries/:id/breaks": [
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "(D-10) POST /:id/breaks writes a second AuditLog row (entity TimeEntry, action UPDATE) with breakMinutes/breakStatus before and after",
+    },
+  ],
+  "POST /api/v1/time-entries": [
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title: "POST /api/v1/time-entries writes AuditLog with action CREATE",
+    },
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "(D-11) an approved, corrected Zeitnachtrag is reconstructable from the AuditLog alone — requester != approver, correction before/after",
+    },
+  ],
+  "PUT /api/v1/time-entries/:id": [
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title: "PUT /api/v1/time-entries/:id writes AuditLog with action UPDATE",
+    },
+  ],
+  "PATCH /api/v1/time-entries/:id/revalidate": [
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "PATCH /api/v1/time-entries/:id/revalidate writes AuditLog with action REVALIDATE and oldValue/newValue.isInvalid before/after",
+    },
+  ],
+  "DELETE /api/v1/time-entries/:id": [
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title: "DELETE /api/v1/time-entries/:id writes AuditLog with action DELETE",
+    },
+  ],
+  "PATCH /api/v1/time-entries/:id/break-status": [
+    {
+      file: "apps/api/src/__tests__/break-status.test.ts",
+      title: "confirm: AUTO entry -> 200, breakStatus CONFIRMED, BREAK_CONFIRMED audit row",
+    },
+    {
+      file: "apps/api/src/__tests__/break-status.test.ts",
+      title:
+        "waive: AUTO entry -> 200, breakMinutes 0, Break[] deleted, WAIVED + reason, BREAK_WAIVED audit, manager BREAK_COMPLIANCE_ALERT notification",
+    },
+  ],
+  "POST /api/v1/retro-entry-requests": [
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "grant-first: POST /api/v1/retro-entry-requests writes RETRO_ENTRY_REQUESTED with the requester's own userId",
+    },
+  ],
+  "PATCH /api/v1/retro-entry-requests/:id/review": [
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "(D-11) an approved, corrected Zeitnachtrag is reconstructable from the AuditLog alone — requester != approver, correction before/after",
+    },
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "entry-first: admin rejects a pending Nachtrag — RETRO_ENTRY_REJECTED with actor/before-after, and the coupled TimeEntry is DELETEd with audit",
+    },
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "grant-first (legacy) approve: RETRO_ENTRY_APPROVED records oldValue (status PENDING) alongside newValue (status APPROVED, requesterId != approverId) — P-04/D-09",
+    },
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "grant-first (legacy) reject: RETRO_ENTRY_REJECTED records oldValue (status PENDING) alongside newValue (status REJECTED) — P-04/D-09",
+    },
+  ],
+  "DELETE /api/v1/retro-entry-requests/:id": [
+    {
+      file: "apps/api/src/__tests__/audit-trail.test.ts",
+      title:
+        "entry-first: the requesting employee withdraws their own pending Nachtrag — RETRO_ENTRY_WITHDRAWN with actor/before-after, and the coupled TimeEntry is DELETEd with audit",
+    },
+  ],
+};
+
+describe("every time-entry write route has an audit test (issue #78, D-09)", () => {
+  it("input proof: parsing the two route files yields exactly the measured route set", () => {
+    const routes = [
+      ...extractWriteRoutes(TIME_ENTRIES_FILE, "/api/v1/time-entries"),
+      ...extractWriteRoutes(RETRO_ENTRY_REQUESTS_FILE, "/api/v1/retro-entry-requests"),
+    ];
+    expect(
+      routes.length,
+      "no write route parsed at all — the scan itself is broken",
+    ).toBeGreaterThan(0);
+    expect(
+      routes.length,
+      "the parsed write-route count moved off the measured value — a changed registration idiom " +
+        "(or a genuinely new/removed route) needs this guard's index updated, never silenced",
+    ).toBe(MEASURED_WRITE_ROUTE_COUNT);
+    // How to add a new route: write its audit test first, then add "METHOD /full/path" to
+    // TIME_ENTRY_WRITE_PATH_AUDIT_TESTS with the {file, title} of that test.
+    expect(new Set(routes).size, "duplicate route parsed — regex or route file drifted").toBe(
+      routes.length,
+    );
+  });
+
+  it("the completeness index's key set equals the parsed route set exactly", () => {
+    const routes = [
+      ...extractWriteRoutes(TIME_ENTRIES_FILE, "/api/v1/time-entries"),
+      ...extractWriteRoutes(RETRO_ENTRY_REQUESTS_FILE, "/api/v1/retro-entry-requests"),
+    ];
+    const routeSet = new Set(routes);
+    const indexKeys = Object.keys(TIME_ENTRY_WRITE_PATH_AUDIT_TESTS);
+
+    const missingFromIndex = routes.filter((r) => !(r in TIME_ENTRY_WRITE_PATH_AUDIT_TESTS));
+    expect(
+      missingFromIndex,
+      "route(s) registered in time-entries.ts/retro-entry-requests.ts with no entry in " +
+        "TIME_ENTRY_WRITE_PATH_AUDIT_TESTS — write the audit test, then add the entry",
+    ).toEqual([]);
+
+    const staleInIndex = indexKeys.filter((k) => !routeSet.has(k));
+    expect(
+      staleInIndex,
+      "index entry no longer matches a registered route — the route was renamed/removed; update " +
+        "or delete the stale entry",
+    ).toEqual([]);
+  });
+
+  it("every index entry points to an existing file that contains that exact test title", () => {
+    // Looks for the actual `it("<title>"` declaration syntax, not a bare substring — a bare
+    // `content.includes(title)` would trivially "pass" for THIS file (audit-trail.test.ts),
+    // because a typo'd title is itself still literally present here as the index entry's own
+    // string value, even with no matching `it(...)` anywhere in the file.
+    for (const [route, entries] of Object.entries(TIME_ENTRY_WRITE_PATH_AUDIT_TESTS)) {
+      expect(entries.length, `route ${route} has an empty audit-test list`).toBeGreaterThan(0);
+      for (const { file, title } of entries) {
+        const abs = join(AUDIT_INDEX_REPO_ROOT, file);
+        let content: string;
+        try {
+          content = readFileSync(abs, "utf8");
+        } catch {
+          throw new Error(`${route}: index points to a non-existent file "${file}"`);
+        }
+        const declaration = `it("${title}"`;
+        expect(
+          content.includes(declaration),
+          `${route}: "${file}" has no it("${title}" declaration`,
+        ).toBe(true);
+      }
+    }
   });
 });
