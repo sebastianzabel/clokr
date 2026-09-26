@@ -320,9 +320,6 @@ export async function roleRoutes(app: FastifyInstance) {
         return toRoleResponse(existing);
       }
 
-      // D-04: PATCH's "before" is the stored permissions prior to this change.
-      const createsCombination = createsFourEyesCombination(existing.permissions, nextPermissions);
-
       const nextNameKey = roleNameKey(nextName);
 
       try {
@@ -336,26 +333,45 @@ export async function roleRoutes(app: FastifyInstance) {
           // tenant-wide holder. The guard runs on EVERY update (it can only fire on a >= 1 -> 0
           // transition), so no per-trigger "which permissions were removed" logic can drift. The
           // update and its audit run on the transaction client; RoleLockoutError rolls both back.
-          const row = await withRoleLockoutGuard(tx, req.user.tenantId, async () => {
-            const updatedRow = await tx.accessRole.update({
-              where: { id },
-              data: { name: nextName, nameKey: nextNameKey, permissions: nextPermissions },
-            });
-            await app.audit({
-              tx,
-              action: "UPDATE",
-              entity: "AccessRole",
-              entityId: updatedRow.id,
-              oldValue: { name: existing.name, permissions: existing.permissions },
-              ...requestAuditFields(req, {
-                name: updatedRow.name,
-                permissions: updatedRow.permissions,
-                // Gated on the computed transition, never on body.confirm alone (Pitfall 2).
-                ...(createsCombination ? { fourEyesWarningConfirmed: true } : {}),
-              }),
-            });
-            return updatedRow;
-          });
+          const { row, createsCombination } = await withRoleLockoutGuard(
+            tx,
+            req.user.tenantId,
+            async () => {
+              // Phase 78b review WR-01: re-read the role's stored permissions on the transaction
+              // client, AFTER withRoleLockoutGuard's lockTenantForRoleChanges has taken the tenant
+              // row lock, and use THIS read — not the pre-transaction `existing` above — for both
+              // the four-eyes transition check and the audit's oldValue. Mirrors
+              // withRoleLockoutGuard's own before/after counts (facade/role-assignments.ts), which
+              // read on the SAME client after the SAME lock for exactly this reason: the
+              // pre-transaction `existing` snapshot can be superseded by a concurrent, already-
+              // committed PATCH of this same role by the time this write actually runs.
+              const lockedExisting = await tx.accessRole.findUniqueOrThrow({ where: { id } });
+              // D-04: PATCH's "before" is the stored permissions prior to this change — read from
+              // inside the lock, not the pre-transaction snapshot.
+              const createsCombination = createsFourEyesCombination(
+                lockedExisting.permissions,
+                nextPermissions,
+              );
+              const updatedRow = await tx.accessRole.update({
+                where: { id },
+                data: { name: nextName, nameKey: nextNameKey, permissions: nextPermissions },
+              });
+              await app.audit({
+                tx,
+                action: "UPDATE",
+                entity: "AccessRole",
+                entityId: updatedRow.id,
+                oldValue: { name: lockedExisting.name, permissions: lockedExisting.permissions },
+                ...requestAuditFields(req, {
+                  name: updatedRow.name,
+                  permissions: updatedRow.permissions,
+                  // Gated on the computed transition, never on body.confirm alone (Pitfall 2).
+                  ...(createsCombination ? { fourEyesWarningConfirmed: true } : {}),
+                }),
+              });
+              return { row: updatedRow, createsCombination };
+            },
+          );
           // P-01: checked AFTER withRoleLockoutGuard returns, still inside this same transaction —
           // a change that ALSO causes a lockout answers the lockout 409 instead (the lockout guard
           // can only decide after the write; D-06 says the four-eyes 409 is only for an otherwise-

@@ -12,7 +12,7 @@
  * prove the export (D-01). Integration blocks: the three role-mutation routes, added task by task
  * (POST here in Task 1, PATCH/COPY in Task 2).
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import { PERMISSIONS, permissionKey } from "../permission-catalog";
@@ -322,6 +322,29 @@ describe("Four-eyes combination (Phase 78b, Issue #78)", () => {
       });
     }
 
+    /**
+     * Phase 78b review WR-01 regression helper — modelled on
+     * `role-assignment-review-fixes.test.ts`'s helper of the same name (74b review WR-01, an
+     * identically-shaped finding on the sibling role-assignments facade). Runs `concurrentWrite`
+     * once, right before the NEXT `app.prisma.$transaction()` call made by the code under test —
+     * i.e. after the route has done its pre-transaction reads (the `existing` snapshot) but before
+     * `withRoleLockoutGuard` takes the tenant lock. That is exactly the staleness window WR-01
+     * describes, made deterministic instead of left to timing.
+     */
+    function beforeNextTransaction(concurrentWrite: () => Promise<unknown>) {
+      const realTransaction = app.prisma.$transaction.bind(app.prisma) as unknown as (
+        ...args: unknown[]
+      ) => Promise<unknown>;
+      vi.spyOn(app.prisma, "$transaction").mockImplementationOnce((async (...args: unknown[]) => {
+        await concurrentWrite();
+        return realTransaction(...args);
+      }) as never);
+    }
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
     it("(h) adding half B to a half-A role without confirm answers 409, stored permissions unchanged, no UPDATE audit", async () => {
       const id = await createCustomerRole(["time-entry:create:EIGENE"]);
       const beforeTs = new Date();
@@ -469,6 +492,76 @@ describe("Four-eyes combination (Phase 78b, Issue #78)", () => {
 
       const row = await app.prisma.accessRole.findUniqueOrThrow({ where: { id: roleId } });
       expect(row.permissions).toEqual(normalizeRolePermissions([ROLE_MANAGE, ASSIGNMENT_MANAGE]));
+    });
+
+    // ── Phase 78b review WR-01: locked-read regression (fix commit) ─────────────────────────────
+    //
+    // Both tests below start a role that ALREADY holds the combination, then use
+    // `beforeNextTransaction` to commit a concurrent write — removing half B — in the exact window
+    // between this request's pre-transaction `existing` read and the moment its own transaction
+    // takes the tenant lock. At that point the TRUE prior state no longer holds the combination,
+    // even though the pre-transaction snapshot still does. Both PATCH bodies also change `name` so
+    // the no-op early return (which runs before any transaction, and so before the concurrent
+    // write's hook ever fires) does not short-circuit the request.
+
+    it("(v) WR-01: restoring the combination without confirm, after a concurrent write removed half B, answers 409 — not the false-negative 200 a pre-lock read would give", async () => {
+      const id = await createCustomerRole(combinationPermissions);
+      beforeNextTransaction(() =>
+        app.prisma.accessRole.update({
+          where: { id },
+          data: { permissions: normalizeRolePermissions(["time-entry:create:EIGENE"]) },
+        }),
+      );
+
+      const newName = `4E-WR01-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      const beforeTs = new Date();
+      const res = await patchRole(id, { name: newName, permissions: combinationPermissions });
+
+      // Relative to the TRUE prior state (half A only, set by the concurrent write, read inside
+      // the lock), this save newly creates the combination — 409 is correct. A pre-lock read would
+      // still see the stale `existing` snapshot (already holding the combination) and compute
+      // createsCombination === false, silently skipping the confirmation gate (the false-negative
+      // WR-01 describes).
+      expect(res.statusCode, res.body).toBe(409);
+      expect(JSON.parse(res.body).code).toBe(FOUR_EYES_CONFIRMATION_REQUIRED);
+
+      // The whole transaction (including the write the concurrent-write-unaware pre-lock
+      // computation would have let commit) rolled back; only the concurrent write's own,
+      // separately-committed state survives.
+      const row = await app.prisma.accessRole.findUniqueOrThrow({ where: { id } });
+      expect(row.name).not.toBe(newName);
+      expect(row.permissions).toEqual(normalizeRolePermissions(["time-entry:create:EIGENE"]));
+      expect(await updateAuditCountSince(id, beforeTs)).toBe(0);
+    });
+
+    it("(w) WR-01: the UPDATE audit's oldValue reflects the state read inside the lock, not the stale pre-transaction snapshot", async () => {
+      const id = await createCustomerRole(combinationPermissions);
+      beforeNextTransaction(() =>
+        app.prisma.accessRole.update({
+          where: { id },
+          data: { permissions: normalizeRolePermissions(["time-entry:create:EIGENE"]) },
+        }),
+      );
+
+      const newName = `4E-WR01-Confirmed-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      const res = await patchRole(id, {
+        name: newName,
+        permissions: combinationPermissions,
+        confirm: true,
+      });
+      expect(res.statusCode, res.body).toBe(200);
+
+      const audit = await app.prisma.auditLog.findFirst({
+        where: { entity: "AccessRole", entityId: id, action: "UPDATE" },
+        orderBy: { createdAt: "desc" },
+      });
+      expect(audit).not.toBeNull();
+      const newValue = audit!.newValue as Record<string, unknown>;
+      expect(newValue.fourEyesWarningConfirmed).toBe(true);
+      const oldValue = audit!.oldValue as Record<string, unknown>;
+      // The truly-committed prior value (the concurrent write's result), never the stale
+      // pre-transaction `existing` snapshot (which still showed the full combination).
+      expect(oldValue.permissions).toEqual(normalizeRolePermissions(["time-entry:create:EIGENE"]));
     });
   });
 
