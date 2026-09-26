@@ -1430,9 +1430,19 @@ export async function dashboardRoutes(app: FastifyInstance) {
   });
 
   // GET /api/v1/dashboard/overtime-trend — Team overtime saldo trend (last 6 months)
+  //
+  // Phase 76b (Issue #76), D-15: before this change the route had NO permission gate at all
+  // (`preHandler: requireAuth`) — a pre-existing finding already documented and deliberately
+  // deferred from Phase 91b Plan 06 (docs/adr/0001-abweichungen.md, "GET
+  // /dashboard/overtime-trend fehlendes Permission-Gate"). Every signed-in user, including a
+  // plain Mitarbeiter or any new Phase 76b template holder without overtime:read, could see the
+  // tenant-wide aggregate saldo. This closes that gap: the route now requires
+  // overtime:read:ZUGEWIESEN and aggregates only over the caller's in-scope employees, mirroring
+  // GET /overtime-overview's resolveAccessReach/resolveStammsalonScopedEmployeeIds pattern below,
+  // keyed on THIS route's own gate permission (not team-overview:read).
   app.get("/overtime-trend", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
-    preHandler: requireAuth,
+    preHandler: requirePermission("overtime:read:ZUGEWIESEN"),
     handler: async (req) => {
       const tenantId = req.user.tenantId;
 
@@ -1449,7 +1459,29 @@ export async function dashboardRoutes(app: FastifyInstance) {
         where: { tenantId, user: { isActive: true } },
         select: { id: true },
       });
-      const employeeIds = employees.map((e) => e.id);
+
+      // D-15 — narrow to the caller's scope BEFORE both aggregation queries below (same
+      // precedent as GET /overtime-overview), Stichtag = today.
+      const trendAccess = accessContextFromRequest(req);
+      const trendScopeReach = await resolveAccessReach(
+        app.prisma,
+        trendAccess,
+        "overtime:read:ZUGEWIESEN",
+      );
+      const trendScopedIds =
+        trendScopeReach.kind === "wholeTenant"
+          ? "all"
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              tenantId,
+              trendScopeReach,
+              new Date(),
+            );
+      const scopedEmployees =
+        trendScopedIds === "all"
+          ? employees
+          : employees.filter((e) => trendScopedIds.includes(e.id));
+      const employeeIds = scopedEmployees.map((e) => e.id);
 
       // Query 1: SUM(carryOver) grouped by periodStart, MONTHLY only, within 6-month window.
       const grouped = await sumCarryOverByMonth(app.prisma, employeeIds, tenantId, sixMonthsAgo);
