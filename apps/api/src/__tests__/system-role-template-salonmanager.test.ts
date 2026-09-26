@@ -420,6 +420,31 @@ describe("Issue #76 (Phase 76b Plan 06), AK-76b-5 — Salonmanager behavioural m
       expect(controlRes.statusCode).toBe(200);
     });
 
+    it("GET /dashboard/ → 200 with overtime:null and vacation:null (CR-01/WR-01, code review; control: admin gets both non-null)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/",
+        headers: { authorization: `Bearer ${sToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as { overtime: unknown; vacation: unknown };
+      // A bare Salonmanager (no Mitarbeiter) holds neither overtime:read:EIGENE nor
+      // leave-entitlement:read:EIGENE (D-05) — the route must degrade both sections to null
+      // rather than leaking S's own saldo/vacation, contradicting AK-76b-5.
+      expect(body.overtime).toBeNull();
+      expect(body.vacation).toBeNull();
+
+      const controlRes = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(controlRes.statusCode).toBe(200);
+      const controlBody = JSON.parse(controlRes.body) as { overtime: unknown; vacation: unknown };
+      expect(controlBody.overtime).not.toBeNull();
+      expect(controlBody.vacation).not.toBeNull();
+    });
+
     it("GET /reports/monthly?employeeId=<X>&year&month → 403 (report:* excluded, D-05)", async () => {
       const res = await app.inject({
         method: "GET",
@@ -504,6 +529,21 @@ describe("Issue #76 (Phase 76b Plan 06), AK-76b-5 — Salonmanager behavioural m
           headers: { authorization: `Bearer ${s2Token}` },
         });
         expect(res.statusCode).toBe(403);
+      });
+
+      it("GET /dashboard/ → 200 with overtime and vacation both non-null (CR-01/WR-01, code review; Mitarbeiter grants EIGENE)", async () => {
+        const res = await app.inject({
+          method: "GET",
+          url: "/api/v1/dashboard/",
+          headers: { authorization: `Bearer ${s2Token}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body) as { overtime: unknown; vacation: unknown };
+        // S2 additionally holds the Mitarbeiter system role at TENANT scope, which carries
+        // overtime:read:EIGENE and leave-entitlement:read:EIGENE — both sections must be
+        // populated (S2's OWN data only, per the sibling "own saldo only" tests above).
+        expect(body.overtime).not.toBeNull();
+        expect(body.vacation).not.toBeNull();
       });
     });
   });

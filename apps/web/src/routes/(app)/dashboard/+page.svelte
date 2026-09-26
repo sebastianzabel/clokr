@@ -94,14 +94,19 @@
     // Phase 97-04 (SALDO-DISP-01/02/04) — additive confirmed/forecast split fields. Optional
     // so an older cached response (or the API-only no-employeeId branch) still type-checks;
     // the Überstundenkonto tile falls back to the single-value primitive when undefined.
+    //
+    // Phase 76b (Issue #76), CR-01/WR-01 (code review): `null` when the caller holds no
+    // overtime:read:EIGENE / leave-entitlement:read:EIGENE permission respectively (e.g. a bare
+    // Salonmanager/Ausbilder template holder) — the corresponding card is hidden, never rendered
+    // with a fabricated zero.
     overtime: {
       balanceHours: number;
       confirmedMinutes?: number;
       openMonthMinutes?: number | null;
       hasClosedMonth?: boolean;
       rosterIncomplete?: boolean;
-    };
-    vacation: { remaining: number; total: number; used: number };
+    } | null;
+    vacation: { remaining: number; total: number; used: number } | null;
   }
 
   interface TeamDay {
@@ -1496,16 +1501,23 @@
       <!-- KPI pair -->
       <Card animate class="kpi-pair" style="--card-idx: 1;">
         {#if stats}
-          <KPIStat
-            label="Urlaubstage"
-            value={String(stats.vacation.remaining)}
-            unit={`/ ${stats.vacation.total}`}
-            delta={`verbleibend${stats.vacation.used > 0 ? ` · ${stats.vacation.used} verbraucht` : ""}`}
-          />
+          {#if stats.vacation}
+            <KPIStat
+              label="Urlaubstage"
+              value={String(stats.vacation.remaining)}
+              unit={`/ ${stats.vacation.total}`}
+              delta={`verbleibend${stats.vacation.used > 0 ? ` · ${stats.vacation.used} verbraucht` : ""}`}
+            />
+          {/if}
           <!-- Phase 76.7 (D-15, UI-V19-04): § 18 ArbZG-exempt employees see
                an em-dash "—" instead of a numeric saldo + no delta cue. Unchanged by
                Phase 97-04 — an exempt employee has no confirmed/forecast split to show. -->
-          {#if isExempt}
+          <!-- Phase 76b (Issue #76), CR-01 (code review): `stats.overtime === null` means the
+               caller holds no overtime:read:EIGENE permission (e.g. a bare Salonmanager/Ausbilder
+               template holder without the Mitarbeiter role) — hide the card, no error/toast. -->
+          {#if stats.overtime === null}
+            <!-- intentionally empty: no saldo card for this caller -->
+          {:else if isExempt}
             <KPIStat label="Überstundenkonto" value="—" delta="§ 18 ArbZG" deltaTone="neutral" />
           {:else if stats.overtime.confirmedMinutes !== undefined}
             <!-- Phase 97-04 (SALDO-DISP-02) — the split primitive replaces the inline KPIStat

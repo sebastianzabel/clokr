@@ -476,12 +476,20 @@ Gesundheitsdaten nach Art. 9 DSGVO handelt — die Personalabteilung ist die üb
 insbesondere jede Genehmigung, jede Korrektur, Saldo und Vertrag (403, AK-76b-6). `employee:read`
 ist notwendig, um überhaupt zu sehen, welche Azubis in der Personenliste stehen.
 
-**Saldo-Gates (D-06, D-15).** Die Saldenübersicht (`GET /dashboard/overtime-overview`) verlangt
-seit Phase 76b zusätzlich `overtime:read:ZUGEWIESEN` — beide Reichweiten werden geschnitten
-(P-04), eine engere überstimmt die weitere nie. Ohne dieses zweite Gate hätte ein Salonmanager
-über `team-overview:read` allein jeden Saldo im eigenen Scope gesehen. Der Überstunden-Trend des
-Dashboards (`GET /dashboard/overtime-trend`) verlangt seit derselben Phase `overtime:read` und
-aggregiert nur über die Mitarbeiter im Scope des Aufrufers, statt wie zuvor mandantenweit (D-15).
+**Saldo-Gates (D-06, D-15, CR-01/WR-01 aus dem Code-Review).** Die Saldenübersicht
+(`GET /dashboard/overtime-overview`) verlangt seit Phase 76b zusätzlich `overtime:read:ZUGEWIESEN`
+— beide Reichweiten werden geschnitten (P-04), eine engere überstimmt die weitere nie. Ohne dieses
+zweite Gate hätte ein Salonmanager über `team-overview:read` allein jeden Saldo im eigenen Scope
+gesehen. Der Überstunden-Trend des Dashboards (`GET /dashboard/overtime-trend`) verlangt seit
+derselben Phase `overtime:read` und aggregiert nur über die Mitarbeiter im Scope des Aufrufers,
+statt wie zuvor mandantenweit (D-15). Das persönliche Dashboard (`GET /dashboard/`) blieb davon im
+ersten Entwurf ausgenommen: die Route bleibt für jeden angemeldeten Nutzer erreichbar (Heute/Woche
+bleiben legitim für alle sichtbar), aber die Felder `overtime` und `vacation` werden nur befüllt,
+wenn der Aufrufer `overtime:read:EIGENE` beziehungsweise `leave-entitlement:read:EIGENE` hält —
+sonst liefert die Route `null` statt einer erfundenen Null (CR-01/WR-01, gefunden im Code-Review
+von Phase 76b, siehe `composition/dashboard.ts:96-97`). Ein bloßer Salonmanager oder Ausbilder
+ohne die Systemrolle Mitarbeiter hätte sonst beim ersten Login den eigenen Saldo bzw. die eigenen
+Urlaubstage gesehen, obwohl die Templates bewusst keine EIGENE-Permission vergeben (D-05/D-08).
 
 **Selbstgenehmigungs-Paar (D-09).** Von den vier Templates hält nur Inhaber beide Hälften des
 Paars `time-entry:update:EIGENE` (eigene Zeiten ändern) und `retro-request:approve:ZUGEWIESEN`
@@ -681,53 +689,55 @@ oder nur auf seinen eigenen (`EIGENE`); die Zeilen mit nur `ZUGEWIESEN` schalten
 frei oder ab. Die Spalte „heute“ nennt wie im Abschnitt davor, was die Rollen an dieser Stelle vor
 der Umstellung (#75) durften.
 
-| Stelle                                                   | Route                                 | heute                                         | Permission               | Reichweite                                                 |
-| -------------------------------------------------------- | ------------------------------------- | --------------------------------------------- | ------------------------ | ---------------------------------------------------------- |
-| `composition/activity.ts:69`                             | `GET /`                               | nur A: Audit-Feed                             | `audit-log:read`         | ZUGEWIESEN                                                 |
-| `composition/activity.ts:214`                            | `GET /`                               | nur M: Team-Ereignisse                        | `team-overview:read`     | ZUGEWIESEN; Vorrang hat `audit-log:read`                   |
-| `composition/dashboard.ts:1048`                          | `GET /open-items`                     | A, M: Team-Posten; E: nur eigene Posten       | `team-overview:read`     | ZUGEWIESEN                                                 |
-| `composition/reports.ts:1457`                            | `GET /monthly/pdf`                    | A, M: alle; E: nur eigenes PDF                | `report:export`          | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/absence/api/leave.ts:357`                      | `POST /requests`                      | A, M: auch für andere; E: nur für sich        | `leave-request:create`   | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/absence/api/leave.ts:370`                      | `POST /requests`                      | A, M, E                                       | `leave-request:create`   | EIGENE (ZUGEWIESEN bereits bei :357 geprüft, Issue #359)   |
-| `contexts/absence/api/leave.ts:804`                      | `GET /requests`                       | A, M: alle; E: nur eigene                     | `leave-request:read`     | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/absence/api/leave.ts:967`                      | `GET /overlap`                        | A, M: Art sichtbar; E: Art verborgen          | `leave-request:read`     | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/absence/api/leave.ts:2142`                     | `DELETE /requests/:id`                | A, M: alle; E: nur eigene                     | `leave-request:cancel`   | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/absence/api/leave.ts:2367`                     | `GET /calendar`                       | A, M: Art sichtbar; E: nur bei eigenem Antrag | `leave-request:read`     | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/absence/api/leave.ts:2717`                     | `GET /entitlements/:employeeId`       | A, M: alle; E: nur eigene                     | `leave-entitlement:read` | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/absence/api/leave.ts:2903`                     | `GET /section9`                       | A, M: alle; E: nur eigene                     | `section9:read`          | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/absence/api/leave.ts:2967`                     | `GET /section9/:id`                   | A, M: alle; E: nur eigene                     | `section9:read`          | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/absence/api/section9-documents.ts:74`          | `POST /:creditId`                     | A, M: alle; E: nur eigene                     | `section9:upload`        | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/absence/api/section9-documents.ts:199`         | `GET /:creditId`                      | A, M: alle; E: nur eigene                     | `section9:read`          | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/absence/api/vocational-school-pattern.ts:136`  | `GET /:id/vocational-school-pattern`  | A, M: alle; E: nur eigene                     | `vocational-school:read` | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/absence/api/vocational-school.ts:205`          | `GET /upcoming`                       | A, M: alle; E: nur eigene                     | `vocational-school:read` | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/platform/api/api-keys.ts:63`                   | `POST /`                              | nur A: admin-Scope vergeben                   | `role-assignment:manage` | ZUGEWIESEN                                                 |
-| `contexts/platform/api/avatars.ts:19`                    | `POST /:employeeId`                   | A, M: alle; E: nur eigenes Bild               | `employee:update-avatar` | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/platform/api/avatars.ts:145`                   | `DELETE /:employeeId`                 | A, M: alle; E: nur eigenes Bild               | `employee:update-avatar` | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/platform/api/employees.ts:375`                 | `GET /`                               | nur A: Anonymisierte einblenden               | `employee:anonymize`     | ZUGEWIESEN                                                 |
-| `contexts/platform/api/employees.ts:412`                 | `GET /:id`                            | A, M: alle; E: nur eigene                     | `employee:read`          | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/platform/api/employees.ts:457`                 | `POST /`                              | nur A: Rolle vergeben                         | `role-assignment:manage` | ZUGEWIESEN                                                 |
-| `contexts/platform/api/employees.ts:738`                 | `PATCH /:id`                          | nur A: Rolle setzen                           | `role-assignment:manage` | ZUGEWIESEN                                                 |
-| `contexts/platform/api/imports.ts:157`                   | `POST /employees`                     | nur A: Rolle vergeben                         | `role-assignment:manage` | ZUGEWIESEN                                                 |
-| `contexts/platform/api/roles.ts:271`                     | `PATCH /:id`                          | nur A: selbst innegehabte Rolle ändern        | `role-assignment:manage` | ZUGEWIESEN                                                 |
-| `contexts/platform/api/settings.ts:949`                  | `GET /work/:employeeId`               | A, M: alle; E: nur eigene                     | `contract:read`          | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/scheduling/api/availability.ts:126`            | `GET /:id/availability`               | A, M: alle; E: nur eigene                     | `availability:read`      | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/scheduling/api/availability.ts:170`            | `PUT /:id/availability`               | A, M: alle; E: nur eigene                     | `availability:update`    | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/scheduling/api/integrations.ts:989`            | `GET /phorest/appointment-collisions` | A, M: alle; E: nur eigene                     | `shift:read`             | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/scheduling/api/shift-patterns.ts:44`           | `GET /:id/shift-patterns`             | A, M: alle; E: nur eigene                     | `shift-pattern:read`     | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/scheduling/api/shifts.ts:1786`                 | `GET /range`                          | A, M: alle; E: nur eigene                     | `shift:read`             | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/time-tracking/api/retro-entry-requests.ts:103` | `POST /`                              | A, M: auch für andere; E: nur für sich        | `retro-request:create`   | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/time-tracking/api/retro-entry-requests.ts:279` | `PATCH /:id/review`                   | nur A, M                                      | `retro-request:approve`  | ZUGEWIESEN                                                 |
-| `contexts/time-tracking/api/time-entries.ts:447`         | `POST /clock-in`                      | A, M: auch für andere; E: nur für sich        | `time-entry:create`      | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/time-tracking/api/time-entries.ts:569`         | `POST /:id/clock-out`                 | A, M: alle; E: nur eigene (Issue #346/#359)   | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/time-tracking/api/time-entries.ts:811`         | `POST /:id/breaks`                    | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/time-tracking/api/time-entries.ts:890`         | `GET /`                               | A, M: alle; E: nur eigene                     | `time-entry:read`        | ZUGEWIESEN; sonst EIGENE; ohne beide Reichweiten 403 (#76) |
-| `contexts/time-tracking/api/time-entries.ts:951`         | `POST /`                              | A, M: auch für andere; E: nur für sich        | `time-entry:create`      | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/time-tracking/api/time-entries.ts:1497`        | `PUT /:id`                            | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/time-tracking/api/time-entries.ts:2084`        | `DELETE /:id`                         | A, M: alle; E: nur eigene                     | `time-entry:delete`      | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/time-tracking/api/time-entries.ts:2196`        | `PATCH /:id/break-status`             | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/working-time-account/api/overtime.ts:136`      | `GET /:employeeId`                    | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/working-time-account/api/overtime.ts:1516`     | `GET /snapshots/:employeeId`          | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                                   |
-| `contexts/working-time-account/api/overtime.ts:1873`     | `GET /month-saldo/:employeeId`        | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                                   |
+| Stelle                                                   | Route                                 | heute                                         | Permission               | Reichweite                                                   |
+| -------------------------------------------------------- | ------------------------------------- | --------------------------------------------- | ------------------------ | ------------------------------------------------------------ |
+| `composition/activity.ts:69`                             | `GET /`                               | nur A: Audit-Feed                             | `audit-log:read`         | ZUGEWIESEN                                                   |
+| `composition/activity.ts:214`                            | `GET /`                               | nur M: Team-Ereignisse                        | `team-overview:read`     | ZUGEWIESEN; Vorrang hat `audit-log:read`                     |
+| `composition/dashboard.ts:96`                            | `GET /`                               | A, M, E                                       | `overtime:read`          | EIGENE (Phase 76b Nachtrag — sonst `null` statt Saldo)       |
+| `composition/dashboard.ts:97`                            | `GET /`                               | A, M, E                                       | `leave-entitlement:read` | EIGENE (Phase 76b Nachtrag — sonst `null` statt Urlaubstage) |
+| `composition/dashboard.ts:1048`                          | `GET /open-items`                     | A, M: Team-Posten; E: nur eigene Posten       | `team-overview:read`     | ZUGEWIESEN                                                   |
+| `composition/reports.ts:1457`                            | `GET /monthly/pdf`                    | A, M: alle; E: nur eigenes PDF                | `report:export`          | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/absence/api/leave.ts:357`                      | `POST /requests`                      | A, M: auch für andere; E: nur für sich        | `leave-request:create`   | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/absence/api/leave.ts:370`                      | `POST /requests`                      | A, M, E                                       | `leave-request:create`   | EIGENE (ZUGEWIESEN bereits bei :357 geprüft, Issue #359)     |
+| `contexts/absence/api/leave.ts:804`                      | `GET /requests`                       | A, M: alle; E: nur eigene                     | `leave-request:read`     | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/absence/api/leave.ts:967`                      | `GET /overlap`                        | A, M: Art sichtbar; E: Art verborgen          | `leave-request:read`     | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/absence/api/leave.ts:2142`                     | `DELETE /requests/:id`                | A, M: alle; E: nur eigene                     | `leave-request:cancel`   | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/absence/api/leave.ts:2367`                     | `GET /calendar`                       | A, M: Art sichtbar; E: nur bei eigenem Antrag | `leave-request:read`     | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/absence/api/leave.ts:2717`                     | `GET /entitlements/:employeeId`       | A, M: alle; E: nur eigene                     | `leave-entitlement:read` | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/absence/api/leave.ts:2903`                     | `GET /section9`                       | A, M: alle; E: nur eigene                     | `section9:read`          | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/absence/api/leave.ts:2967`                     | `GET /section9/:id`                   | A, M: alle; E: nur eigene                     | `section9:read`          | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/absence/api/section9-documents.ts:74`          | `POST /:creditId`                     | A, M: alle; E: nur eigene                     | `section9:upload`        | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/absence/api/section9-documents.ts:199`         | `GET /:creditId`                      | A, M: alle; E: nur eigene                     | `section9:read`          | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/absence/api/vocational-school-pattern.ts:136`  | `GET /:id/vocational-school-pattern`  | A, M: alle; E: nur eigene                     | `vocational-school:read` | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/absence/api/vocational-school.ts:205`          | `GET /upcoming`                       | A, M: alle; E: nur eigene                     | `vocational-school:read` | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/platform/api/api-keys.ts:63`                   | `POST /`                              | nur A: admin-Scope vergeben                   | `role-assignment:manage` | ZUGEWIESEN                                                   |
+| `contexts/platform/api/avatars.ts:19`                    | `POST /:employeeId`                   | A, M: alle; E: nur eigenes Bild               | `employee:update-avatar` | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/platform/api/avatars.ts:145`                   | `DELETE /:employeeId`                 | A, M: alle; E: nur eigenes Bild               | `employee:update-avatar` | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/platform/api/employees.ts:375`                 | `GET /`                               | nur A: Anonymisierte einblenden               | `employee:anonymize`     | ZUGEWIESEN                                                   |
+| `contexts/platform/api/employees.ts:412`                 | `GET /:id`                            | A, M: alle; E: nur eigene                     | `employee:read`          | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/platform/api/employees.ts:457`                 | `POST /`                              | nur A: Rolle vergeben                         | `role-assignment:manage` | ZUGEWIESEN                                                   |
+| `contexts/platform/api/employees.ts:738`                 | `PATCH /:id`                          | nur A: Rolle setzen                           | `role-assignment:manage` | ZUGEWIESEN                                                   |
+| `contexts/platform/api/imports.ts:157`                   | `POST /employees`                     | nur A: Rolle vergeben                         | `role-assignment:manage` | ZUGEWIESEN                                                   |
+| `contexts/platform/api/roles.ts:271`                     | `PATCH /:id`                          | nur A: selbst innegehabte Rolle ändern        | `role-assignment:manage` | ZUGEWIESEN                                                   |
+| `contexts/platform/api/settings.ts:949`                  | `GET /work/:employeeId`               | A, M: alle; E: nur eigene                     | `contract:read`          | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/scheduling/api/availability.ts:126`            | `GET /:id/availability`               | A, M: alle; E: nur eigene                     | `availability:read`      | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/scheduling/api/availability.ts:170`            | `PUT /:id/availability`               | A, M: alle; E: nur eigene                     | `availability:update`    | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/scheduling/api/integrations.ts:989`            | `GET /phorest/appointment-collisions` | A, M: alle; E: nur eigene                     | `shift:read`             | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/scheduling/api/shift-patterns.ts:44`           | `GET /:id/shift-patterns`             | A, M: alle; E: nur eigene                     | `shift-pattern:read`     | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/scheduling/api/shifts.ts:1786`                 | `GET /range`                          | A, M: alle; E: nur eigene                     | `shift:read`             | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/time-tracking/api/retro-entry-requests.ts:103` | `POST /`                              | A, M: auch für andere; E: nur für sich        | `retro-request:create`   | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/time-tracking/api/retro-entry-requests.ts:279` | `PATCH /:id/review`                   | nur A, M                                      | `retro-request:approve`  | ZUGEWIESEN                                                   |
+| `contexts/time-tracking/api/time-entries.ts:447`         | `POST /clock-in`                      | A, M: auch für andere; E: nur für sich        | `time-entry:create`      | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/time-tracking/api/time-entries.ts:569`         | `POST /:id/clock-out`                 | A, M: alle; E: nur eigene (Issue #346/#359)   | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/time-tracking/api/time-entries.ts:811`         | `POST /:id/breaks`                    | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/time-tracking/api/time-entries.ts:890`         | `GET /`                               | A, M: alle; E: nur eigene                     | `time-entry:read`        | ZUGEWIESEN; sonst EIGENE; ohne beide Reichweiten 403 (#76)   |
+| `contexts/time-tracking/api/time-entries.ts:951`         | `POST /`                              | A, M: auch für andere; E: nur für sich        | `time-entry:create`      | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/time-tracking/api/time-entries.ts:1497`        | `PUT /:id`                            | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/time-tracking/api/time-entries.ts:2084`        | `DELETE /:id`                         | A, M: alle; E: nur eigene                     | `time-entry:delete`      | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/time-tracking/api/time-entries.ts:2196`        | `PATCH /:id/break-status`             | A, M: alle; E: nur eigene                     | `time-entry:update`      | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/working-time-account/api/overtime.ts:136`      | `GET /:employeeId`                    | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/working-time-account/api/overtime.ts:1516`     | `GET /snapshots/:employeeId`          | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                                     |
+| `contexts/working-time-account/api/overtime.ts:1873`     | `GET /month-saldo/:employeeId`        | A, M: alle; E: nur eigene                     | `overtime:read`          | ZUGEWIESEN; sonst EIGENE                                     |
 
 ## Empfängersuchen
 

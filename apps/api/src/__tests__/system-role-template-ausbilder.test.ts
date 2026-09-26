@@ -409,5 +409,30 @@ describe("Issue #76 (Phase 76b Plan 05), AK-76b-6 — Ausbilder behavioural matr
       });
       expect(res.statusCode).toBe(403);
     });
+
+    it("GET /dashboard/ → 200 with overtime:null and vacation:null (CR-01/WR-01, code review; control: admin gets both non-null)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/",
+        headers: { authorization: `Bearer ${trainerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as { overtime: unknown; vacation: unknown };
+      // A bare Ausbilder holds neither overtime:read:EIGENE nor leave-entitlement:read:EIGENE at
+      // all (D-08) — the route must degrade both sections to null rather than leaking the
+      // trainer's own saldo/vacation, contradicting AK-76b-6.
+      expect(body.overtime).toBeNull();
+      expect(body.vacation).toBeNull();
+
+      const controlRes = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(controlRes.statusCode).toBe(200);
+      const controlBody = JSON.parse(controlRes.body) as { overtime: unknown; vacation: unknown };
+      expect(controlBody.overtime).not.toBeNull();
+      expect(controlBody.vacation).not.toBeNull();
+    });
   });
 });
