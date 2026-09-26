@@ -41,10 +41,13 @@ import { describe, it, expect } from "vitest";
 import {
   PERMISSIONS,
   permissionKey,
+  PERMISSION_RESOURCES,
   SYSTEM_ROLE_IDS,
   SYSTEM_ROLE_NAMES,
   SYSTEM_ROLE_PERMISSIONS,
   isSystemRoleId,
+  type PermissionKey,
+  type SystemRoleSlot,
 } from "..";
 
 // __dirname is apps/api/src/contexts/platform/__tests__ — six levels up is the repo root.
@@ -372,4 +375,140 @@ describe("Phase 75b — system-role identity (D-01, D-02)", () => {
     expect(isSystemRoleId("Admin")).toBe(false);
     expect(isSystemRoleId("")).toBe(false);
   });
+});
+
+describe("Phase 76b — system-role templates (Issue #76)", () => {
+  // Catalog order, transcribed from CONTEXT.md D-05/D-07/D-08 — never computed from
+  // SYSTEM_ROLE_PERMISSIONS, so a typo in the production list turns this red.
+  const SALON_MANAGER_EXPECTED: PermissionKey[] = [
+    "employee:read:ZUGEWIESEN",
+    "time-entry:read:ZUGEWIESEN",
+    "time-entry:create:ZUGEWIESEN",
+    "time-entry:update:ZUGEWIESEN",
+    "time-entry:delete:ZUGEWIESEN",
+    "time-entry:revalidate:ZUGEWIESEN",
+    "retro-request:read:ZUGEWIESEN",
+    "retro-request:create:ZUGEWIESEN",
+    "retro-request:approve:ZUGEWIESEN",
+    "leave-request:read:ZUGEWIESEN",
+    "leave-request:create:ZUGEWIESEN",
+    "leave-request:approve:ZUGEWIESEN",
+    "leave-request:attest:ZUGEWIESEN",
+    "leave-request:cancel:ZUGEWIESEN",
+    "section9:read:ZUGEWIESEN",
+    "section9:upload:ZUGEWIESEN",
+    "section9:decide:ZUGEWIESEN",
+    "leave-entitlement:read:ZUGEWIESEN",
+    "vocational-school:read:ZUGEWIESEN",
+    "shift:read:ZUGEWIESEN",
+    "shift:plan:ZUGEWIESEN",
+    "shift-pattern:read:ZUGEWIESEN",
+    "availability:read:ZUGEWIESEN",
+    "team-overview:read:ZUGEWIESEN",
+  ];
+
+  const HR_EXPECTED: PermissionKey[] = [
+    "employee:read:ZUGEWIESEN",
+    "employee:create:ZUGEWIESEN",
+    "employee:update:ZUGEWIESEN",
+    "employee:update-avatar:ZUGEWIESEN",
+    "contract:read:ZUGEWIESEN",
+    "contract:update:ZUGEWIESEN",
+    "leave-request:read:ZUGEWIESEN",
+    "section9:read:ZUGEWIESEN",
+    "leave-entitlement:read:ZUGEWIESEN",
+    "leave-entitlement:update:ZUGEWIESEN",
+    "vocational-school:read:ZUGEWIESEN",
+    "overtime:read:ZUGEWIESEN",
+    "month-close:read:ZUGEWIESEN",
+  ];
+
+  const TRAINER_EXPECTED: PermissionKey[] = [
+    "employee:read:ZUGEWIESEN",
+    "time-entry:read:ZUGEWIESEN",
+    "leave-request:read:ZUGEWIESEN",
+    "vocational-school:read:ZUGEWIESEN",
+    "shift:read:ZUGEWIESEN",
+  ];
+
+  it("(D-05) Salonmanager equals the hand-written literal list, 24 entries", () => {
+    expect(SALON_MANAGER_EXPECTED).toHaveLength(24);
+    expect([...SYSTEM_ROLE_PERMISSIONS.SALON_MANAGER]).toEqual(SALON_MANAGER_EXPECTED);
+  });
+
+  it("(D-07) Personalabteilung equals the hand-written literal list, 13 entries", () => {
+    expect(HR_EXPECTED).toHaveLength(13);
+    expect([...SYSTEM_ROLE_PERMISSIONS.HR]).toEqual(HR_EXPECTED);
+  });
+
+  it("(D-08) Ausbilder equals the hand-written literal list, 5 entries", () => {
+    expect(TRAINER_EXPECTED).toHaveLength(5);
+    expect([...SYSTEM_ROLE_PERMISSIONS.TRAINER]).toEqual(TRAINER_EXPECTED);
+  });
+
+  it("(D-04) Inhaber equals the full live catalog enumeration, not a literal count", () => {
+    expect([...SYSTEM_ROLE_PERMISSIONS.OWNER]).toEqual(PERMISSIONS.map(permissionKey));
+  });
+
+  it(
+    "(principle, D-05/D-07/D-08) Salonmanager/Personalabteilung/Ausbilder hold only " +
+      "ZUGEWIESEN permissions on PERSON-relation resources — no EIGENE, no MANDANT",
+    () => {
+      for (const slot of ["SALON_MANAGER", "HR", "TRAINER"] as const) {
+        for (const key of SYSTEM_ROLE_PERMISSIONS[slot]) {
+          const [resource, , reach] = key.split(":");
+          expect(reach, `${slot} key ${key}`).toBe("ZUGEWIESEN");
+          expect(
+            PERMISSION_RESOURCES[resource as keyof typeof PERMISSION_RESOURCES].relation,
+            `${slot} key ${key}`,
+          ).toBe("PERSON");
+        }
+      }
+    },
+  );
+
+  it("(named exclusions) Salonmanager holds none of the excluded keys (D-05)", () => {
+    const keys = SYSTEM_ROLE_PERMISSIONS.SALON_MANAGER;
+    expect(keys).not.toContain("leave-request:correct:ZUGEWIESEN");
+    expect(keys.some((k) => k.startsWith("overtime:"))).toBe(false);
+    expect(keys.some((k) => k.startsWith("month-close:"))).toBe(false);
+    expect(keys.some((k) => k.startsWith("contract:"))).toBe(false);
+    expect(keys.some((k) => k.startsWith("report:"))).toBe(false);
+  });
+
+  it("(named exclusions) Personalabteilung holds none of the excluded keys (D-07)", () => {
+    const keys = SYSTEM_ROLE_PERMISSIONS.HR;
+    expect(keys.some((k) => k.startsWith("time-entry:"))).toBe(false);
+    expect(keys.some((k) => k.startsWith("retro-request:"))).toBe(false);
+    expect(keys.some((k) => k.startsWith("report:"))).toBe(false);
+    expect(keys).not.toContain("team-overview:read:ZUGEWIESEN");
+    expect(keys).not.toContain("employee:anonymize:ZUGEWIESEN");
+    expect(keys).not.toContain("employee:import:ZUGEWIESEN");
+    expect(keys).not.toContain("employee:manage-access:ZUGEWIESEN");
+    const forbiddenActions = new Set(["approve", "decide", "attest", "correct", "cancel"]);
+    for (const key of keys) {
+      const [, action] = key.split(":");
+      expect(forbiddenActions.has(action), key).toBe(false);
+    }
+  });
+
+  it("(named exclusions) Ausbilder holds only read actions (D-08)", () => {
+    for (const key of SYSTEM_ROLE_PERMISSIONS.TRAINER) {
+      const [, action] = key.split(":");
+      expect(action, key).toBe("read");
+    }
+  });
+
+  it(
+    "(D-09) only Inhaber holds both time-entry:update:EIGENE and retro-request:approve:ZUGEWIESEN " +
+      "among the four new templates",
+    () => {
+      const pair = ["time-entry:update:EIGENE", "retro-request:approve:ZUGEWIESEN"] as const;
+      const NEW_SLOTS: SystemRoleSlot[] = ["OWNER", "SALON_MANAGER", "HR", "TRAINER"];
+      for (const slot of NEW_SLOTS) {
+        const holds = pair.every((k) => SYSTEM_ROLE_PERMISSIONS[slot].includes(k as PermissionKey));
+        expect(holds, slot).toBe(slot === "OWNER");
+      }
+    },
+  );
 });
