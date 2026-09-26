@@ -46,6 +46,7 @@ import {
   SYSTEM_ROLE_NAMES,
   SYSTEM_ROLE_PERMISSIONS,
   isSystemRoleId,
+  holdsFourEyesCombination,
   type PermissionKey,
   type SystemRoleSlot,
 } from "..";
@@ -500,17 +501,85 @@ describe("Phase 76b — system-role templates (Issue #76)", () => {
   });
 
   it(
-    "(D-09) only Inhaber holds both time-entry:update:EIGENE and retro-request:approve:ZUGEWIESEN " +
-      "among the four new templates",
+    "(D-09, superseded by 78b D-03) among the four templates only Inhaber holds the four-eyes " +
+      "combination",
     () => {
-      const pair = ["time-entry:update:EIGENE", "retro-request:approve:ZUGEWIESEN"] as const;
       const NEW_SLOTS: SystemRoleSlot[] = ["OWNER", "SALON_MANAGER", "HR", "TRAINER"];
       for (const slot of NEW_SLOTS) {
-        const holds = pair.every((k) => SYSTEM_ROLE_PERMISSIONS[slot].includes(k as PermissionKey));
+        const holds = holdsFourEyesCombination(SYSTEM_ROLE_PERMISSIONS[slot]);
         expect(holds, slot).toBe(slot === "OWNER");
       }
     },
   );
+});
+
+/**
+ * Phase 78b (Issue #78), D-02/D-03 — every system role checked against the four-eyes combination
+ * (`contexts/platform/four-eyes.ts`), not just the four templates the block above covers. A role
+ * "holds the combination" iff it holds at least one key of `FOUR_EYES_COMBINATION.changeOwnTimes`
+ * AND at least one key of `.approveTimes` — see `four-eyes.ts`'s own docblock. Today that is
+ * exactly { ADMIN, MANAGER, OWNER } (confirmed by the RESEARCH session's direct read of this
+ * module's permission lists), each for a stated reason below. A system role gaining the
+ * combination without a matching, reasoned entry here fails the test — the same for a listed
+ * entry whose role no longer holds it (a dead exception, equally a finding: either the exception
+ * is now unjustified or the permission removal was accidental).
+ *
+ * This exception list lives in the TEST as a test allowlist (Planner decision P-08, 78b-04-PLAN.md)
+ * — production code never branches on it. The system roles are immutable (`roles.ts` rejects any
+ * PATCH/DELETE where `tenantId === null`), and the role API's own 409 confirmation gate
+ * (78b-01) never fires for them.
+ */
+describe("Phase 78b — the four-eyes combination on system roles (Issue #78, D-03)", () => {
+  const FOUR_EYES_EXCEPTIONS: Readonly<Partial<Record<SystemRoleSlot, string>>> = {
+    ADMIN:
+      "#75 rights-neutral legacy role: today an admin edits own entries inside the retro window " +
+      "and approves colleagues' Zeitnachträge; the runtime self-approval lock covers the risk.",
+    MANAGER:
+      "#75 rights-neutral legacy role: today a manager edits own entries inside the retro window " +
+      "and approves colleagues' Zeitnachträge; the runtime self-approval lock covers the risk.",
+    OWNER:
+      "#76 working owner (Inhaber): records own times and approves the team's; the runtime lock " +
+      "covers self-approval.",
+  };
+
+  it("(input proof) SYSTEM_ROLE_IDS has 7 slots, matching SYSTEM_ROLE_PERMISSIONS' key set", () => {
+    const idSlots = Object.keys(SYSTEM_ROLE_IDS).sort();
+    const permSlots = Object.keys(SYSTEM_ROLE_PERMISSIONS).sort();
+    expect(idSlots).toHaveLength(7);
+    expect(idSlots).toEqual(permSlots);
+  });
+
+  it("holds the four-eyes combination on exactly the exception list — no missing, no dead entry", () => {
+    for (const slot of Object.keys(SYSTEM_ROLE_IDS) as SystemRoleSlot[]) {
+      const holds = holdsFourEyesCombination(SYSTEM_ROLE_PERMISSIONS[slot]);
+      const isException = slot in FOUR_EYES_EXCEPTIONS;
+      if (holds && !isException) {
+        expect.fail(
+          `${slot} holds the four-eyes combination but is not on the exception list ` +
+            `(FOUR_EYES_EXCEPTIONS) — add a reasoned entry, or remove the combination from its ` +
+            `permission set.`,
+        );
+      }
+      if (!holds && isException) {
+        expect.fail(
+          `${slot} is a dead exception: it is on FOUR_EYES_EXCEPTIONS but no longer holds the ` +
+            `four-eyes combination — remove its entry.`,
+        );
+      }
+      expect(holds).toBe(isException);
+    }
+  });
+
+  it("every exception is a real SystemRoleSlot with a reason of at least 20 characters", () => {
+    const validSlots = new Set(Object.keys(SYSTEM_ROLE_IDS));
+    const entries = Object.entries(FOUR_EYES_EXCEPTIONS);
+    expect(entries.length).toBeGreaterThan(0);
+    for (const [slot, reason] of entries) {
+      expect(validSlots.has(slot)).toBe(true);
+      expect(typeof reason).toBe("string");
+      expect((reason as string).length).toBeGreaterThanOrEqual(20);
+    }
+  });
 });
 
 /**
