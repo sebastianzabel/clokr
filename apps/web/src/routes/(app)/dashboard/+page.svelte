@@ -18,7 +18,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
-  import { api } from "$api/client";
+  import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
   import { toasts } from "$stores/toast";
   import Pagination from "$components/ui/Pagination.svelte";
@@ -193,6 +193,12 @@
   // request had been made. `error={!loading}` itself is correct in that branch and is left alone.
   let loading = $state(true);
   let chartsLoading = $state(true);
+  // Phase 76b (Issue #76), D-15: whether the caller holds overtime:read (the trend endpoint's own
+  // gate, added by Phase 76b). No client-side permission list exists ($stores/auth carries only
+  // `role`), so a 403 from the endpoint itself is how we learn this — tolerated silently, never
+  // logged, never toasted (a missing overtime:read is expected for e.g. a Mitarbeiter or a
+  // Salonmanager template). Starts false so the card stays hidden until a successful load flips it.
+  let overtimeTrendAvailable = $state(false);
   let clockLoading = $state(false);
   let breakMinutes = $state(0);
   let currentTime = $state(new Date());
@@ -577,8 +583,15 @@
       // Load team overtime trend from the dedicated endpoint
       try {
         overtimeTrend = await api.get<OvertimeTrendResponse>("/dashboard/overtime-trend");
+        overtimeTrendAvailable = true;
       } catch (err) {
-        console.error("Failed to load overtime trend:", err);
+        overtimeTrendAvailable = false;
+        // Phase 76b (Issue #76), D-15: the endpoint now requires overtime:read, and a 403 for a
+        // caller without it is expected (Mitarbeiter, Salonmanager template, …) — not an error to
+        // report. Every other failure (network, 500, …) still logs as before.
+        if (!(err instanceof ApiError && err.status === 403)) {
+          console.error("Failed to load overtime trend:", err);
+        }
       }
 
       labels = months.map((m) => m.label);
@@ -1696,20 +1709,22 @@
         </div>
       </Card>
 
-      <Card animate class="chart-card" style="--card-idx: 8;">
-        <CardHeader title="Überstunden-Trend" sub="Saldo-Verlauf" />
-        <div class="chart-wrap">
-          {#if chartsLoading}
-            <div class="chart-skeleton" aria-hidden="true"></div>
-          {:else}
-            <canvas
-              bind:this={overtimeChartEl}
-              role="img"
-              aria-label="Liniendiagramm: Überstunden-Verlauf der letzten 6 Monate"
-            ></canvas>
-          {/if}
-        </div>
-      </Card>
+      {#if chartsLoading || overtimeTrendAvailable}
+        <Card animate class="chart-card" style="--card-idx: 8;">
+          <CardHeader title="Überstunden-Trend" sub="Saldo-Verlauf" />
+          <div class="chart-wrap">
+            {#if chartsLoading}
+              <div class="chart-skeleton" aria-hidden="true"></div>
+            {:else}
+              <canvas
+                bind:this={overtimeChartEl}
+                role="img"
+                aria-label="Liniendiagramm: Überstunden-Verlauf der letzten 6 Monate"
+              ></canvas>
+            {/if}
+          </div>
+        </Card>
+      {/if}
 
       <Card animate class="chart-card" style="--card-idx: 9;">
         <CardHeader title="Krankheitstage" sub="Letzte 6 Monate" />
