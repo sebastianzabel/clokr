@@ -13,13 +13,27 @@
  *   four template rows' `createdAt`/`updatedAt`. Deleting global rows first to simulate a "first
  *   run" is deliberately NOT done: other test files in the same worker database depend on them
  *   existing, and a crash mid-test would strand the worker (RESEARCH.md, D-02).
+ * - Content drift (WR-02, code review): the "replaying the file twice" describe block below also
+ *   asserts that the four migrated rows' `permissions` equal `SYSTEM_ROLE_PERMISSIONS`, in
+ *   declaration order — co-located here so a reader of THIS file does not have to discover that
+ *   the general proof lives in `system-roles-migration.test.ts`'s "(a) D-04 drift" test (Phase
+ *   75b), which covers all seven global rows (three 75b system roles + these four 76b templates)
+ *   only because `test:setup`'s `migrate deploy` applies both migrations to the same worker
+ *   database before either test file runs — that file was written before this migration existed
+ *   and was never specifically extended for it.
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp } from "./setup";
-import { SYSTEM_ROLE_IDS } from "../contexts/platform";
+import {
+  SYSTEM_ROLE_IDS,
+  SYSTEM_ROLE_NAMES,
+  SYSTEM_ROLE_PERMISSIONS,
+  roleNameKey,
+  type SystemRoleSlot,
+} from "../contexts/platform";
 
 // __dirname is apps/api/src/__tests__ — four levels up is the repo root (same resolution as
 // legacy-role-migration-sql.ts).
@@ -156,4 +170,29 @@ describe("Phase 76b — system-role-templates migration, replay (AK-76b-8, D-02)
     const count = await app.prisma.auditLog.count({ where: { entityId: { in: templateIds } } });
     expect(count).toBe(0);
   });
+
+  it(
+    "content drift (WR-02, code review): the four template rows' permissions equal " +
+      "SYSTEM_ROLE_PERMISSIONS, in declaration order — the co-located counterpart to " +
+      'system-roles-migration.test.ts\'s "(a) D-04 drift" test',
+    async () => {
+      const slots: SystemRoleSlot[] = ["OWNER", "SALON_MANAGER", "HR", "TRAINER"];
+      const rows = await app.prisma.accessRole.findMany({
+        where: { id: { in: templateIds } },
+        orderBy: { id: "asc" },
+      });
+      expect(rows).toHaveLength(4);
+      // a004..a007 sort lexically in slot-declaration order (same fact
+      // system-roles-migration.test.ts relies on for all seven global rows, RESEARCH Pitfall 5) —
+      // `templateIds` above is declared in that same order, so index-zipping is safe here too.
+      const bySlot = slots.map((slot, i) => [slot, rows[i]] as const);
+      for (const [slot, row] of bySlot) {
+        expect(row.id).toBe(SYSTEM_ROLE_IDS[slot]);
+        expect(row.tenantId).toBeNull();
+        expect(row.name).toBe(SYSTEM_ROLE_NAMES[slot]);
+        expect(row.nameKey).toBe(roleNameKey(SYSTEM_ROLE_NAMES[slot]));
+        expect(row.permissions).toEqual([...SYSTEM_ROLE_PERMISSIONS[slot]]);
+      }
+    },
+  );
 });
