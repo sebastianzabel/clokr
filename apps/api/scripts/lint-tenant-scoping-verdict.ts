@@ -75,10 +75,7 @@ function getRootIdentifier(expr: ts.Expression): ts.Identifier | null {
  * second, independently-drifting implementation of it.
  */
 type FunctionLike =
-  | ts.FunctionDeclaration
-  | ts.FunctionExpression
-  | ts.ArrowFunction
-  | ts.MethodDeclaration;
+  ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration;
 
 function isFunctionLikeNode(node: ts.Node): node is FunctionLike {
   return (

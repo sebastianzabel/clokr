@@ -20,11 +20,7 @@
 -->
 <script lang="ts" module>
   export type ArbZGWarningClass =
-    | "DAILY_OVER_10"
-    | "WEEKLY_OVER_48"
-    | "REST_UNDER_11"
-    | "BREAK_UNDER_30"
-    | "BREAK_UNDER_45";
+    "DAILY_OVER_10" | "WEEKLY_OVER_48" | "REST_UNDER_11" | "BREAK_UNDER_30" | "BREAK_UNDER_45";
 
   export interface ArbZGWarning {
     class: ArbZGWarningClass;

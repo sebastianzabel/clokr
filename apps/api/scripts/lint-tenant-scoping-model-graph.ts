@@ -111,9 +111,7 @@ function isSingularRelationField(model: DmmfModel, field: DmmfField): boolean {
 }
 
 export type ModelTenancy =
-  | { kind: "own" }
-  | { kind: "relation"; path: readonly string[] }
-  | { kind: "none" };
+  { kind: "own" } | { kind: "relation"; path: readonly string[] } | { kind: "none" };
 
 /**
  * Classify one model given the full model list (D-05/D-18/D-19). Pure — no DMMF import, no I/O.

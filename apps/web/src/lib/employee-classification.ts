@@ -9,13 +9,7 @@
 // apps/api/src/contexts/platform/api/employees.ts employeeClassificationSchema.
 
 export type EmployeeClassification =
-  | "VOLLZEIT"
-  | "TEILZEIT"
-  | "MINIJOB"
-  | "AZUBI"
-  | "AUSHILFE"
-  | "WERKSTUDENT"
-  | "PRAKTIKANT";
+  "VOLLZEIT" | "TEILZEIT" | "MINIJOB" | "AZUBI" | "AUSHILFE" | "WERKSTUDENT" | "PRAKTIKANT";
 
 export interface ClassificationDefaults {
   coverageWeight: number;

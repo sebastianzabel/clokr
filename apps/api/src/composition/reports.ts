@@ -1710,14 +1710,12 @@ export async function reportRoutes(app: FastifyInstance) {
             [emp.id],
             dateStrInTz(start, tz),
             dateStrInTz(end, tz),
-            emp.timeEntries.map(
-              (e): WorkLocationEntry => ({
-                employeeId: emp.id,
-                date: e.date,
-                startTime: e.startTime,
-                salonId: e.salonId,
-              }),
-            ),
+            emp.timeEntries.map((e): WorkLocationEntry => ({
+              employeeId: emp.id,
+              date: e.date,
+              startTime: e.startTime,
+              salonId: e.salonId,
+            })),
           )
         : new Map<string, Map<string, string>>();
 

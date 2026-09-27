@@ -250,12 +250,7 @@
       employeeId: string;
       date: string;
       reason:
-        | "leave"
-        | "absence"
-        | "existing"
-        | "no-pattern"
-        | "open-day"
-        | "availability-unavailable";
+        "leave" | "absence" | "existing" | "no-pattern" | "open-day" | "availability-unavailable";
     }>;
     committed: boolean;
   }

@@ -28,11 +28,7 @@
 import type { CalendarTypeCode } from "./team-calendar-visibility";
 
 export type LeaveRequestStatus =
-  | "PENDING"
-  | "APPROVED"
-  | "REJECTED"
-  | "CANCELLED"
-  | "CANCELLATION_REQUESTED";
+  "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
 
 /**
  * The subset of `GET /leave/requests`' response both /team/leave and /inbox need to render the
