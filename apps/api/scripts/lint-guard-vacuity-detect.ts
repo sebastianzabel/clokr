@@ -1031,12 +1031,7 @@ function matchFlagProof(
 // ── Part G: the public classifier ─────────────────────────────────────────────────────────────
 
 export type InputProofKind =
-  | "none"
-  | "length"
-  | "contains"
-  | "flag-inner"
-  | "flag-outer"
-  | "empty-abort";
+  "none" | "length" | "contains" | "flag-inner" | "flag-outer" | "empty-abort";
 
 export interface GuardClassification {
   file: string;

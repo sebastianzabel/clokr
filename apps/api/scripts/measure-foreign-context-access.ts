@@ -70,11 +70,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 /** The five contexts a Prisma model can be OWNED by (ADR 0001 §3). Never a sixth value. */
 export type OwnerArea =
-  | "platform"
-  | "time-tracking"
-  | "absence"
-  | "scheduling"
-  | "working-time-account";
+  "platform" | "time-tracking" | "absence" | "scheduling" | "working-time-account";
 
 /** Where a FILE sits (D-04): the five contexts, or the cross-context `composition/` layer. */
 export type FileArea = OwnerArea | "composition";

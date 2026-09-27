@@ -187,10 +187,7 @@ export function listScopedFiles(repoRoot: string): string[] {
 // ── `where` extraction and resolution ──────────────────────────────────────────────────────
 
 type FunctionLike =
-  | ts.FunctionDeclaration
-  | ts.FunctionExpression
-  | ts.ArrowFunction
-  | ts.MethodDeclaration;
+  ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration;
 
 function isFunctionLikeNode(node: ts.Node): node is FunctionLike {
   return (

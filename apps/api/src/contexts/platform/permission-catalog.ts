@@ -59,12 +59,7 @@ export type PermissionRelation = (typeof PERMISSION_RELATIONS)[number];
 
 /** The code directory of the owning context (`apps/api/src/contexts/<name>` or `composition`). */
 type PermissionContext =
-  | "platform"
-  | "time-tracking"
-  | "absence"
-  | "working-time-account"
-  | "scheduling"
-  | "composition";
+  "platform" | "time-tracking" | "absence" | "working-time-account" | "scheduling" | "composition";
 
 interface PermissionResourceDefinition {
   readonly context: PermissionContext;

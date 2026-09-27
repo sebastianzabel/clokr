@@ -49,9 +49,7 @@
 
 /** Outcome of one fetch whose failure the user must be told about. */
 export type FetchResult<T> =
-  | { status: "ok"; value: T }
-  | { status: "skipped" }
-  | { status: "failed" };
+  { status: "ok"; value: T } | { status: "skipped" } | { status: "failed" };
 
 /** The fetch was never attempted (e.g. no employee link) — NOT a backend failure. */
 export const SKIPPED: FetchResult<never> = { status: "skipped" };

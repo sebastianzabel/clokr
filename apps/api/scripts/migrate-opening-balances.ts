@@ -70,9 +70,7 @@ export function truncId(id: string): string {
 export type OpeningBalanceSourceValue = "MIGRATED_FROM_SNAPSHOT" | "RECONSTRUCTED";
 
 export type NeedsReviewBlocker =
-  | "delta_not_at_chain_head"
-  | "multiple_deltas"
-  | "duplicate_month_links";
+  "delta_not_at_chain_head" | "multiple_deltas" | "duplicate_month_links";
 
 export type EligibleCandidate = {
   status: "eligible";

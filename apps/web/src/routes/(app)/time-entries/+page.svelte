@@ -462,9 +462,9 @@
         // activeEmpId is null (user without linked employee row).
         activeEmpId
           ? api
-              .get<
-                BsAbsence[]
-              >(`/vocational-school/upcoming?from=${fromDate}&to=${toDate}&employeeId=${activeEmpId}`)
+              .get<BsAbsence[]>(
+                `/vocational-school/upcoming?from=${fromDate}&to=${toDate}&employeeId=${activeEmpId}`,
+              )
               .catch(() => [] as BsAbsence[])
           : Promise.resolve([] as BsAbsence[]),
       ]);
@@ -534,9 +534,9 @@
 
       if (schedule?.type === "SHIFT_BASED") {
         const rawShifts = await api
-          .get<
-            Array<{ date: string; durationMin: number; durationMinNetto: number }>
-          >(`/shifts/range?from=${fromDate}&to=${toDate}`)
+          .get<Array<{ date: string; durationMin: number; durationMinNetto: number }>>(
+            `/shifts/range?from=${fromDate}&to=${toDate}`,
+          )
           .catch(
             () => [] as Array<{ date: string; durationMin: number; durationMinNetto: number }>,
           );

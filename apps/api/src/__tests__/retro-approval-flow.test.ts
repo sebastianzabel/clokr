@@ -698,8 +698,7 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
         // retroEntryRequest model does not exist yet (Plan 01) — access via unknown cast
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const retroModel = (app.prisma as unknown as Record<string, any>)["retroEntryRequest"] as
-          | { findUnique: (opts: object) => Promise<{ status: string } | null> }
-          | undefined;
+          { findUnique: (opts: object) => Promise<{ status: string } | null> } | undefined;
         const grant = await retroModel?.findUnique({ where: { id: grantId } });
         expect(grant?.status, "grant must be USED after consumption").toBe("USED");
 
@@ -797,8 +796,7 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
         // Grant must end in USED status exactly once (not PENDING/APPROVED)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const retroModel2 = (app.prisma as unknown as Record<string, any>)["retroEntryRequest"] as
-          | { findUnique: (opts: object) => Promise<{ status: string } | null> }
-          | undefined;
+          { findUnique: (opts: object) => Promise<{ status: string } | null> } | undefined;
         const grant = await retroModel2?.findUnique({ where: { id: grantId } });
         expect(grant?.status, "grant must be USED after concurrent race").toBe("USED");
       } finally {
@@ -880,8 +878,7 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
         // Verify grant is now USED
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const retroModel = (app.prisma as unknown as Record<string, any>)["retroEntryRequest"] as
-          | { findUnique: (opts: object) => Promise<{ status: string } | null> }
-          | undefined;
+          { findUnique: (opts: object) => Promise<{ status: string } | null> } | undefined;
         const grant = await retroModel?.findUnique({ where: { id: grantId } });
         expect(grant?.status, "grant must be USED after PUT consumption").toBe("USED");
 
