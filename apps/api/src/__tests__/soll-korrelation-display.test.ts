@@ -604,7 +604,19 @@ describe("WR-01 RED→GREEN: manual PublicHoliday applies by the employee's work
   // #136 — the old comment promised "if that week has a computed holiday we shift further",
   // which the hand-rolled arithmetic never actually did).
   // The test seeds its OWN DB PublicHoliday for BAYERN — so it controls the signal.
-  const TEST_WEEK_MONDAY = holidayFreeMondayStr(12, "NI");
+  // The accept callback enforces the BY half of that promise: holidayFreeMondayStr only checks
+  // the state it is given, so without it the 12-weeks-ahead search can land on a week with a
+  // computed BY-only holiday (e.g. 06.01. Heilige Drei Könige) and the BY employee loses two
+  // days instead of the one DB-seeded day (issue #394).
+  const TEST_WEEK_MONDAY = holidayFreeMondayStr(12, "NI", (mondayStr) => {
+    const sundayStr = new Date(Date.parse(mondayStr + "T00:00:00Z") + 6 * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    const years = new Set([Number(mondayStr.slice(0, 4)), Number(sundayStr.slice(0, 4))]);
+    return [...years].every((y) =>
+      getHolidays(y, "BY").every((h) => h.date < mondayStr || h.date > sundayStr),
+    );
+  });
 
   // The Monday of TEST_WEEK is the PublicHoliday date for BAYERN.
   const BY_HOLIDAY_DATE = TEST_WEEK_MONDAY;
