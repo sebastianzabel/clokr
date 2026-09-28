@@ -29,6 +29,10 @@ ENCRYPTION_KEY=<generierter-string>
 # URL unter der Clokr erreichbar ist
 CORS_ORIGIN=http://deine-domain.de:3000
 APP_URL=http://deine-domain.de:3000
+
+# MinIO-Zugangsdaten — MinIO und die API nutzen dieselben Werte
+MINIO_ROOT_USER=<benutzername>
+MINIO_ROOT_PASSWORD=<generierter-string>
 ```
 
 > Alle verfügbaren Umgebungsvariablen sind in [deployment.md](./deployment.md) dokumentiert.
@@ -69,6 +73,7 @@ docker compose -f docker-compose.prod.yml up -d
 ## Version pinnen
 
 ```bash
-# In .env
-CLOKR_VERSION=1.9.2
+# In .env — Tags ohne führendes `v`
+CLOKR_API_IMAGE=ghcr.io/sebastianzabel/clokr-api:1.12.0
+CLOKR_WEB_IMAGE=ghcr.io/sebastianzabel/clokr-web:1.12.0
 ```
