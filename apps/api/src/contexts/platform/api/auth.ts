@@ -6,6 +6,7 @@ import { Role } from "@clokr/db";
 import { JwtPayload } from "../../../middleware/auth";
 import { validatePassword, loadPasswordPolicy } from "../password-policy";
 import { compatRoleForUser } from "../compat-role";
+import { effectivePermissionKeysForUser } from "../request-permissions"; // Phase 378 (#378)
 import { userIdsHoldingPermission, resolveScopedHolderIds } from "../facade/role-assignments"; // Phase 75b Plan 10 (#75), D-16/D-17; Phase 91b Plan 09 (#91), D-17
 import { isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 09 (#91), D-10/D-17
 import { readTenantTimezone } from "../facade/salon-assignments";
@@ -603,6 +604,14 @@ async function issueTokens(
   // access decision reads it (D-12); the frontend still consumes it until #83 removes User.role.
   const role = await compatRoleForUser(app.prisma, user.id, tenantId, user.role);
 
+  // Phase 378 (#378): the web decides Team-Bereich visibility by permission, not by the compat
+  // role above — a Salon/Personen-scope assignment (Salonmanager, Ausbilder templates) never
+  // contributes to `role`, but its permissions are real. Computed once per login/OTP-verify, same
+  // staleness window as `role` itself (both refresh only on next login, not on token refresh).
+  const permissions = tenantId
+    ? await effectivePermissionKeysForUser(app.prisma, user.id, tenantId)
+    : [];
+
   const payload = {
     sub: user.id,
     role,
@@ -666,6 +675,8 @@ async function issueTokens(
       role,
       employeeId: user.employee?.id ?? null,
       firstName: user.employee?.firstName ?? null,
+      // Phase 378 (#378): effective permission keys, for web-side visibility decisions.
+      permissions,
     },
     sessionConfig: {
       sessionTimeoutMinutes: tenantConfig?.sessionTimeoutMinutes ?? 60,

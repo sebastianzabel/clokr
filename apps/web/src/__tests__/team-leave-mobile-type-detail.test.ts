@@ -203,24 +203,24 @@ describe("#265 — CalendarDayDetail spells the type out", () => {
     },
   ];
 
-  function open(role: string, entries: DayDetailEntry[] = sickPair) {
+  function open(canSeeType: boolean, entries: DayDetailEntry[] = sickPair) {
     return renderWithTheme(CalendarDayDetail, {
       open: true,
       dateLabel: "21.09.2026",
       entries,
-      role,
+      canSeeType,
     });
   }
 
-  it("MANAGER: Krank and Kinderkrank are separated by WORDS, not by two similar oranges", () => {
-    open("MANAGER");
+  it("leave-request:read:ZUGEWIESEN: Krank and Kinderkrank are separated by WORDS, not by two similar oranges", () => {
+    open(true);
     expect(screen.getByRole("dialog")).toBeTruthy();
     const types = screen.getAllByTestId("cal-day-detail-type").map((el) => el.textContent);
     expect(types).toEqual(["Krankmeldung", "Kinderkrank"]);
   });
 
-  it("EMPLOYEE: a colleague's type is NOT named in the detail sheet either (#257 unchanged)", () => {
-    open("EMPLOYEE");
+  it("no leave-request:read:ZUGEWIESEN: a colleague's type is NOT named in the detail sheet either (#257 unchanged)", () => {
+    open(false);
     const types = screen.getAllByTestId("cal-day-detail-type").map((el) => el.textContent);
     expect(types).toEqual([NEUTRAL_CHIP_LABEL, NEUTRAL_CHIP_LABEL]);
     // The direction that hurts when it breaks: no sickness word anywhere in the rendered sheet.
@@ -230,26 +230,26 @@ describe("#265 — CalendarDayDetail spells the type out", () => {
     expect(rendered).not.toContain("Kinder");
   });
 
-  it("EMPLOYEE, own absence: the type IS named — the rule is about colleagues", () => {
-    open("EMPLOYEE", [{ ...sickPair[0], isOwn: true }]);
+  it("no leave-request:read:ZUGEWIESEN, own absence: the type IS named — the rule is about colleagues", () => {
+    open(false, [{ ...sickPair[0], isOwn: true }]);
     expect(screen.getByTestId("cal-day-detail-type").textContent).toBe("Krankmeldung");
   });
 
   it("a keyboard can dismiss it: Escape closes the sheet", async () => {
-    open("MANAGER");
+    open(true);
     expect(screen.queryByRole("dialog")).toBeTruthy();
     await fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("a finger can dismiss it: a visible Schließen button, because a phone has no Escape key", async () => {
-    open("MANAGER");
+    open(true);
     await fireEvent.click(screen.getByTestId("cal-day-detail-close"));
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("an empty day still renders a sheet with an explanation, not a blank box", () => {
-    open("MANAGER", []);
+    open(true, []);
     expect(screen.getByTestId("cal-day-detail").textContent).toContain("Keine Abwesenheiten");
   });
 });
@@ -285,9 +285,9 @@ describe("#265 — page wiring (source pins)", () => {
     expect(cellBlock()).toContain("{#if dayAbsences.length > 0}");
   });
 
-  it("the sheet is mounted with the viewer's role, from the auth store", () => {
+  it("the sheet is mounted with the permission-derived flag (Phase 378)", () => {
     expect(PAGE).toContain("<CalendarDayDetail");
-    expect(PAGE).toContain("role={$authStore.user?.role}");
+    expect(PAGE).toContain("canSeeType={canSeeOthersLeaveType}");
     expect(PAGE).toContain("entries={dayDetailEntries}");
   });
 

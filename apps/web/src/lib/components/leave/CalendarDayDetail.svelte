@@ -28,14 +28,17 @@
     dateLabel: string;
     /** The day's absence bars, in the order the calendar stacked them. */
     entries: readonly DayDetailEntry[];
-    /** Viewer role from the auth store. Decides whether a type may be named at all (#257). */
-    role: string | null | undefined;
+    /** Phase 378 (#378): `hasPermission(user, "leave-request:read:ZUGEWIESEN")`, computed by the
+     *  caller — decides whether a colleague's type may be named at all (#257). No longer a role
+     *  string: a Salonmanager/Ausbilder (Salon-/Personen-Scope role assignment) holds this
+     *  permission but resolves to compat role EMPLOYEE. */
+    canSeeType: boolean;
   }
 
-  let { open = $bindable(), dateLabel, entries, role }: Props = $props();
+  let { open = $bindable(), dateLabel, entries, canSeeType }: Props = $props();
 
   // ONE decision per row, taken by the shared module — never a second role check here (D-10).
-  let rows = $derived(resolveDayDetailRows(entries, role));
+  let rows = $derived(resolveDayDetailRows(entries, canSeeType));
 </script>
 
 <Modal bind:open eyebrow="Abwesenheiten" title={dateLabel}>

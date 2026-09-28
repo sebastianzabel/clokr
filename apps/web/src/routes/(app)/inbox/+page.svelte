@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { hasAnyPermission } from "$lib/permissions"; // Phase 378 (#378)
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
@@ -105,10 +106,16 @@
   let retroEditEndTime = $state("");
   let retroEditBreakMinutes = $state(0);
 
-  // ── Role gate ────────────────────────────────────────────────────────────
+  // ── Permission gate (Phase 378, #378) ─────────────────────────────────────
+  // Either approve permission is enough — this Postfach approves both leave requests and
+  // Zeitnachträge. A Salonmanager (Salon-Scope role assignment) holds both; an Ausbilder holds
+  // neither (read-only template, #76) and correctly never reaches this page.
   onMount(() => {
-    const role = $authStore.user?.role;
-    if (role !== "MANAGER" && role !== "ADMIN") {
+    const canApprove = hasAnyPermission($authStore.user, [
+      "leave-request:approve:ZUGEWIESEN",
+      "retro-request:approve:ZUGEWIESEN",
+    ]);
+    if (!canApprove) {
       void goto("/dashboard");
       return;
     }

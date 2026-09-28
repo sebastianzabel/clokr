@@ -49,6 +49,7 @@
  *   granting or denying would be wrong; the migration that inserts the rows runs before the code.
  */
 import type { FastifyReply, FastifyRequest } from "fastify";
+import type { Prisma } from "@clokr/db";
 import { requireAuth } from "../../middleware/auth";
 import { roleGrants } from "./access-role";
 import { systemRoleIdForLegacyRole } from "./compat-role";
@@ -132,8 +133,8 @@ function collect(
   }
 }
 
-async function loadSystemRole(req: FastifyRequest, id: string): Promise<GrantingRole> {
-  const role = await req.server.prisma.accessRole.findUnique({
+async function loadSystemRole(prisma: Prisma.TransactionClient, id: string): Promise<GrantingRole> {
+  const role = await prisma.accessRole.findUnique({
     where: { id },
     select: { id: true, tenantId: true, permissions: true },
   });
@@ -145,23 +146,26 @@ async function loadSystemRole(req: FastifyRequest, id: string): Promise<Granting
   return role;
 }
 
-async function resolveGrants(req: FastifyRequest): Promise<EffectiveGrants> {
+/**
+ * The request-INDEPENDENT core of grant resolution: everything `resolveGrants` does once it has a
+ * `userId`/`tenantId`, extracted (Phase 378, Issue #378) so a caller without a `FastifyRequest` —
+ * the login/OTP-verify handlers in `api/auth.ts`, which run before any access token exists — can
+ * resolve the SAME grants `effectiveGrants(req)` would compute for that user's next request.
+ * `ownEmployeeId` is deliberately not part of the return: callers of this function never had a
+ * request-scoped one to attach, and no consumer added by this phase needs it (only permission
+ * KEYS, never an own-vs-other comparison).
+ */
+async function computeGrantsForUser(
+  prisma: Prisma.TransactionClient,
+  userId: string,
+  tenantId: string,
+): Promise<Omit<EffectiveGrants, "ownEmployeeId">> {
   const zugewiesen = new Set<PermissionKey>();
   const zugewiesenAnyScope = new Set<PermissionKey>();
   const eigene = new Set<PermissionKey>();
 
-  if (req.apiKeyScopes !== undefined) {
-    const roleId = req.apiKeyScopes.includes("admin")
-      ? SYSTEM_ROLE_IDS.ADMIN
-      : SYSTEM_ROLE_IDS.MANAGER;
-    collect(await loadSystemRole(req, roleId), true, zugewiesen, zugewiesenAnyScope, eigene);
-    return { zugewiesen, zugewiesenAnyScope, eigene, ownEmployeeId: undefined };
-  }
-
-  const tenantId = req.user.tenantId;
-  const ownEmployeeId = req.user.employeeId;
-  const user = await req.server.prisma.user.findUnique({
-    where: { id: req.user.sub },
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
     select: {
       role: true,
       roleAssignments: {
@@ -175,12 +179,12 @@ async function resolveGrants(req: FastifyRequest): Promise<EffectiveGrants> {
       },
     },
   });
-  if (!user) return { zugewiesen, zugewiesenAnyScope, eigene, ownEmployeeId };
+  if (!user) return { zugewiesen, zugewiesenAnyScope, eigene };
 
   if (user.roleAssignments.length === 0) {
-    const fallback = await loadSystemRole(req, systemRoleIdForLegacyRole(user.role));
+    const fallback = await loadSystemRole(prisma, systemRoleIdForLegacyRole(user.role));
     collect(fallback, true, zugewiesen, zugewiesenAnyScope, eigene);
-    return { zugewiesen, zugewiesenAnyScope, eigene, ownEmployeeId };
+    return { zugewiesen, zugewiesenAnyScope, eigene };
   }
 
   for (const row of user.roleAssignments) {
@@ -191,7 +195,31 @@ async function resolveGrants(req: FastifyRequest): Promise<EffectiveGrants> {
     if (scope === null) continue;
     collect(row.accessRole, scope.scopeType === "TENANT", zugewiesen, zugewiesenAnyScope, eigene);
   }
-  return { zugewiesen, zugewiesenAnyScope, eigene, ownEmployeeId };
+  return { zugewiesen, zugewiesenAnyScope, eigene };
+}
+
+async function resolveGrants(req: FastifyRequest): Promise<EffectiveGrants> {
+  if (req.apiKeyScopes !== undefined) {
+    const zugewiesen = new Set<PermissionKey>();
+    const zugewiesenAnyScope = new Set<PermissionKey>();
+    const eigene = new Set<PermissionKey>();
+    const roleId = req.apiKeyScopes.includes("admin")
+      ? SYSTEM_ROLE_IDS.ADMIN
+      : SYSTEM_ROLE_IDS.MANAGER;
+    collect(
+      await loadSystemRole(req.server.prisma, roleId),
+      true,
+      zugewiesen,
+      zugewiesenAnyScope,
+      eigene,
+    );
+    return { zugewiesen, zugewiesenAnyScope, eigene, ownEmployeeId: undefined };
+  }
+
+  const tenantId = req.user.tenantId;
+  const ownEmployeeId = req.user.employeeId;
+  const grants = await computeGrantsForUser(req.server.prisma, req.user.sub, tenantId);
+  return { ...grants, ownEmployeeId };
 }
 
 /**
@@ -285,4 +313,38 @@ export function requireAnyPermission(...keys: PermissionKey[]) {
     }
     return reply.code(403).send({ error: "Forbidden" });
   };
+}
+
+/**
+ * Phase 378 (Issue #378): the caller's full effective permission set, flattened to a plain sorted
+ * list of catalog keys — for exposing to a client (today: the login/OTP-verify response body, see
+ * `api/auth.ts`'s `issueTokens()`) so the web can decide Team-Bereich visibility by permission
+ * instead of the legacy compat role, which a Salon/Personen-scope assignment (Salonmanager,
+ * Ausbilder templates) never contributes to.
+ *
+ * Deliberately NOT built by calling `hasPermission()` once per catalog key against a synthetic
+ * request — it inlines the exact same relation-based rule `hasPermission()` applies, because it
+ * has no `FastifyRequest` to call `hasPermission` with (the login flow runs before any access
+ * token, hence any `req.user`, exists). Living in this file, the SAME module that defines
+ * `CATALOG`/`hasPermission`, is what keeps `lint-role-checks.ts` and
+ * `permission-site-mapping.test.ts`'s detectors (which look for literal `hasPermission(`/
+ * `permissionReach(` calls) uninterested in it — exactly the exemption those gates already grant
+ * `collect()` a few lines above.
+ */
+export async function effectivePermissionKeysForUser(
+  prisma: Prisma.TransactionClient,
+  userId: string,
+  tenantId: string,
+): Promise<PermissionKey[]> {
+  const grants = await computeGrantsForUser(prisma, userId, tenantId);
+  const out = new Set<PermissionKey>(grants.eigene);
+  for (const entry of CATALOG) {
+    if (!entry.key.endsWith(":ZUGEWIESEN")) continue;
+    const held =
+      entry.relation === "MANDANT"
+        ? grants.zugewiesen.has(entry.key)
+        : grants.zugewiesenAnyScope.has(entry.key);
+    if (held) out.add(entry.key);
+  }
+  return [...out].sort();
 }

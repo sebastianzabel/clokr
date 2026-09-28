@@ -227,8 +227,8 @@ describe("#303 (leave) — above the breakpoint (measured)", () => {
 // unchanged component; repeating it here would duplicate assertions without adding coverage.
 // What is NOT covered elsewhere is asserted from THIS page's file, so it cannot be lost if the
 // sibling suite is ever re-scoped: an EMPLOYEE must learn no colleague's type from the sheet.
-describe("#303 (leave) — CalendarDayDetail names no colleague's type for an EMPLOYEE", () => {
-  it("EMPLOYEE, two colleagues, two different sickness types: neither type is named anywhere", () => {
+describe("#303 (leave) — CalendarDayDetail names no colleague's type without the permission", () => {
+  it("no leave-request:read:ZUGEWIESEN, two colleagues, two different sickness types: neither type is named anywhere", () => {
     const sickPair: DayDetailEntry[] = [
       {
         id: "r1",
@@ -253,7 +253,7 @@ describe("#303 (leave) — CalendarDayDetail names no colleague's type for an EM
       open: true,
       dateLabel: "21.09.2026",
       entries: sickPair,
-      role: "EMPLOYEE",
+      canSeeType: false,
     });
     const types = screen.getAllByTestId("cal-day-detail-type").map((el) => el.textContent);
     expect(types).toEqual([NEUTRAL_CHIP_LABEL, NEUTRAL_CHIP_LABEL]);
@@ -348,9 +348,9 @@ describe("#303 (leave) — page wiring (source pins)", () => {
     },
   );
 
-  it("the sheet is mounted with the derived entries and the viewer's role, from the auth store", () => {
+  it("the sheet is mounted with the derived entries and the permission-derived flag (Phase 378)", () => {
     expect(PAGE).toContain("<CalendarDayDetail");
-    expect(PAGE).toContain("role={$authStore.user?.role}");
+    expect(PAGE).toContain("canSeeType={canSeeOthersLeaveType}");
     expect(PAGE).toContain("entries={dayDetailEntries}");
   });
 

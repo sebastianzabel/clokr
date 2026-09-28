@@ -48,8 +48,8 @@ describe("team leave page — one shared visibility decision (Phase 257)", () =>
       expect((PAGE.match(/resolveChipVisual\(/g) ?? []).length).toBe(1);
     });
 
-    it("A3: the one call is a {@const} inside the chip's {#if e} block, reading role from the auth store", () => {
-      expect(PAGE).toContain("{@const _vis = resolveChipVisual(e, $authStore.user?.role)}");
+    it("A3: the one call is a {@const} inside the chip's {#if e} block, reading the permission-derived flag (Phase 378)", () => {
+      expect(PAGE).toContain("{@const _vis = resolveChipVisual(e, canSeeOthersLeaveType)}");
     });
 
     it("A4: all three render points read from _vis", () => {
@@ -109,7 +109,7 @@ describe("team leave page — one shared visibility decision (Phase 257)", () =>
     });
 
     it("B2: the loop is gated on the same predicate as the bars (D-05)", () => {
-      expect(LEGEND).toContain("{#if canSeeLeaveType(false, $authStore.user?.role)}");
+      expect(LEGEND).toContain("{#if canSeeLeaveType(false, canSeeOthersLeaveType)}");
     });
 
     it("B3: no hand-written type dot survives — every --leave-type-* literal is gone except the neutral one", () => {
