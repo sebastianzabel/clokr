@@ -673,7 +673,7 @@ export async function employeeRoutes(app: FastifyInstance) {
           },
         });
 
-        await tx.workSchedule.create({
+        const workSchedule = await tx.workSchedule.create({
           data: {
             employeeId: emp.id,
             type: body.scheduleType,
@@ -735,9 +735,10 @@ export async function employeeRoutes(app: FastifyInstance) {
 
         // Einladung nur erstellen wenn kein Passwort gesetzt
         let token: string | null = null;
+        let invitation: { expiresAt: Date; acceptedAt: Date | null } | null = null;
         if (!directPassword) {
           token = crypto.randomBytes(32).toString("hex");
-          await tx.invitation.create({
+          invitation = await tx.invitation.create({
             data: {
               token: hashToken(token),
               employeeId: emp.id,
@@ -747,7 +748,14 @@ export async function employeeRoutes(app: FastifyInstance) {
           });
         }
 
-        return { status: "OK" as const, employee: emp, invitationToken: token };
+        return {
+          status: "OK" as const,
+          employee: emp,
+          user,
+          workSchedule,
+          invitation,
+          invitationToken: token,
+        };
       });
 
       if (result.status !== "OK") {
@@ -785,7 +793,7 @@ export async function employeeRoutes(app: FastifyInstance) {
         }
       }
 
-      const { employee, invitationToken } = result;
+      const { employee, user, workSchedule, invitation, invitationToken } = result;
 
       await app.audit({
         userId: req.user.sub,
@@ -819,26 +827,57 @@ export async function employeeRoutes(app: FastifyInstance) {
 
       // Re-fetch the created employee with the full shape (same as GET /employees)
       // so the frontend can append it to the list without a full page reload.
-      const fullEmployee = await app.prisma.employee.findUniqueOrThrow({
-        where: { id: employee.id },
-        include: {
-          user: { select: { email: true, role: true, isActive: true, lastLoginAt: true } },
-          workSchedules: { orderBy: { validFrom: "desc" }, take: 1 },
-          overtimeAccount: { select: { balanceHours: true } },
-          invitations: { orderBy: { createdAt: "desc" }, take: 1 },
-        },
-      });
+      try {
+        const fullEmployee = await app.prisma.employee.findUniqueOrThrow({
+          where: { id: employee.id },
+          include: {
+            user: { select: { email: true, role: true, isActive: true, lastLoginAt: true } },
+            workSchedules: { orderBy: { validFrom: "desc" }, take: 1 },
+            overtimeAccount: { select: { balanceHours: true } },
+            invitations: { orderBy: { createdAt: "desc" }, take: 1 },
+          },
+        });
 
-      return reply.code(201).send({
-        ...fullEmployee,
-        workSchedule: fullEmployee.workSchedules[0] ?? null,
-        workSchedules: undefined,
-        invitationStatus: directPassword
-          ? "ACCEPTED"
-          : deriveInvitationStatus(fullEmployee.user.isActive, fullEmployee.invitations),
-        invitations: undefined,
-        ...(emailError ? { emailError } : {}),
-      });
+        return reply.code(201).send({
+          ...fullEmployee,
+          workSchedule: fullEmployee.workSchedules[0] ?? null,
+          workSchedules: undefined,
+          invitationStatus: directPassword
+            ? "ACCEPTED"
+            : deriveInvitationStatus(fullEmployee.user.isActive, fullEmployee.invitations),
+          invitations: undefined,
+          ...(emailError ? { emailError } : {}),
+        });
+      } catch (err) {
+        // Issue #379: the creation transaction above already committed durably — a failure of
+        // this independent post-commit read (measured on int: a transient DNS blip) must not
+        // surface as a 500 for a request that in truth fully succeeded. A naive client retry on
+        // a false 500 would then hit 409 (duplicate employeeNumber) or create a near-duplicate.
+        // Answer 201 from the data the transaction already produced instead of a second read.
+        app.log.error(
+          { err, employeeId: employee.id },
+          "Mitarbeiter angelegt, aber Nachladen für die Antwort fehlgeschlagen — antworte mit Transaktionsdaten",
+        );
+
+        return reply.code(201).send({
+          ...employee,
+          user: {
+            email: user.email,
+            role: user.role,
+            isActive: user.isActive,
+            lastLoginAt: user.lastLoginAt,
+          },
+          workSchedule,
+          // createOvertimeAccount() writes balanceHours: 0 unconditionally for a brand-new
+          // account (apps/api/src/contexts/working-time-account/facade/overtime-account.ts:233-240)
+          // — a fresh account can only ever be 0 immediately after creation, so this is not a guess.
+          overtimeAccount: { balanceHours: 0 },
+          invitationStatus: directPassword
+            ? "ACCEPTED"
+            : deriveInvitationStatus(user.isActive, invitation ? [invitation] : []),
+          ...(emailError ? { emailError } : {}),
+        });
+      }
     },
   });
 
