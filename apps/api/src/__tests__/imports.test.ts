@@ -358,7 +358,10 @@ ${empNo};08.06.2026;08:00;12:00;0`;
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/imports/time-entries",
-        headers: { authorization: `Bearer ${data.adminToken}` },
+        headers: {
+          authorization: `Bearer ${data.adminToken}`,
+          "user-agent": "vitest-agent/1.0",
+        },
         payload: { csv },
       });
 
@@ -383,6 +386,19 @@ ${empNo};08.06.2026;08:00;12:00;0`;
         },
       });
       expect(auditCount).toBe(2);
+
+      const audits = await app.prisma.auditLog.findMany({
+        where: {
+          entity: "TimeEntry",
+          action: "CREATE",
+          entityId: { in: created.map((c) => c.id) },
+        },
+      });
+      expect(audits.length).toBe(2);
+      for (const a of audits) {
+        expect(a.ipAddress).toBeTruthy();
+        expect(a.userAgent).toBe("vitest-agent/1.0");
+      }
     });
 
     // ── Plan 76.19-06 Task 2: DB partial-unique → P2002 reported per-row ───────

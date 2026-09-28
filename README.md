@@ -50,6 +50,7 @@ cp .env.example .env
 # 2. Generate secrets and edit .env
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 # Paste output into JWT_SECRET, JWT_REFRESH_SECRET, ENCRYPTION_KEY in .env
+# Also replace the change-me values of POSTGRES_PASSWORD and MINIO_ROOT_USER / MINIO_ROOT_PASSWORD in .env
 
 # 3. Start
 docker compose -f docker-compose.prod.yml up -d
@@ -73,7 +74,9 @@ docker compose -f docker-compose.prod.yml up -d
 
 ### Pin a version
 
-Set `CLOKR_VERSION=1.9.2` in `.env` to pin to a specific release.
+Set both `CLOKR_API_IMAGE` and `CLOKR_WEB_IMAGE` in `.env` to the same release, e.g.
+`ghcr.io/sebastianzabel/clokr-api:1.12.0` / `ghcr.io/sebastianzabel/clokr-web:1.12.0` (tags have
+no leading `v`; `.env.example` ships `latest`).
 
 ---
 
