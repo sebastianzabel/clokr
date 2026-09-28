@@ -27,8 +27,16 @@ services:
       POSTGRES_USER: clokr
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
       POSTGRES_DB: clokr
+    # Postgres 18+ stores PGDATA in /var/lib/postgresql/<major>/docker (not
+    # /var/lib/postgresql/data); mounting the parent directory lets the entrypoint use
+    # the correct subdirectory. See https://github.com/docker-library/postgres/pull/1259
+    # WARNING: a volume created under the OLD /var/lib/postgresql/data mount must NOT
+    # simply be re-pointed to this path — the pg18 image would initialise an EMPTY
+    # cluster under 18/docker while the old data sits untouched in the volume root. Such
+    # a host migrates via pg_dump/pg_restore or pg_upgrade. No known host runs this
+    # file's postgres with an existing volume (real prod uses its own compose file).
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     # NOTE: NO public ports exposed in prod — postgres only on the internal network.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U clokr -d clokr"]
@@ -60,15 +68,17 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: "${MINIO_ROOT_USER}"
-      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD}"
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in .env — shared by the minio and api services}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env — shared by the minio and api services}"
     volumes:
       - minio_data:/data
     # NO public ports — MinIO console accessible via SSH tunnel only.
 
   api:
-    # Pitfall #8: pinned image, NO build directive (no source tree on prod-host).
-    image: "ghcr.io/sebastianzabel/clokr-api:${CLOKR_VERSION:-latest}"
+    # Pitfall #8: pinned image, NO build directive (no source tree on prod-host). The
+    # image refs are the same CLOKR_API_IMAGE / CLOKR_WEB_IMAGE that docs/prod-deploy.md
+    # and scripts/prod-deploy.sh write.
+    image: "${CLOKR_API_IMAGE:?CLOKR_API_IMAGE must be set in .env to a full image reference, e.g. ghcr.io/sebastianzabel/clokr-api:1.12.0 (GHCR tags have no leading v). Replaces the legacy CLOKR_VERSION variable.}"
     restart: unless-stopped
     # D-01: NO Traefik labels — HAProxy on OPNsense handles TLS + SNI routing.
     ports:
@@ -88,6 +98,11 @@ services:
       ENCRYPTION_KEY: "${ENCRYPTION_KEY}"
       SEED_DEMO_DATA: "false"
       RATE_LIMIT_MAX: "${RATE_LIMIT_MAX:-500}"
+      # The api must use the same MinIO credentials as the minio service. Without these
+      # the api falls back to minioadmin/minioadmin (storage.ts) and every bucket call
+      # fails with InvalidAccessKeyId.
+      MINIO_ACCESS_KEY: "${MINIO_ROOT_USER}"
+      MINIO_SECRET_KEY: "${MINIO_ROOT_PASSWORD}"
     deploy:
       resources:
         limits:
@@ -105,7 +120,7 @@ services:
       retries: 5
 
   web:
-    image: "ghcr.io/sebastianzabel/clokr-web:${CLOKR_VERSION:-latest}"
+    image: "${CLOKR_WEB_IMAGE:?CLOKR_WEB_IMAGE must be set in .env to a full image reference, e.g. ghcr.io/sebastianzabel/clokr-web:1.12.0 (GHCR tags have no leading v). Replaces the legacy CLOKR_VERSION variable.}"
     restart: unless-stopped
     # D-01: NO Traefik labels — HAProxy on OPNsense terminates TLS.
     ports:
