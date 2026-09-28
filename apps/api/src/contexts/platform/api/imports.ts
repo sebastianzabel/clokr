@@ -437,6 +437,7 @@ export async function importRoutes(app: FastifyInstance) {
             entity: "TimeEntry",
             entityId: created.id,
             newValue: created,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
           });
 
           affectedEmployeeIds.add(employeeId);

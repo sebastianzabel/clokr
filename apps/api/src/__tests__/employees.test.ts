@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
@@ -141,6 +141,60 @@ describe("Employees API", () => {
         },
       });
       expect(res2.statusCode).toBeGreaterThanOrEqual(400);
+    });
+  });
+
+  describe("POST /api/v1/employees — Nachladen nach dem Commit (Issue #379)", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("answers 201 with transaction data when the post-commit reload fails", async () => {
+      // Simulates the measured int failure: a transient DNS blip on the independent read that
+      // runs AFTER the creation transaction has already committed. The fix must be agnostic to
+      // the failure cause, so this mock is not asserted against anywhere in production code.
+      vi.spyOn(app.prisma.employee, "findUniqueOrThrow").mockRejectedValueOnce(
+        Object.assign(new Error("getaddrinfo EAI_AGAIN clokr-db"), { code: "EAI_AGAIN" }) as never,
+      );
+
+      const uid = Date.now().toString(36);
+      const email = `reload-fail-${uid}@test.de`;
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          email,
+          firstName: "Reload",
+          lastName: "Failure",
+          employeeNumber: `RF-${uid}`,
+          hireDate: new Date("2026-01-01").toISOString(),
+          role: "EMPLOYEE",
+          weeklyHours: 40,
+          // No password → invitation branch, exercising tx.invitation.create too.
+        },
+      });
+
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+      expect(body.firstName).toBe("Reload");
+      expect(body.lastName).toBe("Failure");
+      expect(body.employeeNumber).toBe(`RF-${uid}`);
+      expect(typeof body.id).toBe("string");
+      expect(body.id.length).toBeGreaterThan(0);
+
+      // Prove the 201 is not fiction over a rolled-back write: an UNMOCKED GET must confirm the
+      // employee was in fact durably persisted by the (already committed) transaction.
+      const getRes = await app.inject({
+        method: "GET",
+        url: `/api/v1/employees/${body.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(getRes.statusCode).toBe(200);
+      const getBody = JSON.parse(getRes.body);
+      expect(getBody.firstName).toBe("Reload");
+      expect(getBody.lastName).toBe("Failure");
+      expect(getBody.employeeNumber).toBe(`RF-${uid}`);
     });
   });
 

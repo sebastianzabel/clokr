@@ -111,24 +111,35 @@ export async function meRoutes(app: FastifyInstance) {
       }
       const body = updatePreferencesSchema.parse(req.body);
 
-      const user = await app.prisma.user.findUnique({
-        where: { id: userId },
-        select: { uiPreferences: true },
-      });
-      if (!user) {
+      // Issue #392: a single atomic jsonb merge instead of findUnique -> JS merge -> update.
+      // The old sequence read the row, merged the patch in JS, then wrote the WHOLE merged
+      // object back — so when several partial PUTs (e.g. skin/mode/theme from selectModern() on
+      // /admin/themes) land within milliseconds of each other, a later write that read the
+      // pre-earlier-write row overwrites an already-persisted key with its stale value (lost
+      // update). A single UPDATE ... SET "uiPreferences" = ... || patch takes the row lock and,
+      // under READ COMMITTED, re-evaluates against the latest committed row, so concurrent
+      // partial PUTs serialize and none can revert another's key.
+      // jsonb_typeof(...) = 'object' guards the CASE so a non-object stored value (SQL NULL,
+      // JSON null, array, scalar) falls back to '{}'::jsonb before the merge, rather than making
+      // the `||` operator build an array or throw.
+      const rows = await app.prisma.$queryRaw<{ uiPreferences: unknown }[]>`
+        UPDATE "User"
+        SET "uiPreferences" = (
+              CASE
+                WHEN jsonb_typeof("uiPreferences") = 'object' THEN "uiPreferences"
+                ELSE '{}'::jsonb
+              END
+            ) || ${JSON.stringify(body)}::jsonb,
+            "updatedAt" = now()
+        WHERE "id" = ${userId}
+        RETURNING "uiPreferences"
+      `;
+
+      if (rows.length === 0) {
         return reply.code(404).send({ error: "Benutzer nicht gefunden" });
       }
 
-      // Merge into existing preferences (partial update)
-      const current = mergePreferences(user.uiPreferences);
-      const next: UiPreferences = { ...current, ...body };
-
-      await app.prisma.user.update({
-        where: { id: userId },
-        data: { uiPreferences: next as unknown as Record<string, string> },
-      });
-
-      return next;
+      return mergePreferences(rows[0].uiPreferences);
     },
   });
 
