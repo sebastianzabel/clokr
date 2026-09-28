@@ -98,8 +98,9 @@ services:
       ENCRYPTION_KEY: "${ENCRYPTION_KEY}"
       SEED_DEMO_DATA: "false"
       RATE_LIMIT_MAX: "${RATE_LIMIT_MAX:-500}"
-      # The api must use the same MinIO credentials as the minio service. Previously
-      # both sides silently fell back to MinIO's built-in default credentials.
+      # The api must use the same MinIO credentials as the minio service. Without these
+      # the api falls back to minioadmin/minioadmin (storage.ts) and every bucket call
+      # fails with InvalidAccessKeyId.
       MINIO_ACCESS_KEY: "${MINIO_ROOT_USER}"
       MINIO_SECRET_KEY: "${MINIO_ROOT_PASSWORD}"
     deploy:
