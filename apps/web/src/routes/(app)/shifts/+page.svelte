@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
@@ -464,13 +465,17 @@
   // The old pattern had a second onMount that set `mounted = true`, which caused
   // the $effect below to fire immediately on mount (because `mounted` changed),
   // resulting in two concurrent GET /shifts/week requests on every page load.
-  // Now: one onMount does the role check and triggers the initial load(); the
+  // Now: one onMount does the permission check and triggers the initial load(); the
   // $effect only re-fires on genuine week-navigation (cursorMonday changes).
+  //
+  // Phase 378 (#378): gated on `shift:plan:ZUGEWIESEN`, not `shift:read:ZUGEWIESEN` — this page
+  // is entirely write-oriented (create/generate/copy/delete shifts) with no read-only rendering
+  // mode, so a holder of only `shift:read` (Ausbilder template, #76) is not handed a
+  // half-working edit UI (D-05).
   let mounted = $state(false);
   onMount(() => {
     mounted = true;
-    const role = $authStore.user?.role;
-    if (role !== "MANAGER" && role !== "ADMIN") {
+    if (!hasPermission($authStore.user, "shift:plan:ZUGEWIESEN")) {
       gated = true;
       goto("/dashboard");
       return;
@@ -1111,12 +1116,12 @@
     modalOpen = true;
   }
 
-  // 260601-g8l — Role gate for the BS-removal click handler. Mirrored in the
-  // template so non-ADMIN/MANAGER users don't receive a misleading "Knopf"
-  // affordance (role="button" / tabindex / title are omitted).
-  const canRemoveVs = $derived(
-    $authStore.user?.role === "ADMIN" || $authStore.user?.role === "MANAGER",
-  );
+  // 260601-g8l — Permission gate for the BS-removal click handler (Phase 378, #378: was a role
+  // check). Mirrored in the template so a viewer without `shift:plan:ZUGEWIESEN` doesn't receive
+  // a misleading "Knopf" affordance (role="button" / tabindex / title are omitted) — though this
+  // page is unreachable without that permission anyway (see the onMount guard above), this stays
+  // as defense-in-depth against a future entry point that mounts the component differently.
+  const canRemoveVs = $derived(hasPermission($authStore.user, "shift:plan:ZUGEWIESEN"));
 
   // 260601-g8l — Click on a vocational_school cell → resolve absenceId via
   // /vocational-school/upcoming (the canonical read endpoint), then open the

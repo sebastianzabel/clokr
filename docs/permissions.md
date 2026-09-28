@@ -518,6 +518,21 @@ Brücke gar nicht erst aus, sodass ein Personalabteilung- oder Kundenrollen-Halt
 Manager-Zuweisung mehr geschenkt bekommt und ein Salonmanager/Ausbilder-Halter mit Mitarbeiter
 kein unnötiges 409 mehr erhält.
 
+## Effektive Permissions im Web (Phase 378, Issue #378)
+
+Die Weboberfläche kennt die effektiven Permissions eines Nutzers, nicht nur die Kompatibilitätsrolle:
+`effectivePermissionKeysForUser(prisma, userId, tenantId)`
+(`contexts/platform/request-permissions.ts`) liefert die flache, sortierte Liste aller
+Permission-Schlüssel, die ein Nutzer hält — dieselbe Auflösung wie `hasPermission()`, nur für
+alle Katalogschlüssel auf einmal statt für einen. `POST /auth/login` und `POST /auth/verify-otp`
+(`contexts/platform/api/auth.ts`, `issueTokens()`) hängen das Ergebnis als `user.permissions`
+an die Antwort — dieselbe Aktualität wie die Kompatibilitätsrolle: neu berechnet bei jedem Login,
+nicht bei jedem Token-Refresh. Das Web liest diese Liste über `apps/web/src/lib/permissions.ts`
+(`hasPermission`/`hasAnyPermission`) und entscheidet damit Sichtbarkeit im Team-Bereich (Sidebar,
+Routen-Guards, Dashboard-Karten) — nicht mehr über `user.role`, das eine Salon-/Personen-Scope-
+Zuweisung (Salonmanager, Ausbilder) nie widerspiegelt (#357). `apps/web/scripts/lint-role-checks.mjs`
+bewacht die dafür umgestellten Dateien gegen eine Rückkehr zu `user.role`.
+
 ## Aufrufstellen der Permission-Guards
 
 Jede Zeile ist eine Aufrufstelle der Permission-Guards `requirePermission` / `requireAnyPermission`

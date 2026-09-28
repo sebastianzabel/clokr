@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
@@ -52,10 +53,11 @@
   let loading = $state(true);
   let error = $state("");
 
-  // ── Role gate ────────────────────────────────────────────────────────────
+  // ── Permission gate (Phase 378, #378) ─────────────────────────────────────
+  // Same permission as Team-Abwesenheiten — this page renders the same underlying team
+  // LeaveRequest data as a month calendar instead of a list.
   onMount(() => {
-    const role = $authStore.user?.role;
-    if (role !== "MANAGER" && role !== "ADMIN") {
+    if (!hasPermission($authStore.user, "leave-request:read:ZUGEWIESEN")) {
       void goto("/dashboard");
       return;
     }

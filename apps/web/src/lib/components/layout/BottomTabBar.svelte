@@ -1,6 +1,7 @@
 <script lang="ts">
   import { authStore } from "$stores/auth";
   import { tenantFeatures } from "$stores/tenant-features";
+  import { visibleTeamNavItems } from "$lib/nav/team-nav";
   import MobileMoreSheet from "./MobileMoreSheet.svelte";
 
   interface Props {
@@ -21,29 +22,16 @@
     { href: "/leave", label: "Abwesenheiten", icon: "umbrella" },
   ];
 
-  // Mehr-sheet content per role — mirrors Sidebar.svelte sections exactly.
-  // EMPLOYEE: just the items NOT already in the 3 primary tabs.
-  // MANAGER:  EMPLOYEE overflow + all team items.
-  // ADMIN:    MANAGER overflow + all admin items.
-  // NOTE: "Berichte" intentionally NOT in employeeMore — the /reports page
-  // is reachable for EMPLOYEEs via direct URL (EMP-06 personal monthly closes),
-  // but per Sidebar IA Berichte is exposed in nav only to MANAGER+. Keep
-  // mobile + desktop in sync.
-  const employeeMore: NavItem[] = [
-    { href: "/availability", label: "Verfügbarkeit", icon: "calendar-check" },
-    { href: "/settings", label: "Mein Profil", icon: "settings" },
-  ];
-
-  const managerMore: NavItem[] = [
-    // Phase 76.9 (NAV-V19-01): /team/leave restored — was removed by Phase 30-04 commit 70912731.
-    { href: "/inbox", label: "Anträge", icon: "inbox" },
-    { href: "/team/time-entries", label: "Team-Zeiten", icon: "clock" },
-    { href: "/team/leave", label: "Team-Abwesenheiten", icon: "umbrella" },
-    { href: "/teamcal", label: "Team-Kalender", icon: "calendar" },
-    { href: "/shifts", label: "Schichtplanung", icon: "grid" },
-    { href: "/reports", label: "Berichte", icon: "chart" },
-    { href: "/settings", label: "Mein Profil", icon: "settings" },
-  ];
+  // Mehr-sheet content, Phase 378 (#378): the Team items themselves and which permission gates
+  // each one moved to $lib/nav/team-nav.ts (visibleTeamNavItems, shared with Sidebar.svelte) —
+  // filtered per-item by permission, so a Salonmanager or Ausbilder (Salon-/Personen-Scope role
+  // assignment, #76) sees exactly the items their permissions allow, same as the desktop nav.
+  // "Mein Profil" is appended after the team items for every actor that has any (mirrors the old
+  // `managerMore`'s trailing settings entry byte-for-byte); an actor with none falls back to the
+  // plain employee overflow (Verfügbarkeit + Mein Profil).
+  // NOTE: "Berichte" intentionally absent for a plain Mitarbeiter — the /reports page is
+  // reachable for EMPLOYEEs via direct URL (EMP-06 personal monthly closes), but neither
+  // Systemrollen-Template without `report:read:ZUGEWIESEN` gets a nav entry for it either.
 
   // adminMore: flat list for mobile (12 entries). Group restructure deferred to ADMIN-MIG-14
   // (v2 backlog) — mobile users see the same flat list as today.
@@ -62,20 +50,24 @@
     { href: "/admin/export", label: "DATEV Export", icon: "download" },
   ];
 
-  // moreItems is reactive to the user role; server-side requireRole(...)
-  // still enforces actual authorization on every protected route.
+  // moreItems is reactive to the caller's PERMISSIONS (Phase 378, #378) for the team items, and
+  // to `role` only for the `/admin/*` items (out of this issue's scope, #83 owns that UI — same
+  // documented exception as Sidebar.svelte's admin sub-groups); server-side permission guards
+  // still enforce actual authorization on every protected route.
   //
   // Verfügbarkeits-System (Phase 47.3): the /availability entry is hidden
   // when the tenant feature flag is off. Fail-open while the store is loading.
   const moreItems = $derived.by((): NavItem[] => {
-    const role = $authStore.user?.role;
+    const role = $authStore.user?.role; // ADMIN-only /admin/* items gate — see comment above
     const availabilityOn = $tenantFeatures.availabilityEnabled;
-    const base =
-      role === "ADMIN"
-        ? [...managerMore, ...adminMore]
-        : role === "MANAGER"
-          ? managerMore
-          : employeeMore;
+    const teamItems = visibleTeamNavItems($authStore.user);
+    const settingsItem: NavItem = { href: "/settings", label: "Mein Profil", icon: "settings" };
+    const base: NavItem[] =
+      teamItems.length > 0
+        ? role === "ADMIN"
+          ? [...teamItems, settingsItem, ...adminMore]
+          : [...teamItems, settingsItem]
+        : [{ href: "/availability", label: "Verfügbarkeit", icon: "calendar-check" }, settingsItem];
     return availabilityOn ? base : base.filter((it) => it.href !== "/availability");
   });
 

@@ -7,6 +7,7 @@
   import { clearUnsaved } from "$stores/unsaved";
   import { api } from "$api/client";
   import Icon from "$lib/components/Icon.svelte";
+  import { visibleTeamNavItems } from "$lib/nav/team-nav";
   import { onMount } from "svelte";
 
   interface Props {
@@ -45,17 +46,10 @@
     { href: "/availability", label: "Verfügbarkeit", icon: "calendar-check" },
   ];
 
-  const managerNav: NavItem[] = [
-    // v1.5 Phase 30 manager screens — replaces the prior team-page hrefs.
-    // Labels match docs/design/reference/i18n.js DE entries (nav_inbox / nav_team_cal / nav_shifts).
-    // Phase 76.9 (NAV-V19-01): /team/leave restored — was removed by Phase 30-04 commit 70912731.
-    { href: "/inbox", label: "Anträge", icon: "inbox" },
-    { href: "/team/time-entries", label: "Team-Zeiten", icon: "clock" },
-    { href: "/team/leave", label: "Team-Abwesenheiten", icon: "umbrella" },
-    { href: "/teamcal", label: "Team-Kalender", icon: "calendar" },
-    { href: "/shifts", label: "Schichtplanung", icon: "grid" },
-    { href: "/reports", label: "Berichte", icon: "chart" },
-  ];
+  // Phase 378 (#378): the Team-Bereich items themselves, and which permission gates each one,
+  // moved to $lib/nav/team-nav.ts (visibleTeamNavItems) — shared with BottomTabBar.svelte, and
+  // filtered per-item instead of an all-or-nothing role block, so a Salonmanager or Ausbilder
+  // (Salon-/Personen-Scope role assignment, #76) sees exactly the items their permissions allow.
 
   // 5-group admin nav per docs/ADMIN_STRUCTURE.md §1 (Phase 51 Regulatorium).
   // Labels are UPPERCASE visual-only section headers — never clickable.
@@ -105,15 +99,18 @@
     },
   ];
 
-  // Section visibility is gated by the authenticated user's role.
-  // Server-side `requireRole(...)` middleware still enforces authorization
-  // on every protected endpoint — this is a UI-only display gate.
+  // Section visibility for "Mein Bereich" and "Team" is gated by the caller's PERMISSIONS
+  // (Phase 378, #378) — server-side permission guards still enforce authorization on every
+  // protected endpoint, this is a UI-only display gate. The 5 admin sub-groups below are
+  // deliberately NOT part of that conversion: they are `/admin/*`-only, out of this issue's scope
+  // (#83 owns the role-management UI these sub-groups belong to), and the ADMIN check that gates
+  // them is a legitimate, documented exception in the web's role-check lint (Phase 378, D-03).
   //
   // The Verfügbarkeits-System (Phase 47.3) is gated by a tenant feature flag.
   // While `$tenantFeatures.loaded === false` the flag is treated as on
   // (fail-open) so nav doesn't flash hidden→visible during initial load.
   const sections = $derived.by((): NavSection[] => {
-    const role = $authStore.user?.role;
+    const role = $authStore.user?.role; // ADMIN sub-groups gate only (#83 scope) — see comment above
     const availabilityOn = $tenantFeatures.availabilityEnabled;
     const filterAvailability = (items: NavItem[]): NavItem[] =>
       availabilityOn
@@ -121,8 +118,9 @@
         : items.filter((it) => it.href !== "/availability" && it.href !== "/admin/availability");
 
     const out: NavSection[] = [{ label: "Mein Bereich", items: filterAvailability(employeeNav) }];
-    if (role === "MANAGER" || role === "ADMIN") {
-      out.push({ label: "Team", items: managerNav });
+    const teamItems = visibleTeamNavItems($authStore.user);
+    if (teamItems.length > 0) {
+      out.push({ label: "Team", items: teamItems });
     }
     if (role === "ADMIN") {
       // Expand each NavGroup into its own NavSection (isAdminGroup: true) so the

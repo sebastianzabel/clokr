@@ -3,6 +3,7 @@
   import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import Pagination from "$components/ui/Pagination.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
@@ -334,6 +335,15 @@
   type View = "calendar" | "list" | "approvals";
   let view: View = $state("calendar");
 
+  // Phase 378 (#378): the one place this page decides whether a colleague's absence TYPE may be
+  // named (DSGVO Art. 9, #257/D-10). Permission-based, not role-based — a Salonmanager/Ausbilder
+  // (Salon-/Personen-Scope role assignment, #76) holds `leave-request:read:ZUGEWIESEN`, which the
+  // server already grants this on (`docs/permissions.md:309`), but their compat role stays
+  // EMPLOYEE (#357).
+  const canSeeOthersLeaveType = $derived(
+    hasPermission($authStore.user, "leave-request:read:ZUGEWIESEN"),
+  );
+
   /** Format a local Date to YYYY-MM-DD without UTC shift */
   function toLocalDateStr(d: Date): string {
     const y = d.getFullYear();
@@ -508,6 +518,14 @@
     await loadData();
     loadCalendar();
     loadSection9Cases();
+
+    // Deep-link: ?view=approvals (Phase 378, #378) — the dashboard "Offene Vorgänge" widget links
+    // here with this param; it never selected a tab because neither /leave nor /team/leave read
+    // it before this phase. Kept separate from the ?request=/?section9= handling below: those
+    // additionally highlight and scroll to one row, this only selects the tab.
+    if ($page.url.searchParams.get("view") === "approvals") {
+      view = "approvals";
+    }
 
     // Deep-link: highlight a specific request from notification
     const requestId = $page.url.searchParams.get("request");
@@ -943,7 +961,7 @@
 <!-- ── Header ─────────────────────────────────────────────────────────────── -->
 <PageHead eyebrow="Team" title="Team-Anträge" accent="Anträge">
   {#snippet actions()}
-    {#if $authStore.user?.role === "MANAGER" || $authStore.user?.role === "ADMIN"}
+    {#if hasPermission($authStore.user, "leave-request:create:ZUGEWIESEN")}
       <button class="btn btn-primary btn-sm" onclick={openCreate}>+ Neue Abwesenheit</button>
     {/if}
   {/snippet}
@@ -1189,7 +1207,7 @@
                   {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
                   {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
                   {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
-                  {@const _vis = resolveChipVisual(e, $authStore.user?.role)}
+                  {@const _vis = resolveChipVisual(e, canSeeOthersLeaveType)}
                   <div
                     class="cal-chip"
                     class:cal-chip--bar-start={_isBarStart && !_isBarEnd}
@@ -1239,7 +1257,7 @@
          An EMPLOYEE never sees a colleague's type, so the type dots would promise colours that
          never appear for them. -->
     <div class="cal-legend">
-      {#if canSeeLeaveType(false, $authStore.user?.role)}
+      {#if canSeeLeaveType(false, canSeeOthersLeaveType)}
         {#each LEAVE_TYPE_OPTIONS as t (t.code)}
           <span class="legend-item"
             ><span class="legend-dot" style:background="var({t.colorVar})"></span>{t.label}</span
@@ -1593,7 +1611,7 @@
   bind:open={dayDetailOpen}
   dateLabel={dayDetailDate ? fmtDate(dayDetailDate) : ""}
   entries={dayDetailEntries}
-  role={$authStore.user?.role}
+  canSeeType={canSeeOthersLeaveType}
 />
 
 <!-- ── Review-Modal (Phase 255: the shared LeaveReviewDialog component) ──────── -->

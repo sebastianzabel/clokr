@@ -5,6 +5,7 @@
   import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import Pagination from "$components/ui/Pagination.svelte";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
@@ -256,6 +257,13 @@
 
   type View = "calendar" | "list";
   let view: View = $state("calendar");
+
+  // Phase 378 (#378): the one place this page decides whether a colleague's absence TYPE may be
+  // named (DSGVO Art. 9, #257/#303/D-10) — permission-based, not role-based. See the identical
+  // comment on team/leave/+page.svelte for why.
+  const canSeeOthersLeaveType = $derived(
+    hasPermission($authStore.user, "leave-request:read:ZUGEWIESEN"),
+  );
 
   /** Format a local Date to YYYY-MM-DD without UTC shift */
   function toLocalDateStr(d: Date): string {
@@ -1919,7 +1927,7 @@
                     {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
                     {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
                     {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
-                    {@const _vis = resolveChipVisual(e, $authStore.user?.role)}
+                    {@const _vis = resolveChipVisual(e, canSeeOthersLeaveType)}
                     <!-- Phase 104-10 (D-28/D-29): the § 9 marker only applies to the SPECIFIC
                          days the server named in section9Days — a multi-day bar can be
                          partially marked. -->
@@ -2313,7 +2321,7 @@
     bind:open={dayDetailOpen}
     dateLabel={dayDetailDate ? fmtDate(dayDetailDate) : ""}
     entries={dayDetailEntries}
-    role={$authStore.user?.role}
+    canSeeType={canSeeOthersLeaveType}
   />
 </div>
 

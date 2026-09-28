@@ -1,7 +1,13 @@
 // Phase 257 (GitHub issue #257) — the privacy direction of the team calendar's absence bars.
 //
-// AC-5: "a person with role EMPLOYEE gets NO type colour and NO type name for a foreign entry.
-// That is the direction that hurts when it breaks — the other one fails visibly."
+// AC-5: "a viewer without the permission gets NO type colour and NO type name for a foreign
+// entry. That is the direction that hurts when it breaks — the other one fails visibly."
+//
+// Phase 378 (GitHub issue #378): the predicate takes a boolean — whether the caller holds
+// `leave-request:read:ZUGEWIESEN` (`docs/permissions.md:309`) — not a role string. A role string
+// never distinguished a Salonmanager/Ausbilder (Salon-/Personen-Scope role assignment, #76), who
+// holds that permission but resolves to compat role EMPLOYEE (#357); this file's cases are named
+// by the permission now, not by the role that used to stand in for it.
 //
 // Why this lives in $lib and not next to the page: apps/web/vitest.config.ts registers no
 // `$app/*` alias, and routes/(app)/team/leave/+page.svelte imports `{ page } from "$app/stores"`,
@@ -23,20 +29,13 @@ import {
 } from "../team-calendar-visibility";
 import { showsBurlgSection7Notice } from "../leave-review";
 
-// ── Table 1: canSeeLeaveType(isOwn, role) over roles x ownership ──────────────
+// ── Table 1: canSeeLeaveType(isOwn, canSeeOthersType) over the permission x ownership ─────────
 describe("canSeeLeaveType", () => {
-  const cases: { isOwn: boolean; role: string | null | undefined; expected: boolean }[] = [
-    { isOwn: false, role: "EMPLOYEE", expected: false }, // THE assertion that matters (AC-5 / D-02)
-    { isOwn: false, role: undefined, expected: false },
-    { isOwn: false, role: null, expected: false },
-    { isOwn: false, role: "", expected: false },
-    { isOwn: false, role: "employee", expected: false }, // lowercase must NOT pass; exact comparison
-    { isOwn: false, role: "MANAGER", expected: true },
-    { isOwn: false, role: "ADMIN", expected: true },
-    { isOwn: true, role: "EMPLOYEE", expected: true },
-    { isOwn: true, role: undefined, expected: true },
-    { isOwn: true, role: "MANAGER", expected: true },
-    { isOwn: true, role: "ADMIN", expected: true },
+  const cases: { isOwn: boolean; canSeeOthersType: boolean; expected: boolean }[] = [
+    { isOwn: false, canSeeOthersType: false, expected: false }, // THE assertion that matters (AC-5 / D-02)
+    { isOwn: false, canSeeOthersType: true, expected: true },
+    { isOwn: true, canSeeOthersType: false, expected: true },
+    { isOwn: true, canSeeOthersType: true, expected: true },
   ];
 
   it("the case table itself is non-empty and covers both outcomes", () => {
@@ -46,14 +45,14 @@ describe("canSeeLeaveType", () => {
     expect(cases.some((c) => c.expected === true)).toBe(true);
   });
 
-  for (const { isOwn, role, expected } of cases) {
-    it(`isOwn=${isOwn} role=${JSON.stringify(role)} => ${expected}`, () => {
-      expect(canSeeLeaveType(isOwn, role)).toBe(expected);
+  for (const { isOwn, canSeeOthersType, expected } of cases) {
+    it(`isOwn=${isOwn} canSeeOthersType=${canSeeOthersType} => ${expected}`, () => {
+      expect(canSeeLeaveType(isOwn, canSeeOthersType)).toBe(expected);
     });
   }
 });
 
-// ── Table 2: resolveChipVisual(entry, role) over roles x ownership x type x status ──
+// ── Table 2: resolveChipVisual(entry, canSeeOthersType) over the permission x ownership x type x status ──
 describe("resolveChipVisual", () => {
   const statuses = ["APPROVED", "PENDING"] as const;
 
@@ -61,9 +60,9 @@ describe("resolveChipVisual", () => {
     for (const status of statuses) {
       const typeName = `GEHEIM-${type.code}`;
 
-      it(`EMPLOYEE, foreign ${type.code}/${status} — no colour, no label, no leak`, () => {
+      it(`no leave-request:read:ZUGEWIESEN, foreign ${type.code}/${status} — no colour, no label, no leak`, () => {
         const entry: ChipEntry = { typeCode: type.code, typeName, status, isOwn: false };
-        const visual = resolveChipVisual(entry, "EMPLOYEE");
+        const visual = resolveChipVisual(entry, false);
 
         expect(visual.typeLabel).toBeNull();
         expect(visual.chipLabel).toBe(NEUTRAL_CHIP_LABEL);
@@ -74,9 +73,9 @@ describe("resolveChipVisual", () => {
         expect(JSON.stringify(visual)).not.toContain(typeName);
       });
 
-      it(`MANAGER, foreign ${type.code}/${status} — colour and label visible`, () => {
+      it(`leave-request:read:ZUGEWIESEN, foreign ${type.code}/${status} — colour and label visible`, () => {
         const entry: ChipEntry = { typeCode: type.code, typeName, status, isOwn: false };
-        const visual = resolveChipVisual(entry, "MANAGER");
+        const visual = resolveChipVisual(entry, true);
 
         expect(visual.typeLabel).toBe(typeName);
         expect(visual.chipLabel).toBe(typeName);
@@ -84,19 +83,9 @@ describe("resolveChipVisual", () => {
         expect(visual.textColor).toBe(`var(${type.colorVar}-text, #ffffff)`);
       });
 
-      it(`ADMIN, foreign ${type.code}/${status} — colour and label visible`, () => {
-        const entry: ChipEntry = { typeCode: type.code, typeName, status, isOwn: false };
-        const visual = resolveChipVisual(entry, "ADMIN");
-
-        expect(visual.typeLabel).toBe(typeName);
-        expect(visual.chipLabel).toBe(typeName);
-        expect(visual.background).toBe(`var(${type.colorVar})`);
-        expect(visual.textColor).toBe(`var(${type.colorVar}-text, #ffffff)`);
-      });
-
-      it(`EMPLOYEE, own ${type.code}/${status} — always visible`, () => {
+      it(`no leave-request:read:ZUGEWIESEN, own ${type.code}/${status} — always visible`, () => {
         const entry: ChipEntry = { typeCode: type.code, typeName, status, isOwn: true };
-        const visual = resolveChipVisual(entry, "EMPLOYEE");
+        const visual = resolveChipVisual(entry, false);
 
         expect(visual.typeLabel).toBe(typeName);
         expect(visual.chipLabel).toBe(typeName);
@@ -107,9 +96,9 @@ describe("resolveChipVisual", () => {
   }
 
   // ── Edge cases ──────────────────────────────────────────────────────────────
-  it("typeCode null, ADMIN, own entry — no crash, no colour (pre-backfill row)", () => {
+  it("typeCode null, permission held, own entry — no crash, no colour (pre-backfill row)", () => {
     const entry: ChipEntry = { typeCode: null, typeName: null, status: "APPROVED", isOwn: true };
-    const visual = resolveChipVisual(entry, "ADMIN");
+    const visual = resolveChipVisual(entry, true);
 
     expect(visual.typeLabel).toBeNull();
     expect(visual.chipLabel).toBe(NEUTRAL_CHIP_LABEL);
@@ -118,7 +107,7 @@ describe("resolveChipVisual", () => {
 
   it("typeName null falls back to the LEAVE_TYPES label, never the raw code or 'abwesend'", () => {
     const entry: ChipEntry = { typeCode: "SICK", typeName: null, status: "APPROVED", isOwn: false };
-    const visual = resolveChipVisual(entry, "MANAGER");
+    const visual = resolveChipVisual(entry, true);
 
     expect(visual.chipLabel).toBe("Krankmeldung");
     expect(visual.chipLabel).not.toBe("SICK");
@@ -188,8 +177,9 @@ describe("SICK_CODES", () => {
 //
 // Below 700px the bar's type label is hidden, so the type was carried by COLOUR ALONE. The
 // remedy is a tap that reveals the type as text. That text is produced here, which makes this the
-// place where the #257 role rule must hold a second time: a detail sheet naming a colleague's
-// "Kinderkrank" to an EMPLOYEE would be a worse leak than the bug it fixes.
+// place where the #257 permission rule must hold a second time: a detail sheet naming a
+// colleague's "Kinderkrank" to a viewer without `leave-request:read:ZUGEWIESEN` would be a worse
+// leak than the bug it fixes.
 describe("resolveDayDetailRows (#265)", () => {
   function entry(over: Partial<DayDetailEntry> = {}): DayDetailEntry {
     return {
@@ -211,8 +201,8 @@ describe("resolveDayDetailRows (#265)", () => {
     entry({ id: "r2", firstName: "Zwei", typeCode: "SICK_CHILD", typeName: "Kinderkrank" }),
   ];
 
-  it("MANAGER: Krank and Kinderkrank come back as two DIFFERENT words, not two colours", () => {
-    const rows = resolveDayDetailRows(sickPair, "MANAGER");
+  it("leave-request:read:ZUGEWIESEN: Krank and Kinderkrank come back as two DIFFERENT words, not two colours", () => {
+    const rows = resolveDayDetailRows(sickPair, true);
     expect(rows).toHaveLength(2); // anti-vacuity: the mapping actually produced lines
     expect(rows[0].typeLabel).toBe("Krankmeldung");
     expect(rows[1].typeLabel).toBe("Kinderkrank");
@@ -221,39 +211,27 @@ describe("resolveDayDetailRows (#265)", () => {
     expect(rows[0].background).not.toBe(rows[1].background);
   });
 
-  it("ADMIN sees the types too", () => {
-    const rows = resolveDayDetailRows(sickPair, "ADMIN");
-    expect(rows.map((r) => r.typeLabel)).toEqual(["Krankmeldung", "Kinderkrank"]);
-  });
-
-  it("EMPLOYEE, colleague's rows: BOTH read the neutral word and NEITHER names a sickness", () => {
-    const rows = resolveDayDetailRows(sickPair, "EMPLOYEE");
+  it("no leave-request:read:ZUGEWIESEN, colleague's rows: BOTH read the neutral word and NEITHER names a sickness", () => {
+    const rows = resolveDayDetailRows(sickPair, false);
     expect(rows).toHaveLength(2);
     expect(rows.map((r) => r.typeLabel)).toEqual([NEUTRAL_CHIP_LABEL, NEUTRAL_CHIP_LABEL]);
     const everything = JSON.stringify(rows);
     expect(everything).not.toContain("Krank");
     expect(everything).not.toContain("SICK");
-    // Identical neutral fills: an EMPLOYEE must not be able to tell the two apart by swatch
-    // either, which would reintroduce the leak through the back door.
+    // Identical neutral fills: a viewer without the permission must not be able to tell the two
+    // apart by swatch either, which would reintroduce the leak through the back door.
     expect(rows[0].background).toBe(rows[1].background);
   });
 
-  it("EMPLOYEE, own row: the type IS named — the rule is about colleagues, not about secrecy", () => {
-    const rows = resolveDayDetailRows([entry({ isOwn: true })], "EMPLOYEE");
+  it("no leave-request:read:ZUGEWIESEN, own row: the type IS named — the rule is about colleagues, not about secrecy", () => {
+    const rows = resolveDayDetailRows([entry({ isOwn: true })], false);
     expect(rows[0].typeLabel).toBe("Krankmeldung");
-  });
-
-  it("no role at all (undefined/null) is treated as an EMPLOYEE — the safe side", () => {
-    for (const role of [undefined, null, "", "SOMETHING_NEW"]) {
-      const rows = resolveDayDetailRows(sickPair, role);
-      expect(rows.map((r) => r.typeLabel)).toEqual([NEUTRAL_CHIP_LABEL, NEUTRAL_CHIP_LABEL]);
-    }
   });
 
   it("carries the full name, the pending flag and the paired foreground", () => {
     const rows = resolveDayDetailRows(
       [entry({ firstName: "Vor", lastName: "Nach", status: "PENDING", isOwn: true })],
-      "EMPLOYEE",
+      false,
     );
     expect(rows[0].name).toBe("Vor Nach");
     expect(rows[0].isPending).toBe(true);
@@ -263,12 +241,12 @@ describe("resolveDayDetailRows (#265)", () => {
   it("CANCELLATION_REQUESTED counts as pending, exactly as the bar's modifier class does", () => {
     const rows = resolveDayDetailRows(
       [entry({ status: "CANCELLATION_REQUESTED", isOwn: true })],
-      "EMPLOYEE",
+      false,
     );
     expect(rows[0].isPending).toBe(true);
   });
 
   it("an empty day yields no rows (the sheet's empty state is reachable)", () => {
-    expect(resolveDayDetailRows([], "ADMIN")).toEqual([]);
+    expect(resolveDayDetailRows([], true)).toEqual([]);
   });
 });

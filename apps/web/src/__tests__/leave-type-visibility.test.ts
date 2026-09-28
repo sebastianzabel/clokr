@@ -63,8 +63,8 @@ describe("leave page — one shared visibility decision (Phase 303)", () => {
       expect((PAGE.match(/resolveChipVisual\(/g) ?? []).length).toBe(1);
     });
 
-    it("A3: the one call is the {@const} binding, reading role from the auth store", () => {
-      expect(PAGE).toContain("{@const _vis = resolveChipVisual(e, $authStore.user?.role)}");
+    it("A3: the one call is the {@const} binding, reading the permission-derived flag (Phase 378)", () => {
+      expect(PAGE).toContain("{@const _vis = resolveChipVisual(e, canSeeOthersLeaveType)}");
     });
 
     it("A4: all four render points read from the binding", () => {
@@ -136,48 +136,45 @@ describe("leave page — one shared visibility decision (Phase 303)", () => {
       isOwn: false,
     };
 
-    it("B1: EMPLOYEE sees the neutral label for both — never the type, in text", () => {
-      const visSick = resolveChipVisual(sick, "EMPLOYEE");
-      const visSickChild = resolveChipVisual(sickChild, "EMPLOYEE");
+    it("B1: no leave-request:read:ZUGEWIESEN sees the neutral label for both — never the type, in text", () => {
+      const visSick = resolveChipVisual(sick, false);
+      const visSickChild = resolveChipVisual(sickChild, false);
       expect(visSick.chipLabel).toBe(NEUTRAL_CHIP_LABEL);
       expect(visSick.typeLabel).toBeNull();
       expect(visSickChild.chipLabel).toBe(NEUTRAL_CHIP_LABEL);
       expect(visSickChild.typeLabel).toBeNull();
     });
 
-    it("B2: EMPLOYEE sees the SAME neutral fill for both — the colour channel a text-only test cannot see", () => {
+    it("B2: no leave-request:read:ZUGEWIESEN sees the SAME neutral fill for both — the colour channel a text-only test cannot see", () => {
       // Before this plan, the fill came from a second, independent helper (typeColor()) that a
       // text-only assertion would never exercise. Token names are derived from the module's own
       // table, not hardcoded, so a token rename cannot make this assertion vacuously true.
-      const visSick = resolveChipVisual(sick, "EMPLOYEE");
-      const visSickChild = resolveChipVisual(sickChild, "EMPLOYEE");
+      const visSick = resolveChipVisual(sick, false);
+      const visSickChild = resolveChipVisual(sickChild, false);
       expect(visSick.background).toBe(visSickChild.background);
       expect(visSick.background).not.toContain(sickVar);
       expect(visSick.background).not.toContain(sickChildVar);
     });
 
-    it("B3: MANAGER and ADMIN see the real type and two distinguishable fills — the intended widening", () => {
-      // This is what a MANAGER/ADMIN did NOT see on this page before Phase 303.
-      for (const role of ["MANAGER", "ADMIN"]) {
-        const visSick = resolveChipVisual(sick, role);
-        const visSickChild = resolveChipVisual(sickChild, role);
-        expect(visSick.typeLabel).toBe("Krankmeldung");
-        expect(visSickChild.typeLabel).toBe("Kinderkrank");
-        expect(visSick.background).not.toBe(visSickChild.background);
-      }
+    it("B3: leave-request:read:ZUGEWIESEN holders see the real type and two distinguishable fills — the intended widening", () => {
+      // This is what MANAGER/ADMIN (and, since Phase 378, a Salonmanager/Ausbilder) did NOT see
+      // on this page before Phase 303.
+      const visSick = resolveChipVisual(sick, true);
+      const visSickChild = resolveChipVisual(sickChild, true);
+      expect(visSick.typeLabel).toBe("Krankmeldung");
+      expect(visSickChild.typeLabel).toBe("Kinderkrank");
+      expect(visSick.background).not.toBe(visSickChild.background);
     });
 
-    it("B4: EMPLOYEE sees their OWN type — the rule is about colleagues, not secrecy as such", () => {
-      const own = resolveChipVisual({ ...sick, isOwn: true }, "EMPLOYEE");
+    it("B4: sees their OWN type regardless — the rule is about colleagues, not secrecy as such", () => {
+      const own = resolveChipVisual({ ...sick, isOwn: true }, false);
       expect(own.typeLabel).toBe("Krankmeldung");
     });
 
-    it("B5: canSeeLeaveType, spot-checked across roles — so B1-B4 cannot all pass from one shared mistake", () => {
-      expect(canSeeLeaveType(false, "EMPLOYEE")).toBe(false);
-      expect(canSeeLeaveType(false, "MANAGER")).toBe(true);
-      expect(canSeeLeaveType(false, "ADMIN")).toBe(true);
-      expect(canSeeLeaveType(false, null)).toBe(false);
-      expect(canSeeLeaveType(true, "EMPLOYEE")).toBe(true);
+    it("B5: canSeeLeaveType, spot-checked — so B1-B4 cannot all pass from one shared mistake", () => {
+      expect(canSeeLeaveType(false, false)).toBe(false);
+      expect(canSeeLeaveType(false, true)).toBe(true);
+      expect(canSeeLeaveType(true, false)).toBe(true);
     });
   });
 });

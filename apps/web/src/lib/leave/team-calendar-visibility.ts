@@ -137,13 +137,18 @@ function textColor(colorVar: string): string {
 /**
  * May this viewer learn the absence TYPE of this entry?
  *
- * The role comparison is exact and case-sensitive on purpose — the JWT carries the Prisma `Role`
- * enum verbatim (`ADMIN` | `MANAGER` | `EMPLOYEE`, packages/db/prisma/schema.prisma). A relaxed
- * comparison would let an unexpected value through on the permissive side, which is the side
- * that leaks.
+ * Phase 378 (#378): takes the caller's ALREADY-RESOLVED permission check, not a role. Before this
+ * phase the rule compared the compat role directly against the two elevated legacy values — the server-side
+ * mirror (`GET /leave/calendar`, `apps/api/src/contexts/absence/api/leave.ts:2250-2258`) already
+ * grants seeing a colleague's absence type to anyone holding `leave-request:read:ZUGEWIESEN`
+ * (`docs/permissions.md:309` — that includes learning that someone is sick, DSGVO Art. 9), including a
+ * Salonmanager or Ausbilder (Salon-/Personen-Scope role assignment, #76) whose compat role stays
+ * EMPLOYEE (#357). The old role check therefore masked data these viewers already had
+ * server-side permission to see — this was a correctness bug, not only a nav-visibility one.
+ * Callers pass `hasPermission(user, "leave-request:read:ZUGEWIESEN")`.
  */
-export function canSeeLeaveType(isOwn: boolean, role: string | null | undefined): boolean {
-  return isOwn === true || role === "MANAGER" || role === "ADMIN";
+export function canSeeLeaveType(isOwn: boolean, canSeeOthersType: boolean): boolean {
+  return isOwn === true || canSeeOthersType === true;
 }
 
 export interface ChipVisual {
@@ -169,10 +174,10 @@ export interface ChipEntry {
  * Background, text colour, tooltip type and bar label — derived together, from one decision, so
  * they cannot drift apart (D-10). Call this ONCE per bar.
  */
-export function resolveChipVisual(entry: ChipEntry, role: string | null | undefined): ChipVisual {
+export function resolveChipVisual(entry: ChipEntry, canSeeOthersType: boolean): ChipVisual {
   const type = entry.typeCode ? entryFor(entry.typeCode) : undefined;
 
-  if (!canSeeLeaveType(entry.isOwn, role) || !entry.typeCode) {
+  if (!canSeeLeaveType(entry.isOwn, canSeeOthersType) || !entry.typeCode) {
     const neutralVar = entry.status === "APPROVED" ? NEUTRAL_APPROVED_VAR : NEUTRAL_PENDING_VAR;
     return {
       background: background(neutralVar),
@@ -228,10 +233,10 @@ export interface DayDetailRow {
  */
 export function resolveDayDetailRows(
   entries: readonly DayDetailEntry[],
-  role: string | null | undefined,
+  canSeeOthersType: boolean,
 ): DayDetailRow[] {
   return entries.map((entry) => {
-    const visual = resolveChipVisual(entry, role);
+    const visual = resolveChipVisual(entry, canSeeOthersType);
     return {
       id: entry.id,
       name: `${entry.firstName} ${entry.lastName}`.trim(),

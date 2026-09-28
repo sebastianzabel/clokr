@@ -7,12 +7,22 @@ import { skin } from "$stores/skin";
 import { prefsHydrated } from "$stores/prefs-state";
 import { fetchPreferences } from "$api/preferences";
 
-interface AuthUser {
+export interface AuthUser {
   id: string;
   email: string;
   role: "ADMIN" | "MANAGER" | "EMPLOYEE";
   employeeId: string | null;
   firstName: string | null;
+  /**
+   * Phase 378 (#378): the caller's effective permission keys (`docs/permissions.md`), computed at
+   * login/OTP-verify by `effectivePermissionKeysForUser()`. The web decides Team-Bereich
+   * visibility from this list, never from `role` — a Salon/Personen-scope role assignment
+   * (Salonmanager, Ausbilder templates) never widens `role`, but does widen this list. Same
+   * staleness window as `role`: refreshed on next login, not mid-session. Optional because a
+   * `user` object cached in localStorage from before this phase shipped has none — every consumer
+   * goes through `$lib/permissions.ts`, which treats a missing list as empty (fail-closed).
+   */
+  permissions?: string[];
 }
 
 interface AuthState {

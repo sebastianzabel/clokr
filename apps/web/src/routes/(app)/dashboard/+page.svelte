@@ -20,6 +20,7 @@
   import { onMount, onDestroy, tick } from "svelte";
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import { toasts } from "$stores/toast";
   import Pagination from "$components/ui/Pagination.svelte";
   import Card from "$components/ui/Card.svelte";
@@ -350,7 +351,16 @@
   let timer: ReturnType<typeof setInterval>;
   let pollInterval: ReturnType<typeof setInterval>;
 
-  const isManager = $derived(["ADMIN", "MANAGER"].includes($authStore.user?.role ?? ""));
+  // Phase 378 (#378): permission-based, not role-based — a Salonmanager (Salon-Scope role
+  // assignment, #76) holds `team-overview:read:ZUGEWIESEN` but resolves to compat role EMPLOYEE
+  // (#357), so the old check (compat role in the ADMIN/MANAGER set) never saw them. The
+  // Überstunden-Trend saldo card inside this block already handles a holder without
+  // `overtime:read` gracefully (see `loadCharts()`'s `overtimeTrendAvailable` below, Phase 76b
+  // D-15) — opening this gate to `team-overview:read` therefore satisfies AK-378-1's "keine
+  // Saldo-Karten" via that EXISTING fail-safe, not a new one.
+  const canSeeTeamBereich = $derived(
+    hasPermission($authStore.user, "team-overview:read:ZUGEWIESEN"),
+  );
 
   // Phase 76.7 (D-15, UI-V19-04) — § 18 ArbZG-exempt: when the current
   // employee's `isTimeTrackingExempt` flag is true, fully HIDE the Timer-Card
@@ -481,7 +491,7 @@
       }
 
       // Team-Wochenübersicht für Manager/Admin
-      if (isManager) {
+      if (canSeeTeamBereich) {
         await loadTeamWeek();
       }
 
@@ -493,7 +503,7 @@
   }
 
   async function pollDashboard() {
-    if (isManager) await loadTeamWeek(); // only managers need team-week data
+    if (canSeeTeamBereich) await loadTeamWeek(); // only Team-Bereich holders need team-week data
     // Also refresh clock-in status
     try {
       const today = format(new Date(), "yyyy-MM-dd");
@@ -783,7 +793,7 @@
     }
 
     // Load upcoming leaves
-    if (isManager) {
+    if (canSeeTeamBereich) {
       try {
         const leaves = await api.get<
           {
@@ -1655,7 +1665,10 @@
                 </a>
               {/if}
               {#if openItems.pendingApprovals > 0}
-                <a href="/leave?view=approvals" class="oi-row">
+                <!-- Phase 378 (#378): was "/leave?view=approvals" — /leave (the personal page)
+                     has no approvals view at all and never did; the working "Genehmigungen" tab
+                     lives on /team/leave. -->
+                <a href="/team/leave?view=approvals" class="oi-row">
                   <span class="oi-dot oi-dot--approval"></span>
                   <span
                     >{openItems.pendingApprovals} zu genehmigende{openItems.pendingApprovals === 1
@@ -1697,9 +1710,10 @@
     </div>
   {/if}
 
-  <!-- ═══ Team-Bereich (nur Manager/Admin) ═══ -->
-  <!-- Single role gate: employees never see team charts, upcoming leaves, or team-week table -->
-  {#if $authStore.user?.role === "MANAGER" || $authStore.user?.role === "ADMIN"}
+  <!-- ═══ Team-Bereich (permission-gated, Phase 378 / #378) ═══ -->
+  <!-- Single gate on team-overview:read:ZUGEWIESEN: employees, and any holder without it, never
+       see team charts, upcoming leaves, or team-week table. -->
+  {#if canSeeTeamBereich}
     <div class="team-divider">
       <span class="team-divider-label">Team</span>
     </div>
