@@ -1561,6 +1561,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         entity: "TimeEntry",
         entityId: entry.id,
         newValue: entryWithBreaks,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       // Phase 96 (RETRO-16/D-10) — submit-notify: tell the tenant's managers/admins
