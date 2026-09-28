@@ -80,7 +80,10 @@ describe("Audit Trail Completeness", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/time-entries",
-        headers: { authorization: `Bearer ${data.adminToken}` },
+        headers: {
+          authorization: `Bearer ${data.adminToken}`,
+          "user-agent": "vitest-agent/1.0",
+        },
         payload: {
           employeeId: data.employee.id,
           date: "2025-06-10",
@@ -111,6 +114,8 @@ describe("Audit Trail Completeness", () => {
         newValue: { id: createdTimeEntryId, note: "Audit trail test entry" },
       });
       expect(log!.action).toBe("CREATE");
+      expect(log!.ipAddress).toBeTruthy();
+      expect(log!.userAgent).toBe("vitest-agent/1.0");
     });
 
     // D-09: tightened from `toBeDefined()` (which passes for a `null` Json column — Prisma's
