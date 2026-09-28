@@ -2,6 +2,7 @@
   import { theme, themes, type Theme } from "$stores/theme";
   import { mode, type Mode } from "$stores/mode";
   import { skin, type Skin } from "$stores/skin";
+  import { applyPreferences } from "$stores/apply-preferences";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import LanguageToggle from "$components/ui/LanguageToggle.svelte";
@@ -42,23 +43,21 @@
     },
   ];
 
-  /** Editorial theme click: switch skin back to editorial + set theme. */
+  /** Editorial theme click: switch skin back to editorial + set theme, persisted with one PUT. */
   function selectTheme(id: Theme) {
-    skin.set("editorial");
-    theme.set(id);
+    applyPreferences({ skin: "editorial", theme: id });
   }
 
   function selectMode(m: Mode) {
     mode.set(m);
   }
 
-  /** Modern preset click: apply skin + mode + theme together. */
+  /** Modern preset click: apply skin + mode + theme together, persisted with one PUT
+   *  (Issue #392 — three separate store writes used to fire three concurrent partial PUTs). */
   function selectModern(preset: ModernPreset) {
-    // Stores own the DOM attribute writes — no manual setAttribute needed,
+    // Stores still own the DOM attribute writes — no manual setAttribute needed,
     // each subscribe() in skin.ts / mode.ts / theme.ts already does that.
-    skin.set(preset.skin);
-    mode.set(preset.mode);
-    theme.set(preset.theme);
+    applyPreferences({ skin: preset.skin, mode: preset.mode, theme: preset.theme });
   }
 
   // Active detection — editorial cards only match when skin is editorial.
