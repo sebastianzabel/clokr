@@ -75,7 +75,8 @@ Per Phase 71 decision **D-11** (verified 2026-06-04 via `gh api user/packages`):
 ## Deploy a new version (standard release)
 
 After a release tag has been pushed and the `release.yml` workflow has completed promoting the
-`sha-{SHA}` images to a `vX.Y.Z` tag (see `docs/release-process.md`):
+`sha-{SHA}` images to an `X.Y.Z` tag (see `docs/release-process.md`). The image tag is the git
+tag's version without its leading `v` (git tag `v1.12.0` → image tag `1.12.0`):
 
 ```bash
 # On the operator machine:
@@ -244,7 +245,7 @@ own shell. The script's runtime configuration (target host, remote path) is pass
 ## Companion documents
 
 - [`docs/release-process.md`](release-process.md) — How releases get tagged + how images get
-  promoted from `sha-{SHA}` to `vX.Y.Z` (Phase 69).
+  promoted from `sha-{SHA}` to `X.Y.Z` (Phase 69).
 - [`docs/ci-branch-protection.md`](ci-branch-protection.md) — Branch protection + status checks
   (Phase 70-07).
 - [`.github/workflows/release.yml`](../.github/workflows/release.yml) — Post-release smoke-test
