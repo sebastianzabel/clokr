@@ -1677,13 +1677,28 @@ export async function overtimeRoutes(app: FastifyInstance) {
           data: { superseded: true, supersededReason: reason },
         });
         // Phase 100B Plan 08 — T8, contexts/time-tracking facade.
-        await unlockEntriesForMonth(
+        const unlockedEntries = await unlockEntriesForMonth(
           tx,
           employeeId,
           employee.tenantId,
           unlockFirstDay,
           unlockLastDay,
         );
+
+        // Issue #370 (D-07): one TimeEntry UNLOCK audit per row unlockEntriesForMonth actually
+        // unlocked, INSIDE this $transaction — same rollback reasoning as COMP-V1814-05 F1 below.
+        for (const row of unlockedEntries) {
+          await app.audit({
+            tx,
+            userId: req.user.sub,
+            action: "UNLOCK",
+            entity: "TimeEntry",
+            entityId: row.id,
+            oldValue: row.oldValue,
+            newValue: row.newValue,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+        }
 
         // D-02 / COMP-V1814-05 (audit F1): audit UNLOCK inside the same $transaction (pass tx) so a
         // rollback cannot leave the snapshot superseded without its UNLOCK audit row (or vice-versa).
