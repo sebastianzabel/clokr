@@ -1931,3 +1931,114 @@ pnpm --filter @clokr/api run lint:facade-signatures
 pnpm --filter @clokr/api run lint:tenant-scoping
 pnpm --filter @clokr/api test
 ```
+
+## S — SHIFT_BASED-Urlaubstage werden nach Vertrag statt nach Schichtplan gezählt (Phase 417, Issue #417)
+
+**Schwere: fachlich bedeutsam (BUrlG § 3) — keine Berechtigungsänderung.**
+
+### Warum dieser Eintrag existiert
+
+Phase 107 (D-06) entschied: SHIFT_BASED-Urlaubstage werden "roster-exact" gezählt — eine ganze
+ISO-Woche innerhalb des Zeitraums zählt vertraglich, eine Teilwoche zählt exakt nach den an diesem
+Tag tatsächlich aktiven Schichten, sofern die Woche überhaupt einen Schichtplan hat; ohne
+Schichtplan in dieser Woche griff eine vorläufige Schätzung
+(`min(Kalendertage, Vertragstage) − Feiertage`, als `daysProvisional: true` markiert), die sich bei
+jeder späteren Schichtplan-Änderung über `recalcProvisionalLeaveForShiftChange()`
+(`apps/api/src/contexts/absence/shift-leave-recalc-resolver.ts`) neu berechnete.
+
+Befund von prod (29.09.2026, Issue #417): Im Salon wird ein Urlaubstag gerade NICHT als Schicht
+geplant. Beide Reihenfolgen landeten deshalb bei `days: 0`: (1) Schicht zuerst per Phorest
+entfernt, Antrag danach findet keine Schicht in einer sonst verplanten Woche → 0 Tage (exakter
+Zweig zählt 0 am ungeplanten Tag). (2) Antrag zuerst (vorläufig geschätzt), Salon plant die Woche
+danach ohne genau diesen Tag → Neuberechnung zählt "exakt" und setzt den Antrag auf 0 Tage. Der
+gesetzliche Urlaubsanspruch wurde dadurch nie tatsächlich verbraucht.
+
+**Owner-Entscheidung (29.09.2026, bindend, ersetzt Phase-107-Entscheidung D-06):** Urlaubstage von
+SHIFT_BASED-Mitarbeitenden werden NACH VERTRAG gezählt, unabhängig vom Schichtplan. Begründung:
+§ 3 BUrlG bemisst Urlaub nach den vertraglichen Arbeitstagen; der Schichtplan bildet im Salon den
+Urlaub gerade nicht ab.
+
+### Was sich geändert hat
+
+- **`countShiftBasedLeaveDays()`** (`apps/api/src/contexts/absence/vacation-calc.ts:376-451`)
+  zählt jetzt ausschließlich nach Vertrag: eine ganze ISO-Woche im Zeitraum zählt
+  `contractWorkDaysPerWeek` abzüglich gesetzlicher Feiertage in dieser Woche; eine Teilwoche zählt
+  `min(Kalendertage der Teilwoche, contractWorkDaysPerWeek) − Feiertage in der Teilwoche` — die
+  bestehende "flache" Formel aus Phase 107 D-07/D-08, jetzt UNIFORM auf jede Woche angewandt statt
+  nur auf eine Woche ohne Schichtplan. Der Schichtplan (`rosteredDates`/`weeksWithRoster`) wird
+  nicht mehr abgefragt — die Funktionssignatur verlor diese beiden Parameter. `provisional` bleibt
+  im Rückgabetyp (Kompatibilität für Aufrufer), ist aber ab jetzt immer `false`.
+- **`resolveLeaveDays()`** (`apps/api/src/contexts/absence/leave-days.ts:396-421`) fragt für
+  SHIFT_BASED keine `Shift`-Zeilen mehr ab (`getShiftsInRange`-Aufruf entfernt) — der Schichtplan
+  ist für die Urlaubs-Tagezählung nicht mehr relevant.
+- **`recalcProvisionalLeaveForShiftChange()`** (`shift-leave-recalc-resolver.ts:167-…`) bleibt
+  unverändert bestehen, wird aber für JEDEN neuen/neu genehmigten Antrag zum No-op: sein Filter
+  (`daysProvisional: true`) trifft auf keine neue Zeile mehr zu, da `resolveLeaveDays()` für
+  SHIFT_BASED nie wieder `provisional: true` liefert. Die Funktion bleibt als Sicherheitsnetz für
+  ALTBESTAND (Zeilen mit `daysProvisional: true` von vor diesem Fix) aktiv, bis das
+  Korrektur-Skript (unten) sie bereinigt hat — siehe die ausführliche Begründung im Code-Kommentar
+  direkt über der Funktion. Keiner der acht Aufrufer in `scheduling/api/shifts.ts` /
+  `services/phorest/sync-shifts.ts` wurde geändert.
+- **Neues Korrektur-Skript**
+  (`apps/api/scripts/recalculate-shift-based-leave-days.ts`, Geschwister-Skript zu
+  `backfill-missing-vacation-entitlements.ts`, dessen `TODO(#417)`-Kommentar hierher verweist):
+  findet SHIFT_BASED-VACATION-Anträge (PENDING/APPROVED), deren gespeicherte `days`/
+  `daysProvisional` vom heutigen Vertragswert abweichen. PENDING wird direkt korrigiert
+  (`UPDATE`-Audit); APPROVED wird über dasselbe Rückbuchen/Neubuchen-Paar korrigiert, das
+  `PATCH /requests/:id/correct` (Phase 94) nutzt, mit `LEAVE_CORRECTED`-Audit; ein Antrag, dessen
+  Zeitraum einen gesperrten Monat berührt, wird übersprungen und gemeldet — nie in-place
+  editiert. Dry-Run per Default, `--confirm` zum Schreiben.
+- **Keine Migration.** `LeaveRequest.daysProvisional Boolean?` bleibt als Spalte bestehen — sie
+  wird für neue Zeilen nur noch nie wieder `true`, das ist eine semantische, additive Änderung,
+  keine Schema-Änderung.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** keine Codeänderung.
+- **Abwesenheiten:** `vacation-calc.ts` (`countShiftBasedLeaveDays()` neu formuliert, Signatur
+  verkleinert), `leave-days.ts` (`resolveLeaveDays()` fragt keinen Schichtplan mehr ab),
+  `shift-leave-recalc-resolver.ts` (unverändert, Code-Kommentar zur Rolle als Sicherheitsnetz für
+  Altbestand ergänzt), neues Skript `scripts/recalculate-shift-based-leave-days.ts`.
+- **Schichtplanung:** keine Codeänderung — die acht Aufrufer von
+  `recalcProvisionalLeaveForShiftChange()` in `scheduling/api/shifts.ts` /
+  `services/phorest/sync-shifts.ts` bleiben unverändert; ihr Effekt auf NEUE Urlaubsanträge ist
+  jetzt strukturell ein No-op (siehe oben), ohne dass ein Aufrufer angepasst wurde.
+- **Arbeitszeitkonto:** keine Codeänderung. Geprüft: `calcLeaveAbsenceMinutesTz()`
+  (`contexts/working-time-account/timezone.ts:479-518`) liest `LeaveRequest.days` NICHT — der
+  Soll-Abzug für eine Abwesenheitsperiode wird für SHIFT_BASED/FLEXTIME über `avgWorkMinutesCore()`
+  rein aus dem Kalenderzeitraum (`from`/`to`) und dem Vertrags-Durchschnitt berechnet, komplett
+  unabhängig von der Urlaubstage-ZÄHLUNG (die nur `LeaveEntitlement.usedDays` betrifft). Die
+  "genau einmal"-Invariante (`sbClaimed`-Set in `close-employee-month.ts`) dedupliziert über den
+  Kalenderzeitraum, nicht über `days` — von dieser Phase nicht berührt. Golden-Matrix
+  (`golden-matrix.test.ts`, 38 Fälle) und Shift-Based-Saldo-Paritätstests
+  (`shift-based-saldo-parity.test.ts`, 33 Fälle) liefen unverändert grün, ohne eine einzige
+  angepasste Erwartung — empirische Bestätigung der Unabhängigkeit.
+- **Kompositionsschicht:** keine Codeänderung.
+- **Unterbau:** keine Codeänderung.
+
+### Gemessen
+
+- `apps/api/src/contexts/absence/__tests__/vacation-calc.test.ts` — die D-05..D-09-Testgruppe
+  (vormals roster-abhängig) wurde durch eine äquivalente, roster-unabhängige Gruppe ersetzt
+  (12 Fälle, alle grün).
+- Drei neue Regressionstests (`apps/api/src/__tests__/leave-days-by-contract-417.test.ts`),
+  bewiesen ROT gegen den Stand unmittelbar vor diesem Fix (separates `git worktree add --detach`
+  gegen `origin/main`, siehe PR-Beschreibung): (a) Schicht gelöscht, dann Antrag → vorher 0 Tage,
+  jetzt 1 Tag; (b) Antrag zuerst, dann Woche ohne diesen Tag geplant → vorher fiel `days` von 2
+  auf 0, jetzt bleibt es bei 2; (c) ganze Woche auf 5-Tage-Vertrag → 5 Tage (war schon vorher
+  korrekt, jetzt als Regressionsschutz fixiert).
+- Drei bestehende Integrationssuiten (`shift-leave-recalc.test.ts`,
+  `phorest-shift-leave-recalc.test.ts`, `leave-provisional-approval.test.ts`) mussten an die neue
+  Semantik angepasst werden — 14 Erwartungen, die das alte roster-exakte Verhalten prüften, wurden
+  auf das neue Verhalten umgeschrieben (Details: PR-Beschreibung).
+- Golden-Matrix + Shift-Based-Saldo-Parität: 91 Tests, unverändert grün, 0 angepasste Erwartungen.
+
+### Nachrechnen
+
+```bash
+pnpm --filter @clokr/api exec vitest run src/contexts/absence/__tests__/vacation-calc.test.ts
+pnpm --filter @clokr/api exec vitest run src/__tests__/leave-days-by-contract-417.test.ts
+pnpm --filter @clokr/api exec vitest run src/__tests__/shift-leave-recalc.test.ts src/__tests__/phorest-shift-leave-recalc.test.ts src/__tests__/leave-provisional-approval.test.ts
+pnpm --filter @clokr/api exec vitest run src/__tests__/golden-matrix.test.ts src/__tests__/shift-based-saldo-parity.test.ts
+pnpm --filter @clokr/api exec tsx scripts/recalculate-shift-based-leave-days.ts --all-tenants
+```
