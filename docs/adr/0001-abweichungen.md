@@ -1960,7 +1960,7 @@ Urlaub gerade nicht ab.
 
 ### Was sich geändert hat
 
-- **`countShiftBasedLeaveDays()`** (`apps/api/src/contexts/absence/vacation-calc.ts:376-451`)
+- **`countShiftBasedLeaveDays()`** (`apps/api/src/contexts/absence/vacation-calc.ts:377-418`)
   zählt jetzt ausschließlich nach Vertrag: eine ganze ISO-Woche im Zeitraum zählt
   `contractWorkDaysPerWeek` abzüglich gesetzlicher Feiertage in dieser Woche; eine Teilwoche zählt
   `min(Kalendertage der Teilwoche, contractWorkDaysPerWeek) − Feiertage in der Teilwoche` — die
@@ -1968,17 +1968,17 @@ Urlaub gerade nicht ab.
   nur auf eine Woche ohne Schichtplan. Der Schichtplan (`rosteredDates`/`weeksWithRoster`) wird
   nicht mehr abgefragt — die Funktionssignatur verlor diese beiden Parameter. `provisional` bleibt
   im Rückgabetyp (Kompatibilität für Aufrufer), ist aber ab jetzt immer `false`.
-- **`resolveLeaveDays()`** (`apps/api/src/contexts/absence/leave-days.ts:396-421`) fragt für
+- **`resolveLeaveDays()`** (`apps/api/src/contexts/absence/leave-days.ts:396-426`) fragt für
   SHIFT_BASED keine `Shift`-Zeilen mehr ab (`getShiftsInRange`-Aufruf entfernt) — der Schichtplan
   ist für die Urlaubs-Tagezählung nicht mehr relevant.
-- **`recalcProvisionalLeaveForShiftChange()`** (`shift-leave-recalc-resolver.ts:167-…`) bleibt
+- **`recalcProvisionalLeaveForShiftChange()`** (`shift-leave-recalc-resolver.ts:195`) bleibt
   unverändert bestehen, wird aber für JEDEN neuen/neu genehmigten Antrag zum No-op: sein Filter
   (`daysProvisional: true`) trifft auf keine neue Zeile mehr zu, da `resolveLeaveDays()` für
   SHIFT_BASED nie wieder `provisional: true` liefert. Die Funktion bleibt als Sicherheitsnetz für
   ALTBESTAND (Zeilen mit `daysProvisional: true` von vor diesem Fix) aktiv, bis das
   Korrektur-Skript (unten) sie bereinigt hat — siehe die ausführliche Begründung im Code-Kommentar
-  direkt über der Funktion. Keiner der acht Aufrufer in `scheduling/api/shifts.ts` /
-  `services/phorest/sync-shifts.ts` wurde geändert.
+  direkt über der Funktion. Keiner der elf Aufrufer (sieben in `scheduling/api/shifts.ts`, vier in
+  `services/phorest/sync-shifts.ts`) wurde geändert.
 - **Neues Korrektur-Skript**
   (`apps/api/scripts/recalculate-shift-based-leave-days.ts`, Geschwister-Skript zu
   `backfill-missing-vacation-entitlements.ts`, dessen `TODO(#417)`-Kommentar hierher verweist):
@@ -1999,9 +1999,9 @@ Urlaub gerade nicht ab.
   verkleinert), `leave-days.ts` (`resolveLeaveDays()` fragt keinen Schichtplan mehr ab),
   `shift-leave-recalc-resolver.ts` (unverändert, Code-Kommentar zur Rolle als Sicherheitsnetz für
   Altbestand ergänzt), neues Skript `scripts/recalculate-shift-based-leave-days.ts`.
-- **Schichtplanung:** keine Codeänderung — die acht Aufrufer von
-  `recalcProvisionalLeaveForShiftChange()` in `scheduling/api/shifts.ts` /
-  `services/phorest/sync-shifts.ts` bleiben unverändert; ihr Effekt auf NEUE Urlaubsanträge ist
+- **Schichtplanung:** keine Codeänderung — die elf Aufrufer von
+  `recalcProvisionalLeaveForShiftChange()` in `scheduling/api/shifts.ts` (sieben) /
+  `services/phorest/sync-shifts.ts` (vier) bleiben unverändert; ihr Effekt auf NEUE Urlaubsanträge ist
   jetzt strukturell ein No-op (siehe oben), ohne dass ein Aufrufer angepasst wurde.
 - **Arbeitszeitkonto:** keine Codeänderung. Geprüft: `calcLeaveAbsenceMinutesTz()`
   (`contexts/working-time-account/timezone.ts:479-518`) liest `LeaveRequest.days` NICHT — der

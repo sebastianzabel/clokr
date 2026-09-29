@@ -41,17 +41,17 @@
  * (`daysProvisional: true`) — every request created or approved from this fix onward makes the
  * `findMany` above return `[]` immediately, before any of the other guards even run.
  *
- * Decision (documented on Issue #417, not just here): this function and all eight call sites in
- * `scheduling/api/shifts.ts` / `services/phorest/sync-shifts.ts` are kept, UNCHANGED, rather
- * than deleted. Two reasons: (1) it is not dead in the way an unreachable branch is — any
- * `daysProvisional: true` row written BEFORE this fix (there is prod data with exactly that
- * shape, per the issue) still needs to keep converging safely until the Issue #417 correction
- * script (`scripts/recalculate-shift-based-leave-days.ts`) has visited it, and this guard is
- * that safety net for free; (2) deleting it would mean touching eight transactional call sites
- * across two files for zero behavioural gain, once every legacy row is corrected. Once the
- * correction script has run in every environment (dev/int/prod) and a query confirms
+ * Decision (documented on Issue #417, not just here): this function and all eleven call sites
+ * (seven in `scheduling/api/shifts.ts`, four in `services/phorest/sync-shifts.ts`) are kept,
+ * UNCHANGED, rather than deleted. Two reasons: (1) it is not dead in the way an unreachable
+ * branch is — any `daysProvisional: true` row written BEFORE this fix (there is prod data with
+ * exactly that shape, per the issue) still needs to keep converging safely until the Issue #417
+ * correction script (`scripts/recalculate-shift-based-leave-days.ts`) has visited it, and this
+ * guard is that safety net for free; (2) deleting it would mean touching eleven transactional
+ * call sites across two files for zero behavioural gain, once every legacy row is corrected.
+ * Once the correction script has run in every environment (dev/int/prod) and a query confirms
  * `daysProvisional: true` no longer occurs on any non-deleted `LeaveRequest`, this function and
- * its eight call sites should be deleted outright — tracked as a follow-up, not done here.
+ * its eleven call sites should be deleted outright — tracked as a follow-up, not done here.
  *
  * Classification (ADR 0002, Entscheidung 10): unchanged from Phase 107 — still
  * invariant-carrying (synchronous, inside the caller's own shift-mutation transaction,
