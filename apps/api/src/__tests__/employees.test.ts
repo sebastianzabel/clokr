@@ -144,6 +144,127 @@ describe("Employees API", () => {
     });
   });
 
+  describe("POST /api/v1/employees — Issue #416: auto-seed vacation entitlement at hire time", () => {
+    let uid: string;
+
+    beforeAll(() => {
+      uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    });
+
+    it("creates a pro-rated LeaveEntitlement row (mid-year hire, full-time) with a CREATE audit entry", async () => {
+      const year = new Date().getFullYear();
+      const hireDateIso = new Date(Date.UTC(year, 6, 1)).toISOString(); // Jul 1 -> 6/12
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          email: `entitlement-midyear-${uid}@test.de`,
+          firstName: "Mid",
+          lastName: "Year",
+          employeeNumber: `MY-${uid}`,
+          hireDate: hireDateIso,
+          role: "EMPLOYEE",
+          weeklyHours: 40,
+          password: "Test@1234567!",
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+
+      const entitlement = await app.prisma.leaveEntitlement.findUnique({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId: body.id,
+            leaveTypeId: data.vacationType.id,
+            year,
+          },
+        },
+      });
+      expect(entitlement).not.toBeNull();
+      // Full-time (5 days/week default for SHIFT_BASED) -> 30 tenant default, then 6/12 pro-rata
+      // for a Jul 1 hire = 15.
+      expect(Number(entitlement?.totalDays)).toBe(15);
+      expect(entitlement?.isAutoCalculated).toBe(true);
+
+      const audit = await app.prisma.auditLog.findFirst({
+        where: { entity: "LeaveEntitlement", entityId: entitlement!.id, action: "CREATE" },
+      });
+      expect(audit).not.toBeNull();
+    });
+
+    it("scales the entitlement for a part-time contract (workDaysPerWeek < 5)", async () => {
+      const year = new Date().getFullYear();
+      const hireDateIso = new Date(Date.UTC(year, 0, 1)).toISOString(); // Jan 1 -> full year
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          email: `entitlement-parttime-${uid}@test.de`,
+          firstName: "Part",
+          lastName: "Time",
+          employeeNumber: `PT-${uid}`,
+          hireDate: hireDateIso,
+          role: "EMPLOYEE",
+          scheduleType: "FIXED_SCHEDULE",
+          workDays: [1, 2, 3], // Mon-Wed, 3 days/week
+          weeklyHours: 24,
+          password: "Test@1234567!",
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+
+      const entitlement = await app.prisma.leaveEntitlement.findUnique({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId: body.id,
+            leaveTypeId: data.vacationType.id,
+            year,
+          },
+        },
+      });
+      // 3/5 * 30 = 18, full year (Jan 1 hire, no pro-rata reduction).
+      expect(Number(entitlement?.totalDays)).toBe(18);
+    });
+
+    it("AZUBI classification gets the identical auto-seeded entitlement — no special-casing", async () => {
+      const year = new Date().getFullYear();
+      const hireDateIso = new Date(Date.UTC(year, 0, 1)).toISOString(); // Jan 1 -> full year
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          email: `entitlement-azubi-${uid}@test.de`,
+          firstName: "Azubi",
+          lastName: "Test",
+          employeeNumber: `AZ-${uid}`,
+          hireDate: hireDateIso,
+          role: "EMPLOYEE",
+          classification: "AZUBI",
+          weeklyHours: 40,
+          password: "Test@1234567!",
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+
+      const entitlement = await app.prisma.leaveEntitlement.findUnique({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId: body.id,
+            leaveTypeId: data.vacationType.id,
+            year,
+          },
+        },
+      });
+      expect(Number(entitlement?.totalDays)).toBe(30);
+      expect(entitlement?.isAutoCalculated).toBe(true);
+    });
+  });
+
   describe("POST /api/v1/employees — Nachladen nach dem Commit (Issue #379)", () => {
     afterEach(() => {
       vi.restoreAllMocks();

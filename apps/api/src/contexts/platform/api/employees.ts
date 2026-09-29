@@ -61,7 +61,8 @@ import {
   BS_DAILY_MAX_BOUND,
   BS_BLOCK_WEEKLY_MIN_BOUND,
   BS_BLOCK_WEEKLY_MAX_BOUND,
-} from "../../absence"; // Phase 100B Plan 10 — A11 (Issue #205 reroute) / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6
+  ensureVacationEntitlementForYear, // Issue #416 — auto-seed vacation entitlement at hire time
+} from "../../absence"; // Phase 100B Plan 10 — A11 (Issue #205 reroute) / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6; issue #416
 // Phase 67b Plan 03 (issue #67, D-22/D-07/D-24) — the Stammsalon lifecycle helpers.
 import {
   createInitialHomeAssignment,
@@ -602,7 +603,9 @@ export async function employeeRoutes(app: FastifyInstance) {
       // non-Mo-Fr default at hire-time.
       const tenantConfigForDefaults = await app.prisma.tenantConfig.findUnique({
         where: { tenantId: req.user.tenantId },
-        select: { defaultWorkDays: true },
+        // Issue #416: defaultVacationDays feeds ensureVacationEntitlementForYear below, read
+        // alongside the pre-existing defaultWorkDays fetch rather than issuing a second query.
+        select: { defaultWorkDays: true, defaultVacationDays: true },
       });
       const perDayHoursForDerive: PerDayHours = {
         mondayHours: 8,
@@ -698,6 +701,36 @@ export async function employeeRoutes(app: FastifyInstance) {
         });
 
         await createOvertimeAccount(tx, emp.id, req.user.tenantId);
+
+        // Issue #416: auto-seed the new hire's VACATION LeaveEntitlement for their hire year —
+        // no code path previously created one, leaving new employees with no Urlaubsanspruch
+        // until an admin happened to open the Urlaubsanspruch tab. Runs on `tx` (invariant-
+        // carrying, ADR 0002 Entscheidung 10): if this fails, the whole employee-creation
+        // transaction rolls back rather than committing an employee with a silently missing
+        // entitlement. No classification special-case (AZUBI included) — CONTEXT.md decision 3.
+        const workDaysPerWeek =
+          body.scheduleType === "SHIFT_BASED"
+            ? (body.contractWorkDaysPerWeek ?? 5)
+            : // Mirrors countWorkDaysPerWeek()'s workDays.length tier — the same raw input
+              // resolvedWorkDays above already resolved for the WorkSchedule row.
+              resolvedWorkDays.length;
+        await ensureVacationEntitlementForYear(
+          tx,
+          emp.id,
+          req.user.tenantId,
+          emp.hireDate.getFullYear(),
+          emp.hireDate,
+          workDaysPerWeek,
+          Number(tenantConfigForDefaults?.defaultVacationDays ?? 30),
+          "Automatisch angelegt bei Mitarbeiteranlage",
+          async (entry) =>
+            app.audit({
+              userId: req.user.sub,
+              ...entry,
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+              tx,
+            }),
+        );
 
         // Phase 75b (D-15): the new user's system-role assignment and its audit row, in this same
         // transaction. A grant cannot lower any holder count, so it takes the tenant lock (which
