@@ -141,6 +141,21 @@ describe("Saldo Snapshot & Monatsabschluss", () => {
         expect(e.isLocked).toBe(true);
         expect(e.lockedAt).not.toBeNull();
       }
+
+      // Issue #370 (D-06): every locked entry also has exactly one TimeEntry LOCK audit row,
+      // written inside the close-month $transaction.
+      for (const e of entries) {
+        const auditRows = await app.prisma.auditLog.findMany({
+          where: { entity: "TimeEntry", entityId: e.id, action: "LOCK" },
+        });
+        expect(auditRows.length).toBe(1);
+        expect(auditRows[0].userId).toBe(data.adminUser.id);
+        expect(auditRows[0].oldValue).toEqual({ isLocked: false, lockedAt: null });
+        expect(auditRows[0].newValue).toEqual({
+          isLocked: true,
+          lockedAt: e.lockedAt?.toISOString(),
+        });
+      }
     });
 
     it("chains carryOver correctly across months", async () => {
