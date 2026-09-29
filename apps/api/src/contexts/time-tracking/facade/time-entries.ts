@@ -463,6 +463,12 @@ export async function unlockEntriesForMonth(
  * its own per-tenant loop (same file, same loop as `countSnapshotsBefore`/W7 — `tenantId` is a
  * proven no-op here for the identical reason: `employeeIds` already comes from that loop's own
  * `employee.findMany({ where: { tenantId } })`).
+ *
+ * Issue #370, D-09: no per-row `TimeEntry` audit, by owner decision — the legally-timed annual
+ * retention soft-delete applies one uniform rule to potentially thousands of rows per tenant; its
+ * caller `composition/data-retention.ts` already writes one aggregate `DataRetention` `ARCHIVE`
+ * audit carrying the count, and each archived row stays reconstructible itself (only `deletedAt`
+ * changes). A per-row audit here would be out of proportion to its value.
  */
 export async function archiveEntriesBefore(
   db: Prisma.TransactionClient,
@@ -494,6 +500,11 @@ export async function archiveEntriesBefore(
  * function is ever reached, and this is a hard `note` scrub with nothing left to constrain by
  * tenant that the caller hasn't already fixed. Runs on the caller's own `tx` (the whole
  * anonymisation sequence is one transaction).
+ *
+ * Issue #370, D-09: no per-row audit, by owner decision — this call is part of the DSGVO Art. 17
+ * anonymisation transaction (`platform/anonymize.ts`), already covered by the `Employee`
+ * `ANONYMIZE` audit that same transaction writes; a nulled note carries nothing left worth
+ * logging per row.
  */
 export async function clearEntryNotesForEmployee(
   db: Prisma.TransactionClient,
@@ -522,6 +533,12 @@ export async function clearEntryNotesForEmployee(
  * hard-delete `$transaction` — and therefore before this function — is ever reached. Carries a
  * named `lint-facade-signatures` F3 exception for exactly that reason (same shape as plan 06's
  * `hardDeleteOvertimeDataForEmployee`).
+ *
+ * Issue #370, D-09: no per-row audit, by owner decision — the rows are irrevocably gone after this
+ * call returns, so a per-row audit could only be written BEFORE the delete and would merely
+ * duplicate the `Employee` `HARD_DELETE` audit (with its own `oldValue`/`newValue`) that
+ * `platform/api/employees.ts`'s `DELETE /:id/hard-delete` handler already writes — the established
+ * pattern of that deletion chain.
  */
 export async function hardDeleteTimeDataForEmployee(
   db: Prisma.TransactionClient,
