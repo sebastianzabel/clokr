@@ -436,7 +436,13 @@ describe("Issue #76 (Phase 76b Plan 04), AK-76b-4 — Personalabteilung behaviou
   });
 
   describe("Task 2: Personalabteilung + Mitarbeiter (working HR person) never sees another employee's entries", () => {
-    it("GET /time-entries?employeeId=<X> → 200 with only HR2's own entries", async () => {
+    // Issue #368, Befund 4 (owner comment 2026-09-27): this combined actor holds
+    // `time-entry:read:EIGENE` (via the Mitarbeiter/EMPLOYEE assignment) but NOT
+    // `time-entry:read:ZUGEWIESEN` — HR (Personalabteilung) alone grants no time-entry permission
+    // at all. Before this fix, a foreign `?employeeId=` under an EIGENE-only reach silently
+    // substituted the caller's own id and answered 200 with (empty) own data — contradicting the
+    // catalog, which excludes foreign entries from `:EIGENE` outright. Fixed: 403.
+    it("GET /time-entries?employeeId=<X> (foreign) → 403 Forbidden, not 200 with own data", async () => {
       const hr2 = await createEmployee("template-hr2");
       await createEntry(hr2.employee.id, salonA.id, pastDateStr(2));
       await assignSystemRole(hr2.user.id, "HR", { scopeType: "TENANT" });
@@ -448,12 +454,45 @@ describe("Issue #76 (Phase 76b Plan 04), AK-76b-4 — Personalabteilung behaviou
         url: `/api/v1/time-entries?employeeId=${x.employee.id}&from=${from}&to=${to}`,
         headers: { authorization: `Bearer ${hr2Token}` },
       });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body)).toEqual({ error: "Forbidden" });
+    });
+
+    it("GET /time-entries?employeeId=<HR2's own id> → 200 with only HR2's own entries (EIGENE self-path unaffected)", async () => {
+      const hr3 = await createEmployee("template-hr3");
+      const hr3Entry = await createEntry(hr3.employee.id, salonA.id, pastDateStr(2));
+      await assignSystemRole(hr3.user.id, "HR", { scopeType: "TENANT" });
+      await assignSystemRole(hr3.user.id, "EMPLOYEE", { scopeType: "TENANT" });
+      const hr3Token = await login(hr3.user.email);
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/time-entries?employeeId=${hr3.employee.id}&from=${from}&to=${to}`,
+        headers: { authorization: `Bearer ${hr3Token}` },
+      });
       expect(res.statusCode).toBe(200);
-      const rows = JSON.parse(res.body) as Array<{ employeeId: string }>;
+      const ids = (JSON.parse(res.body) as Array<{ id: string }>).map((e) => e.id);
+      expect(ids).toContain(hr3Entry.id);
+    });
+
+    it("GET /time-entries (no employeeId) → 200 with only HR2's own entries (EIGENE default unaffected)", async () => {
+      const hr4 = await createEmployee("template-hr4");
+      const hr4Entry = await createEntry(hr4.employee.id, salonA.id, pastDateStr(2));
+      await assignSystemRole(hr4.user.id, "HR", { scopeType: "TENANT" });
+      await assignSystemRole(hr4.user.id, "EMPLOYEE", { scopeType: "TENANT" });
+      const hr4Token = await login(hr4.user.email);
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/time-entries?from=${from}&to=${to}`,
+        headers: { authorization: `Bearer ${hr4Token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const rows = JSON.parse(res.body) as Array<{ id: string; employeeId: string }>;
       for (const row of rows) {
-        expect(row.employeeId).toBe(hr2.employee.id);
+        expect(row.employeeId).toBe(hr4.employee.id);
       }
-      expect(rows.map((r) => r.employeeId)).not.toContain(x.employee.id);
+      expect(rows.map((r) => r.id)).toContain(hr4Entry.id);
     });
   });
 });

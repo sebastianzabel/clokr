@@ -201,25 +201,50 @@ describe("Issue #76 (Phase 76b Plan 05), AK-76b-6 — Ausbilder behavioural matr
       expect(rows.map((r) => r.employeeId)).toEqual([t2.employee.id]);
     });
 
-    // FINDING (recorded in 76b-05-SUMMARY.md, carried to Plan 76b-07's follow-up issue): the
-    // plan's <behavior> expected the UNFILTERED list to already contain both trainees' entries.
-    // Measured against the real route (`time-entries.ts:1017`), it does not — a manager who omits
-    // `?employeeId` falls back to `employeeId: user.employeeId ?? undefined` (the CALLER's own
-    // id), never the reach's PERSONS list. The trainer has no time entries of their own, so the
-    // unfiltered response is empty regardless of scope. This is pre-existing route behavior (not
-    // introduced by this plan, and not owned by this plan's `files_modified`) — every trainee-scoped
-    // read in this suite therefore passes an explicit `employeeId`, matching every other
-    // `*-salon-scope.test.ts` fixture (none of them exercises the unfiltered-list branch for a
-    // ZUGEWIESEN caller either).
-    it("FINDING: the unfiltered list ignores PERSONS scope and falls back to the caller's own employeeId (time-entries.ts:1017)", async () => {
+    // Recorded in 76b-05-SUMMARY.md as a finding, revisited in issue #368: the plan's <behavior>
+    // once expected the UNFILTERED list to already contain both trainees' entries. #368's Befund 3
+    // proposed changing this (no `?employeeId` -> the whole PERSONS/SALONS scope), but the
+    // orchestrator decision on #368 (dated after the initial fix attempt) reverted that part:
+    // apps/web's personal Zeiterfassung and dashboard clock widgets rely on "no employeeId = own
+    // entries" even for a manager/admin viewing their OWN page
+    // (apps/web/src/routes/(app)/time-entries/+page.svelte, dashboard/+page.svelte) — widening the
+    // unfiltered list to the whole scope would leak the trainer's trainees into their own personal
+    // calendar. This is therefore INTENTIONALLY RETAINED, not a residual bug: the trainer has no
+    // time entries of their own, so the unfiltered response stays empty regardless of PERSONS
+    // scope. The dedicated own-entries-only web-contract guard (a wholeTenant/ADMIN-shaped caller,
+    // matching what apps/web's personal pages actually see) lives in
+    // `time-entries-salon-scope.test.ts`; the test below documents the PERSONS/SALONS-specific
+    // interaction instead — falling back to the caller's own `employeeId` still ANDs with
+    // `scopedIds`, so a PERSONS-scoped caller whose OWN employeeId is outside their OWN scope
+    // (the trainer is never in the `[t1, t2]` PERSONS list they were assigned) sees an empty list
+    // even when they DO have an own entry — the same AND-combination this file's `employeeId=<X>`
+    // tests above rely on, just with the caller's own id substituted in.
+    it("the unfiltered list still falls back to the caller's own employeeId, not the PERSONS scope (kept per #368 orchestrator decision)", async () => {
       const res = await app.inject({
         method: "GET",
         url: `/api/v1/time-entries?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
         headers: { authorization: `Bearer ${trainerToken}` },
       });
       expect(res.statusCode).toBe(200);
-      // Observed reality: empty, not "both trainees' entries" as the plan's <behavior> expected.
       expect(JSON.parse(res.body)).toEqual([]);
+    });
+
+    it("the fallback to the caller's own employeeId still ANDs with the caller's own PERSONS scope — an own entry outside that scope stays invisible", async () => {
+      const ownEntry = await createEntry(trainer.employee.id, salonA.id, T1_ENTRY_A_DATE);
+      try {
+        const res = await app.inject({
+          method: "GET",
+          url: `/api/v1/time-entries?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+          headers: { authorization: `Bearer ${trainerToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        // The trainer is not in their own PERSONS scope ([t1, t2]), so their own entry does not
+        // satisfy `id: { in: scopedIds }` and stays invisible — pre-existing behavior, unchanged
+        // by #368 either before or after the orchestrator decision.
+        expect(JSON.parse(res.body)).toEqual([]);
+      } finally {
+        await app.prisma.timeEntry.delete({ where: { id: ownEntry.id } });
+      }
     });
 
     it("employeeId=<unlisted colleague> → 200 with []", async () => {
@@ -408,6 +433,20 @@ describe("Issue #76 (Phase 76b Plan 05), AK-76b-6 — Ausbilder behavioural matr
         headers: { authorization: `Bearer ${trainerToken}` },
       });
       expect(res.statusCode).toBe(403);
+    });
+
+    // Issue #368, Befund 2: Ausbilder holds neither `section9:read:ZUGEWIESEN` nor
+    // `section9:read:EIGENE` at all (docs/permissions.md's template table) — the route used to
+    // fall into the own-data branch (`employeeId: req.user.employeeId ?? "__none__"`) and answer
+    // 200 with an empty list instead of 403, same error form as the leave/requests guard above.
+    it("GET /leave/section9 → 403 (no section9:read reach at all)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/leave/section9",
+        headers: { authorization: `Bearer ${trainerToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body)).toEqual({ error: "Forbidden" });
     });
 
     it("GET /dashboard/ → 200 with overtime:null and vacation:null (CR-01/WR-01, code review; control: admin gets both non-null)", async () => {

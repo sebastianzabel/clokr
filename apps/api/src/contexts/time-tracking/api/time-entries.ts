@@ -1011,6 +1011,26 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
       const isManager = readReach === "ZUGEWIESEN";
 
+      // Issue #368, Befund 4: EIGENE (non-manager) reach with a foreign `?employeeId=` used to
+      // silently substitute the caller's own id and answer 200 with (empty) own data instead of
+      // 403 — `time-entry:read:EIGENE` explicitly excludes foreign entries
+      // (docs/permissions.md). Fixed: 403.
+      //
+      // Deliberately NOT changed here (orchestrator decision on #368, dated after the initial fix
+      // attempt): a ZUGEWIESEN caller who omits `?employeeId` still falls back to their OWN
+      // employeeId, exactly as before. apps/web's personal Zeiterfassung and dashboard clock
+      // widgets rely on that "no employeeId = own entries" contract even when the logged-in
+      // account happens to be a manager/admin looking at their OWN page
+      // (apps/web/src/routes/(app)/time-entries/+page.svelte, dashboard/+page.svelte) —
+      // widening the unfiltered list to the whole scope would leak a manager's team into their
+      // personal calendar. An explicit `?employeeId=` from a ZUGEWIESEN holder is unaffected:
+      // it still narrows to that employee (scope-checked via `scopedIds` below), exactly as
+      // before (`system-role-template-salonmanager.test.ts`, `system-role-template-ausbilder.test.ts`).
+      if (!isManager && employeeId && employeeId !== user.employeeId) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+      const employeeFilter = isManager && employeeId ? employeeId : (user.employeeId ?? undefined);
+
       // PERF-V1814-03: cap + defaulted 90d window (non-breaking; web callers always pass bounds)
       const defaultFrom = from
         ? new Date(from)
@@ -1047,7 +1067,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         where: {
           // Tenant isolation: always scope to the requesting user's tenant via employee.tenantId
           employee: { tenantId: user.tenantId },
-          employeeId: isManager && employeeId ? employeeId : (user.employeeId ?? undefined),
+          employeeId: employeeFilter,
           deletedAt: null,
           date: {
             gte: defaultFrom,
@@ -1067,7 +1087,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         req.log.warn(
           {
             tenantId: user.tenantId,
-            employeeId: isManager && employeeId ? employeeId : user.employeeId,
+            employeeId: employeeFilter ?? user.employeeId,
             from: defaultFrom,
             to,
             cap: TIME_ENTRIES_MAX,

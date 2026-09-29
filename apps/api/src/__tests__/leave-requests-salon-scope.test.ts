@@ -299,10 +299,16 @@ describe("Issue #91 (Phase 91b Plan 04) — LeaveRequest salon/person scope", ()
     expect(ids).not.toContain(outOfScopeRequest.id);
   });
 
-  it("a SALONS/PERSONS manager with an empty resolved reach sees zero requests", async () => {
+  // Updated for Issue #368, Befund 1: a SALONS row with an empty `salonIds` array is malformed
+  // (D-03 shape invariant, `storedRoleAssignmentScope`) and is skipped ENTIRELY by
+  // `computeGrantsForUser` — this manager therefore holds no `leave-request:read` permission at
+  // all, not merely an empty SALONS reach. Before this fix that silently fell into the
+  // own-requests branch and happened to answer 200 with an empty list (right output, wrong
+  // reason — the exact P-02 error shape). Fixed: 403, same as any other neither-reach caller.
+  it("a role-assignment row with a malformed (empty) SALONS scope grants no reach at all — 403, not a silent empty list", async () => {
     const emp = await createEmployee("emptyreach-leave-list");
     await createHome(emp.employee.id, salonA.id, "2020-01-01");
-    const request = await createLeaveRequest(emp.employee.id, "2026-06-06", "2026-06-06");
+    await createLeaveRequest(emp.employee.id, "2026-06-06", "2026-06-06");
 
     const manager = await createScopedManager(
       "mgr-leave-empty",
@@ -319,8 +325,29 @@ describe("Issue #91 (Phase 91b Plan 04) — LeaveRequest salon/person scope", ()
       url: "/api/v1/leave/requests",
       headers: { authorization: `Bearer ${token}` },
     });
-    expect(res.statusCode).toBe(200);
-    const ids = (JSON.parse(res.body) as Array<{ id: string }>).map((r) => r.id);
-    expect(ids).not.toContain(request.id);
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.body)).toEqual({ error: "Forbidden" });
+  });
+
+  // Issue #368, Befund 1: a caller holding NEITHER `leave-request:read:ZUGEWIESEN` NOR
+  // `leave-request:read:EIGENE` used to fall into the own-requests branch (`employeeId:
+  // user.employeeId ?? ""`) and get 200 with an empty list — the same error form P-02 (Phase 76b,
+  // #76) already closed for `GET /time-entries`. No shipped system-role template lacks
+  // leave-request:read entirely (every one of the seven slots grants at least :ZUGEWIESEN,
+  // system-roles.ts), so this uses a minimal ad-hoc `AccessRole` — the general shape any future
+  // permission-less-for-this-resource template or misconfigured custom role would hit.
+  it("a caller with neither leave-request:read reach gets 403, not 200 with empty own data", async () => {
+    const noReach = await createScopedManager("mgr-leave-no-reach", ["shift:read:ZUGEWIESEN"], {
+      scopeType: "TENANT",
+    });
+    const token = await login(noReach.user.email);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.body)).toEqual({ error: "Forbidden" });
   });
 });
