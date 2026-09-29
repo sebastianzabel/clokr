@@ -130,7 +130,11 @@ async function doRefresh(): Promise<boolean> {
     });
     if (!res.ok) return false;
     const data = await res.json();
-    authStore.setTokens(data.accessToken, data.refreshToken);
+    // Phase 408 (#408): an absent or null `permissions` field (e.g. mid-rollout, an older API
+    // instance) must never be stored as an empty list — that would freeze a fail-closed session
+    // until the next login instead of leaving `permissions` as "not yet known".
+    const permissions = Array.isArray(data.permissions) ? data.permissions : undefined;
+    authStore.setTokens(data.accessToken, data.refreshToken, permissions);
     return true;
   } catch (err) {
     console.error("Failed to refresh token:", err);
