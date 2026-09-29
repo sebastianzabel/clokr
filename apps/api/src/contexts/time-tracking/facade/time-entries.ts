@@ -77,7 +77,7 @@
  * for a UTC+ tenant and would lock/unlock one day too many; copied verbatim from
  * `auto-close-month.ts`'s own comment, not re-derived.
  */
-import type { Prisma } from "@clokr/db";
+import type { InvalidReasonCode, Prisma } from "@clokr/db";
 import { type EmployeeScope, employeeScopeWhere } from "../../platform";
 import { CLEARED_INVALID_REASON } from "../invalid-reason";
 
@@ -296,12 +296,30 @@ export async function getEntryActivityFeed(
 // ── T6 — leave-cancellation revalidation ─────────────────────────────────────────────────────
 
 /**
+ * Issue #370, D-01/D-02: the per-row old/new pair {@link revalidateLeaveCancellationEntries}
+ * returns for each row it actually revalidates — the audit shape carries only the reason CODE
+ * (D-03); `invalidReason` is the derived display text of the code (`invalid-reason.ts`) and is not
+ * duplicated into the audit.
+ */
+export type EntryRevalidationAudit = {
+  id: string;
+  oldValue: { isInvalid: true; invalidReasonCode: InvalidReasonCode | null };
+  newValue: { isInvalid: false; invalidReasonCode: null };
+};
+
+/**
  * T6 — clears the `LEAVE_CANCELLATION_PENDING` invalidation for every entry of `employeeId` in
  * `[from, to]`. H2: never touches a row with `isLocked: true` or `deletedAt != null` — dropping
  * either guard would let a cancellation-approval/correction modify a locked month's entry, exactly
  * the invariant CLAUDE.md § "Immutability after lock" exists to prevent. Two call sites in
  * `absence/api/leave.ts`: the cancellation-approval handler (`app.prisma`) and the
  * PATCH `/requests/:id/correct` handler's own delta-reversal `tx`.
+ *
+ * Issue #370, D-01/D-02: returns one `{id, oldValue, newValue}` per row actually revalidated (an
+ * empty match returns `[]`) so the caller can write a per-row `TimeEntry` UPDATE audit — a facade
+ * cannot call `app.audit()` itself (see the T7/T8 docblock above for why). The `where` guards are
+ * repeated verbatim on the `findMany` AND inline on the `updateMany` (H2 stays exactly as-is; the
+ * write keeps its own guards because the review call site runs without a transaction).
  */
 export async function revalidateLeaveCancellationEntries(
   db: Prisma.TransactionClient,
@@ -309,9 +327,9 @@ export async function revalidateLeaveCancellationEntries(
   tenantId: string,
   from: Date,
   to: Date,
-): Promise<void> {
-  if (from > to) return;
-  await db.timeEntry.updateMany({
+): Promise<EntryRevalidationAudit[]> {
+  if (from > to) return [];
+  const rows = await db.timeEntry.findMany({
     where: {
       employeeId,
       employee: { tenantId },
@@ -321,8 +339,27 @@ export async function revalidateLeaveCancellationEntries(
       deletedAt: null, // H2/D-08 — never touch a soft-deleted entry
       isLocked: false, // H2 — never mutate a locked-month entry (Revisionssicherheit)
     },
+    select: { id: true, invalidReasonCode: true },
+  });
+  if (rows.length === 0) return [];
+  await db.timeEntry.updateMany({
+    where: {
+      employeeId,
+      employee: { tenantId },
+      date: { gte: from, lte: to },
+      isInvalid: true,
+      invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
+      deletedAt: null, // H2/D-08 — never touch a soft-deleted entry
+      isLocked: false, // H2 — never mutate a locked-month entry (Revisionssicherheit)
+      id: { in: rows.map((r) => r.id) },
+    },
     data: { isInvalid: false, ...CLEARED_INVALID_REASON },
   });
+  return rows.map((r) => ({
+    id: r.id,
+    oldValue: { isInvalid: true, invalidReasonCode: r.invalidReasonCode },
+    newValue: { isInvalid: false, invalidReasonCode: CLEARED_INVALID_REASON.invalidReasonCode },
+  }));
 }
 
 // ── T7/T8 — Monatsabschluss lock / unlock ────────────────────────────────────────────────────

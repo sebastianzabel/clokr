@@ -1145,13 +1145,26 @@ export async function leaveRoutes(app: FastifyInstance) {
 
           // Revalidate time entries that were created during CANCELLATION_REQUESTED
           // Phase 100B Plan 08 — T6, contexts/time-tracking facade (H2 guard unchanged).
-          await revalidateLeaveCancellationEntries(
+          const revalidatedEntries = await revalidateLeaveCancellationEntries(
             app.prisma,
             existing.employeeId,
             existing.employee.tenantId,
             existing.startDate,
             existing.endDate,
           );
+          // Issue #370, D-04: one TimeEntry UPDATE audit per revalidated row — no `tx`, matching
+          // the sibling LeaveRequest CANCEL/REJECT audit below, which also runs on app.prisma.
+          for (const row of revalidatedEntries) {
+            await app.audit({
+              userId: req.user.sub,
+              action: "UPDATE",
+              entity: "TimeEntry",
+              entityId: row.id,
+              oldValue: row.oldValue,
+              newValue: row.newValue,
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            });
+          }
 
           const typeCode = existing.leaveType.code;
           if (typeCode === "VACATION") {

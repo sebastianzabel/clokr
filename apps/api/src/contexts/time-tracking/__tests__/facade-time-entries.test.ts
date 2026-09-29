@@ -31,6 +31,7 @@ import {
   hardDeleteTimeDataForEmployee,
   createImportedTimeEntry,
 } from "../index";
+import { invalidReasonFields } from "../invalid-reason"; // Issue #370 — intra-context import
 import type { FastifyInstance } from "fastify";
 
 describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => {
@@ -278,6 +279,72 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
       );
       const after = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: entry.id } });
       expect(after.isInvalid).toBe(true);
+    });
+
+    it("returns one {id, oldValue, newValue} per revalidated row; locked, soft-deleted and other-reason rows are neither changed nor returned (Issue #370)", async () => {
+      const decFrom = new Date("2026-12-01T00:00:00Z");
+      const decTo = new Date("2026-12-04T00:00:00Z");
+      const mkDecEntry = (day: string, extra: Record<string, unknown>) =>
+        app.prisma.timeEntry.create({
+          data: {
+            employeeId: data.employee.id,
+            date: new Date(`${day}T00:00:00Z`),
+            startTime: new Date(`${day}T08:00:00Z`),
+            endTime: new Date(`${day}T16:00:00Z`),
+            type: "WORK",
+            salonId: data.salonId, // Phase 68b (issue #68)
+            ...extra,
+          },
+        });
+      const rowA = await mkDecEntry("2026-12-01", {
+        isInvalid: true,
+        ...invalidReasonFields("LEAVE_CANCELLATION_PENDING"),
+      });
+      const rowB = await mkDecEntry("2026-12-02", {
+        isInvalid: true,
+        ...invalidReasonFields("LEAVE_CANCELLATION_PENDING"),
+        isLocked: true,
+      });
+      const rowC = await mkDecEntry("2026-12-03", {
+        isInvalid: true,
+        ...invalidReasonFields("LEAVE_CANCELLATION_PENDING"),
+        deletedAt: new Date(),
+      });
+      const rowD = await mkDecEntry("2026-12-04", {
+        isInvalid: true,
+        ...invalidReasonFields("MISSING_CLOCK_OUT"),
+      });
+
+      const result = await revalidateLeaveCancellationEntries(
+        app.prisma,
+        data.employee.id,
+        data.tenant.id,
+        decFrom,
+        decTo,
+      );
+      expect(result).toEqual([
+        {
+          id: rowA.id,
+          oldValue: { isInvalid: true, invalidReasonCode: "LEAVE_CANCELLATION_PENDING" },
+          newValue: { isInvalid: false, invalidReasonCode: null },
+        },
+      ]);
+
+      const bAfter = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: rowB.id } });
+      const cAfter = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: rowC.id } });
+      const dAfter = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: rowD.id } });
+      expect(bAfter.isInvalid).toBe(true);
+      expect(cAfter.isInvalid).toBe(true);
+      expect(dAfter.isInvalid).toBe(true);
+
+      const empty = await revalidateLeaveCancellationEntries(
+        app.prisma,
+        data.employee.id,
+        data.tenant.id,
+        decTo,
+        decFrom, // from > to
+      );
+      expect(empty).toEqual([]);
     });
   });
 

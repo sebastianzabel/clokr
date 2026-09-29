@@ -1233,6 +1233,25 @@ describe("Leave / Absence API", () => {
       expect(deletedAfter!.isInvalid).toBe(true); // soft-deleted → untouched
       expect(lockedAfter!.isInvalid).toBe(true); // locked → untouched
 
+      // Issue #370: approving the cancellation must audit the revalidated TimeEntry row.
+      const timeEntryAudits = await app.prisma.auditLog.findMany({
+        where: { entity: "TimeEntry", entityId: live.id },
+      });
+      expect(timeEntryAudits.length).toBe(1);
+      expect(timeEntryAudits[0].action).toBe("UPDATE");
+      expect(timeEntryAudits[0].userId).toBe(data.adminUser.id);
+      expect(timeEntryAudits[0].oldValue).toEqual({
+        isInvalid: true,
+        invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
+      });
+      expect(timeEntryAudits[0].newValue).toEqual({ isInvalid: false, invalidReasonCode: null });
+      expect(timeEntryAudits[0].ipAddress).toBeTruthy();
+
+      const untouchedAuditCount = await app.prisma.auditLog.count({
+        where: { entity: "TimeEntry", entityId: { in: [deleted.id, locked.id] } },
+      });
+      expect(untouchedAuditCount).toBe(0);
+
       await app.prisma.timeEntry.deleteMany({
         where: { id: { in: [live.id, deleted.id, locked.id] } },
       });
