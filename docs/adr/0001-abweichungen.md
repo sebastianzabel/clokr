@@ -1604,6 +1604,73 @@ pnpm --filter @clokr/api exec tsx scripts/measure-context-boundary-imports.ts --
 pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api test:coverage
 ```
 
+### Nachtrag 2026-09-29 (Issue #367) — SALONS-/PERSONS-Inhaber werden endlich benachrichtigt
+
+**Schwere: informativ. Semantikänderung eines Exports von `contexts/platform/index.ts`
+(`userIdsHoldingPermission`) nach ADR 0002, Entscheidung 7, per Owner-Entscheidung vom 2026-09-29
+auf dem Issue.**
+
+Dieser Eintrag selbst hatte den Befund unter „Was bewusst NICHT geschah“ nicht benannt — er ergab
+sich erst aus der Phase-91b-Testsuite (Docblock von `leave-request-approve-notification-scope.
+test.ts`) und wurde als #367 gemeldet: D-17s `resolveScopedHolderIds()` engt eine Kandidatenmenge
+ein, fügt aber nie einen Kandidaten hinzu. Weil `userIdsHoldingPermission()` (D-16, unverändert
+seit Phase 75b) einen SALONS-/PERSONS-Inhaber nie als Kandidaten lieferte, blieb die Einengung für
+diese Nutzer wirkungslos — ein Salonmanager mit Scope Salon A, der seit dieser Phase einen
+Urlaubsantrag aus Salon A genehmigen DARF (die Zugriffsentscheidung, D-05), wurde über einen
+solchen Antrag nie BENACHRICHTIGT (eine komplett separate Kandidatenquelle).
+
+**Was sich geändert hat:** `userIdsHoldingPermission()`
+(`facade/role-assignments.ts:441-500`) akzeptiert jetzt auch eine wohlgeformte SALONS-/
+PERSONS-Zuweisung als Kandidatin — aber NUR für eine Permission mit Bezug `PERSON`
+(`permission-catalog.ts`), spiegelbildlich zu D-05s `zugewiesen`/`zugewiesenAnyScope`-Trennung in
+`request-permissions.ts`. Eine Permission mit Bezug `MANDANT` bleibt auf TENANT-Zuweisungen
+beschränkt — unverändert. Ohne diese Bezug-Unterscheidung hätte die Erweiterung
+`carryover-warning.ts`s un-narrowte `leave-config:manage`-Abfrage (Bezug MANDANT) sofort mitbetroffen,
+obwohl die Owner-Entscheidung ausdrücklich festhält, dass diese eine Stelle ihr Verhalten behält —
+gemessen beim Bau der Neutralitäts-Nachträge unten (die erste, bezugs-blinde Fassung dieses Fixes
+brach exakt diese Stelle in der Neutralitätsaufzeichnung).
+
+Die Einengung auf den tatsächlichen Salon bzw. die tatsächliche Person übernimmt weiterhin
+`resolveScopedHolderIds()` (D-17), unverändert. Von den neun Aufrufer-DATEIEN (17 Aufrufstellen,
+siehe Nachrechnen-Block unten) narrowen acht bereits über `resolveScopedHolderIds()`;
+`carryover-warning.ts:124` bleibt unverändert, weil `leave-config:manage` Bezug MANDANT hat und die
+Fassade selbst dafür keinen SALONS-/PERSONS-Kandidaten mehr liefert (siehe oben) — ein erklärender
+Codekommentar an der Aufrufstelle verweist auf diesen Eintrag.
+
+**Empfänger-Neutralitätsaufzeichnung:** `recorded/recipients.json` bleibt byte-identisch. Vier der
+17 Stellen ändern ihr tatsächliches Verhalten (die Fixture-Nutzerin `R.salonsScope`, SALONS-Scope
+auf den Fixture-Salon mit jeder ZUGEWIESEN-Permission, wird dort neu benachrichtigt) — erfasst über
+das bestehende Nachtrags-Register (`recorded/recipients-amendments.json`, von #355 für
+`R.admin.exited`/`R.manager.exited` eingeführt): die vier betroffenen Einträge (`#03`, `#05`,
+`#10`, `#15`) wurden auf den kumulativen erwarteten Wert aus #355 UND #367 aktualisiert, `from`
+unverändert gegen die Aufzeichnung geprüft. Site `#06` (carryover-warning.ts) ist NICHT unter den
+geänderten Einträgen — das ist der Nachweis, dass die Bezug-Unterscheidung oben tatsächlich greift.
+`NEVER_RECIPIENTS` in `notification-recipients-neutrality.test.ts` verliert `R.salonsScope` als
+blanket-Ausschluss; die verbleibenden 13 unveränderten Stellen bleiben durch den unamendierten
+`toEqual`-Vergleich gegen die Aufzeichnung abgesichert.
+
+**Guard-Tests:** `user-ids-holding-permission.test.ts` (die vormals D-09 nennende Zeile „a SALONS
+or PERSONS assignment ... does not make a holder“ ist jetzt umgekehrt, plus ein neuer Test für eine
+fehlgeformte SALONS-Zeile) und `leave-request-approve-notification-scope.test.ts` (das Phase-91b-
+Dokument des Befunds selbst — vormals „evidence for the documented finding“, jetzt AK-1/AK-2 des
+Issues end-to-end über `POST /leave/requests`). Beide vor dem Fix gegen den unveränderten Code rot
+gemessen (mutation proof), danach grün.
+
+**Auswirkung auf die Kontexte** (aus dem Issue übernommen): Zeiterfassung (Zeitnachtrag/Korrektur-
+Empfänger ändern sich für Salon-/Personen-Scope), Abwesenheiten (Urlaubs-/Abwesenheitsanträge
+ebenso), Schichtplanung (Schichtplan-Benachrichtigungen ebenso), Arbeitszeitkonto
+(Monatsabschluss-Benachrichtigungen ebenso, geprüft — `auto-close-month.ts`/`deferred-month-close-
+reminder.ts` narrowen bereits über `resolveScopedHolderIds()`), Kompositionsschicht: keine.
+
+### Nachrechnen (Issue #367)
+
+```bash
+grep -rln "await userIdsHoldingPermission(" apps/api/src --include="*.ts" | grep -v __tests__ | grep -v "facade/role-assignments.ts" | wc -l   # 9 Aufrufer-Dateien
+grep -rn "await userIdsHoldingPermission(" apps/api/src --include="*.ts" | grep -v __tests__ | grep -v "facade/role-assignments.ts" | wc -l    # 17 Aufrufstellen (unverändert seit Eintrag P)
+pnpm --filter @clokr/api exec vitest run src/contexts/platform/__tests__/user-ids-holding-permission.test.ts src/__tests__/leave-request-approve-notification-scope.test.ts src/contexts/platform/__tests__/resolve-scoped-holder-ids.test.ts src/contexts/platform/__tests__/resolve-access-reach.test.ts
+pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api exec vitest run src/__tests__/notification-recipients-neutrality.test.ts
+```
+
 ## Q — Systemrollen-Templates und zwei Saldo-Gates (Phase 76b, Issue #76)
 
 **Schwere: informativ. Unterbau-Erweiterung nach ADR 0002, Entscheidung 7 (additiv, kein

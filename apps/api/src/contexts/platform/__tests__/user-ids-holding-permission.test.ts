@@ -1,14 +1,17 @@
 /**
- * Phase 75b Plan 10 (Issue #75), D-16/D-17 — `userIdsHoldingPermission`, the Unterbau facade every
- * notification-recipient site (17 of them) asks instead of a role-based Prisma predicate.
+ * Phase 75b Plan 10 (Issue #75), D-16/D-17, revised by Issue #367 (2026-09-29 owner decision) —
+ * `userIdsHoldingPermission`, the Unterbau facade every notification-recipient site (17 of them)
+ * asks instead of a role-based Prisma predicate.
  *
- * A holder is either a well-formed TENANT-scope stored assignment whose role belongs to the
- * tenant and grants the permission, or — for a user with NO stored assignment at all in the
- * tenant — the implicit system role of their `User.role` column (D-08's "Altrollen-Rückfall",
- * mapped through `systemRoleIdForLegacyRole`, C-10). SALONS/PERSONS assignments, a malformed
- * TENANT row, and a foreign tenant's customer role never make a holder (D-09). The facade does
- * NOT filter `isActive` itself — every site keeps that filter (and every other filter) on its own
- * side; this test proves an inactive holder is still returned here.
+ * A holder is either a well-formed stored assignment of ANY scope (TENANT, SALONS or PERSONS)
+ * whose role belongs to the tenant and grants the permission, or — for a user with NO stored
+ * assignment at all in the tenant — the implicit system role of their `User.role` column (D-08's
+ * "Altrollen-Rückfall", mapped through `systemRoleIdForLegacyRole`, C-10). Before Issue #367 (the
+ * original D-09), a SALONS/PERSONS assignment never made a holder here — narrowing to the actual
+ * scope is `resolveScopedHolderIds()`'s job (D-17); a malformed row (any scope) and a foreign
+ * tenant's customer role still never make a holder. The facade does NOT filter `isActive` itself —
+ * every site keeps that filter (and every other filter) on its own side; this test proves an
+ * inactive holder is still returned here.
  *
  * Phase 355 (Issue #355): the facade DOES filter a departed holder — `Employee.exitDate` set and
  * in the past — itself, through either path (a stored assignment or the D-08 fallback), because no
@@ -133,6 +136,12 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
   let malformedTenantRole: Awaited<ReturnType<typeof createRole>>;
   let malformedHolder: Awaited<ReturnType<typeof createUserWithEmployee>>;
 
+  // Issue #367: a malformed SALONS row (empty salonIds) — the same D-03 fail-closed shape check
+  // now applies to a non-TENANT scope too, since Issue #367 widened the candidate set to include
+  // well-formed SALONS/PERSONS rows.
+  let malformedSalonsRole: Awaited<ReturnType<typeof createRole>>;
+  let malformedSalonsHolder: Awaited<ReturnType<typeof createUserWithEmployee>>;
+
   let foreignRoleInB: Awaited<ReturnType<typeof createRole>>;
   let foreignCustomerHolder: Awaited<ReturnType<typeof createUserWithEmployee>>;
 
@@ -230,6 +239,28 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
       },
     });
 
+    // Issue #367: a malformed SALONS row — scopeType SALONS with an empty salonIds list violates
+    // storedRoleAssignmentScope's D-03 shape (SALONS requires salonIds.length > 0), so it must
+    // fail closed exactly like the malformed TENANT row above.
+    malformedSalonsRole = await createRole(app, tenantA.tenant.id, "MalformedSalonsGrant", [
+      LEAVE_REQUEST_APPROVE,
+    ]);
+    malformedSalonsHolder = await createUserWithEmployee(
+      app,
+      tenantA.tenant.id,
+      "MalformedSalonsHolder",
+    );
+    await app.prisma.roleAssignment.create({
+      data: {
+        tenantId: tenantA.tenant.id,
+        userId: malformedSalonsHolder.user.id,
+        accessRoleId: malformedSalonsRole.id,
+        scopeType: "SALONS",
+        salonIds: [],
+        employeeIds: [],
+      },
+    });
+
     // A TENANT-scope row of tenantA referencing a customer role that belongs to tenantB — models
     // a foreign tenant's customer role slipping onto a row (never producible through the API).
     foreignRoleInB = await createRole(app, tenantB.tenant.id, "ForeignGrant", [
@@ -314,14 +345,23 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
     expect(ids).not.toContain(fallbackEmployee.user.id);
   });
 
-  it("a SALONS or PERSONS assignment granting the permission does not make a holder (D-09)", async () => {
+  it("Issue #367: a well-formed SALONS or PERSONS assignment granting the permission NOW makes a holder (revises D-09)", async () => {
     const ids = await userIdsHoldingPermission(
       app.prisma,
       tenantA.tenant.id,
       LEAVE_REQUEST_APPROVE,
     );
-    expect(ids).not.toContain(salonHolder.user.id);
-    expect(ids).not.toContain(personsHolder.user.id);
+    expect(ids).toContain(salonHolder.user.id);
+    expect(ids).toContain(personsHolder.user.id);
+  });
+
+  it("Issue #367: a malformed SALONS row (empty salonIds) still does not make a holder (D-03 shape, fail closed for every scope)", async () => {
+    const ids = await userIdsHoldingPermission(
+      app.prisma,
+      tenantA.tenant.id,
+      LEAVE_REQUEST_APPROVE,
+    );
+    expect(ids).not.toContain(malformedSalonsHolder.user.id);
   });
 
   it("a malformed TENANT row does not make a holder (D-03 shape, fail closed)", async () => {

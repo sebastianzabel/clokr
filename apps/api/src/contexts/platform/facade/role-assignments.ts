@@ -387,16 +387,39 @@ export async function withRoleLockoutGuard<T>(
  * D-16: the ids of every user of `tenantId` who holds `permission` — a ZUGEWIESEN permission only
  * (an EIGENE key answers nothing at tenant scope, so it throws — D-09). A holder is either:
  *
- * (a) a well-formed TENANT-scope assignment (D-03 shape — fail closed on a malformed row, IN-02)
- *     whose role belongs to the tenant (a system role, or a customer role OF this tenant — a
- *     customer role of a FOREIGN tenant grants nothing even if a row references it) and grants
- *     `permission` via `roleGrants`, the ONE role-evaluation path (AK-73-7). D-09: a SALONS or
- *     PERSONS assignment never grants a ZUGEWIESEN permission here, even when its role would grant
- *     it under a TENANT scope — that boundary is #91's, not this facade's; or
+ * (a) a well-formed assignment (D-03 shape — fail closed on a malformed row, IN-02:
+ *     `storedRoleAssignmentScope` returns `null` for a TENANT row with a non-empty salon/employee
+ *     list just as much as for a SALONS/PERSONS row with an empty one) whose role belongs to the
+ *     tenant (a system role, or a customer role OF this tenant — a customer role of a FOREIGN
+ *     tenant grants nothing even if a row references it) and grants `permission` via `roleGrants`,
+ *     the ONE role-evaluation path (AK-73-7) — a TENANT-scope row always qualifies; a SALONS/
+ *     PERSONS row qualifies only when `permission`'s resource has relation `PERSON` (Issue #367,
+ *     see below); or
  * (b) a user with NO stored `RoleAssignment` at all in the tenant — any scope, even a malformed
  *     one, disables the fallback for that user (D-08's "Altrollen-Rückfall") — mapped through
  *     `systemRoleIdForLegacyRole` (C-10, the compat module; never an inline role literal) onto the
  *     matching system role, kept when THAT role grants `permission`.
+ *
+ * Issue #367 (owner decision 2026-09-29, revises Phase 91b's D-09, ADR 0001-abweichungen Eintrag
+ * P): before this fix, (a) required a TENANT-scope row specifically — a SALONS or PERSONS
+ * assignment never contributed a candidate here, even when its role would grant `permission` under
+ * a TENANT scope. That made every notification-recipient site relying on this function
+ * structurally unreachable for a SALONS/PERSONS holder, because `resolveScopedHolderIds()` (D-17)
+ * can only narrow a candidate that is already in the list — it never adds one. This function now
+ * mirrors D-05's own `zugewiesen`/`zugewiesenAnyScope` split (`request-permissions.ts`): a
+ * PERSON-relation permission (every recipient site except one) also accepts a well-formed SALONS/
+ * PERSONS candidate, narrowed to the caller's actual salon(s)/person(s) by
+ * `resolveScopedHolderIds()` (D-17, unchanged) — never by this facade. A MANDANT-relation
+ * permission (`leave-config:manage`, `carryover-warning.ts`'s ONE caller in this category) stays
+ * restricted to TENANT-scope candidates only, exactly as before this fix — role composition is not
+ * restricted by relation (nothing stops a SALONS-scoped role from also bundling a MANDANT-relation
+ * permission), so without this split that caller's un-narrowed candidate list would silently widen
+ * too, handing a scoped holder a tenant-wide notification their own access reach could never
+ * actually satisfy at the real gate.
+ *
+ * A caller that does NOT narrow via `resolveScopedHolderIds()` after calling this function is safe
+ * only for a MANDANT-relation permission (the candidate set for it is unchanged by this fix); every
+ * PERSON-relation caller narrows.
  *
  * Every recipient site (D-16, D-17) keeps its OWN other filters — `isActive`, the employee's
  * tenant, an actor/target skip, the select shape. This facade answers only "who holds the
@@ -449,14 +472,32 @@ export async function userIdsHoldingPermission(
     },
   });
 
+  // Issue #367: mirrors D-05's own `zugewiesen`/`zugewiesenAnyScope` split (`request-
+  // permissions.ts`) — a MANDANT-relation permission (e.g. `leave-config:manage`) stays candidate-
+  // restricted to TENANT-scope assignments, same as before this fix; a PERSON-relation permission
+  // (every other ZUGEWIESEN permission a recipient site asks for) now also accepts a well-formed
+  // SALONS/PERSONS assignment. Without this split, a role that happens to bundle a MANDANT-
+  // relation permission together with PERSON-relation ones (nothing prevents that — role
+  // composition is not restricted by relation, see `permission-catalog.ts` § Relation) onto a
+  // SALONS/PERSONS assignment would silently become a tenant-wide-config candidate too, which
+  // `carryover-warning.ts`'s un-narrowed `leave-config:manage` lookup would then hand a scoped
+  // holder a MANDANT notification their own access reach could never actually satisfy (D-05's
+  // `hasPermission` gate reads the narrower `zugewiesen` set for MANDANT, never
+  // `zugewiesenAnyScope`) — measured while building this fix's neutrality-amendment coverage.
+  const isPersonRelation = PERMISSION_RESOURCES[catalogEntry.resource].relation === "PERSON";
+
   const usersWithStoredAssignment = new Set<string>();
   const storedHolderIds = new Set<string>();
   for (const assignment of assignments) {
     usersWithStoredAssignment.add(assignment.userId);
-    // D-09: only a well-formed TENANT-scope row (D-03 shape) can ever grant a ZUGEWIESEN
-    // permission here — a SALONS/PERSONS row, or a malformed TENANT row, contributes nothing.
-    if (assignment.scopeType !== "TENANT") continue;
-    if (assignment.salonIds.length > 0 || assignment.employeeIds.length > 0) continue;
+    // A well-formed TENANT row is always a candidate; a well-formed SALONS/PERSONS row is a
+    // candidate only for a PERSON-relation permission (see above). `storedRoleAssignmentScope` is
+    // the ONE D-03 shape check (IN-02, fail closed on a malformed row, whichever scope it claims).
+    // Narrowing a SALONS/PERSONS holder to their actual scope remains `resolveScopedHolderIds()`'s
+    // job (D-17), not this facade's.
+    const scope = storedRoleAssignmentScope(assignment);
+    if (scope === null) continue;
+    if (scope.scopeType !== "TENANT" && !isPersonRelation) continue;
     const roleBelongsHere =
       assignment.accessRole.tenantId === null || assignment.accessRole.tenantId === tenantId;
     if (!roleBelongsHere) continue;
