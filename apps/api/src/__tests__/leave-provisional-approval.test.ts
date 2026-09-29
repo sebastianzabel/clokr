@@ -312,10 +312,15 @@ describe("Leave provisional approval — SHIFT_BASED roster-aware recompute (Pha
     expect(await usedDaysFor(sb3Emp.id, start)).toBe(usedBefore + 6);
   });
 
-  it("AC-RC-01: request created before the roster existed, then the roster is planned, then approved — persisted days changes from the creation-time value to the roster-derived value, daysProvisional flips to false, and LeaveEntitlement.usedDays reflects the recomputed value", async () => {
+  // Issue #417 (2026-09-29 owner decision): superseded AC-RC-01. This test's own scenario —
+  // request created BEFORE the roster exists, roster then planned, THEN approved — is exactly
+  // Issue #417's regression case (b) ("Antrag, danach Woche ohne diesen Tag geplant → Tage
+  // bleiben"). Day counting is now BY CONTRACT, so the roster planned in step 2 must NOT move
+  // `days` at all, at creation or at approval.
+  it("Issue #417 regression (b): request created before the roster exists, then the roster is planned (only Tuesday), then approved — days is IDENTICAL at creation and approval, daysProvisional is false, usedDays reflects the SAME value throughout", async () => {
     const start = RC01_MONDAY;
     const tuesday = addDaysIso(RC01_MONDAY, 1);
-    const end = tuesday; // Mon+Tue fragment, count 4 -> creation-time upper bound min(2,4)=2
+    const end = tuesday; // Mon+Tue fragment, contract count 4 -> min(2,4)=2
 
     // 1) Create while the period has NO roster at all.
     const createRes = await postVacation(sb4Token, start, end);
@@ -323,7 +328,8 @@ describe("Leave provisional approval — SHIFT_BASED roster-aware recompute (Pha
     const created = JSON.parse(createRes.body);
     expect(Number(created.days)).toBe(2);
 
-    // 2) NOW the roster gets planned — but only for Tuesday, not Monday.
+    // 2) NOW the roster gets planned — but only for Tuesday, not Monday. Issue #417: this must
+    //    be irrelevant to the day count.
     await seedShift(sb4Emp.id, tuesday);
 
     // 3) Approve.
@@ -332,21 +338,20 @@ describe("Leave provisional approval — SHIFT_BASED roster-aware recompute (Pha
     expect(approveRes.statusCode).toBe(200);
     const approved = JSON.parse(approveRes.body);
 
-    // The persisted value CHANGED between creation (2) and approval (1) — the roster-exact
-    // count of the ONE actually-rostered day, not the creation-time upper bound.
-    expect(Number(approved.days)).toBe(1);
-    expect(approved.daysProvisional).toBe(false); // the week now has a roster (D-06/D-08 exact)
+    // Issue #417: the persisted value is UNCHANGED between creation (2) and approval (2) —
+    // the roster planned in between never entered the calculation.
+    expect(Number(approved.days)).toBe(2);
+    expect(approved.daysProvisional).toBe(false); // Issue #417: never provisional any more
 
     const persisted = await app.prisma.leaveRequest.findUnique({ where: { id: created.id } });
-    expect(Number(persisted!.days)).toBe(1);
+    expect(Number(persisted!.days)).toBe(2);
     expect(persisted!.daysProvisional).toBe(false);
 
-    // deductVacationDays() got the FRESH value (1), not the stale creation-time value (2).
-    expect(await usedDaysFor(sb4Emp.id, start)).toBe(usedBefore + 1);
+    // deductVacationDays() got the SAME value (2) the creation-time preview already showed.
+    expect(await usedDaysFor(sb4Emp.id, start)).toBe(usedBefore + 2);
 
-    // Phase 120 (D-01/D-02/D-04): the approval CHANGED `days` — the audit row must show both sides.
-    // `oldVal.days !== newVal.days` is the regression guard for D-04: an implementation that
-    // re-reads the row after the update() instead of snapshotting before it makes these two equal.
+    // Phase 120 (D-01/D-02/D-04): the audit row must show both sides even though the value did
+    // NOT change (Issue #417) — `days` stated, not absent, on a status-flip audit entry.
     const auditRow = await app.prisma.auditLog.findFirst({
       where: { action: "APPROVE", entity: "LeaveRequest", entityId: created.id },
       orderBy: { createdAt: "desc" },
@@ -365,8 +370,7 @@ describe("Leave provisional approval — SHIFT_BASED roster-aware recompute (Pha
     expect(oldVal.status).toBe("PENDING");
     expect(newVal.status).toBe("APPROVED");
     expect(oldVal.days).toBe(2);
-    expect(newVal.days).toBe(1);
-    expect(oldVal.days).not.toBe(newVal.days);
+    expect(newVal.days).toBe(2);
     expect(oldVal.daysProvisional).toBeNull();
     expect(newVal.daysProvisional).toBe(false);
     // Phase 120 (D-12 / D-11(e)): the reviewer's identity, on the same entry.
@@ -374,24 +378,24 @@ describe("Leave provisional approval — SHIFT_BASED roster-aware recompute (Pha
     expect(auditRow!.userAgent).toBe(TEST_USER_AGENT);
   });
 
-  it("approving while the period still has NO roster at all sets daysProvisional true and persists the D-07 upper bound; LeaveEntitlement.usedDays reflects it", async () => {
+  it("Issue #417: approving while the period has NO roster at all persists the SAME by-contract value as at creation and never sets daysProvisional", async () => {
     const start = PROVISIONAL_MONDAY;
-    const end = addDaysIso(PROVISIONAL_MONDAY, 1); // Mon+Tue, count 3 -> min(2,3)=2
+    const end = addDaysIso(PROVISIONAL_MONDAY, 1); // Mon+Tue, contract count 3 -> min(2,3)=2
 
     const createRes = await postVacation(sb3Token, start, end);
     expect(createRes.statusCode).toBe(201);
     const created = JSON.parse(createRes.body);
     expect(Number(created.days)).toBe(2);
 
-    // No shift is EVER seeded for this week — approve against a still-empty roster.
+    // No shift is EVER seeded for this week — approve against a still-empty roster. Issue #417:
+    // this is now irrelevant, since the roster is never consulted.
     const usedBefore = await usedDaysFor(sb3Emp.id, start);
     const approveRes = await approve(created.id);
     expect(approveRes.statusCode).toBe(200);
     const approved = JSON.parse(approveRes.body);
 
-    expect(Number(approved.days)).toBe(2); // unchanged: still the D-07 upper bound
-    expect(approved.daysProvisional).toBe(true);
-    // D-13: provisional consumption counts FULLY against the entitlement.
+    expect(Number(approved.days)).toBe(2); // unchanged: the by-contract value
+    expect(approved.daysProvisional).toBe(false); // Issue #417: never provisional any more
     expect(await usedDaysFor(sb3Emp.id, start)).toBe(usedBefore + 2);
   });
 
@@ -428,16 +432,16 @@ describe("Leave provisional approval — SHIFT_BASED roster-aware recompute (Pha
     expect(persisted!.daysProvisional).toBeNull();
   });
 
-  it("GET /hours-preview surfaces `provisional` (Phase 107, D-09): true with no roster, false once the fragment's week is rostered, same day count either way", async () => {
+  it("Issue #417: GET /hours-preview never surfaces `provisional: true` — the by-contract day count is identical before and after the fragment's week is rostered", async () => {
     const start = PREVIEW_MONDAY;
     const tuesday = addDaysIso(PREVIEW_MONDAY, 1);
-    const end = tuesday; // Mon+Tue fragment, count 4 -> min(2,4)=2
+    const end = tuesday; // Mon+Tue fragment, contract count 4 -> min(2,4)=2
 
     const before = await hoursPreview(sb4Token, start, end);
     expect(before.statusCode).toBe(200);
     const beforeBody = JSON.parse(before.body);
     expect(Number(beforeBody.days)).toBe(2);
-    expect(beforeBody.provisional).toBe(true);
+    expect(beforeBody.provisional).toBe(false); // Issue #417: never provisional any more
 
     await seedShift(sb4Emp.id, start);
     await seedShift(sb4Emp.id, tuesday);
@@ -445,7 +449,7 @@ describe("Leave provisional approval — SHIFT_BASED roster-aware recompute (Pha
     const after = await hoursPreview(sb4Token, start, end);
     expect(after.statusCode).toBe(200);
     const afterBody = JSON.parse(after.body);
-    expect(Number(afterBody.days)).toBe(2); // same number, both days are now rostered
+    expect(Number(afterBody.days)).toBe(2); // same number — the roster never entered the calc
     expect(afterBody.provisional).toBe(false);
   });
 

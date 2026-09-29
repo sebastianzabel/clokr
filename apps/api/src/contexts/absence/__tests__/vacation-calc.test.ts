@@ -339,7 +339,7 @@ function mon(n: number): Date {
 const MONDAY = mondayOfWeekStr();
 const NO_HOLIDAYS = new Set<string>();
 
-describe("countShiftBasedLeaveDays (Phase 107, D-05..D-09)", () => {
+describe("countShiftBasedLeaveDays — by contract, roster-independent (Issue #417, supersedes Phase 107 D-05..D-09)", () => {
   it("fixture week's Monday is genuinely a Monday (pins the week-cutting primitive)", () => {
     // Two independent implementations must agree: test-dates.ts's dowOf() (tenant-TZ string
     // arithmetic) and vacation-calc.ts's own exported mondayOfWeekUtc() (pure UTC). If either
@@ -349,183 +349,95 @@ describe("countShiftBasedLeaveDays (Phase 107, D-05..D-09)", () => {
     expect(mondayOfWeekUtc(mon(2)).getTime()).toBe(utcMidnight(MONDAY).getTime()); // Wed -> Mon
   });
 
-  it("AC-UV-01: two whole ISO weeks, count 5 -> 10 days, not provisional (empty AND full roster)", () => {
-    const start = mon(0); // Monday, week A
-    const end = mon(13); // Sunday, week B (the second Sunday)
-
-    const resultEmptyRoster = countShiftBasedLeaveDays(
-      start,
-      end,
-      false,
-      5,
-      new Set(),
-      NO_HOLIDAYS,
-      new Set(),
-    );
-    expect(resultEmptyRoster).toEqual({ days: 10, provisional: false });
-
-    // A FULL roster (every day rostered, both weeks marked as "has a roster") must not change
-    // the result AT ALL — D-06: whole weeks ignore the roster entirely by construction. This is
-    // the unit-level proof that later roster planning cannot retroactively alter a whole week
-    // (AC-RC-06).
-    const fullRoster = new Set<string>();
-    for (let i = 0; i <= 13; i++) fullRoster.add(ds(mon(i)));
-    const fullWeeks = new Set([ds(mon(0)), ds(mon(7))]);
-    const resultFullRoster = countShiftBasedLeaveDays(
-      start,
-      end,
-      false,
-      5,
-      fullRoster,
-      NO_HOLIDAYS,
-      fullWeeks,
-    );
-    expect(resultFullRoster).toEqual({ days: 10, provisional: false });
+  it("AC-417-c: a whole vacation week on a 5-day contract costs 5 days", () => {
+    const start = mon(0); // Monday
+    const end = mon(6); // Sunday
+    const result = countShiftBasedLeaveDays(start, end, false, 5, NO_HOLIDAYS);
+    expect(result).toEqual({ days: 5, provisional: false });
   });
 
-  it("AC-UV-02: Mon-Tue leave, roster Tue-Sat -> 1 day", () => {
-    const start = mon(0); // Mon
+  it("two whole ISO weeks, count 5 -> 10 days, never provisional", () => {
+    const start = mon(0); // Monday, week A
+    const end = mon(13); // Sunday, week B (the second Sunday)
+    const result = countShiftBasedLeaveDays(start, end, false, 5, NO_HOLIDAYS);
+    expect(result).toEqual({ days: 10, provisional: false });
+  });
+
+  it("a single requested day (fragment of 1 calendar day) costs 1 day on a 5-day contract", () => {
+    // AC-417-a's unit-level counterpart: a single Tuesday, regardless of any roster —
+    // this function no longer takes a roster parameter at all.
+    const start = mon(1); // Tue
     const end = mon(1); // Tue
-    const roster = new Set([ds(mon(1)), ds(mon(2)), ds(mon(3)), ds(mon(4)), ds(mon(5))]); // Tue..Sat
-    const weeksWithRoster = new Set([ds(mon(0))]);
-    const result = countShiftBasedLeaveDays(
-      start,
-      end,
-      false,
-      5,
-      roster,
-      NO_HOLIDAYS,
-      weeksWithRoster,
-    );
+    const result = countShiftBasedLeaveDays(start, end, false, 5, NO_HOLIDAYS);
     expect(result).toEqual({ days: 1, provisional: false });
   });
 
-  it("AC-UV-03: Mon-Tue leave, roster Mon-Fri -> 2 days", () => {
+  it("Mon-Tue fragment costs 2 days on a 5-day contract, independent of any roster shape", () => {
     const start = mon(0); // Mon
     const end = mon(1); // Tue
-    const roster = new Set([ds(mon(0)), ds(mon(1)), ds(mon(2)), ds(mon(3)), ds(mon(4))]); // Mon..Fri
-    const weeksWithRoster = new Set([ds(mon(0))]);
-    const result = countShiftBasedLeaveDays(
-      start,
-      end,
-      false,
-      5,
-      roster,
-      NO_HOLIDAYS,
-      weeksWithRoster,
-    );
+    const result = countShiftBasedLeaveDays(start, end, false, 5, NO_HOLIDAYS);
     expect(result).toEqual({ days: 2, provisional: false });
   });
 
-  it("AC-UV-04: Mon-Tue leave, no roster in that week, count 5 -> 2 days, provisional true", () => {
-    const start = mon(0); // Mon
-    const end = mon(1); // Tue
-    const result = countShiftBasedLeaveDays(
-      start,
-      end,
-      false,
-      5,
-      new Set(),
-      NO_HOLIDAYS,
-      new Set(),
-    );
-    expect(result).toEqual({ days: 2, provisional: true });
-  });
-
-  it("D-07 upper bound: Wed-Sun fragment (5 calendar days), count 4, no roster -> 4 days, provisional true", () => {
+  it("upper bound: Wed-Sun fragment (5 calendar days), count 4 -> 4 days, never provisional", () => {
     const start = mon(2); // Wed
     const end = mon(6); // Sun
-    const result = countShiftBasedLeaveDays(
-      start,
-      end,
-      false,
-      4,
-      new Set(),
-      NO_HOLIDAYS,
-      new Set(),
-    );
+    const result = countShiftBasedLeaveDays(start, end, false, 4, NO_HOLIDAYS);
     // min(5 calendar days, count 4) = 4 — the count caps the calendar-day count, not vice versa.
-    expect(result).toEqual({ days: 4, provisional: true });
+    expect(result).toEqual({ days: 4, provisional: false });
   });
 
-  it("D-08 exact: a holiday on a rostered day inside a fragment is not counted", () => {
+  it("a holiday inside a fragment reduces the count by 1", () => {
     const start = mon(0); // Mon
     const end = mon(1); // Tue
-    const roster = new Set([ds(mon(0)), ds(mon(1))]); // both rostered
-    const weeksWithRoster = new Set([ds(mon(0))]);
     const holidays = new Set([ds(mon(1))]); // Tuesday is a public holiday
-    const result = countShiftBasedLeaveDays(
-      start,
-      end,
-      false,
-      5,
-      roster,
-      holidays,
-      weeksWithRoster,
-    );
-    expect(result).toEqual({ days: 1, provisional: false }); // only Monday counts
-  });
-
-  it("D-08 flat: no roster, 1 holiday in the fragment -> value reduced by 1", () => {
-    const start = mon(0); // Mon
-    const end = mon(1); // Tue
-    const holidays = new Set([ds(mon(1))]); // Tuesday
-    const result = countShiftBasedLeaveDays(start, end, false, 5, new Set(), holidays, new Set());
+    const result = countShiftBasedLeaveDays(start, end, false, 5, holidays);
     // min(2 calendar days, count 5) = 2, minus 1 holiday in the fragment = 1
-    expect(result).toEqual({ days: 1, provisional: true });
+    expect(result).toEqual({ days: 1, provisional: false });
   });
 
-  it("D-08 flat floor: count 1, 2 holidays in the fragment -> 0, never negative", () => {
+  it("a holiday inside a WHOLE week also reduces the count by 1 (uniform holiday exclusion, Issue #417 AC)", () => {
+    const start = mon(0); // Mon
+    const end = mon(6); // Sun — a whole week
+    const holidays = new Set([ds(mon(2))]); // Wednesday is a public holiday
+    const result = countShiftBasedLeaveDays(start, end, false, 5, holidays);
+    expect(result).toEqual({ days: 4, provisional: false });
+  });
+
+  it("floor: count 1, 2 holidays in the fragment -> 0, never negative", () => {
     const start = mon(0); // Mon
     const end = mon(1); // Tue
     const holidays = new Set([ds(mon(0)), ds(mon(1))]); // both days are holidays
-    const result = countShiftBasedLeaveDays(start, end, false, 1, new Set(), holidays, new Set());
+    const result = countShiftBasedLeaveDays(start, end, false, 1, holidays);
     // min(2, 1) = 1, minus 2 holidays = -1 -> floored at 0, never negative
-    expect(result).toEqual({ days: 0, provisional: true });
+    expect(result).toEqual({ days: 0, provisional: false });
   });
 
-  it("halfDay short-circuits to 0.5, never provisional, regardless of roster", () => {
+  it("halfDay short-circuits to 0.5, never provisional", () => {
     const start = mon(0);
     const end = mon(0);
-    const result = countShiftBasedLeaveDays(start, end, true, 5, new Set(), NO_HOLIDAYS, new Set());
+    const result = countShiftBasedLeaveDays(start, end, true, 5, NO_HOLIDAYS);
     expect(result).toEqual({ days: 0.5, provisional: false });
   });
 
-  it("mixed period (fragment + 2 whole weeks + fragment): provisional true when only ONE fragment lacks a roster", () => {
+  it("mixed period (fragment + 2 whole weeks + fragment): sums every week's contract-capped contribution, never provisional", () => {
     const start = mon(2); // Wed, week A
     const end = mon(24); // Thu, week D (3 weeks + 3 days later)
     const count = 5;
 
-    // Week A's fragment (Wed..Sun) HAS a roster: Wed/Thu/Fri rostered, Sat/Sun not.
-    const roster = new Set([ds(mon(2)), ds(mon(3)), ds(mon(4))]);
-    // Only week A's Monday-key is marked "has a roster" — week D's fragment (the period's other
-    // end) deliberately has NO entry in weeksWithRoster.
-    const weeksWithRoster = new Set([ds(mon(0))]);
-
-    const result = countShiftBasedLeaveDays(
-      start,
-      end,
-      false,
-      count,
-      roster,
-      NO_HOLIDAYS,
-      weeksWithRoster,
-    );
-    // Week A fragment (roster-exact): Wed+Thu+Fri rostered -> 3
-    // Week B + Week C: WHOLE, roster-independent -> 5 + 5 = 10
-    // Week D fragment (Mon..Thu, no roster, flat): min(4 calendar days, 5) - 0 holidays -> 4
-    // Total: 3 + 10 + 4 = 17; provisional true because week D's fragment lacked a roster, even
-    // though week A's fragment had one (D-11: at-least-one-day / at-least-one-fragment).
-    expect(result).toEqual({ days: 17, provisional: true });
+    const result = countShiftBasedLeaveDays(start, end, false, count, NO_HOLIDAYS);
+    // Week A fragment (Wed..Sun, 5 calendar days): min(5, 5) = 5
+    // Week B + Week C: WHOLE -> 5 + 5 = 10
+    // Week D fragment (Mon..Thu, 4 calendar days): min(4, 5) = 4
+    // Total: 5 + 10 + 4 = 19
+    expect(result).toEqual({ days: 19, provisional: false });
   });
 
   it("is DB-free and callable without Fastify or a Prisma client", () => {
     // No import of Fastify/@clokr/db appears anywhere in this file or in vacation-calc.ts
     // (enforced by Task 1's own acceptance criteria) — this call is the behavioral proof: it
     // runs to completion with nothing but plain JS values.
-    expect(() =>
-      countShiftBasedLeaveDays(mon(0), mon(1), false, 5, new Set(), new Set(), new Set()),
-    ).not.toThrow();
+    expect(() => countShiftBasedLeaveDays(mon(0), mon(1), false, 5, new Set())).not.toThrow();
   });
 });
 

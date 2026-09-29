@@ -32,7 +32,7 @@
  * observed.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup"; // Phase 325 (issue #325)
+import { getTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -356,11 +356,15 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     });
   }
 
-  // ── AC-RC-01 / AC-RC-02 / AC-RC-03 (single-shift route shape) ──────────────────────────────
-  it("AC-RC-01 / AC-RC-02 / AC-RC-03: planning the roster for a period with an approved provisional request recomputes its days, corrects the entitlement by the delta, audits and notifies both parties", async () => {
+  // ── Issue #417 (2026-09-29): superseded AC-RC-01/02/03 — day counting is now BY CONTRACT,
+  //    never by roster, so approving a SHIFT_BASED vacation request never sets
+  //    daysProvisional: true any more, and a LATER roster change (however it is expressed —
+  //    force-overriding the exact leave dates here) must NOT move `days` at all. This is the
+  //    HTTP-route-level counterpart of Issue #417's regression case (b).
+  it("Issue #417: approving a SHIFT_BASED vacation request never sets daysProvisional, and a later roster change over the same dates leaves its days/entitlement/audit trail untouched", async () => {
     const start = AC01_MONDAY;
     const tuesday = addDaysIso(AC01_MONDAY, 1);
-    const end = tuesday; // Mon+Tue fragment, count 4 -> upper bound min(2,4)=2
+    const end = tuesday; // Mon+Tue fragment, contract count 4 -> min(2,4)=2
 
     const createRes = await postVacation(empToken, start, end);
     expect(createRes.statusCode).toBe(201);
@@ -371,9 +375,10 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     expect(approveRes.statusCode).toBe(200);
     const approved = JSON.parse(approveRes.body);
     expect(Number(approved.days)).toBe(2);
-    expect(approved.daysProvisional).toBe(true); // still no roster
+    expect(approved.daysProvisional).toBe(false); // Issue #417: never provisional any more
 
     const usedAfterApproval = await usedDaysFor(emp.id, start);
+    const auditCountBefore = await auditCountFor(created.id);
 
     // adminB (NOT the approver) plans ONLY Tuesday. force=true: the date already carries the
     // APPROVED leave this request created — an intentional roster decision, not a test
@@ -382,36 +387,22 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     const shiftRes = await postShift(adminBToken, emp.id, tuesday, { force: true });
     expect(shiftRes.statusCode).toBe(201);
 
+    // Issue #417: the request's days/entitlement/audit trail are UNCHANGED by this roster
+    // change — recalcProvisionalLeaveForShiftChange's guard (daysProvisional: true) matches
+    // nothing for a freshly-approved request, by construction.
     const persisted = await app.prisma.leaveRequest.findUnique({ where: { id: created.id } });
-    expect(Number(persisted!.days)).toBe(1); // roster-exact: only Tuesday is actually rostered
+    expect(Number(persisted!.days)).toBe(2);
     expect(persisted!.daysProvisional).toBe(false);
+    expect(await usedDaysFor(emp.id, start)).toBe(usedAfterApproval);
+    expect(await auditCountFor(created.id)).toBe(auditCountBefore);
 
-    // AC-RC-03 / D-13
-    expect(await usedDaysFor(emp.id, start)).toBe(usedAfterApproval - 1);
-    const auditRow = await app.prisma.auditLog.findFirst({
-      where: { action: "LEAVE_DAYS_ADJUSTED", entityId: created.id },
-      orderBy: { createdAt: "desc" },
-    });
-    expect(auditRow).toBeTruthy();
-    expect(auditRow!.createdAt).toBeTruthy();
-    const oldVal = auditRow!.oldValue as { days: number };
-    const newVal = auditRow!.newValue as { days: number; trigger: string; triggerSource: string };
-    expect(oldVal.days).toBe(2);
-    expect(newVal.days).toBe(1);
-    expect(newVal.trigger).toBe("Roster-Planung");
-    // Phase 120 (D-05/D-07): the row came from a real HTTP route call, so it must carry that
-    // caller's identity — and say so explicitly, not leave it to be inferred from a non-empty IP.
-    expect(auditRow!.ipAddress).toBeTruthy();
-    expect(auditRow!.userAgent).toBe(TEST_USER_AGENT);
-    expect(newVal.triggerSource).toBe("REQUEST");
-
-    // AC-RC-02 / D-18
+    // AC-RC-02 / D-18 no longer fires either — no LEAVE_DAYS_ADJUSTED notification for anyone.
     const notifications = await app.prisma.notification.findMany({
       where: { relatedType: "LeaveRequest", relatedId: created.id, type: "LEAVE_DAYS_ADJUSTED" },
     });
     const recipients = notifications.map((n) => n.userId);
-    expect(recipients).toContain(empUserId);
-    expect(recipients).toContain(adminAUserId);
+    expect(recipients).not.toContain(empUserId);
+    expect(recipients).not.toContain(adminAUserId);
     expect(recipients).not.toContain(adminBUserId); // adminB is the acting user — skipped
   });
 
@@ -506,8 +497,8 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
   });
 
   // ── Genuine no-op: was a real candidate, recompute equals the stored value ─────────────────
-  it("a genuine no-op recompute (recomputed value equals the stored value) writes no audit row, corrects no entitlement, and leaves daysProvisional untouched", async () => {
-    const start = NOOP_MONDAY; // single-day fragment, count 4 -> upper bound min(1,4)=1
+  it("Issue #417: a single-day request settles to daysProvisional: false at approval, and a same-day roster change still writes no audit row and corrects no entitlement", async () => {
+    const start = NOOP_MONDAY; // single-day fragment, contract count 4 -> min(1,4)=1
 
     const createRes = await postVacation(empToken, start, start);
     const created = JSON.parse(createRes.body);
@@ -515,20 +506,18 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     const approveRes = await approve(created.id);
     const approved = JSON.parse(approveRes.body);
     expect(Number(approved.days)).toBe(1);
-    expect(approved.daysProvisional).toBe(true);
+    expect(approved.daysProvisional).toBe(false); // Issue #417: never provisional any more
 
     const usedBefore = await usedDaysFor(emp.id, start);
-    // Roster exactly the ONE day the fragment already assumed -> roster-exact count = 1, SAME as
-    // the stored upper bound. Step 5 ("skip that request entirely — no write, no audit, no
-    // notification") means daysProvisional itself is untouched too, even though the week now
-    // genuinely has a roster — a deliberate consequence of "no write at all" on a no-op, not a
-    // bug: the plan's own Task 1 action text is explicit about this.
+    // Issue #417: daysProvisional is false from approval onward, so recalcProvisionalLeaveForShiftChange's
+    // guard never matches this request — no write, no audit, no notification, regardless of what
+    // the roster later shows.
     const shiftRes = await postShift(adminBToken, emp.id, start, { force: true });
     expect(shiftRes.statusCode).toBe(201);
 
     const persisted = await app.prisma.leaveRequest.findUnique({ where: { id: created.id } });
     expect(Number(persisted!.days)).toBe(1);
-    expect(persisted!.daysProvisional).toBe(true);
+    expect(persisted!.daysProvisional).toBe(false);
     expect(await usedDaysFor(emp.id, start)).toBe(usedBefore);
     expect(await auditCountFor(created.id)).toBe(0);
     const notifications = await app.prisma.notification.findMany({
@@ -538,9 +527,15 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
   });
 
   // ── AC-RC-07 downward (direct call — inspects the returned `direction`) ────────────────────
-  it("AC-RC-07 downward: the roster has fewer workdays in the fragment than the D-07 upper bound — days decreases, entitlement corrected by the delta, audit row exists, returned direction is 'down'", async () => {
+  // Issue #417: the resolver's own recompute is now BY CONTRACT (`resolveLeaveDays()` /
+  // `countShiftBasedLeaveDays()`), never by roster — so it stays a valid safety net ONLY for
+  // pre-existing `daysProvisional: true` rows whose stored `days` predates this fix and
+  // therefore disagrees with the by-contract value. The roster shift created below is
+  // deliberately irrelevant to the recomputed value (proving the resolver no longer reads it);
+  // what actually moves the value is the deliberately-stale seeded `days`.
+  it("Issue #417: a legacy provisional row with a stale days value converges to the by-contract value on the next roster-triggered call — direction 'down'", async () => {
     const start = DOWN_MONDAY;
-    const end = addDaysIso(DOWN_MONDAY, 2); // Mon+Tue+Wed, count 4 -> upper bound min(3,4)=3
+    const end = addDaysIso(DOWN_MONDAY, 2); // Mon+Tue+Wed, 3 calendar days, contract count 4 -> min(3,4)=3
 
     const created = await app.prisma.leaveRequest.create({
       data: {
@@ -548,7 +543,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
         leaveTypeId: vacTypeId,
         startDate: utcMidnight(start),
         endDate: utcMidnight(end),
-        days: 3,
+        days: 5, // stale pre-fix value — disagrees with the by-contract value (3)
         halfDay: false,
         daysProvisional: true,
         status: "APPROVED",
@@ -559,11 +554,12 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     // observable against a realistic baseline.
     await app.prisma.leaveEntitlement.updateMany({
       where: { employeeId: emp.id, leaveTypeId: vacTypeId, year: Number(start.slice(0, 4)) },
-      data: { usedDays: { increment: 3 } },
+      data: { usedDays: { increment: 5 } },
     });
     const usedBefore = await usedDaysFor(emp.id, start);
 
-    // Roster ONLY Monday -> roster-exact count = 1 < upper bound 3.
+    // Irrelevant to the by-contract recompute — included only to prove the resolver no longer
+    // reads the roster at all.
     await app.prisma.shift.create({
       data: {
         employeeId: emp.id,
@@ -578,16 +574,16 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     const adjustments = await directRecalc(emp.id, weekStart, weekEnd, adminBUserId);
     expect(adjustments).toHaveLength(1);
     expect(adjustments[0].direction).toBe("down");
-    expect(adjustments[0].oldDays).toBe(3);
-    expect(adjustments[0].newDays).toBe(1);
+    expect(adjustments[0].oldDays).toBe(5);
+    expect(adjustments[0].newDays).toBe(3);
     expect(adjustments[0].leaveRequestId).toBe(created.id);
     expect(adjustments[0].employeeUserId).toBe(empUserId);
     expect(adjustments[0].approverUserId).toBe(adminAUserId);
 
     const persisted = await app.prisma.leaveRequest.findUnique({ where: { id: created.id } });
-    expect(Number(persisted!.days)).toBe(1);
-    expect(persisted!.daysProvisional).toBe(false);
-    expect(await usedDaysFor(emp.id, start)).toBe(usedBefore - 2); // delta = 1 - 3 = -2
+    expect(Number(persisted!.days)).toBe(3);
+    expect(persisted!.daysProvisional).toBe(false); // converged — never provisional again
+    expect(await usedDaysFor(emp.id, start)).toBe(usedBefore - 2); // delta = 3 - 5 = -2
 
     const auditRow = await app.prisma.auditLog.findFirst({
       where: { action: "LEAVE_DAYS_ADJUSTED", entityId: created.id },
@@ -595,26 +591,10 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     expect(auditRow).toBeTruthy();
   });
 
-  // ── AC-RC-07 upward (direct call) ───────────────────────────────────────────────────────
-  it("AC-RC-07 upward: the roster ends up covering more non-holiday days in the fragment than the flat estimate assumed — days increases, entitlement corrected by the delta, audit row exists, returned direction is 'up'", async () => {
+  // Issue #417 counterpart with the delta in the other direction.
+  it("Issue #417: a legacy provisional row with a stale days value converges to the by-contract value — direction 'up'", async () => {
     const start = UP_MONDAY; // Monday
-    const end = addDaysIso(UP_MONDAY, 4); // Mon-Fri, 5 calendar days, count 3
-    const wednesday = addDaysIso(UP_MONDAY, 2);
-
-    // A manually-seeded holiday: the flat (no-roster) estimate subtracts it
-    // (min(5,3) - 1 = 2), but the roster-exact branch excludes that SAME date regardless of
-    // rostering, so it does not cap the roster-exact count the same way — a fragment can be
-    // rostered on MORE non-holiday days than the weekly contractual count assumed.
-    await app.prisma.publicHoliday.create({
-      data: {
-        tenantId,
-        salonId: await salonIdForEmployee(app.prisma, emp.id), // Phase 71b (issue #71)
-        date: utcMidnight(wednesday),
-        name: "SLR Test-Feiertag",
-        federalState: "NIEDERSACHSEN",
-        year: Number(wednesday.slice(0, 4)),
-      },
-    });
+    const end = addDaysIso(UP_MONDAY, 4); // Mon-Fri, 5 calendar days, emp's contract count 4 -> min(5,4)=4
 
     const created = await app.prisma.leaveRequest.create({
       data: {
@@ -622,7 +602,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
         leaveTypeId: vacTypeId,
         startDate: utcMidnight(start),
         endDate: utcMidnight(end),
-        days: 2,
+        days: 1, // stale pre-fix value — disagrees with the by-contract value (4)
         halfDay: false,
         daysProvisional: true,
         status: "APPROVED",
@@ -631,11 +611,12 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     });
     await app.prisma.leaveEntitlement.updateMany({
       where: { employeeId: emp.id, leaveTypeId: vacTypeId, year: Number(start.slice(0, 4)) },
-      data: { usedDays: { increment: 2 } },
+      data: { usedDays: { increment: 1 } },
     });
     const usedBefore = await usedDaysFor(emp.id, start);
 
-    // Roster THREE non-holiday days (Mon, Tue, Thu) -> roster-exact = 3 > flat estimate 2.
+    // Irrelevant to the by-contract recompute — included only to prove the resolver no longer
+    // reads the roster at all.
     for (const dateIso of [start, addDaysIso(UP_MONDAY, 1), addDaysIso(UP_MONDAY, 3)]) {
       await app.prisma.shift.create({
         data: {
@@ -652,13 +633,13 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     const adjustments = await directRecalc(emp.id, weekStart, weekEnd, adminBUserId);
     expect(adjustments).toHaveLength(1);
     expect(adjustments[0].direction).toBe("up");
-    expect(adjustments[0].oldDays).toBe(2);
-    expect(adjustments[0].newDays).toBe(3);
+    expect(adjustments[0].oldDays).toBe(1);
+    expect(adjustments[0].newDays).toBe(4);
 
     const persisted = await app.prisma.leaveRequest.findUnique({ where: { id: created.id } });
-    expect(Number(persisted!.days)).toBe(3);
+    expect(Number(persisted!.days)).toBe(4);
     expect(persisted!.daysProvisional).toBe(false);
-    expect(await usedDaysFor(emp.id, start)).toBe(usedBefore + 1); // delta = 3 - 2 = +1
+    expect(await usedDaysFor(emp.id, start)).toBe(usedBefore + 3); // delta = 4 - 1 = +3
 
     const auditRow = await app.prisma.auditLog.findFirst({
       where: { action: "LEAVE_DAYS_ADJUSTED", entityId: created.id },
@@ -774,7 +755,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
         leaveTypeId: vacTypeId,
         startDate: utcMidnight(start),
         endDate: utcMidnight(end),
-        days: 3,
+        days: 5, // stale pre-fix value — disagrees with the by-contract value (3)
         halfDay: false,
         daysProvisional: true,
         status: "APPROVED",
@@ -802,8 +783,8 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
       },
     });
 
-    // Roster ONLY Monday -> roster-exact count = 1 < upper bound 3 for the VACATION request, so
-    // the recompute actually changes something (a no-op would pass trivially either way).
+    // Irrelevant to the by-contract recompute (Issue #417) — included only to prove the
+    // resolver no longer reads the roster.
     await app.prisma.shift.create({
       data: {
         employeeId: emp.id,
@@ -824,7 +805,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     const persistedVacation = await app.prisma.leaveRequest.findUnique({
       where: { id: vacationReq.id },
     });
-    expect(Number(persistedVacation!.days)).toBe(1);
+    expect(Number(persistedVacation!.days)).toBe(3);
 
     const persistedSick = await app.prisma.leaveRequest.findUnique({ where: { id: sickReq.id } });
     expect(Number(persistedSick!.days)).toBe(3); // untouched — SICK is out of scope
@@ -890,7 +871,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
   });
 
   // ── Bulk-route transaction shape (generate-week) ────────────────────────────────────────
-  it("bulk-route shape (POST /shifts/generate-week): planning the roster recomputes an overlapping provisional request from within the SAME transaction as the creates", async () => {
+  it("Issue #417: bulk-route shape (POST /shifts/generate-week) — planning the roster does NOT touch an overlapping, already-approved (never-provisional) request", async () => {
     const monday = GENWEEK_MONDAY;
     const tuesday = addDaysIso(GENWEEK_MONDAY, 1);
     const wednesday = addDaysIso(GENWEEK_MONDAY, 2);
@@ -900,9 +881,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     });
     // Pattern covers ONLY Wednesday (dayOfWeek 2 = We, Phase 43's Mo=0..So=6 convention) —
     // deliberately a day OUTSIDE the Mon-Tue leave fragment below, so generate-week's own
-    // leave-conflict skip never fires, while still giving the WEEK a roster (resolveLeaveDays()
-    // widens its Shift query to the ENCLOSING ISO week, not just [start,end] — that is exactly
-    // what makes a Wednesday shift count for a Mon-Tue fragment).
+    // leave-conflict skip never fires.
     await app.prisma.employeeShiftPattern.create({
       data: {
         employeeId: emp.id,
@@ -913,11 +892,13 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
       },
     });
 
-    const createRes = await postVacation(empToken, monday, tuesday); // count 4 -> upper bound 2
+    const createRes = await postVacation(empToken, monday, tuesday); // contract count 4 -> min(2,4)=2
     const created = JSON.parse(createRes.body);
     expect(Number(created.days)).toBe(2);
     const approveRes = await approve(created.id);
-    expect(JSON.parse(approveRes.body).daysProvisional).toBe(true);
+    expect(JSON.parse(approveRes.body).daysProvisional).toBe(false); // Issue #417
+
+    const auditBefore = await auditCountFor(created.id);
 
     const genRes = await app.inject({
       method: "POST",
@@ -933,34 +914,31 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
       ),
     ).toBe(true);
 
+    // Issue #417: this roster mutation must not move a freshly-approved request's days at all —
+    // the by-contract value is stable from approval onward.
     const persisted = await app.prisma.leaveRequest.findUnique({ where: { id: created.id } });
-    // The week now has a roster, but neither Monday nor Tuesday itself is on it.
-    expect(Number(persisted!.days)).toBe(0);
+    expect(Number(persisted!.days)).toBe(2);
     expect(persisted!.daysProvisional).toBe(false);
+    expect(await auditCountFor(created.id)).toBe(auditBefore);
   });
 
   // ── Delete-route transaction shape ──────────────────────────────────────────────────────
-  it("delete-route shape (DELETE /shifts/:id): removing a shift recomputes an overlapping provisional request", async () => {
+  it("Issue #417: delete-route shape (DELETE /shifts/:id) — removing a shift converges a LEGACY stale-days provisional request to the by-contract value", async () => {
     const monday = DELETE_MONDAY;
     const tuesday = addDaysIso(DELETE_MONDAY, 1);
 
-    // Seed the request directly as an already-settled candidate: APPROVED, daysProvisional
-    // true, days = the D-07 upper bound. Deliberately NOT built via postVacation()+approve()+
-    // postShift() — the FIRST resolver-triggered settlement of a fragment's week flips
-    // daysProvisional to false (D-11: false means "the week now has a roster", a one-way
-    // transition out of this resolver's `daysProvisional: true` candidate gate), so a request
-    // that had already been settled by an earlier HTTP-mediated shift call is no longer a
-    // candidate for a LATER one — that is a real, separately-covered guard (see the
-    // non-provisional case above), not this test's concern. Seeding both rows directly keeps
-    // the request eligible right up to the DELETE call below, isolating THIS route's own
-    // transaction wiring.
+    // Seed the request directly as a LEGACY pre-fix candidate: APPROVED, daysProvisional true,
+    // days deliberately STALE (disagrees with the by-contract value, contract count 4 ->
+    // min(2,4)=2). This isolates the DELETE route's own transaction wiring: the resolver picks
+    // up the row via the daysProvisional: true guard and converges it, regardless of the roster
+    // shifts created below (Issue #417 — the resolver no longer reads them).
     const created = await app.prisma.leaveRequest.create({
       data: {
         employeeId: emp.id,
         leaveTypeId: vacTypeId,
         startDate: utcMidnight(monday),
         endDate: utcMidnight(tuesday),
-        days: 2,
+        days: 5, // stale pre-fix value — disagrees with the by-contract value (2)
         halfDay: false,
         daysProvisional: true,
         status: "APPROVED",
@@ -969,7 +947,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     });
     await app.prisma.leaveEntitlement.updateMany({
       where: { employeeId: emp.id, leaveTypeId: vacTypeId, year: Number(monday.slice(0, 4)) },
-      data: { usedDays: { increment: 2 } },
+      data: { usedDays: { increment: 5 } },
     });
     await app.prisma.shift.create({
       data: {
@@ -999,7 +977,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     expect(delRes.statusCode).toBe(204);
 
     const persisted = await app.prisma.leaveRequest.findUnique({ where: { id: created.id } });
-    expect(Number(persisted!.days)).toBe(1); // only Monday still rostered
+    expect(Number(persisted!.days)).toBe(2); // by-contract value — the roster is irrelevant
     expect(persisted!.daysProvisional).toBe(false);
     expect(await auditCountFor(created.id)).toBe(auditBefore + 1);
   });
