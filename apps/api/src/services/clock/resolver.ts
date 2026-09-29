@@ -8,7 +8,7 @@ import type { ClockEvent, ClockResolution, ClockState } from "./types";
 import { decide } from "./state-machine";
 import { emitClockAudit } from "./audit-actor";
 import { consolidateSameDayEntries, calcBreakMinutesLocal } from "./consolidate";
-import { DOUBLE_TAP_DEBOUNCE_MS } from "./thresholds";
+import { DOUBLE_TAP_DEBOUNCE_MS, CROSS_DAY_OPEN_ENTRY_FALLBACK_HOURS } from "./thresholds";
 import { hasApprovedLeaveOnDate } from "../../contexts/absence"; // Phase 100b Plan 14 (AC-1) — index is the public surface
 import {
   invalidReasonFields,
@@ -70,7 +70,47 @@ export async function resolveClockEvent(
       });
       // MULTI-ENTRY: the clock state is "the open row of the day" — with several entries there can
       // be several open rows, and STOP must know which one it closes.
-      const openEntry = dayEntries.find((e) => e.endTime === null) ?? null;
+      const sameDayOpenEntry = dayEntries.find((e) => e.endTime === null) ?? null;
+
+      // Phase 376 (Issue #376, D-01/D-02): a shift crossing local midnight (23:30 clock-in,
+      // 00:30 clock-out tap) computes `event.date` as the NEW day — the same-day lookup above
+      // finds nothing even though the previous day's entry is still open. Only checked when
+      // today has no open entry; calls the SAME findEntriesOfDay() wrapper a second time (never
+      // a new raw day-predicate query — time-entry-day-lookup-guard.test.ts stays compliant).
+      // MULTI-ENTRY: the cross-day candidate is "the open row of the PREVIOUS day" — with
+      // several entries per day this would need to pick among them the same way sameDayOpenEntry
+      // does today.
+      let crossDayOpenEntry: (typeof dayEntries)[number] | null = null;
+      if (!sameDayOpenEntry) {
+        const previousDate = new Date(event.date);
+        previousDate.setUTCDate(previousDate.getUTCDate() - 1);
+        const previousDayEntries = await findEntriesOfDay(tx, {
+          tenantId: event.tenantId,
+          employeeId: event.employeeId,
+          date: previousDate,
+        });
+        const candidate = previousDayEntries.find((e) => e.endTime === null) ?? null;
+        if (candidate) {
+          // D-02: bound the lookback by elapsed time so an unrelated tap days after a genuinely
+          // forgotten clock-out can never silently close it with a wrong endTime. Reuses the
+          // tenant's own staleness threshold (same field attendance-checker.ts already uses);
+          // `0`/missing config falls back to the fixed 24h cap — never "search back forever".
+          const tenantConfig = await tx.tenantConfig.findUnique({
+            where: { tenantId: event.tenantId },
+          });
+          const boundHours =
+            tenantConfig?.autoDeleteOpenHours || CROSS_DAY_OPEN_ENTRY_FALLBACK_HOURS;
+          const elapsedMs = event.timestamp.getTime() - candidate.startTime.getTime();
+          if (elapsedMs <= boundHours * 3600_000) {
+            crossDayOpenEntry = candidate;
+          }
+        }
+      }
+      // D-03: an in-bound previous-day open row outranks a same-day closed row — at most one
+      // clock session can be genuinely active per employee. D-04: no new ClockState/
+      // ClockDecision variant — the cross-day candidate is folded into the existing OPEN_ENTRY
+      // shape below, so decide() runs unchanged.
+      const openEntry = sameDayOpenEntry ?? crossDayOpenEntry;
 
       // D-01: when no open entry, look for a closed non-deleted same-day entry to potentially reopen.
       // Selected WITHOUT isLocked filter so the REOPEN branch can return explicit MONTH_LOCKED CONFLICT.
