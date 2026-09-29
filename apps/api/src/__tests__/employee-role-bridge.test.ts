@@ -986,14 +986,14 @@ describe("Role bridge: employee form, compat column and fallback materialization
 
         const { accessToken } = await login(target.email);
         const timeEntriesRes = await timeEntriesOf(accessToken, other.employee.id);
-        if (variant === "alone") {
-          expect(timeEntriesRes.statusCode).toBe(403);
-          expect(JSON.parse(timeEntriesRes.body)).toEqual({ error: "Forbidden" });
-        } else {
-          expect(timeEntriesRes.statusCode).toBe(200);
-          const entries = JSON.parse(timeEntriesRes.body) as { employeeId: string }[];
-          expect(entries.every((entry) => entry.employeeId !== other.employee.id)).toBe(true);
-        }
+        // "alone": HR grants no time-entry:read reach at all -> P-02's null-reach 403 (Phase
+        // 76b, #76), unaffected by Issue #368.
+        // "with Mitarbeiter": HR still grants no time-entry:read reach, but the Mitarbeiter
+        // (EMPLOYEE) assignment adds time-entry:read:EIGENE — an EIGENE-only reach querying a
+        // FOREIGN employeeId used to silently substitute the caller's own id and answer 200 with
+        // (empty) own data; fixed (Issue #368, Befund 4) to 403, matching the "alone" case.
+        expect(timeEntriesRes.statusCode).toBe(403);
+        expect(JSON.parse(timeEntriesRes.body)).toEqual({ error: "Forbidden" });
       },
     );
 

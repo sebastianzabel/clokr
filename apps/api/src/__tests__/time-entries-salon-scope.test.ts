@@ -470,5 +470,35 @@ describe("Issue #91 (Phase 91b Plan 03) — TimeEntry salon/person scope", () =>
       });
       expect(res.statusCode).toBe(200);
     });
+
+    // Issue #368 (orchestrator decision, web-contract guard, dated after the initial fix
+    // attempt): apps/web's personal Zeiterfassung and dashboard clock-status widgets call
+    // GET /time-entries WITHOUT ?employeeId and expect ONLY the logged-in caller's own entries —
+    // even for a wholeTenant (ADMIN/MANAGER-shaped) caller, whose `scopedIds` resolves to "all"
+    // (no `id` restriction at all). Widening the unfiltered list to the whole tenant would leak
+    // every employee's entries into that caller's own personal calendar. Proven here with the
+    // tenant admin, who already has entries of their own from `seedTestData` plus a fresh one, and
+    // a second employee's entry that must NOT leak in.
+    it("a wholeTenant (ADMIN) caller's unfiltered list returns ONLY their own entries, never another employee's (web-contract guard)", async () => {
+      const other = await createEmployee("wholetenant-none-other");
+      await createHome(other.employee.id, salonA.id);
+      const otherEntry = await createEntry(other.employee.id, salonA.id, "2026-05-20");
+
+      const ownEntry = await createEntry(data.adminEmployee.id, salonA.id, "2026-05-21");
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/time-entries?from=2026-05-20&to=2026-05-21",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const rows = JSON.parse(res.body) as Array<{ id: string; employeeId: string }>;
+      const ids = rows.map((r) => r.id);
+      expect(ids).toContain(ownEntry.id);
+      expect(ids).not.toContain(otherEntry.id);
+      for (const row of rows) {
+        expect(row.employeeId).toBe(data.adminEmployee.id);
+      }
+    });
   });
 });
