@@ -195,4 +195,45 @@ describe("POST /:id/clock-out — Phase 76.2 resolver migration", () => {
     const body = JSON.parse(res.body) as { error: string };
     expect(body.error).toBe("Bereits ausgestempelt");
   });
+
+  // ── Phase 376 (Issue #376, D-00c) — pinning test: this route is unaffected by the resolver's
+  // cross-day lookback fix (376-01) because it builds `event.date: entry.date` — the entry's OWN
+  // known date — never `todayInTz()`. It needs no cross-day lookback and must keep closing a
+  // previous-day open entry correctly regardless of what "now" is when the request lands.
+  it("Issue #376/D-00c: closes a previous-day open entry correctly regardless of current wall-clock time", async () => {
+    const yesterday = new Date();
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    yesterday.setUTCHours(23, 30, 0, 0);
+    const dateStr = yesterday.toISOString().slice(0, 10);
+    const date = new Date(`${dateStr}T00:00:00.000Z`);
+
+    const entry = await app.prisma.timeEntry.create({
+      data: {
+        employeeId: data.employee.id,
+        date,
+        startTime: yesterday,
+        source: "MOBILE",
+        salonId: data.salonId,
+      },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/time-entries/${entry.id}/clock-out`,
+      headers: { authorization: `Bearer ${jwt}` },
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      resolution: { kind: string; entry: { id: string; endTime: string | null } };
+    };
+    expect(["CLOCKED_OUT", "CONSOLIDATED"]).toContain(body.resolution.kind);
+    expect(body.resolution.entry.id).toBe(entry.id);
+    expect(body.resolution.entry.endTime).not.toBeNull();
+
+    // D-00d/AC5: date stays unchanged — never shifted to "today"
+    const refetched = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+    expect(refetched?.date.toISOString().slice(0, 10)).toBe(dateStr);
+  });
 });
