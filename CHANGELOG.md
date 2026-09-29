@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.13.0](https://github.com/sebastianzabel/clokr/compare/v1.12.1...v1.13.0) (2026-09-29)
+
+
+### Features
+
+* **415-01:** unify employee/manager Abwesenheitsdialog into one shared component ([#418](https://github.com/sebastianzabel/clokr/issues/418)) ([e056276](https://github.com/sebastianzabel/clokr/commit/e056276ba251abb3e43136f57ca7062886cdc7c6)), closes [#415](https://github.com/sebastianzabel/clokr/issues/415)
+
+
+### Bug Fixes
+
+* **416:** Neue Mitarbeitende bekommen automatisch einen Urlaubsanspruch ([#420](https://github.com/sebastianzabel/clokr/issues/420)) ([2f49e6d](https://github.com/sebastianzabel/clokr/commit/2f49e6d9a00596f3a2a0f4a779af1be9fca8b481))
+* **417:** SHIFT_BASED-Urlaubstage nach Vertrag statt Schichtplan zählen ([#422](https://github.com/sebastianzabel/clokr/issues/422)) ([8ed4d13](https://github.com/sebastianzabel/clokr/commit/8ed4d137fd4449e598f61c4b9793df026ded9e4a))
+* **421:** Urlaubs-Rundung bei Austritt folgt § 5 Abs. 2 BUrlG (nicht mehr halbe Tage) ([#423](https://github.com/sebastianzabel/clokr/issues/423)) ([670c024](https://github.com/sebastianzabel/clokr/commit/670c0245fcb2ecb74a8606aa0b50e8493679c34e)), closes [#421](https://github.com/sebastianzabel/clokr/issues/421)
+
 ## [1.12.1](https://github.com/sebastianzabel/clokr/compare/v1.12.0...v1.12.1) (2026-09-29)
 
 
