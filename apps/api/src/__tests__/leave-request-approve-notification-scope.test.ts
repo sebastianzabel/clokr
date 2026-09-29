@@ -1,32 +1,21 @@
 /**
- * Phase 91b Plan 09 (Issue #91), D-17 — the tracer end-to-end proof for `resolveScopedHolderIds`
- * applied to `leave.ts`'s `leaveRequestApproveHolderIds` site.
+ * Phase 91b Plan 09 (Issue #91), D-17, revised by Issue #367 — the tracer end-to-end proof for
+ * `resolveScopedHolderIds` applied to `leave.ts`'s `leaveRequestApproveHolderIds` site.
  *
- * IMPORTANT, empirically confirmed finding (documented in 91b-09-SUMMARY.md, all narrowing sites
- * this plan touches): `userIdsHoldingPermission` (Phase 75b, D-16, explicitly UNCHANGED by this
- * plan) only ever returns holders via (a) a well-formed TENANT-scope RoleAssignment whose role
- * grants the permission, or (b) the legacy no-stored-assignment fallback — D-09's OWN comment
- * states this in the source: "a SALONS or PERSONS assignment never grants a ZUGEWIESEN permission
- * here ... that boundary is #91's, not this facade's." A SALONS/PERSONS-only holder is therefore
- * NEVER a member of `userIdsHoldingPermission`'s output, in EITHER direction — resolveScopedHolderIds
- * narrows that SAME list, so at every site built this way (all 17 in this plan) every surviving
- * candidate ALWAYS resolves `wholeTenant` for the very permission being asked about (the two
- * functions apply structurally identical TENANT/fallback criteria to the same RoleAssignment rows)
- * and is therefore ALWAYS kept. This makes resolveScopedHolderIds's narrowing a structural no-op
- * for TODAY's real-world notification traffic at every one of these sites — it does not (and,
- * built this way, cannot) close the actual gap CONTEXT.md's D-17 describes (a SALONS/PERSONS
- * manager who CAN now approve a request per Plan 91b-01's access-gate widening still never being
- * NOTIFIED about it, since notification-recipient enumeration is a completely separate candidate
- * source from the access decision). Closing that gap would require widening the CANDIDATE set
- * itself (not just narrowing it), which is a semantic change to a Phase 75b facade this plan's own
- * context explicitly keeps unchanged — reported as a finding, not fixed here (see the phase's final
- * decision-log comment on Issue #91).
+ * Phase 91b's own conclusion (91b-09-SUMMARY.md, quoted in the pre-#367 version of this file):
+ * `userIdsHoldingPermission` (Phase 75b, D-16) only ever returned holders via (a) a well-formed
+ * TENANT-scope RoleAssignment, or (b) the legacy no-stored-assignment fallback — a SALONS/PERSONS
+ * assignment was NEVER a candidate (D-09), so `resolveScopedHolderIds`'s narrowing was a
+ * structural no-op: a SALONS/PERSONS manager who CAN approve a request (Plan 91b-01's access-gate
+ * widening) was still never NOTIFIED about it. That gap is Issue #367.
  *
- * This test therefore proves what the wiring actually does today: a TENANT-scope holder is still
- * notified (no regression from adding the narrowing step), the route does not crash, and — as
- * direct evidence of the finding above — a SALONS-scope holder (in or out of the affected
- * employee's Stammsalon) is NOT notified, for the PRE-EXISTING `userIdsHoldingPermission` reason,
- * not because `resolveScopedHolderIds` excluded them.
+ * Issue #367 (owner decision 2026-09-29, revises D-09): `userIdsHoldingPermission()` now includes
+ * a well-formed SALONS/PERSONS assignment as a candidate too; `resolveScopedHolderIds()` (D-17,
+ * unchanged) narrows to the holder's actual scope exactly as it always did for a TENANT holder.
+ * This file's two AC tests below (mirroring the issue's Akzeptanzkriterien) replace the old
+ * "documented finding" test that proved the gap: a SALONS-scope holder covering the requester's
+ * own Stammsalon IS now notified; one covering a different salon is NOT. A third test covers the
+ * issue's PERSONS-scope AC directly against `leave.ts` too.
  *
  * No person names in fixtures (CLAUDE.md PII rule).
  */
@@ -44,7 +33,7 @@ import {
 
 const PASSWORD = "test1234";
 
-describe("Issue #91 (Phase 91b Plan 09) — leave-request:approve notification scope", () => {
+describe("Issue #91 (Phase 91b Plan 09) / Issue #367 — leave-request:approve notification scope", () => {
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
   let salonA: { id: string };
@@ -191,7 +180,7 @@ describe("Issue #91 (Phase 91b Plan 09) — leave-request:approve notification s
     expect(notifiedUserIds).toContain(tenantHolder.user.id);
   });
 
-  it("evidence for the documented finding: a SALONS-scope holder is never a userIdsHoldingPermission candidate, so is never notified here, regardless of matching the affected employee's own Stammsalon", async () => {
+  it("Issue #367 AK-1: a SALONS-scope holder covering the requester's own Stammsalon IS notified; one covering a different salon is NOT", async () => {
     const requester = await createEmployee("requester-notif-2");
     await createHome(requester.employee.id, salonA.id, "2020-01-01");
 
@@ -200,16 +189,22 @@ describe("Issue #91 (Phase 91b Plan 09) — leave-request:approve notification s
       ["leave-request:approve:ZUGEWIESEN"],
       { scopeType: "SALONS", salonIds: [salonA.id] },
     );
+    const outOfScopeSalonHolder = await createScopedManager(
+      "outscope-holder",
+      ["leave-request:approve:ZUGEWIESEN"],
+      { scopeType: "SALONS", salonIds: [salonB.id] },
+    );
 
-    // Sanity check backing the finding: this user genuinely holds the permission at their own
-    // (SALONS) scope — `resolveAccessReach` for THIS user would resolve `scoped` covering salonA —
-    // yet userIdsHoldingPermission (the notification-candidate source) never lists them.
+    // Sanity check for the fix itself: both SALONS-scope users are now genuine candidates of
+    // userIdsHoldingPermission (Issue #367 widened the candidate set) — the salon-A/salon-B split
+    // below is entirely resolveScopedHolderIds's narrowing, not a candidate-set difference.
     const holderIds = await userIdsHoldingPermission(
       app.prisma,
       data.tenant.id,
       "leave-request:approve:ZUGEWIESEN",
     );
-    expect(holderIds).not.toContain(inScopeSalonHolder.user.id);
+    expect(holderIds).toContain(inScopeSalonHolder.user.id);
+    expect(holderIds).toContain(outOfScopeSalonHolder.user.id);
 
     const requesterToken = await login(requester.user.email);
     const res = await app.inject({
@@ -228,6 +223,59 @@ describe("Issue #91 (Phase 91b Plan 09) — leave-request:approve notification s
       })
     ).map((n) => n.userId);
 
-    expect(notifiedUserIds).not.toContain(inScopeSalonHolder.user.id);
+    expect(notifiedUserIds).toContain(inScopeSalonHolder.user.id);
+    expect(notifiedUserIds).not.toContain(outOfScopeSalonHolder.user.id);
+  });
+
+  it("Issue #367 AK-2: a PERSONS-scope holder is notified only about the listed employee(s)", async () => {
+    // Short, mutually distinct-at-20-chars labels: createEmployee's employeeNumber truncates the
+    // unique suffix to 20 chars total, so two long, near-identical labels in the same test can
+    // collide on Employee_tenantId_employeeNumber_key — keep these two short and different early.
+    const listedRequester = await createEmployee("pers-listed");
+    await createHome(listedRequester.employee.id, salonA.id, "2020-01-01");
+    const unlistedRequester = await createEmployee("pers-unlisted");
+    await createHome(unlistedRequester.employee.id, salonA.id, "2020-01-01");
+
+    const personsHolder = await createScopedManager(
+      "persons-holder",
+      ["leave-request:approve:ZUGEWIESEN"],
+      { scopeType: "PERSONS", employeeIds: [listedRequester.employee.id] },
+    );
+
+    const listedToken = await login(listedRequester.user.email);
+    const listedRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${listedToken}` },
+      payload: { type: "VACATION", startDate: "2026-07-05", endDate: "2026-07-06" },
+    });
+    expect(listedRes.statusCode).toBe(201);
+    const listedRequestId = JSON.parse(listedRes.body).id as string;
+
+    const unlistedToken = await login(unlistedRequester.user.email);
+    const unlistedRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${unlistedToken}` },
+      payload: { type: "VACATION", startDate: "2026-07-07", endDate: "2026-07-08" },
+    });
+    expect(unlistedRes.statusCode).toBe(201);
+    const unlistedRequestId = JSON.parse(unlistedRes.body).id as string;
+
+    const notifiedForListed = (
+      await app.prisma.notification.findMany({
+        where: { type: "LEAVE_REQUEST", relatedId: listedRequestId },
+        select: { userId: true },
+      })
+    ).map((n) => n.userId);
+    const notifiedForUnlisted = (
+      await app.prisma.notification.findMany({
+        where: { type: "LEAVE_REQUEST", relatedId: unlistedRequestId },
+        select: { userId: true },
+      })
+    ).map((n) => n.userId);
+
+    expect(notifiedForListed).toContain(personsHolder.user.id);
+    expect(notifiedForUnlisted).not.toContain(personsHolder.user.id);
   });
 });

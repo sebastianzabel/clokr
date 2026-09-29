@@ -28,10 +28,20 @@
  * Tenant S holds an active ADMIN and MANAGER and nothing that could trigger a notification of its
  * own, so any row S receives is a cross-tenant leak.
  *
- * Never a recipient, before or after the switch: the inactive users, the exited EMPLOYEE, the
- * SALONS-scope user (a SALONS assignment grants nothing at the API in 75b, D-09) and tenant S.
- * No TENANT customer-role holder is in the fixture: that such a holder is notified after the
- * switch is the intended new behaviour (D-16), not a neutrality question.
+ * Never a recipient, before or after the switch: the inactive users, the exited EMPLOYEE, and
+ * tenant S. No TENANT customer-role holder is in the fixture: that such a holder is notified after
+ * the switch is the intended new behaviour (D-16), not a neutrality question.
+ *
+ * Issue #367 (2026-09-29): the SALONS-scope user is NO LONGER a blanket NEVER_RECIPIENTS member —
+ * before #367 a SALONS assignment granted nothing at the API (75b, D-09), but #367 widened
+ * `userIdsHoldingPermission` to include a well-formed SALONS/PERSONS candidate for any PERSON-
+ * relation permission (narrowed to the holder's actual scope by `resolveScopedHolderIds`, D-17, as
+ * always). This fixture's SALONS-scope user holds `leave-config:manage:ZUGEWIESEN` too (MANDANT
+ * relation, unaffected by #367 — see the facade's own docblock), so site #6 stays untouched; the
+ * four PERSON-relation sites whose affected resource resolves into this user's own salon (#3, #5,
+ * #10, #15) now legitimately notify them — amended below via `recipients-amendments.json`, the
+ * same mechanism #355 established. The other 13 sites are unaffected, proven by the unamended
+ * `toEqual` comparison against the byte-identical recording.
  *
  * Phase 355 (Issue #355): the exited ADMIN/MANAGER used to be deliberately part of the recording
  * (most sites did not filter on `exitDate`, only the missing-entries scan did). #355 made
@@ -136,6 +146,12 @@ function at(iso: string, time: string): Date {
  * leak the issue reports); `userIdsHoldingPermission` (`contexts/platform/facade/role-assignments.ts`)
  * now excludes a departed (`exitDate` in the past) holder centrally, so every site is affected the
  * same way #9's missing-entries scan already was.
+ *
+ * Issue #367 (2026-09-29): `R.salonsScope` removed from this list — it is no longer NEVER a
+ * recipient of every site, only of the 13 unaffected ones (see the fixture docblock above). A
+ * site-specific leak is still caught: the `toEqual` comparison against the recording (amended for
+ * the four affected sites, byte-identical for the rest) fails if `R.salonsScope` appears anywhere
+ * this file does not expect it.
  */
 const NEVER_RECIPIENTS: readonly string[] = [
   "R.admin.inactive",
@@ -143,7 +159,6 @@ const NEVER_RECIPIENTS: readonly string[] = [
   "R.admin.exited",
   "R.manager.exited",
   "R.employee.exited",
-  "R.salonsScope",
 ];
 
 interface SiteRecord {

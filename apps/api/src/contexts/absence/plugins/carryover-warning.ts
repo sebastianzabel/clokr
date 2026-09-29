@@ -121,6 +121,14 @@ export async function runCarryoverWarningOnce(
       // holders of leave-config:manage replace the legacy Admin-only role predicate — the only
       // Admin-only permission of the absence context (report:notify is A,M and would widen the
       // set) — the recorded recipient set is unchanged.
+      //
+      // Issue #367 / ADR 0001-abweichungen Eintrag P: `userIdsHoldingPermission()` widened its
+      // candidate set to include SALONS/PERSONS-scope holders for a PERSON-relation permission,
+      // but `leave-config` has relation MANDANT (`permission-catalog.ts`) — the facade itself
+      // keeps a MANDANT-relation permission's candidate set restricted to TENANT-scope rows only
+      // (mirroring D-05's `zugewiesen`/`zugewiesenAnyScope` split in `request-permissions.ts`), so
+      // this call site's result is BYTE-IDENTICAL to before Issue #367 and does NOT need to narrow
+      // via `resolveScopedHolderIds()`.
       const leaveConfigManageHolderIds = await userIdsHoldingPermission(
         app.prisma,
         tenant.id,
