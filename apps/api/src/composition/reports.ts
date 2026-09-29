@@ -1114,7 +1114,7 @@ export async function reportRoutes(app: FastifyInstance) {
         pendingMap.set(key, (pendingMap.get(key) ?? 0) + Number(row.days));
       }
 
-      return entitlements.map((e) => ({
+      const realRows = entitlements.map((e) => ({
         employee: e.employee,
         leaveType: e.leaveType,
         year: e.year,
@@ -1123,7 +1123,44 @@ export async function reportRoutes(app: FastifyInstance) {
         usedDays: Number(e.usedDays),
         remainingDays: Number(e.totalDays) + Number(e.carriedOverDays) - Number(e.usedDays),
         pendingDays: pendingMap.get(`${e.employeeId}:${e.leaveTypeId}`) ?? 0,
+        missingEntitlement: false as const,
       }));
+
+      // Issue #416 (AC-3/AC-4): active tenant employees (same Stammsalon scope as the
+      // entitlements query above) with NO VACATION-coded entitlement row for `y` are surfaced as
+      // placeholder rows — this is the Urlaubsbericht's own contribution to visibility, it must
+      // NOT call ensureVacationEntitlementForYear here (display only, never create — otherwise
+      // the gap this AC requires visible would already be gone by the time it's rendered).
+      // GET /vacation/pdf and /leave-overview/pdf (below, ~2080/~2215) build their OWN
+      // listEntitlementsForYear query independently rather than sharing this handler's — they do
+      // NOT inherit this fix and are deliberately out of scope for this phase (issue #416's AC
+      // names the JSON leave-overview endpoint only).
+      const vacationEmployeeIds = new Set(
+        entitlements.filter((e) => e.leaveType.code === "VACATION").map((e) => e.employeeId),
+      );
+      const activeEmployees = await app.prisma.employee.findMany({
+        where: {
+          tenantId: req.user.tenantId,
+          exitDate: null,
+          ...(leaveOverviewScopedIds !== "all" ? { id: { in: leaveOverviewScopedIds } } : {}),
+        },
+        select: { id: true, firstName: true, lastName: true, employeeNumber: true },
+      });
+      const missingEntitlementRows = activeEmployees
+        .filter((emp) => !vacationEmployeeIds.has(emp.id))
+        .map((emp) => ({
+          employee: emp,
+          leaveType: null,
+          year: y,
+          totalDays: null,
+          carriedOverDays: null,
+          usedDays: null,
+          remainingDays: null,
+          pendingDays: null,
+          missingEntitlement: true as const,
+        }));
+
+      return [...realRows, ...missingEntitlementRows];
     },
   });
 

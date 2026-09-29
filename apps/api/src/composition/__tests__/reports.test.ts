@@ -2396,6 +2396,126 @@ describe("Reports API", () => {
     });
   });
 
+  // ── GET /api/v1/reports/leave-overview — missing-entitlement placeholder rows (Issue #416) ──
+  describe("GET /api/v1/reports/leave-overview — missing-entitlement placeholder rows (Issue #416)", () => {
+    let meData: Awaited<ReturnType<typeof seedTestData>>;
+    const currentYear = new Date().getFullYear();
+    let noEntitlementEmployeeId: string;
+    let inactiveEmployeeId: string;
+
+    beforeAll(async () => {
+      meData = await seedTestData(app, "me416");
+
+      // Bypass POST /employees (which, as of this same phase's Task 3, auto-seeds an
+      // entitlement) — insert directly via Prisma, mirroring exactly the legacy-employee shape
+      // this phase's repair script exists for: an active employee with NO LeaveEntitlement row
+      // at all.
+      const activeUser = await app.prisma.user.create({
+        data: {
+          email: `me416-active-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@test.de`,
+          passwordHash: "x",
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const activeEmployee = await app.prisma.employee.create({
+        data: {
+          tenantId: meData.tenant.id,
+          userId: activeUser.id,
+          employeeNumber: `ME416-A-${Date.now()}`,
+          firstName: "NoEnt",
+          lastName: "Itlement",
+          hireDate: new Date(Date.UTC(currentYear - 1, 0, 1)),
+        },
+      });
+      noEntitlementEmployeeId = activeEmployee.id;
+
+      const inactiveUser = await app.prisma.user.create({
+        data: {
+          email: `me416-inactive-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@test.de`,
+          passwordHash: "x",
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const inactiveEmployee = await app.prisma.employee.create({
+        data: {
+          tenantId: meData.tenant.id,
+          userId: inactiveUser.id,
+          employeeNumber: `ME416-I-${Date.now()}`,
+          firstName: "Exited",
+          lastName: "Employee",
+          hireDate: new Date(Date.UTC(currentYear - 2, 0, 1)),
+          exitDate: new Date(Date.UTC(currentYear - 1, 5, 30)),
+        },
+      });
+      inactiveEmployeeId = inactiveEmployee.id;
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, meData.tenant.id);
+    });
+
+    it("lists an active employee with no VACATION entitlement row as a missingEntitlement placeholder", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview?year=${currentYear}`,
+        headers: { authorization: `Bearer ${meData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const row = body.find(
+        (r: { employee: { id: string } }) => r.employee.id === noEntitlementEmployeeId,
+      );
+      expect(row).toBeDefined();
+      expect(row.missingEntitlement).toBe(true);
+      expect(row.leaveType).toBeNull();
+      expect(row.totalDays).toBeNull();
+    });
+
+    it("does NOT list an inactive (exited) employee, even with no entitlement row", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview?year=${currentYear}`,
+        headers: { authorization: `Bearer ${meData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const row = body.find(
+        (r: { employee: { id: string } }) => r.employee.id === inactiveEmployeeId,
+      );
+      expect(row).toBeUndefined();
+    });
+
+    it("is display-only — never creates the entitlement row as a side effect of being viewed", async () => {
+      await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview?year=${currentYear}`,
+        headers: { authorization: `Bearer ${meData.adminToken}` },
+      });
+      const rows = await app.prisma.leaveEntitlement.findMany({
+        where: { employeeId: noEntitlementEmployeeId },
+      });
+      expect(rows).toHaveLength(0);
+    });
+
+    it("a real entitlement row still renders normally (missingEntitlement: false, no regression)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview?year=${currentYear}`,
+        headers: { authorization: `Bearer ${meData.adminToken}` },
+      });
+      const body = JSON.parse(res.body);
+      const row = body.find(
+        (r: { employee: { id: string } }) => r.employee.id === meData.employee.id,
+      );
+      expect(row).toBeDefined();
+      expect(row.missingEntitlement).toBe(false);
+      expect(row.leaveType).not.toBeNull();
+      expect(typeof row.totalDays).toBe("number");
+    });
+  });
+
   // ── GET /api/v1/dashboard/overtime-overview (RPT-01 + SALDO-03) ──────────
   describe("GET /api/v1/dashboard/overtime-overview (RPT-01 + SALDO-03)", () => {
     let otData: Awaited<ReturnType<typeof seedTestData>>;
