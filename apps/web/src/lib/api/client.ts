@@ -142,6 +142,25 @@ async function doRefresh(): Promise<boolean> {
   }
 }
 
+/**
+ * Phase 408 (#408): for a session cached before #378 shipped (a stored `user` whose `permissions`
+ * is `undefined`, never merged in by any login/refresh since). Forces exactly ONE token refresh
+ * through the existing dedup (`tryRefresh()`/`refreshPromise`, the same machinery a 401 already
+ * uses) — no new route, no request of its own. Never rejects: on any failure it leaves the store
+ * untouched, so `hasPermission()` (`$lib/permissions.ts`) stays fail-closed until a later refresh
+ * succeeds. The re-check at call time also makes this idempotent when a 401-driven refresh has
+ * already filled the list in the meantime.
+ */
+export async function loadPermissionsIfMissing(): Promise<boolean> {
+  const auth = get(authStore);
+  if (!auth.user || auth.user.permissions !== undefined) return false;
+  try {
+    return await tryRefresh();
+  } catch {
+    return false;
+  }
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
   /** Multipart POST (file upload) with the same 401-refresh-and-retry as every other verb. */

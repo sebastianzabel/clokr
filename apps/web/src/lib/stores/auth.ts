@@ -6,6 +6,7 @@ import { density } from "$stores/density";
 import { skin } from "$stores/skin";
 import { prefsHydrated } from "$stores/prefs-state";
 import { fetchPreferences } from "$api/preferences";
+import { loadPermissionsIfMissing } from "$api/client";
 
 export interface AuthUser {
   id: string;
@@ -88,6 +89,20 @@ function createAuthStore() {
   // On boot: if we already have an access token (returning visit), hydrate prefs.
   if (browser && initial.accessToken) {
     void hydratePreferencesFromServer();
+
+    // Phase 408 (#408): stores/auth.ts and api/client.ts import each other (directly here, and
+    // via $api/preferences). A synchronous call into client.ts at this point would run while
+    // `authStore` — or, in the other module-evaluation order, client.ts's own module state — is
+    // still uninitialized, and the call would reject before ever sending anything. queueMicrotask
+    // defers it until the module graph has finished evaluating. A cached `user` whose
+    // `permissions` is `undefined` (a session from before #378 shipped) forces exactly one
+    // refresh through the existing dedup; a user that already has a list (even an empty one)
+    // never re-triggers this.
+    if (initial.user && initial.user.permissions === undefined) {
+      queueMicrotask(() => {
+        void loadPermissionsIfMissing();
+      });
+    }
   }
 
   return {
