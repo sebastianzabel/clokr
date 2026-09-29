@@ -26,3 +26,17 @@
 // about ONE of the two concepts above — it must never silently change the other.
 export const DOUBLE_TAP_DEBOUNCE_MS = 60_000;
 export const MIN_MERGE_PREDECESSOR_DURATION_MS = 60_000;
+
+// Phase 376 (Issue #376, D-02) — the fallback bound for the resolver's cross-day open-entry
+// lookback (a shift crossing local midnight, e.g. 23:30 clock-in / 00:30 clock-out tap).
+//
+// The lookback's PRIMARY bound is the tenant's own `TenantConfig.autoDeleteOpenHours` — the same
+// field `attendance-checker.ts`'s `autoInvalidateOpenEntries()` already uses to decide "this open
+// entry is presumptively stale" (reusing it rather than inventing a second, competing notion of
+// staleness). This constant is ONLY consulted when that field cannot serve as the bound — it is
+// `0` (the tenant explicitly disabled stale-open-entry auto-invalidation) or the tenant's
+// TenantConfig row is missing entirely. In BOTH cases `0`/missing must read as "use this fixed
+// 24h cap", never as "search back forever": an unrelated clock event days after a genuinely
+// forgotten clock-out must never silently close it with a fabricated, wrong `endTime` — exactly
+// what issue #376's "Vorgehen" section warns against.
+export const CROSS_DAY_OPEN_ENTRY_FALLBACK_HOURS = 24;

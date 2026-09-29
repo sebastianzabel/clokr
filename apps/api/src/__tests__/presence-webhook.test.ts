@@ -533,4 +533,139 @@ describe("POST /api/v1/presence/events", () => {
       where: { tenantId: data.tenant.id, mac: TEST_MAC_NORMALIZED },
     });
   });
+
+  // ── REQ-12 (Issue #376): WIFI disconnect after local midnight closes the previous-day entry ──
+  // Root cause (D-00b): the disconnect event's `today` is computed from its OWN local calendar
+  // day (dateStrInTz), which lands on D+1 for a 00:30-local disconnect after a 23:30-local
+  // connect. Pre-fix, the resolver's day lookup for D+1 finds nothing, `decide()` returns
+  // CONFLICT NOT_CLOCKED_IN, and the adapter writes a purgeable WIFI_NO_OPEN_ENTRY audit row
+  // instead of closing the D entry — which then stays open forever.
+  it("REQ-12 (#376): disconnect shortly after local midnight closes the entry opened before midnight", async () => {
+    await setupEmployee({ wifiMacs: [TEST_MAC_NORMALIZED], wifiPresenceEnabled: true });
+
+    const OVERNIGHT_DAY_D = new Date("2026-01-25T00:00:00Z");
+    const OVERNIGHT_DAY_D_PLUS_1 = new Date("2026-01-26T00:00:00Z");
+    // 23:30 Berlin (winter, UTC+1) on 2026-01-25
+    const CONNECT_TIMESTAMP = "2026-01-25T22:30:00.000Z";
+    // 00:30 Berlin on 2026-01-26 — same UTC calendar date as the connect timestamp, on purpose:
+    // this proves the fix uses dateStrInTz-derived LOCAL calendar days, not UTC ones.
+    const DISCONNECT_TIMESTAMP = "2026-01-25T23:30:00.000Z";
+
+    await app.prisma.timeEntry.deleteMany({
+      where: {
+        employeeId: data.employee.id,
+        date: { in: [OVERNIGHT_DAY_D, OVERNIGHT_DAY_D_PLUS_1] },
+      },
+    });
+
+    // The presence route's shift-window gate is unrelated to this bug but must stay passing for
+    // the events to even reach the resolver — the shift is looked up by the EVENT's OWN local
+    // calendar date, so an overnight shift dated D alone would not be found for the D+1 disconnect.
+    const shiftD = await app.prisma.shift.create({
+      data: {
+        employeeId: data.employee.id,
+        salonId: data.salonId,
+        date: OVERNIGHT_DAY_D,
+        startTime: "23:30",
+        endTime: "23:59",
+        label: "Nachtschicht D",
+      },
+    });
+    const shiftDPlus1 = await app.prisma.shift.create({
+      data: {
+        employeeId: data.employee.id,
+        salonId: data.salonId,
+        date: OVERNIGHT_DAY_D_PLUS_1,
+        startTime: "00:30",
+        endTime: "08:30",
+        label: "Nachtschicht D+1",
+      },
+    });
+
+    try {
+      const beforeConnect = new Date();
+      const connectRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/presence/events",
+        headers: { authorization: `Bearer ${RAW_KEY}` },
+        payload: {
+          mac: TEST_MAC_RAW,
+          eventType: "connected",
+          timestamp: CONNECT_TIMESTAMP,
+          adapter: "fritzbox",
+        },
+      });
+      expect(connectRes.statusCode).toBe(200);
+
+      const openEntry = await app.prisma.timeEntry.findFirst({
+        where: {
+          employeeId: data.employee.id,
+          date: OVERNIGHT_DAY_D,
+          deletedAt: null,
+          source: "WIFI",
+        },
+      });
+      expect(openEntry).not.toBeNull();
+      expect(openEntry!.endTime).toBeNull();
+
+      const beforeDisconnect = new Date();
+      const disconnectRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/presence/events",
+        headers: { authorization: `Bearer ${RAW_KEY}` },
+        payload: {
+          mac: TEST_MAC_RAW,
+          eventType: "disconnected",
+          timestamp: DISCONNECT_TIMESTAMP,
+          adapter: "fritzbox",
+        },
+      });
+      expect(disconnectRes.statusCode).toBe(200);
+
+      const closedEntry = await app.prisma.timeEntry.findUnique({ where: { id: openEntry!.id } });
+      expect(closedEntry!.endTime).not.toBeNull();
+      expect(closedEntry!.endTime!.toISOString()).toBe(
+        new Date(DISCONNECT_TIMESTAMP).toISOString(),
+      );
+      // D-00d/AC5: date stays the shift's start day
+      expect(closedEntry!.date.toISOString()).toBe(OVERNIGHT_DAY_D.toISOString());
+
+      const closeAudit = await app.prisma.auditLog.findFirst({
+        where: {
+          action: "CLOCK_OUT",
+          entityId: openEntry!.id,
+          createdAt: { gte: beforeDisconnect },
+        },
+      });
+      expect(closeAudit).not.toBeNull();
+
+      const noOpenEntryAudit = await app.prisma.auditLog.findFirst({
+        where: {
+          action: "WIFI_NO_OPEN_ENTRY",
+          entityId: data.employee.id,
+          createdAt: { gte: beforeConnect },
+        },
+      });
+      expect(noOpenEntryAudit).toBeNull();
+
+      const entries = await app.prisma.timeEntry.findMany({
+        where: {
+          employeeId: data.employee.id,
+          date: { in: [OVERNIGHT_DAY_D, OVERNIGHT_DAY_D_PLUS_1] },
+          deletedAt: null,
+        },
+      });
+      expect(entries).toHaveLength(1);
+    } finally {
+      await app.prisma.shift.deleteMany({
+        where: { id: { in: [shiftD.id, shiftDPlus1.id] } },
+      });
+      await app.prisma.timeEntry.deleteMany({
+        where: {
+          employeeId: data.employee.id,
+          date: { in: [OVERNIGHT_DAY_D, OVERNIGHT_DAY_D_PLUS_1] },
+        },
+      });
+    }
+  });
 });
