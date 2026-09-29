@@ -82,6 +82,9 @@ export default defineConfig({
       $stores: path.resolve(__dirname, "./src/lib/stores"),
       $api: path.resolve(__dirname, "./src/lib/api"),
       $tests: path.resolve(__dirname, "./src/__tests__"),
+      // Phase 412 (#412): narrow single-specifier shim — see the stub file's own doc
+      // comment (src/__tests__/stubs/app-environment.ts) for the full rationale.
+      "$app/environment": path.resolve(__dirname, "./src/__tests__/stubs/app-environment.ts"),
     },
   },
 });
