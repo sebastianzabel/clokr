@@ -674,6 +674,25 @@ describe("Leave correction — reverse-OLD/apply-NEW saldo (94-02)", () => {
     expect(openAfter?.invalidReason).toBeNull();
     expect(lockedAfter?.isInvalid).toBe(true); // locked month never mutated
     expect(deletedAfter?.isInvalid).toBe(true); // soft-deleted never touched
+
+    // Issue #370: the correction must audit the revalidated removed-day TimeEntry row.
+    const timeEntryAudits = await app.prisma.auditLog.findMany({
+      where: { entity: "TimeEntry", entityId: eOpen.id },
+    });
+    expect(timeEntryAudits.length).toBe(1);
+    expect(timeEntryAudits[0].action).toBe("UPDATE");
+    expect(timeEntryAudits[0].userId).toBe(data.adminUser.id);
+    expect(timeEntryAudits[0].oldValue).toEqual({
+      isInvalid: true,
+      invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
+    });
+    expect(timeEntryAudits[0].newValue).toEqual({ isInvalid: false, invalidReasonCode: null });
+    expect(timeEntryAudits[0].ipAddress).toBeTruthy();
+
+    const untouchedAuditCount = await app.prisma.auditLog.count({
+      where: { entity: "TimeEntry", entityId: { in: [eLocked.id, eDeleted.id] } },
+    });
+    expect(untouchedAuditCount).toBe(0);
   });
 
   // ── Task 2: apply-NEW side (dispatch on NEW type) ───────────────────────────

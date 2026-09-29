@@ -31,6 +31,7 @@ import {
   hardDeleteTimeDataForEmployee,
   createImportedTimeEntry,
 } from "../index";
+import { invalidReasonFields } from "../invalid-reason"; // Issue #370 — intra-context import
 import type { FastifyInstance } from "fastify";
 
 describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => {
@@ -279,6 +280,72 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
       const after = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: entry.id } });
       expect(after.isInvalid).toBe(true);
     });
+
+    it("returns one {id, oldValue, newValue} per revalidated row; locked, soft-deleted and other-reason rows are neither changed nor returned (Issue #370)", async () => {
+      const decFrom = new Date("2026-12-01T00:00:00Z");
+      const decTo = new Date("2026-12-04T00:00:00Z");
+      const mkDecEntry = (day: string, extra: Record<string, unknown>) =>
+        app.prisma.timeEntry.create({
+          data: {
+            employeeId: data.employee.id,
+            date: new Date(`${day}T00:00:00Z`),
+            startTime: new Date(`${day}T08:00:00Z`),
+            endTime: new Date(`${day}T16:00:00Z`),
+            type: "WORK",
+            salonId: data.salonId, // Phase 68b (issue #68)
+            ...extra,
+          },
+        });
+      const rowA = await mkDecEntry("2026-12-01", {
+        isInvalid: true,
+        ...invalidReasonFields("LEAVE_CANCELLATION_PENDING"),
+      });
+      const rowB = await mkDecEntry("2026-12-02", {
+        isInvalid: true,
+        ...invalidReasonFields("LEAVE_CANCELLATION_PENDING"),
+        isLocked: true,
+      });
+      const rowC = await mkDecEntry("2026-12-03", {
+        isInvalid: true,
+        ...invalidReasonFields("LEAVE_CANCELLATION_PENDING"),
+        deletedAt: new Date(),
+      });
+      const rowD = await mkDecEntry("2026-12-04", {
+        isInvalid: true,
+        ...invalidReasonFields("MISSING_CLOCK_OUT"),
+      });
+
+      const result = await revalidateLeaveCancellationEntries(
+        app.prisma,
+        data.employee.id,
+        data.tenant.id,
+        decFrom,
+        decTo,
+      );
+      expect(result).toEqual([
+        {
+          id: rowA.id,
+          oldValue: { isInvalid: true, invalidReasonCode: "LEAVE_CANCELLATION_PENDING" },
+          newValue: { isInvalid: false, invalidReasonCode: null },
+        },
+      ]);
+
+      const bAfter = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: rowB.id } });
+      const cAfter = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: rowC.id } });
+      const dAfter = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: rowD.id } });
+      expect(bAfter.isInvalid).toBe(true);
+      expect(cAfter.isInvalid).toBe(true);
+      expect(dAfter.isInvalid).toBe(true);
+
+      const empty = await revalidateLeaveCancellationEntries(
+        app.prisma,
+        data.employee.id,
+        data.tenant.id,
+        decTo,
+        decFrom, // from > to
+      );
+      expect(empty).toEqual([]);
+    });
   });
 
   describe("T7/T8 lockEntriesForMonth / unlockEntriesForMonth — inverse over the same window", () => {
@@ -305,6 +372,159 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
       const unlocked = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: entry.id } });
       expect(unlocked.isLocked).toBe(false);
       expect(unlocked.lockedAt).toBeNull();
+    });
+
+    it("T8 unlockEntriesForMonth returns one {id, oldValue, newValue} per unlocked row (Issue #370)", async () => {
+      const from = new Date("2026-10-01T00:00:00Z");
+      const to = new Date("2026-10-31T00:00:00Z");
+      const l1 = new Date("2026-09-01T10:00:00Z");
+      const l2 = new Date("2026-09-02T11:00:00Z");
+
+      const rowA = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date("2026-10-05T00:00:00Z"),
+          startTime: new Date("2026-10-05T08:00:00Z"),
+          endTime: new Date("2026-10-05T16:00:00Z"),
+          type: "WORK",
+          salonId: data.salonId, // Phase 68b (issue #68)
+          isLocked: true,
+          lockedAt: l1,
+        },
+      });
+      const rowB = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date("2026-10-12T00:00:00Z"),
+          startTime: new Date("2026-10-12T08:00:00Z"),
+          endTime: new Date("2026-10-12T16:00:00Z"),
+          type: "WORK",
+          salonId: data.salonId, // Phase 68b (issue #68)
+          isLocked: true,
+          lockedAt: l2,
+        },
+      });
+      const rowC = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date("2026-10-19T00:00:00Z"),
+          startTime: new Date("2026-10-19T08:00:00Z"),
+          endTime: new Date("2026-10-19T16:00:00Z"),
+          type: "WORK",
+          salonId: data.salonId, // Phase 68b (issue #68)
+          isLocked: true,
+          lockedAt: new Date("2026-09-03T12:00:00Z"),
+          deletedAt: new Date("2026-09-04T00:00:00Z"),
+        },
+      });
+
+      const result = await unlockEntriesForMonth(
+        app.prisma,
+        data.employee.id,
+        data.tenant.id,
+        from,
+        to,
+      );
+      const sorted = [...result].sort((a, b) => a.id.localeCompare(b.id));
+      const expected = [
+        {
+          id: rowA.id,
+          oldValue: { isLocked: true, lockedAt: l1 },
+          newValue: { isLocked: false, lockedAt: null },
+        },
+        {
+          id: rowB.id,
+          oldValue: { isLocked: true, lockedAt: l2 },
+          newValue: { isLocked: false, lockedAt: null },
+        },
+      ].sort((a, b) => a.id.localeCompare(b.id));
+      expect(sorted).toEqual(expected);
+      expect(result.some((r) => r.id === rowC.id)).toBe(false);
+
+      const empty = await unlockEntriesForMonth(
+        app.prisma,
+        data.employee.id,
+        data.tenant.id,
+        new Date("2030-01-01T00:00:00Z"),
+        new Date("2030-01-31T00:00:00Z"),
+      );
+      expect(empty).toEqual([]);
+    });
+
+    it("T7 lockEntriesForMonth returns one {id, oldValue, newValue} per locked row with one batch timestamp (Issue #370)", async () => {
+      const from = new Date("2026-11-01T00:00:00Z");
+      const to = new Date("2026-11-30T00:00:00Z");
+      const l = new Date("2026-10-01T10:00:00Z");
+
+      const rowA = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date("2026-11-05T00:00:00Z"),
+          startTime: new Date("2026-11-05T08:00:00Z"),
+          endTime: new Date("2026-11-05T16:00:00Z"),
+          type: "WORK",
+          salonId: data.salonId, // Phase 68b (issue #68)
+          isLocked: false,
+          lockedAt: null,
+        },
+      });
+      const rowB = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date("2026-11-12T00:00:00Z"),
+          startTime: new Date("2026-11-12T08:00:00Z"),
+          endTime: new Date("2026-11-12T16:00:00Z"),
+          type: "WORK",
+          salonId: data.salonId, // Phase 68b (issue #68)
+          isLocked: true,
+          lockedAt: l,
+        },
+      });
+      const rowC = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date("2026-11-19T00:00:00Z"),
+          startTime: new Date("2026-11-19T08:00:00Z"),
+          endTime: new Date("2026-11-19T16:00:00Z"),
+          type: "WORK",
+          salonId: data.salonId, // Phase 68b (issue #68)
+          isLocked: false,
+          lockedAt: null,
+          deletedAt: new Date("2026-10-02T00:00:00Z"),
+        },
+      });
+
+      const result = await lockEntriesForMonth(
+        app.prisma,
+        data.employee.id,
+        data.tenant.id,
+        from,
+        to,
+      );
+      expect(result.length).toBe(2);
+      const resultIds = result.map((r) => r.id).sort();
+      expect(resultIds).toEqual([rowA.id, rowB.id].sort());
+      expect(result.some((r) => r.id === rowC.id)).toBe(false);
+
+      const resultA = result.find((r) => r.id === rowA.id)!;
+      const resultB = result.find((r) => r.id === rowB.id)!;
+      expect(resultA.oldValue).toEqual({ isLocked: false, lockedAt: null });
+      expect(resultB.oldValue).toEqual({ isLocked: true, lockedAt: l });
+      expect(resultA.newValue.isLocked).toBe(true);
+      expect(resultB.newValue.isLocked).toBe(true);
+      expect(resultA.newValue.lockedAt?.getTime()).toBe(resultB.newValue.lockedAt?.getTime());
+
+      const reloadedA = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: rowA.id } });
+      expect(resultA.newValue.lockedAt?.getTime()).toBe(reloadedA.lockedAt?.getTime());
+
+      const empty = await lockEntriesForMonth(
+        app.prisma,
+        data.employee.id,
+        data.tenant.id,
+        new Date("2030-02-01T00:00:00Z"),
+        new Date("2030-02-28T00:00:00Z"),
+      );
+      expect(empty).toEqual([]);
     });
   });
 

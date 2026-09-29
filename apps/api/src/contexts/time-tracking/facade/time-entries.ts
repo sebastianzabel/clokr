@@ -77,7 +77,7 @@
  * for a UTC+ tenant and would lock/unlock one day too many; copied verbatim from
  * `auto-close-month.ts`'s own comment, not re-derived.
  */
-import type { Prisma } from "@clokr/db";
+import type { InvalidReasonCode, Prisma } from "@clokr/db";
 import { type EmployeeScope, employeeScopeWhere } from "../../platform";
 import { CLEARED_INVALID_REASON } from "../invalid-reason";
 
@@ -296,12 +296,30 @@ export async function getEntryActivityFeed(
 // ── T6 — leave-cancellation revalidation ─────────────────────────────────────────────────────
 
 /**
+ * Issue #370, D-01/D-02: the per-row old/new pair {@link revalidateLeaveCancellationEntries}
+ * returns for each row it actually revalidates — the audit shape carries only the reason CODE
+ * (D-03); `invalidReason` is the derived display text of the code (`invalid-reason.ts`) and is not
+ * duplicated into the audit.
+ */
+export type EntryRevalidationAudit = {
+  id: string;
+  oldValue: { isInvalid: true; invalidReasonCode: InvalidReasonCode | null };
+  newValue: { isInvalid: false; invalidReasonCode: null };
+};
+
+/**
  * T6 — clears the `LEAVE_CANCELLATION_PENDING` invalidation for every entry of `employeeId` in
  * `[from, to]`. H2: never touches a row with `isLocked: true` or `deletedAt != null` — dropping
  * either guard would let a cancellation-approval/correction modify a locked month's entry, exactly
  * the invariant CLAUDE.md § "Immutability after lock" exists to prevent. Two call sites in
  * `absence/api/leave.ts`: the cancellation-approval handler (`app.prisma`) and the
  * PATCH `/requests/:id/correct` handler's own delta-reversal `tx`.
+ *
+ * Issue #370, D-01/D-02: returns one `{id, oldValue, newValue}` per row actually revalidated (an
+ * empty match returns `[]`) so the caller can write a per-row `TimeEntry` UPDATE audit — a facade
+ * cannot call `app.audit()` itself (see the T7/T8 docblock above for why). The `where` guards are
+ * repeated verbatim on the `findMany` AND inline on the `updateMany` (H2 stays exactly as-is; the
+ * write keeps its own guards because the review call site runs without a transaction).
  */
 export async function revalidateLeaveCancellationEntries(
   db: Prisma.TransactionClient,
@@ -309,9 +327,9 @@ export async function revalidateLeaveCancellationEntries(
   tenantId: string,
   from: Date,
   to: Date,
-): Promise<void> {
-  if (from > to) return;
-  await db.timeEntry.updateMany({
+): Promise<EntryRevalidationAudit[]> {
+  if (from > to) return [];
+  const rows = await db.timeEntry.findMany({
     where: {
       employeeId,
       employee: { tenantId },
@@ -321,17 +339,54 @@ export async function revalidateLeaveCancellationEntries(
       deletedAt: null, // H2/D-08 — never touch a soft-deleted entry
       isLocked: false, // H2 — never mutate a locked-month entry (Revisionssicherheit)
     },
+    select: { id: true, invalidReasonCode: true },
+  });
+  if (rows.length === 0) return [];
+  await db.timeEntry.updateMany({
+    where: {
+      employeeId,
+      employee: { tenantId },
+      date: { gte: from, lte: to },
+      isInvalid: true,
+      invalidReasonCode: "LEAVE_CANCELLATION_PENDING",
+      deletedAt: null, // H2/D-08 — never touch a soft-deleted entry
+      isLocked: false, // H2 — never mutate a locked-month entry (Revisionssicherheit)
+      id: { in: rows.map((r) => r.id) },
+    },
     data: { isInvalid: false, ...CLEARED_INVALID_REASON },
   });
+  return rows.map((r) => ({
+    id: r.id,
+    oldValue: { isInvalid: true, invalidReasonCode: r.invalidReasonCode },
+    newValue: { isInvalid: false, invalidReasonCode: CLEARED_INVALID_REASON.invalidReasonCode },
+  }));
 }
 
 // ── T7/T8 — Monatsabschluss lock / unlock ────────────────────────────────────────────────────
+
+/**
+ * Issue #370, D-01/D-02: the per-row old/new pair {@link lockEntriesForMonth} and
+ * {@link unlockEntriesForMonth} return for each row they actually mutate. A facade cannot call
+ * `app.audit()` itself — `app.audit` is only a Fastify decorator, and `lint-facade-signatures`'s
+ * F2 rule forbids a facade parameter typed `FastifyInstance`/`FastifyRequest`/`FastifyReply` — so
+ * the facade hands the caller enough state to write the per-row `TimeEntry` LOCK/UNLOCK audit
+ * itself, inside its own transaction.
+ */
+export type EntryLockAudit = {
+  id: string;
+  oldValue: { isLocked: boolean; lockedAt: Date | null };
+  newValue: { isLocked: boolean; lockedAt: Date | null };
+};
 
 /**
  * T7 — locks every non-deleted entry of `employeeId` in `[from, to]` (`isLocked: true,
  * lockedAt`). `from`/`to` MUST already be DAY bounds (`monthDayBounds()`), not the raw
  * month-start/end timestamps — see the module header. Two call sites, both on a `tx`:
  * `overtime.ts`'s manual close and `auto-close-month.ts`'s cron close.
+ *
+ * Issue #370, D-02/D-03: returns one `{id, oldValue, newValue}` per row actually locked (an empty
+ * match returns `[]`) so the caller can write a per-row `TimeEntry` LOCK audit; all mutated rows
+ * share ONE `lockedAt` timestamp for the whole batch.
  */
 export async function lockEntriesForMonth(
   db: Prisma.TransactionClient,
@@ -339,17 +394,37 @@ export async function lockEntriesForMonth(
   tenantId: string,
   from: Date,
   to: Date,
-): Promise<void> {
-  await db.timeEntry.updateMany({
+): Promise<EntryLockAudit[]> {
+  const rows = await db.timeEntry.findMany({
     where: { employeeId, employee: { tenantId }, deletedAt: null, date: { gte: from, lte: to } },
-    data: { isLocked: true, lockedAt: new Date() },
+    select: { id: true, isLocked: true, lockedAt: true },
   });
+  if (rows.length === 0) return [];
+  const lockedAt = new Date();
+  await db.timeEntry.updateMany({
+    where: {
+      employeeId,
+      employee: { tenantId },
+      deletedAt: null,
+      date: { gte: from, lte: to },
+      id: { in: rows.map((r) => r.id) },
+    },
+    data: { isLocked: true, lockedAt },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    oldValue: { isLocked: r.isLocked, lockedAt: r.lockedAt },
+    newValue: { isLocked: true, lockedAt },
+  }));
 }
 
 /**
  * T8 — the inverse of {@link lockEntriesForMonth}: unlocks every non-deleted entry of
  * `employeeId` in `[from, to]` (`isLocked: false, lockedAt: null`). Sole caller: `overtime.ts`'s
  * `POST /unlock-month`, on its own `tx`.
+ *
+ * Issue #370, D-02/D-03: returns one `{id, oldValue, newValue}` per row actually unlocked (an
+ * empty match returns `[]`) so the caller can write a per-row `TimeEntry` UNLOCK audit.
  */
 export async function unlockEntriesForMonth(
   db: Prisma.TransactionClient,
@@ -357,11 +432,27 @@ export async function unlockEntriesForMonth(
   tenantId: string,
   from: Date,
   to: Date,
-): Promise<void> {
-  await db.timeEntry.updateMany({
+): Promise<EntryLockAudit[]> {
+  const rows = await db.timeEntry.findMany({
     where: { employeeId, employee: { tenantId }, deletedAt: null, date: { gte: from, lte: to } },
+    select: { id: true, isLocked: true, lockedAt: true },
+  });
+  if (rows.length === 0) return [];
+  await db.timeEntry.updateMany({
+    where: {
+      employeeId,
+      employee: { tenantId },
+      deletedAt: null,
+      date: { gte: from, lte: to },
+      id: { in: rows.map((r) => r.id) },
+    },
     data: { isLocked: false, lockedAt: null },
   });
+  return rows.map((r) => ({
+    id: r.id,
+    oldValue: { isLocked: r.isLocked, lockedAt: r.lockedAt },
+    newValue: { isLocked: false, lockedAt: null },
+  }));
 }
 
 // ── T9 — retention archival ───────────────────────────────────────────────────────────────────
@@ -372,6 +463,12 @@ export async function unlockEntriesForMonth(
  * its own per-tenant loop (same file, same loop as `countSnapshotsBefore`/W7 — `tenantId` is a
  * proven no-op here for the identical reason: `employeeIds` already comes from that loop's own
  * `employee.findMany({ where: { tenantId } })`).
+ *
+ * Issue #370, D-09: no per-row `TimeEntry` audit, by owner decision — the legally-timed annual
+ * retention soft-delete applies one uniform rule to potentially thousands of rows per tenant; its
+ * caller `composition/data-retention.ts` already writes one aggregate `DataRetention` `ARCHIVE`
+ * audit carrying the count, and each archived row stays reconstructible itself (only `deletedAt`
+ * changes). A per-row audit here would be out of proportion to its value.
  */
 export async function archiveEntriesBefore(
   db: Prisma.TransactionClient,
@@ -403,6 +500,11 @@ export async function archiveEntriesBefore(
  * function is ever reached, and this is a hard `note` scrub with nothing left to constrain by
  * tenant that the caller hasn't already fixed. Runs on the caller's own `tx` (the whole
  * anonymisation sequence is one transaction).
+ *
+ * Issue #370, D-09: no per-row audit, by owner decision — this call is part of the DSGVO Art. 17
+ * anonymisation transaction (`platform/anonymize.ts`), already covered by the `Employee`
+ * `ANONYMIZE` audit that same transaction writes; a nulled note carries nothing left worth
+ * logging per row.
  */
 export async function clearEntryNotesForEmployee(
   db: Prisma.TransactionClient,
@@ -431,6 +533,12 @@ export async function clearEntryNotesForEmployee(
  * hard-delete `$transaction` — and therefore before this function — is ever reached. Carries a
  * named `lint-facade-signatures` F3 exception for exactly that reason (same shape as plan 06's
  * `hardDeleteOvertimeDataForEmployee`).
+ *
+ * Issue #370, D-09: no per-row audit, by owner decision — the rows are irrevocably gone after this
+ * call returns, so a per-row audit could only be written BEFORE the delete and would merely
+ * duplicate the `Employee` `HARD_DELETE` audit (with its own `oldValue`/`newValue`) that
+ * `platform/api/employees.ts`'s `DELETE /:id/hard-delete` handler already writes — the established
+ * pattern of that deletion chain.
  */
 export async function hardDeleteTimeDataForEmployee(
   db: Prisma.TransactionClient,

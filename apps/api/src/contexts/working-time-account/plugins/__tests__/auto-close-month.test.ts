@@ -324,6 +324,38 @@ describe("auto-close-month plugin (Phase 76.12 Plan 02) — Ø-Methode + bsAbsen
         // The fix (halfDay propagated via Boolean(lr.halfDay)) halves the
         // subtraction → balance moves from +570 to +285 (exactly 285 less).
         expect(snap?.balanceMinutes).toBe(285);
+
+        // Issue #370 (D-08): the cron close must also leave one TimeEntry LOCK audit per
+        // locked entry, written INSIDE the close $transaction, SYSTEM actor (userId null).
+        const mayEntries = await app.prisma.timeEntry.findMany({
+          where: {
+            employeeId: asEmpId,
+            deletedAt: null,
+            date: { gte: new Date("2026-05-01T00:00:00Z"), lte: new Date("2026-05-31T00:00:00Z") },
+          },
+        });
+        expect(mayEntries.length).toBeGreaterThan(0); // anti-vacuity
+        const mayEntryIds = mayEntries.map((e) => e.id);
+
+        const lockAudits = await app.prisma.auditLog.findMany({
+          where: { entity: "TimeEntry", action: "LOCK", entityId: { in: mayEntryIds } },
+        });
+        expect(lockAudits.length).toBe(mayEntries.length);
+        expect(new Set(lockAudits.map((a) => a.entityId)).size).toBe(mayEntryIds.length);
+        for (const a of lockAudits) {
+          expect(a.userId).toBeNull();
+          expect(a.oldValue).toEqual({ isLocked: false, lockedAt: null });
+        }
+        const lockedAtValues = new Set(
+          mayEntries.map((e) => e.lockedAt?.toISOString()).filter((v): v is string => Boolean(v)),
+        );
+        expect(lockedAtValues.size).toBe(1);
+        const expectedLockedAt = [...lockedAtValues][0];
+        for (const a of lockAudits) {
+          const newValue = a.newValue as { isLocked: boolean; lockedAt: string | null };
+          expect(newValue.isLocked).toBe(true);
+          expect(newValue.lockedAt).toBe(expectedLockedAt);
+        }
       } finally {
         vi.useRealTimers();
       }

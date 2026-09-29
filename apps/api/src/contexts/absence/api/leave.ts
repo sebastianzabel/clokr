@@ -1145,13 +1145,26 @@ export async function leaveRoutes(app: FastifyInstance) {
 
           // Revalidate time entries that were created during CANCELLATION_REQUESTED
           // Phase 100B Plan 08 — T6, contexts/time-tracking facade (H2 guard unchanged).
-          await revalidateLeaveCancellationEntries(
+          const revalidatedEntries = await revalidateLeaveCancellationEntries(
             app.prisma,
             existing.employeeId,
             existing.employee.tenantId,
             existing.startDate,
             existing.endDate,
           );
+          // Issue #370, D-04: one TimeEntry UPDATE audit per revalidated row — no `tx`, matching
+          // the sibling LeaveRequest CANCEL/REJECT audit below, which also runs on app.prisma.
+          for (const row of revalidatedEntries) {
+            await app.audit({
+              userId: req.user.sub,
+              action: "UPDATE",
+              entity: "TimeEntry",
+              entityId: row.id,
+              oldValue: row.oldValue,
+              newValue: row.newValue,
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            });
+          }
 
           const typeCode = existing.leaveType.code;
           if (typeCode === "VACATION") {
@@ -2207,9 +2220,21 @@ export async function leaveRoutes(app: FastifyInstance) {
         //    be cleared. Delta-lock already guarantees these fall in unlocked months;
         //    locked / soft-deleted entries are never touched (Revisionssicherheit).
         // Phase 100B Plan 08 — T6, contexts/time-tracking facade (H2 guard unchanged).
+        // Issue #370, D-05: accumulate the revalidated rows across both calls below so they
+        // can be audited once, inside this same transaction, before it closes.
+        const revalidatedEntries: Awaited<ReturnType<typeof revalidateLeaveCancellationEntries>> =
+          [];
         const revalidateRemoved = async (from: Date, to: Date) => {
           if (from > to) return;
-          await revalidateLeaveCancellationEntries(tx, existing.employeeId, tenantId, from, to);
+          revalidatedEntries.push(
+            ...(await revalidateLeaveCancellationEntries(
+              tx,
+              existing.employeeId,
+              tenantId,
+              from,
+              to,
+            )),
+          );
         };
         const ONE_DAY_MS = 24 * 60 * 60 * 1000;
         if (start > existing.startDate) {
@@ -2219,6 +2244,21 @@ export async function leaveRoutes(app: FastifyInstance) {
         if (end < existing.endDate) {
           // tail removed: [newEnd+1 .. oldEnd]
           await revalidateRemoved(new Date(end.getTime() + ONE_DAY_MS), existing.endDate);
+        }
+        // Issue #370, D-05: one TimeEntry UPDATE audit per revalidated row, inside the tx so a
+        // rollback (94 CR-01) never leaves an orphan audit row — same rule as overtime.ts's
+        // COMP-V1814-05 comment.
+        for (const row of revalidatedEntries) {
+          await app.audit({
+            tx,
+            userId: req.user.sub,
+            action: "UPDATE",
+            entity: "TimeEntry",
+            entityId: row.id,
+            oldValue: row.oldValue,
+            newValue: row.newValue,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
         }
 
         return updatedRow;

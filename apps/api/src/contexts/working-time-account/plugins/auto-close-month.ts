@@ -537,7 +537,30 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 // Day bounds (not the monthStart/monthEnd timestamps): the timestamp
                 // lower bound casts to the previous month's last day for UTC+ tenants.
                 // Phase 100B Plan 08 — T7, contexts/time-tracking facade.
-                await lockEntriesForMonth(tx, emp.id, tenant.id, monthFirstDay, monthLastDay);
+                const lockedEntries = await lockEntriesForMonth(
+                  tx,
+                  emp.id,
+                  tenant.id,
+                  monthFirstDay,
+                  monthLastDay,
+                );
+
+                // Issue #370 (D-08): one TimeEntry LOCK audit per row lockEntriesForMonth
+                // actually locked, INSIDE this $transaction (unlike the SaldoSnapshot audit
+                // below, which stays deliberately AFTER commit for this cron's SYSTEM path —
+                // see that audit's own comment). userId: undefined matches this file's own
+                // SYSTEM-actor convention.
+                for (const row of lockedEntries) {
+                  await app.audit({
+                    tx,
+                    userId: undefined,
+                    action: "LOCK",
+                    entity: "TimeEntry",
+                    entityId: row.id,
+                    oldValue: row.oldValue,
+                    newValue: row.newValue,
+                  });
+                }
 
                 // PERF-V1814-02: overtimeAccount.upsert inside the same tx as snapshot + entry-lock.
                 // A crash between snapshot commit and upsert can no longer leave a stale live balance.

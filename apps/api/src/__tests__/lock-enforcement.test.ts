@@ -400,6 +400,23 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
         });
         expect(updatedEntry?.isLocked).toBe(false);
         expect(updatedEntry?.lockedAt).toBeNull();
+
+        // Issue #370 (D-07): the unlock must also leave a per-row TimeEntry UNLOCK audit,
+        // written inside the same $transaction as the SaldoSnapshot UNLOCK audit.
+        const timeEntryAudits = await app.prisma.auditLog.findMany({
+          where: { entity: "TimeEntry", entityId: lockedEntry.id, action: "UNLOCK" },
+        });
+        expect(timeEntryAudits.length).toBe(1);
+        expect(timeEntryAudits[0].userId).toBe(data.adminUser.id);
+        expect(timeEntryAudits[0].newValue).toEqual({ isLocked: false, lockedAt: null });
+        const oldValue = timeEntryAudits[0].oldValue as {
+          isLocked: boolean;
+          lockedAt: string | null;
+        };
+        expect(oldValue.isLocked).toBe(true);
+        expect(typeof oldValue.lockedAt).toBe("string");
+        expect(oldValue.lockedAt).not.toBeNull();
+        expect(timeEntryAudits[0].ipAddress).toBeTruthy();
       } finally {
         // Clean up — snapshot is superseded (not deleted) by endpoint
         await app.prisma.saldoSnapshot.deleteMany({ where: { id: snapshot.id } });
