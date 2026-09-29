@@ -430,6 +430,55 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
       );
       expect(Number(result?.entitlement.totalDays)).toBe(9);
     });
+
+    it("under two genuinely concurrent calls for the same employee+year, only ONE row exists and only ONE CREATE audit fires — no duplicate row, no duplicate audit", async () => {
+      const freshYear = year + 13;
+      const auditCalls: unknown[] = [];
+      const auditFn = async (entry: unknown) => {
+        auditCalls.push(entry);
+      };
+      // Fire both calls truly concurrently (Promise.all, not sequential awaits) so both read
+      // "no existing row" before either write lands — the race window this guards against.
+      const [a, b] = await Promise.all([
+        ensureVacationEntitlementForYear(
+          app.prisma,
+          data.employee.id,
+          data.tenant.id,
+          freshYear,
+          new Date("2024-01-01"),
+          5,
+          30,
+          "concurrent-a",
+          auditFn,
+        ),
+        ensureVacationEntitlementForYear(
+          app.prisma,
+          data.employee.id,
+          data.tenant.id,
+          freshYear,
+          new Date("2024-01-01"),
+          5,
+          30,
+          "concurrent-b",
+          auditFn,
+        ),
+      ]);
+
+      // Exactly one row for this employee+year — the unique constraint + atomic upsert guarantee
+      // this regardless of which caller "won".
+      const rows = await app.prisma.leaveEntitlement.findMany({
+        where: { employeeId: data.employee.id, year: freshYear, leaveType: { code: "VACATION" } },
+      });
+      expect(rows).toHaveLength(1);
+      expect(a?.entitlement.id).toBe(b?.entitlement.id);
+
+      // Exactly one of the two calls observes itself as the genuine creator; the other sees the
+      // already-created row and does not re-audit.
+      const createdFlags = [a?.created, b?.created].sort();
+      expect(createdFlags).toEqual([false, true]);
+      expect(auditCalls).toHaveLength(1);
+      expect(auditCalls[0]).toMatchObject({ action: "CREATE", entity: "LeaveEntitlement" });
+    });
   });
 
   describe("hardDeleteEntitlementsForEmployee (F3)", () => {

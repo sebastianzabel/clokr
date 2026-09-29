@@ -276,22 +276,54 @@ export async function ensureVacationEntitlementForYear(
       ? calculateProRataVacationForHire(scaledBase, year, hireDate)
       : scaledBase;
 
-  const entitlement = await upsertVacationEntitlement(db, employeeId, tenantId, year, {
-    totalDays,
-    carriedOverDays: 0,
-    carryOverDeadline: null,
-    isAutoCalculated: true,
-  });
+  let entitlement: LeaveEntitlement | null;
+  try {
+    entitlement = await upsertVacationEntitlement(db, employeeId, tenantId, year, {
+      totalDays,
+      carriedOverDays: 0,
+      carryOverDeadline: null,
+      isAutoCalculated: true,
+    });
+  } catch (err: unknown) {
+    // Issue #416: `upsertVacationEntitlement`'s `where` combines the compound unique constraint
+    // with an additional `employee: { tenantId }` relation filter, so Prisma cannot lower it to a
+    // single atomic `INSERT ... ON CONFLICT DO UPDATE` — under two genuinely concurrent callers
+    // that both observed "no row yet" above, one still raises P2002 here instead of silently
+    // updating (same backstop pattern as services/clock/resolver.ts's ALREADY_CLOCKED_IN P2002
+    // mapping, duck-typed the same way — this repo's established idiom, not a new one). The race
+    // LOSER re-fetches the winner's row and treats it exactly like the `existing.entitlement`
+    // branch above: no audit, `created: false`.
+    if (typeof err === "object" && err !== null && "code" in err && err.code === "P2002") {
+      const refetched = await getVacationEntitlement(db, employeeId, tenantId, year);
+      return refetched?.entitlement ? { entitlement: refetched.entitlement, created: false } : null;
+    }
+    throw err;
+  }
   if (!entitlement) return null; // same practically-unreachable case as above
 
-  await auditFn({
-    action: "CREATE",
-    entity: "LeaveEntitlement",
-    entityId: entitlement.id,
-    newValue: { totalDays, isAutoCalculated: true, reason },
-  });
+  // Issue #416: the `existing` check above is a SELECT before the upsert, not atomic with it —
+  // under two genuinely concurrent callers for the same (employeeId, year) that both observe no
+  // row yet (e.g. two browser tabs loading /leave at once), BOTH would reach this point. The
+  // underlying `@@unique([employeeId, leaveTypeId, year])` constraint still guarantees exactly one
+  // row ever exists (Prisma's upsert is atomic at the DB level, INSERT ... ON CONFLICT DO UPDATE
+  // on Postgres) — but without this check, both callers would unconditionally write a CREATE
+  // audit entry for what is, for the loser of the race, actually an update. `createdAt` and
+  // `updatedAt` are set to the same `now()` by the single INSERT statement that wins the race;
+  // the loser's conflict branch only touches `updatedAt`, so comparing the two after the fact
+  // reliably distinguishes "I created this row" from "someone else already had". Only the actual
+  // creator audits CREATE; the race loser gets the row silently, exactly like `existing.entitlement`
+  // above.
+  const genuinelyCreated = entitlement.createdAt.getTime() === entitlement.updatedAt.getTime();
+  if (genuinelyCreated) {
+    await auditFn({
+      action: "CREATE",
+      entity: "LeaveEntitlement",
+      entityId: entitlement.id,
+      newValue: { totalDays, isAutoCalculated: true, reason },
+    });
+  }
 
-  return { entitlement, created: true };
+  return { entitlement, created: genuinelyCreated };
 }
 
 // ── Vacation entitlements for a year, by code (Issue #205 finding 1, Phase 205 Plan 02) ────────
