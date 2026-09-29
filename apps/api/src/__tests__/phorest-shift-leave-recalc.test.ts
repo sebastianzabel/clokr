@@ -312,24 +312,26 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     const tuesday = addDaysIso(monday, 1);
 
     const usedBefore = await usedDaysFor(erikaId, monday);
-    const requestId = await seedRequest(erikaId, monday, tuesday, 2, true); // D-07 upper bound: min(2,4)=2
+    // Issue #417: seeded STALE (disagrees with the by-contract value min(2,4)=2) so the cron
+    // sync's call below is an observable convergence, not a no-op.
+    const requestId = await seedRequest(erikaId, monday, tuesday, 5, true);
 
-    mockPhorestSlots([{ staffId: MAPPED_STAFF_ID, date: tuesday }]); // plans ONLY Tuesday
+    mockPhorestSlots([{ staffId: MAPPED_STAFF_ID, date: tuesday }]); // plans ONLY Tuesday — irrelevant to the by-contract recompute
     const res = await syncPhorestShifts(app, tenantId, seed.target, windowAround(monday));
     expect(res.status).toBe("SUCCESS");
 
     const persisted = await app.prisma.leaveRequest.findUnique({ where: { id: requestId } });
-    expect(Number(persisted!.days)).toBe(1); // roster-exact: only Tuesday is actually rostered
+    expect(Number(persisted!.days)).toBe(2); // by-contract value, roster-independent
     expect(persisted!.daysProvisional).toBe(false);
-    expect(await usedDaysFor(erikaId, monday)).toBe(usedBefore + 1); // 2 -> 1, delta -1
+    expect(await usedDaysFor(erikaId, monday)).toBe(usedBefore + 2); // seed +5, recalc delta -3, net +2
 
     const audits = await auditRowsFor(requestId);
     expect(audits.length).toBe(1);
     expect(audits[0].userId).toBeNull(); // the SYSTEM convention: never a literal "SYSTEM" string
     const oldVal = audits[0].oldValue as { days: number };
     const newVal = audits[0].newValue as { days: number; trigger: string; triggerSource: string };
-    expect(oldVal.days).toBe(2);
-    expect(newVal.days).toBe(1);
+    expect(oldVal.days).toBe(5);
+    expect(newVal.days).toBe(2);
     expect(newVal.trigger).toBe("Roster-Planung");
     // Phase 120 (D-06/D-07): no request exists on the cron path — the row must carry no IP and no
     // invented substitute, and must SAY it is a sync so the empty IP is not ambiguous.
@@ -459,10 +461,12 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     });
     expect(cancelledShift?.deletedReason).toBe("PHOREST_REMOVED");
 
-    // Week now has ZERO active shifts -> flat estimate: min(3 calendar days, count 4) = 3.
+    // Issue #417: by-contract value, roster-independent — min(3 calendar days, count 4) = 3,
+    // regardless of the soft-cancel above. The legacy seeded row (stale days=1) converges once
+    // touched by this mutation-site call, and never comes back provisional (Issue #417).
     const persisted = await app.prisma.leaveRequest.findUnique({ where: { id: requestId } });
     expect(Number(persisted!.days)).toBe(3);
-    expect(persisted!.daysProvisional).toBe(true); // flat branch is always provisional
+    expect(persisted!.daysProvisional).toBe(false); // Issue #417: never provisional any more
 
     const audits = await auditRowsFor(requestId);
     expect(audits.length).toBe(1);
@@ -476,7 +480,11 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     const monday = nextHolidayFreeMonday(70);
     const tuesday = addDaysIso(monday, 1);
 
-    const beaRequestId = await seedRequest(beaId, monday, tuesday, 2, true); // min(2,3)=2
+    // Issue #417: seeded STALE (disagrees with the by-contract value min(2,3)=2) so the
+    // recompute below is actually observable — a value that already matched would be a no-op
+    // (the resolver no longer reads the roster at all) and would not prove per-employee
+    // transaction isolation.
+    const beaRequestId = await seedRequest(beaId, monday, tuesday, 5, true);
 
     // Capture the PLAIN function reference before spying — `vi.spyOn` mutates the module's own
     // `recalcProvisionalLeaveForShiftChange` property in place (ESM modules are singletons), so
@@ -516,7 +524,7 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
       const persisted = await app.prisma.leaveRequest.findUnique({
         where: { id: beaRequestId },
       });
-      expect(Number(persisted!.days)).toBe(1); // Bea's request WAS adjusted (roster-exact)
+      expect(Number(persisted!.days)).toBe(2); // Bea's request WAS adjusted (converged to by-contract value)
       expect((await auditRowsFor(beaRequestId)).length).toBe(1);
       const beaNotifications = await notificationsFor(beaRequestId);
       expect(beaNotifications.map((n) => n.userId)).toContain(beaUserId);
@@ -525,16 +533,21 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     }
   });
 
-  // ── Notification de-dup ─────────────────────────────────────────────────────────────────
-  it("notification de-dup: two mutation-site adjustments touching the same (employee, week) in one run send exactly one notification per recipient", async () => {
+  // ── Notification de-dup (Issue #417: now proven via the one-way daysProvisional transition
+  //    instead of the old roster-exact/flat split — see the file's updated header note) ──────
+  it("Issue #417: two mutation-site calls touching the same (employee, week) in one run still send exactly one notification per recipient — the first call already converges the row out of candidacy", async () => {
     const monday = nextHolidayFreeMonday(84);
     const thursday = addDaysIso(monday, 3);
     const friday = addDaysIso(monday, 4);
-    // Second fragment (following week) deliberately left unrostered by this test, so the
-    // request stays daysProvisional=true across BOTH adjustments below (see the file header).
     const followingWed = addDaysIso(monday, 9);
 
-    const requestId = await seedRequest(erikaId, thursday, followingWed, 7, true); // min(4,4)+min(3,4)=4+3
+    // Issue #417: seeded STALE (disagrees with the by-contract total min(4,4)+min(3,4)=7) so
+    // the FIRST of the two mutation-site calls below actually converges it. Once that write
+    // lands, daysProvisional is false — a one-way transition — so the SECOND call (same
+    // employeeId/weekStart, different shift) finds it no longer a candidate at all. This is
+    // what now prevents a duplicate audit/notification: not a de-dup step, but the guard's own
+    // `daysProvisional: true` condition never matching twice.
+    const requestId = await seedRequest(erikaId, thursday, followingWed, 2, true);
 
     // Two WORKING slots for Erika in the SAME week (Thu + Fri) -> two separate per-shift
     // transactions, two separate recalcProvisionalLeaveForShiftChange() calls, same
@@ -547,17 +560,17 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     expect(res.status).toBe("SUCCESS");
 
     const persisted = await app.prisma.leaveRequest.findUnique({ where: { id: requestId } });
-    // Week 1 fragment settles to roster-exact (2: Thu+Fri); week 2 fragment stays flat (3).
-    expect(Number(persisted!.days)).toBe(5);
-    expect(persisted!.daysProvisional).toBe(true); // week 2 still has no roster
+    // By-contract total over the WHOLE period, roster-independent: min(4,4) + min(3,4) = 7.
+    expect(Number(persisted!.days)).toBe(7);
+    expect(persisted!.daysProvisional).toBe(false); // Issue #417: never provisional any more
 
     const audits = await auditRowsFor(requestId);
-    expect(audits.length).toBe(2); // both DB-level adjustments happened (7->4, then 4->5)
+    expect(audits.length).toBe(1); // only the FIRST call found a candidate at all (2->7)
 
     const notifications = await notificationsFor(requestId);
     const employeeNotifs = notifications.filter((n) => n.userId === erikaUserId);
     const managerNotifs = notifications.filter((n) => n.userId === managerUserId);
-    expect(employeeNotifs.length).toBe(1); // de-duped: not one per adjustment
+    expect(employeeNotifs.length).toBe(1);
     expect(managerNotifs.length).toBe(1);
   });
 
@@ -566,7 +579,9 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     const monday = nextHolidayFreeMonday(98);
     const tuesday = addDaysIso(monday, 1);
 
-    const requestId = await seedRequest(erikaId, monday, tuesday, 2, true);
+    // Issue #417: seeded STALE (disagrees with the by-contract value min(2,4)=2) so the call
+    // below is an observable adjustment, not a no-op.
+    const requestId = await seedRequest(erikaId, monday, tuesday, 5, true);
 
     mockPhorestSlots([{ staffId: MAPPED_STAFF_ID, date: tuesday }]);
     // Simulates routes/integrations.ts POST /phorest/sync-shifts — actorUserId = the manager who

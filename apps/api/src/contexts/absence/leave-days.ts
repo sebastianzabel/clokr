@@ -15,9 +15,8 @@ import {
   holidaysAtWorkLocation,
   holidaysForSalon,
 } from "../platform"; // Phase 71b (issue #71, D-04) — the engine/state map are gone from this file, see getHolidayMap()
-import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import { getWorkedEntriesInRange } from "../time-tracking"; // Phase 71b (issue #71) — T2, the work-location rule's entry half
-import { splitDaysAcrossYears, countShiftBasedLeaveDays, mondayOfWeekUtc } from "./vacation-calc"; // Phase 107 (D-04/D-09)
+import { splitDaysAcrossYears, countShiftBasedLeaveDays } from "./vacation-calc"; // Phase 107 (D-04/D-09), Issue #417
 import { preserveIllnessDeadline } from "./illness-carryover-guard"; // Phase 104
 
 // Prisma client shape shared by `app.prisma` (top-level) and the `tx` handle inside
@@ -409,43 +408,15 @@ export async function resolveLeaveDays(
   });
 
   if (ws?.type === "SHIFT_BASED") {
+    // Issue #417 (2026-09-29 owner decision, supersedes Phase 107 D-06): counted BY CONTRACT,
+    // never by roster — the roster is not queried here any more (no getShiftsInRange call).
     const contractWorkDaysPerWeek = await resolveContractWorkDaysPerWeek(
       prisma,
       employeeId,
       tenantId,
     );
 
-    // Widen the shift query to the ENCLOSING ISO weeks of [start, end] — a fragment's
-    // weeksWithRoster answer must see shifts on days of that week outside the leave period too
-    // (D-05/D-06). Same Monday derivation countShiftBasedLeaveDays() itself uses.
-    const rangeStart = mondayOfWeekUtc(start);
-    const rangeEnd = mondayOfWeekUtc(end);
-    rangeEnd.setUTCDate(rangeEnd.getUTCDate() + 6);
-
-    // Phase 100B Plan 05 — S1, contexts/scheduling facade.
-    const shifts = await getShiftsInRange(
-      prisma,
-      { kind: "employee", employeeId, tenantId },
-      rangeStart,
-      rangeEnd,
-    );
-
-    const rosteredDates = new Set<string>();
-    const weeksWithRoster = new Set<string>();
-    for (const shift of shifts) {
-      rosteredDates.add(shift.date.toISOString().split("T")[0]);
-      weeksWithRoster.add(mondayOfWeekUtc(shift.date).toISOString().split("T")[0]);
-    }
-
-    return countShiftBasedLeaveDays(
-      start,
-      end,
-      halfDay,
-      contractWorkDaysPerWeek,
-      rosteredDates,
-      holidays,
-      weeksWithRoster,
-    );
+    return countShiftBasedLeaveDays(start, end, halfDay, contractWorkDaysPerWeek, holidays);
   }
 
   // Every other schedule type: byte-identical to today's five call sites (AC-REG-02).
