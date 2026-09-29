@@ -1,7 +1,5 @@
 <script lang="ts">
-  import { preventDefault } from "svelte/legacy";
-
-  import { onMount, onDestroy } from "svelte";
+  import { onMount } from "svelte";
   import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
@@ -11,18 +9,12 @@
   import Card from "$components/ui/Card.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-06
-  import Modal from "$components/ui/Modal.svelte";
-  import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
-  import CollisionWarnBody from "$lib/phorest/CollisionWarnBody.svelte";
-  import {
-    checkAppointmentCollisions,
-    COLLISION_UNAVAILABLE_TOAST,
-    type CollisionSummary,
-  } from "$lib/phorest/appointmentCollisions";
-  import { toasts } from "$stores/toast";
   import KarenzAttestPanel from "$lib/components/leave/KarenzAttestPanel.svelte";
   import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte"; // Phase 303-03 (#265's pattern)
+  // Phase 415 (#415): the shared create/edit dialog — replaces this page's own copy of the
+  // modal, its balance/preview/overlap fetches, and its collision-confirm flow.
+  import LeaveRequestForm from "$lib/components/leave/LeaveRequestForm.svelte";
   import {
     summarizeKarenzOverrun,
     karenzOverrunDays,
@@ -43,8 +35,7 @@
     vacationCardDelta,
     vacationCardLabel,
   } from "$lib/leave/vacation-summary";
-  import { SICK_TYPE_CODES } from "$lib/leave/leave-kind"; // Phase 201 (Issue #201, B)
-  import { NEUTRAL_CHIP_LABEL, resolveChipVisual } from "$lib/leave/team-calendar-visibility"; // Phase 262 / 303
+  import { resolveChipVisual } from "$lib/leave/team-calendar-visibility"; // Phase 262 / 303
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -88,16 +79,6 @@
 
   // typeCode/typeName are null when the server masks this caller from the absence type
   // (Phase 262, D-01) — not a data error. Render a fallback for null, never "fix" it away.
-  interface OverlapEntry {
-    id: string;
-    employeeName: string;
-    typeCode: string | null;
-    typeName: string | null;
-    startDate: string;
-    endDate: string;
-    status: Status;
-  }
-
   // ── Konstanten ────────────────────────────────────────────────────────────
   const TYPE_OPTIONS: { code: TypeCode; label: string }[] = [
     { code: "VACATION", label: "Urlaub" },
@@ -120,26 +101,15 @@
   let loading = $state(true);
   let error = $state("");
 
-  // Formular
+  // Formular — Phase 415 (#415): the modal's own fields/balances/preview/overlap state moved
+  // into the shared `LeaveRequestForm.svelte`. The page keeps only what opens it and what
+  // reloads after it saves.
   let showForm = $state(false);
   let editingRequest: LeaveRequest | null = $state(null); // gesetztes Objekt = Bearbeitungsmodus
-  let formType: TypeCode = $state("VACATION");
-  let formStart = $state("");
-  let formEnd = $state("");
-  let formHalfDay = $state(false);
-  let formNote = $state("");
-  let formSaving = $state(false);
-  let formError = $state("");
-
-  // Special leave rules
-  interface SpecialLeaveRule {
-    id: string;
-    name: string;
-    defaultDays: number;
-    isActive: boolean;
-  }
-  let specialLeaveRules: SpecialLeaveRule[] = $state([]);
-  let formSpecialRuleId = $state("");
+  // Seeds the dialog's date fields on a fresh CREATE open (calendar drag-select / day click /
+  // Enter-Space). Reset to "" by the plain "+ Neue Abwesenheit" button.
+  let pendingInitialStart = $state("");
+  let pendingInitialEnd = $state("");
 
   // Überstunden- / Urlaubskontostand
   let overtimeBalance: number | null = $state(null);
@@ -152,10 +122,6 @@
   let openMonthMinutes: number | null | undefined = $state(undefined);
   let hasClosedMonth = $state(false);
   let rosterIncomplete: boolean | undefined = $state(undefined);
-  // Phase 100 (OTC-03) — resolved negative-balance tolerance, same
-  // `undefined`-default convention as the Phase-97 fields above.
-  let maxNegativeBalanceMinutes: number | null | undefined = $state(undefined);
-  let isNegativeLimitExceeded: boolean | undefined = $state(undefined);
   // Phase 104-10 (D-31): one movement per CONFIRMED § 9 credit in this entitlement year —
   // rendered verbatim (server-authored label), never re-derived on the client.
   // Types + the mapper live in $lib/leave/vacation-balance.ts (dev-pass fix, see that
@@ -166,22 +132,6 @@
   // and never an unearned claim about the year on screen. Same rule as Phase 116's `loading`
   // flip on /time-entries. Every exit path of loadVacationSummary clears it.
   let vacSummaryLoading = $state(true);
-
-  // Stunden- und Tage-Vorschau (vom Server berechnet, Feiertage berücksichtigt)
-  let hoursPreview: number | null = $state(null);
-  // Phase 100 (WR-03 code review fix) — exact integer minutes alongside the
-  // .toFixed(2)-rounded `hoursPreview`, so wouldBeRejected below can compare in the
-  // same unit the server gate uses instead of reconstructing it through two
-  // different rounding paths.
-  let minutesNeeded: number | null = $state(null);
-  let serverDays: number | null = $state(null); // Feiertags-bereinigte Tage vom Server
-  let hoursPreviewLoading = $state(false);
-  let hoursPreviewTimer: ReturnType<typeof setTimeout> | null = null;
-
-  // Parallele Abwesenheiten im Formular
-  let overlapEntries: OverlapEntry[] = $state([]);
-  let overlapLoading = $state(false);
-  let overlapTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Highlighted request (from notification deep-link)
   let highlightRequestId: string | null = $state(null);
@@ -216,8 +166,8 @@
     // Ensure start <= end
     const start = dragStart < dragEnd ? dragStart : dragEnd;
     const end = dragStart < dragEnd ? dragEnd : dragStart;
-    formStart = start;
-    formEnd = end;
+    pendingInitialStart = start;
+    pendingInitialEnd = end;
     editingRequest = null;
     showForm = true;
     dragStart = null;
@@ -463,11 +413,6 @@
     }
   });
 
-  onDestroy(() => {
-    if (hoursPreviewTimer) clearTimeout(hoursPreviewTimer);
-    if (overlapTimer) clearTimeout(overlapTimer);
-  });
-
   async function loadData() {
     loading = true;
     error = "";
@@ -567,283 +512,12 @@
       openMonthMinutes = r.openMonthMinutes;
       hasClosedMonth = r.hasClosedMonth ?? false;
       rosterIncomplete = r.rosterIncomplete;
-      maxNegativeBalanceMinutes = r.maxNegativeBalanceMinutes;
-      isNegativeLimitExceeded = r.isNegativeLimitExceeded;
     } catch {
       overtimeBalance = null;
       confirmedMinutes = undefined;
       openMonthMinutes = undefined;
       hasClosedMonth = false;
       rosterIncomplete = undefined;
-      maxNegativeBalanceMinutes = undefined;
-      isNegativeLimitExceeded = undefined;
-    }
-  }
-
-  // ── Overlap laden ─────────────────────────────────────────────────────────
-  function scheduleOverlapLoad() {
-    if (overlapTimer) clearTimeout(overlapTimer);
-    if (!formStart || !formEnd || formStart > formEnd) {
-      overlapEntries = [];
-      return;
-    }
-    overlapTimer = setTimeout(doLoadOverlap, 300);
-  }
-
-  async function doLoadOverlap(start = formStart, end = formEnd) {
-    if (!start || !end || start > end) return;
-    overlapLoading = true;
-    try {
-      overlapEntries = await api.get<OverlapEntry[]>(
-        `/leave/overlap?startDate=${start}&endDate=${end}`,
-      );
-    } catch {
-      overlapEntries = [];
-    } finally {
-      overlapLoading = false;
-    }
-  }
-
-  function scheduleHoursPreview() {
-    if (hoursPreviewTimer) clearTimeout(hoursPreviewTimer);
-    if (!formStart || !formEnd || formStart > formEnd) {
-      hoursPreview = null;
-      minutesNeeded = null;
-      serverDays = null;
-      return;
-    }
-    hoursPreviewTimer = setTimeout(loadHoursPreview, 300);
-  }
-
-  async function loadHoursPreview() {
-    if (!formStart || !formEnd) return;
-    hoursPreviewLoading = true;
-    try {
-      const r = await api.get<{ hours: number; days: number; minutesNeeded: number }>(
-        `/leave/hours-preview?startDate=${formStart}&endDate=${formEnd}&halfDay=${formHalfDay}`,
-      );
-      hoursPreview = r.hours;
-      minutesNeeded = r.minutesNeeded;
-      serverDays = r.days;
-    } catch {
-      hoursPreview = null;
-      minutesNeeded = null;
-      serverDays = null;
-    } finally {
-      hoursPreviewLoading = false;
-    }
-  }
-
-  // Issue #258 (hardening) — a failed REFETCH must not destroy an already-displayed value.
-  //
-  // This function is a refetch: `onMount` has already filled both KPI tiles via
-  // `loadOvertimeBalance()` and the year-scoped vacation-summary loader, and this runs again
-  // every time the
-  // request form opens (`$effect` below, "if (showForm) loadBalanceForType(formType)").
-  // Both catch arms used to blank their state, so ONE transient failure of the second call
-  // wiped a value the first call had fetched correctly — and the tile stayed empty until a
-  // full page reload. In a network trace that reads as "GET /leave/overtime-balance -> 200,
-  // tile empty anyway", which is exactly the shape of the still-unreproduced report in #258.
-  // It is a defect on its own terms regardless of whether it is that report's cause: the
-  // fresher, failed answer is not more true than the older, successful one.
-  //
-  // Preserving is only correct where the two calls ask the SAME question:
-  //   - OVERTIME_COMP: `/leave/overtime-balance` takes no parameters, so the preserved value
-  //     is the answer to the identical request. Preserve.
-  //   - VACATION: the entitlement read is scoped to `calYear`. Preserving across a year change
-  //     would re-create issue #122 (the tiles claiming one year while this writer shows
-  //     another), so it is preserved ONLY when `calYear` did not move while the request was in
-  //     flight. If it did, the displayed figure belongs to a year that is no longer on screen
-  //     and is cleared — a stale year's number under a new year's heading is worse than an
-  //     empty tile.
-  async function loadBalanceForType(type: TypeCode) {
-    if (type === "OVERTIME_COMP") {
-      try {
-        const r = await api.get<OvertimeBalanceResponse>("/leave/overtime-balance");
-        overtimeBalance = r.balanceHours;
-        confirmedMinutes = r.confirmedMinutes;
-        openMonthMinutes = r.openMonthMinutes;
-        hasClosedMonth = r.hasClosedMonth ?? false;
-        rosterIncomplete = r.rosterIncomplete;
-        maxNegativeBalanceMinutes = r.maxNegativeBalanceMinutes;
-        isNegativeLimitExceeded = r.isNegativeLimitExceeded;
-      } catch {
-        // Deliberately empty: keep whatever `loadOvertimeBalance()` already put on screen.
-        // Nothing is cleared here — see the block comment above.
-      }
-    } else if (type === "VACATION") {
-      const yearAtRequest = calYear;
-      try {
-        const userId = $authStore.user?.employeeId;
-        if (!userId) return;
-        // Phase 117 (issue #122): the SECOND writer of vacationBalance — it must read the same
-        // year the tiles claim, or it re-mixes them on form open.
-        const entitlements = await api.get<VacationEntitlementRow[]>(
-          `/leave/entitlements/${userId}?year=${calYear}`,
-        );
-        const vac = entitlements.find((e) => e.typeCode === "VACATION");
-        vacationBalance = mapVacationBalance(vac);
-      } catch {
-        // Clear ONLY when the year moved while this request was in flight (issue #122's
-        // failure mode); otherwise keep what is on screen — see the block comment above.
-        if (yearAtRequest !== calYear) vacationBalance = null;
-      }
-    }
-  }
-
-  // ── Formular zurücksetzen ─────────────────────────────────────────────────
-  async function loadSpecialLeaveRules() {
-    if (specialLeaveRules.length > 0) return;
-    try {
-      const all = await api.get<SpecialLeaveRule[]>("/special-leave/rules");
-      specialLeaveRules = all.filter((r) => r.isActive);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  function resetForm() {
-    showForm = false;
-    resetFormFields();
-  }
-
-  function resetFormFields() {
-    editingRequest = null;
-    formType = "VACATION";
-    formStart = formEnd = formNote = "";
-    formHalfDay = false;
-    formSpecialRuleId = "";
-    overlapEntries = [];
-    hoursPreview = null;
-    minutesNeeded = null;
-    serverDays = null;
-  }
-
-  // ── Antrag einreichen / bearbeiten ────────────────────────────────────────
-  // Phase 87: appointment-collision warn-and-confirm gate on CREATE only. The
-  // dialog is parent-owned; on ≥1 collision it must be confirmed before POST.
-  let collisionConfirmOpen = $state(false);
-  let collisionSummary = $state<CollisionSummary | null>(null);
-
-  // Snapshot of the create payload captured BEFORE the form Modal is closed on
-  // the collision path. Closing the Modal triggers the reset effect
-  // (`if (!showForm) resetFormFields()`) which would otherwise wipe
-  // formStart/formEnd/… before the confirm-path POST runs — so the confirm
-  // mutation reads this snapshot instead of the (now reset) live fields.
-  type PendingCreate = {
-    type: TypeCode;
-    startDate: string;
-    endDate: string;
-    halfDay: boolean;
-    note: string;
-    specialLeaveRuleId?: string;
-  };
-  let pendingCreate = $state<PendingCreate | null>(null);
-
-  async function submitRequest() {
-    // Edit path is unchanged — no collision pre-check on PATCH.
-    if (editingRequest) {
-      await performLeaveMutation();
-      return;
-    }
-    // Create path: fail-open pre-check before the POST.
-    const summary = await checkAppointmentCollisions({
-      employeeId: $authStore.user?.employeeId ?? "",
-      from: formStart,
-      to: formEnd,
-    });
-    if (summary && summary.total > 0) {
-      // Booked appointments in range → require explicit confirm before POST.
-      // Snapshot the payload FIRST, then close the form Modal so exactly ONE
-      // scrim is live (mirrors the team/leave pendingApprove pattern), then
-      // open the collision dialog.
-      pendingCreate = {
-        type: formType,
-        startDate: formStart,
-        endDate: formEnd,
-        halfDay: SICK_TYPE_CODES.has(formType) ? false : formHalfDay,
-        note: formNote,
-        ...(formType === "SPECIAL" && formSpecialRuleId
-          ? { specialLeaveRuleId: formSpecialRuleId }
-          : {}),
-      };
-      collisionSummary = summary;
-      showForm = false;
-      collisionConfirmOpen = true;
-      return;
-    }
-    if (summary === null) {
-      // Fail-open: endpoint unreachable — proceed without blocking, notify.
-      toasts.error(COLLISION_UNAVAILABLE_TOAST);
-    }
-    await performLeaveMutation();
-  }
-
-  // Confirm handler for the collision dialog (create path only). Throws on
-  // failure so the ConfirmDialog stays open (its documented contract), mirroring
-  // the team/leave confirmCreateWithCollisions pattern.
-  async function confirmCreateWithCollisions() {
-    const ok = await performLeaveMutation();
-    if (!ok) throw new Error("Antrag konnte nicht eingereicht werden");
-  }
-
-  // Cancel handler for the collision dialog — abort cleanly, no orphaned state.
-  function cancelCreateCollision() {
-    pendingCreate = null;
-    collisionSummary = null;
-  }
-
-  // The actual create/edit mutation, shared by the direct path and the
-  // collision-confirm path. Returns true on success, false on failure.
-  async function performLeaveMutation(): Promise<boolean> {
-    formSaving = true;
-    formError = "";
-    try {
-      if (editingRequest) {
-        await api.patch(`/leave/requests/${editingRequest.id}`, {
-          startDate: formStart,
-          endDate: formEnd,
-          halfDay: SICK_TYPE_CODES.has(formType) ? false : formHalfDay,
-          note: formNote || null,
-        });
-      } else {
-        // Prefer the snapshot captured before the collision dialog closed the
-        // form (its reset effect wiped the live fields); fall back to the live
-        // form fields for the direct no-collision path.
-        const src: PendingCreate = pendingCreate ?? {
-          type: formType,
-          startDate: formStart,
-          endDate: formEnd,
-          halfDay: SICK_TYPE_CODES.has(formType) ? false : formHalfDay,
-          note: formNote,
-          ...(formType === "SPECIAL" && formSpecialRuleId
-            ? { specialLeaveRuleId: formSpecialRuleId }
-            : {}),
-        };
-        await api.post("/leave/requests", {
-          type: src.type,
-          startDate: src.startDate,
-          endDate: src.endDate,
-          halfDay: src.halfDay,
-          note: src.note || null,
-          ...(src.type === "SPECIAL" && src.specialLeaveRuleId
-            ? { specialLeaveRuleId: src.specialLeaveRuleId }
-            : {}),
-        });
-      }
-      resetForm();
-      pendingCreate = null;
-      collisionSummary = null;
-      await Promise.all([loadData(), loadCalendar(), loadVacationSummary(calYear)]);
-      return true;
-    } catch (e: unknown) {
-      formError = e instanceof Error ? e.message : "Fehler";
-      // On the collision-confirm path the form Modal is already closed, so the
-      // inline formError is not visible — surface it via a toast instead.
-      if (!showForm) toasts.error(formError);
-      return false;
-    } finally {
-      formSaving = false;
     }
   }
 
@@ -879,11 +553,6 @@
   // ── Antrag bearbeiten (Formular öffnen) ───────────────────────────────────
   function openEditForm(req: LeaveRequest) {
     editingRequest = req;
-    formType = req.typeCode as TypeCode;
-    formStart = req.startDate;
-    formEnd = req.endDate;
-    formHalfDay = req.halfDay;
-    formNote = req.note ?? "";
     showForm = true;
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -924,67 +593,9 @@
     return days === 1 ? "1 Tag" : `${days} Tage`;
   }
 
-  function calcDays(start: string, end: string, halfDay: boolean): number {
-    if (!start || !end || start > end) return 0;
-    if (halfDay) return 0.5;
-    let days = 0;
-    const cur = new Date(start + "T00:00:00");
-    const endD = new Date(end + "T00:00:00");
-    while (cur <= endD) {
-      const dow = cur.getDay();
-      if (dow !== 0 && dow !== 6) days++;
-      cur.setDate(cur.getDate() + 1);
-    }
-    return days;
-  }
-
-  function fmtH(h: number): string {
-    const abs = Math.abs(h);
-    const hh = Math.floor(abs);
-    const mm = Math.round((abs - hh) * 60);
-    return mm > 0 ? `${hh}h ${mm}min` : `${hh}h`;
-  }
-  // Abgeleitete Werte
-  let formDays = $derived(calcDays(formStart, formEnd, formHalfDay));
-  let effectiveDays = $derived(serverDays ?? formDays); // Server-Wert bevorzugen (Feiertage)
-  let hoursNeeded = $derived(hoursPreview ?? formDays * 8); // Fallback auf ×8 solange Preview lädt
-  // Phase 97-06 (SALDO-DISP-04) — the OVERTIME_COMP balance-box's affordability
-  // arithmetic (Guthaben/Verbleibend) uses the CONFIRMED figure, never the
-  // lifetime total (which still includes the unclaimable open-month forecast).
-  // Falls back to the lifetime total when confirmedMinutes hasn't loaded yet,
-  // matching the KPI tile's own degrade-not-blank convention below.
-  let confirmedHours = $derived(
-    confirmedMinutes !== undefined ? confirmedMinutes / 60 : (overtimeBalance ?? 0),
-  );
-  // Phase 100 (OTC-03) — resolved negative-balance tolerance in hours, for the
-  // Toleranz row display below.
-  let toleranceHours = $derived((maxNegativeBalanceMinutes ?? 0) / 60);
-  // Phase 100 (OTC-05, WR-03 code-review fix) — mirrors the server gate in leave.ts
-  // (`neededMinutes > availableMinutes`). Compares in MINUTES — the server's own unit —
-  // whenever both exact-minute values have loaded: `minutesNeeded` from GET
-  // /leave/hours-preview and `confirmedMinutes` from GET /leave/overtime-balance are both
-  // exact integers, so this branch can never disagree with the server.
-  //
-  // Previously this compared in HOURS: `hoursNeeded` (derived from the preview's
-  // .toFixed(2)-rounded `hours` field) against unrounded confirmedHours/toleranceHours.
-  // At a boundary whose true value isn't a whole number of minutes (e.g. needed =
-  // available = 241 minutes), the asymmetric rounding could disagree with the server's
-  // exact-minute gate and show a spurious warning/no-warning.
-  //
-  // Falls back to the (approximate, rounded-hours) comparison only in the brief
-  // (300ms-debounced) window before minutesNeeded/confirmedMinutes have loaded. This is
-  // display-only in both branches — the "⚠ Nicht genug Überstunden" hint never blocks
-  // the Antrag-Button (only `formSaving` does), and the server remains authoritative on
-  // submit regardless of which branch was active.
-  let wouldBeRejected = $derived(
-    minutesNeeded !== null && confirmedMinutes !== undefined
-      ? confirmedMinutes + (maxNegativeBalanceMinutes ?? 0) < minutesNeeded
-      : confirmedHours + toleranceHours - hoursNeeded < 0,
-  );
   // Phase 114: `vacSummary.remaining` is `number | null` — the null branch is what makes the
   // Urlaubskonto-Karte render "–" instead of a fake "0". Do NOT add `?? 0`.
   let vacRemaining = $derived(vacSummary.remaining);
-  let vacAfter = $derived(vacRemaining !== null ? vacRemaining - effectiveDays : null);
   // ── Lane assignment: stable gantt-style rows across calendar days ────────
   // Returns a Map<absenceId, laneIndex> so that a multi-day absence always
   // occupies the same vertical row in every day cell it spans.
@@ -1166,38 +777,6 @@
     filteredMyRequests.length;
     myReqPage = 1;
   });
-
-  $effect(() => {
-    if (showForm) {
-      formStart;
-      formEnd;
-      scheduleOverlapLoad();
-    }
-  });
-  $effect(() => {
-    if (showForm) {
-      formStart;
-      formEnd;
-      formHalfDay;
-      scheduleHoursPreview();
-    }
-  });
-  // Kontostände laden wenn Typ wechselt oder Formular öffnet
-  $effect(() => {
-    if (showForm) loadBalanceForType(formType);
-  });
-  // Phase 201 (Issue #201, B): partial incapacity to work does not exist (EFZG §3/§4) — the
-  // backend rejects half-day sick leave at all three write paths. The checkbox is therefore
-  // disabled rather than hidden (a hidden option reads like a bug, a disabled one with a
-  // reason reads like a rule), and an already-set selection is discarded when the type
-  // changes.
-  $effect(() => {
-    if (SICK_TYPE_CODES.has(formType)) formHalfDay = false;
-  });
-  // When Modal closes (Escape/backdrop), reset form fields.
-  $effect(() => {
-    if (!showForm) resetFormFields();
-  });
 </script>
 
 <svelte:head>
@@ -1220,6 +799,8 @@
           class="btn btn-primary btn-sm"
           onclick={() => {
             editingRequest = null;
+            pendingInitialStart = "";
+            pendingInitialEnd = "";
             showForm = true;
           }}>+ Neue Abwesenheit</button
         >
@@ -1320,392 +901,22 @@
   </div>
 
   <!-- ── Neuer Antrag (Modal) ─────────────────────────────────────────────────── -->
-  <!-- Phase 73-04 testid wiring:
-     - Modal primitive does not pass attrs through to its inner DOM; a
-       display:contents wrapper around the modal body owns
-       `leave-form-modal`, and the inner <form> owns `leave-form`. -->
-  <!-- Phase 201 (Issue #201, C): the eyebrow names the SELECTED type. It used to be a fixed
-       "Urlaub", even above a Krankmeldung — same family as Issue #200: a vacation string in a
-       place that knows the type. typeName() is code-driven (TYPE_OPTIONS), never a comparison
-       against a display name. -->
-  <Modal
+  <!-- Phase 415 (#415): the shared create/edit dialog. `employeeId` is always the caller's own
+       here (`/leave` has no person-picker concept); `entitlementYear` mirrors `calYear` so the
+       dialog's Resturlaub box and this page's own KPI strip agree on the same accounting year,
+       even though the two are now independent reads of the same endpoint (see the component's
+       own doc comment for why that is safe). -->
+  <LeaveRequestForm
     bind:open={showForm}
-    eyebrow={typeName(formType)}
-    title={editingRequest ? "Antrag bearbeiten" : "Neuer Abwesenheitsantrag"}
-  >
-    <div data-testid="leave-form-modal" style="display: contents">
-      {#if formError}
-        <div
-          class="alert alert-error"
-          role="alert"
-          style="margin-bottom:1rem"
-          data-testid="leave-form-error"
-        >
-          <span>⚠</span><span>{formError}</span>
-        </div>
-      {/if}
-
-      <form
-        id="leave-form"
-        data-testid="leave-form"
-        onsubmit={preventDefault(submitRequest)}
-        class="form-grid"
-      >
-        <div class="form-group">
-          <label class="form-label" for="f-type">Art der Abwesenheit</label>
-          <select
-            id="f-type"
-            data-testid="leave-form-type"
-            bind:value={formType}
-            class="form-input"
-            disabled={!!editingRequest}
-            onchange={() => {
-              if (formType === "SPECIAL") loadSpecialLeaveRules();
-            }}
-          >
-            {#each TYPE_OPTIONS as t (t.code)}
-              <option value={t.code}>{t.label}</option>
-            {/each}
-          </select>
-        </div>
-
-        {#if formType === "SPECIAL"}
-          <div class="form-group">
-            <label class="form-label" for="f-special-rule">Anlass</label>
-            <select id="f-special-rule" bind:value={formSpecialRuleId} class="form-input" required>
-              <option value="">— Anlass wählen —</option>
-              {#each specialLeaveRules as rule (rule.id)}
-                <option value={rule.id}>{rule.name} ({Number(rule.defaultDays)} Tage)</option>
-              {/each}
-            </select>
-          </div>
-        {/if}
-
-        <div class="form-group">
-          <label class="form-label" for="f-start">Von</label>
-          <input
-            id="f-start"
-            data-testid="leave-form-from"
-            type="date"
-            bind:value={formStart}
-            required
-            class="form-input"
-          />
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="f-end">Bis</label>
-          <input
-            id="f-end"
-            data-testid="leave-form-to"
-            type="date"
-            bind:value={formEnd}
-            required
-            min={formStart}
-            class="form-input"
-          />
-        </div>
-
-        <!-- Überstundensaldo-Info -->
-        {#if formType === "OVERTIME_COMP" && overtimeBalance !== null}
-          <div class="form-group form-group--full">
-            <div class="balance-box">
-              <div class="balance-row">
-                <span class="balance-label">Guthaben</span>
-                {#if !hasClosedMonth}
-                  <!-- Phase 97-06 (SALDO-DISP-04) — a confirmed value of 0 with no
-                       closed month yet must not read as a genuine 0h entitlement.
-                       Reuses SaldoAnzeige's own "noch kein Monatsabschluss" caption
-                       (state A3) rather than restating that copy locally here. -->
-                  <span class="balance-value">
-                    <SaldoAnzeige
-                      variant="compact"
-                      confirmedMinutes={confirmedMinutes ?? 0}
-                      hasClosedMonth={false}
-                    />
-                  </span>
-                {:else}
-                  <span class="balance-value">{fmtH(confirmedHours)}</span>
-                {/if}
-              </div>
-              {#if toleranceHours > 0}
-                <div class="balance-row">
-                  <span class="balance-label">Toleranz</span>
-                  <span class="balance-value">+ {fmtH(toleranceHours)}</span>
-                </div>
-              {/if}
-              {#if isNegativeLimitExceeded === true}
-                <!-- Phase 100 (D-10) — warn tone, not the red hint below: this is
-                     a standing account-state signal, independent of any draft
-                     request. The red hint stays reserved for "this specific
-                     request would be rejected". -->
-                <p class="balance-hint-notice">
-                  ⚠ Guthaben übersteigt bereits die Toleranzgrenze ({fmtH(toleranceHours)})
-                </p>
-              {/if}
-              {#if typeof openMonthMinutes === "number"}
-                <!-- Muted, non-arithmetic — the forecast is shown for context but
-                     never enters the Verbleibend/warning arithmetic below, and is
-                     never presented as claimable (the whole point of this plan).
-                     Omitted entirely when openMonthMinutes is null (fail-safe
-                     shape) rather than showing a fabricated zero. -->
-                <div class="balance-row">
-                  <span class="balance-label">Laufender Monat (Prognose)</span>
-                  <span class="balance-value balance-value--muted"
-                    >{fmtH(openMonthMinutes / 60)}</span
-                  >
-                </div>
-                <p class="balance-hint-muted">
-                  Noch nicht abrufbar – wird mit dem Monatsabschluss zu „Bestätigt“.
-                </p>
-              {/if}
-              {#if effectiveDays > 0 || formHalfDay}
-                <div class="balance-row">
-                  <span class="balance-label">
-                    Wird genutzt ({daysLabel(effectiveDays, formHalfDay)})
-                  </span>
-                  <span class="balance-value balance-deduct">
-                    {#if hoursPreviewLoading}
-                      <span class="text-muted">…</span>
-                    {:else}
-                      − {fmtH(hoursNeeded)}
-                    {/if}
-                  </span>
-                </div>
-                <div class="balance-divider"></div>
-                <div class="balance-row">
-                  <span class="balance-label">Verbleibend</span>
-                  <span class="balance-value {wouldBeRejected ? 'balance-warn' : ''}">
-                    {#if hoursPreviewLoading}
-                      <span class="text-muted">…</span>
-                    {:else}
-                      {fmtH(confirmedHours - hoursNeeded)}
-                    {/if}
-                  </span>
-                </div>
-                {#if !hoursPreviewLoading && wouldBeRejected}
-                  <p class="balance-hint-warn">
-                    ⚠ Nicht genug Überstunden vorhanden{toleranceHours > 0
-                      ? " (auch mit Toleranz)"
-                      : ""}
-                  </p>
-                {/if}
-              {/if}
-            </div>
-          </div>
-        {/if}
-
-        <!-- Tage-Info (sofort sichtbar, kein Ladeindikator) -->
-        {#if formStart && formEnd && formStart <= formEnd && (formDays > 0 || formHalfDay)}
-          <div class="form-group form-group--full" data-testid="leave-form-days-calc">
-            <div class="days-info-bar">
-              <span class="days-info-icon">📅</span>
-              <span class="days-info-text">
-                <strong>{daysLabel(effectiveDays, formHalfDay)}</strong>
-                {#if hoursPreviewLoading}
-                  <span class="days-info-note">(Feiertage werden geprüft…)</span>
-                {:else if serverDays !== null && serverDays !== formDays}
-                  <span class="days-info-note">(Feiertage berücksichtigt)</span>
-                {/if}
-              </span>
-            </div>
-          </div>
-        {/if}
-
-        <!-- Urlaubssaldo-Info -->
-        {#if formType === "VACATION" && vacationBalance !== null}
-          <div class="form-group form-group--full">
-            <div class="balance-box">
-              <div class="balance-row">
-                <span class="balance-label">Jahresanspruch</span>
-                <span class="balance-value">{vacationBalance.total} Tage</span>
-              </div>
-              {#if vacationBalance.carryOver > 0}
-                <div class="balance-row">
-                  <span class="balance-label">
-                    Übertrag Vorjahr
-                    {#if vacationBalance.carryOverDeadline}
-                      <span class="balance-meta"
-                        >(verfällt {fmtDate(vacationBalance.carryOverDeadline)})</span
-                      >
-                    {/if}
-                  </span>
-                  <span class="balance-value">+ {vacationBalance.carryOver} Tage</span>
-                </div>
-              {/if}
-              <!-- Phase 107 gap G-03: the label is CONDITIONAL on purpose. "(bestätigt)" is a
-                   qualifier that only means something next to the "Verbraucht (vorläufig)" row
-                   below, which renders only for SHIFT_BASED provisional consumption. At
-                   provisionalUsed === 0 that row is absent, so the qualifier would pose a
-                   contrast the card never resolves — we fall back to "Genommen", the pre-107
-                   wording still used by this page's own summary strip, admin/employees/[id]
-                   and reports. Same predicate as the #if guard below, so the pair is always
-                   rendered together or not at all. Do NOT collapse this back to a constant. -->
-              <div class="balance-row">
-                <span class="balance-label"
-                  >{vacationBalance.provisionalUsed > 0
-                    ? "Verbraucht (bestätigt)"
-                    : "Genommen"}</span
-                >
-                <span class="balance-value"
-                  >− {vacationBalance.used - vacationBalance.provisionalUsed} Tage</span
-                >
-              </div>
-              {#if vacationBalance.provisionalUsed > 0}
-                <!-- Phase 107-07 (D-12): omitted entirely at zero — that omission plus the
-                     conditional label above (gap G-03) is what makes the card indistinguishable
-                     from before this phase for a reader with no SHIFT_BASED provisional
-                     consumption; dropping this row alone would leave a dangling "(bestätigt)"
-                     qualifier up there with nothing to contrast against. Muted like Phase 97's
-                     "Laufender Monat (Prognose)" row (same class, same "true today, may change"
-                     meaning). -->
-                <div class="balance-row">
-                  <span class="balance-label">Verbraucht (vorläufig)</span>
-                  <span class="balance-value balance-value--muted"
-                    >− {vacationBalance.provisionalUsed} Tage</span
-                  >
-                </div>
-              {/if}
-              <!-- Phase 114: dieselbe Größe wie die Urlaubskonto-Karte (vacRemaining) und
-                   deshalb dasselbe Wort. „Verfügbar" ist entfallen — es hat vorher in der
-                   Karte die 38 und hier die 7 bezeichnet. -->
-              <div class="balance-row">
-                <span class="balance-label">Resturlaub</span>
-                <span class="balance-value">{vacRemaining} Tage</span>
-              </div>
-              {#if vacationBalance.section9Movements?.length}
-                <!-- Phase 104-10 (D-31): rendered verbatim from the server — never
-                     re-derived on the client, so account line, notification and audit
-                     entry all say the same thing. Optional chaining here is a second
-                     line of defense on top of mapVacationBalance() always populating
-                     the array — see the dev-pass fix note near VacationEntitlementRow. -->
-                <ul class="section9-movements">
-                  {#each vacationBalance.section9Movements ?? [] as m (m.creditId)}
-                    <li class="section9-movement" data-testid="section9-movement">{m.label}</li>
-                  {/each}
-                </ul>
-              {/if}
-              {#if effectiveDays > 0 || formHalfDay}
-                <div class="balance-row">
-                  <span class="balance-label">
-                    Wird genutzt
-                    {#if hoursPreviewLoading}
-                      <span class="text-muted">…</span>
-                    {:else}
-                      ({daysLabel(
-                        effectiveDays,
-                        formHalfDay,
-                      )}{#if serverDays !== null && serverDays !== formDays}, Feiertage abgezogen{/if})
-                    {/if}
-                  </span>
-                  <span class="balance-value balance-deduct">
-                    {#if hoursPreviewLoading}
-                      <span class="text-muted">…</span>
-                    {:else}
-                      − {effectiveDays} {effectiveDays === 1 ? "Tag" : "Tage"}
-                    {/if}
-                  </span>
-                </div>
-                <div class="balance-divider"></div>
-                <div class="balance-row">
-                  <span class="balance-label">Verbleibend</span>
-                  <span class="balance-value {(vacAfter ?? 0) < 0 ? 'balance-warn' : ''}">
-                    {#if hoursPreviewLoading}
-                      <span class="text-muted">…</span>
-                    {:else}
-                      {vacAfter} {(vacAfter ?? 0) === 1 ? "Tag" : "Tage"}
-                    {/if}
-                  </span>
-                </div>
-                {#if !hoursPreviewLoading && (vacAfter ?? 0) < 0}
-                  <p class="balance-hint-warn">⚠ Nicht genug Resturlaub vorhanden</p>
-                {/if}
-              {/if}
-            </div>
-          </div>
-        {/if}
-
-        <div class="form-group form-group--full">
-          <label class="form-label" for="f-note">Anmerkung (optional)</label>
-          <input
-            id="f-note"
-            data-testid="leave-form-note"
-            type="text"
-            bind:value={formNote}
-            class="form-input"
-            placeholder="z.B. Hochzeit, Arzttermin …"
-          />
-        </div>
-
-        <div class="form-group form-group--full">
-          <label class="toggle-label">
-            <input
-              type="checkbox"
-              data-testid="leave-form-half-day"
-              bind:checked={formHalfDay}
-              disabled={SICK_TYPE_CODES.has(formType)}
-              class="toggle-cb"
-            />
-            <span>Halber Tag</span>
-          </label>
-          {#if SICK_TYPE_CODES.has(formType)}
-            <p class="form-hint">Halbe Kranktage sind nicht zulässig</p>
-          {/if}
-        </div>
-
-        <!-- Parallele Abwesenheiten -->
-        {#if formStart && formEnd && formStart <= formEnd}
-          <div class="form-group form-group--full">
-            <div class="overlap-box">
-              <p class="overlap-title">
-                Kolleg:innen im gleichen Zeitraum
-                {#if overlapLoading}<span class="text-muted"> laden…</span>{/if}
-              </p>
-              {#if !overlapLoading && overlapEntries.filter((o) => o.status === "APPROVED").length === 0}
-                <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
-              {:else}
-                <div class="overlap-list">
-                  {#each overlapEntries.filter((o) => o.status === "APPROVED") as o (o.id)}
-                    <div class="overlap-row">
-                      <span class="overlap-name">{o.employeeName}</span>
-                      <span class="overlap-type">{o.typeName ?? NEUTRAL_CHIP_LABEL}</span>
-                      <span class="overlap-dates"
-                        >{fmtDate(o.startDate)} – {fmtDate(o.endDate)}</span
-                      >
-                    </div>
-                  {/each}
-                </div>
-              {/if}
-            </div>
-          </div>
-        {/if}
-
-        <div class="form-actions form-group--full">
-          <button
-            type="submit"
-            data-testid="leave-form-submit"
-            class="btn btn-primary"
-            disabled={formSaving}
-          >
-            {formSaving
-              ? "Speichern…"
-              : editingRequest
-                ? "Änderungen speichern"
-                : "Antrag einreichen"}
-          </button>
-          <button
-            type="button"
-            data-testid="leave-form-cancel"
-            class="btn btn-ghost"
-            onclick={resetForm}
-          >
-            Abbrechen
-          </button>
-        </div>
-      </form>
-    </div>
-    <!-- /leave-form-modal -->
-  </Modal>
+    employeeId={$authStore.user?.employeeId ?? ""}
+    {editingRequest}
+    initialStartDate={pendingInitialStart}
+    initialEndDate={pendingInitialEnd}
+    entitlementYear={calYear}
+    onSaved={async () => {
+      await Promise.all([loadData(), loadCalendar(), loadVacationSummary(calYear)]);
+    }}
+  />
 
   <!-- ── Übergreifend: Pro-rata Warnung + Urlaubsübersicht (beide Tabs) ──────── -->
   {#if proRataWarning}
@@ -1907,8 +1118,8 @@
               onkeydown={(e) => {
                 if ((e.key === "Enter" || e.key === " ") && day.isCurrentMonth) {
                   e.preventDefault();
-                  formStart = day.dateStr;
-                  formEnd = day.dateStr;
+                  pendingInitialStart = day.dateStr;
+                  pendingInitialEnd = day.dateStr;
                   editingRequest = null;
                   showForm = true;
                 }
@@ -2288,22 +1499,6 @@
       {/if}
     {/if}
   {/if}<!-- Ende Liste -->
-
-  <!-- ── Phase 87: Terminkollision-Warnung (Urlaub anlegen) ──────────────────── -->
-  {#if collisionSummary}
-    <ConfirmDialog
-      bind:open={collisionConfirmOpen}
-      title="Kundentermine im Zeitraum gebucht"
-      confirmLabel="Trotzdem fortfahren"
-      cancelLabel="Abbrechen"
-      onConfirm={confirmCreateWithCollisions}
-      onCancel={cancelCreateCollision}
-    >
-      {#snippet body()}
-        <CollisionWarnBody summary={collisionSummary} variant="range" />
-      {/snippet}
-    </ConfirmDialog>
-  {/if}
 
   <!-- ── Quick 260824-cjd: Storno-Begründung (Zurückziehen / Stornierung) ────── -->
   <ReasonDialog

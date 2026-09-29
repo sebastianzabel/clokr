@@ -1,4 +1,4 @@
-import { FastifyInstance } from "fastify";
+import { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { LeaveRequestStatus, Prisma } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
@@ -346,6 +346,80 @@ function formatDateDe(d: Date): string {
  */
 function canSeeLeaveType(isOwn: boolean, canSeeAll: boolean): boolean {
   return isOwn === true || canSeeAll;
+}
+
+/**
+ * Resolves the target employeeId for a read that defaults to the caller's own employeeId when
+ * `requestedEmployeeId` is omitted, and otherwise authorizes reading a DIFFERENT employee within
+ * the caller's `leave-entitlement:read:ZUGEWIESEN` reach. Phase 415 (#415): the unified
+ * leave-request dialog needs GET /hours-preview and GET /overtime-balance — both previously
+ * hardcoded to `req.user.employeeId` — to answer for a manager's SELECTED employee too. Mirrors
+ * GET /entitlements/:employeeId's authorization shape (Phase 91b Plan 04, D-10/D-14): same reach
+ * check, same tenant isolation, same T-100-09-conformant 404 for a foreign-tenant OR unknown id
+ * (byte-identical status + body, so a caller cannot distinguish the two) — copied rather than
+ * reinvented.
+ *
+ * The omitted/self path is a plain passthrough with NO permission check at all — byte-identical
+ * to the code it replaces, so no existing self-only caller can regress.
+ */
+async function resolveScopedEmployeeIdForRead(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  requestedEmployeeId: string | undefined,
+): Promise<
+  { ok: true; employeeId: string } | { ok: false; status: 403 | 404; body: { error: string } }
+> {
+  const selfEmployeeId = req.user.employeeId;
+  if (!requestedEmployeeId || requestedEmployeeId === selfEmployeeId) {
+    return { ok: true, employeeId: selfEmployeeId ?? "" };
+  }
+
+  const employeeId = requestedEmployeeId;
+  const tenantId = req.user.tenantId;
+
+  const employee = await app.prisma.employee.findUnique({
+    where: { id: employeeId },
+    select: { tenantId: true },
+  });
+  if (!employee || employee.tenantId !== tenantId) {
+    if (employee) {
+      // Same tenant-isolation check as /entitlements/:employeeId — only audited when a row
+      // genuinely exists in a foreign tenant, never for a wholly unknown id.
+      await app.audit({
+        userId: req.user.sub,
+        action: "CROSS_TENANT_ACCESS_DENIED",
+        entity: "Employee",
+        entityId: employeeId,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+    }
+    return { ok: false, status: 404, body: { error: "Mitarbeiter nicht gefunden" } };
+  }
+
+  const reach = await permissionReach(req, "leave-entitlement:read");
+  if (reach !== "ZUGEWIESEN") {
+    return { ok: false, status: 403, body: { error: "Forbidden" } };
+  }
+
+  const access = accessContextFromRequest(req);
+  const scopeReach = await resolveAccessReach(
+    app.prisma,
+    access,
+    "leave-entitlement:read:ZUGEWIESEN",
+  );
+  const stichtag = req.testNow ?? new Date();
+  if (!(await isStammsalonScopeMatch(app.prisma, tenantId, scopeReach, employeeId, stichtag))) {
+    await app.audit({
+      userId: req.user.sub,
+      action: "SCOPE_ACCESS_DENIED",
+      entity: "LeaveEntitlement",
+      entityId: employeeId,
+      request: { ip: req.ip, headers: req.headers as Record<string, string> },
+    });
+    return { ok: false, status: 404, body: { error: "Mitarbeiter nicht gefunden" } };
+  }
+
+  return { ok: true, employeeId };
 }
 
 export async function leaveRoutes(app: FastifyInstance) {
@@ -2654,15 +2728,26 @@ export async function leaveRoutes(app: FastifyInstance) {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req, reply) => {
-      const { startDate, endDate, halfDay } = req.query as {
+      const {
+        startDate,
+        endDate,
+        halfDay,
+        employeeId: requestedEmployeeId,
+      } = req.query as {
         startDate?: string;
         endDate?: string;
         halfDay?: string;
+        employeeId?: string;
       };
       if (!startDate || !endDate) {
         return reply.code(400).send({ error: "startDate und endDate erforderlich" });
       }
-      const employeeId = req.user.employeeId;
+      // Phase 415 (#415): optional employeeId — the unified leave-request dialog reads a
+      // manager's SELECTED employee's preview, not only the caller's own. Omitted or self is a
+      // byte-identical passthrough (see resolveScopedEmployeeIdForRead's doc comment).
+      const scoped = await resolveScopedEmployeeIdForRead(app, req, requestedEmployeeId);
+      if (!scoped.ok) return reply.code(scoped.status).send(scoped.body);
+      const employeeId = scoped.employeeId;
       if (!employeeId) return { hours: 0, days: 0 };
 
       const start = new Date(startDate);
@@ -2713,8 +2798,12 @@ export async function leaveRoutes(app: FastifyInstance) {
   app.get("/overtime-balance", {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
-    handler: async (req) => {
-      const employeeId = req.user.employeeId;
+    handler: async (req, reply) => {
+      // Phase 415 (#415): optional employeeId — same treatment as GET /hours-preview above.
+      const { employeeId: requestedEmployeeId } = req.query as { employeeId?: string };
+      const scoped = await resolveScopedEmployeeIdForRead(app, req, requestedEmployeeId);
+      if (!scoped.ok) return reply.code(scoped.status).send(scoped.body);
+      const employeeId = scoped.employeeId;
       if (!employeeId) {
         return {
           balanceHours: 0,

@@ -337,25 +337,22 @@ describe("Test 5 — AC-5 / D-20: no third copy of the review dialog exists", ()
     )
       .map((f) => f.relPath.slice("routes/".length))
       .sort();
-    // Corrected 2026-09-20 (Phase 255 Plan 04), after measurement proved the previous three-carrier
-    // expectation stale. Plan 03 removed the marker from "(app)/team/leave/+page.svelte" (it moved
-    // into LeaveReviewDialog.svelte, under lib/, not routes/); this plan removes it from
-    // "(app)/inbox/+page.svelte" the same way. After Phase 255, NO route carries a review dialog —
-    // the one file left here, "(app)/leave/+page.svelte", is not one: it is the overlap panel inside
-    // the EMPLOYEE's own request form (Phase 262), a different feature that happens to share the
-    // same German sentence. This is the mechanical proof behind "there is no third copy" (D-20),
-    // sharpened rather than weakened by the correction: before, "three carriers, none left" — now,
-    // "exactly one carrier, and it is demonstrably something else."
+    // Corrected 2026-09-29 (Phase 415, #415), after measurement proved the previous one-carrier
+    // expectation stale. The remaining carrier this test used to accept, "(app)/leave/+page.svelte"
+    // (the overlap panel inside the EMPLOYEE's own request form, Phase 262 — never a review-dialog
+    // duplicate, see the superseded comment this replaces), moved out of routes/ entirely: Phase
+    // 415 unified `/leave`'s and `/team/leave`'s create/edit dialogs into ONE shared component,
+    // `lib/components/leave/LeaveRequestForm.svelte`, and that component's overlap panel is where
+    // the marker sentence now lives. No route file carries it any more — a STRICTLY STRONGER form
+    // of the same D-20 guarantee ("no third copy of the review dialog exists"): before Phase 415,
+    // "exactly one carrier, and it is demonstrably something else"; now, "no route carries it at
+    // all, because the something-else it always was also moved under lib/".
     //
-    // This assertion CANNOT be red against today's unmodified tree: the corpus genuinely has
-    // exactly this one carrier today. Its guarantee is therefore proven by a RECORDED MUTATION
-    // instead of an unobserved green — repeated here because the previous mutation proof
-    // (255-01-PLAN.md Task 2 Part B) predates this correction and does not itself validate the
-    // corrected assertion: 255-04-SUMMARY.md records a temporary fourth marker-carrying file added
-    // under routes/, this test observed red, the file removed, green re-confirmed. An unobserved-
-    // green assertion here would be the same failure class as the Phase 96 discriminator-swap
-    // incident and the #203/#235/#240/#245 vacuous-guard incidents this project has already hit.
-    expect(carriers).toEqual(["(app)/leave/+page.svelte"]);
+    // Measured directly against this phase's own restructuring (moving `/leave`'s modal into
+    // LeaveRequestForm.svelte turned the pre-existing carriers array from
+    // `["(app)/leave/+page.svelte"]` to `[]`) — the equivalent of a mutation proof for this
+    // specific correction, since the change that flips this assertion IS the phase's own diff.
+    expect(carriers).toEqual([]);
   });
 });
 

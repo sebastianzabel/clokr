@@ -227,10 +227,16 @@ describe("resolveAdjustmentBadge", () => {
 // route source off disk (precedent: work-schedule.test.ts's ROUTE_SOURCE).
 // Deliberately NOT solved by exporting a label helper from vacation-balance.ts:
 // the mapper does not and must not know about UI copy.
+//
+// Phase 415 (#415): the Urlaubskonto card (and the rest of the create/edit dialog) moved out of
+// `/leave/+page.svelte` into the shared `lib/components/leave/LeaveRequestForm.svelte` — the
+// same component `/team/leave` now uses too. Both slice markers ("Urlaubssaldo-Info" comment,
+// "Anmerkung (optional)" label) survive verbatim in the new file, so only the source path below
+// changed.
 const LEAVE_ROUTE_SOURCE = readFileSync(
   path.join(
     path.dirname(fileURLToPath(import.meta.url)),
-    "../../../routes/(app)/leave/+page.svelte",
+    "../../components/leave/LeaveRequestForm.svelte",
   ),
   "utf-8",
 );

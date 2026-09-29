@@ -26,6 +26,22 @@ try {
   PAGE = readFileSync(resolve(process.cwd(), "src/routes/(app)/leave/+page.svelte"), "utf8");
 }
 
+// Phase 415 (#415): the request-form's OWN "Resturlaub" balance box — the shortfall hint and the
+// Phase 107 G-03 conditional label both live inside it — moved into the shared
+// `lib/components/leave/LeaveRequestForm.svelte`. The KPI strip's six tiles this file otherwise
+// tests stayed page-owned and are unaffected (see that component's own doc comment for why the
+// two are now independent reads of the same balance).
+const SHARED_FORM_URL = new URL("../../components/leave/LeaveRequestForm.svelte", import.meta.url);
+let SHARED_FORM: string;
+try {
+  SHARED_FORM = readFileSync(fileURLToPath(SHARED_FORM_URL), "utf8");
+} catch {
+  SHARED_FORM = readFileSync(
+    resolve(process.cwd(), "src/lib/components/leave/LeaveRequestForm.svelte"),
+    "utf8",
+  );
+}
+
 describe("leave page vocabulary — RETIRED terms must not come back", () => {
   it("no strip tile is called `Resturlaub` — that tile meant carryOverRemaining (0), not the balance", () => {
     expect(PAGE).not.toContain('<div class="vac-stat-label">Resturlaub</div>');
@@ -80,14 +96,17 @@ describe("leave page vocabulary — the new terms must be PRESENT", () => {
   });
 
   it("keeps the one surviving `Resturlaub` string literal — the shortfall hint, which now carries the single meaning", () => {
-    expect(PAGE).toContain("Nicht genug Resturlaub vorhanden");
+    // Phase 415: this hint lives inside the shared create/edit dialog now, not the page itself.
+    expect(SHARED_FORM).toContain("Nicht genug Resturlaub vorhanden");
+    expect(PAGE).not.toContain("Nicht genug Resturlaub vorhanden");
   });
 
   it("leaves Phase 107 gap G-03's conditional label untouched", () => {
     // G-03's own comment ends "Do NOT collapse this back to a constant." Phase 114 obeys that;
-    // this assertion is the proof that it did.
-    expect(PAGE).toContain('"Verbraucht (bestätigt)"');
-    expect(PAGE).toContain('<span class="balance-label">Verbraucht (vorläufig)</span>');
+    // this assertion is the proof that it did. Phase 415 moved the label itself into the shared
+    // dialog (SHARED_FORM), not just this page.
+    expect(SHARED_FORM).toContain('"Verbraucht (bestätigt)"');
+    expect(SHARED_FORM).toContain('<span class="balance-label">Verbraucht (vorläufig)</span>');
   });
 });
 

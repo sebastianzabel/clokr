@@ -17,6 +17,11 @@ import { describe, it, expect } from "vitest";
 
 import { LEAVE_TYPE_OPTIONS } from "$lib/leave/team-calendar-visibility";
 
+const SHARED_FORM = readRouteFile(
+  "../lib/components/leave/LeaveRequestForm.svelte",
+  "src/lib/components/leave/LeaveRequestForm.svelte",
+);
+
 function readRouteFile(relativeFromHere: string, relativeFromCwd: string): string {
   try {
     return readFileSync(fileURLToPath(new URL(relativeFromHere, import.meta.url)), "utf8");
@@ -137,12 +142,27 @@ describe("team leave page — one shared visibility decision (Phase 257)", () =>
   });
 
   describe("Group C — the three dropdowns did not change meaning (D-11)", () => {
-    it("C1: exactly four LEAVE_TYPE_OPTIONS loops — three selects plus the legend", () => {
-      expect((PAGE.match(/\{#each LEAVE_TYPE_OPTIONS as /g) ?? []).length).toBe(4);
+    // Phase 415 (#415): the create dialog's own type <select> moved out of this page and into
+    // the shared `LeaveRequestForm.svelte` (`/leave` and `/team/leave` now use ONE dialog). The
+    // page therefore carries three loops now (list-filter select, legend, Korrektur-modal select
+    // — the Korrektur flow is a SEPARATE, still page-owned modal, out of Phase 415's scope), and
+    // the fourth lives in the shared component — asserted below so the count invariant this
+    // group protects (every type dropdown reachable from team/leave is fed from
+    // LEAVE_TYPE_OPTIONS, never the HOLIDAY-including LEAVE_TYPES) still covers all four.
+    it("C1: exactly three LEAVE_TYPE_OPTIONS loops on the page — list-filter select, legend, Korrektur-modal select", () => {
+      expect((PAGE.match(/\{#each LEAVE_TYPE_OPTIONS as /g) ?? []).length).toBe(3);
     });
 
-    it("C2: no <option> block is fed from LEAVE_TYPES (which does contain HOLIDAY)", () => {
+    it("C1b: the shared create/edit dialog carries the fourth loop", () => {
+      expect((SHARED_FORM.match(/\{#each LEAVE_TYPE_OPTIONS as /g) ?? []).length).toBe(1);
+    });
+
+    it("C2: no <option> block on the page is fed from LEAVE_TYPES (which does contain HOLIDAY)", () => {
       expect(PAGE).not.toContain("{#each LEAVE_TYPES as");
+    });
+
+    it("C2b: the shared dialog is not fed from LEAVE_TYPES either", () => {
+      expect(SHARED_FORM).not.toContain("{#each LEAVE_TYPES as");
     });
   });
 });

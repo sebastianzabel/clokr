@@ -42,9 +42,13 @@ const PAGE = readRouteFile(
 
 describe("leave page — one shared visibility decision (Phase 303)", () => {
   it("Group 0: the page source actually loaded", () => {
-    // The file measures 109_708 bytes on the pre-edit tree; the floor sits several KB below so
-    // it does not become a time bomb on ordinary future edits.
-    expect(PAGE.length).toBeGreaterThan(100_000);
+    // The file measured 109_708 bytes on the Phase 303 tree. Phase 415 (#415) moved the create/
+    // edit dialog's own markup, state and fetch functions out into the shared
+    // `lib/components/leave/LeaveRequestForm.svelte`, shrinking this file to 78_423 bytes — a
+    // legitimate, by-design reduction (not a broken read), so the floor moved down with it. It
+    // still sits several KB below the current measurement so it does not become a time bomb on
+    // ordinary future edits.
+    expect(PAGE.length).toBeGreaterThan(60_000);
     expect(PAGE).toContain("cal-chip");
     expect(PAGE).toContain("cal-grid");
   });
