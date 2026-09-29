@@ -14,8 +14,13 @@ import {
   isStammsalonScopeMatch, // Phase 91b Plan 10 (#91), D-10/D-14
 } from "../../platform";
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
-import { getVacationEntitlement, upsertVacationEntitlement } from "../facade/entitlements"; // Phase 100B Plan 10 — A11/A16
+import {
+  getVacationEntitlement,
+  upsertVacationEntitlement,
+  ensureVacationEntitlementForYear, // Issue #416 — first-access self-heal
+} from "../facade/entitlements"; // Phase 100B Plan 10 — A11/A16
 import { listLeaveTypes, updateLeaveType } from "../facade/leave-types"; // Phase 100B Plan 10 — A18/A19
+import { resolveContractWorkDaysPerWeek } from "../leave-days"; // Issue #416 — same-context internal import, the one resolution chain (CLAUDE.md)
 
 const vacationEntitlementSchema = z.object({
   year: z.number().int().min(2000).max(2100),
@@ -90,6 +95,51 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
       const result = await getVacationEntitlement(app.prisma, employeeId, employee.tenantId, year);
       if (!result) return reply.code(404).send({ error: "Urlaubstyp nicht konfiguriert" });
       const { leaveTypeId, entitlement } = result;
+
+      // Issue #416, CONTEXT.md decision 6 ("first access"): an active employee's row for the
+      // CURRENT year that no code path ever created (either a genuinely new hire whose
+      // POST /employees predates this phase, or a year-rollover — "Jahreswechsel") is healed
+      // right here, on read. NEVER for a past/future year (that stays the repair script's job,
+      // Task 6/8 — backfilling history is a deliberate, auditable, batch action, not a read-time
+      // side effect) and NEVER for an inactive employee (`exitDate` set).
+      const currentYear = new Date().getFullYear();
+      if (!entitlement && employee.exitDate === null && year === currentYear) {
+        const tenantConfigForHeal = await app.prisma.tenantConfig.findUnique({
+          where: { tenantId: employee.tenantId },
+          select: { defaultVacationDays: true },
+        });
+        const workDaysPerWeek = await resolveContractWorkDaysPerWeek(
+          app.prisma,
+          employeeId,
+          employee.tenantId,
+        );
+        const healed = await ensureVacationEntitlementForYear(
+          app.prisma,
+          employeeId,
+          employee.tenantId,
+          year,
+          employee.hireDate,
+          workDaysPerWeek,
+          Number(tenantConfigForHeal?.defaultVacationDays ?? 30),
+          "Jahreswechsel — automatisch angelegt",
+          (entry) =>
+            app.audit({
+              userId: req.user.sub,
+              ...entry,
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            }),
+        );
+        if (healed?.entitlement) {
+          return {
+            year,
+            leaveTypeId,
+            totalDays: Number(healed.entitlement.totalDays),
+            usedDays: Number(healed.entitlement.usedDays),
+            carriedOverDays: Number(healed.entitlement.carriedOverDays),
+            carryOverDeadline: healed.entitlement.carryOverDeadline ?? null,
+          };
+        }
+      }
 
       return {
         year,
