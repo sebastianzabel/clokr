@@ -241,6 +241,11 @@ describe("Audit Trail Completeness", () => {
     // (a different act — the employee confirming an auto-inserted break on /break-status).
     it("(D-10) POST /:id/breaks writes a second AuditLog row (entity TimeEntry, action UPDATE) with breakMinutes/breakStatus before and after", async () => {
       const dateStr = daysAgoStrInTz(new Date(), 3);
+      // Phase 380 (issue #380): this fixture used to seed a bare breakMinutes column
+      // with zero Break rows — exactly the "sum without individual breaks" shape Phase
+      // 380 made a 400 case. Seeding a real Break row here keeps this test's actual
+      // purpose (the audit trail of the still-ALLOWED append) intact instead of
+      // asserting the pre-380 bug (a silently discarded 30-minute sum) as correct.
       const entry = await app.prisma.timeEntry.create({
         data: {
           employeeId: data.employee.id,
@@ -251,6 +256,14 @@ describe("Audit Trail Completeness", () => {
           breakStatus: "AUTO",
           salonId: data.salonId,
           source: "MANUAL",
+          breaks: {
+            create: [
+              {
+                startTime: new Date(`${dateStr}T07:00:00.000Z`),
+                endTime: new Date(`${dateStr}T07:30:00.000Z`),
+              },
+            ],
+          },
         },
       });
 
@@ -268,7 +281,8 @@ describe("Audit Trail Completeness", () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body);
-      expect(body.breakMinutes).toBe(45);
+      // 30 (existing Break row) + 45 (newly appended) = 75.
+      expect(body.breakMinutes).toBe(75);
 
       const timeEntryLog = await app.prisma.auditLog.findFirst({
         where: {
@@ -282,7 +296,7 @@ describe("Audit Trail Completeness", () => {
         userId: data.empUser.id,
         beforeTs,
         oldValue: { breakMinutes: 30, breakStatus: "AUTO" },
-        newValue: { breakMinutes: 45, breakStatus: "CONFIRMED" },
+        newValue: { breakMinutes: 75, breakStatus: "CONFIRMED" },
       });
 
       // The pre-existing BREAK_APPEND audit (entity Break) for the new break must still exist.
