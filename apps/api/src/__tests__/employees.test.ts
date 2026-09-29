@@ -315,8 +315,9 @@ describe("Employees API", () => {
         });
         // scaledBase = calculatePartTimeVacation(5 contract days, fullTimeWorkDays=5, 30) = 30
         // (NOT 30 * 5/defaultWorkDays.length(4) = 37.5). Hired 01.10. -> Oct/Nov/Dec = 3 full
-        // months remaining in the hire year -> 30 * 3/12 = 7.5 (§ 5 Abs. 1 lit. a BUrlG).
-        expect(Number(entitlement?.totalDays)).toBe(7.5);
+        // months remaining in the hire year -> 30 * 3/12 = 7.5, which § 5 Abs. 2 BUrlG (BAG)
+        // rounds UP to a full day (fraction >= 0.5) -> 8.
+        expect(Number(entitlement?.totalDays)).toBe(8);
       } finally {
         await app.prisma.tenantConfig.update({
           where: { tenantId: data.tenant.id },

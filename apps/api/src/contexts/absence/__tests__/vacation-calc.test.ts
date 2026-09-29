@@ -189,8 +189,24 @@ describe("calculateProRataVacationForHire (Issue #416)", () => {
     expect(calculateProRataVacationForHire(30, YEAR, new Date(YEAR, 6, 1))).toBe(15);
   });
 
-  it("returns 2.5 when hire is Dec 31 and base is 30 (1/12)", () => {
-    expect(calculateProRataVacationForHire(30, YEAR, new Date(YEAR, 11, 31))).toBe(2.5);
+  it("§ 5 Abs. 2 BUrlG (BAG): a fraction >= 0.5 day rounds UP to a full day — Dec 31 hire, 1/12 of 30 = 2.5 -> 3", () => {
+    expect(calculateProRataVacationForHire(30, YEAR, new Date(YEAR, 11, 31))).toBe(3);
+  });
+
+  it("§ 5 Abs. 2 BUrlG (BAG): a fraction >= 0.5 day rounds UP — 30 * 3/12 = 7.5 -> 8 (owner worked example, #416)", () => {
+    // Oct 1 hire -> Oct/Nov/Dec = 3 full months remaining.
+    expect(calculateProRataVacationForHire(30, YEAR, new Date(YEAR, 9, 1))).toBe(8);
+  });
+
+  it("§ 5 Abs. 2 BUrlG (BAG): a fraction >= 0.5 day rounds UP — 30 * 5/12 = 12.5 -> 13 (owner worked example, #416)", () => {
+    // Aug 1 hire -> Aug/Sep/Oct/Nov/Dec = 5 full months remaining.
+    expect(calculateProRataVacationForHire(30, YEAR, new Date(YEAR, 7, 1))).toBe(13);
+  });
+
+  it("§ 5 Abs. 2 BUrlG (BAG): a fraction < 0.5 day is NOT rounded to 0.5 — it is kept as the exact fraction (2 decimals) — 25 * 4/12 = 8.33...", () => {
+    // Sep 1 hire -> Sep/Oct/Nov/Dec = 4 full months remaining. 25 * 4/12 = 8.3333... -> 8.33,
+    // not the old round-to-nearest-0.5 result (8.5) that calculatePartTimeVacation uses elsewhere.
+    expect(calculateProRataVacationForHire(25, YEAR, new Date(YEAR, 8, 1))).toBe(8.33);
   });
 
   it("returns 0 when hireDate is in a future year", () => {

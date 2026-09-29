@@ -192,11 +192,18 @@ export function calculateProRataVacation(baseDays: number, year: number, exitDat
  * — i.e. `baseDays` here is the day-count already owed at this employee's contract, not the raw
  * tenant default.
  *
+ * § 5 Abs. 2 BUrlG rounding (BAG, corrected 2026-09-29, Issue #416): a fraction of at least half
+ * a day rounds UP to a full day; a fraction below half a day is NOT rounded to the nearest 0.5 —
+ * it stays the exact fraction, to 2 decimals. This differs from `calculatePartTimeVacation()`'s
+ * round-to-nearest-0.5 convention (a separate question, left unchanged) and from the sibling
+ * EXIT-date `calculateProRataVacation()` above, which still rounds to nearest 0.5 (a known,
+ * out-of-scope-here divergence — see the Issue #416 PR).
+ *
  * @param baseDays - Full-year vacation entitlement (may already be part-time adjusted)
  * @param year - The calendar year to calculate for
  * @param hireDate - The employee's first working day
- * @returns Pro-rata entitlement rounded UP to nearest 0.5; `baseDays` unchanged if hired before
- *   `year`; `0` if not yet hired in `year`.
+ * @returns Pro-rata entitlement: `baseDays` unchanged if hired before `year`; `0` if not yet
+ *   hired in `year`; otherwise the § 5 Abs. 2 BUrlG rounding above.
  */
 export function calculateProRataVacationForHire(
   baseDays: number,
@@ -227,8 +234,16 @@ export function calculateProRataVacationForHire(
   monthsWorked = Math.min(monthsWorked, 12);
 
   const raw = (baseDays * monthsWorked) / 12;
-  // Round UP to nearest 0.5 — identical rounding step as calculateProRataVacation().
-  return Math.ceil(raw * 2) / 2;
+  // § 5 Abs. 2 BUrlG, as construed by the BAG: "Bruchteile von Urlaubstagen, die mindestens
+  // einen halben Tag ergeben, sind auf volle Urlaubstage aufzurunden" — a fraction of AT LEAST
+  // half a day rounds UP to a FULL day. A fraction BELOW half a day is NOT rounded to the
+  // nearest 0.5 (that convention belongs to calculatePartTimeVacation()'s part-time scaling,
+  // a different question, deliberately left as-is per Issue #416 coordinator decision
+  // 2026-09-29) — it is kept as the exact fraction, to 2 decimals (e.g. 8.33), matching how
+  // prod's existing manually-entered rows already do it (13.0 already follows this rule).
+  const frac = raw - Math.floor(raw);
+  if (frac >= 0.5) return Math.ceil(raw);
+  return Math.round(raw * 100) / 100;
 }
 
 /**
