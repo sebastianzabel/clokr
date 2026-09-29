@@ -591,6 +591,18 @@ describe("Time Entries API", () => {
           breakStatus: "AUTO",
           source: "MANUAL",
           salonId: data.salonId, // Phase 68b (issue #68)
+          // Phase 380 (issue #380): a real Break row backs this 30-minute sum so the
+          // entry is NOT in the "breakMinutes > 0, no Break rows" case that Phase 380
+          // rejects with 400 — the test at :648 below appends via POST /:id/breaks and
+          // must stay in the still-allowed "entry already has Break rows" case.
+          breaks: {
+            create: [
+              {
+                startTime: new Date(`${dateStr}T07:00:00Z`),
+                endTime: new Date(`${dateStr}T07:30:00Z`),
+              },
+            ],
+          },
         },
       });
       flipCleanupIds.push(res.id);

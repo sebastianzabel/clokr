@@ -900,6 +900,23 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
       }
 
+      // Phase 380 (issue #380), owner decision Variante (b), 2026-09-28: an entry that already
+      // carries a positive breakMinutes SUM but has no individual Break rows (legacy data or a
+      // manual breakMinutes-only entry) must not have that sum silently discarded by the
+      // recompute-from-Break-rows below. Rejecting the first append and pointing at PUT /:id with
+      // breaks:[...] (which already fully replaces breakMinutes from the submitted slots, see
+      // below) avoids both the data loss AND fabricating an unstructured break with no start/end
+      // time (ArbZG § 4 requires an actual, reconstructable rest period).
+      if (entry.breakMinutes > 0) {
+        const existingBreakCount = await app.prisma.break.count({ where: { timeEntryId: id } });
+        if (existingBreakCount === 0) {
+          return reply.code(400).send({
+            error:
+              "Dieser Eintrag hat eine Pausensumme ohne Einzelpausen. Pause zuerst in Einzelpausen aufteilen (Eintrag bearbeiten).",
+          });
+        }
+      }
+
       const breakStart = new Date(body.startTime);
       const breakEnd = new Date(body.endTime);
 

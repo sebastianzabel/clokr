@@ -656,8 +656,22 @@ import { readFileSync } from "node:fs";
 // MIN_TESTS from 5883 to 6019; the delta mixes Phase 71b's new test files (resolver matrix,
 // migration replay, per-salon holiday API, work-location readers, D-05 boundary guard) with the
 // test files #361/#362/#363 added on `origin/main`. Numbers read from the reporter, not summed.
+//
+// Phase 380 (issue #380), 2026-09-29: no new test FILE — MIN_FILES stays 346. MIN_TESTS rises from
+// 6019 to 6023: +4 new cases in `src/contexts/time-tracking/api/__tests__/breaks.test.ts` (Cases
+// A-D covering the new POST /:id/breaks 400 guard and the confirmed PUT /:id conversion path).
+// Measured by counting `it(` occurrences in that file's git blob before and after this plan's Task
+// 1 commit (5 -> 9); the two other files this plan touches, `src/__tests__/time-entries.test.ts`
+// and `src/__tests__/audit-trail.test.ts`, only had their fixtures corrected (a bare `breakMinutes`
+// column replaced with a real `Break` row) — no case added or removed in either (29 -> 29, 22 -> 22,
+// same count before/after). Note: on the current merged tree the reporter's actual totals
+// (`pnpm --filter @clokr/api test`, `apps/api/vitest-report.json`) are `testResults.length` 371 and
+// `numTotalTests` 6389, well above this floor — the drift accrued from other phases landing since
+// Phase 71b without re-tightening this floor to the exact total (the check is `<` MIN_*, a lower
+// bound, not an equality); this plan's own action is the mechanical +4 documented above, not a
+// re-measure-to-actual sweep, which is out of this phase's scope.
 const MIN_FILES = 346;
-const MIN_TESTS = 6019;
+const MIN_TESTS = 6023;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
