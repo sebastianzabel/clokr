@@ -234,9 +234,9 @@ export function calculateProRataVacationForHire(
   monthsWorked = Math.min(monthsWorked, 12);
 
   const raw = (baseDays * monthsWorked) / 12;
-  // § 5 Abs. 2 BUrlG, as construed by the BAG: "Bruchteile von Urlaubstagen, die mindestens
-  // einen halben Tag ergeben, sind auf volle Urlaubstage aufzurunden" — a fraction of AT LEAST
-  // half a day rounds UP to a FULL day. A fraction BELOW half a day is NOT rounded to the
+  // § 5 Abs. 2 BUrlG, as construed by the BAG (in English: fractions of a vacation day that add
+  // up to at least half a day are to be rounded up to a full vacation day): a fraction of AT
+  // LEAST half a day rounds UP to a FULL day. A fraction BELOW half a day is NOT rounded to the
   // nearest 0.5 (that convention belongs to calculatePartTimeVacation()'s part-time scaling,
   // a different question, deliberately left as-is per Issue #416 coordinator decision
   // 2026-09-29) — it is kept as the exact fraction, to 2 decimals (e.g. 8.33), matching how
