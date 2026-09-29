@@ -56,6 +56,31 @@ describe("Phase 408 (#408) — source-read guards", () => {
     expect(body).toContain('localStorage.setItem("user"');
     expect(body).toContain("permissions");
   });
+
+  it("WEB-c: boot block schedules loadPermissionsIfMissing via queueMicrotask when permissions is undefined", () => {
+    expect(STORES_AUTH).toContain('import { loadPermissionsIfMissing } from "$api/client"');
+    const start = STORES_AUTH.indexOf("if (browser && initial.accessToken) {");
+    const end = STORES_AUTH.indexOf("return {", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const body = STORES_AUTH.slice(start, end);
+    const iCheck = body.search(/initial\.user\s*&&\s*initial\.user\.permissions\s*===\s*undefined/);
+    const iMicrotask = body.indexOf("queueMicrotask(");
+    const iLoader = body.indexOf("loadPermissionsIfMissing()");
+    expect(iCheck).toBeGreaterThan(-1);
+    expect(iMicrotask).toBeGreaterThan(iCheck);
+    expect(iLoader).toBeGreaterThan(iMicrotask);
+  });
+
+  it("WEB-d: loadPermissionsIfMissing exists, reuses tryRefresh() and issues no request of its own", () => {
+    const start = CLIENT.indexOf("export async function loadPermissionsIfMissing(");
+    expect(start).toBeGreaterThan(-1);
+    const end = CLIENT.indexOf("\n}", start);
+    expect(end).toBeGreaterThan(start);
+    const body = CLIENT.slice(start, end);
+    expect(body).toContain("tryRefresh()");
+    expect(body).not.toContain("fetch(");
+  });
 });
 
 // Hoisted mutable auth-store mock: `state` is read synchronously by every `subscribe()` call (the
@@ -95,7 +120,7 @@ vi.mock("$stores/auth", () => ({
   },
 }));
 
-import { api } from "$api/client";
+import { api, loadPermissionsIfMissing } from "$api/client";
 
 function jsonResponse(body: unknown, status = 200) {
   return Promise.resolve({
@@ -188,5 +213,115 @@ describe("Phase 408 (#408) — behavioural: doRefresh forwards permissions to se
     await api.get("/probe");
 
     expect(authMock.setTokens.mock.calls[0][2]).toBeUndefined();
+  });
+});
+
+describe("Phase 408 (#408) — behavioural: loadPermissionsIfMissing() (Task 2, AK-3/AK-4)", () => {
+  it("WEB-l1: a cached user without permissions triggers exactly one refresh, whose list is stored", async () => {
+    authMock.state.user = {
+      id: "u1",
+      email: "u1@test.de",
+      role: "EMPLOYEE",
+      employeeId: "e1",
+      firstName: null,
+      permissions: undefined,
+    };
+    fetchMock.mockReturnValueOnce(
+      jsonResponse({
+        accessToken: "a2",
+        refreshToken: "r2",
+        permissions: ["leave-request:read:ZUGEWIESEN"],
+      }),
+    );
+
+    const result = await loadPermissionsIfMissing();
+
+    expect(result).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/api/v1/auth/refresh");
+    expect((options.method ?? "").toUpperCase()).toBe("POST");
+    expect(options.body).toBe(JSON.stringify({ refreshToken: "r1" }));
+    expect(authMock.setTokens.mock.calls[0][2]).toEqual(["leave-request:read:ZUGEWIESEN"]);
+  });
+
+  it("WEB-l2: a cached user with permissions: [] never re-triggers — an empty list is a real answer", async () => {
+    authMock.state.user = {
+      id: "u1",
+      email: "u1@test.de",
+      role: "EMPLOYEE",
+      employeeId: "e1",
+      firstName: null,
+      permissions: [],
+    };
+
+    const result = await loadPermissionsIfMissing();
+
+    expect(result).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("WEB-l2: no cached user resolves false without a request", async () => {
+    authMock.state.user = null;
+
+    const result = await loadPermissionsIfMissing();
+
+    expect(result).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("WEB-l3: a 401 refresh answer resolves false — no setTokens, no logout, session stays fail-closed", async () => {
+    authMock.state.user = {
+      id: "u1",
+      email: "u1@test.de",
+      role: "EMPLOYEE",
+      employeeId: "e1",
+      firstName: null,
+      permissions: undefined,
+    };
+    fetchMock.mockReturnValueOnce(errorResponse(401));
+
+    const result = await loadPermissionsIfMissing();
+
+    expect(result).toBe(false);
+    expect(authMock.setTokens).not.toHaveBeenCalled();
+    expect(authMock.logout).not.toHaveBeenCalled();
+  });
+
+  it("WEB-l3: a network error resolves false and never rejects", async () => {
+    authMock.state.user = {
+      id: "u1",
+      email: "u1@test.de",
+      role: "EMPLOYEE",
+      employeeId: "e1",
+      firstName: null,
+      permissions: undefined,
+    };
+    fetchMock.mockReturnValueOnce(Promise.reject(new Error("network down")));
+
+    await expect(loadPermissionsIfMissing()).resolves.toBe(false);
+  });
+
+  it("WEB-l4: two concurrent calls reuse the existing refresh dedup — exactly one /auth/refresh fetch", async () => {
+    authMock.state.user = {
+      id: "u1",
+      email: "u1@test.de",
+      role: "EMPLOYEE",
+      employeeId: "e1",
+      firstName: null,
+      permissions: undefined,
+    };
+    fetchMock.mockReturnValueOnce(
+      jsonResponse({ accessToken: "a2", refreshToken: "r2", permissions: [] }),
+    );
+
+    const [first, second] = await Promise.all([
+      loadPermissionsIfMissing(),
+      loadPermissionsIfMissing(),
+    ]);
+
+    expect(first).toBe(true);
+    expect(second).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
