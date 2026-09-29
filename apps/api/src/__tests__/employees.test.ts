@@ -263,6 +263,70 @@ describe("Employees API", () => {
       expect(Number(entitlement?.totalDays)).toBe(30);
       expect(entitlement?.isAutoCalculated).toBe(true);
     });
+
+    it("uses a hardcoded 5-day reference week, NOT TenantConfig.defaultWorkDays.length — pins the prod config (defaultWorkDays={1,2,3,4}) worked example from #416", async () => {
+      // Owner statement (binding, #416): "30 Tage bei 5 Tagen/Woche; wenn sie weniger arbeitet
+      // entsprechend anpassen" — a 5-day employee gets the full defaultVacationDays regardless of
+      // how many days the TENANT's default schedule covers. Prod's actual TenantConfig has
+      // defaultWorkDays=[1,2,3,4] (4 entries) while every employee in these other tests happens to
+      // hire onto the schema default [1,2,3,4,5] (5 entries), which cannot distinguish "scaled by
+      // a hardcoded 5" from "scaled by defaultWorkDays.length" — both give 30 in that case. This
+      // test sets defaultWorkDays to prod's actual 4-entry value so the two formulas diverge
+      // (5 - a wrong /4 scaling would yield 30 * 5/4 = 37.5) and asserts the correct one.
+      const original = await app.prisma.tenantConfig.findUniqueOrThrow({
+        where: { tenantId: data.tenant.id },
+        select: { defaultWorkDays: true, defaultVacationDays: true },
+      });
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: data.tenant.id },
+        data: { defaultWorkDays: [1, 2, 3, 4], defaultVacationDays: 30 },
+      });
+      try {
+        const year = 2026;
+        const hireDateIso = new Date(Date.UTC(year, 9, 1)).toISOString(); // 01.10.2026
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/employees",
+          headers: { authorization: `Bearer ${data.adminToken}` },
+          payload: {
+            email: `entitlement-prod-config-${uid}@test.de`,
+            firstName: "Prod",
+            lastName: "Config",
+            employeeNumber: `PC-${uid}`,
+            hireDate: hireDateIso,
+            role: "EMPLOYEE",
+            scheduleType: "FIXED_SCHEDULE",
+            workDays: [1, 2, 3, 4, 5], // full-time, 5 contract days/week
+            weeklyHours: 40,
+            password: "Test@1234567!",
+          },
+        });
+        expect(res.statusCode).toBe(201);
+        const body = JSON.parse(res.body);
+
+        const entitlement = await app.prisma.leaveEntitlement.findUnique({
+          where: {
+            employeeId_leaveTypeId_year: {
+              employeeId: body.id,
+              leaveTypeId: data.vacationType.id,
+              year,
+            },
+          },
+        });
+        // scaledBase = calculatePartTimeVacation(5 contract days, fullTimeWorkDays=5, 30) = 30
+        // (NOT 30 * 5/defaultWorkDays.length(4) = 37.5). Hired 01.10. -> Oct/Nov/Dec = 3 full
+        // months remaining in the hire year -> 30 * 3/12 = 7.5 (§ 5 Abs. 1 lit. a BUrlG).
+        expect(Number(entitlement?.totalDays)).toBe(7.5);
+      } finally {
+        await app.prisma.tenantConfig.update({
+          where: { tenantId: data.tenant.id },
+          data: {
+            defaultWorkDays: original.defaultWorkDays,
+            defaultVacationDays: original.defaultVacationDays,
+          },
+        });
+      }
+    });
   });
 
   describe("POST /api/v1/employees — Nachladen nach dem Commit (Issue #379)", () => {
