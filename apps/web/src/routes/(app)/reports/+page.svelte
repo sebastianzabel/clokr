@@ -72,8 +72,19 @@
 
   type OvertimeOverview = { employees: OvertimeEmployee[] };
 
-  type LeaveOverviewRow = {
-    employee: { id: string; firstName: string; lastName: string; employeeNumber: string };
+  // Issue #416: a discriminated union — `missingEntitlement: true` marks a placeholder row (an
+  // active employee with no VACATION LeaveEntitlement row for this year yet), whose
+  // leaveType/totalDays/… fields are all null. Keeping the two shapes distinct (rather than one
+  // type with every non-employee field `| null`) lets the `{#if row.missingEntitlement}` branch
+  // below narrow without a non-null assertion on the real-row fields.
+  type LeaveOverviewEmployee = {
+    id: string;
+    firstName: string;
+    lastName: string;
+    employeeNumber: string;
+  };
+  type LeaveOverviewRealRow = {
+    employee: LeaveOverviewEmployee;
     leaveType: { id: string; name: string };
     year: number;
     totalDays: number;
@@ -81,7 +92,20 @@
     usedDays: number;
     remainingDays: number;
     pendingDays: number;
+    missingEntitlement?: false;
   };
+  type LeaveOverviewMissingRow = {
+    employee: LeaveOverviewEmployee;
+    leaveType: null;
+    year: number;
+    totalDays: null;
+    carriedOverDays: null;
+    usedDays: null;
+    remainingDays: null;
+    pendingDays: null;
+    missingEntitlement: true;
+  };
+  type LeaveOverviewRow = LeaveOverviewRealRow | LeaveOverviewMissingRow;
 
   // EMP-06: Employee monthly closes view
   type EmpMonthlyClose = {
@@ -273,7 +297,11 @@
       if (ln !== 0) return ln;
       const fn = a.employee.firstName.localeCompare(b.employee.firstName, "de");
       if (fn !== 0) return fn;
-      return a.leaveType.name.localeCompare(b.leaveType.name, "de");
+      // Issue #416: a missingEntitlement placeholder row carries leaveType: null — fall back to
+      // an empty string so the comparator never dereferences .name on it (a placeholder sorts
+      // before every real leave-type name for the same employee, which is fine — there's at
+      // most one placeholder row per employee).
+      return (a.leaveType?.name ?? "").localeCompare(b.leaveType?.name ?? "", "de");
     });
   });
 
@@ -1475,16 +1503,22 @@
               </tr>
             </thead>
             <tbody>
-              {#each pagedLeaveOverviewRows as row (row.employee.employeeNumber + ":" + row.leaveType.id)}
+              {#each pagedLeaveOverviewRows as row (row.employee.employeeNumber + ":" + (row.leaveType?.id ?? "missing"))}
                 <tr>
                   <td>{row.employee.firstName} {row.employee.lastName}</td>
                   <td>{row.employee.employeeNumber}</td>
-                  <td>{row.leaveType.name}</td>
-                  <td class="numeric">{formatDays(row.totalDays)}</td>
-                  <td class="numeric">{formatDays(row.carriedOverDays)}</td>
-                  <td class="numeric">{formatDays(row.usedDays)}</td>
-                  <td class="numeric">{formatDays(row.pendingDays)}</td>
-                  <td class="numeric strong">{formatDays(row.remainingDays)}</td>
+                  {#if row.missingEntitlement}
+                    <td colspan="6">
+                      <span class="badge badge-yellow">kein Anspruch hinterlegt</span>
+                    </td>
+                  {:else}
+                    <td>{row.leaveType?.name}</td>
+                    <td class="numeric">{formatDays(row.totalDays)}</td>
+                    <td class="numeric">{formatDays(row.carriedOverDays)}</td>
+                    <td class="numeric">{formatDays(row.usedDays)}</td>
+                    <td class="numeric">{formatDays(row.pendingDays)}</td>
+                    <td class="numeric strong">{formatDays(row.remainingDays)}</td>
+                  {/if}
                 </tr>
               {/each}
             </tbody>
