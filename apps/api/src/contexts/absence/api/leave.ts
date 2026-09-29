@@ -823,9 +823,17 @@ export async function leaveRoutes(app: FastifyInstance) {
   app.get("/requests", {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
-    handler: async (req) => {
+    handler: async (req, reply) => {
       const user = req.user;
-      const isManager = await hasPermission(req, "leave-request:read:ZUGEWIESEN");
+      // Issue #368: a caller holding NEITHER `leave-request:read:ZUGEWIESEN` NOR
+      // `leave-request:read:EIGENE` used to fall into the own-requests branch below and get 200
+      // with (empty) own data — same error form P-02 (Phase 76b, #76) already closed for
+      // `GET /time-entries`. Reused here verbatim.
+      const readReach = await permissionReach(req, "leave-request:read");
+      if (readReach === null) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+      const isManager = readReach === "ZUGEWIESEN";
       const { status, employeeId, year, upcoming } = req.query as {
         status?: string;
         employeeId?: string;
@@ -3185,9 +3193,16 @@ export async function leaveRoutes(app: FastifyInstance) {
   app.get("/section9", {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
-    handler: async (req) => {
+    handler: async (req, reply) => {
       const { status } = section9StatusQuerySchema.parse(req.query);
-      const isManager = await hasPermission(req, "section9:read:ZUGEWIESEN");
+      // Issue #368: same error form as `GET /requests` above — a caller holding neither
+      // `section9:read:ZUGEWIESEN` nor `section9:read:EIGENE` (e.g. a template without an own
+      // Employee record) used to get 200 with an empty list instead of 403.
+      const readReach = await permissionReach(req, "section9:read");
+      if (readReach === null) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+      const isManager = readReach === "ZUGEWIESEN";
       const rows = await app.prisma.section9Credit.findMany({
         where: {
           employee: { tenantId: req.user.tenantId },

@@ -225,9 +225,12 @@ describe("Issue #76 (Phase 76b Plan 06), AK-76b-5 — Salonmanager behavioural m
   describe("Task 1 (tracer): #91 salon scope for time entries; saldo 403 even for a Stammsalon-A employee", () => {
     // Queried per-employeeId (not the unfiltered list): 76b-05-SUMMARY.md documented that GET
     // /time-entries without ?employeeId falls back to the CALLER's own employeeId
-    // (time-entries.ts:1017), ignoring the manager's scope entirely — a pre-existing, already
-    // recorded finding unrelated to this template. Every *-salon-scope.test.ts fixture (Stammsalon
-    // and entry-salon rules alike) exercises the route the same way, via an explicit employeeId.
+    // (time-entries.ts:1017), ignoring the manager's scope entirely. Issue #368's Befund 3
+    // proposed changing this; the orchestrator decision on #368 (dated after the initial fix
+    // attempt) kept the fallback — apps/web's personal Zeiterfassung/dashboard rely on
+    // "no employeeId = own entries" even for a manager viewing their own page. Every fixture in
+    // this describe block therefore still queries per-employeeId, matching every other
+    // *-salon-scope.test.ts fixture; the own-entries-only guard sits in its own `it` below.
     it("GET /time-entries?employeeId=<X> → 200 with X's entry (Stammsalon A match)", async () => {
       const res = await app.inject({
         method: "GET",
@@ -258,6 +261,41 @@ describe("Issue #76 (Phase 76b Plan 06), AK-76b-5 — Salonmanager behavioural m
       });
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual([]);
+    });
+
+    // Retained per the #368 orchestrator decision: the unfiltered list (no ?employeeId) still
+    // falls back to the CALLER's own employeeId, never the SALONS scope — S has no time entries
+    // of their own, so the response stays empty even though X's and Z's salon-A entries are
+    // within S's scope.
+    it("GET /time-entries (no employeeId) → 200 [] (falls back to S's own employeeId, not the SALONS scope)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/time-entries?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+        headers: { authorization: `Bearer ${sToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual([]);
+    });
+
+    // Issue #368 (orchestrator decision, web-contract guard): a ZUGEWIESEN holder who omits
+    // `?employeeId` must see ONLY their own entries, never a scoped colleague's — proven here
+    // with a salon manager who DOES have an own entry, so an empty result couldn't hide a
+    // regression.
+    it("GET /time-entries (no employeeId) → 200 with ONLY S's own entry, never X's or Z's (web-contract guard)", async () => {
+      const sEntry = await createEntry(s.employee.id, salonA.id, X_ENTRY_DATE);
+      try {
+        const res = await app.inject({
+          method: "GET",
+          url: `/api/v1/time-entries?from=${WINDOW_FROM}&to=${WINDOW_TO}`,
+          headers: { authorization: `Bearer ${sToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const rows = JSON.parse(res.body) as Array<{ id: string; employeeId: string }>;
+        expect(rows.map((r) => r.id)).toEqual([sEntry.id]);
+        expect(rows[0].employeeId).toBe(s.employee.id);
+      } finally {
+        await app.prisma.timeEntry.delete({ where: { id: sEntry.id } });
+      }
     });
 
     it("GET /overtime/<X> → 403, although X's Stammsalon is A and X is fully in S's salon scope", async () => {
