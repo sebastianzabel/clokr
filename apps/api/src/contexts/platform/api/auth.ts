@@ -340,6 +340,14 @@ export async function authRoutes(app: FastifyInstance) {
       // because the frontend still consumes it until #83 removes User.role.
       const tenantId = stored.user.employee?.tenantId ?? "";
       const role = await compatRoleForUser(app.prisma, stored.user.id, tenantId, stored.user.role);
+
+      // Phase 408 (#408): /auth/refresh is the only round-trip a running or restored session makes
+      // by itself, so it carries the same effective-permissions list login/verify-otp already
+      // compute — same function, same empty-tenant guard as issueTokens().
+      const permissions = tenantId
+        ? await effectivePermissionKeysForUser(app.prisma, stored.user.id, tenantId)
+        : [];
+
       const payload = {
         sub: stored.user.id,
         role,
@@ -364,7 +372,7 @@ export async function authRoutes(app: FastifyInstance) {
         },
       });
 
-      return { accessToken: newAccessToken, refreshToken: newRefreshToken };
+      return { accessToken: newAccessToken, refreshToken: newRefreshToken, permissions };
     },
   });
 
@@ -606,8 +614,9 @@ async function issueTokens(
 
   // Phase 378 (#378): the web decides Team-Bereich visibility by permission, not by the compat
   // role above — a Salon/Personen-scope assignment (Salonmanager, Ausbilder templates) never
-  // contributes to `role`, but its permissions are real. Computed once per login/OTP-verify, same
-  // staleness window as `role` itself (both refresh only on next login, not on token refresh).
+  // contributes to `role`, but its permissions are real. Computed at login/OTP-verify AND on every
+  // `/auth/refresh` (Phase 408, #408) — unlike `role`, this list is recomputed on every refresh,
+  // not just on the next login.
   const permissions = tenantId
     ? await effectivePermissionKeysForUser(app.prisma, user.id, tenantId)
     : [];

@@ -6,6 +6,7 @@ import { density } from "$stores/density";
 import { skin } from "$stores/skin";
 import { prefsHydrated } from "$stores/prefs-state";
 import { fetchPreferences } from "$api/preferences";
+import { loadPermissionsIfMissing } from "$api/client";
 
 export interface AuthUser {
   id: string;
@@ -17,10 +18,11 @@ export interface AuthUser {
    * Phase 378 (#378): the caller's effective permission keys (`docs/permissions.md`), computed at
    * login/OTP-verify by `effectivePermissionKeysForUser()`. The web decides Team-Bereich
    * visibility from this list, never from `role` — a Salon/Personen-scope role assignment
-   * (Salonmanager, Ausbilder templates) never widens `role`, but does widen this list. Same
-   * staleness window as `role`: refreshed on next login, not mid-session. Optional because a
-   * `user` object cached in localStorage from before this phase shipped has none — every consumer
-   * goes through `$lib/permissions.ts`, which treats a missing list as empty (fail-closed).
+   * (Salonmanager, Ausbilder templates) never widens `role`, but does widen this list. Refreshed
+   * at login and on every token refresh (Phase 408, #408, via `setTokens()`) — unlike `role`, not
+   * only on the next login. Still optional: a `user` object cached in localStorage from before
+   * #378 shipped has none, and every consumer goes through `$lib/permissions.ts`, which treats a
+   * missing list as empty (fail-closed) until a refresh fills it in.
    */
   permissions?: string[];
 }
@@ -87,6 +89,20 @@ function createAuthStore() {
   // On boot: if we already have an access token (returning visit), hydrate prefs.
   if (browser && initial.accessToken) {
     void hydratePreferencesFromServer();
+
+    // Phase 408 (#408): stores/auth.ts and api/client.ts import each other (directly here, and
+    // via $api/preferences). A synchronous call into client.ts at this point would run while
+    // `authStore` — or, in the other module-evaluation order, client.ts's own module state — is
+    // still uninitialized, and the call would reject before ever sending anything. queueMicrotask
+    // defers it until the module graph has finished evaluating. A cached `user` whose
+    // `permissions` is `undefined` (a session from before #378 shipped) forces exactly one
+    // refresh through the existing dedup; a user that already has a list (even an empty one)
+    // never re-triggers this.
+    if (initial.user && initial.user.permissions === undefined) {
+      queueMicrotask(() => {
+        void loadPermissionsIfMissing();
+      });
+    }
   }
 
   return {
@@ -103,12 +119,24 @@ function createAuthStore() {
         void hydratePreferencesFromServer();
       }
     },
-    setTokens(accessToken: string, refreshToken: string) {
+    setTokens(accessToken: string, refreshToken: string, permissions?: string[]) {
       if (browser) {
         localStorage.setItem("accessToken", accessToken);
         localStorage.setItem("refreshToken", refreshToken);
       }
-      update((s) => ({ ...s, accessToken, refreshToken }));
+      update((s) => {
+        // Phase 408 (#408): when a refresh carries a permissions list AND we already have a
+        // user, merge it in and re-persist — the same localStorage shape login() uses. Without a
+        // list, or without a user, leave the user object untouched (never fabricate one here).
+        if (permissions !== undefined && s.user) {
+          const mergedUser = { ...s.user, permissions };
+          if (browser) {
+            localStorage.setItem("user", JSON.stringify(mergedUser));
+          }
+          return { ...s, accessToken, refreshToken, user: mergedUser };
+        }
+        return { ...s, accessToken, refreshToken };
+      });
     },
     logout() {
       if (browser) {

@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import bcrypt from "bcryptjs";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import { SYSTEM_ROLE_IDS } from "../contexts/platform";
 import type { FastifyInstance } from "fastify";
 
 describe("Auth API", () => {
@@ -101,6 +103,86 @@ describe("Auth API", () => {
       });
 
       expect(res.statusCode).toBe(401);
+    });
+
+    // Phase 408 (Issue #408, regression of #378): the refresh response carries the caller's
+    // CURRENT effective permissions, computed by the same function login/verify-otp already use —
+    // this is RED against unfixed auth.ts (today's /refresh response has no `permissions` key).
+    it("D-01/D-10: returns permissions deep-equal to login's, non-empty, and no `user` object", async () => {
+      const loginRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: data.adminUser.email, password: "test1234" },
+      });
+      const loginBody = JSON.parse(loginRes.body);
+      const { refreshToken } = loginBody;
+
+      const refreshRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/refresh",
+        payload: { refreshToken },
+      });
+
+      expect(refreshRes.statusCode).toBe(200);
+      const refreshBody = JSON.parse(refreshRes.body);
+      expect(Array.isArray(refreshBody.permissions)).toBe(true);
+      // Length check FIRST — two empty lists must never satisfy the deep-equal below.
+      expect(refreshBody.permissions.length).toBeGreaterThan(0);
+      expect(refreshBody.permissions).toEqual(loginBody.user.permissions);
+      expect(refreshBody.user).toBeUndefined();
+    });
+
+    // AK-1 freshness: a role assignment granted AFTER login shows up in the very next refresh
+    // response — the list is recomputed per refresh, never echoed from login.
+    it("AK-1: a role assignment granted after login is reflected in the next refresh", async () => {
+      const suffix = `au408-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      const passwordHash = await bcrypt.hash("test1234", 10);
+      const user = await app.prisma.user.create({
+        data: { email: `${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      });
+      await app.prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: user.id,
+          employeeNumber: suffix.toUpperCase().slice(0, 20),
+          firstName: "Refresh",
+          lastName: "PermissionsTest",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+
+      const loginRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: `${suffix}@test.de`, password: "test1234" },
+      });
+      expect(loginRes.statusCode).toBe(200);
+      const loginBody = JSON.parse(loginRes.body);
+      expect(loginBody.user.permissions).not.toContain("leave-request:read:ZUGEWIESEN");
+
+      const salon = await createTestSalon(app.prisma, data.tenant.id, {
+        name: "Refresh Permissions Test Salon",
+      });
+      await app.prisma.roleAssignment.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: user.id,
+          accessRoleId: SYSTEM_ROLE_IDS.SALON_MANAGER,
+          scopeType: "SALONS",
+          salonIds: [salon.id],
+          employeeIds: [],
+        },
+      });
+
+      const refreshRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/refresh",
+        payload: { refreshToken: loginBody.refreshToken },
+      });
+      expect(refreshRes.statusCode).toBe(200);
+      const refreshBody = JSON.parse(refreshRes.body);
+      expect(refreshBody.permissions).toContain("leave-request:read:ZUGEWIESEN");
+      expect(refreshBody.permissions).toContain("time-entry:read:ZUGEWIESEN");
     });
   });
 

@@ -22,7 +22,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const auth = get(authStore);
 
   const headers: Record<string, string> = {
-    // Content-Type nur setzen wenn ein Body mitkommt
+    // Only set Content-Type when a body is present
     ...(options.body !== undefined ? { "Content-Type": "application/json" } : {}),
     ...(options.headers as Record<string, string>),
   };
@@ -33,7 +33,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
 
-  // 204 No Content – kein Body
+  // 204 No Content – no body
   if (res.status === 204) return undefined as T;
 
   const data = res.headers.get("content-type")?.includes("application/json")
@@ -41,11 +41,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     : await res.text();
 
   if (res.status === 401) {
-    // Auth-Endpunkte selbst (login, otp) sollen kein Auto-Refresh auslösen —
-    // dort bedeutet 401 "falsche Anmeldedaten", nicht "Token abgelaufen".
+    // The auth endpoints themselves (login, otp) must not trigger an auto-refresh —
+    // there, 401 means "wrong credentials", not "token expired".
     const isAuthEndpoint = path.startsWith("/auth/login") || path.startsWith("/auth/otp");
     if (!isAuthEndpoint) {
-      // Token abgelaufen – versuche zu refreshen
+      // Token expired – attempt to refresh
       const refreshed = await tryRefresh();
       if (refreshed) {
         return request<T>(path, options); // Retry
@@ -130,10 +130,33 @@ async function doRefresh(): Promise<boolean> {
     });
     if (!res.ok) return false;
     const data = await res.json();
-    authStore.setTokens(data.accessToken, data.refreshToken);
+    // Phase 408 (#408): an absent or null `permissions` field (e.g. mid-rollout, an older API
+    // instance) must never be stored as an empty list — that would freeze a fail-closed session
+    // until the next login instead of leaving `permissions` as "not yet known".
+    const permissions = Array.isArray(data.permissions) ? data.permissions : undefined;
+    authStore.setTokens(data.accessToken, data.refreshToken, permissions);
     return true;
   } catch (err) {
     console.error("Failed to refresh token:", err);
+    return false;
+  }
+}
+
+/**
+ * Phase 408 (#408): for a session cached before #378 shipped (a stored `user` whose `permissions`
+ * is `undefined`, never merged in by any login/refresh since). Forces exactly ONE token refresh
+ * through the existing dedup (`tryRefresh()`/`refreshPromise`, the same machinery a 401 already
+ * uses) — no new route, no request of its own. Never rejects: on any failure it leaves the store
+ * untouched, so `hasPermission()` (`$lib/permissions.ts`) stays fail-closed until a later refresh
+ * succeeds. The re-check at call time also makes this idempotent when a 401-driven refresh has
+ * already filled the list in the meantime.
+ */
+export async function loadPermissionsIfMissing(): Promise<boolean> {
+  const auth = get(authStore);
+  if (!auth.user || auth.user.permissions !== undefined) return false;
+  try {
+    return await tryRefresh();
+  } catch {
     return false;
   }
 }

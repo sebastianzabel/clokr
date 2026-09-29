@@ -317,10 +317,11 @@ export function requireAnyPermission(...keys: PermissionKey[]) {
 
 /**
  * Phase 378 (Issue #378): the caller's full effective permission set, flattened to a plain sorted
- * list of catalog keys — for exposing to a client (today: the login/OTP-verify response body, see
- * `api/auth.ts`'s `issueTokens()`) so the web can decide Team-Bereich visibility by permission
- * instead of the legacy compat role, which a Salon/Personen-scope assignment (Salonmanager,
- * Ausbilder templates) never contributes to.
+ * list of catalog keys — for exposing to a client: the login/OTP-verify response body (see
+ * `api/auth.ts`'s `issueTokens()`) and, since Phase 408 (#408), the `POST /auth/refresh` response
+ * too, so the web can decide Team-Bereich visibility by permission instead of the legacy compat
+ * role, which a Salon/Personen-scope assignment (Salonmanager, Ausbilder templates) never
+ * contributes to.
  *
  * Deliberately NOT built by calling `hasPermission()` once per catalog key against a synthetic
  * request — it inlines the exact same relation-based rule `hasPermission()` applies, because it

@@ -168,8 +168,6 @@
   "apps/web/src/__tests__/admin-employee-save-wiring.test.ts::33ac629ed614::1",
   "apps/web/src/__tests__/admin-employee-save-wiring.test.ts::5203d426ec29::1",
   "apps/web/src/__tests__/admin-employee-save-wiring.test.ts::bfd2ba84463f::1",
-  "apps/web/src/lib/api/client.ts::3a4cbe347296::1",
-  "apps/web/src/lib/api/client.ts::a90149874509::1",
   "apps/web/src/lib/components/saldo/KontoSaldoCard.svelte::df632ba49f5c::1",
   "apps/web/src/lib/dashboard/__tests__/dashboard-clock-card.test.ts::5ded0c960b7e::1",
   "apps/web/src/lib/dashboard/day-state.ts::5d2476640b0c::1",
