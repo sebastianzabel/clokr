@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.12.1](https://github.com/sebastianzabel/clokr/compare/v1.12.0...v1.12.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **260928-uli:** Theme/Skin-Auswahl geht nach Logout nicht mehr verloren ([#393](https://github.com/sebastianzabel/clokr/issues/393)) ([f59bc19](https://github.com/sebastianzabel/clokr/commit/f59bc19cbb7265473004df2fb95ff257df36f9de))
+* **367-01:** userIdsHoldingPermission berücksichtigt SALONS/PERSONS-Zuweisungen ([#403](https://github.com/sebastianzabel/clokr/issues/403)) ([39c46ae](https://github.com/sebastianzabel/clokr/commit/39c46ae48bf7d696a14b4652414dbb6c687081cf)), closes [#367](https://github.com/sebastianzabel/clokr/issues/367)
+* **368:** Listen-Routen fallen ohne Permission auf eigene Daten zurück statt 403 ([#410](https://github.com/sebastianzabel/clokr/issues/410)) ([8b50b60](https://github.com/sebastianzabel/clokr/commit/8b50b6009c4c6b6d050e1bbdfce14ccd1b84dd90)), closes [#368](https://github.com/sebastianzabel/clokr/issues/368)
+* **370:** Facade-Zeilen-Protokollierung für Lock/Unlock/Revalidierung ([#406](https://github.com/sebastianzabel/clokr/issues/406)) ([42bc327](https://github.com/sebastianzabel/clokr/commit/42bc327ac02f8bcb4c36939a2d23007010a33898))
+* **371-01:** add request field to TimeEntry CREATE audits ([#399](https://github.com/sebastianzabel/clokr/issues/399)) ([538a50f](https://github.com/sebastianzabel/clokr/commit/538a50f407cdbcac1c69508bc0160418c119a40b)), closes [#371](https://github.com/sebastianzabel/clokr/issues/371)
+* **372:** RETRO_ENTRY_APPROVED_USED protokolliert kein oldValue ([#404](https://github.com/sebastianzabel/clokr/issues/404)) ([952d478](https://github.com/sebastianzabel/clokr/commit/952d478e2f53d0d9c4e6a4d16ad88e555142f8e8))
+* **376:** Schicht über Mitternacht — Ausstempeln findet den offenen Eintrag vom Vortag ([#407](https://github.com/sebastianzabel/clokr/issues/407)) ([87ce9bc](https://github.com/sebastianzabel/clokr/commit/87ce9bc811227ac39f6b8255c36750026da3d0e8))
+* **378:** Team-Bereich im Web permission- statt rollenbasiert ([#398](https://github.com/sebastianzabel/clokr/issues/398)) ([3f39bc5](https://github.com/sebastianzabel/clokr/commit/3f39bc5cd0b4f4de894680d30283ffba7817add1))
+* **379-01:** POST /employees antwortet 201 aus der Transaktion, wenn das Nachladen danach fehlschlägt ([#400](https://github.com/sebastianzabel/clokr/issues/400)) ([87440b1](https://github.com/sebastianzabel/clokr/commit/87440b11449dae466cb0c6ef81aa92a78f6f3031))
+* **380:** Pause hinzufügen verwirft keine bestehende Pausensumme mehr ([#405](https://github.com/sebastianzabel/clokr/issues/405)) ([f46730c](https://github.com/sebastianzabel/clokr/commit/f46730c239dc23e737066e90aa0a6573f1b2f8eb))
+* **408:** Token-Refresh liefert die aktuellen Rechte mit (Regression [#378](https://github.com/sebastianzabel/clokr/issues/378)) ([#411](https://github.com/sebastianzabel/clokr/issues/411)) ([d72236c](https://github.com/sebastianzabel/clokr/commit/d72236c54ac237a911b3bffd6d276083b673afcf)), closes [#408](https://github.com/sebastianzabel/clokr/issues/408)
+* **412:** Hydrierung beim Start scheitert still durch Importzyklus (TDZ) ([#414](https://github.com/sebastianzabel/clokr/issues/414)) ([d7200c2](https://github.com/sebastianzabel/clokr/commit/d7200c2342bffd16cc9484e1f08e7b7815dd7f06))
+
 ## [1.12.0](https://github.com/sebastianzabel/clokr/compare/v1.11.1...v1.12.0) (2026-09-27)
 
 
