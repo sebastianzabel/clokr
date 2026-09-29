@@ -5,6 +5,7 @@ import {
   calculateStatutoryMinimum,
   splitDaysAcrossYears,
   calculateProRataVacation,
+  calculateProRataVacationForHire,
   countShiftBasedLeaveDays,
   mondayOfWeekUtc,
 } from "../vacation-calc";
@@ -174,6 +175,56 @@ describe("calculateProRataVacation", () => {
     // Mar 31 is the last day of March → 3 volle Monate
     // 30 × 3/12 = 7.5 → exactly 7.5
     expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 2, 31))).toBe(7.5);
+  });
+});
+
+describe("calculateProRataVacationForHire (Issue #416)", () => {
+  const YEAR = 2026;
+
+  it("returns baseDays unchanged when hire is Jan 1 (full year)", () => {
+    expect(calculateProRataVacationForHire(30, YEAR, new Date(YEAR, 0, 1))).toBe(30);
+  });
+
+  it("returns 15 when hire is Jul 1 and base is 30 (6/12)", () => {
+    expect(calculateProRataVacationForHire(30, YEAR, new Date(YEAR, 6, 1))).toBe(15);
+  });
+
+  it("returns 2.5 when hire is Dec 31 and base is 30 (1/12)", () => {
+    expect(calculateProRataVacationForHire(30, YEAR, new Date(YEAR, 11, 31))).toBe(2.5);
+  });
+
+  it("returns 0 when hireDate is in a future year", () => {
+    expect(calculateProRataVacationForHire(30, YEAR, new Date(YEAR + 1, 0, 15))).toBe(0);
+  });
+
+  it("returns baseDays unchanged when hireDate is in a prior year", () => {
+    expect(calculateProRataVacationForHire(30, YEAR, new Date(YEAR - 1, 5, 1))).toBe(30);
+  });
+
+  it("a hire on the 3rd of a month still counts that month as full (no day-level proration)", () => {
+    // Hired Jul 3 → same 6/12 result as Jul 1 above — the hire month always counts in full.
+    expect(calculateProRataVacationForHire(30, YEAR, new Date(YEAR, 6, 3))).toBe(15);
+  });
+
+  it("hire on the last day of a month vs. the first day of the next month differ by exactly one month's worth", () => {
+    // Jan 31 → whole year still counts (Jan itself counts in full) = 12/12.
+    const lastDayOfJan = calculateProRataVacationForHire(24, YEAR, new Date(YEAR, 0, 31));
+    // Feb 1 → January no longer counts = 11/12.
+    const firstDayOfFeb = calculateProRataVacationForHire(24, YEAR, new Date(YEAR, 1, 1));
+    expect(lastDayOfJan).toBe(24); // 24 * 12/12 = 24
+    expect(firstDayOfFeb).toBe(22); // 24 * 11/12 = 22
+  });
+
+  it("returns 0 for baseDays 0", () => {
+    expect(calculateProRataVacationForHire(0, YEAR, new Date(YEAR, 5, 1))).toBe(0);
+  });
+
+  it("returns 0 for negative baseDays (defensive)", () => {
+    expect(calculateProRataVacationForHire(-5, YEAR, new Date(YEAR, 5, 1))).toBe(0);
+  });
+
+  it("returns 0 for NaN baseDays (defensive)", () => {
+    expect(calculateProRataVacationForHire(NaN, YEAR, new Date(YEAR, 5, 1))).toBe(0);
   });
 });
 
