@@ -6,14 +6,7 @@
   import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import Pagination from "$components/ui/Pagination.svelte";
   import Modal from "$components/ui/Modal.svelte";
-  import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-ef6
-  import CollisionWarnBody from "$lib/phorest/CollisionWarnBody.svelte";
-  import {
-    checkAppointmentCollisions,
-    COLLISION_UNAVAILABLE_TOAST,
-    type CollisionSummary,
-  } from "$lib/phorest/appointmentCollisions";
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import AttestFields from "$lib/components/leave/AttestFields.svelte"; // Phase 201
@@ -33,6 +26,9 @@
   import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte"; // #265
   import { resolveAdjustmentBadge, type LastDaysAdjustment } from "$lib/leave/vacation-balance"; // Phase 107-07
   import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
+  // Phase 415 (#415): the shared create/edit dialog — replaces this page's own copy of the
+  // create modal, its collision-confirm flow, and the mutation itself.
+  import LeaveRequestForm from "$lib/components/leave/LeaveRequestForm.svelte";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -283,29 +279,15 @@
   }
 
   // ── Manager-on-behalf-of: Neue Abwesenheit anlegen ───────────────────────
-  interface CreateForm {
-    employeeId: string;
-    type: TypeCode;
-    startDate: string;
-    endDate: string;
-    halfDay: boolean;
-    note: string;
-  }
-  function emptyCreateForm(): CreateForm {
-    const today = new Date().toISOString().slice(0, 10);
-    return {
-      employeeId: "",
-      type: "VACATION",
-      startDate: today,
-      endDate: today,
-      halfDay: false,
-      note: "",
-    };
-  }
+  // Phase 415 (#415): the create dialog itself — fields, balances, preview, overlap, the
+  // collision-confirm flow, and the mutation — moved into the shared `LeaveRequestForm.svelte`.
+  // The page keeps only the person picker (its one addition, Phase 415 D-03) and what opens it.
   let createModalOpen = $state(false);
-  let createForm: CreateForm = $state(emptyCreateForm());
-  let createSaving = $state(false);
-  let createError = $state("");
+  let createEmployeeId = $state("");
+  // Preserves this page's pre-existing default (today/today) as the shared component's initial
+  // date props — the component itself defaults to blank when these are omitted (matching
+  // `/leave`'s own default). Set once per openCreate() call, not reactive.
+  let createInitialDate = $state("");
 
   // ── Kalender ──────────────────────────────────────────────────────────────
   interface CalEntry {
@@ -592,13 +574,6 @@
     if (SICK_CODES.includes(correctType)) correctHalfDay = false;
   });
 
-  // Phase 201 (Issue #201, B): same as the create dialog — an already-set half-day
-  // selection is discarded when switching to a sickness type, so it cannot survive
-  // invisibly behind a disabled checkbox and end up in a 400 from the backend.
-  $effect(() => {
-    if (SICK_CODES.includes(createForm.type)) createForm.halfDay = false;
-  });
-
   async function submitCorrection() {
     if (!correctModal) return;
     // Client-Vorabprüfung (Server ist maßgeblich): Enddatum >= Startdatum.
@@ -873,82 +848,9 @@
   }
 
   function openCreate() {
-    createForm = emptyCreateForm();
-    createError = "";
+    createEmployeeId = "";
+    createInitialDate = new Date().toISOString().slice(0, 10);
     createModalOpen = true;
-  }
-  function closeCreate() {
-    if (createSaving) return;
-    createModalOpen = false;
-  }
-  // ── Phase 87: appointment-collision warn-and-confirm on on-behalf CREATE ───
-  let createCollisionOpen = $state(false);
-  let createCollisionSummary = $state<CollisionSummary | null>(null);
-
-  async function submitCreate(e: Event) {
-    e.preventDefault();
-    createError = "";
-    if (!createForm.employeeId) {
-      createError = "Bitte einen Mitarbeiter auswählen";
-      return;
-    }
-    if (createForm.endDate < createForm.startDate) {
-      createError = "Enddatum muss nach Startdatum liegen";
-      return;
-    }
-    // Fail-open pre-check before the POST.
-    const summary = await checkAppointmentCollisions({
-      employeeId: createForm.employeeId,
-      from: createForm.startDate,
-      to: createForm.endDate,
-    });
-    if (summary && summary.total > 0) {
-      createCollisionSummary = summary;
-      // Close the create Modal so exactly ONE scrim is live.
-      createModalOpen = false;
-      createCollisionOpen = true;
-      return;
-    }
-    if (summary === null) {
-      toasts.error(COLLISION_UNAVAILABLE_TOAST);
-    }
-    await runCreate();
-  }
-
-  // Confirm handler for the collision dialog on the create path. Throws on
-  // failure so the ConfirmDialog stays open (its documented contract).
-  async function confirmCreateWithCollisions() {
-    const ok = await runCreate();
-    if (!ok) throw new Error("Anlegen fehlgeschlagen");
-  }
-
-  // Shared create mutation. Returns true on success, false on failure.
-  async function runCreate(): Promise<boolean> {
-    createSaving = true;
-    try {
-      await api.post("/leave/requests", {
-        employeeId: createForm.employeeId,
-        type: createForm.type,
-        startDate: createForm.startDate,
-        endDate: createForm.endDate,
-        halfDay: SICK_CODES.includes(createForm.type) ? false : createForm.halfDay,
-        note: createForm.note || null,
-      });
-      createModalOpen = false;
-      createCollisionSummary = null;
-      await Promise.all([loadData(), loadCalendar()]);
-      return true;
-    } catch (err: unknown) {
-      const apiErr = err as { data?: { error?: string }; message?: string };
-      const msg = apiErr?.data?.error ?? apiErr?.message ?? "Fehler beim Anlegen";
-      createError = msg;
-      // If the create Modal was already closed (collision-confirm path), the
-      // inline error is not visible — surface it via a toast instead.
-      if (!createModalOpen) toasts.error(msg);
-      return false;
-    } finally {
-      createSaving = false;
-    }
   }
 </script>
 
@@ -1772,106 +1674,32 @@
 {/if}
 
 <!-- ── Create-Modal: Neue Abwesenheit anlegen (Manager-on-behalf-of) ─────── -->
-{#if createModalOpen}
-  <Modal bind:open={createModalOpen} eyebrow="Team-Anträge" title="Neue Abwesenheit anlegen">
-    <form id="create-leave-form" onsubmit={submitCreate}>
-      <div class="form-group">
-        <label class="form-label" for="create-emp">Mitarbeiter</label>
-        <select id="create-emp" class="form-input" bind:value={createForm.employeeId} required>
-          <option value="" disabled>— Mitarbeiter wählen —</option>
-          {#each employees as emp (emp.id)}
-            <option value={emp.id}>{emp.firstName} {emp.lastName}</option>
-          {/each}
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="create-type">Art</label>
-        <select id="create-type" class="form-input" bind:value={createForm.type} required>
-          {#each LEAVE_TYPE_OPTIONS as opt (opt.code)}
-            <option value={opt.code}>{opt.label}</option>
-          {/each}
-        </select>
-      </div>
-      <div class="form-grid-2col">
-        <div class="form-group">
-          <label class="form-label" for="create-start">Von</label>
-          <input
-            id="create-start"
-            type="date"
-            class="form-input"
-            bind:value={createForm.startDate}
-            required
-          />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="create-end">Bis</label>
-          <input
-            id="create-end"
-            type="date"
-            class="form-input"
-            bind:value={createForm.endDate}
-            required
-          />
-        </div>
-      </div>
-      <div class="form-group">
-        <label class="checkbox-row">
-          <input
-            type="checkbox"
-            data-testid="leave-create-modal-halfday"
-            bind:checked={createForm.halfDay}
-            disabled={SICK_CODES.includes(createForm.type)}
-          />
-          Halber Tag
-        </label>
-        {#if SICK_CODES.includes(createForm.type)}
-          <p class="form-hint">Halbe Kranktage sind nicht zulässig</p>
-        {/if}
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="create-note">Notiz (optional)</label>
-        <textarea id="create-note" class="form-input" rows="3" bind:value={createForm.note}
-        ></textarea>
-      </div>
-      {#if createError}
-        <p class="form-error">{createError}</p>
-      {/if}
-      <p class="form-hint">
-        Der Antrag wird mit Status <strong>Ausstehend</strong> angelegt und kann anschließend unter „Genehmigungen“
-        freigegeben werden.
-      </p>
-    </form>
-
-    {#snippet footer()}
-      <button type="button" class="btn btn-ghost" onclick={closeCreate} disabled={createSaving}>
-        Abbrechen
-      </button>
-      <button
-        type="submit"
-        form="create-leave-form"
-        class="btn btn-primary"
-        disabled={createSaving}
-      >
-        {createSaving ? "Speichert…" : "Speichern"}
-      </button>
-    {/snippet}
-  </Modal>
-{/if}
-
-<!-- ── Phase 87: Terminkollision-Warnung (Abwesenheit anlegen) ────────────── -->
-{#if createCollisionSummary}
-  <ConfirmDialog
-    bind:open={createCollisionOpen}
-    title="Kundentermine im Zeitraum gebucht"
-    confirmLabel="Trotzdem fortfahren"
-    cancelLabel="Abbrechen"
-    onConfirm={confirmCreateWithCollisions}
-  >
-    {#snippet body()}
-      <CollisionWarnBody summary={createCollisionSummary} variant="range" />
-    {/snippet}
-  </ConfirmDialog>
-{/if}
+<!-- Phase 415 (#415): the shared create/edit dialog. Only the person picker is added here
+     (Phase 415 D-03) — every other field, balance box, warning and preview is identical to
+     `/leave`'s own dialog and refers to the SELECTED person via `employeeId`. -->
+<LeaveRequestForm
+  bind:open={createModalOpen}
+  employeeId={createEmployeeId}
+  editingRequest={null}
+  initialStartDate={createInitialDate}
+  initialEndDate={createInitialDate}
+  entitlementYear={calYear}
+  onSaved={async () => {
+    await Promise.all([loadData(), loadCalendar()]);
+  }}
+>
+  {#snippet personPicker()}
+    <div class="form-group">
+      <label class="form-label" for="create-emp">Mitarbeiter</label>
+      <select id="create-emp" class="form-input" bind:value={createEmployeeId} required>
+        <option value="" disabled>— Mitarbeiter wählen —</option>
+        {#each employees as emp (emp.id)}
+          <option value={emp.id}>{emp.firstName} {emp.lastName}</option>
+        {/each}
+      </select>
+    </div>
+  {/snippet}
+</LeaveRequestForm>
 
 <!-- ── Quick 260824-ef6: Storno-Begründung (Zurückziehen / Stornierung) ────── -->
 {#if stornoCopy}

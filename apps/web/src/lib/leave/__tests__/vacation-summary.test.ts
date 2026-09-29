@@ -43,6 +43,31 @@ try {
   PAGE = readFileSync(resolve(process.cwd(), "src/routes/(app)/leave/+page.svelte"), "utf8");
 }
 
+// Phase 415 (#415): `loadBalanceForType` — the "SECOND writer" the block below used to find on
+// this same page — moved into the shared `lib/components/leave/LeaveRequestForm.svelte` and no
+// longer shares state with `loadVacationSummary` at all (the two are now independent reads of
+// the same endpoint, by design — see that component's own doc comment). It is still year-scoped,
+// just via its own `entitlementYear` prop instead of the page's `calYear`.
+const SHARED_FORM_URL = new URL("../../components/leave/LeaveRequestForm.svelte", import.meta.url);
+let SHARED_FORM: string;
+try {
+  SHARED_FORM = readFileSync(fileURLToPath(SHARED_FORM_URL), "utf8");
+} catch {
+  SHARED_FORM = readFileSync(
+    resolve(process.cwd(), "src/lib/components/leave/LeaveRequestForm.svelte"),
+    "utf8",
+  );
+}
+
+/** Same slicing idiom as `fnBody`, against the shared component instead of the page. */
+function sharedFormFnBody(marker: string): string {
+  const start = SHARED_FORM.indexOf(marker);
+  expect(start, `marker not found in LeaveRequestForm.svelte: ${marker}`).toBeGreaterThan(-1);
+  const end = SHARED_FORM.indexOf("\n  }", start);
+  expect(end, `unterminated function: ${marker}`).toBeGreaterThan(start);
+  return SHARED_FORM.slice(start, end);
+}
+
 /** The body of one top-level function of `leave/+page.svelte`, from its declaration to the
  *  two-space-indented `}` that closes it. Slicing keeps each assertion inside the function it
  *  is about, so a match elsewhere on this 2700-line page cannot make a broken wiring look fixed. */
@@ -324,8 +349,10 @@ describe("loadVacationSummary fetches the SELECTED year (issue #122)", () => {
   it("has no wall-clock fallback left in either entitlement fetch", () => {
     // This exact line existed TWICE (loadVacationSummary and loadBalanceForType's VACATION
     // branch) and is the whole defect. `?? calYear`, a default parameter, or any other
-    // reinstatement of "heute" would put it back in a new costume.
+    // reinstatement of "heute" would put it back in a new costume. `loadBalanceForType` moved to
+    // the shared component in Phase 415 — checked there too.
     expect(PAGE).not.toContain("const year = new Date().getFullYear();");
+    expect(SHARED_FORM).not.toContain("const year = new Date().getFullYear();");
   });
 
   it("interpolates the parameter into the entitlements URL", () => {
@@ -334,11 +361,14 @@ describe("loadVacationSummary fetches the SELECTED year (issue #122)", () => {
     expect(body).not.toContain("new Date(");
   });
 
-  it("year-scopes the SECOND writer of vacationBalance too", () => {
-    // `loadBalanceForType("VACATION")` assigns the same `vacationBalance` state the tiles read.
-    // Left on the current year it would snap the tiles back on form open — the same bug, later.
-    const body = fnBody("async function loadBalanceForType(");
-    expect(body).toContain("/leave/entitlements/${userId}?year=${calYear}");
+  it("year-scopes the shared dialog's own entitlements fetch too (Phase 415)", () => {
+    // Phase 415 (#415): `loadBalanceForType("VACATION")` no longer assigns the PAGE's
+    // `vacationBalance` — it lives in `LeaveRequestForm.svelte` now, with its OWN state,
+    // independent of the tiles' writer (`loadVacationSummary` above). Left on the wall-clock
+    // year regardless, it would show the wrong year's Resturlaub whenever the dialog opens while
+    // viewing a different `calYear` — the same class of bug, in the new location.
+    const body = sharedFormFnBody("async function loadBalanceForType(");
+    expect(body).toContain("/leave/entitlements/${forEmployeeId}?year=${year}");
     expect(body).not.toContain("new Date(");
   });
 

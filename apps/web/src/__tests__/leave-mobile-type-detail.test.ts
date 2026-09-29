@@ -93,7 +93,11 @@ afterEach(() => {
 // ── Group 0: the harness itself is not lying ────────────────────────────────
 describe("#303 (leave) — the measuring harness (anti-vacuity)", () => {
   it("PAGE actually loaded — well above the pre-edit floor", () => {
-    expect(PAGE.length).toBeGreaterThan(100_000);
+    // Phase 415 (#415) moved the create/edit dialog out into
+    // `lib/components/leave/LeaveRequestForm.svelte`, shrinking this file from ~109 KB to
+    // 78_423 bytes — a legitimate, by-design reduction, not a broken read. See
+    // leave-type-visibility.test.ts's Group 0 for the same adjustment with the exact byte count.
+    expect(PAGE.length).toBeGreaterThan(60_000);
   });
 
   it("jsdom applies NO @media rule, which is why this suite flattens them itself", () => {
