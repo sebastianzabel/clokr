@@ -172,6 +172,81 @@ export function calculateProRataVacation(baseDays: number, year: number, exitDat
 }
 
 /**
+ * Calculate pro-rata vacation entitlement for an employee HIRED mid-year.
+ * Formula (§ 5 Abs. 1 lit. a BUrlG): baseDays × (volleBeschäftigungsmonate / 12), rounded UP to
+ * nearest 0.5. Mirrors {@link calculateProRataVacation} (which is for EXIT dates — do not use
+ * that function for a hire, and do not use this one for an exit) but counts full calendar months
+ * REMAINING in the year, from `hireDate` (inclusive) through December, instead of months before
+ * an exit date.
+ *
+ * "Volle Beschäftigungsmonate": mirrors the exit function's own "last day of month" technique,
+ * just testing the opposite direction — a month counts as full here when `hireDate` falls ON OR
+ * BEFORE that month's LAST DAY. Concretely this means the HIRE month itself always counts in
+ * full, no matter which day within it the hire happened (e.g. hired the 3rd of the month) — BUrlG
+ * does not require day-level proration within the first month. A hire on the last day of a month
+ * and a hire on the first day of the NEXT month differ by exactly one month's worth, because that
+ * is where the calendar-month boundary actually falls.
+ *
+ * Owner decision (Issue #416, 29.09.2026): composition order is scale-by-workdays FIRST
+ * (`calculatePartTimeVacation`), THEN apply this hire-year pro-rata to the already-scaled result
+ * — i.e. `baseDays` here is the day-count already owed at this employee's contract, not the raw
+ * tenant default.
+ *
+ * § 5 Abs. 2 BUrlG rounding (BAG, corrected 2026-09-29, Issue #416): a fraction of at least half
+ * a day rounds UP to a full day; a fraction below half a day is NOT rounded to the nearest 0.5 —
+ * it stays the exact fraction, to 2 decimals. This differs from `calculatePartTimeVacation()`'s
+ * round-to-nearest-0.5 convention (a separate question, left unchanged) and from the sibling
+ * EXIT-date `calculateProRataVacation()` above, which still rounds to nearest 0.5 (a known,
+ * out-of-scope-here divergence — see the Issue #416 PR).
+ *
+ * @param baseDays - Full-year vacation entitlement (may already be part-time adjusted)
+ * @param year - The calendar year to calculate for
+ * @param hireDate - The employee's first working day
+ * @returns Pro-rata entitlement: `baseDays` unchanged if hired before `year`; `0` if not yet
+ *   hired in `year`; otherwise the § 5 Abs. 2 BUrlG rounding above.
+ */
+export function calculateProRataVacationForHire(
+  baseDays: number,
+  year: number,
+  hireDate: Date,
+): number {
+  if (!Number.isFinite(baseDays) || baseDays <= 0) return 0;
+
+  const hireYear = hireDate.getFullYear();
+
+  // Not yet employed in this year → no entitlement.
+  if (hireYear > year) return 0;
+
+  // Already employed before this year started → full entitlement for this year.
+  if (hireYear < year) return baseDays;
+
+  // Count volle Beschäftigungsmonate remaining in the year: month is full when hireDate is
+  // ON OR BEFORE the last day of that month (mirrors calculateProRataVacation()'s technique,
+  // opposite direction — see this function's own docblock above).
+  let monthsWorked = 0;
+  for (let month = 0; month < 12; month++) {
+    // Last day of the month (day 0 of next month)
+    const lastDayOfMonth = new Date(year, month + 1, 0);
+    if (hireDate <= lastDayOfMonth) {
+      monthsWorked++;
+    }
+  }
+  monthsWorked = Math.min(monthsWorked, 12);
+
+  const raw = (baseDays * monthsWorked) / 12;
+  // § 5 Abs. 2 BUrlG, as construed by the BAG (in English: fractions of a vacation day that add
+  // up to at least half a day are to be rounded up to a full vacation day): a fraction of AT
+  // LEAST half a day rounds UP to a FULL day. A fraction BELOW half a day is NOT rounded to the
+  // nearest 0.5 (that convention belongs to calculatePartTimeVacation()'s part-time scaling,
+  // a different question, deliberately left as-is per Issue #416 coordinator decision
+  // 2026-09-29) — it is kept as the exact fraction, to 2 decimals (e.g. 8.33), matching how
+  // prod's existing manually-entered rows already do it (13.0 already follows this rule).
+  const frac = raw - Math.floor(raw);
+  if (frac >= 0.5) return Math.ceil(raw);
+  return Math.round(raw * 100) / 100;
+}
+
+/**
  * Count work days in a date range, using the supplied `workDays` set
  * (0-6, So=0, Mo=1, …, Sa=6) and excluding holidays.
  *

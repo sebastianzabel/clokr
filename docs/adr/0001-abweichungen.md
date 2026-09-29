@@ -1852,3 +1852,82 @@ pnpm --filter @clokr/api run test:setup
 pnpm --filter @clokr/api test
 pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts src/__tests__/permission-site-mapping.test.ts src/contexts/platform/__tests__/system-roles.test.ts
 ```
+
+## R — Fehlender Urlaubsanspruch bei Mitarbeiteranlage (Phase 416, Issue #416)
+
+**Schwere: informativ. Keine Berechtigungsänderung — eine reine Response-Body-Erweiterung einer
+bestehenden Route, erfasst über das Amendment-Register (Eintrag N/Issue #360-Mechanismus), damit
+`permission-neutrality-matrix.test.ts` grün bleibt.**
+
+### Warum dieser Eintrag existiert
+
+Issue #416: kein Codepfad legte vor dieser Phase automatisch eine `LeaveEntitlement`-Zeile
+(VACATION) für eine neue Mitarbeiterin an — nur ein manueller Admin-Schreibvorgang
+(`PUT /settings/vacation/:employeeId`) tat das. Neue Mitarbeitende hatten dadurch bis zum ersten
+manuellen Eintrag keinen sichtbaren Urlaubsanspruch. Die Phase schließt die Lücke an drei Stellen
+(Mitarbeiteranlage, Erstzugriff-Self-Heal, Reparatur-Skript) über einen gemeinsamen Facade-Helper
+(`ensureVacationEntitlementForYear`, `contexts/absence/facade/entitlements.ts`) und macht die
+verbleibende Lücke im Urlaubsbericht sichtbar (`GET /reports/leave-overview`, Task 6): aktive
+Mitarbeitende ohne VACATION-Zeile für das abgefragte Jahr erscheinen jetzt als Platzhalter-Zeile
+(`missingEntitlement: true, leaveType: null`) statt stillschweigend zu fehlen. Diese
+Sichtbarkeits-Erweiterung ändert die Antwort der Route für sechs Akteure mit Zugriff (die
+IDs-Liste enthält jetzt zusätzlich die drei Fixture-Mitarbeitenden, die vorher keine
+Urlaubsanspruch-Zeile hatten) und macht die Neutralitätsmatrix ohne ein Amendment rot — nicht,
+weil sich Zugriff geändert hätte (alle sechs Akteure sehen die identischen drei neuen IDs), sondern
+weil der Response-Body selbst mehr Zeilen trägt.
+
+### Was sich geändert hat
+
+- **`GET /api/v1/reports/leave-overview` liefert zusätzliche Platzhalter-Zeilen** für aktive
+  Mitarbeitende ohne VACATION-`LeaveEntitlement` des abgefragten Jahres
+  (`apps/api/src/composition/reports.ts`, Task 6). Die Route selbst schreibt dabei nichts — reine
+  Anzeige, kein `ensureVacationEntitlementForYear`-Aufruf in diesem Handler.
+- **Sechs Amendment-Einträge** (Issue 416, `ADMIN`/`APIKEY_ADMIN`/`APIKEY_PLAIN`/
+  `FALLBACK_ADMIN`/`FALLBACK_MANAGER`/`MANAGER` × `GET /api/v1/reports/leave-overview | none`) in
+  `apps/api/src/__tests__/neutrality/recorded/matrix-amendments.json`: `ids` wächst von 6 auf 9
+  Einträge (drei neue Fixture-Mitarbeitende: `anchor.admin.employee`, `anonymized.employee`,
+  `holder.employee`), `status` bleibt 200 für alle sechs. `EMPLOYEE`/`FALLBACK_EMPLOYEE` bleiben
+  unverändert bei 403/`[]` (kein Berechtigungszugriff auf die Route, daher keine Amendment-Zeile
+  nötig). `recorded/matrix.json` bleibt byte-gleich.
+- Kein Unterbau-Feld/-Modell geändert — `LeaveEntitlement.isAutoCalculated` (bereits vorhanden)
+  und ein additives, optionales Feld auf der internen `UpsertVacationEntitlementData`-Schnittstelle
+  der Abwesenheiten-Fassade sind die einzigen Signaturänderungen, beide additiv.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** keine Codeänderung.
+- **Abwesenheiten:** `vacation-calc.ts` (neue `calculateProRataVacationForHire`),
+  `facade/entitlements.ts` (neuer `ensureVacationEntitlementForYear`, additives Feld auf
+  `UpsertVacationEntitlementData`), `api/leave-settings.ts` (CREATE-vs-UPDATE-Audit-Fix,
+  Erstzugriff-Self-Heal).
+- **Schichtplanung:** keine Codeänderung.
+- **Arbeitszeitkonto:** keine Codeänderung.
+- **Kompositionsschicht:** `composition/reports.ts` — `GET /leave-overview` liefert zusätzliche
+  Platzhalter-Zeilen (Task 6, dieser Eintrag).
+- **Unterbau:** `contexts/platform/api/employees.ts` — `POST /employees` ruft
+  `ensureVacationEntitlementForYear` im Rahmen der bestehenden Transaktion auf (invariant-carrying,
+  ADR 0002 Entscheidung 10); keine Modell-/Feldänderung.
+
+### Gemessen
+
+- **Neutralitätsmatrix (`permission-neutrality-matrix.test.ts`, voller Lauf):** bleibt grün, mit
+  genau sechs neuen, dokumentierten Amendments (Issue 416) in `matrix-amendments.json` — alle für
+  dieselbe Route, alle mit identischem `from`/`to`. `recorded/matrix.json` und die Testdatei selbst
+  unverändert.
+- **`lint:facade-signatures`:** golden count 128 → 129 exportierte Facade-Funktionen
+  (`ensureVacationEntitlementForYear` neu), 0 unexcepted findings.
+- **`lint:tenant-scoping`:** zwei vorgepinnte Ausnahme-Einträge in
+  `lint-tenant-scoping-exceptions.json` (`POST /:id/resend-invitation`,
+  `DELETE /:id/hard-delete`, beide in `employees.ts`) um +33 Zeilen verschoben durch den neuen
+  Codeblock in `POST /employees` — reine Zeilenverschiebung, kein neuer Fund (0 findings vor und
+  nach dem Re-Pinning).
+
+### Nachrechnen
+
+```bash
+grep -c '"issue": 416' apps/api/src/__tests__/neutrality/recorded/matrix-amendments.json
+pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts
+pnpm --filter @clokr/api run lint:facade-signatures
+pnpm --filter @clokr/api run lint:tenant-scoping
+pnpm --filter @clokr/api test
+```

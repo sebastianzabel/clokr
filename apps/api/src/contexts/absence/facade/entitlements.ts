@@ -47,6 +47,7 @@
  */
 import type { LeaveEntitlement, Prisma } from "@clokr/db";
 import { getLeaveTypeByCode } from "./leave-types";
+import { calculatePartTimeVacation, calculateProRataVacationForHire } from "../vacation-calc";
 
 // ── A11 — the vacation entitlement, resolved by code ────────────────────────────────────────
 
@@ -165,6 +166,11 @@ export interface UpsertVacationEntitlementData {
   totalDays: number;
   carriedOverDays: number;
   carryOverDeadline: Date | null;
+  // Issue #416: optional so the pre-existing PUT /vacation/:employeeId call site (an explicit
+  // admin write) stays byte-identical — omitting it leaves the column untouched on `update` and
+  // falls back to the schema default (`false`) on `create`. Only ensureVacationEntitlementForYear
+  // below sets it (to `true`, always).
+  isAutoCalculated?: boolean;
 }
 
 /**
@@ -190,6 +196,134 @@ export async function upsertVacationEntitlement(
     update: data,
     create: { employeeId, leaveTypeId: vacationType.id, year, ...data },
   });
+}
+
+// ── Issue #416 — ensureVacationEntitlementForYear (auto-seed on hire / first access / repair) ──
+
+/**
+ * Auto-seeding audit callback shape — the subset of `app.audit()`'s params this facade function
+ * needs. Facade functions take `db: Prisma.TransactionClient` (D-07), never
+ * `app: FastifyInstance`, so they cannot call `app.audit()` themselves; every caller passes its
+ * own `app.audit`-backed closure (already bound to the same transaction client `db` runs on)
+ * instead — see the three call sites below.
+ */
+export type EnsureVacationEntitlementAuditFn = (entry: {
+  userId?: string;
+  action: "CREATE";
+  entity: "LeaveEntitlement";
+  entityId: string;
+  newValue: unknown;
+}) => Promise<void>;
+
+/**
+ * Issue #416 — ensures a VACATION `LeaveEntitlement` row exists for `employeeId`/`year`.
+ *
+ * No-op-on-existing (returns the row unchanged, `created: false`) when a row already exists for
+ * `(employeeId, VACATION leaveTypeId, year)` — this is what makes every caller (hire-time
+ * creation, first-access self-heal, the repair script) structurally idempotent without
+ * re-implementing the check three times. Do not remove it.
+ *
+ * When creating, `totalDays` is `TenantConfig.defaultVacationDays` scaled by the employee's
+ * contractual workdays via {@link calculatePartTimeVacation} (owner decision, Issue #416:
+ * `defaultVacationDays` means "N days at a 5-day-week workload" — the reference week is stated
+ * here because the data model has no explicit reference-week field). For `year === hireDate`'s
+ * year, the scaled result is further pro-rated by {@link calculateProRataVacationForHire}; for
+ * every other year (a later year, or the repair script's/first-access self-heal's "missing
+ * current-year row for an already-employed active employee" case) the full scaled amount applies
+ * unprorated, because the employee was already employed at that year's start. Composition order
+ * (scale first, THEN pro-rate) is deliberate — see the owner decision text above and
+ * `416-CONTEXT.md`.
+ *
+ * Returns `null` only in the practically-unreachable case where the tenant has no VACATION
+ * `LeaveType` configured (mirrors {@link getVacationEntitlement} / {@link upsertVacationEntitlement}).
+ *
+ * Sites: `platform/api/employees.ts`'s `POST /employees` (hire-time), `leave-settings.ts`'s
+ * `GET /vacation/:employeeId` (first access), `scripts/backfill-missing-vacation-entitlements.ts`
+ * (repair script).
+ */
+export async function ensureVacationEntitlementForYear(
+  db: Prisma.TransactionClient,
+  employeeId: string,
+  tenantId: string,
+  year: number,
+  hireDate: Date,
+  workDaysPerWeek: number,
+  defaultVacationDays: number,
+  reason: string,
+  auditFn: EnsureVacationEntitlementAuditFn,
+): Promise<{ entitlement: LeaveEntitlement; created: boolean } | null> {
+  const existing = await getVacationEntitlement(db, employeeId, tenantId, year);
+  if (!existing) return null; // no VACATION LeaveType configured for this tenant
+  if (existing.entitlement) return { entitlement: existing.entitlement, created: false };
+
+  // fullTimeWorkDays = 5, per the owner decision above — calculatePartTimeVacation() does no
+  // WorkSchedule lookup of its own, so a minimal schedule shape carrying only
+  // contractWorkDaysPerWeek (checked FIRST by countWorkDaysPerWeek()) is enough to reuse it
+  // without hand-rolling the ratio again.
+  const referenceSchedule = {
+    mondayHours: 0,
+    tuesdayHours: 0,
+    wednesdayHours: 0,
+    thursdayHours: 0,
+    fridayHours: 0,
+    saturdayHours: 0,
+    sundayHours: 0,
+    contractWorkDaysPerWeek: workDaysPerWeek,
+  };
+  const scaledBase = calculatePartTimeVacation(referenceSchedule, 5, defaultVacationDays);
+  const totalDays =
+    year === hireDate.getFullYear()
+      ? calculateProRataVacationForHire(scaledBase, year, hireDate)
+      : scaledBase;
+
+  let entitlement: LeaveEntitlement | null;
+  try {
+    entitlement = await upsertVacationEntitlement(db, employeeId, tenantId, year, {
+      totalDays,
+      carriedOverDays: 0,
+      carryOverDeadline: null,
+      isAutoCalculated: true,
+    });
+  } catch (err: unknown) {
+    // Issue #416: `upsertVacationEntitlement`'s `where` combines the compound unique constraint
+    // with an additional `employee: { tenantId }` relation filter, so Prisma cannot lower it to a
+    // single atomic `INSERT ... ON CONFLICT DO UPDATE` — under two genuinely concurrent callers
+    // that both observed "no row yet" above, one still raises P2002 here instead of silently
+    // updating (same backstop pattern as services/clock/resolver.ts's ALREADY_CLOCKED_IN P2002
+    // mapping, duck-typed the same way — this repo's established idiom, not a new one). The race
+    // LOSER re-fetches the winner's row and treats it exactly like the `existing.entitlement`
+    // branch above: no audit, `created: false`.
+    if (typeof err === "object" && err !== null && "code" in err && err.code === "P2002") {
+      const refetched = await getVacationEntitlement(db, employeeId, tenantId, year);
+      return refetched?.entitlement ? { entitlement: refetched.entitlement, created: false } : null;
+    }
+    throw err;
+  }
+  if (!entitlement) return null; // same practically-unreachable case as above
+
+  // Issue #416: the `existing` check above is a SELECT before the upsert, not atomic with it —
+  // under two genuinely concurrent callers for the same (employeeId, year) that both observe no
+  // row yet (e.g. two browser tabs loading /leave at once), BOTH would reach this point. The
+  // underlying `@@unique([employeeId, leaveTypeId, year])` constraint still guarantees exactly one
+  // row ever exists (Prisma's upsert is atomic at the DB level, INSERT ... ON CONFLICT DO UPDATE
+  // on Postgres) — but without this check, both callers would unconditionally write a CREATE
+  // audit entry for what is, for the loser of the race, actually an update. `createdAt` and
+  // `updatedAt` are set to the same `now()` by the single INSERT statement that wins the race;
+  // the loser's conflict branch only touches `updatedAt`, so comparing the two after the fact
+  // reliably distinguishes "I created this row" from "someone else already had". Only the actual
+  // creator audits CREATE; the race loser gets the row silently, exactly like `existing.entitlement`
+  // above.
+  const genuinelyCreated = entitlement.createdAt.getTime() === entitlement.updatedAt.getTime();
+  if (genuinelyCreated) {
+    await auditFn({
+      action: "CREATE",
+      entity: "LeaveEntitlement",
+      entityId: entitlement.id,
+      newValue: { totalDays, isAutoCalculated: true, reason },
+    });
+  }
+
+  return { entitlement, created: genuinelyCreated };
 }
 
 // ── Vacation entitlements for a year, by code (Issue #205 finding 1, Phase 205 Plan 02) ────────

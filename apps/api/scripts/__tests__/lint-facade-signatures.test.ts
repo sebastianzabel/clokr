@@ -507,7 +507,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // except `salon-assignments.ts`, where they add two DIFFERENT functions (salonsForDays vs.
   // homeSalonAt) — counts still add, re-measured on the merged tree. Exceptions unchanged at 17
   // (71b added none).
-  it("the real tree has exactly 128 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  it("the real tree has exactly 129 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -538,7 +538,9 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
       expect(existsSync(abs)).toBe(true);
       return analyzeSource(readFileSync(abs, "utf8"), relFile);
     });
-    expect(functions).toHaveLength(128);
+    // Issue #416: contexts/absence/facade/entitlements.ts gained one new exported facade
+    // function, ensureVacationEntitlementForYear — 128 -> 129.
+    expect(functions).toHaveLength(129);
 
     const rawExceptions = JSON.parse(
       readFileSync(

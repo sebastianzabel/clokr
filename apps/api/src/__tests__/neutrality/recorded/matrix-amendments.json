@@ -1983,6 +1983,192 @@
         "error": "Forbidden",
         "ids": []
       }
+    },
+    {
+      "date": "2026-09-29",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      },
+      "issue": 416,
+      "key": "ADMIN | GET /api/v1/reports/leave-overview | none",
+      "reason": "Issue #416 (Task 6, AC-3/AC-4): GET /api/v1/reports/leave-overview listet jetzt zusaetzlich aktive Mitarbeitende ohne VACATION-LeaveEntitlement-Zeile fuer das abgefragte Jahr als Platzhalter-Zeile (missingEntitlement: true, leaveType: null) statt sie wie zuvor stillschweigend wegzulassen. Drei der Testfixtur-Mitarbeitenden (anchor.admin.employee, anonymized.employee, holder.employee) sind aktiv und hatten keine Urlaubsanspruch-Zeile fuer das Testjahr, erscheinen also neu in der IDs-Liste. Die Aenderung ist NICHT rollenspezifisch: alle sechs Akteure mit Zugriff auf die Route (die zwei ohne Berechtigung bleiben bei 403/[]) sehen dieselben drei zusaetzlichen IDs identisch, es handelt sich also nicht um eine differenzielle Berechtigungsaenderung im Sinne von Issue #75, sondern um eine reine Sichtbarkeits-Erweiterung des Response-Bodys. Route und Permission-Check sind unveraendert.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "anonymized.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      }
+    },
+    {
+      "date": "2026-09-29",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      },
+      "issue": 416,
+      "key": "APIKEY_ADMIN | GET /api/v1/reports/leave-overview | none",
+      "reason": "Issue #416 (Task 6, AC-3/AC-4): GET /api/v1/reports/leave-overview listet jetzt zusaetzlich aktive Mitarbeitende ohne VACATION-LeaveEntitlement-Zeile fuer das abgefragte Jahr als Platzhalter-Zeile (missingEntitlement: true, leaveType: null) statt sie wie zuvor stillschweigend wegzulassen. Drei der Testfixtur-Mitarbeitenden (anchor.admin.employee, anonymized.employee, holder.employee) sind aktiv und hatten keine Urlaubsanspruch-Zeile fuer das Testjahr, erscheinen also neu in der IDs-Liste. Die Aenderung ist NICHT rollenspezifisch: alle sechs Akteure mit Zugriff auf die Route (die zwei ohne Berechtigung bleiben bei 403/[]) sehen dieselben drei zusaetzlichen IDs identisch, es handelt sich also nicht um eine differenzielle Berechtigungsaenderung im Sinne von Issue #75, sondern um eine reine Sichtbarkeits-Erweiterung des Response-Bodys. Route und Permission-Check sind unveraendert.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "anonymized.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      }
+    },
+    {
+      "date": "2026-09-29",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      },
+      "issue": 416,
+      "key": "APIKEY_PLAIN | GET /api/v1/reports/leave-overview | none",
+      "reason": "Issue #416 (Task 6, AC-3/AC-4): GET /api/v1/reports/leave-overview listet jetzt zusaetzlich aktive Mitarbeitende ohne VACATION-LeaveEntitlement-Zeile fuer das abgefragte Jahr als Platzhalter-Zeile (missingEntitlement: true, leaveType: null) statt sie wie zuvor stillschweigend wegzulassen. Drei der Testfixtur-Mitarbeitenden (anchor.admin.employee, anonymized.employee, holder.employee) sind aktiv und hatten keine Urlaubsanspruch-Zeile fuer das Testjahr, erscheinen also neu in der IDs-Liste. Die Aenderung ist NICHT rollenspezifisch: alle sechs Akteure mit Zugriff auf die Route (die zwei ohne Berechtigung bleiben bei 403/[]) sehen dieselben drei zusaetzlichen IDs identisch, es handelt sich also nicht um eine differenzielle Berechtigungsaenderung im Sinne von Issue #75, sondern um eine reine Sichtbarkeits-Erweiterung des Response-Bodys. Route und Permission-Check sind unveraendert.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "anonymized.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      }
+    },
+    {
+      "date": "2026-09-29",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      },
+      "issue": 416,
+      "key": "FALLBACK_ADMIN | GET /api/v1/reports/leave-overview | none",
+      "reason": "Issue #416 (Task 6, AC-3/AC-4): GET /api/v1/reports/leave-overview listet jetzt zusaetzlich aktive Mitarbeitende ohne VACATION-LeaveEntitlement-Zeile fuer das abgefragte Jahr als Platzhalter-Zeile (missingEntitlement: true, leaveType: null) statt sie wie zuvor stillschweigend wegzulassen. Drei der Testfixtur-Mitarbeitenden (anchor.admin.employee, anonymized.employee, holder.employee) sind aktiv und hatten keine Urlaubsanspruch-Zeile fuer das Testjahr, erscheinen also neu in der IDs-Liste. Die Aenderung ist NICHT rollenspezifisch: alle sechs Akteure mit Zugriff auf die Route (die zwei ohne Berechtigung bleiben bei 403/[]) sehen dieselben drei zusaetzlichen IDs identisch, es handelt sich also nicht um eine differenzielle Berechtigungsaenderung im Sinne von Issue #75, sondern um eine reine Sichtbarkeits-Erweiterung des Response-Bodys. Route und Permission-Check sind unveraendert.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "anonymized.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      }
+    },
+    {
+      "date": "2026-09-29",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      },
+      "issue": 416,
+      "key": "FALLBACK_MANAGER | GET /api/v1/reports/leave-overview | none",
+      "reason": "Issue #416 (Task 6, AC-3/AC-4): GET /api/v1/reports/leave-overview listet jetzt zusaetzlich aktive Mitarbeitende ohne VACATION-LeaveEntitlement-Zeile fuer das abgefragte Jahr als Platzhalter-Zeile (missingEntitlement: true, leaveType: null) statt sie wie zuvor stillschweigend wegzulassen. Drei der Testfixtur-Mitarbeitenden (anchor.admin.employee, anonymized.employee, holder.employee) sind aktiv und hatten keine Urlaubsanspruch-Zeile fuer das Testjahr, erscheinen also neu in der IDs-Liste. Die Aenderung ist NICHT rollenspezifisch: alle sechs Akteure mit Zugriff auf die Route (die zwei ohne Berechtigung bleiben bei 403/[]) sehen dieselben drei zusaetzlichen IDs identisch, es handelt sich also nicht um eine differenzielle Berechtigungsaenderung im Sinne von Issue #75, sondern um eine reine Sichtbarkeits-Erweiterung des Response-Bodys. Route und Permission-Check sind unveraendert.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "anonymized.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      }
+    },
+    {
+      "date": "2026-09-29",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      },
+      "issue": 416,
+      "key": "MANAGER | GET /api/v1/reports/leave-overview | none",
+      "reason": "Issue #416 (Task 6, AC-3/AC-4): GET /api/v1/reports/leave-overview listet jetzt zusaetzlich aktive Mitarbeitende ohne VACATION-LeaveEntitlement-Zeile fuer das abgefragte Jahr als Platzhalter-Zeile (missingEntitlement: true, leaveType: null) statt sie wie zuvor stillschweigend wegzulassen. Drei der Testfixtur-Mitarbeitenden (anchor.admin.employee, anonymized.employee, holder.employee) sind aktiv und hatten keine Urlaubsanspruch-Zeile fuer das Testjahr, erscheinen also neu in der IDs-Liste. Die Aenderung ist NICHT rollenspezifisch: alle sechs Akteure mit Zugriff auf die Route (die zwei ohne Berechtigung bleiben bei 403/[]) sehen dieselben drei zusaetzlichen IDs identisch, es handelt sich also nicht um eine differenzielle Berechtigungsaenderung im Sinne von Issue #75, sondern um eine reine Sichtbarkeits-Erweiterung des Response-Bodys. Route und Permission-Check sind unveraendert.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "anonymized.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      }
     }
   ]
 }
