@@ -130,16 +130,45 @@ export function splitDaysAcrossYears(
 }
 
 /**
+ * Round a raw (unrounded) pro-rata vacation-day value per § 5 Abs. 2 BUrlG, as construed by the
+ * BAG: a fraction of a vacation day that amounts to AT LEAST half a day rounds UP to a FULL day.
+ * A fraction BELOW half a day is NOT rounded to the nearest 0.5 — it is kept as the exact
+ * fraction, to 2 decimal places (e.g. 8.33), matching how prod's existing manually-entered rows
+ * already do it.
+ *
+ * Shared by {@link calculateProRataVacationForHire} (Issue #416) and
+ * {@link calculateProRataVacation} (Issue #421) — the two § 5 Abs. 1 BUrlG "Zwölftelung"
+ * (twelfthing) calculations for hire-year and exit-year pro-rata entitlement. This rule does
+ * NOT apply to {@link calculatePartTimeVacation}'s full-time/part-time day-count conversion,
+ * which is a different calculation outside § 5's twelfthing rule (Issue #421 research, backed by
+ * the Arnold/Tillmanns BUrlG § 5 commentary § "Bruchteile außerhalb der Zwölftelungsregelung" and
+ * BAG 9 AZR 7/16, 14.03.2017) — deliberately left unrounded-to-full-day there.
+ */
+export function roundVacationDaysBurlG(raw: number): number {
+  const frac = raw - Math.floor(raw);
+  if (frac >= 0.5) return Math.ceil(raw);
+  return Math.round(raw * 100) / 100;
+}
+
+/**
  * Calculate pro-rata vacation entitlement for an employee leaving mid-year.
- * Formula (BUrlG § 5 Abs. 2): baseDays × (volleBeschäftigungsmonate / 12), rounded UP to nearest 0.5.
+ * Formula (BUrlG § 5 Abs. 2): baseDays × (volleBeschäftigungsmonate / 12), rounded per
+ * {@link roundVacationDaysBurlG}.
  *
  * "Volle Beschäftigungsmonate": a month counts as full ONLY if the exitDate is on or after
  * the LAST DAY of that month. E.g., Jun 30 → 6 full months; Jun 29 → 5.
  *
+ * § 5 Abs. 2 BUrlG rounding (corrected 2026-09-30, Issue #421): previously rounded to the
+ * nearest half day (`Math.ceil(raw * 2) / 2`), which silently under-granted entitlement whenever
+ * the fraction was at least half a day (e.g. 12.5 stayed 12.5 instead of rounding up to 13). Now
+ * uses the same {@link roundVacationDaysBurlG} rule as the sibling HIRE-date function
+ * {@link calculateProRataVacationForHire} (Issue #416) — the two are no longer divergent.
+ *
  * @param baseDays - Full-year vacation entitlement (may already be part-time adjusted)
  * @param year - The calendar year to calculate for
  * @param exitDate - The employee's last working day
- * @returns Pro-rata entitlement rounded UP to nearest 0.5; or baseDays if exitDate is in future year
+ * @returns Pro-rata entitlement per {@link roundVacationDaysBurlG}; or baseDays if exitDate is in
+ *   a future year
  */
 export function calculateProRataVacation(baseDays: number, year: number, exitDate: Date): number {
   if (!Number.isFinite(baseDays) || baseDays <= 0) return 0;
@@ -167,8 +196,7 @@ export function calculateProRataVacation(baseDays: number, year: number, exitDat
   monthsWorked = Math.min(monthsWorked, 12);
 
   const raw = (baseDays * monthsWorked) / 12;
-  // Round UP to nearest 0.5
-  return Math.ceil(raw * 2) / 2;
+  return roundVacationDaysBurlG(raw);
 }
 
 /**
@@ -192,12 +220,14 @@ export function calculateProRataVacation(baseDays: number, year: number, exitDat
  * — i.e. `baseDays` here is the day-count already owed at this employee's contract, not the raw
  * tenant default.
  *
- * § 5 Abs. 2 BUrlG rounding (BAG, corrected 2026-09-29, Issue #416): a fraction of at least half
- * a day rounds UP to a full day; a fraction below half a day is NOT rounded to the nearest 0.5 —
- * it stays the exact fraction, to 2 decimals. This differs from `calculatePartTimeVacation()`'s
- * round-to-nearest-0.5 convention (a separate question, left unchanged) and from the sibling
- * EXIT-date `calculateProRataVacation()` above, which still rounds to nearest 0.5 (a known,
- * out-of-scope-here divergence — see the Issue #416 PR).
+ * § 5 Abs. 2 BUrlG rounding, via the shared {@link roundVacationDaysBurlG} helper: a fraction of
+ * at least half a day rounds UP to a full day; a fraction below half a day is NOT rounded to the
+ * nearest 0.5 — it stays the exact fraction, to 2 decimals. This differs from
+ * `calculatePartTimeVacation()`'s round-to-nearest-0.5 convention, which is a different
+ * calculation outside § 5's twelfthing rule (a separate question, left unchanged — see the
+ * shared helper's docblock and Issue #421). As of Issue #421 the sibling EXIT-date
+ * `calculateProRataVacation()` above uses the identical shared helper — the two are no longer
+ * divergent.
  *
  * @param baseDays - Full-year vacation entitlement (may already be part-time adjusted)
  * @param year - The calendar year to calculate for
@@ -234,16 +264,7 @@ export function calculateProRataVacationForHire(
   monthsWorked = Math.min(monthsWorked, 12);
 
   const raw = (baseDays * monthsWorked) / 12;
-  // § 5 Abs. 2 BUrlG, as construed by the BAG (in English: fractions of a vacation day that add
-  // up to at least half a day are to be rounded up to a full vacation day): a fraction of AT
-  // LEAST half a day rounds UP to a FULL day. A fraction BELOW half a day is NOT rounded to the
-  // nearest 0.5 (that convention belongs to calculatePartTimeVacation()'s part-time scaling,
-  // a different question, deliberately left as-is per Issue #416 coordinator decision
-  // 2026-09-29) — it is kept as the exact fraction, to 2 decimals (e.g. 8.33), matching how
-  // prod's existing manually-entered rows already do it (13.0 already follows this rule).
-  const frac = raw - Math.floor(raw);
-  if (frac >= 0.5) return Math.ceil(raw);
-  return Math.round(raw * 100) / 100;
+  return roundVacationDaysBurlG(raw);
 }
 
 /**
