@@ -178,6 +178,10 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
       );
       if (!result) return reply.code(404).send({ error: "Urlaubstyp nicht konfiguriert" });
       const { entitlement: existing } = result;
+      // Issue #416: the row already fetched above tells us whether this write is the FIRST one
+      // for this employee+year (no code path created it automatically before this phase) — the
+      // audit action must say so instead of always claiming "UPDATE".
+      const existedBefore = Boolean(existing);
       const illnessProtected = preserveIllnessDeadline(existing);
       const requestedDeadline = body.carryOverDeadline ? new Date(body.carryOverDeadline) : null;
 
@@ -214,7 +218,9 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
 
       await app.audit({
         userId: req.user.sub,
-        action: "UPDATE",
+        // Issue #416: CREATE when no row existed for this employee+year before this write,
+        // UPDATE otherwise — previously hardcoded to "UPDATE" even on the first write.
+        action: existedBefore ? "UPDATE" : "CREATE",
         entity: "LeaveEntitlement",
         entityId: entitlement.id,
         oldValue: existing
