@@ -22,7 +22,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const auth = get(authStore);
 
   const headers: Record<string, string> = {
-    // Content-Type nur setzen wenn ein Body mitkommt
+    // Only set Content-Type when a body is present
     ...(options.body !== undefined ? { "Content-Type": "application/json" } : {}),
     ...(options.headers as Record<string, string>),
   };
@@ -33,7 +33,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
 
-  // 204 No Content – kein Body
+  // 204 No Content – no body
   if (res.status === 204) return undefined as T;
 
   const data = res.headers.get("content-type")?.includes("application/json")
@@ -41,11 +41,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     : await res.text();
 
   if (res.status === 401) {
-    // Auth-Endpunkte selbst (login, otp) sollen kein Auto-Refresh auslösen —
-    // dort bedeutet 401 "falsche Anmeldedaten", nicht "Token abgelaufen".
+    // The auth endpoints themselves (login, otp) must not trigger an auto-refresh —
+    // there, 401 means "wrong credentials", not "token expired".
     const isAuthEndpoint = path.startsWith("/auth/login") || path.startsWith("/auth/otp");
     if (!isAuthEndpoint) {
-      // Token abgelaufen – versuche zu refreshen
+      // Token expired – attempt to refresh
       const refreshed = await tryRefresh();
       if (refreshed) {
         return request<T>(path, options); // Retry

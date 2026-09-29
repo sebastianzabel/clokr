@@ -518,7 +518,7 @@ Brücke gar nicht erst aus, sodass ein Personalabteilung- oder Kundenrollen-Halt
 Manager-Zuweisung mehr geschenkt bekommt und ein Salonmanager/Ausbilder-Halter mit Mitarbeiter
 kein unnötiges 409 mehr erhält.
 
-## Effektive Permissions im Web (Phase 378, Issue #378)
+## Effektive Permissions im Web (Phase 378, Issue #378; Phase 408, Issue #408)
 
 Die Weboberfläche kennt die effektiven Permissions eines Nutzers, nicht nur die Kompatibilitätsrolle:
 `effectivePermissionKeysForUser(prisma, userId, tenantId)`
@@ -526,8 +526,12 @@ Die Weboberfläche kennt die effektiven Permissions eines Nutzers, nicht nur die
 Permission-Schlüssel, die ein Nutzer hält — dieselbe Auflösung wie `hasPermission()`, nur für
 alle Katalogschlüssel auf einmal statt für einen. `POST /auth/login` und `POST /auth/verify-otp`
 (`contexts/platform/api/auth.ts`, `issueTokens()`) hängen das Ergebnis als `user.permissions`
-an die Antwort — dieselbe Aktualität wie die Kompatibilitätsrolle: neu berechnet bei jedem Login,
-nicht bei jedem Token-Refresh. Das Web liest diese Liste über `apps/web/src/lib/permissions.ts`
+an die Antwort. Seit Phase 408 (Issue #408) liefert auch `POST /auth/refresh` dieselbe Liste,
+als eigenes Top-Level-Feld `permissions` (dieselbe Funktion, kein `user`-Objekt) — die Liste wird
+bei jedem Login UND bei jedem Token-Refresh neu berechnet, nicht mehr nur beim nächsten Login.
+Das Web übernimmt sie bei jedem Refresh, und eine vor #378 zwischengespeicherte Session ohne
+Liste lädt sie beim App-Start nach, ohne dass sich der Nutzer neu anmelden muss; bis dahin gilt
+sie als leer (fail-closed). Das Web liest diese Liste über `apps/web/src/lib/permissions.ts`
 (`hasPermission`/`hasAnyPermission`) und entscheidet damit Sichtbarkeit im Team-Bereich (Sidebar,
 Routen-Guards, Dashboard-Karten) — nicht mehr über `user.role`, das eine Salon-/Personen-Scope-
 Zuweisung (Salonmanager, Ausbilder) nie widerspiegelt (#357). `apps/web/scripts/lint-role-checks.mjs`
