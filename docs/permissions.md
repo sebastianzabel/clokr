@@ -781,7 +781,16 @@ Filter (`isActive`, Mandant, `exitDate`, Akteur-/Ziel-Ausschluss, Auswahlform) u
 Rollenbedingung durch die Trefferliste dieser Fassade. Die Permission je Stelle ist so gewählt,
 dass die heutige Empfänger-Menge unverändert bleibt (D-16): A,M-Stellen fragen eine Permission, die
 Admin UND Manager halten, A-Stellen eine, die nur Admin hält. Neu (D-09): ein TENANT-Inhaber einer
-Kundenrolle wird ab jetzt ebenfalls benachrichtigt; ein SALONS- oder PERSONS-Inhaber erst mit #91.
+Kundenrolle wird ab jetzt ebenfalls benachrichtigt.
+
+**Issue #367 (2026-09-29, revidiert D-09):** Ein Inhaber einer wohlgeformten SALONS- oder
+PERSONS-Zuweisung ist jetzt ebenfalls Kandidat dieser Fassade — aber NUR für eine Permission mit
+Bezug `PERSON` (`permission-catalog.ts`), spiegelbildlich zu D-05s `zugewiesen`/
+`zugewiesenAnyScope`-Trennung in `request-permissions.ts`. Die Einengung auf den tatsächlichen
+Salon/die tatsächliche Person übernimmt weiterhin `resolveScopedHolderIds()` (D-17) je Vorgang; der
+Aufrufer bei `carryover-warning.ts:124` fragt die einzige Permission dieser Tabelle mit Bezug
+`MANDANT` (`leave-config:manage`) ab und bleibt deshalb unverändert — dort narrowed nichts, weil
+die Fassade selbst für diese eine Permission gar keinen SALONS-/PERSONS-Kandidaten liefert.
 
 Die Spalte „heute“ nennt wie bei den anderen Abschnitten die Rollen, die die Stelle vor der
 Umstellung ausgewählt hat — der Neutralitätsvertrag von D-16, geprüft von
