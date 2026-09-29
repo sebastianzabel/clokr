@@ -17,8 +17,9 @@
  *     idempotent by construction (structural, via `ensureVacationEntitlementForYear`'s own
  *     no-op-on-existing check — not re-implemented here).
  *
- * TODO(#417): recalc 0-day leave requests caused by missing entitlement at request time —
- * out of scope for this script (issue #416's own AC); tracked separately as issue #417.
+ * Issue #417's sibling repair (SHIFT_BASED leave requests miscounted against the roster instead
+ * of the contract) is out of this script's scope (issue #416's own AC) — see
+ * `scripts/recalculate-shift-based-leave-days.ts`.
  *
  * Invariants:
  *   - NEVER hard-deletes anything (Revisionssicherheit per CLAUDE.md) — this script only
