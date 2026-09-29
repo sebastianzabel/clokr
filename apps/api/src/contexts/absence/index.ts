@@ -101,8 +101,12 @@ export {
   upsertVacationEntitlement,
   getVacationEntitlementsForYearByCode,
   hardDeleteEntitlementsForEmployee,
+  ensureVacationEntitlementForYear, // Issue #416
 } from "./facade/entitlements";
-export type { UpsertVacationEntitlementData } from "./facade/entitlements";
+export type {
+  UpsertVacationEntitlementData,
+  EnsureVacationEntitlementAuditFn, // Issue #416
+} from "./facade/entitlements";
 
 // ── EmployeeVocationalSchoolPattern (plan 11, A20/A21a/A21b) ─────────────────────────────────
 export {

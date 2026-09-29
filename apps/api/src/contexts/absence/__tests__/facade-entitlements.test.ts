@@ -32,6 +32,7 @@ import {
   upsertVacationEntitlement,
   getVacationEntitlementsForYearByCode,
   hardDeleteEntitlementsForEmployee,
+  ensureVacationEntitlementForYear,
 } from "../index";
 import type { FastifyInstance } from "fastify";
 
@@ -347,6 +348,87 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
           data: { name: "Urlaub" },
         });
       }
+    });
+  });
+
+  describe("ensureVacationEntitlementForYear (Issue #416)", () => {
+    it("creates a full-year entitlement (no pro-rata) for a year the employee was already employed at the start of, scaled by workdays, with exactly one CREATE audit call", async () => {
+      const freshYear = year + 10;
+      const auditCalls: unknown[] = [];
+      const result = await ensureVacationEntitlementForYear(
+        app.prisma,
+        data.employee.id,
+        data.tenant.id,
+        freshYear,
+        new Date("2024-01-01"), // hired well before freshYear -> full-scaled-amount branch
+        5, // full-time
+        30,
+        "Automatisch angelegt bei Mitarbeiteranlage",
+        async (entry) => {
+          auditCalls.push(entry);
+        },
+      );
+      expect(result?.created).toBe(true);
+      expect(Number(result?.entitlement.totalDays)).toBe(30);
+      expect(result?.entitlement.isAutoCalculated).toBe(true);
+      expect(auditCalls).toHaveLength(1);
+      expect(auditCalls[0]).toMatchObject({
+        action: "CREATE",
+        entity: "LeaveEntitlement",
+        entityId: result?.entitlement.id,
+      });
+    });
+
+    it("is a no-op on a second call for the same employee+year — idempotent, no second audit call", async () => {
+      const freshYear = year + 11;
+      const auditCalls: unknown[] = [];
+      const auditFn = async (entry: unknown) => {
+        auditCalls.push(entry);
+      };
+      const first = await ensureVacationEntitlementForYear(
+        app.prisma,
+        data.employee.id,
+        data.tenant.id,
+        freshYear,
+        new Date("2024-01-01"),
+        5,
+        30,
+        "reason",
+        auditFn,
+      );
+      expect(first?.created).toBe(true);
+
+      const second = await ensureVacationEntitlementForYear(
+        app.prisma,
+        data.employee.id,
+        data.tenant.id,
+        freshYear,
+        new Date("2024-01-01"),
+        5,
+        30,
+        "reason",
+        auditFn,
+      );
+      expect(second?.created).toBe(false);
+      expect(second?.entitlement.id).toBe(first?.entitlement.id);
+      expect(auditCalls).toHaveLength(1); // only the first call is audited
+    });
+
+    it("pro-rates by hire-month AND scales by workdays for the hire year (composition order: scale first, then pro-rate)", async () => {
+      const hireYear = year + 12;
+      const hireDate = new Date(hireYear, 6, 1); // Jul 1 -> 6/12
+      const result = await ensureVacationEntitlementForYear(
+        app.prisma,
+        data.employee.id,
+        data.tenant.id,
+        hireYear,
+        hireDate,
+        3, // 3-day week: 3/5 * 30 = 18, then 18 * 6/12 = 9
+        30,
+        "reason",
+        async () => {},
+      );
+      expect(Number(result?.entitlement.totalDays)).toBe(9);
     });
   });
 
