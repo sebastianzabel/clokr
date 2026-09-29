@@ -6,7 +6,8 @@ import { density } from "$stores/density";
 import { skin } from "$stores/skin";
 import { prefsHydrated } from "$stores/prefs-state";
 import { fetchPreferences } from "$api/preferences";
-import { loadPermissionsIfMissing } from "$api/client";
+import { ApiError, loadPermissionsIfMissing } from "$api/client";
+import { clientLogger } from "$lib/utils/logger";
 
 export interface AuthUser {
   id: string;
@@ -71,9 +72,18 @@ async function hydratePreferencesFromServer(): Promise<void> {
     skin.set(prefs.skin ?? "editorial");
     // Language store doesn't exist yet (planned). Once it does, set it here.
     prefsHydrated.set(true);
-  } catch {
-    // Server unreachable or 401 — keep localStorage fallback, stay un-hydrated so
-    // we don't fire PUTs that will also fail.
+  } catch (err) {
+    // Server unreachable or 401 — keep localStorage fallback, stay un-hydrated so we
+    // don't fire PUTs that will also fail. A non-401 ApiError (e.g. a 5xx from
+    // /me/preferences) is a real, recoverable failure and is reported (Phase 412, #412,
+    // AK-3) so it no longer disappears silently. A failed fetch() rejects with a
+    // TypeError (offline/network), never an ApiError — no other non-ApiError exception is
+    // expected from this call chain, so every non-ApiError stays silent too.
+    if (err instanceof ApiError && err.status !== 401) {
+      clientLogger.warn("Fehler beim Laden der Einstellungen vom Server", {
+        status: err.status,
+      });
+    }
   }
 }
 
@@ -88,7 +98,17 @@ function createAuthStore() {
 
   // On boot: if we already have an access token (returning visit), hydrate prefs.
   if (browser && initial.accessToken) {
-    void hydratePreferencesFromServer();
+    // Phase 412 (#412), same cause as the #408 deferral below: stores/auth.ts and
+    // api/client.ts import each other (directly here via $api/preferences -> $api/client, and
+    // directly since #408). A synchronous call into client.ts at this point would run while
+    // `authStore` is still inside its own TDZ (the `export const authStore = createAuthStore()`
+    // assignment below has not completed yet) — client.ts's `get(authStore)` would throw a
+    // `ReferenceError` before ever sending a request, silently swallowed by
+    // hydratePreferencesFromServer()'s own catch. queueMicrotask defers the call until the
+    // module graph has finished evaluating, exactly like the sibling deferral immediately below.
+    queueMicrotask(() => {
+      void hydratePreferencesFromServer();
+    });
 
     // Phase 408 (#408): stores/auth.ts and api/client.ts import each other (directly here, and
     // via $api/preferences). A synchronous call into client.ts at this point would run while

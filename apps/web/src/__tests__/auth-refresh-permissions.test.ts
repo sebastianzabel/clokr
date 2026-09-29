@@ -58,16 +58,22 @@ describe("Phase 408 (#408) — source-read guards", () => {
   });
 
   it("WEB-c: boot block schedules loadPermissionsIfMissing via queueMicrotask when permissions is undefined", () => {
-    expect(STORES_AUTH).toContain('import { loadPermissionsIfMissing } from "$api/client"');
+    // Phase 412 (#412) merged this import with the new ApiError import from the same module.
+    expect(STORES_AUTH).toMatch(
+      /import \{[^}]*loadPermissionsIfMissing[^}]*\} from "\$api\/client"/,
+    );
     const start = STORES_AUTH.indexOf("if (browser && initial.accessToken) {");
     const end = STORES_AUTH.indexOf("return {", start);
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const body = STORES_AUTH.slice(start, end);
     const iCheck = body.search(/initial\.user\s*&&\s*initial\.user\.permissions\s*===\s*undefined/);
-    const iMicrotask = body.indexOf("queueMicrotask(");
-    const iLoader = body.indexOf("loadPermissionsIfMissing()");
     expect(iCheck).toBeGreaterThan(-1);
+    // Phase 412 (#412) added a SEPARATE, sibling queueMicrotask deferral earlier in this same
+    // block for hydratePreferencesFromServer() — search for THIS call's own wrapper starting at
+    // the permissions-check, not the first queueMicrotask( in the whole boot block.
+    const iMicrotask = body.indexOf("queueMicrotask(", iCheck);
+    const iLoader = body.indexOf("loadPermissionsIfMissing()", iMicrotask);
     expect(iMicrotask).toBeGreaterThan(iCheck);
     expect(iLoader).toBeGreaterThan(iMicrotask);
   });
