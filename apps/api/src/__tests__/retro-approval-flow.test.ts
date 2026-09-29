@@ -702,6 +702,21 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
         const grant = await retroModel?.findUnique({ where: { id: grantId } });
         expect(grant?.status, "grant must be USED after consumption").toBe("USED");
 
+        // Verify AuditLog entry for RETRO_ENTRY_APPROVED_USED carries oldValue
+        const usedAuditLog = await app.prisma.auditLog.findFirst({
+          where: { action: "RETRO_ENTRY_APPROVED_USED", entityId: grantId },
+          orderBy: { createdAt: "desc" },
+        });
+        expect(usedAuditLog, "AuditLog with RETRO_ENTRY_APPROVED_USED must exist").not.toBeNull();
+        if (usedAuditLog) {
+          const oldValue = usedAuditLog.oldValue as Record<string, unknown> | null;
+          const newValue = usedAuditLog.newValue as Record<string, unknown> | null;
+          expect(oldValue?.status, "audit oldValue must carry prior status APPROVED").toBe(
+            "APPROVED",
+          );
+          expect(newValue?.timeEntryId, "audit newValue must carry timeEntryId").toBeTruthy();
+        }
+
         // Second write with same grant → 403
         const secondRes = await app.inject({
           method: "POST",
@@ -881,6 +896,21 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           { findUnique: (opts: object) => Promise<{ status: string } | null> } | undefined;
         const grant = await retroModel?.findUnique({ where: { id: grantId } });
         expect(grant?.status, "grant must be USED after PUT consumption").toBe("USED");
+
+        // Verify AuditLog entry for RETRO_ENTRY_APPROVED_USED carries oldValue
+        const usedAuditLog = await app.prisma.auditLog.findFirst({
+          where: { action: "RETRO_ENTRY_APPROVED_USED", entityId: grantId },
+          orderBy: { createdAt: "desc" },
+        });
+        expect(usedAuditLog, "AuditLog with RETRO_ENTRY_APPROVED_USED must exist").not.toBeNull();
+        if (usedAuditLog) {
+          const oldValue = usedAuditLog.oldValue as Record<string, unknown> | null;
+          const newValue = usedAuditLog.newValue as Record<string, unknown> | null;
+          expect(oldValue?.status, "audit oldValue must carry prior status APPROVED").toBe(
+            "APPROVED",
+          );
+          expect(newValue?.timeEntryId, "audit newValue must carry timeEntryId").toBeTruthy();
+        }
 
         // Second PUT with the same (now USED) grantId → 403
         const secondPutRes = await app.inject({

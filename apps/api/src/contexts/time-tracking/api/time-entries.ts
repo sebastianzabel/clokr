@@ -1364,6 +1364,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               action: "RETRO_ENTRY_APPROVED_USED",
               entity: "RetroEntryRequest",
               entityId: grantIdForTx,
+              oldValue: { status: "APPROVED" },
               newValue: { timeEntryId: created.id, employeeId, date: body.date },
               tx,
             });
@@ -2013,6 +2014,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               action: "RETRO_ENTRY_APPROVED_USED",
               entity: "RetroEntryRequest",
               entityId: grantIdForTx,
+              oldValue: { status: "APPROVED" },
               newValue: {
                 timeEntryId: id,
                 employeeId: existing.employeeId,
