@@ -44,6 +44,8 @@
  *   DATABASE_URL=... pnpm --filter @clokr/api exec tsx \
  *     scripts/recalculate-shift-based-leave-days.ts \
  *     ( --tenant-id <uuid> | --all-tenants ) \
+ *     [--status PENDING|APPROVED] \
+ *     [--request-id <uuid> ...] \
  *     [--confirm] \
  *     [--help]
  *
@@ -52,6 +54,13 @@
  * With    --confirm: corrects PENDING rows directly, corrects APPROVED rows via the reverse/
  *                     apply booking pair + LEAVE_CORRECTED audit, skips (and reports) any
  *                     APPROVED row touching a locked month.
+ *
+ * --status PENDING|APPROVED: restricts scanning to that single status (default: both, the
+ *                             existing scope). Any other value throws a German error.
+ * --request-id <uuid>:       repeatable — restricts scanning to those specific requests (ANDed
+ *                             with --status when both are given). Issue #425: lets the owner
+ *                             identify affected requests via dry-run before deciding on a
+ *                             correction pass.
  */
 import { PrismaClient, Prisma } from "@clokr/db";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -77,6 +86,8 @@ const CORRECTION_REASON = "Nachberechnung Urlaubstage nach Vertrag (Issue #417)"
 export type CliArgs = {
   tenantId: string | null;
   allTenants: boolean;
+  status: "PENDING" | "APPROVED" | null;
+  requestIds: string[];
   confirm: boolean;
   help: boolean;
 };
@@ -108,6 +119,8 @@ Usage:
   DATABASE_URL=<dsn> pnpm --filter @clokr/api exec tsx \\
     scripts/recalculate-shift-based-leave-days.ts \\
     ( --tenant-id <uuid> | --all-tenants ) \\
+    [--status PENDING|APPROVED] \\
+    [--request-id <uuid> ...] \\
     [--confirm] \\
     [--help]
 
@@ -121,6 +134,9 @@ Scope:
   - SHIFT_BASED employees' VACATION requests only (PENDING or APPROVED, not soft-deleted).
   - Idempotent: a request whose stored days/daysProvisional already match the by-contract
     value is not touched.
+  - --status PENDING|APPROVED restricts scanning to that single status (default: both).
+  - --request-id <uuid> is repeatable and restricts scanning to those specific requests
+    (ANDed with --status when both are given).
 `;
 
 // ── CLI parsing ─────────────────────────────────────────────────────────────
@@ -130,15 +146,24 @@ export function parseCli(argv: string[]): CliArgs {
     options: {
       "tenant-id": { type: "string" },
       "all-tenants": { type: "boolean", default: false },
+      status: { type: "string" },
+      "request-id": { type: "string", multiple: true },
       confirm: { type: "boolean", default: false },
       help: { type: "boolean", default: false },
     },
     strict: true,
   });
 
+  const rawStatus = values.status;
+  if (rawStatus !== undefined && rawStatus !== "PENDING" && rawStatus !== "APPROVED") {
+    throw new Error(`Ungültiger --status Wert: "${rawStatus}" (erlaubt: PENDING, APPROVED).`);
+  }
+
   return {
     tenantId: values["tenant-id"] ?? null,
     allTenants: Boolean(values["all-tenants"]),
+    status: rawStatus ?? null,
+    requestIds: values["request-id"] ?? [],
     confirm: Boolean(values.confirm),
     help: Boolean(values.help),
   };
@@ -202,12 +227,13 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       const requests = await prisma.leaveRequest.findMany({
         where: {
           deletedAt: null,
-          status: { in: ["PENDING", "APPROVED"] },
+          status: args.status ?? { in: ["PENDING", "APPROVED"] },
           leaveType: { tenantId: t.id, code: "VACATION" },
           employee: {
             tenantId: t.id,
             workSchedules: { some: { type: "SHIFT_BASED" } },
           },
+          ...(args.requestIds.length > 0 ? { id: { in: args.requestIds } } : {}),
         },
         include: {
           employee: { select: { id: true, employeeNumber: true, tenantId: true } },
