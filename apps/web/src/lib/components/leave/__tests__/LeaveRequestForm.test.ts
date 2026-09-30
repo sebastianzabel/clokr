@@ -246,4 +246,97 @@ describe("LeaveRequestForm", () => {
     const firstFormGroup = form.querySelector(".form-group");
     expect(firstFormGroup?.querySelector("#f-type")).toBeTruthy();
   });
+
+  // ── Roster-not-imported hint (Phase 430, D-15/D-16) ─────────────────────────────────────────
+  const ROSTER_HINT_TEXT =
+    "Für diese Woche steht der Schichtplan noch nicht fest. Bitte alle Tage beantragen, die frei sein sollen – auch den Samstag.";
+
+  it("rosterImported: false in the hours-preview response -> the hint renders with the exact owner-specified wording", async () => {
+    apiGet.mockImplementation((path: string) => {
+      if (path.startsWith("/leave/hours-preview")) {
+        return Promise.resolve({ hours: 8, days: 1, minutesNeeded: 480, rosterImported: false });
+      }
+      return defaultGetImpl(path);
+    });
+    renderForm();
+    await fireEvent.input(screen.getByTestId("leave-form-from"), {
+      target: { value: "2026-10-05" },
+    });
+    await fireEvent.input(screen.getByTestId("leave-form-to"), {
+      target: { value: "2026-10-06" },
+    });
+    await waitFor(() => expect(screen.getByTestId("leave-form-roster-hint")).toBeTruthy(), {
+      timeout: 1000,
+    });
+    expect(
+      screen.getByTestId("leave-form-roster-hint").textContent?.replace(/\s+/g, " ").trim(),
+    ).toBe(ROSTER_HINT_TEXT);
+  });
+
+  it("rosterImported: true (or absent, the default mock) -> no hint renders", async () => {
+    renderForm();
+    await fireEvent.input(screen.getByTestId("leave-form-from"), {
+      target: { value: "2026-10-05" },
+    });
+    await fireEvent.input(screen.getByTestId("leave-form-to"), {
+      target: { value: "2026-10-06" },
+    });
+    // Wait for the hours-preview round trip to settle (the days-info bar is proof it landed)
+    // before asserting the hint's ABSENCE — an absence checked before the fetch resolves would
+    // pass vacuously.
+    await waitFor(() => expect(screen.getByTestId("leave-form-days-calc")).toBeTruthy(), {
+      timeout: 1000,
+    });
+    expect(screen.queryByTestId("leave-form-roster-hint")).toBeNull();
+  });
+
+  it("non-SHIFT_BASED employee (the default mock never sends rosterImported: false) never shows the hint, even across a date change", async () => {
+    renderForm();
+    await fireEvent.input(screen.getByTestId("leave-form-from"), {
+      target: { value: "2026-10-05" },
+    });
+    await fireEvent.input(screen.getByTestId("leave-form-to"), {
+      target: { value: "2026-10-06" },
+    });
+    await waitFor(() => expect(screen.getByTestId("leave-form-days-calc")).toBeTruthy(), {
+      timeout: 1000,
+    });
+    expect(screen.queryByTestId("leave-form-roster-hint")).toBeNull();
+
+    await fireEvent.input(screen.getByTestId("leave-form-to"), {
+      target: { value: "2026-10-09" },
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    expect(screen.queryByTestId("leave-form-roster-hint")).toBeNull();
+  });
+
+  it("hint disappears once the date range changes to a week that IS rostered (reactive, matches the existing debounce re-fetch)", async () => {
+    apiGet.mockImplementation((path: string) => {
+      if (path.startsWith("/leave/hours-preview")) {
+        const rostered = path.includes("startDate=2026-11");
+        return Promise.resolve({ hours: 8, days: 1, minutesNeeded: 480, rosterImported: rostered });
+      }
+      return defaultGetImpl(path);
+    });
+    renderForm();
+    await fireEvent.input(screen.getByTestId("leave-form-from"), {
+      target: { value: "2026-10-05" },
+    });
+    await fireEvent.input(screen.getByTestId("leave-form-to"), {
+      target: { value: "2026-10-06" },
+    });
+    await waitFor(() => expect(screen.getByTestId("leave-form-roster-hint")).toBeTruthy(), {
+      timeout: 1000,
+    });
+
+    await fireEvent.input(screen.getByTestId("leave-form-from"), {
+      target: { value: "2026-11-02" },
+    });
+    await fireEvent.input(screen.getByTestId("leave-form-to"), {
+      target: { value: "2026-11-03" },
+    });
+    await waitFor(() => expect(screen.queryByTestId("leave-form-roster-hint")).toBeNull(), {
+      timeout: 1000,
+    });
+  });
 });

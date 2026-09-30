@@ -145,6 +145,11 @@
   let serverDays: number | null = $state(null);
   let hoursPreviewLoading = $state(false);
   let hoursPreviewTimer: ReturnType<typeof setTimeout> | null = null;
+  // Phase 430 Plan 04 (D-15/D-16): `null` = not (yet) loaded / not applicable (never renders the
+  // hint below); `false` is the ONLY value that renders it — a SHIFT_BASED employee's requested
+  // week has no imported roster yet. Every other schedule type reports `true` from the server
+  // (D-15), so the hint never fires for them.
+  let rosterImported: boolean | null = $state(null);
 
   let overlapEntries: OverlapEntry[] = $state([]);
   let overlapLoading = $state(false);
@@ -303,6 +308,7 @@
       hoursPreview = null;
       minutesNeeded = null;
       serverDays = null;
+      rosterImported = null;
       return;
     }
     hoursPreviewTimer = setTimeout(loadHoursPreview, 300);
@@ -312,16 +318,25 @@
     if (!formStart || !formEnd || !employeeId) return;
     hoursPreviewLoading = true;
     try {
-      const r = await api.get<{ hours: number; days: number; minutesNeeded: number }>(
+      const r = await api.get<{
+        hours: number;
+        days: number;
+        minutesNeeded: number;
+        rosterImported?: boolean;
+      }>(
         `/leave/hours-preview?startDate=${formStart}&endDate=${formEnd}&halfDay=${formHalfDay}&employeeId=${employeeId}`,
       );
       hoursPreview = r.hours;
       minutesNeeded = r.minutesNeeded;
       serverDays = r.days;
+      // Phase 430 Plan 04 (D-15): absent (non-SHIFT_BASED omission path) reads as `true` — the
+      // hint never fires for a schedule type the server didn't compute this signal for.
+      rosterImported = r.rosterImported ?? true;
     } catch {
       hoursPreview = null;
       minutesNeeded = null;
       serverDays = null;
+      rosterImported = null;
     } finally {
       hoursPreviewLoading = false;
     }
@@ -339,6 +354,7 @@
     hoursPreview = null;
     minutesNeeded = null;
     serverDays = null;
+    rosterImported = null;
   }
 
   $effect(() => {
@@ -577,6 +593,17 @@
       {#if !employeeId}
         <div class="form-group form-group--full">
           <p class="form-hint">Bitte zuerst einen Mitarbeiter auswählen.</p>
+        </div>
+      {/if}
+
+      <!-- Phase 430 Plan 04 (D-15/D-16): Schichtplan für die beantragte Woche noch nicht
+           importiert — impersonal, matching this dialog's own register (no Du/Sie anywhere). -->
+      {#if rosterImported === false}
+        <div class="form-group form-group--full">
+          <p class="form-hint" data-testid="leave-form-roster-hint">
+            Für diese Woche steht der Schichtplan noch nicht fest. Bitte alle Tage beantragen, die
+            frei sein sollen – auch den Samstag.
+          </p>
         </div>
       {/if}
 

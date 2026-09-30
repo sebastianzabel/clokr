@@ -7,6 +7,7 @@ import {
   splitDaysAcrossYears,
   calculateProRataVacation,
   shiftBasedLeaveMinutesForRequest, // Issue #429, D-13 — receipt shares the saldo's per-week formula
+  mondayOfWeekUtc, // Phase 430 Plan 04 (D-15) — the one shared Monday derivation
 } from "../vacation-calc"; // Phase 107 (D-04/D-09)
 import { selfHealUsedDays, loadVacationTypeMeta } from "../leave-self-heal";
 import { computeAffectedMonths } from "../correction-lock";
@@ -27,7 +28,11 @@ import {
   contractWorkDaysPerWeekFrom, // Issue #429, D-13 — the getScheduledHours SHIFT_BASED branch below
 } from "../leave-days";
 import { formatMinutesHM } from "../format-hm"; // Phase 100
-import { flagShiftsConflictingWithLeave, notifyShiftLeaveConflicts } from "../../scheduling"; // Phase 100B Plan 05 — S1/S2; Phase 430 (D-02) — shared audit+notify helper
+import {
+  flagShiftsConflictingWithLeave,
+  notifyShiftLeaveConflicts, // Phase 100B Plan 05 — S1/S2; Phase 430 (D-02) — shared audit+notify helper
+  getShiftsInRange, // Phase 430 Plan 04 (D-15) — rosterImported on GET /hours-preview
+} from "../../scheduling";
 import {
   getOvertimeAccount,
   bookOvertimeCompensation,
@@ -55,6 +60,7 @@ import {
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 04 (#91), D-10
   isStammsalonScopeMatch, // Phase 91b Plan 04 (#91), D-10/D-14
   resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
+  employeeScopeFor, // Phase 430 Plan 04 (D-15) — rosterImported's getShiftsInRange scope
 } from "../../platform"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
@@ -2687,7 +2693,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       const scoped = await resolveScopedEmployeeIdForRead(app, req, requestedEmployeeId);
       if (!scoped.ok) return reply.code(scoped.status).send(scoped.body);
       const employeeId = scoped.employeeId;
-      if (!employeeId) return { hours: 0, days: 0 };
+      if (!employeeId) return { hours: 0, days: 0, rosterImported: true };
 
       const start = new Date(startDate);
       const end = new Date(endDate);
@@ -2704,6 +2710,40 @@ export async function leaveRoutes(app: FastifyInstance) {
       ]);
       const { days, provisional } = leaveDaysPreview;
 
+      // Phase 430 Plan 04 (D-15): `rosterImported` — a NEW, independent signal from
+      // `provisional` above (Issue #417 hard-wired that one `false`; it must not be
+      // repurposed). Meaningful only for SHIFT_BASED employees — every other schedule type
+      // reports `true` unconditionally so the leave-dialog hint this field feeds (D-16) can
+      // never fire for them. Reuses the exact inline WorkSchedule-lookup idiom this same
+      // handler's sibling routes already use (e.g. `wsForApproval` above), not a new query
+      // shape, and `mondayOfWeekUtc()` (vacation-calc.ts) — the one shared Monday derivation
+      // (Phase 107 D-05: "do not invent a third one") — for the week bounds. Only the week
+      // containing `startDate` is checked, even when the request spans multiple weeks — a
+      // documented first-cut simplification (see 430-04-SUMMARY.md).
+      let rosterImported = true;
+      const wsForRoster = await app.prisma.workSchedule.findFirst({
+        where: { employeeId },
+        orderBy: { validFrom: "desc" },
+        select: { type: true },
+      });
+      if (wsForRoster?.type === "SHIFT_BASED") {
+        const weekStart = mondayOfWeekUtc(start);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+        // Multi-Tenancy Convention (CLAUDE.md) / route-employee-scope-literals.test.ts: every
+        // route-file EmployeeScope is built via employeeScopeFor(accessContextFromRequest(req),
+        // …), never a hand-built literal — `access` mirrors this same file's other call sites
+        // (e.g. the approval-reverse-hook above).
+        const access = accessContextFromRequest(req);
+        const shiftsThisWeek = await getShiftsInRange(
+          app.prisma,
+          employeeScopeFor(access, { employeeId }),
+          weekStart,
+          weekEnd,
+        );
+        rosterImported = shiftsThisWeek.length > 0;
+      }
+
       // WR-03 (code review) — exact integer minutes, computed with the SAME
       // Math.round(hoursNeeded * 60) formula the POST /requests OVERTIME_COMP gate
       // uses for `neededMinutes` above. `hours` is rounded to 2 decimal PLACES for
@@ -2717,6 +2757,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         hours: +hours.toFixed(2),
         days,
         provisional,
+        rosterImported,
         minutesNeeded: Math.round(hours * 60),
       };
     },
