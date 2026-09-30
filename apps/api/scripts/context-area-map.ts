@@ -248,6 +248,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/scheduling/shift-cleanup.ts": "schichtplanung", // soft-deletes/flags Shift rows on VOCATIONAL_SCHOOL Absence creation — Shift is the model it manipulates
   "src/contexts/scheduling/shift-netto.ts": "schichtplanung", // net Shift-hours calculation
   "src/contexts/scheduling/shift-leave-conflict-notify.ts": "schichtplanung", // Phase 430 (D-02) — Shift is the model it flags/audits; shared by leave.ts, sync-shifts.ts and this context's own routes
+  "src/contexts/scheduling/shift-week-capacity.ts": "schichtplanung", // Phase 430 (D-05..D-07) — Shift is the model it counts; shared by sync-shifts.ts and this context's own routes
   "src/contexts/scheduling/tenant-availability.ts": "schichtplanung", // TenantConfig.availabilityEnabled toggle for the EmployeeAvailability feature
   "src/contexts/scheduling/time-arithmetic.ts": "schichtplanung", // Phorest Vor-/Nachbereitungszeit padding, sole consumer services/phorest/sync-shifts.ts
 

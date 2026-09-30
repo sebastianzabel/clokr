@@ -118,6 +118,12 @@ const ALWAYS_ENTRIES: Record<string, EmailPolicy> = {
       "An operational Schichtplanung conflict for managers. No toggle covers shift planning; " +
       "emailOnLeaveDecision is the employee-facing leave-decision switch, not this.",
   },
+  SHIFT_WEEK_OVERBOOKED: {
+    email: "always",
+    reason:
+      "An operational Schichtplanung conflict for managers, same family as SHIFT_LEAVE_CONFLICT — " +
+      "no toggle covers shift planning.",
+  },
 };
 
 // ── D. never — the four SECTION9_* types, reason mandatory ──

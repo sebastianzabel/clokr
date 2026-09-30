@@ -18,6 +18,7 @@ import {
 import { getWorkedEntriesInRange } from "../time-tracking"; // Phase 71b (issue #71) — T2, the work-location rule's entry half
 import { splitDaysAcrossYears, countShiftBasedLeaveDays } from "./vacation-calc"; // Phase 107 (D-04/D-09), Issue #417
 import { preserveIllnessDeadline } from "./illness-carryover-guard"; // Phase 104
+import { getApprovedLeaveOverlapping } from "./facade/leave-requests"; // Phase 430 (D-08) — this file is INSIDE contexts/absence, no boundary crossing
 
 // Prisma client shape shared by `app.prisma` (top-level) and the `tx` handle inside
 // `$transaction(async (tx) => ...)` — mirrors ./api/leave.ts's own private DbClient alias.
@@ -134,6 +135,84 @@ export async function resolveContractWorkDaysPerWeek(
     }),
   ]);
   return contractWorkDaysPerWeekFrom(ws, cfg?.defaultWorkDays);
+}
+
+// German 2-letter weekday abbreviation, indexed by `Date.getUTCDay()` (0=So..6=Sa). Index 0
+// (Sunday) is never read by getShiftBasedLeaveDaysForWeek() below — § 3 Abs. 2 BUrlG excludes it.
+const GERMAN_WEEKDAY_ABBR = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"] as const;
+
+/**
+ * Approved leave days AND which weekdays they fall on, for exactly one employee's one ISO week
+ * (Mon..Sun, `weekStart`/`weekEnd` as UTC-midnight Dates spanning that week). Reuses
+ * `countShiftBasedLeaveDays` (via the SAME `resolveContractWorkDaysPerWeek` chain
+ * `resolveLeaveDays()` already uses) — this is NOT a second implementation of the BUrlG
+ * day-counting rule (Phase 430, D-08). `weekdays` independently derives which days are covered by
+ * an approved leave request (excluding Sunday, mirroring the formula's own § 3 Abs. 2 BUrlG
+ * exclusion, and excluding public holidays via the same `holidays` set the day-count call uses) so
+ * the two never disagree about what counts.
+ *
+ * Consumed by the Type-2 week-capacity conflict check (`contexts/scheduling/shift-week-capacity.ts`)
+ * and the Wochenübersicht "Planungsbedarf" view.
+ */
+export async function getShiftBasedLeaveDaysForWeek(
+  prisma: DbClient,
+  employeeId: string,
+  tenantId: string,
+  weekStart: Date,
+  weekEnd: Date,
+): Promise<{ days: number; weekdays: string[] }> {
+  const [overlapping, contractWorkDaysPerWeek, holidays] = await Promise.all([
+    getApprovedLeaveOverlapping(
+      prisma,
+      { kind: "employee", employeeId, tenantId },
+      weekStart,
+      weekEnd,
+    ),
+    resolveContractWorkDaysPerWeek(prisma, employeeId, tenantId),
+    getHolidayMap(prisma, tenantId, employeeId, weekStart, weekEnd),
+  ]);
+
+  if (overlapping.length === 0) return { days: 0, weekdays: [] };
+
+  const holidaySet = new Set(holidays.keys());
+
+  // Day COUNT: clip each overlapping request to [weekStart, weekEnd] and sum
+  // countShiftBasedLeaveDays's own result per request — never re-derived independently.
+  let days = 0;
+  const clips: Array<{ start: Date; end: Date }> = [];
+  for (const req of overlapping) {
+    const clipStart = req.startDate > weekStart ? req.startDate : weekStart;
+    const clipEnd = req.endDate < weekEnd ? req.endDate : weekEnd;
+    if (clipStart > clipEnd) continue;
+    clips.push({ start: clipStart, end: clipEnd });
+    days += countShiftBasedLeaveDays(
+      clipStart,
+      clipEnd,
+      req.halfDay,
+      contractWorkDaysPerWeek,
+      holidaySet,
+    ).days;
+  }
+
+  // Which weekdays: walk Mon..Sun, skip Sunday (never a Werktag) and any holiday, collect the
+  // German abbreviation of every day covered by at least one clipped overlapping request.
+  const weekdays: string[] = [];
+  for (
+    const d = new Date(weekStart);
+    d.getTime() <= weekEnd.getTime();
+    d.setUTCDate(d.getUTCDate() + 1)
+  ) {
+    const dow = d.getUTCDay(); // 0=So..6=Sa
+    if (dow === 0) continue; // Sunday never a Werktag (§ 3 Abs. 2 BUrlG)
+    const dateStr = d.toISOString().slice(0, 10);
+    if (holidaySet.has(dateStr)) continue;
+    const covered = clips.some(
+      (c) => d.getTime() >= c.start.getTime() && d.getTime() <= c.end.getTime(),
+    );
+    if (covered) weekdays.push(GERMAN_WEEKDAY_ABBR[dow]);
+  }
+
+  return { days, weekdays };
 }
 
 /**

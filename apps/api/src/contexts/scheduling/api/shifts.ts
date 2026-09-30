@@ -51,6 +51,7 @@ import {
 } from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from three deep imports
 import { flagShiftIfConflictsWithApprovedLeave } from "../facade/shifts"; // Phase 430 (D-03/D-04) — S4, the inverse Type-1 direction
 import { notifyShiftLeaveConflicts } from "../shift-leave-conflict-notify"; // Phase 430 (D-02)
+import { detectWeekCapacityConflict, notifyWeekCapacityConflictOnce } from "../shift-week-capacity"; // Phase 430 (D-05..D-07) — Type-2
 // ARBZG_MARKER_47_4_01
 
 const templateSchema = z.object({
@@ -437,6 +438,86 @@ async function flagAndNotifyLeaveConflictsBatch(
       );
     }
   }
+}
+
+/**
+ * Phase 430 (D-07, batch variant): Type-2 week-capacity check for the manual-planning routes —
+ * reuses the route's own already-computed `(employeeId, weekStart, weekEnd)` pairs (same
+ * dedup-by-week-start idiom PUT's own `affectedPairs` and `/bulk`'s own `affectedPairs` already
+ * use). Non-SHIFT_BASED employees are silently skipped — the caller does not need to filter first.
+ * Best-effort: a failure here is logged and swallowed, never thrown, and never blocks or rolls
+ * back the shift write it follows.
+ */
+async function checkAndNotifyWeekCapacityBatch(
+  app: FastifyInstance,
+  tenantId: string,
+  pairs: Array<{ employeeId: string; weekStart: Date; weekEnd: Date; salonId: string }>,
+): Promise<void> {
+  if (pairs.length === 0) return;
+
+  const employeeIds = Array.from(new Set(pairs.map((p) => p.employeeId)));
+  const schedules = await app.prisma.workSchedule.findMany({
+    where: { employeeId: { in: employeeIds } },
+    orderBy: { validFrom: "desc" },
+    select: { employeeId: true, type: true },
+  });
+  const typeByEmployee = new Map<string, string>();
+  for (const s of schedules) {
+    // Global sort by validFrom desc: the FIRST row seen per employeeId is that employee's own
+    // latest row, regardless of interleaving with other employees' rows.
+    if (!typeByEmployee.has(s.employeeId)) typeByEmployee.set(s.employeeId, s.type);
+  }
+  const shiftBasedPairs = pairs.filter((p) => typeByEmployee.get(p.employeeId) === "SHIFT_BASED");
+  if (shiftBasedPairs.length === 0) return;
+
+  const employees = await app.prisma.employee.findMany({
+    where: { id: { in: Array.from(new Set(shiftBasedPairs.map((p) => p.employeeId))) } },
+    select: { id: true, firstName: true, lastName: true },
+  });
+  const employeeById = new Map(employees.map((e) => [e.id, e]));
+
+  for (const pair of shiftBasedPairs) {
+    try {
+      const conflict = await detectWeekCapacityConflict(
+        app.prisma,
+        pair.employeeId,
+        tenantId,
+        pair.weekStart,
+        pair.weekEnd,
+      );
+      if (!conflict) continue;
+      const employee = employeeById.get(pair.employeeId);
+      if (!employee) continue;
+      await notifyWeekCapacityConflictOnce(app, {
+        employeeId: pair.employeeId,
+        tenantId,
+        employeeName: { firstName: employee.firstName, lastName: employee.lastName },
+        weekStart: pair.weekStart,
+        salonId: pair.salonId,
+        conflict,
+      });
+    } catch (err) {
+      app.log.warn(
+        { err, employeeId: pair.employeeId },
+        "SHIFT_WEEK_OVERBOOKED manual-route check failed",
+      );
+    }
+  }
+}
+
+/** Single-pair convenience wrapper around {@link checkAndNotifyWeekCapacityBatch} — POST `/` and
+ *  PUT `/:id`'s single-shift call sites. */
+async function checkAndNotifyWeekCapacity(
+  app: FastifyInstance,
+  tenantId: string,
+  employeeId: string,
+  weekStart: Date,
+  weekEnd: Date,
+  salonId: string,
+): Promise<void> {
+  await checkAndNotifyWeekCapacityBatch(app, tenantId, [
+    { employeeId, weekStart, weekEnd, salonId },
+  ]);
 }
 
 /**
@@ -2385,6 +2466,17 @@ export async function shiftRoutes(app: FastifyInstance) {
       );
       await notifyIfLeaveConflict(app, req, body.employeeId, req.user.tenantId, leaveConflict);
 
+      // Phase 430 (D-05..D-07): Type-2 week-capacity check — reuses this route's own
+      // already-computed weekStart/weekEnd. Skipped internally for non-SHIFT_BASED employees.
+      await checkAndNotifyWeekCapacity(
+        app,
+        req.user.tenantId,
+        body.employeeId,
+        weekStart,
+        weekEnd,
+        salon.id,
+      );
+
       return reply.code(201).send(shift);
     },
   });
@@ -2787,6 +2879,15 @@ export async function shiftRoutes(app: FastifyInstance) {
         await notifyIfLeaveConflict(app, req, effEmployeeId, req.user.tenantId, leaveConflict);
       }
 
+      // Phase 430 (D-05..D-07): Type-2 week-capacity check for both the old and new
+      // (employeeId, week) pair — reuses `affectedPairs` computed above. Independent of the
+      // Type-1 force&&conflict skip above (a different conflict kind).
+      await checkAndNotifyWeekCapacityBatch(
+        app,
+        req.user.tenantId,
+        Array.from(affectedPairs.values()).map((pair) => ({ ...pair, salonId: updated.salonId })),
+      );
+
       return updated;
     },
   });
@@ -3178,6 +3279,22 @@ export async function shiftRoutes(app: FastifyInstance) {
           saldoRefreshFailures.push(uniqueIds[i]);
         }
       });
+
+      // Phase 430 (D-05..D-07): Type-2 week-capacity check — every row created above lands in the
+      // SAME target week (mirrors the resolver-call reasoning inside the transaction above), so
+      // one (employeeId, week) pair per unique employee is enough. Salon: each employee's own
+      // first created row this run (informational only — see checkAndNotifyWeekCapacityBatch).
+      const { weekStart: capWeekStart, weekEnd: capWeekEnd } = affectedWeekBounds(monday);
+      await checkAndNotifyWeekCapacityBatch(
+        app,
+        tenantId,
+        uniqueIds.map((employeeId) => ({
+          employeeId,
+          weekStart: capWeekStart,
+          weekEnd: capWeekEnd,
+          salonId: created.find((r) => r.employeeId === employeeId)!.salonId,
+        })),
+      );
 
       return {
         weekStart: weekStartIso,
@@ -3598,6 +3715,21 @@ export async function shiftRoutes(app: FastifyInstance) {
         }
       });
 
+      // Phase 430 (D-05..D-07): Type-2 week-capacity check — every row created above lands in the
+      // TARGET week (mirrors the resolver-call reasoning inside the transaction above), so one
+      // (employeeId, week) pair per unique employee is enough.
+      const { weekStart: capWeekStart, weekEnd: capWeekEnd } = affectedWeekBounds(targetMonday);
+      await checkAndNotifyWeekCapacityBatch(
+        app,
+        tenantId,
+        uniqueIds.map((employeeId) => ({
+          employeeId,
+          weekStart: capWeekStart,
+          weekEnd: capWeekEnd,
+          salonId: created.find((r) => r.employeeId === employeeId)!.salonId,
+        })),
+      );
+
       return {
         sourceWeekStart: sourceStartIso,
         targetWeekStart: targetStartIso,
@@ -3801,6 +3933,28 @@ export async function shiftRoutes(app: FastifyInstance) {
         req,
         req.user.tenantId,
         created.map((r) => ({ id: r.id, employeeId: r.employeeId, date: r.date })),
+      );
+
+      // Phase 430 (D-05..D-07): Type-2 week-capacity check. /bulk can span multiple employees AND
+      // multiple weeks (same reasoning as the transaction's own `affectedPairs` above, recomputed
+      // here from `created` since that Map is scoped inside the transaction callback).
+      const capacityPairs = new Map<
+        string,
+        { employeeId: string; weekStart: Date; weekEnd: Date; salonId: string }
+      >();
+      for (const row of created) {
+        const { weekStart, weekEnd } = affectedWeekBounds(row.date);
+        capacityPairs.set(`${row.employeeId}::${weekStart.toISOString()}`, {
+          employeeId: row.employeeId,
+          weekStart,
+          weekEnd,
+          salonId: row.salonId,
+        });
+      }
+      await checkAndNotifyWeekCapacityBatch(
+        app,
+        req.user.tenantId,
+        Array.from(capacityPairs.values()),
       );
 
       return reply.code(201).send({ created: created.length, saldoRefreshFailures });

@@ -811,11 +811,20 @@ manuellen Schichtplanungs-Routen (`POST /shifts`, `PUT /shifts/:id`, `POST /shif
 angelegte/geänderte Schicht auf einem Tag mit bereits genehmigtem Urlaub. Empfängermenge und
 Permission sind unverändert (reiner Verschiebe-Refactor).
 
+**Phase 430 (2026-09-30, D-05..D-07):** Neuer, ZWEITER Konflikttyp (Wochenkapazität statt
+Urlaubsüberschneidung): `contexts/scheduling/shift-week-capacity.ts`s `notifyWeekCapacityConflictOnce`
+nutzt dieselbe `userIdsHoldingPermission("shift:plan:ZUGEWIESEN")` + `resolveScopedHolderIds`-Kette
+wie `SHIFT_LEAVE_CONFLICT` oben, ausgelöst vom Phorest-Sync-Ende und denselben fünf manuellen
+Schichtplanungs-Routen. Keine neue Permission; die Deduplizierung (kein Doppel-Notify für dieselbe
+noch nicht bestätigte Woche) läuft rein über eine Abfrage gegen das bestehende `Notification`-Modell,
+ohne neue Tabelle.
+
 | Stelle                                                                       | Benachrichtigung              | heute | Permission               | Reichweite |
 | ---------------------------------------------------------------------------- | ----------------------------- | ----- | ------------------------ | ---------- |
 | `contexts/absence/api/leave.ts:760`                                          | `LEAVE_REQUEST`               | A, M  | `leave-request:approve`  | ZUGEWIESEN |
 | `contexts/absence/api/leave.ts:1416`                                         | `SECTION9_AU_PENDING_MANAGER` | A, M  | `section9:decide`        | ZUGEWIESEN |
 | `contexts/scheduling/shift-leave-conflict-notify.ts:91`                      | `SHIFT_LEAVE_CONFLICT`        | A, M  | `shift:plan`             | ZUGEWIESEN |
+| `contexts/scheduling/shift-week-capacity.ts:136`                             | `SHIFT_WEEK_OVERBOOKED`       | A, M  | `shift:plan`             | ZUGEWIESEN |
 | `contexts/absence/api/leave.ts:3455`                                         | `SECTION9_AU_PENDING_MANAGER` | A, M  | `section9:decide`        | ZUGEWIESEN |
 | `contexts/absence/vocational-school-generator.ts:897`                        | `SHIFT_BS_CLEANUP`            | A, M  | `shift:plan`             | ZUGEWIESEN |
 | `contexts/absence/plugins/carryover-warning.ts:124`                          | `CARRYOVER_EXPIRING`          | A     | `leave-config:manage`    | ZUGEWIESEN |

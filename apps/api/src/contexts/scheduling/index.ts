@@ -41,6 +41,10 @@ export { getEmployeeAvailability } from "./facade/availability";
 // FastifyInstance`, not `db: Prisma.TransactionClient` — see the module's own docblock).
 export { notifyShiftLeaveConflicts } from "./shift-leave-conflict-notify";
 export type { ShiftLeaveConflictParams } from "./shift-leave-conflict-notify";
+// Phase 430 (D-05..D-07) — Type-2 week-capacity conflict (detect + idempotent notify). Same
+// "not a facade export" reasoning as notifyShiftLeaveConflicts above — see the module's own header.
+export { detectWeekCapacityConflict, notifyWeekCapacityConflictOnce } from "./shift-week-capacity";
+export type { WeekCapacityConflict, NotifyWeekCapacityConflictParams } from "./shift-week-capacity";
 
 // Phase 101B (Issue #101, wave 9 — the phase's closing wave) — declared public because a caller
 // outside this context already depended on them (absence/api/leave.ts,

@@ -48,6 +48,10 @@ import { applyPrepWrapup } from "../../contexts/scheduling/time-arithmetic";
 import { flagShiftIfConflictsWithApprovedLeave } from "../../contexts/scheduling/facade/shifts"; // Phase 430 (D-03/D-04) — S4, the inverse Type-1 direction
 import { notifyShiftLeaveConflicts } from "../../contexts/scheduling/shift-leave-conflict-notify"; // Phase 430 (D-02)
 import {
+  detectWeekCapacityConflict,
+  notifyWeekCapacityConflictOnce,
+} from "../../contexts/scheduling/shift-week-capacity"; // Phase 430 (D-05..D-07) — Type-2, end-of-run pass
+import {
   getVocationalSchoolDays, // Phase 100B Plan 12 — A6
   getPendingLeaveForShiftProtection, // Phase 100B Plan 13 — shift-protection (H5)
   mondayOfWeekUtc, // Phase 107 (D-14) — same Monday-cutting primitive routes/shifts.ts:709-718 / affectedWeekBounds() use
@@ -1050,6 +1054,69 @@ export async function syncPhorestShifts(
     }
 
     await finalizeRun(app, run.id, result);
+
+    // Phase 430 (D-05..D-07) — Type-2 conflict: end-of-run pass, once per (SHIFT_BASED employee,
+    // ISO week) touched by this run's window. Runs ONLY on the success path (every early-return
+    // above — GATE 2 pagination cap, GATE 3 plausibility floor, the catch block — exits before
+    // this point), mirroring D-07's "after finalizeRun, before the final log/return" placement.
+    const weekStartsTouched = new Map<string, Date>();
+    for (
+      const d = new Date(windowStartDate);
+      d.getTime() <= windowEndDate.getTime();
+      d.setUTCDate(d.getUTCDate() + 1)
+    ) {
+      const { weekStart } = affectedWeekBounds(new Date(d));
+      weekStartsTouched.set(weekStart.toISOString(), weekStart);
+    }
+    if (weekStartsTouched.size > 0 && mappedEmployeeIds.length > 0) {
+      // Bulk-load the latest WorkSchedule.type per mapped employee (mirrors the employeeOverrides
+      // bulk-load idiom above) — only SHIFT_BASED employees are eligible for this check.
+      const schedules = await app.prisma.workSchedule.findMany({
+        where: { employeeId: { in: mappedEmployeeIds } },
+        orderBy: { validFrom: "desc" },
+        select: { employeeId: true, type: true },
+      });
+      const typeByEmployee = new Map<string, string>();
+      for (const s of schedules) {
+        // Global sort by validFrom desc: the FIRST row seen per employeeId is that employee's
+        // own latest row, regardless of interleaving with other employees' rows.
+        if (!typeByEmployee.has(s.employeeId)) typeByEmployee.set(s.employeeId, s.type);
+      }
+      const shiftBasedEmployeeIds = mappedEmployeeIds.filter(
+        (id) => typeByEmployee.get(id) === "SHIFT_BASED",
+      );
+      for (const weekStart of weekStartsTouched.values()) {
+        const weekEnd = new Date(weekStart);
+        weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+        for (const employeeId of shiftBasedEmployeeIds) {
+          try {
+            const conflict = await detectWeekCapacityConflict(
+              app.prisma,
+              employeeId,
+              tenantId,
+              weekStart,
+              weekEnd,
+            );
+            if (!conflict) continue;
+            const empName = overrideById.get(employeeId);
+            if (!empName) continue;
+            await notifyWeekCapacityConflictOnce(app, {
+              employeeId,
+              tenantId,
+              employeeName: { firstName: empName.firstName, lastName: empName.lastName },
+              weekStart,
+              salonId: target.salonId,
+              conflict,
+            });
+          } catch (err) {
+            app.log.error(
+              { err, runId: run.id, employeeId, weekStart: weekStart.toISOString() },
+              "Phorest sync: SHIFT_WEEK_OVERBOOKED check failed",
+            );
+          }
+        }
+      }
+    }
 
     app.log.info(
       {
