@@ -66,7 +66,7 @@ CVE-2026-55697
 #     two patch releases behind). GHSA's per-CVE data for -14257/-13149 gives only a single
 #     top-line threshold with no published 2.x-line backport info, so 2.1.2 is conservatively
 #     treated as still vulnerable to those two as well rather than assumed safe.
-# Our app dependency tree resolves brace-expansion@5.0.9 (fixed for all three, via the root
+# Our app dependency tree resolves brace-expansion@5.0.12 (fixed for all three, via the root
 # pnpm.overrides pin), so no application code path is affected — but this is a single global
 # ignorefile covering both images, and the vulnerable copies above are genuinely present in build
 # tooling that npm/corepack manage independently of app dependencies (`npm install -g npm@latest`
