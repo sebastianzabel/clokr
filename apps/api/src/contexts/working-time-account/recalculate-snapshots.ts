@@ -439,6 +439,8 @@ export async function recalculateSnapshots(
         ? {
             defaultBreakOver6h: tenantConfig.defaultBreakOver6h,
             defaultBreakOver9h: tenantConfig.defaultBreakOver9h,
+            // Issue #429 (D-11) — contractWorkDaysPerWeekFrom()'s tenant fallback tier.
+            defaultWorkDays: tenantConfig.defaultWorkDays ?? undefined,
             monthlyHoursHolidayDeduction: tenantConfig.monthlyHoursHolidayDeduction ?? undefined,
             vocationalSchoolMinutesPerDay: tenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
             vocationalSchoolBlockMinutesPerWeek:
