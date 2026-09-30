@@ -45,6 +45,8 @@ import type { FastifyInstance } from "fastify";
 import { decryptSafe } from "../../utils/crypto";
 import { todayInTz, dateStrInTz } from "../../contexts/working-time-account"; // Phase 101B
 import { applyPrepWrapup } from "../../contexts/scheduling/time-arithmetic";
+import { flagShiftIfConflictsWithApprovedLeave } from "../../contexts/scheduling/facade/shifts"; // Phase 430 (D-03/D-04) — S4, the inverse Type-1 direction
+import { notifyShiftLeaveConflicts } from "../../contexts/scheduling/shift-leave-conflict-notify"; // Phase 430 (D-02)
 import {
   getVocationalSchoolDays, // Phase 100B Plan 12 — A6
   getPendingLeaveForShiftProtection, // Phase 100B Plan 13 — shift-protection (H5)
@@ -443,12 +445,17 @@ export async function syncPhorestShifts(
 
     // Phase 85.1.1 (D-02) — bulk-load per-employee Phorest puffer overrides for all mapped
     // employees (mirrors the D-09 BS-absence bulk-load idiom directly above). One query, not N.
+    // Phase 430 (D-04): firstName/lastName ride along on the SAME query — needed only for the
+    // (rare) SHIFT_LEAVE_CONFLICT notification title, never for every shift, so bulk-loading them
+    // here avoids an extra per-shift query on the common (no-conflict) path.
     const employeeOverrides = await app.prisma.employee.findMany({
       where: { id: { in: mappedEmployeeIds } },
       select: {
         id: true,
         phorestPrepMinutesOverride: true,
         phorestWrapupMinutesOverride: true,
+        firstName: true,
+        lastName: true,
       },
     });
     const overrideById = new Map(employeeOverrides.map((e) => [e.id, e]));
@@ -600,11 +607,21 @@ export async function syncPhorestShifts(
               weekEnd,
               actorUserId,
             );
-            return { adopted, adjustments };
+            // Phase 430 (D-03/D-04): the missing Type-1 direction — this adopted slot may land on
+            // a day that already has an APPROVED LeaveRequest. Same transaction, right after the
+            // leave-recalc call above.
+            const leaveConflict = await flagShiftIfConflictsWithApprovedLeave(
+              tx,
+              adopted.id,
+              employeeId,
+              tenantId,
+              new Date(date),
+            );
+            return { adopted, adjustments, leaveConflict };
           }),
         );
         if (!outcome) continue;
-        const { adopted, adjustments } = outcome;
+        const { adopted, adjustments, leaveConflict } = outcome;
         await notifyLeaveDaysAdjustedOnce(
           app,
           adjustments,
@@ -623,6 +640,33 @@ export async function syncPhorestShifts(
           oldValue: { origin: occupant.origin, externalId: occupant.externalId },
           newValue: { source: "Phorest", origin: "PHOREST", externalId, adopted: true },
         });
+        if (leaveConflict) {
+          const empName = overrideById.get(employeeId);
+          if (empName) {
+            await notifyShiftLeaveConflicts(app, {
+              actorUserId: opts.actorUserId,
+              employeeId,
+              tenantId,
+              employeeName: { firstName: empName.firstName, lastName: empName.lastName },
+              leaveRequestId: leaveConflict.leaveRequestId,
+              leaveStart: leaveConflict.leaveStart,
+              leaveEnd: leaveConflict.leaveEnd,
+              conflictingShifts: [
+                {
+                  id: adopted.id,
+                  date: leaveConflict.date,
+                  label: adopted.label,
+                  salonId: target.salonId,
+                },
+              ],
+            }).catch((err) =>
+              app.log.error(
+                { err, runId: run.id, employeeId, date },
+                "Phorest sync: SHIFT_LEAVE_CONFLICT notify (adopt-on-match) failed",
+              ),
+            );
+          }
+        }
         continue;
       }
 
@@ -671,11 +715,24 @@ export async function syncPhorestShifts(
               weekEnd,
               actorUserId,
             );
-            return { shift, adjustments };
+            // Phase 430 (D-03/D-04): same Type-1 check as the adopt-on-match branch above, same
+            // transaction, right after the leave-recalc call.
+            const leaveConflict = await flagShiftIfConflictsWithApprovedLeave(
+              tx,
+              shift.id,
+              employeeId,
+              tenantId,
+              new Date(date),
+            );
+            return { shift, adjustments, leaveConflict };
           }),
       );
       if (!upsertOutcome) continue;
-      const { shift, adjustments: upsertAdjustments } = upsertOutcome;
+      const {
+        shift,
+        adjustments: upsertAdjustments,
+        leaveConflict: upsertLeaveConflict,
+      } = upsertOutcome;
       await notifyLeaveDaysAdjustedOnce(
         app,
         upsertAdjustments,
@@ -707,6 +764,33 @@ export async function syncPhorestShifts(
           endTime: paddedEnd,
         },
       });
+      if (upsertLeaveConflict) {
+        const empName = overrideById.get(employeeId);
+        if (empName) {
+          await notifyShiftLeaveConflicts(app, {
+            actorUserId: opts.actorUserId,
+            employeeId,
+            tenantId,
+            employeeName: { firstName: empName.firstName, lastName: empName.lastName },
+            leaveRequestId: upsertLeaveConflict.leaveRequestId,
+            leaveStart: upsertLeaveConflict.leaveStart,
+            leaveEnd: upsertLeaveConflict.leaveEnd,
+            conflictingShifts: [
+              {
+                id: shift.id,
+                date: upsertLeaveConflict.date,
+                label: shift.label,
+                salonId: target.salonId,
+              },
+            ],
+          }).catch((err) =>
+            app.log.error(
+              { err, runId: run.id, employeeId, date },
+              "Phorest sync: SHIFT_LEAVE_CONFLICT notify (upsert) failed",
+            ),
+          );
+        }
+      }
     }
 
     // ── GATE 3 (plausibility floor) ──────────────────────────────────

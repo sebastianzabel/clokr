@@ -802,11 +802,20 @@ Umstellung ausgewählt hat — der Neutralitätsvertrag von D-16, geprüft von
 `src/contexts/platform/__tests__/system-roles.test.ts` gegen dieselben Buchstaben, die jede andere
 Zeile für dieselbe Permission nennt (D-03 Regel (i)).
 
+**Phase 430 (2026-09-30, D-02):** Der `SHIFT_LEAVE_CONFLICT`-Aufruf zog von
+`contexts/absence/api/leave.ts` (der Reverse-Hook bei Urlaubsgenehmigung) in den neuen, geteilten
+`contexts/scheduling/shift-leave-conflict-notify.ts` — derselbe `userIdsHoldingPermission`-Aufruf,
+jetzt aus EINER Stelle wiederverwendet von der Urlaubsgenehmigung, dem Phorest-Sync und den
+manuellen Schichtplanungs-Routen (`POST /shifts`, `PUT /shifts/:id`, `POST /shifts/generate-week`,
+`POST /shifts/copy-week`, `POST /shifts/bulk`) für die bis dahin fehlende Gegenrichtung: eine neu
+angelegte/geänderte Schicht auf einem Tag mit bereits genehmigtem Urlaub. Empfängermenge und
+Permission sind unverändert (reiner Verschiebe-Refactor).
+
 | Stelle                                                                       | Benachrichtigung              | heute | Permission               | Reichweite |
 | ---------------------------------------------------------------------------- | ----------------------------- | ----- | ------------------------ | ---------- |
 | `contexts/absence/api/leave.ts:760`                                          | `LEAVE_REQUEST`               | A, M  | `leave-request:approve`  | ZUGEWIESEN |
 | `contexts/absence/api/leave.ts:1416`                                         | `SECTION9_AU_PENDING_MANAGER` | A, M  | `section9:decide`        | ZUGEWIESEN |
-| `contexts/absence/api/leave.ts:1545`                                         | `SHIFT_LEAVE_CONFLICT`        | A, M  | `shift:plan`             | ZUGEWIESEN |
+| `contexts/scheduling/shift-leave-conflict-notify.ts:91`                      | `SHIFT_LEAVE_CONFLICT`        | A, M  | `shift:plan`             | ZUGEWIESEN |
 | `contexts/absence/api/leave.ts:3455`                                         | `SECTION9_AU_PENDING_MANAGER` | A, M  | `section9:decide`        | ZUGEWIESEN |
 | `contexts/absence/vocational-school-generator.ts:897`                        | `SHIFT_BS_CLEANUP`            | A, M  | `shift:plan`             | ZUGEWIESEN |
 | `contexts/absence/plugins/carryover-warning.ts:124`                          | `CARRYOVER_EXPIRING`          | A     | `leave-config:manage`    | ZUGEWIESEN |

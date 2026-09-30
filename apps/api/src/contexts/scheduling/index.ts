@@ -32,9 +32,15 @@
 export {
   getShiftsInRange,
   flagShiftsConflictingWithLeave,
+  flagShiftIfConflictsWithApprovedLeave, // Phase 430 (D-03) — S4, the inverse direction
   cancelOrphanShifts,
 } from "./facade/shifts";
 export { getEmployeeAvailability } from "./facade/availability";
+// Phase 430 (D-02) — shared audit+notify helper for BOTH conflict directions (leave-approval
+// reverse-hook + the new shift-creation-time check). Not a facade export (it takes `app:
+// FastifyInstance`, not `db: Prisma.TransactionClient` — see the module's own docblock).
+export { notifyShiftLeaveConflicts } from "./shift-leave-conflict-notify";
+export type { ShiftLeaveConflictParams } from "./shift-leave-conflict-notify";
 
 // Phase 101B (Issue #101, wave 9 — the phase's closing wave) — declared public because a caller
 // outside this context already depended on them (absence/api/leave.ts,

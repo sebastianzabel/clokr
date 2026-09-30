@@ -27,7 +27,7 @@ import {
   contractWorkDaysPerWeekFrom, // Issue #429, D-13 — the getScheduledHours SHIFT_BASED branch below
 } from "../leave-days";
 import { formatMinutesHM } from "../format-hm"; // Phase 100
-import { flagShiftsConflictingWithLeave } from "../../scheduling"; // Phase 100B Plan 05 — S1/S2
+import { flagShiftsConflictingWithLeave, notifyShiftLeaveConflicts } from "../../scheduling"; // Phase 100B Plan 05 — S1/S2; Phase 430 (D-02) — shared audit+notify helper
 import {
   getOvertimeAccount,
   bookOvertimeCompensation,
@@ -55,7 +55,6 @@ import {
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 04 (#91), D-10
   isStammsalonScopeMatch, // Phase 91b Plan 04 (#91), D-10/D-14
   resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
-  isShiftInScope, // Phase 91b Plan 09 (#91), D-11/D-17
 } from "../../platform"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
@@ -1721,91 +1720,27 @@ export async function leaveRoutes(app: FastifyInstance) {
           );
 
           if (conflictingShifts.length > 0) {
-            for (const s of conflictingShifts) {
-              await app
-                .audit({
-                  userId: req.user.sub,
-                  action: "SHIFT_MARKED_CONFLICTING",
-                  entity: "Shift",
-                  entityId: s.id,
-                  newValue: {
-                    leaveRequestId: existing.id,
-                    leaveStart: existing.startDate.toISOString().slice(0, 10),
-                    leaveEnd: existing.endDate.toISOString().slice(0, 10),
-                    shiftDate: s.date.toISOString().slice(0, 10),
-                    shiftLabel: s.label,
-                  },
-                  request: { ip: req.ip, headers: req.headers as Record<string, string> },
-                })
-                .catch((err) =>
-                  app.log.warn({ err, shiftId: s.id }, "Failed to audit SHIFT_MARKED_CONFLICTING"),
-                );
-            }
-
-            // Notify managers — find all MANAGER + ADMIN users in the tenant
-            try {
-              const empName = await app.prisma.employee.findUnique({
-                where: { id: existing.employeeId },
-                select: { firstName: true, lastName: true, tenantId: true },
+            // Phase 430 (D-02): the audit loop + recipient-resolution + notify loop that used to
+            // live inline here are now ONE shared helper (`contexts/scheduling`), reused by the
+            // Phorest sync and the manual shift-planning routes for the new (inverse) direction —
+            // a shift created/updated on an already-approved leave day. Behaviour here is
+            // byte-identical: same audit rows, same notification text/link, same recipients.
+            const empName = await app.prisma.employee.findUnique({
+              where: { id: existing.employeeId },
+              select: { firstName: true, lastName: true, tenantId: true },
+            });
+            if (empName) {
+              await notifyShiftLeaveConflicts(app, {
+                actorUserId: req.user.sub,
+                employeeId: existing.employeeId,
+                tenantId: empName.tenantId,
+                employeeName: { firstName: empName.firstName, lastName: empName.lastName },
+                leaveRequestId: existing.id,
+                leaveStart: existing.startDate,
+                leaveEnd: existing.endDate,
+                conflictingShifts,
+                request: { ip: req.ip, headers: req.headers as Record<string, string> },
               });
-              if (empName) {
-                // Phase 75b Plan 10 (#75), D-16: holders of shift:plan replace the legacy A,M
-                // role predicate — the recorded recipient set is unchanged.
-                const shiftPlanHolderIds = await userIdsHoldingPermission(
-                  app.prisma,
-                  empName.tenantId,
-                  "shift:plan:ZUGEWIESEN",
-                );
-                // Phase 91b Plan 09 (Issue #91), D-11/D-17: narrow to holders whose OWN reach
-                // covers AT LEAST ONE of the flagged conflicting shifts (the batch's own salon(s)
-                // — a single leave approval can conflict with shifts at different salons, and this
-                // ONE notification summarizes ALL of them, so a holder in scope for any one of the
-                // affected shifts is kept). No Stammsalon fallback (D-11).
-                const scopedShiftPlanHolderIds = await resolveScopedHolderIds(
-                  app.prisma,
-                  empName.tenantId,
-                  shiftPlanHolderIds,
-                  "shift:plan:ZUGEWIESEN",
-                  (reach) =>
-                    conflictingShifts.some((s) =>
-                      isShiftInScope(reach, {
-                        salonId: s.salonId,
-                        employeeId: existing.employeeId,
-                      }),
-                    ),
-                );
-                const managers = await app.prisma.user.findMany({
-                  where: {
-                    isActive: true,
-                    id: { in: scopedShiftPlanHolderIds },
-                    employee: { tenantId: empName.tenantId },
-                  },
-                  select: { id: true },
-                });
-                const dStart = existing.startDate.toLocaleDateString("de-DE");
-                const dEnd = existing.endDate.toLocaleDateString("de-DE");
-                for (const mgr of managers) {
-                  await app
-                    .notify({
-                      userId: mgr.id,
-                      type: "SHIFT_LEAVE_CONFLICT",
-                      title: `Schicht-Konflikt: ${empName.firstName} ${empName.lastName}`,
-                      message: `Genehmigter Urlaub vom ${dStart} bis ${dEnd} überschneidet sich mit ${conflictingShifts.length} Schicht(en). Bitte überprüfen Sie /shifts.`,
-                      link: "/shifts",
-                      tenantId: empName.tenantId,
-                      relatedType: "LeaveRequest",
-                      relatedId: existing.id,
-                    })
-                    .catch((err) =>
-                      app.log.warn(
-                        { err, managerId: mgr.id },
-                        "Failed to notify manager of SHIFT_LEAVE_CONFLICT",
-                      ),
-                    );
-                }
-              }
-            } catch (err) {
-              app.log.warn({ err }, "SHIFT_LEAVE_CONFLICT manager-notify pass failed");
             }
           }
         } catch (err) {

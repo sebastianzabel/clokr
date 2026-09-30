@@ -49,6 +49,8 @@ import {
   deductVacationDays,
   reverseVacationDays,
 } from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from three deep imports
+import { flagShiftIfConflictsWithApprovedLeave } from "../facade/shifts"; // Phase 430 (D-03/D-04) — S4, the inverse Type-1 direction
+import { notifyShiftLeaveConflicts } from "../shift-leave-conflict-notify"; // Phase 430 (D-02)
 // ARBZG_MARKER_47_4_01
 
 const templateSchema = z.object({
@@ -307,6 +309,134 @@ async function findShiftConflict(
   }
 
   return null;
+}
+
+/**
+ * Phase 430 (D-04): shared wiring for every manual shift-write route — after
+ * `flagShiftIfConflictsWithApprovedLeave` has (maybe) flagged a shift, resolve the employee's name
+ * and fire the shared audit+notify helper. A no-op when `leaveConflict` is null. Best-effort: a
+ * failure here is logged and swallowed, never thrown — mirrors the leave-approval reverse-hook's
+ * own "never undo the write" discipline (see `absence/api/leave.ts`).
+ */
+async function notifyIfLeaveConflict(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  employeeId: string,
+  tenantId: string,
+  leaveConflict: Awaited<ReturnType<typeof flagShiftIfConflictsWithApprovedLeave>>,
+): Promise<void> {
+  if (!leaveConflict) return;
+  try {
+    const employee = await app.prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: { firstName: true, lastName: true },
+    });
+    if (!employee) return;
+    await notifyShiftLeaveConflicts(app, {
+      actorUserId: req.user.sub,
+      employeeId,
+      tenantId,
+      employeeName: { firstName: employee.firstName, lastName: employee.lastName },
+      leaveRequestId: leaveConflict.leaveRequestId,
+      leaveStart: leaveConflict.leaveStart,
+      leaveEnd: leaveConflict.leaveEnd,
+      conflictingShifts: [
+        {
+          id: leaveConflict.shiftId,
+          date: leaveConflict.date,
+          label: leaveConflict.label,
+          salonId: leaveConflict.salonId,
+        },
+      ],
+      request: { ip: req.ip, headers: req.headers as Record<string, string> },
+    });
+  } catch (err) {
+    app.log.warn({ err, employeeId }, "SHIFT_LEAVE_CONFLICT manual-route notify failed");
+  }
+}
+
+/**
+ * Phase 430 (D-04, batch variant): used by the bulk-write routes (generate-week, copy-week, bulk)
+ * that can create/update MANY shifts across MULTIPLE employees in one call. Flags every shift,
+ * then groups the flagged ones by (employeeId, leaveRequestId) so one employee's several
+ * newly-flagged shifts against the SAME leave request produce ONE notification per route call —
+ * mirroring how the leave-approval reverse-hook (S2) already summarizes a whole batch in one
+ * notification, never one per shift.
+ */
+async function flagAndNotifyLeaveConflictsBatch(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  tenantId: string,
+  shifts: Array<{ id: string; employeeId: string; date: Date }>,
+): Promise<void> {
+  interface Group {
+    employeeId: string;
+    leaveRequestId: string;
+    leaveStart: Date;
+    leaveEnd: Date;
+    shifts: Array<{ id: string; date: Date; label: string | null; salonId: string }>;
+  }
+  const groups = new Map<string, Group>();
+  for (const s of shifts) {
+    const leaveConflict = await flagShiftIfConflictsWithApprovedLeave(
+      app.prisma,
+      s.id,
+      s.employeeId,
+      tenantId,
+      s.date,
+    );
+    if (!leaveConflict) continue;
+    const key = `${s.employeeId}|${leaveConflict.leaveRequestId}`;
+    const entry = {
+      id: leaveConflict.shiftId,
+      date: leaveConflict.date,
+      label: leaveConflict.label,
+      salonId: leaveConflict.salonId,
+    };
+    const existing = groups.get(key);
+    if (existing) {
+      existing.shifts.push(entry);
+    } else {
+      groups.set(key, {
+        employeeId: s.employeeId,
+        leaveRequestId: leaveConflict.leaveRequestId,
+        leaveStart: leaveConflict.leaveStart,
+        leaveEnd: leaveConflict.leaveEnd,
+        shifts: [entry],
+      });
+    }
+  }
+  if (groups.size === 0) return;
+
+  const employeeIds = Array.from(new Set([...groups.values()].map((g) => g.employeeId)));
+  const employees = await app.prisma.employee.findMany({
+    where: { id: { in: employeeIds } },
+    select: { id: true, firstName: true, lastName: true },
+  });
+  const employeeById = new Map(employees.map((e) => [e.id, e]));
+
+  for (const group of groups.values()) {
+    const employee = employeeById.get(group.employeeId);
+    if (!employee) continue;
+    try {
+      await notifyShiftLeaveConflicts(app, {
+        actorUserId: req.user.sub,
+        employeeId: group.employeeId,
+        tenantId,
+        employeeName: { firstName: employee.firstName, lastName: employee.lastName },
+        leaveRequestId: group.leaveRequestId,
+        leaveStart: group.leaveStart,
+        leaveEnd: group.leaveEnd,
+        conflictingShifts: group.shifts,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+    } catch (err) {
+      app.log.warn(
+        { err, employeeId: group.employeeId },
+        "SHIFT_LEAVE_CONFLICT batch-route notify failed",
+      );
+    }
+  }
 }
 
 /**
@@ -2242,6 +2372,19 @@ export async function shiftRoutes(app: FastifyInstance) {
       // HTTP 500 (no silent swallow — saldo divergence is audit-relevant).
       await updateOvertimeAccount(app, body.employeeId);
 
+      // Phase 430 (D-03/D-04): the missing Type-1 direction — this NEW shift may itself land on a
+      // day that already has an APPROVED LeaveRequest (most commonly the `force=true` path above,
+      // since the un-forced case is already rejected with 409 before this point is ever reached).
+      // Detection only, never blocking — the shift above is already created.
+      const leaveConflict = await flagShiftIfConflictsWithApprovedLeave(
+        app.prisma,
+        shift.id,
+        body.employeeId,
+        req.user.tenantId,
+        new Date(body.date),
+      );
+      await notifyIfLeaveConflict(app, req, body.employeeId, req.user.tenantId, leaveConflict);
+
       return reply.code(201).send(shift);
     },
   });
@@ -2626,6 +2769,24 @@ export async function shiftRoutes(app: FastifyInstance) {
         await updateOvertimeAccount(app, body.employeeId);
       }
 
+      // Phase 430 (D-03/D-04): the missing Type-1 direction. Skipped when this PUT just
+      // explicitly cleared `conflictsWithLeave` above (`force && conflict`) — that clear IS the
+      // manager's active decision to keep the shift despite the conflict; immediately re-flagging
+      // it here would silently undo that decision. In every other case `conflict` is already null
+      // here (a non-forced leave conflict on `effDateIso` was rejected with 409 earlier in this
+      // handler), so this call only ever does something on the explicit-override path it must NOT
+      // run for, or is a defensive no-op otherwise.
+      if (!(force && conflict)) {
+        const leaveConflict = await flagShiftIfConflictsWithApprovedLeave(
+          app.prisma,
+          updated.id,
+          effEmployeeId,
+          req.user.tenantId,
+          new Date(effDateIso),
+        );
+        await notifyIfLeaveConflict(app, req, effEmployeeId, req.user.tenantId, leaveConflict);
+      }
+
       return updated;
     },
   });
@@ -2989,6 +3150,17 @@ export async function shiftRoutes(app: FastifyInstance) {
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
       }
+
+      // Phase 430 (D-03/D-04): the missing Type-1 direction. generate-week already excludes
+      // approved-leave days from `toCreate` (see this route's own docblock), so this is a
+      // defensive safety net (e.g. a leave approved in the narrow window between the read above
+      // and this commit), never the expected path — unlike /bulk, which has no such pre-filter.
+      await flagAndNotifyLeaveConflictsBatch(
+        app,
+        req,
+        tenantId,
+        created.map((r) => ({ id: r.id, employeeId: r.employeeId, date: r.date })),
+      );
 
       // Phase 76.5 (D-03, D-04) — saldo refresh per unique employee.
       // D-04: No p-limit cap — POOL_MAX=10 implicit bound; revisit if generate-week regresses >10%.
@@ -3399,6 +3571,16 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
       }
 
+      // Phase 430 (D-03/D-04): the missing Type-1 direction. copy-week already excludes
+      // approved-leave days (same skip-logic as generate-week, see this route's own docblock),
+      // so this is a defensive safety net, never the expected path.
+      await flagAndNotifyLeaveConflictsBatch(
+        app,
+        req,
+        tenantId,
+        created.map((r) => ({ id: r.id, employeeId: r.employeeId, date: r.date })),
+      );
+
       // Phase 76.5 (D-03, D-04) — saldo refresh per unique employee.
       // D-04: No p-limit cap — POOL_MAX=10 implicit bound; revisit if copy-week regresses >10%.
       const uniqueIds = Array.from(new Set(created.map((r) => r.employeeId)));
@@ -3610,6 +3792,16 @@ export async function shiftRoutes(app: FastifyInstance) {
           saldoRefreshFailures.push(uniqueIds[i]);
         }
       });
+
+      // Phase 430 (D-03/D-04): the missing Type-1 direction. Unlike generate-week/copy-week,
+      // /bulk has NO pre-filter against approved leave — it is the one manual route where a
+      // conflicting shift is a genuine, realistic outcome, not a defensive-only safety net.
+      await flagAndNotifyLeaveConflictsBatch(
+        app,
+        req,
+        req.user.tenantId,
+        created.map((r) => ({ id: r.id, employeeId: r.employeeId, date: r.date })),
+      );
 
       return reply.code(201).send({ created: created.length, saldoRefreshFailures });
     },

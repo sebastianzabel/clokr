@@ -1162,6 +1162,132 @@ describe("SHIFT-02 pending-leave protection", () => {
   });
 });
 
+// Phase 430 (D-03/D-04/D-07) — the missing Type-1 direction: a shift CREATED/UPDATED by the
+// Phorest import lands on a day that already has an APPROVED LeaveRequest. `wttFixture`'s mapped
+// employee (Erika) has two WORKING slots, 2026-07-30 and 2026-07-31 — an APPROVED leave on the
+// first day exercises the canonical-upsert branch (no legacy "Phorest"-labelled occupant exists,
+// so `occupant` is null and the upsert-by-externalId path runs, not adopt-on-match — both branches
+// call the SAME `flagShiftIfConflictsWithApprovedLeave`/`notifyShiftLeaveConflicts` pair per the
+// plan's interfaces section, so covering one directly is sufficient; the adopt-on-match branch is
+// wired identically, see sync-shifts.ts).
+describe("Phase 430 — Type-1 leave conflict on Phorest import", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("a fresh Phorest shift on an approved-leave day is flagged, audited and notified — idempotent on re-sync", async () => {
+    const seed = await seedPhorestTenant(app, "leaveconflict");
+    try {
+      // A shift:plan:ZUGEWIESEN holder to receive the notification — a plain MANAGER with no
+      // stored RoleAssignment falls back to its system role (D-08), same pattern
+      // apps/api/src/__tests__/shifts.test.ts's own leave-approval reverse-hook test relies on.
+      const bcryptMod = await import("bcryptjs");
+      const mgrPasswordHash = await bcryptMod.default.hash("test1234", 10);
+      const mgrUser = await app.prisma.user.create({
+        data: {
+          email: `mgr-phorest-lc-${Date.now()}@test.de`,
+          passwordHash: mgrPasswordHash,
+          role: "MANAGER",
+          isActive: true,
+        },
+      });
+      await app.prisma.employee.create({
+        data: {
+          tenantId: seed.tenantId,
+          userId: mgrUser.id,
+          employeeNumber: `PLC-${Date.now()}`,
+          firstName: "Mary",
+          lastName: "Manager",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+
+      await seedPendingLeaveRequest(
+        app,
+        seed.mappedEmployeeId,
+        "2026-07-30",
+        "2026-07-30",
+        "APPROVED",
+      );
+
+      mockPhorest(wttFixture);
+      const first = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
+      expect(first.status).toBe("SUCCESS");
+      expect(first.created).toBe(2); // both worktime entries still create — detection, never blocking
+
+      const conflictShift = await app.prisma.shift.findFirst({
+        where: { employeeId: seed.mappedEmployeeId, date: new Date("2026-07-30") },
+      });
+      const otherShift = await app.prisma.shift.findFirst({
+        where: { employeeId: seed.mappedEmployeeId, date: new Date("2026-07-31") },
+      });
+      expect(conflictShift?.conflictsWithLeave).toBe(true);
+      expect(otherShift?.conflictsWithLeave).toBe(false); // no leave on this day — untouched
+
+      const audits = await app.prisma.auditLog.findMany({
+        where: { entity: "Shift", action: "SHIFT_MARKED_CONFLICTING", entityId: conflictShift!.id },
+      });
+      expect(audits).toHaveLength(1);
+      // Phase 120 (D-06/D-07): the cron path's sentinel is never written to AuditLog.userId.
+      expect(audits[0].userId).toBeNull();
+
+      const notifs = await app.prisma.notification.findMany({
+        where: { type: "SHIFT_LEAVE_CONFLICT", userId: mgrUser.id },
+      });
+      expect(notifs.length).toBeGreaterThan(0);
+      expect(notifs[0].title).toContain("Erika");
+
+      // Re-sync the SAME window — the shift is already flagged, so no second audit row and no
+      // second notification (idempotent, mirrors the leave-approval direction's own S2 idiom).
+      mockPhorest(wttFixture);
+      const second = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
+      expect(second.status).toBe("SUCCESS");
+
+      const auditsAfterSecond = await app.prisma.auditLog.count({
+        where: { entity: "Shift", action: "SHIFT_MARKED_CONFLICTING", entityId: conflictShift!.id },
+      });
+      expect(auditsAfterSecond).toBe(1);
+      const notifsAfterSecond = await app.prisma.notification.count({
+        where: { type: "SHIFT_LEAVE_CONFLICT", userId: mgrUser.id },
+      });
+      expect(notifsAfterSecond).toBe(notifs.length);
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("a PENDING (not APPROVED) leave on the import day never flags the shift", async () => {
+    const seed = await seedPhorestTenant(app, "leaveconflict-pending");
+    try {
+      await seedPendingLeaveRequest(
+        app,
+        seed.mappedEmployeeId,
+        "2026-07-30",
+        "2026-07-30",
+        "PENDING",
+      );
+
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+
+      const shift = await app.prisma.shift.findFirst({
+        where: { employeeId: seed.mappedEmployeeId, date: new Date("2026-07-30") },
+      });
+      expect(shift?.conflictsWithLeave).toBe(false);
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+});
+
 // WR-01 regression: the slot-type filter is an ALLOW-LIST, not a NON_WORKING deny-list.
 // extractWorkTimes is the ONLY filter point (it drops `type` before the sync sees the item), so a
 // NOT_SPECIFIED / absent-type slot must NOT survive as a phantom working shift on the §615 roster.

@@ -934,6 +934,156 @@ describe("Shift Planning API", () => {
     });
   });
 
+  // ── Phase 430 — Type-1 conflict detection, the missing (shift-creation-time) direction ───
+  describe("Phase 430 — shift created/updated onto an already-approved-leave day", () => {
+    it("POST /shifts?force=true over an approved leave flags conflictsWithLeave, audits SHIFT_MARKED_CONFLICTING and notifies — alongside the existing SHIFT_FORCED_OVER_LEAVE audit", async () => {
+      const dateIso = nextWeekdayStr(futureDateStr(70));
+      const leave = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: data.employee.id,
+          leaveTypeId: data.vacationType.id,
+          startDate: new Date(dateIso),
+          endDate: new Date(dateIso),
+          days: 1,
+          status: "APPROVED",
+        },
+      });
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/shifts?force=true",
+        headers: { authorization: `Bearer ${managerToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: dateIso,
+          startTime: "08:00",
+          endTime: "16:00",
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const shift = JSON.parse(res.body);
+
+      const reloaded = await app.prisma.shift.findUnique({ where: { id: shift.id } });
+      expect(reloaded?.conflictsWithLeave).toBe(true);
+
+      const markedAudit = await app.prisma.auditLog.findFirst({
+        where: { entity: "Shift", entityId: shift.id, action: "SHIFT_MARKED_CONFLICTING" },
+      });
+      expect(markedAudit).toBeDefined();
+      expect((markedAudit?.newValue as { leaveRequestId?: string })?.leaveRequestId).toBe(leave.id);
+
+      // The pre-existing force-override audit still fires unchanged — both now coexist.
+      const forcedAudit = await app.prisma.auditLog.findFirst({
+        where: { entity: "Shift", entityId: shift.id, action: "SHIFT_FORCED_OVER_LEAVE" },
+      });
+      expect(forcedAudit).toBeDefined();
+
+      const notifs = await app.prisma.notification.findMany({
+        where: { type: "SHIFT_LEAVE_CONFLICT", relatedType: "LeaveRequest", relatedId: leave.id },
+      });
+      expect(notifs.length).toBeGreaterThan(0);
+
+      await app.prisma.shift.delete({ where: { id: shift.id } });
+      await app.prisma.leaveRequest.delete({ where: { id: leave.id } });
+    });
+
+    it("PUT /shifts/:id?force=true moved onto a leave-conflict day clears conflictsWithLeave (the manager's explicit override) and is NOT immediately re-flagged by the new check", async () => {
+      const safeDateIso = nextWeekdayStr(futureDateStr(74));
+      const conflictDateIso = nextWeekdayStr(futureDateStr(78));
+
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/shifts",
+        headers: { authorization: `Bearer ${managerToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: safeDateIso,
+          startTime: "08:00",
+          endTime: "16:00",
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const shift = JSON.parse(createRes.body);
+
+      const leave = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: data.employee.id,
+          leaveTypeId: data.vacationType.id,
+          startDate: new Date(conflictDateIso),
+          endDate: new Date(conflictDateIso),
+          days: 1,
+          status: "APPROVED",
+        },
+      });
+
+      const putRes = await app.inject({
+        method: "PUT",
+        url: `/api/v1/shifts/${shift.id}?force=true`,
+        headers: { authorization: `Bearer ${managerToken}` },
+        payload: { date: conflictDateIso },
+      });
+      expect(putRes.statusCode).toBe(200);
+
+      const reloaded = await app.prisma.shift.findUnique({ where: { id: shift.id } });
+      // Pre-existing behaviour: force-saving OVER a conflict clears the flag (the manager's
+      // active decision to keep the shift). Phase 430's new check must not silently undo it.
+      expect(reloaded?.conflictsWithLeave).toBe(false);
+
+      const markedAudit = await app.prisma.auditLog.findFirst({
+        where: { entity: "Shift", entityId: shift.id, action: "SHIFT_MARKED_CONFLICTING" },
+      });
+      expect(markedAudit).toBeNull();
+
+      await app.prisma.shift.delete({ where: { id: shift.id } });
+      await app.prisma.leaveRequest.delete({ where: { id: leave.id } });
+    });
+
+    it("POST /bulk has NO pre-existing leave-conflict gate — a shift landing on an approved-leave day is still flagged, audited and notified", async () => {
+      const dateIso = nextWeekdayStr(futureDateStr(82));
+      const leave = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: data.employee.id,
+          leaveTypeId: data.vacationType.id,
+          startDate: new Date(dateIso),
+          endDate: new Date(dateIso),
+          days: 1,
+          status: "APPROVED",
+        },
+      });
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/shifts/bulk",
+        headers: { authorization: `Bearer ${managerToken}` },
+        payload: {
+          shifts: [
+            { employeeId: data.employee.id, date: dateIso, startTime: "08:00", endTime: "16:00" },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      expect(JSON.parse(res.body).created).toBe(1);
+
+      const shift = await app.prisma.shift.findFirst({
+        where: { employeeId: data.employee.id, date: new Date(dateIso) },
+      });
+      expect(shift?.conflictsWithLeave).toBe(true);
+
+      const markedAudit = await app.prisma.auditLog.findFirst({
+        where: { entity: "Shift", entityId: shift!.id, action: "SHIFT_MARKED_CONFLICTING" },
+      });
+      expect(markedAudit).toBeDefined();
+
+      const notifs = await app.prisma.notification.findMany({
+        where: { type: "SHIFT_LEAVE_CONFLICT", relatedType: "LeaveRequest", relatedId: leave.id },
+      });
+      expect(notifs.length).toBeGreaterThan(0);
+
+      await app.prisma.shift.delete({ where: { id: shift!.id } });
+      await app.prisma.leaveRequest.delete({ where: { id: leave.id } });
+    });
+  });
+
   // ── Phase 43-05 — Copy-Week ────────────────────────────────────────────────
   describe("Phase 43-05 — copy-week", () => {
     let copyTplId: string;
