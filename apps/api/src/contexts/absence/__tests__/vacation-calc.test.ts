@@ -8,6 +8,7 @@ import {
   calculateProRataVacationForHire,
   countShiftBasedLeaveDays,
   mondayOfWeekUtc,
+  leaveDaysPerWeek,
 } from "../vacation-calc";
 // Phase 107 — single shared tenant-TZ date helper (issue #34); avoids hardcoded calendar
 // dates that expire (see project history in CLAUDE.md / docs/testing.md).
@@ -558,6 +559,21 @@ describe("countShiftBasedLeaveDays — by contract, roster-independent (Issue #4
     // (enforced by Task 1's own acceptance criteria) — this call is the behavioral proof: it
     // runs to completion with nothing but plain JS values.
     expect(() => countShiftBasedLeaveDays(mon(0), mon(1), false, 5, new Set())).not.toThrow();
+  });
+});
+
+describe("leaveDaysPerWeek — same kernel as countShiftBasedLeaveDays (Issue #429, D-01/D-02)", () => {
+  it("matches countShiftBasedLeaveDays for a single full-day row (contract c=4, Mon-Thu)", () => {
+    const c = 4;
+    const start = mon(0); // Mon
+    const end = mon(3); // Thu
+    const weeks = leaveDaysPerWeek([{ startDate: start, endDate: end }], c, NO_HOLIDAYS);
+    expect(weeks).toHaveLength(1);
+    const entry = weeks[0];
+    const expected = countShiftBasedLeaveDays(start, end, false, c, NO_HOLIDAYS);
+    expect(entry.days).toBe(expected.days);
+    const sumShares = Array.from(entry.dayShares.values()).reduce((a, b) => a + b, 0);
+    expect(sumShares).toBeCloseTo(entry.days);
   });
 });
 
