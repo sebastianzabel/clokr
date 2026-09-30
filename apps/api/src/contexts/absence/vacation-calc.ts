@@ -524,7 +524,6 @@ export function leaveDaysPerWeek(
   let weekMonday = mondayOfWeekUtc(minStart);
   const lastMonday = mondayOfWeekUtc(maxEnd);
   while (weekMonday.getTime() <= lastMonday.getTime()) {
-    const weekSaturday = addUtcDays(weekMonday, 5);
     const weekSunday = addUtcDays(weekMonday, 6);
 
     // Union of full-day Mo-Sat dates this week across ALL full-day rows (halfDay falsy).
