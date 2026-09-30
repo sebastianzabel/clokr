@@ -379,7 +379,7 @@ describe("countShiftBasedLeaveDays — by contract, roster-independent (Issue #4
   });
 
   // ── Issue #425: a partial ISO-week fragment must not count Sunday as a vacation-consuming
-  // day (§ 3 Abs. 2 BUrlG: Sonntag ist kein Werktag). These five fixtures use literal calendar
+  // day (§ 3 Abs. 2 BUrlG: Sunday is not a Werktag). These five fixtures use literal calendar
   // dates (real 2026 dates, including real NI public holidays) rather than the mon()/ds()
   // relative helpers, because they pin the exact historical regression from Issue #425.
   it("#425 Test A: 4-day contract, Fri 2026-09-11 – Mon 2026-09-14 costs 3 days (not 4)", () => {

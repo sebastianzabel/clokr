@@ -369,10 +369,10 @@ function toDateStrUtc(d: Date): string {
  * string format as `countWorkDaysInRange()` (see `toDateStrUtc()` above); resolved by the
  * caller via `holidaysAtWorkLocation()` (the Unterbau's only holiday-set builder).
  *
- * Algorithm (revised, Issue #425): Sunday is never a Werktag (§ 3 Abs. 2 BUrlG: "Werktage sind
- * alle Kalendertage, die nicht Sonn- oder gesetzliche Feiertage sind"), so it must never be
- * counted as a vacation-consuming day, in either branch. The previous version counted Sunday as
- * an ordinary calendar day inside a week FRAGMENT — that was the bug #425 fixes.
+ * Algorithm (revised, Issue #425): Sunday is never a Werktag — § 3 Abs. 2 BUrlG defines
+ * Werktage as every calendar day that is not a Sunday or a statutory holiday — so it must never
+ * be counted as a vacation-consuming day, in either branch. The previous version counted Sunday
+ * as an ordinary calendar day inside a week FRAGMENT — that was the bug #425 fixes.
  *   1. `halfDay` short-circuits to 0.5 (mirrors `countWorkDaysInRange()`'s own first
  *      statement) — no week-cutting, no holiday lookup.
  *   2. `[start, end]` is cut into ISO weeks Mon-Sun (`mondayOfWeekUtc()`, same primitive as
@@ -392,8 +392,8 @@ function toDateStrUtc(d: Date): string {
  *      `min(moSaDaysInFragment - moSaHolidaysInFragment, contractWorkDaysPerWeek)` — the
  *      non-holiday Mo-Sat days are counted FIRST, then the result is capped at the contractual
  *      count. Capping before subtracting would double-deduct a holiday whenever the fragment has
- *      spare capacity above the contract (Issue #425 AC: "Feiertage werden nicht doppelt
- *      abgezogen").
+ *      spare capacity above the contract (Issue #425 AC: a holiday must never be deducted
+ *      twice).
  *   6. Sum every week's contribution. The result is never provisional any more (Issue #417):
  *      nothing here depends on data that can still change (the roster), so there is nothing
  *      left to converge later. `provisional` stays in the return shape only so every existing
