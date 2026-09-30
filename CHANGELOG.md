@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.1](https://github.com/sebastianzabel/clokr/compare/v1.13.0...v1.13.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* **425:** SHIFT_BASED-Urlaubszählung zählt keine Sonntage mehr in angebrochenen Wochen ([#426](https://github.com/sebastianzabel/clokr/issues/426)) ([b752f3b](https://github.com/sebastianzabel/clokr/commit/b752f3b68e232335f779e2ddffa32fe686a37ec8))
+
 ## [1.13.0](https://github.com/sebastianzabel/clokr/compare/v1.12.1...v1.13.0) (2026-09-29)
 
 
