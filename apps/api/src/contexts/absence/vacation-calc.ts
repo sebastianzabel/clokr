@@ -350,11 +350,6 @@ function toDateStrUtc(d: Date): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function daysBetweenInclusiveUtc(a: Date, b: Date): number {
-  const MS_PER_DAY = 24 * 60 * 60 * 1000;
-  return Math.round((b.getTime() - a.getTime()) / MS_PER_DAY) + 1;
-}
-
 /**
  * Counts leave-day consumption for a SHIFT_BASED employee over [start, end] — BY CONTRACT, not
  * by roster (Issue #417, 2026-09-29 owner decision, supersedes Phase 107 D-06). Pure and
@@ -374,22 +369,35 @@ function daysBetweenInclusiveUtc(a: Date, b: Date): number {
  * string format as `countWorkDaysInRange()` (see `toDateStrUtc()` above); resolved by the
  * caller via `holidaysAtWorkLocation()` (the Unterbau's only holiday-set builder).
  *
- * Algorithm:
+ * Algorithm (revised, Issue #425): Sunday is never a Werktag — § 3 Abs. 2 BUrlG defines
+ * Werktage as every calendar day that is not a Sunday or a statutory holiday — so it must never
+ * be counted as a vacation-consuming day, in either branch. The previous version counted Sunday
+ * as an ordinary calendar day inside a week FRAGMENT — that was the bug #425 fixes.
  *   1. `halfDay` short-circuits to 0.5 (mirrors `countWorkDaysInRange()`'s own first
  *      statement) — no week-cutting, no holiday lookup.
  *   2. `[start, end]` is cut into ISO weeks Mon-Sun (`mondayOfWeekUtc()`, same primitive as
  *      `weekRangeUtc()`/`shifts.ts`, see its own docblock above).
- *   3. A week lying COMPLETELY inside `[start, end]` contributes `contractWorkDaysPerWeek` minus
- *      any statutory holiday that falls inside that week — the contractual cap always binds for
- *      a whole week, by construction; there is no fragment to measure.
- *   4. A week lying PARTIALLY inside `[start, end]` is a FRAGMENT: it contributes
- *      `max(0, min(fragmentCalendarDays, contractWorkDaysPerWeek) - holidaysInThatFragment)` —
- *      the requested calendar days of that fragment, capped per ISO week at the contractual
- *      count and reduced by any statutory holiday inside it. This reuses, unchanged, the "flat"
- *      formula Phase 107 D-07/D-08 already used for a week with no roster — the AC for #417
- *      explicitly calls for exactly this reuse, now applied uniformly instead of only when the
- *      roster happened to be empty.
- *   5. Sum every week's contribution. The result is never provisional any more (Issue #417):
+ *   3. For each ISO week, one loop walks the intersection of that week's Mon-Sun span with
+ *      `[start, end]`, SKIPPING Sunday unconditionally, and counts two things: the number of
+ *      Mo-Sat calendar days in that intersection (`moSaDaysInFragment`), and how many of them
+ *      are a statutory holiday (`moSaHolidaysInFragment`).
+ *   4. A week counts as WHOLE (D-07, Issue #425) when every Mo-Sat day of that ISO week lies
+ *      inside `[start, end]` — i.e. `weekMonday >= start && weekSaturday <= end`. Sunday is
+ *      irrelevant to this test: a Mo-Sa request already covers the whole working week and must
+ *      cost the same as the identical Mo-So request (otherwise a non-working Sunday appended to
+ *      a Mo-Sa request would, absurdly, LOWER the cost — see the D-07 regression test). A whole
+ *      week contributes `max(0, contractWorkDaysPerWeek - moSaHolidaysInFragment)` — the
+ *      contractual cap always binds for a whole week; there is no fragment to cap against.
+ *   5. Any other week is a FRAGMENT: it contributes
+ *      `max(0, min(moSaDaysInFragment, contractWorkDaysPerWeek) - moSaHolidaysInFragment)` — the
+ *      requested Mo-Sat days, capped at the contractual count, minus each Mo-Sat holiday exactly
+ *      once (a Sunday holiday is never counted, so it can never be deducted). This is the same
+ *      holiday rule as the whole-week branch (contract minus Mo-Sat holidays), so the cost is
+ *      monotone in the request: extending a request by a day never makes it cheaper. The
+ *      alternative "count non-holiday days first, then cap" was rejected (Issue #425 decision
+ *      comment): with a 4-day contract and a Wednesday holiday it would charge Mo-Fr 4 days
+ *      while the whole Mo-Sa week costs 3.
+ *   6. Sum every week's contribution. The result is never provisional any more (Issue #417):
  *      nothing here depends on data that can still change (the roster), so there is nothing
  *      left to converge later. `provisional` stays in the return shape only so every existing
  *      caller (`resolveLeaveDays()`, `shift-leave-recalc-resolver.ts`) keeps compiling against
@@ -411,24 +419,29 @@ export function countShiftBasedLeaveDays(
 
   let weekMonday = mondayOfWeekUtc(s);
   while (weekMonday.getTime() <= e.getTime()) {
+    const weekSaturday = addUtcDays(weekMonday, 5);
     const weekSunday = addUtcDays(weekMonday, 6);
-    const isWhole = weekMonday.getTime() >= s.getTime() && weekSunday.getTime() <= e.getTime();
+    // D-07: "whole" is decided on the Mo-Sat span only — Sunday is not a Werktag, so a Mo-Sa
+    // request already covers the whole working week.
+    const isWhole = weekMonday.getTime() >= s.getTime() && weekSaturday.getTime() <= e.getTime();
 
-    const fragStart = isWhole ? weekMonday : weekMonday.getTime() > s.getTime() ? weekMonday : s;
-    const fragEnd = isWhole ? weekSunday : weekSunday.getTime() < e.getTime() ? weekSunday : e;
+    const fragStart = weekMonday.getTime() > s.getTime() ? weekMonday : s;
+    const fragEnd = weekSunday.getTime() < e.getTime() ? weekSunday : e;
 
-    let holidaysInFragment = 0;
+    let moSaDaysInFragment = 0;
+    let moSaHolidaysInFragment = 0;
     for (let d = fragStart; d.getTime() <= fragEnd.getTime(); d = addUtcDays(d, 1)) {
-      if (holidays.has(toDateStrUtc(d))) holidaysInFragment++;
+      if (d.getUTCDay() === 0) continue; // Sunday is never a Werktag (§ 3 Abs. 2 BUrlG)
+      moSaDaysInFragment++;
+      if (holidays.has(toDateStrUtc(d))) moSaHolidaysInFragment++;
     }
 
     if (isWhole) {
-      totalDays += Math.max(0, contractWorkDaysPerWeek - holidaysInFragment);
+      totalDays += Math.max(0, contractWorkDaysPerWeek - moSaHolidaysInFragment);
     } else {
-      const fragmentCalendarDays = daysBetweenInclusiveUtc(fragStart, fragEnd);
       totalDays += Math.max(
         0,
-        Math.min(fragmentCalendarDays, contractWorkDaysPerWeek) - holidaysInFragment,
+        Math.min(moSaDaysInFragment, contractWorkDaysPerWeek) - moSaHolidaysInFragment,
       );
     }
 
