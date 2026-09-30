@@ -25,6 +25,15 @@ import { getTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
+// Issue #429 (D-13, plan 429-03) — receipt-equals-credit equality test. Deep imports into
+// working-time-account's internals, same precedent as shift-based-leave-week-soll-429.test.ts
+// (429-02): apps/api/src/__tests__ sits outside the eslint.boundaries.mjs BOUNDARY_CONTEXTS scan.
+import {
+  closeEmployeeMonth,
+  toCloseMonthApprovedLeave,
+  type CloseMonthInput,
+} from "../contexts/working-time-account/close-employee-month";
+import { monthRangeUtc, monthDayBounds } from "../contexts/working-time-account/timezone";
 
 /**
  * Next Monday at least `daysOut` days out (UTC arithmetic), advanced past any NI public
@@ -408,11 +417,21 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
     expect(res.statusCode).toBe(201);
   });
 
-  it("D-07 REVERSED (#293): halfDay over the same 2-day range costs half the RANGE's Ø-Methode total — 8.00h (WR-03: minutesNeeded 480), not half the first shift's netto", async () => {
+  it("D-07 CHANGED (Issue #429, D-02/D-09, supersedes the #293-era expectation below): halfDay over a multi-day range now costs a flat 0.5 contract-day (4.00h), same as the entitlement side's own halfDay short-circuit — NOT half the range's Ø-Methode total (was 8.00h)", async () => {
+    // Pre-#429 value: 8.00h / minutesNeeded 480 (half of the range's 16.00h Ø-Methode total,
+    // via the old workDays-divisor formula). Under D-13's shiftBasedLeaveMinutesForRequest(),
+    // a halfDay row is NOT split day-by-day across its start/end range — leaveDaysPerWeek()
+    // (D-02) treats ANY halfDay row as "+0.5 on the row's startDate", mirroring
+    // countShiftBasedLeaveDays()'s own flat `if (halfDay) return { days: 0.5 }` short-circuit
+    // (the ENTITLEMENT side has always behaved this way). This is issue #429 correctly closing
+    // the exact divergence #293 was about: receipt and saldo now agree on halfDay-over-a-
+    // multi-day-range too, where before this phase they only happened to agree because both
+    // used the OLD Ø-Methode-then-halve convention. Measured (RED before the D-13 rewrite,
+    // GREEN after): 8.00h/480min -> 4.00h/240min.
     const preview = await hoursPreview(shiftEmpToken, RANGE_4_MON, RANGE_4_TUE, true);
     const body = JSON.parse(preview.body);
-    expect(body.hours).toBe(8);
-    expect(body.minutesNeeded).toBe(480);
+    expect(body.hours).toBe(4);
+    expect(body.minutesNeeded).toBe(240);
   });
 
   it("WR-02 SUPERSEDED (#293): same-day split shift costs 4.00h (half the 8.00h Ø-Methode day) regardless of which shift was inserted first — the roster is not read, so insertion order cannot matter", async () => {
@@ -434,5 +453,162 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
     const preview = await hoursPreview(fixedEmpToken, MONDAY_1, MONDAY_1);
     expect(preview.statusCode).toBe(200);
     expect(JSON.parse(preview.body).hours).toBe(8);
+  });
+});
+
+/**
+ * Issue #429 (D-13, plan 429-03) — the mandatory receipt-equals-credit equality test.
+ *
+ * A contract deliberately chosen so the OLD receipt formula (weeklyHours ÷ `workDays.length`,
+ * via the since-removed `calcLeaveAbsenceMinutesTz` call in `getScheduledHours`) and the NEW
+ * one (weeklyHours ÷ `contractWorkDaysPerWeek`, via `shiftBasedLeaveMinutesForRequest`) give
+ * DIFFERENT numbers: `contractWorkDaysPerWeek: 4` but `workDays: [1,2,3,4,5]` (length 5) — the
+ * exact divisor-unification divergence #429 exists to close (429-02-SUMMARY.md's
+ * `section9-soll-dedup.test.ts` Integration 4/5 changes are the same divergence class).
+ *
+ * Receipt side: `GET /leave/hours-preview` (goes through `getScheduledHours()`) for one
+ * unplanned weekday inside a month, no other leave.
+ * Saldo side: `closeEmployeeMonth()` (pure, no DB) for the SAME schedule/month, run twice —
+ * once with NO leave (baseline contract Soll) and once with the SAME single leave row — so the
+ * row's credited minutes = baseline.expectedMinutes − withLeave.expectedMinutes, isolating the
+ * one row's credit from the rest of the month's contract Soll without needing the intra-context
+ * `shiftBasedLeaveCreditByDate()` directly. No cap binds (one day out of a 4-day contract week,
+ * entirely inside the month — see 429-CONTEXT.md D-08).
+ */
+describe("getScheduledHours SHIFT_BASED == saldo credit (Issue #429, D-13)", () => {
+  let app: FastifyInstance;
+  let tenantId: string;
+  let empToken: string;
+
+  const TZ = "Europe/Berlin";
+  const CONTRACT_DAYS = 4;
+  const WEEKLY_HOURS = 38;
+  // A distant, distinct anchor — this describe block owns its own tenant/employee, so it cannot
+  // collide with the anchors above even though the offset ranges overlap.
+  const LEAVE_DAY = nextNonHolidayMonday(210);
+
+  const D13_SCHEDULE = {
+    type: "SHIFT_BASED",
+    weeklyHours: WEEKLY_HOURS,
+    contractWorkDaysPerWeek: CONTRACT_DAYS,
+    workDays: [1, 2, 3, 4, 5], // length 5 != contractWorkDaysPerWeek 4 — see docblock above
+  };
+
+  const [leaveYear, leaveMonth] = LEAVE_DAY.split("-").map(Number);
+  const { start: MONTH_START, end: MONTH_END } = monthRangeUtc(leaveYear, leaveMonth, TZ);
+  const { firstDay: MONTH_FIRST, lastDay: MONTH_LAST } = monthDayBounds(MONTH_START, MONTH_END, TZ);
+
+  function buildD13Input(approvedLeave: CloseMonthInput["approvedLeave"]): CloseMonthInput {
+    return {
+      employeeId: "d13-equality",
+      monthStart: MONTH_START,
+      monthEnd: MONTH_END,
+      monthFirstDay: MONTH_FIRST,
+      monthLastDay: MONTH_LAST,
+      tz: TZ,
+      carryOverIn: 0,
+      schedule: D13_SCHEDULE,
+      hireDate: PAST_ANCHOR,
+      exitDate: null,
+      isTimeTrackingExempt: false,
+      breakOver6hOverride: null,
+      breakOver9hOverride: null,
+      entries: [],
+      shifts: [],
+      approvedLeave,
+      absences: [],
+      holidayDateStrings: new Set(),
+      tenantConfig: {
+        defaultBreakOver6h: 30,
+        defaultBreakOver9h: 45,
+        defaultWorkDays: [1, 2, 3, 4, 5],
+      },
+    };
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const prisma = app.prisma;
+
+    const suffix = "d13-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const tenant = await prisma.tenant.create({
+      data: { name: `D13 ${suffix}`, slug: `d13-${suffix}`, federalState: "NIEDERSACHSEN" },
+    });
+    tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId); // Phase 325 (#325) — a tenant must have an active salon
+    await prisma.tenantConfig.create({ data: { tenantId } });
+
+    const passwordHash = await bcrypt.hash("test1234", 10);
+    const user = await prisma.user.create({
+      data: { email: `d13-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+    });
+    const emp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: user.id,
+        employeeNumber: `D13-${suffix}`,
+        firstName: "D13",
+        lastName: "Equality",
+        hireDate: PAST_ANCHOR,
+      },
+    });
+    // Same divisor mismatch as D13_SCHEDULE above (contractWorkDaysPerWeek 4, workDays length 5).
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: emp.id,
+        type: "SHIFT_BASED",
+        weeklyHours: WEEKLY_HOURS,
+        contractWorkDaysPerWeek: CONTRACT_DAYS,
+        workDays: [1, 2, 3, 4, 5],
+        mondayHours: 8, // placeholder, not authoritative for SHIFT_BASED (CLAUDE.md)
+        validFrom: PAST_ANCHOR,
+      },
+    });
+
+    const login = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: `d13-${suffix}@test.de`, password: "test1234" },
+    });
+    empToken = JSON.parse(login.body).accessToken;
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("D-13 equality cleanup failed:", err);
+    }
+  });
+
+  it("receipt (getScheduledHours) equals the saldo's credited minutes for the same lone request", async () => {
+    const preview = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/hours-preview?startDate=${LEAVE_DAY}&endDate=${LEAVE_DAY}&halfDay=false`,
+      headers: { authorization: `Bearer ${empToken}` },
+    });
+    expect(preview.statusCode).toBe(200);
+    const receiptMinutes = JSON.parse(preview.body).minutesNeeded;
+
+    const leaveDate = new Date(LEAVE_DAY + "T00:00:00Z");
+    const baseline = closeEmployeeMonth(buildD13Input([]));
+    const withLeave = closeEmployeeMonth(
+      buildD13Input(
+        toCloseMonthApprovedLeave([
+          {
+            startDate: leaveDate,
+            endDate: leaveDate,
+            halfDay: false,
+            leaveType: { code: "VACATION" },
+          },
+        ]),
+      ),
+    );
+    const creditedMinutes = baseline.expectedMinutes - withLeave.expectedMinutes;
+
+    expect(
+      receiptMinutes,
+      `receipt (${receiptMinutes} min) must equal the saldo's credited minutes (${creditedMinutes} min) for the same lone request — Issue #429 D-13`,
+    ).toBe(creditedMinutes);
   });
 });

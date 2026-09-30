@@ -476,8 +476,14 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
     const withdrawal = (await balanceOf(vacEmp.id)) - (await balanceOf(emp.id));
 
     // ONE equality assertion, not three pins: the journal's absolute amount and the measured
-    // saldo withdrawal must be the SAME number, because both now come from the same function
-    // call (getScheduledHours() -> calcLeaveAbsenceMinutesTz()) on the same schedule row.
+    // saldo withdrawal must be the SAME number. Issue #429 (D-13) moved the receipt chain from
+    // `getScheduledHours() -> calcLeaveAbsenceMinutesTz()` to
+    // `getScheduledHours() -> shiftBasedLeaveMinutesForRequest()`, while the saldo side already
+    // moved (plan 429-02) to `closeEmployeeMonth() -> shiftBasedLeaveCreditByDate()` — two
+    // different functions now, not one, but both derived from the SAME `leaveDaysPerWeek()`
+    // kernel (429-01, D-01/D-02) and the SAME `contractWorkDaysPerWeekFrom()` resolution chain
+    // (429-01, D-03), so for this fixture (single full day, c=5 on both sides, no cap binding)
+    // they still produce the identical number — the receipt still follows the account (#293).
     expect(
       journalAmount,
       `journal amount (${journalAmount}h) must equal the measured saldo withdrawal (${withdrawal}h) — the receipt follows the account (#293)`,
