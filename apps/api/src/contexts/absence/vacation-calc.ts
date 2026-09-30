@@ -389,11 +389,14 @@ function toDateStrUtc(d: Date): string {
  *      week contributes `max(0, contractWorkDaysPerWeek - moSaHolidaysInFragment)` — the
  *      contractual cap always binds for a whole week; there is no fragment to cap against.
  *   5. Any other week is a FRAGMENT: it contributes
- *      `min(moSaDaysInFragment - moSaHolidaysInFragment, contractWorkDaysPerWeek)` — the
- *      non-holiday Mo-Sat days are counted FIRST, then the result is capped at the contractual
- *      count. Capping before subtracting would double-deduct a holiday whenever the fragment has
- *      spare capacity above the contract (Issue #425 AC: a holiday must never be deducted
- *      twice).
+ *      `max(0, min(moSaDaysInFragment, contractWorkDaysPerWeek) - moSaHolidaysInFragment)` — the
+ *      requested Mo-Sat days, capped at the contractual count, minus each Mo-Sat holiday exactly
+ *      once (a Sunday holiday is never counted, so it can never be deducted). This is the same
+ *      holiday rule as the whole-week branch (contract minus Mo-Sat holidays), so the cost is
+ *      monotone in the request: extending a request by a day never makes it cheaper. The
+ *      alternative "count non-holiday days first, then cap" was rejected (Issue #425 decision
+ *      comment): with a 4-day contract and a Wednesday holiday it would charge Mo-Fr 4 days
+ *      while the whole Mo-Sa week costs 3.
  *   6. Sum every week's contribution. The result is never provisional any more (Issue #417):
  *      nothing here depends on data that can still change (the roster), so there is nothing
  *      left to converge later. `provisional` stays in the return shape only so every existing
@@ -436,7 +439,10 @@ export function countShiftBasedLeaveDays(
     if (isWhole) {
       totalDays += Math.max(0, contractWorkDaysPerWeek - moSaHolidaysInFragment);
     } else {
-      totalDays += Math.min(moSaDaysInFragment - moSaHolidaysInFragment, contractWorkDaysPerWeek);
+      totalDays += Math.max(
+        0,
+        Math.min(moSaDaysInFragment, contractWorkDaysPerWeek) - moSaHolidaysInFragment,
+      );
     }
 
     weekMonday = addUtcDays(weekMonday, 7);

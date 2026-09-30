@@ -435,6 +435,42 @@ describe("countShiftBasedLeaveDays — by contract, roster-independent (Issue #4
     expect(moSo).toEqual({ days: 3, provisional: false });
   });
 
+  it("#425 monotonicity: with a Mo–Sat holiday, a Mo–Fr fragment never costs more than the whole Mo–Sa week", () => {
+    // 4-day contract, Wednesday holiday. Fragment Mo–Fr: min(5 Mo-Sat days, 4) - 1 holiday = 3.
+    // Counting non-holiday days first and capping afterwards would give min(4, 4) = 4 — more
+    // than the whole week (4 - 1 = 3), i.e. adding Saturday would make the request cheaper.
+    const holidays = new Set(["2026-09-16"]); // Wed
+    const moFr = countShiftBasedLeaveDays(
+      new Date("2026-09-14"), // Mon
+      new Date("2026-09-18"), // Fri
+      false,
+      4,
+      holidays,
+    );
+    expect(moFr).toEqual({ days: 3, provisional: false });
+  });
+
+  it("#425: a holiday on a Sunday never reduces the count — whole week or fragment", () => {
+    const sundayHoliday = new Set(["2026-09-20"]); // Sun
+    const wholeWeek = countShiftBasedLeaveDays(
+      new Date("2026-09-14"), // Mon
+      new Date("2026-09-20"), // Sun
+      false,
+      5,
+      sundayHoliday,
+    );
+    expect(wholeWeek).toEqual({ days: 5, provisional: false });
+    const fragment = countShiftBasedLeaveDays(
+      new Date("2026-09-17"), // Thu
+      new Date("2026-09-20"), // Sun
+      false,
+      5,
+      sundayHoliday,
+    );
+    // Thu, Fri, Sat = 3 Mo-Sat days, capped at 5 -> 3; the Sunday holiday is not deducted.
+    expect(fragment).toEqual({ days: 3, provisional: false });
+  });
+
   it("two whole ISO weeks, count 5 -> 10 days, never provisional", () => {
     const start = mon(0); // Monday, week A
     const end = mon(13); // Sunday, week B (the second Sunday)
@@ -462,7 +498,8 @@ describe("countShiftBasedLeaveDays — by contract, roster-independent (Issue #4
     const start = mon(2); // Wed
     const end = mon(6); // Sun
     const result = countShiftBasedLeaveDays(start, end, false, 4, NO_HOLIDAYS);
-    // min(5 calendar days, count 4) = 4 — the count caps the calendar-day count, not vice versa.
+    // Issue #425: 4 Mo-Sat days (Wed..Sat; Sunday never counts), min(4, count 4) = 4 — the count
+    // caps the Mo-Sat day count, not vice versa. (Before #425 this read min(5 calendar days, 4).)
     expect(result).toEqual({ days: 4, provisional: false });
   });
 
@@ -471,7 +508,7 @@ describe("countShiftBasedLeaveDays — by contract, roster-independent (Issue #4
     const end = mon(1); // Tue
     const holidays = new Set([ds(mon(1))]); // Tuesday is a public holiday
     const result = countShiftBasedLeaveDays(start, end, false, 5, holidays);
-    // min(2 calendar days, count 5) = 2, minus 1 holiday in the fragment = 1
+    // min(2 Mo-Sat days, count 5) = 2, minus 1 Mo-Sat holiday in the fragment = 1
     expect(result).toEqual({ days: 1, provisional: false });
   });
 
@@ -488,7 +525,7 @@ describe("countShiftBasedLeaveDays — by contract, roster-independent (Issue #4
     const end = mon(1); // Tue
     const holidays = new Set([ds(mon(0)), ds(mon(1))]); // both days are holidays
     const result = countShiftBasedLeaveDays(start, end, false, 1, holidays);
-    // min(2, 1) = 1, minus 2 holidays = -1 -> floored at 0, never negative
+    // min(2 Mo-Sat days, 1) = 1, minus 2 Mo-Sat holidays = -1 -> floored at 0, never negative
     expect(result).toEqual({ days: 0, provisional: false });
   });
 
