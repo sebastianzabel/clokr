@@ -541,7 +541,7 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     const friday = addDaysIso(monday, 4);
     const followingWed = addDaysIso(monday, 9);
 
-    // Issue #417: seeded STALE (disagrees with the by-contract total min(4,4)+min(3,4)=7) so
+    // Issue #417: seeded STALE (disagrees with the by-contract total min(3,4)+min(3,4)=6) so
     // the FIRST of the two mutation-site calls below actually converges it. Once that write
     // lands, daysProvisional is false — a one-way transition — so the SECOND call (same
     // employeeId/weekStart, different shift) finds it no longer a candidate at all. This is
@@ -560,12 +560,15 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
     expect(res.status).toBe("SUCCESS");
 
     const persisted = await app.prisma.leaveRequest.findUnique({ where: { id: requestId } });
-    // By-contract total over the WHOLE period, roster-independent: min(4,4) + min(3,4) = 7.
-    expect(Number(persisted!.days)).toBe(7);
+    // By-contract total over the WHOLE period, roster-independent. Issue #425: the Thu..Sun
+    // fragment counts only its 3 Mo-Sat days (Thu, Fri, Sat) — Sunday is never a Werktag — so
+    // min(3,4) + min(3,4) (Mon..Wed) = 6. It was 7 before #425 only because the old formula
+    // counted the Sunday; this is the Sunday bug #425 fixes, not a relaxed assertion.
+    expect(Number(persisted!.days)).toBe(6);
     expect(persisted!.daysProvisional).toBe(false); // Issue #417: never provisional any more
 
     const audits = await auditRowsFor(requestId);
-    expect(audits.length).toBe(1); // only the FIRST call found a candidate at all (2->7)
+    expect(audits.length).toBe(1); // only the FIRST call found a candidate at all (2->6)
 
     const notifications = await notificationsFor(requestId);
     const employeeNotifs = notifications.filter((n) => n.userId === erikaUserId);

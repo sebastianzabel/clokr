@@ -370,10 +370,105 @@ describe("countShiftBasedLeaveDays — by contract, roster-independent (Issue #4
   });
 
   it("AC-417-c: a whole vacation week on a 5-day contract costs 5 days", () => {
+    // Also the issue #425 4th fixture (Test D: 5-day contract, full Mo–So week -> 5) — reused
+    // as-is, not duplicated.
     const start = mon(0); // Monday
     const end = mon(6); // Sunday
     const result = countShiftBasedLeaveDays(start, end, false, 5, NO_HOLIDAYS);
     expect(result).toEqual({ days: 5, provisional: false });
+  });
+
+  // ── Issue #425: a partial ISO-week fragment must not count Sunday as a vacation-consuming
+  // day (§ 3 Abs. 2 BUrlG: Sunday is not a Werktag). These five fixtures use literal calendar
+  // dates (real 2026 dates, including real NI public holidays) rather than the mon()/ds()
+  // relative helpers, because they pin the exact historical regression from Issue #425.
+  it("#425 Test A: 4-day contract, Fri 2026-09-11 – Mon 2026-09-14 costs 3 days (not 4)", () => {
+    const start = new Date("2026-09-11"); // Fri
+    const end = new Date("2026-09-14"); // Mon
+    const result = countShiftBasedLeaveDays(start, end, false, 4, NO_HOLIDAYS);
+    // Week 1 fragment Fri-Sat = 2 (Sunday 09-13 excluded), week 2 fragment Mon-only = 1, total 3.
+    expect(result).toEqual({ days: 3, provisional: false });
+  });
+
+  it("#425 Test B: 4-day contract, 2026-07-23 – 2026-07-29 costs 6 days", () => {
+    const start = new Date("2026-07-23");
+    const end = new Date("2026-07-29");
+    const result = countShiftBasedLeaveDays(start, end, false, 4, NO_HOLIDAYS);
+    expect(result).toEqual({ days: 6, provisional: false });
+  });
+
+  it("#425 Test C: 4-day contract, 2026-04-01 – 2026-04-07 with Karfreitag + Ostermontag costs 4 days", () => {
+    const start = new Date("2026-04-01");
+    const end = new Date("2026-04-07");
+    const holidays = new Set(["2026-04-03", "2026-04-06"]); // Karfreitag, Ostermontag
+    const result = countShiftBasedLeaveDays(start, end, false, 4, holidays);
+    expect(result).toEqual({ days: 4, provisional: false });
+  });
+
+  it("#425 Test E: a single Sunday costs 0 leave days", () => {
+    const start = new Date("2026-09-13"); // Sun
+    const end = new Date("2026-09-13");
+    const result = countShiftBasedLeaveDays(start, end, false, 5, NO_HOLIDAYS);
+    expect(result).toEqual({ days: 0, provisional: false });
+  });
+
+  it("#425 D-07: a Mo–Sa request costs the same as the identical Mo–So request (whole-week redefinition)", () => {
+    // 4-day contract, one Mo–Sat week with one Mo–Sat holiday. Without D-07's redefinition of
+    // "whole", the Mo–Sa request would be treated as a FRAGMENT (min(5,4)=4) while the
+    // Mo–So request is a WHOLE week (4-1=3) — a non-working Sunday must never lower the cost.
+    const holidays = new Set(["2026-09-16"]); // Wed
+    const moSa = countShiftBasedLeaveDays(
+      new Date("2026-09-14"), // Mon
+      new Date("2026-09-19"), // Sat
+      false,
+      4,
+      holidays,
+    );
+    const moSo = countShiftBasedLeaveDays(
+      new Date("2026-09-14"), // Mon
+      new Date("2026-09-20"), // Sun
+      false,
+      4,
+      holidays,
+    );
+    expect(moSa).toEqual({ days: 3, provisional: false });
+    expect(moSo).toEqual({ days: 3, provisional: false });
+  });
+
+  it("#425 monotonicity: with a Mo–Sat holiday, a Mo–Fr fragment never costs more than the whole Mo–Sa week", () => {
+    // 4-day contract, Wednesday holiday. Fragment Mo–Fr: min(5 Mo-Sat days, 4) - 1 holiday = 3.
+    // Counting non-holiday days first and capping afterwards would give min(4, 4) = 4 — more
+    // than the whole week (4 - 1 = 3), i.e. adding Saturday would make the request cheaper.
+    const holidays = new Set(["2026-09-16"]); // Wed
+    const moFr = countShiftBasedLeaveDays(
+      new Date("2026-09-14"), // Mon
+      new Date("2026-09-18"), // Fri
+      false,
+      4,
+      holidays,
+    );
+    expect(moFr).toEqual({ days: 3, provisional: false });
+  });
+
+  it("#425: a holiday on a Sunday never reduces the count — whole week or fragment", () => {
+    const sundayHoliday = new Set(["2026-09-20"]); // Sun
+    const wholeWeek = countShiftBasedLeaveDays(
+      new Date("2026-09-14"), // Mon
+      new Date("2026-09-20"), // Sun
+      false,
+      5,
+      sundayHoliday,
+    );
+    expect(wholeWeek).toEqual({ days: 5, provisional: false });
+    const fragment = countShiftBasedLeaveDays(
+      new Date("2026-09-17"), // Thu
+      new Date("2026-09-20"), // Sun
+      false,
+      5,
+      sundayHoliday,
+    );
+    // Thu, Fri, Sat = 3 Mo-Sat days, capped at 5 -> 3; the Sunday holiday is not deducted.
+    expect(fragment).toEqual({ days: 3, provisional: false });
   });
 
   it("two whole ISO weeks, count 5 -> 10 days, never provisional", () => {
@@ -403,7 +498,8 @@ describe("countShiftBasedLeaveDays — by contract, roster-independent (Issue #4
     const start = mon(2); // Wed
     const end = mon(6); // Sun
     const result = countShiftBasedLeaveDays(start, end, false, 4, NO_HOLIDAYS);
-    // min(5 calendar days, count 4) = 4 — the count caps the calendar-day count, not vice versa.
+    // Issue #425: 4 Mo-Sat days (Wed..Sat; Sunday never counts), min(4, count 4) = 4 — the count
+    // caps the Mo-Sat day count, not vice versa. (Before #425 this read min(5 calendar days, 4).)
     expect(result).toEqual({ days: 4, provisional: false });
   });
 
@@ -412,7 +508,7 @@ describe("countShiftBasedLeaveDays — by contract, roster-independent (Issue #4
     const end = mon(1); // Tue
     const holidays = new Set([ds(mon(1))]); // Tuesday is a public holiday
     const result = countShiftBasedLeaveDays(start, end, false, 5, holidays);
-    // min(2 calendar days, count 5) = 2, minus 1 holiday in the fragment = 1
+    // min(2 Mo-Sat days, count 5) = 2, minus 1 Mo-Sat holiday in the fragment = 1
     expect(result).toEqual({ days: 1, provisional: false });
   });
 
@@ -429,7 +525,7 @@ describe("countShiftBasedLeaveDays — by contract, roster-independent (Issue #4
     const end = mon(1); // Tue
     const holidays = new Set([ds(mon(0)), ds(mon(1))]); // both days are holidays
     const result = countShiftBasedLeaveDays(start, end, false, 1, holidays);
-    // min(2, 1) = 1, minus 2 holidays = -1 -> floored at 0, never negative
+    // min(2 Mo-Sat days, 1) = 1, minus 2 Mo-Sat holidays = -1 -> floored at 0, never negative
     expect(result).toEqual({ days: 0, provisional: false });
   });
 
@@ -446,11 +542,15 @@ describe("countShiftBasedLeaveDays — by contract, roster-independent (Issue #4
     const count = 5;
 
     const result = countShiftBasedLeaveDays(start, end, false, count, NO_HOLIDAYS);
-    // Week A fragment (Wed..Sun, 5 calendar days): min(5, 5) = 5
-    // Week B + Week C: WHOLE -> 5 + 5 = 10
-    // Week D fragment (Mon..Thu, 4 calendar days): min(4, 5) = 4
-    // Total: 5 + 10 + 4 = 19
-    expect(result).toEqual({ days: 19, provisional: false });
+    // Corrected for Issue #425 (Sunday is never a Werktag, § 3 Abs. 2 BUrlG) — this is the
+    // literal Sunday-counting bug #425 fixes, caught inside the #417 suite itself; not a
+    // relaxed assertion (CLAUDE.md "No test manipulation for green CI").
+    // Week A fragment (Wed..Sun): OLD counted all 5 calendar days (incl. Sunday) -> min(5,5)=5.
+    //   NEW counts only the 4 Mo-Sat days (Wed,Thu,Fri,Sat) -> min(4,5) = 4.
+    // Week B + Week C: WHOLE, no holidays -> unchanged, 5 + 5 = 10.
+    // Week D fragment (Mon..Thu, no Sunday in range): unchanged, min(4,5) = 4.
+    // Total: OLD 5+5+5+4=19 -> NEW 4+5+5+4=18.
+    expect(result).toEqual({ days: 18, provisional: false });
   });
 
   it("is DB-free and callable without Fastify or a Prisma client", () => {
