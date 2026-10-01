@@ -541,8 +541,11 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // Issue #416: contexts/absence/facade/entitlements.ts gained one new exported facade
     // function, ensureVacationEntitlementForYear — 128 -> 129.
     // Issue #430: contexts/scheduling/facade/shifts.ts gained one new exported facade function,
-    // flagShiftIfConflictsWithApprovedLeave (S4, the inverse of S2) — 129 -> 130.
-    expect(functions).toHaveLength(130);
+    // flagShiftIfConflictsWithApprovedLeave (S4, the inverse of S2) — 129 -> 130. Reverted in
+    // Phase 430-06 (follow-up to #437/#429, boundary-import-cycle gate): S4 moved OUT of
+    // facade/shifts.ts into contexts/scheduling/shift-leave-check.ts (not under ./facade/, so no
+    // longer counted) — 130 -> 129. See that file's own module docblock for the full reasoning.
+    expect(functions).toHaveLength(129);
 
     const rawExceptions = JSON.parse(
       readFileSync(

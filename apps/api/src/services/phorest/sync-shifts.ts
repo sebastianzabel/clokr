@@ -45,7 +45,7 @@ import type { FastifyInstance } from "fastify";
 import { decryptSafe } from "../../utils/crypto";
 import { todayInTz, dateStrInTz } from "../../contexts/working-time-account"; // Phase 101B
 import { applyPrepWrapup } from "../../contexts/scheduling/time-arithmetic";
-import { flagShiftIfConflictsWithApprovedLeave } from "../../contexts/scheduling/facade/shifts"; // Phase 430 (D-03/D-04) — S4, the inverse Type-1 direction
+import { flagShiftIfConflictsWithApprovedLeave } from "../../contexts/scheduling/shift-leave-check"; // Phase 430 (D-03/D-04, moved 430-06 to avoid widening the boundary-import cycle) — S4, the inverse Type-1 direction
 import { notifyShiftLeaveConflicts } from "../../contexts/scheduling/shift-leave-conflict-notify"; // Phase 430 (D-02)
 import {
   detectWeekCapacityConflict,

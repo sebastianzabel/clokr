@@ -51,10 +51,8 @@ import {
   resolveContractWorkDaysPerWeek, // Phase 430 (D-08) — planning-overview's "Vertragstage" column
   getShiftBasedLeaveDaysForWeek, // Phase 430 (D-08) — planning-overview's leave days + weekdays
 } from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from three deep imports
-import {
-  flagShiftIfConflictsWithApprovedLeave, // Phase 430 (D-03/D-04) — S4, the inverse Type-1 direction
-  getShiftsInRange, // Phase 430 (D-12) — planning-overview's "geplant" column
-} from "../facade/shifts";
+import { getShiftsInRange } from "../facade/shifts"; // Phase 430 (D-12) — planning-overview's "geplant" column
+import { flagShiftIfConflictsWithApprovedLeave } from "../shift-leave-check"; // Phase 430 (D-03/D-04, moved 430-06 to avoid widening the boundary-import cycle) — S4, the inverse Type-1 direction
 import { notifyShiftLeaveConflicts } from "../shift-leave-conflict-notify"; // Phase 430 (D-02)
 import {
   detectWeekCapacityConflict,
@@ -4249,6 +4247,12 @@ export async function shiftRoutes(app: FastifyInstance) {
   // Threat coverage:
   //   T-430-10 (Info Disclosure): EmployeeScope/salon scoping via accessContextFromRequest chain.
   //   T-430-11 (Elevation): shift:plan:ZUGEWIESEN guard, tested against a shift:read-only actor.
+  //
+  // Phase 430-06 (follow-up to #437/#429): "this week's approved leave days" (leaveDays below)
+  // now uses the SAME per-week kernel the saldo side uses (leaveDaysPerWeek(), Issue #429
+  // D-01/D-02), via getShiftBasedLeaveDaysForWeek() — see that function's own docblock
+  // (contexts/absence/leave-days.ts) for why it deliberately counts SICK/SPECIAL days here too,
+  // unlike #429's payroll-only CONTRACT/ROSTER split.
 
   const planningOverviewQuerySchema = z.object({
     weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),

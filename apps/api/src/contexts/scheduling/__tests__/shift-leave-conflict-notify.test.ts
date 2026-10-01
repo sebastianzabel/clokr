@@ -8,7 +8,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
-import { flagShiftIfConflictsWithApprovedLeave, notifyShiftLeaveConflicts } from "../index";
+import { flagShiftIfConflictsWithApprovedLeave } from "../shift-leave-check"; // Phase 430-06 — moved out of the index barrel, see that module's docblock
+import { notifyShiftLeaveConflicts } from "../index";
 import type { FastifyInstance } from "fastify";
 
 describe("Schichtplanung — flagShiftIfConflictsWithApprovedLeave / notifyShiftLeaveConflicts (Phase 430)", () => {

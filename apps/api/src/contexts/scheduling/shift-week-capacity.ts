@@ -18,6 +18,13 @@
  * (`userIdsHoldingPermission` + `resolveScopedHolderIds` + `isShiftInScope`,
  * `contexts/platform/facade/role-assignments.ts:450/579`) `shift-leave-conflict-notify.ts` already
  * uses for Type 1 — no new permission, no new recipient logic.
+ *
+ * Phase 430-06 (follow-up to #437/#429): `leaveDays` below (via `getShiftBasedLeaveDaysForWeek`)
+ * now uses the EXACT same per-week kernel (`leaveDaysPerWeek()`, Issue #429 D-01/D-02) the saldo
+ * side uses, and — deliberately — counts every approved leave TYPE including SICK/SICK_CHILD/
+ * SPECIAL, regardless of Issue #429's `leaveCreditBasisForCode()` CONTRACT/ROSTER payroll split.
+ * See `leave-days.ts`'s own docblock on `getShiftBasedLeaveDaysForWeek` for the full reasoning —
+ * this is a scheduling question ("still need a shift?"), not the payroll question #429 answers.
  */
 import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";

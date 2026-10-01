@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
-import { detectWeekCapacityConflict, notifyWeekCapacityConflictOnce } from "../index";
+import { detectWeekCapacityConflict, notifyWeekCapacityConflictOnce } from "../shift-week-capacity"; // Phase 430-06 — moved out of the index barrel, see contexts/scheduling/index.ts's docblock
 import type { FastifyInstance } from "fastify";
 
 function utcDate(y: number, m: number, d: number): Date {

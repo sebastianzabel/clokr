@@ -16,7 +16,7 @@ import {
   holidaysForSalon,
 } from "../platform"; // Phase 71b (issue #71, D-04) — the engine/state map are gone from this file, see getHolidayMap()
 import { getWorkedEntriesInRange } from "../time-tracking"; // Phase 71b (issue #71) — T2, the work-location rule's entry half
-import { splitDaysAcrossYears, countShiftBasedLeaveDays } from "./vacation-calc"; // Phase 107 (D-04/D-09), Issue #417
+import { splitDaysAcrossYears, countShiftBasedLeaveDays, leaveDaysPerWeek } from "./vacation-calc"; // Phase 107 (D-04/D-09), Issue #417; leaveDaysPerWeek Issue #429 (D-01/D-02) — the shared per-week kernel, Phase 430-06
 import { preserveIllnessDeadline } from "./illness-carryover-guard"; // Phase 104
 import { getApprovedLeaveOverlapping } from "./facade/leave-requests"; // Phase 430 (D-08) — this file is INSIDE contexts/absence, no boundary crossing
 
@@ -143,13 +143,40 @@ const GERMAN_WEEKDAY_ABBR = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"] as const;
 
 /**
  * Approved leave days AND which weekdays they fall on, for exactly one employee's one ISO week
- * (Mon..Sun, `weekStart`/`weekEnd` as UTC-midnight Dates spanning that week). Reuses
- * `countShiftBasedLeaveDays` (via the SAME `resolveContractWorkDaysPerWeek` chain
- * `resolveLeaveDays()` already uses) — this is NOT a second implementation of the BUrlG
- * day-counting rule (Phase 430, D-08). `weekdays` independently derives which days are covered by
- * an approved leave request (excluding Sunday, mirroring the formula's own § 3 Abs. 2 BUrlG
- * exclusion, and excluding public holidays via the same `holidays` set the day-count call uses) so
- * the two never disagree about what counts.
+ * (Mon..Sun, `weekStart`/`weekEnd` as UTC-midnight Dates spanning that week).
+ *
+ * Phase 430-06 (follow-up to #437/#429 merging): this is now a thin DB-fetching wrapper around
+ * `leaveDaysPerWeek()` (Issue #429, D-01/D-02 — the shared per-week kernel the saldo side
+ * [`working-time-account`, plan 429-02] also uses) — it no longer re-implements the per-week
+ * BUrlG day-counting itself (the prior version summed `countShiftBasedLeaveDays()` PER REQUEST,
+ * which would double-count a calendar date covered by two overlapping requests; `leaveDaysPerWeek`
+ * computes the UNION of dates across all rows instead, so this fold also closes that latent,
+ * never-observed-in-practice edge case). `weekdays` is derived from the single matching
+ * `LeaveWeek.dayShares` entry (any date with a non-zero share), not recomputed independently, so
+ * the two can never disagree about what counts.
+ *
+ * Real holidays (via `getHolidayMap`) are passed in, NOT an empty set — unlike the saldo side's
+ * own `leaveDaysPerWeek()` call (D-05: SHIFT_BASED contract Soll is deliberately not holiday-
+ * reduced for payroll purposes). This function answers a DIFFERENT question — "how many vacation
+ * days does this week cost, for display" — which IS holiday-aware by BUrlG practice (a public
+ * holiday during approved leave is not itself a vacation day) and matches
+ * `countShiftBasedLeaveDays()`'s own long-standing holiday handling that `resolveLeaveDays()`
+ * (vacation-entitlement booking) already relies on. Two different callers of the SAME kernel with
+ * two different, individually correct `holidays` arguments — not a second day-counting
+ * implementation.
+ *
+ * Status scope: APPROVED only (via `getApprovedLeaveOverlapping`), matching the saldo side's own
+ * leave-row scope — no PENDING-vs-APPROVED divergence to parameterise.
+ *
+ * Leave-type scope (Phase 430-06, decided per PR review): includes EVERY approved leave type —
+ * VACATION, SICK, SICK_CHILD, SPECIAL, etc. — regardless of Issue #429's `leaveCreditBasisForCode()`
+ * CONTRACT/ROSTER split. That split answers a PAYROLL question (does this type replace a
+ * contractual workday's PAY irrespective of the roster, or only pay what was planned?) which this
+ * function's two callers do not ask. Type-2 conflict detection and the Planungsbedarf view both
+ * ask a SCHEDULING question — "does this person still need a shift this week?" — and a SICK or
+ * SPECIAL day answers that exactly like a VACATION day: no, don't plan one. Including ROSTER-basis
+ * types here is therefore deliberate, not an oversight; see the PR description for the full
+ * reasoning.
  *
  * Consumed by the Type-2 week-capacity conflict check (`contexts/scheduling/shift-week-capacity.ts`)
  * and the Wochenübersicht "Planungsbedarf" view.
@@ -175,27 +202,13 @@ export async function getShiftBasedLeaveDaysForWeek(
   if (overlapping.length === 0) return { days: 0, weekdays: [] };
 
   const holidaySet = new Set(holidays.keys());
+  const weeks = leaveDaysPerWeek(overlapping, contractWorkDaysPerWeek, holidaySet);
+  const weekMondayStr = weekStart.toISOString().slice(0, 10);
+  const match = weeks.find((w) => w.weekMonday === weekMondayStr);
+  if (!match) return { days: 0, weekdays: [] };
 
-  // Day COUNT: clip each overlapping request to [weekStart, weekEnd] and sum
-  // countShiftBasedLeaveDays's own result per request — never re-derived independently.
-  let days = 0;
-  const clips: Array<{ start: Date; end: Date }> = [];
-  for (const req of overlapping) {
-    const clipStart = req.startDate > weekStart ? req.startDate : weekStart;
-    const clipEnd = req.endDate < weekEnd ? req.endDate : weekEnd;
-    if (clipStart > clipEnd) continue;
-    clips.push({ start: clipStart, end: clipEnd });
-    days += countShiftBasedLeaveDays(
-      clipStart,
-      clipEnd,
-      req.halfDay,
-      contractWorkDaysPerWeek,
-      holidaySet,
-    ).days;
-  }
-
-  // Which weekdays: walk Mon..Sun, skip Sunday (never a Werktag) and any holiday, collect the
-  // German abbreviation of every day covered by at least one clipped overlapping request.
+  // Which weekdays: walk Mon..Sun, skip Sunday (never a Werktag, § 3 Abs. 2 BUrlG) — the
+  // `dayShares` map already excludes holidays (a holiday date never gets a share > 0).
   const weekdays: string[] = [];
   for (
     const d = new Date(weekStart);
@@ -203,16 +216,12 @@ export async function getShiftBasedLeaveDaysForWeek(
     d.setUTCDate(d.getUTCDate() + 1)
   ) {
     const dow = d.getUTCDay(); // 0=So..6=Sa
-    if (dow === 0) continue; // Sunday never a Werktag (§ 3 Abs. 2 BUrlG)
+    if (dow === 0) continue;
     const dateStr = d.toISOString().slice(0, 10);
-    if (holidaySet.has(dateStr)) continue;
-    const covered = clips.some(
-      (c) => d.getTime() >= c.start.getTime() && d.getTime() <= c.end.getTime(),
-    );
-    if (covered) weekdays.push(GERMAN_WEEKDAY_ABBR[dow]);
+    if ((match.dayShares.get(dateStr) ?? 0) > 0) weekdays.push(GERMAN_WEEKDAY_ABBR[dow]);
   }
 
-  return { days, weekdays };
+  return { days: match.days, weekdays };
 }
 
 /**

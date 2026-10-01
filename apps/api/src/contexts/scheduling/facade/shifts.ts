@@ -91,7 +91,6 @@
  */
 import type { Prisma } from "@clokr/db";
 import { type EmployeeScope, employeeScopeWhere } from "../../platform";
-import { getApprovedLeaveOverlapping } from "../../absence"; // Phase 430 (D-03) — S4's inverse-direction read
 
 /**
  * S1 — the one date-range read for `Shift`, covering all three `EmployeeScope` variants in ONE
@@ -159,69 +158,6 @@ export async function flagShiftsConflictingWithLeave(
   }
 
   return conflictingShifts;
-}
-
-/**
- * S4 — the INVERSE of S2 (Phase 430, D-03): a shift just created/updated for `employeeId` on
- * `date` may land on a day that ALREADY has an APPROVED LeaveRequest. Checks via the absence
- * context's `getApprovedLeaveOverlapping` (already exported — never reimplemented here), and —
- * mirroring S2's own idempotency idiom exactly (every RELEVANT_METHOD call here carries the same
- * inline `employeeId`/`employee: { tenantId }` filter S2 and S3 already use, `lint-tenant-scoping`)
- * — only flags+returns the shift when its `conflictsWithLeave` is currently `false`. A shift that
- * is already flagged, foreign to this tenant/employee, or soft-deleted is a no-op: `updateMany`'s
- * `count` is 0, so the caller never re-audits/re-notifies it (no extra dedup state needed, same as
- * S2).
- */
-export async function flagShiftIfConflictsWithApprovedLeave(
-  db: Prisma.TransactionClient,
-  shiftId: string,
-  employeeId: string,
-  tenantId: string,
-  date: Date,
-): Promise<{
-  shiftId: string;
-  date: Date;
-  startTime: string;
-  endTime: string;
-  label: string | null;
-  salonId: string;
-  leaveRequestId: string;
-  leaveStart: Date;
-  leaveEnd: Date;
-} | null> {
-  const scope: EmployeeScope = { kind: "employee", employeeId, tenantId };
-  const [leave] = await getApprovedLeaveOverlapping(db, scope, date, date);
-  if (!leave) return null;
-
-  const { count } = await db.shift.updateMany({
-    where: {
-      id: shiftId,
-      employeeId,
-      employee: { tenantId },
-      conflictsWithLeave: false,
-      deletedAt: null, // Phase 67.2 — never (re-)flag a soft-deleted row
-    },
-    data: { conflictsWithLeave: true },
-  });
-  if (count === 0) return null; // already flagged, soft-deleted, or a tenant/employee mismatch
-
-  const shift = await db.shift.findFirst({
-    where: { id: shiftId, employeeId, employee: { tenantId } },
-    select: { date: true, startTime: true, endTime: true, label: true, salonId: true },
-  });
-  if (!shift) return null; // defensive; the updateMany above just touched this exact row
-
-  return {
-    shiftId,
-    date: shift.date,
-    startTime: shift.startTime,
-    endTime: shift.endTime,
-    label: shift.label,
-    salonId: shift.salonId,
-    leaveRequestId: leave.id,
-    leaveStart: leave.startDate,
-    leaveEnd: leave.endDate,
-  };
 }
 
 /**
