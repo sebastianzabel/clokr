@@ -3,7 +3,11 @@ import { z } from "zod";
 import { LeaveRequestStatus, Prisma } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
 import { generateICal, addOneDay, type ICalEvent } from "../ical";
-import { splitDaysAcrossYears, calculateProRataVacation } from "../vacation-calc"; // Phase 107 (D-04/D-09)
+import {
+  splitDaysAcrossYears,
+  calculateProRataVacation,
+  shiftBasedLeaveMinutesForRequest, // Issue #429, D-13 — receipt shares the saldo's per-week formula
+} from "../vacation-calc"; // Phase 107 (D-04/D-09)
 import { selfHealUsedDays, loadVacationTypeMeta } from "../leave-self-heal";
 import { computeAffectedMonths } from "../correction-lock";
 // Phase 101B (Issue #101, D-11 Welle absence): lifted out of this file into ./leave-days.ts.
@@ -37,7 +41,6 @@ import {
   computeOvertimeBalanceBreakdown,
   computeOvertimeBalanceHours, // Issue #294 — pure read, run BEFORE the booking+persist transaction
   persistOvertimeBalance, // Issue #294 — booking + recompute in one $transaction
-  shiftBasedLeaveMinutesForRequest, // Issue #429, D-13 — receipt shares the saldo's own new formula
   todayInTz, // Phase 91b Plan 04 (#91), D-10 — Stichtag for the general leave-requests list
   type OvertimeBalanceBreakdown,
 } from "../../working-time-account"; // Phase 100B Plan 06 — W8/W11/W12; Plan 07 — W1; Phase 101B
@@ -4109,7 +4112,7 @@ class Section9MissingEntitlementError extends Error {
  * the contractual workday count via `leaveDaysPerWeek()` (`contexts/absence`, D-01/D-02) times
  * `weeklyHours × 60 ÷ contractWorkDaysPerWeek` (D-04). #293's principle ("the receipt follows
  * the account") means this branch had to follow that same change: it now calls
- * `shiftBasedLeaveMinutesForRequest()` (`contexts/working-time-account`), the per-request
+ * `shiftBasedLeaveMinutesForRequest()` (`../vacation-calc`), the per-request
  * counterpart of the saldo's `shiftBasedLeaveCreditByDate()`, with `c` resolved via the SAME
  * `contractWorkDaysPerWeekFrom()` fallback chain (Phase 107, D-04) the saldo uses — the same
  * two functions plan 429-01/429-02 built, not a third independent formula.

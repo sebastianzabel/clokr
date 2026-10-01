@@ -617,6 +617,38 @@ export function leaveDaysPerWeek(
   return result;
 }
 
+/**
+ * Issue #429 (D-13, #293 "the receipt follows the account") — the per-REQUEST SHIFT_BASED
+ * leave-minutes receipt for a single request in isolation: Σ `leaveDaysPerWeek()` days ×
+ * (`weeklyHours` × 60 ÷ `contractWorkDaysPerWeek`). Consumed by `getScheduledHours()`
+ * (`./api/leave.ts`). The saldo side (`working-time-account/shift-based-leave-credit.ts`)
+ * applies the SAME per-week count and the SAME daily value per date; for a lone request with
+ * no cap binding both are one number (pinned by `leave-overtime-comp-shift-based.test.ts`).
+ *
+ * Lives in Abwesenheiten (not Arbeitszeitkonto) so the receipt path needs no import of
+ * `contexts/working-time-account/index.ts` for it — keeping `shift-based-leave-credit.ts` out
+ * of the cross-context import cycle gated by `measure-context-boundary-imports --cycles`.
+ * Empty holiday set, mirroring the saldo side's D-05 decision.
+ */
+export function shiftBasedLeaveMinutesForRequest(
+  schedule: { weeklyHours?: unknown },
+  start: Date,
+  end: Date,
+  halfDay: boolean,
+  contractWorkDaysPerWeek: number,
+): number {
+  const weeklyHours = Number(schedule.weeklyHours ?? 0);
+  if (weeklyHours <= 0 || contractWorkDaysPerWeek <= 0) return 0;
+  const daily = (weeklyHours * 60) / contractWorkDaysPerWeek;
+  const weeks = leaveDaysPerWeek(
+    [{ startDate: start, endDate: end, halfDay }],
+    contractWorkDaysPerWeek,
+    new Set(),
+  );
+  const totalDays = weeks.reduce((sum, w) => sum + w.days, 0);
+  return Math.round(totalDays * daily);
+}
+
 /** Half-day rows' contribution for a single week: +0.5 per distinct startDate that falls inside
  * [weekMonday, weekSunday] AND is not already a member of `fullDayUnion` (a full-day row on the
  * same date always wins — OPEN-01). Several half-day rows on the same date count once, because a

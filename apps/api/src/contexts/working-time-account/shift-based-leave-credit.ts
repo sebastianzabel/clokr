@@ -10,8 +10,8 @@
  * PURITY CONTRACT: pure — no DB, no network, no `Date.now()`, no side effects. Matches
  * `close-employee-month.ts`'s own purity contract.
  *
- * D-05 — an EMPTY holiday set is passed to `leaveDaysPerWeek()` here, deliberately, on
- * this (saldo) side: SHIFT_BASED contract Soll (`avgWorkMinutesCore`) is not
+ * D-05 — the caller (`close-employee-month.ts`) passes an EMPTY holiday set to
+ * `leaveDaysPerWeek()`, deliberately, on this (saldo) side: SHIFT_BASED contract Soll (`avgWorkMinutesCore`) is not
  * holiday-reduced at all today (a holiday is not deducted, §615 nets the gap), so a
  * holiday that falls inside a leave range keeps being a Soll-free day via the leave
  * itself, exactly as before this module existed. Feeding holidays into the week count
@@ -22,16 +22,23 @@
  * stays the SHIFT_BASED absence loop's (and every non-SHIFT branch's) credit function.
  */
 
-import { leaveDaysPerWeek } from "../absence";
 import { calcExpectedMinutesTz, dateStrInTz } from "./timezone";
+
+/**
+ * Structural shape of one `LeaveWeek` (`contexts/absence`, `leaveDaysPerWeek()`), declared
+ * locally on purpose: this module must NOT import `contexts/absence/index.ts` (not even
+ * type-only), or it joins the cross-context import cycle `measure-context-boundary-imports
+ * --cycles` gates in CI. The caller (`close-employee-month.ts`) computes the weeks.
+ */
+export type LeaveWeekShares = { weekMonday: string; dayShares: ReadonlyMap<string, number> };
 
 /**
  * Per-calendar-date SHIFT_BASED leave-Soll-reduction (minutes) for a set of approved-leave
  * rows, restricted to `[effectiveStart, monthEnd]` (Issue #429, D-06..D-09).
  *
- * `rows` are passed with their FULL, UNCLIPPED `startDate`/`endDate` (D-07) — clipping to
- * the effective range happens INSIDE this function (via the returned map's keys), not on
- * the input, so a leave week straddling a month boundary contributes its correct
+ * `weeks` is `leaveDaysPerWeek()` computed over the rows' FULL, UNCLIPPED `startDate`/`endDate`
+ * (D-07) — clipping to the effective range happens INSIDE this function (via the returned
+ * map's keys), not on the input, so a leave week straddling a month boundary contributes its correct
  * proportional share to each month's call without ever being double-counted.
  *
  * Per ISO week (Mon..Sun): the week's leave-day count (`leaveDaysPerWeek`, D-01/D-02,
@@ -49,7 +56,7 @@ import { calcExpectedMinutesTz, dateStrInTz } from "./timezone";
  * before"), by summing this map's values for the dates that row is first to claim.
  */
 export function shiftBasedLeaveCreditByDate(
-  rows: Array<{ startDate: Date; endDate: Date; halfDay?: boolean }>,
+  weeks: ReadonlyArray<LeaveWeekShares>,
   contractWorkDaysPerWeek: number,
   schedule: Record<string, unknown>,
   effectiveStart: Date,
@@ -62,8 +69,6 @@ export function shiftBasedLeaveCreditByDate(
   if (weeklyHours <= 0 || contractWorkDaysPerWeek <= 0) return result;
   const daily = (weeklyHours * 60) / contractWorkDaysPerWeek;
 
-  // D-05: empty holiday set — see module docblock.
-  const weeks = leaveDaysPerWeek(rows, contractWorkDaysPerWeek, new Set());
   if (weeks.length === 0) return result;
 
   const effectiveStartStr = dateStrInTz(effectiveStart, tz);
@@ -107,35 +112,4 @@ export function shiftBasedLeaveCreditByDate(
   }
 
   return result;
-}
-
-/**
- * Issue #429 (D-13, #293 "the receipt follows the account") — the per-REQUEST SHIFT_BASED
- * leave-minutes receipt, for a single request in isolation. Used by plan 429-03's
- * `getScheduledHours()` SHIFT_BASED branch (`contexts/absence/api/leave.ts`) — NOT wired
- * to any caller by this plan.
- *
- * No capping, no cross-row union (unlike {@link shiftBasedLeaveCreditByDate}, which
- * dedups/caps across the saldo core's whole `approvedLeave` array) — a receipt answers
- * "what would THIS one request cost", not "what does the account currently owe".
- */
-export function shiftBasedLeaveMinutesForRequest(
-  schedule: Record<string, unknown>,
-  start: Date,
-  end: Date,
-  halfDay: boolean,
-  contractWorkDaysPerWeek: number,
-): number {
-  const weeklyHours = Number(schedule.weeklyHours ?? 0);
-  if (weeklyHours <= 0 || contractWorkDaysPerWeek <= 0) return 0;
-  const daily = (weeklyHours * 60) / contractWorkDaysPerWeek;
-
-  // D-05: empty holiday set, same reasoning as shiftBasedLeaveCreditByDate above.
-  const weeks = leaveDaysPerWeek(
-    [{ startDate: start, endDate: end, halfDay }],
-    contractWorkDaysPerWeek,
-    new Set(),
-  );
-  const totalDays = weeks.reduce((sum, w) => sum + w.days, 0);
-  return Math.round(totalDays * daily);
 }

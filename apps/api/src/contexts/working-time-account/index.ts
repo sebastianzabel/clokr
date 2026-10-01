@@ -85,10 +85,6 @@ export {
   weekRangeUtc,
 } from "./timezone";
 export { recalculateSnapshots } from "./recalculate-snapshots";
-// Issue #429 (D-13) — the per-request SHIFT_BASED leave-minutes receipt, for plan 429-03's
-// getScheduledHours() SHIFT_BASED branch. shiftBasedLeaveCreditByDate (the saldo-core's own
-// per-date credit map) is intentionally NOT re-exported — it is intra-context only (D-06).
-export { shiftBasedLeaveMinutesForRequest } from "./shift-based-leave-credit";
 export {
   bsUnterrichtsMinutesByDateForIsoWeek,
   computeDailySollMinutes,

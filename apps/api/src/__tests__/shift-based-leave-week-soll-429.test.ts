@@ -32,6 +32,7 @@ import {
   calcExpectedMinutesTz,
 } from "../contexts/working-time-account/timezone";
 import { shiftBasedLeaveCreditByDate } from "../contexts/working-time-account/shift-based-leave-credit";
+import { leaveDaysPerWeek } from "../contexts/absence";
 
 const TZ = "Europe/Berlin";
 const { start: JUNE_START, end: JUNE_END } = monthRangeUtc(2026, 6, TZ);
@@ -240,7 +241,11 @@ describe("Issue #429 — invariant suite (D-07..D-10): 'a day reduces Soll exact
     const derivedTotal = contractSoll - result.expectedMinutes; // = sbLeaveCredit (no absences/BS here)
 
     const map = shiftBasedLeaveCreditByDate(
-      leave.map((l) => ({ startDate: D(l.s), endDate: D(l.e) })),
+      leaveDaysPerWeek(
+        leave.map((l) => ({ startDate: D(l.s), endDate: D(l.e) })),
+        4,
+        new Set(),
+      ),
       4,
       schedule,
       JUNE_FIRST,
@@ -293,7 +298,7 @@ describe("Issue #429 — invariant suite (D-07..D-10): 'a day reduces Soll exact
       base,
     );
     const standaloneMap = shiftBasedLeaveCreditByDate(
-      [{ startDate: D("2026-06-08"), endDate: D("2026-06-08") }],
+      leaveDaysPerWeek([{ startDate: D("2026-06-08"), endDate: D("2026-06-08") }], 4, new Set()),
       4,
       schedule,
       JUNE_FIRST,

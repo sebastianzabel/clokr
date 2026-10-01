@@ -73,6 +73,7 @@ import {
   buildSlotOverrideHierarchy,
   resolveBsTagSlot,
   contractWorkDaysPerWeekFrom, // Issue #429 (D-03/D-11) — the ONE fallback-chain implementation
+  leaveDaysPerWeek, // Issue #429 (D-01/D-02) — the shared per-week leave-day count
   type WeekContext,
 } from "../absence"; // Phase 101B (Issue #101, wave 7)
 import {
@@ -744,7 +745,9 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
       tenantConfig?.defaultWorkDays ?? null,
     );
     const sbLeaveCreditByDate = shiftBasedLeaveCreditByDate(
-      approvedLeave, // full, unclipped startDate/endDate (D-07) — clipping happens inside
+      // Full, unclipped startDate/endDate (D-07) — clipping happens inside. D-05: EMPTY
+      // holiday set on the saldo side (see shift-based-leave-credit.ts's docblock).
+      leaveDaysPerWeek(approvedLeave, contractWorkDaysPerWeek, new Set()),
       contractWorkDaysPerWeek,
       schedule,
       effectiveStart,
