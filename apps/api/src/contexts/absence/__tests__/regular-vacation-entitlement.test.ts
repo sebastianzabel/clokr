@@ -10,7 +10,7 @@ import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../.
 import {
   computeRegularVacationDays,
   calculatePartTimeVacation,
-  calculateProRataVacationForHire,
+  hireYearVacationDays,
 } from "../vacation-calc";
 import {
   resolveVacationBaseDays,
@@ -61,7 +61,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
   });
 
   it("hire-year pro-rata, § 5 Abs. 2 BUrlG rounding", () => {
-    // 3/12 × 30 = 7.5, rounded UP to 8 (fraction >= 0.5)
+    // 3/12 × 30 = 7.5, rounded UP to 8 (fraction >= 0.5) — Oct 1 hire, after the G9 cutoff
     expect(
       computeRegularVacationDays({
         year: 2027,
@@ -70,7 +70,9 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         baseDays: 30,
       }),
     ).toBe(8);
-    // 11/12 × 30 = 27.5 → 28
+    // Feb 1 hire (on/before 1 July) — Issue #435, owner Ergänzung G9 (01.10.2026): the § 4 BUrlG
+    // Wartezeit ends within the hire year, so § 5 Abs. 1 a BUrlG's reduction does not apply. Full
+    // value (was 28 — 11/12 × 30 pro-rated — before the Ergänzung).
     expect(
       computeRegularVacationDays({
         year: 2026,
@@ -78,7 +80,9 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         workDaysPerWeek: 5,
         baseDays: 30,
       }),
-    ).toBe(28);
+    ).toBe(30);
+    // Jul 1 hire (on/before 1 July, the G9 Grenzfall) — full value (was 12 — 6/12 × 24 pro-rated —
+    // before the Ergänzung).
     expect(
       computeRegularVacationDays({
         year: 2027,
@@ -86,10 +90,10 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         workDaysPerWeek: 4,
         baseDays: 30,
       }),
-    ).toBe(12);
+    ).toBe(24);
   });
 
-  it("parity with the #416 inline formula (scale first, then hire-year pro-rata)", () => {
+  it("parity with the #416 inline formula (scale first, then the G9 Wartezeit decision)", () => {
     const cases = [
       { year: 2027, hireDate: new Date(2024, 0, 1), workDaysPerWeek: 5, baseDays: 30 },
       { year: 2027, hireDate: new Date(2024, 0, 1), workDaysPerWeek: 4, baseDays: 30 },
@@ -114,12 +118,34 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         5,
         c.baseDays,
       );
-      const inline =
-        c.year === c.hireDate.getFullYear()
-          ? calculateProRataVacationForHire(scaledBase, c.year, c.hireDate)
-          : scaledBase;
+      // Issue #435, owner Ergänzung G9: the #416 inline formula's bare hire-year ternary is
+      // superseded — `hireYearVacationDays` now decides WHETHER a hire year pro-rates at all
+      // (Wartezeit), before the twelfthing itself.
+      const inline = hireYearVacationDays(scaledBase, c.year, c.hireDate);
       expect(computeRegularVacationDays(c)).toBe(inline);
     }
+  });
+});
+
+describe("hireYearVacationDays — Wartezeit im Eintrittsjahr (Issue #435, G9)", () => {
+  it("base 20, 5-day week: hire 01.01./01.06./01.07. -> full year 20; 02.07. -> 10; 01.10. -> 5", () => {
+    expect(hireYearVacationDays(20, 2027, new Date(2027, 0, 1))).toBe(20);
+    expect(hireYearVacationDays(20, 2027, new Date(2027, 5, 1))).toBe(20);
+    expect(hireYearVacationDays(20, 2027, new Date(2027, 6, 1))).toBe(20);
+    expect(hireYearVacationDays(20, 2027, new Date(2027, 6, 2))).toBe(10);
+    expect(hireYearVacationDays(20, 2027, new Date(2027, 9, 1))).toBe(5);
+  });
+
+  it("base 30, 5-day week: hire 01.01./01.06./01.07. -> full year 30; 02.07. -> 15; 01.10. -> 8 (§ 5 Abs. 2 rounding, #421)", () => {
+    expect(hireYearVacationDays(30, 2027, new Date(2027, 0, 1))).toBe(30);
+    expect(hireYearVacationDays(30, 2027, new Date(2027, 5, 1))).toBe(30);
+    expect(hireYearVacationDays(30, 2027, new Date(2027, 6, 1))).toBe(30);
+    expect(hireYearVacationDays(30, 2027, new Date(2027, 6, 2))).toBe(15);
+    expect(hireYearVacationDays(30, 2027, new Date(2027, 9, 1))).toBe(8);
+  });
+
+  it("a year other than the hire year is unaffected — full value unchanged", () => {
+    expect(hireYearVacationDays(30, 2028, new Date(2027, 9, 1))).toBe(30);
   });
 });
 

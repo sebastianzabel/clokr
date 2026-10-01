@@ -151,9 +151,10 @@ describe("Employees API", () => {
       uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     });
 
-    it("creates a pro-rated LeaveEntitlement row (mid-year hire, full-time) with a CREATE audit entry", async () => {
+    it("creates a full-value LeaveEntitlement row (mid-year hire on/before 1 July, full-time) with a CREATE audit entry", async () => {
       const year = new Date().getFullYear();
-      const hireDateIso = new Date(Date.UTC(year, 6, 1)).toISOString(); // Jul 1 -> 6/12
+      // Jul 1 — on/before the G9 Wartezeit cutoff (Issue #435, owner Ergänzung): no pro-rata.
+      const hireDateIso = new Date(Date.UTC(year, 6, 1)).toISOString();
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/employees",
@@ -182,9 +183,10 @@ describe("Employees API", () => {
         },
       });
       expect(entitlement).not.toBeNull();
-      // Full-time (5 days/week default for SHIFT_BASED) -> 30 tenant default, then 6/12 pro-rata
-      // for a Jul 1 hire = 15.
-      expect(Number(entitlement?.totalDays)).toBe(15);
+      // Full-time (5 days/week default for SHIFT_BASED) -> 30 tenant default; a Jul 1 hire is
+      // on/before the G9 Wartezeit cutoff (Issue #435, owner Ergänzung) -> full value, no
+      // pro-rata (was 15 — 6/12 pro-rated — before the Ergänzung).
+      expect(Number(entitlement?.totalDays)).toBe(30);
       expect(entitlement?.isAutoCalculated).toBe(true);
 
       const audit = await app.prisma.auditLog.findFirst({

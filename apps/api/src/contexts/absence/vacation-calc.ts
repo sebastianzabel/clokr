@@ -234,6 +234,12 @@ export function calculateProRataVacation(baseDays: number, year: number, exitDat
  * @param hireDate - The employee's first working day
  * @returns Pro-rata entitlement: `baseDays` unchanged if hired before `year`; `0` if not yet
  *   hired in `year`; otherwise the § 5 Abs. 2 BUrlG rounding above.
+ *
+ * Pure twelfthing — this function does not decide WHETHER a hire year is pro-rated at all; it only
+ * computes the result once pro-rating has been decided elsewhere. Issue #435 (owner Ergänzung G9,
+ * § 4 BUrlG Wartezeit) applies that decision FIRST, in {@link hireYearVacationDays}: a hire on or
+ * before 1 July of the hire year never reaches this function's reduction at all. Production callers
+ * reach this function only through `hireYearVacationDays` — see that function's docblock.
  */
 export function calculateProRataVacationForHire(
   baseDays: number,
@@ -480,12 +486,40 @@ export function countShiftBasedLeaveDays(
 // ── Issue #445 (D-01) — the regular yearly vacation entitlement, in ONE place ──────────────────
 
 /**
+ * Issue #435, owner Ergänzung G9 (01.10.2026, "Wartezeit im Eintrittsjahr") — § 4 / § 5 Abs. 1 a
+ * BUrlG: the hire-year pro-rata reduction applies ONLY when the 6-month § 4 BUrlG Wartezeit is NOT
+ * yet fulfilled within the hire year, i.e. the hire happened AFTER 1 July. A hire on or before 1
+ * July has a Wartezeit that ends within the same calendar year (a 01.07. hire's Wartezeit ends
+ * 31.12.) — § 5 Abs. 1 a BUrlG's reduction does not apply, so the FULL (already contract-scaled)
+ * entitlement is owed, with no twelfthing at all.
+ *
+ * This is the ONE place deciding WHETHER a hire year is pro-rated —
+ * {@link calculateProRataVacationForHire} stays the pure twelfthing step this function delegates
+ * to for a later hire. Uses the same local-time getters the existing hire-year check already used
+ * (`getFullYear`/`getMonth`/`getDate` — P-01 of #445) so year and day are judged in one frame.
+ *
+ * @param fullYearDays - the already contract-scaled full-year entitlement (e.g. via
+ *   {@link calculatePartTimeVacation})
+ * @param year - the calendar year being computed
+ * @param hireDate - the employee's hire date
+ * @returns `fullYearDays` unchanged for any year other than the hire year, and for a hire on or
+ *   before 1 July of the hire year; otherwise the § 5 Abs. 1 a BUrlG pro-rata via
+ *   {@link calculateProRataVacationForHire}
+ */
+export function hireYearVacationDays(fullYearDays: number, year: number, hireDate: Date): number {
+  if (year !== hireDate.getFullYear()) return fullYearDays;
+  const onOrBeforeJuly1 =
+    hireDate.getMonth() < 6 || (hireDate.getMonth() === 6 && hireDate.getDate() === 1);
+  if (onOrBeforeJuly1) return fullYearDays;
+  return calculateProRataVacationForHire(fullYearDays, year, hireDate);
+}
+
+/**
  * The ONE regular-entitlement computation for a VACATION `LeaveEntitlement` row (Issue #445,
  * D-01). Moved verbatim from `facade/entitlements.ts`'s `ensureVacationEntitlementForYear`
  * (Issue #416): scale by contractual workdays FIRST ({@link calculatePartTimeVacation}, reference
- * week 5), THEN apply hire-year pro-rata ({@link calculateProRataVacationForHire}) only when
- * `year` is the employee's hire year (local calendar year, unchanged from #416 — P-01); every
- * other year gets the full scaled amount unprorated.
+ * week 5), THEN apply the hire-year Wartezeit/pro-rata decision ({@link hireYearVacationDays},
+ * Issue #435) — unchanged for every year other than the employee's hire year.
  *
  * Issue #435 will add the § 19 JArbSchG / § 3 BUrlG statutory-minimum floor HERE, and the
  * per-person base value in `resolveVacationBaseDays` (leave-days.ts) — this extraction exists so
@@ -509,9 +543,7 @@ export function computeRegularVacationDays(input: {
     contractWorkDaysPerWeek: workDaysPerWeek,
   };
   const scaledBase = calculatePartTimeVacation(referenceSchedule, 5, baseDays);
-  return year === hireDate.getFullYear()
-    ? calculateProRataVacationForHire(scaledBase, year, hireDate)
-    : scaledBase;
+  return hireYearVacationDays(scaledBase, year, hireDate);
 }
 
 /** One ISO week's leave-day contribution (Issue #429, D-01): the week's Monday (UTC
