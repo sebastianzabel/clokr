@@ -272,6 +272,7 @@ These rules MUST be followed when implementing or modifying ArbZG compliance che
 3. Time entries during this period: allowed but marked `isInvalid` (needs cancellation approval first)
 4. Another manager approves cancellation → status = `CANCELLED`, time entries auto-revalidated
 5. If cancellation rejected → status reverts to `APPROVED`, time entries stay invalid
+   The statuses that count as active leave are defined once: `EFFECTIVE_LEAVE_STATUSES` (`apps/api/src/contexts/absence/effective-leave-statuses.ts`, exported via `contexts/absence/index.ts`, read through `getActiveLeaveOverlapping`) — saldo, Monatsabschluss, reports/DATEV, scheduling and calendars use it (Issue #446); `apps/web/src/lib/leave/effective-leave-statuses.ts` is a display mirror pinned to it by a test.
 
 ## Vacation Carry-Over & Cross-Year Booking
 
