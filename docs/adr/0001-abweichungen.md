@@ -184,6 +184,16 @@ Hier steht es, weil es strukturell ist und nicht nur ein Bug: Die Regel „wie v
 dieser Zeitraum" gehört nach dem ADR zum **Arbeitszeitkonto**, wird aber an zwei Stellen im Kontext
 Abwesenheiten unabhängig implementiert.
 
+**Nachtrag 2026-10-01 (Issue #445):** Punkt 1 ist aufgelöst. Der jahresübergreifende Zweig von
+`deductVacationDays()`/`reverseVacationDays()` (`contexts/absence/leave-days.ts`) verwirft den
+übergebenen `totalDays`-Parameter nicht mehr für eine eigenständige Neuberechnung über
+`splitDaysAcrossYears()`, sondern bucht genau diesen Wert — chronologisch auf die beiden Jahre
+verteilt über `splitLeaveDaysByYear()`, mit derselben Tageszählung, mit der der Antrag selbst
+bepreist wurde (`resolveLeaveDays()`). `LeaveRequest.days` und die Summe der `usedDays` beider
+Jahre können dadurch nicht mehr auseinanderlaufen — es gibt nur noch einen Rechenweg für dieselbe
+Zahl. Punkt 2 bleibt unverändert bestehen: die Zählung liest die Vertragsdaten weiterhin über
+`resolveLeaveDays()` aus dem Unterbau, nicht über eine Schnittstelle des Arbeitszeitkontos.
+
 ---
 
 ## Reihenfolge
