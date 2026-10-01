@@ -524,7 +524,7 @@ export function hireYearVacationDays(fullYearDays: number, year: number, hireDat
  * Issue #435 (D-07/D-08) — the statutory MINIMUM vacation entitlement (§ 19 Abs. 2 JArbSchG for
  * minors, § 3 Abs. 1 BUrlG otherwise), at `contractWorkDaysPerWeek` days/week, for `year`.
  *
- * Age gate (§ 19 Abs. 2 JArbSchG: "noch nicht N Jahre alt zu Beginn des Kalenderjahres"): the age
+ * Age gate (§ 19 Abs. 2 JArbSchG: "not yet N years old at the start of the calendar year"): the age
  * is taken at 1 January of `year`, via {@link ageAtDate} — which already implements § 187 Abs. 2
  * S. 2 BGB's "birthday on the reference date counts as the new age" rule (a person born 1 January
  * is already that year's new age ON 1 January; born 2 January is still the old age). The age is
@@ -544,8 +544,8 @@ export function hireYearVacationDays(fullYearDays: number, year: number, hireDat
  * {@link calculateStatutoryMinimum}'s own `werktage / 6 × days` shape for the adult/§3 case — this
  * function generalises it to all four Werktage bands. Result is rounded to 2 decimals, the
  * storage precision of `LeaveEntitlement.totalDays` (`Decimal(5,2)`) — NEVER rounded to a whole or
- * half day (the law's fraction, e.g. 20.83 or 16.67, stays exact; "Bruchteile bleiben anteilig,
- * keine Abrundung").
+ * half day (the law's fraction, e.g. 20.83 or 16.67, stays exact — fractional days are never
+ * rounded down).
  *
  * @param birthDate - the employee's birth date, or `null` (fail-open to the adult/§3 floor)
  * @param year - the calendar year the entitlement is computed for
