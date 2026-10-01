@@ -17,7 +17,7 @@ import {
 } from "../platform"; // Phase 71b (issue #71, D-04) — the engine/state map are gone from this file, see getHolidayMap()
 import { getWorkedEntriesInRange } from "../time-tracking"; // Phase 71b (issue #71) — T2, the work-location rule's entry half
 import { countShiftBasedLeaveDays, leaveDaysPerWeek } from "./vacation-calc"; // Phase 107 (D-04/D-09), Issue #417; leaveDaysPerWeek Issue #429 (D-01/D-02) — the shared per-week kernel, Phase 430-06
-import { preserveIllnessDeadline } from "./illness-carryover-guard"; // Phase 104
+import { preserveCarryOverDeadline } from "./illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
 import { getApprovedLeaveOverlapping } from "./facade/leave-requests"; // Phase 430 (D-08) — this file is INSIDE contexts/absence, no boundary crossing
 import type { LeaveEntitlement } from "@clokr/db";
 import { computeRegularVacationDays } from "./vacation-calc";
@@ -282,17 +282,18 @@ export async function recalculateCarryOver(
     REGULAR_ENTITLEMENT_REASON_ROLLOVER,
   );
 
-  // Phase 104 (D-19 / R9): an ILLNESS carry-over carries the extended EuGH KHS C-214/10
-  // deadline (15 months after the end of the accrual year), not the tenant's standard
+  // Phase 104 (D-19 / R9), generalised by Issue #445 (D-16/D-17): a row with ANY documented
+  // carry-over reason (ILLNESS's extended EuGH KHS C-214/10 deadline, MATERNITY, PARENTAL_LEAVE,
+  // OTHER, or the legacy OPERATIONAL value) carries a deadline that is not the tenant's standard
   // Stichtag. This function runs after EVERY booking and cancellation, so an unconditional
-  // deadline write would silently revert that extension on the next unrelated leave
-  // request — the days would then appear to lapse on a date the ECJ forbids. Only the
-  // DEADLINE is protected: carriedOverDays is still recomputed, because D-20 relies on the
-  // existing expiry-warning mechanism reading an accurate, raised remaining entitlement.
-  const illnessProtected = preserveIllnessDeadline(cur);
+  // deadline write would silently revert that documented extension on the next unrelated leave
+  // request. Only the DEADLINE is protected: carriedOverDays is still recomputed, because D-20
+  // relies on the existing expiry-warning mechanism reading an accurate, raised remaining
+  // entitlement.
+  const deadlineProtected = preserveCarryOverDeadline(cur);
   await prisma.leaveEntitlement.update({
     where: { id: cur.id },
-    data: illnessProtected
+    data: deadlineProtected
       ? { carriedOverDays: remaining }
       : { carriedOverDays: remaining, carryOverDeadline: deadline },
   });

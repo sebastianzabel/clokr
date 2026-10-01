@@ -60,7 +60,7 @@ import {
   resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
   employeeScopeFor, // Phase 430 Plan 04 (D-15) — rosterImported's getShiftsInRange scope
 } from "../../platform"; // Quick 260824-cjd
-import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
+import { preserveCarryOverDeadline } from "../illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
 import { isSickLeaveTypeCode } from "../leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
 import { karenzOverrunFromRequests, normalizeKarenzDays } from "../find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
@@ -3739,10 +3739,10 @@ export async function leaveRoutes(app: FastifyInstance) {
             },
           });
 
-          // D-19 / R9: Ist die Übertragsfrist des Ursprungsjahres bereits abgelaufen, verfallen
-          // die Tage NICHT (EuGH KHS C-214/10 — 15 Monate). Wir markieren den Folgejahres-
-          // Übertrag als krankheitsbedingt; preserveIllnessDeadline (Phase 104-04) schützt
-          // diese Frist bei späteren Buchungen vor stillem Überschreiben.
+          // D-19 / R9: when the origin year's carry-over deadline has already passed, the
+          // days do NOT lapse (EuGH KHS C-214/10 — 15 months). We mark the following year's
+          // carry-over as illness-related; preserveCarryOverDeadline (Phase 104-04, generalised
+          // Issue #445 D-17) protects this deadline from a later, silent overwrite.
           const originYear = credited.start.getUTCFullYear(); // WR-09: @db.Date is UTC midnight
           const carryRow = await tx.leaveEntitlement.findUnique({
             where: {
@@ -4136,11 +4136,12 @@ async function autoCarryOver(
     REGULAR_ENTITLEMENT_REASON_ROLLOVER,
   );
 
-  // Phase 104 (D-19): see recalculateCarryOver — same ILLNESS deadline protection.
-  const illnessProtected = preserveIllnessDeadline(cur);
+  // Phase 104 (D-19), generalised by Issue #445 (D-16/D-17): see recalculateCarryOver — same
+  // documented-reason deadline protection.
+  const deadlineProtected = preserveCarryOverDeadline(cur);
   await prisma.leaveEntitlement.update({
     where: { id: cur.id },
-    data: illnessProtected
+    data: deadlineProtected
       ? { carriedOverDays: remaining }
       : { carriedOverDays: remaining, carryOverDeadline: deadline },
   });

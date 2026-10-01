@@ -171,6 +171,11 @@ export interface UpsertVacationEntitlementData {
   // falls back to the schema default (`false`) on `create`. Only ensureVacationEntitlementForYear
   // below sets it (to `true`, always).
   isAutoCalculated?: boolean;
+  // Issue #445 (D-16): optional for the same reason — PUT /vacation/:employeeId is the only
+  // writer of these two columns; omitting either leaves it untouched on `update` and falls back
+  // to the schema default (`null`) on `create`.
+  carryOverReason?: string | null;
+  carryOverNote?: string | null;
 }
 
 /**
