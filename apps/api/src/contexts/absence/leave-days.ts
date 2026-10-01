@@ -19,6 +19,11 @@ import { getWorkedEntriesInRange } from "../time-tracking"; // Phase 71b (issue 
 import { splitDaysAcrossYears, countShiftBasedLeaveDays, leaveDaysPerWeek } from "./vacation-calc"; // Phase 107 (D-04/D-09), Issue #417; leaveDaysPerWeek Issue #429 (D-01/D-02) — the shared per-week kernel, Phase 430-06
 import { preserveIllnessDeadline } from "./illness-carryover-guard"; // Phase 104
 import { getApprovedLeaveOverlapping } from "./facade/leave-requests"; // Phase 430 (D-08) — this file is INSIDE contexts/absence, no boundary crossing
+import type { LeaveEntitlement } from "@clokr/db";
+import { computeRegularVacationDays } from "./vacation-calc";
+import { ensureVacationEntitlementForYear } from "./facade/entitlements";
+import { getLeaveTypeByCode } from "./facade/leave-types";
+import { writeEntitlementAudit } from "./entitlement-audit"; // Issue #445
 
 // Prisma client shape shared by `app.prisma` (top-level) and the `tx` handle inside
 // `$transaction(async (tx) => ...)` — mirrors ./api/leave.ts's own private DbClient alias.
@@ -530,4 +535,240 @@ export async function resolveLeaveDays(
   const workDays = await resolveWorkDays(prisma, employeeId, tenantId);
   const days = calculateWorkDays(start, end, halfDay, workDays, holidays);
   return { days, provisional: false };
+}
+
+// ── Issue #445 — the regular yearly vacation entitlement (D-01..D-06) ──────────────────────────
+
+/** D-06 — audit reason for recalculateCarryOver()/autoCarryOver() ensuring a missing row exists
+ * at year rollover. */
+export const REGULAR_ENTITLEMENT_REASON_ROLLOVER = "Jahreswechsel: regulärer Jahresanspruch";
+/** D-04 — audit reason for a row the POST /leave/requests VACATION branch had to create before
+ * it could even check availability. */
+export const REGULAR_ENTITLEMENT_REASON_LEAVE_REQUEST = "Urlaubsantrag: regulärer Jahresanspruch";
+/** D-05 — audit reason for a zero placeholder healed on read (selfHealUsedDays, GET
+ * /settings/vacation). */
+export const REGULAR_ENTITLEMENT_REASON_SELF_HEAL =
+  "Self-Heal: Urlaubsanspruch 0 ohne manuelle Setzung";
+/** D-06 — audit reason for a carriedOverDays change written by recalculateCarryOver() /
+ * autoCarryOver(). */
+export const CARRY_OVER_RECALC_REASON = "Übertrag neu berechnet";
+
+/**
+ * Compares two day counts on 2-decimal rounding — the same precision `LeaveEntitlement.
+ * carriedOverDays`/`totalDays` are stored at (`Decimal(5,2)`) — so a write that only moves a
+ * value within float noise is not audited as a change (D-06).
+ */
+export function daysDiffer(a: number, b: number): boolean {
+  return Math.round(a * 100) !== Math.round(b * 100);
+}
+
+/**
+ * Issue #445 — the ONE base-value resolver for the regular vacation entitlement. Today:
+ * `TenantConfig.defaultVacationDays`, falling back to 30 when unset. Issue #435 changes only
+ * this function's body to "person value ?? tenant default" — every caller of
+ * {@link resolveRegularVacationDays} / {@link ensureRegularVacationEntitlement} keeps working
+ * unchanged.
+ */
+export async function resolveVacationBaseDays(
+  db: DbClient,
+  employeeId: string,
+  tenantId: string,
+): Promise<number> {
+  const config = await db.tenantConfig.findUnique({
+    where: { tenantId },
+    select: { defaultVacationDays: true },
+  });
+  return Number(config?.defaultVacationDays ?? 30);
+}
+
+/**
+ * Issue #445 — internal: the shared inputs {@link resolveRegularVacationDays} and
+ * {@link ensureRegularVacationEntitlement} both need to compute a regular entitlement for
+ * `employeeId`/`year` (D-02, D-03). Not exported — every external caller goes through one of
+ * those two.
+ */
+async function loadRegularVacationInputs(
+  db: DbClient,
+  employeeId: string,
+  tenantId: string,
+  year: number,
+): Promise<{ hireDate: Date; workDaysPerWeek: number; baseDays: number }> {
+  const employee = await db.employee.findFirst({
+    where: { id: employeeId, tenantId },
+    select: { hireDate: true, exitDate: true },
+  });
+  if (!employee) {
+    throw new Error(
+      `ensureRegularVacationEntitlement: employee ${employeeId} not found in tenant ${tenantId}`,
+    );
+  }
+  // D-03/P-02: employed in `year` means hired on or before its start AND, if the employee has
+  // since exited, that the exit happened in `year` or later — both compared on UTC calendar
+  // years so the check is independent of server timezone.
+  const employedInYear =
+    employee.hireDate.getUTCFullYear() <= year &&
+    (employee.exitDate === null || employee.exitDate.getUTCFullYear() >= year);
+
+  const workDaysPerWeek = await resolveContractWorkDaysPerWeek(db, employeeId, tenantId);
+  const baseDays = employedInYear ? await resolveVacationBaseDays(db, employeeId, tenantId) : 0;
+
+  return { hireDate: employee.hireDate, workDaysPerWeek, baseDays };
+}
+
+/**
+ * Issue #445 (D-03) — the regular yearly VACATION entitlement for `employeeId` in `year`,
+ * read-only (no row is created or changed). Delegates the actual formula to
+ * {@link computeRegularVacationDays}.
+ */
+export async function resolveRegularVacationDays(
+  db: DbClient,
+  employeeId: string,
+  tenantId: string,
+  year: number,
+): Promise<number> {
+  const inputs = await loadRegularVacationInputs(db, employeeId, tenantId, year);
+  return computeRegularVacationDays({ year, ...inputs });
+}
+
+/**
+ * Issue #445 (D-05) — a VACATION `LeaveEntitlement` row is a *zero placeholder* when `totalDays`
+ * is 0, it was never auto-calculated, AND no human/API write ever set `totalDays` on it: no
+ * AuditLog row of action CREATE or UPDATE for this entity/id has a `newValue` whose `totalDays`
+ * is set while its `isAutoCalculated` is not `true` (PUT /settings/vacation always audits `newValue: body`
+ * with `totalDays` — see leave-settings.ts). Idempotent precondition for
+ * {@link ensureRegularVacationEntitlement}'s heal branch.
+ */
+export async function isZeroVacationPlaceholder(
+  db: DbClient,
+  row: { id: string; totalDays: unknown; isAutoCalculated: boolean },
+): Promise<boolean> {
+  if (Number(row.totalDays) !== 0 || row.isAutoCalculated) return false;
+
+  const audits = await db.auditLog.findMany({
+    where: { entity: "LeaveEntitlement", entityId: row.id, action: { in: ["CREATE", "UPDATE"] } },
+    select: { newValue: true },
+  });
+  const hasHumanWrite = audits.some((a) => {
+    const value = a.newValue;
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+    const record = value as Record<string, unknown>;
+    return (
+      record.totalDays !== undefined &&
+      record.totalDays !== null &&
+      record.isAutoCalculated !== true
+    );
+  });
+  return !hasHumanWrite;
+}
+
+export type RegularEntitlementResult = {
+  entitlement: LeaveEntitlement;
+  created: boolean;
+  healed: boolean;
+};
+
+/**
+ * Issue #445 (D-02) — ensures a VACATION `LeaveEntitlement` row for `employeeId`/`year` carries
+ * the regular yearly entitlement, creating it or healing a zero placeholder as needed:
+ *   - missing row, VACATION type → created through {@link ensureVacationEntitlementForYear}
+ *     (reuses its P2002 race handling and CREATE audit), `healed: false`.
+ *   - missing row, any other leave type → today's behaviour: a 0 row with one CREATE audit
+ *     (D-02 — only VACATION gets the regular-entitlement treatment).
+ *   - existing row, zero placeholder (D-05), target > 0 (P-03) → healed: `totalDays` +
+ *     `isAutoCalculated: true`, one UPDATE audit.
+ *   - existing row, not a placeholder (a human zero, a non-zero value, or already
+ *     auto-calculated) → returned unchanged, `healed: false`.
+ *
+ * `reason` is the audit `newValue.reason` for whichever branch runs (create or heal) — see the
+ * `REGULAR_ENTITLEMENT_REASON_*` constants above for the call-site reasons in use today.
+ */
+export async function ensureRegularVacationEntitlement(
+  db: DbClient,
+  employeeId: string,
+  tenantId: string,
+  year: number,
+  leaveTypeId: string,
+  reason: string,
+): Promise<RegularEntitlementResult> {
+  const vacationType = await getLeaveTypeByCode(db, tenantId, "VACATION");
+  const existing = await db.leaveEntitlement.findUnique({
+    where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
+  });
+
+  // D-02: only the tenant's VACATION type gets the regular-entitlement treatment — any other
+  // type keeps today's pre-#445 behaviour (a 0 row, audited CREATE, no heal).
+  if (!vacationType || vacationType.id !== leaveTypeId) {
+    if (existing) return { entitlement: existing, created: false, healed: false };
+
+    let created: LeaveEntitlement;
+    try {
+      created = await db.leaveEntitlement.create({
+        data: { employeeId, leaveTypeId, year, totalDays: 0, usedDays: 0, carriedOverDays: 0 },
+      });
+    } catch (err: unknown) {
+      if (typeof err === "object" && err !== null && "code" in err && err.code === "P2002") {
+        const refetched = await db.leaveEntitlement.findUniqueOrThrow({
+          where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
+        });
+        return { entitlement: refetched, created: false, healed: false };
+      }
+      throw err;
+    }
+    await writeEntitlementAudit(db, {
+      action: "CREATE",
+      entityId: created.id,
+      newValue: { totalDays: 0, reason },
+    });
+    return { entitlement: created, created: true, healed: false };
+  }
+
+  if (existing) {
+    if (await isZeroVacationPlaceholder(db, existing)) {
+      const inputs = await loadRegularVacationInputs(db, employeeId, tenantId, year);
+      const target = computeRegularVacationDays({ year, ...inputs });
+      if (target > 0) {
+        const { count } = await db.leaveEntitlement.updateMany({
+          where: { id: existing.id, totalDays: 0, isAutoCalculated: false },
+          data: { totalDays: target, isAutoCalculated: true },
+        });
+        if (count === 1) {
+          await writeEntitlementAudit(db, {
+            action: "UPDATE",
+            entityId: existing.id,
+            oldValue: { totalDays: 0 },
+            newValue: { totalDays: target, isAutoCalculated: true, reason },
+          });
+        }
+        const entitlement = await db.leaveEntitlement.findUniqueOrThrow({
+          where: { id: existing.id },
+        });
+        return { entitlement, created: false, healed: count === 1 };
+      }
+    }
+    return { entitlement: existing, created: false, healed: false };
+  }
+
+  const inputs = await loadRegularVacationInputs(db, employeeId, tenantId, year);
+  const result = await ensureVacationEntitlementForYear(
+    db,
+    employeeId,
+    tenantId,
+    year,
+    inputs.hireDate,
+    inputs.workDaysPerWeek,
+    inputs.baseDays,
+    reason,
+    (entry) =>
+      writeEntitlementAudit(db, {
+        action: entry.action,
+        entityId: entry.entityId,
+        newValue: entry.newValue,
+      }),
+  );
+  if (!result) {
+    throw new Error(
+      `ensureRegularVacationEntitlement: no VACATION LeaveType configured for tenant ${tenantId}`,
+    );
+  }
+  return { entitlement: result.entitlement, created: result.created, healed: false };
 }

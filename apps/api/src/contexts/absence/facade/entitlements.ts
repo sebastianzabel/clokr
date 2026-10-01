@@ -47,7 +47,7 @@
  */
 import type { LeaveEntitlement, Prisma } from "@clokr/db";
 import { getLeaveTypeByCode } from "./leave-types";
-import { calculatePartTimeVacation, calculateProRataVacationForHire } from "../vacation-calc";
+import { computeRegularVacationDays } from "../vacation-calc"; // Issue #445 (D-01) — the one regular-entitlement computation
 
 // ── A11 — the vacation entitlement, resolved by code ────────────────────────────────────────
 
@@ -223,16 +223,16 @@ export type EnsureVacationEntitlementAuditFn = (entry: {
  * creation, first-access self-heal, the repair script) structurally idempotent without
  * re-implementing the check three times. Do not remove it.
  *
- * When creating, `totalDays` is `TenantConfig.defaultVacationDays` scaled by the employee's
- * contractual workdays via {@link calculatePartTimeVacation} (owner decision, Issue #416:
- * `defaultVacationDays` means "N days at a 5-day-week workload" — the reference week is stated
- * here because the data model has no explicit reference-week field). For `year === hireDate`'s
- * year, the scaled result is further pro-rated by {@link calculateProRataVacationForHire}; for
- * every other year (a later year, or the repair script's/first-access self-heal's "missing
- * current-year row for an already-employed active employee" case) the full scaled amount applies
- * unprorated, because the employee was already employed at that year's start. Composition order
- * (scale first, THEN pro-rate) is deliberate — see the owner decision text above and
- * `416-CONTEXT.md`.
+ * When creating, `totalDays` is computed by {@link computeRegularVacationDays} (Issue #445,
+ * D-01 — extracted verbatim from this function's own former inline formula): `TenantConfig.
+ * defaultVacationDays` scaled by the employee's contractual workdays (owner decision, Issue
+ * #416: `defaultVacationDays` means "N days at a 5-day-week workload" — the reference week is
+ * stated there because the data model has no explicit reference-week field), then, for
+ * `year === hireDate`'s year, further pro-rated for the hire year; every other year (a later
+ * year, or the repair script's/first-access self-heal's "missing current-year row for an
+ * already-employed active employee" case) gets the full scaled amount unprorated, because the
+ * employee was already employed at that year's start. Composition order (scale first, THEN
+ * pro-rate) is deliberate — see `computeRegularVacationDays`'s own docblock and `416-CONTEXT.md`.
  *
  * Returns `null` only in the practically-unreachable case where the tenant has no VACATION
  * `LeaveType` configured (mirrors {@link getVacationEntitlement} / {@link upsertVacationEntitlement}).
@@ -256,25 +256,14 @@ export async function ensureVacationEntitlementForYear(
   if (!existing) return null; // no VACATION LeaveType configured for this tenant
   if (existing.entitlement) return { entitlement: existing.entitlement, created: false };
 
-  // fullTimeWorkDays = 5, per the owner decision above — calculatePartTimeVacation() does no
-  // WorkSchedule lookup of its own, so a minimal schedule shape carrying only
-  // contractWorkDaysPerWeek (checked FIRST by countWorkDaysPerWeek()) is enough to reuse it
-  // without hand-rolling the ratio again.
-  const referenceSchedule = {
-    mondayHours: 0,
-    tuesdayHours: 0,
-    wednesdayHours: 0,
-    thursdayHours: 0,
-    fridayHours: 0,
-    saturdayHours: 0,
-    sundayHours: 0,
-    contractWorkDaysPerWeek: workDaysPerWeek,
-  };
-  const scaledBase = calculatePartTimeVacation(referenceSchedule, 5, defaultVacationDays);
-  const totalDays =
-    year === hireDate.getFullYear()
-      ? calculateProRataVacationForHire(scaledBase, year, hireDate)
-      : scaledBase;
+  // Issue #445 (D-01): the regular-entitlement computation now lives in ONE place —
+  // computeRegularVacationDays() in vacation-calc.ts — moved verbatim from here.
+  const totalDays = computeRegularVacationDays({
+    year,
+    hireDate,
+    workDaysPerWeek,
+    baseDays: defaultVacationDays,
+  });
 
   let entitlement: LeaveEntitlement | null;
   try {
