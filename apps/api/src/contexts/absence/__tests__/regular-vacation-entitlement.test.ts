@@ -10,7 +10,7 @@ import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../.
 import {
   computeRegularVacationDays,
   calculatePartTimeVacation,
-  calculateProRataVacationForHire,
+  hireYearVacationDays,
 } from "../vacation-calc";
 import {
   resolveVacationBaseDays,
@@ -22,11 +22,16 @@ import { leaveTypeFields } from "../leave-type";
 import type { FastifyInstance } from "fastify";
 
 describe("computeRegularVacationDays (Issue #445, D-01)", () => {
+  // Issue #435 Plan 02 Task 2: birthDate became a REQUIRED field on computeRegularVacationDays's
+  // input (every in-src caller must thread it through). These pre-existing cases pass `null`
+  // (adult/unknown) — verified (Task 1 RED/GREEN run) that none of their expected values sits
+  // below the § 3 BUrlG floor, so adding `birthDate: null` here does not change any assertion.
   it("full-time employee, a later year than the hire year: full base days", () => {
     expect(
       computeRegularVacationDays({
         year: 2027,
         hireDate: new Date(2024, 0, 1),
+        birthDate: null,
         workDaysPerWeek: 5,
         baseDays: 30,
       }),
@@ -38,6 +43,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
       computeRegularVacationDays({
         year: 2027,
         hireDate: new Date(2024, 0, 1),
+        birthDate: null,
         workDaysPerWeek: 4,
         baseDays: 30,
       }),
@@ -46,6 +52,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
       computeRegularVacationDays({
         year: 2027,
         hireDate: new Date(2024, 0, 1),
+        birthDate: null,
         workDaysPerWeek: 4,
         baseDays: 20,
       }),
@@ -54,6 +61,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
       computeRegularVacationDays({
         year: 2027,
         hireDate: new Date(2024, 0, 1),
+        birthDate: null,
         workDaysPerWeek: 3,
         baseDays: 20,
       }),
@@ -61,43 +69,92 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
   });
 
   it("hire-year pro-rata, § 5 Abs. 2 BUrlG rounding", () => {
-    // 3/12 × 30 = 7.5, rounded UP to 8 (fraction >= 0.5)
+    // 3/12 × 30 = 7.5, rounded UP to 8 (fraction >= 0.5) — Oct 1 hire, after the G9 cutoff
     expect(
       computeRegularVacationDays({
         year: 2027,
         hireDate: new Date(2027, 9, 1),
+        birthDate: null,
         workDaysPerWeek: 5,
         baseDays: 30,
       }),
     ).toBe(8);
-    // 11/12 × 30 = 27.5 → 28
+    // Feb 1 hire (on/before 1 July) — Issue #435, owner Ergänzung G9 (01.10.2026): the § 4 BUrlG
+    // Wartezeit ends within the hire year, so § 5 Abs. 1 a BUrlG's reduction does not apply. Full
+    // value (was 28 — 11/12 × 30 pro-rated — before the Ergänzung).
     expect(
       computeRegularVacationDays({
         year: 2026,
         hireDate: new Date(2026, 1, 1),
+        birthDate: null,
         workDaysPerWeek: 5,
         baseDays: 30,
       }),
-    ).toBe(28);
+    ).toBe(30);
+    // Jul 1 hire (on/before 1 July, the G9 Grenzfall) — full value (was 12 — 6/12 × 24 pro-rated —
+    // before the Ergänzung).
     expect(
       computeRegularVacationDays({
         year: 2027,
         hireDate: new Date(2027, 6, 1),
+        birthDate: null,
         workDaysPerWeek: 4,
         baseDays: 30,
       }),
-    ).toBe(12);
+    ).toBe(24);
   });
 
-  it("parity with the #416 inline formula (scale first, then hire-year pro-rata)", () => {
+  it("parity with the #416 inline formula (scale first, then the G9 Wartezeit decision)", () => {
     const cases = [
-      { year: 2027, hireDate: new Date(2024, 0, 1), workDaysPerWeek: 5, baseDays: 30 },
-      { year: 2027, hireDate: new Date(2024, 0, 1), workDaysPerWeek: 4, baseDays: 30 },
-      { year: 2027, hireDate: new Date(2024, 0, 1), workDaysPerWeek: 4, baseDays: 20 },
-      { year: 2027, hireDate: new Date(2024, 0, 1), workDaysPerWeek: 3, baseDays: 20 },
-      { year: 2027, hireDate: new Date(2027, 9, 1), workDaysPerWeek: 5, baseDays: 30 },
-      { year: 2026, hireDate: new Date(2026, 1, 1), workDaysPerWeek: 5, baseDays: 30 },
-      { year: 2027, hireDate: new Date(2027, 6, 1), workDaysPerWeek: 4, baseDays: 30 },
+      {
+        year: 2027,
+        hireDate: new Date(2024, 0, 1),
+        birthDate: null,
+        workDaysPerWeek: 5,
+        baseDays: 30,
+      },
+      {
+        year: 2027,
+        hireDate: new Date(2024, 0, 1),
+        birthDate: null,
+        workDaysPerWeek: 4,
+        baseDays: 30,
+      },
+      {
+        year: 2027,
+        hireDate: new Date(2024, 0, 1),
+        birthDate: null,
+        workDaysPerWeek: 4,
+        baseDays: 20,
+      },
+      {
+        year: 2027,
+        hireDate: new Date(2024, 0, 1),
+        birthDate: null,
+        workDaysPerWeek: 3,
+        baseDays: 20,
+      },
+      {
+        year: 2027,
+        hireDate: new Date(2027, 9, 1),
+        birthDate: null,
+        workDaysPerWeek: 5,
+        baseDays: 30,
+      },
+      {
+        year: 2026,
+        hireDate: new Date(2026, 1, 1),
+        birthDate: null,
+        workDaysPerWeek: 5,
+        baseDays: 30,
+      },
+      {
+        year: 2027,
+        hireDate: new Date(2027, 6, 1),
+        birthDate: null,
+        workDaysPerWeek: 4,
+        baseDays: 30,
+      },
     ];
     for (const c of cases) {
       const scaledBase = calculatePartTimeVacation(
@@ -114,12 +171,110 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         5,
         c.baseDays,
       );
-      const inline =
-        c.year === c.hireDate.getFullYear()
-          ? calculateProRataVacationForHire(scaledBase, c.year, c.hireDate)
-          : scaledBase;
+      // Issue #435, owner Ergänzung G9: the #416 inline formula's bare hire-year ternary is
+      // superseded — `hireYearVacationDays` now decides WHETHER a hire year pro-rates at all
+      // (Wartezeit), before the twelfthing itself.
+      const inline = hireYearVacationDays(scaledBase, c.year, c.hireDate);
       expect(computeRegularVacationDays(c)).toBe(inline);
     }
+  });
+});
+
+describe("hireYearVacationDays — Wartezeit im Eintrittsjahr (Issue #435, G9)", () => {
+  it("base 20, 5-day week: hire 01.01./01.06./01.07. -> full year 20; 02.07. -> 10; 01.10. -> 5", () => {
+    expect(hireYearVacationDays(20, 2027, new Date(2027, 0, 1))).toBe(20);
+    expect(hireYearVacationDays(20, 2027, new Date(2027, 5, 1))).toBe(20);
+    expect(hireYearVacationDays(20, 2027, new Date(2027, 6, 1))).toBe(20);
+    expect(hireYearVacationDays(20, 2027, new Date(2027, 6, 2))).toBe(10);
+    expect(hireYearVacationDays(20, 2027, new Date(2027, 9, 1))).toBe(5);
+  });
+
+  it("base 30, 5-day week: hire 01.01./01.06./01.07. -> full year 30; 02.07. -> 15; 01.10. -> 8 (§ 5 Abs. 2 rounding, #421)", () => {
+    expect(hireYearVacationDays(30, 2027, new Date(2027, 0, 1))).toBe(30);
+    expect(hireYearVacationDays(30, 2027, new Date(2027, 5, 1))).toBe(30);
+    expect(hireYearVacationDays(30, 2027, new Date(2027, 6, 1))).toBe(30);
+    expect(hireYearVacationDays(30, 2027, new Date(2027, 6, 2))).toBe(15);
+    expect(hireYearVacationDays(30, 2027, new Date(2027, 9, 1))).toBe(8);
+  });
+
+  it("a year other than the hire year is unaffected — full value unchanged", () => {
+    expect(hireYearVacationDays(30, 2028, new Date(2027, 9, 1))).toBe(30);
+  });
+});
+
+describe("computeRegularVacationDays — statutory floor (Issue #435, D-09)", () => {
+  it("adult (birthDate null), base 10, 5-day week, a later year -> floored to the § 3 BUrlG 20", () => {
+    expect(
+      computeRegularVacationDays({
+        year: 2027,
+        hireDate: new Date(2024, 0, 1),
+        birthDate: null,
+        workDaysPerWeek: 5,
+        baseDays: 10,
+      }),
+    ).toBe(20);
+  });
+
+  it("minor born 2012-06-15, base 20, 5-day week, 2027, hired 2024 -> floored to 25 (JArbSchG)", () => {
+    expect(
+      computeRegularVacationDays({
+        year: 2027,
+        hireDate: new Date(2024, 0, 1),
+        birthDate: new Date(Date.UTC(2012, 5, 15)),
+        workDaysPerWeek: 5,
+        baseDays: 20,
+      }),
+    ).toBe(25);
+  });
+
+  it("born 2009-06-15 (age 17), base 20, 4-day week, 2027, hired 2024 -> floored to 16.67", () => {
+    expect(
+      computeRegularVacationDays({
+        year: 2027,
+        hireDate: new Date(2024, 0, 1),
+        birthDate: new Date(Date.UTC(2009, 5, 15)),
+        workDaysPerWeek: 4,
+        baseDays: 20,
+      }),
+    ).toBe(16.67);
+  });
+
+  it("minor born 2012-06-15, base 20, hire 2027-10-01 (after G9 cutoff) -> max first, then 3/12 -> 6.25", () => {
+    // scaledBase=20, floored to statutory minimum 25 (5-day, age 14), THEN hire-year pro-rata:
+    // 25 × 3/12 = 6.25 — fraction < 0.5 stays exact (§ 5 Abs. 2 BUrlG).
+    expect(
+      computeRegularVacationDays({
+        year: 2027,
+        hireDate: new Date(2027, 9, 1),
+        birthDate: new Date(Date.UTC(2012, 5, 15)),
+        workDaysPerWeek: 5,
+        baseDays: 20,
+      }),
+    ).toBe(6.25);
+  });
+
+  it("same minor, hire 2027-06-01 (on/before G9 cutoff) -> full floored value, no pro-rata -> 25", () => {
+    expect(
+      computeRegularVacationDays({
+        year: 2027,
+        hireDate: new Date(2027, 5, 1),
+        birthDate: new Date(Date.UTC(2012, 5, 15)),
+        workDaysPerWeek: 5,
+        baseDays: 20,
+      }),
+    ).toBe(25);
+  });
+
+  it("baseDays 0 with a minor birthDate -> 0 (not-employed guard wins over the floor)", () => {
+    expect(
+      computeRegularVacationDays({
+        year: 2027,
+        hireDate: new Date(2024, 0, 1),
+        birthDate: new Date(Date.UTC(2012, 5, 15)),
+        workDaysPerWeek: 5,
+        baseDays: 0,
+      }),
+    ).toBe(0);
   });
 });
 
@@ -132,7 +287,13 @@ describe("regular VACATION entitlement wrapper (Issue #445, D-02/D-03/D-05/D-06)
   async function mkEmployee(
     label: string,
     kind: EmployeeKind = "FIXED",
-    overrides: { hireDate?: Date; exitDate?: Date } = {},
+    overrides: {
+      hireDate?: Date;
+      exitDate?: Date;
+      // Issue #435 (Task 3) — person-value/floor DB-path proofs.
+      birthDate?: Date | null;
+      annualVacationDays?: number | null;
+    } = {},
   ): Promise<string> {
     const uid = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const user = await app.prisma.user.create({
@@ -152,6 +313,8 @@ describe("regular VACATION entitlement wrapper (Issue #445, D-02/D-03/D-05/D-06)
         lastName: "T",
         hireDate: overrides.hireDate ?? new Date(Date.UTC(2024, 0, 1)),
         exitDate: overrides.exitDate ?? null,
+        birthDate: overrides.birthDate ?? null,
+        annualVacationDays: overrides.annualVacationDays ?? null,
       },
     });
     if (kind === "SHIFT_BASED") {
@@ -448,6 +611,72 @@ describe("regular VACATION entitlement wrapper (Issue #445, D-02/D-03/D-05/D-06)
         where: { entity: "LeaveEntitlement", entityId: result.entitlement.id, action: "CREATE" },
       });
       expect(audits).toHaveLength(1);
+    });
+  });
+
+  describe("Issue #435 — person value, floor and D-15 through the DB path", () => {
+    it("resolveVacationBaseDays returns the person value when set, the tenant default otherwise (D-05)", async () => {
+      const withPersonValue = await mkEmployee("pv-person", "FIXED", { annualVacationDays: 22 });
+      const withoutPersonValue = await mkEmployee("pv-tenant", "FIXED");
+
+      expect(await resolveVacationBaseDays(app.prisma, withPersonValue, data.tenant.id)).toBe(22);
+      expect(await resolveVacationBaseDays(app.prisma, withoutPersonValue, data.tenant.id)).toBe(
+        30,
+      );
+    });
+
+    it("resolveRegularVacationDays floors a minor's person-value entitlement through the DB path", async () => {
+      const employeeId = await mkEmployee("pv-minor", "FIXED", {
+        birthDate: new Date(Date.UTC(2012, 5, 15)), // age 14 at 1.1.2027 -> 25 at a 5-day week
+        annualVacationDays: 20, // below the statutory minimum for this age band
+      });
+      const result = await resolveRegularVacationDays(app.prisma, employeeId, data.tenant.id, 2027);
+      expect(result).toBe(25);
+    });
+
+    it("ensureRegularVacationEntitlement for the next year (no row) uses the person value (435-AC-03)", async () => {
+      const employeeId = await mkEmployee("pv-nextyear", "FIXED", { annualVacationDays: 20 });
+      const result = await ensureRegularVacationEntitlement(
+        app.prisma,
+        employeeId,
+        data.tenant.id,
+        2028,
+        data.vacationType.id,
+        "R",
+      );
+      expect(result.created).toBe(true);
+      expect(Number(result.entitlement.totalDays)).toBe(20);
+    });
+
+    it("D-15: changing annualVacationDays never moves an existing row", async () => {
+      const employeeId = await mkEmployee("pv-d15");
+      const existing = await app.prisma.leaveEntitlement.create({
+        data: {
+          employeeId,
+          leaveTypeId: data.vacationType.id,
+          year: 2027,
+          totalDays: 30,
+          isAutoCalculated: true,
+        },
+      });
+
+      await app.prisma.employee.update({
+        where: { id: employeeId },
+        data: { annualVacationDays: 20 },
+      });
+
+      const result = await ensureRegularVacationEntitlement(
+        app.prisma,
+        employeeId,
+        data.tenant.id,
+        2027,
+        data.vacationType.id,
+        "R",
+      );
+      expect(result.created).toBe(false);
+      expect(result.healed).toBe(false);
+      expect(result.entitlement.id).toBe(existing.id);
+      expect(Number(result.entitlement.totalDays)).toBe(30);
     });
   });
 });

@@ -94,6 +94,8 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     "carryoverWarningThresholds",
     "christmasEveRule",
     "clockOutReminderHours",
+    // Issue #435 D-03: +defaultApprenticeVacationDays (37 → 38)
+    "defaultApprenticeVacationDays",
     "defaultFridayHours",
     "defaultMondayHours",
     "defaultSaturdayHours",
@@ -121,7 +123,7 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     "vacationReminderStartMonth",
   ] as const;
 
-  it("PUT /settings/work carries exactly the 37 known keys, no more, no fewer", () => {
+  it("PUT /settings/work carries exactly the 38 known keys, no more, no fewer", () => {
     const saveGlobalBody = fnBody("async function saveGlobal");
     const bodyStart = saveGlobalBody.indexOf('api.put("/settings/work", {');
     expect(bodyStart, 'api.put("/settings/work", {...}) call not found').toBeGreaterThan(-1);

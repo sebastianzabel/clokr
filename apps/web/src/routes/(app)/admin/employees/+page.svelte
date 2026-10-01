@@ -16,6 +16,10 @@
     applyDefaults,
     isOverridden,
   } from "$lib/employee-classification";
+  import {
+    statutoryMinimumFiveDayWeek,
+    MISSING_BIRTH_DATE_HINT,
+  } from "$lib/statutory-minimum-vacation";
 
   type InvitationStatus = "ACCEPTED" | "PENDING" | "EXPIRED" | "NONE";
   type Role = "ADMIN" | "MANAGER" | "EMPLOYEE";
@@ -28,6 +32,7 @@
     hireDate: string;
     exitDate: string | null;
     nfcCardId: string | null;
+    birthDate: string | null;
     // Personalstruktur (Phase 41) — coverageWeight is Decimal serialized as string by Prisma JSON
     classification: EmployeeClassification;
     coverageWeight: string | number;
@@ -75,6 +80,20 @@
   let cClassification: EmployeeClassification = $state("VOLLZEIT");
   let cCoverageWeight = $state(1.0);
   let cRequiresSupervision = $state(false);
+  // Issue #435 (D-13 tracer) — per-person vacation base value; null = tenant default.
+  let cAnnualVacationDays = $state<number | null>(null);
+  // Issue #435 (D-01/D-11) — tenant defaults loaded onMount, for the create-dialog pre-fill.
+  let tenantDefaultVacationDays = $state<number | null>(null);
+  let tenantDefaultApprenticeVacationDays = $state<number | null>(null);
+  let cBirthDate = $state("");
+  // The last value refreshVacationPrefill itself wrote — distinguishes "still the suggestion"
+  // from "the admin typed something", so a later classification/birth-date change only re-fills
+  // while the field still holds the form's own suggestion (never overwrites a typed value).
+  let cVacationPrefill = $state<number | null>(null);
+  // Without a birth date the adult minimum (§ 3 BUrlG) still applies — never "no minimum".
+  let cBirthMinimum = $derived(
+    statutoryMinimumFiveDayWeek(cBirthDate || null, Number(cHireDate.slice(0, 4))),
+  );
 
   // ── Personalstruktur override badges (Phase 41 DD-03) ────────────────────
   // Reactive: re-evaluate when classification or the field itself changes.
@@ -85,10 +104,24 @@
     isOverridden(cClassification, "requiresSupervision", cRequiresSupervision),
   );
 
+  // Issue #435 (D-01/D-11) — proposes the apprentice or regular tenant default, raised to the
+  // legal minimum (§ 19 JArbSchG with a birth date, else § 3 BUrlG); never overwrites a value
+  // the admin typed.
+  function refreshVacationPrefill() {
+    const base =
+      cClassification === "AZUBI" ? tenantDefaultApprenticeVacationDays : tenantDefaultVacationDays;
+    const next = base === null ? null : Math.max(base, cBirthMinimum.days);
+    if (cAnnualVacationDays === null || cAnnualVacationDays === cVacationPrefill) {
+      cAnnualVacationDays = next;
+    }
+    cVacationPrefill = next;
+  }
+
   function onCreateClassificationChange() {
     const def = applyDefaults(cClassification);
     cCoverageWeight = def.coverageWeight;
     cRequiresSupervision = def.requiresSupervision;
+    refreshVacationPrefill();
   }
   function resetCoverage() {
     cCoverageWeight = applyDefaults(cClassification).coverageWeight;
@@ -166,15 +199,24 @@
   onMount(async () => {
     await loadEmployees();
     // Phase 49.2 — load tenant FLEXTIME core defaults for pre-fill in create modal
+    // Issue #435 (D-01) — same fetch also reads the vacation-days tenant defaults.
     try {
       const cfg = await api.get<{
         defaultCoreStart?: string | null;
         defaultCoreEnd?: string | null;
         defaultCoreDays?: number[];
+        defaultVacationDays?: number | string;
+        defaultApprenticeVacationDays?: number | string;
       }>("/settings/work");
       tenantDefaultCoreStart = cfg.defaultCoreStart ?? "";
       tenantDefaultCoreEnd = cfg.defaultCoreEnd ?? "";
       tenantDefaultCoreDays = Array.isArray(cfg.defaultCoreDays) ? [...cfg.defaultCoreDays] : [];
+      const vacDays = Number(cfg.defaultVacationDays);
+      tenantDefaultVacationDays = Number.isFinite(vacDays) ? vacDays : null;
+      const apprenticeVacDays = Number(cfg.defaultApprenticeVacationDays);
+      tenantDefaultApprenticeVacationDays = Number.isFinite(apprenticeVacDays)
+        ? apprenticeVacDays
+        : null;
     } catch {
       // non-critical — pre-fill just won't happen if this fails
     }
@@ -215,6 +257,11 @@
     const def = applyDefaults(cClassification);
     cCoverageWeight = def.coverageWeight;
     cRequiresSupervision = def.requiresSupervision;
+    // Issue #435 (D-01/D-13) — reset to "no value", then let the pre-fill propose one
+    cAnnualVacationDays = null;
+    cVacationPrefill = null;
+    cBirthDate = "";
+    refreshVacationPrefill();
     createError = "";
     createEmailError = "";
     createOpen = true;
@@ -266,6 +313,18 @@
         classification: cClassification,
         coverageWeight: cCoverageWeight,
         requiresSupervision: cRequiresSupervision,
+        // Issue #435 (D-11/D-12) — optional, drives the statutory-minimum pre-fill/hint only.
+        birthDate: cBirthDate ? new Date(cBirthDate).toISOString() : null,
+        // Issue #435 (D-13): null = tenant default (resolveVacationBaseDays). A non-AZUBI value
+        // that still equals the tenant default is sent as null, so the person keeps following a
+        // later change to the tenant default; an AZUBI pre-fill is always sent explicitly (the
+        // resolver never branches on classification, D-05).
+        annualVacationDays:
+          cAnnualVacationDays === null
+            ? null
+            : cClassification !== "AZUBI" && cAnnualVacationDays === tenantDefaultVacationDays
+              ? null
+              : cAnnualVacationDays,
       };
       if (cUsePassword && cPassword) payload.password = cPassword;
       const res = await api.post<Employee & { emailError?: string }>("/employees", payload);
@@ -489,6 +548,13 @@
                       >
                         <strong>{emp.lastName}, {emp.firstName}</strong>
                       </a>
+                      {#if emp.classification === "AZUBI" && !emp.birthDate}
+                        <span
+                          class="chip chip-warn"
+                          data-testid={`admin-employees-row-${emp.id}-birthdate-hint`}
+                          >{MISSING_BIRTH_DATE_HINT}</span
+                        >
+                      {/if}
                     </td>
                     <td class="col-email">{emp.user.email}</td>
                     <td>
@@ -603,7 +669,14 @@
       </div>
       <div class="form-group">
         <label class="form-label" for="c-hiredate">Eintrittsdatum</label>
-        <input id="c-hiredate" type="date" bind:value={cHireDate} class="input" required />
+        <input
+          id="c-hiredate"
+          type="date"
+          bind:value={cHireDate}
+          class="input"
+          required
+          onchange={refreshVacationPrefill}
+        />
       </div>
       <div class="form-group">
         <label class="form-label" for="c-role">Rolle</label>
@@ -630,6 +703,20 @@
           {/each}
         </select>
       </div>
+      <!-- Issue #435 (D-11/D-12) — optional birth date drives the statutory-minimum pre-fill -->
+      <div class="form-group">
+        <label class="form-label" for="c-birthdate">Geburtsdatum (optional)</label>
+        <input
+          id="c-birthdate"
+          type="date"
+          class="input"
+          bind:value={cBirthDate}
+          onchange={refreshVacationPrefill}
+        />
+      </div>
+      {#if cClassification === "AZUBI" && !cBirthDate}
+        <div class="callout form-group--full">{MISSING_BIRTH_DATE_HINT}</div>
+      {/if}
       <div class="form-group">
         <label class="form-label" for="c-coverage">Schicht-Gewicht</label>
         <input
@@ -661,6 +748,36 @@
             <button type="button" class="btn btn-ghost btn-sm" onclick={() => resetSupervision()}
               >Auf Standard zurück</button
             >
+          </div>
+        {/if}
+      </div>
+      <!-- ── Urlaub (Issue #435, D-13 tracer) ─────────────────────────────── -->
+      <div class="form-group form-group--full form-subhead">
+        <h4 class="form-subhead-title">Urlaub</h4>
+      </div>
+      <div class="form-group form-group--full">
+        <label class="form-label" for="c-annual-vacation-days">
+          Urlaubstage pro Jahr (5-Tage-Woche)
+        </label>
+        <input
+          id="c-annual-vacation-days"
+          type="number"
+          min="0.5"
+          max="365"
+          step="0.01"
+          class="input"
+          bind:value={cAnnualVacationDays}
+          data-testid="admin-employees-create-annual-vacation-days"
+        />
+        <p class="form-hint">
+          Vorschlag aus den Mandanten-Einstellungen (Azubis: „Urlaubstage Azubis"). Wird auf die
+          vertraglichen Arbeitstage umgerechnet und im Eintrittsjahr anteilig berechnet.
+        </p>
+        {#if cBirthMinimum && cAnnualVacationDays !== null && cAnnualVacationDays < cBirthMinimum.days}
+          <div class="callout error">
+            Unter dem gesetzlichen Mindesturlaub von {cBirthMinimum.days.toLocaleString("de-DE", {
+              maximumFractionDigits: 2,
+            })} Tagen ({cBirthMinimum.law}) – das Speichern wird abgelehnt.
           </div>
         {/if}
       </div>

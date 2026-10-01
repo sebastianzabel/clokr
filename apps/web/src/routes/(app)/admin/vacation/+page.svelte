@@ -69,6 +69,7 @@
     overtimeThreshold: number;
     allowOvertimePayout: boolean;
     defaultVacationDays: number;
+    defaultApprenticeVacationDays?: number | string;
     carryOverDeadlineDay: number;
     carryOverDeadlineMonth: number;
     federalState: string;
@@ -116,6 +117,8 @@
   let gThreshold = $state(60);
   let gPayout = $state(false);
   let gVacationDays = $state(30);
+  // Issue #435 (D-03) — tenant default pre-filled for apprentices in the create form.
+  let gApprenticeVacationDays = $state(20);
   let gSaving = $state(false);
   let gSaved = $state(false);
   let gError = $state("");
@@ -219,6 +222,7 @@
       gCarryOverDay,
       gCarryOverMonth,
       gVacationDays,
+      gApprenticeVacationDays,
       gArbzgEnabled,
       gClockOutHours,
       gMissingDays,
@@ -276,6 +280,7 @@
       gThreshold = Number(cfg.overtimeThreshold);
       gPayout = cfg.allowOvertimePayout;
       gVacationDays = Number(cfg.defaultVacationDays) || 30;
+      gApprenticeVacationDays = Number(cfg.defaultApprenticeVacationDays) || 20;
       gCarryOverDay = cfg.carryOverDeadlineDay ?? 31;
       gCarryOverMonth = cfg.carryOverDeadlineMonth ?? 3;
       gArbzgEnabled = cfg.arbzgEnabled ?? true;
@@ -329,6 +334,7 @@
         gCarryOverDay,
         gCarryOverMonth,
         gVacationDays,
+        gApprenticeVacationDays,
         gArbzgEnabled,
         gClockOutHours,
         gMissingDays,
@@ -396,6 +402,7 @@
         carryOverDeadlineDay: gCarryOverDay,
         carryOverDeadlineMonth: gCarryOverMonth,
         defaultVacationDays: gVacationDays,
+        defaultApprenticeVacationDays: gApprenticeVacationDays,
         arbzgEnabled: gArbzgEnabled,
         // v1.6.5: autoBreakEnabled + defaultBreakStart are owned by /admin/system →
         // Arbeitszeit and intentionally not sent from this page to avoid clobbering.
@@ -446,6 +453,7 @@
         gCarryOverDay,
         gCarryOverMonth,
         gVacationDays,
+        gApprenticeVacationDays,
         gArbzgEnabled,
         gClockOutHours,
         gMissingDays,
@@ -749,6 +757,30 @@
               </div>
               <p class="form-hint">
                 Teilzeit anteilig (4-Tage-Woche &rarr; {Math.round((gVacationDays * 4) / 5)} Tage).
+              </p>
+            </div>
+
+            <!-- Issue #435 (D-03) — tenant default pre-filled for AZUBI in the create dialog -->
+            <div class="form-group">
+              <label class="form-label" for="g-apprentice-vac-days"
+                >Urlaubstage Azubis (Basis 5-Tage-Woche)</label
+              >
+              <div class="input-suffix-wrap">
+                <input
+                  id="g-apprentice-vac-days"
+                  type="number"
+                  min="20"
+                  max="365"
+                  step="0.5"
+                  bind:value={gApprenticeVacationDays}
+                  class="form-input threshold-input"
+                />
+                <span class="input-suffix">Tage</span>
+              </div>
+              <p class="form-hint">
+                Vorschlag beim Anlegen von Auszubildenden, jederzeit überschreibbar. Mindestens 20
+                Tage (§ 3 BUrlG); Jugendliche erhalten automatisch den höheren Mindesturlaub nach §
+                19 JArbSchG.
               </p>
             </div>
 

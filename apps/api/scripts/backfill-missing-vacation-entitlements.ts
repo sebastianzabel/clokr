@@ -21,6 +21,15 @@
  * of the contract) is out of this script's scope (issue #416's own AC) — see
  * `scripts/recalculate-shift-based-leave-days.ts`.
  *
+ * Issue #435 (D-06/D-09): the base value per candidate is the ONE shared resolution — the
+ * employee's person value (`Employee.annualVacationDays`) falling back to the tenant's configured
+ * default, never a raw tenant-config column read directly — and the proposed/written `totalDays`
+ * is floored at the § 19 JArbSchG / § 3 BUrlG statutory minimum for the employee's birth date
+ * before the § 4 BUrlG Wartezeit/hire-year pro-rata decision, exactly like every other
+ * `ensureVacationEntitlementForYear` caller. The dry-run preview below calls the shared regular-
+ * entitlement helper directly — the SAME helper `ensureVacationEntitlementForYear` (the
+ * `--confirm` path) calls internally — so the two can never drift (RESEARCH.md Pitfall 4).
+ *
  * Invariants:
  *   - NEVER hard-deletes anything (Revisionssicherheit per CLAUDE.md) — this script only
  *     creates missing rows, never mutates or removes an existing one.
@@ -49,11 +58,11 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import { parseArgs } from "node:util";
 import { ensureVacationEntitlementForYear } from "../src/contexts/absence";
-import { resolveContractWorkDaysPerWeek } from "../src/contexts/absence/leave-days";
 import {
-  calculatePartTimeVacation,
-  calculateProRataVacationForHire,
-} from "../src/contexts/absence/vacation-calc";
+  resolveContractWorkDaysPerWeek,
+  resolveVacationBaseDays, // Issue #435 (D-06) — the ONE base-value resolution, same as --confirm
+} from "../src/contexts/absence/leave-days";
+import { computeRegularVacationDays } from "../src/contexts/absence/vacation-calc";
 
 const REPAIR_REASON = "Nachtrag fehlender Urlaubsanspruch";
 
@@ -177,15 +186,9 @@ export async function main(
     summary.tenantsScanned = tenants.length;
 
     for (const t of tenants) {
-      const tenantConfig = await prisma.tenantConfig.findUnique({
-        where: { tenantId: t.id },
-        select: { defaultVacationDays: true },
-      });
-      const defaultVacationDays = Number(tenantConfig?.defaultVacationDays ?? 30);
-
       const activeEmployees = await prisma.employee.findMany({
         where: { tenantId: t.id, exitDate: null },
-        select: { id: true, employeeNumber: true, hireDate: true },
+        select: { id: true, employeeNumber: true, hireDate: true, birthDate: true },
       });
       summary.employeesScanned += activeEmployees.length;
 
@@ -204,31 +207,22 @@ export async function main(
           }
 
           const workDaysPerWeek = await resolveContractWorkDaysPerWeek(prisma, emp.id, t.id);
+          // Issue #435 (D-06): the ONE base-value resolution — person value ?? tenant default ??
+          // 30 — computed ONCE per candidate and used by both the dry-run preview and --confirm,
+          // so the two can never drift on the base value either.
+          const baseDays = await resolveVacationBaseDays(prisma, emp.id, t.id);
 
           if (!args.confirm) {
-            // Dry-run preview: same formula ensureVacationEntitlementForYear uses internally
-            // (scale by workdays, then pro-rate for the hire year only) — computed here
-            // read-only, purely for the operator preview; --confirm below routes 100% through
-            // the shared helper for the actual write, so the two can never drift on the write
-            // path itself.
-            const scaledBase = calculatePartTimeVacation(
-              {
-                mondayHours: 0,
-                tuesdayHours: 0,
-                wednesdayHours: 0,
-                thursdayHours: 0,
-                fridayHours: 0,
-                saturdayHours: 0,
-                sundayHours: 0,
-                contractWorkDaysPerWeek: workDaysPerWeek,
-              },
-              5,
-              defaultVacationDays,
-            );
-            const proposedTotalDays =
-              year === emp.hireDate.getFullYear()
-                ? calculateProRataVacationForHire(scaledBase, year, emp.hireDate)
-                : scaledBase;
+            // Dry-run preview: calls the EXACT function and inputs ensureVacationEntitlementForYear
+            // (the --confirm path below) uses internally — not a hand-rolled duplicate — so the two
+            // can never drift (Issue #435, RESEARCH.md Pitfall 4).
+            const proposedTotalDays = computeRegularVacationDays({
+              year,
+              hireDate: emp.hireDate,
+              birthDate: emp.birthDate,
+              workDaysPerWeek,
+              baseDays,
+            });
 
             summary.candidates.push({
               employeeId: emp.id,
@@ -252,8 +246,9 @@ export async function main(
               t.id,
               year,
               emp.hireDate,
+              emp.birthDate,
               workDaysPerWeek,
-              defaultVacationDays,
+              baseDays,
               REPAIR_REASON,
               (entry) =>
                 tx.auditLog.create({

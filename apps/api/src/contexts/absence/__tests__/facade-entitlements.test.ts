@@ -34,6 +34,7 @@ import {
   hardDeleteEntitlementsForEmployee,
   ensureVacationEntitlementForYear,
 } from "../index";
+import { statutoryMinimumVacationDays } from "../vacation-calc";
 import type { FastifyInstance } from "fastify";
 
 describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 10)", () => {
@@ -361,6 +362,7 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
         data.tenant.id,
         freshYear,
         new Date("2024-01-01"), // hired well before freshYear -> full-scaled-amount branch
+        null, // birthDate — Issue #435, adult default
         5, // full-time
         30,
         "Automatisch angelegt bei Mitarbeiteranlage",
@@ -391,6 +393,7 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
         data.tenant.id,
         freshYear,
         new Date("2024-01-01"),
+        null, // birthDate — Issue #435, adult default
         5,
         30,
         "reason",
@@ -404,6 +407,7 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
         data.tenant.id,
         freshYear,
         new Date("2024-01-01"),
+        null, // birthDate — Issue #435, adult default
         5,
         30,
         "reason",
@@ -414,21 +418,62 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
       expect(auditCalls).toHaveLength(1); // only the first call is audited
     });
 
-    it("pro-rates by hire-month AND scales by workdays for the hire year (composition order: scale first, then pro-rate)", async () => {
+    it("scales by workdays for the hire year, then applies no pro-rata for a Jul 1 hire (Issue #435, owner Ergänzung G9 Wartezeit — composition order: scale first, then the Wartezeit decision)", async () => {
       const hireYear = year + 12;
-      const hireDate = new Date(hireYear, 6, 1); // Jul 1 -> 6/12
+      // Jul 1 — on/before the G9 Wartezeit cutoff: full value, no pro-rata (was 9 — 18 × 6/12
+      // pro-rated — before the Ergänzung).
+      const hireDate = new Date(hireYear, 6, 1);
       const result = await ensureVacationEntitlementForYear(
         app.prisma,
         data.employee.id,
         data.tenant.id,
         hireYear,
         hireDate,
-        3, // 3-day week: 3/5 * 30 = 18, then 18 * 6/12 = 9
+        null, // birthDate — Issue #435, adult default
+        3, // 3-day week: 3/5 * 30 = 18, full value (no pro-rata)
         30,
         "reason",
         async () => {},
       );
-      expect(Number(result?.entitlement.totalDays)).toBe(9);
+      expect(Number(result?.entitlement.totalDays)).toBe(18);
+    });
+
+    it("minor birthDate floors totalDays to the JArbSchG statutory minimum (Issue #435, D-09)", async () => {
+      const freshYear = year + 14;
+      const hireDate = new Date("2024-01-01"); // hired well before freshYear -> full-scaled branch
+      const birthDate = new Date(Date.UTC(2012, 5, 15)); // minor at freshYear's 1 January
+      const expected = statutoryMinimumVacationDays(birthDate, freshYear, 5);
+      const result = await ensureVacationEntitlementForYear(
+        app.prisma,
+        data.employee.id,
+        data.tenant.id,
+        freshYear,
+        hireDate,
+        birthDate,
+        5, // full-time
+        20, // base below the statutory minimum for this age band -> floor applies
+        "reason",
+        async () => {},
+      );
+      expect(Number(result?.entitlement.totalDays)).toBe(expected);
+    });
+
+    it("birthDate null floors totalDays to the § 3 BUrlG adult minimum (Issue #435, D-09)", async () => {
+      const freshYear = year + 15;
+      const hireDate = new Date("2024-01-01");
+      const result = await ensureVacationEntitlementForYear(
+        app.prisma,
+        data.employee.id,
+        data.tenant.id,
+        freshYear,
+        hireDate,
+        null, // birthDate
+        5, // full-time
+        10, // base below the § 3 BUrlG floor of 20 at a 5-day week
+        "reason",
+        async () => {},
+      );
+      expect(Number(result?.entitlement.totalDays)).toBe(20);
     });
 
     it("under two genuinely concurrent calls for the same employee+year, only ONE row exists and only ONE CREATE audit fires — no duplicate row, no duplicate audit", async () => {
@@ -446,6 +491,7 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
           data.tenant.id,
           freshYear,
           new Date("2024-01-01"),
+          null, // birthDate — Issue #435, adult default
           5,
           30,
           "concurrent-a",
@@ -457,6 +503,7 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
           data.tenant.id,
           freshYear,
           new Date("2024-01-01"),
+          null, // birthDate — Issue #435, adult default
           5,
           30,
           "concurrent-b",

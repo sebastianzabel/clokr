@@ -204,6 +204,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/api/special-leave.ts": "abwesenheiten", // writes SpecialLeaveRule
   "src/contexts/absence/api/vocational-school-pattern.ts": "abwesenheiten", // writes EmployeeVocationalSchoolPattern
   "src/contexts/absence/api/vocational-school.ts": "abwesenheiten", // writes Absence
+  "src/contexts/absence/age-at-date.ts": "abwesenheiten", // Issue #435 — zero-import ageAtDate leaf (extracted from jarbschg.ts), consumed by vacation-calc.ts's statutory-minimum floor
   "src/contexts/absence/plugins/carryover-warning.ts": "abwesenheiten", // BUrlG carry-over expiry reminders over LeaveEntitlement
   "src/contexts/absence/plugins/vocational-school-generator.ts": "abwesenheiten", // cron wrapper around utils/vocational-school-generator.ts's Absence generation
   "src/contexts/absence/bs-slot-resolver.ts": "abwesenheiten", // Berufsschule (VOCATIONAL_SCHOOL Absence) time-slot resolution

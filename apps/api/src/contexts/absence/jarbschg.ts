@@ -35,6 +35,11 @@ import {
   bsUnterrichtsMinutesByDateForIsoWeek,
 } from "../working-time-account"; // Phase 101B
 import { BS_PATTERN_ORDER_BY } from "./vocational-school-pattern-order.js";
+// Issue #435 — ageAtDate moved to a zero-import leaf (D-07/D-08) so vacation-calc.ts can use it
+// without importing this file's "../working-time-account" dependency (RESEARCH.md Pitfall 1).
+// Re-exported here verbatim for existing callers (e.g. vocational-school-jarbschg.test.ts).
+import { ageAtDate } from "./age-at-date";
+export { ageAtDate } from "./age-at-date";
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -80,29 +85,6 @@ const SOFT_WARN_MESSAGE =
   "JArbSchG-Empfehlung: Reguläre Arbeit am Berufsschultag mit mehr als 5 UStd (225 Min) wird für Azubis nicht empfohlen.";
 
 // ── Date helpers ─────────────────────────────────────────────────────────────
-
-/**
- * Returns whole years between `birthDate` and `atDate`, ignoring sub-day precision.
- *
- * UTC-only — TZ-agnostic by design (the JArbSchG age gate operates on the calendar
- * date of the work shift; the choice of TZ for that date is the route's problem, not
- * this helper's).
- *
- * Birthday EXACTLY on `atDate` returns the new age (whole-year boundary inclusive).
- * Source equivalent to date-fns `differenceInYears`. No external dep — `date-fns`
- * (plain) is NOT installed in @clokr/api (verified in package.json).
- */
-export function ageAtDate(birthDate: Date, atDate: Date): number {
-  const by = birthDate.getUTCFullYear();
-  const bm = birthDate.getUTCMonth();
-  const bd = birthDate.getUTCDate();
-  const ay = atDate.getUTCFullYear();
-  const am = atDate.getUTCMonth();
-  const ad = atDate.getUTCDate();
-  let years = ay - by;
-  if (am < bm || (am === bm && ad < bd)) years--;
-  return years;
-}
 
 /** Compute [start, next) UTC midnight range for the calendar date of `date`. */
 function dateRangeUtc(date: Date): { start: Date; next: Date } {

@@ -14,7 +14,10 @@ describe("Issue #445 finding 1 — next-year VACATION entitlement (D-04/D-05/D-0
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
 
-  async function mkEmployee(label: string): Promise<string> {
+  async function mkEmployee(
+    label: string,
+    hireDate = new Date(Date.UTC(2024, 0, 1)),
+  ): Promise<string> {
     const uid = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const user = await app.prisma.user.create({
       data: {
@@ -31,7 +34,7 @@ describe("Issue #445 finding 1 — next-year VACATION entitlement (D-04/D-05/D-0
         employeeNumber: `NYVE-${label}-${uid}`,
         firstName: "T",
         lastName: "T",
-        hireDate: new Date(Date.UTC(2024, 0, 1)),
+        hireDate,
       },
     });
     await app.prisma.workSchedule.create({
@@ -45,7 +48,7 @@ describe("Issue #445 finding 1 — next-year VACATION entitlement (D-04/D-05/D-0
         fridayHours: 8,
         saturdayHours: 0,
         sundayHours: 0,
-        validFrom: new Date(Date.UTC(2024, 0, 1)),
+        validFrom: hireDate,
       },
     });
     await app.prisma.overtimeAccount.create({ data: { employeeId: employee.id, balanceHours: 0 } });
@@ -232,7 +235,11 @@ describe("Issue #445 finding 1 — next-year VACATION entitlement (D-04/D-05/D-0
   });
 
   it("scenario 5: a human-written 0 via PUT /settings/vacation never heals", async () => {
-    const employeeId = await mkEmployee("s5");
+    // Issue #435 (D-10): a totalDays write below the statutory minimum is now rejected. Hired
+    // AFTER the queried year keeps the statutory threshold at 0 (not-yet-employed guard), so an
+    // explicit 0 for 2027 is still a legal write — this test is about the "never heals"
+    // human-write detection, not about the number itself.
+    const employeeId = await mkEmployee("s5", new Date(Date.UTC(2028, 0, 1)));
 
     const putRes = await app.inject({
       method: "PUT",
