@@ -257,10 +257,9 @@ export async function recalculateCarryOver(
   });
   if (!prev) return;
 
-  const remaining = Math.max(
-    0,
-    Number(prev.totalDays) + Number(prev.carriedOverDays) - Number(prev.usedDays),
-  );
+  // Issue #445 (D-14): the effective (FIFO) remainder — an expired, untaken carry never
+  // returns the following year.
+  const remaining = await carryOverRemainder(prisma, prev, tenantId);
 
   if (options.createIfMissing === false) {
     const existing = await prisma.leaveEntitlement.findUnique({
@@ -1156,4 +1155,98 @@ export async function healEntitlementUsedDays(
     createIfMissing: false,
   });
   return { usedDays: actualUsed, changed: true };
+}
+
+// ── Issue #445 — carry-over FIFO and expiry (D-12..D-15) ────────────────────────────────────────
+
+/**
+ * Issue #445 (D-12/D-13) — the portion of a `LeaveEntitlement` row's carried-over (prior-year)
+ * days that still counts towards the balance as of `referenceDate`.
+ *
+ * Legal basis: BUrlG § 7 Abs. 3 — carried-over days must be granted AND taken by the deadline;
+ * EuGH C-684/16 (Hinweispflicht) — they lapse only when the employer has documented a warning
+ * (`CARRYOVER_WARNED` AuditLog row, `hinweisIssued`); KHS C-214/10, Schultz-Hoff C-350/06. Days
+ * taken before the deadline are consumed from the carry-over FIRST (FIFO, Tilgung der älteren
+ * Schuld analog § 366 Abs. 2 BGB — see docs/burlg-carryover.md "Carry-over priority") — only the
+ * part NOT taken by the deadline lapses:
+ *   - `carry <= 0` → 0 (nothing to protect).
+ *   - no deadline configured, OR `referenceDate` is on/before the deadline, OR no Hinweis was
+ *     issued → the full carry (not yet due, or not lawfully forfeitable).
+ *   - otherwise → `min(carry, takenUpToDeadline)`, where `takenUpToDeadline` is this row's
+ *     counted (vacation-aware) days inside `[1 Jan of row.year, min(deadline, 31 Dec of
+ *     row.year)]` (P-18 — a day taken in the FOLLOWING year belongs to that year's own row and
+ *     never consumes THIS row's carry), via {@link countedLeaveDaysWithin} — the same dispatch
+ *     used throughout this file.
+ *
+ * Example (Issue #445): totalDays 10, carry 5, 5 days taken in February, deadline 31 March,
+ * warned — a request starting 19 April sees `10` available days (not `5`): the 5 already-taken
+ * February days are charged against the carry, which is then fully consumed and causes no further
+ * reduction of `totalDays`.
+ */
+export async function effectiveCarryOverDays(
+  db: DbClient,
+  row: {
+    employeeId: string;
+    leaveTypeId: string;
+    year: number;
+    carriedOverDays: unknown;
+    carryOverDeadline: Date | null;
+    tenantId: string;
+  },
+  referenceDate: Date,
+  hinweisIssued: boolean,
+): Promise<number> {
+  const carry = Number(row.carriedOverDays);
+  if (carry <= 0) return 0;
+  if (!row.carryOverDeadline) return carry; // no expiry configured
+  if (referenceDate <= row.carryOverDeadline) return carry; // deadline not yet reached
+  if (!hinweisIssued) return carry; // EuGH C-684/16: no lapse without a documented warning
+
+  const yearEnd = Date.UTC(row.year, 11, 31, 23, 59, 59);
+  const windowEnd = new Date(Math.min(row.carryOverDeadline.getTime(), yearEnd));
+  const { requestDays, section9CreditDays } = await countedLeaveDaysWithin(db, {
+    employeeId: row.employeeId,
+    tenantId: row.tenantId,
+    leaveTypeIds: [row.leaveTypeId],
+    from: new Date(Date.UTC(row.year, 0, 1)),
+    to: windowEnd,
+  });
+  const takenUpToDeadline = Math.max(0, round2(requestDays - section9CreditDays));
+  return Math.min(carry, takenUpToDeadline);
+}
+
+/**
+ * Issue #445 (D-14, P-19) — the previous year's remainder to carry forward into `year`:
+ * `prev.totalDays + effectiveCarryOverDays(prev, 31 Dec of prev.year) − prev.usedDays`, clamped
+ * at 0. Unlike the pre-#445 formula (`totalDays + carriedOverDays - usedDays`), this uses the
+ * EFFECTIVE carry — so an expired, untaken carry never comes back the following year (D-14's own
+ * issue example: 30 + 5 carry lapsed, 10 used → remainder 20, not 25). The Hinweis flag is read
+ * from the PREVIOUS row's own `CARRYOVER_WARNED` AuditLog entry — the warning is always issued
+ * against the row whose carry-over is at risk of expiring.
+ */
+export async function carryOverRemainder(
+  db: DbClient,
+  prev: {
+    id: string;
+    employeeId: string;
+    leaveTypeId: string;
+    year: number;
+    totalDays: unknown;
+    usedDays: unknown;
+    carriedOverDays: unknown;
+    carryOverDeadline: Date | null;
+  },
+  tenantId: string,
+): Promise<number> {
+  const hinweisIssued =
+    (await db.auditLog.count({
+      where: { action: "CARRYOVER_WARNED", entity: "LeaveEntitlement", entityId: prev.id },
+    })) > 0;
+  const effectiveCarry = await effectiveCarryOverDays(
+    db,
+    { ...prev, tenantId },
+    new Date(Date.UTC(prev.year, 11, 31, 23, 59, 59)),
+    hinweisIssued,
+  );
+  return Math.max(0, round2(Number(prev.totalDays) + effectiveCarry - Number(prev.usedDays)));
 }
