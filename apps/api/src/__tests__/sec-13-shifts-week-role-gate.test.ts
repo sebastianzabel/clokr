@@ -79,9 +79,9 @@ describe("GET /api/v1/shifts/week — role gate (#267)", () => {
     });
     sickColleagueId = sickColleague.id;
 
-    // (b) SICK LeaveType + an APPROVED request for her, covering TARGET_DAY_ISO. Only the
-    // APPROVED status produces a bucket (`getApprovedLeaveOverlapping` filters on it) — a
-    // PENDING request here would make Test 1 silently vacuous.
+    // (b) SICK LeaveType + an APPROVED request for her, covering TARGET_DAY_ISO. Only an
+    // effective status produces a bucket (`getActiveLeaveOverlapping` reads APPROVED and
+    // CANCELLATION_REQUESTED) — a PENDING request here would make Test 1 silently vacuous.
     const sickType = await app.prisma.leaveType.create({
       data: { tenantId: data.tenant.id, ...leaveTypeFields("SICK"), color: "#EF4444" },
     });

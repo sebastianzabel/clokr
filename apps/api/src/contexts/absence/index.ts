@@ -60,7 +60,6 @@ export type { EffectiveLeaveStatus } from "./effective-leave-statuses";
 
 // ── LeaveRequest (plan 13, A1-A3/A7-A10/A9 + shift-protection + 3 compliance — closing model) ──
 export {
-  getApprovedLeaveOverlapping,
   getActiveLeaveOverlapping,
   getCalendarLeaveOverlapping,
   getOwnPendingLeaveRequests,
@@ -77,7 +76,6 @@ export {
   archiveLeaveRequestsBefore,
 } from "./facade/leave-requests";
 export type {
-  ApprovedLeaveOverlap,
   ActiveLeaveOverlap,
   CalendarLeaveOverlap,
   StalePendingLeaveRequestForReminder,

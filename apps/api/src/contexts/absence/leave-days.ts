@@ -25,6 +25,7 @@ import { ensureVacationEntitlementForYear } from "./facade/entitlements";
 import { getLeaveTypeByCode } from "./facade/leave-types";
 import { writeEntitlementAudit } from "./entitlement-audit"; // Issue #445
 import { listConfirmedSection9CreditsByRequest } from "./section9-credit-days"; // Issue #445 (D-10)
+import { EFFECTIVE_LEAVE_STATUSES } from "./effective-leave-statuses"; // Issue #446 (D-01)
 
 // Prisma client shape shared by `app.prisma` (top-level) and the `tx` handle inside
 // `$transaction(async (tx) => ...)` — mirrors ./api/leave.ts's own private DbClient alias.
@@ -1036,7 +1037,7 @@ export async function countedLeaveDaysWithin(
       deletedAt: null,
       employee: { tenantId },
       leaveTypeId: { in: leaveTypeIds },
-      status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
+      status: { in: [...EFFECTIVE_LEAVE_STATUSES] },
       startDate: { lte: to },
       endDate: { gte: from },
     },

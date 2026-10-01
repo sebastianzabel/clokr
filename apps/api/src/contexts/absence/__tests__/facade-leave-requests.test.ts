@@ -1,18 +1,22 @@
 /**
  * Phase 100B Plan 13 (Wave 5, LAST conversion plan) — focused integration test for the
- * Abwesenheiten `LeaveRequest` facade (A1-A3, A7a-c, A8, A9, A10a-c, shift-protection, and the
+ * Abwesenheiten `LeaveRequest` facade (A2-A3, A7a-c, A8, A9, A10a-c, shift-protection, and the
  * three compliance functions).
  *
- * The centrepiece is the A1/A2/A3 three-set membership test below: it is what actually keeps the
- * three leave-status sets from being silently merged, not this file's prose or the facade module's
- * own docblock. It was seen RED three times — once per function, each time by widening or
- * narrowing that function's own status set by one value — before being committed green; all three
- * transcripts are quoted verbatim in this plan's own SUMMARY.
+ * Issue #446 (D-02): A1 (`getApprovedLeaveOverlapping`, the APPROVED-only "Soll-reduction set")
+ * was retired — its premise ("a day only stops counting toward Soll once leave is APPROVED")
+ * contradicted CLAUDE.md § Leave Cancellation Flow ("leave remains active ... until cancellation
+ * is approved"), and keeping it next to an identical A2 would have been two names for one
+ * question. This file now guards TWO sets, not three: A2 (`getActiveLeaveOverlapping`, EFFECTIVE
+ * = `EFFECTIVE_LEAVE_STATUSES` = APPROVED + CANCELLATION_REQUESTED — Soll reduction, presence,
+ * roster, scheduling conflicts) and A3 (`getCalendarLeaveOverlapping`, A2's set + PENDING —
+ * display only, never a Soll input). The centrepiece is the A2/A3 membership test below: it is
+ * what actually keeps the two leave-status sets from being silently merged, not this file's prose
+ * or the facade module's own docblock.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import {
-  getApprovedLeaveOverlapping,
   getActiveLeaveOverlapping,
   getCalendarLeaveOverlapping,
   getOwnPendingLeaveRequests,
@@ -27,6 +31,7 @@ import {
   anonymizeLeaveRequestsForEmployee,
   hardDeleteLeaveRequestsForEmployee,
   archiveLeaveRequestsBefore,
+  EFFECTIVE_LEAVE_STATUSES,
 } from "../index";
 import type { FastifyInstance } from "fastify";
 
@@ -55,9 +60,9 @@ describe("Abwesenheiten facade — LeaveRequest (Phase 100B Plan 13)", () => {
     await closeTestApp();
   });
 
-  // ── A1/A2/A3 — the three-status-set membership test (the actual guard, not the docblock) ──────
+  // ── A2/A3 — the two-status-set membership test (the actual guard, not the docblock) ────────────
 
-  describe("getApprovedLeaveOverlapping (A1) vs getActiveLeaveOverlapping (A2) vs getCalendarLeaveOverlapping (A3)", () => {
+  describe("getActiveLeaveOverlapping (A2) vs getCalendarLeaveOverlapping (A3)", () => {
     // Window: 2028-03-01..2028-03-10. Far enough in the future to never collide with a real
     // fixture; deliberately NOT `new Date()`-relative so the fixture reads the same on any day.
     const windowFrom = utcDate(2028, 3, 1);
@@ -138,48 +143,59 @@ describe("Abwesenheiten facade — LeaveRequest (Phase 100B Plan 13)", () => {
       tenantId: data.tenant.id,
     });
 
-    it("A1 (getApprovedLeaveOverlapping) returns ONLY the APPROVED row — exact set", async () => {
-      const rows = await getApprovedLeaveOverlapping(app.prisma, scope(), windowFrom, windowTo);
+    it("A2 (getActiveLeaveOverlapping) returns EXACTLY {APPROVED, CANCELLATION_REQUESTED} — exact id set, matches EFFECTIVE_LEAVE_STATUSES", async () => {
+      const rows = await getActiveLeaveOverlapping(app.prisma, scope(), windowFrom, windowTo);
       const ids = rows.map((r) => r.id).sort();
-      expect(ids).toEqual([approvedId].sort());
-      expect(ids).not.toContain(cancellationRequestedId);
+      expect(ids).toEqual([approvedId, cancellationRequestedId].sort());
       expect(ids).not.toContain(pendingId);
       expect(ids).not.toContain(rejectedId);
       expect(ids).not.toContain(softDeletedApprovedId);
+      const statuses = rows.map((r) => r.status).sort();
+      expect(statuses).toEqual([...EFFECTIVE_LEAVE_STATUSES].sort());
     });
 
-    it("A2 (getActiveLeaveOverlapping) returns EXACTLY {APPROVED, CANCELLATION_REQUESTED} — exact set", async () => {
+    it("A2's select carries the superset every Arbeitszeitkonto/Karenz caller needs", async () => {
       const rows = await getActiveLeaveOverlapping(app.prisma, scope(), windowFrom, windowTo);
-      const employees = rows.map((r) => r.employeeId);
-      expect(employees).toHaveLength(2);
-      const statuses = rows.map((r) => r.status).sort();
-      expect(statuses).toEqual(["APPROVED", "CANCELLATION_REQUESTED"].sort());
+      const approvedRow = rows.find((r) => r.id === approvedId);
+      expect(approvedRow).toBeDefined();
+      expect(approvedRow).toMatchObject({
+        id: approvedId,
+        leaveTypeId: data.vacationType.id,
+        attestPresent: expect.any(Boolean),
+        attestValidFrom: null,
+        attestValidTo: null,
+      });
+      expect(approvedRow?.leaveType.code).toBeDefined();
+      expect(approvedRow?.leaveType.name).toBeDefined();
     });
 
     it("A3 (getCalendarLeaveOverlapping) returns EXACTLY {APPROVED, CANCELLATION_REQUESTED, PENDING} — exact set", async () => {
       const rows = await getCalendarLeaveOverlapping(app.prisma, scope(), windowFrom, windowTo);
       expect(rows).toHaveLength(3);
       const statuses = rows.map((r) => r.status).sort();
-      expect(statuses).toEqual(["APPROVED", "CANCELLATION_REQUESTED", "PENDING"].sort());
+      expect(statuses).toEqual([...EFFECTIVE_LEAVE_STATUSES, "PENDING"].sort());
     });
 
-    it("none of A1/A2/A3 ever returns the soft-deleted or the REJECTED row", async () => {
-      const [a1, a2, a3] = await Promise.all([
-        getApprovedLeaveOverlapping(app.prisma, scope(), windowFrom, windowTo),
+    it("neither A2 nor A3 ever returns the soft-deleted or the REJECTED row", async () => {
+      // A2 carries `id`; A3 (CalendarLeaveOverlap, display-only) deliberately does not — checked
+      // via its own fields instead of a shared `id`-shaped cast.
+      const [a2, a3] = await Promise.all([
         getActiveLeaveOverlapping(app.prisma, scope(), windowFrom, windowTo),
         getCalendarLeaveOverlapping(app.prisma, scope(), windowFrom, windowTo),
       ]);
-      for (const rows of [a1, a2, a3]) {
-        const ids = "id" in (rows[0] ?? {}) ? (rows as Array<{ id: string }>).map((r) => r.id) : [];
-        expect(ids).not.toContain(softDeletedApprovedId);
-        expect(ids).not.toContain(rejectedId);
-      }
+      const a2Ids = a2.map((r) => r.id);
+      expect(a2Ids).not.toContain(softDeletedApprovedId);
+      expect(a2Ids).not.toContain(rejectedId);
+
+      const a3StartTimes = a3.map((r) => r.startDate.getTime());
+      expect(a3StartTimes).not.toContain(utcDate(2028, 3, 6).getTime()); // soft-deleted APPROVED row
+      expect(a3StartTimes).not.toContain(utcDate(2028, 3, 5).getTime()); // REJECTED row
     });
   });
 
-  // ── A9 vs A1 — startDate-IN-WINDOW is not overlap ───────────────────────────────────────────────
+  // ── A9 vs A2 — startDate-IN-WINDOW is not overlap ───────────────────────────────────────────────
 
-  describe("getLeaveStartingInWindow (A9) vs getApprovedLeaveOverlapping (A1) — start vs overlap", () => {
+  describe("getLeaveStartingInWindow (A9) vs getActiveLeaveOverlapping (A2) — start vs overlap", () => {
     const windowFrom = utcDate(2028, 5, 10);
     const windowTo = utcDate(2028, 5, 20);
     let straddlingId: string;
@@ -199,8 +215,8 @@ describe("Abwesenheiten facade — LeaveRequest (Phase 100B Plan 13)", () => {
       straddlingId = straddling.id;
     });
 
-    it("A1 (overlap) returns the straddling request", async () => {
-      const rows = await getApprovedLeaveOverlapping(
+    it("A2 (overlap) returns the straddling request", async () => {
+      const rows = await getActiveLeaveOverlapping(
         app.prisma,
         { kind: "employee", employeeId: data.employee.id, tenantId: data.tenant.id },
         windowFrom,
@@ -358,15 +374,16 @@ describe("Abwesenheiten facade — LeaveRequest (Phase 100B Plan 13)", () => {
       );
       const employeeIds = rows.map((r) => r.employeeId);
       expect(employeeIds.length).toBeGreaterThan(0);
-      // The APPROVED row must not appear — verified by re-querying A1 on the same window and
-      // confirming the two functions disagree on this row.
-      const a1Rows = await getApprovedLeaveOverlapping(
+      // The APPROVED row must not appear — verified by re-querying A2 on the same window and
+      // confirming the two functions disagree on this row (the APPROVED row IS in A2 too, per
+      // module header — the assertion is about getPendingLeaveForShiftProtection's own exclusion).
+      const a2Rows = await getActiveLeaveOverlapping(
         app.prisma,
         { kind: "employee", employeeId: data.employee.id, tenantId: data.tenant.id },
         windowFrom,
         windowTo,
       );
-      expect(a1Rows.some((r) => r.id === approvedId)).toBe(true);
+      expect(a2Rows.some((r) => r.id === approvedId)).toBe(true);
       expect(pendingId).toBeDefined();
     });
   });
