@@ -18,7 +18,7 @@ import {
 import { getWorkedEntriesInRange } from "../time-tracking"; // Phase 71b (issue #71) — T2, the work-location rule's entry half
 import { countShiftBasedLeaveDays, leaveDaysPerWeek } from "./vacation-calc"; // Phase 107 (D-04/D-09), Issue #417; leaveDaysPerWeek Issue #429 (D-01/D-02) — the shared per-week kernel, Phase 430-06
 import { preserveCarryOverDeadline } from "./illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
-import { getApprovedLeaveOverlapping } from "./facade/leave-requests"; // Phase 430 (D-08) — this file is INSIDE contexts/absence, no boundary crossing
+import { getActiveLeaveOverlapping } from "./facade/leave-requests"; // Phase 430 (D-08) — this file is INSIDE contexts/absence, no boundary crossing
 import type { LeaveEntitlement } from "@clokr/db";
 import { computeRegularVacationDays } from "./vacation-calc";
 import { ensureVacationEntitlementForYear } from "./facade/entitlements";
@@ -171,8 +171,8 @@ const GERMAN_WEEKDAY_ABBR = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"] as const;
  * two different, individually correct `holidays` arguments — not a second day-counting
  * implementation.
  *
- * Status scope: APPROVED only (via `getApprovedLeaveOverlapping`), matching the saldo side's own
- * leave-row scope — no PENDING-vs-APPROVED divergence to parameterise.
+ * Status scope: effective leave (APPROVED + CANCELLATION_REQUESTED, via
+ * `getActiveLeaveOverlapping`) — the same set the saldo side reads since Issue #446.
  *
  * Leave-type scope (Phase 430-06, decided per PR review): includes EVERY approved leave type —
  * VACATION, SICK, SICK_CHILD, SPECIAL, etc. — regardless of Issue #429's `leaveCreditBasisForCode()`
@@ -195,7 +195,7 @@ export async function getShiftBasedLeaveDaysForWeek(
   weekEnd: Date,
 ): Promise<{ days: number; weekdays: string[] }> {
   const [overlapping, contractWorkDaysPerWeek, holidays] = await Promise.all([
-    getApprovedLeaveOverlapping(
+    getActiveLeaveOverlapping(
       prisma,
       { kind: "employee", employeeId, tenantId },
       weekStart,

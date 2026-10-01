@@ -52,8 +52,7 @@ import {
 import {
   getEntitlementsForEmployee, // Phase 100B Plan 10 — A13
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
-  getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
-  getActiveLeaveOverlapping, // Phase 100B Plan 13 — A2
+  getActiveLeaveOverlapping, // Phase 100B Plan 13 — A2 (Issue #446 D-02: A1 retired, merged into A2)
   getCalendarLeaveOverlapping, // Phase 100B Plan 13 — A3
   getOwnPendingLeaveRequests, // Phase 100B Plan 13 — A7a
   countPendingApprovals, // Phase 100B Plan 13 — A8
@@ -1344,11 +1343,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
             (openItemsHolidaysByEmployee.get(employeeId) ?? new Map<string, string>()).keys(),
           );
 
-          // Approved leave + Absences in the configured window cover the day too
-          // (mirrors overtime.ts close-month/status logic — a day is only "missing"
-          // if no entry, no holiday, no leave, no absence covers it)
-          // Phase 100B Plan 13 — A1, contexts/absence facade.
-          const approvedLeaveInWindow = await getApprovedLeaveOverlapping(
+          // Effective leave (APPROVED or CANCELLATION_REQUESTED, Issue #446) + Absences in the
+          // configured window cover the day too (mirrors overtime.ts close-month/status logic — a
+          // day is only "missing" if no entry, no holiday, no leave, no absence covers it)
+          // Phase 100B Plan 13 — A2, contexts/absence facade.
+          const approvedLeaveInWindow = await getActiveLeaveOverlapping(
             app.prisma,
             employeeScopeFor(access, { employeeId }),
             windowStart,

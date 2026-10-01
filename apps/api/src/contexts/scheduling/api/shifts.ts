@@ -38,8 +38,7 @@ import {
   listActiveBsPatternsForWeek, // Phase 100B Plan 11 — A21a
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
   getRosterSollAbsencesOverlapping, // Phase 100B Plan 12 — A5 (D-09, NEVER merge with A4)
-  getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
-  getActiveLeaveOverlapping, // Phase 100B Plan 13 — A2
+  getActiveLeaveOverlapping, // Phase 100B Plan 13 — A2 (Issue #446 D-02: A1 retired, merged into A2)
   mondayOfWeekUtc, // Phase 107 (D-14) — same Monday-cutting primitive as :709-718
   recalcProvisionalLeaveForShiftChange,
   type RecalcDeps,
@@ -291,10 +290,10 @@ async function findShiftConflict(
   const day = new Date(isoDate + "T00:00:00Z");
   const scope = employeeScopeFor(access, { employeeId });
 
-  // Check APPROVED LeaveRequest first (vacation/sonder) — Phase 100B Plan 13 (A1), contexts/absence
-  // facade. Same status set as A1 (APPROVED only, NOT A2's CANCELLATION_REQUESTED-inclusive set —
-  // read and confirmed, per H2), just from === to.
-  const [leave] = await getApprovedLeaveOverlapping(prisma, scope, day, day);
+  // Check effective LeaveRequest first (vacation/sonder) — Phase 100B Plan 13 (A2), contexts/absence
+  // facade. Since Issue #446 (D-02) this reads the effective set (APPROVED or
+  // CANCELLATION_REQUESTED) — a cancellation-pending leave still blocks the day, just from === to.
+  const [leave] = await getActiveLeaveOverlapping(prisma, scope, day, day);
   if (leave) {
     return {
       kind: "leave",
@@ -1237,7 +1236,7 @@ export async function shiftRoutes(app: FastifyInstance) {
       //   - `employees` below is the "plannable staff" list — WHICH employees this manager may
       //     see/assign at all, a person-master-data question (D-12: Stammsalon-TODAY OR an
       //     active-DEPLOYMENT-TODAY row), not a shift-instance question — `resolvePersonScopedEmployeeIds`.
-      //   - The 2 `employeeScopeFor(access)` sites feed `getApprovedLeaveOverlapping`/
+      //   - The 2 `employeeScopeFor(access)` sites feed `getActiveLeaveOverlapping`/
       //     `getAbsencesOverlapping` (D-10, Stammsalon-only, no entry-salon fallback) — narrowed via
       //     `resolveStammsalonScopedEmployeeIds` at the week's Monday, fed through a `scopedAccess`.
       const weekScopeReach = await resolveAccessReach(app.prisma, access, "shift:read:ZUGEWIESEN");
@@ -1360,8 +1359,8 @@ export async function shiftRoutes(app: FastifyInstance) {
           orderBy: { lastName: "asc" },
         }),
         listLeaveTypes(app.prisma, tenantId),
-        // Phase 100B Plan 13 — A1, contexts/absence facade.
-        getApprovedLeaveOverlapping(
+        // Phase 100B Plan 13 — A2, contexts/absence facade (Issue #446 D-02: A1 retired).
+        getActiveLeaveOverlapping(
           app.prisma,
           weekLeaveAbsenceScopedIds === "all"
             ? employeeScopeFor(access)
@@ -3065,8 +3064,8 @@ export async function shiftRoutes(app: FastifyInstance) {
               template: { select: { id: true, name: true, startTime: true, endTime: true } },
             },
           }),
-          // Phase 100B Plan 13 — A1, contexts/absence facade.
-          getApprovedLeaveOverlapping(
+          // Phase 100B Plan 13 — A2, contexts/absence facade (Issue #446 D-02: A1 retired).
+          getActiveLeaveOverlapping(
             app.prisma,
             generateWeekPersonScopedIds === "all"
               ? employeeScopeFor(access)
@@ -3497,8 +3496,8 @@ export async function shiftRoutes(app: FastifyInstance) {
             },
             orderBy: [{ date: "asc" }, { startTime: "asc" }],
           }),
-          // Phase 100B Plan 13 — A1, contexts/absence facade.
-          getApprovedLeaveOverlapping(
+          // Phase 100B Plan 13 — A2, contexts/absence facade (Issue #446 D-02: A1 retired).
+          getActiveLeaveOverlapping(
             app.prisma,
             copyWeekPersonScopedIds === "all"
               ? employeeScopeFor(access)

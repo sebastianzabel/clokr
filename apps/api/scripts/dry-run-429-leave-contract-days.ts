@@ -10,7 +10,8 @@
  * is immutable even to admins.
  *
  * This script lists, for every SHIFT_BASED employee's non-superseded MONTHLY SaldoSnapshot
- * whose period overlaps at least one APPROVED LeaveRequest, the STORED `expectedMinutes`/
+ * whose period overlaps at least one effective (APPROVED or CANCELLATION_REQUESTED, Issue #446)
+ * LeaveRequest, the STORED `expectedMinutes`/
  * `balanceMinutes` next to what `closeEmployeeMonth()` (the Issue #429 formula, as it stands
  * on this branch) RECOMPUTES for the same month, and the delta between them. Whoever owns
  * payroll gets a concrete, per-employee/per-month list of which closed months would now
@@ -68,7 +69,7 @@ import {
 import { getValidWorkedEntriesInRange } from "../src/contexts/time-tracking";
 import { getShiftsInRange } from "../src/contexts/scheduling";
 import {
-  getApprovedLeaveOverlapping,
+  getActiveLeaveOverlapping,
   getAbsencesOverlapping,
   loadBsSlotOverrides,
 } from "../src/contexts/absence";
@@ -277,7 +278,7 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
             monthFirstDay,
             monthLastDay,
           ),
-          getApprovedLeaveOverlapping(
+          getActiveLeaveOverlapping(
             prisma,
             { kind: "employee", employeeId: emp.id, tenantId: emp.tenantId },
             monthStart,
