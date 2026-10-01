@@ -24,8 +24,10 @@ import {
   NEUTRAL_CHIP_LABEL,
   SICK_CODES,
   resolveDayDetailRows,
+  isDrawnInCalendar,
   type ChipEntry,
   type DayDetailEntry,
+  type DrawableEntry,
 } from "../team-calendar-visibility";
 import { showsBurlgSection7Notice } from "../leave-review";
 
@@ -248,5 +250,42 @@ describe("resolveDayDetailRows (#265)", () => {
 
   it("an empty day yields no rows (the sheet's empty state is reachable)", () => {
     expect(resolveDayDetailRows([], true)).toEqual([]);
+  });
+});
+
+// ── Issue #446 (D-04) — isDrawnInCalendar: is this absence bar drawn at all? ───────────────────
+describe("isDrawnInCalendar", () => {
+  function entry(over: Partial<DrawableEntry> = {}): DrawableEntry {
+    return { isHoliday: false, isOwn: false, status: "APPROVED", ...over };
+  }
+
+  it("own PENDING entry is drawn — an employee sees their own pending request", () => {
+    expect(isDrawnInCalendar(entry({ isOwn: true, status: "PENDING" }))).toBe(true);
+  });
+
+  it("colleague's APPROVED entry is drawn", () => {
+    expect(isDrawnInCalendar(entry({ isOwn: false, status: "APPROVED" }))).toBe(true);
+  });
+
+  it("colleague's CANCELLATION_REQUESTED entry is drawn (new, Issue #446)", () => {
+    expect(isDrawnInCalendar(entry({ isOwn: false, status: "CANCELLATION_REQUESTED" }))).toBe(true);
+  });
+
+  it("colleague's PENDING entry is NOT drawn — not yet decided", () => {
+    expect(isDrawnInCalendar(entry({ isOwn: false, status: "PENDING" }))).toBe(false);
+  });
+
+  it("colleague's REJECTED entry is NOT drawn", () => {
+    expect(isDrawnInCalendar(entry({ isOwn: false, status: "REJECTED" }))).toBe(false);
+  });
+
+  it("colleague's CANCELLED entry is NOT drawn", () => {
+    expect(isDrawnInCalendar(entry({ isOwn: false, status: "CANCELLED" }))).toBe(false);
+  });
+
+  it("any isHoliday: true entry is NOT drawn through this predicate, even if isOwn", () => {
+    expect(isDrawnInCalendar(entry({ isHoliday: true, isOwn: true, status: "APPROVED" }))).toBe(
+      false,
+    );
   });
 });

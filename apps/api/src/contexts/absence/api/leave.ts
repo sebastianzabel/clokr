@@ -9,7 +9,9 @@ import {
   mondayOfWeekUtc, // Phase 430 Plan 04 (D-15) — the one shared Monday derivation
 } from "../vacation-calc"; // Phase 107 (D-04/D-09)
 import { selfHealUsedDays, loadVacationTypeMeta } from "../leave-self-heal";
-import { computeAffectedMonths } from "../correction-lock";
+import { computeAffectedMonths, closedMonthLeaveMessage } from "../correction-lock"; // Issue #446 (D-07/D-08)
+import { findClosedMonthsInRange } from "../closed-month-guard"; // Issue #446 (D-07)
+import { EFFECTIVE_LEAVE_STATUSES } from "../effective-leave-statuses"; // Issue #446 (D-04)
 // Phase 101B (Issue #101, D-11 Welle absence): lifted out of this file into ./leave-days.ts.
 // resolveLeaveDays/getHolidayMap/deductVacationDays/reverseVacationDays are re-exported below
 // (unchanged) so scheduling/api/shifts.ts, services/phorest/sync-shifts.ts and
@@ -482,6 +484,24 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Startdatum muss vor Enddatum liegen" });
 
       const tenantId = req.user.tenantId;
+
+      // Issue #446 (D-06(a)/D-09/D-10): checked before any read-dependent computation and
+      // before every write — a range touching a closed month is rejected as a whole, naming
+      // every closed month it spans (never just the first one found).
+      const closedMonths = await findClosedMonthsInRange(
+        app.prisma,
+        employeeId,
+        tenantId,
+        start,
+        end,
+      );
+      if (closedMonths.length > 0) {
+        return reply.code(409).send({
+          error: closedMonthLeaveMessage(closedMonths, "request"),
+          code: "LEAVE_MONTH_CLOSED",
+        });
+      }
+
       const holidayMap = await getHolidayMap(app.prisma, tenantId, employeeId, start, end);
       const holidays = new Set(holidayMap.keys());
       // Phase 107 (D-09): roster-aware estimate from creation onward, so the number does not
@@ -1262,6 +1282,24 @@ export async function leaveRoutes(app: FastifyInstance) {
           description: string;
         } | null = null;
         if (body.status === "APPROVED") {
+          // Issue #446 (D-06(c)/D-10): checked before the write below — a cancellation of a
+          // leave touching a closed month may not be approved (dead end otherwise: the
+          // CANCELLED state would silently diverge from the snapshot). The rejection branch
+          // (else, below) stays unguarded — it is saldo-neutral.
+          const closedMonths = await findClosedMonthsInRange(
+            app.prisma,
+            existing.employeeId,
+            existing.employee.tenantId,
+            existing.startDate,
+            existing.endDate,
+          );
+          if (closedMonths.length > 0) {
+            return reply.code(409).send({
+              error: closedMonthLeaveMessage(closedMonths, "change"),
+              code: "LEAVE_MONTH_CLOSED",
+            });
+          }
+
           // Stornierung genehmigen → CANCELLED + Rückbuchung
           await app.prisma.leaveRequest.update({
             where: { id },
@@ -1373,6 +1411,21 @@ export async function leaveRoutes(app: FastifyInstance) {
           newValue: { cancellationDecision: body.status, reviewNote: body.reviewNote },
         });
 
+        // Issue #446 (D-05): rejecting a cancellation recalculates rewritable snapshots exactly
+        // like the cancellation-approval path below. Saldo-neutral after D-02 (the leave
+        // counted while CANCELLATION_REQUESTED and counts again as APPROVED), but heals
+        // snapshots written under the old APPROVED-only rule. Locked months are skipped by
+        // recalculateSnapshots itself (Phase 99, D-09); like every other caller, the
+        // recalculation starts at the first snapshot whose periodStart >= startDate.
+        if (body.status !== "APPROVED") {
+          await recalculateSnapshots(app, existing.employeeId, existing.startDate).catch((err) =>
+            app.log.error(
+              { err, employeeId: existing.employeeId },
+              "Failed to recalculate snapshots after leave cancellation rejection",
+            ),
+          );
+        }
+
         // Retroactive recalculation: cancellation approved (CANCELLED) affects snapshots
         if (body.status === "APPROVED") {
           await recalculateSnapshots(app, existing.employeeId, existing.startDate).catch((err) =>
@@ -1427,6 +1480,25 @@ export async function leaveRoutes(app: FastifyInstance) {
       }
 
       // ── Normaler Antrag (PENDING) ────────────────────────────────────────────
+      // Issue #446 (D-06(b)/D-10): gated on APPROVED only — a PENDING -> REJECTED review
+      // stays allowed (saldo-neutral), checked before any read-dependent computation and
+      // before the write below.
+      if (body.status === "APPROVED") {
+        const closedMonths = await findClosedMonthsInRange(
+          app.prisma,
+          existing.employeeId,
+          existing.employee.tenantId,
+          existing.startDate,
+          existing.endDate,
+        );
+        if (closedMonths.length > 0) {
+          return reply.code(409).send({
+            error: closedMonthLeaveMessage(closedMonths, "change"),
+            code: "LEAVE_MONTH_CLOSED",
+          });
+        }
+      }
+
       const reviewTypeCode = existing.leaveType.code;
 
       // Issue #294: the OVERTIME_COMP booking below is computed but NOT written where it is
@@ -2433,6 +2505,23 @@ export async function leaveRoutes(app: FastifyInstance) {
       const { reason } = stornoSchema.parse(req.body);
 
       if (existing.status === "APPROVED") {
+        // Issue #446 (D-06(d)/D-10): checked before the write below — otherwise a request
+        // whose approval can never succeed (guard point c) would be created. The PENDING
+        // withdrawal path below (status stays unguarded) is saldo-neutral.
+        const closedMonths = await findClosedMonthsInRange(
+          app.prisma,
+          existing.employeeId,
+          existing.employee.tenantId,
+          existing.startDate,
+          existing.endDate,
+        );
+        if (closedMonths.length > 0) {
+          return reply.code(409).send({
+            error: closedMonthLeaveMessage(closedMonths, "change"),
+            code: "LEAVE_MONTH_CLOSED",
+          });
+        }
+
         // Approved leave → request cancellation (needs another manager's approval)
         // Until approved, the leave remains active (blocks time tracking, shown in calendar)
         await app.prisma.leaveRequest.update({
@@ -2608,7 +2697,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           where: {
             deletedAt: null,
             employee: { tenantId: req.user.tenantId },
-            status: { in: ["PENDING", "APPROVED", "CANCELLATION_REQUESTED"] },
+            status: { in: ["PENDING", ...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04): same set, now derived
             startDate: { lte: end },
             endDate: { gte: start },
           },
@@ -2937,7 +3026,8 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const [requests, absences] = await Promise.all([
         app.prisma.leaveRequest.findMany({
-          where: { employeeId, deletedAt: null, status: "APPROVED" },
+          // Issue #446 (D-04): a leave under requested cancellation is still active.
+          where: { employeeId, deletedAt: null, status: { in: [...EFFECTIVE_LEAVE_STATUSES] } },
           include: { leaveType: true, employee: { select: { firstName: true, lastName: true } } },
         }),
         app.prisma.absence.findMany({
@@ -2992,8 +3082,9 @@ export async function leaveRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
 
       // Phase 91b Plan 04 (Issue #91), D-10 — this feed has no date window of its own (it returns
-      // every APPROVED request + absence, unbounded) to use as a Stichtag, unlike the plan's own
-      // text assumed; treated the same as GET /requests's own "no single natural period" case:
+      // every effective-status request + absence, unbounded — Issue #446 D-04: a request under
+      // requested cancellation is still active) to use as a Stichtag, unlike the plan's own text
+      // assumed; treated the same as GET /requests's own "no single natural period" case:
       // tenant-local today.
       const access = accessContextFromRequest(req);
       const reach = await resolveAccessReach(app.prisma, access, "leave-request:read:ZUGEWIESEN");
@@ -3012,7 +3103,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           where: {
             deletedAt: null,
             employee: { tenantId },
-            status: "APPROVED",
+            status: { in: [...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04)
             ...(scopedEmployeeIds !== "all" ? { employeeId: { in: scopedEmployeeIds } } : {}),
           },
           include: { leaveType: true, employee: { select: { firstName: true, lastName: true } } },

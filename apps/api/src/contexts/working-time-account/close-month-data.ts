@@ -12,7 +12,7 @@
 
 import type { PrismaClient } from "@clokr/db";
 import { getWorkedEntriesInRange } from "../time-tracking"; // Phase 100B Plan 08 — T2
-import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A1
+import { getAbsencesOverlapping, getActiveLeaveOverlapping } from "../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A2; Issue #446
 import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — work-location resolution
 import { dateStrInTz } from "./timezone";
 
@@ -32,8 +32,9 @@ import { dateStrInTz } from "./timezone";
  *  snapshotsByEmp - Map<employeeId, SaldoSnapshot[]> — non-superseded MONTHLY snapshots
  *  entriesByEmp   - Map<employeeId, {id, date, breakStatus, isLocked}[]> — WORK TimeEntries
  *                   with non-null endTime (Phase 92 — breakStatus/isLocked added for BREAK-05)
- *  leaveByEmp     - Map<employeeId, LeaveRequest[]> — APPROVED leave overlapping range,
- *                   with leaveType included (Phase 104 — also feeds the Karenz detector)
+ *  leaveByEmp     - Map<employeeId, LeaveRequest[]> — effective leave (APPROVED +
+ *                   CANCELLATION_REQUESTED, Issue #446) overlapping range, with leaveType
+ *                   included (Phase 104 — also feeds the Karenz detector)
  *  absencesByEmp  - Map<employeeId, Absence[]> — absences overlapping range
  *  holidaysByEmp  - Map<employeeId, Set<string>> — statutory + manual holiday dates at that
  *                   employee's own WORK LOCATION (§ 2 EFZG, Phase 71b), never tenant-wide
@@ -65,12 +66,15 @@ export async function fetchCloseMonthData(
     // Phase 100B Plan 08 — T2, contexts/time-tracking facade.
     getWorkedEntriesInRange(prisma, { kind: "employees", employeeIds, tenantId }, start, end),
 
-    // Q3: all APPROVED LeaveRequests overlapping this date range. A1's select already carries
-    // leaveType.code (added in Phase 104, R4/D-21) so the SAME bulk-fetch also serves the
-    // Karenz-overrun detector — a second leaveRequest query here would double-count against
+    // Q3: all effective LeaveRequests (APPROVED + CANCELLATION_REQUESTED, Issue #446 D-02)
+    // overlapping this date range. A2's select already carries leaveType.code (added in Phase
+    // 104, R4/D-21; inherited from A1 by the widening) so the SAME bulk-fetch also serves the
+    // Karenz-overrun detector — karenzOverrunFromRequests filters APPROVED itself
+    // (find-karenz-overrun-days.ts:102), so the hint is unchanged. Still exactly ONE bulk
+    // leaveRequest read — a second leaveRequest query here would double-count against
     // overtime-perf-n1.test.ts's per-model ≤1 assertion.
-    // Phase 100B Plan 13 — A1, contexts/absence facade.
-    getApprovedLeaveOverlapping(prisma, { kind: "employees", employeeIds, tenantId }, start, end),
+    // Phase 100B Plan 13 — A2, contexts/absence facade.
+    getActiveLeaveOverlapping(prisma, { kind: "employees", employeeIds, tenantId }, start, end),
 
     // Q4: all Absences overlapping this date range.
     // Phase 100B Plan 12 — A4, contexts/absence facade.

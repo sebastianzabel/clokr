@@ -283,9 +283,12 @@ describe("POST /leave/requests OVERTIME_COMP + GET /leave/overtime-balance — m
       where: { employeeId },
       data: { balanceHours: 1 }, // 60min stored
     });
-    vi.spyOn(app.prisma.saldoSnapshot, "findFirst").mockRejectedValueOnce(
-      new Error("simulated DB failure"),
-    );
+    // Issue #446 (D-07): POST /requests now makes its OWN saldoSnapshot.findFirst call
+    // (findClosedMonthsInRange/isMonthClosed) before getConfirmedCarryOver's — resolved as
+    // "not closed" so the one rejection below still targets getConfirmedCarryOver.
+    vi.spyOn(app.prisma.saldoSnapshot, "findFirst")
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error("simulated DB failure"));
     try {
       const res = await requestMonday();
       expect(res.statusCode).toBe(400);

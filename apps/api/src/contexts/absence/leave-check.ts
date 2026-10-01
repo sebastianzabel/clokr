@@ -12,6 +12,7 @@
 // never its name (ADR 0001, `leave-type.ts`'s own module header). The caller renders the
 // display text itself via `DISPLAY_NAME[code]`, the one Phase 97/98b mapping.
 import type { LeaveTypeCode, Prisma } from "@clokr/db";
+import { EFFECTIVE_LEAVE_STATUSES } from "./effective-leave-statuses"; // Issue #446 (D-01)
 
 /** § 8 BUrlG: Prüft ob aktiver Urlaub an dem Tag vorliegt */
 export async function hasApprovedLeaveOnDate(
@@ -27,7 +28,7 @@ export async function hasApprovedLeaveOnDate(
       // MUST include deletedAt: null. Otherwise a soft-deleted APPROVED leave
       // would still block clock-in via the resolver's BUrlG § 8 check.
       deletedAt: null,
-      status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
+      status: { in: [...EFFECTIVE_LEAVE_STATUSES] },
       startDate: { lte: new Date(dateStr + "T23:59:59Z") },
       endDate: { gte: new Date(dateStr + "T00:00:00Z") },
     },

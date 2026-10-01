@@ -2169,6 +2169,216 @@
           "tenant.leaveType.VACATION"
         ]
       }
+    },
+    {
+      "date": "2026-10-01",
+      "from": {
+        "status": 200,
+        "contentType": "text/calendar",
+        "ids": [
+          "absence-foreign.vocationalSchool.absence",
+          "absence-own.vocationalSchool.absence",
+          "leave-foreign.leaveRequest.approved",
+          "leave-foreign.leaveRequest.section9Vacation",
+          "leave-foreign.leaveRequest.sick",
+          "leave-own.leaveRequest.approved",
+          "leave-own.leaveRequest.section9Vacation",
+          "leave-own.leaveRequest.sick"
+        ]
+      },
+      "issue": 446,
+      "key": "ADMIN | GET /api/v1/leave/ical/team | none",
+      "reason": "Issue #446 (D-04), unrelated bug fix, not a role→permission access change: GET /api/v1/leave/ical/team filterte bisher status: \"APPROVED\" und liess einen Antrag mit beantragter Stornierung (CANCELLATION_REQUESTED) fehlen, obwohl CLAUDE.md § Leave Cancellation Flow diesen Urlaub bis zur Genehmigung der Stornierung als aktiv definiert (u. a. 'shown in calendar'). Die Route liest jetzt EFFECTIVE_LEAVE_STATUSES (APPROVED + CANCELLATION_REQUESTED). Die foreign.leaveRequest.cancellationByActor-Fixture (eine echte CANCELLATION_REQUESTED-Buchung) erscheint deshalb neu in der ids-Liste. Die Aenderung ist NICHT rollenspezifisch: alle sechs Akteure mit Zugriff auf diese Route (leave-request:read:ZUGEWIESEN) sehen dieselbe zusaetzliche ID identisch; Route und Permission-Check sind unveraendert — reine Sichtbarkeits-Erweiterung des Response-Bodys, analog Issue #416.",
+      "to": {
+        "status": 200,
+        "contentType": "text/calendar",
+        "ids": [
+          "absence-foreign.vocationalSchool.absence",
+          "absence-own.vocationalSchool.absence",
+          "leave-foreign.leaveRequest.approved",
+          "leave-foreign.leaveRequest.cancellationByActor",
+          "leave-foreign.leaveRequest.section9Vacation",
+          "leave-foreign.leaveRequest.sick",
+          "leave-own.leaveRequest.approved",
+          "leave-own.leaveRequest.section9Vacation",
+          "leave-own.leaveRequest.sick"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-01",
+      "from": {
+        "status": 200,
+        "contentType": "text/calendar",
+        "ids": [
+          "absence-foreign.vocationalSchool.absence",
+          "absence-own.vocationalSchool.absence",
+          "leave-foreign.leaveRequest.approved",
+          "leave-foreign.leaveRequest.section9Vacation",
+          "leave-foreign.leaveRequest.sick",
+          "leave-own.leaveRequest.approved",
+          "leave-own.leaveRequest.section9Vacation",
+          "leave-own.leaveRequest.sick"
+        ]
+      },
+      "issue": 446,
+      "key": "APIKEY_ADMIN | GET /api/v1/leave/ical/team | none",
+      "reason": "Issue #446 (D-04) — identisch zur ADMIN-Amendment oben, siehe dort fuer die volle Begruendung: EFFECTIVE_LEAVE_STATUSES statt APPROVED-only auf GET /api/v1/leave/ical/team, reine Sichtbarkeits-Erweiterung, Route und Permission-Check unveraendert.",
+      "to": {
+        "status": 200,
+        "contentType": "text/calendar",
+        "ids": [
+          "absence-foreign.vocationalSchool.absence",
+          "absence-own.vocationalSchool.absence",
+          "leave-foreign.leaveRequest.approved",
+          "leave-foreign.leaveRequest.cancellationByActor",
+          "leave-foreign.leaveRequest.section9Vacation",
+          "leave-foreign.leaveRequest.sick",
+          "leave-own.leaveRequest.approved",
+          "leave-own.leaveRequest.section9Vacation",
+          "leave-own.leaveRequest.sick"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-01",
+      "from": {
+        "status": 200,
+        "contentType": "text/calendar",
+        "ids": [
+          "absence-foreign.vocationalSchool.absence",
+          "absence-own.vocationalSchool.absence",
+          "leave-foreign.leaveRequest.approved",
+          "leave-foreign.leaveRequest.section9Vacation",
+          "leave-foreign.leaveRequest.sick",
+          "leave-own.leaveRequest.approved",
+          "leave-own.leaveRequest.section9Vacation",
+          "leave-own.leaveRequest.sick"
+        ]
+      },
+      "issue": 446,
+      "key": "APIKEY_PLAIN | GET /api/v1/leave/ical/team | none",
+      "reason": "Issue #446 (D-04) — identisch zur ADMIN-Amendment oben, siehe dort fuer die volle Begruendung: EFFECTIVE_LEAVE_STATUSES statt APPROVED-only auf GET /api/v1/leave/ical/team, reine Sichtbarkeits-Erweiterung, Route und Permission-Check unveraendert.",
+      "to": {
+        "status": 200,
+        "contentType": "text/calendar",
+        "ids": [
+          "absence-foreign.vocationalSchool.absence",
+          "absence-own.vocationalSchool.absence",
+          "leave-foreign.leaveRequest.approved",
+          "leave-foreign.leaveRequest.cancellationByActor",
+          "leave-foreign.leaveRequest.section9Vacation",
+          "leave-foreign.leaveRequest.sick",
+          "leave-own.leaveRequest.approved",
+          "leave-own.leaveRequest.section9Vacation",
+          "leave-own.leaveRequest.sick"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-01",
+      "from": {
+        "status": 200,
+        "contentType": "text/calendar",
+        "ids": [
+          "absence-foreign.vocationalSchool.absence",
+          "absence-own.vocationalSchool.absence",
+          "leave-foreign.leaveRequest.approved",
+          "leave-foreign.leaveRequest.section9Vacation",
+          "leave-foreign.leaveRequest.sick",
+          "leave-own.leaveRequest.approved",
+          "leave-own.leaveRequest.section9Vacation",
+          "leave-own.leaveRequest.sick"
+        ]
+      },
+      "issue": 446,
+      "key": "FALLBACK_ADMIN | GET /api/v1/leave/ical/team | none",
+      "reason": "Issue #446 (D-04) — identisch zur ADMIN-Amendment oben, siehe dort fuer die volle Begruendung: EFFECTIVE_LEAVE_STATUSES statt APPROVED-only auf GET /api/v1/leave/ical/team, reine Sichtbarkeits-Erweiterung, Route und Permission-Check unveraendert.",
+      "to": {
+        "status": 200,
+        "contentType": "text/calendar",
+        "ids": [
+          "absence-foreign.vocationalSchool.absence",
+          "absence-own.vocationalSchool.absence",
+          "leave-foreign.leaveRequest.approved",
+          "leave-foreign.leaveRequest.cancellationByActor",
+          "leave-foreign.leaveRequest.section9Vacation",
+          "leave-foreign.leaveRequest.sick",
+          "leave-own.leaveRequest.approved",
+          "leave-own.leaveRequest.section9Vacation",
+          "leave-own.leaveRequest.sick"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-01",
+      "from": {
+        "status": 200,
+        "contentType": "text/calendar",
+        "ids": [
+          "absence-foreign.vocationalSchool.absence",
+          "absence-own.vocationalSchool.absence",
+          "leave-foreign.leaveRequest.approved",
+          "leave-foreign.leaveRequest.section9Vacation",
+          "leave-foreign.leaveRequest.sick",
+          "leave-own.leaveRequest.approved",
+          "leave-own.leaveRequest.section9Vacation",
+          "leave-own.leaveRequest.sick"
+        ]
+      },
+      "issue": 446,
+      "key": "FALLBACK_MANAGER | GET /api/v1/leave/ical/team | none",
+      "reason": "Issue #446 (D-04) — identisch zur ADMIN-Amendment oben, siehe dort fuer die volle Begruendung: EFFECTIVE_LEAVE_STATUSES statt APPROVED-only auf GET /api/v1/leave/ical/team, reine Sichtbarkeits-Erweiterung, Route und Permission-Check unveraendert.",
+      "to": {
+        "status": 200,
+        "contentType": "text/calendar",
+        "ids": [
+          "absence-foreign.vocationalSchool.absence",
+          "absence-own.vocationalSchool.absence",
+          "leave-foreign.leaveRequest.approved",
+          "leave-foreign.leaveRequest.cancellationByActor",
+          "leave-foreign.leaveRequest.section9Vacation",
+          "leave-foreign.leaveRequest.sick",
+          "leave-own.leaveRequest.approved",
+          "leave-own.leaveRequest.section9Vacation",
+          "leave-own.leaveRequest.sick"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-01",
+      "from": {
+        "status": 200,
+        "contentType": "text/calendar",
+        "ids": [
+          "absence-foreign.vocationalSchool.absence",
+          "absence-own.vocationalSchool.absence",
+          "leave-foreign.leaveRequest.approved",
+          "leave-foreign.leaveRequest.section9Vacation",
+          "leave-foreign.leaveRequest.sick",
+          "leave-own.leaveRequest.approved",
+          "leave-own.leaveRequest.section9Vacation",
+          "leave-own.leaveRequest.sick"
+        ]
+      },
+      "issue": 446,
+      "key": "MANAGER | GET /api/v1/leave/ical/team | none",
+      "reason": "Issue #446 (D-04) — identisch zur ADMIN-Amendment oben, siehe dort fuer die volle Begruendung: EFFECTIVE_LEAVE_STATUSES statt APPROVED-only auf GET /api/v1/leave/ical/team, reine Sichtbarkeits-Erweiterung, Route und Permission-Check unveraendert.",
+      "to": {
+        "status": 200,
+        "contentType": "text/calendar",
+        "ids": [
+          "absence-foreign.vocationalSchool.absence",
+          "absence-own.vocationalSchool.absence",
+          "leave-foreign.leaveRequest.approved",
+          "leave-foreign.leaveRequest.cancellationByActor",
+          "leave-foreign.leaveRequest.section9Vacation",
+          "leave-foreign.leaveRequest.sick",
+          "leave-own.leaveRequest.approved",
+          "leave-own.leaveRequest.section9Vacation",
+          "leave-own.leaveRequest.sick"
+        ]
+      }
     }
   ]
 }

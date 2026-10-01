@@ -48,6 +48,7 @@ import {
   REGULAR_ENTITLEMENT_REASON_SELF_HEAL, // Issue #445 (D-05)
   vacationEntitlementWarning, // Issue #445 — composition carries no business rule (CLAUDE.md); the warning string is built in the absence context
   healEntitlementUsedDays, // Issue #445 (D-10) — injected into selfHealUsedDays's ctx below
+  EFFECTIVE_LEAVE_STATUSES, // Issue #446 (D-01/D-04)
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
 import type { LeaveTypeCode } from "@clokr/db";
 
@@ -886,7 +887,7 @@ function buildEmployeeInclude(start: Date, end: Date) {
     leaveRequests: {
       where: {
         deletedAt: null,
-        status: "APPROVED",
+        status: { in: Array.from(EFFECTIVE_LEAVE_STATUSES) }, // Issue #446 (D-04) — Array.from (not a spread) yields a mutable array despite this function's own `as const`
         startDate: { lte: end },
         endDate: { gte: start },
       },
@@ -1453,7 +1454,7 @@ export async function reportRoutes(app: FastifyInstance) {
           leaveRequests: {
             where: {
               deletedAt: null,
-              status: "APPROVED",
+              status: { in: [...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04)
               startDate: { lte: end },
               endDate: { gte: start },
             },
@@ -1621,7 +1622,7 @@ export async function reportRoutes(app: FastifyInstance) {
           leaveRequests: {
             where: {
               deletedAt: null,
-              status: "APPROVED",
+              status: { in: [...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04)
               startDate: { lte: end },
               endDate: { gte: start },
             },
@@ -2086,7 +2087,7 @@ export async function reportRoutes(app: FastifyInstance) {
           leaveRequests: {
             where: {
               deletedAt: null,
-              status: "APPROVED",
+              status: { in: [...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04)
               startDate: { lte: yearEnd },
               endDate: { gte: yearStart },
             },
@@ -2188,7 +2189,7 @@ export async function reportRoutes(app: FastifyInstance) {
             leaveRequests: {
               where: {
                 deletedAt: null,
-                status: "APPROVED",
+                status: { in: [...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04)
                 startDate: { lte: yearEnd },
                 endDate: { gte: yearStart },
               },

@@ -19,6 +19,8 @@
  * this module is the display half of it, not its only line of defence.
  */
 
+import { isEffectiveLeaveStatus } from "./effective-leave-statuses";
+
 /**
  * Every code the team calendar can paint a bar for.
  *
@@ -246,4 +248,30 @@ export function resolveDayDetailRows(
       textColor: visual.textColor,
     };
   });
+}
+
+/** The subset of a calendar entry `isDrawnInCalendar` needs. */
+export interface DrawableEntry {
+  isHoliday?: boolean;
+  isOwn: boolean;
+  status: string;
+}
+
+/**
+ * The ONE "is this absence bar drawn at all" decision for the leave and team-leave calendars
+ * (Issue #446, D-04). A holiday pseudo-entry is never drawn here (it is painted separately). An
+ * own entry is always drawn, regardless of status — an employee sees their own pending request.
+ * A colleague's entry is drawn while it is EFFECTIVE (`APPROVED` or `CANCELLATION_REQUESTED`):
+ * CLAUDE.md's Leave Cancellation Flow keeps a leave active — shown in the calendar — until its
+ * cancellation is itself approved. A colleague's merely-`PENDING` request is never drawn (it has
+ * not yet been decided), matching the existing behaviour this predicate replaces.
+ *
+ * A `CANCELLATION_REQUESTED` bar keeps the existing pending ("ausstehend") styling
+ * (`resolveDayDetailRows`'s `isPending` already treats it as pending, and the page's
+ * `.cal-chip--pending` class does the same) and, for an EMPLOYEE viewer, the neutral label — the
+ * Phase 257 type-visibility rule (`resolveChipVisual`) is untouched by this predicate.
+ */
+export function isDrawnInCalendar(entry: DrawableEntry): boolean {
+  if (entry.isHoliday) return false;
+  return entry.isOwn || isEffectiveLeaveStatus(entry.status);
 }

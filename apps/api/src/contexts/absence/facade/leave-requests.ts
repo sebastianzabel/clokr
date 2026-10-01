@@ -16,37 +16,46 @@
  * to plan 14, not here. Two import paths to the same question in the tree for no benefit is
  * exactly what this plan avoids (same reasoning `contexts/absence/index.ts`'s own header states).
  *
- * ── A1/A2/A3 — the three leave-status sets carry LEGAL meaning, and are three functions ─────────
- * {@link getApprovedLeaveOverlapping} (A1), {@link getActiveLeaveOverlapping} (A2) and
- * {@link getCalendarLeaveOverlapping} (A3) all take a date range and return overlapping
- * `LeaveRequest` rows — and answer three DIFFERENT questions, forced into view by
- * `composition/dashboard.ts`, where the SAME shape of query appears three times with three
- * different `status` filters, each correct for its own widget:
+ * ── A2/A3 — two leave-status sets carry LEGAL meaning, and are two functions ─────────────────────
+ * {@link getActiveLeaveOverlapping} (A2) and {@link getCalendarLeaveOverlapping} (A3) both take a
+ * date range and return overlapping `LeaveRequest` rows — and answer two DIFFERENT questions:
  *
- *   - A1 `status: "APPROVED"` — THE SOLL-REDUCTION SET. A day only stops counting toward an
- *     employee's expected working time once leave is APPROVED (ArbZG/BUrlG: only an approved
- *     absence reduces Soll). Feeds every close/cron/status Soll calculation in the tree.
- *   - A2 `status in [APPROVED, CANCELLATION_REQUESTED]` — TODAY'S PRESENCE / ROSTER-SOLL SET. Per
- *     CLAUDE.md § Leave Cancellation Flow step 2: "Leave remains active ... until cancellation is
- *     approved" — a leave under `CANCELLATION_REQUESTED` still blocks clock-in and still reduces
- *     the week's roster Soll. Dropping this status here would silently let an employee whose
- *     cancellation is merely REQUESTED (not yet approved) clock in and count as present, reversing
- *     § 8 BUrlG.
- *   - A3 `status in [APPROVED, CANCELLATION_REQUESTED, PENDING]` — CALENDAR/DISPLAY SET, Phase 95
+ *   - A2 `status in EFFECTIVE_LEAVE_STATUSES` ([`APPROVED`, `CANCELLATION_REQUESTED`]) — THE
+ *     EFFECTIVE SET: Soll reduction (saldo, Monatsabschluss, snapshot recalc, auto-close cron, gap
+ *     check), today's presence/roster-Soll, and scheduling conflict detection. Per CLAUDE.md §
+ *     Leave Cancellation Flow step 2: "Leave remains active ... until cancellation is approved" —
+ *     a leave under `CANCELLATION_REQUESTED` still blocks clock-in, still reduces Soll, and still
+ *     conflicts with a shift. Dropping this status here would silently let an employee whose
+ *     cancellation is merely REQUESTED (not yet approved) clock in, keep their Soll reduced, and
+ *     plan a shift on that day — reversing § 8 BUrlG.
+ *   - A3 `status in [...EFFECTIVE_LEAVE_STATUSES, PENDING]` — CALENDAR/DISPLAY SET, Phase 95
  *     SHIFT-01. Adds `PENDING` on top of A2 so an unapproved request still renders as "beantragt"
  *     instead of a blank cell. This set is NEVER a Soll input — leaking A3 into a Soll query would
  *     let a merely-requested (not yet approved) day reduce Soll, which no rule permits.
  *
  * A single function taking a `status` argument would hand this decision straight back to every
  * caller — exactly D-02's argument #2 ("the function expresses the QUESTION a caller asks, not the
- * caller's `where`"; a caller with a special case does not get a passed-through filter). Three
- * names, three meanings, kept apart by the exact-set membership test in
- * `__tests__/facade-leave-requests.test.ts`, seen RED three times (once per function, by widening
- * or narrowing its own status set by one value) before being committed green — see this plan's
- * SUMMARY for the three transcripts.
+ * caller's `where`"; a caller with a special case does not get a passed-through filter). Two
+ * names, two meanings, kept apart by the exact-set membership test in
+ * `__tests__/facade-leave-requests.test.ts`.
  *
- * ── A1's select union (read all 11 pre-facade call sites' `select`/`include` first) ─────────────
- * Ten of the eleven A1 sites use one of three narrow shapes (a subset of `{id, employeeId,
+ * ── Issue #446 (D-02) — A1 (`getApprovedLeaveOverlapping`, APPROVED only, "the Soll-reduction
+ *    set") was retired, no alias ──────────────────────────────────────────────────────────────────
+ * A1 used to be a THIRD function here, `status: "APPROVED"` only, on the premise that "a day only
+ * stops counting toward Soll once leave is APPROVED". That premise directly contradicted CLAUDE.md
+ * § Leave Cancellation Flow ("Leave remains active ... counts for saldo ... until cancellation is
+ * approved"): every saldo path that read A1 silently dropped a `CANCELLATION_REQUESTED` week out
+ * of Soll, the opposite of the documented rule. Once A2 was widened to the same status set and the
+ * same select superset A1 used to carry (Issue #446 D-01/D-02, plan 01), A1 and A2 answered the
+ * identical question — keeping both would have been two names for one question, the exact
+ * divergence hazard this facade's own A7/A9/A10 sections elsewhere in this header exist to guard
+ * against. A1 was deleted (no alias — every caller is in-repo and all 31 references were switched
+ * to A2 across plans 01-02). The one reasoned APPROVED-only reader left in the tree is the Karenz
+ * hint (`find-karenz-overrun-days.ts`'s `karenzOverrunFromRequests`), which filters APPROVED
+ * in-memory itself rather than through a facade function — see the comment at that filter for why.
+ *
+ * ── A2's select union (read all 11 pre-facade call sites' `select`/`include` first) ─────────────
+ * Ten of the eleven former-A1 sites use one of three narrow shapes (a subset of `{id, employeeId,
  * leaveTypeId, startDate, endDate, halfDay}`). The eleventh,
  * `working-time-account/close-month-data.ts`'s `fetchCloseMonthData` (a FULL-ROW read with
  * `include: { leaveType: true }`), is the widest: its own comment says the `leaveType` include
@@ -64,23 +73,21 @@
  * (`contexts/absence/facade/absences.ts`, plan 12) for the identical situation. The union below
  * (`id, employeeId, leaveTypeId, startDate, endDate, halfDay, status, attestPresent,
  * attestValidFrom, attestValidTo, leaveType: { code }`) is a strict superset of every real caller's
- * actual field use across all 11 sites, confirmed by reading, not assumed.
+ * actual field use across all 11 former-A1 sites, confirmed by reading, not assumed.
  *
  * `contexts/scheduling/api/shifts.ts`'s module-private `findShiftConflict` (a single-day
- * `leaveRequest.findFirst({ employeeId, status: "APPROVED", deletedAt: null, startDate: { lte:
- * day }, endDate: { gte: day } }, include: { leaveType: { select: { code } } })`) is A1 too — same
- * status set (APPROVED only, NOT A2's `CANCELLATION_REQUESTED`-inclusive set — read and confirmed,
- * per H2), just `from === to`. Absorbed into A1 taking `[0]`, mirroring plan 12's identical
- * absorption of that same function's sibling `absence.findFirst` call one function below it in the
- * same file. No caller change needed at either of `findShiftConflict`'s two call sites — plan 12
- * already threaded `tenantId` through its signature for the `Absence` half; this plan's half reuses
- * the SAME already-threaded parameter.
+ * `leaveRequest.findFirst` with `from === to`) used to be A1 too; since Issue #446 it reads A2's
+ * effective set — a cancellation-pending leave still blocks the day. Absorbed into A2 taking `[0]`,
+ * mirroring plan 12's identical absorption of that same function's sibling `absence.findFirst`
+ * call one function below it in the same file. No caller change needed at either of
+ * `findShiftConflict`'s two call sites — plan 12 already threaded `tenantId` through its signature
+ * for the `Absence` half; this plan's half reuses the SAME already-threaded parameter.
  *
- * ── A9 vs A1 — `startDate`-IN-WINDOW is not overlap ──────────────────────────────────────────────
+ * ── A9 vs A2 — `startDate`-IN-WINDOW is not overlap ──────────────────────────────────────────────
  * {@link getLeaveStartingInWindow} (A9, `attendance-checker.ts`'s "upcoming absence" reminder)
  * filters `startDate: { gte: from, lte: to }` with NO `endDate` filter at all — it answers "which
  * leave STARTS in this window", not "which leave OVERLAPS this window". A leave that started
- * BEFORE the window and merely overlaps it is correctly excluded: folding this into A1 (or A2/A3)
+ * BEFORE the window and merely overlaps it is correctly excluded: folding this into A2 (or A3)
  * would change WHICH reminders fire (an employee already on long-running leave would get a
  * spurious "upcoming absence" email on every day the window happens to still cover their leave).
  *
@@ -100,7 +107,7 @@
  *     an individual row → {@link getPendingLeaveDaysInYear}.
  * A shared "explicit window" parameter cannot represent both "before a `createdAt` cutoff" and
  * "within a `startDate` year range" without becoming exactly the generic `where`-carrying function
- * D-02 forbids. Applying this plan's OWN divergence-handling instruction (written for A9 vs A1, the
+ * D-02 forbids. Applying this plan's OWN divergence-handling instruction (written for A9 vs A2, the
  * hazard the plan explicitly named) to a site the plan itself did not flag — same protocol plans 11
  * (A21) and 12 (`findShiftConflict`'s Prisma-call-shape finding) already established for
  * plan-proposed mergers that do not survive reading the real `where` clauses: NOT merged. Three
@@ -158,10 +165,11 @@
  */
 import type { LeaveRequestStatus, LeaveTypeCode, Prisma } from "@clokr/db";
 import { type EmployeeScope, employeeScopeWhere } from "../../platform";
+import { EFFECTIVE_LEAVE_STATUSES } from "../effective-leave-statuses"; // Issue #446 (D-01/D-02)
 
-// ── A1 — the Soll-reduction set: status: "APPROVED" only ─────────────────────────────────────────
+// ── A2 — today's presence / roster-Soll set: APPROVED + CANCELLATION_REQUESTED ───────────────────
 
-export interface ApprovedLeaveOverlap {
+export interface ActiveLeaveOverlap {
   id: string;
   employeeId: string;
   leaveTypeId: string;
@@ -172,34 +180,43 @@ export interface ApprovedLeaveOverlap {
   attestPresent: boolean;
   attestValidFrom: Date | null;
   attestValidTo: Date | null;
-  leaveType: { code: LeaveTypeCode | null };
+  leaveType: { name: string; code: LeaveTypeCode | null };
 }
 
 /**
- * A1 — every `APPROVED` `LeaveRequest` overlapping `[from, to]` for the given
- * {@link EmployeeScope}, soft-delete-filtered. THE SOLL-REDUCTION SET (§ 8 BUrlG / ArbZG — only an
- * APPROVED absence reduces expected working time). See this module's own header for why
- * {@link getActiveLeaveOverlapping} (A2) and {@link getCalendarLeaveOverlapping} (A3) are SEPARATE
- * functions, never this one with an extra status value folded in.
+ * A2 — every `LeaveRequest` with `status in EFFECTIVE_LEAVE_STATUSES` ([`APPROVED`,
+ * `CANCELLATION_REQUESTED`], Issue #446 D-01) overlapping `[from, to]` for the given
+ * {@link EmployeeScope}, soft-delete-filtered. Per CLAUDE.md § Leave Cancellation Flow step 2: a
+ * leave under `CANCELLATION_REQUESTED` remains ACTIVE — still blocks clock-in, still reduces
+ * roster Soll — until the cancellation itself is approved. See this module's own header for why
+ * this must never merge with A3 (adds PENDING, which must never reduce Soll).
  *
- * Sites: `composition/dashboard.ts` (open-items calculation), `contexts/scheduling/api/shifts.ts`
- * (`/shifts/week` calendar/roster reads, `generate-week`, `copy-week`, plus `findShiftConflict`'s
- * single-day conflict check with `from === to`, absorbed — see module header),
- * `contexts/time-tracking/api/time-entries.ts` (Bug-5 open-month recompute — SALDO INPUT),
- * `contexts/working-time-account/{close-month-data,month-saldo,recalculate-snapshots}.ts`,
- * `api/overtime.ts` (2×) and `plugins/auto-close-month.ts` (2×) — the close/cron path, ALL feeding
- * `calcLeaveAbsenceMinutesTz` through `closeEmployeeMonth()` — SALDO INPUT.
+ * THE read of "leave that counts" (Issue #446 D-02): Soll reduction (saldo, Monatsabschluss,
+ * snapshot recalc, the auto-close cron, the gap check) AND today's presence/roster — because
+ * CLAUDE.md says a `CANCELLATION_REQUESTED` leave still counts for saldo, not only for roster
+ * display. Its `select` is the superset every caller needs, including the Karenz-overrun
+ * detector's fields (`attestPresent`/`attestValidFrom`/`attestValidTo`/`leaveType.code`) that the
+ * now-retired `getApprovedLeaveOverlapping` (A1) used to carry — A1 was deleted by Issue #446, no
+ * alias; do not add a new caller expecting an APPROVED-only variant to reappear.
+ *
+ * Sites: `composition/dashboard.ts`'s today's-presence bulk fetch,
+ * `contexts/scheduling/api/shifts.ts`'s `/shifts/week` Soll-Korrelation row, plus — since Issue
+ * #446 — every Arbeitszeitkonto saldo input (`working-time-account/{month-saldo,overtime-balance,
+ * close-month-data,recalculate-snapshots,plugins/auto-close-month,month-gap-check,api/overtime}.ts`).
+ * Guarded by `apps/api/src/__tests__/shift-week-leave-absence-minutes.test.ts`'s case E (plan 02),
+ * `contexts/absence/__tests__/leave-check.test.ts` and `leave-cancellation-saldo.test.ts` (Issue
+ * #446, D-11).
  */
-export async function getApprovedLeaveOverlapping(
+export async function getActiveLeaveOverlapping(
   db: Prisma.TransactionClient,
   scope: EmployeeScope,
   from: Date,
   to: Date,
-): Promise<ApprovedLeaveOverlap[]> {
+): Promise<ActiveLeaveOverlap[]> {
   return db.leaveRequest.findMany({
     where: {
       ...employeeScopeWhere(scope),
-      status: "APPROVED",
+      status: { in: [...EFFECTIVE_LEAVE_STATUSES] },
       deletedAt: null,
       startDate: { lte: to },
       endDate: { gte: from },
@@ -215,57 +232,7 @@ export async function getApprovedLeaveOverlapping(
       attestPresent: true,
       attestValidFrom: true,
       attestValidTo: true,
-      leaveType: { select: { code: true } },
-    },
-  });
-}
-
-// ── A2 — today's presence / roster-Soll set: APPROVED + CANCELLATION_REQUESTED ───────────────────
-
-export interface ActiveLeaveOverlap {
-  employeeId: string;
-  startDate: Date;
-  endDate: Date;
-  halfDay: boolean;
-  status: LeaveRequestStatus;
-  leaveType: { name: string };
-}
-
-/**
- * A2 — every `LeaveRequest` with `status in [APPROVED, CANCELLATION_REQUESTED]` overlapping
- * `[from, to]` for the given {@link EmployeeScope}, soft-delete-filtered. Per CLAUDE.md § Leave
- * Cancellation Flow step 2: a leave under `CANCELLATION_REQUESTED` remains ACTIVE — still blocks
- * clock-in, still reduces roster Soll — until the cancellation itself is approved. See this
- * module's own header for why this must never merge with A1 (drops the cancellation-pending case,
- * reversing § 8 BUrlG) or A3 (adds PENDING, which must never reduce Soll).
- *
- * Sites: `composition/dashboard.ts`'s today's-presence bulk fetch,
- * `contexts/scheduling/api/shifts.ts`'s `/shifts/week` Soll-Korrelation row. Guarded by
- * `apps/api/src/__tests__/shift-week-leave-absence-minutes.test.ts`'s case E (plan 02) and
- * `contexts/absence/__tests__/leave-check.test.ts` — run immediately after this function's two
- * call sites are rewired (R4, T-100B-59).
- */
-export async function getActiveLeaveOverlapping(
-  db: Prisma.TransactionClient,
-  scope: EmployeeScope,
-  from: Date,
-  to: Date,
-): Promise<ActiveLeaveOverlap[]> {
-  return db.leaveRequest.findMany({
-    where: {
-      ...employeeScopeWhere(scope),
-      status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
-      deletedAt: null,
-      startDate: { lte: to },
-      endDate: { gte: from },
-    },
-    select: {
-      employeeId: true,
-      startDate: true,
-      endDate: true,
-      halfDay: true,
-      status: true,
-      leaveType: { select: { name: true } },
+      leaveType: { select: { name: true, code: true } },
     },
   });
 }
@@ -431,7 +398,7 @@ export async function countPendingApprovals(
   });
 }
 
-// ── A9 — startDate-IN-WINDOW, NOT overlap (see module header for why this differs from A1) ───────
+// ── A9 — startDate-IN-WINDOW, NOT overlap (see module header for why this differs from A2) ───────
 
 export interface UpcomingApprovedLeave {
   id: string;
@@ -442,7 +409,7 @@ export interface UpcomingApprovedLeave {
 
 /**
  * A9 — every `APPROVED` `LeaveRequest` whose `startDate` falls IN `[from, to]` (NOT overlapping
- * it — see this module's own header, folding this into A1 would change which reminders fire),
+ * it — see this module's own header, folding this into A2 would change which reminders fire),
  * tenant-wide. Sole site: `contexts/time-tracking/plugins/attendance-checker.ts`'s "Upcoming
  * absence reminder" cron feature.
  */

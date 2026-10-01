@@ -36,7 +36,7 @@ import {
 } from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7; Phase 101B wave 8 merged in
 import {
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
-  getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
+  getActiveLeaveOverlapping, // Phase 100B Plan 13 — A2; Issue #446 — effective leave
   loadBsSlotOverrides, // Phase 76.31 — D-06 slot overrides
 } from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports
 
@@ -415,9 +415,9 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                     empEffectiveStart,
                     monthLastDay,
                   ),
-                  // Approved leave
-                  // Phase 100B Plan 13 — A1, contexts/absence facade. THE SALDO INPUT.
-                  getApprovedLeaveOverlapping(
+                  // Effective leave (APPROVED + CANCELLATION_REQUESTED)
+                  // Issue #446 (D-02), contexts/absence facade. THE SALDO INPUT.
+                  getActiveLeaveOverlapping(
                     app.prisma,
                     { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
                     monthStart,

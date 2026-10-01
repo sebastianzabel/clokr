@@ -1,7 +1,8 @@
 /**
  * Phase 430 (D-03/D-04) — S4, the inverse of `facade/shifts.ts`'s S2
  * (`flagShiftsConflictingWithLeave`): a shift just created/updated for `employeeId` on `date` may
- * land on a day that ALREADY has an APPROVED LeaveRequest.
+ * land on a day that ALREADY has an effective (APPROVED or CANCELLATION_REQUESTED) LeaveRequest,
+ * Issue #446 (D-02).
  *
  * Phase 430-06 (follow-up to #437/#429, boundary-cycle gate): deliberately NOT in
  * `facade/shifts.ts` and NOT re-exported from `contexts/scheduling/index.ts`. Every real caller
@@ -14,13 +15,13 @@
  * `getShiftsInRange` export) — adding this function's own `../../absence` import THERE would close
  * a NEW back-edge into that cycle for no functional reason, since nothing needs this function
  * through `scheduling/index.ts` in the first place. Keeping it in its own, non-re-exported file
- * means it can import `getApprovedLeaveOverlapping` from `../../absence` (a legitimate, ADR-0002-
+ * means it can import `getActiveLeaveOverlapping` from `../../absence` (a legitimate, ADR-0002-
  * sanctioned peer read) without joining that cycle: nothing cycle-internal imports this file, so
  * the loop never closes.
  */
 import type { Prisma } from "@clokr/db";
 import { type EmployeeScope } from "../platform";
-import { getApprovedLeaveOverlapping } from "../absence";
+import { getActiveLeaveOverlapping } from "../absence";
 
 /**
  * S4 — mirrors S2's own idempotency idiom exactly (every RELEVANT_METHOD call here carries the
@@ -48,7 +49,7 @@ export async function flagShiftIfConflictsWithApprovedLeave(
   leaveEnd: Date;
 } | null> {
   const scope: EmployeeScope = { kind: "employee", employeeId, tenantId };
-  const [leave] = await getApprovedLeaveOverlapping(db, scope, date, date);
+  const [leave] = await getActiveLeaveOverlapping(db, scope, date, date);
   if (!leave) return null;
 
   const { count } = await db.shift.updateMany({

@@ -21,6 +21,9 @@ describe("Schichtplanung — flagShiftIfConflictsWithApprovedLeave / notifyShift
   const NO_LEAVE_DATE = "2027-02-01";
   const LEAVE_DATE = "2027-02-08";
   const PENDING_LEAVE_DATE = "2027-02-15";
+  // Issue #446 D-02 — not 2027-02-22 (already used by the foreign-tenant case below, whose
+  // leave row is never cleaned up because that test only tears down otherTenantData).
+  const CANCELLATION_REQUESTED_LEAVE_DATE = "2027-02-28";
 
   beforeAll(async () => {
     app = await getTestApp();
@@ -148,6 +151,44 @@ describe("Schichtplanung — flagShiftIfConflictsWithApprovedLeave / notifyShift
       expect(again).toBeNull();
 
       await app.prisma.leaveRequest.delete({ where: { id: approved.id } });
+    });
+
+    it("a CANCELLATION_REQUESTED leave on that day -> still flags the shift (Issue #446 D-02: a leave under requested cancellation is still active, CLAUDE.md § Leave Cancellation Flow)", async () => {
+      const shift = await app.prisma.shift.create({
+        data: {
+          employeeId: data.employee.id,
+          salonId: data.salonId,
+          date: new Date(CANCELLATION_REQUESTED_LEAVE_DATE + "T00:00:00Z"),
+          startTime: "08:00",
+          endTime: "16:00",
+        },
+      });
+      const cancellationRequested = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: data.employee.id,
+          leaveTypeId: data.vacationType.id,
+          startDate: new Date(CANCELLATION_REQUESTED_LEAVE_DATE + "T00:00:00Z"),
+          endDate: new Date(CANCELLATION_REQUESTED_LEAVE_DATE + "T00:00:00Z"),
+          days: 1,
+          status: "CANCELLATION_REQUESTED",
+        },
+      });
+
+      const result = await flagShiftIfConflictsWithApprovedLeave(
+        app.prisma,
+        shift.id,
+        data.employee.id,
+        data.tenant.id,
+        new Date(CANCELLATION_REQUESTED_LEAVE_DATE + "T00:00:00Z"),
+      );
+
+      expect(result).not.toBeNull();
+      expect(result?.leaveRequestId).toBe(cancellationRequested.id);
+
+      const reloaded = await app.prisma.shift.findUniqueOrThrow({ where: { id: shift.id } });
+      expect(reloaded.conflictsWithLeave).toBe(true);
+
+      await app.prisma.leaveRequest.delete({ where: { id: cancellationRequested.id } });
     });
 
     it("a foreign tenant's employeeId/tenantId combination never flags the shift", async () => {

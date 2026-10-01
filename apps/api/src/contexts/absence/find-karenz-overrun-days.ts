@@ -99,6 +99,12 @@ export function karenzOverrunFromRequests(
     // instead of sharing it (D-04 tension, resolved in favour of the stricter R5/D-23 guarantee).
     if (r.leaveType.code !== "SICK" && r.leaveType.code !== "SICK_CHILD") continue;
     if (r.deletedAt) continue;
+    // Issue #446 (D-02): deliberately APPROVED-only, NOT EFFECTIVE_LEAVE_STATUSES. The Karenz
+    // overrun is a non-binding notice (D-21 above), not a saldo input — widening it to
+    // CANCELLATION_REQUESTED is a separate decision. Its two callers (overtime.ts
+    // close-month/status, fed by close-month-data.ts's now-effective bulk rows, and
+    // absence/api/leave.ts's GET /karenz-overrun, via its own APPROVED-only read) must agree, and
+    // this filter is what keeps them agreeing.
     if (r.status !== "APPROVED") continue;
     // § 5 Abs. 1 EFZG zählt KALENDERTAGE, nicht Arbeitstage — calculateWorkDays wäre falsch.
     const calendarDays = Math.round((r.endDate.getTime() - r.startDate.getTime()) / 86400000) + 1;

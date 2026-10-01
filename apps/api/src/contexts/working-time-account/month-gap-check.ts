@@ -15,8 +15,9 @@
  *   2. the day is EXPECTED — for `SHIFT_BASED` that means a roster `Shift` exists on it (never
  *      `{day}Hours`); for the FIXED family it means `isObligatedWorkday()` says so,
  *      `workDays`-primary;
- *   3. no approved leave, no absence and no public holiday AT THE EMPLOYEE'S WORK LOCATION OF
- *      THAT DAY covers the day (Phase 71b, § 2 EFZG);
+ *   3. no effective leave (APPROVED or CANCELLATION_REQUESTED, Issue #446), no absence and no
+ *      public holiday AT THE EMPLOYEE'S WORK LOCATION OF THAT DAY covers the day (Phase 71b,
+ *      § 2 EFZG);
  *   4. the day carries no entry in `entryDates`.
  *
  * Point 4 is the sharp one. `entryDates` is built from {@link getWorkedEntriesInRange} (facade
@@ -38,7 +39,7 @@ import type { Prisma } from "@clokr/db";
 import { holidaysAtWorkLocation } from "../platform";
 import { getShiftsInRange } from "../scheduling";
 import { getWorkedEntriesInRange } from "../time-tracking";
-import { getAbsencesOverlapping, getApprovedLeaveOverlapping } from "../absence";
+import { getAbsencesOverlapping, getActiveLeaveOverlapping } from "../absence"; // Issue #446 — A2, effective leave
 import { findMissingWorkdays } from "./find-missing-workdays";
 import { dateStrInTz, monthDayBounds, monthRangeUtc } from "./timezone";
 import type { MonthKey } from "./month-close-window";
@@ -94,7 +95,7 @@ export async function detectMonthGaps(
   const entries = await getWorkedEntriesInRange(db, scope, monthStart, monthEnd);
   const entryDates = new Set(entries.map((e) => dateStrInTz(e.date, tz)));
 
-  const approvedLeave = await getApprovedLeaveOverlapping(db, scope, monthStart, monthEnd);
+  const approvedLeave = await getActiveLeaveOverlapping(db, scope, monthStart, monthEnd);
   const absences = await getAbsencesOverlapping(db, scope, monthStart, monthEnd);
 
   // Phase 71b (issue #71): holidays by WORK LOCATION (§ 2 EFZG) instead of a tenant-wide
