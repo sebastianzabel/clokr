@@ -44,6 +44,10 @@ import {
   loadVacationTypeMeta,
   isSickLeaveTypeCode,
   runCarryoverWarningOnce, // Phase 101B (Issue #101, wave 7) — was `await import(...)`, see :1090
+  ensureRegularVacationEntitlement, // Issue #445 (D-05) — injected into selfHealUsedDays's ctx below
+  REGULAR_ENTITLEMENT_REASON_SELF_HEAL, // Issue #445 (D-05)
+  vacationEntitlementWarning, // Issue #445 — composition carries no business rule (CLAUDE.md); the warning string is built in the absence context
+  healEntitlementUsedDays, // Issue #445 (D-10) — injected into selfHealUsedDays's ctx below
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
 import type { LeaveTypeCode } from "@clokr/db";
 
@@ -1100,7 +1104,39 @@ export async function reportRoutes(app: FastifyInstance) {
       // Self-heal usedDays from Σ approved LeaveRequest.days BEFORE we shape the response.
       // Mirrors the heal that GET /entitlements/:employeeId has done since v1.4.
       // Fixes the report-vs-leave-page divergence (a-tenant incident 2026-05-27).
-      const vacMeta = await loadVacationTypeMeta(app.prisma, req.user.tenantId);
+      // healZeroPlaceholder (Issue #445, D-05) and healUsedDays (Issue #445, D-10) are injected
+      // rather than imported statically by leave-self-heal.ts itself — see that file's module
+      // docblock for why.
+      const vacMeta = {
+        ...(await loadVacationTypeMeta(app.prisma, req.user.tenantId)),
+        healZeroPlaceholder: (
+          prisma: typeof app.prisma,
+          employeeId: string,
+          empTenantId: string,
+          year: number,
+          leaveTypeId: string,
+        ) =>
+          ensureRegularVacationEntitlement(
+            prisma,
+            employeeId,
+            empTenantId,
+            year,
+            leaveTypeId,
+            REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
+          ),
+        healUsedDays: (
+          prisma: typeof app.prisma,
+          row: {
+            id: string;
+            employeeId: string;
+            leaveTypeId: string;
+            year: number;
+            usedDays: unknown;
+          },
+          leaveTypeIds: string[],
+          empTenantId: string,
+        ) => healEntitlementUsedDays(prisma, row, leaveTypeIds, empTenantId),
+      };
       await selfHealUsedDays(app.prisma, entitlements, vacMeta);
 
       // Bulk fetch PENDING leave requests for the same year + tenant (NO per-entitlement loop)
@@ -1124,6 +1160,16 @@ export async function reportRoutes(app: FastifyInstance) {
         remainingDays: Number(e.totalDays) + Number(e.carriedOverDays) - Number(e.usedDays),
         pendingDays: pendingMap.get(`${e.employeeId}:${e.leaveTypeId}`) ?? 0,
         missingEntitlement: false as const,
+        // Issue #445 (coordinator deviation from CONTEXT D-05) — selfHealUsedDays above sets
+        // needsReview on a VACATION row whose zero placeholder was left unhealed because it
+        // was ambiguous (see isAmbiguousRegularEntitlement in contexts/absence/leave-days.ts).
+        // The flag AND the warning string are both computed in the absence context — this
+        // composition layer carries no business rule (CLAUDE.md, ADR 0002 Entscheidung 9).
+        entitlementWarning: vacationEntitlementWarning({
+          leaveTypeCode: e.leaveType.code,
+          year: e.year,
+          needsReview: (e as { needsReview?: boolean }).needsReview,
+        }),
       }));
 
       // Issue #416 (AC-3/AC-4): active tenant employees (same Stammsalon scope as the
@@ -1158,6 +1204,7 @@ export async function reportRoutes(app: FastifyInstance) {
           remainingDays: null,
           pendingDays: null,
           missingEntitlement: true as const,
+          entitlementWarning: null,
         }));
 
       return [...realRows, ...missingEntitlementRows];

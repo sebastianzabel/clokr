@@ -12,10 +12,15 @@
  *   3. `PUT /api/v1/settings/vacation/:employeeId` (leave-settings.ts, moved from settings.ts
  *      by Phase 243 Plan 02 — B1; the URL is unchanged) — admin entitlement save
  *
- * All three now consult the single shared predicate `preserveIllnessDeadline`
- * (utils/illness-carryover-guard.ts). This file pins that an ILLNESS-protected deadline
- * survives all three, that non-ILLNESS rows are unaffected, and (Task 4) that no fourth,
- * divergent copy of the predicate can creep in undetected.
+ * All three now consult the single shared predicate `preserveCarryOverDeadline`
+ * (contexts/absence/illness-carryover-guard.ts). This file pins that an ILLNESS-protected
+ * deadline survives all three, that unprotected rows are unaffected, and (Task 4) that no
+ * fourth, divergent copy of the predicate can creep in undetected.
+ *
+ * Issue #445 (D-16/D-17) generalised the predicate from ILLNESS-only to every documented
+ * carry-over reason (ILLNESS, MATERNITY, PARENTAL_LEAVE, OTHER, plus the legacy OPERATIONAL
+ * value) — `preserveCarryOverDeadline` replaces the old `preserveIllnessDeadline`; "Test 4"
+ * below (originally pinning that an OPERATIONAL row was NOT protected) is flipped accordingly.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -302,7 +307,7 @@ describe("recalculateCarryOver / autoCarryOver — ILLNESS deadline protection (
     );
   });
 
-  it("Test 4: an entitlement with carryOverReason = 'OPERATIONAL' also has its deadline recomputed (guard is ILLNESS-specific)", async () => {
+  it("Test 4: an entitlement with carryOverReason = 'OPERATIONAL' keeps its deadline (Issue #445 D-16/D-17: every documented reason protects the deadline, not just ILLNESS)", async () => {
     const employeeId = await mkEmployee("s9cd-t4");
     await app.prisma.leaveEntitlement.create({
       data: {
@@ -339,9 +344,9 @@ describe("recalculateCarryOver / autoCarryOver — ILLNESS deadline protection (
         },
       },
     });
-    expect(nextYearEnt!.carryOverDeadline?.getTime()).toBe(
-      defaultDeadline(currentYear + 1).getTime(),
-    );
+    // Issue #445 (D-16/D-17): preserveCarryOverDeadline protects ANY documented reason,
+    // including the legacy OPERATIONAL value — the deadline is PRESERVED, not recomputed.
+    expect(nextYearEnt!.carryOverDeadline?.getTime()).toBe(staleDeadline.getTime());
     expect(nextYearEnt!.carryOverReason).toBe("OPERATIONAL");
   });
 
@@ -704,8 +709,8 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
   });
 });
 
-describe("structural guard against a divergent copy (Phase 104 Plan 04, Task 4)", () => {
-  it("every carryOverDeadline writer goes through preserveIllnessDeadline (guards against a divergent copy)", () => {
+describe("structural guard against a divergent copy (Phase 104 Plan 04, Task 4; generalised Issue #445 D-16/D-17)", () => {
+  it("every carryOverDeadline writer goes through preserveCarryOverDeadline (guards against a divergent copy)", () => {
     const apiSrc = join(__dirname, "..");
     const leaveTs = readFileSync(join(apiSrc, "contexts", "absence", "api", "leave.ts"), "utf-8");
     // Phase 243 Plan 02 (B1): the PUT /settings/vacation/:employeeId writer moved from
@@ -715,21 +720,30 @@ describe("structural guard against a divergent copy (Phase 104 Plan 04, Task 4)"
       join(apiSrc, "contexts", "absence", "api", "leave-settings.ts"),
       "utf-8",
     );
+    // Issue #445: recalculateCarryOver — the THIRD writer — lives in leave-days.ts.
+    const leaveDaysTs = readFileSync(join(apiSrc, "contexts", "absence", "leave-days.ts"), "utf-8");
 
-    const leaveMatches = leaveTs.match(/preserveIllnessDeadline/g) ?? [];
+    const leaveMatches = leaveTs.match(/preserveCarryOverDeadline/g) ?? [];
     expect(
       leaveMatches.length,
-      "leave.ts must reference preserveIllnessDeadline at least twice (both writers)",
+      "leave.ts must reference preserveCarryOverDeadline at least twice (both writers)",
     ).toBeGreaterThanOrEqual(2);
 
-    const leaveSettingsMatches = leaveSettingsTs.match(/preserveIllnessDeadline/g) ?? [];
+    const leaveSettingsMatches = leaveSettingsTs.match(/preserveCarryOverDeadline/g) ?? [];
     expect(
       leaveSettingsMatches.length,
-      "leave-settings.ts must reference preserveIllnessDeadline at least once",
-    ).toBeGreaterThanOrEqual(1);
+      "leave-settings.ts must reference preserveCarryOverDeadline at least twice",
+    ).toBeGreaterThanOrEqual(2);
 
-    // No file under apps/api/src outside utils/illness-carryover-guard.ts and __tests__/
-    // may contain a divergent inline copy of the predicate.
+    const leaveDaysMatches = leaveDaysTs.match(/preserveCarryOverDeadline/g) ?? [];
+    expect(
+      leaveDaysMatches.length,
+      "leave-days.ts must reference preserveCarryOverDeadline at least twice",
+    ).toBeGreaterThanOrEqual(2);
+
+    // No file under apps/api/src outside contexts/absence/illness-carryover-guard.ts and
+    // __tests__/ may contain a divergent inline copy of the predicate, or a reference to the
+    // removed ILLNESS-only name (Issue #445 D-17 — "no two predicates").
     const allFiles = walkTsFiles(apiSrc, true);
     // 235-BEFUND-B.md #4: `offenders` below is the OUTPUT set (expected empty on a healthy
     // tree) — proving IT non-empty would be backwards. This proves the WALKED (input) set is
@@ -739,16 +753,24 @@ describe("structural guard against a divergent copy (Phase 104 Plan 04, Task 4)"
       "no .ts file scanned under apps/api/src — the source tree moved or emptied",
     ).toBeGreaterThan(0);
     const offenders: string[] = [];
+    const removedNameOffenders: string[] = [];
     for (const file of allFiles) {
       if (file.endsWith(join("contexts", "absence", "illness-carryover-guard.ts"))) continue;
       const content = readFileSync(file, "utf-8");
       if (content.includes('=== "ILLNESS"')) {
         offenders.push(file);
       }
+      if (content.includes("preserveIllnessDeadline")) {
+        removedNameOffenders.push(file);
+      }
     }
     expect(
       offenders,
       `no production file may re-inline the ILLNESS predicate: ${offenders.join(", ")}`,
+    ).toEqual([]);
+    expect(
+      removedNameOffenders,
+      `no file may still reference the removed preserveIllnessDeadline name: ${removedNameOffenders.join(", ")}`,
     ).toEqual([]);
   });
 });

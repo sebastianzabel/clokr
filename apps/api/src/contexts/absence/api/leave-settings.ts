@@ -13,20 +13,32 @@ import {
   resolveAccessReach, // Phase 91b Plan 10 (#91), D-10/D-14
   isStammsalonScopeMatch, // Phase 91b Plan 10 (#91), D-10/D-14
 } from "../../platform";
-import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
+import {
+  preserveCarryOverDeadline, // Phase 104, Issue #445 (D-17)
+  CARRY_OVER_REASONS, // Issue #445 (D-16)
+  OTHER_CARRY_OVER_REASON, // Issue #445 (D-16)
+  ILLNESS_CARRY_OVER_REASON, // Issue #445 (D-16)
+} from "../illness-carryover-guard";
 import {
   getVacationEntitlement,
   upsertVacationEntitlement,
   ensureVacationEntitlementForYear, // Issue #416 — first-access self-heal
 } from "../facade/entitlements"; // Phase 100B Plan 10 — A11/A16
 import { listLeaveTypes, updateLeaveType } from "../facade/leave-types"; // Phase 100B Plan 10 — A18/A19
-import { resolveContractWorkDaysPerWeek } from "../leave-days"; // Issue #416 — same-context internal import, the one resolution chain (CLAUDE.md)
+import {
+  resolveContractWorkDaysPerWeek, // Issue #416 — same-context internal import, the one resolution chain (CLAUDE.md)
+  ensureRegularVacationEntitlement, // Issue #445 (D-05, P-07) — zero-placeholder heal
+  REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
+} from "../leave-days";
 
 const vacationEntitlementSchema = z.object({
   year: z.number().int().min(2000).max(2100),
   totalDays: z.number().min(0).max(365),
   carriedOverDays: z.number().min(0).max(365).optional(),
   carryOverDeadline: z.string().nullable().optional(), // ISO date string or null
+  // Issue #445 (D-16): omitted keeps the stored value, explicit null removes the protection.
+  carryOverReason: z.enum(CARRY_OVER_REASONS).nullable().optional(),
+  carryOverNote: z.string().max(500).nullable().optional(),
 });
 
 export async function leaveSettingsRoutes(app: FastifyInstance) {
@@ -94,7 +106,8 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
       // Phase 100B Plan 10 (A11): resolves the VACATION type AND the entitlement in one call.
       const result = await getVacationEntitlement(app.prisma, employeeId, employee.tenantId, year);
       if (!result) return reply.code(404).send({ error: "Urlaubstyp nicht konfiguriert" });
-      const { leaveTypeId, entitlement } = result;
+      const { leaveTypeId } = result;
+      let entitlement = result.entitlement;
 
       // Issue #416, CONTEXT.md decision 6 ("first access"): an active employee's row for the
       // CURRENT year that no code path ever created (either a genuinely new hire whose
@@ -138,6 +151,23 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
             carriedOverDays: Number(healed.entitlement.carriedOverDays),
             carryOverDeadline: healed.entitlement.carryOverDeadline ?? null,
           };
+        }
+      }
+
+      // Issue #445 (D-05, P-07): an EXISTING zero placeholder for whatever year is queried heals
+      // here too — no history is created (the row already exists), so this runs for a past year
+      // as well, unlike the #416 missing-row block above.
+      if (entitlement && Number(entitlement.totalDays) === 0 && !entitlement.isAutoCalculated) {
+        const healResult = await ensureRegularVacationEntitlement(
+          app.prisma,
+          employeeId,
+          employee.tenantId,
+          year,
+          leaveTypeId,
+          REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
+        );
+        if (healResult.healed) {
+          entitlement = healResult.entitlement;
         }
       }
 
@@ -232,27 +262,68 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
       // for this employee+year (no code path created it automatically before this phase) — the
       // audit action must say so instead of always claiming "UPDATE".
       const existedBefore = Boolean(existing);
-      const illnessProtected = preserveIllnessDeadline(existing);
+      const existingProtected = preserveCarryOverDeadline(existing);
       const requestedDeadline = body.carryOverDeadline ? new Date(body.carryOverDeadline) : null;
 
-      // An EXPLICIT non-null deadline is still allowed on a protected row — an admin must be able
-      // to correct a wrong date, and a hard block would be the kind of dead end this phase exists
-      // to avoid. It is audited separately (below) so the override is reconstructible.
-      const deadlineOverride = illnessProtected && requestedDeadline !== null;
-      const nextDeadline = illnessProtected
-        ? (requestedDeadline ?? existing?.carryOverDeadline ?? null)
-        : requestedDeadline;
+      // Issue #445 (D-16, P-20): `carryOverReason`/`carryOverNote` are resolved BEFORE any
+      // validation or write — omitted keeps the stored value, an explicit `null` removes the
+      // protection.
+      const reasonProvided = body.carryOverReason !== undefined;
+      const nextReason = reasonProvided
+        ? (body.carryOverReason ?? null)
+        : (existing?.carryOverReason ?? null);
+      const nextNote =
+        body.carryOverNote !== undefined
+          ? body.carryOverNote?.trim() || null
+          : (existing?.carryOverNote ?? null);
+
+      if (nextReason === OTHER_CARRY_OVER_REASON && !nextNote) {
+        return reply.code(400).send({
+          error:
+            "Für den Übertragungsgrund OTHER (sonstiger Grund) ist eine Notiz (carryOverNote) erforderlich.",
+        });
+      }
+      if (
+        reasonProvided &&
+        body.carryOverReason != null &&
+        body.carryOverReason !== ILLNESS_CARRY_OVER_REASON &&
+        !body.carryOverDeadline
+      ) {
+        return reply.code(400).send({
+          error:
+            "Für diesen Übertragungsgrund ist eine Übertragsfrist (carryOverDeadline) erforderlich.",
+        });
+      }
+
+      // Issue #445 (D-16): when a reason is provided (and non-null), the deadline comes from the
+      // request, falling back to the ILLNESS default (15 months — 31.03. of year + 1) only for
+      // ILLNESS; every other reason already required an explicit deadline above. When the
+      // reason is omitted, the pre-#445 Phase 104 logic applies: an EXPLICIT non-null deadline is
+      // still allowed on a protected row — an admin must be able to correct a wrong date, and a
+      // hard block would be the kind of dead end this phase exists to avoid. It is audited
+      // separately (below) so the override is reconstructible.
+      const deadlineOverride = existingProtected && !reasonProvided && requestedDeadline !== null;
+      const nextDeadline = reasonProvided
+        ? nextReason != null
+          ? (requestedDeadline ?? new Date(Date.UTC(body.year + 1, 2, 31, 23, 59, 59)))
+          : requestedDeadline
+        : existingProtected
+          ? (requestedDeadline ?? existing?.carryOverDeadline ?? null)
+          : requestedDeadline;
 
       // Same silent-zeroing shape on the adjacent line: `?? 0` wipes a carry-over the admin never
-      // mentioned. Protected rows preserve it; every other row keeps today's `?? 0` behaviour
-      // byte-for-byte, because clearing that input plausibly does mean "zero" for a normal row.
+      // mentioned. Protected rows (any documented reason) preserve it; every other row keeps
+      // today's `?? 0` behaviour byte-for-byte, because clearing that input plausibly does mean
+      // "zero" for a normal row.
       const nextCarriedOver =
-        body.carriedOverDays ?? (illnessProtected ? Number(existing?.carriedOverDays ?? 0) : 0);
+        body.carriedOverDays ?? (nextReason != null ? Number(existing?.carriedOverDays ?? 0) : 0);
 
       const data = {
         totalDays: body.totalDays,
         carriedOverDays: nextCarriedOver,
         carryOverDeadline: nextDeadline,
+        carryOverReason: nextReason,
+        carryOverNote: nextNote,
       };
 
       // Phase 100B Plan 10 (A16): re-resolves the VACATION type by code (a cheap, indexed
@@ -279,9 +350,18 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
               carriedOverDays: Number(existing.carriedOverDays),
               carryOverDeadline: existing.carryOverDeadline,
               carryOverReason: existing.carryOverReason,
+              carryOverNote: existing.carryOverNote,
             }
           : null,
-        newValue: body,
+        // Issue #445 (D-18): carries the resolved reason/note/deadline, not just the raw body —
+        // `totalDays` stays present so the Issue #445 human-write detection (isZeroVacationPlaceholder)
+        // still recognises this as a human write.
+        newValue: {
+          ...body,
+          carryOverDeadline: nextDeadline,
+          carryOverReason: nextReason,
+          carryOverNote: nextNote,
+        },
       });
 
       if (deadlineOverride) {
@@ -304,6 +384,8 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
         usedDays: Number(entitlement.usedDays),
         carriedOverDays: Number(entitlement.carriedOverDays),
         carryOverDeadline: entitlement.carryOverDeadline,
+        carryOverReason: entitlement.carryOverReason,
+        carryOverNote: entitlement.carryOverNote,
       };
     },
   });

@@ -118,8 +118,9 @@ describe("Section9Credit — model shape (Phase 104 Plan 01)", () => {
   // Phase 104 code review WR-03: the detection path's duplicate guard is a
   // findFirst/create pair that is NOT in a transaction — a check-then-create race that two
   // concurrent approvals both pass. If both rows were later confirmed, reverseVacationDays()
-  // would run twice and sumConfirmedSection9DaysByRequest() would sum both; the double
-  // credit then SURVIVES selfHealUsedDays(), because the self-heal trusts the credit sum.
+  // would run twice and listConfirmedSection9CreditsByRequest() (Issue #445, D-10 — replaces
+  // the former total-only summing helper) would sum both; the double credit then SURVIVES
+  // selfHealUsedDays(), because the self-heal trusts the credit sum.
   // Only @@unique([sickRequestId, vacationRequestId]) can rule it out.
   it("Test 1b (WR-03): a second credit for the same (sickRequestId, vacationRequestId) pair is rejected by the database", async () => {
     // The Test 1 row for exactly this pair still exists.

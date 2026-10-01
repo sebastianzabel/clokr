@@ -172,6 +172,10 @@ export {
   contractWorkDaysPerWeekFrom, // Issue #429 (D-03) — the ONE fallback-chain implementation
   resolveContractWorkDaysPerWeek, // Phase 430 (D-08) — Erweiterung, additive; the DB-fetching wrapper (Issue #429 D-03) that delegates to contractWorkDaysPerWeekFrom
   getShiftBasedLeaveDaysForWeek, // Phase 430 (D-08) — Erweiterung, additive; a thin DB-fetching wrapper delegating to leaveDaysPerWeek (Issue #429 D-01/D-02) for the actual kernel — see leave-days.ts
+  ensureRegularVacationEntitlement, // Issue #445 (D-02) — composition/reports.ts injects this into leave-self-heal.ts's ctx (D-05)
+  REGULAR_ENTITLEMENT_REASON_SELF_HEAL, // Issue #445 (D-05) — the matching audit reason
+  vacationEntitlementWarning, // Issue #445 — the one function building the warning string (no rule in composition/)
+  healEntitlementUsedDays, // Issue #445 (D-10) — composition/reports.ts injects this into leave-self-heal.ts's ctx
 } from "./leave-days";
 export { checkJArbSchG } from "./jarbschg";
 export { buildSlotOverrideHierarchy, resolveBsTagSlot } from "./bs-slot-resolver";

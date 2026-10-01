@@ -477,6 +477,43 @@ export function countShiftBasedLeaveDays(
   return { days: totalDays, provisional: false };
 }
 
+// ── Issue #445 (D-01) — the regular yearly vacation entitlement, in ONE place ──────────────────
+
+/**
+ * The ONE regular-entitlement computation for a VACATION `LeaveEntitlement` row (Issue #445,
+ * D-01). Moved verbatim from `facade/entitlements.ts`'s `ensureVacationEntitlementForYear`
+ * (Issue #416): scale by contractual workdays FIRST ({@link calculatePartTimeVacation}, reference
+ * week 5), THEN apply hire-year pro-rata ({@link calculateProRataVacationForHire}) only when
+ * `year` is the employee's hire year (local calendar year, unchanged from #416 — P-01); every
+ * other year gets the full scaled amount unprorated.
+ *
+ * Issue #435 will add the § 19 JArbSchG / § 3 BUrlG statutory-minimum floor HERE, and the
+ * per-person base value in `resolveVacationBaseDays` (leave-days.ts) — this extraction exists so
+ * that change has exactly one place to land.
+ */
+export function computeRegularVacationDays(input: {
+  year: number;
+  hireDate: Date;
+  workDaysPerWeek: number;
+  baseDays: number;
+}): number {
+  const { year, hireDate, workDaysPerWeek, baseDays } = input;
+  const referenceSchedule: ScheduleForCalc = {
+    mondayHours: 0,
+    tuesdayHours: 0,
+    wednesdayHours: 0,
+    thursdayHours: 0,
+    fridayHours: 0,
+    saturdayHours: 0,
+    sundayHours: 0,
+    contractWorkDaysPerWeek: workDaysPerWeek,
+  };
+  const scaledBase = calculatePartTimeVacation(referenceSchedule, 5, baseDays);
+  return year === hireDate.getFullYear()
+    ? calculateProRataVacationForHire(scaledBase, year, hireDate)
+    : scaledBase;
+}
+
 /** One ISO week's leave-day contribution (Issue #429, D-01): the week's Monday (UTC
  * "YYYY-MM-DD"), the total `days` that week costs, and a per-calendar-date fractional
  * breakdown (`dayShares`) of that total — `Σ dayShares === days`. `leaveDaysPerWeek()` below is

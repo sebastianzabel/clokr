@@ -4,7 +4,6 @@ import { LeaveRequestStatus, Prisma } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
 import { generateICal, addOneDay, type ICalEvent } from "../ical";
 import {
-  splitDaysAcrossYears,
   calculateProRataVacation,
   shiftBasedLeaveMinutesForRequest, // Issue #429, D-13 — receipt shares the saldo's per-week formula
   mondayOfWeekUtc, // Phase 430 Plan 04 (D-15) — the one shared Monday derivation
@@ -23,7 +22,6 @@ import {
   getHolidayMap,
   deductVacationDays,
   reverseVacationDays,
-  resolveWorkDays,
   recalculateCarryOver,
   contractWorkDaysPerWeekFrom, // Issue #429, D-13 — the getScheduledHours SHIFT_BASED branch below
 } from "../leave-days";
@@ -62,10 +60,24 @@ import {
   resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
   employeeScopeFor, // Phase 430 Plan 04 (D-15) — rosterImported's getShiftsInRange scope
 } from "../../platform"; // Quick 260824-cjd
-import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
+import { preserveCarryOverDeadline } from "../illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
 import { isSickLeaveTypeCode } from "../leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
 import { karenzOverrunFromRequests, normalizeKarenzDays } from "../find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
+import {
+  ensureRegularVacationEntitlement,
+  daysDiffer,
+  CARRY_OVER_RECALC_REASON,
+  REGULAR_ENTITLEMENT_REASON_LEAVE_REQUEST,
+  REGULAR_ENTITLEMENT_REASON_ROLLOVER,
+  REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
+  vacationEntitlementWarning, // Issue #445 — one function builds the warning string (no business rule in composition/reports.ts)
+  splitLeaveDaysByYear, // Issue #445 (D-08/D-09) — chronological cross-year attribution
+  healEntitlementUsedDays, // Issue #445 (D-10) — injected into leave-self-heal.ts's ctx below
+  effectiveCarryOverDays, // Issue #445 (D-13) — the FIFO expiry check (replaces the removed local helper)
+  carryOverRemainder, // Issue #445 (D-14) — replaces the raw totalDays+carriedOverDays-usedDays sum
+} from "../leave-days"; // Issue #445 — own statement: PR #437 edits the block above
+import { writeEntitlementAudit } from "../entitlement-audit"; // Issue #445
 import { revalidateLeaveCancellationEntries } from "../../time-tracking"; // Phase 100B Plan 08 — T6
 import {
   REQUESTABLE_CODES as TYPE_CODES,
@@ -472,8 +484,6 @@ export async function leaveRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const holidayMap = await getHolidayMap(app.prisma, tenantId, employeeId, start, end);
       const holidays = new Set(holidayMap.keys());
-      // workDays (the array, not just the count) is still needed below for splitDaysAcrossYears.
-      const workDays = await resolveWorkDays(app.prisma, employeeId, tenantId);
       // Phase 107 (D-09): roster-aware estimate from creation onward, so the number does not
       // visibly jump at approval. daysProvisional itself stays null until approval (D-10) --
       // only `.days` is used here, `.provisional` is deliberately discarded.
@@ -598,14 +608,20 @@ export async function leaveRoutes(app: FastifyInstance) {
       }
 
       // Für VACATION: Resturlaub auto-übertragen (lazy) + verfügbare Tage prüfen
+      //
+      // Issue #445 (D-08/D-09/P-15): UTC year boundaries, symmetric with deductVacationDays()/
+      // reverseVacationDays(). A cross-year request is split chronologically through
+      // splitLeaveDaysByYear() — the SAME day count the request itself was priced with above
+      // (resolveLeaveDays) — instead of re-deriving each year's count from the placeholder
+      // workDays array via splitDaysAcrossYears (a missing row used to also skip this entirely,
+      // see the ensureRegularVacationEntitlement calls below, D-04).
       if (body.type === "VACATION") {
-        const year1 = start.getFullYear();
-        const year2 = end.getFullYear();
+        const year1 = start.getUTCFullYear();
+        const year2 = end.getUTCFullYear();
         const isCrossYear = year1 !== year2;
 
-        // Split days across years if cross-year
         const split = isCrossYear
-          ? splitDaysAcrossYears(start, end, body.halfDay, workDays, holidays)
+          ? await splitLeaveDaysByYear(app.prisma, employeeId, tenantId, start, end, days, holidays)
           : { year1Days: days, year2Days: 0, year1, year2 };
 
         // § 5 Abs. 2 BUrlG: fetch exit date once so both year-1 and year-2 blocks can use it.
@@ -618,16 +634,29 @@ export async function leaveRoutes(app: FastifyInstance) {
 
         // ── Year 1: check entitlement ──
         await autoCarryOver(app.prisma, tenantId, employeeId, leaveTypeId, year1);
-        const ent1 = await app.prisma.leaveEntitlement.findUnique({
-          where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year: year1 } },
-        });
-        if (ent1 && split.year1Days > 0) {
+        // Issue #445 D-04: a missing row used to skip the availability check entirely —
+        // ensureRegularVacationEntitlement() creates it (with the regular entitlement, never a
+        // hard-coded zero) before the check below ever runs.
+        const { entitlement: ent1 } = await ensureRegularVacationEntitlement(
+          app.prisma,
+          employeeId,
+          tenantId,
+          year1,
+          leaveTypeId,
+          REGULAR_ENTITLEMENT_REASON_LEAVE_REQUEST,
+        );
+        if (split.year1Days > 0) {
           // EuGH C-684/16: pre-fetch whether a warning was issued for this entitlement
           const hinweis1 =
             (await app.prisma.auditLog.count({
               where: { action: "CARRYOVER_WARNED", entity: "LeaveEntitlement", entityId: ent1.id },
             })) > 0;
-          const co1 = getEffectiveCarryOver(ent1, start, hinweis1);
+          const co1 = await effectiveCarryOverDays(
+            app.prisma,
+            { ...ent1, tenantId },
+            start,
+            hinweis1,
+          );
           const avail1 = Number(ent1.totalDays) + co1 - Number(ent1.usedDays);
 
           // § 5 Abs. 2 BUrlG: H1 exits are capped at pro-rata entitlement.
@@ -663,37 +692,47 @@ export async function leaveRoutes(app: FastifyInstance) {
           // (remaining from year 1 after this booking)
           await recalculateCarryOver(app.prisma, tenantId, employeeId, leaveTypeId, year2);
 
-          const ent2 = await app.prisma.leaveEntitlement.findUnique({
-            where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year: year2 } },
-          });
-          if (ent2) {
-            // EuGH C-684/16: pre-fetch whether a warning was issued for this entitlement
-            const hinweis2 =
-              (await app.prisma.auditLog.count({
-                where: {
-                  action: "CARRYOVER_WARNED",
-                  entity: "LeaveEntitlement",
-                  entityId: ent2.id,
-                },
-              })) > 0;
-            const co2 = getEffectiveCarryOver(ent2, end, hinweis2);
-            let avail2 = Number(ent2.totalDays) + co2 - Number(ent2.usedDays);
+          // Issue #445 D-04: same reasoning as year 1 — a missing row used to skip this check
+          // entirely.
+          const { entitlement: ent2 } = await ensureRegularVacationEntitlement(
+            app.prisma,
+            employeeId,
+            tenantId,
+            year2,
+            leaveTypeId,
+            REGULAR_ENTITLEMENT_REASON_LEAVE_REQUEST,
+          );
+          // EuGH C-684/16: pre-fetch whether a warning was issued for this entitlement
+          const hinweis2 =
+            (await app.prisma.auditLog.count({
+              where: {
+                action: "CARRYOVER_WARNED",
+                entity: "LeaveEntitlement",
+                entityId: ent2.id,
+              },
+            })) > 0;
+          const co2 = await effectiveCarryOverDays(
+            app.prisma,
+            { ...ent2, tenantId },
+            end,
+            hinweis2,
+          );
+          let avail2 = Number(ent2.totalDays) + co2 - Number(ent2.usedDays);
 
-            // § 5 Abs. 2 BUrlG: apply H1 cap symmetrically to year 2 when employee exits in H1
-            // of year 2 (mirrors the year-1 check above for cross-year bookings).
-            // Carry-over is excluded from the cap base for the same reason as year 1.
-            if (exitDate && exitDate.getFullYear() === year2 && exitDate.getMonth() < 6) {
-              const proRata2 = calculateProRataVacation(Number(ent2.totalDays), year2, exitDate);
-              avail2 = Math.min(avail2, proRata2 - Number(ent2.usedDays));
-            }
+          // § 5 Abs. 2 BUrlG: apply H1 cap symmetrically to year 2 when employee exits in H1
+          // of year 2 (mirrors the year-1 check above for cross-year bookings).
+          // Carry-over is excluded from the cap base for the same reason as year 1.
+          if (exitDate && exitDate.getFullYear() === year2 && exitDate.getMonth() < 6) {
+            const proRata2 = calculateProRataVacation(Number(ent2.totalDays), year2, exitDate);
+            avail2 = Math.min(avail2, proRata2 - Number(ent2.usedDays));
+          }
 
-            if (split.year2Days > avail2) {
-              return reply.code(400).send({
-                error: `Nicht genug Urlaubstage in ${year2}`,
-                available: avail2,
-                requested: split.year2Days,
-              });
-            }
+          if (split.year2Days > avail2) {
+            return reply.code(400).send({
+              error: `Nicht genug Urlaubstage in ${year2}`,
+              available: avail2,
+              requested: split.year2Days,
+            });
           }
         }
       }
@@ -1259,14 +1298,28 @@ export async function leaveRoutes(app: FastifyInstance) {
 
           const typeCode = existing.leaveType.code;
           if (typeCode === "VACATION") {
-            await app.prisma.leaveEntitlement.updateMany({
-              where: {
-                employeeId: existing.employeeId,
-                leaveTypeId: existing.leaveTypeId,
-                year: existing.startDate.getFullYear(),
-              },
-              data: { usedDays: { decrement: Number(existing.days) } },
-            });
+            // Issue #445 (D-11): a single-year decrement on existing.startDate's year used to
+            // silently drop a cross-year request's year-2 portion and never recompute the next
+            // year's carry-over. reverseVacationDays() splits per year chronologically
+            // (D-08/D-09) and recomputes the next year's carry-over — the symmetric
+            // counterpart of the deduct at booking time.
+            const cancelHolidayMap = await getHolidayMap(
+              app.prisma,
+              existing.employee.tenantId,
+              existing.employeeId,
+              existing.startDate,
+              existing.endDate,
+            );
+            await reverseVacationDays(
+              app.prisma,
+              existing.employeeId,
+              existing.leaveTypeId,
+              existing.startDate,
+              existing.endDate,
+              Number(existing.days),
+              new Set(cancelHolidayMap.keys()),
+              existing.employee.tenantId,
+            );
           }
           if (typeCode === "OVERTIME_COMP") {
             const empT = await app.prisma.employee.findUnique({
@@ -3103,8 +3156,41 @@ export async function leaveRoutes(app: FastifyInstance) {
         orderBy: { year: "desc" },
       });
 
-      // Vacation type meta — shared with selfHealUsedDays AND the pro-rata mapping below
-      const vacMeta = await loadVacationTypeMeta(app.prisma, tenantId);
+      // Vacation type meta — shared with selfHealUsedDays AND the pro-rata mapping below.
+      // healZeroPlaceholder (Issue #445, D-05) and healUsedDays (Issue #445, D-10) are injected
+      // here rather than imported statically by leave-self-heal.ts itself — see that file's
+      // module docblock for why (the absence/scheduling/time-tracking/working-time-account
+      // import-cycle ceiling, Phase 101B, 22).
+      const vacMeta = {
+        ...(await loadVacationTypeMeta(app.prisma, tenantId)),
+        healZeroPlaceholder: (
+          prisma: typeof app.prisma,
+          employeeId: string,
+          empTenantId: string,
+          year: number,
+          leaveTypeId: string,
+        ) =>
+          ensureRegularVacationEntitlement(
+            prisma,
+            employeeId,
+            empTenantId,
+            year,
+            leaveTypeId,
+            REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
+          ),
+        healUsedDays: (
+          prisma: typeof app.prisma,
+          row: {
+            id: string;
+            employeeId: string;
+            leaveTypeId: string;
+            year: number;
+            usedDays: unknown;
+          },
+          leaveTypeIds: string[],
+          empTenantId: string,
+        ) => healEntitlementUsedDays(prisma, row, leaveTypeIds, empTenantId),
+      };
 
       // exitDate for pro-rata effective entitlement computation (§ 5 Abs. 2 BUrlG) —
       // reuse the `employee` row loaded by the tenant guard above.
@@ -3135,8 +3221,8 @@ export async function leaveRoutes(app: FastifyInstance) {
         select: { id: true, days: true, startDate: true, endDate: true, leaveTypeId: true },
       });
 
-      // EuGH C-684/16: batch-fetch which entitlements have a documented warning so the
-      // synchronous rows.map() can call getEffectiveCarryOver with the hinweisIssued flag.
+      // EuGH C-684/16: batch-fetch which entitlements have a documented warning so
+      // effectiveCarryOverDays() below can be called with the hinweisIssued flag.
       // A single query covers all entitlement ids — no N+1 (rows per employee+year are bounded).
       const warnedEntitlementIds = new Set(
         (
@@ -3152,6 +3238,22 @@ export async function leaveRoutes(app: FastifyInstance) {
         ).map((al) => al.entityId!),
       );
 
+      // Issue #445 (D-13): effectiveCarryOverDays() is async (it may need to count the days
+      // taken before the deadline), so it is resolved here, in a loop, BEFORE the synchronous
+      // rows.map() below — the response field's name and meaning are unchanged.
+      const effectiveCarryByRowId = new Map<string, number>();
+      for (const r of rows) {
+        effectiveCarryByRowId.set(
+          r.id,
+          await effectiveCarryOverDays(
+            app.prisma,
+            { ...r, tenantId },
+            now,
+            warnedEntitlementIds.has(r.id),
+          ),
+        );
+      }
+
       // typeCode + effektiven Resturlaub + anteiligen Urlaubsanspruch im Response markieren
       return rows.map((r) => {
         // Phase 97: the vacation account is the row whose CODE is VACATION. This used to be a
@@ -3163,6 +3265,17 @@ export async function leaveRoutes(app: FastifyInstance) {
           isVacationRow && employeeExitDate
             ? calculateProRataVacation(Number(r.totalDays), r.year, employeeExitDate)
             : Number(r.totalDays);
+        // Issue #445 (coordinator deviation from CONTEXT D-05) — selfHealUsedDays above sets
+        // needsReview on a row whose zero placeholder was left unhealed because it was
+        // ambiguous (see isAmbiguousRegularEntitlement in ../leave-days). Surface it so an
+        // admin/manager can act instead of the row silently staying at 0 unexplained. The
+        // warning string itself is built by vacationEntitlementWarning() in ../leave-days — the
+        // same function composition/reports.ts uses, so the business rule lives in one place.
+        const entitlementWarning = vacationEntitlementWarning({
+          leaveTypeCode: r.leaveType.code,
+          year: r.year,
+          needsReview: (r as { needsReview?: boolean }).needsReview,
+        });
         // D-31: only the vacation-account row carries movements — a credit only ever
         // touches the VACATION LeaveEntitlement (reverseVacationDays' target), so a
         // same-year non-vacation row (e.g. Sonderurlaub) must not repeat it.
@@ -3180,9 +3293,11 @@ export async function leaveRoutes(app: FastifyInstance) {
         return {
           ...r,
           typeCode: r.leaveType.code,
-          effectiveCarryOverDays: getEffectiveCarryOver(r, now, warnedEntitlementIds.has(r.id)),
+          effectiveCarryOverDays: effectiveCarryByRowId.get(r.id) ?? 0,
           carryOverDeadline: r.carryOverDeadline?.toISOString().split("T")[0] ?? null,
           effectiveEntitlementDays,
+          // Issue #445 — null unless this VACATION row is an unhealed ambiguous placeholder.
+          entitlementWarning,
           // Phase 107-07 (D-12): the provisional portion of `usedDays` for this year — see the
           // `provisionalLeaveRequests` query above. Always 0 for an employee/year with no
           // provisional requests; every other field on this response is unchanged.
@@ -3558,9 +3673,12 @@ export async function leaveRoutes(app: FastifyInstance) {
           .send({ error: "Kein anrechenbarer Arbeitstag im attestierten Zeitraum." });
       }
 
-      // reverseVacationDays IGNORES totalDays in its cross-year branch and recomputes it with
-      // halfDay=false. A half-day request whose credited range crosses a year boundary would
-      // therefore be over-booked. Refuse loudly instead of mis-booking silently.
+      // Issue #445 (D-08/D-09): reverseVacationDays' cross-year branch now splits `totalDays`
+      // chronologically by the REQUEST'S OWN day count (splitLeaveDaysByYear), always called
+      // with halfDay=false — the split works on the already-priced total, not on halfDay
+      // itself. A half-day credit whose credited range crosses a year boundary therefore still
+      // has no unambiguous per-year attribution (0.5 day cannot be chronologically split).
+      // Refuse loudly instead of mis-booking silently — behaviour unchanged from before #445.
       // Phase 104 review (WR-09): UTC accessors throughout the § 9 path. Every
       // Section9Credit date column is @db.Date (UTC midnight) and the entitlement endpoint
       // attributes credits to a year with getUTCFullYear(); using the LOCAL accessors here
@@ -3621,10 +3739,10 @@ export async function leaveRoutes(app: FastifyInstance) {
             },
           });
 
-          // D-19 / R9: Ist die Übertragsfrist des Ursprungsjahres bereits abgelaufen, verfallen
-          // die Tage NICHT (EuGH KHS C-214/10 — 15 Monate). Wir markieren den Folgejahres-
-          // Übertrag als krankheitsbedingt; preserveIllnessDeadline (Phase 104-04) schützt
-          // diese Frist bei späteren Buchungen vor stillem Überschreiben.
+          // D-19 / R9: when the origin year's carry-over deadline has already passed, the
+          // days do NOT lapse (EuGH KHS C-214/10 — 15 months). We mark the following year's
+          // carry-over as illness-related; preserveCarryOverDeadline (Phase 104-04, generalised
+          // Issue #445 D-17) protects this deadline from a later, silent overwrite.
           const originYear = credited.start.getUTCFullYear(); // WR-09: @db.Date is UTC midnight
           const carryRow = await tx.leaveEntitlement.findUnique({
             where: {
@@ -3969,9 +4087,13 @@ export async function leaveRoutes(app: FastifyInstance) {
 }
 
 /**
- * Überträgt automatisch nicht genommene Urlaubstage des Vorjahres als Resturlaub
- * ins aktuelle Jahr — sofern das noch nicht passiert ist.
- * Wird lazy bei jedem Urlaubsantrag und Kontoabruf aufgerufen.
+ * Automatically carries over the previous year's unused vacation days into the current year as
+ * Resturlaub — unless that has already happened. Called lazily on every leave request and
+ * account read.
+ *
+ * Issue #445 (D-04): a missing current-year row used to be created here with a hard-coded
+ * `totalDays: 0` — now `ensureRegularVacationEntitlement()` creates (or heals) it with the
+ * regular yearly entitlement instead, through the same wrapper `recalculateCarryOver()` uses.
  */
 async function autoCarryOver(
   prisma: FastifyInstance["prisma"],
@@ -3982,73 +4104,55 @@ async function autoCarryOver(
 ): Promise<void> {
   const prevYear = year - 1;
 
-  // Vorjahres-Entitlement holen
+  // Fetch the previous year's entitlement.
   const prev = await prisma.leaveEntitlement.findUnique({
     where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year: prevYear } },
   });
   if (!prev) return;
 
-  const remaining = Number(prev.totalDays) + Number(prev.carriedOverDays) - Number(prev.usedDays);
+  // Issue #445 (D-14): the effective (FIFO) remainder — an expired, untaken carry never
+  // returns the following year.
+  const remaining = await carryOverRemainder(prisma, prev, tenantId);
   if (remaining <= 0) return;
 
-  // Bereits übertragen? → abbrechen
-  const cur = await prisma.leaveEntitlement.findUnique({
+  // Already carried over? -> abort (idempotent).
+  const alreadyCarried = await prisma.leaveEntitlement.findUnique({
     where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
   });
-  if (cur && Number(cur.carriedOverDays) > 0) return;
+  if (alreadyCarried && Number(alreadyCarried.carriedOverDays) > 0) return;
 
-  // Verfallsdatum aus TenantConfig
+  // Expiry deadline from TenantConfig.
   const config = await prisma.tenantConfig.findUnique({ where: { tenantId } });
   const deadlineDay = config?.carryOverDeadlineDay ?? 31;
   const deadlineMonth = config?.carryOverDeadlineMonth ?? 3;
   const deadline = new Date(year, deadlineMonth - 1, deadlineDay, 23, 59, 59);
 
-  if (cur) {
-    // Phase 104 (D-19): see recalculateCarryOver — same ILLNESS deadline protection.
-    const illnessProtected = preserveIllnessDeadline(cur);
-    await prisma.leaveEntitlement.update({
-      where: { id: cur.id },
-      data: illnessProtected
-        ? { carriedOverDays: remaining }
-        : { carriedOverDays: remaining, carryOverDeadline: deadline },
-    });
-  } else {
-    await prisma.leaveEntitlement.create({
-      data: {
-        employeeId,
-        leaveTypeId,
-        year,
-        totalDays: 0,
-        usedDays: 0,
-        carriedOverDays: remaining,
-        carryOverDeadline: deadline,
-      },
+  const { entitlement: cur } = await ensureRegularVacationEntitlement(
+    prisma,
+    employeeId,
+    tenantId,
+    year,
+    leaveTypeId,
+    REGULAR_ENTITLEMENT_REASON_ROLLOVER,
+  );
+
+  // Phase 104 (D-19), generalised by Issue #445 (D-16/D-17): see recalculateCarryOver — same
+  // documented-reason deadline protection.
+  const deadlineProtected = preserveCarryOverDeadline(cur);
+  await prisma.leaveEntitlement.update({
+    where: { id: cur.id },
+    data: deadlineProtected
+      ? { carriedOverDays: remaining }
+      : { carriedOverDays: remaining, carryOverDeadline: deadline },
+  });
+  if (daysDiffer(Number(cur.carriedOverDays), remaining)) {
+    await writeEntitlementAudit(prisma, {
+      action: "UPDATE",
+      entityId: cur.id,
+      oldValue: { carriedOverDays: Number(cur.carriedOverDays) },
+      newValue: { carriedOverDays: remaining, reason: CARRY_OVER_RECALC_REASON },
     });
   }
-}
-
-/**
- * Gibt den effektiven Resturlaub zurück.
- *
- * EuGH C-684/16 (Hinweispflicht, docs/burlg-carryover.md): Resturlaub verfällt am
- * Stichtag nur dann, wenn der Arbeitgeber den Arbeitnehmer zuvor ausdrücklich auf
- * den bevorstehenden Verfall hingewiesen hat (CARRYOVER_WARNED AuditLog-Eintrag).
- * Ohne dokumentierten Hinweis bleibt der Anspruch erhalten.
- *
- * @param hinweisIssued - true wenn ein CARRYOVER_WARNED-AuditLog für dieses
- *   LeaveEntitlement existiert (vor dem Aufruf per count-Query zu ermitteln).
- */
-function getEffectiveCarryOver(
-  entitlement: { carriedOverDays: Prisma.Decimal | number; carryOverDeadline: Date | null },
-  referenceDate: Date,
-  hinweisIssued: boolean,
-): number {
-  const carryOver = Number(entitlement.carriedOverDays);
-  if (carryOver <= 0) return 0;
-  if (!entitlement.carryOverDeadline) return carryOver; // kein Verfall konfiguriert
-  if (referenceDate <= entitlement.carryOverDeadline) return carryOver; // Stichtag noch nicht erreicht
-  if (!hinweisIssued) return carryOver; // EuGH C-684/16: kein Verfall ohne dokumentierten Hinweis
-  return 0;
 }
 
 /**
