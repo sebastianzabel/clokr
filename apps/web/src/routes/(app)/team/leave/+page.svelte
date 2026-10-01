@@ -1348,48 +1348,50 @@
                   {/if}
                 </td>
                 <td class="action-cell">
-                  {#if req.status === "PENDING" || req.status === "CANCELLATION_REQUESTED"}
-                    <button
-                      data-testid={req.status === "CANCELLATION_REQUESTED"
-                        ? `leave-team-row-${req.id}-review-cancel`
-                        : `leave-team-row-${req.id}-review`}
-                      class="btn btn-sm btn-ghost"
-                      onclick={() => openReview(req)}
-                    >
-                      {req.status === "CANCELLATION_REQUESTED" ? "Stornierung prüfen" : "Prüfen"}
-                    </button>
-                  {:else if req.status === "APPROVED"}
-                    <button
-                      data-testid={`leave-team-row-${req.id}-correct`}
-                      class="btn btn-sm btn-ghost"
-                      onclick={() => openCorrect(req)}
-                    >
-                      Korrigieren
-                    </button>
-                    {#if SICK_CODES.includes(req.typeCode)}
+                  <div class="action-cell__group">
+                    {#if req.status === "PENDING" || req.status === "CANCELLATION_REQUESTED"}
                       <button
-                        data-testid={`leave-team-row-${req.id}-attest`}
+                        data-testid={req.status === "CANCELLATION_REQUESTED"
+                          ? `leave-team-row-${req.id}-review-cancel`
+                          : `leave-team-row-${req.id}-review`}
                         class="btn btn-sm btn-ghost"
-                        onclick={() => openAttest(req)}
+                        onclick={() => openReview(req)}
                       >
-                        {req.attestPresent ? "Attest ändern" : "Attest erfassen"}
+                        {req.status === "CANCELLATION_REQUESTED" ? "Stornierung prüfen" : "Prüfen"}
+                      </button>
+                    {:else if req.status === "APPROVED"}
+                      <button
+                        data-testid={`leave-team-row-${req.id}-correct`}
+                        class="btn btn-sm btn-ghost"
+                        onclick={() => openCorrect(req)}
+                      >
+                        Korrigieren
+                      </button>
+                      {#if SICK_CODES.includes(req.typeCode)}
+                        <button
+                          data-testid={`leave-team-row-${req.id}-attest`}
+                          class="btn btn-sm btn-ghost"
+                          onclick={() => openAttest(req)}
+                        >
+                          {req.attestPresent ? "Attest ändern" : "Attest erfassen"}
+                        </button>
+                      {/if}
+                    {/if}
+                    {#if resolveStornoAction(req.status, req.employeeId === $authStore.user?.employeeId)}
+                      {@const kind = resolveStornoAction(
+                        req.status,
+                        req.employeeId === $authStore.user?.employeeId,
+                      )!}
+                      <button
+                        data-testid={`leave-team-row-${req.id}-storno`}
+                        data-storno-kind={kind}
+                        class="btn btn-sm btn-ghost text-red"
+                        onclick={() => openStorno(req)}
+                      >
+                        {stornoDialogCopy(kind).buttonLabel}
                       </button>
                     {/if}
-                  {/if}
-                  {#if resolveStornoAction(req.status, req.employeeId === $authStore.user?.employeeId)}
-                    {@const kind = resolveStornoAction(
-                      req.status,
-                      req.employeeId === $authStore.user?.employeeId,
-                    )!}
-                    <button
-                      data-testid={`leave-team-row-${req.id}-storno`}
-                      data-storno-kind={kind}
-                      class="btn btn-sm btn-ghost text-red"
-                      onclick={() => openStorno(req)}
-                    >
-                      {stornoDialogCopy(kind).buttonLabel}
-                    </button>
-                  {/if}
+                  </div>
                 </td>
               </tr>
             {/each}
@@ -2078,6 +2080,10 @@
   }
   .action-cell {
     white-space: nowrap;
+  }
+  /* Issue #442 — flex layout lives on the inner wrapper, never on the td itself, so the cell
+     keeps display: table-cell and lines up with the rest of the row even when empty. */
+  .action-cell__group {
     display: flex;
     gap: 0.25rem;
     align-items: center;
