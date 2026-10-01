@@ -31,6 +31,12 @@ describe("backfill-missing-vacation-entitlements (Issue #416)", () => {
   let alreadyRepairedEntitlementId: string;
   // An exited employee with no row — must never be a candidate.
   let exitedEmployeeId: string;
+  // Issue #435 (Task 3, D-06/D-09): an active employee with a per-person base value — the
+  // dry-run must propose the PERSON value, never the tenant default.
+  let personValueEmployeeId: string;
+  // Issue #435 (Task 3, D-09): a minor whose person value (20) sits BELOW the JArbSchG statutory
+  // minimum for their age band at a 5-day week (25) — the dry-run must propose the FLOORED value.
+  let minorEmployeeId: string;
 
   beforeAll(async () => {
     app = await getTestApp();
@@ -38,7 +44,7 @@ describe("backfill-missing-vacation-entitlements (Issue #416)", () => {
 
     const mkEmployee = async (
       label: string,
-      overrides: { exitDate?: Date } = {},
+      overrides: { exitDate?: Date; birthDate?: Date; annualVacationDays?: number } = {},
     ): Promise<string> => {
       const uid = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
       const user = await app.prisma.user.create({
@@ -67,6 +73,11 @@ describe("backfill-missing-vacation-entitlements (Issue #416)", () => {
     alreadyRepairedEmployeeId = await mkEmployee("repaired");
     exitedEmployeeId = await mkEmployee("exited", {
       exitDate: new Date(Date.UTC(currentYear - 1, 5, 30)),
+    });
+    personValueEmployeeId = await mkEmployee("personvalue", { annualVacationDays: 22 });
+    minorEmployeeId = await mkEmployee("minor", {
+      birthDate: new Date(Date.UTC(currentYear - 15, 5, 15)), // 14 on 1 January of currentYear
+      annualVacationDays: 20, // legacy shape, bypassing the API's D-11 floor check
     });
 
     const alreadyRepaired = await app.prisma.leaveEntitlement.create({
@@ -117,6 +128,17 @@ describe("backfill-missing-vacation-entitlements (Issue #416)", () => {
     });
     expect(rows).toHaveLength(0);
 
+    // Issue #435 (D-06): the dry-run proposes the PERSON value, never the tenant default.
+    const personValueCandidate = summary.candidates.find(
+      (c) => c.employeeId === personValueEmployeeId,
+    );
+    expect(personValueCandidate?.proposedTotalDays).toBe(22);
+
+    // Issue #435 (D-09): the dry-run proposes the FLOORED value for a minor whose person value
+    // (20) sits below the JArbSchG statutory minimum for their age band (25, 5-day week).
+    const minorCandidate = summary.candidates.find((c) => c.employeeId === minorEmployeeId);
+    expect(minorCandidate?.proposedTotalDays).toBe(25);
+
     // The exited employee must never be a candidate.
     expect(summary.candidates.find((c) => c.employeeId === exitedEmployeeId)).toBeUndefined();
 
@@ -142,6 +164,17 @@ describe("backfill-missing-vacation-entitlements (Issue #416)", () => {
       where: { entity: "LeaveEntitlement", entityId: entitlement!.id, action: "CREATE" },
     });
     expect(audit).not.toBeNull();
+
+    // Issue #435 (D-06/D-09): --confirm creates EXACTLY what dry-run proposed — no drift.
+    const personValueEntitlement = await app.prisma.leaveEntitlement.findFirst({
+      where: { employeeId: personValueEmployeeId, year: currentYear },
+    });
+    expect(Number(personValueEntitlement?.totalDays)).toBe(22);
+
+    const minorEntitlement = await app.prisma.leaveEntitlement.findFirst({
+      where: { employeeId: minorEmployeeId, year: currentYear },
+    });
+    expect(Number(minorEntitlement?.totalDays)).toBe(25);
 
     // The already-manually-repaired row must be COMPLETELY untouched (same updatedAt).
     const untouched = await app.prisma.leaveEntitlement.findUnique({

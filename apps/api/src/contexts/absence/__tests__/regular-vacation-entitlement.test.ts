@@ -287,7 +287,13 @@ describe("regular VACATION entitlement wrapper (Issue #445, D-02/D-03/D-05/D-06)
   async function mkEmployee(
     label: string,
     kind: EmployeeKind = "FIXED",
-    overrides: { hireDate?: Date; exitDate?: Date } = {},
+    overrides: {
+      hireDate?: Date;
+      exitDate?: Date;
+      // Issue #435 (Task 3) — person-value/floor DB-path proofs.
+      birthDate?: Date | null;
+      annualVacationDays?: number | null;
+    } = {},
   ): Promise<string> {
     const uid = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const user = await app.prisma.user.create({
@@ -307,6 +313,8 @@ describe("regular VACATION entitlement wrapper (Issue #445, D-02/D-03/D-05/D-06)
         lastName: "T",
         hireDate: overrides.hireDate ?? new Date(Date.UTC(2024, 0, 1)),
         exitDate: overrides.exitDate ?? null,
+        birthDate: overrides.birthDate ?? null,
+        annualVacationDays: overrides.annualVacationDays ?? null,
       },
     });
     if (kind === "SHIFT_BASED") {
@@ -603,6 +611,72 @@ describe("regular VACATION entitlement wrapper (Issue #445, D-02/D-03/D-05/D-06)
         where: { entity: "LeaveEntitlement", entityId: result.entitlement.id, action: "CREATE" },
       });
       expect(audits).toHaveLength(1);
+    });
+  });
+
+  describe("Issue #435 — person value, floor and D-15 through the DB path", () => {
+    it("resolveVacationBaseDays returns the person value when set, the tenant default otherwise (D-05)", async () => {
+      const withPersonValue = await mkEmployee("pv-person", "FIXED", { annualVacationDays: 22 });
+      const withoutPersonValue = await mkEmployee("pv-tenant", "FIXED");
+
+      expect(await resolveVacationBaseDays(app.prisma, withPersonValue, data.tenant.id)).toBe(22);
+      expect(await resolveVacationBaseDays(app.prisma, withoutPersonValue, data.tenant.id)).toBe(
+        30,
+      );
+    });
+
+    it("resolveRegularVacationDays floors a minor's person-value entitlement through the DB path", async () => {
+      const employeeId = await mkEmployee("pv-minor", "FIXED", {
+        birthDate: new Date(Date.UTC(2012, 5, 15)), // age 14 at 1.1.2027 -> 25 at a 5-day week
+        annualVacationDays: 20, // below the statutory minimum for this age band
+      });
+      const result = await resolveRegularVacationDays(app.prisma, employeeId, data.tenant.id, 2027);
+      expect(result).toBe(25);
+    });
+
+    it("ensureRegularVacationEntitlement for the next year (no row) uses the person value (435-AC-03)", async () => {
+      const employeeId = await mkEmployee("pv-nextyear", "FIXED", { annualVacationDays: 20 });
+      const result = await ensureRegularVacationEntitlement(
+        app.prisma,
+        employeeId,
+        data.tenant.id,
+        2028,
+        data.vacationType.id,
+        "R",
+      );
+      expect(result.created).toBe(true);
+      expect(Number(result.entitlement.totalDays)).toBe(20);
+    });
+
+    it("D-15: changing annualVacationDays never moves an existing row", async () => {
+      const employeeId = await mkEmployee("pv-d15");
+      const existing = await app.prisma.leaveEntitlement.create({
+        data: {
+          employeeId,
+          leaveTypeId: data.vacationType.id,
+          year: 2027,
+          totalDays: 30,
+          isAutoCalculated: true,
+        },
+      });
+
+      await app.prisma.employee.update({
+        where: { id: employeeId },
+        data: { annualVacationDays: 20 },
+      });
+
+      const result = await ensureRegularVacationEntitlement(
+        app.prisma,
+        employeeId,
+        data.tenant.id,
+        2027,
+        data.vacationType.id,
+        "R",
+      );
+      expect(result.created).toBe(false);
+      expect(result.healed).toBe(false);
+      expect(result.entitlement.id).toBe(existing.id);
+      expect(Number(result.entitlement.totalDays)).toBe(30);
     });
   });
 });
