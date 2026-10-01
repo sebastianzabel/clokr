@@ -27,13 +27,28 @@
     conflictsWithLeave: boolean;
   }
 
+  // Phase 430 (D-10): third, live-computed bucket — no Shift row to restore, informational only.
+  interface WeekOverbookedEntry {
+    employeeId: string;
+    employeeName: string;
+    weekStart: string;
+    weekEnd: string;
+    contractDays: number;
+    leaveDays: number;
+    otherAbsenceDays: number;
+    scheduledDays: number;
+    overbookedBy: number;
+  }
+
   interface ConflictsResponse {
     softDeleted: ConflictShift[];
     flagged: ConflictShift[];
+    weekOverbooked: WeekOverbookedEntry[];
   }
 
   let softDeleted = $state<ConflictShift[]>([]);
   let flagged = $state<ConflictShift[]>([]);
+  let weekOverbooked = $state<WeekOverbookedEntry[]>([]);
   let loading = $state(true);
   let loadError = $state("");
   let restoringId = $state<string | null>(null);
@@ -62,10 +77,12 @@
       );
       softDeleted = res.softDeleted;
       flagged = res.flagged;
+      weekOverbooked = res.weekOverbooked;
     } catch (err) {
       loadError = err instanceof Error ? err.message : "Konflikte konnten nicht geladen werden.";
       softDeleted = [];
       flagged = [];
+      weekOverbooked = [];
     } finally {
       loading = false;
     }
@@ -171,6 +188,44 @@
       </div>
     {/if}
   </section>
+
+  <!-- Section: live-computed week-capacity overbooking (Phase 430, D-10) — no restore action,
+       informational only; the full breakdown per employee lives on /shifts/planning. -->
+  <section class="card-animate conflict-section">
+    <header class="conflict-section-head">
+      <h2>Wochenkapazität überschritten</h2>
+      <p class="conflict-section-hint">
+        SHIFT_BASED-Mitarbeiter mit mehr geplanten Schichttagen in einer Woche als Vertrag abzüglich
+        genehmigtem Urlaub und sonstigen Abwesenheiten erlaubt. Rein informativ — nichts zum
+        Wiederherstellen; die volle Übersicht gibt es unter
+        <a href="/shifts/planning">Planungsbedarf</a>.
+      </p>
+    </header>
+
+    {#if loading}
+      <p class="empty">Lädt…</p>
+    {:else if weekOverbooked.length === 0}
+      <p class="empty">Keine Wochenkapazität-Konflikte im Zeitraum.</p>
+    {:else}
+      <div class="rows">
+        {#each weekOverbooked as w (w.employeeId + w.weekStart)}
+          <div class="card week-overbooked-row">
+            <div class="week-overbooked-main">
+              <span class="week-overbooked-name">{w.employeeName}</span>
+              <span class="week-overbooked-week">Woche {w.weekStart} – {w.weekEnd}</span>
+            </div>
+            <div class="week-overbooked-numbers">
+              <span>Vertrag {w.contractDays}</span>
+              <span>− Urlaub {w.leaveDays}</span>
+              <span>− Abwesenheit {w.otherAbsenceDays}</span>
+              <span>= geplant {w.scheduledDays}</span>
+              <span class="badge badge-orange">überbucht um {w.overbookedBy}</span>
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </section>
 </section>
 
 <style>
@@ -230,5 +285,38 @@
     display: flex;
     flex-direction: column;
     gap: var(--s-2);
+  }
+
+  .week-overbooked-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    padding: var(--s-3);
+  }
+
+  .week-overbooked-main {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s-2);
+  }
+
+  .week-overbooked-name {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .week-overbooked-week {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+  }
+
+  .week-overbooked-numbers {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-3);
+    color: var(--text-muted);
+    font-size: 0.875rem;
   }
 </style>

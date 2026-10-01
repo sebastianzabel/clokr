@@ -93,6 +93,9 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
     expect(found.employee).toBeTruthy();
     expect(found.employee.firstName).toBeTruthy();
     expect(found.employee.lastName).toBeTruthy();
+    // Phase 430 (D-10) regression guard — this fixture's employee is FIXED_SCHEDULE, never
+    // SHIFT_BASED, so the new live-computed bucket stays empty and the existing two are unchanged.
+    expect(body.weekOverbooked).toEqual([]);
   });
 
   it("GET /shifts/conflicts returns active+flagged shifts in `flagged` bucket", async () => {
@@ -120,6 +123,63 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
     const body = JSON.parse(res.body);
     expect(body.flagged.map((s: { id: string }) => s.id)).toContain(shift.id);
     expect(body.softDeleted.map((s: { id: string }) => s.id)).not.toContain(shift.id);
+    expect(body.weekOverbooked).toEqual([]);
+  });
+
+  it("GET /shifts/conflicts weekOverbooked bucket reports a SHIFT_BASED employee overbooked that week (Phase 430 D-10)", async () => {
+    // 1-day contract, 2 distinct shift-days inside the [from, to] window -> overbookedBy = 1.
+    const schedule = await app.prisma.workSchedule.create({
+      data: {
+        employeeId: data.employee.id,
+        type: "SHIFT_BASED",
+        weeklyHours: 8,
+        contractWorkDaysPerWeek: 1,
+        validFrom: new Date("2025-01-01"),
+      },
+    });
+    // Monday + Tuesday of a fixed, far-future week — distinct from every other fixture window in
+    // this file (futureDate()-based), to never collide across the shared test DB.
+    const weekMonday = new Date(Date.UTC(2030, 2, 4)); // 2030-03-04, a Monday
+    const weekTuesday = new Date(Date.UTC(2030, 2, 5));
+    const shiftIds: string[] = [];
+    for (const d of [weekMonday, weekTuesday]) {
+      const shift = await app.prisma.shift.create({
+        data: {
+          employeeId: data.employee.id,
+          salonId: data.salonId,
+          date: d,
+          startTime: "08:00",
+          endTime: "12:00",
+        },
+      });
+      shiftIds.push(shift.id);
+    }
+
+    try {
+      const from = isoDate(weekMonday);
+      const to = isoDate(new Date(Date.UTC(2030, 2, 10))); // that week's Sunday
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/shifts/conflicts?from=${from}&to=${to}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.weekOverbooked).toHaveLength(1);
+      const entry = body.weekOverbooked[0];
+      expect(entry.employeeId).toBe(data.employee.id);
+      expect(entry.weekStart).toBe("2030-03-04");
+      expect(entry.weekEnd).toBe("2030-03-10");
+      expect(entry.contractDays).toBe(1);
+      expect(entry.leaveDays).toBe(0);
+      expect(entry.otherAbsenceDays).toBe(0);
+      expect(entry.scheduledDays).toBe(2);
+      expect(entry.overbookedBy).toBe(1);
+    } finally {
+      await app.prisma.shift.deleteMany({ where: { id: { in: shiftIds } } });
+      await app.prisma.workSchedule.delete({ where: { id: schedule.id } });
+    }
   });
 
   it("Cross-tenant isolation: other-tenant soft-deleted shift NOT returned", async () => {

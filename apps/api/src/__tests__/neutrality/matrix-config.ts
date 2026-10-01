@@ -215,6 +215,17 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
     route: "GET /api/v1/release-notes",
     reason: "Public baked release notes (release-notes.ts), no authentication at all.",
   },
+  {
+    route: "GET /api/v1/shifts/planning-overview",
+    reason:
+      "New route added in Phase 430 (Issue #430), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — it was built permission-gated " +
+      "(`shift:plan:ZUGEWIESEN`) from its very first commit and never had role-based access " +
+      "behavior to compare. RECORD/MERGE mode for this matrix refuses to run once the role guard " +
+      "is gone (see this file's own docblock), so there is no mechanism left to give this route a " +
+      "recorded cell; it genuinely satisfies the matrix's purpose (proving requireRole->permission " +
+      "is behavior-preserving) vacuously, by never having had the old behavior at all.",
+  },
 ];
 
 /** Routes declared in `app.ts` itself — invisible to the source parser, proven registered. */

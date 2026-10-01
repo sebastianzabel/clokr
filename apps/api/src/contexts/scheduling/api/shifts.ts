@@ -48,10 +48,19 @@ import {
   getHolidayMap,
   deductVacationDays,
   reverseVacationDays,
+  resolveContractWorkDaysPerWeek, // Phase 430 (D-08) — planning-overview's "Vertragstage" column
+  getShiftBasedLeaveDaysForWeek, // Phase 430 (D-08) — planning-overview's leave days + weekdays
 } from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from three deep imports
-import { flagShiftIfConflictsWithApprovedLeave } from "../facade/shifts"; // Phase 430 (D-03/D-04) — S4, the inverse Type-1 direction
+import {
+  flagShiftIfConflictsWithApprovedLeave, // Phase 430 (D-03/D-04) — S4, the inverse Type-1 direction
+  getShiftsInRange, // Phase 430 (D-12) — planning-overview's "geplant" column
+} from "../facade/shifts";
 import { notifyShiftLeaveConflicts } from "../shift-leave-conflict-notify"; // Phase 430 (D-02)
-import { detectWeekCapacityConflict, notifyWeekCapacityConflictOnce } from "../shift-week-capacity"; // Phase 430 (D-05..D-07) — Type-2
+import {
+  detectWeekCapacityConflict,
+  notifyWeekCapacityConflictOnce,
+  type WeekCapacityConflict,
+} from "../shift-week-capacity"; // Phase 430 (D-05..D-07) — Type-2
 // ARBZG_MARKER_47_4_01
 
 const templateSchema = z.object({
@@ -518,6 +527,79 @@ async function checkAndNotifyWeekCapacity(
   await checkAndNotifyWeekCapacityBatch(app, tenantId, [
     { employeeId, weekStart, weekEnd, salonId },
   ]);
+}
+
+/** One `GET /conflicts` `weekOverbooked` entry (Phase 430, D-10) — live-computed, nothing persisted. */
+interface WeekOverbookedEntry extends WeekCapacityConflict {
+  employeeId: string;
+  employeeName: string;
+  weekStart: string;
+  weekEnd: string;
+}
+
+/**
+ * Phase 430 (D-10): the `/conflicts` view's third bucket. Unlike `softDeleted`/`flagged` (which
+ * read persisted `Shift` flags), Type-2 overbooking has no row to flag — this enumerates every
+ * SHIFT_BASED employee of the tenant and every ISO week (Mon..Sun) whose range intersects
+ * `[fromDate, toDate]`, calling the SAME `detectWeekCapacityConflict` the Phorest-sync/manual-route
+ * checks already use (never a reimplementation). Tenant-scoped only, matching `/conflicts`' own
+ * existing (non-salon) scoping — not narrowed or widened by this addition.
+ */
+async function findWeekOverbookedConflicts(
+  app: FastifyInstance,
+  tenantId: string,
+  fromDate: Date,
+  toDate: Date,
+): Promise<WeekOverbookedEntry[]> {
+  const employees = await app.prisma.employee.findMany({
+    where: { tenantId, ...NOT_ANONYMIZED_EMPLOYEE_WHERE },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      workSchedules: {
+        orderBy: { validFrom: "desc" as const },
+        take: 1,
+        select: { type: true },
+      },
+    },
+  });
+  const shiftBased = employees.filter((e) => e.workSchedules[0]?.type === "SHIFT_BASED");
+  if (shiftBased.length === 0) return [];
+
+  // Every Monday whose Mon..Sun week intersects [fromDate, toDate].
+  const weekStarts: Date[] = [];
+  for (
+    const w = mondayOfWeekUtc(fromDate);
+    w.getTime() <= toDate.getTime();
+    w.setUTCDate(w.getUTCDate() + 7)
+  ) {
+    weekStarts.push(new Date(w));
+  }
+
+  const entries: WeekOverbookedEntry[] = [];
+  for (const employee of shiftBased) {
+    for (const weekStart of weekStarts) {
+      const weekEnd = new Date(weekStart);
+      weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+      const conflict = await detectWeekCapacityConflict(
+        app.prisma,
+        employee.id,
+        tenantId,
+        weekStart,
+        weekEnd,
+      );
+      if (!conflict) continue;
+      entries.push({
+        employeeId: employee.id,
+        employeeName: `${employee.firstName} ${employee.lastName}`,
+        weekStart: weekStart.toISOString().slice(0, 10),
+        weekEnd: weekEnd.toISOString().slice(0, 10),
+        ...conflict,
+      });
+    }
+  }
+  return entries;
 }
 
 /**
@@ -4118,7 +4200,169 @@ export async function shiftRoutes(app: FastifyInstance) {
         deletedAt: s.deletedAt ? s.deletedAt.toISOString() : null,
       });
 
-      return { softDeleted: softDeleted.map(ser), flagged: flagged.map(ser) };
+      // Phase 430 (D-10) — third bucket, live-computed Type-2 (week-overbooking) conflicts.
+      // Same tenant-only scoping as softDeleted/flagged above; no restore action (informational).
+      const weekOverbooked = await findWeekOverbookedConflicts(
+        app,
+        req.user.tenantId,
+        fromDate,
+        toDate,
+      );
+
+      return { softDeleted: softDeleted.map(ser), flagged: flagged.map(ser), weekOverbooked };
+    },
+  });
+
+  // ── Phase 430 (D-12/D-13), Issue #430 — Wochenübersicht "Planungsbedarf" ─────
+  //
+  // GET /planning-overview — one row per SHIFT_BASED employee in scope: contract days, this
+  //   week's approved leave days (+ weekdays), other absences, days still to plan, and — once
+  //   shifts exist for the week — the planned count and the difference. Query-param-only
+  //   (weekStart, optional salonId) — no path parameter, so no T-100-09 register entry is needed.
+  //   Guarded by shift:plan:ZUGEWIESEN (owner's explicit instruction, not shift:read), salon-scoped
+  //   via the standard EmployeeScope/accessContextFromRequest pattern GET /week already uses for
+  //   "plannable staff" (resolvePersonScopedEmployeeIds).
+  //
+  // Threat coverage:
+  //   T-430-10 (Info Disclosure): EmployeeScope/salon scoping via accessContextFromRequest chain.
+  //   T-430-11 (Elevation): shift:plan:ZUGEWIESEN guard, tested against a shift:read-only actor.
+
+  const planningOverviewQuerySchema = z.object({
+    weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    salonId: z.string().uuid().optional(),
+  });
+
+  app.get("/planning-overview", {
+    schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
+    preHandler: requirePermission("shift:plan:ZUGEWIESEN"),
+    handler: async (req) => {
+      const { weekStart: weekStartRaw, salonId } = planningOverviewQuerySchema.parse(req.query);
+      const weekStart = mondayOfWeekUtc(new Date(`${weekStartRaw}T00:00:00.000Z`));
+      const weekEnd = new Date(weekStart);
+      weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+
+      const access = accessContextFromRequest(req);
+      const tenantId = req.user.tenantId;
+
+      // Same "plannable staff" question GET /week's own D-12 answers, same answer function.
+      const reach = await resolveAccessReach(app.prisma, access, "shift:plan:ZUGEWIESEN");
+      const scopedAccess = { ...access, reach };
+      const personScopedIds =
+        reach.kind === "wholeTenant"
+          ? "all"
+          : await resolvePersonScopedEmployeeIds(app.prisma, tenantId, reach);
+
+      // Optional further narrowing to one specific salon's Stammsalon (HOME) population, intersected
+      // with the reach above — same `employeeSalonAssignment` HOME-kind query shape
+      // `resolveStammsalonScopedEmployeeIds` uses internally, inlined here because this answers "is
+      // this ONE client-given salonId valid/theirs", not "which of reach.salonIds".
+      let inScopeIds: "all" | string[] = personScopedIds;
+      if (salonId) {
+        const homeRows = await app.prisma.employeeSalonAssignment.findMany({
+          where: {
+            tenantId,
+            kind: "HOME",
+            salonId,
+            validFrom: { lte: weekStart },
+            OR: [{ validUntil: null }, { validUntil: { gte: weekStart } }],
+          },
+          select: { employeeId: true },
+        });
+        const homeIds = homeRows.map((r) => r.employeeId);
+        inScopeIds =
+          personScopedIds === "all"
+            ? homeIds
+            : homeIds.filter((id) => personScopedIds.includes(id));
+      }
+
+      // SHIFT_BASED only — latest WorkSchedule per employee (same bulk-lookup idiom
+      // checkAndNotifyWeekCapacityBatch above already uses).
+      const candidates = await app.prisma.employee.findMany({
+        where: {
+          tenantId,
+          ...NOT_ANONYMIZED_EMPLOYEE_WHERE,
+          ...(inScopeIds !== "all" ? { id: { in: inScopeIds } } : {}),
+        },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          workSchedules: {
+            orderBy: { validFrom: "desc" as const },
+            take: 1,
+            select: { type: true },
+          },
+        },
+        orderBy: { lastName: "asc" },
+      });
+      const shiftBased = candidates.filter((e) => e.workSchedules[0]?.type === "SHIFT_BASED");
+
+      const employeesResult = await Promise.all(
+        shiftBased.map(async (employee) => {
+          const empScope = employeeScopeFor(scopedAccess, { employeeId: employee.id });
+          const [contractDays, leaveResult, absences, shiftsThisWeek] = await Promise.all([
+            resolveContractWorkDaysPerWeek(app.prisma, employee.id, tenantId),
+            getShiftBasedLeaveDaysForWeek(app.prisma, employee.id, tenantId, weekStart, weekEnd),
+            getAbsencesOverlapping(app.prisma, empScope, weekStart, weekEnd),
+            getShiftsInRange(app.prisma, empScope, weekStart, weekEnd),
+          ]);
+
+          // Distinct Mon-Sat days covered by an "other" (imposed) absence — same Sunday-exclusion
+          // and clip-to-week idiom detectWeekCapacityConflict already uses for the identical
+          // question (§ 3 Abs. 2 BUrlG never counts Sunday as a Werktag).
+          const otherAbsenceDayStrings = new Set<string>();
+          for (const absence of absences) {
+            const clipStart = absence.startDate > weekStart ? absence.startDate : weekStart;
+            const clipEnd = absence.endDate < weekEnd ? absence.endDate : weekEnd;
+            for (
+              const d = new Date(clipStart);
+              d.getTime() <= clipEnd.getTime();
+              d.setUTCDate(d.getUTCDate() + 1)
+            ) {
+              if (d.getUTCDay() === 0) continue;
+              otherAbsenceDayStrings.add(d.toISOString().slice(0, 10));
+            }
+          }
+          const otherAbsenceDays = otherAbsenceDayStrings.size;
+          const stillToPlan = Math.max(0, contractDays - leaveResult.days - otherAbsenceDays);
+
+          const row: {
+            employeeId: string;
+            name: string;
+            contractDays: number;
+            leaveDays: number;
+            leaveWeekdays: string[];
+            otherAbsenceDays: number;
+            stillToPlan: number;
+            plannedDays?: number;
+            difference?: number;
+          } = {
+            employeeId: employee.id,
+            name: `${employee.firstName} ${employee.lastName}`,
+            contractDays,
+            leaveDays: leaveResult.days,
+            leaveWeekdays: leaveResult.weekdays,
+            otherAbsenceDays,
+            stillToPlan,
+          };
+
+          if (shiftsThisWeek.length > 0) {
+            const plannedDayStrings = new Set(
+              shiftsThisWeek.map((s) => s.date.toISOString().slice(0, 10)),
+            );
+            row.plannedDays = plannedDayStrings.size;
+            row.difference = row.plannedDays - stillToPlan;
+          }
+
+          return row;
+        }),
+      );
+
+      return {
+        weekStart: weekStart.toISOString().slice(0, 10),
+        weekEnd: weekEnd.toISOString().slice(0, 10),
+        employees: employeesResult,
+      };
     },
   });
 
