@@ -29,6 +29,7 @@ import {
   resolveContractWorkDaysPerWeek, // Issue #416 — same-context internal import, the one resolution chain (CLAUDE.md)
   ensureRegularVacationEntitlement, // Issue #445 (D-05, P-07) — zero-placeholder heal
   REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
+  resolveVacationBaseDays, // Issue #435 (D-06) — person value ?? tenant default ?? 30
 } from "../leave-days";
 
 const vacationEntitlementSchema = z.object({
@@ -117,23 +118,23 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
       // side effect) and NEVER for an inactive employee (`exitDate` set).
       const currentYear = new Date().getFullYear();
       if (!entitlement && employee.exitDate === null && year === currentYear) {
-        const tenantConfigForHeal = await app.prisma.tenantConfig.findUnique({
-          where: { tenantId: employee.tenantId },
-          select: { defaultVacationDays: true },
-        });
         const workDaysPerWeek = await resolveContractWorkDaysPerWeek(
           app.prisma,
           employeeId,
           employee.tenantId,
         );
+        // Issue #435 (D-06): the ONE base-value resolution — person value ?? tenant default ?? 30
+        // — replaces the previous direct TenantConfig.defaultVacationDays read.
+        const baseDays = await resolveVacationBaseDays(app.prisma, employeeId, employee.tenantId);
         const healed = await ensureVacationEntitlementForYear(
           app.prisma,
           employeeId,
           employee.tenantId,
           year,
           employee.hireDate,
+          employee.birthDate,
           workDaysPerWeek,
-          Number(tenantConfigForHeal?.defaultVacationDays ?? 30),
+          baseDays,
           "Jahreswechsel — automatisch angelegt",
           (entry) =>
             app.audit({

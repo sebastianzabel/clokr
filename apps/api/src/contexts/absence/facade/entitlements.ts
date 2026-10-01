@@ -229,15 +229,19 @@ export type EnsureVacationEntitlementAuditFn = (entry: {
  * re-implementing the check three times. Do not remove it.
  *
  * When creating, `totalDays` is computed by {@link computeRegularVacationDays} (Issue #445,
- * D-01 — extracted verbatim from this function's own former inline formula): `TenantConfig.
- * defaultVacationDays` scaled by the employee's contractual workdays (owner decision, Issue
- * #416: `defaultVacationDays` means "N days at a 5-day-week workload" — the reference week is
- * stated there because the data model has no explicit reference-week field), then, for
- * `year === hireDate`'s year, further pro-rated for the hire year; every other year (a later
- * year, or the repair script's/first-access self-heal's "missing current-year row for an
- * already-employed active employee" case) gets the full scaled amount unprorated, because the
- * employee was already employed at that year's start. Composition order (scale first, THEN
- * pro-rate) is deliberate — see `computeRegularVacationDays`'s own docblock and `416-CONTEXT.md`.
+ * D-01 — extracted verbatim from this function's own former inline formula): `baseDays` —
+ * the caller's resolved output of `resolveVacationBaseDays()` (Issue #435, D-05/D-06: person
+ * value ?? tenant default ?? 30 — never a raw `TenantConfig.defaultVacationDays` read) — scaled
+ * by the employee's contractual workdays (owner decision, Issue #416: `baseDays` means "N days at
+ * a 5-day-week workload" — the reference week is stated there because the data model has no
+ * explicit reference-week field), floored at the § 19 JArbSchG / § 3 BUrlG statutory minimum for
+ * `birthDate` (Issue #435, D-07/D-09 — the caller's resolved employee birth date, never derived
+ * here), then, for `year === hireDate`'s year, further pro-rated for the hire year; every other
+ * year (a later year, or the repair script's/first-access self-heal's "missing current-year row
+ * for an already-employed active employee" case) gets the full floored amount unprorated, because
+ * the employee was already employed at that year's start. Composition order (scale, THEN floor,
+ * THEN pro-rate) is deliberate — see `computeRegularVacationDays`'s own docblock and
+ * `416-CONTEXT.md`/`435-CONTEXT.md`.
  *
  * Returns `null` only in the practically-unreachable case where the tenant has no VACATION
  * `LeaveType` configured (mirrors {@link getVacationEntitlement} / {@link upsertVacationEntitlement}).
@@ -252,8 +256,9 @@ export async function ensureVacationEntitlementForYear(
   tenantId: string,
   year: number,
   hireDate: Date,
+  birthDate: Date | null,
   workDaysPerWeek: number,
-  defaultVacationDays: number,
+  baseDays: number,
   reason: string,
   auditFn: EnsureVacationEntitlementAuditFn,
 ): Promise<{ entitlement: LeaveEntitlement; created: boolean } | null> {
@@ -263,11 +268,15 @@ export async function ensureVacationEntitlementForYear(
 
   // Issue #445 (D-01): the regular-entitlement computation now lives in ONE place —
   // computeRegularVacationDays() in vacation-calc.ts — moved verbatim from here.
+  // Issue #435 (D-06/D-09): callers pass the output of resolveVacationBaseDays() (person value ??
+  // tenant default) as `baseDays`, and the employee's birth date for the statutory-minimum floor —
+  // never a raw TenantConfig value.
   const totalDays = computeRegularVacationDays({
     year,
     hireDate,
+    birthDate,
     workDaysPerWeek,
-    baseDays: defaultVacationDays,
+    baseDays,
   });
 
   let entitlement: LeaveEntitlement | null;

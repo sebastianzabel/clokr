@@ -640,10 +640,10 @@ async function loadRegularVacationInputs(
   employeeId: string,
   tenantId: string,
   year: number,
-): Promise<{ hireDate: Date; workDaysPerWeek: number; baseDays: number }> {
+): Promise<{ hireDate: Date; birthDate: Date | null; workDaysPerWeek: number; baseDays: number }> {
   const employee = await db.employee.findFirst({
     where: { id: employeeId, tenantId },
-    select: { hireDate: true, exitDate: true },
+    select: { hireDate: true, exitDate: true, birthDate: true }, // Issue #435 (D-09) — statutory floor
   });
   if (!employee) {
     throw new Error(
@@ -660,7 +660,7 @@ async function loadRegularVacationInputs(
   const workDaysPerWeek = await resolveContractWorkDaysPerWeek(db, employeeId, tenantId);
   const baseDays = employedInYear ? await resolveVacationBaseDays(db, employeeId, tenantId) : 0;
 
-  return { hireDate: employee.hireDate, workDaysPerWeek, baseDays };
+  return { hireDate: employee.hireDate, birthDate: employee.birthDate, workDaysPerWeek, baseDays };
 }
 
 /**
@@ -859,6 +859,7 @@ export async function ensureRegularVacationEntitlement(
     tenantId,
     year,
     inputs.hireDate,
+    inputs.birthDate,
     inputs.workDaysPerWeek,
     inputs.baseDays,
     reason,

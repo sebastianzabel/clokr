@@ -233,6 +233,9 @@ const createEmployeeSchema = z.object({
     .refine((v) => Math.round(v * 100) / 100 === v, "Höchstens zwei Nachkommastellen.")
     .optional()
     .nullable(),
+  // Issue #435 D-11 (prerequisite): needed at creation so the statutory minimum is checked and
+  // applied from day one — mirrors updateEmployeeSchema's identical field (Phase 65).
+  birthDate: z.string().datetime().nullable().optional(),
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
@@ -684,6 +687,8 @@ export async function employeeRoutes(app: FastifyInstance) {
             bsSlotBlockWeekMinutes: body.bsSlotBlockWeekMinutes ?? null,
             // Issue #435 (D-02): per-person vacation base value, null = tenant default.
             annualVacationDays: body.annualVacationDays ?? null,
+            // Issue #435 (D-11 prerequisite): needed at creation for the statutory-minimum floor.
+            birthDate: body.birthDate ? new Date(body.birthDate) : null,
           },
         });
 
@@ -734,6 +739,7 @@ export async function employeeRoutes(app: FastifyInstance) {
           req.user.tenantId,
           emp.hireDate.getFullYear(),
           emp.hireDate,
+          emp.birthDate,
           workDaysPerWeek,
           vacationBaseDays,
           "Automatisch angelegt bei Mitarbeiteranlage",

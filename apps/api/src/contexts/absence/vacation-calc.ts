@@ -587,14 +587,15 @@ export function statutoryMinimumVacationDays(
  * runs FIRST and short-circuits to `0` — the floor must never invent an entitlement for a year the
  * employee wasn't employed in.
  *
- * `birthDate` is optional here only until Issue #435 Plan 02 Task 2 makes it required once every
- * in-src caller threads it through (`leave-days.ts`'s `loadRegularVacationInputs`,
- * `facade/entitlements.ts`'s `ensureVacationEntitlementForYear`).
+ * `birthDate` is REQUIRED (Issue #435 Plan 02 Task 2) — every in-src caller threads it through
+ * (`leave-days.ts`'s `loadRegularVacationInputs`, `facade/entitlements.ts`'s
+ * `ensureVacationEntitlementForYear`), so the compiler enumerates every writer that must apply
+ * the floor. Pass `null` explicitly for an adult/unknown birth date (fails open to § 3 BUrlG).
  */
 export function computeRegularVacationDays(input: {
   year: number;
   hireDate: Date;
-  birthDate?: Date | null;
+  birthDate: Date | null;
   workDaysPerWeek: number;
   baseDays: number;
 }): number {
@@ -617,7 +618,7 @@ export function computeRegularVacationDays(input: {
   const scaledBase = calculatePartTimeVacation(referenceSchedule, 5, baseDays);
   const floored = Math.max(
     scaledBase,
-    statutoryMinimumVacationDays(birthDate ?? null, year, workDaysPerWeek),
+    statutoryMinimumVacationDays(birthDate, year, workDaysPerWeek),
   );
   return hireYearVacationDays(floored, year, hireDate);
 }

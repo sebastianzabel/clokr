@@ -22,11 +22,16 @@ import { leaveTypeFields } from "../leave-type";
 import type { FastifyInstance } from "fastify";
 
 describe("computeRegularVacationDays (Issue #445, D-01)", () => {
+  // Issue #435 Plan 02 Task 2: birthDate became a REQUIRED field on computeRegularVacationDays's
+  // input (every in-src caller must thread it through). These pre-existing cases pass `null`
+  // (adult/unknown) — verified (Task 1 RED/GREEN run) that none of their expected values sits
+  // below the § 3 BUrlG floor, so adding `birthDate: null` here does not change any assertion.
   it("full-time employee, a later year than the hire year: full base days", () => {
     expect(
       computeRegularVacationDays({
         year: 2027,
         hireDate: new Date(2024, 0, 1),
+        birthDate: null,
         workDaysPerWeek: 5,
         baseDays: 30,
       }),
@@ -38,6 +43,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
       computeRegularVacationDays({
         year: 2027,
         hireDate: new Date(2024, 0, 1),
+        birthDate: null,
         workDaysPerWeek: 4,
         baseDays: 30,
       }),
@@ -46,6 +52,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
       computeRegularVacationDays({
         year: 2027,
         hireDate: new Date(2024, 0, 1),
+        birthDate: null,
         workDaysPerWeek: 4,
         baseDays: 20,
       }),
@@ -54,6 +61,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
       computeRegularVacationDays({
         year: 2027,
         hireDate: new Date(2024, 0, 1),
+        birthDate: null,
         workDaysPerWeek: 3,
         baseDays: 20,
       }),
@@ -66,6 +74,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
       computeRegularVacationDays({
         year: 2027,
         hireDate: new Date(2027, 9, 1),
+        birthDate: null,
         workDaysPerWeek: 5,
         baseDays: 30,
       }),
@@ -77,6 +86,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
       computeRegularVacationDays({
         year: 2026,
         hireDate: new Date(2026, 1, 1),
+        birthDate: null,
         workDaysPerWeek: 5,
         baseDays: 30,
       }),
@@ -87,6 +97,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
       computeRegularVacationDays({
         year: 2027,
         hireDate: new Date(2027, 6, 1),
+        birthDate: null,
         workDaysPerWeek: 4,
         baseDays: 30,
       }),
@@ -95,13 +106,55 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
 
   it("parity with the #416 inline formula (scale first, then the G9 Wartezeit decision)", () => {
     const cases = [
-      { year: 2027, hireDate: new Date(2024, 0, 1), workDaysPerWeek: 5, baseDays: 30 },
-      { year: 2027, hireDate: new Date(2024, 0, 1), workDaysPerWeek: 4, baseDays: 30 },
-      { year: 2027, hireDate: new Date(2024, 0, 1), workDaysPerWeek: 4, baseDays: 20 },
-      { year: 2027, hireDate: new Date(2024, 0, 1), workDaysPerWeek: 3, baseDays: 20 },
-      { year: 2027, hireDate: new Date(2027, 9, 1), workDaysPerWeek: 5, baseDays: 30 },
-      { year: 2026, hireDate: new Date(2026, 1, 1), workDaysPerWeek: 5, baseDays: 30 },
-      { year: 2027, hireDate: new Date(2027, 6, 1), workDaysPerWeek: 4, baseDays: 30 },
+      {
+        year: 2027,
+        hireDate: new Date(2024, 0, 1),
+        birthDate: null,
+        workDaysPerWeek: 5,
+        baseDays: 30,
+      },
+      {
+        year: 2027,
+        hireDate: new Date(2024, 0, 1),
+        birthDate: null,
+        workDaysPerWeek: 4,
+        baseDays: 30,
+      },
+      {
+        year: 2027,
+        hireDate: new Date(2024, 0, 1),
+        birthDate: null,
+        workDaysPerWeek: 4,
+        baseDays: 20,
+      },
+      {
+        year: 2027,
+        hireDate: new Date(2024, 0, 1),
+        birthDate: null,
+        workDaysPerWeek: 3,
+        baseDays: 20,
+      },
+      {
+        year: 2027,
+        hireDate: new Date(2027, 9, 1),
+        birthDate: null,
+        workDaysPerWeek: 5,
+        baseDays: 30,
+      },
+      {
+        year: 2026,
+        hireDate: new Date(2026, 1, 1),
+        birthDate: null,
+        workDaysPerWeek: 5,
+        baseDays: 30,
+      },
+      {
+        year: 2027,
+        hireDate: new Date(2027, 6, 1),
+        birthDate: null,
+        workDaysPerWeek: 4,
+        baseDays: 30,
+      },
     ];
     for (const c of cases) {
       const scaledBase = calculatePartTimeVacation(
