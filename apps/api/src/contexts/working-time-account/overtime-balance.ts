@@ -21,7 +21,7 @@ import { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
 import {
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
-  getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
+  getActiveLeaveOverlapping, // Phase 100B Plan 13 — A2; Issue #446 — effective leave
   loadBsSlotOverrides, // Phase 76.31 — D-06 slot overrides
 } from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports (plan-04 carry-over row)
 import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — central resolver
@@ -351,8 +351,8 @@ export async function computeOvertimeBalanceBreakdown(
   // fetches the FULL month). This mirrors the shiftRangeLastDay widening above (Bug 5); the
   // leave/absence fetch was left at effectiveEnd — that asymmetry is the divergence root cause.
   // Non-SHIFT partial (monthEnd = effectiveEnd) ignores the extra rows (out of window) → no-op.
-  // Phase 100B Plan 13 — A1, contexts/absence facade.
-  const allApprovedLeave = await getApprovedLeaveOverlapping(
+  // Issue #446 (D-02) — effective leave (APPROVED + CANCELLATION_REQUESTED), contexts/absence facade.
+  const allApprovedLeave = await getActiveLeaveOverlapping(
     app.prisma,
     { kind: "employee", employeeId, tenantId: employee?.tenantId ?? "" },
     rangeStart,

@@ -44,7 +44,7 @@ import {
 } from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7/T8; Phase 101B wave 8 merged in
 import {
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
-  getApprovedLeaveOverlapping, // Phase 100B Plan 13 — A1
+  getActiveLeaveOverlapping, // Phase 100B Plan 13 — A2; Issue #446 — effective leave
   karenzOverrunFromRequests, // Phase 104 (R4/D-21) — Karenztage-Überschreitung, Hinweis only
   loadBsSlotOverrides, // Phase 76.31 — D-06 slot overrides
 } from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from three deep imports
@@ -1359,9 +1359,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
           effectiveStart,
           monthLastDay,
         ),
-        // Approved leave — same filter as old inline path
-        // Phase 100B Plan 13 — A1, contexts/absence facade.
-        getApprovedLeaveOverlapping(
+        // Effective leave (APPROVED + CANCELLATION_REQUESTED) — Issue #446 (D-02)
+        // Phase 100B Plan 13 — A2, contexts/absence facade.
+        getActiveLeaveOverlapping(
           app.prisma,
           employeeScopeFor(access, { employeeId }),
           monthStart,
