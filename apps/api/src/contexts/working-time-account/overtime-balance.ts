@@ -8,13 +8,14 @@
 // leaf, not defined here) — "which schedule applies to this employee on this day" is a
 // Zeiterfassung question.
 //
-// Follow-up fix (Phase 101B): the move above turned the two TimeEntry reads inline in
-// computeOvertimeBalanceBreakdown (the "has today's entries" cutoff check and the worked-minutes
-// read) into a cross-context Prisma access — TimeEntry is owned by time-tracking. Both are now
-// routed through time-tracking's own `getValidWorkedEntriesInRange` facade export (T1, "the saldo
-// input" — see `time-tracking/facade/time-entries.ts`), the exact same read three other
-// working-time-account call sites already use (month-saldo.ts, recalculate-snapshots.ts,
-// auto-close-month.ts, overtime.ts). No `foreign-context-access-exceptions.json` entry needed.
+// Follow-up fix (Phase 101B): the move above turned the worked-minutes TimeEntry read inline in
+// computeOvertimeBalanceBreakdown into a cross-context Prisma access — TimeEntry is owned by
+// time-tracking. It is routed through time-tracking's own `getValidWorkedEntriesInRange` facade
+// export (T1, "the saldo input" — see `time-tracking/facade/time-entries.ts`), the exact same
+// read three other working-time-account call sites already use (month-saldo.ts,
+// recalculate-snapshots.ts, auto-close-month.ts, overtime.ts). No
+// `foreign-context-access-exceptions.json` entry needed. (Issue #438 removed this file's OWN
+// "has today's entries" cutoff check — see the cutoff block below.)
 
 import { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
@@ -47,8 +48,8 @@ import {
 // seit dem Snapshot neu. Ohne Snapshot: Fallback auf den aktuellen Monat.
 //
 // PURE READ (no DB write). Returns the LIFETIME running Überstundensaldo breakdown through the
-// windowEnd cutoff (today only if today has completed entries, else yesterday — the same
-// hasTodayEntries convention the §615 calendar header/cells use). Handles all schedule types:
+// windowEnd cutoff (always yesterday, in the tenant timezone — issue #438: today never counts,
+// the same rule computeMonthSaldo's §615 calendar header/cells use). Handles all schedule types:
 //   - MONTHLY_HOURS TRACK_ONLY → totalHours 0, confirmedMinutes/openMonthMinutes both 0.
 //   - SHIFT_BASED / FIXED_* / FLEXTIME / MONTHLY_HOURS(target>0) → live lifetime saldo.
 // Lifetime-correct: totalHours = last-snapshot carryOver (or full history from hireDate when no
@@ -137,23 +138,31 @@ export async function computeOvertimeBalanceBreakdown(
     rangeStart = hireDateNorm ?? new Date(0); // epoch fallback if hireDate is null
   }
 
-  // Determine cutoff: include today only if entries exist.
-  // Routed through time-tracking's T1 facade read (see file header follow-up-fix note): its
-  // `where` is byte-identical to the former inline query, and a single-day [todayDate, todayDate]
-  // range is equivalent to the former exact-date match for a @db.Date column.
+  // Determine cutoff: the live window ALWAYS ends yesterday, in the tenant timezone — never
+  // today, and never clamped back up to rangeStart (issue #438).
+  //
+  // A closed entry for today is not evidence that today is over: the clock resolver's REOPEN
+  // branch (`services/clock/resolver.ts:232-256`, commit 446d4bb6) closes today's entry on a
+  // lunch-break clock-out exactly like an end-of-day clock-out would, and a later clock-in
+  // reopens it. There is no reliable signal in the data model to tell the two apart, so the only
+  // safe rule is: today never counts, regardless of whether it has no entry, an open entry, or a
+  // closed-but-reopenable one.
+  //
+  // Planner finding F-1 (438-01-PLAN.md): the OLD code also clamped this window back up to
+  // rangeStart whenever yesterday preceded it — the day after the last closed month (the auto-
+  // close cron runs daily at 06:00 Berlin and closes a gap-free previous month at once) and the
+  // employee's own hire day. That clamp is ALSO removed: when yesterday precedes rangeStart the
+  // open period is simply empty, which every downstream reader already handles correctly for an
+  // inverted range — the T1/T2 entry reads (plain Prisma gte/lte, no rows), the holiday resolver
+  // (`holidaysAtWorkLocation` returns an empty map for `fromDay > toDay`), the complete-months
+  // loop (breaks immediately at the current month), and the partial-month gate just below
+  // (`effectiveEnd >= currentMonthOpenStart` is false).
   const employeeScope = {
     kind: "employee" as const,
     employeeId,
     tenantId: employee?.tenantId ?? "",
   };
-  const todayValidEntries = await getValidWorkedEntriesInRange(
-    app.prisma,
-    employeeScope,
-    todayDate,
-    todayDate,
-  );
-  const cutoffDate = todayValidEntries.length > 0 ? todayDate : yesterdayDate;
-  const effectiveEnd = cutoffDate < rangeStart ? rangeStart : cutoffDate;
+  const effectiveEnd = yesterdayDate;
 
   // Worked minutes since snapshot (or month start). Same T1 facade read — every downstream use of
   // `entries` in this file only reads `date`/`startTime`/`endTime`/`breakMinutes`, exactly the
@@ -252,11 +261,11 @@ export async function computeOvertimeBalanceBreakdown(
   // Current month: the calendar month that contains TODAY (not effectiveEnd).
   //
   // SNAP-03-A fix: when effectiveEnd is the last day of the previous calendar month
-  // (because today has no entries yet, so effectiveEnd = yesterday), using effectiveEnd's
-  // month would classify that complete month as the "current partial" month and skip it
-  // from the complete-months loop. Using todayDate ensures the month boundary is always
-  // the ACTUAL current calendar month, so all complete prior months (including yesterday's
-  // full month) are processed by closeEmployeeMonth().
+  // (effectiveEnd = yesterday is always true since issue #438 — see the cutoff block above),
+  // using effectiveEnd's month would classify that complete month as the "current partial" month
+  // and skip it from the complete-months loop. Using todayDate ensures the month boundary is
+  // always the ACTUAL current calendar month, so all complete prior months (including
+  // yesterday's full month) are processed by closeEmployeeMonth().
   const currentMonthRange = monthRangeUtc(
     todayDate.getUTCFullYear(),
     todayDate.getUTCMonth() + 1,
@@ -310,7 +319,7 @@ export async function computeOvertimeBalanceBreakdown(
   const rangeLastDay = effectiveEnd; // Already a UTC-midnight @db.Date-compatible value
 
   // SHIFT_BASED roster fetch upper bound: include the WHOLE current calendar month, not just
-  // rangeLastDay (= effectiveEnd = yesterday when today has no entries). The partial-month §615
+  // rangeLastDay (= effectiveEnd = always yesterday since issue #438). The partial-month §615
   // block needs rosterPeriodMinutes = the FULL current-month roster (incl. future-planned shifts)
   // to prorate the contract Soll (R_toDate ÷ R_periodFull). Truncating at effectiveEnd made
   // R_periodFull == R_toDate → factor 1 → NO proration → the open partial month collapsed to ~0,
@@ -335,7 +344,7 @@ export async function computeOvertimeBalanceBreakdown(
   // Upper bound = shiftRangeLastDay (= full current calendar month, NOT effectiveEnd).
   // The SHIFT_BASED partial-month C_net credit (closeEmployeeMonth uses monthEnd =
   // currentMonthRange.end) must see approved leave/absences that START LATER in the current
-  // month than effectiveEnd (= yesterday when today has no entries). Truncating at effectiveEnd
+  // month than effectiveEnd (= always yesterday since issue #438). Truncating at effectiveEnd
   // dropped a future-in-month approved vacation → its Soll-credit was never subtracted from
   // C_net → the prorated effective Soll was inflated above W → the whole open-month §615
   // contribution collapsed to 0, diverging from the per-day cells (computeMonthSaldo, which
@@ -604,15 +613,14 @@ export async function computeOvertimeBalanceBreakdown(
       // contribution 0) would collide with this state because 0 === 0.
       //
       // WR-01 (code review) — this "days remain in the month" clause is intentionally
-      // anchored to `todayStr` (literal calendar today), NOT `effectiveEnd`/windowEnd
-      // (today-or-yesterday, whichever has a completed entry). computeMonthSaldo's own
-      // rosterIncomplete (month-saldo.ts) is anchored to the SAME `todayStr` for the SAME
-      // reason: the flag answers "is there still unplanned roster ahead of *now*", which
-      // does not depend on whether today's own time entry happens to be logged yet. Using
-      // windowEnd would make the two flags disagree on the last calendar day of a month
-      // with no entry yet that day (windowEnd = yesterday, one day short of month-end) —
-      // see overtime-live-vs-monthsaldo-parity.test.ts's "WR-01" describe block for the
-      // regression case this anchor choice is pinned against.
+      // anchored to `todayStr` (literal calendar today), NOT `effectiveEnd`/windowEnd (always
+      // yesterday since issue #438). computeMonthSaldo's own rosterIncomplete (month-saldo.ts)
+      // is anchored to the SAME `todayStr` for the SAME reason: the flag answers "is there still
+      // unplanned roster ahead of *now*", which does not depend on whether today's own time
+      // entry happens to be logged yet. Using windowEnd would make the two flags disagree on the
+      // last calendar day of a month (windowEnd = yesterday, one day short of month-end) — see
+      // overtime-live-vs-monthsaldo-parity.test.ts's "WR-01" describe block for the regression
+      // case this anchor choice is pinned against.
       rosterIncomplete =
         rosterProration.rosterPeriodMinutes > 0 &&
         rosterProration.rosterToDateMinutes === rosterProration.rosterPeriodMinutes &&

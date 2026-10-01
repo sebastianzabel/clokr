@@ -187,8 +187,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       const threshold = Number(schedule?.overtimeThreshold ?? 60);
 
-      // v1.8.24 — return the LIVE lifetime overtime balance (through windowEnd: today only if today
-      // has completed entries, else yesterday) instead of the stale event-driven
+      // v1.8.24 — return the LIVE lifetime overtime balance (through windowEnd = yesterday —
+      // issue #438: today never counts) instead of the stale event-driven
       // OvertimeAccount.balanceHours. Single source of truth = computeOvertimeBalanceBreakdown, the
       // same value updateOvertimeAccount persists (and that the §615 calendar/dashboard use). This
       // makes the Team-Zeiten GESAMT-SALDO tile month-INDEPENDENT (it no longer changes with the

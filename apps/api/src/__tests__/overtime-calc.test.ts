@@ -71,12 +71,17 @@ describe("Overtime Saldo Calculation", () => {
     expect(balanceAfter).not.toBe(balanceBefore);
   });
 
-  it("overtime balance includes today only when entry created via API", async () => {
+  // D-02 (issue #438): this pair replaces the old "overtime balance includes today only when
+  // entry created via API" test, which encoded the PRE-#438 rule — a closed entry for today
+  // promoted the live cutoff from yesterday to today. That rule became wrong once the clock
+  // resolver's REOPEN branch (commit 446d4bb6) made a lunch-break clock-out close today's entry
+  // exactly like an end-of-day clock-out. The corrected rule (D-01): the live saldo ends
+  // yesterday, always — today never enters it, no matter how it was created or closed.
+  it("does NOT include today's closed entry while today is still running (issue #438)", async () => {
     // Phase 66 fix (failure #4): pin time to 17:45 UTC so the today T18:00:00.000Z
     // endTime falls within the future-time guard's `now + 30 min` window. Without
     // the pin, on test runs before 17:30 UTC, POST /time-entries rejects with 400
-    // ("Endzeit darf max. 30 Minuten in der Zukunft liegen"), the createRes is
-    // ignored, and the balance2 == balance1 assertion fails.
+    // ("Endzeit darf max. 30 Minuten in der Zukunft liegen").
     vi.useFakeTimers({ now: new Date("2026-05-26T17:45:00.000Z"), toFake: ["Date"] });
     try {
       const today = pastDateStr(0);
@@ -115,7 +120,7 @@ describe("Overtime Saldo Calculation", () => {
       const balance1 = Number(JSON.parse(res1.body).balanceHours);
 
       // Create entry for today via API route (fires updateOvertimeAccount again)
-      await app.inject({
+      const createToday = await app.inject({
         method: "POST",
         url: "/api/v1/time-entries",
         headers: { authorization: `Bearer ${data.adminToken}` },
@@ -127,8 +132,11 @@ describe("Overtime Saldo Calculation", () => {
           breakMinutes: 0,
         },
       });
+      // A silently rejected POST would make the balance2 === balance1 assertion below pass
+      // vacuously (no entry ever created) — assert it actually landed.
+      expect(createToday.statusCode).toBe(201);
 
-      // GET overtime — stored balance now includes today's 10h entry
+      // GET overtime — balance must NOT include today's 10h entry (issue #438, D-01)
       const res2 = await app.inject({
         method: "GET",
         url: `/api/v1/overtime/${data.employee.id}`,
@@ -137,8 +145,69 @@ describe("Overtime Saldo Calculation", () => {
       expect(res2.statusCode).toBe(200);
       const balance2 = Number(JSON.parse(res2.body).balanceHours);
 
-      // Balance increased after adding today's 10h entry (10h vs 8h schedule = +2h if weekday)
-      expect(balance2).toBeGreaterThan(balance1);
+      expect(balance2).toBeCloseTo(balance1, 2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("picks up a day's closed entry on the next calendar day (issue #438)", async () => {
+    vi.useFakeTimers({ now: new Date("2026-05-19T17:45:00.000Z"), toFake: ["Date"] });
+    try {
+      const day = "2026-05-19";
+
+      await app.prisma.timeEntry.deleteMany({
+        where: {
+          employeeId: data.employee.id,
+          date: new Date(day + "T00:00:00Z"),
+          deletedAt: null,
+        },
+      });
+
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: day,
+          startTime: new Date(`${day}T08:00:00.000Z`).toISOString(),
+          endTime: new Date(`${day}T18:00:00.000Z`).toISOString(),
+          breakMinutes: 0,
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+
+      // Still "today" (2026-05-19) — the entry must not be included yet.
+      const res1 = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res1.statusCode).toBe(200);
+      const b1 = Number(JSON.parse(res1.body).balanceHours);
+
+      // Derive the net minutes the API actually stored (it may adjust the break) rather than
+      // hard-coding the expected net.
+      const stored = await app.prisma.timeEntry.findFirst({
+        where: { employeeId: data.employee.id, date: new Date(day + "T00:00:00Z") },
+      });
+      expect(stored).not.toBeNull();
+      const net =
+        (stored!.endTime!.getTime() - stored!.startTime.getTime()) / 60000 -
+        Number(stored!.breakMinutes);
+
+      // Advance to the next calendar day — the entry is now "yesterday" and must be picked up.
+      vi.setSystemTime(new Date("2026-05-20T09:00:00.000Z"));
+      const res2 = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res2.statusCode).toBe(200);
+      const b2 = Number(JSON.parse(res2.body).balanceHours);
+
+      expect(b2).toBeCloseTo(b1 + (net - 480) / 60, 2);
     } finally {
       vi.useRealTimers();
     }
