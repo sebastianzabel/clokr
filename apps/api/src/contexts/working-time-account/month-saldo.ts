@@ -65,8 +65,8 @@ export type MonthSaldoResult = {
   /** Phase 125 (issue #125, D-02/D-03) — distinct days in
    *  [month-start-or-hireDate, to-date cutoff] with credited worked minutes > 0, taken from the
    *  SAME `closeEmployeeMonth` to-date result that produced `workedMinutes` above. The
-   *  "up to and including today" clamping is therefore the core's own `effectiveEnd`, not a
-   *  second derivation.
+   *  "up to yesterday" clamping (issue #438: today never counts) is therefore the core's own
+   *  `effectiveEnd`, not a second derivation.
    *
    *  ABSENT — never a fabricated 0 — for a CLOSED month and for the three zeroed early returns.
    *  A SaldoSnapshot stores no day count and D-07 forbids adding a column, so for a closed month
@@ -311,15 +311,18 @@ export async function computeMonthSaldo(
   // full-month roster charged as undertime (Bug 3).
   const days: MonthSaldoDay[] = [];
 
-  // Iterate only days from effectiveStart to today-or-monthLastDay.
-  // Bug 1 fix: only include TODAY when the employee has completed entries for today —
-  // mirroring updateOvertimeAccount's hasTodayEntries cutoff (time-entries.ts). Otherwise
-  // a SHIFT_BASED employee with a shift today but no entry yet would have today's full shift
-  // charged as §615 undertime, showing a spurious "future penalty" on today's cell.
+  // Iterate only days from effectiveStart through yesterday (never today) — the series and
+  // header always end yesterday, the SAME window computeOvertimeBalanceBreakdown uses (issue
+  // #438). A closed entry for today is not evidence the day is over: the clock resolver's
+  // REOPEN branch (services/clock/resolver.ts:232-256, commit 446d4bb6) closes today's entry on
+  // a lunch-break clock-out exactly like an end-of-day clock-out would, and a later clock-in
+  // reopens it. Promoting the cutoff to today on that signal charged the full day's Soll
+  // against only a partial Ist. A SHIFT_BASED employee with a shift today but no entry yet
+  // similarly never has today's shift charged as §615 undertime — it is simply outside the
+  // window.
   const todayStr = dateStrInTz(new Date(), tz);
   const yesterdayStr = dateStrInTz(new Date(Date.now() - 86400000), tz);
-  const hasTodayEntries = closeEntries.some((e) => dateStrInTz(e.date, tz) === todayStr);
-  const cutoffStr = hasTodayEntries ? todayStr : yesterdayStr;
+  const cutoffStr = yesterdayStr;
   const windowEnd =
     cutoffStr < dateStrInTz(monthLastDay, tz) ? cutoffStr : dateStrInTz(monthLastDay, tz);
 
@@ -465,16 +468,15 @@ export async function computeMonthSaldo(
   // window).
   //
   // WR-01 (code review) — "days remaining" is anchored to `todayStr` (literal calendar today,
-  // already computed above), NOT `lastDayStr` (the day loop's own cursor, today-or-yesterday
-  // depending on whether today has a completed entry yet). This was previously anchored to
-  // `lastDayStr` on the reasoning that it's "the same to-date cursor the header/cells already
-  // use" — correct in isolation, but it silently disagreed with computeOvertimeBalanceBreakdown's
-  // sibling flag (time-entries.ts), which has always anchored to `todayStr`, on exactly one
-  // window: today is the LAST calendar day of the month and has no entry logged yet (so
-  // lastDayStr = yesterday, one day short of month-end, while todayStr already IS month-end).
-  // Both flags now anchor to `todayStr` — the flag answers "is there still unplanned roster
-  // ahead of *now*", which does not depend on whether today's own entry happens to be logged
-  // yet. See overtime-live-vs-monthsaldo-parity.test.ts's "WR-01" describe block for the
+  // already computed above), NOT `lastDayStr` (the day loop's own cursor, always yesterday since
+  // issue #438). This was previously anchored to `lastDayStr` on the reasoning that it's "the
+  // same to-date cursor the header/cells already use" — correct in isolation, but it silently
+  // disagreed with computeOvertimeBalanceBreakdown's sibling flag (overtime-balance.ts), which
+  // has always anchored to `todayStr`, on exactly one window: today is the LAST calendar day of
+  // the month (so lastDayStr = yesterday, one day short of month-end, while todayStr already IS
+  // month-end). Both flags now anchor to `todayStr` — the flag answers "is there still unplanned
+  // roster ahead of *now*", which does not depend on whether today's own entry happens to be
+  // logged yet. See overtime-live-vs-monthsaldo-parity.test.ts's "WR-01" describe block for the
   // regression case this anchor choice is pinned against.
   const rosterIncomplete: boolean | undefined =
     scheduleType === "SHIFT_BASED" && lastRosterProration !== undefined && lastDayStr !== undefined

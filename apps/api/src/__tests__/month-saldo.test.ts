@@ -61,87 +61,84 @@ describe("month-saldo endpoint + computeMonthSaldo", () => {
   // ── (a) Open FIXED_SCHEDULE month: §615 balance = worked − contract_expected ─
 
   it("(a) open month: balanceMinutes equals §615 closeEmployeeMonth result, NOT worked−roster", async () => {
-    // data.employee is FIXED_SCHEDULE 40h/week (Mo-Fr 8h each, seeded by setup.ts)
-    // Use a past month that is definitely not closed.
-    // Issue #136 (batch D): derived from todayStr() (tenant TZ, Europe/Berlin) instead of
-    // local getFullYear()/getMonth()/getDate() — the endpoint resolves the month in
-    // Europe/Berlin (month-saldo.ts), so on a runner ahead of Berlin, right around
-    // midnight, the local basis could ask for month M+1 while Berlin is still on M,
-    // making the [monthStart, today] to-date window empty.
-    const [year, month, dayOfMonth] = todayStr().split("-").map(Number);
+    // data.employee is FIXED_SCHEDULE 40h/week (Mo-Fr 8h each, seeded by setup.ts).
+    // Fixed fake clock, independent of the run date (issues #434/#438) — a fixed PAST day
+    // (2026-06-02) inside the to-date window [monthStart, yesterday], which the live window
+    // always ends at since issue #438 (today never counts, regardless of the run date).
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-10T10:00:00.000Z"));
+    try {
+      const year = 2026;
+      const month = 6;
+      const testDate = ymd(year, month, 2);
+      // Clean up any pre-existing entry for that date
+      await app.prisma.timeEntry.deleteMany({
+        where: { employeeId: data.employee.id, date: new Date(testDate + "T00:00:00Z") },
+      });
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date(testDate + "T00:00:00Z"),
+          startTime: new Date(`${testDate}T07:00:00.000Z`),
+          endTime: new Date(`${testDate}T16:00:00.000Z`), // 9h gross, 0 break = 540min worked
+          breakMinutes: 0,
+          type: "WORK",
+          source: "MANUAL",
+          note: null,
+          isInvalid: false,
+          salonId: data.salonId, // Phase 68b (issue #68)
+        },
+      });
 
-    // Create one time entry, 9h worked (480+60=540 gross, 0 break). The header now reflects the
-    // TO-DATE (bisher) §615 state (windowEnd = today, or yesterday when no today-entries), so the
-    // entry MUST fall within [monthStart, today] to be counted. Use min(day 2, today's day-of-month):
-    // when today is the 1st/2nd, place it on today (the hasTodayEntries guard then includes today);
-    // otherwise day 2 (a past day, always inside the to-date window).
-    const testDay = Math.min(2, dayOfMonth);
-    const testDate = ymd(year, month, testDay);
-    // Clean up any pre-existing entry for that date
-    await app.prisma.timeEntry.deleteMany({
-      where: { employeeId: data.employee.id, date: new Date(testDate + "T00:00:00Z") },
-    });
-    await app.prisma.timeEntry.create({
-      data: {
-        employeeId: data.employee.id,
-        date: new Date(testDate + "T00:00:00Z"),
-        startTime: new Date(`${testDate}T07:00:00.000Z`),
-        endTime: new Date(`${testDate}T16:00:00.000Z`), // 9h gross, 0 break = 540min worked
-        breakMinutes: 0,
-        type: "WORK",
-        source: "MANUAL",
-        note: null,
-        isInvalid: false,
-        salonId: data.salonId, // Phase 68b (issue #68)
-      },
-    });
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/month-saldo/${data.employee.id}?year=${year}&month=${month}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
 
-    const res = await app.inject({
-      method: "GET",
-      url: `/api/v1/overtime/month-saldo/${data.employee.id}?year=${year}&month=${month}`,
-      headers: { authorization: `Bearer ${data.adminToken}` },
-    });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as {
+        workedMinutes: number;
+        expectedMinutes: number;
+        balanceMinutes: number;
+        closed: boolean;
+        days: Array<{ date: string; cumulativeSaldoMinutes: number }>;
+      };
 
-    expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body) as {
-      workedMinutes: number;
-      expectedMinutes: number;
-      balanceMinutes: number;
-      closed: boolean;
-      days: Array<{ date: string; cumulativeSaldoMinutes: number }>;
-    };
+      expect(body.closed).toBe(false);
+      // balance MUST come from §615 (worked − contract_expected), not roster-based diff
+      expect(body.balanceMinutes).toBe(body.workedMinutes - body.expectedMinutes);
+      // workedMinutes should be at least 540 (the 9h entry we created)
+      expect(body.workedMinutes).toBeGreaterThanOrEqual(540);
 
-    expect(body.closed).toBe(false);
-    // balance MUST come from §615 (worked − contract_expected), not roster-based diff
-    expect(body.balanceMinutes).toBe(body.workedMinutes - body.expectedMinutes);
-    // workedMinutes should be at least 540 (the 9h entry we created)
-    expect(body.workedMinutes).toBeGreaterThanOrEqual(540);
+      // (b) days[] shape assertions
+      expect(Array.isArray(body.days)).toBe(true);
+      // days array should have at least one entry (for the day we created an entry on)
+      expect(body.days.length).toBeGreaterThan(0);
+      // all dates must be YYYY-MM-DD format
+      for (const d of body.days) {
+        expect(d.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        expect(typeof d.cumulativeSaldoMinutes).toBe("number");
+      }
+      // dates should be in ascending order (monotonic progression)
+      for (let i = 1; i < body.days.length; i++) {
+        expect(body.days[i]!.date >= body.days[i - 1]!.date).toBe(true);
+      }
+      // cumulative on the last day = carryOverIn + to-date (bisher) balance.
+      // Header balanceMinutes is now derived from the SAME last-included-day result the cells use
+      // (single source of truth), so the terminal cumulative must equal carryOverIn + body.balanceMinutes.
+      // The seeded employee may have a prior snapshot so carryOverIn could be non-zero.
+      const lastDay = body.days[body.days.length - 1]!;
+      const carryOverIn = lastDay.cumulativeSaldoMinutes - body.balanceMinutes;
+      expect(lastDay.cumulativeSaldoMinutes).toBe(carryOverIn + body.balanceMinutes);
 
-    // (b) days[] shape assertions
-    expect(Array.isArray(body.days)).toBe(true);
-    // days array should have at least one entry (for the day we created an entry on)
-    expect(body.days.length).toBeGreaterThan(0);
-    // all dates must be YYYY-MM-DD format
-    for (const d of body.days) {
-      expect(d.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-      expect(typeof d.cumulativeSaldoMinutes).toBe("number");
+      // Clean up
+      await app.prisma.timeEntry.deleteMany({
+        where: { employeeId: data.employee.id, date: new Date(testDate + "T00:00:00Z") },
+      });
+    } finally {
+      vi.useRealTimers();
     }
-    // dates should be in ascending order (monotonic progression)
-    for (let i = 1; i < body.days.length; i++) {
-      expect(body.days[i]!.date >= body.days[i - 1]!.date).toBe(true);
-    }
-    // cumulative on the last day = carryOverIn + to-date (bisher) balance.
-    // Header balanceMinutes is now derived from the SAME last-included-day result the cells use
-    // (single source of truth), so the terminal cumulative must equal carryOverIn + body.balanceMinutes.
-    // The seeded employee may have a prior snapshot so carryOverIn could be non-zero.
-    const lastDay = body.days[body.days.length - 1]!;
-    const carryOverIn = lastDay.cumulativeSaldoMinutes - body.balanceMinutes;
-    expect(lastDay.cumulativeSaldoMinutes).toBe(carryOverIn + body.balanceMinutes);
-
-    // Clean up
-    await app.prisma.timeEntry.deleteMany({
-      where: { employeeId: data.employee.id, date: new Date(testDate + "T00:00:00Z") },
-    });
   });
 
   // ── (c) Closed month: returns snapshot verbatim ───────────────────────────
