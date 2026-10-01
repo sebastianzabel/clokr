@@ -79,9 +79,9 @@ describe("Overtime Saldo Calculation", () => {
   // yesterday, always — today never enters it, no matter how it was created or closed.
   it("does NOT include today's closed entry while today is still running (issue #438)", async () => {
     // Phase 66 fix (failure #4): pin time to 17:45 UTC so the today T18:00:00.000Z
-    // endTime falls within the future-time guard's `now + 30 min` window. Without
-    // the pin, on test runs before 17:30 UTC, POST /time-entries rejects with 400
-    // ("Endzeit darf max. 30 Minuten in der Zukunft liegen").
+    // endTime falls within the future-time guard's `now + 30 min` window. Without the pin, on
+    // test runs before 17:30 UTC, POST /time-entries rejects with 400 (end time too far in the
+    // future).
     vi.useFakeTimers({ now: new Date("2026-05-26T17:45:00.000Z"), toFake: ["Date"] });
     try {
       const today = pastDateStr(0);
