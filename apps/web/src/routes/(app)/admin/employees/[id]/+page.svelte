@@ -23,6 +23,10 @@
     isOverridden,
   } from "$lib/employee-classification";
   import { isWorkDay, buildContractWorkDaysPayload } from "$lib/utils/work-schedule";
+  import {
+    statutoryMinimumFiveDayWeek,
+    MISSING_BIRTH_DATE_HINT,
+  } from "$lib/statutory-minimum-vacation";
 
   // ── Types ──────────────────────────────────────────────────────────────────
   type Role = "ADMIN" | "MANAGER" | "EMPLOYEE";
@@ -56,6 +60,9 @@
     usedDays: number;
     carriedOverDays: number;
     carryOverDeadline: string | null;
+    // Issue #435 (D-14) — server's own regular-entitlement suggestion and statutory minimum.
+    regularDays?: number;
+    statutoryMinimumDays?: number;
   }
 
   interface Employee {
@@ -70,6 +77,8 @@
     requiresSupervision?: boolean;
     // Phase 64/65 — Pausendauer per-Employee overrides
     birthDate?: string | null; // ISO date or null
+    // Issue #435 (D-13) — per-person vacation base value; null = tenant default.
+    annualVacationDays?: number | string | null;
     breakOver6hOverride?: number | null; // null = use tenant default
     breakOver9hOverride?: number | null;
     // Phase 85.1.1 (D-01, D-03) — Phorest Vor-/Nachbereitungszeit per-Employee
@@ -106,6 +115,8 @@
     // (returned by GET /settings/work per Task 1; reuses this existing fetch).
     phorestPrepMinutes?: number;
     phorestWrapupMinutes?: number;
+    // Issue #435 (D-13) — tenant default for the Stammdaten placeholder (same response).
+    defaultVacationDays?: number | string;
   }
 
   // Phase 67 (BERSCH-15) — Vocational-school pattern row returned by
@@ -330,6 +341,7 @@
         eNfcCardId,
         eExitDate,
         eBirthDate,
+        eAnnualVacationDays,
         eClassification,
         eCoverageWeight,
         eRequiresSupervision,
@@ -412,6 +424,8 @@
   let eNfcCardId = $state<string>("");
   let eExitDate = $state<string>("");
   let eBirthDate = $state<string>(""); // Phase 65 — JArbSchG §9 needs DOB for AZUBI <18 check
+  // Issue #435 (D-13) — per-person vacation base value; null = tenant default.
+  let eAnnualVacationDays = $state<number | null>(null);
   let eClassification = $state<EmployeeClassification>("VOLLZEIT");
   let eCoverageWeight = $state<number>(applyDefaults("VOLLZEIT").coverageWeight);
   let eRequiresSupervision = $state<boolean>(applyDefaults("VOLLZEIT").requiresSupervision);
@@ -594,6 +608,17 @@
   let bothOverridesEmpty = $derived(eBreakOver6hOverride === "" && eBreakOver9hOverride === "");
   let showAzubiSuggestionButton = $derived(isAzubiUnder18 && bothOverridesEmpty);
 
+  // Issue #435 (D-12) — AZUBI with no birth date on file: the legal minimum cannot be checked.
+  let azubiMissingBirthDate = $derived(eClassification === "AZUBI" && !eBirthDate);
+
+  // Issue #435 (D-13) — tenant default shown as the Stammdaten placeholder.
+  let tenantDefaultVacationDays = $derived(Number(tenantBreakConfig?.defaultVacationDays) || 30);
+  // Issue #435 (D-13 hint) — below the statutory minimum for the CURRENT year (display-only;
+  // the server's PUT/PATCH guards, plan 03, are authoritative).
+  let eAnnualVacationMinimum = $derived(
+    eBirthDate ? statutoryMinimumFiveDayWeek(eBirthDate, new Date().getFullYear()) : null,
+  );
+
   function initFields() {
     if (!employee) return;
     eFirstName = employee.firstName ?? "";
@@ -603,6 +628,11 @@
     eNfcCardId = employee.nfcCardId ?? "";
     eExitDate = employee.exitDate ? String(employee.exitDate).split("T")[0] : "";
     eBirthDate = employee.birthDate ? String(employee.birthDate).split("T")[0] : "";
+    // Issue #435 (D-13) — null/undefined = tenant default (placeholder shown in the input).
+    eAnnualVacationDays =
+      employee.annualVacationDays !== undefined && employee.annualVacationDays !== null
+        ? Number(employee.annualVacationDays)
+        : null;
     eClassification = employee.classification ?? "VOLLZEIT";
     eCoverageWeight =
       employee.coverageWeight !== undefined && employee.coverageWeight !== null
@@ -744,6 +774,8 @@
           classification: eClassification,
           coverageWeight: eCoverageWeight,
           requiresSupervision: eRequiresSupervision,
+          // Issue #435 (D-13) — null = back to the tenant default.
+          annualVacationDays: eAnnualVacationDays ?? null,
         },
       );
       employee = { ...employee, firstName: eFirstName, lastName: eLastName };
@@ -756,6 +788,7 @@
         eNfcCardId,
         eExitDate,
         eBirthDate,
+        eAnnualVacationDays,
         eClassification,
         eCoverageWeight,
         eRequiresSupervision,
@@ -1505,7 +1538,11 @@
 
   // ── Urlaub state ───────────────────────────────────────────────────────────
   const vacYear = new Date().getFullYear();
-  let eVacSuggestion = $derived(Math.round((30 * eWorkingDays) / 5));
+  // Issue #435 (D-14) — the server's own regular-entitlement suggestion (person's/tenant's base
+  // value, scaled to contract workdays, hire-year pro-rata applied) replaces the former
+  // client-side flat-30-days formula, which ignored the per-person base value entirely.
+  let eVacSuggestion = $derived(vacationEntitlement?.regularDays ?? 0);
+  let eVacMinimum = $derived(vacationEntitlement?.statutoryMinimumDays ?? 0);
   let eVacTotal = $state<number | null>(null);
   let eVacCarried = $state<number>(0);
   let eVacDeadline = $state<string>("");
@@ -1556,6 +1593,7 @@
       eNfcCardId,
       eExitDate,
       eBirthDate,
+      eAnnualVacationDays,
       eClassification,
       eCoverageWeight,
       eRequiresSupervision,
@@ -1829,6 +1867,37 @@
                 Für Azubis unter 18 Jahren werden bei der Pausendauer JArbSchG §9 Schutzregeln
                 vorgeschlagen (30 / 60 Min).
               </p>
+              {#if azubiMissingBirthDate}
+                <div class="callout">{MISSING_BIRTH_DATE_HINT}</div>
+              {/if}
+            </div>
+            <!-- Issue #435 (D-13) — per-person vacation base value -->
+            <div class="form-group form-group--full">
+              <label class="form-label" for="e-annual-vacation-days">
+                Urlaubstage pro Jahr (5-Tage-Woche)
+              </label>
+              <input
+                id="e-annual-vacation-days"
+                type="number"
+                min="0.5"
+                max="365"
+                step="0.01"
+                class="input"
+                bind:value={eAnnualVacationDays}
+                placeholder={`Mandanten-Standard (${tenantDefaultVacationDays})`}
+              />
+              <p class="hint">
+                Leer = Mandanten-Standard. Gilt für künftige Urlaubsjahre; bestehende Ansprüche
+                ändern sich nur im Tab Urlaub (mit Protokoll).
+              </p>
+              {#if eAnnualVacationMinimum && eAnnualVacationDays !== null && eAnnualVacationDays < eAnnualVacationMinimum.days}
+                <div class="callout error">
+                  Unter dem gesetzlichen Mindesturlaub von {eAnnualVacationMinimum.days.toLocaleString(
+                    "de-DE",
+                    { maximumFractionDigits: 2 },
+                  )} Tagen ({eAnnualVacationMinimum.law}) – das Speichern wird abgelehnt.
+                </div>
+              {/if}
             </div>
             <div class="form-group form-group--full">
               <label class="form-label" for="e-exitdate">Austrittsdatum (optional)</label>
@@ -3210,8 +3279,17 @@
           {/if}
 
           <p class="form-hint">
-            Berechnet aus Arbeitstagen: {eWorkingDays} Tage/Woche →
-            <strong>{eVacSuggestion} Urlaubstage</strong> vorgeschlagen.
+            Regulärer Anspruch {vacYear}:
+            <strong
+              >{eVacSuggestion.toLocaleString("de-DE", {
+                maximumFractionDigits: 2,
+              })} Tage</strong
+            >
+            (Basiswert der Person bzw. Mandanten-Standard, umgerechnet auf die Vertragstage, im
+            Eintrittsjahr ggf. anteilig). Gesetzlicher Mindesturlaub: {eVacMinimum.toLocaleString(
+              "de-DE",
+              { maximumFractionDigits: 2 },
+            )} Tage.
           </p>
 
           <div class="extra-row">
@@ -3223,7 +3301,7 @@
                   type="number"
                   min="0"
                   max="365"
-                  step="0.5"
+                  step="0.01"
                   bind:value={eVacTotal}
                   placeholder={String(eVacSuggestion)}
                   class="form-input threshold-input"
@@ -3231,6 +3309,12 @@
                 <span class="input-suffix">Tage</span>
               </div>
               <p class="form-hint">Leer lassen für automatischen Wert ({eVacSuggestion})</p>
+              {#if eVacTotal !== null && eVacTotal < eVacMinimum}
+                <div class="callout error">
+                  Unter dem gesetzlichen Mindesturlaub – das Speichern wird abgelehnt, sofern sich
+                  der Wert ändert.
+                </div>
+              {/if}
             </div>
 
             <div class="form-group">

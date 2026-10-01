@@ -209,3 +209,22 @@ describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
     });
   });
 });
+
+describe("Issue #435 — server-driven vacation values", () => {
+  it("no client-side '30 * eWorkingDays' vacation formula remains (D-14)", () => {
+    expect(PAGE).not.toMatch(/30\s*\*\s*eWorkingDays/);
+  });
+
+  it("eVacSuggestion is derived from the server's regularDays, not a local formula", () => {
+    const line = PAGE.split("\n").find((l) => l.includes("let eVacSuggestion = $derived("));
+    expect(line, "eVacSuggestion derivation not found").toBeDefined();
+    expect(line).toContain("regularDays");
+  });
+
+  it("the Stammdaten snapshot covers eAnnualVacationDays (D-13)", () => {
+    const idx = PAGE.indexOf("let stammdatenDirty = $derived(");
+    expect(idx, "stammdatenDirty derivation not found").toBeGreaterThan(-1);
+    const slice = PAGE.slice(idx, idx + 400);
+    expect(slice).toContain("eAnnualVacationDays");
+  });
+});
