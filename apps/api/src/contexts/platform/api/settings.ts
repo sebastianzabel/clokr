@@ -78,6 +78,11 @@ const tenantConfigSchema = z
     carryOverDeadlineDay: z.number().int().min(1).max(31).optional(),
     carryOverDeadlineMonth: z.number().int().min(1).max(12).optional(),
     defaultVacationDays: decimalFromApi(z.number().min(0.5).max(365).multipleOf(0.5)).optional(),
+    // Issue #435 D-03 — pre-fill for apprentices in the create form; min 20 = § 3 BUrlG at a
+    // 5-day week; never read by the entitlement computation (D-05).
+    defaultApprenticeVacationDays: decimalFromApi(
+      z.number().min(20).max(365).multipleOf(0.5),
+    ).optional(),
     timezone: z.string().min(1).max(100).optional(),
     arbzgEnabled: z.boolean().optional(),
     // Phase 47.3 — Verfügbarkeits-System toggle (default true, feature-on)
@@ -549,6 +554,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         carryOverDeadlineDay: 31,
         carryOverDeadlineMonth: 3,
         defaultVacationDays: 30,
+        defaultApprenticeVacationDays: 20,
         arbzgEnabled: true,
         availabilityEnabled: true,
         clockOutReminderHours: 10,
