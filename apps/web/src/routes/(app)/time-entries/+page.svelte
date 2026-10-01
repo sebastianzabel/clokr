@@ -1416,14 +1416,11 @@
     // FIXED_SCHEDULE / FLEXTIME and no-target MONTHLY_HOURS: keep the up-to-today accrual.
     hasMonthlyTarget ? totalWorked - monthlyBudgetSoll : totalWorked - totalExpected,
   );
-  // Check if there are entries for today
-  let hasTodayEntries = $derived(
-    entries.some((e) => {
-      const d = (e.date ?? e.startTime).split("T")[0];
-      return d === todayStr && e.endTime && !e.isInvalid;
-    }),
-  );
-  // Worked + Expected up to cutoff: today if clocked, yesterday otherwise
+  // Worked + Expected up to cutoff: always YESTERDAY, never today. Today's entry may still be
+  // open, or it may be closed only because of a lunch-break clock-out that the clock resolver
+  // reopens on the next clock-in (commit 446d4bb6) — there is no reliable signal that today is
+  // actually "done". This is the same cutoff as the server's live saldo
+  // (overtime-balance.ts / month-saldo.ts, issue #438).
   //
   // Phase 125 (issue #125) — one predicate, two outputs. `totalWorked` (the card's Ist in every
   // non-SHIFT branch) and `workedEntryDays` (its "N Arbeitstage bisher" in those same branches)
@@ -1438,7 +1435,6 @@
   let entriesToDate = $derived(
     entries.filter((e) => {
       if (!e.endTime || e.isInvalid) return false;
-      if (hasTodayEntries) return true;
       const d = (e.date ?? e.startTime).split("T")[0];
       return d < todayStr;
     }),
@@ -1455,12 +1451,12 @@
     calendarDays
       .filter((d) => {
         if (!d.isCurrentMonth || d.isFuture) return false;
-        if (hasTodayEntries) return true;
         return !d.isToday;
       })
       .reduce((s, d) => s + d.expectedMin, 0),
   );
-  // Phase 49.1 — FLEXTIME weekly diff: sum this week's worked vs expected
+  // Phase 49.1 — FLEXTIME weekly diff: sum this week's worked vs expected, through yesterday,
+  // the same cutoff as the month figures (issue #438)
   let weekWorkedMin = $derived.by((): number => {
     const weekStart = format(startOfWeek(today, { weekStartsOn: 1 }), "yyyy-MM-dd");
     const weekEnd = format(endOfWeek(today, { weekStartsOn: 1 }), "yyyy-MM-dd");
@@ -1468,7 +1464,7 @@
       .filter((e) => {
         if (!e.endTime || e.isInvalid) return false;
         const d = (e.date ?? e.startTime).split("T")[0];
-        return d >= weekStart && d <= weekEnd;
+        return d >= weekStart && d <= weekEnd && d < todayStr;
       })
       .reduce(
         (s, e) =>
@@ -1482,7 +1478,7 @@
     const weekStart = format(startOfWeek(today, { weekStartsOn: 1 }), "yyyy-MM-dd");
     const weekEnd = format(endOfWeek(today, { weekStartsOn: 1 }), "yyyy-MM-dd");
     return calendarDays
-      .filter((d) => d.dateStr >= weekStart && d.dateStr <= weekEnd && !d.isFuture)
+      .filter((d) => d.dateStr >= weekStart && d.dateStr <= weekEnd && d.dateStr < todayStr)
       .reduce((s, d) => s + d.expectedMin, 0);
   });
   // §615 SHIFT_BASED: Soll (bisher) + Monat-Saldo come from the §615 core (monthSaldo).
@@ -1894,7 +1890,7 @@
                       >{cum >= 0 ? "+" : "−"}{fmtMin(Math.abs(cum))}</span
                     >
                   {/if}
-                {:else if day.expectedMin > 0 && !isNoDailyTarget}
+                {:else if day.expectedMin > 0 && !isNoDailyTarget && !day.isToday}
                   {@const b = day.workedMin - day.expectedMin}
                   <span class="day-bal {balClass(b)}"
                     >{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span
