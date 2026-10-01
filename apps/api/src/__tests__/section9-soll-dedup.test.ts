@@ -255,7 +255,23 @@ describe("§9 BUrlG (D-15) — day-based Soll dedup in closeEmployeeMonth", () =
     // request's claimed day, so this figure MUST stay byte-identical after
     // Task 2 — a change here would mean the v1.8.27/v1.8.28 subtract-then-
     // recredit symmetry regressed.
-    expect(result.expectedMinutes).toBe(8550);
+    //
+    // Issue #429, plan 429-02 (justified, intended effect — NOT a regression):
+    // SHIFT_AS_TUE_FRI sets neither `workDays` nor `contractWorkDaysPerWeek`, and this
+    // fixture's `tenantConfig` is `null` (no `defaultWorkDays` either), so
+    // `contractWorkDaysPerWeekFrom()`'s chain bottoms out at its final default of 5.
+    // Before #429, the SHIFT_BASED approvedLeave (SICK) row's credit came from
+    // `avgWorkMinutesCore`'s OWN fallback — count of `{day}Hours > 0` = 4 (Tue-Fri) — giving
+    // round(38*60*1/4) = 570 for the one-day SICK row. #429 replaces that leave credit with
+    // `shiftBasedLeaveCreditByDate()`, which resolves the divisor via the SAME chain
+    // Abwesenheiten's entitlement side already used (Phase 107 D-04) — here landing on 5, not
+    // 4 — giving round(38*60*1/5) = 456: 114 minutes less subtracted, so expectedMinutes rises
+    // by exactly 114 (8550 -> 8664). The BS absence loop (sbAbsenceCredit, untouched by this
+    // plan) still uses `avgWorkMinutesCore`'s divisor of 4, so `workedMinutes`/`balanceMinutes`
+    // are unaffected — this is a pure Soll-side (`expectedMinutes`) shift, unifying the
+    // leave-credit divisor with entitlement instead of leaving them silently diverged, which is
+    // exactly #429's stated purpose.
+    expect(result.expectedMinutes).toBe(8664);
     expect(result.workedMinutes).toBe(570);
     expect(result.balanceMinutes).toBe(0);
   });
@@ -283,7 +299,26 @@ describe("§9 BUrlG (D-15) — day-based Soll dedup in closeEmployeeMonth", () =
     // workedMinutes=0, balanceMinutes=0. No two rows share a day, so dedup is a
     // structural no-op — this must stay byte-identical after Task 2, pinning
     // that a refactor of the non-overlap path did not change anything.
-    expect(result.expectedMinutes).toBe(7980);
+    //
+    // Issue #429, plan 429-02 (justified, intended effect — NOT a regression):
+    // this fixture is the exact bug class #429 fixes, hit incidentally by an unrelated
+    // pre-existing test. The Mon 2026-08-03 VACATION row falls on a day SHIFT_AS_TUE_FRI gives
+    // 0 `{day}Hours` (Monday is not one of its Tue-Fri contract days). Before #429, the leave
+    // credit came from `avgWorkMinutesCore`, whose `workdaysInRange` counts ONLY
+    // `{day}Hours > 0` days — Monday contributes 0 workdays in range, so this row credited
+    // exactly 0 regardless of divisor (the reported "credits zero for a day outside the
+    // schedule's per-day hours" bug). #429's `shiftBasedLeaveCreditByDate()` no longer asks
+    // "is this a contracted {day}Hours day" — it asks `leaveDaysPerWeek()` "how many of this
+    // ISO week's Mo-Sat leave days does the CONTRACT (contractWorkDaysPerWeekFrom, here 5 —
+    // same fallback-chain gap as Integration 4 above) cost", so the lone Monday fragment now
+    // correctly costs 1 day = round(38*60*1/5) = 456 minutes where it cost 0 before. The
+    // Tue 2026-08-11 VACATION row's own credit ALSO moves, from the old
+    // avgWorkMinutesCore-divisor-4 570 to the new contract-divisor-5 456 (same fallback-chain
+    // shift as Integration 4). Combined leave-credit delta: (456-0) + (456-570) = +342 minutes
+    // subtracted from Soll, so expectedMinutes falls by exactly 342 (7980 -> 7638). The
+    // separate SICK ABSENCE row (08-18, sbAbsenceCredit loop, untouched by this plan) is
+    // unaffected, so workedMinutes/balanceMinutes stay 0.
+    expect(result.expectedMinutes).toBe(7638);
     expect(result.workedMinutes).toBe(0);
     expect(result.balanceMinutes).toBe(0);
   });

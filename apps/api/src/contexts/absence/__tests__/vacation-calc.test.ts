@@ -8,6 +8,7 @@ import {
   calculateProRataVacationForHire,
   countShiftBasedLeaveDays,
   mondayOfWeekUtc,
+  leaveDaysPerWeek,
 } from "../vacation-calc";
 // Phase 107 — single shared tenant-TZ date helper (issue #34); avoids hardcoded calendar
 // dates that expire (see project history in CLAUDE.md / docs/testing.md).
@@ -558,6 +559,135 @@ describe("countShiftBasedLeaveDays — by contract, roster-independent (Issue #4
     // (enforced by Task 1's own acceptance criteria) — this call is the behavioral proof: it
     // runs to completion with nothing but plain JS values.
     expect(() => countShiftBasedLeaveDays(mon(0), mon(1), false, 5, new Set())).not.toThrow();
+  });
+});
+
+describe("leaveDaysPerWeek — same kernel as countShiftBasedLeaveDays (Issue #429, D-01/D-02)", () => {
+  it("matches countShiftBasedLeaveDays for a single full-day row (contract c=4, Mon-Thu)", () => {
+    const c = 4;
+    const start = mon(0); // Mon
+    const end = mon(3); // Thu
+    const weeks = leaveDaysPerWeek([{ startDate: start, endDate: end }], c, NO_HOLIDAYS);
+    expect(weeks).toHaveLength(1);
+    const entry = weeks[0];
+    const expected = countShiftBasedLeaveDays(start, end, false, c, NO_HOLIDAYS);
+    expect(entry.days).toBe(expected.days);
+    const sumShares = Array.from(entry.dayShares.values()).reduce((a, b) => a + b, 0);
+    expect(sumShares).toBeCloseTo(entry.days);
+  });
+});
+
+describe("leaveDaysPerWeek — properties (D-02)", () => {
+  it("parity fuzz: total days matches countShiftBasedLeaveDays for every generated (offset, length, c) combination", () => {
+    // 14 offsets x 21 lengths x 6 contract values = 1764 combinations, one full-day row per
+    // combination, no dependency added (plain nested loops, per this plan's own decision).
+    const mismatches: string[] = [];
+    for (let startOffsetDays = 0; startOffsetDays <= 13; startOffsetDays++) {
+      for (let lengthDays = 1; lengthDays <= 21; lengthDays++) {
+        for (let c = 1; c <= 6; c++) {
+          const start = mon(startOffsetDays);
+          const end = mon(startOffsetDays + lengthDays - 1);
+          const weeks = leaveDaysPerWeek([{ startDate: start, endDate: end }], c, NO_HOLIDAYS);
+          const totalFromWeeks = weeks.reduce((sum, w) => sum + w.days, 0);
+          const expected = countShiftBasedLeaveDays(start, end, false, c, NO_HOLIDAYS).days;
+          if (totalFromWeeks !== expected) {
+            mismatches.push(
+              `offset=${startOffsetDays} length=${lengthDays} c=${c}: got ${totalFromWeeks}, expected ${expected}`,
+            );
+          }
+        }
+      }
+    }
+    expect(mismatches).toEqual([]);
+  });
+
+  it("half-day row: one LeaveWeek entry with days 0.5 and a single dayShares entry of 0.5", () => {
+    const start = mon(1); // Tue
+    const weeks = leaveDaysPerWeek(
+      [{ startDate: start, endDate: start, halfDay: true }],
+      5,
+      NO_HOLIDAYS,
+    );
+    expect(weeks).toHaveLength(1);
+    expect(weeks[0].days).toBe(0.5);
+    expect(weeks[0].dayShares.size).toBe(1);
+    expect(weeks[0].dayShares.get(ds(start))).toBe(0.5);
+  });
+
+  it("union of two overlapping full-day rows equals a single row covering their union", () => {
+    const c = 4;
+    const overlapping = leaveDaysPerWeek(
+      [
+        { startDate: mon(0), endDate: mon(2) }, // Mon-Wed
+        { startDate: mon(1), endDate: mon(3) }, // Tue-Thu
+      ],
+      c,
+      NO_HOLIDAYS,
+    );
+    const union = leaveDaysPerWeek([{ startDate: mon(0), endDate: mon(3) }], c, NO_HOLIDAYS); // Mon-Thu
+    const overlappingTotal = overlapping.reduce((s, w) => s + w.days, 0);
+    const unionTotal = union.reduce((s, w) => s + w.days, 0);
+    expect(overlappingTotal).toBe(unionTotal);
+  });
+
+  it("week cap: a half-day row on a different date than an already-full week does not push days past the contract", () => {
+    const c = 4;
+    // Mon-Thu full days already contribute min(4, c) = 4 == c.
+    const weeks = leaveDaysPerWeek(
+      [
+        { startDate: mon(0), endDate: mon(3) }, // Mon-Thu
+        { startDate: mon(4), endDate: mon(4), halfDay: true }, // Fri, half-day, different date
+      ],
+      c,
+      NO_HOLIDAYS,
+    );
+    expect(weeks).toHaveLength(1);
+    expect(weeks[0].days).toBe(c);
+  });
+
+  it("Σ dayShares === days for whole-week, fragment and half-day fixtures", () => {
+    const fixtures: Array<{
+      rows: Array<{ startDate: Date; endDate: Date; halfDay?: boolean }>;
+      c: number;
+    }> = [
+      { rows: [{ startDate: mon(0), endDate: mon(6) }], c: 5 }, // whole week
+      { rows: [{ startDate: mon(0), endDate: mon(2) }], c: 5 }, // fragment Mon-Wed
+      { rows: [{ startDate: mon(1), endDate: mon(1), halfDay: true }], c: 5 }, // half-day
+    ];
+    for (const { rows, c } of fixtures) {
+      for (const week of leaveDaysPerWeek(rows, c, NO_HOLIDAYS)) {
+        const sum = Array.from(week.dayShares.values()).reduce((a, b) => a + b, 0);
+        expect(sum).toBeCloseTo(week.days);
+      }
+    }
+  });
+
+  it("every dayShares value stays within [0,1] for whole-week, fragment and half-day fixtures", () => {
+    const fixtures: Array<{
+      rows: Array<{ startDate: Date; endDate: Date; halfDay?: boolean }>;
+      c: number;
+    }> = [
+      { rows: [{ startDate: mon(0), endDate: mon(6) }], c: 5 }, // whole week
+      { rows: [{ startDate: mon(0), endDate: mon(2) }], c: 5 }, // fragment Mon-Wed
+      { rows: [{ startDate: mon(1), endDate: mon(1), halfDay: true }], c: 5 }, // half-day
+    ];
+    for (const { rows, c } of fixtures) {
+      for (const week of leaveDaysPerWeek(rows, c, NO_HOLIDAYS)) {
+        for (const share of week.dayShares.values()) {
+          expect(share).toBeGreaterThanOrEqual(0);
+          expect(share).toBeLessThanOrEqual(1);
+        }
+      }
+    }
+  });
+
+  it("a Sunday date is never a key in dayShares, even for a full Mo-Su week fixture", () => {
+    const weeks = leaveDaysPerWeek([{ startDate: mon(0), endDate: mon(6) }], 5, NO_HOLIDAYS);
+    for (const week of weeks) {
+      for (const dateStr of week.dayShares.keys()) {
+        expect(dowOf(dateStr)).not.toBe(0);
+      }
+    }
   });
 });
 

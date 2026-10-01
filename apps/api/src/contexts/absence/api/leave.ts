@@ -3,7 +3,11 @@ import { z } from "zod";
 import { LeaveRequestStatus, Prisma } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
 import { generateICal, addOneDay, type ICalEvent } from "../ical";
-import { splitDaysAcrossYears, calculateProRataVacation } from "../vacation-calc"; // Phase 107 (D-04/D-09)
+import {
+  splitDaysAcrossYears,
+  calculateProRataVacation,
+  shiftBasedLeaveMinutesForRequest, // Issue #429, D-13 — receipt shares the saldo's per-week formula
+} from "../vacation-calc"; // Phase 107 (D-04/D-09)
 import { selfHealUsedDays, loadVacationTypeMeta } from "../leave-self-heal";
 import { computeAffectedMonths } from "../correction-lock";
 // Phase 101B (Issue #101, D-11 Welle absence): lifted out of this file into ./leave-days.ts.
@@ -20,6 +24,7 @@ import {
   reverseVacationDays,
   resolveWorkDays,
   recalculateCarryOver,
+  contractWorkDaysPerWeekFrom, // Issue #429, D-13 — the getScheduledHours SHIFT_BASED branch below
 } from "../leave-days";
 import { formatMinutesHM } from "../format-hm"; // Phase 100
 import { flagShiftsConflictingWithLeave } from "../../scheduling"; // Phase 100B Plan 05 — S1/S2
@@ -36,7 +41,6 @@ import {
   computeOvertimeBalanceBreakdown,
   computeOvertimeBalanceHours, // Issue #294 — pure read, run BEFORE the booking+persist transaction
   persistOvertimeBalance, // Issue #294 — booking + recompute in one $transaction
-  calcLeaveAbsenceMinutesTz, // Issue #293 — receipt shares the saldo's own Ø-Methode entry point
   todayInTz, // Phase 91b Plan 04 (#91), D-10 — Stichtag for the general leave-requests list
   type OvertimeBalanceBreakdown,
 } from "../../working-time-account"; // Phase 100B Plan 06 — W8/W11/W12; Plan 07 — W1; Phase 101B
@@ -4093,15 +4097,25 @@ class Section9MissingEntitlementError extends Error {
  *
  * SHIFT_BASED (owner decision on issue #293, 2026-09-23): this used to sum the rostered
  * `Shift` rows (Phase 100 / OTC-04, D-05..D-08 — superseded by this decision, not just
- * amended). That made the receipt answer a different question than the saldo, which credits
- * an OVERTIME_COMP day via the Ø-Methode (`calcLeaveAbsenceMinutesTz`,
+ * amended). That made the receipt answer a different question than the saldo, which credited
+ * an OVERTIME_COMP day via the Ø-Methode (the saldo's own Ø-Methode entry point,
  * `close-employee-month.ts:721`) — the two could and did diverge (issue #293). The decided
- * rule: the day IS the average contract day, full stop. This branch now calls the SAME
+ * rule: the day IS the average contract day, full stop. This branch calls the SAME
  * function the saldo calls, on the SAME schedule row, so the receipt amount and the saldo
  * effect are one number because they are one function call — not two formulas kept in sync by
  * hand. Half-day uses that function's own `halfDay` option (no bespoke first-shift-halved
  * path any more). An employee with no shifts in the range now costs a full Ø-Methode day —
  * an empty roster is no longer free, which is the material behavior change from D-08.
+ *
+ * Issue #429 (D-13): the saldo side (`close-employee-month.ts`) stopped calling that old
+ * Ø-Methode entry point for SHIFT_BASED approved leave — it now derives the credit from
+ * the contractual workday count via `leaveDaysPerWeek()` (`contexts/absence`, D-01/D-02) times
+ * `weeklyHours × 60 ÷ contractWorkDaysPerWeek` (D-04). #293's principle ("the receipt follows
+ * the account") means this branch had to follow that same change: it now calls
+ * `shiftBasedLeaveMinutesForRequest()` (`../vacation-calc`), the per-request
+ * counterpart of the saldo's `shiftBasedLeaveCreditByDate()`, with `c` resolved via the SAME
+ * `contractWorkDaysPerWeekFrom()` fallback chain (Phase 107, D-04) the saldo uses — the same
+ * two functions plan 429-01/429-02 built, not a third independent formula.
  */
 async function getScheduledHours(
   prisma: DbClient,
@@ -4130,19 +4144,15 @@ async function getScheduledHours(
   // Returns BEFORE the FIXED_SCHEDULE / FLEXTIME / MONTHLY_HOURS per-weekday path below, which
   // stays byte-for-byte unchanged for every other schedule type.
   if (ws?.type === "SHIFT_BASED") {
-    // `cfg.timezone` (not `getTenantTimezone()`): that helper's signature is
-    // `FastifyInstance["prisma"]`, not tx-compatible, and this function is called with a
-    // transaction client at the correction site (`:1899`/`:1951`) — same reason
-    // `shift-leave-recalc-resolver.ts` avoids it. `cfg` is already loaded above by this
-    // function's own employee query, so this needs no extra read at all; "Europe/Berlin" is
-    // the same fallback `getTenantTimezone()` itself uses for a tenant with no config row.
-    const tz = cfg?.timezone ?? "Europe/Berlin";
+    // Issue #429, D-13: `c` via the SAME fallback chain the saldo uses (Phase 107, D-04) —
+    // `contractWorkDaysPerWeek` -> `workDays.length` -> tenant `defaultWorkDays.length` -> 5.
+    const c = contractWorkDaysPerWeekFrom(ws, cfg?.defaultWorkDays);
 
-    // The `holidays` set is deliberately NOT forwarded here, mirroring
-    // `close-employee-month.ts:721-729` exactly: the saldo side passes a cross-row
-    // already-claimed-days dedup set on that call, not public holidays, so forwarding this
-    // function's own `holidays` argument would apply a set the saldo side never sees.
-    const minutes = calcLeaveAbsenceMinutesTz(ws, start, end, tz, { halfDay });
+    // `shiftBasedLeaveMinutesForRequest` is timezone-free (it operates on calendar `Date`
+    // boundaries via `leaveDaysPerWeek`, like the saldo's `shiftBasedLeaveCreditByDate`) and,
+    // mirroring `close-employee-month.ts`'s D-05 decision, is never given a holiday set — a
+    // holiday inside a leave range keeps being a Soll-free day via the leave itself.
+    const minutes = shiftBasedLeaveMinutesForRequest(ws, start, end, halfDay, c);
     return minutes / 60;
   }
 

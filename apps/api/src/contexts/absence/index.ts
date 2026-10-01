@@ -155,6 +155,10 @@ export {
 export { loadBsSlotOverrides } from "./load-bs-slot-overrides";
 export { DISPLAY_NAME, isSickLeaveTypeCode } from "./leave-type";
 export { mondayOfWeekUtc } from "./vacation-calc";
+// Issue #429 (D-01): the shared week-counting kernel's per-week/per-date breakdown — the saldo
+// side (Arbeitszeitkonto, plan 429-02) and Phase 430 both consume this through this index.
+export { leaveDaysPerWeek } from "./vacation-calc";
+export type { LeaveWeek } from "./vacation-calc";
 export { recalcProvisionalLeaveForShiftChange } from "./shift-leave-recalc-resolver";
 export type { RecalcDeps, AdjustmentRecord } from "./shift-leave-recalc-resolver";
 // resolveLeaveDays/getHolidayMap/deductVacationDays/reverseVacationDays are DEFINED in
@@ -165,6 +169,7 @@ export {
   getHolidayMap,
   deductVacationDays,
   reverseVacationDays,
+  contractWorkDaysPerWeekFrom, // Issue #429 (D-03) — the ONE fallback-chain implementation
 } from "./leave-days";
 export { checkJArbSchG } from "./jarbschg";
 export { buildSlotOverrideHierarchy, resolveBsTagSlot } from "./bs-slot-resolver";

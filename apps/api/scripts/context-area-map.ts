@@ -271,6 +271,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/working-time-account/negative-balance-tolerance.ts": "arbeitszeitkonto", // Überstundenabbau minus-hours tolerance (Phase 100)
   "src/contexts/working-time-account/overtime-balance.ts": "arbeitszeitkonto", // Phase 101B (Issue #101) — lifted out of time-tracking/api/time-entries.ts (owner's Nebenbefund); writes/computes OvertimeAccount balance, Arbeitszeitkonto's own subject
   "src/contexts/working-time-account/recalculate-snapshots.ts": "arbeitszeitkonto", // SaldoSnapshot recompute across the effective range
+  "src/contexts/working-time-account/shift-based-leave-credit.ts": "arbeitszeitkonto", // Issue #429 — SHIFT_BASED leave Soll credit per ISO week, consumed by close-employee-month.ts
   "src/contexts/working-time-account/saldo-chain-classification.ts": "arbeitszeitkonto", // SaldoSnapshot chain delta classification
   "src/contexts/working-time-account/saldo-chain-integrity.ts": "arbeitszeitkonto", // SaldoSnapshot chain integrity check (Phase 98)
   "src/contexts/working-time-account/saldo-snapshot-cleanup.ts": "arbeitszeitkonto", // writes AuditLog/SaldoSnapshot on snapshot cleanup

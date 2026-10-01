@@ -2042,3 +2042,214 @@ pnpm --filter @clokr/api exec vitest run src/__tests__/shift-leave-recalc.test.t
 pnpm --filter @clokr/api exec vitest run src/__tests__/golden-matrix.test.ts src/__tests__/shift-based-saldo-parity.test.ts
 pnpm --filter @clokr/api exec tsx scripts/recalculate-shift-based-leave-days.ts --all-tenants
 ```
+
+## T — Saldo: Urlaub reduziert die vertraglichen Wochenarbeitstage bei SHIFT_BASED (Phase 429, Issue #429)
+
+**Schwere: fachlich bedeutsam (Überstundenberechnung) — keine Berechtigungsänderung.**
+
+### Warum dieser Eintrag existiert
+
+Issue #429 (Analyse-Kommentar gegen den echten Code,
+https://github.com/sebastianzabel/clokr/issues/429#issuecomment-5909407943, AK-429-1, bereits vor
+dieser Phase abgeschlossen) wies nach: der SHIFT_BASED-Urlaubs-Soll-Abzug lief über
+`calcLeaveAbsenceMinutesTz()` → `avgWorkMinutesCore()`
+(`apps/api/src/contexts/working-time-account/timezone.ts`), der einen Urlaubstag mit
+`weeklyHours ÷ workDays.length` bewertete und nur Tage INNERHALB von `workDays` anrechnete — beides
+falsch für "N Vertragstage/Woche, der Schichtplan entscheidet welche". Vier-Modell-Analyse (main =
+v1.13.1, Juni 2026, Woche 08.–14.06., 4-Tage-Vertrag/38h): Urlaub Montag (ungeplant), Di–Do 10,5h
+gearbeitet — korrekt wäre +180 min (+3h Überstunden); der alte Code lieferte je nach
+`workDays`-Variante −10 min (Mo–Sa), +66 min (Mo–Fr) oder +180 min (Mo–Do, Zufallstreffer); Variante
+A2 (Urlaub Samstag statt Montag) ebenso falsch (−228 min bzw. −3,80h je Variante). Die ganze
+Urlaubswoche (Fall B) lieferte in allen Varianten korrekt 0 — das Symptom betraf nur Teilwochen.
+
+### Was sich geändert hat
+
+- **`weekLeaveDays()`** (privater Kernel, `apps/api/src/contexts/absence/vacation-calc.ts:419`) und
+  **`leaveDaysPerWeek()`** (`vacation-calc.ts:506`, D-01/D-02) — neue Exportfunktion, die über die
+  UNION aller Zeilen pro ISO-Woche rechnet und DIESELBE Formel wie `countShiftBasedLeaveDays()`
+  (`vacation-calc.ts:434`, Phase 417/Eintrag S) verwendet — bewiesen per Property-Test (1764
+  Parameterkombinationen, 0 Abweichungen zwischen beiden Funktionen).
+- **`contractWorkDaysPerWeekFrom()`** (`apps/api/src/contexts/absence/leave-days.ts:97`, D-03) — die
+  Fallback-Kette selbst (`contractWorkDaysPerWeek` → `workDays.length` →
+  `TenantConfig.defaultWorkDays.length` → `5`, Phase 107 D-04) wurde hierhin extrahiert;
+  `resolveContractWorkDaysPerWeek()` (`leave-days.ts:121`) holt nur noch Schedule + TenantConfig und
+  delegiert (CLAUDE.md § Schedule Types korrigiert im selben Commit).
+- **`shiftBasedLeaveCreditByDate()`** (neues Modul
+  `apps/api/src/contexts/working-time-account/shift-based-leave-credit.ts:58`, D-06) — eine
+  Pro-Datum-Kredit-Map je ISO-Woche: `leaveDaysPerWeek(...).days ×
+(weeklyHours×60÷contractWorkDaysPerWeek)`, pro Wochenteil gekappt auf `calcExpectedMinutesTz()`
+  desselben Teils (D-08). Die Wochen berechnet der Aufrufer `close-employee-month.ts`; das Modul
+  importiert `contexts/absence` bewusst NICHT und bleibt so außerhalb des per CI gezählten
+  Import-Zyklus (`measure-context-boundary-imports --cycles --check 22`). Der Beleg-Gegenpart
+  **`shiftBasedLeaveMinutesForRequest()`** liegt aus demselben Grund in Abwesenheiten
+  (`apps/api/src/contexts/absence/vacation-calc.ts:633`, D-13).
+- **`close-employee-month.ts`** (`apps/api/src/contexts/working-time-account/close-employee-month.ts:742-772`)
+  — NUR die SHIFT_BASED-`approvedLeave`-Schleife (`sbLeaveCredit`) wurde umgestellt: statt eines
+  Live-`calcLeaveAbsenceMinutesTz()`-Aufrufs pro Zeile liest sie aus `sbLeaveCreditByDate` (D-06).
+  `grep -c "calcLeaveAbsenceMinutesTz" close-employee-month.ts`: 8 → 7 (genau −1 Aufruf).
+- **`getScheduledHours()`** (`apps/api/src/contexts/absence/api/leave.ts:4117`, SHIFT_BASED-Zweig
+  `:4143-4153`, Issue #293/D-13) — die Beleg-Funktion für eine einzelne Anfrage folgt derselben
+  Formel (`shiftBasedLeaveMinutesForRequest()` statt der alten Ø-Methode), damit Beleg und Saldo
+  dieselbe Zahl liefern.
+- **`calcLeaveAbsenceMinutesTz()` selbst ist UNVERÄNDERT**
+  (`apps/api/src/contexts/working-time-account/timezone.ts`) und bleibt die Funktion für: die
+  SHIFT_BASED-`absences`-Schleife (`sbAbsenceCredit`, BS-Subtract-then-recredit, v1.8.27 —
+  `close-employee-month.ts:798`) sowie JEDEN nicht-SHIFT-Zweig (`close-employee-month.ts:927`). Nur
+  der SHIFT_BASED-**approvedLeave**-Pfad ruft sie nicht mehr auf — exakt die Schleife, die D-06
+  ersetzt.
+
+### Wie die "genau einmal"-Invariante gesichert bleibt
+
+`sbClaimed` (`close-employee-month.ts:729`) ist UNVERÄNDERT (D-09) — nur WAS ein geclaimter Tag wert
+ist, hat sich geändert, nicht die Claim-Reihenfolge (`sortForDedup`) oder der Dedup-Mechanismus
+selbst. Bewiesen durch:
+
+- `apps/api/src/__tests__/shift-based-leave-week-soll-429.test.ts` — § 9-Überlappung (zwei
+  überlappende Zeilen == eine Union-Zeile), OPEN-01 (volltägige Zeile schlägt Halbtags-Zeile am
+  selben Datum), Σ-Zeilenkredite == Gesamt, OVERTIME_COMP-Entnahme == Kredit (D-10),
+  Monatsgrenzen-Split (D-07), Split-Request-Cap (D-08). Mutationsbeweis: `sbClaimed.has(dateStr)`
+  entfernt (`if (false && ...)`) → 3 Tests rot (§9-Überlappung, OPEN-01, Split-Request-Cap — jeweils
+  doppelte Anrechnung), reverted, wieder grün.
+- `apps/api/src/__tests__/four-model-leave-analysis-429.test.ts` — die Vier-Modell-Analyse aus der
+  Issue-Diskussion als Pin (17 Assertions): FIXED_SCHEDULE/FLEXTIME/MONTHLY_HOURS unverändert,
+  SHIFT_BASED korrigiert (+180 min in A/A2, 0 in B, für alle drei `workDays`-Varianten).
+- `apps/api/src/__tests__/section9-soll-dedup.test.ts` — unverändert grün bis auf zwei gerechtfertigte
+  Erwartungsänderungen (Integration 4/5, s. „Gemessen" unten).
+
+### D-05 (Feiertage)
+
+`leaveDaysPerWeek()` erhält auf der Saldo-Seite bewusst ein LEERES Feiertags-Set (nicht das echte
+Feiertagsfenster). Begründung: (a) der SHIFT_BASED-Vertrags-Soll wird heute bereits NICHT
+feiertagsreduziert (Golden-Zellen `sb-40-4-feiertag`/`sb-30-4-feiertag`: "Feiertag NICHT abgezogen,
+§615 verrechnet die Lücke") — ein Feiertag innerhalb eines Urlaubs bleibt dadurch weiterhin ein
+Soll-freier Tag über den Urlaub selbst, exakt wie bisher; (b) der Live-Pfad übergibt ein
+fenstergefiltertes Feiertags-Set, der Abschluss-Pfad den vollen Monat (`overtime-balance.ts`
+`partialHolidayExclude`, `month-saldo.ts` `partialHolidaySet`) — Feiertage in die Wochenzählung
+einzubeziehen hätte für Wochen mit einem zukünftigen Feiertag eine neue Live-vs-Close-Divergenz
+erzeugt. Das ist eine bewusste Abweichung vom Anspruchs-Zähler (`resolveLeaveDays()`, der Feiertage
+ausschließt) — dokumentiert, nicht übersehen.
+
+### Nachtrag Audit (PR #437): Bemessung je Abwesenheitsart
+
+Ein unabhängiges Audit fand: die Vertragswochen-Formel behandelte SICK wie VACATION, weil die
+Antragszeilen keinen Typ trugen. Nach § 4 Abs. 1 EFZG (Lohnausfallprinzip) entlastet ein
+Krankheitstag nur die Stunden, die tatsächlich gearbeitet worden wären — die geplante Schicht. Ein
+ungeplanter Krankheitstag entlastet nichts (Beispiel 38 h / 4 Tage, krank am ungeplanten Montag:
+`main` +3,17 h, die erste PR-Fassung +6,33 h Scheinüberstunden). Entscheidung nach dem Prinzip
+„ersetzt die Art einen vertraglichen Arbeitstag, oder bezahlt sie nur tatsächlich geplante
+Stunden?" — eine Stelle, `leaveCreditBasisForCode()` in `close-employee-month.ts`, über den einen
+Mapper `toCloseMonthApprovedLeave()` (Pflichtfeld `creditBasis`, wie `isOvertimeCompensation`):
+
+| Code                              | Basis       | Begründung                                                                              |
+| --------------------------------- | ----------- | --------------------------------------------------------------------------------------- |
+| `SICK`, `SICK_CHILD`              | Schichtplan | § 4 Abs. 1 EFZG; Kinderkrank (§ 45 SGB V) stellt ebenso nur von geplanter Arbeit frei   |
+| `SPECIAL` (Sonderurlaub)          | Schichtplan | § 616 BGB: Vergütung für die ausfallende, geplante Arbeitszeit                          |
+| `VACATION`                        | Vertrag     | BUrlG; einziger anspruchsverbrauchender Typ (`deductVacationDays`)                      |
+| `OVERTIME_COMP`                   | Vertrag     | Owner-Entscheidung #293 („der Tag IST der Ø-Vertragstag"); Entnahme = Gutschrift (#220) |
+| `EDUCATION`                       | Vertrag     | Bildungsurlaub zählt in Arbeitstagen je Jahr, wie Urlaub                                |
+| `UNPAID`, `MATERNITY`, `PARENTAL` | Vertrag     | die Arbeitspflicht selbst ruht für den Zeitraum                                         |
+| `OTHER`, unbekannt/`null`         | Vertrag     | Vor-Tracking-Brückenzeilen neutralisieren das Soll; bisheriges Verhalten                |
+
+Schichtplan-Basis: Entlastung = Netto-Minuten der geplanten Schicht(en) des Tages (dieselbe
+Netto-Regel wie R; halber Tag = Hälfte), ohne Schicht 0. Nur Vertrags-Basis-Zeilen gehen in
+`leaveDaysPerWeek()` ein, ein Krankheitstag verändert also weder Ganzwochen-Prüfung noch Anteile.
+Die Invariante bleibt: beide Basen laufen durch dieselbe `sbClaimed`-Erstbelegung in
+`sortForDedup`-Reihenfolge — ein Tag mit Urlaub UND Krankheit wird genau einmal entlastet. Tests
+(vorher rot: 570 statt 0, 570 statt 630, 1140 statt 1200): `shift-based-leave-week-soll-429.test.ts`
+„SHIFT_BASED sick leave is credited roster-based" (ungeplanter Montag 0, geplanter Dienstag 630,
+SICK_CHILD/SPECIAL, gemischte Woche, Überlappung) und die Vollständigkeit der Zuordnung über alle
+elf Codes. Restgrenze: der Live-Pfad übergibt Schichten nur bis heute — eine Krankmeldung für einen
+künftigen geplanten Tag entlastet live erst, wenn der Tag erreicht ist; der Abschluss rechnet mit
+dem vollen Monat.
+
+### Was bewusst NICHT geschah
+
+- **D-12 (MONTHLY_HOURS):** keine Codeänderung. Die rechtliche Richtung ist klar (§§ 1, 11, 13
+  BUrlG; §§ 2, 4 TzBfG; § 2 Abs. 2 MiLoG; EFZG für Krankheit), aber ob `monthlyHours` ein
+  geschuldetes Soll oder eine Verdienstgrenzen-Budgetgröße ist, die Urlaubstags-Bewertung und das
+  Kippen der Golden-Zelle `mj-80-urlaub` sind Owner-Entscheidungen mit Lohnkonsequenzen →
+  Folge-Issue #433 (dokumentiert auf #429). `four-model-leave-analysis-429.test.ts` pinnt den
+  unveränderten Fall B (−600 min) als bewusst nicht gefixt.
+- **D-14 (Planer-Soll, Schichtplanung):** `apps/api/src/contexts/scheduling/api/shifts.ts`s
+  Wochenplaner (`contractSollMinutesByEmp`) bleibt unverändert — er weicht bereits heute vom Saldo ab
+  (schließt Feiertage aus) und wird nicht angefasst, weil Phase 430 parallel in diesem Bereich
+  arbeitet. Bekannter Restbefund, nicht stillschweigend gefixt.
+- **Residuum Monatsgrenzen-Split (Plan 429-02, Finding, kein eigener D-Punkt):** bei einer
+  durchgehenden Mo–Sa-`workDays`-Woche summiert der Split (D-07/D-08) exakt zu einer Wochen-Soll;
+  bei einer engeren `workDays`-Form (z. B. Mo–Fr), die an bestimmten Stellen geteilt wird, kann der
+  unabhängige Pro-Wochenteil-Cap (D-08, wie spezifiziert — keine Umverteilung zwischen Wochenteilen)
+  zu einer UNTER-Anrechnung führen (gemessenes Konstruktionsbeispiel: 2128 statt 2280 min) — nie
+  negativ, nie doppelt, aber auch nie über den wörtlichen Anspruch "nie verloren" hinaus für diese
+  `workDays`-Form. Nicht gefixt, da D-08 keine Umverteilung vorsieht; als eigener grüner Test
+  gemeldet statt die Hauptfixtur stillschweigend zu verengen
+  (`shift-based-leave-week-soll-429.test.ts`).
+- **Residuum Urlaub+BS additiv (strukturell verhindert, kein Fix nötig):** Urlaub und
+  Berufsschul-Abwesenheit am selben Kalendertag sind additiv (nicht dedupliziert) — unverändert von
+  dieser Phase, weil `isBsAbsence()`-Zeilen `sbClaimed` nicht beanspruchen; per Superpositionstest
+  verifiziert (`bothEffect === leaveEffect + bsEffect`), aber laut dem bestehenden Code-Kommentar
+  über `sortForDedup` strukturell verhindert ("ein BS-Tag kann heute physisch keinen LeaveRequest
+  überlappen").
+- **Residuum Entitlement pro Antrag (Abwesenheiten, vorbestehend, außerhalb des #429-Scopes,
+  Finding):** die Anspruchs-Zählung (`countShiftBasedLeaveDays()`) zählt pro Antrag, nicht über
+  mehrere Anträge derselben Woche vereint — zwei Anträge Mo–Mi + Do–Sa kosten auf einem
+  4-Tage-Vertrag 6 Tage statt der korrekten 4. Dieser Fehler liegt außerhalb dieser Phase (Entitlement
+  via Abwesenheiten, nicht der hier geänderte Saldo via Arbeitszeitkonto) und wird nur als Befund
+  gemeldet, nicht gefixt.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** keine Codeänderung.
+- **Abwesenheiten:** `vacation-calc.ts` (`weekLeaveDays()`/`leaveDaysPerWeek()`, D-01/D-02),
+  `leave-days.ts` (`contractWorkDaysPerWeekFrom()`, D-03), `api/leave.ts` (`getScheduledHours()`
+  SHIFT_BASED-Zweig, D-13).
+- **Schichtplanung:** keine Codeänderung — D-14 (Planer-Soll bleibt divergent, siehe oben).
+- **Arbeitszeitkonto:** die eigentliche Korrektur — `shift-based-leave-credit.ts` (neu),
+  `close-employee-month.ts` (SHIFT_BASED-`approvedLeave`-Schleife umgestellt, `defaultWorkDays` durch
+  alle sechs Aufrufer durchgereicht: `recalculate-snapshots.ts`, `plugins/auto-close-month.ts`,
+  `overtime-balance.ts` ×2, `month-saldo.ts`, `api/overtime.ts`).
+- **Kompositionsschicht:** keine Codeänderung.
+- **Unterbau:** keine Codeänderung.
+
+### Gemessen
+
+- `apps/api/src/contexts/absence/__tests__/vacation-calc.test.ts` — 77 passed (inkl. 7 neue
+  Property-Tests für `leaveDaysPerWeek`; 1764-Kombinationen-Fuzz, 0 Abweichungen).
+- `apps/api/src/contexts/absence/__tests__/leave-days.test.ts` — 6 passed
+  (`contractWorkDaysPerWeekFrom`, neu).
+- `apps/api/src/contexts/absence` (gesamter Kontext, nach `test:setup`) — 220 passed, 11/11 Dateien.
+- `apps/api/src/__tests__/shift-based-leave-week-soll-429.test.ts` — 18 passed
+  (Regression + Invarianten, D-07..D-10).
+- `apps/api/src/__tests__/four-model-leave-analysis-429.test.ts` — 17 passed (Vier-Modell-Pin).
+- `apps/api/src/__tests__/golden-matrix.test.ts`,
+  `apps/api/src/__tests__/close-employee-month.test.ts`,
+  `apps/api/src/__tests__/section9-soll-dedup.test.ts`,
+  `apps/api/src/contexts/absence/api/__tests__/overtime-comp-saldo.test.ts`,
+  `apps/api/src/__tests__/leave-overtime-comp-shift-based.test.ts`,
+  `apps/api/src/__tests__/shift-based-saldo-parity.test.ts`,
+  `apps/api/src/contexts/working-time-account/__tests__/shift-based-saldo.test.ts` — zusammen mit den
+  beiden vorgenannten (429-02): 164 passed, 9/9 Dateien (Golden-Matrix' 38 Zellen unverändert,
+  close-employee-month's 18 Vier-Pfad-Paritätsfälle unverändert).
+- `apps/api/scripts/__tests__/dry-run-429-leave-contract-days.test.ts` — 11 passed (D-15-Skript,
+  Null-Mutation gegen die gelesene `SaldoSnapshot`-Zeile bewiesen).
+- Gerechtfertigte Erwartungsänderungen in `section9-soll-dedup.test.ts` (beide auf
+  `SHIFT_AS_TUE_FRI`-Fixtur mit `tenantConfig: null` → die Kette fällt auf den Default `5` zurück,
+  wo der alte Ø-Methode-Pfad per `{day}Hours`-Fallback `4` nutzte — exakt die
+  Divisor-Vereinheitlichung, die #429 herstellt, keine neue Divergenz): Integration 4
+  `expectedMinutes` 8550 → 8664 (+114 min, SICK-Tag-Kredit 570→456 bei Divisorwechsel 4→5);
+  Integration 5 `expectedMinutes` 7980 → 7638 (−342 min: Montags-Urlaubstag 0→456, da er unter dem
+  alten `{day}Hours`-Gate keinen Kredit erhielt; Dienstag 570→456 beim selben Divisorwechsel).
+  `workedMinutes`/`balanceMinutes` in beiden Fällen unverändert.
+- `apps/api/src/__tests__/leave-overtime-comp-shift-based.test.ts` — eine Erwartung von 8,00h auf
+  4,00h korrigiert (Halbtags-Urlaub über einen 2-Tage-Zeitraum: die flache 0,5-Tage-Regel, identisch
+  zu `countShiftBasedLeaveDays` und zum Saldo-Kredit).
+
+### Nachrechnen
+
+```bash
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/contexts/absence/__tests__/vacation-calc.test.ts src/contexts/absence/__tests__/leave-days.test.ts
+pnpm --filter @clokr/api exec vitest run src/__tests__/shift-based-leave-week-soll-429.test.ts src/__tests__/four-model-leave-analysis-429.test.ts
+pnpm --filter @clokr/api exec vitest run src/__tests__/golden-matrix.test.ts src/__tests__/close-employee-month.test.ts src/__tests__/section9-soll-dedup.test.ts src/contexts/absence/api/__tests__/overtime-comp-saldo.test.ts src/__tests__/leave-overtime-comp-shift-based.test.ts src/__tests__/shift-based-saldo-parity.test.ts src/contexts/working-time-account/__tests__/shift-based-saldo.test.ts
+pnpm --filter @clokr/api exec vitest run scripts/__tests__/dry-run-429-leave-contract-days.test.ts
+pnpm --filter @clokr/api exec tsx scripts/dry-run-429-leave-contract-days.ts --tenant-id <uuid>
+```

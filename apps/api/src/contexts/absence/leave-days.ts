@@ -75,20 +75,44 @@ export async function resolveWorkDays(
 // ── Phase 107 (D-04/D-09): SHIFT_BASED-aware leave-day resolution ─────────────────────────
 
 /**
- * Resolves an employee's contractual workday count (Phase 107, D-04).
- *
- * This is the ONLY place this resolution chain may exist — no other reader (not
- * avgWorkMinutesCore, not any route handler, not a future shift resolver) may rebuild it
- * inline; every caller either invokes this function or receives its result as a parameter.
+ * The pure resolution chain behind `resolveContractWorkDaysPerWeek()` (Phase 107, D-04; extracted
+ * Issue #429, D-03). This function IS the chain — `resolveContractWorkDaysPerWeek()` below is
+ * just "fetch, then delegate" — and it is the ONLY place this chain may be written out: no other
+ * reader (not `avgWorkMinutesCore`, not any route handler, not the saldo side of Issue #429) may
+ * rebuild it inline; every caller either invokes this function (directly, or indirectly via
+ * `resolveContractWorkDaysPerWeek()`) or receives its result as a parameter.
  *
  * Resolution chain, in this exact order:
- *   1. WorkSchedule.contractWorkDaysPerWeek, when non-null (the SHIFT_BASED contractual count,
+ *   1. `schedule.contractWorkDaysPerWeek`, when non-null (the SHIFT_BASED contractual count,
  *      D-01 — populated by the write path settings.ts/employees.ts own once a SHIFT_BASED row
  *      is created or saved).
- *   2. WorkSchedule.workDays.length, when non-empty (pre-107 legacy rows, and every other
+ *   2. `schedule.workDays.length`, when non-empty (pre-107 legacy rows, and every other
  *      schedule type).
- *   3. TenantConfig.defaultWorkDays.length, when non-empty.
+ *   3. `tenantDefaultWorkDays.length`, when non-empty.
  *   4. 5.
+ *
+ * `schedule` is `null` when no `WorkSchedule` row exists yet (mirrors
+ * `resolveContractWorkDaysPerWeek()`'s own `ws` being `null`).
+ */
+export function contractWorkDaysPerWeekFrom(
+  schedule: { contractWorkDaysPerWeek?: number | null; workDays?: number[] | null } | null,
+  tenantDefaultWorkDays?: number[] | null,
+): number {
+  if (schedule) {
+    if (schedule.contractWorkDaysPerWeek != null) return schedule.contractWorkDaysPerWeek;
+    if (schedule.workDays && schedule.workDays.length > 0) return schedule.workDays.length;
+  }
+  if (tenantDefaultWorkDays && tenantDefaultWorkDays.length > 0)
+    return tenantDefaultWorkDays.length;
+  return 5;
+}
+
+/**
+ * Resolves an employee's contractual workday count (Phase 107, D-04).
+ *
+ * This is the DB-fetching side only — the actual resolution chain lives in
+ * {@link contractWorkDaysPerWeekFrom} (Issue #429, D-03), which this function delegates to
+ * verbatim after fetching the latest `WorkSchedule` row and the tenant's `defaultWorkDays`.
  *
  * Mirrors resolveWorkDays()'s shape verbatim (same Promise.all over the latest WorkSchedule and
  * the TenantConfig row) — the two resolvers are deliberately parallel, not merged, because they
@@ -109,12 +133,7 @@ export async function resolveContractWorkDaysPerWeek(
       select: { defaultWorkDays: true },
     }),
   ]);
-  if (ws) {
-    if (ws.contractWorkDaysPerWeek != null) return ws.contractWorkDaysPerWeek;
-    if (ws.workDays && ws.workDays.length > 0) return ws.workDays.length;
-  }
-  if (cfg?.defaultWorkDays && cfg.defaultWorkDays.length > 0) return cfg.defaultWorkDays.length;
-  return 5;
+  return contractWorkDaysPerWeekFrom(ws, cfg?.defaultWorkDays);
 }
 
 /**
