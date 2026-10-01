@@ -63,6 +63,8 @@ import {
   BS_BLOCK_WEEKLY_MAX_BOUND,
   ensureVacationEntitlementForYear, // Issue #416 — auto-seed vacation entitlement at hire time
   resolveVacationBaseDays, // Issue #435 (D-06) — person value ?? tenant default ?? 30
+  statutoryMinimumVacationDays, // Issue #435 (D-11) — 5-day-base floor on POST/PATCH
+  statutoryMinimumViolationMessage, // Issue #435 (D-11) — the ONE German 400 message builder
 } from "../../absence"; // Phase 100B Plan 10 — A11 (Issue #205 reroute) / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6; issue #416; issue #435
 // Phase 67b Plan 03 (issue #67, D-22/D-07/D-24) — the Stammsalon lifecycle helpers.
 import {
@@ -250,6 +252,15 @@ const updateEmployeeSchema = z.object({
   exitDate: z.string().datetime().nullable().optional(),
   // Phase 65 — Geburtsdatum (needed for JArbSchG §9 AZUBI <18 check + UI suggestion)
   birthDate: z.string().datetime().nullable().optional(),
+  // Issue #435 D-02/D-11 — identical Zod chain to createEmployeeSchema's field; null = back to
+  // tenant default (resolveVacationBaseDays). The statutory-minimum 400 runs in the handler.
+  annualVacationDays: z
+    .number()
+    .min(0.5)
+    .max(365)
+    .refine((v) => Math.round(v * 100) / 100 === v, "Höchstens zwei Nachkommastellen.")
+    .optional()
+    .nullable(),
   // Personalstruktur (Phase 41)
   classification: employeeClassificationSchema.optional(),
   coverageWeight: z.number().min(0).max(9.99).optional(),
@@ -594,6 +605,20 @@ export async function employeeRoutes(app: FastifyInstance) {
         !(await hasPermission(req, "role-assignment:manage:ZUGEWIESEN"))
       ) {
         return reply.code(403).send({ error: "Forbidden" });
+      }
+
+      // Issue #435 (D-11): the 5-day base against the 5-day statutory minimum, age at 1 January
+      // of the HIRE year — before any write. The regular computation additionally floors per
+      // year (D-09, plan 02); this guard only stops an obviously unlawful input value.
+      if (body.annualVacationDays != null) {
+        const checkYear = new Date(body.hireDate).getUTCFullYear();
+        const birthDateForCheck = body.birthDate ? new Date(body.birthDate) : null;
+        const minimum = statutoryMinimumVacationDays(birthDateForCheck, checkYear, 5);
+        if (Math.round(body.annualVacationDays * 100) < Math.round(minimum * 100)) {
+          return reply.code(400).send({
+            error: statutoryMinimumViolationMessage(minimum, birthDateForCheck, checkYear),
+          });
+        }
       }
 
       const directPassword = !!body.password;
@@ -975,6 +1000,28 @@ export async function employeeRoutes(app: FastifyInstance) {
         return;
       }
 
+      // Issue #435 (D-11): mirrors the POST check above; unchanged values are never rejected
+      // (same "legacy row stays editable" principle as D-10).
+      if (
+        body.annualVacationDays != null &&
+        (employee.annualVacationDays === null ||
+          Number(employee.annualVacationDays) !== body.annualVacationDays)
+      ) {
+        const birthDateForCheck =
+          body.birthDate !== undefined
+            ? body.birthDate
+              ? new Date(body.birthDate)
+              : null
+            : employee.birthDate;
+        const checkYear = new Date().getUTCFullYear();
+        const minimum = statutoryMinimumVacationDays(birthDateForCheck, checkYear, 5);
+        if (Math.round(body.annualVacationDays * 100) < Math.round(minimum * 100)) {
+          return reply.code(400).send({
+            error: statutoryMinimumViolationMessage(minimum, birthDateForCheck, checkYear),
+          });
+        }
+      }
+
       const updates: Record<string, unknown> = {};
       if (body.firstName !== undefined) updates.firstName = body.firstName;
       if (body.lastName !== undefined) updates.lastName = body.lastName;
@@ -987,6 +1034,13 @@ export async function employeeRoutes(app: FastifyInstance) {
       // Phase 65 — Geburtsdatum (JArbSchG §9 AZUBI <18 check)
       if (body.birthDate !== undefined) {
         updates.birthDate = body.birthDate === null ? null : new Date(body.birthDate);
+      }
+      // Issue #435 (D-15): the person value only affects rows NOT YET created (future years, the
+      // #445 zero-placeholder heal) — an existing LeaveEntitlement row is deliberately NOT
+      // recomputed here; a correction to an already-set year goes through PUT
+      // /settings/vacation (audited there, D-10).
+      if (body.annualVacationDays !== undefined) {
+        updates.annualVacationDays = body.annualVacationDays;
       }
       // Personalstruktur (Phase 41)
       if (body.classification !== undefined) updates.classification = body.classification;
@@ -1090,6 +1144,8 @@ export async function employeeRoutes(app: FastifyInstance) {
               exitDate: employee.exitDate?.toISOString() ?? null,
               // Personalstruktur (Phase 41) — Decimal → string for stable JSON
               coverageWeight: employee.coverageWeight.toString(),
+              // Issue #435 (D-02/D-15) — Decimal → string for stable JSON (same treatment as coverageWeight)
+              annualVacationDays: employee.annualVacationDays?.toString() ?? null,
             },
             ...requestAuditFields(req, {
               ...updatedEmp,
@@ -1097,6 +1153,8 @@ export async function employeeRoutes(app: FastifyInstance) {
               exitDate: updatedEmp.exitDate?.toISOString() ?? null,
               // Personalstruktur (Phase 41) — Decimal → string for stable JSON
               coverageWeight: updatedEmp.coverageWeight.toString(),
+              // Issue #435 (D-02/D-15) — Decimal → string for stable JSON (same treatment as coverageWeight)
+              annualVacationDays: updatedEmp.annualVacationDays?.toString() ?? null,
             }),
             tx,
           });
