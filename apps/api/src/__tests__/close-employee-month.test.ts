@@ -1025,6 +1025,7 @@ describe("closeEmployeeMonth — case 5: MONTHLY_HOURS no-gap, leave NOT deducte
           endDate: new Date("2026-07-11T23:59:59Z"),
           halfDay: false,
           isOvertimeCompensation: false,
+          creditBasis: "CONTRACT", // Issue #429 audit — VACATION-like row
         },
       ],
       absences: [],

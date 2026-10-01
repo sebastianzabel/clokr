@@ -24,6 +24,7 @@ import { describe, it, expect } from "vitest";
 import {
   closeEmployeeMonth,
   toCloseMonthApprovedLeave,
+  leaveCreditBasisForCode,
   type CloseMonthInput,
 } from "../contexts/working-time-account/close-employee-month";
 import {
@@ -82,7 +83,7 @@ function shift(ds: string, netMin: number) {
   return { date: D(ds), startTime: hm(s), endTime: hm(e) };
 }
 
-type Leave = { s: string; e: string; half?: boolean; overtimeComp?: boolean };
+type Leave = { s: string; e: string; half?: boolean; overtimeComp?: boolean; code?: string };
 
 function buildInput(
   schedule: Record<string, unknown>,
@@ -113,7 +114,7 @@ function buildInput(
         startDate: D(l.s),
         endDate: D(l.e),
         halfDay: Boolean(l.half),
-        leaveType: { code: l.overtimeComp ? "OVERTIME_COMP" : "VACATION" },
+        leaveType: { code: l.code ?? (l.overtimeComp ? "OVERTIME_COMP" : "VACATION") },
       })),
     ),
     absences: [],
@@ -163,7 +164,7 @@ function buildInputForMonth(
         startDate: D(l.s),
         endDate: D(l.e),
         halfDay: Boolean(l.half),
-        leaveType: { code: l.overtimeComp ? "OVERTIME_COMP" : "VACATION" },
+        leaveType: { code: l.code ?? (l.overtimeComp ? "OVERTIME_COMP" : "VACATION") },
       })),
     ),
     absences: [],
@@ -444,5 +445,92 @@ describe("Issue #429 — invariant suite (D-07..D-10): 'a day reduces Soll exact
     // touch (it never modified the absence loop or isBsAbsence) — the two credits stack
     // rather than deduplicating. Documented as a finding, not silently worked around.
     expect(bothEffect).toBe(leaveEffect + bsEffect);
+  });
+});
+
+// ── Audit follow-up (PR #437): SICK and other pay-for-planned-hours types are roster-based ──
+//
+// § 4 EFZG (Lohnausfallprinzip): a sick day relieves only the hours that would actually have been
+// worked, i.e. the rostered shift of that day. An unplanned sick day relieves nothing. Only the
+// contract-replacing leave types (see `leaveCreditBasisForCode`) use the contract-week formula.
+// The example is the audit's: 38 h / 4-day contract.
+describe("Issue #429 audit — SHIFT_BASED sick leave is credited roster-based (§ 4 EFZG)", () => {
+  const schedule = shiftBasedSchedule([1, 2, 3, 4, 5, 6]);
+  // Week of 08.06: no shift Monday, Tue-Thu planned 10.5 h each; every other week = contract.
+  const plan = (d: string) => (inWeek(d) ? (dow(d) >= 2 && dow(d) <= 4 ? 630 : 0) : base(d));
+  const contractSoll = run(schedule, plan, [], plan).expectedMinutes;
+
+  it("SICK on an UNPLANNED Monday credits 0 (no shift that day)", () => {
+    const withoutLeave = run(schedule, plan, [], plan);
+    const r = run(schedule, plan, [{ s: "2026-06-08", e: "2026-06-08", code: "SICK" }], plan);
+    expect(withoutLeave.expectedMinutes - r.expectedMinutes).toBe(0);
+    expect(r.balanceMinutes).toBe(withoutLeave.balanceMinutes);
+  });
+
+  it("SICK on a PLANNED Tuesday credits exactly that shift's netto minutes (630)", () => {
+    const worked = (d: string) => (d === "2026-06-09" ? 0 : plan(d));
+    const r = run(schedule, worked, [{ s: "2026-06-09", e: "2026-06-09", code: "SICK" }], plan);
+    expect(contractSoll - r.expectedMinutes).toBe(630);
+  });
+
+  it("SICK_CHILD and SPECIAL follow the same roster rule", () => {
+    for (const code of ["SICK_CHILD", "SPECIAL"]) {
+      const unplanned = run(schedule, plan, [{ s: "2026-06-08", e: "2026-06-08", code }], plan);
+      expect(contractSoll - unplanned.expectedMinutes).toBe(0);
+      const planned = run(schedule, plan, [{ s: "2026-06-09", e: "2026-06-09", code }], plan);
+      expect(contractSoll - planned.expectedMinutes).toBe(630);
+    }
+  });
+
+  it("Mixed week: VACATION on unplanned Monday (570) + SICK on planned Tuesday (630) = 1200", () => {
+    const worked = (d: string) => (d === "2026-06-09" ? 0 : plan(d));
+    const r = run(
+      schedule,
+      worked,
+      [
+        { s: "2026-06-08", e: "2026-06-08", code: "VACATION" },
+        { s: "2026-06-09", e: "2026-06-09", code: "SICK" },
+      ],
+      plan,
+    );
+    expect(contractSoll - r.expectedMinutes).toBe(570 + 630);
+  });
+
+  it("Mixed overlap: SICK and VACATION on the same planned day reduce Soll exactly once", () => {
+    const worked = (d: string) => (d === "2026-06-09" ? 0 : plan(d));
+    const both = run(
+      schedule,
+      worked,
+      [
+        { s: "2026-06-09", e: "2026-06-09", code: "VACATION" },
+        { s: "2026-06-09", e: "2026-06-09", code: "SICK" },
+      ],
+      plan,
+    );
+    // Same date, same start, both full-day: the first row in sortForDedup order claims the day,
+    // the second contributes 0 — the day is reduced exactly once (570 or 630), never 1200.
+    expect([570, 630]).toContain(contractSoll - both.expectedMinutes);
+  });
+});
+
+describe("Issue #429 audit — leaveCreditBasisForCode covers every LeaveType code", () => {
+  it("ROSTER exactly for SICK, SICK_CHILD, SPECIAL; CONTRACT for every other code and for null", () => {
+    const expected: Record<string, "CONTRACT" | "ROSTER"> = {
+      VACATION: "CONTRACT",
+      OVERTIME_COMP: "CONTRACT",
+      SPECIAL: "ROSTER",
+      UNPAID: "CONTRACT",
+      SICK: "ROSTER",
+      SICK_CHILD: "ROSTER",
+      EDUCATION: "CONTRACT",
+      MATERNITY: "CONTRACT",
+      PARENTAL: "CONTRACT",
+      VOCATIONAL_SCHOOL: "CONTRACT",
+      OTHER: "CONTRACT",
+    };
+    for (const [code, basis] of Object.entries(expected)) {
+      expect(leaveCreditBasisForCode(code), code).toBe(basis);
+    }
+    expect(leaveCreditBasisForCode(null)).toBe("CONTRACT");
   });
 });

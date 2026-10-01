@@ -2129,6 +2129,39 @@ einzubeziehen hätte für Wochen mit einem zukünftigen Feiertag eine neue Live-
 erzeugt. Das ist eine bewusste Abweichung vom Anspruchs-Zähler (`resolveLeaveDays()`, der Feiertage
 ausschließt) — dokumentiert, nicht übersehen.
 
+### Nachtrag Audit (PR #437): Bemessung je Abwesenheitsart
+
+Ein unabhängiges Audit fand: die Vertragswochen-Formel behandelte SICK wie VACATION, weil die
+Antragszeilen keinen Typ trugen. Nach § 4 Abs. 1 EFZG (Lohnausfallprinzip) entlastet ein
+Krankheitstag nur die Stunden, die tatsächlich gearbeitet worden wären — die geplante Schicht. Ein
+ungeplanter Krankheitstag entlastet nichts (Beispiel 38 h / 4 Tage, krank am ungeplanten Montag:
+`main` +3,17 h, die erste PR-Fassung +6,33 h Scheinüberstunden). Entscheidung nach dem Prinzip
+„ersetzt die Art einen vertraglichen Arbeitstag, oder bezahlt sie nur tatsächlich geplante
+Stunden?" — eine Stelle, `leaveCreditBasisForCode()` in `close-employee-month.ts`, über den einen
+Mapper `toCloseMonthApprovedLeave()` (Pflichtfeld `creditBasis`, wie `isOvertimeCompensation`):
+
+| Code                              | Basis       | Begründung                                                                              |
+| --------------------------------- | ----------- | --------------------------------------------------------------------------------------- |
+| `SICK`, `SICK_CHILD`              | Schichtplan | § 4 Abs. 1 EFZG; Kinderkrank (§ 45 SGB V) stellt ebenso nur von geplanter Arbeit frei   |
+| `SPECIAL` (Sonderurlaub)          | Schichtplan | § 616 BGB: Vergütung für die ausfallende, geplante Arbeitszeit                          |
+| `VACATION`                        | Vertrag     | BUrlG; einziger anspruchsverbrauchender Typ (`deductVacationDays`)                      |
+| `OVERTIME_COMP`                   | Vertrag     | Owner-Entscheidung #293 („der Tag IST der Ø-Vertragstag"); Entnahme = Gutschrift (#220) |
+| `EDUCATION`                       | Vertrag     | Bildungsurlaub zählt in Arbeitstagen je Jahr, wie Urlaub                                |
+| `UNPAID`, `MATERNITY`, `PARENTAL` | Vertrag     | die Arbeitspflicht selbst ruht für den Zeitraum                                         |
+| `OTHER`, unbekannt/`null`         | Vertrag     | Vor-Tracking-Brückenzeilen neutralisieren das Soll; bisheriges Verhalten                |
+
+Schichtplan-Basis: Entlastung = Netto-Minuten der geplanten Schicht(en) des Tages (dieselbe
+Netto-Regel wie R; halber Tag = Hälfte), ohne Schicht 0. Nur Vertrags-Basis-Zeilen gehen in
+`leaveDaysPerWeek()` ein, ein Krankheitstag verändert also weder Ganzwochen-Prüfung noch Anteile.
+Die Invariante bleibt: beide Basen laufen durch dieselbe `sbClaimed`-Erstbelegung in
+`sortForDedup`-Reihenfolge — ein Tag mit Urlaub UND Krankheit wird genau einmal entlastet. Tests
+(vorher rot: 570 statt 0, 570 statt 630, 1140 statt 1200): `shift-based-leave-week-soll-429.test.ts`
+„SHIFT_BASED sick leave is credited roster-based" (ungeplanter Montag 0, geplanter Dienstag 630,
+SICK_CHILD/SPECIAL, gemischte Woche, Überlappung) und die Vollständigkeit der Zuordnung über alle
+elf Codes. Restgrenze: der Live-Pfad übergibt Schichten nur bis heute — eine Krankmeldung für einen
+künftigen geplanten Tag entlastet live erst, wenn der Tag erreicht ist; der Abschluss rechnet mit
+dem vollen Monat.
+
 ### Was bewusst NICHT geschah
 
 - **D-12 (MONTHLY_HOURS):** keine Codeänderung. Die rechtliche Richtung ist klar (§§ 1, 11, 13
