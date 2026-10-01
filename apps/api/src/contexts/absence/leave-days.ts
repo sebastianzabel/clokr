@@ -603,17 +603,25 @@ export function daysDiffer(a: number, b: number): boolean {
 }
 
 /**
- * Issue #445 — the ONE base-value resolver for the regular vacation entitlement. Today:
- * `TenantConfig.defaultVacationDays`, falling back to 30 when unset. Issue #435 changes only
- * this function's body to "person value ?? tenant default" — every caller of
- * {@link resolveRegularVacationDays} / {@link ensureRegularVacationEntitlement} keeps working
- * unchanged.
+ * Issue #435 (D-05) — the ONE base-value resolver for the regular vacation entitlement: person
+ * value ?? tenant default ?? 30. Every regular-entitlement path resolves the base value here and
+ * nowhere else (D-06); every caller of {@link resolveRegularVacationDays} /
+ * {@link ensureRegularVacationEntitlement} keeps working unchanged. Never reads `classification`
+ * or `TenantConfig.defaultApprenticeVacationDays` — the apprentice tenant value is a UI pre-fill
+ * only (D-05).
  */
 export async function resolveVacationBaseDays(
   db: DbClient,
   employeeId: string,
   tenantId: string,
 ): Promise<number> {
+  const employee = await db.employee.findFirst({
+    where: { id: employeeId, tenantId },
+    select: { annualVacationDays: true },
+  });
+  if (employee?.annualVacationDays != null) {
+    return Number(employee.annualVacationDays);
+  }
   const config = await db.tenantConfig.findUnique({
     where: { tenantId },
     select: { defaultVacationDays: true },

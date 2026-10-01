@@ -62,7 +62,8 @@ import {
   BS_BLOCK_WEEKLY_MIN_BOUND,
   BS_BLOCK_WEEKLY_MAX_BOUND,
   ensureVacationEntitlementForYear, // Issue #416 — auto-seed vacation entitlement at hire time
-} from "../../absence"; // Phase 100B Plan 10 — A11 (Issue #205 reroute) / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6; issue #416
+  resolveVacationBaseDays, // Issue #435 (D-06) — person value ?? tenant default ?? 30
+} from "../../absence"; // Phase 100B Plan 10 — A11 (Issue #205 reroute) / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6; issue #416; issue #435
 // Phase 67b Plan 03 (issue #67, D-22/D-07/D-24) — the Stammsalon lifecycle helpers.
 import {
   createInitialHomeAssignment,
@@ -222,6 +223,16 @@ const createEmployeeSchema = z.object({
   // null resolves automatically when the tenant has exactly one active salon; explicit null is
   // accepted because Clokr frontends send `field: x ? x : null`, never omit the key.
   homeSalonId: z.string().uuid().optional().nullable(),
+  // Issue #435 D-02 — base days at a 5-day week, two decimals because the JArbSchG minimum is
+  // 20,83 (D-11 pre-fill), Decimal(5,2) column. null = tenant default (resolveVacationBaseDays).
+  // The statutory-minimum 400 is plan 03's (D-11) and runs in the handler, not in Zod.
+  annualVacationDays: z
+    .number()
+    .min(0.5)
+    .max(365)
+    .refine((v) => Math.round(v * 100) / 100 === v, "Höchstens zwei Nachkommastellen.")
+    .optional()
+    .nullable(),
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
@@ -603,9 +614,7 @@ export async function employeeRoutes(app: FastifyInstance) {
       // non-Mo-Fr default at hire-time.
       const tenantConfigForDefaults = await app.prisma.tenantConfig.findUnique({
         where: { tenantId: req.user.tenantId },
-        // Issue #416: defaultVacationDays feeds ensureVacationEntitlementForYear below, read
-        // alongside the pre-existing defaultWorkDays fetch rather than issuing a second query.
-        select: { defaultWorkDays: true, defaultVacationDays: true },
+        select: { defaultWorkDays: true },
       });
       const perDayHoursForDerive: PerDayHours = {
         mondayHours: 8,
@@ -673,6 +682,8 @@ export async function employeeRoutes(app: FastifyInstance) {
             bsSlotSecondLongDayMinutes: body.bsSlotSecondLongDayMinutes ?? null,
             bsSlotShortDayMinutes: body.bsSlotShortDayMinutes ?? null,
             bsSlotBlockWeekMinutes: body.bsSlotBlockWeekMinutes ?? null,
+            // Issue #435 (D-02): per-person vacation base value, null = tenant default.
+            annualVacationDays: body.annualVacationDays ?? null,
           },
         });
 
@@ -714,6 +725,9 @@ export async function employeeRoutes(app: FastifyInstance) {
             : // Mirrors countWorkDaysPerWeek()'s workDays.length tier — the same raw input
               // resolvedWorkDays above already resolved for the WorkSchedule row.
               resolvedWorkDays.length;
+        // Issue #435 (D-06): the ONE base-value resolution — person value ?? tenant default ?? 30
+        // — on `tx` since `emp` already exists inside this transaction.
+        const vacationBaseDays = await resolveVacationBaseDays(tx, emp.id, req.user.tenantId);
         await ensureVacationEntitlementForYear(
           tx,
           emp.id,
@@ -721,7 +735,7 @@ export async function employeeRoutes(app: FastifyInstance) {
           emp.hireDate.getFullYear(),
           emp.hireDate,
           workDaysPerWeek,
-          Number(tenantConfigForDefaults?.defaultVacationDays ?? 30),
+          vacationBaseDays,
           "Automatisch angelegt bei Mitarbeiteranlage",
           async (entry) =>
             app.audit({
@@ -839,6 +853,8 @@ export async function employeeRoutes(app: FastifyInstance) {
           directPassword,
           // Personalstruktur (Phase 41) — Decimal → string for stable JSON
           coverageWeight: employee.coverageWeight.toString(),
+          // Issue #435 (D-02) — Decimal → string for stable JSON (same treatment as coverageWeight)
+          annualVacationDays: employee.annualVacationDays?.toString() ?? null,
         },
       });
 

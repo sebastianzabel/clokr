@@ -330,6 +330,181 @@ describe("Employees API", () => {
     });
   });
 
+  describe("POST /api/v1/employees — Issue #435: annualVacationDays (tracer)", () => {
+    let uid: string;
+
+    beforeAll(() => {
+      uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    });
+
+    it("stores the person value and seeds the hire-time entitlement from it (435-AC-01: base 20, hire 01.10. -> 5.0)", async () => {
+      const hireDateIso = new Date(Date.UTC(2027, 9, 1)).toISOString(); // Oct 1, 2027
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          email: `vacbase-ac01-${uid}@test.de`,
+          firstName: "Vac",
+          lastName: "Base",
+          employeeNumber: `VB1-${uid}`,
+          hireDate: hireDateIso,
+          role: "EMPLOYEE",
+          annualVacationDays: 20,
+          password: "Test@1234567!",
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+
+      const employee = await app.prisma.employee.findUnique({ where: { id: body.id } });
+      expect(Number(employee?.annualVacationDays)).toBe(20);
+
+      const entitlement = await app.prisma.leaveEntitlement.findUnique({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId: body.id,
+            leaveTypeId: data.vacationType.id,
+            year: 2027,
+          },
+        },
+      });
+      expect(Number(entitlement?.totalDays)).toBe(5);
+      expect(entitlement?.isAutoCalculated).toBe(true);
+    });
+
+    it("435-AC-02: without annualVacationDays, stores null and behaves exactly as before (tenant default 30, hire 01.10. -> 8)", async () => {
+      const hireDateIso = new Date(Date.UTC(2027, 9, 1)).toISOString(); // Oct 1, 2027
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          email: `vacbase-ac02-${uid}@test.de`,
+          firstName: "Vac",
+          lastName: "Default",
+          employeeNumber: `VB2-${uid}`,
+          hireDate: hireDateIso,
+          role: "EMPLOYEE",
+          password: "Test@1234567!",
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+
+      const employee = await app.prisma.employee.findUnique({ where: { id: body.id } });
+      expect(employee?.annualVacationDays).toBeNull();
+
+      const entitlement = await app.prisma.leaveEntitlement.findUnique({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId: body.id,
+            leaveTypeId: data.vacationType.id,
+            year: 2027,
+          },
+        },
+      });
+      expect(Number(entitlement?.totalDays)).toBe(8);
+    });
+
+    it("accepts an explicit null and stores null", async () => {
+      const hireDateIso = new Date(Date.UTC(2027, 9, 1)).toISOString();
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          email: `vacbase-null-${uid}@test.de`,
+          firstName: "Vac",
+          lastName: "Null",
+          employeeNumber: `VB3-${uid}`,
+          hireDate: hireDateIso,
+          role: "EMPLOYEE",
+          annualVacationDays: null,
+          password: "Test@1234567!",
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+      const employee = await app.prisma.employee.findUnique({ where: { id: body.id } });
+      expect(employee?.annualVacationDays).toBeNull();
+    });
+
+    it("accepts a two-decimal value (20.83) and rejects a three-decimal value (20.833) with 400 and no created row", async () => {
+      const hireDateIso = new Date(Date.UTC(2027, 9, 1)).toISOString();
+      const okRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          email: `vacbase-decimals-ok-${uid}@test.de`,
+          firstName: "Vac",
+          lastName: "Decimals",
+          employeeNumber: `VB4-${uid}`,
+          hireDate: hireDateIso,
+          role: "EMPLOYEE",
+          annualVacationDays: 20.83,
+          password: "Test@1234567!",
+        },
+      });
+      expect(okRes.statusCode).toBe(201);
+      const okBody = JSON.parse(okRes.body);
+      const okEmployee = await app.prisma.employee.findUnique({ where: { id: okBody.id } });
+      expect(Number(okEmployee?.annualVacationDays)).toBe(20.83);
+
+      const badEmployeeNumber = `VB5-${uid}`;
+      const badRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          email: `vacbase-decimals-bad-${uid}@test.de`,
+          firstName: "Vac",
+          lastName: "Decimals",
+          employeeNumber: badEmployeeNumber,
+          hireDate: hireDateIso,
+          role: "EMPLOYEE",
+          annualVacationDays: 20.833,
+          password: "Test@1234567!",
+        },
+      });
+      expect(badRes.statusCode).toBe(400);
+      expect(JSON.parse(badRes.body).error).toBe("Validierungsfehler");
+      const badEmployee = await app.prisma.employee.findFirst({
+        where: { employeeNumber: badEmployeeNumber },
+      });
+      expect(badEmployee).toBeNull();
+    });
+
+    it("audits annualVacationDays as a string, not a raw Decimal object (Decimal -> string for stable JSON)", async () => {
+      const hireDateIso = new Date(Date.UTC(2027, 9, 1)).toISOString();
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          email: `vacbase-audit-${uid}@test.de`,
+          firstName: "Vac",
+          lastName: "Audit",
+          employeeNumber: `VB6-${uid}`,
+          hireDate: hireDateIso,
+          role: "EMPLOYEE",
+          annualVacationDays: 20,
+          password: "Test@1234567!",
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+
+      const audit = await app.prisma.auditLog.findFirst({
+        where: { entity: "Employee", entityId: body.id, action: "CREATE" },
+      });
+      expect(audit).not.toBeNull();
+      const newValue = audit!.newValue as { annualVacationDays: unknown };
+      expect(newValue.annualVacationDays).toBe("20");
+    });
+  });
+
   describe("POST /api/v1/employees — Nachladen nach dem Commit (Issue #379)", () => {
     afterEach(() => {
       vi.restoreAllMocks();

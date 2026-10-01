@@ -75,6 +75,8 @@
   let cClassification: EmployeeClassification = $state("VOLLZEIT");
   let cCoverageWeight = $state(1.0);
   let cRequiresSupervision = $state(false);
+  // Issue #435 (D-13 tracer) — per-person vacation base value; null = tenant default.
+  let cAnnualVacationDays = $state<number | null>(null);
 
   // ── Personalstruktur override badges (Phase 41 DD-03) ────────────────────
   // Reactive: re-evaluate when classification or the field itself changes.
@@ -215,6 +217,8 @@
     const def = applyDefaults(cClassification);
     cCoverageWeight = def.coverageWeight;
     cRequiresSupervision = def.requiresSupervision;
+    // Issue #435 (D-13 tracer) — reset to "no value" (= tenant default)
+    cAnnualVacationDays = null;
     createError = "";
     createEmailError = "";
     createOpen = true;
@@ -266,6 +270,8 @@
         classification: cClassification,
         coverageWeight: cCoverageWeight,
         requiresSupervision: cRequiresSupervision,
+        // Issue #435 (D-13 tracer) — null = tenant default (resolveVacationBaseDays)
+        annualVacationDays: cAnnualVacationDays ?? null,
       };
       if (cUsePassword && cPassword) payload.password = cPassword;
       const res = await api.post<Employee & { emailError?: string }>("/employees", payload);
@@ -663,6 +669,29 @@
             >
           </div>
         {/if}
+      </div>
+      <!-- ── Urlaub (Issue #435, D-13 tracer) ─────────────────────────────── -->
+      <div class="form-group form-group--full form-subhead">
+        <h4 class="form-subhead-title">Urlaub</h4>
+      </div>
+      <div class="form-group form-group--full">
+        <label class="form-label" for="c-annual-vacation-days">
+          Urlaubstage pro Jahr (5-Tage-Woche)
+        </label>
+        <input
+          id="c-annual-vacation-days"
+          type="number"
+          min="0.5"
+          max="365"
+          step="0.01"
+          class="input"
+          bind:value={cAnnualVacationDays}
+          data-testid="admin-employees-create-annual-vacation-days"
+        />
+        <p class="form-hint">
+          Leer = Mandanten-Standard. Wird auf die vertraglichen Arbeitstage umgerechnet und im
+          Eintrittsjahr anteilig berechnet.
+        </p>
       </div>
       <div class="form-group form-group--full form-subhead">
         <h4 class="form-subhead-title">Arbeitszeitmodell</h4>

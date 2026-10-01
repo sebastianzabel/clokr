@@ -145,6 +145,9 @@ model TenantConfig {
   allowOvertimePayout                 Boolean @default(false)
   // Urlaubsanspruch (Basis 5-Tage-Woche)
   defaultVacationDays                 Decimal @default(30) @db.Decimal(5, 2)
+  // Issue #435 D-03 — pre-fill for the create form when the classification is AZUBI; never read
+  // by the entitlement computation (D-05).
+  defaultApprenticeVacationDays       Decimal @default(20) @db.Decimal(5, 2)
   // Resturlaub-Verfall: Tag und Monat im Folgejahr (z.B. 31. März = day=31, month=3)
   carryOverDeadlineDay                Int     @default(31)
   carryOverDeadlineMonth              Int     @default(3)
@@ -417,6 +420,10 @@ model Employee {
   // Phase 63 (D-10): Geburtsdatum für JArbSchG §9 Altersprüfung (AZUBI < 18).
   // Nullable: fail-open — wenn nicht gesetzt, wird der Hard-Block NICHT ausgelöst (siehe checkJArbSchG).
   birthDate                    DateTime?              @db.Date
+  // Issue #435 D-02 — vacation base days per year at a 5-day week, the same unit as
+  // TenantConfig.defaultVacationDays; null = tenant default; read only through
+  // resolveVacationBaseDays() in contexts/absence/leave-days.ts.
+  annualVacationDays           Decimal?               @db.Decimal(5, 2)
   // Phase 64 — Pausendauer Override (D-02, BREAK-02): nullable = fall back to TenantConfig defaults.
   // Server-side validation rejects values below ArbZG-Floor (30/45) — see apps/api/src/routes/employees.ts Zod schema.
   breakOver6hOverride          Int? // null = TenantConfig.defaultBreakOver6h verwenden
