@@ -1895,7 +1895,8 @@
                   Unter dem gesetzlichen Mindesturlaub von {eAnnualVacationMinimum.days.toLocaleString(
                     "de-DE",
                     { maximumFractionDigits: 2 },
-                  )} Tagen ({eAnnualVacationMinimum.law}) – das Speichern wird abgelehnt.
+                  )} Tagen ({eAnnualVacationMinimum.law}) – das Speichern wird abgelehnt, sofern
+                  sich der Wert ändert.
                 </div>
               {/if}
             </div>
@@ -3285,11 +3286,10 @@
                 maximumFractionDigits: 2,
               })} Tage</strong
             >
-            (Basiswert der Person bzw. Mandanten-Standard, umgerechnet auf die Vertragstage, im
-            Eintrittsjahr ggf. anteilig). Gesetzlicher Mindesturlaub: {eVacMinimum.toLocaleString(
-              "de-DE",
-              { maximumFractionDigits: 2 },
-            )} Tage.
+            (Basiswert der Person bzw. Mandanten-Standard, umgerechnet auf die Vertragstage, im Eintrittsjahr
+            ggf. anteilig). Gesetzlicher Mindesturlaub: {eVacMinimum.toLocaleString("de-DE", {
+              maximumFractionDigits: 2,
+            })} Tage.
           </p>
 
           <div class="extra-row">
