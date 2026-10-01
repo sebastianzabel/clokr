@@ -9,7 +9,8 @@ import {
   mondayOfWeekUtc, // Phase 430 Plan 04 (D-15) — the one shared Monday derivation
 } from "../vacation-calc"; // Phase 107 (D-04/D-09)
 import { selfHealUsedDays, loadVacationTypeMeta } from "../leave-self-heal";
-import { computeAffectedMonths } from "../correction-lock";
+import { computeAffectedMonths, closedMonthLeaveMessage } from "../correction-lock"; // Issue #446 (D-07/D-08)
+import { findClosedMonthsInRange } from "../closed-month-guard"; // Issue #446 (D-07)
 // Phase 101B (Issue #101, D-11 Welle absence): lifted out of this file into ./leave-days.ts.
 // resolveLeaveDays/getHolidayMap/deductVacationDays/reverseVacationDays are re-exported below
 // (unchanged) so scheduling/api/shifts.ts, services/phorest/sync-shifts.ts and
@@ -482,6 +483,24 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Startdatum muss vor Enddatum liegen" });
 
       const tenantId = req.user.tenantId;
+
+      // Issue #446 (D-06(a)/D-09/D-10): checked before any read-dependent computation and
+      // before every write — a range touching a closed month is rejected as a whole, naming
+      // every closed month it spans (never just the first one found).
+      const closedMonths = await findClosedMonthsInRange(
+        app.prisma,
+        employeeId,
+        tenantId,
+        start,
+        end,
+      );
+      if (closedMonths.length > 0) {
+        return reply.code(409).send({
+          error: closedMonthLeaveMessage(closedMonths, "request"),
+          code: "LEAVE_MONTH_CLOSED",
+        });
+      }
+
       const holidayMap = await getHolidayMap(app.prisma, tenantId, employeeId, start, end);
       const holidays = new Set(holidayMap.keys());
       // Phase 107 (D-09): roster-aware estimate from creation onward, so the number does not

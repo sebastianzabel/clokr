@@ -275,9 +275,13 @@ describe("POST /leave/requests OVERTIME_COMP — validates against confirmed car
   });
 
   it("compute-failure fail-safe: falls back to the stored balance, permits when the stored balance covers it (never 500s)", async () => {
-    vi.spyOn(app.prisma.saldoSnapshot, "findFirst").mockRejectedValueOnce(
-      new Error("simulated DB failure"),
-    );
+    // Issue #446 (D-07): POST /requests now calls findClosedMonthsInRange first, which makes
+    // its OWN saldoSnapshot.findFirst call (isMonthClosed) for REQUEST_MONDAY's month —
+    // resolved as "not closed" here so the ONE rejection below still lands on the call this
+    // test actually targets: getConfirmedCarryOver's own saldoSnapshot.findFirst.
+    vi.spyOn(app.prisma.saldoSnapshot, "findFirst")
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error("simulated DB failure"));
     // Stored balance temporarily raised to comfortably cover the 4h request, so this test
     // isolates "does the fallback engage and permit correctly" from the rejection case below.
     await app.prisma.overtimeAccount.update({
@@ -307,9 +311,11 @@ describe("POST /leave/requests OVERTIME_COMP — validates against confirmed car
   });
 
   it("compute-failure fail-safe: falls back to the stored balance, still REJECTS when the stored balance is insufficient (never silently permits)", async () => {
-    vi.spyOn(app.prisma.saldoSnapshot, "findFirst").mockRejectedValueOnce(
-      new Error("simulated DB failure"),
-    );
+    // Issue #446 (D-07): see the sibling test above — the guard's own saldoSnapshot.findFirst
+    // call must resolve first so the rejection still targets getConfirmedCarryOver.
+    vi.spyOn(app.prisma.saldoSnapshot, "findFirst")
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error("simulated DB failure"));
     await app.prisma.overtimeAccount.update({
       where: { employeeId },
       data: { balanceHours: 0 },
