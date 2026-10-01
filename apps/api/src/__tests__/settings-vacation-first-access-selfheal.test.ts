@@ -102,6 +102,45 @@ describe("GET /api/v1/settings/vacation/:employeeId — first-access self-heal (
     expect(auditsAfter).toHaveLength(1);
   });
 
+  it("heals with the person value, not the tenant default (Issue #435, D-06)", async () => {
+    const currentYear = new Date().getFullYear();
+    const uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/employees",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {
+        email: `selfheal-pv-${uid}@test.de`,
+        firstName: "Person",
+        lastName: "Value",
+        employeeNumber: `SHPV-${uid}`,
+        hireDate: new Date(Date.UTC(currentYear, 0, 1)).toISOString(),
+        role: "EMPLOYEE",
+        weeklyHours: 40,
+        password: "Test@1234567!",
+        annualVacationDays: 20, // below the tenant default (30) — the heal must use THIS value
+      },
+    });
+    expect(createRes.statusCode).toBe(201);
+    const employeeId = JSON.parse(createRes.body).id;
+
+    // Simulate "no code path ever created a row" — same setup as the sibling test above.
+    await app.prisma.leaveEntitlement.deleteMany({ where: { employeeId } });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/settings/vacation/${employeeId}?year=${currentYear}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).totalDays).toBe(20);
+
+    const entitlement = await app.prisma.leaveEntitlement.findFirst({
+      where: { employeeId, year: currentYear },
+    });
+    expect(Number(entitlement?.totalDays)).toBe(20);
+  });
+
   it("does NOT self-heal an exited (inactive) employee — totalDays stays null, no row created", async () => {
     const currentYear = new Date().getFullYear();
     const uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);

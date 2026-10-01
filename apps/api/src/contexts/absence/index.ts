@@ -159,6 +159,9 @@ export { mondayOfWeekUtc } from "./vacation-calc";
 // side (Arbeitszeitkonto, plan 429-02) and Phase 430 both consume this through this index.
 export { leaveDaysPerWeek } from "./vacation-calc";
 export type { LeaveWeek } from "./vacation-calc";
+// Issue #435 (D-11) — Erweiterung, additive; consumed by platform/api/employees.ts for the
+// POST/PATCH statutory-minimum 400 guard.
+export { statutoryMinimumVacationDays, statutoryMinimumViolationMessage } from "./vacation-calc";
 export { recalcProvisionalLeaveForShiftChange } from "./shift-leave-recalc-resolver";
 export type { RecalcDeps, AdjustmentRecord } from "./shift-leave-recalc-resolver";
 // resolveLeaveDays/getHolidayMap/deductVacationDays/reverseVacationDays are DEFINED in
@@ -176,6 +179,8 @@ export {
   REGULAR_ENTITLEMENT_REASON_SELF_HEAL, // Issue #445 (D-05) — the matching audit reason
   vacationEntitlementWarning, // Issue #445 — the one function building the warning string (no rule in composition/)
   healEntitlementUsedDays, // Issue #445 (D-10) — composition/reports.ts injects this into leave-self-heal.ts's ctx
+  resolveVacationBaseDays, // Issue #435 (D-06) — Erweiterung, additive; the ONE base-value resolver, consumed by platform/api/employees.ts
+  daysDiffer, // Issue #435 code review (WR-01) — the 2-decimal-precision "did it change" compare, reused by platform/api/employees.ts's PATCH guard instead of a re-implemented inline comparison
 } from "./leave-days";
 export { checkJArbSchG } from "./jarbschg";
 export { buildSlotOverrideHierarchy, resolveBsTagSlot } from "./bs-slot-resolver";

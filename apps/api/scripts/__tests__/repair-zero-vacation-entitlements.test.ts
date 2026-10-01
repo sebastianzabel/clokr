@@ -34,7 +34,9 @@ describe("repair-zero-vacation-entitlements (Issue #445, D-07)", () => {
   let employeeC: string;
   // Scenario D: exited before the target year -> target 0 -> never a candidate.
   let employeeD: string;
-  // Scenario E: hired mid-2026, no 2025 row -> candidate, target 28, priorYear null, flag null.
+  // Scenario E: hired mid-2026 (Feb 1, on/before the G9 Wartezeit cutoff — Issue #435, owner
+  // Ergänzung), no 2025 row -> candidate, target 30 (full value, no pro-rata), priorYear null,
+  // flag null. Was target 28 (11/12 pro-rated) before the Ergänzung.
   let employeeE: string;
   let entitlementE2026: string;
 
@@ -226,7 +228,7 @@ describe("repair-zero-vacation-entitlements (Issue #445, D-07)", () => {
       expect(e).toMatchObject({
         year: 2026,
         currentTotalDays: 0,
-        targetTotalDays: 28,
+        targetTotalDays: 30,
         priorYearTotalDays: null,
         flag: null,
       });
@@ -287,7 +289,7 @@ describe("repair-zero-vacation-entitlements (Issue #445, D-07)", () => {
     const healedE = await app.prisma.leaveEntitlement.findUnique({
       where: { id: entitlementE2026 },
     });
-    expect(Number(healedE?.totalDays)).toBe(28);
+    expect(Number(healedE?.totalDays)).toBe(30);
     expect(healedE?.isAutoCalculated).toBe(true);
 
     const stillZeroB = await app.prisma.leaveEntitlement.findUnique({
