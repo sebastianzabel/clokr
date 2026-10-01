@@ -21,6 +21,7 @@ import {
 } from "../contexts/platform";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import type { JwtPayload } from "../middleware/auth";
 
 // Keep JsonValue reachable from this module's public types (intentional no-op type alias)
 export type _SeedJsonValue = Prisma.JsonValue;
@@ -93,6 +94,35 @@ async function fixturePasswordHash(plaintext: string): Promise<string> {
  */
 export async function closeTestApp(): Promise<void> {
   // Intentionally empty — shared singleton
+}
+
+/**
+ * Re-issue a previously minted access token at whatever "now" is CURRENTLY active for the
+ * app's JWT plugin — real or faked.
+ *
+ * Root cause this fixes (issue #434): `seedTestData()` logs in under the REAL wall clock in
+ * `beforeAll`, so `adminToken`/`empToken` carry `iat`/`exp` computed from the real `Date.now()`
+ * at that moment (`JWT_EXPIRES_IN=15m` in `.env.test`). A test that later calls
+ * `vi.useFakeTimers({ now: <some other instant>, toFake: ["Date"] })` and then reuses that same
+ * token leaves the token's `exp` anchored to the REAL issuance time while the expiry check
+ * against it now runs under the FAKED clock. If the faked "now" lands far enough past the real
+ * issuance time (more than `JWT_EXPIRES_IN`), the token reads as already expired and the request
+ * 401s — reproduced by `workschedule-validfrom-month1.test.ts` and
+ * `schedule-type-switch-guard.test.ts`, whose derived "now" (`monthStartUtc(0) + 10 days`) can
+ * land 10+ days ahead of the real token issuance in the first third of a calendar month.
+ *
+ * Decode-and-resign works under either clock, since both `app.jwt.decode` and `app.jwt.sign` read
+ * `Date.now()` — call this AFTER `vi.useFakeTimers(...)` is active, before any `app.inject()` that
+ * uses the returned token, and use the returned token (not the original) for the rest of that
+ * faked-clock block.
+ */
+export function reissueTokenNow(app: FastifyInstance, token: string): string {
+  const decoded = app.jwt.decode<JwtPayload>(token);
+  if (!decoded) {
+    throw new Error("reissueTokenNow: could not decode token");
+  }
+  const { sub, role, tenantId, employeeId } = decoded;
+  return app.jwt.sign({ sub, role, tenantId, employeeId });
 }
 
 /**
