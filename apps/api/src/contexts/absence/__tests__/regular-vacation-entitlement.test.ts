@@ -149,6 +149,82 @@ describe("hireYearVacationDays — Wartezeit im Eintrittsjahr (Issue #435, G9)",
   });
 });
 
+describe("computeRegularVacationDays — statutory floor (Issue #435, D-09)", () => {
+  it("adult (birthDate null), base 10, 5-day week, a later year -> floored to the § 3 BUrlG 20", () => {
+    expect(
+      computeRegularVacationDays({
+        year: 2027,
+        hireDate: new Date(2024, 0, 1),
+        birthDate: null,
+        workDaysPerWeek: 5,
+        baseDays: 10,
+      }),
+    ).toBe(20);
+  });
+
+  it("minor born 2012-06-15, base 20, 5-day week, 2027, hired 2024 -> floored to 25 (JArbSchG)", () => {
+    expect(
+      computeRegularVacationDays({
+        year: 2027,
+        hireDate: new Date(2024, 0, 1),
+        birthDate: new Date(Date.UTC(2012, 5, 15)),
+        workDaysPerWeek: 5,
+        baseDays: 20,
+      }),
+    ).toBe(25);
+  });
+
+  it("born 2009-06-15 (age 17), base 20, 4-day week, 2027, hired 2024 -> floored to 16.67", () => {
+    expect(
+      computeRegularVacationDays({
+        year: 2027,
+        hireDate: new Date(2024, 0, 1),
+        birthDate: new Date(Date.UTC(2009, 5, 15)),
+        workDaysPerWeek: 4,
+        baseDays: 20,
+      }),
+    ).toBe(16.67);
+  });
+
+  it("minor born 2012-06-15, base 20, hire 2027-10-01 (after G9 cutoff) -> max first, then 3/12 -> 6.25", () => {
+    // scaledBase=20, floored to statutory minimum 25 (5-day, age 14), THEN hire-year pro-rata:
+    // 25 × 3/12 = 6.25 — fraction < 0.5 stays exact (§ 5 Abs. 2 BUrlG).
+    expect(
+      computeRegularVacationDays({
+        year: 2027,
+        hireDate: new Date(2027, 9, 1),
+        birthDate: new Date(Date.UTC(2012, 5, 15)),
+        workDaysPerWeek: 5,
+        baseDays: 20,
+      }),
+    ).toBe(6.25);
+  });
+
+  it("same minor, hire 2027-06-01 (on/before G9 cutoff) -> full floored value, no pro-rata -> 25", () => {
+    expect(
+      computeRegularVacationDays({
+        year: 2027,
+        hireDate: new Date(2027, 5, 1),
+        birthDate: new Date(Date.UTC(2012, 5, 15)),
+        workDaysPerWeek: 5,
+        baseDays: 20,
+      }),
+    ).toBe(25);
+  });
+
+  it("baseDays 0 with a minor birthDate -> 0 (not-employed guard wins over the floor)", () => {
+    expect(
+      computeRegularVacationDays({
+        year: 2027,
+        hireDate: new Date(2024, 0, 1),
+        birthDate: new Date(Date.UTC(2012, 5, 15)),
+        workDaysPerWeek: 5,
+        baseDays: 0,
+      }),
+    ).toBe(0);
+  });
+});
+
 describe("regular VACATION entitlement wrapper (Issue #445, D-02/D-03/D-05/D-06)", () => {
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;

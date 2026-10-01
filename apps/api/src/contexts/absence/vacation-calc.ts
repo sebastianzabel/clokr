@@ -7,7 +7,13 @@
  * arbeitet diese Person?" — unabhängig vom AZ-Modell. Per-Tag-Soll-Felder
  * (mondayHours…) bleiben für FIXED_SCHEDULE Saldo-Berechnung relevant, sind
  * aber nicht mehr Grundlage für Urlaubs-Tagezählung.
+ *
+ * Issue #435 — this file's only import. `ageAtDate` lives in the zero-import leaf
+ * `age-at-date.ts` (never `jarbschg.ts`, which imports `../working-time-account` and would pull
+ * this file into the capped import cycle — RESEARCH.md Pitfall 1). This file must stay a
+ * zero-import leaf itself beyond this one line.
  */
+import { ageAtDate } from "./age-at-date";
 
 export interface ScheduleForCalc {
   mondayHours: number;
@@ -515,23 +521,89 @@ export function hireYearVacationDays(fullYearDays: number, year: number, hireDat
 }
 
 /**
+ * Issue #435 (D-07/D-08) — the statutory MINIMUM vacation entitlement (§ 19 Abs. 2 JArbSchG for
+ * minors, § 3 Abs. 1 BUrlG otherwise), at `contractWorkDaysPerWeek` days/week, for `year`.
+ *
+ * Age gate (§ 19 Abs. 2 JArbSchG: "noch nicht N Jahre alt zu Beginn des Kalenderjahres"): the age
+ * is taken at 1 January of `year`, via {@link ageAtDate} — which already implements § 187 Abs. 2
+ * S. 2 BGB's "birthday on the reference date counts as the new age" rule (a person born 1 January
+ * is already that year's new age ON 1 January; born 2 January is still the old age). The age is
+ * re-evaluated per `year` — someone turning 18 during `year` drops to the § 3 BUrlG band only in
+ * the FOLLOWING year, because 1 January of `year` itself still sees the old (lower) age.
+ *
+ * Werktage (statutory, 6-day-week basis) by age band:
+ *   - age < 16  -> 30 Werktage (§ 19 Abs. 2 Nr. 1 JArbSchG)
+ *   - age < 17  -> 27 Werktage (§ 19 Abs. 2 Nr. 2 JArbSchG)
+ *   - age < 18  -> 25 Werktage (§ 19 Abs. 2 Nr. 3 JArbSchG)
+ *   - else      -> 24 Werktage (§ 3 Abs. 1 BUrlG — the adult statutory minimum)
+ * `birthDate === null` is treated as an ADULT (24 Werktage) — the only fail-open direction that
+ * never undercuts the law for an adult; a minor without a recorded birth date instead gets a
+ * "Geburtsdatum fehlt" UI hint elsewhere (D-12), never a silently-wrong floor.
+ *
+ * Conversion to `contractWorkDaysPerWeek` days/week mirrors the existing (now-dead-code)
+ * {@link calculateStatutoryMinimum}'s own `werktage / 6 × days` shape for the adult/§3 case — this
+ * function generalises it to all four Werktage bands. Result is rounded to 2 decimals, the
+ * storage precision of `LeaveEntitlement.totalDays` (`Decimal(5,2)`) — NEVER rounded to a whole or
+ * half day (the law's fraction, e.g. 20.83 or 16.67, stays exact; "Bruchteile bleiben anteilig,
+ * keine Abrundung").
+ *
+ * @param birthDate - the employee's birth date, or `null` (fail-open to the adult/§3 floor)
+ * @param year - the calendar year the entitlement is computed for
+ * @param contractWorkDaysPerWeek - the employee's contractual work days per week
+ * @returns the statutory-minimum entitlement at 2-decimal precision; `0` for a non-finite or
+ *   non-positive `contractWorkDaysPerWeek`
+ */
+export function statutoryMinimumVacationDays(
+  birthDate: Date | null,
+  year: number,
+  contractWorkDaysPerWeek: number,
+): number {
+  if (!Number.isFinite(contractWorkDaysPerWeek) || contractWorkDaysPerWeek <= 0) return 0;
+
+  let werktage = 24; // § 3 Abs. 1 BUrlG — adult default, also birthDate === null fail-open
+  if (birthDate !== null) {
+    const age = ageAtDate(birthDate, new Date(Date.UTC(year, 0, 1)));
+    if (age < 16) werktage = 30;
+    else if (age < 17) werktage = 27;
+    else if (age < 18) werktage = 25;
+  }
+
+  return Math.round((werktage / 6) * contractWorkDaysPerWeek * 100) / 100;
+}
+
+/**
  * The ONE regular-entitlement computation for a VACATION `LeaveEntitlement` row (Issue #445,
  * D-01). Moved verbatim from `facade/entitlements.ts`'s `ensureVacationEntitlementForYear`
  * (Issue #416): scale by contractual workdays FIRST ({@link calculatePartTimeVacation}, reference
  * week 5), THEN apply the hire-year Wartezeit/pro-rata decision ({@link hireYearVacationDays},
  * Issue #435) — unchanged for every year other than the employee's hire year.
  *
- * Issue #435 will add the § 19 JArbSchG / § 3 BUrlG statutory-minimum floor HERE, and the
- * per-person base value in `resolveVacationBaseDays` (leave-days.ts) — this extraction exists so
- * that change has exactly one place to land.
+ * Issue #435 (D-09) adds the § 19 JArbSchG / § 3 BUrlG statutory-minimum floor HERE, via
+ * {@link statutoryMinimumVacationDays}: `scaled = max(calculatePartTimeVacation(base),
+ * statutoryMinimumVacationDays(birthDate, year, workDays))`, applied BEFORE the hire-year
+ * Wartezeit/pro-rata decision ({@link hireYearVacationDays}) — the floor binds on the full-year
+ * value, and the already-floored amount is what a late hire gets prorated from. The not-employed
+ * guard (`baseDays` 0, `loadRegularVacationInputs`' signal for an exited or not-yet-hired year)
+ * runs FIRST and short-circuits to `0` — the floor must never invent an entitlement for a year the
+ * employee wasn't employed in.
+ *
+ * `birthDate` is optional here only until Issue #435 Plan 02 Task 2 makes it required once every
+ * in-src caller threads it through (`leave-days.ts`'s `loadRegularVacationInputs`,
+ * `facade/entitlements.ts`'s `ensureVacationEntitlementForYear`).
  */
 export function computeRegularVacationDays(input: {
   year: number;
   hireDate: Date;
+  birthDate?: Date | null;
   workDaysPerWeek: number;
   baseDays: number;
 }): number {
-  const { year, hireDate, workDaysPerWeek, baseDays } = input;
+  const { year, hireDate, birthDate, workDaysPerWeek, baseDays } = input;
+  // Issue #435 (D-09 guard): baseDays 0 is loadRegularVacationInputs' "not employed in this year"
+  // signal (exited before, or hired after, the queried year) — the floor must not invent an
+  // entitlement where none is owed. Pinned by the existing "exited employee -> 0" / "hired after
+  // the queried year -> 0" tests.
+  if (!(baseDays > 0)) return 0;
   const referenceSchedule: ScheduleForCalc = {
     mondayHours: 0,
     tuesdayHours: 0,
@@ -543,7 +615,11 @@ export function computeRegularVacationDays(input: {
     contractWorkDaysPerWeek: workDaysPerWeek,
   };
   const scaledBase = calculatePartTimeVacation(referenceSchedule, 5, baseDays);
-  return hireYearVacationDays(scaledBase, year, hireDate);
+  const floored = Math.max(
+    scaledBase,
+    statutoryMinimumVacationDays(birthDate ?? null, year, workDaysPerWeek),
+  );
+  return hireYearVacationDays(floored, year, hireDate);
 }
 
 /** One ISO week's leave-day contribution (Issue #429, D-01): the week's Monday (UTC

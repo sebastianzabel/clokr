@@ -9,6 +9,7 @@ import {
   countShiftBasedLeaveDays,
   mondayOfWeekUtc,
   leaveDaysPerWeek,
+  statutoryMinimumVacationDays,
 } from "../vacation-calc";
 // Phase 107 — single shared tenant-TZ date helper (issue #34); avoids hardcoded calendar
 // dates that expire (see project history in CLAUDE.md / docs/testing.md).
@@ -109,6 +110,60 @@ describe("calculateStatutoryMinimum", () => {
   });
   it("returns 16 for 4-day week", () => {
     expect(calculateStatutoryMinimum(4)).toBe(16);
+  });
+});
+
+describe("statutoryMinimumVacationDays (Issue #435, D-07/D-08)", () => {
+  const YEAR = 2027;
+
+  it.each([
+    // [label, birthDate, days, expected]
+    ["age 14 (< 16, 30 Werktage), 4-day", new Date(Date.UTC(2012, 5, 15)), 4, 20],
+    ["age 14 (< 16, 30 Werktage), 5-day", new Date(Date.UTC(2012, 5, 15)), 5, 25],
+    ["age 14 (< 16, 30 Werktage), 6-day", new Date(Date.UTC(2012, 5, 15)), 6, 30],
+    ["age 16 (< 17, 27 Werktage), 4-day", new Date(Date.UTC(2010, 5, 15)), 4, 18],
+    ["age 16 (< 17, 27 Werktage), 5-day", new Date(Date.UTC(2010, 5, 15)), 5, 22.5],
+    ["age 16 (< 17, 27 Werktage), 6-day", new Date(Date.UTC(2010, 5, 15)), 6, 27],
+    ["age 17 (< 18, 25 Werktage), 4-day", new Date(Date.UTC(2009, 5, 15)), 4, 16.67],
+    ["age 17 (< 18, 25 Werktage), 5-day", new Date(Date.UTC(2009, 5, 15)), 5, 20.83],
+    ["age 17 (< 18, 25 Werktage), 6-day", new Date(Date.UTC(2009, 5, 15)), 6, 25],
+    ["age 26 (adult, § 3 BUrlG 24 Werktage), 4-day", new Date(Date.UTC(2000, 5, 15)), 4, 16],
+    ["age 26 (adult, § 3 BUrlG 24 Werktage), 5-day", new Date(Date.UTC(2000, 5, 15)), 5, 20],
+    ["age 26 (adult, § 3 BUrlG 24 Werktage), 6-day", new Date(Date.UTC(2000, 5, 15)), 6, 24],
+    ["birthDate null (fail-open adult), 4-day", null, 4, 16],
+    ["birthDate null (fail-open adult), 5-day", null, 5, 20],
+    ["birthDate null (fail-open adult), 6-day", null, 6, 24],
+  ])("%s -> %d", (_label, birthDate, days, expected) => {
+    expect(statutoryMinimumVacationDays(birthDate, YEAR, days)).toBe(expected);
+  });
+
+  it("§ 187 Abs. 2 S. 2 BGB boundary: born 01.01. is already the new age on 1 January", () => {
+    // Born 2011-01-01 -> already 16 on 1.1.2027 -> age<17 band (27 Werktage), 5-day = 22.5
+    expect(statutoryMinimumVacationDays(new Date(Date.UTC(2011, 0, 1)), YEAR, 5)).toBe(22.5);
+  });
+
+  it("§ 187 Abs. 2 S. 2 BGB boundary: born 02.01. is still the old age on 1 January", () => {
+    // Born 2011-01-02 -> still 15 on 1.1.2027 -> age<16 band (30 Werktage), 5-day = 25
+    expect(statutoryMinimumVacationDays(new Date(Date.UTC(2011, 0, 2)), YEAR, 5)).toBe(25);
+  });
+
+  it("turning 18 during the year drops to the BUrlG band only in the FOLLOWING year", () => {
+    // Born 2009-03-10: age 17 at 1.1.2027 (< 18 -> 25 Werktage), age 18 at 1.1.2028 (-> 24 Werktage)
+    const birthDate = new Date(Date.UTC(2009, 2, 10));
+    expect(statutoryMinimumVacationDays(birthDate, 2027, 5)).toBe(20.83);
+    expect(statutoryMinimumVacationDays(birthDate, 2028, 5)).toBe(20);
+  });
+
+  it("agrees with calculateStatutoryMinimum for the adult/§3 BUrlG case", () => {
+    for (const d of [4, 5, 6]) {
+      expect(statutoryMinimumVacationDays(null, YEAR, d)).toBe(calculateStatutoryMinimum(d));
+    }
+  });
+
+  it("0 / NaN / negative days -> 0", () => {
+    expect(statutoryMinimumVacationDays(null, YEAR, 0)).toBe(0);
+    expect(statutoryMinimumVacationDays(null, YEAR, NaN)).toBe(0);
+    expect(statutoryMinimumVacationDays(null, YEAR, -1)).toBe(0);
   });
 });
 
