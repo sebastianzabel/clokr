@@ -90,8 +90,9 @@
   // from "the admin typed something", so a later classification/birth-date change only re-fills
   // while the field still holds the form's own suggestion (never overwrites a typed value).
   let cVacationPrefill = $state<number | null>(null);
+  // Without a birth date the adult minimum (§ 3 BUrlG) still applies — never "no minimum".
   let cBirthMinimum = $derived(
-    cBirthDate ? statutoryMinimumFiveDayWeek(cBirthDate, Number(cHireDate.slice(0, 4))) : null,
+    statutoryMinimumFiveDayWeek(cBirthDate || null, Number(cHireDate.slice(0, 4))),
   );
 
   // ── Personalstruktur override badges (Phase 41 DD-03) ────────────────────
@@ -104,11 +105,12 @@
   );
 
   // Issue #435 (D-01/D-11) — proposes the apprentice or regular tenant default, raised to the
-  // legal minimum when a birth date is known; never overwrites a value the admin typed.
+  // legal minimum (§ 19 JArbSchG with a birth date, else § 3 BUrlG); never overwrites a value
+  // the admin typed.
   function refreshVacationPrefill() {
     const base =
       cClassification === "AZUBI" ? tenantDefaultApprenticeVacationDays : tenantDefaultVacationDays;
-    const next = base === null ? null : cBirthDate ? Math.max(base, cBirthMinimum!.days) : base;
+    const next = base === null ? null : Math.max(base, cBirthMinimum.days);
     if (cAnnualVacationDays === null || cAnnualVacationDays === cVacationPrefill) {
       cAnnualVacationDays = next;
     }

@@ -616,7 +616,8 @@
   // Issue #435 (D-13 hint) — below the statutory minimum for the CURRENT year (display-only;
   // the server's PUT/PATCH guards, plan 03, are authoritative).
   let eAnnualVacationMinimum = $derived(
-    eBirthDate ? statutoryMinimumFiveDayWeek(eBirthDate, new Date().getFullYear()) : null,
+    // Without a birth date the adult minimum (§ 3 BUrlG) still applies — never "no minimum".
+    statutoryMinimumFiveDayWeek(eBirthDate || null, new Date().getFullYear()),
   );
 
   function initFields() {
