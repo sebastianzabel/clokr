@@ -518,11 +518,14 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
       },
     });
 
-    const res = await putVacation(employeeId, { year, totalDays: 10 });
+    // Issue #435 (D-10): totalDays must be at/above the statutory minimum (20 for an adult,
+    // 5-day week) — this test is about the deadline, not the number, so it uses the smallest
+    // legal value.
+    const res = await putVacation(employeeId, { year, totalDays: 20 });
     expect(res.statusCode, `PUT must succeed: ${res.body}`).toBe(200);
     const body = res.json() as { carryOverDeadline: string | null; totalDays: number };
     expect(new Date(body.carryOverDeadline!).getTime()).toBe(protectedDeadline.getTime());
-    expect(body.totalDays).toBe(10);
+    expect(body.totalDays).toBe(20);
 
     const db = await app.prisma.leaveEntitlement.findUnique({
       where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId: vacationTypeId, year } },
@@ -547,7 +550,8 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
     });
 
     // Mirrors what the admin form actually sends when the date input is left empty.
-    const res = await putVacation(employeeId, { year, totalDays: 10, carryOverDeadline: null });
+    // Issue #435 (D-10): totalDays must be at/above the statutory minimum (20).
+    const res = await putVacation(employeeId, { year, totalDays: 20, carryOverDeadline: null });
     expect(res.statusCode, `PUT must succeed: ${res.body}`).toBe(200);
 
     const db = await app.prisma.leaveEntitlement.findUnique({
@@ -572,9 +576,10 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
     });
     const correctedDeadline = "2028-01-15";
 
+    // Issue #435 (D-10): totalDays must be at/above the statutory minimum (20).
     const res = await putVacation(employeeId, {
       year,
-      totalDays: 10,
+      totalDays: 20,
       carryOverDeadline: correctedDeadline,
     });
     expect(res.statusCode, `PUT must succeed: ${res.body}`).toBe(200);
@@ -610,7 +615,8 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
       },
     });
 
-    const res = await putVacation(employeeId, { year, totalDays: 10 });
+    // Issue #435 (D-10): totalDays must be at/above the statutory minimum (20).
+    const res = await putVacation(employeeId, { year, totalDays: 20 });
     expect(res.statusCode, `PUT must succeed: ${res.body}`).toBe(200);
 
     const db = await app.prisma.leaveEntitlement.findUnique({
@@ -642,7 +648,8 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
         carryOverDeadline: protectedDeadline,
       },
     });
-    const resIllness = await putVacation(illnessEmployeeId, { year, totalDays: 10 });
+    // Issue #435 (D-10): totalDays must be at/above the statutory minimum (20).
+    const resIllness = await putVacation(illnessEmployeeId, { year, totalDays: 20 });
     expect(resIllness.statusCode).toBe(200);
     const dbIllness = await app.prisma.leaveEntitlement.findUnique({
       where: {
@@ -668,7 +675,8 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
         carryOverDeadline: null,
       },
     });
-    const resNormal = await putVacation(normalEmployeeId, { year, totalDays: 10 });
+    // Issue #435 (D-10): totalDays must be at/above the statutory minimum (20).
+    const resNormal = await putVacation(normalEmployeeId, { year, totalDays: 20 });
     expect(resNormal.statusCode).toBe(200);
     const dbNormal = await app.prisma.leaveEntitlement.findUnique({
       where: {

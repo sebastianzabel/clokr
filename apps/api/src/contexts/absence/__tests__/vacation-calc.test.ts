@@ -10,6 +10,8 @@ import {
   mondayOfWeekUtc,
   leaveDaysPerWeek,
   statutoryMinimumVacationDays,
+  statutoryMinimumVacationThreshold,
+  statutoryMinimumViolationMessage,
 } from "../vacation-calc";
 // Phase 107 — single shared tenant-TZ date helper (issue #34); avoids hardcoded calendar
 // dates that expire (see project history in CLAUDE.md / docs/testing.md).
@@ -164,6 +166,119 @@ describe("statutoryMinimumVacationDays (Issue #435, D-07/D-08)", () => {
     expect(statutoryMinimumVacationDays(null, YEAR, 0)).toBe(0);
     expect(statutoryMinimumVacationDays(null, YEAR, NaN)).toBe(0);
     expect(statutoryMinimumVacationDays(null, YEAR, -1)).toBe(0);
+  });
+});
+
+describe("statutoryMinimumVacationThreshold (Issue #435, D-10)", () => {
+  const adult = null;
+  it("adult, 5 days, hired 2024 -> 2027: 20 (unchanged across the hire-adjacent years)", () => {
+    expect(
+      statutoryMinimumVacationThreshold({
+        birthDate: adult,
+        year: 2027,
+        workDaysPerWeek: 5,
+        hireDate: new Date(Date.UTC(2024, 0, 1)),
+        exitDate: null,
+      }),
+    ).toBe(20);
+  });
+
+  it("hired 2027-06-01 (on/before 1 July -> Wartezeit fulfilled, no pro-rata): 20", () => {
+    expect(
+      statutoryMinimumVacationThreshold({
+        birthDate: adult,
+        year: 2027,
+        workDaysPerWeek: 5,
+        hireDate: new Date(Date.UTC(2027, 5, 1)),
+        exitDate: null,
+      }),
+    ).toBe(20);
+  });
+
+  it("hired 2027-10-01 (after 1 July -> hire-year pro-rata, 3/12): 5", () => {
+    expect(
+      statutoryMinimumVacationThreshold({
+        birthDate: adult,
+        year: 2027,
+        workDaysPerWeek: 5,
+        hireDate: new Date(Date.UTC(2027, 9, 1)),
+        exitDate: null,
+      }),
+    ).toBe(5);
+  });
+
+  it("hired 2028-03-01, queried for 2027 (not yet employed): 0", () => {
+    expect(
+      statutoryMinimumVacationThreshold({
+        birthDate: adult,
+        year: 2027,
+        workDaysPerWeek: 5,
+        hireDate: new Date(Date.UTC(2028, 2, 1)),
+        exitDate: null,
+      }),
+    ).toBe(0);
+  });
+
+  it("exited 2026-06-30, queried for 2027 (not employed that year): 0", () => {
+    expect(
+      statutoryMinimumVacationThreshold({
+        birthDate: adult,
+        year: 2027,
+        workDaysPerWeek: 5,
+        hireDate: new Date(Date.UTC(2020, 0, 1)),
+        exitDate: new Date(Date.UTC(2026, 5, 30)),
+      }),
+    ).toBe(0);
+  });
+
+  it("exit happens INSIDE the queried year: no exit pro-rata in the threshold (D-10)", () => {
+    expect(
+      statutoryMinimumVacationThreshold({
+        birthDate: adult,
+        year: 2027,
+        workDaysPerWeek: 5,
+        hireDate: new Date(Date.UTC(2020, 0, 1)),
+        exitDate: new Date(Date.UTC(2027, 5, 30)),
+      }),
+    ).toBe(20);
+  });
+
+  it("minor born 2012-06-15, 5 days, hired 2024, year 2027: 25", () => {
+    expect(
+      statutoryMinimumVacationThreshold({
+        birthDate: new Date(Date.UTC(2012, 5, 15)),
+        year: 2027,
+        workDaysPerWeek: 5,
+        hireDate: new Date(Date.UTC(2024, 0, 1)),
+        exitDate: null,
+      }),
+    ).toBe(25);
+  });
+});
+
+describe("statutoryMinimumViolationMessage (Issue #435, D-10/D-11)", () => {
+  it("minor (age < 18 on 1 Jan of year) -> § 19 JArbSchG, German-formatted number", () => {
+    const msg = statutoryMinimumViolationMessage(20.83, new Date(Date.UTC(2009, 5, 15)), 2027);
+    expect(msg).toContain("20,83 Tagen");
+    expect(msg).toContain("§ 19 JArbSchG");
+    expect(msg).not.toContain("2009"); // never the birth year (T-435-16)
+  });
+
+  it("birthDate null (adult) -> § 3 BUrlG, whole number has no trailing comma", () => {
+    const msg = statutoryMinimumViolationMessage(20, null, 2027);
+    expect(msg).toContain("20 Tagen");
+    expect(msg).toContain("§ 3 BUrlG");
+  });
+
+  it("half-day fraction formats with a single decimal (22,5, not 22,50)", () => {
+    const msg = statutoryMinimumViolationMessage(22.5, new Date(Date.UTC(2010, 5, 15)), 2027);
+    expect(msg).toContain("22,5 Tagen");
+  });
+
+  it("an adult birthDate (age >= 18 on 1 Jan of year) -> § 3 BUrlG, not § 19 JArbSchG", () => {
+    const msg = statutoryMinimumViolationMessage(20, new Date(Date.UTC(2000, 5, 15)), 2027);
+    expect(msg).toContain("§ 3 BUrlG");
+    expect(msg).not.toContain("§ 19 JArbSchG");
   });
 });
 

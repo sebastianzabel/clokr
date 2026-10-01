@@ -572,6 +572,65 @@ export function statutoryMinimumVacationDays(
 }
 
 /**
+ * Issue #435 (D-10) — the statutory-minimum THRESHOLD a `PUT /settings/vacation/:employeeId`
+ * write (or the `GET` suggestion, D-14) must not undercut, for one employee/year. This is the
+ * SAME hire-year Wartezeit decision {@link computeRegularVacationDays} applies to the regular
+ * entitlement — {@link hireYearVacationDays} — applied to the statutory minimum instead of the
+ * person/tenant base value, so the threshold a late hire owes is pro-rated exactly like their
+ * regular entitlement would be. One shared helper, not a second hire-year formula.
+ *
+ * Not-employed-in-`year` short-circuits to `0` (mirrors {@link computeRegularVacationDays}'s own
+ * `baseDays` guard) — the floor must never invent an entitlement for a year the employee wasn't
+ * employed in. Employed-in-`year` test: `hireDate.getUTCFullYear() <= year` AND, if the employee
+ * has since exited, `exitDate.getUTCFullYear() >= year` — the same UTC calendar-year comparison
+ * `loadRegularVacationInputs` (`leave-days.ts`) already uses. Exit-year: deliberately NO
+ * pro-rata in the threshold either (mirrors the regular computation, D-10) — an exit mid-year
+ * still owes the full (hire-year-adjusted) threshold for that year.
+ *
+ * @returns the statutory-minimum threshold at 2-decimal precision; `0` when not employed in `year`
+ */
+export function statutoryMinimumVacationThreshold(input: {
+  birthDate: Date | null;
+  year: number;
+  workDaysPerWeek: number;
+  hireDate: Date;
+  exitDate: Date | null;
+}): number {
+  const { birthDate, year, workDaysPerWeek, hireDate, exitDate } = input;
+  const notEmployedInYear =
+    hireDate.getUTCFullYear() > year || (exitDate !== null && exitDate.getUTCFullYear() < year);
+  if (notEmployedInYear) return 0;
+  return hireYearVacationDays(
+    statutoryMinimumVacationDays(birthDate, year, workDaysPerWeek),
+    year,
+    hireDate,
+  );
+}
+
+/**
+ * Issue #435 (D-10/D-11) — the ONE German error message naming the statutory-minimum violation:
+ * the computed minimum (German number format, e.g. "20,83") and the applicable law — § 19
+ * JArbSchG when `birthDate` is known and the employee is still a minor (age < 18) on 1 January of
+ * `year`, else § 3 BUrlG. Deliberately NEVER includes the birth date itself (T-435-16,
+ * Information Disclosure) — mirrors `jarbschg.ts`'s own documented invariant of never returning
+ * the birth date to a caller.
+ *
+ * @param minimumDays - the computed statutory-minimum number to report (not re-derived here)
+ * @param birthDate - the employee's birth date, or `null` (never reflected in the message itself)
+ * @param year - the calendar year the minimum was computed for (used only for the age gate)
+ */
+export function statutoryMinimumViolationMessage(
+  minimumDays: number,
+  birthDate: Date | null,
+  year: number,
+): string {
+  const isMinor = birthDate !== null && ageAtDate(birthDate, new Date(Date.UTC(year, 0, 1))) < 18;
+  const law = isMinor ? "§ 19 JArbSchG" : "§ 3 BUrlG";
+  const formatted = minimumDays.toLocaleString("de-DE", { maximumFractionDigits: 2 });
+  return `Der Urlaubsanspruch unterschreitet den gesetzlichen Mindesturlaub von ${formatted} Tagen (${law}).`;
+}
+
+/**
  * The ONE regular-entitlement computation for a VACATION `LeaveEntitlement` row (Issue #445,
  * D-01). Moved verbatim from `facade/entitlements.ts`'s `ensureVacationEntitlementForYear`
  * (Issue #416): scale by contractual workdays FIRST ({@link calculatePartTimeVacation}, reference

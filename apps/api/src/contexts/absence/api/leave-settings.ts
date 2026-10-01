@@ -30,7 +30,13 @@ import {
   ensureRegularVacationEntitlement, // Issue #445 (D-05, P-07) — zero-placeholder heal
   REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
   resolveVacationBaseDays, // Issue #435 (D-06) — person value ?? tenant default ?? 30
+  resolveRegularVacationDays, // Issue #435 (D-14) — the GET suggestion value, never a client formula
+  daysDiffer, // Issue #435 (D-10) — 2-decimal-precision "did totalDays actually change" test
 } from "../leave-days";
+import {
+  statutoryMinimumVacationThreshold, // Issue #435 (D-10/D-14) — the ONE hire-year-adjusted floor
+  statutoryMinimumViolationMessage, // Issue #435 (D-10) — the ONE German 400 message builder
+} from "../vacation-calc";
 
 const vacationEntitlementSchema = z.object({
   year: z.number().int().min(2000).max(2100),
@@ -110,6 +116,28 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
       const { leaveTypeId } = result;
       let entitlement = result.entitlement;
 
+      // Issue #435 (D-14): the Urlaub tab's suggestion values, computed server-side ONCE — never
+      // a client-side formula. Hoisted here (before the #416 heal block below) so the heal branch
+      // reuses this SAME workDaysPerWeek instead of resolving it a second time.
+      const workDaysPerWeek = await resolveContractWorkDaysPerWeek(
+        app.prisma,
+        employeeId,
+        employee.tenantId,
+      );
+      const regularDays = await resolveRegularVacationDays(
+        app.prisma,
+        employeeId,
+        employee.tenantId,
+        year,
+      );
+      const statutoryMinimumDays = statutoryMinimumVacationThreshold({
+        birthDate: employee.birthDate,
+        year,
+        workDaysPerWeek,
+        hireDate: employee.hireDate,
+        exitDate: employee.exitDate,
+      });
+
       // Issue #416, CONTEXT.md decision 6 ("first access"): an active employee's row for the
       // CURRENT year that no code path ever created (either a genuinely new hire whose
       // POST /employees predates this phase, or a year-rollover — "Jahreswechsel") is healed
@@ -118,11 +146,6 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
       // side effect) and NEVER for an inactive employee (`exitDate` set).
       const currentYear = new Date().getFullYear();
       if (!entitlement && employee.exitDate === null && year === currentYear) {
-        const workDaysPerWeek = await resolveContractWorkDaysPerWeek(
-          app.prisma,
-          employeeId,
-          employee.tenantId,
-        );
         // Issue #435 (D-06): the ONE base-value resolution — person value ?? tenant default ?? 30
         // — replaces the previous direct TenantConfig.defaultVacationDays read.
         const baseDays = await resolveVacationBaseDays(app.prisma, employeeId, employee.tenantId);
@@ -151,6 +174,8 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
             usedDays: Number(healed.entitlement.usedDays),
             carriedOverDays: Number(healed.entitlement.carriedOverDays),
             carryOverDeadline: healed.entitlement.carryOverDeadline ?? null,
+            regularDays, // Issue #435 (D-14)
+            statutoryMinimumDays, // Issue #435 (D-14)
           };
         }
       }
@@ -179,6 +204,8 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
         usedDays: entitlement ? Number(entitlement.usedDays) : 0,
         carriedOverDays: entitlement ? Number(entitlement.carriedOverDays) : 0,
         carryOverDeadline: entitlement?.carryOverDeadline ?? null,
+        regularDays, // Issue #435 (D-14)
+        statutoryMinimumDays, // Issue #435 (D-14)
       };
     },
   });
@@ -263,6 +290,38 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
       // for this employee+year (no code path created it automatically before this phase) — the
       // audit action must say so instead of always claiming "UPDATE".
       const existedBefore = Boolean(existing);
+
+      // Issue #435 (D-10): a totalDays write below the statutory minimum is rejected before any
+      // other validation or write. An UNCHANGED totalDays on a legacy row (e.g. only
+      // carryOverDeadline/carriedOverDays edited) stays editable — otherwise Bestand rows below
+      // the minimum would become uneditable; correcting those rows is the follow-up
+      // "Prüfbericht" ticket (CONTEXT.md, out of scope here).
+      const workDaysPerWeek = await resolveContractWorkDaysPerWeek(
+        app.prisma,
+        employeeId,
+        employee.tenantId,
+      );
+      const statutoryThreshold = statutoryMinimumVacationThreshold({
+        birthDate: employee.birthDate,
+        year: body.year,
+        workDaysPerWeek,
+        hireDate: employee.hireDate,
+        exitDate: employee.exitDate,
+      });
+      const totalDaysChanged = !existing || daysDiffer(Number(existing.totalDays), body.totalDays);
+      if (
+        totalDaysChanged &&
+        Math.round(body.totalDays * 100) < Math.round(statutoryThreshold * 100)
+      ) {
+        return reply.code(400).send({
+          error: statutoryMinimumViolationMessage(
+            statutoryThreshold,
+            employee.birthDate,
+            body.year,
+          ),
+        });
+      }
+
       const existingProtected = preserveCarryOverDeadline(existing);
       const requestedDeadline = body.carryOverDeadline ? new Date(body.carryOverDeadline) : null;
 
