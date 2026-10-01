@@ -71,12 +71,26 @@ export function cssForViewport(css: string, viewportPx: number): string {
 }
 
 // ── The page's own <style> block ─────────────────────────────────────────────
-/** Extracts the last `<style>` … `</style>` block from a page's source text. Throws when the
- *  block is absent or inverted (fail-closed, same discipline as `mediaMatches`). */
+/** Extracts the `<style>` … `</style>` block from a page's source text, anchored to tags that
+ *  start a LINE — never a bare substring search. (Issue #442: `apps/web/src/routes/(app)/
+ *  reports/+page.svelte` has a CSS COMMENT whose text contains the literal `<style>` tag; a
+ *  naive `lastIndexOf("<style>")` picked that up instead of the real opening tag, silently
+ *  returning only the tail of the block and dropping every rule above the comment — including
+ *  `.row-actions`. A real Svelte `<style>` element is always written at column 0, so anchoring
+ *  the search to line start closes the trap.) Fails closed, same discipline as `mediaMatches`:
+ *  throws when there is no line-anchored opening tag, when there is more than one (ambiguous —
+ *  this module cannot guess which is the real one), or when no closing tag follows it. */
 export function styleBlockOf(source: string): string {
-  const open = source.lastIndexOf("<style>");
-  const close = source.lastIndexOf("</style>");
-  if (open === -1 || close <= open) throw new Error("no <style> block found in the page");
+  const openMatches = [...source.matchAll(/^<style>$/gm)];
+  if (openMatches.length === 0) throw new Error("no <style> block found in the page");
+  if (openMatches.length > 1) {
+    throw new Error("ambiguous: more than one line-anchored <style> tag found in the page");
+  }
+  const open = openMatches[0].index as number;
+  const closeMatches = [...source.matchAll(/^<\/style>$/gm)];
+  if (closeMatches.length === 0) throw new Error("no </style> closing tag found in the page");
+  const close = closeMatches[closeMatches.length - 1].index as number;
+  if (close <= open) throw new Error("</style> does not follow <style> in the page");
   return source.slice(open + "<style>".length, close);
 }
 
