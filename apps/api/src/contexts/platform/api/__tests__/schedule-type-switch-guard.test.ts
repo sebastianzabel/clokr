@@ -19,6 +19,7 @@ import {
   closeTestApp,
   seedTestData,
   cleanupTestData,
+  reissueTokenNow,
 } from "../../../../__tests__/setup";
 import { monthStartUtc } from "../../../../__tests__/test-dates";
 import { MODEL_SWITCH_SAME_MONTH_ERROR } from "../../month-first-date";
@@ -333,6 +334,12 @@ describe("Schedule type-switch guard (Phase 76.24-01)", () => {
         toFake: ["Date"],
       });
       try {
+        // Issue #434: `data.adminToken` was minted under the REAL clock in `beforeAll`, with a
+        // 15-minute `JWT_EXPIRES_IN`. The fake "now" above can land 10+ days ahead of that real
+        // issuance (early in a calendar month), which reads as an already-expired token and 401s.
+        // Re-issue it at the now-active faked "now" so its `iat`/`exp` are anchored correctly.
+        const adminTokenNow = reissueTokenNow(app, data.adminToken);
+
         const thisMonthFirst = monthStartUtc(0);
         // A month-1st strictly after thisMonthFirst so it sorts as most-recent
         const laterMonthFirst = new Date(
@@ -406,7 +413,7 @@ describe("Schedule type-switch guard (Phase 76.24-01)", () => {
         const res = await app.inject({
           method: "PUT",
           url: "/api/v1/settings/work",
-          headers: { authorization: `Bearer ${data.adminToken}` },
+          headers: { authorization: `Bearer ${adminTokenNow}` },
           payload: {
             applyToExisting: true,
             defaultWeeklyHours: 40,
@@ -459,6 +466,12 @@ describe("Schedule type-switch guard (Phase 76.24-01)", () => {
         toFake: ["Date"],
       });
       try {
+        // Issue #434: `data.adminToken` was minted under the REAL clock in `beforeAll`, with a
+        // 15-minute `JWT_EXPIRES_IN`. The fake "now" above can land 10+ days ahead of that real
+        // issuance (early in a calendar month), which reads as an already-expired token and 401s.
+        // Re-issue it at the now-active faked "now" so its `iat`/`exp` are anchored correctly.
+        const adminTokenNow = reissueTokenNow(app, data.adminToken);
+
         const thisMonthFirst = monthStartUtc(0);
 
         // Clean up any rows at or after thisMonthFirst (left from the collision test above)
@@ -479,7 +492,7 @@ describe("Schedule type-switch guard (Phase 76.24-01)", () => {
         const res = await app.inject({
           method: "PUT",
           url: "/api/v1/settings/work",
-          headers: { authorization: `Bearer ${data.adminToken}` },
+          headers: { authorization: `Bearer ${adminTokenNow}` },
           payload: {
             applyToExisting: true,
             defaultWeeklyHours: 38,

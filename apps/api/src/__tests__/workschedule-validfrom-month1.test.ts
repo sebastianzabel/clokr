@@ -16,7 +16,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, reissueTokenNow } from "./setup";
 import { monthStartUtc } from "./test-dates";
 import { MONTH_FIRST_ERROR } from "../contexts/platform/month-first-date";
 import type { FastifyInstance } from "fastify";
@@ -195,6 +195,12 @@ describe("WorkSchedule.validFrom month-1st enforcement (Phase 60, #220)", () => 
         toFake: ["Date"],
       });
       try {
+        // Issue #434: `data.adminToken` was minted under the REAL clock in `beforeAll`, with a
+        // 15-minute `JWT_EXPIRES_IN`. The fake "now" above can land 10+ days ahead of that real
+        // issuance (early in a calendar month), which reads as an already-expired token and 401s.
+        // Re-issue it at the now-active faked "now" so its `iat`/`exp` are anchored correctly.
+        const adminTokenNow = reissueTokenNow(app, data.adminToken);
+
         const captured = new Date();
         const expectedYear = captured.getUTCFullYear();
         const expectedMonth = captured.getUTCMonth(); // 0-indexed
@@ -202,7 +208,7 @@ describe("WorkSchedule.validFrom month-1st enforcement (Phase 60, #220)", () => 
         const res = await app.inject({
           method: "PUT",
           url: "/api/v1/settings/work",
-          headers: { authorization: `Bearer ${data.adminToken}` },
+          headers: { authorization: `Bearer ${adminTokenNow}` },
           payload: {
             applyToExisting: true,
             defaultWeeklyHours: 38,
