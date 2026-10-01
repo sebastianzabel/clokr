@@ -158,6 +158,7 @@
  */
 import type { LeaveRequestStatus, LeaveTypeCode, Prisma } from "@clokr/db";
 import { type EmployeeScope, employeeScopeWhere } from "../../platform";
+import { EFFECTIVE_LEAVE_STATUSES } from "../effective-leave-statuses"; // Issue #446 (D-01/D-02)
 
 // ── A1 — the Soll-reduction set: status: "APPROVED" only ─────────────────────────────────────────
 
@@ -223,27 +224,43 @@ export async function getApprovedLeaveOverlapping(
 // ── A2 — today's presence / roster-Soll set: APPROVED + CANCELLATION_REQUESTED ───────────────────
 
 export interface ActiveLeaveOverlap {
+  id: string;
   employeeId: string;
+  leaveTypeId: string;
   startDate: Date;
   endDate: Date;
   halfDay: boolean;
   status: LeaveRequestStatus;
-  leaveType: { name: string };
+  attestPresent: boolean;
+  attestValidFrom: Date | null;
+  attestValidTo: Date | null;
+  leaveType: { name: string; code: LeaveTypeCode | null };
 }
 
 /**
- * A2 — every `LeaveRequest` with `status in [APPROVED, CANCELLATION_REQUESTED]` overlapping
- * `[from, to]` for the given {@link EmployeeScope}, soft-delete-filtered. Per CLAUDE.md § Leave
- * Cancellation Flow step 2: a leave under `CANCELLATION_REQUESTED` remains ACTIVE — still blocks
- * clock-in, still reduces roster Soll — until the cancellation itself is approved. See this
- * module's own header for why this must never merge with A1 (drops the cancellation-pending case,
- * reversing § 8 BUrlG) or A3 (adds PENDING, which must never reduce Soll).
+ * A2 — every `LeaveRequest` with `status in EFFECTIVE_LEAVE_STATUSES` ([`APPROVED`,
+ * `CANCELLATION_REQUESTED`], Issue #446 D-01) overlapping `[from, to]` for the given
+ * {@link EmployeeScope}, soft-delete-filtered. Per CLAUDE.md § Leave Cancellation Flow step 2: a
+ * leave under `CANCELLATION_REQUESTED` remains ACTIVE — still blocks clock-in, still reduces
+ * roster Soll — until the cancellation itself is approved. See this module's own header for why
+ * this must never merge with A1 (drops the cancellation-pending case, reversing § 8 BUrlG) or A3
+ * (adds PENDING, which must never reduce Soll).
+ *
+ * THE read of "leave that counts" (Issue #446 D-02): Soll reduction (saldo, Monatsabschluss,
+ * snapshot recalc, the auto-close cron, the gap check) AND today's presence/roster — because
+ * CLAUDE.md says a `CANCELLATION_REQUESTED` leave still counts for saldo, not only for roster
+ * display. Its `select` is the superset every caller needs, including the Karenz-overrun
+ * detector's fields (`attestPresent`/`attestValidFrom`/`attestValidTo`/`leaveType.code`) that
+ * `getApprovedLeaveOverlapping` (A1) used to carry — A1 is being retired by Issue #446; do not add
+ * a new caller to it.
  *
  * Sites: `composition/dashboard.ts`'s today's-presence bulk fetch,
- * `contexts/scheduling/api/shifts.ts`'s `/shifts/week` Soll-Korrelation row. Guarded by
- * `apps/api/src/__tests__/shift-week-leave-absence-minutes.test.ts`'s case E (plan 02) and
- * `contexts/absence/__tests__/leave-check.test.ts` — run immediately after this function's two
- * call sites are rewired (R4, T-100B-59).
+ * `contexts/scheduling/api/shifts.ts`'s `/shifts/week` Soll-Korrelation row, plus — since Issue
+ * #446 — every Arbeitszeitkonto saldo input (`working-time-account/{month-saldo,overtime-balance,
+ * close-month-data,recalculate-snapshots,plugins/auto-close-month,month-gap-check,api/overtime}.ts`).
+ * Guarded by `apps/api/src/__tests__/shift-week-leave-absence-minutes.test.ts`'s case E (plan 02),
+ * `contexts/absence/__tests__/leave-check.test.ts` and `leave-cancellation-saldo.test.ts` (Issue
+ * #446, D-11).
  */
 export async function getActiveLeaveOverlapping(
   db: Prisma.TransactionClient,
@@ -254,18 +271,23 @@ export async function getActiveLeaveOverlapping(
   return db.leaveRequest.findMany({
     where: {
       ...employeeScopeWhere(scope),
-      status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
+      status: { in: [...EFFECTIVE_LEAVE_STATUSES] },
       deletedAt: null,
       startDate: { lte: to },
       endDate: { gte: from },
     },
     select: {
+      id: true,
       employeeId: true,
+      leaveTypeId: true,
       startDate: true,
       endDate: true,
       halfDay: true,
       status: true,
-      leaveType: { select: { name: true } },
+      attestPresent: true,
+      attestValidFrom: true,
+      attestValidTo: true,
+      leaveType: { select: { name: true, code: true } },
     },
   });
 }

@@ -55,6 +55,8 @@
  * true for this function too — no second import path to the same function survives in the tree.
  */
 export { hasApprovedLeaveOnDate } from "./leave-check";
+export { EFFECTIVE_LEAVE_STATUSES } from "./effective-leave-statuses"; // Issue #446 (D-01)
+export type { EffectiveLeaveStatus } from "./effective-leave-statuses";
 
 // ── LeaveRequest (plan 13, A1-A3/A7-A10/A9 + shift-protection + 3 compliance — closing model) ──
 export {
