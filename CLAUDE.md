@@ -279,7 +279,7 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
 
 ## Overtime Saldo Calculation (current)
 
-`Saldo = Worked − Expected` over (hire-date or month-start) → (today or yesterday). Leave/holidays/absences reduce expected, clamped to effective range. Recalculated per GET /overtime/:employeeId. Will be replaced by snapshot-based calc (see Saldo Calculation & Monatsabschluss above).
+`Saldo = Worked − Expected` over (hire-date or month-start) → yesterday. The live saldo never includes today, not even a clocked-out today: a clock-out for a lunch break closes the entry exactly like the end of the day, so a closed entry does not mean the day is settled (Issue #438). Leave/holidays/absences reduce expected, clamped to effective range. Recalculated per GET /overtime/:employeeId. Will be replaced by snapshot-based calc (see Saldo Calculation & Monatsabschluss above).
 
 ## Schedule Types
 
