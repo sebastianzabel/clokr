@@ -18,6 +18,7 @@ import {
   createTestSalon, // Phase 325 (issue #325)
 } from "./setup";
 import { saldoSnapshotPeriodBounds } from "./test-dates";
+import { SYSTEM_ROLE_IDS } from "../contexts/platform";
 import type { FastifyInstance } from "fastify";
 
 function isoDate(d: Date): string {
@@ -93,6 +94,9 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
     expect(found.employee).toBeTruthy();
     expect(found.employee.firstName).toBeTruthy();
     expect(found.employee.lastName).toBeTruthy();
+    // Phase 430 (D-10) regression guard — this fixture's employee is FIXED_SCHEDULE, never
+    // SHIFT_BASED, so the new live-computed bucket stays empty and the existing two are unchanged.
+    expect(body.weekOverbooked).toEqual([]);
   });
 
   it("GET /shifts/conflicts returns active+flagged shifts in `flagged` bucket", async () => {
@@ -120,6 +124,193 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
     const body = JSON.parse(res.body);
     expect(body.flagged.map((s: { id: string }) => s.id)).toContain(shift.id);
     expect(body.softDeleted.map((s: { id: string }) => s.id)).not.toContain(shift.id);
+    expect(body.weekOverbooked).toEqual([]);
+  });
+
+  it("GET /shifts/conflicts weekOverbooked bucket reports a SHIFT_BASED employee overbooked that week (Phase 430 D-10)", async () => {
+    // 1-day contract, 2 distinct shift-days inside the [from, to] window -> overbookedBy = 1.
+    const schedule = await app.prisma.workSchedule.create({
+      data: {
+        employeeId: data.employee.id,
+        type: "SHIFT_BASED",
+        weeklyHours: 8,
+        contractWorkDaysPerWeek: 1,
+        validFrom: new Date("2025-01-01"),
+      },
+    });
+    // Monday + Tuesday of a fixed, far-future week — distinct from every other fixture window in
+    // this file (futureDate()-based), to never collide across the shared test DB.
+    const weekMonday = new Date(Date.UTC(2030, 2, 4)); // 2030-03-04, a Monday
+    const weekTuesday = new Date(Date.UTC(2030, 2, 5));
+    const shiftIds: string[] = [];
+    for (const d of [weekMonday, weekTuesday]) {
+      const shift = await app.prisma.shift.create({
+        data: {
+          employeeId: data.employee.id,
+          salonId: data.salonId,
+          date: d,
+          startTime: "08:00",
+          endTime: "12:00",
+        },
+      });
+      shiftIds.push(shift.id);
+    }
+
+    try {
+      const from = isoDate(weekMonday);
+      const to = isoDate(new Date(Date.UTC(2030, 2, 10))); // that week's Sunday
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/shifts/conflicts?from=${from}&to=${to}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.weekOverbooked).toHaveLength(1);
+      const entry = body.weekOverbooked[0];
+      expect(entry.employeeId).toBe(data.employee.id);
+      expect(entry.weekStart).toBe("2030-03-04");
+      expect(entry.weekEnd).toBe("2030-03-10");
+      expect(entry.contractDays).toBe(1);
+      expect(entry.leaveDays).toBe(0);
+      expect(entry.otherAbsenceDays).toBe(0);
+      expect(entry.scheduledDays).toBe(2);
+      expect(entry.overbookedBy).toBe(1);
+    } finally {
+      await app.prisma.shift.deleteMany({ where: { id: { in: shiftIds } } });
+      await app.prisma.workSchedule.delete({ where: { id: schedule.id } });
+    }
+  });
+
+  it("weekOverbooked bucket respects salon scope: a salon-A-only planner never sees salon-B's overbooking (Phase 430-05)", async () => {
+    const salonA = await createTestSalon(app.prisma, data.tenant.id, { name: "Conflicts Scope A" });
+    const salonB = await createTestSalon(app.prisma, data.tenant.id, { name: "Conflicts Scope B" });
+
+    // Fixed, far-future week (distinct from every other fixture window in this file) shared by
+    // both employees, so ONE [from,to] window covers both.
+    const weekMonday = new Date(Date.UTC(2032, 5, 7)); // 2032-06-07, a Monday
+    const weekTuesday = new Date(Date.UTC(2032, 5, 8));
+
+    const passwordHash = await bcrypt.hash("test1234", 10);
+
+    async function createShiftBasedEmployee(label: string, salonId: string) {
+      const suffix = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      const user = await app.prisma.user.create({
+        data: { email: `${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      });
+      const employee = await app.prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: user.id,
+          employeeNumber: suffix.toUpperCase().slice(0, 20),
+          firstName: label,
+          lastName: "ConflictsScope",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await app.prisma.workSchedule.create({
+        data: {
+          employeeId: employee.id,
+          type: "SHIFT_BASED",
+          weeklyHours: 8,
+          contractWorkDaysPerWeek: 1,
+          validFrom: new Date("2025-01-01"),
+        },
+      });
+      await app.prisma.employeeSalonAssignment.create({
+        data: {
+          tenantId: data.tenant.id,
+          employeeId: employee.id,
+          salonId,
+          kind: "HOME",
+          validFrom: new Date("2020-01-01"),
+          validUntil: null,
+          weekdays: [],
+        },
+      });
+      const shiftIds: string[] = [];
+      for (const d of [weekMonday, weekTuesday]) {
+        const shift = await app.prisma.shift.create({
+          data: { employeeId: employee.id, salonId, date: d, startTime: "08:00", endTime: "12:00" },
+        });
+        shiftIds.push(shift.id);
+      }
+      return { user, employee, shiftIds };
+    }
+
+    const empA = await createShiftBasedEmployee("sa", salonA.id);
+    const empB = await createShiftBasedEmployee("sb", salonB.id);
+
+    // Planner scoped to salon A only — no tenant-wide reach (Salonmanager template, SALONS scope).
+    // Needs an Employee row (User carries no tenantId of its own — the login/JWT tenantId comes
+    // from the linked Employee) or the token resolves no tenant and every permission check
+    // silently falls back to the EMPLOYEE legacy role (403), not the intended SALONS assignment.
+    const plannerUser = await app.prisma.user.create({
+      data: {
+        email: `conflicts-scope-planner-${Date.now()}@test.de`,
+        passwordHash,
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const plannerEmployee = await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: plannerUser.id,
+        employeeNumber: `CSP-${Date.now()}`,
+        firstName: "Planner",
+        lastName: "ConflictsScope",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    await app.prisma.roleAssignment.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: plannerUser.id,
+        accessRoleId: SYSTEM_ROLE_IDS.SALON_MANAGER,
+        scopeType: "SALONS",
+        salonIds: [salonA.id],
+        employeeIds: [],
+      },
+    });
+
+    try {
+      const loginRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: plannerUser.email, password: "test1234" },
+      });
+      expect(loginRes.statusCode).toBe(200);
+      const { accessToken } = JSON.parse(loginRes.body);
+
+      const from = isoDate(weekMonday);
+      const to = isoDate(new Date(Date.UTC(2032, 5, 13))); // that week's Sunday
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/shifts/conflicts?from=${from}&to=${to}`,
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const ids = body.weekOverbooked.map((e: { employeeId: string }) => e.employeeId);
+      expect(ids).toContain(empA.employee.id);
+      expect(ids).not.toContain(empB.employee.id);
+    } finally {
+      await app.prisma.roleAssignment.deleteMany({ where: { userId: plannerUser.id } });
+      await app.prisma.employee.delete({ where: { id: plannerEmployee.id } });
+      await app.prisma.user.delete({ where: { id: plannerUser.id } });
+      for (const emp of [empA, empB]) {
+        await app.prisma.shift.deleteMany({ where: { id: { in: emp.shiftIds } } });
+        await app.prisma.employeeSalonAssignment.deleteMany({
+          where: { employeeId: emp.employee.id },
+        });
+        await app.prisma.workSchedule.deleteMany({ where: { employeeId: emp.employee.id } });
+        await app.prisma.employee.delete({ where: { id: emp.employee.id } });
+        await app.prisma.user.delete({ where: { id: emp.user.id } });
+      }
+    }
   });
 
   it("Cross-tenant isolation: other-tenant soft-deleted shift NOT returned", async () => {

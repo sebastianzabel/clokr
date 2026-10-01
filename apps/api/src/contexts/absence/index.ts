@@ -170,6 +170,8 @@ export {
   deductVacationDays,
   reverseVacationDays,
   contractWorkDaysPerWeekFrom, // Issue #429 (D-03) — the ONE fallback-chain implementation
+  resolveContractWorkDaysPerWeek, // Phase 430 (D-08) — Erweiterung, additive; the DB-fetching wrapper (Issue #429 D-03) that delegates to contractWorkDaysPerWeekFrom
+  getShiftBasedLeaveDaysForWeek, // Phase 430 (D-08) — Erweiterung, additive; a thin DB-fetching wrapper delegating to leaveDaysPerWeek (Issue #429 D-01/D-02) for the actual kernel — see leave-days.ts
 } from "./leave-days";
 export { checkJArbSchG } from "./jarbschg";
 export { buildSlotOverrideHierarchy, resolveBsTagSlot } from "./bs-slot-resolver";

@@ -374,11 +374,11 @@ Rückfallsicherung und liefert dieselbe 409.
 
 ### `shift` — Schichten
 
-| Permission              | erlaubt                                                                                                                                                                                                                                                                            | erlaubt ausdrücklich nicht                                                                                                                                        |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `shift:read:EIGENE`     | Die eigenen Schichten lesen (`GET /shifts/my-week`, `GET /shifts/range` für sich selbst) und eigene Terminüberschneidungen aus Phorest sehen (`GET /integrations/phorest/appointment-collisions`).                                                                                 | Schichten anderer Mitarbeiter und die Wochenplanung des Teams (`GET /shifts/week`); Schichten planen (`shift:plan`).                                              |
-| `shift:read:ZUGEWIESEN` | Schichten und Wochenplanung der Mitarbeiter im Scope lesen, Konflikte und Terminüberschneidungen einsehen (`GET /shifts/week`, `GET /shifts/range`, `GET /shifts/conflicts`).                                                                                                      | Schichten anlegen, ändern oder löschen (`shift:plan`); Schichtvorlagen und Besetzungsregeln (`shift-config:manage`); nichts außerhalb des Scopes der Zuweisung.   |
-| `shift:plan:ZUGEWIESEN` | Schichten der Mitarbeiter im Scope anlegen, ändern, löschen und wiederherstellen, Wochen erzeugen und kopieren (`POST /shifts`, `PUT /shifts/:id`, `DELETE /shifts/:id`, `POST /shifts/:id/restore`, `POST /shifts/generate-week`, `POST /shifts/copy-week`, `POST /shifts/bulk`). | Schichtvorlagen und Besetzungsregeln (`shift-config:manage`); Zeiteinträge (`time-entry:create`, `time-entry:update`); nichts außerhalb des Scopes der Zuweisung. |
+| Permission              | erlaubt                                                                                                                                                                                                                                                                                                                                                       | erlaubt ausdrücklich nicht                                                                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shift:read:EIGENE`     | Die eigenen Schichten lesen (`GET /shifts/my-week`, `GET /shifts/range` für sich selbst) und eigene Terminüberschneidungen aus Phorest sehen (`GET /integrations/phorest/appointment-collisions`).                                                                                                                                                            | Schichten anderer Mitarbeiter und die Wochenplanung des Teams (`GET /shifts/week`); Schichten planen (`shift:plan`).                                              |
+| `shift:read:ZUGEWIESEN` | Schichten und Wochenplanung der Mitarbeiter im Scope lesen, Konflikte und Terminüberschneidungen einsehen (`GET /shifts/week`, `GET /shifts/range`, `GET /shifts/conflicts`).                                                                                                                                                                                 | Schichten anlegen, ändern oder löschen (`shift:plan`); Schichtvorlagen und Besetzungsregeln (`shift-config:manage`); nichts außerhalb des Scopes der Zuweisung.   |
+| `shift:plan:ZUGEWIESEN` | Schichten der Mitarbeiter im Scope anlegen, ändern, löschen und wiederherstellen, Wochen erzeugen und kopieren, die Wochenübersicht Planungsbedarf lesen (`POST /shifts`, `PUT /shifts/:id`, `DELETE /shifts/:id`, `POST /shifts/:id/restore`, `POST /shifts/generate-week`, `POST /shifts/copy-week`, `POST /shifts/bulk`, `GET /shifts/planning-overview`). | Schichtvorlagen und Besetzungsregeln (`shift-config:manage`); Zeiteinträge (`time-entry:create`, `time-entry:update`); nichts außerhalb des Scopes der Zuweisung. |
 
 ### `shift-config` — Schichtvorlagen und Besetzungsregeln
 
@@ -680,6 +680,7 @@ schlägt fehl, wenn er oder ein Rollenvergleich zurückkommt (D-19).
 | `contexts/scheduling/api/shifts.ts:3293`                   | `POST /bulk`                                    | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
 | `contexts/scheduling/api/shifts.ts:3455`                   | `DELETE /:id`                                   | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
 | `contexts/scheduling/api/shifts.ts:3543`                   | `GET /conflicts`                                | A, M    | `shift:read`                   | ZUGEWIESEN                                   |
+| `contexts/scheduling/api/shifts.ts:4237`                   | `GET /planning-overview`                        | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
 | `contexts/scheduling/api/shifts.ts:3590`                   | `POST /:id/restore`                             | A, M    | `shift:plan`                   | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/admin-presence-sources.ts:16`  | `GET /opted-in`                                 | A       | `presence-source:manage`       | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/admin-presence-sources.ts:40`  | `GET /`                                         | A       | `presence-source:manage`       | ZUGEWIESEN                                   |
@@ -802,11 +803,29 @@ Umstellung ausgewählt hat — der Neutralitätsvertrag von D-16, geprüft von
 `src/contexts/platform/__tests__/system-roles.test.ts` gegen dieselben Buchstaben, die jede andere
 Zeile für dieselbe Permission nennt (D-03 Regel (i)).
 
+**Phase 430 (2026-09-30, D-02):** Der `SHIFT_LEAVE_CONFLICT`-Aufruf zog von
+`contexts/absence/api/leave.ts` (der Reverse-Hook bei Urlaubsgenehmigung) in den neuen, geteilten
+`contexts/scheduling/shift-leave-conflict-notify.ts` — derselbe `userIdsHoldingPermission`-Aufruf,
+jetzt aus EINER Stelle wiederverwendet von der Urlaubsgenehmigung, dem Phorest-Sync und den
+manuellen Schichtplanungs-Routen (`POST /shifts`, `PUT /shifts/:id`, `POST /shifts/generate-week`,
+`POST /shifts/copy-week`, `POST /shifts/bulk`) für die bis dahin fehlende Gegenrichtung: eine neu
+angelegte/geänderte Schicht auf einem Tag mit bereits genehmigtem Urlaub. Empfängermenge und
+Permission sind unverändert (reiner Verschiebe-Refactor).
+
+**Phase 430 (2026-09-30, D-05..D-07):** Neuer, ZWEITER Konflikttyp (Wochenkapazität statt
+Urlaubsüberschneidung): `contexts/scheduling/shift-week-capacity.ts`s `notifyWeekCapacityConflictOnce`
+nutzt dieselbe `userIdsHoldingPermission("shift:plan:ZUGEWIESEN")` + `resolveScopedHolderIds`-Kette
+wie `SHIFT_LEAVE_CONFLICT` oben, ausgelöst vom Phorest-Sync-Ende und denselben fünf manuellen
+Schichtplanungs-Routen. Keine neue Permission; die Deduplizierung (kein Doppel-Notify für dieselbe
+noch nicht bestätigte Woche) läuft rein über eine Abfrage gegen das bestehende `Notification`-Modell,
+ohne neue Tabelle.
+
 | Stelle                                                                       | Benachrichtigung              | heute | Permission               | Reichweite |
 | ---------------------------------------------------------------------------- | ----------------------------- | ----- | ------------------------ | ---------- |
 | `contexts/absence/api/leave.ts:760`                                          | `LEAVE_REQUEST`               | A, M  | `leave-request:approve`  | ZUGEWIESEN |
 | `contexts/absence/api/leave.ts:1416`                                         | `SECTION9_AU_PENDING_MANAGER` | A, M  | `section9:decide`        | ZUGEWIESEN |
-| `contexts/absence/api/leave.ts:1545`                                         | `SHIFT_LEAVE_CONFLICT`        | A, M  | `shift:plan`             | ZUGEWIESEN |
+| `contexts/scheduling/shift-leave-conflict-notify.ts:91`                      | `SHIFT_LEAVE_CONFLICT`        | A, M  | `shift:plan`             | ZUGEWIESEN |
+| `contexts/scheduling/shift-week-capacity.ts:136`                             | `SHIFT_WEEK_OVERBOOKED`       | A, M  | `shift:plan`             | ZUGEWIESEN |
 | `contexts/absence/api/leave.ts:3455`                                         | `SECTION9_AU_PENDING_MANAGER` | A, M  | `section9:decide`        | ZUGEWIESEN |
 | `contexts/absence/vocational-school-generator.ts:897`                        | `SHIFT_BS_CLEANUP`            | A, M  | `shift:plan`             | ZUGEWIESEN |
 | `contexts/absence/plugins/carryover-warning.ts:124`                          | `CARRYOVER_EXPIRING`          | A     | `leave-config:manage`    | ZUGEWIESEN |

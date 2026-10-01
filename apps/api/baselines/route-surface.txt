@@ -84,6 +84,7 @@
 │   ├── /opted-in (GET, HEAD)
 │   ├── /overtime-overview (GET, HEAD)
 │   ├── /overtime-trend (GET, HEAD)
+│   ├── /planning-overview (GET, HEAD)
 │   ├── /range (GET, HEAD)
 │   ├── /read-all (PATCH)
 │   ├── /scopes (GET, HEAD)

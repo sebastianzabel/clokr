@@ -48,7 +48,17 @@ import {
   getHolidayMap,
   deductVacationDays,
   reverseVacationDays,
+  resolveContractWorkDaysPerWeek, // Phase 430 (D-08) — planning-overview's "Vertragstage" column
+  getShiftBasedLeaveDaysForWeek, // Phase 430 (D-08) — planning-overview's leave days + weekdays
 } from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from three deep imports
+import { getShiftsInRange } from "../facade/shifts"; // Phase 430 (D-12) — planning-overview's "geplant" column
+import { flagShiftIfConflictsWithApprovedLeave } from "../shift-leave-check"; // Phase 430 (D-03/D-04, moved 430-06 to avoid widening the boundary-import cycle) — S4, the inverse Type-1 direction
+import { notifyShiftLeaveConflicts } from "../shift-leave-conflict-notify"; // Phase 430 (D-02)
+import {
+  detectWeekCapacityConflict,
+  notifyWeekCapacityConflictOnce,
+  type WeekCapacityConflict,
+} from "../shift-week-capacity"; // Phase 430 (D-05..D-07) — Type-2
 // ARBZG_MARKER_47_4_01
 
 const templateSchema = z.object({
@@ -307,6 +317,296 @@ async function findShiftConflict(
   }
 
   return null;
+}
+
+/**
+ * Phase 430 (D-04): shared wiring for every manual shift-write route — after
+ * `flagShiftIfConflictsWithApprovedLeave` has (maybe) flagged a shift, resolve the employee's name
+ * and fire the shared audit+notify helper. A no-op when `leaveConflict` is null. Best-effort: a
+ * failure here is logged and swallowed, never thrown — mirrors the leave-approval reverse-hook's
+ * own "never undo the write" discipline (see `absence/api/leave.ts`).
+ */
+async function notifyIfLeaveConflict(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  employeeId: string,
+  tenantId: string,
+  leaveConflict: Awaited<ReturnType<typeof flagShiftIfConflictsWithApprovedLeave>>,
+): Promise<void> {
+  if (!leaveConflict) return;
+  try {
+    const employee = await app.prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: { firstName: true, lastName: true },
+    });
+    if (!employee) return;
+    await notifyShiftLeaveConflicts(app, {
+      actorUserId: req.user.sub,
+      employeeId,
+      tenantId,
+      employeeName: { firstName: employee.firstName, lastName: employee.lastName },
+      leaveRequestId: leaveConflict.leaveRequestId,
+      leaveStart: leaveConflict.leaveStart,
+      leaveEnd: leaveConflict.leaveEnd,
+      conflictingShifts: [
+        {
+          id: leaveConflict.shiftId,
+          date: leaveConflict.date,
+          label: leaveConflict.label,
+          salonId: leaveConflict.salonId,
+        },
+      ],
+      request: { ip: req.ip, headers: req.headers as Record<string, string> },
+    });
+  } catch (err) {
+    app.log.warn({ err, employeeId }, "SHIFT_LEAVE_CONFLICT manual-route notify failed");
+  }
+}
+
+/**
+ * Phase 430 (D-04, batch variant): used by the bulk-write routes (generate-week, copy-week, bulk)
+ * that can create/update MANY shifts across MULTIPLE employees in one call. Flags every shift,
+ * then groups the flagged ones by (employeeId, leaveRequestId) so one employee's several
+ * newly-flagged shifts against the SAME leave request produce ONE notification per route call —
+ * mirroring how the leave-approval reverse-hook (S2) already summarizes a whole batch in one
+ * notification, never one per shift.
+ */
+async function flagAndNotifyLeaveConflictsBatch(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  tenantId: string,
+  shifts: Array<{ id: string; employeeId: string; date: Date }>,
+): Promise<void> {
+  interface Group {
+    employeeId: string;
+    leaveRequestId: string;
+    leaveStart: Date;
+    leaveEnd: Date;
+    shifts: Array<{ id: string; date: Date; label: string | null; salonId: string }>;
+  }
+  const groups = new Map<string, Group>();
+  for (const s of shifts) {
+    const leaveConflict = await flagShiftIfConflictsWithApprovedLeave(
+      app.prisma,
+      s.id,
+      s.employeeId,
+      tenantId,
+      s.date,
+    );
+    if (!leaveConflict) continue;
+    const key = `${s.employeeId}|${leaveConflict.leaveRequestId}`;
+    const entry = {
+      id: leaveConflict.shiftId,
+      date: leaveConflict.date,
+      label: leaveConflict.label,
+      salonId: leaveConflict.salonId,
+    };
+    const existing = groups.get(key);
+    if (existing) {
+      existing.shifts.push(entry);
+    } else {
+      groups.set(key, {
+        employeeId: s.employeeId,
+        leaveRequestId: leaveConflict.leaveRequestId,
+        leaveStart: leaveConflict.leaveStart,
+        leaveEnd: leaveConflict.leaveEnd,
+        shifts: [entry],
+      });
+    }
+  }
+  if (groups.size === 0) return;
+
+  const employeeIds = Array.from(new Set([...groups.values()].map((g) => g.employeeId)));
+  const employees = await app.prisma.employee.findMany({
+    where: { id: { in: employeeIds } },
+    select: { id: true, firstName: true, lastName: true },
+  });
+  const employeeById = new Map(employees.map((e) => [e.id, e]));
+
+  for (const group of groups.values()) {
+    const employee = employeeById.get(group.employeeId);
+    if (!employee) continue;
+    try {
+      await notifyShiftLeaveConflicts(app, {
+        actorUserId: req.user.sub,
+        employeeId: group.employeeId,
+        tenantId,
+        employeeName: { firstName: employee.firstName, lastName: employee.lastName },
+        leaveRequestId: group.leaveRequestId,
+        leaveStart: group.leaveStart,
+        leaveEnd: group.leaveEnd,
+        conflictingShifts: group.shifts,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+    } catch (err) {
+      app.log.warn(
+        { err, employeeId: group.employeeId },
+        "SHIFT_LEAVE_CONFLICT batch-route notify failed",
+      );
+    }
+  }
+}
+
+/**
+ * Phase 430 (D-07, batch variant): Type-2 week-capacity check for the manual-planning routes —
+ * reuses the route's own already-computed `(employeeId, weekStart, weekEnd)` pairs (same
+ * dedup-by-week-start idiom PUT's own `affectedPairs` and `/bulk`'s own `affectedPairs` already
+ * use). Non-SHIFT_BASED employees are silently skipped — the caller does not need to filter first.
+ * Best-effort: a failure here is logged and swallowed, never thrown, and never blocks or rolls
+ * back the shift write it follows.
+ */
+async function checkAndNotifyWeekCapacityBatch(
+  app: FastifyInstance,
+  tenantId: string,
+  pairs: Array<{ employeeId: string; weekStart: Date; weekEnd: Date; salonId: string }>,
+): Promise<void> {
+  if (pairs.length === 0) return;
+
+  const employeeIds = Array.from(new Set(pairs.map((p) => p.employeeId)));
+  const schedules = await app.prisma.workSchedule.findMany({
+    where: { employeeId: { in: employeeIds } },
+    orderBy: { validFrom: "desc" },
+    select: { employeeId: true, type: true },
+  });
+  const typeByEmployee = new Map<string, string>();
+  for (const s of schedules) {
+    // Global sort by validFrom desc: the FIRST row seen per employeeId is that employee's own
+    // latest row, regardless of interleaving with other employees' rows.
+    if (!typeByEmployee.has(s.employeeId)) typeByEmployee.set(s.employeeId, s.type);
+  }
+  const shiftBasedPairs = pairs.filter((p) => typeByEmployee.get(p.employeeId) === "SHIFT_BASED");
+  if (shiftBasedPairs.length === 0) return;
+
+  const employees = await app.prisma.employee.findMany({
+    where: { id: { in: Array.from(new Set(shiftBasedPairs.map((p) => p.employeeId))) } },
+    select: { id: true, firstName: true, lastName: true },
+  });
+  const employeeById = new Map(employees.map((e) => [e.id, e]));
+
+  for (const pair of shiftBasedPairs) {
+    try {
+      const conflict = await detectWeekCapacityConflict(
+        app.prisma,
+        pair.employeeId,
+        tenantId,
+        pair.weekStart,
+        pair.weekEnd,
+      );
+      if (!conflict) continue;
+      const employee = employeeById.get(pair.employeeId);
+      if (!employee) continue;
+      await notifyWeekCapacityConflictOnce(app, {
+        employeeId: pair.employeeId,
+        tenantId,
+        employeeName: { firstName: employee.firstName, lastName: employee.lastName },
+        weekStart: pair.weekStart,
+        salonId: pair.salonId,
+        conflict,
+      });
+    } catch (err) {
+      app.log.warn(
+        { err, employeeId: pair.employeeId },
+        "SHIFT_WEEK_OVERBOOKED manual-route check failed",
+      );
+    }
+  }
+}
+
+/** Single-pair convenience wrapper around {@link checkAndNotifyWeekCapacityBatch} — POST `/` and
+ *  PUT `/:id`'s single-shift call sites. */
+async function checkAndNotifyWeekCapacity(
+  app: FastifyInstance,
+  tenantId: string,
+  employeeId: string,
+  weekStart: Date,
+  weekEnd: Date,
+  salonId: string,
+): Promise<void> {
+  await checkAndNotifyWeekCapacityBatch(app, tenantId, [
+    { employeeId, weekStart, weekEnd, salonId },
+  ]);
+}
+
+/** One `GET /conflicts` `weekOverbooked` entry (Phase 430, D-10) — live-computed, nothing persisted. */
+interface WeekOverbookedEntry extends WeekCapacityConflict {
+  employeeId: string;
+  employeeName: string;
+  weekStart: string;
+  weekEnd: string;
+}
+
+/**
+ * Phase 430 (D-10, revised 430-05): the `/conflicts` view's third bucket. Unlike `softDeleted`/
+ * `flagged` (which read persisted `Shift` flags, matching `/conflicts`' own pre-existing, tenant-
+ * only scoping — NOT touched here, a separate, pre-existing finding), Type-2 overbooking is new
+ * code introduced by this phase, so it gets real salon scoping from day one: `inScopeEmployeeIds`
+ * is the caller's already-resolved "plannable staff" set (D-12's own `resolvePersonScopedEmployeeIds`
+ * answer against the route's own `shift:read:ZUGEWIESEN` guard permission — same question GET
+ * /week already asks for its own employee listing), `"all"` for a wholeTenant reach. Enumerates
+ * every SHIFT_BASED employee IN SCOPE and every ISO week (Mon..Sun) whose range intersects
+ * `[fromDate, toDate]`, calling the SAME `detectWeekCapacityConflict` the Phorest-sync/manual-route
+ * checks already use (never a reimplementation).
+ */
+async function findWeekOverbookedConflicts(
+  app: FastifyInstance,
+  tenantId: string,
+  fromDate: Date,
+  toDate: Date,
+  inScopeEmployeeIds: "all" | string[],
+): Promise<WeekOverbookedEntry[]> {
+  const employees = await app.prisma.employee.findMany({
+    where: {
+      tenantId,
+      ...NOT_ANONYMIZED_EMPLOYEE_WHERE,
+      ...(inScopeEmployeeIds !== "all" ? { id: { in: inScopeEmployeeIds } } : {}),
+    },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      workSchedules: {
+        orderBy: { validFrom: "desc" as const },
+        take: 1,
+        select: { type: true },
+      },
+    },
+  });
+  const shiftBased = employees.filter((e) => e.workSchedules[0]?.type === "SHIFT_BASED");
+  if (shiftBased.length === 0) return [];
+
+  // Every Monday whose Mon..Sun week intersects [fromDate, toDate].
+  const weekStarts: Date[] = [];
+  for (
+    const w = mondayOfWeekUtc(fromDate);
+    w.getTime() <= toDate.getTime();
+    w.setUTCDate(w.getUTCDate() + 7)
+  ) {
+    weekStarts.push(new Date(w));
+  }
+
+  const entries: WeekOverbookedEntry[] = [];
+  for (const employee of shiftBased) {
+    for (const weekStart of weekStarts) {
+      const weekEnd = new Date(weekStart);
+      weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+      const conflict = await detectWeekCapacityConflict(
+        app.prisma,
+        employee.id,
+        tenantId,
+        weekStart,
+        weekEnd,
+      );
+      if (!conflict) continue;
+      entries.push({
+        employeeId: employee.id,
+        employeeName: `${employee.firstName} ${employee.lastName}`,
+        weekStart: weekStart.toISOString().slice(0, 10),
+        weekEnd: weekEnd.toISOString().slice(0, 10),
+        ...conflict,
+      });
+    }
+  }
+  return entries;
 }
 
 /**
@@ -2242,6 +2542,30 @@ export async function shiftRoutes(app: FastifyInstance) {
       // HTTP 500 (no silent swallow — saldo divergence is audit-relevant).
       await updateOvertimeAccount(app, body.employeeId);
 
+      // Phase 430 (D-03/D-04): the missing Type-1 direction — this NEW shift may itself land on a
+      // day that already has an APPROVED LeaveRequest (most commonly the `force=true` path above,
+      // since the un-forced case is already rejected with 409 before this point is ever reached).
+      // Detection only, never blocking — the shift above is already created.
+      const leaveConflict = await flagShiftIfConflictsWithApprovedLeave(
+        app.prisma,
+        shift.id,
+        body.employeeId,
+        req.user.tenantId,
+        new Date(body.date),
+      );
+      await notifyIfLeaveConflict(app, req, body.employeeId, req.user.tenantId, leaveConflict);
+
+      // Phase 430 (D-05..D-07): Type-2 week-capacity check — reuses this route's own
+      // already-computed weekStart/weekEnd. Skipped internally for non-SHIFT_BASED employees.
+      await checkAndNotifyWeekCapacity(
+        app,
+        req.user.tenantId,
+        body.employeeId,
+        weekStart,
+        weekEnd,
+        salon.id,
+      );
+
       return reply.code(201).send(shift);
     },
   });
@@ -2626,6 +2950,33 @@ export async function shiftRoutes(app: FastifyInstance) {
         await updateOvertimeAccount(app, body.employeeId);
       }
 
+      // Phase 430 (D-03/D-04): the missing Type-1 direction. Skipped when this PUT just
+      // explicitly cleared `conflictsWithLeave` above (`force && conflict`) — that clear IS the
+      // manager's active decision to keep the shift despite the conflict; immediately re-flagging
+      // it here would silently undo that decision. In every other case `conflict` is already null
+      // here (a non-forced leave conflict on `effDateIso` was rejected with 409 earlier in this
+      // handler), so this call only ever does something on the explicit-override path it must NOT
+      // run for, or is a defensive no-op otherwise.
+      if (!(force && conflict)) {
+        const leaveConflict = await flagShiftIfConflictsWithApprovedLeave(
+          app.prisma,
+          updated.id,
+          effEmployeeId,
+          req.user.tenantId,
+          new Date(effDateIso),
+        );
+        await notifyIfLeaveConflict(app, req, effEmployeeId, req.user.tenantId, leaveConflict);
+      }
+
+      // Phase 430 (D-05..D-07): Type-2 week-capacity check for both the old and new
+      // (employeeId, week) pair — reuses `affectedPairs` computed above. Independent of the
+      // Type-1 force&&conflict skip above (a different conflict kind).
+      await checkAndNotifyWeekCapacityBatch(
+        app,
+        req.user.tenantId,
+        Array.from(affectedPairs.values()).map((pair) => ({ ...pair, salonId: updated.salonId })),
+      );
+
       return updated;
     },
   });
@@ -2990,6 +3341,17 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
       }
 
+      // Phase 430 (D-03/D-04): the missing Type-1 direction. generate-week already excludes
+      // approved-leave days from `toCreate` (see this route's own docblock), so this is a
+      // defensive safety net (e.g. a leave approved in the narrow window between the read above
+      // and this commit), never the expected path — unlike /bulk, which has no such pre-filter.
+      await flagAndNotifyLeaveConflictsBatch(
+        app,
+        req,
+        tenantId,
+        created.map((r) => ({ id: r.id, employeeId: r.employeeId, date: r.date })),
+      );
+
       // Phase 76.5 (D-03, D-04) — saldo refresh per unique employee.
       // D-04: No p-limit cap — POOL_MAX=10 implicit bound; revisit if generate-week regresses >10%.
       const uniqueIds = Array.from(new Set(created.map((r) => r.employeeId)));
@@ -3006,6 +3368,22 @@ export async function shiftRoutes(app: FastifyInstance) {
           saldoRefreshFailures.push(uniqueIds[i]);
         }
       });
+
+      // Phase 430 (D-05..D-07): Type-2 week-capacity check — every row created above lands in the
+      // SAME target week (mirrors the resolver-call reasoning inside the transaction above), so
+      // one (employeeId, week) pair per unique employee is enough. Salon: each employee's own
+      // first created row this run (informational only — see checkAndNotifyWeekCapacityBatch).
+      const { weekStart: capWeekStart, weekEnd: capWeekEnd } = affectedWeekBounds(monday);
+      await checkAndNotifyWeekCapacityBatch(
+        app,
+        tenantId,
+        uniqueIds.map((employeeId) => ({
+          employeeId,
+          weekStart: capWeekStart,
+          weekEnd: capWeekEnd,
+          salonId: created.find((r) => r.employeeId === employeeId)!.salonId,
+        })),
+      );
 
       return {
         weekStart: weekStartIso,
@@ -3399,6 +3777,16 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
       }
 
+      // Phase 430 (D-03/D-04): the missing Type-1 direction. copy-week already excludes
+      // approved-leave days (same skip-logic as generate-week, see this route's own docblock),
+      // so this is a defensive safety net, never the expected path.
+      await flagAndNotifyLeaveConflictsBatch(
+        app,
+        req,
+        tenantId,
+        created.map((r) => ({ id: r.id, employeeId: r.employeeId, date: r.date })),
+      );
+
       // Phase 76.5 (D-03, D-04) — saldo refresh per unique employee.
       // D-04: No p-limit cap — POOL_MAX=10 implicit bound; revisit if copy-week regresses >10%.
       const uniqueIds = Array.from(new Set(created.map((r) => r.employeeId)));
@@ -3415,6 +3803,21 @@ export async function shiftRoutes(app: FastifyInstance) {
           saldoRefreshFailures.push(uniqueIds[i]);
         }
       });
+
+      // Phase 430 (D-05..D-07): Type-2 week-capacity check — every row created above lands in the
+      // TARGET week (mirrors the resolver-call reasoning inside the transaction above), so one
+      // (employeeId, week) pair per unique employee is enough.
+      const { weekStart: capWeekStart, weekEnd: capWeekEnd } = affectedWeekBounds(targetMonday);
+      await checkAndNotifyWeekCapacityBatch(
+        app,
+        tenantId,
+        uniqueIds.map((employeeId) => ({
+          employeeId,
+          weekStart: capWeekStart,
+          weekEnd: capWeekEnd,
+          salonId: created.find((r) => r.employeeId === employeeId)!.salonId,
+        })),
+      );
 
       return {
         sourceWeekStart: sourceStartIso,
@@ -3611,6 +4014,38 @@ export async function shiftRoutes(app: FastifyInstance) {
         }
       });
 
+      // Phase 430 (D-03/D-04): the missing Type-1 direction. Unlike generate-week/copy-week,
+      // /bulk has NO pre-filter against approved leave — it is the one manual route where a
+      // conflicting shift is a genuine, realistic outcome, not a defensive-only safety net.
+      await flagAndNotifyLeaveConflictsBatch(
+        app,
+        req,
+        req.user.tenantId,
+        created.map((r) => ({ id: r.id, employeeId: r.employeeId, date: r.date })),
+      );
+
+      // Phase 430 (D-05..D-07): Type-2 week-capacity check. /bulk can span multiple employees AND
+      // multiple weeks (same reasoning as the transaction's own `affectedPairs` above, recomputed
+      // here from `created` since that Map is scoped inside the transaction callback).
+      const capacityPairs = new Map<
+        string,
+        { employeeId: string; weekStart: Date; weekEnd: Date; salonId: string }
+      >();
+      for (const row of created) {
+        const { weekStart, weekEnd } = affectedWeekBounds(row.date);
+        capacityPairs.set(`${row.employeeId}::${weekStart.toISOString()}`, {
+          employeeId: row.employeeId,
+          weekStart,
+          weekEnd,
+          salonId: row.salonId,
+        });
+      }
+      await checkAndNotifyWeekCapacityBatch(
+        app,
+        req.user.tenantId,
+        Array.from(capacityPairs.values()),
+      );
+
       return reply.code(201).send({ created: created.length, saldoRefreshFailures });
     },
   });
@@ -3772,7 +4207,189 @@ export async function shiftRoutes(app: FastifyInstance) {
         deletedAt: s.deletedAt ? s.deletedAt.toISOString() : null,
       });
 
-      return { softDeleted: softDeleted.map(ser), flagged: flagged.map(ser) };
+      // Phase 430 (D-10, revised 430-05) — third bucket, live-computed Type-2 (week-overbooking)
+      // conflicts. UNLIKE softDeleted/flagged above (pre-existing, tenant-only, not touched here
+      // — a separate finding), this new bucket is salon-scoped: a caller whose own reach for
+      // THIS route's own guard permission (shift:read:ZUGEWIESEN) is salon-limited sees only the
+      // in-scope employees' overbooking, same "plannable staff" question GET /week already asks.
+      const conflictsAccess = accessContextFromRequest(req);
+      const conflictsReach = await resolveAccessReach(
+        app.prisma,
+        conflictsAccess,
+        "shift:read:ZUGEWIESEN",
+      );
+      const conflictsInScopeIds =
+        conflictsReach.kind === "wholeTenant"
+          ? "all"
+          : await resolvePersonScopedEmployeeIds(app.prisma, req.user.tenantId, conflictsReach);
+      const weekOverbooked = await findWeekOverbookedConflicts(
+        app,
+        req.user.tenantId,
+        fromDate,
+        toDate,
+        conflictsInScopeIds,
+      );
+
+      return { softDeleted: softDeleted.map(ser), flagged: flagged.map(ser), weekOverbooked };
+    },
+  });
+
+  // ── Phase 430 (D-12/D-13), Issue #430 — Wochenübersicht "Planungsbedarf" ─────
+  //
+  // GET /planning-overview — one row per SHIFT_BASED employee in scope: contract days, this
+  //   week's approved leave days (+ weekdays), other absences, days still to plan, and — once
+  //   shifts exist for the week — the planned count and the difference. Query-param-only
+  //   (weekStart, optional salonId) — no path parameter, so no T-100-09 register entry is needed.
+  //   Guarded by shift:plan:ZUGEWIESEN (owner's explicit instruction, not shift:read), salon-scoped
+  //   via the standard EmployeeScope/accessContextFromRequest pattern GET /week already uses for
+  //   "plannable staff" (resolvePersonScopedEmployeeIds).
+  //
+  // Threat coverage:
+  //   T-430-10 (Info Disclosure): EmployeeScope/salon scoping via accessContextFromRequest chain.
+  //   T-430-11 (Elevation): shift:plan:ZUGEWIESEN guard, tested against a shift:read-only actor.
+  //
+  // Phase 430-06 (follow-up to #437/#429): "this week's approved leave days" (leaveDays below)
+  // now uses the SAME per-week kernel the saldo side uses (leaveDaysPerWeek(), Issue #429
+  // D-01/D-02), via getShiftBasedLeaveDaysForWeek() — see that function's own docblock
+  // (contexts/absence/leave-days.ts) for why it deliberately counts SICK/SPECIAL days here too,
+  // unlike #429's payroll-only CONTRACT/ROSTER split.
+
+  const planningOverviewQuerySchema = z.object({
+    weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    salonId: z.string().uuid().optional(),
+  });
+
+  app.get("/planning-overview", {
+    schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
+    preHandler: requirePermission("shift:plan:ZUGEWIESEN"),
+    handler: async (req) => {
+      const { weekStart: weekStartRaw, salonId } = planningOverviewQuerySchema.parse(req.query);
+      const weekStart = mondayOfWeekUtc(new Date(`${weekStartRaw}T00:00:00.000Z`));
+      const weekEnd = new Date(weekStart);
+      weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+
+      const access = accessContextFromRequest(req);
+      const tenantId = req.user.tenantId;
+
+      // Same "plannable staff" question GET /week's own D-12 answers, same answer function.
+      const reach = await resolveAccessReach(app.prisma, access, "shift:plan:ZUGEWIESEN");
+      const scopedAccess = { ...access, reach };
+      const personScopedIds =
+        reach.kind === "wholeTenant"
+          ? "all"
+          : await resolvePersonScopedEmployeeIds(app.prisma, tenantId, reach);
+
+      // Optional further narrowing to one specific salon's Stammsalon (HOME) population, intersected
+      // with the reach above — same `employeeSalonAssignment` HOME-kind query shape
+      // `resolveStammsalonScopedEmployeeIds` uses internally, inlined here because this answers "is
+      // this ONE client-given salonId valid/theirs", not "which of reach.salonIds".
+      let inScopeIds: "all" | string[] = personScopedIds;
+      if (salonId) {
+        const homeRows = await app.prisma.employeeSalonAssignment.findMany({
+          where: {
+            tenantId,
+            kind: "HOME",
+            salonId,
+            validFrom: { lte: weekStart },
+            OR: [{ validUntil: null }, { validUntil: { gte: weekStart } }],
+          },
+          select: { employeeId: true },
+        });
+        const homeIds = homeRows.map((r) => r.employeeId);
+        inScopeIds =
+          personScopedIds === "all"
+            ? homeIds
+            : homeIds.filter((id) => personScopedIds.includes(id));
+      }
+
+      // SHIFT_BASED only — latest WorkSchedule per employee (same bulk-lookup idiom
+      // checkAndNotifyWeekCapacityBatch above already uses).
+      const candidates = await app.prisma.employee.findMany({
+        where: {
+          tenantId,
+          ...NOT_ANONYMIZED_EMPLOYEE_WHERE,
+          ...(inScopeIds !== "all" ? { id: { in: inScopeIds } } : {}),
+        },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          workSchedules: {
+            orderBy: { validFrom: "desc" as const },
+            take: 1,
+            select: { type: true },
+          },
+        },
+        orderBy: { lastName: "asc" },
+      });
+      const shiftBased = candidates.filter((e) => e.workSchedules[0]?.type === "SHIFT_BASED");
+
+      const employeesResult = await Promise.all(
+        shiftBased.map(async (employee) => {
+          const empScope = employeeScopeFor(scopedAccess, { employeeId: employee.id });
+          const [contractDays, leaveResult, absences, shiftsThisWeek] = await Promise.all([
+            resolveContractWorkDaysPerWeek(app.prisma, employee.id, tenantId),
+            getShiftBasedLeaveDaysForWeek(app.prisma, employee.id, tenantId, weekStart, weekEnd),
+            getAbsencesOverlapping(app.prisma, empScope, weekStart, weekEnd),
+            getShiftsInRange(app.prisma, empScope, weekStart, weekEnd),
+          ]);
+
+          // Distinct Mon-Sat days covered by an "other" (imposed) absence — same Sunday-exclusion
+          // and clip-to-week idiom detectWeekCapacityConflict already uses for the identical
+          // question (§ 3 Abs. 2 BUrlG never counts Sunday as a Werktag).
+          const otherAbsenceDayStrings = new Set<string>();
+          for (const absence of absences) {
+            const clipStart = absence.startDate > weekStart ? absence.startDate : weekStart;
+            const clipEnd = absence.endDate < weekEnd ? absence.endDate : weekEnd;
+            for (
+              const d = new Date(clipStart);
+              d.getTime() <= clipEnd.getTime();
+              d.setUTCDate(d.getUTCDate() + 1)
+            ) {
+              if (d.getUTCDay() === 0) continue;
+              otherAbsenceDayStrings.add(d.toISOString().slice(0, 10));
+            }
+          }
+          const otherAbsenceDays = otherAbsenceDayStrings.size;
+          const stillToPlan = Math.max(0, contractDays - leaveResult.days - otherAbsenceDays);
+
+          const row: {
+            employeeId: string;
+            name: string;
+            contractDays: number;
+            leaveDays: number;
+            leaveWeekdays: string[];
+            otherAbsenceDays: number;
+            stillToPlan: number;
+            plannedDays?: number;
+            difference?: number;
+          } = {
+            employeeId: employee.id,
+            name: `${employee.firstName} ${employee.lastName}`,
+            contractDays,
+            leaveDays: leaveResult.days,
+            leaveWeekdays: leaveResult.weekdays,
+            otherAbsenceDays,
+            stillToPlan,
+          };
+
+          if (shiftsThisWeek.length > 0) {
+            const plannedDayStrings = new Set(
+              shiftsThisWeek.map((s) => s.date.toISOString().slice(0, 10)),
+            );
+            row.plannedDays = plannedDayStrings.size;
+            row.difference = row.plannedDays - stillToPlan;
+          }
+
+          return row;
+        }),
+      );
+
+      return {
+        weekStart: weekStart.toISOString().slice(0, 10),
+        weekEnd: weekEnd.toISOString().slice(0, 10),
+        employees: employeesResult,
+      };
     },
   });
 

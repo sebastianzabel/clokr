@@ -507,7 +507,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // except `salon-assignments.ts`, where they add two DIFFERENT functions (salonsForDays vs.
   // homeSalonAt) — counts still add, re-measured on the merged tree. Exceptions unchanged at 17
   // (71b added none).
-  it("the real tree has exactly 129 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  it("the real tree has exactly 130 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -540,6 +540,11 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     });
     // Issue #416: contexts/absence/facade/entitlements.ts gained one new exported facade
     // function, ensureVacationEntitlementForYear — 128 -> 129.
+    // Issue #430: contexts/scheduling/facade/shifts.ts gained one new exported facade function,
+    // flagShiftIfConflictsWithApprovedLeave (S4, the inverse of S2) — 129 -> 130. Reverted in
+    // Phase 430-06 (follow-up to #437/#429, boundary-import-cycle gate): S4 moved OUT of
+    // facade/shifts.ts into contexts/scheduling/shift-leave-check.ts (not under ./facade/, so no
+    // longer counted) — 130 -> 129. See that file's own module docblock for the full reasoning.
     expect(functions).toHaveLength(129);
 
     const rawExceptions = JSON.parse(

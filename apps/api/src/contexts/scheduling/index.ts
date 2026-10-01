@@ -35,6 +35,21 @@ export {
   cancelOrphanShifts,
 } from "./facade/shifts";
 export { getEmployeeAvailability } from "./facade/availability";
+// Phase 430 (D-02) — shared audit+notify helper for BOTH conflict directions (leave-approval
+// reverse-hook + the new shift-creation-time check). Not a facade export (it takes `app:
+// FastifyInstance`, not `db: Prisma.TransactionClient` — see the module's own docblock). This IS
+// genuinely needed cross-context (`contexts/absence/api/leave.ts`).
+export { notifyShiftLeaveConflicts } from "./shift-leave-conflict-notify";
+export type { ShiftLeaveConflictParams } from "./shift-leave-conflict-notify";
+// Phase 430-06 (follow-up to #437/#429, boundary-import-cycle gate): `flagShiftIfConflictsWithApprovedLeave`
+// (now `./shift-leave-check.ts`) and `detectWeekCapacityConflict`/`notifyWeekCapacityConflictOnce`
+// (`./shift-week-capacity.ts`) are deliberately NOT re-exported here. No caller outside
+// `contexts/scheduling/`/`services/phorest/` (the same Schichtplanung boundary area) imports any
+// of them — grep-confirmed — so re-exporting them would only widen this context's public surface
+// for no caller, while additionally making `facade/shifts.ts` (unavoidably reachable from the
+// pre-existing absence/scheduling/time-tracking/working-time-account import cycle via its own
+// cross-context-needed `getShiftsInRange`) close a NEW back-edge into that cycle via S4's own
+// `../../absence` read. See `shift-leave-check.ts`'s own module docblock for the full reasoning.
 
 // Phase 101B (Issue #101, wave 9 — the phase's closing wave) — declared public because a caller
 // outside this context already depended on them (absence/api/leave.ts,

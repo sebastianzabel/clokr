@@ -7,6 +7,7 @@ import {
   splitDaysAcrossYears,
   calculateProRataVacation,
   shiftBasedLeaveMinutesForRequest, // Issue #429, D-13 — receipt shares the saldo's per-week formula
+  mondayOfWeekUtc, // Phase 430 Plan 04 (D-15) — the one shared Monday derivation
 } from "../vacation-calc"; // Phase 107 (D-04/D-09)
 import { selfHealUsedDays, loadVacationTypeMeta } from "../leave-self-heal";
 import { computeAffectedMonths } from "../correction-lock";
@@ -27,7 +28,11 @@ import {
   contractWorkDaysPerWeekFrom, // Issue #429, D-13 — the getScheduledHours SHIFT_BASED branch below
 } from "../leave-days";
 import { formatMinutesHM } from "../format-hm"; // Phase 100
-import { flagShiftsConflictingWithLeave } from "../../scheduling"; // Phase 100B Plan 05 — S1/S2
+import {
+  flagShiftsConflictingWithLeave,
+  notifyShiftLeaveConflicts, // Phase 100B Plan 05 — S1/S2; Phase 430 (D-02) — shared audit+notify helper
+  getShiftsInRange, // Phase 430 Plan 04 (D-15) — rosterImported on GET /hours-preview
+} from "../../scheduling";
 import {
   getOvertimeAccount,
   bookOvertimeCompensation,
@@ -55,7 +60,7 @@ import {
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 04 (#91), D-10
   isStammsalonScopeMatch, // Phase 91b Plan 04 (#91), D-10/D-14
   resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
-  isShiftInScope, // Phase 91b Plan 09 (#91), D-11/D-17
+  employeeScopeFor, // Phase 430 Plan 04 (D-15) — rosterImported's getShiftsInRange scope
 } from "../../platform"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../illness-carryover-guard"; // Phase 104
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
@@ -1721,91 +1726,27 @@ export async function leaveRoutes(app: FastifyInstance) {
           );
 
           if (conflictingShifts.length > 0) {
-            for (const s of conflictingShifts) {
-              await app
-                .audit({
-                  userId: req.user.sub,
-                  action: "SHIFT_MARKED_CONFLICTING",
-                  entity: "Shift",
-                  entityId: s.id,
-                  newValue: {
-                    leaveRequestId: existing.id,
-                    leaveStart: existing.startDate.toISOString().slice(0, 10),
-                    leaveEnd: existing.endDate.toISOString().slice(0, 10),
-                    shiftDate: s.date.toISOString().slice(0, 10),
-                    shiftLabel: s.label,
-                  },
-                  request: { ip: req.ip, headers: req.headers as Record<string, string> },
-                })
-                .catch((err) =>
-                  app.log.warn({ err, shiftId: s.id }, "Failed to audit SHIFT_MARKED_CONFLICTING"),
-                );
-            }
-
-            // Notify managers — find all MANAGER + ADMIN users in the tenant
-            try {
-              const empName = await app.prisma.employee.findUnique({
-                where: { id: existing.employeeId },
-                select: { firstName: true, lastName: true, tenantId: true },
+            // Phase 430 (D-02): the audit loop + recipient-resolution + notify loop that used to
+            // live inline here are now ONE shared helper (`contexts/scheduling`), reused by the
+            // Phorest sync and the manual shift-planning routes for the new (inverse) direction —
+            // a shift created/updated on an already-approved leave day. Behaviour here is
+            // byte-identical: same audit rows, same notification text/link, same recipients.
+            const empName = await app.prisma.employee.findUnique({
+              where: { id: existing.employeeId },
+              select: { firstName: true, lastName: true, tenantId: true },
+            });
+            if (empName) {
+              await notifyShiftLeaveConflicts(app, {
+                actorUserId: req.user.sub,
+                employeeId: existing.employeeId,
+                tenantId: empName.tenantId,
+                employeeName: { firstName: empName.firstName, lastName: empName.lastName },
+                leaveRequestId: existing.id,
+                leaveStart: existing.startDate,
+                leaveEnd: existing.endDate,
+                conflictingShifts,
+                request: { ip: req.ip, headers: req.headers as Record<string, string> },
               });
-              if (empName) {
-                // Phase 75b Plan 10 (#75), D-16: holders of shift:plan replace the legacy A,M
-                // role predicate — the recorded recipient set is unchanged.
-                const shiftPlanHolderIds = await userIdsHoldingPermission(
-                  app.prisma,
-                  empName.tenantId,
-                  "shift:plan:ZUGEWIESEN",
-                );
-                // Phase 91b Plan 09 (Issue #91), D-11/D-17: narrow to holders whose OWN reach
-                // covers AT LEAST ONE of the flagged conflicting shifts (the batch's own salon(s)
-                // — a single leave approval can conflict with shifts at different salons, and this
-                // ONE notification summarizes ALL of them, so a holder in scope for any one of the
-                // affected shifts is kept). No Stammsalon fallback (D-11).
-                const scopedShiftPlanHolderIds = await resolveScopedHolderIds(
-                  app.prisma,
-                  empName.tenantId,
-                  shiftPlanHolderIds,
-                  "shift:plan:ZUGEWIESEN",
-                  (reach) =>
-                    conflictingShifts.some((s) =>
-                      isShiftInScope(reach, {
-                        salonId: s.salonId,
-                        employeeId: existing.employeeId,
-                      }),
-                    ),
-                );
-                const managers = await app.prisma.user.findMany({
-                  where: {
-                    isActive: true,
-                    id: { in: scopedShiftPlanHolderIds },
-                    employee: { tenantId: empName.tenantId },
-                  },
-                  select: { id: true },
-                });
-                const dStart = existing.startDate.toLocaleDateString("de-DE");
-                const dEnd = existing.endDate.toLocaleDateString("de-DE");
-                for (const mgr of managers) {
-                  await app
-                    .notify({
-                      userId: mgr.id,
-                      type: "SHIFT_LEAVE_CONFLICT",
-                      title: `Schicht-Konflikt: ${empName.firstName} ${empName.lastName}`,
-                      message: `Genehmigter Urlaub vom ${dStart} bis ${dEnd} überschneidet sich mit ${conflictingShifts.length} Schicht(en). Bitte überprüfen Sie /shifts.`,
-                      link: "/shifts",
-                      tenantId: empName.tenantId,
-                      relatedType: "LeaveRequest",
-                      relatedId: existing.id,
-                    })
-                    .catch((err) =>
-                      app.log.warn(
-                        { err, managerId: mgr.id },
-                        "Failed to notify manager of SHIFT_LEAVE_CONFLICT",
-                      ),
-                    );
-                }
-              }
-            } catch (err) {
-              app.log.warn({ err }, "SHIFT_LEAVE_CONFLICT manager-notify pass failed");
             }
           }
         } catch (err) {
@@ -2752,7 +2693,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       const scoped = await resolveScopedEmployeeIdForRead(app, req, requestedEmployeeId);
       if (!scoped.ok) return reply.code(scoped.status).send(scoped.body);
       const employeeId = scoped.employeeId;
-      if (!employeeId) return { hours: 0, days: 0 };
+      if (!employeeId) return { hours: 0, days: 0, rosterImported: true };
 
       const start = new Date(startDate);
       const end = new Date(endDate);
@@ -2769,6 +2710,40 @@ export async function leaveRoutes(app: FastifyInstance) {
       ]);
       const { days, provisional } = leaveDaysPreview;
 
+      // Phase 430 Plan 04 (D-15): `rosterImported` — a NEW, independent signal from
+      // `provisional` above (Issue #417 hard-wired that one `false`; it must not be
+      // repurposed). Meaningful only for SHIFT_BASED employees — every other schedule type
+      // reports `true` unconditionally so the leave-dialog hint this field feeds (D-16) can
+      // never fire for them. Reuses the exact inline WorkSchedule-lookup idiom this same
+      // handler's sibling routes already use (e.g. `wsForApproval` above), not a new query
+      // shape, and `mondayOfWeekUtc()` (vacation-calc.ts) — the one shared Monday derivation
+      // (Phase 107 D-05: "do not invent a third one") — for the week bounds. Only the week
+      // containing `startDate` is checked, even when the request spans multiple weeks — a
+      // documented first-cut simplification (see 430-04-SUMMARY.md).
+      let rosterImported = true;
+      const wsForRoster = await app.prisma.workSchedule.findFirst({
+        where: { employeeId },
+        orderBy: { validFrom: "desc" },
+        select: { type: true },
+      });
+      if (wsForRoster?.type === "SHIFT_BASED") {
+        const weekStart = mondayOfWeekUtc(start);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+        // Multi-Tenancy Convention (CLAUDE.md) / route-employee-scope-literals.test.ts: every
+        // route-file EmployeeScope is built via employeeScopeFor(accessContextFromRequest(req),
+        // …), never a hand-built literal — `access` mirrors this same file's other call sites
+        // (e.g. the approval-reverse-hook above).
+        const access = accessContextFromRequest(req);
+        const shiftsThisWeek = await getShiftsInRange(
+          app.prisma,
+          employeeScopeFor(access, { employeeId }),
+          weekStart,
+          weekEnd,
+        );
+        rosterImported = shiftsThisWeek.length > 0;
+      }
+
       // WR-03 (code review) — exact integer minutes, computed with the SAME
       // Math.round(hoursNeeded * 60) formula the POST /requests OVERTIME_COMP gate
       // uses for `neededMinutes` above. `hours` is rounded to 2 decimal PLACES for
@@ -2782,6 +2757,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         hours: +hours.toFixed(2),
         days,
         provisional,
+        rosterImported,
         minutesNeeded: Math.round(hours * 60),
       };
     },

@@ -1162,6 +1162,236 @@ describe("SHIFT-02 pending-leave protection", () => {
   });
 });
 
+// Phase 430 (D-03/D-04/D-07) — the missing Type-1 direction: a shift CREATED/UPDATED by the
+// Phorest import lands on a day that already has an APPROVED LeaveRequest. `wttFixture`'s mapped
+// employee (Erika) has two WORKING slots, 2026-07-30 and 2026-07-31 — an APPROVED leave on the
+// first day exercises the canonical-upsert branch (no legacy "Phorest"-labelled occupant exists,
+// so `occupant` is null and the upsert-by-externalId path runs, not adopt-on-match — both branches
+// call the SAME `flagShiftIfConflictsWithApprovedLeave`/`notifyShiftLeaveConflicts` pair per the
+// plan's interfaces section, so covering one directly is sufficient; the adopt-on-match branch is
+// wired identically, see sync-shifts.ts).
+describe("Phase 430 — Type-1 leave conflict on Phorest import", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("a fresh Phorest shift on an approved-leave day is flagged, audited and notified — idempotent on re-sync", async () => {
+    const seed = await seedPhorestTenant(app, "leaveconflict");
+    try {
+      // A shift:plan:ZUGEWIESEN holder to receive the notification — a plain MANAGER with no
+      // stored RoleAssignment falls back to its system role (D-08), same pattern
+      // apps/api/src/__tests__/shifts.test.ts's own leave-approval reverse-hook test relies on.
+      const bcryptMod = await import("bcryptjs");
+      const mgrPasswordHash = await bcryptMod.default.hash("test1234", 10);
+      const mgrUser = await app.prisma.user.create({
+        data: {
+          email: `mgr-phorest-lc-${Date.now()}@test.de`,
+          passwordHash: mgrPasswordHash,
+          role: "MANAGER",
+          isActive: true,
+        },
+      });
+      await app.prisma.employee.create({
+        data: {
+          tenantId: seed.tenantId,
+          userId: mgrUser.id,
+          employeeNumber: `PLC-${Date.now()}`,
+          firstName: "Mary",
+          lastName: "Manager",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+
+      await seedPendingLeaveRequest(
+        app,
+        seed.mappedEmployeeId,
+        "2026-07-30",
+        "2026-07-30",
+        "APPROVED",
+      );
+
+      mockPhorest(wttFixture);
+      const first = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
+      expect(first.status).toBe("SUCCESS");
+      expect(first.created).toBe(2); // both worktime entries still create — detection, never blocking
+
+      const conflictShift = await app.prisma.shift.findFirst({
+        where: { employeeId: seed.mappedEmployeeId, date: new Date("2026-07-30") },
+      });
+      const otherShift = await app.prisma.shift.findFirst({
+        where: { employeeId: seed.mappedEmployeeId, date: new Date("2026-07-31") },
+      });
+      expect(conflictShift?.conflictsWithLeave).toBe(true);
+      expect(otherShift?.conflictsWithLeave).toBe(false); // no leave on this day — untouched
+
+      const audits = await app.prisma.auditLog.findMany({
+        where: { entity: "Shift", action: "SHIFT_MARKED_CONFLICTING", entityId: conflictShift!.id },
+      });
+      expect(audits).toHaveLength(1);
+      // Phase 120 (D-06/D-07): the cron path's sentinel is never written to AuditLog.userId.
+      expect(audits[0].userId).toBeNull();
+
+      const notifs = await app.prisma.notification.findMany({
+        where: { type: "SHIFT_LEAVE_CONFLICT", userId: mgrUser.id },
+      });
+      expect(notifs.length).toBeGreaterThan(0);
+      expect(notifs[0].title).toContain("Erika");
+
+      // Re-sync the SAME window — the shift is already flagged, so no second audit row and no
+      // second notification (idempotent, mirrors the leave-approval direction's own S2 idiom).
+      mockPhorest(wttFixture);
+      const second = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
+      expect(second.status).toBe("SUCCESS");
+
+      const auditsAfterSecond = await app.prisma.auditLog.count({
+        where: { entity: "Shift", action: "SHIFT_MARKED_CONFLICTING", entityId: conflictShift!.id },
+      });
+      expect(auditsAfterSecond).toBe(1);
+      const notifsAfterSecond = await app.prisma.notification.count({
+        where: { type: "SHIFT_LEAVE_CONFLICT", userId: mgrUser.id },
+      });
+      expect(notifsAfterSecond).toBe(notifs.length);
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("a PENDING (not APPROVED) leave on the import day never flags the shift", async () => {
+    const seed = await seedPhorestTenant(app, "leaveconflict-pending");
+    try {
+      await seedPendingLeaveRequest(
+        app,
+        seed.mappedEmployeeId,
+        "2026-07-30",
+        "2026-07-30",
+        "PENDING",
+      );
+
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+
+      const shift = await app.prisma.shift.findFirst({
+        where: { employeeId: seed.mappedEmployeeId, date: new Date("2026-07-30") },
+      });
+      expect(shift?.conflictsWithLeave).toBe(false);
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+});
+
+// Phase 430 (D-05..D-07) — Type-2: a SHIFT_BASED employee scheduled on more distinct days in an
+// ISO week than her contract allows once approved leave and other absences that week are
+// subtracted. `wttFixture`'s mapped employee (Erika) has two WORKING slots, both inside the ISO
+// week Mon 2026-07-27..Sun 2026-08-02 — a 1-day contract with no leave/absence that week makes
+// both slots exceed the allowed count (`overbookedBy = 2 - max(0, 1-0-0) = 1`). A narrow window
+// exactly matching that one ISO week keeps the end-of-run pass to a single
+// `detectWeekCapacityConflict` call, instead of looping every week WIDE_WINDOW's six months touch.
+const WEEK_WINDOW = { startDate: "2026-07-27", endDate: "2026-08-02" };
+
+describe("Phase 430 — Type-2 week-capacity conflict on Phorest import", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("a SHIFT_BASED employee with a 1-day contract and 2 WORKING slots that week triggers exactly one SHIFT_WEEK_OVERBOOKED notification per recipient — idempotent on re-sync", async () => {
+    const seed = await seedPhorestTenant(app, "weekcap");
+    try {
+      await app.prisma.workSchedule.create({
+        data: {
+          employeeId: seed.mappedEmployeeId,
+          type: "SHIFT_BASED",
+          weeklyHours: 8,
+          contractWorkDaysPerWeek: 1,
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+
+      // A shift:plan:ZUGEWIESEN holder to receive the notification — same D-08 system-role
+      // fallback pattern as the Type-1 describe block above.
+      const bcryptMod = await import("bcryptjs");
+      const mgrPasswordHash = await bcryptMod.default.hash("test1234", 10);
+      const mgrUser = await app.prisma.user.create({
+        data: {
+          email: `mgr-phorest-wc-${Date.now()}@test.de`,
+          passwordHash: mgrPasswordHash,
+          role: "MANAGER",
+          isActive: true,
+        },
+      });
+      await app.prisma.employee.create({
+        data: {
+          tenantId: seed.tenantId,
+          userId: mgrUser.id,
+          employeeNumber: `PWC-${Date.now()}`,
+          firstName: "Mona",
+          lastName: "Manager",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+
+      mockPhorest(wttFixture);
+      const first = await syncPhorestShifts(app, seed.tenantId, seed.target, WEEK_WINDOW);
+      expect(first.status).toBe("SUCCESS");
+      expect(first.created).toBe(2); // both worktime entries still create — detection, never blocking
+
+      const notifs = await app.prisma.notification.findMany({
+        where: { type: "SHIFT_WEEK_OVERBOOKED", userId: mgrUser.id },
+      });
+      expect(notifs.length).toBeGreaterThan(0);
+      expect(notifs[0].title).toContain("Erika");
+      expect(notifs[0].message).toContain("2 Schichttage");
+
+      // Re-sync the SAME window — the (employeeId, week) conflict is still unresolved (not
+      // dismissed), so the not-yet-dismissed Notification dedup (D-06) must suppress a second
+      // notification.
+      mockPhorest(wttFixture);
+      const second = await syncPhorestShifts(app, seed.tenantId, seed.target, WEEK_WINDOW);
+      expect(second.status).toBe("SUCCESS");
+
+      const notifsAfterSecond = await app.prisma.notification.count({
+        where: { type: "SHIFT_WEEK_OVERBOOKED", userId: mgrUser.id },
+      });
+      expect(notifsAfterSecond).toBe(notifs.length);
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("a non-SHIFT_BASED employee is never checked for week-capacity overbooking", async () => {
+    const seed = await seedPhorestTenant(app, "weekcap-nonshift");
+    try {
+      // No WorkSchedule row at all for the mapped employee -> she is not SHIFT_BASED, so
+      // detectWeekCapacityConflict must never even run for her, regardless of shift count.
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WEEK_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+
+      const notifs = await app.prisma.notification.count({
+        where: { type: "SHIFT_WEEK_OVERBOOKED" },
+      });
+      expect(notifs).toBe(0);
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+});
+
 // WR-01 regression: the slot-type filter is an ALLOW-LIST, not a NON_WORKING deny-list.
 // extractWorkTimes is the ONLY filter point (it drops `type` before the sync sees the item), so a
 // NOT_SPECIFIED / absent-type slot must NOT survive as a phantom working shift on the §615 roster.

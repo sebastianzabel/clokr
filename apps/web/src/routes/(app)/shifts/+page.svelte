@@ -1361,7 +1361,14 @@
     title="Schichtplanung"
     accent="Schicht"
     sub="Wöchentliche Schichten zuweisen — mit Verfügbarkeit und Coverage-Heatmap. Vorlagen und Bedarfsregeln pflegt die Administration."
-  />
+  >
+    {#snippet actions()}
+      <!-- Phase 430 (D-11/D-14, Issue #430): sibling links to the conflict overview and the
+           new Wochenübersicht Planungsbedarf — neither page was linked from here before. -->
+      <a class="btn btn-ghost btn-sm" href="/shifts/conflicts">Konflikte</a>
+      <a class="btn btn-ghost btn-sm" href="/shifts/planning">Planungsbedarf</a>
+    {/snippet}
+  </PageHead>
 
   {#if error}
     <div class="callout error card-animate" role="alert">{error}</div>
