@@ -35,7 +35,7 @@
     vacationCardDelta,
     vacationCardLabel,
   } from "$lib/leave/vacation-summary";
-  import { resolveChipVisual } from "$lib/leave/team-calendar-visibility"; // Phase 262 / 303
+  import { resolveChipVisual, isDrawnInCalendar } from "$lib/leave/team-calendar-visibility"; // Phase 262 / 303, Issue #446 (D-04)
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -606,7 +606,7 @@
 
   function buildLaneMap(entries: CalEntry[]): LaneResult {
     // Only the absences that will actually be rendered (mirrors the per-cell filter)
-    const visible = entries.filter((e) => !e.isHoliday && (e.isOwn || e.status === "APPROVED"));
+    const visible = entries.filter((e) => isDrawnInCalendar(e));
 
     // Deterministic sort: startDate → lastName → firstName → id
     const sorted = [...visible].sort((a, b) => {
@@ -659,9 +659,7 @@
 
   /** The tapped day's bars — the same filter the cell's `dayAbsences` and the lane map apply. */
   let dayDetailEntries = $derived(
-    (dayDetailDate ? (calMap.get(dayDetailDate) ?? []) : []).filter(
-      (e) => !e.isHoliday && (e.isOwn || e.status === "APPROVED"),
-    ),
+    (dayDetailDate ? (calMap.get(dayDetailDate) ?? []) : []).filter((e) => isDrawnInCalendar(e)),
   );
 
   function openDayDetail(dateStr: string) {
@@ -1098,9 +1096,7 @@
           {#each calDays as day (day.dateStr)}
             {@const entries = calMap.get(day.dateStr) ?? []}
             {@const holidays = entries.filter((e) => e.isHoliday)}
-            {@const dayAbsences = entries.filter(
-              (e) => !e.isHoliday && (e.isOwn || e.status === "APPROVED"),
-            )}
+            {@const dayAbsences = entries.filter((e) => isDrawnInCalendar(e))}
             {@const isHoliday = holidays.length > 0}
             {@const _dow = new Date(day.dateStr + "T00:00:00").getDay()}
             <div

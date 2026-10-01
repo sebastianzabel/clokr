@@ -8,6 +8,10 @@
   import Card from "$components/ui/Card.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
   import { leaveKind } from "$lib/leave/leave-kind";
+  import {
+    EFFECTIVE_LEAVE_STATUSES,
+    isEffectiveLeaveStatus,
+  } from "$lib/leave/effective-leave-statuses"; // Issue #446 (D-04)
 
   // ── Types ────────────────────────────────────────────────────────────────
   interface Employee {
@@ -77,11 +81,12 @@
   // CSS grid-template-columns value: 200px sticky name col + N data cols
   let gridCols = $derived(`200px repeat(${daysInMonth}, minmax(22px, 1fr))`);
 
-  // Build a fast lookup: employeeId → array of approved leave windows
+  // Build a fast lookup: employeeId → array of effective (APPROVED + CANCELLATION_REQUESTED,
+  // Issue #446) leave windows
   let absenceByEmployee = $derived.by(() => {
     const map = new Map<string, { kind: "vacation" | "sick"; start: string; end: string }[]>();
     for (const r of requests) {
-      if (r.status !== "APPROVED") continue;
+      if (!isEffectiveLeaveStatus(r.status)) continue;
       const kind = leaveKind(r.typeCode);
       const arr = map.get(r.employeeId) ?? [];
       arr.push({ kind, start: r.startDate.slice(0, 10), end: r.endDate.slice(0, 10) });
@@ -127,14 +132,18 @@
     loading = true;
     error = "";
     try {
-      // Fetch employees once + all approved requests; filter to visible window client-side.
-      // A ?from=&to= server filter could be added if perf becomes an issue (deferred).
-      const [emp, leaves] = await Promise.all([
+      // Fetch employees once + all effective requests (APPROVED + CANCELLATION_REQUESTED,
+      // Issue #446 D-04 — a leave stays active while its cancellation is only requested); filter
+      // to visible window client-side. A ?from=&to= server filter could be added if perf becomes
+      // an issue (deferred).
+      const [emp, ...leavesByStatus] = await Promise.all([
         api.get<Employee[]>("/employees"),
-        api.get<LeaveRequest[]>("/leave/requests?status=APPROVED"),
+        ...EFFECTIVE_LEAVE_STATUSES.map((status) =>
+          api.get<LeaveRequest[]>(`/leave/requests?status=${status}`),
+        ),
       ]);
       employees = emp;
-      requests = leaves;
+      requests = leavesByStatus.flat();
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
@@ -143,7 +152,7 @@
   }
 
   // Note: previously this file contained a $effect that re-fetched
-  // /leave/requests?status=APPROVED whenever cursorYear/cursorMonth (or
+  // /leave/requests (APPROVED-only at the time) whenever cursorYear/cursorMonth (or
   // employees.length) changed. That effect was removed (see REVIEW WR-01):
   //   - it caused a duplicate initial fetch (employees.length flips 0 → N
   //     after load(), retriggering the effect immediately after onMount),
@@ -151,9 +160,9 @@
   //     month-nav clicks could overwrite newer state, and
   //   - it did not include the cursor in the query string, so navigation
   //     produced an identical payload — wasted bandwidth.
-  // load() already fetches the full approved set once; if month-by-month
-  // refresh is needed later, add a server-side ?from=&to= filter (see also
-  // the comment in load()).
+  // load() already fetches the full effective set once (APPROVED + CANCELLATION_REQUESTED,
+  // Issue #446); if month-by-month refresh is needed later, add a server-side ?from=&to= filter
+  // (see also the comment in load()).
 
   function prevMonth() {
     if (cursorMonth === 0) {

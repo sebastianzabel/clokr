@@ -366,10 +366,13 @@ describe("#303 (leave) — page wiring (source pins)", () => {
   });
 
   it("the day filter predicate occurs exactly three times: the lane map, dayAbsences, and the sheet", () => {
-    // It occurs twice today (the lane map and the cell's dayAbsences). A fourth shape would mean
-    // the sheet and the bars had started to disagree about what the day contains.
-    const occurrences =
-      PAGE.match(/!e\.isHoliday && \(e\.isOwn \|\| e\.status === "APPROVED"\)/g) ?? [];
+    // Issue #446 (D-04): the colleague filter widened from APPROVED-only to the shared
+    // isDrawnInCalendar predicate (APPROVED + CANCELLATION_REQUESTED) — the three-call-site
+    // invariant (the lane map, the cell's dayAbsences, and the sheet's dayDetailEntries) is
+    // unchanged. A fourth shape here would mean the sheet and the bars had started to disagree
+    // about what the day contains.
+    expect(PAGE).not.toContain('e.status === "APPROVED")');
+    const occurrences = PAGE.match(/\(e\) => isDrawnInCalendar\(e\)/g) ?? [];
     expect(occurrences).toHaveLength(3);
   });
 });

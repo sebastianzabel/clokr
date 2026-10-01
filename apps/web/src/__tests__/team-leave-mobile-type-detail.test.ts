@@ -301,12 +301,15 @@ describe("#265 — page wiring (source pins)", () => {
   it("the detail sheet reads the same day filter the bars use", () => {
     // If the sheet listed entries the bars do not draw, the tap would answer a question about a
     // different day than the one the finger touched.
-    expect(PAGE).toContain('(e) => !e.isHoliday && (e.isOwn || e.status === "APPROVED")');
+    // Issue #446 (D-04): the colleague filter widened from APPROVED-only to the shared
+    // isDrawnInCalendar predicate (APPROVED + CANCELLATION_REQUESTED) — the three-call-site
+    // invariant below is unchanged.
+    expect(PAGE).toContain("(e) => isDrawnInCalendar(e)");
+    expect(PAGE).not.toContain('e.status === "APPROVED")');
     // Three call sites, all the same predicate: the lane map, the cell's `dayAbsences`, and the
     // detail sheet's `dayDetailEntries`. A fourth shape here would mean the sheet and the bars
     // had started to disagree about what the day contains.
-    const occurrences =
-      PAGE.match(/!e\.isHoliday && \(e\.isOwn \|\| e\.status === "APPROVED"\)/g) ?? [];
+    const occurrences = PAGE.match(/\(e\) => isDrawnInCalendar\(e\)/g) ?? [];
     expect(occurrences).toHaveLength(3);
   });
 });

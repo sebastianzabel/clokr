@@ -21,8 +21,9 @@
     resolveChipVisual,
     LEAVE_TYPE_OPTIONS,
     SICK_CODES,
+    isDrawnInCalendar,
     type CalendarTypeCode,
-  } from "$lib/leave/team-calendar-visibility"; // Phase 257, Phase 262, #269
+  } from "$lib/leave/team-calendar-visibility"; // Phase 257, Phase 262, #269, Issue #446 (D-04)
   import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte"; // #265
   import { resolveAdjustmentBadge, type LastDaysAdjustment } from "$lib/leave/vacation-balance"; // Phase 107-07
   import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
@@ -736,7 +737,7 @@
 
   function buildLaneMap(entries: CalEntry[]): LaneResult {
     // Only the absences that will actually be rendered (mirrors the per-cell filter)
-    const visible = entries.filter((e) => !e.isHoliday && (e.isOwn || e.status === "APPROVED"));
+    const visible = entries.filter((e) => isDrawnInCalendar(e));
 
     // Deterministic sort: startDate → lastName → firstName → id
     const sorted = [...visible].sort((a, b) => {
@@ -786,9 +787,7 @@
 
   /** The tapped day's bars — the same filter the cell's `dayAbsences` applies. */
   let dayDetailEntries = $derived(
-    (dayDetailDate ? (calMap.get(dayDetailDate) ?? []) : []).filter(
-      (e) => !e.isHoliday && (e.isOwn || e.status === "APPROVED"),
-    ),
+    (dayDetailDate ? (calMap.get(dayDetailDate) ?? []) : []).filter((e) => isDrawnInCalendar(e)),
   );
 
   function openDayDetail(dateStr: string) {
@@ -1083,9 +1082,7 @@
         {#each calDays as day (day.dateStr)}
           {@const entries = calMap.get(day.dateStr) ?? []}
           {@const holidays = entries.filter((e) => e.isHoliday)}
-          {@const dayAbsences = entries.filter(
-            (e) => !e.isHoliday && (e.isOwn || e.status === "APPROVED"),
-          )}
+          {@const dayAbsences = entries.filter((e) => isDrawnInCalendar(e))}
           {@const isHoliday = holidays.length > 0}
           {@const _dow = new Date(day.dateStr + "T00:00:00").getDay()}
           <div
