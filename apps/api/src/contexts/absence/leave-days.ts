@@ -16,7 +16,7 @@ import {
   holidaysForSalon,
 } from "../platform"; // Phase 71b (issue #71, D-04) — the engine/state map are gone from this file, see getHolidayMap()
 import { getWorkedEntriesInRange } from "../time-tracking"; // Phase 71b (issue #71) — T2, the work-location rule's entry half
-import { splitDaysAcrossYears, countShiftBasedLeaveDays, leaveDaysPerWeek } from "./vacation-calc"; // Phase 107 (D-04/D-09), Issue #417; leaveDaysPerWeek Issue #429 (D-01/D-02) — the shared per-week kernel, Phase 430-06
+import { countShiftBasedLeaveDays, leaveDaysPerWeek } from "./vacation-calc"; // Phase 107 (D-04/D-09), Issue #417; leaveDaysPerWeek Issue #429 (D-01/D-02) — the shared per-week kernel, Phase 430-06
 import { preserveIllnessDeadline } from "./illness-carryover-guard"; // Phase 104
 import { getApprovedLeaveOverlapping } from "./facade/leave-requests"; // Phase 430 (D-08) — this file is INSIDE contexts/absence, no boundary crossing
 import type { LeaveEntitlement } from "@clokr/db";
@@ -356,14 +356,20 @@ export async function getHolidayMap(
 }
 
 /**
- * Zieht Urlaubstage vom Entitlement ab: Resturlaub (sofern nicht verfallen) zuerst,
- * danach reguläre Tage.
+ * Deducts vacation days from the entitlement, cross-year aware.
  *
  * Exported (Phase 107, D-14): the shift-leave-recalc resolver
  * (`apps/api/src/utils/shift-leave-recalc-resolver.ts`) reuses this verbatim for its own
  * VACATION-entitlement delta correction rather than reinventing the year/type resolution —
  * `shifts.ts` imports it and passes it in as part of the resolver's `RecalcDeps`. Behaviour
  * unchanged for every existing call site in this file.
+ *
+ * Issue #445 (D-08/D-09): the cross-year branch now books `totalDays` chronologically through
+ * {@link splitLeaveDaysByYear} — the SAME day count the request itself was priced with
+ * (`resolveLeaveDays`: SHIFT_BASED by contract #417/#425, every other type by `workDays`) —
+ * instead of re-deriving a (possibly different) count per year from the placeholder `workDays`
+ * array via `splitDaysAcrossYears`. This also resolves ADR 0001-abweichungen Eintrag E point 1
+ * (SHIFT_BASED cross-year booking by placeholder `workDays`).
  */
 export async function deductVacationDays(
   prisma: DbClient,
@@ -385,9 +391,16 @@ export async function deductVacationDays(
   const isCrossYear = year1 !== year2;
 
   if (isCrossYear) {
-    // Split days across years — using the employee's own workDays
-    const workDays = await resolveWorkDays(prisma, employeeId, tenantId);
-    const split = splitDaysAcrossYears(startDate, endDate, false, workDays, holidays);
+    // Issue #445 (D-09): chronological attribution, the request's own day count.
+    const split = await splitLeaveDaysByYear(
+      prisma,
+      employeeId,
+      tenantId,
+      startDate,
+      endDate,
+      totalDays,
+      holidays,
+    );
 
     // Deduct from year 1
     if (split.year1Days > 0) {
@@ -425,12 +438,14 @@ export type ReverseVacationResult = {
 };
 
 /**
- * Symmetrischer Gegenpart zu deductVacationDays (Phase 94-02): bucht Urlaubstage
- * wieder ZURÜCK, wenn eine genehmigte Urlaubskorrektur den alten Buchungsstand
- * rückgängig macht. DECREMENTIERT usedDays pro Jahr (cross-year via
- * splitDaysAcrossYears) und rechnet den Folgejahres-Übertrag neu — NICHT der naive
- * Single-Year-Decrement, damit ein jahresübergreifender Urlaub korrekt zurückgebucht
- * wird (T-94-07).
+ * Symmetric counterpart to deductVacationDays (Phase 94-02): books vacation days back when an
+ * approved leave correction reverses a prior booking. DECREMENTS usedDays per year and
+ * recomputes the next year's carry-over — NOT the naive single-year decrement, so a cross-year
+ * leave period is reversed correctly (T-94-07).
+ *
+ * Issue #445 (D-08/D-09): the cross-year branch now splits via {@link splitLeaveDaysByYear} —
+ * see deductVacationDays()'s own docblock for the full rationale; booking and un-booking stay
+ * symmetric by construction (both call the same helper).
  */
 // Exported (Phase 107, D-14): reused verbatim by the shift-leave-recalc resolver for the
 // downward half of its VACATION-entitlement delta correction — see deductVacationDays()'s
@@ -457,8 +472,16 @@ export async function reverseVacationDays(
   const missingYears: number[] = [];
 
   if (isCrossYear) {
-    const workDays = await resolveWorkDays(prisma, employeeId, tenantId);
-    const split = splitDaysAcrossYears(startDate, endDate, false, workDays, holidays);
+    // Issue #445 (D-09): chronological attribution, the request's own day count.
+    const split = await splitLeaveDaysByYear(
+      prisma,
+      employeeId,
+      tenantId,
+      startDate,
+      endDate,
+      totalDays,
+      holidays,
+    );
 
     if (split.year1Days > 0) {
       const { count } = await prisma.leaveEntitlement.updateMany({
@@ -855,4 +878,120 @@ export function vacationEntitlementWarning(row: {
   return row.leaveTypeCode === "VACATION" && row.needsReview === true
     ? `Urlaubsanspruch für ${row.year} fehlt – bitte prüfen`
     : null;
+}
+
+// ── Issue #445 — chronological cross-year attribution (D-08/D-09) ──────────────────────────────
+
+/** Normalises a Date to UTC midnight of its own UTC calendar day (P-12). */
+function utcDay(d: Date): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+
+/** Adds (or subtracts, for a negative `n`) whole UTC days to a UTC-midnight Date. */
+function addUtcDays(d: Date, n: number): Date {
+  return new Date(d.getTime() + n * 24 * 60 * 60 * 1000);
+}
+
+/** Rounds to 2 decimals — the precision `LeaveRequest.days`/`LeaveEntitlement.*Days` are stored
+ * at (`Decimal(5,2)`), matching {@link daysDiffer}'s own rounding. */
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/**
+ * The chronological-prefix rule (D-08): `P(t)` is 0 before the request starts, `request.days`
+ * on/after it ends, and `min(request.days, counted(start, t))` in between — `counted` being the
+ * SAME dispatch {@link resolveLeaveDays} uses to price the request itself (SHIFT_BASED by
+ * contract #417/#425, every other type by `workDays`). Not exported — every external caller
+ * goes through {@link splitLeaveDaysByYear} or {@link leaveDaysWithin} below.
+ */
+async function prefixLeaveDays(
+  db: DbClient,
+  employeeId: string,
+  tenantId: string,
+  request: { startDate: Date; endDate: Date; days: unknown },
+  t: Date,
+  holidays: Set<string>,
+): Promise<number> {
+  const start = utcDay(request.startDate);
+  const end = utcDay(request.endDate);
+  const total = Number(request.days);
+  const tt = utcDay(t);
+  if (tt.getTime() < start.getTime()) return 0;
+  if (tt.getTime() >= end.getTime()) return total;
+  const counted = await resolveLeaveDays(db, employeeId, tenantId, start, tt, false, holidays);
+  return Math.min(total, counted.days);
+}
+
+/**
+ * Issue #445 (D-08/D-09) — splits a (possibly cross-year) leave request's `totalDays` between
+ * the two calendar years it spans, chronologically: `year1Days = P(31 Dec of year1)`,
+ * `year2Days = totalDays − year1Days`. Always sums exactly to `totalDays` (P-11) — unlike the
+ * former `splitDaysAcrossYears()` (still exported from `./vacation-calc`, unchanged, for its
+ * other readers), which re-derived each year's count independently from the placeholder
+ * `workDays` array and could over- or under-count a SHIFT_BASED boundary week. Same-year
+ * requests short-circuit without a DB round-trip.
+ */
+export async function splitLeaveDaysByYear(
+  db: DbClient,
+  employeeId: string,
+  tenantId: string,
+  start: Date,
+  end: Date,
+  totalDays: number,
+  holidays: Set<string>,
+): Promise<{ year1: number; year2: number; year1Days: number; year2Days: number }> {
+  const year1 = start.getUTCFullYear();
+  const year2 = end.getUTCFullYear();
+  if (year1 === year2) {
+    return { year1, year2, year1Days: round2(totalDays), year2Days: 0 };
+  }
+  const request = { startDate: start, endDate: end, days: totalDays };
+  const year1Days = await prefixLeaveDays(
+    db,
+    employeeId,
+    tenantId,
+    request,
+    new Date(Date.UTC(year1, 11, 31)),
+    holidays,
+  );
+  return {
+    year1,
+    year2,
+    year1Days: round2(year1Days),
+    year2Days: round2(totalDays - year1Days),
+  };
+}
+
+/**
+ * Issue #445 (D-08/D-09/D-10) — the portion of `request`'s days that falls inside `[from, to]`,
+ * by the same chronological-prefix rule: `max(0, P(to) − P(from − 1 day))`. Returns 0 when
+ * `to < from`. Used by self-heal (D-10) to attribute a cross-year or partially-overlapping
+ * request's days to one entitlement year's window.
+ *
+ * P-17: for a SHIFT_BASED request the prefix is not strictly monotone across a holiday (adding a
+ * holiday can reduce an already-capped fragment's count), so the result is clamped at 0; a
+ * year-window sum (`P(Dec 31)` minus the previous window's) never goes negative because
+ * `P(Dec 31) <= request.days` always holds.
+ */
+export async function leaveDaysWithin(
+  db: DbClient,
+  employeeId: string,
+  tenantId: string,
+  request: { startDate: Date; endDate: Date; days: unknown },
+  from: Date,
+  to: Date,
+  holidays: Set<string>,
+): Promise<number> {
+  if (to.getTime() < from.getTime()) return 0;
+  const pTo = await prefixLeaveDays(db, employeeId, tenantId, request, to, holidays);
+  const pFromMinus1 = await prefixLeaveDays(
+    db,
+    employeeId,
+    tenantId,
+    request,
+    addUtcDays(utcDay(from), -1),
+    holidays,
+  );
+  return Math.max(0, round2(pTo - pFromMinus1));
 }

@@ -4,7 +4,6 @@ import { LeaveRequestStatus, Prisma } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
 import { generateICal, addOneDay, type ICalEvent } from "../ical";
 import {
-  splitDaysAcrossYears,
   calculateProRataVacation,
   shiftBasedLeaveMinutesForRequest, // Issue #429, D-13 — receipt shares the saldo's per-week formula
   mondayOfWeekUtc, // Phase 430 Plan 04 (D-15) — the one shared Monday derivation
@@ -23,7 +22,6 @@ import {
   getHolidayMap,
   deductVacationDays,
   reverseVacationDays,
-  resolveWorkDays,
   recalculateCarryOver,
   contractWorkDaysPerWeekFrom, // Issue #429, D-13 — the getScheduledHours SHIFT_BASED branch below
 } from "../leave-days";
@@ -74,6 +72,7 @@ import {
   REGULAR_ENTITLEMENT_REASON_ROLLOVER,
   REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
   vacationEntitlementWarning, // Issue #445 — one function builds the warning string (no business rule in composition/reports.ts)
+  splitLeaveDaysByYear, // Issue #445 (D-08/D-09) — chronological cross-year attribution
 } from "../leave-days"; // Issue #445 — own statement: PR #437 edits the block above
 import { writeEntitlementAudit } from "../entitlement-audit"; // Issue #445
 import { revalidateLeaveCancellationEntries } from "../../time-tracking"; // Phase 100B Plan 08 — T6
@@ -482,8 +481,6 @@ export async function leaveRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const holidayMap = await getHolidayMap(app.prisma, tenantId, employeeId, start, end);
       const holidays = new Set(holidayMap.keys());
-      // workDays (the array, not just the count) is still needed below for splitDaysAcrossYears.
-      const workDays = await resolveWorkDays(app.prisma, employeeId, tenantId);
       // Phase 107 (D-09): roster-aware estimate from creation onward, so the number does not
       // visibly jump at approval. daysProvisional itself stays null until approval (D-10) --
       // only `.days` is used here, `.provisional` is deliberately discarded.
@@ -608,14 +605,20 @@ export async function leaveRoutes(app: FastifyInstance) {
       }
 
       // Für VACATION: Resturlaub auto-übertragen (lazy) + verfügbare Tage prüfen
+      //
+      // Issue #445 (D-08/D-09/P-15): UTC year boundaries, symmetric with deductVacationDays()/
+      // reverseVacationDays(). A cross-year request is split chronologically through
+      // splitLeaveDaysByYear() — the SAME day count the request itself was priced with above
+      // (resolveLeaveDays) — instead of re-deriving each year's count from the placeholder
+      // workDays array via splitDaysAcrossYears (a missing row used to also skip this entirely,
+      // see the ensureRegularVacationEntitlement calls below, D-04).
       if (body.type === "VACATION") {
-        const year1 = start.getFullYear();
-        const year2 = end.getFullYear();
+        const year1 = start.getUTCFullYear();
+        const year2 = end.getUTCFullYear();
         const isCrossYear = year1 !== year2;
 
-        // Split days across years if cross-year
         const split = isCrossYear
-          ? splitDaysAcrossYears(start, end, body.halfDay, workDays, holidays)
+          ? await splitLeaveDaysByYear(app.prisma, employeeId, tenantId, start, end, days, holidays)
           : { year1Days: days, year2Days: 0, year1, year2 };
 
         // § 5 Abs. 2 BUrlG: fetch exit date once so both year-1 and year-2 blocks can use it.
@@ -3614,9 +3617,12 @@ export async function leaveRoutes(app: FastifyInstance) {
           .send({ error: "Kein anrechenbarer Arbeitstag im attestierten Zeitraum." });
       }
 
-      // reverseVacationDays IGNORES totalDays in its cross-year branch and recomputes it with
-      // halfDay=false. A half-day request whose credited range crosses a year boundary would
-      // therefore be over-booked. Refuse loudly instead of mis-booking silently.
+      // Issue #445 (D-08/D-09): reverseVacationDays' cross-year branch now splits `totalDays`
+      // chronologically by the REQUEST'S OWN day count (splitLeaveDaysByYear), always called
+      // with halfDay=false — the split works on the already-priced total, not on halfDay
+      // itself. A half-day credit whose credited range crosses a year boundary therefore still
+      // has no unambiguous per-year attribution (0.5 day cannot be chronologically split).
+      // Refuse loudly instead of mis-booking silently — behaviour unchanged from before #445.
       // Phase 104 review (WR-09): UTC accessors throughout the § 9 path. Every
       // Section9Credit date column is @db.Date (UTC midnight) and the entitlement endpoint
       // attributes credits to a year with getUTCFullYear(); using the LOCAL accessors here
