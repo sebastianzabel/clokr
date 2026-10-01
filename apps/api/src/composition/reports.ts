@@ -46,6 +46,7 @@ import {
   runCarryoverWarningOnce, // Phase 101B (Issue #101, wave 7) — was `await import(...)`, see :1090
   ensureRegularVacationEntitlement, // Issue #445 (D-05) — injected into selfHealUsedDays's ctx below
   REGULAR_ENTITLEMENT_REASON_SELF_HEAL, // Issue #445 (D-05)
+  vacationEntitlementWarning, // Issue #445 — composition carries no business rule (CLAUDE.md); the warning string is built in the absence context
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
 import type { LeaveTypeCode } from "@clokr/db";
 
@@ -1147,12 +1148,14 @@ export async function reportRoutes(app: FastifyInstance) {
         missingEntitlement: false as const,
         // Issue #445 (coordinator deviation from CONTEXT D-05) — selfHealUsedDays above sets
         // needsReview on a VACATION row whose zero placeholder was left unhealed because it
-        // was ambiguous (see isAmbiguousRegularEntitlement in contexts/absence/leave-days.ts);
-        // the flag is computed in the absence context, not here, per the coordinator decision.
-        entitlementWarning:
-          e.leaveType.code === "VACATION" && (e as { needsReview?: boolean }).needsReview
-            ? `Urlaubsanspruch für ${e.year} fehlt – bitte prüfen`
-            : null,
+        // was ambiguous (see isAmbiguousRegularEntitlement in contexts/absence/leave-days.ts).
+        // The flag AND the warning string are both computed in the absence context — this
+        // composition layer carries no business rule (CLAUDE.md, ADR 0002 Entscheidung 9).
+        entitlementWarning: vacationEntitlementWarning({
+          leaveTypeCode: e.leaveType.code,
+          year: e.year,
+          needsReview: (e as { needsReview?: boolean }).needsReview,
+        }),
       }));
 
       // Issue #416 (AC-3/AC-4): active tenant employees (same Stammsalon scope as the

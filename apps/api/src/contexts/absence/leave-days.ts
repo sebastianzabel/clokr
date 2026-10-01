@@ -836,3 +836,23 @@ export async function ensureRegularVacationEntitlement(
     needsReview: false,
   };
 }
+
+/**
+ * Issue #445 — the ONE place the German "Urlaubsanspruch fehlt" warning string is built.
+ *
+ * `composition/reports.ts` (GET /reports/leave-overview) and `api/leave.ts` (GET
+ * /leave/entitlements) both surfaced an ambiguous, unhealed zero placeholder (see
+ * {@link isAmbiguousRegularEntitlement}) with their own copy of this string. The composition
+ * layer carries no business rule (CLAUDE.md, ADR 0002 Entscheidung 9) — deciding WHETHER a row
+ * warns and WHAT the warning says is a rule of this context, not a display detail. Both callers
+ * now call this function instead of building the string themselves.
+ */
+export function vacationEntitlementWarning(row: {
+  leaveTypeCode: string | null | undefined;
+  year: number;
+  needsReview?: boolean;
+}): string | null {
+  return row.leaveTypeCode === "VACATION" && row.needsReview === true
+    ? `Urlaubsanspruch für ${row.year} fehlt – bitte prüfen`
+    : null;
+}

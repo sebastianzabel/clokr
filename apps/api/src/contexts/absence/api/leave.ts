@@ -73,6 +73,7 @@ import {
   REGULAR_ENTITLEMENT_REASON_LEAVE_REQUEST,
   REGULAR_ENTITLEMENT_REASON_ROLLOVER,
   REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
+  vacationEntitlementWarning, // Issue #445 — one function builds the warning string (no business rule in composition/reports.ts)
 } from "../leave-days"; // Issue #445 — own statement: PR #437 edits the block above
 import { writeEntitlementAudit } from "../entitlement-audit"; // Issue #445
 import { revalidateLeaveCancellationEntries } from "../../time-tracking"; // Phase 100B Plan 08 — T6
@@ -3208,11 +3209,14 @@ export async function leaveRoutes(app: FastifyInstance) {
         // Issue #445 (coordinator deviation from CONTEXT D-05) — selfHealUsedDays above sets
         // needsReview on a row whose zero placeholder was left unhealed because it was
         // ambiguous (see isAmbiguousRegularEntitlement in ../leave-days). Surface it so an
-        // admin/manager can act instead of the row silently staying at 0 unexplained.
-        const entitlementWarning =
-          isVacationRow && (r as { needsReview?: boolean }).needsReview
-            ? `Urlaubsanspruch für ${r.year} fehlt – bitte prüfen`
-            : null;
+        // admin/manager can act instead of the row silently staying at 0 unexplained. The
+        // warning string itself is built by vacationEntitlementWarning() in ../leave-days — the
+        // same function composition/reports.ts uses, so the business rule lives in one place.
+        const entitlementWarning = vacationEntitlementWarning({
+          leaveTypeCode: r.leaveType.code,
+          year: r.year,
+          needsReview: (r as { needsReview?: boolean }).needsReview,
+        });
         // D-31: only the vacation-account row carries movements — a credit only ever
         // touches the VACATION LeaveEntitlement (reverseVacationDays' target), so a
         // same-year non-vacation row (e.g. Sonderurlaub) must not repeat it.
