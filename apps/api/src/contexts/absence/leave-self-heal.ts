@@ -35,10 +35,15 @@
 import type { FastifyInstance } from "fastify";
 import type { LeaveTypeCode } from "@clokr/db";
 import { sumConfirmedSection9DaysByRequest } from "./section9-credit-days";
-import {
-  ensureRegularVacationEntitlement,
-  REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
-} from "./leave-days"; // Issue #445 D-05 zero-placeholder heal
+// Issue #445 (D-05): the zero-placeholder heal is injected via VacationTypeMeta.healZeroPlaceholder
+// below, NOT imported statically from ./leave-days here. leave-days.ts already sits inside the
+// absence/scheduling/time-tracking/working-time-account import cycle Phase 101B measured and
+// capped at 22 modules (`measure-context-boundary-imports.ts --cycles --check 22`); this file is
+// reachable FROM that cycle (absence/index.ts re-exports selfHealUsedDays), so a static import of
+// ./leave-days here would make this file reachable BACK into the cycle too, growing it to 23 and
+// breaking the capped CI gate. The caller — already holding ensureRegularVacationEntitlement
+// because it imports it for its own call sites — passes the heal function through the ctx object
+// instead, which carries no static source dependency.
 
 /**
  * Minimal row shape the helper needs. Matches against either of:
@@ -60,6 +65,13 @@ export type LeaveEntitlementWithType = {
   totalDays: unknown;
   isAutoCalculated: boolean;
   leaveType: { id: string; code: LeaveTypeCode | null };
+  /**
+   * Issue #445 (coordinator deviation from CONTEXT D-05) — set to `true` when this row is a
+   * zero placeholder left unhealed because {@link VacationTypeMeta.healZeroPlaceholder} found
+   * it ambiguous (a full prior year on record with a different totalDays). Callers surface this
+   * as `entitlementWarning` in their response; `undefined`/`false` otherwise.
+   */
+  needsReview?: boolean;
 };
 
 export type VacationTypeMeta = {
@@ -71,6 +83,20 @@ export type VacationTypeMeta = {
    * sumConfirmedSection9DaysByRequest() without changing every call site's signature.
    */
   tenantId: string;
+  /**
+   * Issue #445 (D-05) — heals a zero-placeholder VACATION row in place, injected by the caller
+   * (bound to `ensureRegularVacationEntitlement` + `REGULAR_ENTITLEMENT_REASON_SELF_HEAL`,
+   * both already imported there) so this file carries no static import of `./leave-days` — see
+   * the module docblock above. Omitted entirely only by a caller that genuinely never wants the
+   * heal; every current caller (GET /leave/entitlements, GET /reports/leave-overview) sets it.
+   */
+  healZeroPlaceholder?: (
+    prisma: FastifyInstance["prisma"],
+    employeeId: string,
+    tenantId: string,
+    year: number,
+    leaveTypeId: string,
+  ) => Promise<{ entitlement: { totalDays: unknown }; healed: boolean; needsReview?: boolean }>;
 };
 
 /**
@@ -101,27 +127,35 @@ export async function selfHealUsedDays(
   rows: LeaveEntitlementWithType[],
   ctx: VacationTypeMeta,
 ): Promise<void> {
-  const { vacationTypeIds, tenantId } = ctx;
+  const { vacationTypeIds, tenantId, healZeroPlaceholder } = ctx;
 
   for (const row of rows) {
     const isVacation = row.leaveType.code === "VACATION";
 
     // Issue #445 (D-05): heal a zero placeholder read-time, for every VACATION row this
-    // self-heal walks (GET /entitlements, GET /reports/leave-overview).
-    if (isVacation && Number(row.totalDays) === 0 && row.isAutoCalculated !== true) {
-      const healResult = await ensureRegularVacationEntitlement(
+    // self-heal walks (GET /entitlements, GET /reports/leave-overview). The actual heal
+    // function is injected by the caller (see VacationTypeMeta.healZeroPlaceholder) to keep
+    // this file out of the leave-days.ts import cycle.
+    if (
+      isVacation &&
+      Number(row.totalDays) === 0 &&
+      row.isAutoCalculated !== true &&
+      healZeroPlaceholder
+    ) {
+      const healResult = await healZeroPlaceholder(
         prisma,
         row.employeeId,
         tenantId,
         row.year,
         row.leaveTypeId,
-        REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
       );
       if (healResult.healed) {
         Object.assign(row, {
           totalDays: healResult.entitlement.totalDays,
           isAutoCalculated: true,
         });
+      } else if (healResult.needsReview) {
+        Object.assign(row, { needsReview: true });
       }
     }
 

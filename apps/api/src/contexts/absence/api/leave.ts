@@ -72,6 +72,7 @@ import {
   CARRY_OVER_RECALC_REASON,
   REGULAR_ENTITLEMENT_REASON_LEAVE_REQUEST,
   REGULAR_ENTITLEMENT_REASON_ROLLOVER,
+  REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
 } from "../leave-days"; // Issue #445 — own statement: PR #437 edits the block above
 import { writeEntitlementAudit } from "../entitlement-audit"; // Issue #445
 import { revalidateLeaveCancellationEntries } from "../../time-tracking"; // Phase 100B Plan 08 — T6
@@ -3124,8 +3125,28 @@ export async function leaveRoutes(app: FastifyInstance) {
         orderBy: { year: "desc" },
       });
 
-      // Vacation type meta — shared with selfHealUsedDays AND the pro-rata mapping below
-      const vacMeta = await loadVacationTypeMeta(app.prisma, tenantId);
+      // Vacation type meta — shared with selfHealUsedDays AND the pro-rata mapping below.
+      // healZeroPlaceholder (Issue #445, D-05) is injected here rather than imported statically
+      // by leave-self-heal.ts itself — see that file's module docblock for why (the absence/
+      // scheduling/time-tracking/working-time-account import-cycle ceiling, Phase 101B, 22).
+      const vacMeta = {
+        ...(await loadVacationTypeMeta(app.prisma, tenantId)),
+        healZeroPlaceholder: (
+          prisma: typeof app.prisma,
+          employeeId: string,
+          empTenantId: string,
+          year: number,
+          leaveTypeId: string,
+        ) =>
+          ensureRegularVacationEntitlement(
+            prisma,
+            employeeId,
+            empTenantId,
+            year,
+            leaveTypeId,
+            REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
+          ),
+      };
 
       // exitDate for pro-rata effective entitlement computation (§ 5 Abs. 2 BUrlG) —
       // reuse the `employee` row loaded by the tenant guard above.
@@ -3184,6 +3205,14 @@ export async function leaveRoutes(app: FastifyInstance) {
           isVacationRow && employeeExitDate
             ? calculateProRataVacation(Number(r.totalDays), r.year, employeeExitDate)
             : Number(r.totalDays);
+        // Issue #445 (coordinator deviation from CONTEXT D-05) — selfHealUsedDays above sets
+        // needsReview on a row whose zero placeholder was left unhealed because it was
+        // ambiguous (see isAmbiguousRegularEntitlement in ../leave-days). Surface it so an
+        // admin/manager can act instead of the row silently staying at 0 unexplained.
+        const entitlementWarning =
+          isVacationRow && (r as { needsReview?: boolean }).needsReview
+            ? `Urlaubsanspruch für ${r.year} fehlt – bitte prüfen`
+            : null;
         // D-31: only the vacation-account row carries movements — a credit only ever
         // touches the VACATION LeaveEntitlement (reverseVacationDays' target), so a
         // same-year non-vacation row (e.g. Sonderurlaub) must not repeat it.
@@ -3204,6 +3233,8 @@ export async function leaveRoutes(app: FastifyInstance) {
           effectiveCarryOverDays: getEffectiveCarryOver(r, now, warnedEntitlementIds.has(r.id)),
           carryOverDeadline: r.carryOverDeadline?.toISOString().split("T")[0] ?? null,
           effectiveEntitlementDays,
+          // Issue #445 — null unless this VACATION row is an unhealed ambiguous placeholder.
+          entitlementWarning,
           // Phase 107-07 (D-12): the provisional portion of `usedDays` for this year — see the
           // `provisionalLeaveRequests` query above. Always 0 for an employee/year with no
           // provisional requests; every other field on this response is unchanged.

@@ -668,17 +668,60 @@ export type RegularEntitlementResult = {
   entitlement: LeaveEntitlement;
   created: boolean;
   healed: boolean;
+  /**
+   * Issue #445 (coordinator deviation from CONTEXT D-05, Plan 01) — `true` when an existing
+   * zero placeholder was left UNHEALED because {@link isAmbiguousRegularEntitlement} found it
+   * ambiguous (a full prior year on record with a DIFFERENT totalDays, e.g. an Azubi/individual
+   * 20-day contract the #416 tenant-default formula would otherwise silently raise to 30). The
+   * row stays at 0 — no write, no audit — until a human resolves it (PUT /settings/vacation) or
+   * an operator runs `repair-zero-vacation-entitlements.ts --include-flagged`. Always `false`
+   * on a create path or a non-ambiguous heal.
+   */
+  needsReview: boolean;
 };
+
+/**
+ * Issue #445 (D-07, generalised to a shared predicate per the coordinator deviation above) — a
+ * computed regular entitlement is *ambiguous* when the employee had a FULL prior year on
+ * record (hired before 1 January of `year - 1`) whose VACATION row is itself not a zero
+ * placeholder and whose `totalDays` differs from `target`. This is the exact PRUEFEN condition
+ * `repair-zero-vacation-entitlements.ts` already used inline — lifted out here so the script and
+ * `ensureRegularVacationEntitlement`'s heal branch share ONE implementation, never two copies.
+ * Only meaningful for the VACATION type; callers only invoke it once they know `leaveTypeId` is
+ * the tenant's VACATION type.
+ */
+export async function isAmbiguousRegularEntitlement(
+  db: DbClient,
+  employeeId: string,
+  leaveTypeId: string,
+  year: number,
+  hireDate: Date,
+  target: number,
+): Promise<boolean> {
+  if (hireDate.getTime() >= Date.UTC(year - 1, 0, 1)) return false; // no full prior year on record
+  const priorRow = await db.leaveEntitlement.findUnique({
+    where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year: year - 1 } },
+  });
+  if (!priorRow) return false;
+  if (await isZeroVacationPlaceholder(db, priorRow)) return false; // prior row itself unreliable
+  return daysDiffer(Number(priorRow.totalDays), target);
+}
 
 /**
  * Issue #445 (D-02) — ensures a VACATION `LeaveEntitlement` row for `employeeId`/`year` carries
  * the regular yearly entitlement, creating it or healing a zero placeholder as needed:
  *   - missing row, VACATION type → created through {@link ensureVacationEntitlementForYear}
- *     (reuses its P2002 race handling and CREATE audit), `healed: false`.
+ *     (reuses its P2002 race handling and CREATE audit), `healed: false`. Creation is NEVER
+ *     gated by {@link isAmbiguousRegularEntitlement} — the coordinator decision explicitly keeps
+ *     D-04's "create with the regular entitlement" path as planned; only the heal of an
+ *     EXISTING zero row (below) is gated.
  *   - missing row, any other leave type → today's behaviour: a 0 row with one CREATE audit
  *     (D-02 — only VACATION gets the regular-entitlement treatment).
- *   - existing row, zero placeholder (D-05), target > 0 (P-03) → healed: `totalDays` +
- *     `isAutoCalculated: true`, one UPDATE audit.
+ *   - existing row, zero placeholder (D-05), target > 0 (P-03), NOT ambiguous → healed:
+ *     `totalDays` + `isAutoCalculated: true`, one UPDATE audit.
+ *   - existing row, zero placeholder, target > 0, AMBIGUOUS (coordinator deviation) → left at 0,
+ *     no write, no audit, `needsReview: true` — unless `options.allowAmbiguousHeal` is set (the
+ *     correction script's `--include-flagged`, the only automated way to write such a row).
  *   - existing row, not a placeholder (a human zero, a non-zero value, or already
  *     auto-calculated) → returned unchanged, `healed: false`.
  *
@@ -692,6 +735,7 @@ export async function ensureRegularVacationEntitlement(
   year: number,
   leaveTypeId: string,
   reason: string,
+  options?: { allowAmbiguousHeal?: boolean },
 ): Promise<RegularEntitlementResult> {
   const vacationType = await getLeaveTypeByCode(db, tenantId, "VACATION");
   const existing = await db.leaveEntitlement.findUnique({
@@ -701,7 +745,8 @@ export async function ensureRegularVacationEntitlement(
   // D-02: only the tenant's VACATION type gets the regular-entitlement treatment — any other
   // type keeps today's pre-#445 behaviour (a 0 row, audited CREATE, no heal).
   if (!vacationType || vacationType.id !== leaveTypeId) {
-    if (existing) return { entitlement: existing, created: false, healed: false };
+    if (existing)
+      return { entitlement: existing, created: false, healed: false, needsReview: false };
 
     let created: LeaveEntitlement;
     try {
@@ -713,7 +758,7 @@ export async function ensureRegularVacationEntitlement(
         const refetched = await db.leaveEntitlement.findUniqueOrThrow({
           where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
         });
-        return { entitlement: refetched, created: false, healed: false };
+        return { entitlement: refetched, created: false, healed: false, needsReview: false };
       }
       throw err;
     }
@@ -722,7 +767,7 @@ export async function ensureRegularVacationEntitlement(
       entityId: created.id,
       newValue: { totalDays: 0, reason },
     });
-    return { entitlement: created, created: true, healed: false };
+    return { entitlement: created, created: true, healed: false, needsReview: false };
   }
 
   if (existing) {
@@ -730,6 +775,17 @@ export async function ensureRegularVacationEntitlement(
       const inputs = await loadRegularVacationInputs(db, employeeId, tenantId, year);
       const target = computeRegularVacationDays({ year, ...inputs });
       if (target > 0) {
+        const ambiguous = await isAmbiguousRegularEntitlement(
+          db,
+          employeeId,
+          leaveTypeId,
+          year,
+          inputs.hireDate,
+          target,
+        );
+        if (ambiguous && !options?.allowAmbiguousHeal) {
+          return { entitlement: existing, created: false, healed: false, needsReview: true };
+        }
         const { count } = await db.leaveEntitlement.updateMany({
           where: { id: existing.id, totalDays: 0, isAutoCalculated: false },
           data: { totalDays: target, isAutoCalculated: true },
@@ -745,10 +801,10 @@ export async function ensureRegularVacationEntitlement(
         const entitlement = await db.leaveEntitlement.findUniqueOrThrow({
           where: { id: existing.id },
         });
-        return { entitlement, created: false, healed: count === 1 };
+        return { entitlement, created: false, healed: count === 1, needsReview: false };
       }
     }
-    return { entitlement: existing, created: false, healed: false };
+    return { entitlement: existing, created: false, healed: false, needsReview: false };
   }
 
   const inputs = await loadRegularVacationInputs(db, employeeId, tenantId, year);
@@ -773,5 +829,10 @@ export async function ensureRegularVacationEntitlement(
       `ensureRegularVacationEntitlement: no VACATION LeaveType configured for tenant ${tenantId}`,
     );
   }
-  return { entitlement: result.entitlement, created: result.created, healed: false };
+  return {
+    entitlement: result.entitlement,
+    created: result.created,
+    healed: false,
+    needsReview: false,
+  };
 }
