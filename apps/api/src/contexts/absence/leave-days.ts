@@ -232,6 +232,10 @@ export async function getShiftBasedLeaveDaysForWeek(
 /**
  * Recalculates carry-over for a given year based on the previous year's current state.
  * Called after every booking/cancellation to keep projected carry-over accurate.
+ *
+ * Issue #445 (D-04): a missing current-year row used to be created here with a hard-coded
+ * `totalDays: 0` — now `ensureRegularVacationEntitlement()` creates (or heals) it with the
+ * regular yearly entitlement instead.
  */
 export async function recalculateCarryOver(
   prisma: DbClient,
@@ -256,36 +260,35 @@ export async function recalculateCarryOver(
   const deadlineMonth = config?.carryOverDeadlineMonth ?? 3;
   const deadline = new Date(year, deadlineMonth - 1, deadlineDay, 23, 59, 59);
 
-  const cur = await prisma.leaveEntitlement.findUnique({
-    where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
-  });
+  const { entitlement: cur } = await ensureRegularVacationEntitlement(
+    prisma,
+    employeeId,
+    tenantId,
+    year,
+    leaveTypeId,
+    REGULAR_ENTITLEMENT_REASON_ROLLOVER,
+  );
 
-  if (cur) {
-    // Phase 104 (D-19 / R9): an ILLNESS carry-over carries the extended EuGH KHS C-214/10
-    // deadline (15 months after the end of the accrual year), not the tenant's standard
-    // Stichtag. This function runs after EVERY booking and cancellation, so an unconditional
-    // deadline write would silently revert that extension on the next unrelated leave
-    // request — the days would then appear to lapse on a date the ECJ forbids. Only the
-    // DEADLINE is protected: carriedOverDays is still recomputed, because D-20 relies on the
-    // existing expiry-warning mechanism reading an accurate, raised remaining entitlement.
-    const illnessProtected = preserveIllnessDeadline(cur);
-    await prisma.leaveEntitlement.update({
-      where: { id: cur.id },
-      data: illnessProtected
-        ? { carriedOverDays: remaining }
-        : { carriedOverDays: remaining, carryOverDeadline: deadline },
-    });
-  } else {
-    await prisma.leaveEntitlement.create({
-      data: {
-        employeeId,
-        leaveTypeId,
-        year,
-        totalDays: 0,
-        usedDays: 0,
-        carriedOverDays: remaining,
-        carryOverDeadline: deadline,
-      },
+  // Phase 104 (D-19 / R9): an ILLNESS carry-over carries the extended EuGH KHS C-214/10
+  // deadline (15 months after the end of the accrual year), not the tenant's standard
+  // Stichtag. This function runs after EVERY booking and cancellation, so an unconditional
+  // deadline write would silently revert that extension on the next unrelated leave
+  // request — the days would then appear to lapse on a date the ECJ forbids. Only the
+  // DEADLINE is protected: carriedOverDays is still recomputed, because D-20 relies on the
+  // existing expiry-warning mechanism reading an accurate, raised remaining entitlement.
+  const illnessProtected = preserveIllnessDeadline(cur);
+  await prisma.leaveEntitlement.update({
+    where: { id: cur.id },
+    data: illnessProtected
+      ? { carriedOverDays: remaining }
+      : { carriedOverDays: remaining, carryOverDeadline: deadline },
+  });
+  if (daysDiffer(Number(cur.carriedOverDays), remaining)) {
+    await writeEntitlementAudit(prisma, {
+      action: "UPDATE",
+      entityId: cur.id,
+      oldValue: { carriedOverDays: Number(cur.carriedOverDays) },
+      newValue: { carriedOverDays: remaining, reason: CARRY_OVER_RECALC_REASON },
     });
   }
 }

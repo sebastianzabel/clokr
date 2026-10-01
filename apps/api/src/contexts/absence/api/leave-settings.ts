@@ -20,7 +20,11 @@ import {
   ensureVacationEntitlementForYear, // Issue #416 — first-access self-heal
 } from "../facade/entitlements"; // Phase 100B Plan 10 — A11/A16
 import { listLeaveTypes, updateLeaveType } from "../facade/leave-types"; // Phase 100B Plan 10 — A18/A19
-import { resolveContractWorkDaysPerWeek } from "../leave-days"; // Issue #416 — same-context internal import, the one resolution chain (CLAUDE.md)
+import {
+  resolveContractWorkDaysPerWeek, // Issue #416 — same-context internal import, the one resolution chain (CLAUDE.md)
+  ensureRegularVacationEntitlement, // Issue #445 (D-05, P-07) — zero-placeholder heal
+  REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
+} from "../leave-days";
 
 const vacationEntitlementSchema = z.object({
   year: z.number().int().min(2000).max(2100),
@@ -94,7 +98,8 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
       // Phase 100B Plan 10 (A11): resolves the VACATION type AND the entitlement in one call.
       const result = await getVacationEntitlement(app.prisma, employeeId, employee.tenantId, year);
       if (!result) return reply.code(404).send({ error: "Urlaubstyp nicht konfiguriert" });
-      const { leaveTypeId, entitlement } = result;
+      const { leaveTypeId } = result;
+      let entitlement = result.entitlement;
 
       // Issue #416, CONTEXT.md decision 6 ("first access"): an active employee's row for the
       // CURRENT year that no code path ever created (either a genuinely new hire whose
@@ -138,6 +143,23 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
             carriedOverDays: Number(healed.entitlement.carriedOverDays),
             carryOverDeadline: healed.entitlement.carryOverDeadline ?? null,
           };
+        }
+      }
+
+      // Issue #445 (D-05, P-07): an EXISTING zero placeholder for whatever year is queried heals
+      // here too — no history is created (the row already exists), so this runs for a past year
+      // as well, unlike the #416 missing-row block above.
+      if (entitlement && Number(entitlement.totalDays) === 0 && !entitlement.isAutoCalculated) {
+        const healResult = await ensureRegularVacationEntitlement(
+          app.prisma,
+          employeeId,
+          employee.tenantId,
+          year,
+          leaveTypeId,
+          REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
+        );
+        if (healResult.healed) {
+          entitlement = healResult.entitlement;
         }
       }
 

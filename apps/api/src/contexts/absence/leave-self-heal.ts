@@ -35,6 +35,10 @@
 import type { FastifyInstance } from "fastify";
 import type { LeaveTypeCode } from "@clokr/db";
 import { sumConfirmedSection9DaysByRequest } from "./section9-credit-days";
+import {
+  ensureRegularVacationEntitlement,
+  REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
+} from "./leave-days"; // Issue #445 D-05 zero-placeholder heal
 
 /**
  * Minimal row shape the helper needs. Matches against either of:
@@ -43,6 +47,9 @@ import { sumConfirmedSection9DaysByRequest } from "./section9-credit-days";
  *
  * `usedDays` is intentionally typed as `unknown` to accept raw Prisma return
  * values (Decimal | number); the helper coerces with Number() before compare.
+ *
+ * `totalDays`/`isAutoCalculated` (Issue #445, D-05): both callers pass full Prisma rows that
+ * already carry these columns — added so the zero-placeholder heal below can read them.
  */
 export type LeaveEntitlementWithType = {
   id: string;
@@ -50,6 +57,8 @@ export type LeaveEntitlementWithType = {
   leaveTypeId: string;
   year: number;
   usedDays: unknown;
+  totalDays: unknown;
+  isAutoCalculated: boolean;
   leaveType: { id: string; code: LeaveTypeCode | null };
 };
 
@@ -96,6 +105,26 @@ export async function selfHealUsedDays(
 
   for (const row of rows) {
     const isVacation = row.leaveType.code === "VACATION";
+
+    // Issue #445 (D-05): heal a zero placeholder read-time, for every VACATION row this
+    // self-heal walks (GET /entitlements, GET /reports/leave-overview).
+    if (isVacation && Number(row.totalDays) === 0 && row.isAutoCalculated !== true) {
+      const healResult = await ensureRegularVacationEntitlement(
+        prisma,
+        row.employeeId,
+        tenantId,
+        row.year,
+        row.leaveTypeId,
+        REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
+      );
+      if (healResult.healed) {
+        Object.assign(row, {
+          totalDays: healResult.entitlement.totalDays,
+          isAutoCalculated: true,
+        });
+      }
+    }
+
     const typeIds = isVacation ? vacationTypeIds : [row.leaveTypeId];
     const yearStart = new Date(`${row.year}-01-01T00:00:00Z`);
     const yearEnd = new Date(`${row.year}-12-31T23:59:59Z`);
