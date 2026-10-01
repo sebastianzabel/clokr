@@ -47,6 +47,7 @@ import {
   ensureRegularVacationEntitlement, // Issue #445 (D-05) — injected into selfHealUsedDays's ctx below
   REGULAR_ENTITLEMENT_REASON_SELF_HEAL, // Issue #445 (D-05)
   vacationEntitlementWarning, // Issue #445 — composition carries no business rule (CLAUDE.md); the warning string is built in the absence context
+  healEntitlementUsedDays, // Issue #445 (D-10) — injected into selfHealUsedDays's ctx below
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
 import type { LeaveTypeCode } from "@clokr/db";
 
@@ -1103,8 +1104,9 @@ export async function reportRoutes(app: FastifyInstance) {
       // Self-heal usedDays from Σ approved LeaveRequest.days BEFORE we shape the response.
       // Mirrors the heal that GET /entitlements/:employeeId has done since v1.4.
       // Fixes the report-vs-leave-page divergence (a-tenant incident 2026-05-27).
-      // healZeroPlaceholder (Issue #445, D-05) is injected rather than imported statically by
-      // leave-self-heal.ts itself — see that file's module docblock for why.
+      // healZeroPlaceholder (Issue #445, D-05) and healUsedDays (Issue #445, D-10) are injected
+      // rather than imported statically by leave-self-heal.ts itself — see that file's module
+      // docblock for why.
       const vacMeta = {
         ...(await loadVacationTypeMeta(app.prisma, req.user.tenantId)),
         healZeroPlaceholder: (
@@ -1122,6 +1124,18 @@ export async function reportRoutes(app: FastifyInstance) {
             leaveTypeId,
             REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
           ),
+        healUsedDays: (
+          prisma: typeof app.prisma,
+          row: {
+            id: string;
+            employeeId: string;
+            leaveTypeId: string;
+            year: number;
+            usedDays: unknown;
+          },
+          leaveTypeIds: string[],
+          empTenantId: string,
+        ) => healEntitlementUsedDays(prisma, row, leaveTypeIds, empTenantId),
       };
       await selfHealUsedDays(app.prisma, entitlements, vacMeta);
 

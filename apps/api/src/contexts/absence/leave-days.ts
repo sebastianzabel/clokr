@@ -24,6 +24,7 @@ import { computeRegularVacationDays } from "./vacation-calc";
 import { ensureVacationEntitlementForYear } from "./facade/entitlements";
 import { getLeaveTypeByCode } from "./facade/leave-types";
 import { writeEntitlementAudit } from "./entitlement-audit"; // Issue #445
+import { listConfirmedSection9CreditsByRequest } from "./section9-credit-days"; // Issue #445 (D-10)
 
 // Prisma client shape shared by `app.prisma` (top-level) and the `tx` handle inside
 // `$transaction(async (tx) => ...)` — mirrors ./api/leave.ts's own private DbClient alias.
@@ -236,6 +237,11 @@ export async function getShiftBasedLeaveDaysForWeek(
  * Issue #445 (D-04): a missing current-year row used to be created here with a hard-coded
  * `totalDays: 0` — now `ensureRegularVacationEntitlement()` creates (or heals) it with the
  * regular yearly entitlement instead.
+ *
+ * Issue #445 (D-10): `options.createIfMissing: false` (self-heal's own next-year recompute)
+ * returns BEFORE the wrapper call when the `year` row does not exist yet — a read-time
+ * self-heal must never create a next-year row (scenario 5). Default (`undefined`/`true`,
+ * every other caller) is unchanged: a missing row is created with the regular entitlement.
  */
 export async function recalculateCarryOver(
   prisma: DbClient,
@@ -243,6 +249,7 @@ export async function recalculateCarryOver(
   employeeId: string,
   leaveTypeId: string,
   year: number,
+  options: { createIfMissing?: boolean } = {},
 ): Promise<void> {
   const prevYear = year - 1;
   const prev = await prisma.leaveEntitlement.findUnique({
@@ -254,6 +261,13 @@ export async function recalculateCarryOver(
     0,
     Number(prev.totalDays) + Number(prev.carriedOverDays) - Number(prev.usedDays),
   );
+
+  if (options.createIfMissing === false) {
+    const existing = await prisma.leaveEntitlement.findUnique({
+      where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
+    });
+    if (!existing) return;
+  }
 
   const config = await prisma.tenantConfig.findUnique({ where: { tenantId } });
   const deadlineDay = config?.carryOverDeadlineDay ?? 31;
@@ -994,4 +1008,152 @@ export async function leaveDaysWithin(
     holidays,
   );
   return Math.max(0, round2(pTo - pFromMinus1));
+}
+
+/**
+ * Issue #445 (D-10) — the days this employee's (vacation-aware) type set counts within
+ * `[from, to]`, split into the raw request sum and the § 9 credit that reduces it. Counts every
+ * non-deleted request with status APPROVED or CANCELLATION_REQUESTED (CLAUDE.md: leave stays
+ * active until a cancellation is approved) overlapping the window: a request fully inside
+ * `[from, to]` contributes its own `days`; any other contributes its chronological-prefix
+ * portion via {@link leaveDaysWithin} (the same rule gives the identical result for a
+ * fully-inside request too, without the holiday-map round-trip — see that function's own
+ * docblock). § 9 credits ({@link listConfirmedSection9CreditsByRequest}) are attributed the same
+ * way over `creditedStart..creditedEnd`, or — when that range is null (a legacy credit, P-13) —
+ * to the window containing the originating request's own start date.
+ */
+export async function countedLeaveDaysWithin(
+  db: DbClient,
+  args: { employeeId: string; tenantId: string; leaveTypeIds: string[]; from: Date; to: Date },
+): Promise<{ requestDays: number; section9CreditDays: number }> {
+  const { employeeId, tenantId, leaveTypeIds, from, to } = args;
+  const fromDay = utcDay(from);
+  const toDay = utcDay(to);
+
+  const requests = await db.leaveRequest.findMany({
+    where: {
+      employeeId,
+      deletedAt: null,
+      employee: { tenantId },
+      leaveTypeId: { in: leaveTypeIds },
+      status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
+      startDate: { lte: to },
+      endDate: { gte: from },
+    },
+    select: { id: true, startDate: true, endDate: true, days: true },
+  });
+
+  let requestDays = 0;
+  for (const r of requests) {
+    if (
+      utcDay(r.startDate).getTime() >= fromDay.getTime() &&
+      utcDay(r.endDate).getTime() <= toDay.getTime()
+    ) {
+      requestDays += Number(r.days);
+    } else {
+      const holidayMap = await getHolidayMap(db, tenantId, employeeId, r.startDate, r.endDate);
+      requestDays += await leaveDaysWithin(
+        db,
+        employeeId,
+        tenantId,
+        r,
+        from,
+        to,
+        new Set(holidayMap.keys()),
+      );
+    }
+  }
+
+  const requestsById = new Map(requests.map((r) => [r.id, r]));
+  const credits = await listConfirmedSection9CreditsByRequest(
+    db,
+    requests.map((r) => r.id),
+    tenantId,
+  );
+
+  let section9CreditDays = 0;
+  for (const credit of credits) {
+    if (credit.creditedStart && credit.creditedEnd) {
+      if (
+        utcDay(credit.creditedStart).getTime() >= fromDay.getTime() &&
+        utcDay(credit.creditedEnd).getTime() <= toDay.getTime()
+      ) {
+        section9CreditDays += credit.creditedDays;
+      } else {
+        const holidayMap = await getHolidayMap(
+          db,
+          tenantId,
+          employeeId,
+          credit.creditedStart,
+          credit.creditedEnd,
+        );
+        section9CreditDays += await leaveDaysWithin(
+          db,
+          employeeId,
+          tenantId,
+          {
+            startDate: credit.creditedStart,
+            endDate: credit.creditedEnd,
+            days: credit.creditedDays,
+          },
+          from,
+          to,
+          new Set(holidayMap.keys()),
+        );
+      }
+    } else {
+      // P-13: legacy credit without a credited range — attribute to the window containing the
+      // originating vacation request's own start date.
+      const originalRequest = requestsById.get(credit.vacationRequestId);
+      if (originalRequest) {
+        const start = utcDay(originalRequest.startDate);
+        if (start.getTime() >= fromDay.getTime() && start.getTime() <= toDay.getTime()) {
+          section9CreditDays += credit.creditedDays;
+        }
+      }
+    }
+  }
+
+  return { requestDays: round2(requestDays), section9CreditDays: round2(section9CreditDays) };
+}
+
+/**
+ * Issue #445 (D-10) — heals one `LeaveEntitlement.usedDays` row in place: recomputes
+ * `requestDays - section9CreditDays` for the row's calendar year via
+ * {@link countedLeaveDaysWithin}, writes the new value plus an audited UPDATE (reason
+ * "Self-Heal", `userId: null`) when it differs, and recomputes the NEXT year's carry-over with
+ * `recalculateCarryOver(..., { createIfMissing: false })` — a read must never create a
+ * next-year row. Bundled into ONE function (rather than leaving the steps in
+ * `leave-self-heal.ts`) so that file needs no static import of this module — see its own
+ * docblock for the import-cycle reason — and is injected via `VacationTypeMeta.healUsedDays`.
+ */
+export async function healEntitlementUsedDays(
+  db: DbClient,
+  row: { id: string; employeeId: string; leaveTypeId: string; year: number; usedDays: unknown },
+  leaveTypeIds: string[],
+  tenantId: string,
+): Promise<{ usedDays: number; changed: boolean }> {
+  const { requestDays, section9CreditDays } = await countedLeaveDaysWithin(db, {
+    employeeId: row.employeeId,
+    tenantId,
+    leaveTypeIds,
+    from: new Date(Date.UTC(row.year, 0, 1)),
+    to: new Date(Date.UTC(row.year, 11, 31)),
+  });
+  const actualUsed = Math.max(0, round2(requestDays - section9CreditDays));
+  const currentUsed = Number(row.usedDays);
+  if (!daysDiffer(currentUsed, actualUsed)) {
+    return { usedDays: currentUsed, changed: false };
+  }
+  await db.leaveEntitlement.update({ where: { id: row.id }, data: { usedDays: actualUsed } });
+  await writeEntitlementAudit(db, {
+    action: "UPDATE",
+    entityId: row.id,
+    oldValue: { usedDays: currentUsed },
+    newValue: { usedDays: actualUsed, reason: "Self-Heal" },
+  });
+  await recalculateCarryOver(db, tenantId, row.employeeId, row.leaveTypeId, row.year + 1, {
+    createIfMissing: false,
+  });
+  return { usedDays: actualUsed, changed: true };
 }

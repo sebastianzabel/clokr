@@ -73,6 +73,7 @@ import {
   REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
   vacationEntitlementWarning, // Issue #445 — one function builds the warning string (no business rule in composition/reports.ts)
   splitLeaveDaysByYear, // Issue #445 (D-08/D-09) — chronological cross-year attribution
+  healEntitlementUsedDays, // Issue #445 (D-10) — injected into leave-self-heal.ts's ctx below
 } from "../leave-days"; // Issue #445 — own statement: PR #437 edits the block above
 import { writeEntitlementAudit } from "../entitlement-audit"; // Issue #445
 import { revalidateLeaveCancellationEntries } from "../../time-tracking"; // Phase 100B Plan 08 — T6
@@ -1285,14 +1286,28 @@ export async function leaveRoutes(app: FastifyInstance) {
 
           const typeCode = existing.leaveType.code;
           if (typeCode === "VACATION") {
-            await app.prisma.leaveEntitlement.updateMany({
-              where: {
-                employeeId: existing.employeeId,
-                leaveTypeId: existing.leaveTypeId,
-                year: existing.startDate.getFullYear(),
-              },
-              data: { usedDays: { decrement: Number(existing.days) } },
-            });
+            // Issue #445 (D-11): a single-year decrement on existing.startDate's year used to
+            // silently drop a cross-year request's year-2 portion and never recompute the next
+            // year's carry-over. reverseVacationDays() splits per year chronologically
+            // (D-08/D-09) and recomputes the next year's carry-over — the symmetric
+            // counterpart of the deduct at booking time.
+            const cancelHolidayMap = await getHolidayMap(
+              app.prisma,
+              existing.employee.tenantId,
+              existing.employeeId,
+              existing.startDate,
+              existing.endDate,
+            );
+            await reverseVacationDays(
+              app.prisma,
+              existing.employeeId,
+              existing.leaveTypeId,
+              existing.startDate,
+              existing.endDate,
+              Number(existing.days),
+              new Set(cancelHolidayMap.keys()),
+              existing.employee.tenantId,
+            );
           }
           if (typeCode === "OVERTIME_COMP") {
             const empT = await app.prisma.employee.findUnique({
@@ -3130,9 +3145,10 @@ export async function leaveRoutes(app: FastifyInstance) {
       });
 
       // Vacation type meta — shared with selfHealUsedDays AND the pro-rata mapping below.
-      // healZeroPlaceholder (Issue #445, D-05) is injected here rather than imported statically
-      // by leave-self-heal.ts itself — see that file's module docblock for why (the absence/
-      // scheduling/time-tracking/working-time-account import-cycle ceiling, Phase 101B, 22).
+      // healZeroPlaceholder (Issue #445, D-05) and healUsedDays (Issue #445, D-10) are injected
+      // here rather than imported statically by leave-self-heal.ts itself — see that file's
+      // module docblock for why (the absence/scheduling/time-tracking/working-time-account
+      // import-cycle ceiling, Phase 101B, 22).
       const vacMeta = {
         ...(await loadVacationTypeMeta(app.prisma, tenantId)),
         healZeroPlaceholder: (
@@ -3150,6 +3166,18 @@ export async function leaveRoutes(app: FastifyInstance) {
             leaveTypeId,
             REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
           ),
+        healUsedDays: (
+          prisma: typeof app.prisma,
+          row: {
+            id: string;
+            employeeId: string;
+            leaveTypeId: string;
+            year: number;
+            usedDays: unknown;
+          },
+          leaveTypeIds: string[],
+          empTenantId: string,
+        ) => healEntitlementUsedDays(prisma, row, leaveTypeIds, empTenantId),
       };
 
       // exitDate for pro-rata effective entitlement computation (§ 5 Abs. 2 BUrlG) —
