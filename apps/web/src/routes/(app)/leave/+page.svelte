@@ -1462,25 +1462,27 @@
                     {/if}
                   </td>
                   <td class="action-cell">
-                    {#if isOwn && req.status === "PENDING"}
-                      <button
-                        data-testid={`leave-mine-row-${req.id}-edit`}
-                        class="btn btn-sm btn-ghost"
-                        onclick={() => openEditForm(req)}>Bearbeiten</button
-                      >
-                      <button
-                        data-testid={`leave-mine-row-${req.id}-withdraw`}
-                        class="btn btn-sm btn-ghost text-red"
-                        onclick={() => openCancelDialog(req)}>Zurückziehen</button
-                      >
-                    {/if}
-                    {#if isOwn && req.status === "APPROVED"}
-                      <button
-                        data-testid={`leave-mine-row-${req.id}-cancel`}
-                        class="btn btn-sm btn-ghost text-red"
-                        onclick={() => openCancelDialog(req)}>Stornieren</button
-                      >
-                    {/if}
+                    <div class="action-cell__group">
+                      {#if isOwn && req.status === "PENDING"}
+                        <button
+                          data-testid={`leave-mine-row-${req.id}-edit`}
+                          class="btn btn-sm btn-ghost"
+                          onclick={() => openEditForm(req)}>Bearbeiten</button
+                        >
+                        <button
+                          data-testid={`leave-mine-row-${req.id}-withdraw`}
+                          class="btn btn-sm btn-ghost text-red"
+                          onclick={() => openCancelDialog(req)}>Zurückziehen</button
+                        >
+                      {/if}
+                      {#if isOwn && req.status === "APPROVED"}
+                        <button
+                          data-testid={`leave-mine-row-${req.id}-cancel`}
+                          class="btn btn-sm btn-ghost text-red"
+                          onclick={() => openCancelDialog(req)}>Stornieren</button
+                        >
+                      {/if}
+                    </div>
                   </td>
                 </tr>
               {/each}
@@ -1659,6 +1661,10 @@
   }
   .action-cell {
     white-space: nowrap;
+  }
+  /* Issue #442 — flex layout lives on the inner wrapper, never on the td itself, so the cell
+     keeps display: table-cell and lines up with the rest of the row even when empty. */
+  .action-cell__group {
     display: flex;
     gap: 0.25rem;
     align-items: center;
