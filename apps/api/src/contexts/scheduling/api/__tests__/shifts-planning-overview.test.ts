@@ -291,6 +291,86 @@ describe("GET /shifts/planning-overview (Phase 430, Issue #430)", () => {
     }
   });
 
+  it("a salon-A-only planner (no tenant-wide reach) never sees salon-B's employee; salonId=salonB and an unknown salonId are byte-identical (Phase 430-05, T-100-09)", async () => {
+    const passwordHash = await bcrypt.hash("test1234", 10);
+    const plannerUser = await app.prisma.user.create({
+      data: {
+        email: `shpo-scope-planner-${Date.now()}@test.de`,
+        passwordHash,
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    // Needs an Employee row — User carries no tenantId of its own, so without one the login
+    // token resolves no tenant and the permission check silently falls back to the EMPLOYEE
+    // legacy role (403) instead of the intended SALONS assignment.
+    const plannerEmployee = await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: plannerUser.id,
+        employeeNumber: `SHPO-SCOPE-${Date.now()}`,
+        firstName: "Planner",
+        lastName: "PlanningOverviewScope",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    // Salonmanager template, SALONS scope limited to salon A only — no wholeTenant reach.
+    await app.prisma.roleAssignment.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: plannerUser.id,
+        accessRoleId: SYSTEM_ROLE_IDS.SALON_MANAGER,
+        scopeType: "SALONS",
+        salonIds: [salonA.id],
+        employeeIds: [],
+      },
+    });
+    try {
+      const loginRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: plannerUser.email, password: "test1234" },
+      });
+      expect(loginRes.statusCode).toBe(200);
+      const { accessToken } = JSON.parse(loginRes.body);
+
+      // Default listing (no salonId): salon-A planner sees salon-A's employee, never salon-B's.
+      const defaultRes = await app.inject({
+        method: "GET",
+        url: `/api/v1/shifts/planning-overview?weekStart=${WEEK_START}`,
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+      expect(defaultRes.statusCode).toBe(200);
+      const defaultIds = JSON.parse(defaultRes.body).employees.map(
+        (e: { employeeId: string }) => e.employeeId,
+      );
+      expect(defaultIds).toContain(sbEmployeeA.id);
+      expect(defaultIds).not.toContain(sbEmployeeB.id);
+
+      // T-100-09: explicitly asking for salon B (real, foreign-to-this-reach salon) and asking
+      // for a wholly unknown salon id must be indistinguishable — same status, same body. The
+      // route never 404s on an unknown/out-of-reach salonId; both answer an empty employees list.
+      const foreignSalonRes = await app.inject({
+        method: "GET",
+        url: `/api/v1/shifts/planning-overview?weekStart=${WEEK_START}&salonId=${salonB.id}`,
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+      const unknownSalonRes = await app.inject({
+        method: "GET",
+        url: `/api/v1/shifts/planning-overview?weekStart=${WEEK_START}&salonId=00000000-0000-4000-8000-000000000000`,
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+      expect(foreignSalonRes.statusCode).toBe(unknownSalonRes.statusCode);
+      expect(foreignSalonRes.statusCode).toBe(200);
+      expect(JSON.parse(foreignSalonRes.body)).toEqual(JSON.parse(unknownSalonRes.body));
+      expect(JSON.parse(foreignSalonRes.body).employees).toEqual([]);
+    } finally {
+      await app.prisma.roleAssignment.deleteMany({ where: { userId: plannerUser.id } });
+      await app.prisma.employee.delete({ where: { id: plannerEmployee.id } });
+      await app.prisma.user.delete({ where: { id: plannerUser.id } });
+    }
+  });
+
   it("paging: two different weekStart values (one 6 months out) return correct, independent results", async () => {
     const nearRes = await app.inject({
       method: "GET",

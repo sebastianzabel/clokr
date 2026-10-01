@@ -538,21 +538,30 @@ interface WeekOverbookedEntry extends WeekCapacityConflict {
 }
 
 /**
- * Phase 430 (D-10): the `/conflicts` view's third bucket. Unlike `softDeleted`/`flagged` (which
- * read persisted `Shift` flags), Type-2 overbooking has no row to flag — this enumerates every
- * SHIFT_BASED employee of the tenant and every ISO week (Mon..Sun) whose range intersects
+ * Phase 430 (D-10, revised 430-05): the `/conflicts` view's third bucket. Unlike `softDeleted`/
+ * `flagged` (which read persisted `Shift` flags, matching `/conflicts`' own pre-existing, tenant-
+ * only scoping — NOT touched here, a separate, pre-existing finding), Type-2 overbooking is new
+ * code introduced by this phase, so it gets real salon scoping from day one: `inScopeEmployeeIds`
+ * is the caller's already-resolved "plannable staff" set (D-12's own `resolvePersonScopedEmployeeIds`
+ * answer against the route's own `shift:read:ZUGEWIESEN` guard permission — same question GET
+ * /week already asks for its own employee listing), `"all"` for a wholeTenant reach. Enumerates
+ * every SHIFT_BASED employee IN SCOPE and every ISO week (Mon..Sun) whose range intersects
  * `[fromDate, toDate]`, calling the SAME `detectWeekCapacityConflict` the Phorest-sync/manual-route
- * checks already use (never a reimplementation). Tenant-scoped only, matching `/conflicts`' own
- * existing (non-salon) scoping — not narrowed or widened by this addition.
+ * checks already use (never a reimplementation).
  */
 async function findWeekOverbookedConflicts(
   app: FastifyInstance,
   tenantId: string,
   fromDate: Date,
   toDate: Date,
+  inScopeEmployeeIds: "all" | string[],
 ): Promise<WeekOverbookedEntry[]> {
   const employees = await app.prisma.employee.findMany({
-    where: { tenantId, ...NOT_ANONYMIZED_EMPLOYEE_WHERE },
+    where: {
+      tenantId,
+      ...NOT_ANONYMIZED_EMPLOYEE_WHERE,
+      ...(inScopeEmployeeIds !== "all" ? { id: { in: inScopeEmployeeIds } } : {}),
+    },
     select: {
       id: true,
       firstName: true,
@@ -4200,13 +4209,27 @@ export async function shiftRoutes(app: FastifyInstance) {
         deletedAt: s.deletedAt ? s.deletedAt.toISOString() : null,
       });
 
-      // Phase 430 (D-10) — third bucket, live-computed Type-2 (week-overbooking) conflicts.
-      // Same tenant-only scoping as softDeleted/flagged above; no restore action (informational).
+      // Phase 430 (D-10, revised 430-05) — third bucket, live-computed Type-2 (week-overbooking)
+      // conflicts. UNLIKE softDeleted/flagged above (pre-existing, tenant-only, not touched here
+      // — a separate finding), this new bucket is salon-scoped: a caller whose own reach for
+      // THIS route's own guard permission (shift:read:ZUGEWIESEN) is salon-limited sees only the
+      // in-scope employees' overbooking, same "plannable staff" question GET /week already asks.
+      const conflictsAccess = accessContextFromRequest(req);
+      const conflictsReach = await resolveAccessReach(
+        app.prisma,
+        conflictsAccess,
+        "shift:read:ZUGEWIESEN",
+      );
+      const conflictsInScopeIds =
+        conflictsReach.kind === "wholeTenant"
+          ? "all"
+          : await resolvePersonScopedEmployeeIds(app.prisma, req.user.tenantId, conflictsReach);
       const weekOverbooked = await findWeekOverbookedConflicts(
         app,
         req.user.tenantId,
         fromDate,
         toDate,
+        conflictsInScopeIds,
       );
 
       return { softDeleted: softDeleted.map(ser), flagged: flagged.map(ser), weekOverbooked };
