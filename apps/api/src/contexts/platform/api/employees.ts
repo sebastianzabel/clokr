@@ -65,6 +65,7 @@ import {
   resolveVacationBaseDays, // Issue #435 (D-06) — person value ?? tenant default ?? 30
   statutoryMinimumVacationDays, // Issue #435 (D-11) — 5-day-base floor on POST/PATCH
   statutoryMinimumViolationMessage, // Issue #435 (D-11) — the ONE German 400 message builder
+  daysDiffer, // Issue #435 code review (WR-01) — reused by the PATCH "did annualVacationDays change" guard
 } from "../../absence"; // Phase 100B Plan 10 — A11 (Issue #205 reroute) / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6; issue #416; issue #435
 // Phase 67b Plan 03 (issue #67, D-22/D-07/D-24) — the Stammsalon lifecycle helpers.
 import {
@@ -1002,10 +1003,12 @@ export async function employeeRoutes(app: FastifyInstance) {
 
       // Issue #435 (D-11): mirrors the POST check above; unchanged values are never rejected
       // (same "legacy row stays editable" principle as D-10).
+      // Code review WR-01: reuse daysDiffer() (the shared Decimal(5,2) "did it change" compare,
+      // also used by PUT /settings/vacation) instead of a re-implemented raw !== comparison.
       if (
         body.annualVacationDays != null &&
         (employee.annualVacationDays === null ||
-          Number(employee.annualVacationDays) !== body.annualVacationDays)
+          daysDiffer(Number(employee.annualVacationDays), body.annualVacationDays))
       ) {
         const birthDateForCheck =
           body.birthDate !== undefined

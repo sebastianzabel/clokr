@@ -180,6 +180,7 @@ export {
   vacationEntitlementWarning, // Issue #445 — the one function building the warning string (no rule in composition/)
   healEntitlementUsedDays, // Issue #445 (D-10) — composition/reports.ts injects this into leave-self-heal.ts's ctx
   resolveVacationBaseDays, // Issue #435 (D-06) — Erweiterung, additive; the ONE base-value resolver, consumed by platform/api/employees.ts
+  daysDiffer, // Issue #435 code review (WR-01) — the 2-decimal-precision "did it change" compare, reused by platform/api/employees.ts's PATCH guard instead of a re-implemented inline comparison
 } from "./leave-days";
 export { checkJArbSchG } from "./jarbschg";
 export { buildSlotOverrideHierarchy, resolveBsTagSlot } from "./bs-slot-resolver";
