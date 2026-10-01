@@ -2074,11 +2074,15 @@ Urlaubswoche (Fall B) lieferte in allen Varianten korrekt 0 — das Symptom betr
   `TenantConfig.defaultWorkDays.length` → `5`, Phase 107 D-04) wurde hierhin extrahiert;
   `resolveContractWorkDaysPerWeek()` (`leave-days.ts:121`) holt nur noch Schedule + TenantConfig und
   delegiert (CLAUDE.md § Schedule Types korrigiert im selben Commit).
-- **`shiftBasedLeaveCreditByDate()` / `shiftBasedLeaveMinutesForRequest()`** (neues Modul
-  `apps/api/src/contexts/working-time-account/shift-based-leave-credit.ts:51`/`:122`, D-06/D-13) —
-  eine Pro-Datum-Kredit-Map je ISO-Woche: `leaveDaysPerWeek(...).days ×
+- **`shiftBasedLeaveCreditByDate()`** (neues Modul
+  `apps/api/src/contexts/working-time-account/shift-based-leave-credit.ts:58`, D-06) — eine
+  Pro-Datum-Kredit-Map je ISO-Woche: `leaveDaysPerWeek(...).days ×
 (weeklyHours×60÷contractWorkDaysPerWeek)`, pro Wochenteil gekappt auf `calcExpectedMinutesTz()`
-  desselben Teils (D-08).
+  desselben Teils (D-08). Die Wochen berechnet der Aufrufer `close-employee-month.ts`; das Modul
+  importiert `contexts/absence` bewusst NICHT und bleibt so außerhalb des per CI gezählten
+  Import-Zyklus (`measure-context-boundary-imports --cycles --check 22`). Der Beleg-Gegenpart
+  **`shiftBasedLeaveMinutesForRequest()`** liegt aus demselben Grund in Abwesenheiten
+  (`apps/api/src/contexts/absence/vacation-calc.ts:633`, D-13).
 - **`close-employee-month.ts`** (`apps/api/src/contexts/working-time-account/close-employee-month.ts:742-772`)
   — NUR die SHIFT_BASED-`approvedLeave`-Schleife (`sbLeaveCredit`) wurde umgestellt: statt eines
   Live-`calcLeaveAbsenceMinutesTz()`-Aufrufs pro Zeile liest sie aus `sbLeaveCreditByDate` (D-06).
