@@ -11,6 +11,7 @@ import {
 import { selfHealUsedDays, loadVacationTypeMeta } from "../leave-self-heal";
 import { computeAffectedMonths, closedMonthLeaveMessage } from "../correction-lock"; // Issue #446 (D-07/D-08)
 import { findClosedMonthsInRange } from "../closed-month-guard"; // Issue #446 (D-07)
+import { EFFECTIVE_LEAVE_STATUSES } from "../effective-leave-statuses"; // Issue #446 (D-04)
 // Phase 101B (Issue #101, D-11 Welle absence): lifted out of this file into ./leave-days.ts.
 // resolveLeaveDays/getHolidayMap/deductVacationDays/reverseVacationDays are re-exported below
 // (unchanged) so scheduling/api/shifts.ts, services/phorest/sync-shifts.ts and
@@ -2696,7 +2697,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           where: {
             deletedAt: null,
             employee: { tenantId: req.user.tenantId },
-            status: { in: ["PENDING", "APPROVED", "CANCELLATION_REQUESTED"] },
+            status: { in: ["PENDING", ...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04): same set, now derived
             startDate: { lte: end },
             endDate: { gte: start },
           },
@@ -3025,7 +3026,8 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const [requests, absences] = await Promise.all([
         app.prisma.leaveRequest.findMany({
-          where: { employeeId, deletedAt: null, status: "APPROVED" },
+          // Issue #446 (D-04): a leave under requested cancellation is still active.
+          where: { employeeId, deletedAt: null, status: { in: [...EFFECTIVE_LEAVE_STATUSES] } },
           include: { leaveType: true, employee: { select: { firstName: true, lastName: true } } },
         }),
         app.prisma.absence.findMany({
@@ -3080,8 +3082,9 @@ export async function leaveRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
 
       // Phase 91b Plan 04 (Issue #91), D-10 — this feed has no date window of its own (it returns
-      // every APPROVED request + absence, unbounded) to use as a Stichtag, unlike the plan's own
-      // text assumed; treated the same as GET /requests's own "no single natural period" case:
+      // every effective-status request + absence, unbounded — Issue #446 D-04: a request under
+      // requested cancellation is still active) to use as a Stichtag, unlike the plan's own text
+      // assumed; treated the same as GET /requests's own "no single natural period" case:
       // tenant-local today.
       const access = accessContextFromRequest(req);
       const reach = await resolveAccessReach(app.prisma, access, "leave-request:read:ZUGEWIESEN");
@@ -3100,7 +3103,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           where: {
             deletedAt: null,
             employee: { tenantId },
-            status: "APPROVED",
+            status: { in: [...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04)
             ...(scopedEmployeeIds !== "all" ? { employeeId: { in: scopedEmployeeIds } } : {}),
           },
           include: { leaveType: true, employee: { select: { firstName: true, lastName: true } } },
