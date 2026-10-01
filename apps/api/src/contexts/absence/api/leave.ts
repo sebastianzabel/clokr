@@ -1410,6 +1410,21 @@ export async function leaveRoutes(app: FastifyInstance) {
           newValue: { cancellationDecision: body.status, reviewNote: body.reviewNote },
         });
 
+        // Issue #446 (D-05): rejecting a cancellation recalculates rewritable snapshots exactly
+        // like the cancellation-approval path below. Saldo-neutral after D-02 (the leave
+        // counted while CANCELLATION_REQUESTED and counts again as APPROVED), but heals
+        // snapshots written under the old APPROVED-only rule. Locked months are skipped by
+        // recalculateSnapshots itself (Phase 99, D-09); like every other caller, the
+        // recalculation starts at the first snapshot whose periodStart >= startDate.
+        if (body.status !== "APPROVED") {
+          await recalculateSnapshots(app, existing.employeeId, existing.startDate).catch((err) =>
+            app.log.error(
+              { err, employeeId: existing.employeeId },
+              "Failed to recalculate snapshots after leave cancellation rejection",
+            ),
+          );
+        }
+
         // Retroactive recalculation: cancellation approved (CANCELLED) affects snapshots
         if (body.status === "APPROVED") {
           await recalculateSnapshots(app, existing.employeeId, existing.startDate).catch((err) =>

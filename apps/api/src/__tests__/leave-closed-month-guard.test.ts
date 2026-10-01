@@ -458,4 +458,135 @@ describe("Leave — closed-month guard (Issue #446, D-05..D-10)", () => {
       }
     });
   });
+
+  describe("(D-05) cancellation rejection recalculates snapshots like the approval path", () => {
+    /** The active (superseded:false) MONTHLY snapshot whose periodEnd falls in `month`/`year`. */
+    async function activeJulySnapshot(employeeId: string) {
+      const rows = await app.prisma.saldoSnapshot.findMany({
+        where: { employeeId, periodType: "MONTHLY", superseded: false },
+      });
+      return rows.find((r) => r.periodEnd.toISOString().slice(0, 7) === "2026-07")!;
+    }
+
+    it("heals a July snapshot written under the old APPROVED-only rule to the effective-leave Soll", async () => {
+      const d = await seedTestData(app, "cmg-d05a");
+      try {
+        const tz = await getTenantTimezone(app.prisma, d.tenant.id);
+        const leave = await app.prisma.leaveRequest.create({
+          data: {
+            employeeId: d.employee.id,
+            leaveTypeId: d.vacationType.id,
+            startDate: new Date("2026-06-29T00:00:00Z"),
+            endDate: new Date("2026-07-03T00:00:00Z"),
+            days: 5,
+            halfDay: false,
+            status: "CANCELLATION_REQUESTED",
+            reviewedBy: null,
+            cancellationRequestedBy: d.empUser.id,
+          },
+        });
+
+        // Old-rule snapshot: 23 workdays x 480min, no leave relief (CANCELLATION_REQUESTED did
+        // not count before D-02), no July activity -> not locked.
+        const { start, end } = monthRangeUtc(2026, 7, tz);
+        await app.prisma.saldoSnapshot.create({
+          data: {
+            employeeId: d.employee.id,
+            periodType: "MONTHLY",
+            periodStart: start,
+            periodEnd: end,
+            workedMinutes: 0,
+            expectedMinutes: 11040,
+            balanceMinutes: -11040,
+            carryOver: -11040,
+            closedAt: new Date(),
+            closedBy: "test-system",
+          },
+        });
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/leave/requests/${leave.id}/review`,
+          headers: { authorization: `Bearer ${d.adminToken}` },
+          payload: { status: "REJECTED" },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const stored = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: leave.id } });
+        expect(stored.status).toBe("APPROVED");
+
+        const julySnapshot = await activeJulySnapshot(d.employee.id);
+        expect(julySnapshot.expectedMinutes).toBe(9600); // 11040 - 3*480 (07-01..07-03)
+      } finally {
+        await cleanupTestData(app, d.tenant.id);
+      }
+    });
+
+    it("locked month: the July snapshot stays byte-identical (same id, same expectedMinutes)", async () => {
+      const d = await seedTestData(app, "cmg-d05b");
+      try {
+        const tz = await getTenantTimezone(app.prisma, d.tenant.id);
+        const leave = await app.prisma.leaveRequest.create({
+          data: {
+            employeeId: d.employee.id,
+            leaveTypeId: d.vacationType.id,
+            startDate: new Date("2026-06-29T00:00:00Z"),
+            endDate: new Date("2026-07-03T00:00:00Z"),
+            days: 5,
+            halfDay: false,
+            status: "CANCELLATION_REQUESTED",
+            reviewedBy: null,
+            cancellationRequestedBy: d.empUser.id,
+          },
+        });
+
+        const { start, end } = monthRangeUtc(2026, 7, tz);
+        const originalSnapshot = await app.prisma.saldoSnapshot.create({
+          data: {
+            employeeId: d.employee.id,
+            periodType: "MONTHLY",
+            periodStart: start,
+            periodEnd: end,
+            workedMinutes: 0,
+            expectedMinutes: 11040,
+            balanceMinutes: -11040,
+            carryOver: -11040,
+            closedAt: new Date(),
+            closedBy: "test-system",
+          },
+        });
+
+        // July is LOCKED: one isLocked WORK entry, the canonical Monatsabschluss shape
+        // recalculateSnapshots' own skip (Phase 99, D-09) reads.
+        await app.prisma.timeEntry.create({
+          data: {
+            employeeId: d.employee.id,
+            date: new Date("2026-07-06T00:00:00Z"),
+            startTime: new Date("2026-07-06T07:00:00Z"),
+            endTime: new Date("2026-07-06T15:30:00Z"),
+            breakMinutes: 30,
+            type: "WORK",
+            isLocked: true,
+            lockedAt: new Date("2026-08-01T00:00:00Z"),
+            salonId: d.salonId,
+          },
+        });
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/leave/requests/${leave.id}/review`,
+          headers: { authorization: `Bearer ${d.adminToken}` },
+          payload: { status: "REJECTED" },
+        });
+
+        expect(res.statusCode).toBe(200);
+
+        const julySnapshot = await activeJulySnapshot(d.employee.id);
+        expect(julySnapshot.id).toBe(originalSnapshot.id);
+        expect(julySnapshot.expectedMinutes).toBe(11040);
+      } finally {
+        await cleanupTestData(app, d.tenant.id);
+      }
+    });
+  });
 });
