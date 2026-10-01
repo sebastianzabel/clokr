@@ -14,6 +14,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import { getTenantTimezone, monthRangeUtc } from "../contexts/working-time-account";
+import { leaveTypeFields } from "../contexts/absence/leave-type";
 import type { FastifyInstance } from "fastify";
 
 describe("Leave — closed-month guard (Issue #446, D-05..D-10)", () => {
@@ -139,6 +140,319 @@ describe("Leave — closed-month guard (Issue #446, D-05..D-10)", () => {
         });
 
         expect(res.statusCode).toBe(201);
+      } finally {
+        await cleanupTestData(app, d.tenant.id);
+      }
+    });
+  });
+
+  /** Creates (or reuses) a SICK LeaveType for the tenant — SICK requests have no lead time
+   * and no entitlement check, matching the plan's guidance for the guard-point fixtures. */
+  async function sickLeaveTypeId(tenantId: string): Promise<string> {
+    const existing = await app.prisma.leaveType.findFirst({ where: { tenantId, code: "SICK" } });
+    if (existing) return existing.id;
+    const created = await app.prisma.leaveType.create({
+      data: { tenantId, ...leaveTypeFields("SICK") },
+    });
+    return created.id;
+  }
+
+  async function auditCount(entityId: string): Promise<number> {
+    return app.prisma.auditLog.count({ where: { entityId } });
+  }
+
+  describe("(b) PATCH /requests/:id/review — PENDING -> APPROVED", () => {
+    it("rejects approval touching a closed month — 409, no partial write", async () => {
+      const d = await seedTestData(app, "cmg-b1");
+      try {
+        const createRes = await app.inject({
+          method: "POST",
+          url: "/api/v1/leave/requests",
+          headers: { authorization: `Bearer ${d.empToken}` },
+          payload: { type: "SICK", startDate: "2026-03-09", endDate: "2026-03-13" },
+        });
+        expect(createRes.statusCode).toBe(201);
+        const { id } = JSON.parse(createRes.body);
+
+        await closeMonth(d.employee.id, d.tenant.id, 2026, 3);
+        const auditBefore = await auditCount(id);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/leave/requests/${id}/review`,
+          headers: { authorization: `Bearer ${d.adminToken}` },
+          payload: { status: "APPROVED" },
+        });
+
+        expect(res.statusCode).toBe(409);
+        const body = JSON.parse(res.body);
+        expect(body.code).toBe("LEAVE_MONTH_CLOSED");
+
+        const stored = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id } });
+        expect(stored.status).toBe("PENDING");
+        expect(stored.reviewedBy).toBeNull();
+        expect(stored.reviewedAt).toBeNull();
+        expect(await auditCount(id)).toBe(auditBefore);
+      } finally {
+        await cleanupTestData(app, d.tenant.id);
+      }
+    });
+
+    it("control: the same approval with no closed month succeeds — 200", async () => {
+      const d = await seedTestData(app, "cmg-b2");
+      try {
+        const createRes = await app.inject({
+          method: "POST",
+          url: "/api/v1/leave/requests",
+          headers: { authorization: `Bearer ${d.empToken}` },
+          payload: { type: "SICK", startDate: "2026-03-09", endDate: "2026-03-13" },
+        });
+        const { id } = JSON.parse(createRes.body);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/leave/requests/${id}/review`,
+          headers: { authorization: `Bearer ${d.adminToken}` },
+          payload: { status: "APPROVED" },
+        });
+
+        expect(res.statusCode).toBe(200);
+      } finally {
+        await cleanupTestData(app, d.tenant.id);
+      }
+    });
+
+    it("allowed: PENDING -> REJECTED review stays allowed in a closed month — 200", async () => {
+      const d = await seedTestData(app, "cmg-b3");
+      try {
+        const createRes = await app.inject({
+          method: "POST",
+          url: "/api/v1/leave/requests",
+          headers: { authorization: `Bearer ${d.empToken}` },
+          payload: { type: "SICK", startDate: "2026-03-09", endDate: "2026-03-13" },
+        });
+        const { id } = JSON.parse(createRes.body);
+
+        await closeMonth(d.employee.id, d.tenant.id, 2026, 3);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/leave/requests/${id}/review`,
+          headers: { authorization: `Bearer ${d.adminToken}` },
+          payload: { status: "REJECTED" },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const stored = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id } });
+        expect(stored.status).toBe("REJECTED");
+      } finally {
+        await cleanupTestData(app, d.tenant.id);
+      }
+    });
+  });
+
+  describe("(c) PATCH /requests/:id/review — CANCELLATION_REQUESTED -> CANCELLED", () => {
+    it("rejects the cancellation approval touching a closed month — 409, no partial write", async () => {
+      const d = await seedTestData(app, "cmg-c1");
+      try {
+        const typeId = await sickLeaveTypeId(d.tenant.id);
+        const leave = await app.prisma.leaveRequest.create({
+          data: {
+            employeeId: d.employee.id,
+            leaveTypeId: typeId,
+            startDate: new Date("2026-03-09T00:00:00Z"),
+            endDate: new Date("2026-03-13T00:00:00Z"),
+            days: 5,
+            halfDay: false,
+            status: "CANCELLATION_REQUESTED",
+            reviewedBy: null, // 4-eyes: must be null or the approver-identity check masks the guard
+            cancellationRequestedBy: d.empUser.id,
+          },
+        });
+
+        await closeMonth(d.employee.id, d.tenant.id, 2026, 3);
+        const auditBefore = await auditCount(leave.id);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/leave/requests/${leave.id}/review`,
+          headers: { authorization: `Bearer ${d.adminToken}` },
+          payload: { status: "APPROVED" },
+        });
+
+        expect(res.statusCode).toBe(409);
+        const body = JSON.parse(res.body);
+        expect(body.code).toBe("LEAVE_MONTH_CLOSED");
+
+        const stored = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: leave.id } });
+        expect(stored.status).toBe("CANCELLATION_REQUESTED");
+        expect(await auditCount(leave.id)).toBe(auditBefore);
+      } finally {
+        await cleanupTestData(app, d.tenant.id);
+      }
+    });
+
+    it("control: the same cancellation approval with no closed month succeeds — 200", async () => {
+      const d = await seedTestData(app, "cmg-c2");
+      try {
+        const typeId = await sickLeaveTypeId(d.tenant.id);
+        const leave = await app.prisma.leaveRequest.create({
+          data: {
+            employeeId: d.employee.id,
+            leaveTypeId: typeId,
+            startDate: new Date("2026-03-09T00:00:00Z"),
+            endDate: new Date("2026-03-13T00:00:00Z"),
+            days: 5,
+            halfDay: false,
+            status: "CANCELLATION_REQUESTED",
+            reviewedBy: null,
+            cancellationRequestedBy: d.empUser.id,
+          },
+        });
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/leave/requests/${leave.id}/review`,
+          headers: { authorization: `Bearer ${d.adminToken}` },
+          payload: { status: "APPROVED" },
+        });
+
+        expect(res.statusCode).toBe(200);
+      } finally {
+        await cleanupTestData(app, d.tenant.id);
+      }
+    });
+
+    it("allowed: rejecting a cancellation stays allowed in a closed month — 200, back to APPROVED", async () => {
+      const d = await seedTestData(app, "cmg-c3");
+      try {
+        const typeId = await sickLeaveTypeId(d.tenant.id);
+        const leave = await app.prisma.leaveRequest.create({
+          data: {
+            employeeId: d.employee.id,
+            leaveTypeId: typeId,
+            startDate: new Date("2026-03-09T00:00:00Z"),
+            endDate: new Date("2026-03-13T00:00:00Z"),
+            days: 5,
+            halfDay: false,
+            status: "CANCELLATION_REQUESTED",
+            reviewedBy: null,
+            cancellationRequestedBy: d.empUser.id,
+          },
+        });
+
+        await closeMonth(d.employee.id, d.tenant.id, 2026, 3);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/leave/requests/${leave.id}/review`,
+          headers: { authorization: `Bearer ${d.adminToken}` },
+          payload: { status: "REJECTED" },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const stored = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: leave.id } });
+        expect(stored.status).toBe("APPROVED");
+      } finally {
+        await cleanupTestData(app, d.tenant.id);
+      }
+    });
+  });
+
+  describe("(d) DELETE /requests/:id — APPROVED -> CANCELLATION_REQUESTED", () => {
+    it("rejects the cancellation request touching a closed month — 409, no partial write", async () => {
+      const d = await seedTestData(app, "cmg-d1");
+      try {
+        const typeId = await sickLeaveTypeId(d.tenant.id);
+        const leave = await app.prisma.leaveRequest.create({
+          data: {
+            employeeId: d.employee.id,
+            leaveTypeId: typeId,
+            startDate: new Date("2026-03-09T00:00:00Z"),
+            endDate: new Date("2026-03-13T00:00:00Z"),
+            days: 5,
+            halfDay: false,
+            status: "APPROVED",
+            reviewedBy: null,
+          },
+        });
+
+        await closeMonth(d.employee.id, d.tenant.id, 2026, 3);
+        const auditBefore = await auditCount(leave.id);
+
+        const res = await app.inject({
+          method: "DELETE",
+          url: `/api/v1/leave/requests/${leave.id}`,
+          headers: { authorization: `Bearer ${d.empToken}` },
+          payload: { reason: "Storno wegen Fehleingabe" },
+        });
+
+        expect(res.statusCode).toBe(409);
+        const body = JSON.parse(res.body);
+        expect(body.code).toBe("LEAVE_MONTH_CLOSED");
+
+        const stored = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: leave.id } });
+        expect(stored.status).toBe("APPROVED");
+        expect(stored.cancellationRequestedBy).toBeNull();
+        expect(await auditCount(leave.id)).toBe(auditBefore);
+      } finally {
+        await cleanupTestData(app, d.tenant.id);
+      }
+    });
+
+    it("control: the same cancellation request with no closed month succeeds — 200", async () => {
+      const d = await seedTestData(app, "cmg-d2");
+      try {
+        const typeId = await sickLeaveTypeId(d.tenant.id);
+        const leave = await app.prisma.leaveRequest.create({
+          data: {
+            employeeId: d.employee.id,
+            leaveTypeId: typeId,
+            startDate: new Date("2026-03-09T00:00:00Z"),
+            endDate: new Date("2026-03-13T00:00:00Z"),
+            days: 5,
+            halfDay: false,
+            status: "APPROVED",
+            reviewedBy: null,
+          },
+        });
+
+        const res = await app.inject({
+          method: "DELETE",
+          url: `/api/v1/leave/requests/${leave.id}`,
+          headers: { authorization: `Bearer ${d.empToken}` },
+          payload: { reason: "Storno wegen Fehleingabe" },
+        });
+
+        expect(res.statusCode).toBe(200);
+      } finally {
+        await cleanupTestData(app, d.tenant.id);
+      }
+    });
+
+    it("allowed: withdrawing a PENDING request stays allowed in a closed month — 204", async () => {
+      const d = await seedTestData(app, "cmg-d3");
+      try {
+        const createRes = await app.inject({
+          method: "POST",
+          url: "/api/v1/leave/requests",
+          headers: { authorization: `Bearer ${d.empToken}` },
+          payload: { type: "SICK", startDate: "2026-03-09", endDate: "2026-03-13" },
+        });
+        const { id } = JSON.parse(createRes.body);
+
+        await closeMonth(d.employee.id, d.tenant.id, 2026, 3);
+
+        const res = await app.inject({
+          method: "DELETE",
+          url: `/api/v1/leave/requests/${id}`,
+          headers: { authorization: `Bearer ${d.empToken}` },
+          payload: { reason: "Storno wegen Fehleingabe" },
+        });
+
+        expect(res.statusCode).toBe(204);
+        const stored = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id } });
+        expect(stored.status).toBe("CANCELLED");
       } finally {
         await cleanupTestData(app, d.tenant.id);
       }

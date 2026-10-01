@@ -1281,6 +1281,24 @@ export async function leaveRoutes(app: FastifyInstance) {
           description: string;
         } | null = null;
         if (body.status === "APPROVED") {
+          // Issue #446 (D-06(c)/D-10): checked before the write below — a cancellation of a
+          // leave touching a closed month may not be approved (dead end otherwise: the
+          // CANCELLED state would silently diverge from the snapshot). The rejection branch
+          // (else, below) stays unguarded — it is saldo-neutral.
+          const closedMonths = await findClosedMonthsInRange(
+            app.prisma,
+            existing.employeeId,
+            existing.employee.tenantId,
+            existing.startDate,
+            existing.endDate,
+          );
+          if (closedMonths.length > 0) {
+            return reply.code(409).send({
+              error: closedMonthLeaveMessage(closedMonths, "change"),
+              code: "LEAVE_MONTH_CLOSED",
+            });
+          }
+
           // Stornierung genehmigen → CANCELLED + Rückbuchung
           await app.prisma.leaveRequest.update({
             where: { id },
@@ -1446,6 +1464,25 @@ export async function leaveRoutes(app: FastifyInstance) {
       }
 
       // ── Normaler Antrag (PENDING) ────────────────────────────────────────────
+      // Issue #446 (D-06(b)/D-10): gated on APPROVED only — a PENDING -> REJECTED review
+      // stays allowed (saldo-neutral), checked before any read-dependent computation and
+      // before the write below.
+      if (body.status === "APPROVED") {
+        const closedMonths = await findClosedMonthsInRange(
+          app.prisma,
+          existing.employeeId,
+          existing.employee.tenantId,
+          existing.startDate,
+          existing.endDate,
+        );
+        if (closedMonths.length > 0) {
+          return reply.code(409).send({
+            error: closedMonthLeaveMessage(closedMonths, "change"),
+            code: "LEAVE_MONTH_CLOSED",
+          });
+        }
+      }
+
       const reviewTypeCode = existing.leaveType.code;
 
       // Issue #294: the OVERTIME_COMP booking below is computed but NOT written where it is
@@ -2452,6 +2489,23 @@ export async function leaveRoutes(app: FastifyInstance) {
       const { reason } = stornoSchema.parse(req.body);
 
       if (existing.status === "APPROVED") {
+        // Issue #446 (D-06(d)/D-10): checked before the write below — otherwise a request
+        // whose approval can never succeed (guard point c) would be created. The PENDING
+        // withdrawal path below (status stays unguarded) is saldo-neutral.
+        const closedMonths = await findClosedMonthsInRange(
+          app.prisma,
+          existing.employeeId,
+          existing.employee.tenantId,
+          existing.startDate,
+          existing.endDate,
+        );
+        if (closedMonths.length > 0) {
+          return reply.code(409).send({
+            error: closedMonthLeaveMessage(closedMonths, "change"),
+            code: "LEAVE_MONTH_CLOSED",
+          });
+        }
+
         // Approved leave → request cancellation (needs another manager's approval)
         // Until approved, the leave remains active (blocks time tracking, shown in calendar)
         await app.prisma.leaveRequest.update({
