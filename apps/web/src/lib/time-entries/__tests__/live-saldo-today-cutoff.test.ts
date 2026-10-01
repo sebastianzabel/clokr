@@ -34,9 +34,11 @@ const WEB_SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../.
 
 // Both calendar pages must carry the identical cutoff and badge guard so they cannot drift
 // (planner finding F-2; mirrors the #291 no-drift rule already pinned by
-// gesamtsaldo-column-label.test.ts in this same directory). The team page is added in a
-// follow-up commit of this same plan (438-02 Task 2) once its own fix lands.
-const PAGES = [path.join(WEB_SRC, "routes/(app)/time-entries/+page.svelte")] as const;
+// gesamtsaldo-column-label.test.ts in this same directory).
+const PAGES = [
+  path.join(WEB_SRC, "routes/(app)/time-entries/+page.svelte"),
+  path.join(WEB_SRC, "routes/(app)/team/time-entries/+page.svelte"),
+] as const;
 
 /**
  * Extracts the source text between two markers, failing loudly rather than silently returning
