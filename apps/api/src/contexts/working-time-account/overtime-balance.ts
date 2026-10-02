@@ -618,8 +618,16 @@ export async function computeOvertimeBalanceBreakdown(
         return set;
       };
 
+      // Issue #447 (D-13) — the roster-period denominator (R_periodFull) ends at the exit day
+      // when the exit falls inside the current month (still-employed branch: exitDateNorm is
+      // later than effectiveEnd here, but may still be this month) — a stray planned shift AFTER
+      // the exit must not inflate the contract period the employee will never work. Same rule as
+      // month-saldo.ts's per-day rosterPeriodCap; when there is no exit this month the cap is
+      // just curMonthLastDay (byte-identical to before).
+      const rosterPeriodCap =
+        exitDateNorm !== null && exitDateNorm < curMonthLastDay ? exitDateNorm : curMonthLastDay;
       const curMonthAllShifts = allShifts.filter(
-        (s) => s.date >= curMonthFirstDay && s.date <= curMonthLastDay,
+        (s) => s.date >= curMonthFirstDay && s.date <= rosterPeriodCap,
       );
       const curShiftsToDate = curMonthAllShifts.filter((s) => s.date <= effectiveEnd);
       const coveredToDate = buildCovered(currentMonthOpenStart, effectiveEnd);

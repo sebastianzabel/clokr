@@ -151,6 +151,13 @@ export async function computeMonthSaldo(
   // Effective employment span for this month
   const hireDateNorm = new Date(dateStrInTz(employee.hireDate, tz) + "T00:00:00Z");
   const effectiveStart = hireDateNorm > monthFirstDay ? hireDateNorm : monthFirstDay;
+  // Issue #447 (D-13) — exit day normalized to tenant-TZ UTC midnight, or null. Used below to
+  // end the SHIFT_BASED per-day roster proration at the exit date, mirroring the core's own
+  // sollRangeEnd clip (closeEmployeeMonth.ts).
+  const exitDateNorm = employee.exitDate
+    ? new Date(dateStrInTz(employee.exitDate, tz) + "T00:00:00Z")
+    : null;
+  const exitDayStr = exitDateNorm ? dateStrInTz(exitDateNorm, tz) : null;
 
   const tenantConfig = await app.prisma.tenantConfig.findUnique({
     where: { tenantId: employee.tenantId },
@@ -371,7 +378,17 @@ export async function computeMonthSaldo(
 
     // For SHIFT_BASED: compute rosterProration up to this day
     let rosterProration: { rosterToDateMinutes: number; rosterPeriodMinutes: number } | undefined;
-    if (scheduleType === "SHIFT_BASED") {
+    // Issue #447 (D-13) — once this day is on or after the exit day, the month is COMPLETE for
+    // the employee: no roster proration (rosterProration stays undefined), identical to the
+    // close path (the core's own sollRangeEnd clips Soll to the exit date without any scaling).
+    if (scheduleType === "SHIFT_BASED" && (exitDayStr === null || dayStr < exitDayStr)) {
+      // Issue #447 (D-13) — the roster-period denominator (R_periodFull / allMonthShifts) ends
+      // at the exit day when the exit falls inside this month, so a stray planned shift AFTER
+      // the exit never inflates a contract period the employee will never work. shiftsToDate is
+      // already bounded by dayEnd < exitDateNorm here (the outer condition above), so applying
+      // the same cap to it is a no-op safety net, not a behavior change.
+      const rosterPeriodCap =
+        exitDateNorm !== null && exitDateNorm < monthLastDay ? exitDateNorm : monthLastDay;
       // coveredDates: leave + absence days that are not shift-days (same logic as time-entries.ts)
       const buildCovered = (fromD: Date, toD: Date): Set<string> => {
         const set = new Set<string>();
@@ -407,9 +424,13 @@ export async function computeMonthSaldo(
         }
         return total;
       };
-      const shiftsToDate = closeShifts.filter((s) => s.date >= monthFirstDay && s.date <= dayEnd);
+      const shiftsToDate = closeShifts.filter(
+        (s) =>
+          s.date >= monthFirstDay &&
+          s.date <= (dayEnd < rosterPeriodCap ? dayEnd : rosterPeriodCap),
+      );
       const allMonthShifts = closeShifts.filter(
-        (s) => s.date >= monthFirstDay && s.date <= monthLastDay,
+        (s) => s.date >= monthFirstDay && s.date <= rosterPeriodCap,
       );
       rosterProration = {
         rosterToDateMinutes: sumShiftNetto(shiftsToDate, coveredToDate),

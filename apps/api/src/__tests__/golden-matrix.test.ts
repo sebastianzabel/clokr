@@ -40,6 +40,7 @@ import {
 } from "../contexts/working-time-account/timezone";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
 import { recalculateSnapshots } from "../contexts/working-time-account/recalculate-snapshots";
+import { computeMonthSaldo } from "../contexts/working-time-account/month-saldo"; // Issue #447 (D-13)
 import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
 import type { CloseMonthInput } from "../contexts/working-time-account/close-employee-month";
 import { closeEmployeeMonth } from "../contexts/working-time-account/close-employee-month";
@@ -1864,6 +1865,24 @@ async function liveBalanceAt(app: FastifyInstance, empId: string, iso: string): 
   }
 }
 
+// Issue #447 (D-13) — computeMonthSaldo reads `new Date()` for its "yesterday" cutoff, exactly
+// like liveBalanceAt's updateOvertimeAccount — fake the clock the same way.
+async function monthSaldoAt(
+  app: FastifyInstance,
+  empId: string,
+  year: number,
+  month: number,
+  iso: string,
+): Promise<Awaited<ReturnType<typeof computeMonthSaldo>>> {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(iso));
+  try {
+    return await computeMonthSaldo(app, empId, year, month);
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
 /** "now" in the month AFTER the close month, day 16 (cron grace ≥15). */
 function graceNowIso(year: number, month: number): string {
   const y = month === 12 ? year + 1 : year;
@@ -2186,9 +2205,151 @@ describe.each(CELLS.filter((c) => c.exitDate !== undefined))(
 
       const liveThreeMonthsLater = await liveBalanceAt(app, employeeId, "2026-10-16T10:00:00.000Z");
       expect(liveThreeMonthsLater, `${cell.id} live @ 2026-10-16`).toBeCloseTo(expectedHours, 2);
+
+      // Issue #447 (D-13) — computeMonthSaldo (the per-day calendar-header reader) agrees with
+      // the golden close values for the open exit month, well after the exit (days after the
+      // exit date are flat — no further Soll accrues through computeMonthSaldo either).
+      const saldo = await monthSaldoAt(
+        app,
+        employeeId,
+        cell.year,
+        cell.month,
+        "2026-07-20T10:00:00.000Z",
+      );
+      expect(
+        saldo.expectedMinutes,
+        `${cell.id} computeMonthSaldo expectedMinutes @ 2026-07-20`,
+      ).toBe(cell.expected.expectedMinutes);
+      expect(saldo.balanceMinutes, `${cell.id} computeMonthSaldo balanceMinutes @ 2026-07-20`).toBe(
+        cell.expected.balanceMinutes,
+      );
     });
   },
 );
+
+// ── Issue #447 (D-13): roster proration ends at the exit date — stray-roster variant ──
+//
+// A planned shift that was never cleaned up AFTER the employee's exit must not inflate the
+// roster-period denominator (R_periodFull) used by the live/month-saldo proration — the core's
+// sollRangeEnd already clips Soll to the exit date, but the proration DENOMINATOR is computed
+// independently in both live callers (overtime-balance.ts, month-saldo.ts) and must mirror
+// that same clip. Variant: sb-40-5-exit plus one unworked planned shift on Mon 2026-07-13
+// (three days after the Fri 2026-07-10 exit) — defined locally here, NOT added to CELLS.
+describe("exit month — roster ends at the exit date (Issue #447, D-13)", () => {
+  let strayApp: FastifyInstance;
+  let strayTenant: string;
+
+  afterAll(async () => {
+    if (!strayApp || !strayTenant) return;
+    try {
+      await cleanupTestData(strayApp, strayTenant);
+    } catch (err) {
+      console.error("stray-roster cleanup:", err);
+    }
+    vi.useRealTimers();
+  });
+
+  it("sb-40-5-exit + one stray shift after the exit (Mon 2026-07-13): roster ends at the exit date everywhere", async () => {
+    strayApp = await getTestApp();
+    const app = strayApp;
+    const baseSbExitCell = CELLS.find((c) => c.id === "sb-40-5-exit")!;
+    const strayRosterCell: Cell = {
+      ...baseSbExitCell,
+      id: "sb-40-5-exit-stray-roster",
+      shifts: [...(baseSbExitCell.shifts ?? []), { date: "2026-07-13", netto: 480 }],
+    };
+    const { tenantId, employeeId, adminToken } = await seedGoldenScenario(app, strayRosterCell);
+    strayTenant = tenantId;
+
+    const { start: MONTH_START, end: MONTH_END } = monthRangeUtc(
+      strayRosterCell.year,
+      strayRosterCell.month,
+      TZ,
+    );
+    const { firstDay, lastDay } = monthDayBounds(MONTH_START, MONTH_END, TZ);
+    const schedule = await app.prisma.workSchedule.findFirst({ where: { employeeId } });
+    const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
+    const entries = await app.prisma.timeEntry.findMany({
+      where: { employeeId, deletedAt: null },
+      select: { date: true, startTime: true, endTime: true, breakMinutes: true },
+    });
+    const shifts = await app.prisma.shift.findMany({
+      where: { employeeId, deletedAt: null },
+      select: { date: true, startTime: true, endTime: true },
+    });
+
+    // Pure core — the stray shift lies after effectiveEnd (the core's own exit clip), so it
+    // must not move the base cell's golden numbers (3840 / +90).
+    const core = closeEmployeeMonth({
+      employeeId,
+      monthStart: MONTH_START,
+      monthEnd: MONTH_END,
+      monthFirstDay: firstDay,
+      monthLastDay: lastDay,
+      tz: TZ,
+      carryOverIn: 0,
+      schedule: schedule as unknown as Record<string, unknown>,
+      hireDate: employee!.hireDate,
+      exitDate: employee!.exitDate,
+      isTimeTrackingExempt: false,
+      breakOver6hOverride: 0,
+      breakOver9hOverride: 0,
+      entries: entries as CloseMonthInput["entries"],
+      shifts: shifts as CloseMonthInput["shifts"],
+      approvedLeave: [],
+      absences: [],
+      holidayDateStrings: new Set<string>(),
+      tenantConfig: null,
+    });
+    expect(core.expectedMinutes, "core expectedMinutes unaffected by stray shift").toBe(3840);
+    expect(core.balanceMinutes, "core balanceMinutes unaffected by stray shift").toBe(90);
+
+    // HTTP close — same.
+    const res = await closeMonth(
+      app,
+      adminToken,
+      employeeId,
+      strayRosterCell.year,
+      strayRosterCell.month,
+      liveNowIso(strayRosterCell.year, strayRosterCell.month),
+    );
+    expect(res.statusCode, res.body).toBe(201);
+    const snap = await fetchSnapshot(app, employeeId, MONTH_END);
+    expect(snap!.expectedMinutes, "HTTP close expectedMinutes unaffected by stray shift").toBe(
+      3840,
+    );
+    expect(snap!.balanceMinutes, "HTTP close balanceMinutes unaffected by stray shift").toBe(90);
+
+    // Reopen the month so the open-month assertions below see no closed snapshot.
+    const unlock = await unlockMonth(
+      app,
+      adminToken,
+      employeeId,
+      strayRosterCell.year,
+      strayRosterCell.month,
+    );
+    expect(unlock.statusCode, unlock.body).toBe(200);
+
+    // month-saldo — the roster PERIOD (denominator) must end at the exit day (10.07.), not
+    // include the stray 13.07. shift, at two different "now" instants inside the open month.
+    const saldo0712 = await monthSaldoAt(app, employeeId, 2026, 7, "2026-07-12T10:00:00.000Z");
+    expect(saldo0712.expectedMinutes, "expectedMinutes @ 07-12 (not the inflated 3413)").toBe(3840);
+    expect(saldo0712.balanceMinutes, "balanceMinutes @ 07-12 (not the inflated 517)").toBe(90);
+
+    const saldo0708 = await monthSaldoAt(app, employeeId, 2026, 7, "2026-07-08T10:00:00.000Z");
+    expect(saldo0708.expectedMinutes, "expectedMinutes @ 07-08 (not the inflated 2133)").toBe(2400);
+    expect(saldo0708.balanceMinutes, "balanceMinutes @ 07-08 (not the inflated 267)").toBe(0);
+
+    // live (overtime-balance.ts) == month-saldo at the same instants — both callers agree.
+    const live0708 = await liveBalanceAt(app, employeeId, "2026-07-08T10:00:00.000Z");
+    expect(live0708, "live @ 07-08 == 0").toBeCloseTo(0, 2);
+    expect(live0708, "live == monthSaldo @ 07-08").toBeCloseTo(saldo0708.balanceMinutes / 60, 2);
+
+    const live0712 = await liveBalanceAt(app, employeeId, "2026-07-12T10:00:00.000Z");
+    expect(live0712, "live @ 07-12 == 1.5").toBeCloseTo(1.5, 2);
+    expect(live0712, "live == monthSaldo @ 07-12").toBeCloseTo(saldo0712.balanceMinutes / 60, 2);
+  }, 60_000);
+});
 
 // ── GT-08: reopen of earliest snapshot → live saldo == cumulative, not 0 ─────
 //
