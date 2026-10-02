@@ -12,6 +12,9 @@ import {
   statutoryMinimumVacationDays,
   statutoryMinimumVacationThreshold,
   statutoryMinimumViolationMessage,
+  wartezeitEndDate,
+  fullEmploymentMonthsInYear,
+  employmentYearVacationDays,
 } from "../vacation-calc";
 // Phase 107 — single shared tenant-TZ date helper (issue #34); avoids hardcoded calendar
 // dates that expire (see project history in CLAUDE.md / docs/testing.md).
@@ -231,7 +234,7 @@ describe("statutoryMinimumVacationThreshold (Issue #435, D-10)", () => {
     ).toBe(0);
   });
 
-  it("exit happens INSIDE the queried year: no exit pro-rata in the threshold (D-10)", () => {
+  it("exit 30.06. inside the queried year: the threshold is twelfthed like the regular entitlement — § 5 Abs. 1 c BUrlG, Issue #447 D-11", () => {
     expect(
       statutoryMinimumVacationThreshold({
         birthDate: adult,
@@ -239,6 +242,18 @@ describe("statutoryMinimumVacationThreshold (Issue #435, D-10)", () => {
         workDaysPerWeek: 5,
         hireDate: new Date(Date.UTC(2020, 0, 1)),
         exitDate: new Date(Date.UTC(2027, 5, 30)),
+      }),
+    ).toBe(10);
+  });
+
+  it("exit 01.07. inside the queried year: second half-year after a fulfilled Wartezeit -> full threshold (Issue #447 D-11)", () => {
+    expect(
+      statutoryMinimumVacationThreshold({
+        birthDate: adult,
+        year: 2027,
+        workDaysPerWeek: 5,
+        hireDate: new Date(Date.UTC(2020, 0, 1)),
+        exitDate: new Date(Date.UTC(2027, 6, 1)),
       }),
     ).toBe(20);
   });
@@ -433,6 +448,122 @@ describe("calculateProRataVacationForHire (Issue #416)", () => {
   it("returns 0 for NaN baseDays (defensive)", () => {
     expect(calculateProRataVacationForHire(NaN, YEAR, new Date(YEAR, 5, 1))).toBe(0);
   });
+});
+
+describe("wartezeitEndDate (§ 4 BUrlG; §§ 187 Abs. 2, 188 Abs. 2/3 BGB — Issue #447 D-05)", () => {
+  it("01.01.2027 -> 30.06.2027", () => {
+    expect(wartezeitEndDate(new Date(2027, 0, 1))).toEqual(new Date(2027, 5, 30));
+  });
+  it("01.07.2027 -> 31.12.2027", () => {
+    expect(wartezeitEndDate(new Date(2027, 6, 1))).toEqual(new Date(2027, 11, 31));
+  });
+  it("15.02.2027 -> 14.08.2027", () => {
+    expect(wartezeitEndDate(new Date(2027, 1, 15))).toEqual(new Date(2027, 7, 14));
+  });
+  it("31.08.2027 -> 29.02.2028 (no numerically matching day six months later, leap year)", () => {
+    expect(wartezeitEndDate(new Date(2027, 7, 31))).toEqual(new Date(2028, 1, 29));
+  });
+  it("31.08.2026 -> 28.02.2027 (no numerically matching day six months later, non-leap year)", () => {
+    expect(wartezeitEndDate(new Date(2026, 7, 31))).toEqual(new Date(2027, 1, 28));
+  });
+});
+
+describe("fullEmploymentMonthsInYear (Issue #447 D-05) — one span twelfthing, hire + exit combined", () => {
+  it("(2027, 01.02.2027, 30.06.2027) -> 5", () => {
+    expect(fullEmploymentMonthsInYear(2027, new Date(2027, 1, 1), new Date(2027, 5, 30))).toBe(5);
+  });
+  it("(2027, 2024-01-01, 31.03.2027) -> 3", () => {
+    expect(fullEmploymentMonthsInYear(2027, new Date(2024, 0, 1), new Date(2027, 2, 31))).toBe(3);
+  });
+  it("(2027, 2024-01-01, 15.06.2027) -> 5", () => {
+    expect(fullEmploymentMonthsInYear(2027, new Date(2024, 0, 1), new Date(2027, 5, 15))).toBe(5);
+  });
+  it("(2027, 01.07.2027, 30.11.2027) -> 5", () => {
+    expect(fullEmploymentMonthsInYear(2027, new Date(2027, 6, 1), new Date(2027, 10, 30))).toBe(5);
+  });
+  it("(2027, 02.07.2027, null) -> 6", () => {
+    expect(fullEmploymentMonthsInYear(2027, new Date(2027, 6, 2), null)).toBe(6);
+  });
+  it("(2027, 2024-01-01, null) -> 12", () => {
+    expect(fullEmploymentMonthsInYear(2027, new Date(2024, 0, 1), null)).toBe(12);
+  });
+  it("(2027, 2024-01-01, exit in 2028) -> 12", () => {
+    expect(fullEmploymentMonthsInYear(2027, new Date(2024, 0, 1), new Date(2028, 2, 31))).toBe(12);
+  });
+  it("(2027, hire 2028, null) -> 0", () => {
+    expect(fullEmploymentMonthsInYear(2027, new Date(2028, 0, 15), null)).toBe(0);
+  });
+});
+
+describe("employmentYearVacationDays — exit year (Issue #447, D-05)", () => {
+  it("base 24, hire 01.02.2027, exit 30.06.2027 -> 10 (D-09 '10 not 12': Wartezeit not fulfilled)", () => {
+    expect(employmentYearVacationDays(24, 2027, new Date(2027, 1, 1), new Date(2027, 5, 30))).toBe(
+      10,
+    );
+  });
+  it("base 23, hire 01.07.2027, exit 30.11.2027 -> 10 (D-09 '10 not 23': Wartezeit not fulfilled)", () => {
+    expect(employmentYearVacationDays(23, 2027, new Date(2027, 6, 1), new Date(2027, 10, 30))).toBe(
+      10,
+    );
+  });
+  it("base 30, hire 2024-01-01, exit 31.03.2027 -> 8 (H1 after Wartezeit, 3/12 = 7.5 -> 8)", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2024, 0, 1), new Date(2027, 2, 31))).toBe(
+      8,
+    );
+  });
+  it("base 30, hire 2024-01-01, exit 30.06.2027 -> 15", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2024, 0, 1), new Date(2027, 5, 30))).toBe(
+      15,
+    );
+  });
+  it("base 30, hire 2024-01-01, exit 15.06.2027 -> 13 (12.5 -> 13)", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2024, 0, 1), new Date(2027, 5, 15))).toBe(
+      13,
+    );
+  });
+  it("base 30, hire 2024-01-01, exit 01.07.2027 -> 30 (H2, full)", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2024, 0, 1), new Date(2027, 6, 1))).toBe(
+      30,
+    );
+  });
+  it("base 30, hire 01.03.2027, exit 31.10.2027 -> 30 (Wartezeit ended 31.08., H2 -> full; supersedes RESEARCH row 467)", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2027, 2, 1), new Date(2027, 9, 31))).toBe(
+      30,
+    );
+  });
+  it("base 30, hire 01.10.2026, exit 15.03.2027 -> 5 (Wartezeit ends 31.03.2027 -> not fulfilled -> Jan, Feb = 2/12)", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2026, 9, 1), new Date(2027, 2, 15))).toBe(
+      5,
+    );
+  });
+  it("base 30, hire 01.10.2026, exit 30.09.2027 -> 30 (Wartezeit fulfilled 31.03.2027, H2 -> full)", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2026, 9, 1), new Date(2027, 8, 30))).toBe(
+      30,
+    );
+  });
+  it("base 30, year 2027, hire 02.07.2027, exit 31.03.2028 (later year) -> 15 (identical to hireYearVacationDays)", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2027, 6, 2), new Date(2028, 2, 31))).toBe(
+      15,
+    );
+  });
+  it("base 30, year 2027, exit 31.12.2026 (earlier year) -> 0", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2024, 0, 1), new Date(2026, 11, 31))).toBe(
+      0,
+    );
+  });
+
+  it.each([
+    [new Date(2027, 0, 1), 20],
+    [new Date(2027, 5, 1), 20],
+    [new Date(2027, 6, 1), 20],
+    [new Date(2027, 6, 2), 10],
+    [new Date(2027, 9, 1), 5],
+  ])(
+    "exitDate null, base 20, hire %s -> %i (identical to hireYearVacationDays — the #435 table)",
+    (hireDate, expected) => {
+      expect(employmentYearVacationDays(20, 2027, hireDate, null)).toBe(expected);
+    },
+  );
 });
 
 describe("splitDaysAcrossYears", () => {
