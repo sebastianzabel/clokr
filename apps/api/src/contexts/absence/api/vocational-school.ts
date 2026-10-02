@@ -39,6 +39,7 @@ import {
   monthRangeUtc,
   todayInTz, // Phase 91b Plan 04 (#91), D-10
 } from "../../working-time-account"; // Phase 101B
+import { correctLeaveForNewVocationalSchoolDay } from "../bs-leave-correction"; // Issue #448 (D-04)
 
 const previewQuerySchema = z.object({
   weeks: z.coerce.number().int().min(1).max(26).optional(),
@@ -377,29 +378,47 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
 
       // (6) try INSERT; rely on @@unique([employeeId, startDate, type]) for dedupe.
       try {
-        const created = await app.prisma.absence.create({
-          data: {
-            employeeId: employee.id,
-            type: "VOCATIONAL_SCHOOL",
-            source: "MANUAL",
-            startDate: dateUtc,
-            endDate: dateUtc,
-            days: 1.0,
-            createdBy: req.user.sub,
-          },
-        });
+        // Issue #448 (D-04): the create + its audit + the correction of any overlapping
+        // VACATION request run in ONE transaction (invariant-carrying, ADR 0002 E10) — a
+        // failing correction rolls the new BS row back too. The P2002 → 409 handling below
+        // stays OUTSIDE and unchanged: PostgreSQL aborts the whole transaction on the
+        // unique-violation, so there is nothing left of it to roll forward either way.
+        const created = await app.prisma.$transaction(async (tx) => {
+          const inserted = await tx.absence.create({
+            data: {
+              employeeId: employee.id,
+              type: "VOCATIONAL_SCHOOL",
+              source: "MANUAL",
+              startDate: dateUtc,
+              endDate: dateUtc,
+              days: 1.0,
+              createdBy: req.user.sub,
+            },
+          });
 
-        await app.audit({
-          userId: req.user.sub,
-          action: "VOCATIONAL_SCHOOL_MANUAL_INSERTED",
-          entity: "Absence",
-          entityId: created.id,
-          newValue: {
-            employeeId: created.employeeId,
-            date: body.date,
-            source: "MANUAL",
-          },
-          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          await app.audit({
+            tx,
+            userId: req.user.sub,
+            action: "VOCATIONAL_SCHOOL_MANUAL_INSERTED",
+            entity: "Absence",
+            entityId: inserted.id,
+            newValue: {
+              employeeId: inserted.employeeId,
+              date: body.date,
+              source: "MANUAL",
+            },
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+
+          await correctLeaveForNewVocationalSchoolDay(tx, app.audit, {
+            tenantId,
+            employeeId: employee.id,
+            date: dateUtc,
+            trigger: "MANUAL",
+            actorUserId: req.user.sub,
+          });
+
+          return inserted;
         });
 
         // Phase 67.2 Plan 04 — Shift-Auto-Cleanup hook for MANUAL insert.

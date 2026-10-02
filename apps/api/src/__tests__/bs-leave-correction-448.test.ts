@@ -604,4 +604,318 @@ describe("Issue #448 (D-04) — Berufsschultag über bestehendem Urlaub korrigie
     expect(await getCorrectionAudit(request.id)).toBeNull();
     expect(await getNotifications(request.id)).toHaveLength(0);
   });
+
+  // ── Task 2: wired through the real HTTP write paths ─────────────────────────────────────
+
+  async function createAzubiEmployee(label: string) {
+    const s = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const user = await app.prisma.user.create({
+      data: {
+        email: `${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const employee = await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        employeeNumber: s.toUpperCase().slice(0, 20),
+        firstName: label,
+        lastName: "BsCorrTask2",
+        hireDate: new Date("2020-01-01"),
+        classification: "AZUBI",
+        birthDate: new Date("2005-01-01"),
+      },
+    });
+    return { user, employee };
+  }
+
+  it("POST /manual-insert for a Tuesday over an APPROVED Mo-Fr VACATION: 201, days 4, entitlement -1, LEAVE_CORRECTED audit (actor = manager), Azubi + approver notified", async () => {
+    const request = await createLeaveRequest({
+      employeeId: data.employee.id,
+      leaveTypeId: data.vacationType.id,
+      start: "2026-10-26",
+      end: "2026-10-30",
+      days: 5,
+      status: "APPROVED",
+      reviewedBy: data.adminUser.id,
+    });
+    await bookEntitlement(data.employee.id, data.vacationType.id, 2026, 5);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/vocational-school/manual-insert",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { employeeId: data.employee.id, date: "2026-10-27" },
+    });
+    expect(res.statusCode).toBe(201);
+
+    const updated = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: request.id } });
+    expect(Number(updated.days)).toBe(4);
+    const entitlement = await app.prisma.leaveEntitlement.findUniqueOrThrow({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: data.employee.id,
+          leaveTypeId: data.vacationType.id,
+          year: 2026,
+        },
+      },
+    });
+    expect(Number(entitlement.usedDays)).toBe(4);
+
+    const audit = await getCorrectionAudit(request.id);
+    expect(audit?.userId).toBe(data.adminUser.id);
+    expect((audit!.newValue as Record<string, unknown>).trigger).toBe("MANUAL");
+
+    expect(await getNotifications(request.id)).toHaveLength(2);
+  });
+
+  it("POST /generate with a Tuesday pattern over an APPROVED VACATION: request re-priced, audit origin SYSTEM, trigger PATTERN", async () => {
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 1, // Tuesday (0=Mon..6=Sun encoding this codebase uses)
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: new Date("2020-01-01"),
+        isActive: true,
+      },
+    });
+    const request = await createLeaveRequest({
+      employeeId: data.employee.id,
+      leaveTypeId: data.vacationType.id,
+      start: "2026-11-09",
+      end: "2026-11-13",
+      days: 5,
+      status: "APPROVED",
+      reviewedBy: data.adminUser.id,
+    });
+    await bookEntitlement(data.employee.id, data.vacationType.id, 2026, 5);
+
+    const genRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/vocational-school/generate",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(genRes.statusCode).toBe(200);
+
+    const absence = await app.prisma.absence.findFirst({
+      where: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        startDate: mkDate("2026-11-10"),
+        deletedAt: null,
+      },
+    });
+    expect(absence).toBeTruthy();
+
+    const updated = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: request.id } });
+    expect(Number(updated.days)).toBe(4);
+
+    const audit = await getCorrectionAudit(request.id);
+    expect((audit!.newValue as Record<string, unknown>).origin).toBe("SYSTEM");
+    expect((audit!.newValue as Record<string, unknown>).trigger).toBe("PATTERN");
+  });
+
+  it("Generator P2002 restore branch (soft-deleted PATTERN row restored) over an APPROVED VACATION: correction runs too", async () => {
+    // The previous test's tenant-wide /generate call already created every future Tuesday for
+    // the pattern above, including 2026-11-17. Soft-delete it (simulating a prior orphan-sweep)
+    // so the next /generate call hits the P2002-restore branch for exactly this date.
+    await app.prisma.absence.updateMany({
+      where: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        startDate: mkDate("2026-11-17"),
+      },
+      data: { deletedAt: new Date() },
+    });
+    const request = await createLeaveRequest({
+      employeeId: data.employee.id,
+      leaveTypeId: data.vacationType.id,
+      start: "2026-11-16",
+      end: "2026-11-20",
+      days: 5,
+      status: "APPROVED",
+      reviewedBy: data.adminUser.id,
+    });
+    await bookEntitlement(data.employee.id, data.vacationType.id, 2026, 5);
+
+    const genRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/vocational-school/generate",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(genRes.statusCode).toBe(200);
+
+    const restored = await app.prisma.absence.findFirst({
+      where: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        startDate: mkDate("2026-11-17"),
+      },
+    });
+    expect(restored?.deletedAt).toBeNull();
+
+    const updated = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: request.id } });
+    expect(Number(updated.days)).toBe(4);
+  });
+
+  it("GET /preview (dry run) over a fresh pattern + APPROVED VACATION: no request change, no audit, no notification", async () => {
+    const { employee: previewEmployee } = await createAzubiEmployee("preview448");
+    await app.prisma.workSchedule.create({
+      data: {
+        employeeId: previewEmployee.id,
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date("2020-01-01"),
+      },
+    });
+    await app.prisma.overtimeAccount.create({
+      data: { employeeId: previewEmployee.id, balanceHours: 0 },
+    });
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: previewEmployee.id,
+        dayOfWeek: 1,
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: new Date("2020-01-01"),
+        isActive: true,
+      },
+    });
+    const request = await createLeaveRequest({
+      employeeId: previewEmployee.id,
+      leaveTypeId: data.vacationType.id,
+      start: "2026-11-23",
+      end: "2026-11-27",
+      days: 5,
+      status: "APPROVED",
+      reviewedBy: data.adminUser.id,
+    });
+    await seedEntitlementYears(app, {
+      employeeId: previewEmployee.id,
+      leaveTypeId: data.vacationType.id,
+      years: [2026],
+      totalDays: 30,
+    });
+    await bookEntitlement(previewEmployee.id, data.vacationType.id, 2026, 5);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/vocational-school/preview",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const absence = await app.prisma.absence.findFirst({
+      where: { employeeId: previewEmployee.id, type: "VOCATIONAL_SCHOOL" },
+    });
+    expect(absence).toBeNull();
+
+    const updated = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: request.id } });
+    expect(Number(updated.days)).toBe(5);
+    expect(await getCorrectionAudit(request.id)).toBeNull();
+    expect(await getNotifications(request.id)).toHaveLength(0);
+  });
+
+  it("POST /retroactive-apply over a CLOSED month whose pattern Tuesday lies in an APPROVED VACATION: no BS row, no request change, one correction-needed notification per approver; a second call sends none", async () => {
+    const { employee: retroEmployee } = await createAzubiEmployee("retro448");
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: retroEmployee.id,
+        dayOfWeek: 1,
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: new Date("2026-08-01"),
+        isActive: true,
+      },
+    });
+    const request = await createLeaveRequest({
+      employeeId: retroEmployee.id,
+      leaveTypeId: data.vacationType.id,
+      start: "2026-08-03",
+      end: "2026-08-07",
+      days: 5,
+      status: "APPROVED",
+      reviewedBy: data.adminUser.id,
+    });
+    await seedEntitlementYears(app, {
+      employeeId: retroEmployee.id,
+      leaveTypeId: data.vacationType.id,
+      years: [2026],
+      totalDays: 30,
+    });
+    await bookEntitlement(retroEmployee.id, data.vacationType.id, 2026, 5);
+
+    const { start: augStart } = monthRangeUtc(2026, 8, "Europe/Berlin");
+    await app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId: retroEmployee.id,
+        periodType: "MONTHLY",
+        periodStart: augStart,
+        periodEnd: augStart,
+        workedMinutes: 0,
+        expectedMinutes: 0,
+        balanceMinutes: 0,
+        carryOver: 0,
+        closedAt: new Date(),
+      },
+    });
+
+    const runRetro = () =>
+      app.inject({
+        method: "POST",
+        url: "/api/v1/vocational-school/retroactive-apply",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { employeeId: retroEmployee.id },
+      });
+
+    const first = await runRetro();
+    expect(first.statusCode).toBe(200);
+
+    const bsRow = await app.prisma.absence.findFirst({
+      where: {
+        employeeId: retroEmployee.id,
+        type: "VOCATIONAL_SCHOOL",
+        startDate: mkDate("2026-08-04"),
+      },
+    });
+    expect(bsRow).toBeNull(); // the locked month never gets a BS row
+
+    const updated = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: request.id } });
+    expect(Number(updated.days)).toBe(5); // unchanged
+
+    const notificationsAfterFirst = (await getNotifications(request.id)).filter(
+      (n) => n.type === LEAVE_CORRECTION_NEEDED_VOCATIONAL_SCHOOL,
+    );
+    expect(notificationsAfterFirst).toHaveLength(1);
+
+    const second = await runRetro();
+    expect(second.statusCode).toBe(200);
+    const notificationsAfterSecond = (await getNotifications(request.id)).filter(
+      (n) => n.type === LEAVE_CORRECTION_NEEDED_VOCATIONAL_SCHOOL,
+    );
+    expect(notificationsAfterSecond).toHaveLength(1); // no new row (dedup)
+  });
+
+  it("POST /manual-insert with no overlapping vacation request: 201, plain insert, no correction side-effects", async () => {
+    const { employee: soloEmployee } = await createAzubiEmployee("solo448");
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/vocational-school/manual-insert",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { employeeId: soloEmployee.id, date: "2026-10-28" },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body);
+    expect(body.source).toBe("MANUAL");
+  });
 });
