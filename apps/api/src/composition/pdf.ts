@@ -95,6 +95,10 @@ export interface LeaveListData {
       endDate: string; // "dd.MM.yyyy"
       leaveTypeName: string;
       days: number;
+      // Issue #448 (D-05, plan 03): set when this period's day count excludes one or more
+      // Berufsschultage — "Berufsschule – kein Urlaub: dd.MM., dd.MM." — printed as a smaller
+      // second line under the row. Undefined for a period with no BS day.
+      note?: string;
     }>;
     totalDays: number;
   }>;
@@ -493,10 +497,13 @@ export function streamLeaveListPdf(doc: PDFKit.PDFDocument, data: LeaveListData)
       let ry = tTop + 18;
 
       for (const period of emp.periods) {
-        if (ry + 14 > doc.page.height - 60) {
+        // Issue #448 (D-05): a period with a BS note needs one extra, smaller line beneath it.
+        const rowHeight = period.note ? 14 + 10 : 14;
+        if (ry + rowHeight > doc.page.height - 60) {
           ry = nextPage();
         }
         let rx = 50;
+        doc.fontSize(8).font("Helvetica").fillColor("#111827");
         doc.text(period.startDate, rx, ry, { width: colWidths[0] });
         rx += colWidths[0];
         doc.text(period.endDate, rx, ry, { width: colWidths[1] });
@@ -505,6 +512,12 @@ export function streamLeaveListPdf(doc: PDFKit.PDFDocument, data: LeaveListData)
         rx += colWidths[2];
         doc.text(String(period.days), rx, ry, { width: colWidths[3] });
         ry += 14;
+        if (period.note) {
+          doc.fontSize(6.5).font("Helvetica").fillColor("#6b7280");
+          doc.text(period.note, 50, ry, { width: colWidths.reduce((a, b) => a + b, 0) });
+          doc.fillColor("#111827");
+          ry += 10;
+        }
       }
       doc.y = ry;
     }
