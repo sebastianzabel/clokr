@@ -28,6 +28,7 @@ import {
   usualWorkDaysFrom, // Issue #436, D-03 — the same branch, threading the Angabe into the receipt
   type LeaveDaysPricing, // Issue #436, D-04/D-09
 } from "../leave-days";
+import { BS_ONLY_LEAVE_ERROR, BS_ONLY_LEAVE_ERROR_CODE } from "../bs-leave-days"; // Issue #448 (D-02)
 import { formatMinutesHM } from "../format-hm"; // Phase 100
 import {
   flagShiftsConflictingWithLeave,
@@ -535,7 +536,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       // only `.days` is used here, `.provisional` is deliberately discarded.
       // Issue #436 (D-04): priced against the employee's other counted VACATION requests
       // sharing an ISO week — no id yet, so there is nothing to exclude.
-      const { days } = await resolveLeaveDays(
+      const { days, vocationalSchoolOnly } = await resolveLeaveDays(
         app.prisma,
         employeeId,
         tenantId,
@@ -545,6 +546,13 @@ export async function leaveRoutes(app: FastifyInstance) {
         holidays,
         { mode: "request", leaveTypeCode: body.type },
       );
+
+      // Issue #448 (D-02): a request whose every chargeable day is a Berufsschultag is
+      // rejected before any write — the owner's binding text (01.10.2026), no LeaveRequest row
+      // is ever created.
+      if (vocationalSchoolOnly) {
+        return reply.code(400).send({ error: BS_ONLY_LEAVE_ERROR, code: BS_ONLY_LEAVE_ERROR_CODE });
+      }
 
       // Überschneidung mit eigenem Antrag prüfen.
       //
