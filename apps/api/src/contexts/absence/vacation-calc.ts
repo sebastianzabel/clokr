@@ -198,6 +198,11 @@ export function roundVacationDaysBurlG(raw: number): number {
  * § 4 BUrlG Wartezeit) applies that decision FIRST, in {@link hireYearVacationDays}: a hire on or
  * before 1 July of the hire year never reaches this function's reduction at all. Production callers
  * reach this function only through `hireYearVacationDays` — see that function's docblock.
+ *
+ * Issue #450: since {@link employmentYearVacationDays} (and, through it,
+ * {@link hireYearVacationDays}) now applies the twelfthing directly via
+ * {@link fullEmploymentMonthsInYear}/{@link roundVacationDaysBurlG}, no production path calls this
+ * function any more — its own unit tests keep pinning the § 5 Abs. 2 arithmetic it still encodes.
  */
 export function calculateProRataVacationForHire(
   baseDays: number,
@@ -498,11 +503,10 @@ export function countShiftBasedLeaveDays(
  *   {@link calculateProRataVacationForHire}
  */
 export function hireYearVacationDays(fullYearDays: number, year: number, hireDate: Date): number {
-  if (year !== hireDate.getFullYear()) return fullYearDays;
-  const onOrBeforeJuly1 =
-    hireDate.getMonth() < 6 || (hireDate.getMonth() === 6 && hireDate.getDate() === 1);
-  if (onOrBeforeJuly1) return fullYearDays;
-  return calculateProRataVacationForHire(fullYearDays, year, hireDate);
+  // Issue #450 (D-01/D-02): a one-line delegate — the hire-year decision is now one case of
+  // the general employment-span decision ({@link isFullEntitlementYear}, via
+  // {@link employmentYearVacationDays}), with no exit date.
+  return employmentYearVacationDays(fullYearDays, year, hireDate, null);
 }
 
 /**
@@ -554,20 +558,16 @@ export function wartezeitEndDate(hireDate: Date): Date {
  * @param hireDate - the employee's hire date
  * @param exitDate - the employee's exit date, or `null` if still employed
  * @returns the number of full employment months within `year`, 0-12
+ *
+ * Issue #450 (D-01): the month loop itself now lives in {@link employmentMonthIndicesInYear} —
+ * this function keeps its original signature and docblock, returning that array's length.
  */
 export function fullEmploymentMonthsInYear(
   year: number,
   hireDate: Date,
   exitDate: Date | null,
 ): number {
-  let months = 0;
-  for (let month = 0; month < 12; month++) {
-    const lastDayOfMonth = new Date(year, month + 1, 0);
-    const hireSide = hireDate <= lastDayOfMonth;
-    const exitSide = exitDate === null || exitDate >= lastDayOfMonth;
-    if (hireSide && exitSide) months++;
-  }
-  return Math.min(months, 12);
+  return Math.min(employmentMonthIndicesInYear(year, hireDate, exitDate).length, 12);
 }
 
 /**
@@ -610,6 +610,11 @@ export function fullEmploymentMonthsInYear(
  * accessors without also rewriting the fixtures (see the Issue #447 code-review fix report). Do
  * NOT normalize this function family to UTC accessors without first converting every test fixture
  * that feeds it to `Date.UTC`/`utcMidnight` construction.
+ *
+ * Issue #450 (D-01/D-02/D-03): the WHETHER-a-year-is-owed-in-full decision this function's body
+ * used to inline (via {@link hireYearVacationDays}) now lives in ONE place,
+ * {@link isFullEntitlementYear} — this function's own behaviour is unchanged, it just asks that
+ * decision instead of re-deriving it.
  */
 export function employmentYearVacationDays(
   fullYearDays: number,
@@ -618,18 +623,177 @@ export function employmentYearVacationDays(
   exitDate: Date | null,
 ): number {
   if (exitDate !== null && exitDate.getFullYear() < year) return 0;
-  if (exitDate === null || exitDate.getFullYear() > year) {
-    return hireYearVacationDays(fullYearDays, year, hireDate);
-  }
+  if (isFullEntitlementYear(year, hireDate, exitDate)) return fullYearDays;
+  return roundVacationDaysBurlG(
+    (fullYearDays * fullEmploymentMonthsInYear(year, hireDate, exitDate)) / 12,
+  );
+}
+
+// ── Issue #450 (D-01/D-02/D-03) — the regular entitlement per contract segment
+// (EuGH Brandes C-415/12, Greenfield C-219/14; BAG 10.02.2015 – 9 AZR 53/14) ───────────────────
+
+/**
+ * Issue #450 (D-01) — THE § 5 BUrlG decision whether `year` is owed IN FULL (no twelfthing at
+ * all), assembled from the exact conditions {@link employmentYearVacationDays} and
+ * {@link hireYearVacationDays} already used before this issue: `false` for a `year` the employee
+ * had already exited before; otherwise the hire rule (`year` differs from the hire year, OR the
+ * hire fell on/before 1 July of the hire year) decides, UNLESS the exit falls inside `year` and
+ * either the § 4 BUrlG Wartezeit is not yet fulfilled by the exit day or the exit falls in the
+ * first half-year (January-June) — either of which makes the year a Teilurlaub year regardless of
+ * the hire rule.
+ *
+ * This is the ONE place deciding WHETHER a year is owed in full — {@link employmentYearVacationDays}
+ * (and, through it, {@link hireYearVacationDays}) delegates here instead of inlining the decision,
+ * and {@link apportionAcrossContractSegments} uses it to pick which calendar months are owed at
+ * all before apportioning them across contract segments.
+ */
+export function isFullEntitlementYear(
+  year: number,
+  hireDate: Date,
+  exitDate: Date | null,
+): boolean {
+  if (exitDate !== null && exitDate.getFullYear() < year) return false;
+  const hireRule =
+    year !== hireDate.getFullYear() ||
+    hireDate.getMonth() < 6 ||
+    (hireDate.getMonth() === 6 && hireDate.getDate() === 1);
+  if (exitDate === null || exitDate.getFullYear() > year) return hireRule;
 
   // Exit happens inside `year`.
   const wartezeitFulfilled = wartezeitEndDate(hireDate) <= exitDate;
   const firstHalfYear = exitDate.getMonth() < 6;
-  if (!wartezeitFulfilled || firstHalfYear) {
-    const months = fullEmploymentMonthsInYear(year, hireDate, exitDate);
-    return roundVacationDaysBurlG((fullYearDays * months) / 12);
+  if (!wartezeitFulfilled || firstHalfYear) return false;
+  return hireRule;
+}
+
+/**
+ * Issue #450 (D-01) — the month-loop half of {@link fullEmploymentMonthsInYear}, extracted so the
+ * segment apportionment below can know WHICH months are owed, not just how many. Moved verbatim
+ * from that function's own loop (Issue #447, D-05) — only the return shape changed, from a count
+ * to the list of month indices (0-11) themselves.
+ *
+ * @returns the month indices (0-11) within `year` that fall inside the employment span
+ *   `max(hireDate, 1 Jan year)…min(exitDate, 31 Dec year)`, in ascending order
+ */
+export function employmentMonthIndicesInYear(
+  year: number,
+  hireDate: Date,
+  exitDate: Date | null,
+): number[] {
+  const months: number[] = [];
+  for (let month = 0; month < 12; month++) {
+    const lastDayOfMonth = new Date(year, month + 1, 0);
+    const hireSide = hireDate <= lastDayOfMonth;
+    const exitSide = exitDate === null || exitDate >= lastDayOfMonth;
+    if (hireSide && exitSide) months.push(month);
   }
-  return hireYearVacationDays(fullYearDays, year, hireDate);
+  return months;
+}
+
+/**
+ * Issue #450 (D-01/D-04) — one contract period: `from` (UTC) is the segment's start, and the
+ * FIRST segment of a sorted list also covers every month before the second segment starts (there
+ * is no "before the first segment" — the earliest known contract always reaches back to the
+ * employee's hire).
+ */
+export type VacationContractSegment = { from: Date; workDaysPerWeek: number };
+
+/**
+ * Issue #450 (D-01/D-03) — apportions a per-contract-segment full-year value across the calendar
+ * months `year` owes (per {@link isFullEntitlementYear}/{@link employmentMonthIndicesInYear}),
+ * picking for each owed month the LAST sorted segment whose `from` is on or before that month's
+ * reference instant (1st of the month, UTC), falling back to the first segment for any month
+ * before every segment starts. D-01: the months' values are summed FIRST and
+ * {@link roundVacationDaysBurlG} is applied ONCE to the total — never per segment. D-02: when
+ * every owed month resolves to the SAME value (a single-contract year, several segments with
+ * equal workdays, or workday counts that all collapse to the same statutory/base ceiling), this is
+ * a one-contract year by construction — it returns {@link employmentYearVacationDays}'s own,
+ * unrounded-here value instead of rounding the (already-equal) sum, so a single-segment year is
+ * byte-identical to today's {@link computeRegularVacationDays}.
+ *
+ * Not exported — every caller goes through {@link computeRegularVacationDaysBySegments}.
+ *
+ * @throws if `segments` is empty — never a silent `0` (fail-closed)
+ */
+function apportionAcrossContractSegments(input: {
+  year: number;
+  hireDate: Date;
+  exitDate: Date | null;
+  segments: readonly VacationContractSegment[];
+  fullYearValue: (workDaysPerWeek: number) => number;
+}): number {
+  const { year, hireDate, exitDate, segments, fullYearValue } = input;
+  if (segments.length === 0) {
+    throw new Error("apportionAcrossContractSegments: segments must not be empty");
+  }
+  const sorted = [...segments].sort((a, b) => a.from.getTime() - b.from.getTime());
+
+  const ownedMonths = isFullEntitlementYear(year, hireDate, exitDate)
+    ? [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    : employmentMonthIndicesInYear(year, hireDate, exitDate);
+  if (ownedMonths.length === 0) return 0;
+
+  const monthValues = ownedMonths.map((month) => {
+    const reference = Date.UTC(year, month, 1);
+    let active = sorted[0];
+    for (const segment of sorted) {
+      if (segment.from.getTime() <= reference) active = segment;
+    }
+    return fullYearValue(active.workDaysPerWeek);
+  });
+
+  const distinctValues = new Set(monthValues);
+  if (distinctValues.size <= 1) {
+    // D-02 precedence: every owed month carries the same full-year value — this IS a
+    // one-contract year, so it returns today's (unrounded-here) value rather than rounding an
+    // already-uniform sum a second time.
+    return employmentYearVacationDays(monthValues[0] ?? 0, year, hireDate, exitDate);
+  }
+
+  const sum = monthValues.reduce((acc, value) => acc + value, 0);
+  return roundVacationDaysBurlG(sum / 12);
+}
+
+/**
+ * Issue #450 (D-01) — the segment-aware regular-entitlement kernel {@link computeRegularVacationDays}
+ * delegates to (single segment, byte-identical, D-02). `segments` need not be sorted or
+ * deduplicated — see {@link apportionAcrossContractSegments}. Per segment, `fullYearValue` mirrors
+ * {@link computeRegularVacationDays}'s own scaling step exactly: scale by that segment's
+ * contractual workdays first ({@link calculatePartTimeVacation}, reference week 5), then floor at
+ * the statutory minimum ({@link statutoryMinimumVacationDays}) for that same workday count.
+ *
+ * @param input.baseDays - the full-time base entitlement (e.g. tenant default 30); `<= 0` → `0`
+ *   (same not-employed-in-year guard {@link computeRegularVacationDays} has always had)
+ */
+export function computeRegularVacationDaysBySegments(input: {
+  year: number;
+  hireDate: Date;
+  birthDate: Date | null;
+  exitDate: Date | null;
+  segments: readonly VacationContractSegment[];
+  baseDays: number;
+}): number {
+  const { year, hireDate, birthDate, exitDate, segments, baseDays } = input;
+  if (!(baseDays > 0)) return 0;
+
+  const fullYearValue = (workDaysPerWeek: number): number => {
+    const referenceSchedule: ScheduleForCalc = {
+      mondayHours: 0,
+      tuesdayHours: 0,
+      wednesdayHours: 0,
+      thursdayHours: 0,
+      fridayHours: 0,
+      saturdayHours: 0,
+      sundayHours: 0,
+      contractWorkDaysPerWeek: workDaysPerWeek,
+    };
+    return Math.max(
+      calculatePartTimeVacation(referenceSchedule, 5, baseDays),
+      statutoryMinimumVacationDays(birthDate, year, workDaysPerWeek),
+    );
+  };
+
+  return apportionAcrossContractSegments({ year, hireDate, exitDate, segments, fullYearValue });
 }
 
 /**
@@ -775,6 +939,10 @@ export function statutoryMinimumViolationMessage(
  * `exitDate` of `null` or a year after `year` reproduces every pre-#447 hire-year result
  * unchanged, because {@link employmentYearVacationDays} itself delegates to
  * {@link hireYearVacationDays} on that path.
+ *
+ * Issue #450 (D-02): this signature and this function's own behaviour are UNCHANGED — it is now a
+ * one-line delegate to {@link computeRegularVacationDaysBySegments} with a single segment spanning
+ * the whole employed range, which is byte-identical to the body this docblock describes.
  */
 export function computeRegularVacationDays(input: {
   year: number;
@@ -785,27 +953,14 @@ export function computeRegularVacationDays(input: {
   baseDays: number;
 }): number {
   const { year, hireDate, birthDate, exitDate, workDaysPerWeek, baseDays } = input;
-  // Issue #435 (D-09 guard): baseDays 0 is loadRegularVacationInputs' "not employed in this year"
-  // signal (exited before, or hired after, the queried year) — the floor must not invent an
-  // entitlement where none is owed. Pinned by the existing "exited employee -> 0" / "hired after
-  // the queried year -> 0" tests.
-  if (!(baseDays > 0)) return 0;
-  const referenceSchedule: ScheduleForCalc = {
-    mondayHours: 0,
-    tuesdayHours: 0,
-    wednesdayHours: 0,
-    thursdayHours: 0,
-    fridayHours: 0,
-    saturdayHours: 0,
-    sundayHours: 0,
-    contractWorkDaysPerWeek: workDaysPerWeek,
-  };
-  const scaledBase = calculatePartTimeVacation(referenceSchedule, 5, baseDays);
-  const floored = Math.max(
-    scaledBase,
-    statutoryMinimumVacationDays(birthDate, year, workDaysPerWeek),
-  );
-  return employmentYearVacationDays(floored, year, hireDate, exitDate);
+  return computeRegularVacationDaysBySegments({
+    year,
+    hireDate,
+    birthDate,
+    exitDate,
+    baseDays,
+    segments: [{ from: new Date(Date.UTC(year, 0, 1)), workDaysPerWeek }],
+  });
 }
 
 /** One ISO week's leave-day contribution (Issue #429, D-01): the week's Monday (UTC

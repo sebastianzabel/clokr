@@ -32,8 +32,10 @@ import {
   BS_BLOCK_WEEKLY_MIN_BOUND,
   BS_BLOCK_WEEKLY_MAX_BOUND,
   contractWorkDaysPerWeekFrom, // Phase 436 (D-02) — resolves the comparison value for validateUsualWorkDays
+  recalcVacationEntitlementsForContractChange, // Issue #450 (D-06) — reactive VACATION-entitlement recompute after a contract change
 } from "../../absence"; // issue #246, E-6
 import { validateUsualWorkDays } from "../usual-work-days"; // Phase 436 (D-02)
+import { requestAuditFields } from "../request-audit-fields"; // Issue #450 (D-08) — attributes the recompute's audit to the acting user
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
@@ -1392,6 +1394,31 @@ export async function settingsRoutes(app: FastifyInstance) {
           ),
         );
       }
+
+      // Issue #450 (D-06) — reactive (ADR 0002 Entscheidung 10): recompute the affected
+      // auto-calculated VACATION entitlement years for this contract change. Unconditional
+      // (unlike the saldo recalc above) — a future-dated contract change still needs this
+      // year's and next year's entitlement recomputed once the new row lands, even though
+      // saldo snapshots correctly wait until the date passes.
+      await recalcVacationEntitlementsForContractChange(
+        app.prisma,
+        employeeId,
+        req.user.tenantId,
+        validFrom,
+        (entry) =>
+          app.audit({
+            action: entry.action,
+            entity: "LeaveEntitlement",
+            entityId: entry.entityId,
+            oldValue: entry.oldValue,
+            ...requestAuditFields(req, entry.newValue as object | undefined),
+          }),
+      ).catch((err) =>
+        app.log.error(
+          { err, employeeId },
+          "Failed to recalculate vacation entitlements after schedule change",
+        ),
+      );
 
       return schedule;
     },

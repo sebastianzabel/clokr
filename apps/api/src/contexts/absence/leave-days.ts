@@ -25,7 +25,10 @@ import {
 import { preserveCarryOverDeadline } from "./illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
 import { getActiveLeaveOverlapping } from "./facade/leave-requests"; // Phase 430 (D-08) — this file is INSIDE contexts/absence, no boundary crossing
 import type { LeaveEntitlement } from "@clokr/db";
-import { computeRegularVacationDays } from "./vacation-calc";
+import {
+  computeRegularVacationDaysBySegments,
+  type VacationContractSegment,
+} from "./vacation-calc"; // Issue #450 (D-01/D-09) — computeRegularVacationDays dropped: unused in this file since the segment-aware rewrite below
 import { ensureVacationEntitlementForYear, getVacationEntitlement } from "./facade/entitlements"; // getVacationEntitlement: Issue #447 (D-07) — A11, tenant-scoped, never creates
 import { getLeaveTypeByCode } from "./facade/leave-types";
 import { writeEntitlementAudit, type EntitlementAuditEntry } from "./entitlement-audit"; // Issue #445
@@ -164,6 +167,61 @@ export async function resolveContractWorkDaysPerWeek(
     }),
   ]);
   return contractWorkDaysPerWeekFrom(ws, cfg?.defaultWorkDays);
+}
+
+/**
+ * Issue #450 (D-01/D-09) — a {@link VacationContractSegment} plus the `WorkSchedule` row it was
+ * loaded from (`workScheduleId`/`validFrom` `null` when the employee has no row at all, the same
+ * no-row placeholder {@link contractWorkDaysPerWeekFrom} already resolves to `5` or the tenant
+ * default).
+ */
+export type LoadedContractSegment = VacationContractSegment & {
+  workScheduleId: string | null;
+  validFrom: Date | null;
+};
+
+/**
+ * Issue #450 (D-01/D-09) — the employee's FULL `WorkSchedule` history as contract segments, one
+ * per row, ordered by `validFrom` ascending. `WorkSchedule` is an Unterbau model read directly
+ * here, same precedent as {@link resolveContractWorkDaysPerWeek} just above (RESEARCH.md
+ * Pitfall 2) — no new cross-context boundary, just a wider query shape (`findMany` instead of
+ * `findFirst`) in a file that already reads this model. Each row resolves its workdays-per-week
+ * through the ONE fallback chain, {@link contractWorkDaysPerWeekFrom}, never re-derived inline. No
+ * row at all → exactly one entry anchored at the epoch, with the same value today's
+ * newest-row-only resolver ({@link resolveContractWorkDaysPerWeek}) yields.
+ */
+export async function loadVacationContractSegments(
+  db: DbClient,
+  employeeId: string,
+  tenantId: string,
+): Promise<LoadedContractSegment[]> {
+  const [rows, cfg] = await Promise.all([
+    db.workSchedule.findMany({
+      where: { employeeId, employee: { tenantId } },
+      orderBy: [{ validFrom: "asc" }, { createdAt: "asc" }],
+      select: { id: true, validFrom: true, contractWorkDaysPerWeek: true, workDays: true },
+    }),
+    db.tenantConfig.findUnique({
+      where: { tenantId },
+      select: { defaultWorkDays: true },
+    }),
+  ]);
+  if (rows.length === 0) {
+    return [
+      {
+        from: new Date(0),
+        workDaysPerWeek: contractWorkDaysPerWeekFrom(null, cfg?.defaultWorkDays),
+        workScheduleId: null,
+        validFrom: null,
+      },
+    ];
+  }
+  return rows.map((row) => ({
+    from: row.validFrom,
+    workDaysPerWeek: contractWorkDaysPerWeekFrom(row, cfg?.defaultWorkDays),
+    workScheduleId: row.id,
+    validFrom: row.validFrom,
+  }));
 }
 
 // German 2-letter weekday abbreviation, indexed by `Date.getUTCDay()` (0=So..6=Sa). Phase 436
@@ -831,6 +889,9 @@ export const CARRY_OVER_RECALC_REASON = "Übertrag neu berechnet";
 /** Issue #447 (D-07) — audit reason for an exit-year VACATION row recomputed by
  * {@link syncExitYearVacationEntitlement} to its § 5 BUrlG Teilurlaub value. */
 export const REGULAR_ENTITLEMENT_REASON_EXIT = "Austritt — anteiliger Anspruch (§ 5 BUrlG)";
+/** Issue #450 (D-08) — audit reason for a VACATION row recomputed by
+ * {@link recalcVacationEntitlementsForContractChange} after a contract (workdays/week) change. */
+export const REGULAR_ENTITLEMENT_REASON_CONTRACT_CHANGE = "Vertragswechsel";
 
 /**
  * Compares two day counts on 2-decimal rounding — the same precision `LeaveEntitlement.
@@ -884,6 +945,8 @@ async function loadRegularVacationInputs(
   birthDate: Date | null;
   exitDate: Date | null;
   workDaysPerWeek: number;
+  // Issue #450 (D-01/D-09): the full contract-segment history, for the segment-aware formula.
+  segments: LoadedContractSegment[];
   baseDays: number;
 }> {
   const employee = await db.employee.findFirst({
@@ -902,24 +965,31 @@ async function loadRegularVacationInputs(
     employee.hireDate.getUTCFullYear() <= year &&
     (employee.exitDate === null || employee.exitDate.getUTCFullYear() >= year);
 
-  const workDaysPerWeek = await resolveContractWorkDaysPerWeek(db, employeeId, tenantId);
+  const [workDaysPerWeek, segments] = await Promise.all([
+    // Issue #450: kept for the create path of ensureRegularVacationEntitlement only — see that
+    // function's call site below. Every other reader now uses `segments`.
+    resolveContractWorkDaysPerWeek(db, employeeId, tenantId),
+    loadVacationContractSegments(db, employeeId, tenantId),
+  ]);
   const baseDays = employedInYear ? await resolveVacationBaseDays(db, employeeId, tenantId) : 0;
 
   return {
     hireDate: employee.hireDate,
     birthDate: employee.birthDate,
-    // Issue #447 (D-05): threaded into computeRegularVacationDays so the regular entitlement
-    // follows § 5 BUrlG's exit-year Teilurlaub rule, not just the hire-year rule.
+    // Issue #447 (D-05): threaded into the regular formula so it follows § 5 BUrlG's exit-year
+    // Teilurlaub rule, not just the hire-year rule.
     exitDate: employee.exitDate,
     workDaysPerWeek,
+    segments,
     baseDays,
   };
 }
 
 /**
  * Issue #445 (D-03) — the regular yearly VACATION entitlement for `employeeId` in `year`,
- * read-only (no row is created or changed). Delegates the actual formula to
- * {@link computeRegularVacationDays}.
+ * read-only (no row is created or changed). Issue #450 (D-09): delegates to the segment-aware
+ * {@link computeRegularVacationDaysBySegments} with the employee's full contract-segment history,
+ * so a mid-year contract change is reflected without a second formula.
  */
 export async function resolveRegularVacationDays(
   db: DbClient,
@@ -927,8 +997,20 @@ export async function resolveRegularVacationDays(
   tenantId: string,
   year: number,
 ): Promise<number> {
-  const inputs = await loadRegularVacationInputs(db, employeeId, tenantId, year);
-  return computeRegularVacationDays({ year, ...inputs });
+  const { hireDate, birthDate, exitDate, segments, baseDays } = await loadRegularVacationInputs(
+    db,
+    employeeId,
+    tenantId,
+    year,
+  );
+  return computeRegularVacationDaysBySegments({
+    year,
+    hireDate,
+    birthDate,
+    exitDate,
+    segments,
+    baseDays,
+  });
 }
 
 /**
@@ -1028,6 +1110,80 @@ export async function syncExitYearVacationEntitlement(
     });
   }
   return { changed: count === 1, entitlement: refreshed };
+}
+
+/**
+ * Issue #450 (D-06/D-07/D-08) — reactive handler (ADR 0002 Entscheidung 10): called by
+ * `platform/api/settings.ts` AFTER the `WorkSchedule` write and its own audit commit, never
+ * inside that write's transaction — the caller awaits this with a `.catch` that logs and swallows
+ * the failure, exactly like the existing `recalculateSnapshots` call it sits next to. Recomputes
+ * every YEAR from `changedFrom`'s UTC year through the current UTC year + 1 that already has a
+ * VACATION `LeaveEntitlement` row, via {@link resolveRegularVacationDays} (now segment-aware,
+ * D-09) — so this function itself carries no formula, only the per-year gate and the write.
+ *
+ * D-07 (literal): a row is skipped — never overwritten — when `isAutoCalculated` is `false` OR
+ * {@link hasHumanVacationWrite} finds a human write in its audit trail. D-05: the write touches
+ * ONLY `totalDays` and `isAutoCalculated` — the entitlement's already-taken and already-carried
+ * balances are never read or written here, and a total that ends up below one of them is never
+ * clamped or hidden (the existing `audit-vacation-entitlements.ts` PRUEFEN pattern surfaces that,
+ * read-only, elsewhere). Never creates a row — a year with none yet is simply skipped.
+ *
+ * @param audit - defaults to the system write {@link writeEntitlementAudit}; `settings.ts` passes
+ *   a callback that attributes the acting user via `requestAuditFields` instead (ADR 0002 E10,
+ *   same pattern `platform/api/employees.ts` uses for {@link syncExitYearVacationEntitlement}).
+ */
+export async function recalcVacationEntitlementsForContractChange(
+  db: DbClient,
+  employeeId: string,
+  tenantId: string,
+  changedFrom: Date,
+  audit: (entry: EntitlementAuditEntry) => Promise<void> = (entry) =>
+    writeEntitlementAudit(db, entry),
+): Promise<
+  Array<{ year: number; entitlementId: string; oldTotalDays: number; newTotalDays: number }>
+> {
+  const results: Array<{
+    year: number;
+    entitlementId: string;
+    oldTotalDays: number;
+    newTotalDays: number;
+  }> = [];
+
+  const startYear = changedFrom.getUTCFullYear();
+  const endYear = new Date().getUTCFullYear() + 1;
+
+  for (let year = startYear; year <= endYear; year++) {
+    const lookup = await getVacationEntitlement(db, employeeId, tenantId, year);
+    const row = lookup?.entitlement ?? null;
+    if (!row) continue;
+    if (!row.isAutoCalculated) continue;
+    if (await hasHumanVacationWrite(db, row.id)) continue;
+
+    const target = await resolveRegularVacationDays(db, employeeId, tenantId, year);
+    const oldTotalDays = Number(row.totalDays);
+    if (!daysDiffer(oldTotalDays, target)) continue;
+
+    const { count } = await db.leaveEntitlement.updateMany({
+      where: { id: row.id, totalDays: oldTotalDays },
+      data: { totalDays: target, isAutoCalculated: true },
+    });
+    if (count !== 1) continue;
+
+    await audit({
+      action: "UPDATE",
+      entityId: row.id,
+      oldValue: { totalDays: oldTotalDays },
+      newValue: {
+        totalDays: target,
+        isAutoCalculated: true,
+        reason: REGULAR_ENTITLEMENT_REASON_CONTRACT_CHANGE,
+        validFrom: changedFrom.toISOString().slice(0, 10),
+      },
+    });
+    results.push({ year, entitlementId: row.id, oldTotalDays, newTotalDays: target });
+  }
+
+  return results;
 }
 
 export type RegularEntitlementResult = {
@@ -1139,7 +1295,15 @@ export async function ensureRegularVacationEntitlement(
   if (existing) {
     if (await isZeroVacationPlaceholder(db, existing)) {
       const inputs = await loadRegularVacationInputs(db, employeeId, tenantId, year);
-      const target = computeRegularVacationDays({ year, ...inputs });
+      // Issue #450 (D-09): segment-aware — same single formula resolveRegularVacationDays uses.
+      const target = computeRegularVacationDaysBySegments({
+        year,
+        hireDate: inputs.hireDate,
+        birthDate: inputs.birthDate,
+        exitDate: inputs.exitDate,
+        segments: inputs.segments,
+        baseDays: inputs.baseDays,
+      });
       if (target > 0) {
         const ambiguous = await isAmbiguousRegularEntitlement(
           db,
