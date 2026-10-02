@@ -24,6 +24,8 @@
    */
   import { preventDefault } from "svelte/legacy";
   import type { Snippet } from "svelte";
+  import { format } from "date-fns";
+  import { de } from "date-fns/locale";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import Modal from "$components/ui/Modal.svelte";
@@ -151,6 +153,11 @@
   // week has no imported roster yet. Every other schedule type reports `true` from the server
   // (D-15), so the hint never fires for them.
   let rosterImported: boolean | null = $state(null);
+  // Issue #448 (D-05, plan 03): the server's own BS classification (never a client formula) —
+  // reset in every place `rosterImported` is reset. `vocationalSchoolDates` is `[]` (never
+  // renders the list below) when the server omits the field (older server, non-Azubi).
+  let vocationalSchoolDates: string[] = $state([]);
+  let vocationalSchoolOnly = $state(false);
 
   let overlapEntries: OverlapEntry[] = $state([]);
   let overlapLoading = $state(false);
@@ -314,6 +321,8 @@
       minutesNeeded = null;
       serverDays = null;
       rosterImported = null;
+      vocationalSchoolDates = [];
+      vocationalSchoolOnly = false;
       return;
     }
     hoursPreviewTimer = setTimeout(loadHoursPreview, 300);
@@ -331,6 +340,8 @@
         days: number;
         minutesNeeded: number;
         rosterImported?: boolean;
+        vocationalSchoolDates?: string[];
+        vocationalSchoolOnly?: boolean;
       }>(
         `/leave/hours-preview?startDate=${formStart}&endDate=${formEnd}&halfDay=${formHalfDay}&employeeId=${employeeId}&type=${encodeURIComponent(formType)}${
           editingRequest ? `&excludeRequestId=${encodeURIComponent(editingRequest.id)}` : ""
@@ -342,11 +353,17 @@
       // Phase 430 Plan 04 (D-15): absent (non-SHIFT_BASED omission path) reads as `true` — the
       // hint never fires for a schedule type the server didn't compute this signal for.
       rosterImported = r.rosterImported ?? true;
+      // Issue #448 (D-05): both additive and optional — an older server or a non-Azubi omits
+      // them, which must render nothing (no row, no hint), not stale leftover state.
+      vocationalSchoolDates = r.vocationalSchoolDates ?? [];
+      vocationalSchoolOnly = r.vocationalSchoolOnly ?? false;
     } catch {
       hoursPreview = null;
       minutesNeeded = null;
       serverDays = null;
       rosterImported = null;
+      vocationalSchoolDates = [];
+      vocationalSchoolOnly = false;
     } finally {
       hoursPreviewLoading = false;
     }
@@ -365,6 +382,8 @@
     minutesNeeded = null;
     serverDays = null;
     rosterImported = null;
+    vocationalSchoolDates = [];
+    vocationalSchoolOnly = false;
   }
 
   $effect(() => {
@@ -642,6 +661,29 @@
           <p class="form-hint" data-testid="leave-form-roster-hint">
             Für diese Woche steht der Schichtplan noch nicht fest. Bitte alle Tage beantragen, die
             frei sein sollen – auch den Samstag.
+          </p>
+        </div>
+      {/if}
+
+      <!-- Issue #448 (D-05): the server's own BS classification — no client-side day arithmetic. -->
+      {#if vocationalSchoolDates.length > 0}
+        <div class="form-group form-group--full">
+          <ul class="form-hint" data-testid="leave-form-bs-days">
+            {#each vocationalSchoolDates as bsDate (bsDate)}
+              <li>
+                {format(new Date(`${bsDate}T00:00:00`), "EEE, dd.MM.yyyy", {
+                  locale: de,
+                })} – Berufsschule – kein Urlaub
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+      {#if vocationalSchoolOnly}
+        <div class="form-group form-group--full">
+          <p class="form-hint" data-testid="leave-form-bs-only-hint">
+            An Berufsschultagen kann kein Urlaub genommen werden – der Azubi ist für den Unterricht
+            freigestellt.
           </p>
         </div>
       {/if}
