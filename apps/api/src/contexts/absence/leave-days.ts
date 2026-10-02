@@ -641,7 +641,13 @@ async function loadRegularVacationInputs(
   employeeId: string,
   tenantId: string,
   year: number,
-): Promise<{ hireDate: Date; birthDate: Date | null; workDaysPerWeek: number; baseDays: number }> {
+): Promise<{
+  hireDate: Date;
+  birthDate: Date | null;
+  exitDate: Date | null;
+  workDaysPerWeek: number;
+  baseDays: number;
+}> {
   const employee = await db.employee.findFirst({
     where: { id: employeeId, tenantId },
     select: { hireDate: true, exitDate: true, birthDate: true }, // Issue #435 (D-09) — statutory floor
@@ -661,7 +667,15 @@ async function loadRegularVacationInputs(
   const workDaysPerWeek = await resolveContractWorkDaysPerWeek(db, employeeId, tenantId);
   const baseDays = employedInYear ? await resolveVacationBaseDays(db, employeeId, tenantId) : 0;
 
-  return { hireDate: employee.hireDate, birthDate: employee.birthDate, workDaysPerWeek, baseDays };
+  return {
+    hireDate: employee.hireDate,
+    birthDate: employee.birthDate,
+    // Issue #447 (D-05): threaded into computeRegularVacationDays so the regular entitlement
+    // follows § 5 BUrlG's exit-year Teilurlaub rule, not just the hire-year rule.
+    exitDate: employee.exitDate,
+    workDaysPerWeek,
+    baseDays,
+  };
 }
 
 /**
@@ -861,6 +875,7 @@ export async function ensureRegularVacationEntitlement(
     year,
     inputs.hireDate,
     inputs.birthDate,
+    inputs.exitDate,
     inputs.workDaysPerWeek,
     inputs.baseDays,
     reason,

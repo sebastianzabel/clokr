@@ -156,6 +156,9 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
           year,
           employee.hireDate,
           employee.birthDate,
+          // Issue #447 (D-05): this branch is only reached when employee.exitDate === null
+          // (see the guard above) — passed through anyway, now that the parameter is required.
+          employee.exitDate,
           workDaysPerWeek,
           baseDays,
           "Jahreswechsel — automatisch angelegt",

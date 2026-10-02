@@ -759,15 +759,24 @@ export function statutoryMinimumViolationMessage(
  * (`leave-days.ts`'s `loadRegularVacationInputs`, `facade/entitlements.ts`'s
  * `ensureVacationEntitlementForYear`), so the compiler enumerates every writer that must apply
  * the floor. Pass `null` explicitly for an adult/unknown birth date (fails open to § 3 BUrlG).
+ *
+ * `exitDate` is REQUIRED (Issue #447, D-05) for the same reason — every writer must pass the
+ * employee's real exit date so the compiler enumerates them. Its last step delegates to
+ * {@link employmentYearVacationDays} instead of {@link hireYearVacationDays} directly: the exit
+ * year and the hire year are now one span, computed together (§ 5 Abs. 1 b/c BUrlG); an
+ * `exitDate` of `null` or a year after `year` reproduces every pre-#447 hire-year result
+ * unchanged, because {@link employmentYearVacationDays} itself delegates to
+ * {@link hireYearVacationDays} on that path.
  */
 export function computeRegularVacationDays(input: {
   year: number;
   hireDate: Date;
   birthDate: Date | null;
+  exitDate: Date | null;
   workDaysPerWeek: number;
   baseDays: number;
 }): number {
-  const { year, hireDate, birthDate, workDaysPerWeek, baseDays } = input;
+  const { year, hireDate, birthDate, exitDate, workDaysPerWeek, baseDays } = input;
   // Issue #435 (D-09 guard): baseDays 0 is loadRegularVacationInputs' "not employed in this year"
   // signal (exited before, or hired after, the queried year) — the floor must not invent an
   // entitlement where none is owed. Pinned by the existing "exited employee -> 0" / "hired after
@@ -788,7 +797,7 @@ export function computeRegularVacationDays(input: {
     scaledBase,
     statutoryMinimumVacationDays(birthDate, year, workDaysPerWeek),
   );
-  return hireYearVacationDays(floored, year, hireDate);
+  return employmentYearVacationDays(floored, year, hireDate, exitDate);
 }
 
 /** One ISO week's leave-day contribution (Issue #429, D-01): the week's Monday (UTC

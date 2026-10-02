@@ -363,6 +363,7 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
         freshYear,
         new Date("2024-01-01"), // hired well before freshYear -> full-scaled-amount branch
         null, // birthDate — Issue #435, adult default
+        null, // exitDate — Issue #447, not under test here
         5, // full-time
         30,
         "Automatisch angelegt bei Mitarbeiteranlage",
@@ -394,6 +395,7 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
         freshYear,
         new Date("2024-01-01"),
         null, // birthDate — Issue #435, adult default
+        null, // exitDate — Issue #447, not under test here
         5,
         30,
         "reason",
@@ -408,6 +410,7 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
         freshYear,
         new Date("2024-01-01"),
         null, // birthDate — Issue #435, adult default
+        null, // exitDate — Issue #447, not under test here
         5,
         30,
         "reason",
@@ -430,6 +433,7 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
         hireYear,
         hireDate,
         null, // birthDate — Issue #435, adult default
+        null, // exitDate — Issue #447, not under test here
         3, // 3-day week: 3/5 * 30 = 18, full value (no pro-rata)
         30,
         "reason",
@@ -450,6 +454,7 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
         freshYear,
         hireDate,
         birthDate,
+        null, // exitDate — Issue #447, not under test here
         5, // full-time
         20, // base below the statutory minimum for this age band -> floor applies
         "reason",
@@ -468,6 +473,7 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
         freshYear,
         hireDate,
         null, // birthDate
+        null, // exitDate — Issue #447, not under test here
         5, // full-time
         10, // base below the § 3 BUrlG floor of 20 at a 5-day week
         "reason",
@@ -492,6 +498,7 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
           freshYear,
           new Date("2024-01-01"),
           null, // birthDate — Issue #435, adult default
+          null, // exitDate — Issue #447, not under test here
           5,
           30,
           "concurrent-a",
@@ -504,6 +511,7 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
           freshYear,
           new Date("2024-01-01"),
           null, // birthDate — Issue #435, adult default
+          null, // exitDate — Issue #447, not under test here
           5,
           30,
           "concurrent-b",

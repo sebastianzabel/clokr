@@ -766,6 +766,9 @@ export async function employeeRoutes(app: FastifyInstance) {
           emp.hireDate.getFullYear(),
           emp.hireDate,
           emp.birthDate,
+          // Issue #447 (D-05): the create schema has no exitDate field, so this is always null at
+          // hire time — passed anyway, truthfully, now that the parameter is required.
+          emp.exitDate,
           workDaysPerWeek,
           vacationBaseDays,
           "Automatisch angelegt bei Mitarbeiteranlage",
