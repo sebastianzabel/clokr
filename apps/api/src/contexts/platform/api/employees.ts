@@ -1227,7 +1227,9 @@ export async function employeeRoutes(app: FastifyInstance) {
       const effectiveExitDate =
         (updates.exitDate as Date | null | undefined) ?? employee.exitDate ?? null;
       if (effectiveExitDate !== null) {
-        const exitYear = effectiveExitDate.getFullYear();
+        // Issue #447 WR-01: exitDate is a UTC-midnight @db.Date value — use the UTC accessor
+        // to match the sync code (getUTCFullYear()) that just keyed the LeaveEntitlement row.
+        const exitYear = effectiveExitDate.getUTCFullYear();
         try {
           // Issue #205, finding 2: resolves the VACATION leave type by its stable code (A11),
           // not by its tenant-editable display name — a renamed "Urlaub" type no longer silently

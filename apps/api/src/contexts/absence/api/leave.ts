@@ -1897,7 +1897,9 @@ export async function leaveRoutes(app: FastifyInstance) {
             // can over-use just as well; exitVacationOverUseWarning itself decides, from the
             // (already exit-synced, D-06) persisted row, whether used exceeds entitled.
             if (empWithExit?.exitDate) {
-              const exitYear = empWithExit.exitDate.getFullYear();
+              // Issue #447 WR-01: exitDate is a UTC-midnight @db.Date value — use the UTC
+              // accessor to match the sync code (getUTCFullYear()) that keyed the row.
+              const exitYear = empWithExit.exitDate.getUTCFullYear();
               const vacLeaveType = await app.prisma.leaveType.findUnique({
                 where: {
                   tenantId_code: { tenantId: empWithExit.tenantId, code: "VACATION" },
