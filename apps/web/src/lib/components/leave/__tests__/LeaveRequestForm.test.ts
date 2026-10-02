@@ -310,6 +310,109 @@ describe("LeaveRequestForm", () => {
     expect(screen.queryByTestId("leave-form-roster-hint")).toBeNull();
   });
 
+  // ── half day = one date (Issue #449, D-4) ───────────────────────────────────────────────────
+  describe("half day = one date (#449)", () => {
+    it("ticking half-day sets the end date to the start date and disables it", async () => {
+      renderForm();
+      await fireEvent.input(screen.getByTestId("leave-form-from"), {
+        target: { value: "2026-11-02" },
+      });
+      await fireEvent.input(screen.getByTestId("leave-form-to"), {
+        target: { value: "2026-11-06" },
+      });
+      await fireEvent.click(screen.getByTestId("leave-form-half-day"));
+
+      const to = screen.getByTestId("leave-form-to") as HTMLInputElement;
+      expect(to.value).toBe("2026-11-02");
+      expect(to.disabled).toBe(true);
+    });
+
+    it("while ticked, changing the start date carries the end date along; unticking re-enables it", async () => {
+      renderForm();
+      await fireEvent.input(screen.getByTestId("leave-form-from"), {
+        target: { value: "2026-11-02" },
+      });
+      await fireEvent.input(screen.getByTestId("leave-form-to"), {
+        target: { value: "2026-11-06" },
+      });
+      await fireEvent.click(screen.getByTestId("leave-form-half-day"));
+
+      await fireEvent.input(screen.getByTestId("leave-form-from"), {
+        target: { value: "2026-11-10" },
+      });
+      const to = screen.getByTestId("leave-form-to") as HTMLInputElement;
+      expect(to.value).toBe("2026-11-10");
+
+      await fireEvent.click(screen.getByTestId("leave-form-half-day"));
+      expect(to.disabled).toBe(false);
+    });
+
+    it("create submit while ticked sends startDate === endDate and halfDay true", async () => {
+      renderForm();
+      await fireEvent.input(screen.getByTestId("leave-form-from"), {
+        target: { value: "2026-11-02" },
+      });
+      await fireEvent.input(screen.getByTestId("leave-form-to"), {
+        target: { value: "2026-11-06" },
+      });
+      await fireEvent.click(screen.getByTestId("leave-form-half-day"));
+      await fireEvent.click(screen.getByTestId("leave-form-submit"));
+
+      await waitFor(() => expect(apiPost).toHaveBeenCalledTimes(1));
+      const payload = apiPost.mock.calls[0][1] as { startDate: string; endDate: string };
+      expect(payload.startDate).toBe(payload.endDate);
+      expect(payload.halfDay).toBe(true);
+    });
+
+    it("editing a legacy multi-day half-day request never rewrites the end date, shows the hint, and refuses submit client-side", async () => {
+      const { onSaved } = renderForm({
+        editingRequest: {
+          id: "req-legacy-449",
+          typeCode: "VACATION",
+          startDate: "2026-11-02",
+          endDate: "2026-11-06",
+          halfDay: true,
+          note: null,
+        },
+      });
+
+      const to = screen.getByTestId("leave-form-to") as HTMLInputElement;
+      expect(to.value).toBe("2026-11-06");
+      expect(screen.getByTestId("leave-form-half-day-range-hint")).toBeTruthy();
+
+      await fireEvent.click(screen.getByTestId("leave-form-submit"));
+      await waitFor(() =>
+        expect(screen.getByTestId("leave-form-error").textContent).toContain(
+          "Ein halber Tag ist nur für ein einzelnes Datum möglich.",
+        ),
+      );
+      expect(apiPatch).not.toHaveBeenCalled();
+      expect(onSaved).not.toHaveBeenCalled();
+    });
+
+    it("an API 400 error shows the full 'category: detail' message, not just the bare category", async () => {
+      apiPatch.mockRejectedValue(
+        Object.assign(new Error("Validierungsfehler: endDate: X"), {
+          data: { error: "Validierungsfehler", message: "endDate: X" },
+        }),
+      );
+      renderForm({
+        editingRequest: {
+          id: "req-9",
+          typeCode: "VACATION",
+          startDate: "2026-11-01",
+          endDate: "2026-11-03",
+          halfDay: false,
+          note: null,
+        },
+      });
+      await fireEvent.click(screen.getByTestId("leave-form-submit"));
+      await waitFor(() =>
+        expect(screen.getByTestId("leave-form-error").textContent).toContain("endDate: X"),
+      );
+    });
+  });
+
   it("hint disappears once the date range changes to a week that IS rostered (reactive, matches the existing debounce re-fetch)", async () => {
     apiGet.mockImplementation((path: string) => {
       if (path.startsWith("/leave/hours-preview")) {
