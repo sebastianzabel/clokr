@@ -2322,6 +2322,41 @@ pnpm --filter @clokr/api exec tsx scripts/recalculate-shift-based-leave-days.ts 
 - Werden zwei Anträge derselben Woche gleichzeitig angelegt, entscheidet die Reihenfolgeregel über
   `createdAt`/Id — eine echte Gleichzeitigkeit zweier Schreibtransaktionen ist nicht gesondert
   gesperrt.
+- **(Code Review 436, WR-01, 02.10.2026)** `PATCH /requests/:id/correct` kann einen früher
+  angelegten, bereits genehmigten Antrag per Datumsänderung so AUSWEITEN, dass die neue
+  Tagesmenge zusammen mit einem später angelegten, bereits genehmigten Geschwisterantrag über die
+  Vertragstage-Kappung dieser ISO-Woche hinausgeht — ohne den Geschwisterantrag zu betrachten. Die
+  Korrektur bepreist nur den korrigierten Antrag selbst, über dieselbe Reihenfolgeregel ("nur vor
+  ihm angelegte Geschwister"), die für den geweiteten Antrag immer leer bleibt, weil der
+  Geschwisterantrag ja NACH ihm angelegt wurde. Der bestehende Überschneidungsguard der
+  Korrektur-Route (`leave.ts`, "Überschneidung mit bestehendem Antrag") greift dabei NICHT —
+  er prüft nur, ob sich die DATUMSBEREICHE zweier Anträge überschneiden, nicht, ob ihre
+  TAGESMENGEN gemeinsam die Vertragstage-Kappung der Woche sprengen; eine Ausweitung, die lückenlos
+  vor dem Geschwisterantrag endet, bleibt für ihn unsichtbar. Verifiziertes Beispiel (4-Tage-
+  Kontrakt, keine Angabe, eine ISO-Woche): A (nur Montag, 1, zuerst angelegt) und B (Do–Fr,
+  grenzkostenbepreist gegen A: cost({Mo,Do,Fr}=3) − cost({Mo}=1) = 2, danach angelegt) sind beide
+  genehmigt (1 + 2 = 3, innerhalb der Kappung). Wird A per Korrektur auf Mo–Mi ausgeweitet (endet
+  Mittwoch, vor B's Donnerstag — KEINE Datumsüberschneidung, die Korrektur geht durch), wird A
+  isoliert auf cost({Mo,Di,Mi}=3) bepreist — B bleibt unverändert bei 2, macht 3 + 2 = 5 für eine
+  Woche auf einem 4-Tage-Kontrakt, einen Tag über der Kappungsgrenze, bis ein Betreiber den
+  Dry-Run-Reparaturscript (Abschnitt 4 oben) laufen lässt — dieser ERKENNT den Fall (B würde gegen
+  das korrigierte A neu bepreist auf cost({Mo,Di,Mi,Do,Fr}=5, gekappt 4) − cost({Mo,Di,Mi}=3) = 1,
+  ein 2 → 1-Kandidat). Dies ist eine ENGERE Ausprägung derselben Klasse wie der erste Punkt oben
+  (ein genehmigter Geschwisterantrag kann veralten) — hier durch eine WEITENDE Korrektur des
+  FRÜHEREN Antrags statt durch Ablehnung/Stornierung des Geschwisterantrags selbst. Gepinnt (als
+  bekannte Grenze, nicht als Spezifikation eines zukünftigen Fixes) in
+  `apps/api/src/__tests__/leave-week-union-436.test.ts` ("[KNOWN LIMITATION, 436-REVIEW WR-01]").
+- **(Code Review 436, WR-02, 02.10.2026)** `scripts/recalculate-shift-based-leave-days.ts
+--confirm` ist, seit dieser Phase, AUCH der Weg, einen genehmigten SHIFT_BASED-VACATION-Antrag
+  unter der NEUEN Wochen-Union-Regel neu zu bepreisen — das ist ein zusätzlicher Effekt
+  gegenüber dem ursprünglichen Issue-#417-Zweck (Vertrags- statt Dienstplan-Bepreisung), den der
+  Betreiber beim Ausführen von `--confirm` beachten muss. Das ist AUSDRÜCKLICH KEIN stilles
+  Umschreiben im Sinne der obigen „niemals stillschweigend neu berechnet"-Regel: `--confirm` ist
+  eine explizite, pro Zeile auditierte (`LEAVE_CORRECTED`) Betreiberaktion über denselben
+  Korrektur-Mechanismus wie `PATCH /requests/:id/correct` (Phase 94) — kein Hintergrundjob, kein
+  impliziter Nebeneffekt eines anderen Schreibpfads. Der Unterschied zur „niemals stillschweigend"-
+  Aussage in Abschnitt 4 ist, dass diese Aussage nur für automatische Schreibpfade gilt, nicht für
+  diesen manuell angestoßenen, explizit auditierten Reparaturlauf.
 
 **Auswirkung auf die Kontexte:**
 
