@@ -10,8 +10,6 @@ import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../s
 import { main, EXIT_OK, EXIT_FINDINGS, parseCli, formatLine } from "../audit-vacation-entitlements";
 import type { FastifyInstance } from "fastify";
 
-const BASE_YEAR = 2026;
-
 describe("audit-vacation-entitlements (Issue #444)", () => {
   let app: FastifyInstance;
   let dataA: Awaited<ReturnType<typeof seedTestData>>;
