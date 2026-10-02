@@ -250,4 +250,44 @@ describe("Issue #448 — Berichte, DATEV und Urlaubsliste zählen Berufsschultag
     expect(sickPeriod!.days).toBe(1);
     expect(sickPeriod!.note).toBeUndefined();
   });
+
+  it("GET /reports/monthly: a soft-deleted BS absence does not reduce vacationDays (WR-02)", async () => {
+    // Isolated to April 2027 so this doesn't interact with the March fixtures above.
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: data.employee.id,
+        leaveTypeId: data.vacationType.id,
+        startDate: new Date("2027-04-05"),
+        endDate: new Date("2027-04-09"),
+        days: 5,
+        status: "APPROVED",
+      },
+    });
+    const softDeletedBs = await app.prisma.absence.create({
+      data: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        source: "PATTERN",
+        startDate: new Date("2027-04-06T00:00:00.000Z"),
+        endDate: new Date("2027-04-06T00:00:00.000Z"),
+        days: 1,
+        halfDay: false,
+        createdBy: "system",
+      },
+    });
+    await app.prisma.absence.update({
+      where: { id: softDeletedBs.id },
+      data: { deletedAt: new Date() },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/reports/monthly?employeeId=${data.employee.id}&year=2027&month=4`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    // Were the soft-deleted BS row counted, this would be 4 (one day displaced) — it must stay 5.
+    expect(Number(body.rows[0].vacationDays)).toBe(5);
+  });
 });

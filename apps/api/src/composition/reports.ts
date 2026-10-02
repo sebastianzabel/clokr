@@ -421,6 +421,13 @@ function computeEmployeeSummary(
   // the monthly report — the ONLY call that receives the BS skip set. `totalAbsenceDays` above
   // and the Soll computation below are untouched; this report does not model BS at all for Soll
   // (pre-existing, finding — see 448-03-SUMMARY.md).
+  //
+  // Phase 448 review (WR-02): `vocationalSchoolDateSetFromRows` is pure and has no way to exclude
+  // soft-deleted rows itself — this relies on `emp.absences` already being fetched with
+  // `deletedAt: null` (confirmed: `buildEmployeeInclude`'s `absences` include below applies that
+  // filter, same as every other soft-deletable query in this file). A soft-deleted
+  // VOCATIONAL_SCHOOL row therefore never reaches this set; see
+  // `reports-bs-leave-448.test.ts` for the regression test proving it.
   const bsDatesForReport = vocationalSchoolDateSetFromRows(emp.absences);
   let vacationDays = daysForTypeCode("VACATION", bsDatesForReport);
   const overtimeCompDays = daysForTypeCode("OVERTIME_COMP");
@@ -972,9 +979,17 @@ async function fetchConfirmedSection9CreditsByEmp(
 // per-employee query, never a hand-built scope literal. Only VACATION-coded requests are
 // relevant (daysForCode's BS subtraction only fires for that code), so non-VACATION requests
 // are not even sent into the batch reader.
+//
+// Phase 448 review (WR-01): `employeeIds` is re-derived from `employees`, which the caller is
+// expected to have already tenant-scoped — but this function had no second line of defense if a
+// future caller passed an unscoped or partially-scoped list. `tenantId` is now required and the
+// candidate ids are verified against `Employee.tenantId` before `employeeScopeFor` ever sees them,
+// mirroring the explicit `tenantId` filter the two route-level `employee.findMany` calls earlier
+// in this file already use — a foreign id is silently dropped here, not passed through.
 async function fetchBsDatesByRequestIdForDatev(
   app: FastifyInstance,
   req: Parameters<typeof accessContextFromRequest>[0],
+  tenantId: string,
   employees: Array<{
     id: string;
     leaveRequests: Array<{
@@ -997,11 +1012,19 @@ async function fetchBsDatesByRequestIdForDatev(
       })),
   );
   if (requests.length === 0) return new Map();
-  const employeeIds = [...new Set(requests.map((r) => r.employeeId))];
+  const candidateEmployeeIds = [...new Set(requests.map((r) => r.employeeId))];
+  const tenantOwned = await app.prisma.employee.findMany({
+    where: { id: { in: candidateEmployeeIds }, tenantId },
+    select: { id: true },
+  });
+  const tenantOwnedIds = new Set(tenantOwned.map((e) => e.id));
+  const scopedRequests = requests.filter((r) => tenantOwnedIds.has(r.employeeId));
+  if (scopedRequests.length === 0) return new Map();
+  const employeeIds = [...new Set(scopedRequests.map((r) => r.employeeId))];
   return vocationalSchoolDatesForLeaveRequests(
     app.prisma,
     employeeScopeFor(accessContextFromRequest(req), { employeeIds }),
-    requests,
+    scopedRequests,
   );
 }
 
@@ -1637,7 +1660,12 @@ export async function reportRoutes(app: FastifyInstance) {
         start,
         end,
       );
-      const bsDatesByRequestIdDatev = await fetchBsDatesByRequestIdForDatev(app, req, employees);
+      const bsDatesByRequestIdDatev = await fetchBsDatesByRequestIdForDatev(
+        app,
+        req,
+        req.user.tenantId,
+        employees,
+      );
 
       const buf = buildDatevLodas({
         employees,
@@ -1803,7 +1831,12 @@ export async function reportRoutes(app: FastifyInstance) {
         start,
         end,
       );
-      const bsDatesByRequestIdDatevSingle = await fetchBsDatesByRequestIdForDatev(app, req, [emp]);
+      const bsDatesByRequestIdDatevSingle = await fetchBsDatesByRequestIdForDatev(
+        app,
+        req,
+        req.user.tenantId,
+        [emp],
+      );
 
       const buf = buildDatevLodas({
         employees: [emp],
