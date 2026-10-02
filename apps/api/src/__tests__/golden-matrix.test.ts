@@ -27,6 +27,12 @@
  * the 2nd BS-Langtag + Kurztag to the individual daily Soll, so both cells run as
  * regular GREEN golden cells (912 = 456+456 BS credit → worked=expected=10944).
  *
+ * Phase 433 (Issue #433, owner decision 2026-10-03): MONTHLY_HOURS `monthlyHours` is an
+ * owed monthly Soll; approved leave, sickness and imposed absences reduce it by
+ * `monthlyHours ÷ contractual workdays of the month` (Ø-Methode), instead of leaving the
+ * Soll untouched. `mj-80-urlaub` flips 4800/0 → 4145/655 on purpose (derivation at the
+ * cell). No other cell changed in this plan.
+ *
  * Model / references: golden-azubi-jan2026.test.ts (harness), shift-based-saldo-parity.test.ts,
  * close-employee-month.test.ts case 9 (pure-core pin), GOLDEN-MATRIX-SPEC.md.
  */
@@ -1050,14 +1056,23 @@ const CELLS: Cell[] = [
     id: "mj-80-urlaub",
     scheduleType: "MONTHLY_HOURS",
     classification: "MINIJOB",
-    situation: "minijob urlaub — leave NOT deducted from budget",
+    situation: "minijob urlaub — leave reduces the owed Soll (Ø-Methode, Issue #433)",
     schedule: MH_80,
     year: 2026,
     month: 1,
     hireDate: "2026-01-01",
-    // Worked total 4800 (= full budget). Leave Jan12-14 does NOT reduce the budget
-    // (MONTHLY_HOURS skips leave/absence Soll-reduction) → balance 0. Spread 4800 over
-    // the 19 non-leave Mo-Fr days (per-day distribution irrelevant for MONTHLY_HOURS).
+    // Issue #433 (owner decision 2026-10-03, D-01/D-02): monthlyHours is an OWED monthly
+    // Soll, so approved leave reduces it by the Ø-Methode day value instead of leaving it
+    // untouched. Jan 2026 has 22 Mo-Fr workdays (JAN_MO_FR); leave Jan 12-14 covers 3 of
+    // them. ONE Math.round over the row total (avgWorkMinutesCore convention, OQ2):
+    //   leaveMinutes = round(80h × 60 × 3 ÷ 22) = round(654.54...) = 655
+    //   expectedMinutes = 4800 − 655 = 4145
+    //   balanceMinutes = worked(4800) − expected(4145) = 655
+    //   carryOver = carryOverIn(0) + 655 = 655 ; overtimeHours = 655 / 60
+    // Worked total stays 4800 (= full budget), spread over the 19 non-leave Mo-Fr days
+    // (per-day distribution is irrelevant for MONTHLY_HOURS).
+    // OLD (superseded "hart 0" rule) pinned expectedMinutes 4800 / balanceMinutes 0 —
+    // leave did not reduce the budget at all. This is the RED-first proof of the flip.
     entries: distribute(
       JAN_MO_FR.filter((d) => !["2026-01-12", "2026-01-13", "2026-01-14"].includes(d)),
       4800,
@@ -1065,10 +1080,10 @@ const CELLS: Cell[] = [
     leave: [{ start: "2026-01-12", end: "2026-01-14" }],
     expected: {
       workedMinutes: 4800,
-      expectedMinutes: 4800,
-      balanceMinutes: 0,
-      carryOver: 0,
-      overtimeHours: 0,
+      expectedMinutes: 4145,
+      balanceMinutes: 655,
+      carryOver: 655,
+      overtimeHours: 655 / 60,
     },
     expectedRed: false,
   },

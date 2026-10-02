@@ -401,7 +401,8 @@ function isBsAbsence(ab: { type?: string | null; source?: string | null }): bool
  *   - SHIFT_BASED bsExpectedMinutes: INCLUDED (matching P1/P2/P3; live-path gap documented above)
  *   - exitDate handling: effectiveEnd = min(exitDate, monthLastDay) — CLOSE-04; since Issue #447
  *     (D-01) the same clip (as `sollRangeEnd`) also bounds Soll, holidays, leave and absences
- *   - General absence subtraction from netExpected: DONE for non-SHIFT, non-MONTHLY_HOURS
+ *   - General absence subtraction from netExpected: DONE for non-SHIFT (Issue #433:
+ *     MONTHLY_HOURS joined this loop too, no longer excluded)
  *   - SHIFT_BASED leave credit: Issue #429 — derived from shiftBasedLeaveCreditByDate()
  *     (contract-based, via leaveDaysPerWeek()), which passes an EMPTY holiday set (D-05) —
  *     SHIFT_BASED contract Soll stays un-holiday-reduced, exactly as before this change
@@ -450,9 +451,10 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
    * `OvertimeTransaction` journal row and the stored balance move together — a
    * `REDUCTION` row now corresponds to a balance that actually fell.
    *
-   * MONTHLY_HOURS never reaches either loop (CLAUDE.md § Schedule Types: no
-   * holiday/absence deduction), so it credits nothing and withdraws nothing — the
-   * invariant "withdrawal == credit" holds there by staying 0 on both sides.
+   * Issue #433 (owner decision 2026-10-03): MONTHLY_HOURS now reaches the non-SHIFT
+   * leave loop too (the prior "never reaches either loop" exemption is gone), so the
+   * invariant "withdrawal == credit" holds there the SAME way it does for
+   * FIXED/FLEXTIME — via the shared rowCredit capture below, not by staying at 0.
    */
   let overtimeCompensationMinutes = 0;
 
@@ -968,7 +970,16 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
     // ── Non-SHIFT branch (FIXED_SCHEDULE, FIXED_WEEKLY, FLEXTIME, MONTHLY_HOURS) ──
 
     // Issue #447 (D-01/D-02): sollRangeEnd clips the Soll at the exit date.
-    expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, sollRangeEnd, tz);
+    // Issue #433 (D-05): defaultWorkDays threaded through for MONTHLY_HOURS — every
+    // other schedule type ignores this argument.
+    expectedMinutes = calcExpectedMinutesTz(
+      schedule,
+      effectiveStart,
+      sollRangeEnd,
+      tz,
+      undefined,
+      tenantConfig?.defaultWorkDays,
+    );
 
     // Holiday subtraction: holidayDateStrings is pre-computed by the caller (merged
     // computed Feiertage + DB manual holidays). Convert to Date objects for the
@@ -1014,64 +1025,75 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
     // holidayDateStrings is already YYYY-MM-DD in tenant TZ from the caller.
     const holidayExcludeSet = holidayDateStrings;
 
-    // CLAUDE.md "Schedule Types": MONTHLY_HOURS — holiday/absence deductions do NOT apply.
-    if (scheduleType !== "MONTHLY_HOURS") {
-      // Phase 104 (D-15): nsClaimed starts as a COPY of holidayExcludeSet (D-06 holidays +
-      // D-15 claimed days) — a COPY, not an alias, so claiming a leave/absence day here can
-      // never mutate the caller-owned holidayDateStrings Set. Seeding from the holiday set is
-      // harmless: a holiday was already excluded, and adding a leave day to the same set is
-      // exactly the intended semantics (skip this YYYY-MM-DD for whichever reason it's in the
-      // set). Shared across BOTH loops below so an overlapping leave+absence day on the same
-      // date is deducted exactly once. See sortForDedup/claimDays/isBsAbsence doc block above.
-      const nsClaimed = new Set<string>(holidayExcludeSet);
+    // Issue #433 (D-07, owner decision 2026-10-03): the leave/absence loops below now
+    // run for MONTHLY_HOURS too — the previous "holiday/absence deductions do NOT apply"
+    // exemption guard is gone. The loop bodies are unchanged except for the one BS skip
+    // added inside the absence loop below (a MONTHLY_HOURS Berufsschultag is already
+    // credited by the BS loop above, so it must not ALSO reduce the Soll here).
+    //
+    // Phase 104 (D-15): nsClaimed starts as a COPY of holidayExcludeSet (D-06 holidays +
+    // D-15 claimed days) — a COPY, not an alias, so claiming a leave/absence day here can
+    // never mutate the caller-owned holidayDateStrings Set. Seeding from the holiday set is
+    // harmless: a holiday was already excluded, and adding a leave day to the same set is
+    // exactly the intended semantics (skip this YYYY-MM-DD for whichever reason it's in the
+    // set). Shared across BOTH loops below so an overlapping leave+absence day on the same
+    // date is deducted exactly once. See sortForDedup/claimDays/isBsAbsence doc block above.
+    const nsClaimed = new Set<string>(holidayExcludeSet);
 
-      leaveMinutes = 0;
-      for (const lr of sortForDedup(approvedLeave)) {
-        const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
-        // Issue #447 (D-01): sollRangeEnd clips the leave credit at the exit date.
-        const leaveEnd = lr.endDate > sollRangeEnd ? sollRangeEnd : lr.endDate;
-        if (leaveStart > leaveEnd) continue;
-        // Issue #448 (D-03): a per-row union (never a mutation of nsClaimed, which is shared
-        // and re-read by every later row) — a Berufsschultag inside this row's range credits
-        // nothing here, its Soll reduction coming exclusively from the BS credit above. A
-        // half-day request is a single date (#449): when that date is a Berufsschultag, `raw`
-        // (computed over the excluded range) is already 0 before the halfDay halving runs, so
-        // no separate half-day override is needed here (unlike the pricing-side kernels).
-        const rowCredit = calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
-          halfDay: Boolean(lr.halfDay),
-          excludeHolidays: new Set([...nsClaimed, ...bsDatesInMonth]), // D-06 holidays + D-15 claimed days + D-03 BS days
-        });
-        leaveMinutes += rowCredit;
-        // Issue #220: the withdrawal is THIS row's credit, not a second computation of it.
-        if (lr.isOvertimeCompensation) overtimeCompensationMinutes += rowCredit;
-        // Issue #448 (D-03): do not claim a Berufsschultag into nsClaimed — see the matching
-        // comment on the SHIFT_BASED leave loop above for why (a MANUAL BS Absence row must
-        // keep its own Ø-Method credit).
-        claimDays(leaveStart, leaveEnd, tz, nsClaimed, bsDatesInMonth);
-      }
+    for (const lr of sortForDedup(approvedLeave)) {
+      const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
+      // Issue #447 (D-01): sollRangeEnd clips the leave credit at the exit date.
+      const leaveEnd = lr.endDate > sollRangeEnd ? sollRangeEnd : lr.endDate;
+      if (leaveStart > leaveEnd) continue;
+      // Issue #448 (D-03): a per-row union (never a mutation of nsClaimed, which is shared
+      // and re-read by every later row) — a Berufsschultag inside this row's range credits
+      // nothing here, its Soll reduction coming exclusively from the BS credit above. A
+      // half-day request is a single date (#449): when that date is a Berufsschultag, `raw`
+      // (computed over the excluded range) is already 0 before the halfDay halving runs, so
+      // no separate half-day override is needed here (unlike the pricing-side kernels).
+      const rowCredit = calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
+        halfDay: Boolean(lr.halfDay),
+        excludeHolidays: new Set([...nsClaimed, ...bsDatesInMonth]), // D-06 holidays + D-15 claimed days + D-03 BS days
+        defaultWorkDays: tenantConfig?.defaultWorkDays, // Issue #433 (D-05) — MONTHLY_HOURS only
+      });
+      leaveMinutes += rowCredit;
+      // Issue #220: the withdrawal is THIS row's credit, not a second computation of it.
+      if (lr.isOvertimeCompensation) overtimeCompensationMinutes += rowCredit;
+      // Issue #448 (D-03): do not claim a Berufsschultag into nsClaimed — see the matching
+      // comment on the SHIFT_BASED leave loop above for why (a MANUAL BS Absence row must
+      // keep its own Ø-Method credit).
+      claimDays(leaveStart, leaveEnd, tz, nsClaimed, bsDatesInMonth);
+    }
 
-      absenceMinutes = 0;
-      for (const ab of sortForDedup(absences)) {
-        // Phase 104 (D-15) BS-exclusion: a VOCATIONAL_SCHOOL/PATTERN row neither claims a day
-        // into nsClaimed nor is excluded by a day another row already claimed — see the
-        // isBsAbsence() doc block above. This branch never special-cased BS before (unlike the
-        // SHIFT_BASED subtract-then-recredit above), so the carve-out here simply keeps that
-        // pre-existing behaviour unchanged while every other absence participates in dedup.
-        const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
-        // Issue #447 (D-01): sollRangeEnd clips the absence credit at the exit date.
-        const absEnd = ab.endDate > sollRangeEnd ? sollRangeEnd : ab.endDate;
-        if (absStart > absEnd) continue;
-        const bs = isBsAbsence(ab);
-        absenceMinutes += calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz, {
-          halfDay: Boolean(ab.halfDay),
-          excludeHolidays: bs ? holidayExcludeSet : nsClaimed, // D-06 holidays (+ D-15 for non-BS)
-        });
-        if (!bs) claimDays(absStart, absEnd, tz, nsClaimed);
-      }
+    for (const ab of sortForDedup(absences)) {
+      // Phase 104 (D-15) BS-exclusion: a VOCATIONAL_SCHOOL/PATTERN row neither claims a day
+      // into nsClaimed nor is excluded by a day another row already claimed — see the
+      // isBsAbsence() doc block above. This branch never special-cased BS before (unlike the
+      // SHIFT_BASED subtract-then-recredit above), so the carve-out here simply keeps that
+      // pre-existing behaviour unchanged while every other absence participates in dedup.
+      const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
+      // Issue #447 (D-01): sollRangeEnd clips the absence credit at the exit date.
+      const absEnd = ab.endDate > sollRangeEnd ? sollRangeEnd : ab.endDate;
+      if (absStart > absEnd) continue;
+      // Issue #433 (D-07): for MONTHLY_HOURS a Berufsschultag is already credited to
+      // workedMinutes by the BS loop above (res.contributesToExpected === false there,
+      // Phase 76.x D-04) — reducing the Soll here too would count the day twice ("a day
+      // reduces Soll exactly once"). This skip is MONTHLY_HOURS-only and covers any
+      // VOCATIONAL_SCHOOL row regardless of source (PATTERN or MANUAL); FIXED/FLEXTIME
+      // keep the existing subtract-then-recredit behaviour via isBsAbsence() below.
+      if (scheduleType === "MONTHLY_HOURS" && ab.type === "VOCATIONAL_SCHOOL") continue;
+      const bs = isBsAbsence(ab);
+      absenceMinutes += calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz, {
+        halfDay: Boolean(ab.halfDay),
+        excludeHolidays: bs ? holidayExcludeSet : nsClaimed, // D-06 holidays (+ D-15 for non-BS)
+        defaultWorkDays: tenantConfig?.defaultWorkDays, // Issue #433 (D-05) — MONTHLY_HOURS only
+      });
+      if (!bs) claimDays(absStart, absEnd, tz, nsClaimed);
     }
 
     // Add bsExpectedMinutes to expectedMinutes for non-MONTHLY_HOURS Soll-bearing types.
-    // For MONTHLY_HOURS (D-04): bsExpectedMinutes stays 0 (forced above — scheduleType check).
+    // For MONTHLY_HOURS (D-04): bsExpectedMinutes stays 0 — forced by `res.contributesToExpected`
+    // being false for MONTHLY_HOURS in the BS credit loop above (Step 6), not by this branch.
     expectedMinutes += bsExpectedMinutes;
   }
 
