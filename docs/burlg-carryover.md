@@ -23,8 +23,11 @@ These rules MUST be followed when implementing or modifying vacation/leave carry
   hire. It is NEVER created with a hard-coded `totalDays: 0` — a missing row used to silently skip
   the availability check on `POST /leave/requests` entirely.
 - An employee who exited before 1 January of the target year gets `0` (no employment in that
-  year); an exit DURING the year keeps the stored full value (§ 5 Abs. 2 BUrlG pro-rata stays a
-  read-time projection).
+  year). An exit DURING the year carries the § 5 BUrlG Teilurlaub on the PERSISTED row itself
+  (`employmentYearVacationDays()`, Issue #447): the exit-year row is recomputed — with an audit
+  entry — every time the exit date is set, moved, or cleared, and again before every availability
+  check, UNLESS a human ever wrote the row's `totalDays` directly. Carry-over from the prior year
+  is never pro-rated by this recompute; past years are never touched.
 - A **zero placeholder** — `totalDays = 0`, not auto-calculated, and no human/API write ever set
   `totalDays` on the row (no `AuditLog` CREATE/UPDATE with a `newValue.totalDays` outside
   `isAutoCalculated: true`) — heals to the regular entitlement, audited, the first time any of the

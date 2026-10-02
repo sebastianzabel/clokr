@@ -100,9 +100,30 @@ Berechnung: `Arbeitstage/Woche × 4`. Bei Teilzeit wird der Anspruch automatisch
 
 Urlaub vom 30.12. – 5.1. wird automatisch gesplittet (2 Tage altes Jahr + 3 Tage neues Jahr). Beide Jahre werden separat geprüft. Stornierung dreht beide um.
 
-### § 5 BUrlG — Juni-30-Regel (v1.4)
+### § 5 BUrlG — Austrittsjahr (Issue #447)
 
-Bei Austritt nach dem 30. Juni: **voller Jahresanspruch** (statt 1/12-Regel der ersten Jahreshälfte). Implementiert in `vacation-calc.ts:calculateProRataVacation()` (§ 5 Abs. 2 BUrlG).
+Das Austrittsjahr und das Eintrittsjahr sind **eine Zwölftelung über eine Beschäftigungsspanne**
+(Eintritt–Austritt), nicht zwei getrennte Rechnungen — ein Eintritt und ein Austritt im selben
+Jahr werden genau einmal zwölftel, nicht zweimal nacheinander.
+
+- **Teilurlaub:** 1/12 je vollem Beschäftigungsmonat der Spanne Eintritt–Austritt. Ein Monat gilt
+  als voll, wenn der Eintritt an oder vor dessen letztem Tag liegt bzw. der Austritt an oder nach
+  dessen letztem Tag liegt.
+- **Austritt vor erfüllter Wartezeit (§ 4 BUrlG, 6 Monate):** immer anteilig — auch wenn der
+  Austritt in der zweiten Jahreshälfte liegt.
+- **Austritt nach erfüllter Wartezeit:** Austritt in der ersten Jahreshälfte (Januar–Juni) →
+  anteilig; Austritt in der zweiten Jahreshälfte (Juli–Dezember) → voller Anspruch.
+- **Gesetzlicher Mindesturlaub** (§ 3 BUrlG/§ 19 JArbSchG) folgt derselben Zwölftelung wie der
+  reguläre Anspruch — kein eigener Rechenweg.
+- **Rundung** nach § 5 Abs. 2 BUrlG: ein Bruchteil ab einem halben Tag wird auf einen vollen Tag
+  aufgerundet; darunter bleibt der exakte Bruchteil (2 Nachkommastellen) erhalten.
+- **Übertrag aus dem Vorjahr wird nie gekürzt** (§ 7 Abs. 3 BUrlG) — die Zwölftelung betrifft nur
+  den im Austrittsjahr neu erworbenen Anspruch.
+- **Kein Rückforderungstext:** wurde im Austrittsjahr mehr Urlaub genommen als zusteht, zeigt das
+  System einen neutralen Hinweis nach § 5 Abs. 3 BUrlG — keine Rückforderungs-Formulierung.
+
+Implementiert in der einen Funktion `employmentYearVacationDays()` (`vacation-calc.ts`), auf die
+sowohl `computeRegularVacationDays()` als auch der Mindesturlaubs-Schwellenwert delegieren.
 
 ---
 

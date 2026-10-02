@@ -4,7 +4,6 @@ import {
   calculatePartTimeVacation,
   calculateStatutoryMinimum,
   splitDaysAcrossYears,
-  calculateProRataVacation,
   calculateProRataVacationForHire,
   countShiftBasedLeaveDays,
   mondayOfWeekUtc,
@@ -15,6 +14,7 @@ import {
   wartezeitEndDate,
   fullEmploymentMonthsInYear,
   employmentYearVacationDays,
+  computeRegularVacationDays,
 } from "../vacation-calc";
 // Phase 107 — single shared tenant-TZ date helper (issue #34); avoids hardcoded calendar
 // dates that expire (see project history in CLAUDE.md / docs/testing.md).
@@ -297,90 +297,106 @@ describe("statutoryMinimumViolationMessage (Issue #435, D-10/D-11)", () => {
   });
 });
 
-describe("calculateProRataVacation", () => {
+describe("computeRegularVacationDays — exit year, former exit-only cases (Issue #447)", () => {
   const YEAR = 2026;
+  // Hired well before the queried year: the § 4 BUrlG Wartezeit is always fulfilled by exit time
+  // in every case below, so employmentYearVacationDays() takes the same month-counting path the
+  // deleted old exit-only twelfthing function took — these cases prove the move loses nothing
+  // (D-06).
+  const HIRED_BEFORE_YEAR = new Date(2015, 0, 1);
+
+  function regular(baseDays: number, exitDate: Date): number {
+    return computeRegularVacationDays({
+      year: YEAR,
+      hireDate: HIRED_BEFORE_YEAR,
+      birthDate: null,
+      exitDate,
+      workDaysPerWeek: 5,
+      baseDays,
+    });
+  }
 
   it("returns baseDays unchanged when exitDate is in a future year", () => {
     // Employee leaves in 2027 → full 2026 entitlement
-    expect(calculateProRataVacation(30, YEAR, new Date(2027, 0, 15))).toBe(30);
+    expect(regular(30, new Date(2027, 0, 15))).toBe(30);
   });
 
   it("returns 0 when exitDate is before the year starts", () => {
     // Employee already left in 2025
-    expect(calculateProRataVacation(30, YEAR, new Date(2025, 11, 31))).toBe(0);
+    expect(regular(30, new Date(2025, 11, 31))).toBe(0);
   });
 
   it("returns baseDays when exitDate is Dec 31 of the year (12/12)", () => {
     // Last day of year → 12 volle Monate → full entitlement
-    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 11, 31))).toBe(30);
+    expect(regular(30, new Date(YEAR, 11, 31))).toBe(30);
   });
 
   it("returns 15 when exitDate is Jun 30 and base is 30 (6/12)", () => {
     // Jun 30 is the last day of June → 6 volle Monate → 30 × 6/12 = 15
-    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 5, 30))).toBe(15);
+    expect(regular(30, new Date(YEAR, 5, 30))).toBe(15);
   });
 
   it("returns baseDays when exitDate is Jul 1 (H2 — § 5 Abs. 2 BUrlG)", () => {
     // July = month index 6 → H2 → full entitlement, no pro-rata
-    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 6, 1))).toBe(30);
+    expect(regular(30, new Date(YEAR, 6, 1))).toBe(30);
   });
 
   it("returns baseDays when exitDate is Aug 15 (H2)", () => {
-    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 7, 15))).toBe(30);
+    expect(regular(30, new Date(YEAR, 7, 15))).toBe(30);
   });
 
   it("returns baseDays for non-30 base on H2 exit (base=25, Jul 1)", () => {
-    expect(calculateProRataVacation(25, YEAR, new Date(YEAR, 6, 1))).toBe(25);
+    expect(regular(25, new Date(YEAR, 6, 1))).toBe(25);
   });
 
   it("rounds a >= half-day fraction UP to a FULL day (base 30, exitDate Jun 15 = 5/12 = 12.5 -> 13, Issue #421)", () => {
     // Jun 15 is NOT the last day of June → 5 volle Monate (Jan-May)
     // 30 × 5/12 = 12.5 → § 5 Abs. 2 BUrlG: fraction >= 0.5 rounds UP to a full day, not to the
     // nearest half day. This is the issue's own example (Issue #421).
-    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 5, 15))).toBe(13);
+    expect(regular(30, new Date(YEAR, 5, 15))).toBe(13);
   });
 
   it("keeps a < half-day fraction EXACT, never rounded to nearest 0.5 (base 20, exitDate Mar 20 = 2 volle Monate = 3.33.., Issue #421)", () => {
     // Mar 20 is NOT the last day of March → 2 volle Monate (Jan-Feb)
     // 20 × 2/12 = 3.333.. → fraction < 0.5, stays exact to 2 decimals (never rounded to 3.5)
-    expect(calculateProRataVacation(20, YEAR, new Date(YEAR, 2, 20))).toBe(3.33);
+    expect(regular(20, new Date(YEAR, 2, 20))).toBe(3.33);
   });
 
   it("returns 0 when baseDays is 0", () => {
-    expect(calculateProRataVacation(0, YEAR, new Date(YEAR, 5, 30))).toBe(0);
+    expect(regular(0, new Date(YEAR, 5, 30))).toBe(0);
   });
 
   it("returns 0 for negative baseDays (defensive)", () => {
-    expect(calculateProRataVacation(-5, YEAR, new Date(YEAR, 5, 30))).toBe(0);
+    expect(regular(-5, new Date(YEAR, 5, 30))).toBe(0);
   });
 
   it("returns 0 for NaN baseDays (defensive)", () => {
-    expect(calculateProRataVacation(NaN, YEAR, new Date(YEAR, 5, 30))).toBe(0);
+    expect(regular(NaN, new Date(YEAR, 5, 30))).toBe(0);
   });
 
   it("correctly counts volle Monate: Mar 31 counts March (3/12 for Jan-Mar), rounds exact half day UP (Issue #421)", () => {
     // Mar 31 is the last day of March → 3 volle Monate
     // 30 × 3/12 = 7.5 → exactly a half-day fraction → § 5 Abs. 2 BUrlG rounds it UP to 8
-    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 2, 31))).toBe(8);
+    expect(regular(30, new Date(YEAR, 2, 31))).toBe(8);
   });
 
   it("§ 5 Abs. 2 BUrlG (Issue #421): 7.5 -> 8 (half-day fraction rounds up to a full day)", () => {
     // Mirrors calculateProRataVacationForHire(30, YEAR, new Date(YEAR, 2, 31)) semantics —
-    // same rounding rule, same raw value, EXIT function instead of HIRE function.
-    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 2, 31))).toBe(8);
+    // same rounding rule, same raw value, EXIT side instead of HIRE side.
+    expect(regular(30, new Date(YEAR, 2, 31))).toBe(8);
   });
 
   it("§ 5 Abs. 2 BUrlG (Issue #421): 12.5 -> 13, identical to calculateProRataVacationForHire's proven scenario", () => {
     // calculateProRataVacationForHire(30, YEAR, new Date(YEAR, 7, 1)) === 13 for the same raw
-    // value (30 * 5/12 = 12.5). The EXIT function must now produce the identical rounded result
-    // for an equivalent raw value.
-    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 5, 15))).toBe(13);
+    // value (30 * 5/12 = 12.5). The EXIT side must produce the identical rounded result for an
+    // equivalent raw value.
+    expect(regular(30, new Date(YEAR, 5, 15))).toBe(13);
   });
 
   it("§ 5 Abs. 2 BUrlG (Issue #421): 8.33 stays 8.33 (fraction below half a day is never rounded)", () => {
     // base 25, 4 volle Monate (Jan-Apr, exitDate = Apr 30) → 25 × 4/12 = 8.333.. → stays exact,
     // mirrors calculateProRataVacationForHire(25, YEAR, new Date(YEAR, 8, 1)) === 8.33.
-    expect(calculateProRataVacation(25, YEAR, new Date(YEAR, 3, 30))).toBe(8.33);
+    expect(regular(25, new Date(YEAR, 3, 30))).toBe(8.33);
   });
 });
 

@@ -143,12 +143,13 @@ export function splitDaysAcrossYears(
  * already do it.
  *
  * Shared by {@link calculateProRataVacationForHire} (Issue #416) and
- * {@link calculateProRataVacation} (Issue #421) — the two § 5 Abs. 1 BUrlG "Zwölftelung"
- * (twelfthing) calculations for hire-year and exit-year pro-rata entitlement. This rule does
- * NOT apply to {@link calculatePartTimeVacation}'s full-time/part-time day-count conversion,
- * which is a different calculation outside § 5's twelfthing rule (Issue #421 research, backed by
- * the Arnold/Tillmanns BUrlG § 5 commentary § "Bruchteile außerhalb der Zwölftelungsregelung" and
- * BAG 9 AZR 7/16, 14.03.2017) — deliberately left unrounded-to-full-day there.
+ * {@link employmentYearVacationDays} (Issue #447, via {@link fullEmploymentMonthsInYear}) — the
+ * two § 5 Abs. 1 BUrlG "Zwölftelung" (twelfthing) calculations for hire-year and exit-year
+ * pro-rata entitlement. This rule does NOT apply to {@link calculatePartTimeVacation}'s
+ * full-time/part-time day-count conversion, which is a different calculation outside § 5's
+ * twelfthing rule (Issue #421 research, backed by the Arnold/Tillmanns BUrlG § 5 commentary
+ * § "Bruchteile außerhalb der Zwölftelungsregelung" and BAG 9 AZR 7/16, 14.03.2017) —
+ * deliberately left unrounded-to-full-day there.
  */
 export function roundVacationDaysBurlG(raw: number): number {
   const frac = raw - Math.floor(raw);
@@ -157,69 +158,21 @@ export function roundVacationDaysBurlG(raw: number): number {
 }
 
 /**
- * Calculate pro-rata vacation entitlement for an employee leaving mid-year.
- * Formula (BUrlG § 5 Abs. 2): baseDays × (volleBeschäftigungsmonate / 12), rounded per
- * {@link roundVacationDaysBurlG}.
- *
- * "Volle Beschäftigungsmonate": a month counts as full ONLY if the exitDate is on or after
- * the LAST DAY of that month. E.g., Jun 30 → 6 full months; Jun 29 → 5.
- *
- * § 5 Abs. 2 BUrlG rounding (corrected 2026-09-30, Issue #421): previously rounded to the
- * nearest half day (`Math.ceil(raw * 2) / 2`), which silently under-granted entitlement whenever
- * the fraction was at least half a day (e.g. 12.5 stayed 12.5 instead of rounding up to 13). Now
- * uses the same {@link roundVacationDaysBurlG} rule as the sibling HIRE-date function
- * {@link calculateProRataVacationForHire} (Issue #416) — the two are no longer divergent.
- *
- * @param baseDays - Full-year vacation entitlement (may already be part-time adjusted)
- * @param year - The calendar year to calculate for
- * @param exitDate - The employee's last working day
- * @returns Pro-rata entitlement per {@link roundVacationDaysBurlG}; or baseDays if exitDate is in
- *   a future year
- */
-export function calculateProRataVacation(baseDays: number, year: number, exitDate: Date): number {
-  if (!Number.isFinite(baseDays) || baseDays <= 0) return 0;
-
-  const exitYear = exitDate.getFullYear();
-
-  // Employee leaves after this year → full entitlement for this year
-  if (exitYear > year) return baseDays;
-
-  // Employee already left before this year → no entitlement
-  if (exitYear < year) return 0;
-
-  // § 5 Abs. 2 BUrlG: Beschäftigung in der zweiten Jahreshälfte → voller Urlaubsanspruch
-  if (exitDate.getMonth() >= 6) return baseDays;
-
-  // Count volle Beschäftigungsmonate: month is full only if exitDate >= last day of that month
-  let monthsWorked = 0;
-  for (let month = 0; month < 12; month++) {
-    // Last day of the month (day 0 of next month)
-    const lastDayOfMonth = new Date(year, month + 1, 0);
-    if (exitDate >= lastDayOfMonth) {
-      monthsWorked++;
-    }
-  }
-  monthsWorked = Math.min(monthsWorked, 12);
-
-  const raw = (baseDays * monthsWorked) / 12;
-  return roundVacationDaysBurlG(raw);
-}
-
-/**
  * Calculate pro-rata vacation entitlement for an employee HIRED mid-year.
  * Formula (§ 5 Abs. 1 lit. a BUrlG): baseDays × (volleBeschäftigungsmonate / 12), rounded UP to
- * nearest 0.5. Mirrors {@link calculateProRataVacation} (which is for EXIT dates — do not use
- * that function for a hire, and do not use this one for an exit) but counts full calendar months
- * REMAINING in the year, from `hireDate` (inclusive) through December, instead of months before
- * an exit date.
+ * nearest 0.5. Counts full calendar months REMAINING in the year, from `hireDate` (inclusive)
+ * through December.
  *
- * "Volle Beschäftigungsmonate": mirrors the exit function's own "last day of month" technique,
- * just testing the opposite direction — a month counts as full here when `hireDate` falls ON OR
- * BEFORE that month's LAST DAY. Concretely this means the HIRE month itself always counts in
- * full, no matter which day within it the hire happened (e.g. hired the 3rd of the month) — BUrlG
- * does not require day-level proration within the first month. A hire on the last day of a month
- * and a hire on the first day of the NEXT month differ by exactly one month's worth, because that
- * is where the calendar-month boundary actually falls.
+ * "Volle Beschäftigungsmonate": a month counts as full here when `hireDate` falls ON OR BEFORE
+ * that month's LAST DAY. Concretely this means the HIRE month itself always counts in full, no
+ * matter which day within it the hire happened (e.g. hired the 3rd of the month) — BUrlG does
+ * not require day-level proration within the first month. A hire on the last day of a month and
+ * a hire on the first day of the NEXT month differ by exactly one month's worth, because that is
+ * where the calendar-month boundary actually falls. Issue #447 (D-05): the counting itself is
+ * delegated to the shared span counter {@link fullEmploymentMonthsInYear} (exitDate `null` →
+ * every month passes the exit side), which also drives the EXIT-year decision in
+ * {@link employmentYearVacationDays} — one month counter instead of two independent copies of the
+ * same loop.
  *
  * Owner decision (Issue #416, 29.09.2026): composition order is scale-by-workdays FIRST
  * (`calculatePartTimeVacation`), THEN apply this hire-year pro-rata to the already-scaled result
@@ -231,9 +184,8 @@ export function calculateProRataVacation(baseDays: number, year: number, exitDat
  * nearest 0.5 — it stays the exact fraction, to 2 decimals. This differs from
  * `calculatePartTimeVacation()`'s round-to-nearest-0.5 convention, which is a different
  * calculation outside § 5's twelfthing rule (a separate question, left unchanged — see the
- * shared helper's docblock and Issue #421). As of Issue #421 the sibling EXIT-date
- * `calculateProRataVacation()` above uses the identical shared helper — the two are no longer
- * divergent.
+ * shared helper's docblock and Issue #421). The EXIT-year side ({@link employmentYearVacationDays})
+ * uses the identical shared helper — the two are not divergent.
  *
  * @param baseDays - Full-year vacation entitlement (may already be part-time adjusted)
  * @param year - The calendar year to calculate for
@@ -263,10 +215,10 @@ export function calculateProRataVacationForHire(
   if (hireYear < year) return baseDays;
 
   // Count volle Beschäftigungsmonate remaining in the year: month is full when hireDate is
-  // ON OR BEFORE the last day of that month (mirrors calculateProRataVacation()'s technique,
-  // opposite direction — see this function's own docblock above). Issue #447 (D-05): delegates to
-  // the shared span counter with no exit (exitDate null -> every month passes the exit side) —
-  // identical result, now the ONE month counter instead of a second copy of the same loop.
+  // ON OR BEFORE the last day of that month (see this function's own docblock above). Issue #447
+  // (D-05): delegates to the shared span counter with no exit (exitDate null -> every month
+  // passes the exit side) — identical result, now the ONE month counter instead of a second copy
+  // of the same loop.
   const monthsWorked = fullEmploymentMonthsInYear(year, hireDate, null);
 
   const raw = (baseDays * monthsWorked) / 12;
