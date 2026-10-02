@@ -257,6 +257,7 @@ export async function ensureVacationEntitlementForYear(
   year: number,
   hireDate: Date,
   birthDate: Date | null,
+  exitDate: Date | null,
   workDaysPerWeek: number,
   baseDays: number,
   reason: string,
@@ -270,11 +271,14 @@ export async function ensureVacationEntitlementForYear(
   // computeRegularVacationDays() in vacation-calc.ts — moved verbatim from here.
   // Issue #435 (D-06/D-09): callers pass the output of resolveVacationBaseDays() (person value ??
   // tenant default) as `baseDays`, and the employee's birth date for the statutory-minimum floor —
-  // never a raw TenantConfig value.
+  // never a raw TenantConfig value. Issue #447 (D-05): `exitDate` is threaded through the same way,
+  // so an employee who has already left owes the § 5 BUrlG Teilurlaub of the exit year, not the
+  // full amount.
   const totalDays = computeRegularVacationDays({
     year,
     hireDate,
     birthDate,
+    exitDate,
     workDaysPerWeek,
     baseDays,
   });

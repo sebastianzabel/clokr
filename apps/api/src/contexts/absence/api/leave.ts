@@ -4,7 +4,6 @@ import { LeaveRequestStatus, Prisma } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
 import { generateICal, addOneDay, type ICalEvent } from "../ical";
 import {
-  calculateProRataVacation,
   shiftBasedLeaveMinutesForRequest, // Issue #429, D-13 — receipt shares the saldo's per-week formula
   mondayOfWeekUtc, // Phase 430 Plan 04 (D-15) — the one shared Monday derivation
 } from "../vacation-calc"; // Phase 107 (D-04/D-09)
@@ -80,6 +79,8 @@ import {
   healEntitlementUsedDays, // Issue #445 (D-10) — injected into leave-self-heal.ts's ctx below
   effectiveCarryOverDays, // Issue #445 (D-13) — the FIFO expiry check (replaces the removed local helper)
   carryOverRemainder, // Issue #445 (D-14) — replaces the raw totalDays+carriedOverDays-usedDays sum
+  syncExitYearVacationEntitlement, // Issue #447 (D-06/D-07) — exit-year row sync, GET-time heal
+  exitVacationOverUseWarning, // Issue #447 (D-08) — the one over-use warning string (approval + GET)
 } from "../leave-days"; // Issue #445 — own statement: PR #437 edits the block above
 import { writeEntitlementAudit } from "../entitlement-audit"; // Issue #445
 import { revalidateLeaveCancellationEntries } from "../../time-tracking"; // Phase 100B Plan 08 — T6
@@ -672,14 +673,6 @@ export async function leaveRoutes(app: FastifyInstance) {
           ? await splitLeaveDaysByYear(app.prisma, employeeId, tenantId, start, end, days, holidays)
           : { year1Days: days, year2Days: 0, year1, year2 };
 
-        // § 5 Abs. 2 BUrlG: fetch exit date once so both year-1 and year-2 blocks can use it.
-        // Hoisted out of the year-1 guard so cross-year bookings can apply the H1 cap to year 2.
-        const empForExit = await app.prisma.employee.findUnique({
-          where: { id: employeeId, tenantId },
-          select: { exitDate: true },
-        });
-        const exitDate = empForExit?.exitDate ?? null;
-
         // ── Year 1: check entitlement ──
         await autoCarryOver(app.prisma, tenantId, employeeId, leaveTypeId, year1);
         // Issue #445 D-04: a missing row used to skip the availability check entirely —
@@ -705,25 +698,13 @@ export async function leaveRoutes(app: FastifyInstance) {
             start,
             hinweis1,
           );
+          // Issue #447 (D-06) — the row is exit-aware (ensureRegularVacationEntitlement synced
+          // it just above) and carry-over is never pro-rated (§ 7 Abs. 3 BUrlG), so totalDays +
+          // effective carry − used is the whole rule. No second exit-pro-rata reduction is
+          // applied on top (the old H1-exit branch double-reduced an already-exit-prorated row).
           const avail1 = Number(ent1.totalDays) + co1 - Number(ent1.usedDays);
 
-          // § 5 Abs. 2 BUrlG: H1 exits are capped at pro-rata entitlement.
-          // Carry-over days are prior-year entitlement already accrued and are not subject to
-          // § 5 Abs. 2 BUrlG pro-ration (which applies only to the current-year "Urlaubsanspruch").
-          // Therefore only `totalDays` (current-year entitlement) is passed to calculateProRataVacation,
-          // and the cap comparison uses `usedDays` directly (carry-over usage already deducted by
-          // the normal avail1 path; the H1 path caps new-year days independently).
-          if (exitDate && exitDate.getFullYear() === year1 && exitDate.getMonth() < 6) {
-            const proRata = calculateProRataVacation(Number(ent1.totalDays), year1, exitDate);
-            const used = Number(ent1.usedDays);
-            if (split.year1Days > proRata - used) {
-              return reply.code(400).send({
-                error: `Anteiliger Urlaub bei Austritt in H1 überschritten (${proRata} Tage anteilig)`,
-                available: proRata - used,
-                requested: split.year1Days,
-              });
-            }
-          } else if (split.year1Days > avail1) {
+          if (split.year1Days > avail1) {
             return reply.code(400).send({
               error: `Nicht genug Urlaubstage in ${year1}`,
               available: avail1,
@@ -765,15 +746,9 @@ export async function leaveRoutes(app: FastifyInstance) {
             end,
             hinweis2,
           );
-          let avail2 = Number(ent2.totalDays) + co2 - Number(ent2.usedDays);
-
-          // § 5 Abs. 2 BUrlG: apply H1 cap symmetrically to year 2 when employee exits in H1
-          // of year 2 (mirrors the year-1 check above for cross-year bookings).
-          // Carry-over is excluded from the cap base for the same reason as year 1.
-          if (exitDate && exitDate.getFullYear() === year2 && exitDate.getMonth() < 6) {
-            const proRata2 = calculateProRataVacation(Number(ent2.totalDays), year2, exitDate);
-            avail2 = Math.min(avail2, proRata2 - Number(ent2.usedDays));
-          }
+          // Issue #447 (D-06) — same rule as year 1: ent2 is already exit-aware, no second
+          // exit-pro-rata cap on top.
+          const avail2 = Number(ent2.totalDays) + co2 - Number(ent2.usedDays);
 
           if (split.year2Days > avail2) {
             return reply.code(400).send({
@@ -1924,41 +1899,36 @@ export async function leaveRoutes(app: FastifyInstance) {
           try {
             const empWithExit = await app.prisma.employee.findUnique({
               where: { id: existing.employeeId },
-              select: { exitDate: true, tenantId: true },
+              select: { exitDate: true, tenantId: true, firstName: true, lastName: true },
             });
+            // Issue #447 (D-08): no first-half-year guard any more — § 5 Abs. 1 b BUrlG
+            // Teilurlaub can also follow an exit in the second half-year, so a second-half exit
+            // can over-use just as well; exitVacationOverUseWarning itself decides, from the
+            // (already exit-synced, D-06) persisted row, whether used exceeds entitled.
             if (empWithExit?.exitDate) {
-              const exitYear = empWithExit.exitDate.getFullYear();
-              // § 5 Abs. 2 BUrlG: H2 exits (July–December) receive full entitlement — no pro-rata
-              // cap applies, so no warning is possible. Guard against false-positive warnings.
-              if (empWithExit.exitDate.getMonth() < 6) {
-                const vacLeaveType = await app.prisma.leaveType.findUnique({
+              // Issue #447 WR-01: exitDate is a UTC-midnight @db.Date value — use the UTC
+              // accessor to match the sync code (getUTCFullYear()) that keyed the row.
+              const exitYear = empWithExit.exitDate.getUTCFullYear();
+              const vacLeaveType = await app.prisma.leaveType.findUnique({
+                where: {
+                  tenantId_code: { tenantId: empWithExit.tenantId, code: "VACATION" },
+                },
+              });
+              if (vacLeaveType) {
+                const entitlement = await app.prisma.leaveEntitlement.findFirst({
                   where: {
-                    tenantId_code: { tenantId: empWithExit.tenantId, code: "VACATION" },
+                    employeeId: existing.employeeId,
+                    leaveTypeId: vacLeaveType.id,
+                    year: exitYear,
                   },
                 });
-                if (vacLeaveType) {
-                  const entitlement = await app.prisma.leaveEntitlement.findFirst({
-                    where: {
-                      employeeId: existing.employeeId,
-                      leaveTypeId: vacLeaveType.id,
-                      year: exitYear,
-                    },
-                  });
-                  if (entitlement) {
-                    const proRata = calculateProRataVacation(
-                      Number(entitlement.totalDays),
-                      exitYear,
-                      empWithExit.exitDate,
-                    );
-                    const used = Number(entitlement.usedDays);
-                    if (used > proRata) {
-                      proRataWarning = {
-                        used,
-                        entitlement: proRata,
-                        message: `Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt (${used} Tage) als ihm anteilig zusteht (${proRata} Tage). Bitte prüfen Sie, ob eine Rückforderung nötig ist.`,
-                      };
-                    }
-                  }
+                if (entitlement) {
+                  proRataWarning =
+                    exitVacationOverUseWarning({
+                      employeeName: `${empWithExit.firstName} ${empWithExit.lastName}`,
+                      exitDate: empWithExit.exitDate,
+                      row: entitlement,
+                    }) ?? undefined;
                 }
               }
             }
@@ -3245,7 +3215,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       // exitDate the pro-rata calculation further down needs.
       const employee = await app.prisma.employee.findUnique({
         where: { id: employeeId },
-        select: { tenantId: true, exitDate: true },
+        select: { tenantId: true, exitDate: true, firstName: true, lastName: true },
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       if (employee.tenantId !== tenantId) {
@@ -3303,6 +3273,14 @@ export async function leaveRoutes(app: FastifyInstance) {
       const vacTypeId = await ensureLeaveType(app.prisma, app.log, tenantId, "VACATION");
       await autoCarryOver(app.prisma, tenantId, employeeId, vacTypeId, targetYear);
 
+      // Issue #447 (D-06): this is a read path that may HEAL the exit-year row — when the
+      // response covers the employee's exit year (no `?year`, or `?year` equal to it), the row
+      // is brought to its § 5 BUrlG value before it is read, same as the booking-time sync via
+      // ensureRegularVacationEntitlement. System audit (no acting user on a GET).
+      if (employee.exitDate && employee.exitDate.getUTCFullYear() === targetYear) {
+        await syncExitYearVacationEntitlement(app.prisma, employeeId, tenantId, targetYear);
+      }
+
       // Issue #173: without `?year` this can return more than one row per LeaveType (e.g. a
       // next-year carry-over projection row created as a side effect of approving a booking
       // — see recalculateCarryOver()). Postgres gives no row order without ORDER BY, so a
@@ -3352,8 +3330,8 @@ export async function leaveRoutes(app: FastifyInstance) {
         ) => healEntitlementUsedDays(prisma, row, leaveTypeIds, empTenantId),
       };
 
-      // exitDate for pro-rata effective entitlement computation (§ 5 Abs. 2 BUrlG) —
-      // reuse the `employee` row loaded by the tenant guard above.
+      // Issue #447 (D-08): reuse the `employee` row loaded by the tenant guard above for the
+      // exit-year over-use warning built per VACATION row below.
       const employeeExitDate = employee.exitDate ?? null;
 
       // Self-heal usedDays from Σ approved LeaveRequest.days.
@@ -3421,10 +3399,19 @@ export async function leaveRoutes(app: FastifyInstance) {
         // renamed row. Do not name that list here — plan 09 removes its last definition and
         // asserts repo-wide that the identifier is gone.
         const isVacationRow = r.leaveType.code === "VACATION";
-        const effectiveEntitlementDays =
-          isVacationRow && employeeExitDate
-            ? calculateProRataVacation(Number(r.totalDays), r.year, employeeExitDate)
-            : Number(r.totalDays);
+        // Issue #447 (D-06): no second exit pro-rata here — the persisted row is already the
+        // exit-aware § 5 BUrlG value (synced above / by ensureRegularVacationEntitlement), so
+        // this field is simply the row's own totalDays. Kept under its existing name/shape for
+        // API stability — leave-provisional-readside.test.ts reads it.
+        const effectiveEntitlementDays = Number(r.totalDays);
+        // Issue #447 (D-08) — the neutral exit-year over-use hint, VACATION row only.
+        const exitOverUseWarning = isVacationRow
+          ? (exitVacationOverUseWarning({
+              employeeName: `${employee.firstName} ${employee.lastName}`,
+              exitDate: employeeExitDate,
+              row: r,
+            }) ?? null)
+          : null;
         // Issue #445 (coordinator deviation from CONTEXT D-05) — selfHealUsedDays above sets
         // needsReview on a row whose zero placeholder was left unhealed because it was
         // ambiguous (see isAmbiguousRegularEntitlement in ../leave-days). Surface it so an
@@ -3458,6 +3445,9 @@ export async function leaveRoutes(app: FastifyInstance) {
           effectiveEntitlementDays,
           // Issue #445 — null unless this VACATION row is an unhealed ambiguous placeholder.
           entitlementWarning,
+          // Issue #447 (D-08) — null unless this VACATION row's used days exceed its exit-year
+          // entitlement (totalDays + carriedOverDays); the one exitVacationOverUseWarning helper.
+          exitOverUseWarning,
           // Phase 107-07 (D-12): the provisional portion of `usedDays` for this year — see the
           // `provisionalLeaveRequests` query above. Always 0 for an employee/year with no
           // provisional requests; every other field on this response is unchanged.

@@ -32,6 +32,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         year: 2027,
         hireDate: new Date(2024, 0, 1),
         birthDate: null,
+        exitDate: null,
         workDaysPerWeek: 5,
         baseDays: 30,
       }),
@@ -44,6 +45,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         year: 2027,
         hireDate: new Date(2024, 0, 1),
         birthDate: null,
+        exitDate: null,
         workDaysPerWeek: 4,
         baseDays: 30,
       }),
@@ -53,6 +55,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         year: 2027,
         hireDate: new Date(2024, 0, 1),
         birthDate: null,
+        exitDate: null,
         workDaysPerWeek: 4,
         baseDays: 20,
       }),
@@ -62,6 +65,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         year: 2027,
         hireDate: new Date(2024, 0, 1),
         birthDate: null,
+        exitDate: null,
         workDaysPerWeek: 3,
         baseDays: 20,
       }),
@@ -75,6 +79,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         year: 2027,
         hireDate: new Date(2027, 9, 1),
         birthDate: null,
+        exitDate: null,
         workDaysPerWeek: 5,
         baseDays: 30,
       }),
@@ -87,6 +92,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         year: 2026,
         hireDate: new Date(2026, 1, 1),
         birthDate: null,
+        exitDate: null,
         workDaysPerWeek: 5,
         baseDays: 30,
       }),
@@ -98,6 +104,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         year: 2027,
         hireDate: new Date(2027, 6, 1),
         birthDate: null,
+        exitDate: null,
         workDaysPerWeek: 4,
         baseDays: 30,
       }),
@@ -110,6 +117,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         year: 2027,
         hireDate: new Date(2024, 0, 1),
         birthDate: null,
+        exitDate: null,
         workDaysPerWeek: 5,
         baseDays: 30,
       },
@@ -117,6 +125,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         year: 2027,
         hireDate: new Date(2024, 0, 1),
         birthDate: null,
+        exitDate: null,
         workDaysPerWeek: 4,
         baseDays: 30,
       },
@@ -124,6 +133,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         year: 2027,
         hireDate: new Date(2024, 0, 1),
         birthDate: null,
+        exitDate: null,
         workDaysPerWeek: 4,
         baseDays: 20,
       },
@@ -131,6 +141,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         year: 2027,
         hireDate: new Date(2024, 0, 1),
         birthDate: null,
+        exitDate: null,
         workDaysPerWeek: 3,
         baseDays: 20,
       },
@@ -138,6 +149,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         year: 2027,
         hireDate: new Date(2027, 9, 1),
         birthDate: null,
+        exitDate: null,
         workDaysPerWeek: 5,
         baseDays: 30,
       },
@@ -145,6 +157,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         year: 2026,
         hireDate: new Date(2026, 1, 1),
         birthDate: null,
+        exitDate: null,
         workDaysPerWeek: 5,
         baseDays: 30,
       },
@@ -152,6 +165,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
         year: 2027,
         hireDate: new Date(2027, 6, 1),
         birthDate: null,
+        exitDate: null,
         workDaysPerWeek: 4,
         baseDays: 30,
       },
@@ -209,6 +223,7 @@ describe("computeRegularVacationDays — statutory floor (Issue #435, D-09)", ()
         year: 2027,
         hireDate: new Date(2024, 0, 1),
         birthDate: null,
+        exitDate: null,
         workDaysPerWeek: 5,
         baseDays: 10,
       }),
@@ -221,6 +236,7 @@ describe("computeRegularVacationDays — statutory floor (Issue #435, D-09)", ()
         year: 2027,
         hireDate: new Date(2024, 0, 1),
         birthDate: new Date(Date.UTC(2012, 5, 15)),
+        exitDate: null,
         workDaysPerWeek: 5,
         baseDays: 20,
       }),
@@ -233,6 +249,7 @@ describe("computeRegularVacationDays — statutory floor (Issue #435, D-09)", ()
         year: 2027,
         hireDate: new Date(2024, 0, 1),
         birthDate: new Date(Date.UTC(2009, 5, 15)),
+        exitDate: null,
         workDaysPerWeek: 4,
         baseDays: 20,
       }),
@@ -247,6 +264,7 @@ describe("computeRegularVacationDays — statutory floor (Issue #435, D-09)", ()
         year: 2027,
         hireDate: new Date(2027, 9, 1),
         birthDate: new Date(Date.UTC(2012, 5, 15)),
+        exitDate: null,
         workDaysPerWeek: 5,
         baseDays: 20,
       }),
@@ -259,6 +277,7 @@ describe("computeRegularVacationDays — statutory floor (Issue #435, D-09)", ()
         year: 2027,
         hireDate: new Date(2027, 5, 1),
         birthDate: new Date(Date.UTC(2012, 5, 15)),
+        exitDate: null,
         workDaysPerWeek: 5,
         baseDays: 20,
       }),
@@ -271,6 +290,7 @@ describe("computeRegularVacationDays — statutory floor (Issue #435, D-09)", ()
         year: 2027,
         hireDate: new Date(2024, 0, 1),
         birthDate: new Date(Date.UTC(2012, 5, 15)),
+        exitDate: null,
         workDaysPerWeek: 5,
         baseDays: 0,
       }),
@@ -386,12 +406,12 @@ describe("regular VACATION entitlement wrapper (Issue #445, D-02/D-03/D-05/D-06)
       expect(result).toBe(0);
     });
 
-    it("exited inside the queried year -> full value", async () => {
+    it("exited inside the queried year (30.06., first half-year after the Wartezeit) -> Teilurlaub 6/12 = 15, § 5 Abs. 1 c BUrlG, Issue #447", async () => {
       const employeeId = await mkEmployee("rrd-exit-inside", "FIXED", {
         exitDate: new Date(Date.UTC(2027, 5, 30)),
       });
       const result = await resolveRegularVacationDays(app.prisma, employeeId, data.tenant.id, 2027);
-      expect(result).toBe(30);
+      expect(result).toBe(15);
     });
 
     it("hired after the queried year -> 0", async () => {
@@ -400,6 +420,34 @@ describe("regular VACATION entitlement wrapper (Issue #445, D-02/D-03/D-05/D-06)
       });
       const result = await resolveRegularVacationDays(app.prisma, employeeId, data.tenant.id, 2027);
       expect(result).toBe(0);
+    });
+
+    it("base 24, hire 01.02.2027, exit 30.06.2027 -> 10 (Wartezeit not fulfilled, Issue #447 D-05/D-09)", async () => {
+      const employeeId = await mkEmployee("rrd-exit-447-a", "FIXED", {
+        hireDate: new Date(Date.UTC(2027, 1, 1)),
+        exitDate: new Date(Date.UTC(2027, 5, 30)),
+        annualVacationDays: 24,
+      });
+      const result = await resolveRegularVacationDays(app.prisma, employeeId, data.tenant.id, 2027);
+      expect(result).toBe(10);
+    });
+
+    it("base 23, hire 01.07.2027, exit 30.11.2027 -> 10 (Wartezeit not fulfilled, Issue #447 D-05/D-09)", async () => {
+      const employeeId = await mkEmployee("rrd-exit-447-b", "FIXED", {
+        hireDate: new Date(Date.UTC(2027, 6, 1)),
+        exitDate: new Date(Date.UTC(2027, 10, 30)),
+        annualVacationDays: 23,
+      });
+      const result = await resolveRegularVacationDays(app.prisma, employeeId, data.tenant.id, 2027);
+      expect(result).toBe(10);
+    });
+
+    it("default hire 2024-01-01, exit 31.03.2027 -> 8 (first half-year after the Wartezeit, Issue #447 D-05)", async () => {
+      const employeeId = await mkEmployee("rrd-exit-447-c", "FIXED", {
+        exitDate: new Date(Date.UTC(2027, 2, 31)),
+      });
+      const result = await resolveRegularVacationDays(app.prisma, employeeId, data.tenant.id, 2027);
+      expect(result).toBe(8);
     });
   });
 
@@ -572,6 +620,31 @@ describe("regular VACATION entitlement wrapper (Issue #445, D-02/D-03/D-05/D-06)
         where: { entity: "LeaveEntitlement", entityId: row.id },
       });
       expect(auditCount).toBe(1); // no new audit written beyond the human one
+    });
+
+    it("a missing 2027 row for an employee who exited 31.03.2027 -> created with the § 5 BUrlG Teilurlaub (8), not the full value (Issue #447 D-05)", async () => {
+      const employeeId = await mkEmployee("erve-exit-447", "FIXED", {
+        exitDate: new Date(Date.UTC(2027, 2, 31)),
+      });
+      const result = await ensureRegularVacationEntitlement(
+        app.prisma,
+        employeeId,
+        data.tenant.id,
+        2027,
+        data.vacationType.id,
+        "R",
+      );
+      expect(result.created).toBe(true);
+      expect(Number(result.entitlement.totalDays)).toBe(8);
+      expect(result.entitlement.isAutoCalculated).toBe(true);
+
+      const audits = await app.prisma.auditLog.findMany({
+        where: { entity: "LeaveEntitlement", entityId: result.entitlement.id, action: "CREATE" },
+      });
+      expect(audits).toHaveLength(1);
+      const newValue = audits[0]!.newValue as { totalDays: number; isAutoCalculated: boolean };
+      expect(newValue.totalDays).toBe(8);
+      expect(newValue.isAutoCalculated).toBe(true);
     });
 
     it("exited employee -> created with totalDays 0 and isAutoCalculated true (never a placeholder)", async () => {

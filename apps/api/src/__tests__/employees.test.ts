@@ -1652,9 +1652,10 @@ describe("Employees API", () => {
       });
       entitlementYear = entitlement.year;
       // Mid-January (not the last day of the month) keeps "volle Beschäftigungsmonate" at zero
-      // regardless of the running process's timezone (see calculateProRataVacation), so the
-      // pro-rata allowance is deterministically 0 and any usedDays > 0 triggers the warning —
-      // an exit date derived from the entitlement's own year, not a hardcoded calendar date.
+      // regardless of the running process's timezone (see employmentYearVacationDays, Issue
+      // #447), so the pro-rata allowance is deterministically 0 and any usedDays > 0 triggers the
+      // warning — an exit date derived from the entitlement's own year, not a hardcoded calendar
+      // date.
       exitDateIso = new Date(Date.UTC(entitlementYear, 0, 15, 12, 0, 0)).toISOString();
     });
 

@@ -220,6 +220,9 @@ export async function main(
               year,
               hireDate: emp.hireDate,
               birthDate: emp.birthDate,
+              // Issue #447 (D-05): this script's query (above) selects only exitDate: null
+              // employees — null is the truthful value here, not a shortcut.
+              exitDate: null,
               workDaysPerWeek,
               baseDays,
             });
@@ -247,6 +250,9 @@ export async function main(
               year,
               emp.hireDate,
               emp.birthDate,
+              // Issue #447 (D-05): same query-level guarantee as the dry-run preview above —
+              // this candidate list only ever contains exitDate: null employees.
+              null,
               workDaysPerWeek,
               baseDays,
               REPAIR_REASON,

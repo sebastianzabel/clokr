@@ -582,6 +582,18 @@ Weiteres: `.planning/phases/101B-.../101B-WORKLIST.md` §14 (die Wellen-für-Wel
 `apps/api/scripts/README.md` § Lint gates (die neue Gate-Dokumentation), Issue #101 (Owner-Kommentare
 und der Abschlusskommentar dieser Phase).
 
+### Nachtrag (Issue #447, 2026-10-02): E-4 aufgelöst
+
+`employees.ts` importiert `absence/vacation-calc` nicht mehr tief — `calculateProRataVacation`,
+der von E-4 ausgenommene Aufruf, ist aus der PATCH-Warnung entfernt. Der Austritts-Warnhinweis
+kommt jetzt über die reguläre Fassade (`exitVacationOverUseWarning`, aus `../../absence` — ein
+bereits bestehender, nicht-tiefer Import), und die Austrittsjahr-Neuberechnung
+(`syncExitYearVacationEntitlement`) ist ein invariant-tragender Aufruf in den besitzenden Kontext
+hinein (ADR 0002, Entscheidung 10), kein Seiteneffekt eines fremden Imports. Das Register in
+`apps/api/scripts/context-boundary-import-exceptions.json` nennt jetzt sechs statt sieben Klassen
+(gemessen: `measure-context-boundary-imports.ts --check 0` → 55 tiefe Importe, alle 55 durch die
+verbliebenen sechs Einträge gedeckt); der Zyklen-Deckel bleibt bei 22 (`--cycles --check 22`).
+
 ## I — Vakuosität von Riegeln maschinell verboten (Phase 235, Issues #235/#240/#245)
 
 **Eintrag I, im Ton und in der Form von Eintrag H (Phase 101B).** Warum dieser Eintrag existiert: #235, #240 und #245 beschreiben dieselbe Fehlerfamilie aus drei

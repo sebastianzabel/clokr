@@ -9,7 +9,9 @@
  *
  * 32 spec cells total. This file drives 31 of them (all except `az-38-5-bs_combo`,
  * which lives in its own file `golden-azubi-jan2026.test.ts` and is cross-referenced,
- * not duplicated).
+ * not duplicated), PLUS four Issue #447 exit-month cells (`fw-40-5-exit`,
+ * `fx-30-4-exit`, `mj-80-exit` — FIXED/FLEXTIME/MONTHLY_HOURS — and the SHIFT_BASED
+ * `sb-40-5-exit`).
  *
  * Per cell the suite asserts the close snapshot
  *   workedMinutes / expectedMinutes / balanceMinutes / carryOver
@@ -38,6 +40,7 @@ import {
 } from "../contexts/working-time-account/timezone";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
 import { recalculateSnapshots } from "../contexts/working-time-account/recalculate-snapshots";
+import { computeMonthSaldo } from "../contexts/working-time-account/month-saldo"; // Issue #447 (D-13)
 import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
 import type { CloseMonthInput } from "../contexts/working-time-account/close-employee-month";
 import { closeEmployeeMonth } from "../contexts/working-time-account/close-employee-month";
@@ -47,7 +50,7 @@ const TZ = "Europe/Berlin";
 
 // ── Descriptor model ─────────────────────────────────────────────────────────
 
-type SchedType = "FIXED_SCHEDULE" | "SHIFT_BASED" | "MONTHLY_HOURS";
+type SchedType = "FIXED_SCHEDULE" | "SHIFT_BASED" | "MONTHLY_HOURS" | "FLEXTIME";
 
 interface ScheduleSpec {
   type: SchedType;
@@ -80,6 +83,11 @@ interface Cell {
   year: number;
   month: number; // 1-based
   hireDate: string; // YYYY-MM-DD
+  /**
+   * Issue #447 (D-03) — inclusive last working day. Absent/undefined = still employed.
+   * Clips Soll, holiday deduction, leave/absence reduction at the exit date (D-01).
+   */
+  exitDate?: string; // YYYY-MM-DD
   /** WORK entries: {date, netto} */
   entries: Array<{ date: string; netto: number }>;
   /** Shifts (SHIFT_BASED only): {date, netto} */
@@ -185,6 +193,10 @@ const FW_30_MWF: ScheduleSpec = {
   sundayHours: 0,
   workDays: [1, 3, 5],
 };
+
+// Issue #447 (D-03) — FLEXTIME shell, same shape as FW_30_4 (30h, Mo-Do). Routed through
+// avgWorkMinutesCore (Ø-Methode) like SHIFT_BASED, unlike FIXED_SCHEDULE's per-day sum.
+const FX_30_4: ScheduleSpec = { ...FW_30_4, type: "FLEXTIME" };
 
 // fw-38-5-halfsick (Wave 2 RED anchor — 76.32.1-02)
 const FW_38_5: ScheduleSpec = {
@@ -323,6 +335,20 @@ const JAN_MO_MI = JAN_MO_FR.filter((d) => {
   const dow = new Date(d + "T00:00:00Z").getUTCDay();
   return dow >= 1 && dow <= 3;
 }); // 12
+
+// Issue #447 (D-03) — Jul 2026 01.-10. Mo-Fr (8 workdays; 01. is a Wednesday, 10. a Friday).
+const JUL_01_10_MO_FR = [
+  "2026-07-01",
+  "2026-07-02",
+  "2026-07-03",
+  "2026-07-06",
+  "2026-07-07",
+  "2026-07-08",
+  "2026-07-09",
+  "2026-07-10",
+];
+// Issue #447 (D-03) — same span, Mo-Do subset (6 workdays; excludes Fri 03./10.).
+const JUL_01_10_MO_DO = JUL_01_10_MO_FR.filter((d) => new Date(d + "T00:00:00Z").getUTCDay() !== 5);
 
 const NEUJAHR = { date: "2026-01-01", name: "Neujahr" };
 
@@ -1324,6 +1350,126 @@ const CELLS: Cell[] = [
     expectedRed: true,
     // NOT redAnchor — runs as a normal failing test (RED until Wave 3 fixes the code)
   },
+
+  // ── Issue #447 — exit-month cells (D-03) ─────────────────────────────────
+  // GitHub Issue #447 finding G3: the exit month's Soll, holiday deduction, leave and
+  // absence reduction must end at the exit date (inclusive), not at month end. Every
+  // cell below was seen RED against pre-fix code (the exit date was only used to clip
+  // entries/shifts/gaps, not Soll). Derivation mirrors GOLDEN-MATRIX-SPEC.md's style;
+  // see that file's "Exit-month cells (Issue #447)" section for the full writeup.
+  {
+    id: "fw-40-5-exit",
+    scheduleType: "FIXED_SCHEDULE",
+    classification: "REGULAR",
+    situation: "exit mid-month (Fri 2026-07-10, inclusive), fully worked through the exit date",
+    schedule: FW_40_5,
+    year: 2026,
+    month: 7,
+    hireDate: "2026-07-01",
+    exitDate: "2026-07-10",
+    // 8 Mo-Fr days (01.-10.07.) x 480 min (8h) = 3840.
+    entries: rows(JUL_01_10_MO_FR, 480),
+    // Spec derivation: FIXED_SCHEDULE Soll = per-day sum over [effectiveStart, exitDate] =
+    // 8 Mo-Fr days x 8h = 3840 min (64h). Pre-fix: Soll ran to month end (23 Mo-Fr days in
+    // July 2026 x 480 = 11040), so worked 3840 - expected 11040 = balance -7200 (-120h) —
+    // the Issue #447 example (184h Soll / -120h saldo instead of 64h / 0).
+    expected: {
+      workedMinutes: 3840,
+      expectedMinutes: 3840,
+      balanceMinutes: 0,
+      carryOver: 0,
+      overtimeHours: 0,
+    },
+    expectedRed: false,
+  },
+  {
+    id: "fx-30-4-exit",
+    scheduleType: "FLEXTIME",
+    classification: "REGULAR",
+    situation:
+      "FLEXTIME 30h Mo-Do, exit on a non-workday (Fri 2026-07-10) — Ø-Methode over the clipped range",
+    schedule: FX_30_4,
+    year: 2026,
+    month: 7,
+    hireDate: "2026-07-01",
+    exitDate: "2026-07-10",
+    // 6 Mo-Do days (01.-10.07., excludes the two Fridays) x 450 min (7.5h) = 2700.
+    entries: rows(JUL_01_10_MO_DO, 450),
+    // Spec derivation: Ø-Methode (avgWorkMinutesCore) = weeklyHours x 60 x workdaysInRange /
+    // workDaysPerWeek = 30 x 60 x 6 / 4 = 2700 min (45h) over [effectiveStart, exitDate].
+    // Pre-fix: workdaysInRange ran to month end (18 Mo-Do days in July 2026), expected =
+    // 30*60*18/4 = 8100, balance 2700 - 8100 = -5400.
+    expected: {
+      workedMinutes: 2700,
+      expectedMinutes: 2700,
+      balanceMinutes: 0,
+      carryOver: 0,
+      overtimeHours: 0,
+    },
+    expectedRed: false,
+  },
+  {
+    id: "mj-80-exit",
+    scheduleType: "MONTHLY_HOURS",
+    classification: "MINIJOB",
+    situation: "MONTHLY_HOURS 80h budget, exit mid-month — budget prorated by workday fraction",
+    schedule: MH_80,
+    year: 2026,
+    month: 7,
+    hireDate: "2026-07-01",
+    exitDate: "2026-07-10",
+    // 8 Mo-Fr days (01.-10.07.) x 240 min (4h) = 1920.
+    entries: rows(JUL_01_10_MO_FR, 240),
+    // Spec derivation: MONTHLY_HOURS proration = round(monthlyHours*60 * rangeWorkdays /
+    // monthWorkdays) = round(80*60*8/23) = round(1669.565...) = 1670 — the SAME proration
+    // the hire month already gets (D-02 symmetry), now applied symmetrically on exit.
+    // balance = 1920 - 1670 = 250 (overtime, since the budget already prorated down).
+    // Pre-fix: expected = 4800 (full-month budget, no clip), balance 1920 - 4800 = -2880.
+    expected: {
+      workedMinutes: 1920,
+      expectedMinutes: 1670,
+      balanceMinutes: 250,
+      carryOver: 250,
+      overtimeHours: 250 / 60,
+    },
+    expectedRed: false,
+  },
+  {
+    id: "sb-40-5-exit",
+    scheduleType: "SHIFT_BASED",
+    classification: "REGULAR",
+    situation:
+      "exit mid-month (Fri 2026-07-10) — overtime above the exit-clipped contract is not swallowed",
+    schedule: SB_40_5,
+    year: 2026,
+    month: 7,
+    hireDate: "2026-07-01",
+    exitDate: "2026-07-10",
+    // Shifts on the 8 Mo-Fr days 01.-10.07. at 480 min each (R = 3840).
+    shifts: rows(JUL_01_10_MO_FR, 480),
+    // Entries the same 8 days at 480 min, except Fri 10.07. at 570 min (W = 3930).
+    entries: [
+      ...rows(
+        JUL_01_10_MO_FR.filter((d) => d !== "2026-07-10"),
+        480,
+      ),
+      { date: "2026-07-10", netto: 570 },
+    ],
+    // Spec derivation: C_net = contractSoll (Ø-Methode) over [effectiveStart, exitDate] =
+    // 40*60*8/5 = 3840 (no leave/absence credits). R = 3840 (8 shifts, none covered).
+    // W = 3930. overtime = max(0, W - C_net) = 90; undertime = max(0, R - W) = 0; balance = 90.
+    // Pre-fix: C_net used the full-month contractSoll = 40*60*23/5 = 11040; R stayed 3840
+    // (shifts were already exit-clipped) < C_net, so the undertime clause dominated and the
+    // 90 min of real overtime above the exit-clipped contract was swallowed to balance 0.
+    expected: {
+      workedMinutes: 3930,
+      expectedMinutes: 3840,
+      balanceMinutes: 90,
+      carryOver: 90,
+      overtimeHours: 1.5,
+    },
+    expectedRed: false,
+  },
 ];
 
 // ── Roster builders for AZUBI cells ──────────────────────────────────────────
@@ -1397,6 +1543,10 @@ const PARITY_IDS = new Set<string>([
   "sb-40-5-s615", // SHIFT §615
   "mj-80-over", // MONTHLY_HOURS
   "az-38-5-bs_first", // AZUBI/BS
+  "fw-40-5-exit", // Issue #447 — FIXED exit month
+  "fx-30-4-exit", // Issue #447 — FLEXTIME exit month
+  "mj-80-exit", // Issue #447 — MONTHLY_HOURS exit month
+  "sb-40-5-exit", // Issue #447 — SHIFT_BASED exit month
 ]);
 
 // ── Seeder ───────────────────────────────────────────────────────────────────
@@ -1489,6 +1639,8 @@ async function seedGoldenScenario(app: FastifyInstance, cell: Cell): Promise<See
       firstName: "Test",
       lastName: "GM",
       hireDate: new Date(cell.hireDate + "T00:00:00Z"),
+      // Issue #447 (D-03) — inclusive last working day; undefined cell.exitDate -> null (still employed).
+      exitDate: cell.exitDate ? new Date(cell.exitDate + "T00:00:00Z") : null,
       classification: cell.classification === "AZUBI" ? "AZUBI" : undefined,
       breakOver6hOverride: 0,
       breakOver9hOverride: 0,
@@ -1713,6 +1865,24 @@ async function liveBalanceAt(app: FastifyInstance, empId: string, iso: string): 
   }
 }
 
+// Issue #447 (D-13) — computeMonthSaldo reads `new Date()` for its "yesterday" cutoff, exactly
+// like liveBalanceAt's updateOvertimeAccount — fake the clock the same way.
+async function monthSaldoAt(
+  app: FastifyInstance,
+  empId: string,
+  year: number,
+  month: number,
+  iso: string,
+): Promise<Awaited<ReturnType<typeof computeMonthSaldo>>> {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(iso));
+  try {
+    return await computeMonthSaldo(app, empId, year, month);
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
 /** "now" in the month AFTER the close month, day 16 (cron grace ≥15). */
 function graceNowIso(year: number, month: number): string {
   const y = month === 12 ? year + 1 : year;
@@ -1804,7 +1974,7 @@ describe.each(CELLS)("golden matrix — $id", (cell) => {
       carryOverIn: 0,
       schedule: schedule as unknown as Record<string, unknown>,
       hireDate: employee!.hireDate,
-      exitDate: null,
+      exitDate: employee!.exitDate, // Issue #447 (D-03) — seeded by seedGoldenScenario
       isTimeTrackingExempt: false,
       breakOver6hOverride: 0,
       breakOver9hOverride: 0,
@@ -1970,7 +2140,15 @@ describe.each(CELLS)("golden matrix — $id", (cell) => {
 
       // Path D (cron): only for cells whose every workday has an entry (completeness
       // gate). Clean cells qualify; feiertag/leave/§615 are covered by the paths above.
-      const cronEligible = ["fw-40-5-clean", "sb-40-5-clean", "mj-80-over"].includes(cell.id);
+      const cronEligible = [
+        "fw-40-5-clean",
+        "sb-40-5-clean",
+        "mj-80-over",
+        "fw-40-5-exit", // Issue #447 — every workday through the exit date has an entry
+        "fx-30-4-exit",
+        "mj-80-exit",
+        "sb-40-5-exit",
+      ].includes(cell.id);
       if (cronEligible) {
         const unlock3 = await unlockMonth(app, adminToken, employeeId, cell.year, cell.month);
         expect(unlock3.statusCode, unlock3.body).toBe(200);
@@ -1988,12 +2166,189 @@ describe.each(CELLS)("golden matrix — $id", (cell) => {
       // and MONTHLY_HOURS pure-tracking. For FIXED_SCHEDULE the open range accrues a
       // negative daily Soll (missing workdays → gaps), so live ≠ carryOver/60 — that
       // invariant is intentionally not asserted here for FIXED cells.
-      if (cell.scheduleType === "SHIFT_BASED") {
+      // Issue #447 (D-12): an exit cell's open range after the close month ALSO
+      // contributes 0 regardless of schedule type — the employee has left, so the
+      // live window never extends past the exit date and nothing accrues afterward.
+      if (cell.scheduleType === "SHIFT_BASED" || cell.exitDate !== undefined) {
         const live = await liveBalanceAt(app, employeeId, liveNowIso(cell.year, cell.month));
         expect(live, "live == carryOver/60").toBeCloseTo(cell.expected.carryOver / 60, 1);
       }
     }
   }, 120_000);
+});
+
+// ── Issue #447 (D-12): exit month — live lifetime saldo == close, before the close ──
+//
+// The exit cells above only prove live == close AFTER the month has been closed
+// (V-03-A). This describe proves the SAME equality while the exit month is still
+// OPEN — computeOvertimeBalanceBreakdown/updateOvertimeAccount must clamp their live
+// window to the employee's exitDate instead of growing it to "yesterday" forever.
+// Checked at two instants: shortly after the exit (same open month) and three months
+// later (several complete-but-after-exit months the loop must zero out).
+describe.each(CELLS.filter((c) => c.exitDate !== undefined))(
+  "exit month live == close (Issue #447, D-12) — $id",
+  (cell) => {
+    it(`${cell.id}: live balance stays at ${cell.expected.balanceMinutes / 60}h at +4 days and +3 months, no close in between`, async () => {
+      sharedApp = await getTestApp();
+      const app = sharedApp;
+      const { tenantId, employeeId } = await seedGoldenScenario(app, cell);
+      seededTenants.push(tenantId);
+
+      const expectedHours = cell.expected.balanceMinutes / 60;
+
+      // 2-digit precision: OvertimeAccount.balanceHours is @db.Decimal(7, 2) — the DB itself
+      // rounds to 2 decimal places (mj-80-exit: 250/60 = 4.1666... persists as 4.17), so a
+      // tighter toBeCloseTo would fail on storage rounding, not on the behavior under test.
+      // Same reasoning as the existing V-03-A assertion above (toBeCloseTo(..., 1)).
+      const liveShortlyAfterExit = await liveBalanceAt(app, employeeId, "2026-07-14T10:00:00.000Z");
+      expect(liveShortlyAfterExit, `${cell.id} live @ 2026-07-14`).toBeCloseTo(expectedHours, 2);
+
+      const liveThreeMonthsLater = await liveBalanceAt(app, employeeId, "2026-10-16T10:00:00.000Z");
+      expect(liveThreeMonthsLater, `${cell.id} live @ 2026-10-16`).toBeCloseTo(expectedHours, 2);
+
+      // Issue #447 (D-13) — computeMonthSaldo (the per-day calendar-header reader) agrees with
+      // the golden close values for the open exit month, well after the exit (days after the
+      // exit date are flat — no further Soll accrues through computeMonthSaldo either).
+      const saldo = await monthSaldoAt(
+        app,
+        employeeId,
+        cell.year,
+        cell.month,
+        "2026-07-20T10:00:00.000Z",
+      );
+      expect(
+        saldo.expectedMinutes,
+        `${cell.id} computeMonthSaldo expectedMinutes @ 2026-07-20`,
+      ).toBe(cell.expected.expectedMinutes);
+      expect(saldo.balanceMinutes, `${cell.id} computeMonthSaldo balanceMinutes @ 2026-07-20`).toBe(
+        cell.expected.balanceMinutes,
+      );
+    });
+  },
+);
+
+// ── Issue #447 (D-13): roster proration ends at the exit date — stray-roster variant ──
+//
+// A planned shift that was never cleaned up AFTER the employee's exit must not inflate the
+// roster-period denominator (R_periodFull) used by the live/month-saldo proration — the core's
+// sollRangeEnd already clips Soll to the exit date, but the proration DENOMINATOR is computed
+// independently in both live callers (overtime-balance.ts, month-saldo.ts) and must mirror
+// that same clip. Variant: sb-40-5-exit plus one unworked planned shift on Mon 2026-07-13
+// (three days after the Fri 2026-07-10 exit) — defined locally here, NOT added to CELLS.
+describe("exit month — roster ends at the exit date (Issue #447, D-13)", () => {
+  let strayApp: FastifyInstance;
+  let strayTenant: string;
+
+  afterAll(async () => {
+    if (!strayApp || !strayTenant) return;
+    try {
+      await cleanupTestData(strayApp, strayTenant);
+    } catch (err) {
+      console.error("stray-roster cleanup:", err);
+    }
+    vi.useRealTimers();
+  });
+
+  it("sb-40-5-exit + one stray shift after the exit (Mon 2026-07-13): roster ends at the exit date everywhere", async () => {
+    strayApp = await getTestApp();
+    const app = strayApp;
+    const baseSbExitCell = CELLS.find((c) => c.id === "sb-40-5-exit")!;
+    const strayRosterCell: Cell = {
+      ...baseSbExitCell,
+      id: "sb-40-5-exit-stray-roster",
+      shifts: [...(baseSbExitCell.shifts ?? []), { date: "2026-07-13", netto: 480 }],
+    };
+    const { tenantId, employeeId, adminToken } = await seedGoldenScenario(app, strayRosterCell);
+    strayTenant = tenantId;
+
+    const { start: MONTH_START, end: MONTH_END } = monthRangeUtc(
+      strayRosterCell.year,
+      strayRosterCell.month,
+      TZ,
+    );
+    const { firstDay, lastDay } = monthDayBounds(MONTH_START, MONTH_END, TZ);
+    const schedule = await app.prisma.workSchedule.findFirst({ where: { employeeId } });
+    const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
+    const entries = await app.prisma.timeEntry.findMany({
+      where: { employeeId, deletedAt: null },
+      select: { date: true, startTime: true, endTime: true, breakMinutes: true },
+    });
+    const shifts = await app.prisma.shift.findMany({
+      where: { employeeId, deletedAt: null },
+      select: { date: true, startTime: true, endTime: true },
+    });
+
+    // Pure core — the stray shift lies after effectiveEnd (the core's own exit clip), so it
+    // must not move the base cell's golden numbers (3840 / +90).
+    const core = closeEmployeeMonth({
+      employeeId,
+      monthStart: MONTH_START,
+      monthEnd: MONTH_END,
+      monthFirstDay: firstDay,
+      monthLastDay: lastDay,
+      tz: TZ,
+      carryOverIn: 0,
+      schedule: schedule as unknown as Record<string, unknown>,
+      hireDate: employee!.hireDate,
+      exitDate: employee!.exitDate,
+      isTimeTrackingExempt: false,
+      breakOver6hOverride: 0,
+      breakOver9hOverride: 0,
+      entries: entries as CloseMonthInput["entries"],
+      shifts: shifts as CloseMonthInput["shifts"],
+      approvedLeave: [],
+      absences: [],
+      holidayDateStrings: new Set<string>(),
+      tenantConfig: null,
+    });
+    expect(core.expectedMinutes, "core expectedMinutes unaffected by stray shift").toBe(3840);
+    expect(core.balanceMinutes, "core balanceMinutes unaffected by stray shift").toBe(90);
+
+    // HTTP close — same.
+    const res = await closeMonth(
+      app,
+      adminToken,
+      employeeId,
+      strayRosterCell.year,
+      strayRosterCell.month,
+      liveNowIso(strayRosterCell.year, strayRosterCell.month),
+    );
+    expect(res.statusCode, res.body).toBe(201);
+    const snap = await fetchSnapshot(app, employeeId, MONTH_END);
+    expect(snap!.expectedMinutes, "HTTP close expectedMinutes unaffected by stray shift").toBe(
+      3840,
+    );
+    expect(snap!.balanceMinutes, "HTTP close balanceMinutes unaffected by stray shift").toBe(90);
+
+    // Reopen the month so the open-month assertions below see no closed snapshot.
+    const unlock = await unlockMonth(
+      app,
+      adminToken,
+      employeeId,
+      strayRosterCell.year,
+      strayRosterCell.month,
+    );
+    expect(unlock.statusCode, unlock.body).toBe(200);
+
+    // month-saldo — the roster PERIOD (denominator) must end at the exit day (10.07.), not
+    // include the stray 13.07. shift, at two different "now" instants inside the open month.
+    const saldo0712 = await monthSaldoAt(app, employeeId, 2026, 7, "2026-07-12T10:00:00.000Z");
+    expect(saldo0712.expectedMinutes, "expectedMinutes @ 07-12 (not the inflated 3413)").toBe(3840);
+    expect(saldo0712.balanceMinutes, "balanceMinutes @ 07-12 (not the inflated 517)").toBe(90);
+
+    const saldo0708 = await monthSaldoAt(app, employeeId, 2026, 7, "2026-07-08T10:00:00.000Z");
+    expect(saldo0708.expectedMinutes, "expectedMinutes @ 07-08 (not the inflated 2133)").toBe(2400);
+    expect(saldo0708.balanceMinutes, "balanceMinutes @ 07-08 (not the inflated 267)").toBe(0);
+
+    // live (overtime-balance.ts) == month-saldo at the same instants — both callers agree.
+    const live0708 = await liveBalanceAt(app, employeeId, "2026-07-08T10:00:00.000Z");
+    expect(live0708, "live @ 07-08 == 0").toBeCloseTo(0, 2);
+    expect(live0708, "live == monthSaldo @ 07-08").toBeCloseTo(saldo0708.balanceMinutes / 60, 2);
+
+    const live0712 = await liveBalanceAt(app, employeeId, "2026-07-12T10:00:00.000Z");
+    expect(live0712, "live @ 07-12 == 1.5").toBeCloseTo(1.5, 2);
+    expect(live0712, "live == monthSaldo @ 07-12").toBeCloseTo(saldo0712.balanceMinutes / 60, 2);
+  }, 60_000);
 });
 
 // ── GT-08: reopen of earliest snapshot → live saldo == cumulative, not 0 ─────

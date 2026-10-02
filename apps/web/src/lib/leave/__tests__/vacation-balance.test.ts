@@ -97,6 +97,29 @@ describe("mapVacationBalance", () => {
     expect(() => mapVacationBalance({ ...baseRow, typeCode: null })).not.toThrow();
   });
 
+  // ── Issue #447 (D-08): exitOverUseWarningMessage ────────────────────────────────────────
+  // The text is built once on the server (exitVacationOverUseWarning, absence/leave-days.ts) —
+  // this mapper only extracts the message string, it never builds or re-derives the text.
+  describe("exitOverUseWarningMessage", () => {
+    it("maps a populated exitOverUseWarning row to its message string", () => {
+      const result = mapVacationBalance({
+        ...baseRow,
+        exitOverUseWarning: { used: 10, entitlement: 8, message: "Hinweis: …" },
+      });
+      expect(result?.exitOverUseWarningMessage).toBe("Hinweis: …");
+    });
+
+    it("defaults to null when the API response omits exitOverUseWarning entirely", () => {
+      const result = mapVacationBalance(baseRow);
+      expect(result?.exitOverUseWarningMessage).toBeNull();
+    });
+
+    it("defaults to null when exitOverUseWarning is explicitly null", () => {
+      const result = mapVacationBalance({ ...baseRow, exitOverUseWarning: null });
+      expect(result?.exitOverUseWarningMessage).toBeNull();
+    });
+  });
+
   // ── Phase 107-07 (D-12/D-13): provisionalUsed ───────────────────────────────────────────
   describe("provisionalUsed", () => {
     it("defaults to 0 when the API response omits provisionalUsedDays entirely (pre-107-07 shape)", () => {
