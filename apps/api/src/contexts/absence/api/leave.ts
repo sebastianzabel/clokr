@@ -26,6 +26,7 @@ import {
   reverseVacationDays,
   recalculateCarryOver,
   contractWorkDaysPerWeekFrom, // Issue #429, D-13 — the getScheduledHours SHIFT_BASED branch below
+  usualWorkDaysFrom, // Issue #436, D-03 — the same branch, threading the Angabe into the receipt
 } from "../leave-days";
 import { formatMinutesHM } from "../format-hm"; // Phase 100
 import {
@@ -4345,8 +4346,16 @@ async function getScheduledHours(
     // `shiftBasedLeaveMinutesForRequest` is timezone-free (it operates on calendar `Date`
     // boundaries via `leaveDaysPerWeek`, like the saldo's `shiftBasedLeaveCreditByDate`) and,
     // mirroring `close-employee-month.ts`'s D-05 decision, is never given a holiday set — a
-    // holiday inside a leave range keeps being a Soll-free day via the leave itself.
-    const minutes = shiftBasedLeaveMinutesForRequest(ws, start, end, halfDay, c);
+    // holiday inside a leave range keeps being a Soll-free day via the leave itself. Phase 436
+    // (D-03): the Angabe follows the receipt through the same `usualWorkDaysFrom()` reader.
+    const minutes = shiftBasedLeaveMinutesForRequest(
+      ws,
+      start,
+      end,
+      halfDay,
+      c,
+      usualWorkDaysFrom(ws),
+    );
     return minutes / 60;
   }
 

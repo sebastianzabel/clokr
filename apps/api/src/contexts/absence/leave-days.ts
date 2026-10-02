@@ -160,8 +160,11 @@ export async function resolveContractWorkDaysPerWeek(
   return contractWorkDaysPerWeekFrom(ws, cfg?.defaultWorkDays);
 }
 
-// German 2-letter weekday abbreviation, indexed by `Date.getUTCDay()` (0=So..6=Sa). Index 0
-// (Sunday) is never read by getShiftBasedLeaveDaysForWeek() below — § 3 Abs. 2 BUrlG excludes it.
+// German 2-letter weekday abbreviation, indexed by `Date.getUTCDay()` (0=So..6=Sa). Phase 436
+// (D-03): index 0 (Sunday) CAN now be read by getShiftBasedLeaveDaysForWeek() below — when the
+// employee's usualWorkDays Angabe names Sunday a usual day, `dayShares` carries a non-zero share
+// for it, exactly like any other weekday. Without an Angabe `dayShares` never has a Sunday key
+// (§ 3 Abs. 2 BUrlG), so the walk below is unchanged output for every pre-436 schedule.
 const GERMAN_WEEKDAY_ABBR = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"] as const;
 
 /**
@@ -211,7 +214,7 @@ export async function getShiftBasedLeaveDaysForWeek(
   weekStart: Date,
   weekEnd: Date,
 ): Promise<{ days: number; weekdays: string[] }> {
-  const [overlapping, contractWorkDaysPerWeek, holidays] = await Promise.all([
+  const [overlapping, contractWorkDaysPerWeek, holidays, latestSchedule] = await Promise.all([
     getActiveLeaveOverlapping(
       prisma,
       { kind: "employee", employeeId, tenantId },
@@ -220,18 +223,34 @@ export async function getShiftBasedLeaveDaysForWeek(
     ),
     resolveContractWorkDaysPerWeek(prisma, employeeId, tenantId),
     getHolidayMap(prisma, tenantId, employeeId, weekStart, weekEnd),
+    // Phase 436 (D-03): the same "latest row" choice resolveContractWorkDaysPerWeek() makes,
+    // scoped by employeeId AND employee.tenantId (T-436-09) — the Angabe follows the contract
+    // count through the identical WorkSchedule row.
+    prisma.workSchedule.findFirst({
+      where: { employeeId, employee: { tenantId } },
+      orderBy: { validFrom: "desc" },
+      select: { type: true, usualWorkDays: true },
+    }),
   ]);
 
   if (overlapping.length === 0) return { days: 0, weekdays: [] };
 
   const holidaySet = new Set(holidays.keys());
-  const weeks = leaveDaysPerWeek(overlapping, contractWorkDaysPerWeek, holidaySet);
+  const weeks = leaveDaysPerWeek(
+    overlapping,
+    contractWorkDaysPerWeek,
+    holidaySet,
+    usualWorkDaysFrom(latestSchedule),
+  );
   const weekMondayStr = weekStart.toISOString().slice(0, 10);
   const match = weeks.find((w) => w.weekMonday === weekMondayStr);
   if (!match) return { days: 0, weekdays: [] };
 
-  // Which weekdays: walk Mon..Sun, skip Sunday (never a Werktag, § 3 Abs. 2 BUrlG) — the
-  // `dayShares` map already excludes holidays (a holiday date never gets a share > 0).
+  // Which weekdays: walk Mon..Sun. Sunday is included (Phase 436, D-03) exactly like any other
+  // weekday — `dayShares` only ever carries a Sunday key when the Angabe names it usual, so this
+  // is byte-identical output for every pre-436 schedule (no Angabe => no Sunday key => skipped
+  // all the same). The `dayShares` map already excludes holidays (a holiday date never gets a
+  // share > 0).
   const weekdays: string[] = [];
   for (
     const d = new Date(weekStart);
@@ -239,7 +258,6 @@ export async function getShiftBasedLeaveDaysForWeek(
     d.setUTCDate(d.getUTCDate() + 1)
   ) {
     const dow = d.getUTCDay(); // 0=So..6=Sa
-    if (dow === 0) continue;
     const dateStr = d.toISOString().slice(0, 10);
     if ((match.dayShares.get(dateStr) ?? 0) > 0) weekdays.push(GERMAN_WEEKDAY_ABBR[dow]);
   }
