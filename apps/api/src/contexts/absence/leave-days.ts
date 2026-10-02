@@ -116,6 +116,22 @@ export function contractWorkDaysPerWeekFrom(
 }
 
 /**
+ * Phase 436 (D-01, 436-AC-11) — the ONLY reader of `WorkSchedule.usualWorkDays`. Returns a copy
+ * of the stored value for a SHIFT_BASED row, else `[]`. A stale value on a non-SHIFT_BASED row
+ * (e.g. left over after a bulk type change) is inert here — it is never surfaced. This function
+ * never falls back to `workDays` (Phase 95b D-01, Phase 107 D-02 — the legacy per-day-hours
+ * placeholders must never act as a usual-workday Angabe).
+ */
+export function usualWorkDaysFrom(
+  schedule: { type?: string | null; usualWorkDays?: number[] | null } | null,
+): number[] {
+  if (schedule?.type === "SHIFT_BASED" && Array.isArray(schedule.usualWorkDays)) {
+    return [...schedule.usualWorkDays];
+  }
+  return [];
+}
+
+/**
  * Resolves an employee's contractual workday count (Phase 107, D-04).
  *
  * This is the DB-fetching side only — the actual resolution chain lives in
@@ -569,7 +585,14 @@ export async function resolveLeaveDays(
       tenantId,
     );
 
-    return countShiftBasedLeaveDays(start, end, halfDay, contractWorkDaysPerWeek, holidays);
+    return countShiftBasedLeaveDays(
+      start,
+      end,
+      halfDay,
+      contractWorkDaysPerWeek,
+      holidays,
+      usualWorkDaysFrom(ws),
+    );
   }
 
   // Every other schedule type: byte-identical to today's five call sites (AC-REG-02).

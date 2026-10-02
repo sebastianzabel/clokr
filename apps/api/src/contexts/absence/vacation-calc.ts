@@ -362,6 +362,13 @@ function toDateStrUtc(d: Date): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+/** The inverse of `toDateStrUtc()` for the "what weekday is this" question — parses a
+ * "YYYY-MM-DD" string (already UTC-midnight by construction) and returns `getUTCDay()`
+ * (0=Sun..6=Sat). Phase 436 (D-03). */
+function dowOfDateStr(dateStr: string): number {
+  return new Date(`${dateStr}T00:00:00.000Z`).getUTCDay();
+}
+
 /**
  * Counts leave-day consumption for a SHIFT_BASED employee over [start, end] — BY CONTRACT, not
  * by roster (Issue #417, 2026-09-29 owner decision, supersedes Phase 107 D-06). Pure and
@@ -416,31 +423,54 @@ function toDateStrUtc(d: Date): string {
  *      the same `{ days, provisional }` shape — it is now always `false`.
  */
 /**
- * The shared per-week kernel (Issue #429, D-02) behind BOTH `countShiftBasedLeaveDays()` (a
- * single running total) and `leaveDaysPerWeek()` (per-week/per-date breakdown, below). Takes
- * only the numbers each caller has already computed for one ISO week — no Date objects, no
- * holidays Set — and implements the two branches that used to be inline here:
- *   - a WHOLE week (every Mo-Sat day of the week is inside the requested range) contributes
- *     `max(0, contractWorkDaysPerWeek - moSaHolidaysInFragment)` — the contractual cap always
- *     binds for a whole week;
- *   - a FRAGMENT contributes
- *     `max(0, min(moSaDaysInFragment, contractWorkDaysPerWeek) - moSaHolidaysInFragment)`.
- * Extracting this as one function is the "dieselbe Formel" proof Issue #429 AC-2 asks for: both
- * callers literally run the same code, not two independently-written formulas that could drift.
+ * The shared per-week kernel (Issue #429, D-02; extended Phase 436, D-03) behind BOTH
+ * `countShiftBasedLeaveDays()` (a single running total) and `leaveDaysPerWeek()`
+ * (per-week/per-date breakdown, below). Extracting this as one function is the "dieselbe Formel"
+ * proof Issue #429 AC-2 asks for: both callers literally run the same code, not two independently
+ * written formulas that could drift.
+ *
+ * `requestedDates` is every calendar date (Mo-So, as UTC "YYYY-MM-DD" strings) requested in THIS
+ * ISO week's fragment/whole span — Sunday dates ARE included here; this function decides whether
+ * a date counts, the caller no longer pre-filters.
+ *
+ * Branches (Phase 436, D-03):
+ *   - WHOLE (every Mo-Sat day of the week is inside the requested range): `countedDates` is the
+ *     requested Mo-Sat dates (Sunday is never a Werktag, § 3 Abs. 2 BUrlG, so it is dropped even
+ *     here), `days = max(0, contractWorkDaysPerWeek - holidays among countedDates)` — the
+ *     contractual cap always binds for a whole week. `usualWorkDays` is NEVER applied to this
+ *     branch (D-03: "Full-week detection unchanged" — see Pitfall 4 in 436-RESEARCH.md: filtering
+ *     a restricted employee's whole week would wrongly undercount it).
+ *   - FRAGMENT, `usualWorkDays` empty: `countedDates` is the requested dates minus Sunday
+ *     (unchanged pre-436 behaviour).
+ *   - FRAGMENT, `usualWorkDays` non-empty: `countedDates` is the requested Mo-Sat dates whose UTC
+ *     weekday is a member of `usualWorkDays` — Sunday stays excluded even when requested (Task 2
+ *     of plan 436-01 adds Sunday set-membership). Either way,
+ *     `days = max(0, min(|countedDates|, contractWorkDaysPerWeek) - holidays among countedDates)`.
+ * A holiday is therefore deducted exactly once, and only for a date that would otherwise count.
  */
 function weekLeaveDays(
-  moSaDaysInFragment: number,
-  moSaHolidaysInFragment: number,
+  requestedDates: string[],
   isWhole: boolean,
   contractWorkDaysPerWeek: number,
-): number {
+  holidays: Set<string>,
+  usualWorkDays: readonly number[] = [],
+): { days: number; countedDates: string[] } {
   if (isWhole) {
-    return Math.max(0, contractWorkDaysPerWeek - moSaHolidaysInFragment);
+    const countedDates = requestedDates.filter((d) => dowOfDateStr(d) !== 0);
+    const holidayCount = countedDates.filter((d) => holidays.has(d)).length;
+    return { days: Math.max(0, contractWorkDaysPerWeek - holidayCount), countedDates };
   }
-  return Math.max(
-    0,
-    Math.min(moSaDaysInFragment, contractWorkDaysPerWeek) - moSaHolidaysInFragment,
-  );
+
+  const countedDates =
+    usualWorkDays.length === 0
+      ? requestedDates.filter((d) => dowOfDateStr(d) !== 0)
+      : requestedDates.filter((d) => {
+          const dow = dowOfDateStr(d);
+          return dow !== 0 && usualWorkDays.includes(dow);
+        });
+  const holidayCount = countedDates.filter((d) => holidays.has(d)).length;
+  const days = Math.max(0, Math.min(countedDates.length, contractWorkDaysPerWeek) - holidayCount);
+  return { days, countedDates };
 }
 
 export function countShiftBasedLeaveDays(
@@ -449,6 +479,7 @@ export function countShiftBasedLeaveDays(
   halfDay: boolean,
   contractWorkDaysPerWeek: number,
   holidays: Set<string>,
+  usualWorkDays: readonly number[] = [],
 ): { days: number; provisional: boolean } {
   if (halfDay) return { days: 0.5, provisional: false };
 
@@ -468,20 +499,18 @@ export function countShiftBasedLeaveDays(
     const fragStart = weekMonday.getTime() > s.getTime() ? weekMonday : s;
     const fragEnd = weekSunday.getTime() < e.getTime() ? weekSunday : e;
 
-    let moSaDaysInFragment = 0;
-    let moSaHolidaysInFragment = 0;
+    const requestedDates: string[] = [];
     for (let d = fragStart; d.getTime() <= fragEnd.getTime(); d = addUtcDays(d, 1)) {
-      if (d.getUTCDay() === 0) continue; // Sunday is never a Werktag (§ 3 Abs. 2 BUrlG)
-      moSaDaysInFragment++;
-      if (holidays.has(toDateStrUtc(d))) moSaHolidaysInFragment++;
+      requestedDates.push(toDateStrUtc(d));
     }
 
     totalDays += weekLeaveDays(
-      moSaDaysInFragment,
-      moSaHolidaysInFragment,
+      requestedDates,
       isWhole,
       contractWorkDaysPerWeek,
-    );
+      holidays,
+      usualWorkDays,
+    ).days;
 
     weekMonday = addUtcDays(weekMonday, 7);
   }
@@ -773,22 +802,20 @@ export function leaveDaysPerWeek(
       }
     }
 
-    let moSaHolidaysInFragment = 0;
-    for (const date of fullDayUnion) {
-      if (holidays.has(date)) moSaHolidaysInFragment++;
-    }
-    const moSaDaysInFragment = fullDayUnion.size;
-
-    const fullDayTotal = weekLeaveDays(
-      moSaDaysInFragment,
-      moSaHolidaysInFragment,
+    // Phase 436 (D-03): usual-workday list is [] here — this plan does not change
+    // leaveDaysPerWeek()'s public signature (plan 03 adds the parameter); with an empty list
+    // weekLeaveDays()'s fragment branch behaves byte-identically to the pre-436 kernel.
+    const { days: fullDayTotal, countedDates } = weekLeaveDays(
+      Array.from(fullDayUnion),
       isWhole,
       contractWorkDaysPerWeek,
+      holidays,
+      [],
     );
 
-    // Distribute the full-day total UNIFORMLY over the non-holiday dates of fullDayUnion —
-    // holiday dates get share 0.
-    const nonHolidayDates = Array.from(fullDayUnion).filter((d) => !holidays.has(d));
+    // Distribute the full-day total UNIFORMLY over the non-holiday counted dates — holiday dates
+    // get share 0.
+    const nonHolidayDates = countedDates.filter((d) => !holidays.has(d));
     const dayShares = new Map<string, number>();
     if (nonHolidayDates.length > 0) {
       const perDate = fullDayTotal / nonHolidayDates.length;

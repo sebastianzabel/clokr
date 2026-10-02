@@ -515,6 +515,13 @@ model WorkSchedule {
   // for SHIFT_BASED come from the roster (Shift[]), never from this field or from
   // workDays (which is frozen for SHIFT_BASED, see D-02).
   contractWorkDaysPerWeek   Int?
+  // Phase 436 (D-01): optional "übliche Arbeitstage" for SHIFT_BASED only — weekday indices
+  // 0=Sun..6=Sat, same convention as workDays above. Empty array ([]) means "keine Angabe" (Prisma
+  // scalar lists cannot be nullable, so empty is the explicit no-data marker). Never derived from
+  // or synced with workDays (frozen for SHIFT_BASED, Phase 95b D-01 / Phase 107 D-02), and never
+  // read for any other schedule type. Read ONLY through usualWorkDaysFrom() in
+  // contexts/absence/leave-days.ts — no other reader may consult this column directly.
+  usualWorkDays             Int[]        @default([])
   // Phase 49.1 — FLEXTIME Kernarbeitszeit (optional; UI metadata only — does not affect calcExpectedMinutesTz)
   coreStart                 String? // HH:MM, FLEXTIME only
   coreEnd                   String? // HH:MM, FLEXTIME only
