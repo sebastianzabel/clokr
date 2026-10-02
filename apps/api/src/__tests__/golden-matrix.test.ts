@@ -1177,6 +1177,85 @@ const CELLS: Cell[] = [
     },
     expectedRed: false,
   },
+  // ── Issue #448 (D-03) — BS day inside approved leave, FIXED + SHIFT_BASED ────
+  // Owner decision 01.10.2026 + Phase 448 implementation decisions 02.10.2026: a
+  // Berufsschultag inside an approved leave range costs 0 leave days and reduces Soll
+  // exactly once (BS wins). Both cells below use the SAME 38h/5-day (daily 456)
+  // schedule, one FIXED_SCHEDULE one SHIFT_BASED, with an identical Mo-Fr leave range
+  // (12.-16.01., BS Wed 14.01.) — both derive to the IDENTICAL numbers, which is the
+  // expected outcome for a clean (no overtime) scenario regardless of schedule type.
+  //
+  // Derivation (both cells): contractSoll = 22 Mo-Fr × 456 = 10032. Leave credit (FIX):
+  // 4 non-BS leave days (12.,13.,15.,16.) × 456 = 1824 (bug pre-fix: 5 × 456 = 2280, the
+  // BS day double-counted as a leave day too). BS absence Ø-Method credit = 456
+  // (subtracted once from contractSoll), §15 FIRST_LONG_DAY re-credit (no slot config,
+  // ordinal fallback) = 456 (net-neutral, cancels). 17 non-leave-week Mo-Fr days worked
+  // at 456 each = 7752.
+  //   expected = max(0, 10032 + 456(bsExpected) − 1824(leave) − 456(bsAbsence)) = 8208
+  //   worked   = 7752(entries) + 456(bsWorked) = 8208 ; balance 0.
+  //   RED before the fix: expected = max(0, 10488 − 2280 − 456) = 7752 ; balance = +456
+  //   (the double-counted BS leave day appears as phantom overtime).
+  {
+    id: "az-fixed-38-5-bs_leave",
+    scheduleType: "FIXED_SCHEDULE",
+    classification: "AZUBI",
+    situation: "Issue #448 — Berufsschule inside a Mo-Fr Urlaub (FIXED), BS wins, net-neutral",
+    schedule: FW_38_5,
+    year: 2026,
+    month: 1,
+    hireDate: "2025-12-01",
+    entries: rows(
+      JAN_MO_FR.filter(
+        (d) => !["2026-01-12", "2026-01-13", "2026-01-14", "2026-01-15", "2026-01-16"].includes(d),
+      ),
+      456,
+    ),
+    leave: [{ start: "2026-01-12", end: "2026-01-16" }],
+    bsDays: ["2026-01-14"],
+    expected: {
+      workedMinutes: 8208,
+      expectedMinutes: 8208,
+      balanceMinutes: 0,
+      carryOver: 0,
+      overtimeHours: 0,
+    },
+    // Phase 448: RED before the fix (see derivation comment above), GREEN after.
+    expectedRed: false,
+  },
+  {
+    id: "az-shift-38-5-bs_leave",
+    scheduleType: "SHIFT_BASED",
+    classification: "AZUBI",
+    situation:
+      "Issue #448 — Berufsschule inside a Mo-Fr Urlaub (SHIFT_BASED), BS wins, net-neutral",
+    schedule: SB_38_5,
+    year: 2026,
+    month: 1,
+    hireDate: "2025-12-01",
+    entries: rows(
+      JAN_MO_FR.filter(
+        (d) => !["2026-01-12", "2026-01-13", "2026-01-14", "2026-01-15", "2026-01-16"].includes(d),
+      ),
+      456,
+    ),
+    shifts: rows(
+      JAN_MO_FR.filter(
+        (d) => !["2026-01-12", "2026-01-13", "2026-01-14", "2026-01-15", "2026-01-16"].includes(d),
+      ),
+      456,
+    ),
+    leave: [{ start: "2026-01-12", end: "2026-01-16" }],
+    bsDays: ["2026-01-14"],
+    expected: {
+      workedMinutes: 8208,
+      expectedMinutes: 8208,
+      balanceMinutes: 0,
+      carryOver: 0,
+      overtimeHours: 0,
+    },
+    // Phase 448: RED before the fix (see derivation comment above), GREEN after.
+    expectedRed: false,
+  },
   // ── RED-first anchors (Phase 76.34) ─────────────────────────────────────
   {
     id: "az-38-5-bs_second",
@@ -1543,6 +1622,8 @@ const PARITY_IDS = new Set<string>([
   "sb-40-5-s615", // SHIFT §615
   "mj-80-over", // MONTHLY_HOURS
   "az-38-5-bs_first", // AZUBI/BS
+  "az-fixed-38-5-bs_leave", // Issue #448 — BS day inside approved leave (FIXED)
+  "az-shift-38-5-bs_leave", // Issue #448 — BS day inside approved leave (SHIFT_BASED)
   "fw-40-5-exit", // Issue #447 — FIXED exit month
   "fx-30-4-exit", // Issue #447 — FLEXTIME exit month
   "mj-80-exit", // Issue #447 — MONTHLY_HOURS exit month

@@ -123,6 +123,10 @@
     // exclusive in the cell label with absenceType (regular absence wins), but
     // both can be true in data (e.g. half-day vacation falling on a BS day).
     isVocationalSchool: boolean;
+    // Issue #448 (D-05): true when this date is a BS date inside a VACATION request
+    // (server-provided vocationalSchoolDates) — independent of isVocationalSchool's own
+    // `/vocational-school/upcoming` window, so the title is correct even for a past BS date.
+    isVocationalSchoolNoLeave: boolean;
   }
 
   interface PublicHoliday {
@@ -137,6 +141,8 @@
     endDate: string;
     typeCode: string;
     halfDay: boolean;
+    // Issue #448 (D-05): BS dates inside this request — [] for every non-VACATION type.
+    vocationalSchoolDates?: string[];
   }
 
   // 260611-ly6 — BS-Absences (Berufsschultage) from GET /vocational-school/upcoming.
@@ -641,6 +647,13 @@
     // Range-Walk wie bei regular Absences nötig.
     const bsByDate = new Set<string>(bsAbsenceList.map((b) => b.date));
 
+    // Issue #448 (D-05): BS dates inside a VACATION request, server-provided — skipped below so
+    // the cell never renders "Urlaub" for that day.
+    const bsNoLeaveDates = new Set<string>();
+    for (const abs of absenceList) {
+      for (const d of abs.vocationalSchoolDates ?? []) bsNoLeaveDates.add(d);
+    }
+
     // Abwesenheitstage auflösen: Datumsbereich → Map<dateStr, {type, half}>
     const absenceByDate = new Map<string, { type: string; half: boolean }>();
     for (const abs of absenceList) {
@@ -648,7 +661,10 @@
       const end = new Date(abs.endDate.split("T")[0]);
       const cur = new Date(start);
       while (cur <= end) {
-        absenceByDate.set(format(cur, "yyyy-MM-dd"), { type: abs.typeCode, half: abs.halfDay });
+        const key = format(cur, "yyyy-MM-dd");
+        if (!bsNoLeaveDates.has(key)) {
+          absenceByDate.set(key, { type: abs.typeCode, half: abs.halfDay });
+        }
         cur.setDate(cur.getDate() + 1);
       }
     }
@@ -733,6 +749,7 @@
           hasPerDayHours,
           shiftMinByDate,
           bsByDate,
+          bsNoLeaveDates,
         ),
       );
     }
@@ -752,6 +769,7 @@
           hasPerDayHours,
           shiftMinByDate,
           bsByDate,
+          bsNoLeaveDates,
         ),
       );
       cur.setDate(cur.getDate() + 1);
@@ -774,6 +792,7 @@
           hasPerDayHours,
           shiftMinByDate,
           bsByDate,
+          bsNoLeaveDates,
         ),
       );
     }
@@ -793,6 +812,7 @@
     hasPerDayHours: boolean = true,
     shiftMinByDate: Map<string, number> = new Map(), // v1.8.8 — SHIFT_BASED Soll override
     bsByDate: Set<string> = new Set(), // bs-tage-in-calendar — set of yyyy-MM-dd that are Berufsschultage
+    bsNoLeaveDates: Set<string> = new Set(), // Issue #448 (D-05) — BS dates inside a VACATION request
   ): CalDay {
     const dateStr = format(date, "yyyy-MM-dd");
     const isToday = dateStr === todayStr;
@@ -852,6 +872,7 @@
     // surface the BS marker for the cell when the regular absence does not paint
     // the cell (e.g. weekend BS, half-day vacation).
     const isVocationalSchool = bsByDate.has(dateStr);
+    const isVocationalSchoolNoLeave = bsNoLeaveDates.has(dateStr);
 
     return {
       date,
@@ -871,6 +892,7 @@
       absenceHalf,
       isBeforeHire,
       isVocationalSchool,
+      isVocationalSchoolNoLeave,
     };
   }
 
@@ -1832,7 +1854,9 @@
               data-testid={`calendar-cell-${day.dateStr}`}
               class="cal-cell cal-cell--{day.status}{day.absenceType && !day.isWeekend
                 ? ' cal-abs cal-abs-' + day.absenceType.toLowerCase()
-                : day.isVocationalSchool && !day.absenceType && !day.isHoliday
+                : (day.isVocationalSchool || day.isVocationalSchoolNoLeave) &&
+                    !day.absenceType &&
+                    !day.isHoliday
                   ? ' cal-abs cal-abs-vocational_school'
                   : ''}"
               class:cal-other={!day.isCurrentMonth}
@@ -1851,9 +1875,11 @@
                     ? day.holidayName
                     : day.absenceType
                       ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
-                      : day.isVocationalSchool
-                        ? "Berufsschule"
-                        : undefined}
+                      : day.isVocationalSchoolNoLeave
+                        ? "Berufsschule – kein Urlaub"
+                        : day.isVocationalSchool
+                          ? "Berufsschule"
+                          : undefined}
               onclick={isExempt ? undefined : () => openAdd(day.dateStr)}
             >
               <span class="cal-day-num">{day.dayNum}</span>
@@ -1872,7 +1898,7 @@
                 <span class="cal-abs-type"
                   >{absenceLabel(day.absenceType)}{day.absenceHalf ? " ½" : ""}</span
                 >
-              {:else if day.isVocationalSchool && day.isCurrentMonth}
+              {:else if (day.isVocationalSchool || day.isVocationalSchoolNoLeave) && day.isCurrentMonth}
                 <span class="cal-abs-type">Berufsschule</span>
               {/if}
               {#if day.isBeforeHire}

@@ -31,6 +31,7 @@ import { getLeaveTypeByCode } from "./facade/leave-types";
 import { writeEntitlementAudit, type EntitlementAuditEntry } from "./entitlement-audit"; // Issue #445
 import { listConfirmedSection9CreditsByRequest } from "./section9-credit-days"; // Issue #445 (D-10)
 import { EFFECTIVE_LEAVE_STATUSES } from "./effective-leave-statuses"; // Issue #446 (D-01)
+import { vocationalSchoolDisplacesLeave, vocationalSchoolDateSet } from "./bs-leave-days"; // Issue #448 (D-01/D-02) — the one BS-vs-leave rule module
 
 // Prisma client shape shared by `app.prisma` (top-level) and the `tx` handle inside
 // `$transaction(async (tx) => ...)` — mirrors ./api/leave.ts's own private DbClient alias.
@@ -678,6 +679,17 @@ async function countedVacationSiblingRequests(
  * full contract; see {@link countedVacationSiblingRequests} for the sibling query and its
  * ordering rule.
  *
+ * Issue #448 (D-02) — a Berufsschultag (`VOCATIONAL_SCHOOL` `Absence`, either source) is removed
+ * from the priced range BEFORE either kernel runs, for EVERY schedule type, whenever the leave
+ * type is displaced by Berufsschule (`vocationalSchoolDisplacesLeave`, VACATION in request mode)
+ * — or the caller prices in isolation (`mode: "isolated"`): `prefixLeaveDays()` below apportions
+ * an ALREADY priced total between two years, so if the exclusion did not also apply there, a BS
+ * day inside an already-priced VACATION request would silently re-enter the cross-year split as
+ * a chargeable day. `vocationalSchoolOnly` is true exactly when the BS exclusion drives the
+ * price to 0 while the SAME range would have priced > 0 without it — the one signal POST/PUT
+ * /requests and PATCH /correct 400 on. SICK/SPECIAL/OVERTIME_COMP etc. are never displaced, so
+ * they keep pricing exactly as before.
+ *
  * Exported (Phase 107, D-14): this is the D-04 resolution chain's DB-fetching wrapper. The
  * shift-leave-recalc resolver (`apps/api/src/utils/shift-leave-recalc-resolver.ts`) calls this
  * SAME function (via `shifts.ts`, which imports it and passes it in as part of `RecalcDeps`) to
@@ -693,55 +705,112 @@ export async function resolveLeaveDays(
   halfDay: boolean,
   holidays: Set<string>,
   pricing: LeaveDaysPricing,
-): Promise<{ days: number; provisional: boolean }> {
+): Promise<{
+  days: number;
+  provisional: boolean;
+  vocationalSchoolDates: string[];
+  vocationalSchoolOnly: boolean;
+}> {
   const ws = await prisma.workSchedule.findFirst({
     where: { employeeId },
     orderBy: { validFrom: "desc" },
   });
 
-  if (ws?.type === "SHIFT_BASED") {
-    // Issue #417 (2026-09-29 owner decision, supersedes Phase 107 D-06): counted BY CONTRACT,
-    // never by roster — the roster is not queried here any more (no getShiftsInRange call).
-    const contractWorkDaysPerWeek = await resolveContractWorkDaysPerWeek(
-      prisma,
-      employeeId,
-      tenantId,
-    );
-    const usualWorkDays = usualWorkDaysFrom(ws);
-
-    if (pricing.mode === "request" && pricing.leaveTypeCode === "VACATION") {
-      const others = await countedVacationSiblingRequests(
+  // Issue #448 (D-02) — the dispatch body, extracted so the BS-priced run and the BS-free
+  // baseline run below share the IDENTICAL day-count logic for every schedule type; only the
+  // holiday Set passed in differs between the two runs — never a second day counter.
+  const dispatch = async (
+    holidaySet: Set<string>,
+  ): Promise<{ days: number; provisional: boolean }> => {
+    if (ws?.type === "SHIFT_BASED") {
+      // Issue #417 (2026-09-29 owner decision, supersedes Phase 107 D-06): counted BY CONTRACT,
+      // never by roster — the roster is not queried here any more (no getShiftsInRange call).
+      const contractWorkDaysPerWeek = await resolveContractWorkDaysPerWeek(
         prisma,
         employeeId,
         tenantId,
+      );
+      const usualWorkDays = usualWorkDaysFrom(ws);
+
+      if (pricing.mode === "request" && pricing.leaveTypeCode === "VACATION") {
+        const others = await countedVacationSiblingRequests(
+          prisma,
+          employeeId,
+          tenantId,
+          start,
+          end,
+          pricing.excludeRequestId,
+        );
+        const days = marginalShiftBasedLeaveDays(
+          { startDate: start, endDate: end, halfDay },
+          others,
+          contractWorkDaysPerWeek,
+          holidaySet,
+          usualWorkDays,
+        );
+        return { days, provisional: false };
+      }
+
+      return countShiftBasedLeaveDays(
         start,
         end,
-        pricing.excludeRequestId,
-      );
-      const days = marginalShiftBasedLeaveDays(
-        { startDate: start, endDate: end, halfDay },
-        others,
+        halfDay,
         contractWorkDaysPerWeek,
-        holidays,
+        holidaySet,
         usualWorkDays,
       );
-      return { days, provisional: false };
     }
 
-    return countShiftBasedLeaveDays(
-      start,
-      end,
-      halfDay,
-      contractWorkDaysPerWeek,
-      holidays,
-      usualWorkDays,
-    );
+    // Every other schedule type: byte-identical to today's five call sites (AC-REG-02).
+    const workDays = await resolveWorkDays(prisma, employeeId, tenantId);
+    const days = calculateWorkDays(start, end, halfDay, workDays, holidaySet);
+    return { days, provisional: false };
+  };
+
+  const excludeBs =
+    pricing.mode === "isolated" ||
+    (pricing.mode === "request" && vocationalSchoolDisplacesLeave(pricing.leaveTypeCode));
+
+  if (!excludeBs) {
+    const result = await dispatch(holidays);
+    return { ...result, vocationalSchoolDates: [], vocationalSchoolOnly: false };
   }
 
-  // Every other schedule type: byte-identical to today's five call sites (AC-REG-02).
-  const workDays = await resolveWorkDays(prisma, employeeId, tenantId);
-  const days = calculateWorkDays(start, end, halfDay, workDays, holidays);
-  return { days, provisional: false };
+  const bsDates = await vocationalSchoolDateSet(prisma, employeeId, tenantId, start, end);
+  const vocationalSchoolDates = Array.from(bsDates).sort();
+
+  if (bsDates.size === 0) {
+    const result = await dispatch(holidays);
+    return { ...result, vocationalSchoolDates, vocationalSchoolOnly: false };
+  }
+
+  // Never mutate the caller's `holidays` Set — a fresh copy, holidays ∪ BS dates.
+  const pricedHolidays = new Set([...holidays, ...bsDates]);
+  const priced = await dispatch(pricedHolidays);
+
+  // Issue #448: both kernels short-circuit a half-day request BEFORE consulting the holiday Set
+  // at all (calculate-work-days.ts, vacation-calc.ts's SHIFT_BASED half-day branch both return
+  // their 0.5/0 answer unconditionally) — a half day therefore needs an EXPLICIT BS check here,
+  // the kernel never looks at the Set for it. #449 guarantees a half-day request is always a
+  // single date, so `start` IS the whole range.
+  const startKey = start.toISOString().slice(0, 10);
+  const priceIsHalfDayOnBs = halfDay && bsDates.has(startKey);
+  const priceDays = priceIsHalfDayOnBs ? 0 : priced.days;
+
+  if (priceDays !== 0) {
+    return { ...priced, days: priceDays, vocationalSchoolDates, vocationalSchoolOnly: false };
+  }
+
+  // Only now — priced at 0 with at least one BS date in range — compute the BS-free baseline
+  // to decide whether this was a PURE BS request (baseline > 0) or a genuine 0-day request
+  // (e.g. a holiday-only range with no chargeable day either way).
+  const baseline = await dispatch(holidays);
+  return {
+    ...priced,
+    days: priceDays,
+    vocationalSchoolDates,
+    vocationalSchoolOnly: baseline.days > 0,
+  };
 }
 
 // ── Issue #445 — the regular yearly vacation entitlement (D-01..D-06) ──────────────────────────

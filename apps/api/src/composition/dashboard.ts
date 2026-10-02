@@ -56,6 +56,7 @@ import {
   getCalendarLeaveOverlapping, // Phase 100B Plan 13 — A3
   getOwnPendingLeaveRequests, // Phase 100B Plan 13 — A7a
   countPendingApprovals, // Phase 100B Plan 13 — A8
+  vocationalSchoolDisplacesLeave, // Issue #448 (D-05) — composition applies, never redefines, the rule
 } from "../contexts/absence";
 
 export async function dashboardRoutes(app: FastifyInstance) {
@@ -551,6 +552,14 @@ export async function dashboardRoutes(app: FastifyInstance) {
               dateStrInTz(a.endDate, tz) >= dayStr,
           );
 
+          // Issue #448 (D-05): a Berufsschultag displaces the vacation classification for that
+          // day — composition only APPLIES vocationalSchoolDisplacesLeave(), the rule itself is
+          // owned by Abwesenheiten (contexts/absence/bs-leave-days.ts).
+          const bsDisplacesLeave =
+            absence?.type === "VOCATIONAL_SCHOOL" &&
+            vocationalSchoolDisplacesLeave(leave?.leaveType.code ?? null);
+          const effectiveLeave = bsDisplacesLeave ? null : leave;
+
           // Find shift for this employee + day
           const dayShifts = shifts.filter(
             (s) => s.employeeId === emp.id && dateStrInTz(s.date, tz) === dayStr,
@@ -617,10 +626,10 @@ export async function dashboardRoutes(app: FastifyInstance) {
             isInvalid: e.isInvalid,
           }));
 
-          const presenceLeave: PresenceLeave | null = leave
+          const presenceLeave: PresenceLeave | null = effectiveLeave
             ? {
-                status: leave.status as "APPROVED" | "CANCELLATION_REQUESTED" | "PENDING",
-                leaveTypeName: leave.leaveType.name,
+                status: effectiveLeave.status as "APPROVED" | "CANCELLATION_REQUESTED" | "PENDING",
+                leaveTypeName: effectiveLeave.leaveType.name,
               }
             : null;
 
@@ -650,7 +659,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
             status,
             workedHours: round(workedMinutes / 60),
             reason,
-            leaveTypeCode: leave?.leaveType.code ?? null,
+            leaveTypeCode: effectiveLeave?.leaveType.code ?? null,
             absenceType: absence?.type ?? null,
             shift,
             isWorkday,
@@ -1185,6 +1194,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
         const absence = myWeekAbsences.find(
           (a) => dateStrInTz(a.startDate, tz) <= dateStr && dateStrInTz(a.endDate, tz) >= dateStr,
         );
+        // Issue #448 (D-05): same BS-displaces-leave application as /team-week above —
+        // composition applies the absence-context rule, never redefines it.
+        const bsDisplacesLeave =
+          absence?.type === "VOCATIONAL_SCHOOL" &&
+          vocationalSchoolDisplacesLeave(leave?.leaveType.code ?? null);
+        const effectiveLeave = bsDisplacesLeave ? null : leave;
         const dayShifts = myWeekShifts.filter((s) => dateStrInTz(s.date, tz) === dateStr);
         const shift =
           dayShifts.length > 0
@@ -1222,7 +1237,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
         else if (hasEntry) status = workedMin >= expectedMin ? "complete" : "partial";
         // Phase 95 SHIFT-01: a PENDING leave surfaces as "requested" ("beantragt"),
         // an APPROVED/CANCELLATION_REQUESTED one stays green "leave".
-        else if (leave) status = leave.status === "PENDING" ? "requested" : "leave";
+        else if (effectiveLeave)
+          status = effectiveLeave.status === "PENDING" ? "requested" : "leave";
         else if (absence) {
           status = absence.type === "SICK" || absence.type === "SICK_CHILD" ? "sick" : "absent";
         } else if (holidayName) status = "holiday";
@@ -1238,7 +1254,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
           isWorkday,
           isWeekend,
           holidayName,
-          leaveType: leave?.leaveType.name ?? null,
+          leaveType: effectiveLeave?.leaveType.name ?? null,
           absenceType: absence?.type ?? null,
           shift,
         };

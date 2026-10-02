@@ -28,6 +28,8 @@ import {
   usualWorkDaysFrom, // Issue #436, D-03 — the same branch, threading the Angabe into the receipt
   type LeaveDaysPricing, // Issue #436, D-04/D-09
 } from "../leave-days";
+import { BS_ONLY_LEAVE_ERROR, BS_ONLY_LEAVE_ERROR_CODE } from "../bs-leave-days"; // Issue #448 (D-02)
+import { vocationalSchoolDatesForLeaveRequests } from "../bs-leave-days"; // Issue #448 (D-05, plan 03)
 import { formatMinutesHM } from "../format-hm"; // Phase 100
 import {
   flagShiftsConflictingWithLeave,
@@ -535,7 +537,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       // only `.days` is used here, `.provisional` is deliberately discarded.
       // Issue #436 (D-04): priced against the employee's other counted VACATION requests
       // sharing an ISO week — no id yet, so there is nothing to exclude.
-      const { days } = await resolveLeaveDays(
+      const { days, vocationalSchoolOnly } = await resolveLeaveDays(
         app.prisma,
         employeeId,
         tenantId,
@@ -545,6 +547,13 @@ export async function leaveRoutes(app: FastifyInstance) {
         holidays,
         { mode: "request", leaveTypeCode: body.type },
       );
+
+      // Issue #448 (D-02): a request whose every chargeable day is a Berufsschultag is
+      // rejected before any write — the owner's binding text (01.10.2026), no LeaveRequest row
+      // is ever created.
+      if (vocationalSchoolOnly) {
+        return reply.code(400).send({ error: BS_ONLY_LEAVE_ERROR, code: BS_ONLY_LEAVE_ERROR_CODE });
+      }
 
       // Überschneidung mit eigenem Antrag prüfen.
       //
@@ -1123,6 +1132,26 @@ export async function leaveRoutes(app: FastifyInstance) {
         });
       }
 
+      // Issue #448 (D-05, plan 03, T-448-12): ONE batch read for the whole response, scoped via
+      // employeeScopeFor(accessContextFromRequest(req), …) over exactly the employees already
+      // returned by the query above — never a hand-built scope literal, never a foreign
+      // employee's BS rows.
+      const vocationalSchoolDatesByRequestId = requestIds.length
+        ? await vocationalSchoolDatesForLeaveRequests(
+            app.prisma,
+            employeeScopeFor(accessContextFromRequest(req), {
+              employeeIds: [...new Set(rows.map((r) => r.employeeId))],
+            }),
+            rows.map((r) => ({
+              id: r.id,
+              employeeId: r.employeeId,
+              startDate: r.startDate,
+              endDate: r.endDate,
+              leaveTypeCode: r.leaveType.code,
+            })),
+          )
+        : new Map<string, string[]>();
+
       return rows.map((r) => ({
         ...r,
         typeCode: r.leaveType.code,
@@ -1135,6 +1164,9 @@ export async function leaveRoutes(app: FastifyInstance) {
         // Phase 107-07 (D-19): the request's own persistent adjustment marker — the latest
         // roster-triggered recompute only, `null` when the request was never adjusted.
         lastDaysAdjustment: lastDaysAdjustmentByRequestId.get(r.id) ?? null,
+        // Issue #448 (D-05): the BS dates inside this request that displace leave — [] for every
+        // non-VACATION type and for a VACATION request with no BS day.
+        vocationalSchoolDates: vocationalSchoolDatesByRequestId.get(r.id) ?? [],
       }));
     },
   });
@@ -2029,7 +2061,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       // Phase 107 (D-09): roster-aware recompute of this still-PENDING request's own edit.
       // Issue #436 (D-04/D-09): excludes itself (self-exclusion, Pitfall 1) — the OLD dates of
       // this very request must never shadow its own NEW price.
-      const { days } = await resolveLeaveDays(
+      const { days, vocationalSchoolOnly: editVocationalSchoolOnly } = await resolveLeaveDays(
         app.prisma,
         existing.employeeId,
         tenantId,
@@ -2039,6 +2071,11 @@ export async function leaveRoutes(app: FastifyInstance) {
         holidays,
         { mode: "request", leaveTypeCode: existingTypeCode, excludeRequestId: id },
       );
+
+      // Issue #448 (D-02): one rule on every write path — before any write, mirroring POST.
+      if (editVocationalSchoolOnly) {
+        return reply.code(400).send({ error: BS_ONLY_LEAVE_ERROR, code: BS_ONLY_LEAVE_ERROR_CODE });
+      }
 
       const updated = await app.prisma.leaveRequest.update({
         where: { id },
@@ -2258,7 +2295,11 @@ export async function leaveRoutes(app: FastifyInstance) {
       // applicable" state with a misleading `false`).
       // Issue #436 (D-04/D-09): priced against the corrected (NEW) leave type, excluding this
       // request itself.
-      const { days, provisional: correctionProvisional } = await resolveLeaveDays(
+      const {
+        days,
+        provisional: correctionProvisional,
+        vocationalSchoolOnly: correctVocationalSchoolOnly,
+      } = await resolveLeaveDays(
         app.prisma,
         existing.employeeId,
         tenantId,
@@ -2268,6 +2309,13 @@ export async function leaveRoutes(app: FastifyInstance) {
         holidays,
         { mode: "request", leaveTypeCode: newType, excludeRequestId: existing.id },
       );
+
+      // Issue #448 (D-02): one rule on every write path — before the transaction opens, same
+      // guard shape as the delta-lock 409 above.
+      if (correctVocationalSchoolOnly) {
+        return reply.code(400).send({ error: BS_ONLY_LEAVE_ERROR, code: BS_ONLY_LEAVE_ERROR_CODE });
+      }
+
       const wsForCorrection = await app.prisma.workSchedule.findFirst({
         where: { employeeId: existing.employeeId },
         orderBy: { validFrom: "desc" },
@@ -2857,7 +2905,14 @@ export async function leaveRoutes(app: FastifyInstance) {
       const scoped = await resolveScopedEmployeeIdForRead(app, req, requestedEmployeeId);
       if (!scoped.ok) return reply.code(scoped.status).send(scoped.body);
       const employeeId = scoped.employeeId;
-      if (!employeeId) return { hours: 0, days: 0, rosterImported: true };
+      if (!employeeId)
+        return {
+          hours: 0,
+          days: 0,
+          rosterImported: true,
+          vocationalSchoolDates: [],
+          vocationalSchoolOnly: false,
+        };
 
       const start = new Date(startDate);
       const end = new Date(endDate);
@@ -2889,7 +2944,9 @@ export async function leaveRoutes(app: FastifyInstance) {
           previewPricing,
         ),
       ]);
-      const { days, provisional } = leaveDaysPreview;
+      // Issue #448 (D-05, plan 03): the server's own BS classification, not a client formula —
+      // additive fields from the already-computed resolveLeaveDays() result.
+      const { days, provisional, vocationalSchoolDates, vocationalSchoolOnly } = leaveDaysPreview;
 
       // Phase 430 Plan 04 (D-15): `rosterImported` — a NEW, independent signal from
       // `provisional` above (Issue #417 hard-wired that one `false`; it must not be
@@ -2940,6 +2997,8 @@ export async function leaveRoutes(app: FastifyInstance) {
         provisional,
         rosterImported,
         minutesNeeded: Math.round(hours * 60),
+        vocationalSchoolDates,
+        vocationalSchoolOnly,
       };
     },
   });

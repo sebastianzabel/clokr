@@ -420,7 +420,7 @@ describe("Issue #429 — invariant suite (D-07..D-10): 'a day reduces Soll exact
     expect(liveRun.expectedMinutes).toBe(Math.round(closeRun.expectedMinutes * factor));
   });
 
-  it("Leave+absence same date: the leave credit and the BS absence credit apply independently (finding, not fixed by this plan)", () => {
+  it("Leave+absence same date (Issue #448 D-03, superseded 2026-10-02): a Berufsschultag wins — the leave credit for that date is suppressed, not stacked", () => {
     const dateStr = "2026-06-08"; // Monday
     const bsAbsence = {
       startDate: D(dateStr),
@@ -437,14 +437,24 @@ describe("Issue #429 — invariant suite (D-07..D-10): 'a day reduces Soll exact
     const bsEffect = bsOnly.expectedMinutes - none.expectedMinutes;
     const bothEffect = both.expectedMinutes - none.expectedMinutes;
 
-    // isBsAbsence()'s carve-out (close-employee-month.ts, above sortForDedup) means a BS
-    // absence neither claims a day into sbClaimed nor is blocked by a day the leave loop
-    // already claimed. A BS day cannot physically overlap a LeaveRequest today (conflict
-    // checks elsewhere prevent it — see that doc block's own "guarantee in principle" note),
-    // so this superposition is a purely additive, PRE-EXISTING edge case this plan does not
-    // touch (it never modified the absence loop or isBsAbsence) — the two credits stack
-    // rather than deduplicating. Documented as a finding, not silently worked around.
-    expect(bothEffect).toBe(leaveEffect + bsEffect);
+    // Issue #448 (D-03, owner decision 01.10.2026; Phase 448 plan 01, commit 2fdaf288)
+    // superseded this test's original premise. Before #448, a BS day could not physically
+    // overlap a LeaveRequest's range at all (the request-creation guard rejected any range
+    // priced against a date already a Berufsschultag), so this scenario was an unreachable,
+    // purely synthetic edge case and the two pure-core credits happened to stack additively
+    // (`bothEffect === leaveEffect + bsEffect`, measured as -646 against pre-448 HEAD).
+    // #448 D-02 now explicitly ALLOWS a leave request's range to span a Berufsschultag (the
+    // BS date is excluded from the PRICED day count, not from the request's own date range),
+    // making this overlap a real, reachable case for the first time — and D-03 requires
+    // "a day reduces Soll exactly once": close-employee-month.ts's SHIFT_BASED
+    // `approvedLeave` credit loop now skips any date present in `bsDatesInMonth` (see that
+    // loop's own Issue #448 D-03 comment block), so the leave credit for 2026-06-08 is
+    // suppressed entirely and only the BS absence credit applies. `bothEffect` is therefore
+    // now byte-identical to `bsEffect` ALONE, never the additive sum — `leaveEffect` is kept
+    // here purely to make the suppression visible (it is what would have applied without the
+    // BS-wins rule).
+    expect(bothEffect).toBe(bsEffect);
+    expect(bothEffect).not.toBe(leaveEffect + bsEffect);
   });
 });
 

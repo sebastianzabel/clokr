@@ -240,7 +240,7 @@ describe("§9 BUrlG (D-15) — day-based Soll dedup in closeEmployeeMonth", () =
     expect(result.expectedMinutes).toBe(9120);
   });
 
-  it("Integration 4 (BS symmetry, v1.8.27/v1.8.28): a BS PATTERN absence overlapping a SICK request is unaffected by dedup", async () => {
+  it("Integration 4 (BS symmetry, v1.8.27/v1.8.28, superseded by Issue #448 D-03): a BS PATTERN absence overlapping a SICK request now wins (no double reduction)", async () => {
     const empId = await createEmployee();
     await createApprovedLeave(empId, "2026-08-04", "2026-08-04"); // SICK Di, same day as BS
     await createBsAbsence(empId, "2026-08-04"); // VOCATIONAL_SCHOOL / PATTERN, same day
@@ -252,9 +252,8 @@ describe("§9 BUrlG (D-15) — day-based Soll dedup in closeEmployeeMonth", () =
     // month.ts, before any 104-02 Task 2 change): expectedMinutes=8550,
     // workedMinutes=570, balanceMinutes=0. The isBsAbsence() carve-out (D-15)
     // means the BS row neither claims a day nor is excluded by the SICK
-    // request's claimed day, so this figure MUST stay byte-identical after
-    // Task 2 — a change here would mean the v1.8.27/v1.8.28 subtract-then-
-    // recredit symmetry regressed.
+    // request's claimed day, so this figure stayed byte-identical through
+    // Task 2 and through Issue #429 below.
     //
     // Issue #429, plan 429-02 (justified, intended effect — NOT a regression):
     // SHIFT_AS_TUE_FRI sets neither `workDays` nor `contractWorkDaysPerWeek`, and this
@@ -265,13 +264,24 @@ describe("§9 BUrlG (D-15) — day-based Soll dedup in closeEmployeeMonth", () =
     // round(38*60*1/4) = 570 for the one-day SICK row. #429 replaces that leave credit with
     // `shiftBasedLeaveCreditByDate()`, which resolves the divisor via the SAME chain
     // Abwesenheiten's entitlement side already used (Phase 107 D-04) — here landing on 5, not
-    // 4 — giving round(38*60*1/5) = 456: 114 minutes less subtracted, so expectedMinutes rises
-    // by exactly 114 (8550 -> 8664). The BS absence loop (sbAbsenceCredit, untouched by this
-    // plan) still uses `avgWorkMinutesCore`'s divisor of 4, so `workedMinutes`/`balanceMinutes`
-    // are unaffected — this is a pure Soll-side (`expectedMinutes`) shift, unifying the
-    // leave-credit divisor with entitlement instead of leaving them silently diverged, which is
-    // exactly #429's stated purpose.
-    expect(result.expectedMinutes).toBe(8664);
+    // 4 — giving round(38*60*1/5) = 456: 114 minutes less subtracted, so expectedMinutes rose
+    // by exactly 114 (8550 -> 8664). The BS absence loop (sbAbsenceCredit, untouched by that
+    // plan) still used `avgWorkMinutesCore`'s divisor of 4, so `workedMinutes`/`balanceMinutes`
+    // were unaffected — a pure Soll-side (`expectedMinutes`) shift, unifying the leave-credit
+    // divisor with entitlement instead of leaving them silently diverged.
+    //
+    // Issue #448 (D-03, owner decision 01.10.2026; Phase 448 plan 01, commit 2fdaf288)
+    // superseded the "unaffected by dedup" premise this test's ORIGINAL name asserted: D-03
+    // requires "a day reduces Soll exactly once" for ANY approved-leave type overlapping a
+    // Berufsschultag, not only VACATION — close-employee-month.ts's SHIFT_BASED
+    // `approvedLeave` credit loop (the SAME loop this SICK row goes through) now skips any
+    // date present in `bsDatesInMonth` (see that loop's own Issue #448 D-03 comment block).
+    // The 456-minute SICK leave credit computed above is therefore no longer subtracted from
+    // Soll for 2026-08-04 — only the BS absence credit still reduces it — so expectedMinutes
+    // rises by exactly that 456 (8664 -> 9120). `workedMinutes`/`balanceMinutes` are untouched
+    // (the leave-credit loop never touches worked minutes), confirming this is again a pure
+    // Soll-side shift, now unifying the BS-vs-leave precedence rule instead of the divisor.
+    expect(result.expectedMinutes).toBe(9120);
     expect(result.workedMinutes).toBe(570);
     expect(result.balanceMinutes).toBe(0);
   });

@@ -10,13 +10,19 @@
  * PURITY CONTRACT: pure — no DB, no network, no `Date.now()`, no side effects. Matches
  * `close-employee-month.ts`'s own purity contract.
  *
- * D-05 — the caller (`close-employee-month.ts`) passes an EMPTY holiday set to
+ * D-05 — the caller (`close-employee-month.ts`) passes an EMPTY statutory-holiday set to
  * `leaveDaysPerWeek()`, deliberately, on this (saldo) side: SHIFT_BASED contract Soll (`avgWorkMinutesCore`) is not
  * holiday-reduced at all today (a holiday is not deducted, §615 nets the gap), so a
  * holiday that falls inside a leave range keeps being a Soll-free day via the leave
- * itself, exactly as before this module existed. Feeding holidays into the week count
- * here would also create a new live-vs-close divergence (the live path filters holidays
- * to an open window; the close path sees the full month) that does not exist today.
+ * itself, exactly as before this module existed. Feeding statutory holidays into the week
+ * count here would also create a new live-vs-close divergence (the live path filters
+ * holidays to an open window; the close path sees the full month) that does not exist today.
+ *
+ * Issue #448 (D-03): the caller DOES pass `bsDatesInMonth` into that same third argument —
+ * a Berufsschultag is not a statutory holiday and is computed identically from the `absences`
+ * input in both the live and close paths, so the D-05 divergence concern above does not apply
+ * to it. Excluding it there makes a Mo-Fr leave row spanning a BS day credit the same 4 days,
+ * with the same per-date share, as two leave rows split around it (the D-03 equivalence rule).
  *
  * `calcLeaveAbsenceMinutesTz()` itself is unchanged and is NOT called from here — it
  * stays the SHIFT_BASED absence loop's (and every non-SHIFT branch's) credit function.

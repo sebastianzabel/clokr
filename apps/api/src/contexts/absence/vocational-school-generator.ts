@@ -26,6 +26,10 @@ import {
 } from "../working-time-account"; // Phase 101B
 import { getClaimedEntryDatesInRange } from "../time-tracking"; // Phase 100B Plan 08
 import { userIdsHoldingPermission, resolveScopedHolderIds, isShiftInScope } from "../platform"; // Phase 75b Plan 10 (#75), D-16; Phase 91b Plan 09 (#91), D-11/D-17
+import {
+  correctLeaveForNewVocationalSchoolDay,
+  flagLockedVocationalSchoolLeaveOverlaps,
+} from "./bs-leave-correction"; // Issue #448 (D-04)
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -238,6 +242,10 @@ async function runOrPreview(
   // invoke the Shift-Auto-Cleanup hook ONCE per employee at the end of the run
   // (batched notification, no per-day fan-out). Skipped entirely in dryRun.
   const createdDatesByEmployee = new Map<string, Date[]>();
+  // Issue #448 (D-04) — dates this run could NOT create a BS row for because the month is
+  // locked (BERSCH-09), per employee. Fed to flagLockedVocationalSchoolLeaveOverlaps() after
+  // the create loop (non-dry-run only); see that call site for why.
+  const lockedSkippedDatesByEmployee = new Map<string, Date[]>();
 
   // 1. Load all active patterns for this tenant whose validity range intersects the window.
   //    Includes Phase 67.2 fields `respectSchoolHolidays` and `federalStateOverride`
@@ -556,6 +564,20 @@ async function runOrPreview(
             action: "skipped",
             reason: "locked",
           });
+        } else {
+          // Issue #448 (D-04): a pattern day the generator could NOT create because its
+          // month is closed may still fall inside an already-approved vacation. Nothing
+          // here may write (BERSCH-09 is absolute) — collect the date so the
+          // flagLockedVocationalSchoolLeaveOverlaps() call after the create loop can raise
+          // a deduplicated "correction needed" notification for the approver(s). The
+          // forward cron window rarely touches a locked month, so this mainly fires on
+          // retroactive runs.
+          let lockedBucket = lockedSkippedDatesByEmployee.get(employee.id);
+          if (!lockedBucket) {
+            lockedBucket = [];
+            lockedSkippedDatesByEmployee.set(employee.id, lockedBucket);
+          }
+          lockedBucket.push(date);
         }
         continue;
       }
@@ -598,18 +620,59 @@ async function runOrPreview(
         // endpoint (used by tests). Treat P2002 (Prisma unique-violation) as a
         // benign "already created by parallel run" and bump the existing-skip
         // counter instead of bubbling the error up.
-        let absence;
+        //
+        // Issue #448 (D-04): the create + its audit + the correction of any overlapping
+        // VACATION request now run in ONE transaction (invariant-carrying, ADR 0002 E10) —
+        // a failing correction rolls the new BS row back too, so the cron simply retries
+        // next run instead of leaving a BS day with a stale vacation booking. The P2002
+        // catch stays OUTSIDE this transaction deliberately: PostgreSQL aborts the whole
+        // transaction on a unique-violation, so by the time the catch runs there is
+        // nothing left of it to continue inside — the restore branch below opens its OWN,
+        // SECOND transaction instead.
+        const auditNewValue = {
+          origin: "SYSTEM",
+          employeeId: employee.id,
+          date: toIsoDate(date),
+          type: "VOCATIONAL_SCHOOL",
+          patternId: pattern.id,
+          // Phase 103 — marks rows created by an explicit retroactive run, mirroring
+          // the triggerSource: "PATTERN" | "MANUAL" precedent in shift-cleanup.ts.
+          // Byte-identical to before when no explicit windowStart was passed
+          // (T-103-AUDIT / backward-compat).
+          ...(opts.windowStart !== undefined ? { triggerSource: "RETROACTIVE" } : {}),
+        };
         try {
-          absence = await prisma.absence.create({
-            data: {
+          await prisma.$transaction(async (tx) => {
+            const created = await tx.absence.create({
+              data: {
+                employeeId: employee.id,
+                type: "VOCATIONAL_SCHOOL",
+                source: "PATTERN", // Phase 63 D-22: distinguishes auto-generated rows from MANUAL (D-23) inserts
+                startDate: date,
+                endDate: date,
+                days: 1.0,
+                createdBy: "SYSTEM",
+              },
+            });
+            // userId is null (FK column) — the SYSTEM-origin marker lives inside newValue.
+            // Encoding the originator inside newValue is the established convention for
+            // SYSTEM-owned mutations (AuditLog.userId has @relation onDelete: SetNull and
+            // no User row with id="SYSTEM" exists in the data model).
+            await audit({
+              tx,
+              userId: undefined,
+              action: "VOCATIONAL_SCHOOL_AUTO_GENERATED",
+              entity: "Absence",
+              entityId: created.id,
+              newValue: auditNewValue,
+            });
+            await correctLeaveForNewVocationalSchoolDay(tx, audit, {
+              tenantId: opts.tenantId,
               employeeId: employee.id,
-              type: "VOCATIONAL_SCHOOL",
-              source: "PATTERN", // Phase 63 D-22: distinguishes auto-generated rows from MANUAL (D-23) inserts
-              startDate: date,
-              endDate: date,
-              days: 1.0,
-              createdBy: "SYSTEM",
-            },
+              date,
+              trigger: "PATTERN",
+            });
+            return created;
           });
         } catch (err: unknown) {
           if (
@@ -634,15 +697,34 @@ async function runOrPreview(
               },
             });
             if (existing && existing.deletedAt !== null) {
-              absence = await prisma.absence.update({
-                where: { id: existing.id },
-                data: {
-                  deletedAt: null,
-                  source: "PATTERN",
-                  createdBy: "SYSTEM",
-                },
+              // Issue #448 (D-04): restore + audit + correction in a SECOND transaction —
+              // same invariant-carrying reasoning as the create branch above.
+              await prisma.$transaction(async (tx) => {
+                const restored = await tx.absence.update({
+                  where: { id: existing.id },
+                  data: {
+                    deletedAt: null,
+                    source: "PATTERN",
+                    createdBy: "SYSTEM",
+                  },
+                });
+                await audit({
+                  tx,
+                  userId: undefined,
+                  action: "VOCATIONAL_SCHOOL_AUTO_GENERATED",
+                  entity: "Absence",
+                  entityId: restored.id,
+                  newValue: auditNewValue,
+                });
+                await correctLeaveForNewVocationalSchoolDay(tx, audit, {
+                  tenantId: opts.tenantId,
+                  employeeId: employee.id,
+                  date,
+                  trigger: "PATTERN",
+                });
+                return restored;
               });
-              // Fall through to the audit + counted-as-created path below.
+              // Fall through to the counted-as-created path below.
             } else {
               result.skipped.existing++;
               if (opts.dryRun) {
@@ -659,28 +741,6 @@ async function runOrPreview(
             throw err;
           }
         }
-        // userId is null (FK column) — the SYSTEM-origin marker lives inside newValue.
-        // Encoding the originator inside newValue is the established convention for
-        // SYSTEM-owned mutations (AuditLog.userId has @relation onDelete: SetNull and
-        // no User row with id="SYSTEM" exists in the data model).
-        await audit({
-          userId: undefined,
-          action: "VOCATIONAL_SCHOOL_AUTO_GENERATED",
-          entity: "Absence",
-          entityId: absence.id,
-          newValue: {
-            origin: "SYSTEM",
-            employeeId: employee.id,
-            date: toIsoDate(date),
-            type: "VOCATIONAL_SCHOOL",
-            patternId: pattern.id,
-            // Phase 103 — marks rows created by an explicit retroactive run, mirroring
-            // the triggerSource: "PATTERN" | "MANUAL" precedent in shift-cleanup.ts.
-            // Byte-identical to before when no explicit windowStart was passed
-            // (T-103-AUDIT / backward-compat).
-            ...(opts.windowStart !== undefined ? { triggerSource: "RETROACTIVE" } : {}),
-          },
-        });
         // Add to existingSet so a second pattern hitting the same day won't double-create
         // (e.g. weekday + block-week both match in the same iteration).
         existingSet.add(existKey);
@@ -710,6 +770,21 @@ async function runOrPreview(
       now,
       "PATTERN",
     );
+  }
+
+  // Issue #448 (D-04) — dates this run could NOT create a BS row for because the month is
+  // locked (BERSCH-09) may still fall inside an already-approved vacation; raise the
+  // deduplicated "correction needed" notification for each one. The forward cron window
+  // rarely contains a locked month, so this fires mainly on retroactive runs. Skipped in
+  // dryRun (no write of any kind happens for a preview).
+  if (!opts.dryRun && lockedSkippedDatesByEmployee.size > 0) {
+    for (const [employeeId, dates] of lockedSkippedDatesByEmployee) {
+      await flagLockedVocationalSchoolLeaveOverlaps(prisma, {
+        tenantId: opts.tenantId,
+        employeeId,
+        dates,
+      });
+    }
   }
 
   // v1.7.4 hotfix — Orphan PATTERN-Absence cleanup.

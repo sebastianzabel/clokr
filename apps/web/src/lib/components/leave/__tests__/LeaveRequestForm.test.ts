@@ -310,6 +310,87 @@ describe("LeaveRequestForm", () => {
     expect(screen.queryByTestId("leave-form-roster-hint")).toBeNull();
   });
 
+  // ── Berufsschultag display (Issue #448, D-05) ───────────────────────────────────────────────
+  describe("Berufsschultag display (Issue #448, D-05)", () => {
+    it("vocationalSchoolDates in the preview response -> one row per date, labelled „Berufsschule – kein Urlaub“", async () => {
+      apiGet.mockImplementation((path: string) => {
+        if (path.startsWith("/leave/hours-preview")) {
+          return Promise.resolve({
+            hours: 32,
+            days: 4,
+            minutesNeeded: 1920,
+            vocationalSchoolDates: ["2027-03-09"],
+            vocationalSchoolOnly: false,
+          });
+        }
+        return defaultGetImpl(path);
+      });
+      renderForm();
+      await fireEvent.input(screen.getByTestId("leave-form-from"), {
+        target: { value: "2027-03-08" },
+      });
+      await fireEvent.input(screen.getByTestId("leave-form-to"), {
+        target: { value: "2027-03-12" },
+      });
+      await waitFor(() => expect(screen.getByTestId("leave-form-bs-days")).toBeTruthy(), {
+        timeout: 1000,
+      });
+      const text = screen
+        .getByTestId("leave-form-bs-days")
+        .textContent?.replace(/\s+/g, " ")
+        .trim();
+      expect(text).toContain("09.03.2027");
+      expect(text).toContain("Berufsschule – kein Urlaub");
+      expect(screen.queryByTestId("leave-form-bs-only-hint")).toBeNull();
+    });
+
+    it("vocationalSchoolOnly: true -> the owner's exact 400 hint renders with the form-hint recipe", async () => {
+      apiGet.mockImplementation((path: string) => {
+        if (path.startsWith("/leave/hours-preview")) {
+          return Promise.resolve({
+            hours: 0,
+            days: 0,
+            minutesNeeded: 0,
+            vocationalSchoolDates: ["2027-03-09"],
+            vocationalSchoolOnly: true,
+          });
+        }
+        return defaultGetImpl(path);
+      });
+      renderForm();
+      await fireEvent.input(screen.getByTestId("leave-form-from"), {
+        target: { value: "2027-03-09" },
+      });
+      await fireEvent.input(screen.getByTestId("leave-form-to"), {
+        target: { value: "2027-03-09" },
+      });
+      await waitFor(() => expect(screen.getByTestId("leave-form-bs-only-hint")).toBeTruthy(), {
+        timeout: 1000,
+      });
+      expect(
+        screen.getByTestId("leave-form-bs-only-hint").textContent?.replace(/\s+/g, " ").trim(),
+      ).toBe(
+        "An Berufsschultagen kann kein Urlaub genommen werden – der Azubi ist für den Unterricht freigestellt.",
+      );
+      expect(screen.getByTestId("leave-form-bs-only-hint").className).toContain("form-hint");
+    });
+
+    it("preview without the new fields (older server, non-Azubi) -> no row, no hint", async () => {
+      renderForm();
+      await fireEvent.input(screen.getByTestId("leave-form-from"), {
+        target: { value: "2026-10-05" },
+      });
+      await fireEvent.input(screen.getByTestId("leave-form-to"), {
+        target: { value: "2026-10-06" },
+      });
+      await waitFor(() => expect(screen.getByTestId("leave-form-days-calc")).toBeTruthy(), {
+        timeout: 1000,
+      });
+      expect(screen.queryByTestId("leave-form-bs-days")).toBeNull();
+      expect(screen.queryByTestId("leave-form-bs-only-hint")).toBeNull();
+    });
+  });
+
   // ── half day = one date (Issue #449, D-4) ───────────────────────────────────────────────────
   describe("half day = one date (#449)", () => {
     it("ticking half-day sets the end date to the start date and disables it", async () => {

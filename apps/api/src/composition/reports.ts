@@ -15,6 +15,7 @@ import {
   resolveAccessReach, // Phase 91b Plan 07 (#91), D-10/D-14
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 07 (#91), D-10
   isStammsalonScopeMatch, // Phase 91b Plan 07 (#91), D-10/D-14
+  employeeScopeFor, // Issue #448 (D-05, plan 03) — T-448-12 scoped BS-date reads
 } from "../contexts/platform";
 import {
   SECTION9_LEGEND,
@@ -49,6 +50,9 @@ import {
   vacationEntitlementWarning, // Issue #445 — composition carries no business rule (CLAUDE.md); the warning string is built in the absence context
   healEntitlementUsedDays, // Issue #445 (D-10) — injected into selfHealUsedDays's ctx below
   EFFECTIVE_LEAVE_STATUSES, // Issue #446 (D-01/D-04)
+  vocationalSchoolDateSetFromRows, // Issue #448 (D-05, plan 03)
+  vocationalSchoolDatesForLeaveRequests, // Issue #448 (D-05, plan 03)
+  BS_NO_LEAVE_LABEL, // Issue #448 (D-05, plan 03)
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
 import type { LeaveTypeCode } from "@clokr/db";
 
@@ -299,7 +303,12 @@ function computeEmployeeSummary(
   // aggregation (e.g. totalAbsenceDays) that also needs to see that same day. Within
   // a single call, two overlapping rows in `rows` (same type, or the nonSickLeave
   // union) claim a shared day exactly once, in sortLeaveForDedup order.
-  function countDedupedDays(rows: LeaveRequestWithType[]): number {
+  // Issue #448 (D-05, plan 03): `skip` is additive and additive ONLY — a date in it is never
+  // counted and never added to `dayClaimed`, so it cannot make a later overlapping row claim
+  // that date instead (skip-not-seed, same pattern as `claimDays()` in
+  // working-time-account/close-employee-month.ts, plan 01). Passed only by the VACATION
+  // `daysForTypeCode` call below — never by `totalAbsenceDays`, never by the Soll computation.
+  function countDedupedDays(rows: LeaveRequestWithType[], skip?: Set<string>): number {
     const dayClaimed = new Set<string>();
     let total = 0;
     for (const lr of sortLeaveForDedup(rows)) {
@@ -310,7 +319,7 @@ function computeEmployeeSummary(
       const cur = new Date(s);
       while (cur <= e2) {
         const key = dateStrInTz(cur, tz);
-        if (!dayClaimed.has(key)) {
+        if (!dayClaimed.has(key) && !skip?.has(key)) {
           dayCount++;
           dayClaimed.add(key);
         }
@@ -323,8 +332,11 @@ function computeEmployeeSummary(
 
   // Phase 97 (T2): the type is selected by its stable code. The display name is a tenant's to
   // change; selecting by it silently dropped a renamed type out of its own row.
-  function daysForTypeCode(code: LeaveTypeCode): number {
-    return countDedupedDays(emp.leaveRequests.filter((lr) => lr.leaveType.code === code));
+  function daysForTypeCode(code: LeaveTypeCode, skip?: Set<string>): number {
+    return countDedupedDays(
+      emp.leaveRequests.filter((lr) => lr.leaveType.code === code),
+      skip,
+    );
   }
 
   // ── Worked hours ─────────────────────────────────────────────────────────
@@ -405,7 +417,19 @@ function computeEmployeeSummary(
   // independent from, not shared with, the per-type calls (which must not lose a
   // day just because an unrelated type's call already saw it).
   let totalAbsenceDays = countDedupedDays(nonSickLeave);
-  let vacationDays = daysForTypeCode("VACATION");
+  // Issue #448 (D-05): a Berufsschultag inside a VACATION request counts as 0 vacation days in
+  // the monthly report — the ONLY call that receives the BS skip set. `totalAbsenceDays` above
+  // and the Soll computation below are untouched; this report does not model BS at all for Soll
+  // (pre-existing, finding — see 448-03-SUMMARY.md).
+  //
+  // Phase 448 review (WR-02): `vocationalSchoolDateSetFromRows` is pure and has no way to exclude
+  // soft-deleted rows itself — this relies on `emp.absences` already being fetched with
+  // `deletedAt: null` (confirmed: `buildEmployeeInclude`'s `absences` include below applies that
+  // filter, same as every other soft-deletable query in this file). A soft-deleted
+  // VOCATIONAL_SCHOOL row therefore never reaches this set; see
+  // `reports-bs-leave-448.test.ts` for the regression test proving it.
+  const bsDatesForReport = vocationalSchoolDateSetFromRows(emp.absences);
+  let vacationDays = daysForTypeCode("VACATION", bsDatesForReport);
   const overtimeCompDays = daysForTypeCode("OVERTIME_COMP");
   const specialLeaveDays = daysForTypeCode("SPECIAL");
   const educationDays = daysForTypeCode("EDUCATION");
@@ -657,8 +681,22 @@ function buildDatevLodas(params: {
   // Phase 104 (D-30): bestätigte § 9-Gutschriften je Mitarbeiter, bereits bulk-fetched
   // und CONFIRMED-only gefiltert vom Aufrufer (T-104-09-N1/PENDING).
   section9ByEmp?: Map<string, Array<{ creditedStart: Date; creditedEnd: Date }>>;
+  // Issue #448 (D-05, plan 03): per-request BS dates, bulk-fetched by the caller via
+  // vocationalSchoolDatesForLeaveRequests — keyed by LeaveRequest.id, same shape as that
+  // function's own return value. Only consumed by daysForCode's VACATION branch below.
+  bsDatesByRequestId?: Map<string, string[]>;
 }): Buffer {
-  const { employees, year: y, month: m, start, end, lna, kanzlei, section9ByEmp } = params;
+  const {
+    employees,
+    year: y,
+    month: m,
+    start,
+    end,
+    lna,
+    kanzlei,
+    section9ByEmp,
+    bsDatesByRequestId,
+  } = params;
   const CRLF = "\r\n";
   const lines: string[] = [];
 
@@ -697,7 +735,16 @@ function buildDatevLodas(params: {
   function daysForCode(emp: DatevEmployee, code: LeaveTypeCode): number {
     return emp.leaveRequests
       .filter((lr) => lr.leaveType.code === code)
-      .reduce((sum, lr) => sum + workDaysInMonthRange(lr.startDate, lr.endDate), 0);
+      .reduce((sum, lr) => {
+        const workdayKeys = workdayKeysInMonthRange(lr.startDate, lr.endDate);
+        if (code !== "VACATION") return sum + workdayKeys.length;
+        // Issue #448 (D-05): a Berufsschultag inside a VACATION request's range is not a
+        // payroll vacation day — subtract only the BS dates that also fall on a counted
+        // workday key (weekday, clipped to the exported month). Other codes unchanged.
+        const bsDates = bsDatesByRequestId?.get(lr.id) ?? [];
+        const bsWorkdayCount = bsDates.filter((d) => workdayKeys.includes(d)).length;
+        return sum + Math.max(0, workdayKeys.length - bsWorkdayCount);
+      }, 0);
   }
 
   /**
@@ -924,6 +971,112 @@ async function fetchConfirmedSection9CreditsByEmp(
     byEmp.set(c.employeeId, arr);
   }
   return byEmp;
+}
+
+// Issue #448 (D-05, plan 03): one batch BS-date read for the whole DATEV export (company-wide
+// or single-employee), scoped via employeeScopeFor(accessContextFromRequest(req), …) over
+// exactly the employees already loaded by the caller's own query (T-448-12) — never a
+// per-employee query, never a hand-built scope literal. Only VACATION-coded requests are
+// relevant (daysForCode's BS subtraction only fires for that code), so non-VACATION requests
+// are not even sent into the batch reader.
+//
+// Phase 448 review (WR-01): `employeeIds` is re-derived from `employees`, which the caller is
+// expected to have already tenant-scoped — but this function had no second line of defense if a
+// future caller passed an unscoped or partially-scoped list. `tenantId` is now required and the
+// candidate ids are verified against `Employee.tenantId` before `employeeScopeFor` ever sees them,
+// mirroring the explicit `tenantId` filter the two route-level `employee.findMany` calls earlier
+// in this file already use — a foreign id is silently dropped here, not passed through.
+async function fetchBsDatesByRequestIdForDatev(
+  app: FastifyInstance,
+  req: Parameters<typeof accessContextFromRequest>[0],
+  tenantId: string,
+  employees: Array<{
+    id: string;
+    leaveRequests: Array<{
+      id: string;
+      startDate: Date;
+      endDate: Date;
+      leaveType: { code: LeaveTypeCode | null };
+    }>;
+  }>,
+): Promise<Map<string, string[]>> {
+  const requests = employees.flatMap((emp) =>
+    emp.leaveRequests
+      .filter((lr) => lr.leaveType.code === "VACATION")
+      .map((lr) => ({
+        id: lr.id,
+        employeeId: emp.id,
+        startDate: lr.startDate,
+        endDate: lr.endDate,
+        leaveTypeCode: lr.leaveType.code,
+      })),
+  );
+  if (requests.length === 0) return new Map();
+  const candidateEmployeeIds = [...new Set(requests.map((r) => r.employeeId))];
+  const tenantOwned = await app.prisma.employee.findMany({
+    where: { id: { in: candidateEmployeeIds }, tenantId },
+    select: { id: true },
+  });
+  const tenantOwnedIds = new Set(tenantOwned.map((e) => e.id));
+  const scopedRequests = requests.filter((r) => tenantOwnedIds.has(r.employeeId));
+  if (scopedRequests.length === 0) return new Map();
+  const employeeIds = [...new Set(scopedRequests.map((r) => r.employeeId))];
+  return vocationalSchoolDatesForLeaveRequests(
+    app.prisma,
+    employeeScopeFor(accessContextFromRequest(req), { employeeIds }),
+    scopedRequests,
+  );
+}
+
+// Issue #448 (D-05, plan 03): the ONE `periods` builder for both `/leave-list/pdf` and the list
+// part of `/vacation/pdf` — both built this identically before this plan. `bsDatesByRequestId`
+// comes from ONE vocationalSchoolDatesForLeaveRequests call per route (never per period); a BS
+// date outside the year-clamped `[s, e2]` window is neither subtracted from `days` nor named in
+// `note` — it was never counted in the unclamped period either. Module-private — the test suite
+// inspects its output the same way reports.test.ts already does for the vacation-overview PDF: a
+// `vi.mock("../pdf")` spy on `streamLeaveListPdf` captures the `LeaveListData` argument before it
+// reaches PDFKit's Flate-compressed streams (see that file's own header comment on why a
+// byte-content substring search on the PDF payload is proven vacuous).
+function buildLeaveListPeriods(
+  leaveRequests: Array<{
+    id: string;
+    startDate: Date;
+    endDate: Date;
+    leaveType: { code: LeaveTypeCode | null; name: string };
+  }>,
+  yearStart: Date,
+  yearEnd: Date,
+  tz: string,
+  bsDatesByRequestId: Map<string, string[]>,
+): Array<{
+  startDate: string;
+  endDate: string;
+  leaveTypeName: string;
+  days: number;
+  note?: string;
+}> {
+  return leaveRequests.map((lr) => {
+    const s = lr.startDate < yearStart ? yearStart : lr.startDate;
+    const e2 = lr.endDate > yearEnd ? yearEnd : lr.endDate;
+    const rawDays = Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
+    const bsDatesInRange = (bsDatesByRequestId.get(lr.id) ?? []).filter((d) => {
+      const dt = new Date(`${d}T00:00:00.000Z`);
+      return dt >= s && dt <= e2;
+    });
+    const days = Math.max(0, rawDays - bsDatesInRange.length);
+    const note = bsDatesInRange.length
+      ? `${BS_NO_LEAVE_LABEL}: ${bsDatesInRange
+          .map((d) => formatInTimeZone(new Date(`${d}T00:00:00.000Z`), tz, "dd.MM."))
+          .join(", ")}`
+      : undefined;
+    return {
+      startDate: formatInTimeZone(lr.startDate, tz, "dd.MM.yyyy"),
+      endDate: formatInTimeZone(lr.endDate, tz, "dd.MM.yyyy"),
+      leaveTypeName: lr.leaveType.name,
+      days,
+      ...(note ? { note } : {}),
+    };
+  });
 }
 
 export async function reportRoutes(app: FastifyInstance) {
@@ -1507,6 +1660,12 @@ export async function reportRoutes(app: FastifyInstance) {
         start,
         end,
       );
+      const bsDatesByRequestIdDatev = await fetchBsDatesByRequestIdForDatev(
+        app,
+        req,
+        req.user.tenantId,
+        employees,
+      );
 
       const buf = buildDatevLodas({
         employees,
@@ -1517,6 +1676,7 @@ export async function reportRoutes(app: FastifyInstance) {
         lna,
         kanzlei,
         section9ByEmp: section9ByEmpDatev,
+        bsDatesByRequestId: bsDatesByRequestIdDatev,
       });
 
       // Issue #256, acceptance criterion "the export reports whom it leaves out": count
@@ -1671,6 +1831,12 @@ export async function reportRoutes(app: FastifyInstance) {
         start,
         end,
       );
+      const bsDatesByRequestIdDatevSingle = await fetchBsDatesByRequestIdForDatev(
+        app,
+        req,
+        req.user.tenantId,
+        [emp],
+      );
 
       const buf = buildDatevLodas({
         employees: [emp],
@@ -1681,6 +1847,7 @@ export async function reportRoutes(app: FastifyInstance) {
         lna,
         kanzlei,
         section9ByEmp: section9ByEmpDatevSingle,
+        bsDatesByRequestId: bsDatesByRequestIdDatevSingle,
       });
 
       await app.audit({
@@ -2098,23 +2265,40 @@ export async function reportRoutes(app: FastifyInstance) {
         orderBy: { lastName: "asc" },
       });
 
+      // Issue #448 (D-05, plan 03): ONE batch BS-date read for every employee's requests in this
+      // PDF, scoped via employeeScopeFor(accessContextFromRequest(req), …) over exactly the
+      // employees already loaded above (T-448-12).
+      const leaveListBsRequests = employees.flatMap((emp) =>
+        emp.leaveRequests.map((lr) => ({
+          id: lr.id,
+          employeeId: emp.id,
+          startDate: lr.startDate,
+          endDate: lr.endDate,
+          leaveTypeCode: lr.leaveType.code,
+        })),
+      );
+      const leaveListBsDates = leaveListBsRequests.length
+        ? await vocationalSchoolDatesForLeaveRequests(
+            app.prisma,
+            employeeScopeFor(accessContextFromRequest(req), {
+              employeeIds: employees.map((e) => e.id),
+            }),
+            leaveListBsRequests,
+          )
+        : new Map<string, string[]>();
+
       // Build leave list data (include all employees, even those with no leave — show empty periods)
       const leaveListData = {
         tenantName: tenant?.name ?? "",
         year: y,
         employees: employees.map((emp) => {
-          const periods = emp.leaveRequests.map((lr) => {
-            // Clamp to year boundaries
-            const s = lr.startDate < yearStart ? yearStart : lr.startDate;
-            const e2 = lr.endDate > yearEnd ? yearEnd : lr.endDate;
-            const days = Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
-            return {
-              startDate: formatInTimeZone(lr.startDate, tz, "dd.MM.yyyy"),
-              endDate: formatInTimeZone(lr.endDate, tz, "dd.MM.yyyy"),
-              leaveTypeName: lr.leaveType.name,
-              days,
-            };
-          });
+          const periods = buildLeaveListPeriods(
+            emp.leaveRequests,
+            yearStart,
+            yearEnd,
+            tz,
+            leaveListBsDates,
+          );
           return {
             employeeName: `${emp.firstName} ${emp.lastName}`,
             employeeNumber: emp.employeeNumber,
@@ -2206,22 +2390,38 @@ export async function reportRoutes(app: FastifyInstance) {
           ? allVacationEntitlements
           : allVacationEntitlements.filter((e) => vacationPdfScopedIds.includes(e.employeeId));
 
+      // Issue #448 (D-05, plan 03): same ONE batch BS-date read as /leave-list/pdf above.
+      const vacationPdfBsRequests = employees.flatMap((emp) =>
+        emp.leaveRequests.map((lr) => ({
+          id: lr.id,
+          employeeId: emp.id,
+          startDate: lr.startDate,
+          endDate: lr.endDate,
+          leaveTypeCode: lr.leaveType.code,
+        })),
+      );
+      const vacationPdfBsDates = vacationPdfBsRequests.length
+        ? await vocationalSchoolDatesForLeaveRequests(
+            app.prisma,
+            employeeScopeFor(accessContextFromRequest(req), {
+              employeeIds: employees.map((e) => e.id),
+            }),
+            vacationPdfBsRequests,
+          )
+        : new Map<string, string[]>();
+
       // Build leave list data
       const leaveListData = {
         tenantName: tenant?.name ?? "",
         year: y,
         employees: employees.map((emp) => {
-          const periods = emp.leaveRequests.map((lr) => {
-            const s = lr.startDate < yearStart ? yearStart : lr.startDate;
-            const e2 = lr.endDate > yearEnd ? yearEnd : lr.endDate;
-            const days = Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
-            return {
-              startDate: formatInTimeZone(lr.startDate, tz, "dd.MM.yyyy"),
-              endDate: formatInTimeZone(lr.endDate, tz, "dd.MM.yyyy"),
-              leaveTypeName: lr.leaveType.name,
-              days,
-            };
-          });
+          const periods = buildLeaveListPeriods(
+            emp.leaveRequests,
+            yearStart,
+            yearEnd,
+            tz,
+            vacationPdfBsDates,
+          );
           return {
             employeeName: `${emp.firstName} ${emp.lastName}`,
             employeeNumber: emp.employeeNumber,
