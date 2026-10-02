@@ -116,6 +116,9 @@ export {
   BS_NO_LEAVE_LABEL,
   vocationalSchoolDisplacesLeave,
   vocationalSchoolDateSet,
+  vocationalSchoolDateSetFromRows, // Issue #448 (D-05, plan 03)
+  vocationalSchoolDatesWithin, // Issue #448 (D-05, plan 03)
+  vocationalSchoolDatesForLeaveRequests, // Issue #448 (D-05, plan 03)
 } from "./bs-leave-days";
 
 // ── EmployeeVocationalSchoolPattern (plan 11, A20/A21a/A21b) ─────────────────────────────────

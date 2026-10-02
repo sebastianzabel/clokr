@@ -29,6 +29,7 @@ import {
   type LeaveDaysPricing, // Issue #436, D-04/D-09
 } from "../leave-days";
 import { BS_ONLY_LEAVE_ERROR, BS_ONLY_LEAVE_ERROR_CODE } from "../bs-leave-days"; // Issue #448 (D-02)
+import { vocationalSchoolDatesForLeaveRequests } from "../bs-leave-days"; // Issue #448 (D-05, plan 03)
 import { formatMinutesHM } from "../format-hm"; // Phase 100
 import {
   flagShiftsConflictingWithLeave,
@@ -1131,6 +1132,26 @@ export async function leaveRoutes(app: FastifyInstance) {
         });
       }
 
+      // Issue #448 (D-05, plan 03, T-448-12): ONE batch read for the whole response, scoped via
+      // employeeScopeFor(accessContextFromRequest(req), …) over exactly the employees already
+      // returned by the query above — never a hand-built scope literal, never a foreign
+      // employee's BS rows.
+      const vocationalSchoolDatesByRequestId = requestIds.length
+        ? await vocationalSchoolDatesForLeaveRequests(
+            app.prisma,
+            employeeScopeFor(accessContextFromRequest(req), {
+              employeeIds: [...new Set(rows.map((r) => r.employeeId))],
+            }),
+            rows.map((r) => ({
+              id: r.id,
+              employeeId: r.employeeId,
+              startDate: r.startDate,
+              endDate: r.endDate,
+              leaveTypeCode: r.leaveType.code,
+            })),
+          )
+        : new Map<string, string[]>();
+
       return rows.map((r) => ({
         ...r,
         typeCode: r.leaveType.code,
@@ -1143,6 +1164,9 @@ export async function leaveRoutes(app: FastifyInstance) {
         // Phase 107-07 (D-19): the request's own persistent adjustment marker — the latest
         // roster-triggered recompute only, `null` when the request was never adjusted.
         lastDaysAdjustment: lastDaysAdjustmentByRequestId.get(r.id) ?? null,
+        // Issue #448 (D-05): the BS dates inside this request that displace leave — [] for every
+        // non-VACATION type and for a VACATION request with no BS day.
+        vocationalSchoolDates: vocationalSchoolDatesByRequestId.get(r.id) ?? [],
       }));
     },
   });
@@ -2881,7 +2905,14 @@ export async function leaveRoutes(app: FastifyInstance) {
       const scoped = await resolveScopedEmployeeIdForRead(app, req, requestedEmployeeId);
       if (!scoped.ok) return reply.code(scoped.status).send(scoped.body);
       const employeeId = scoped.employeeId;
-      if (!employeeId) return { hours: 0, days: 0, rosterImported: true };
+      if (!employeeId)
+        return {
+          hours: 0,
+          days: 0,
+          rosterImported: true,
+          vocationalSchoolDates: [],
+          vocationalSchoolOnly: false,
+        };
 
       const start = new Date(startDate);
       const end = new Date(endDate);
@@ -2913,7 +2944,9 @@ export async function leaveRoutes(app: FastifyInstance) {
           previewPricing,
         ),
       ]);
-      const { days, provisional } = leaveDaysPreview;
+      // Issue #448 (D-05, plan 03): the server's own BS classification, not a client formula —
+      // additive fields from the already-computed resolveLeaveDays() result.
+      const { days, provisional, vocationalSchoolDates, vocationalSchoolOnly } = leaveDaysPreview;
 
       // Phase 430 Plan 04 (D-15): `rosterImported` — a NEW, independent signal from
       // `provisional` above (Issue #417 hard-wired that one `false`; it must not be
@@ -2964,6 +2997,8 @@ export async function leaveRoutes(app: FastifyInstance) {
         provisional,
         rosterImported,
         minutesNeeded: Math.round(hours * 60),
+        vocationalSchoolDates,
+        vocationalSchoolOnly,
       };
     },
   });

@@ -72,3 +72,112 @@ export async function vocationalSchoolDateSet(
   const rows = await getVocationalSchoolDays(db, scope, start, end);
   return new Set(rows.map((r) => r.startDate.toISOString().slice(0, 10)));
 }
+
+/**
+ * D-05 (plan 03): the pure, no-query sibling of {@link vocationalSchoolDateSet} for callers that
+ * already loaded `Absence` rows for other reasons (e.g. a monthly-report employee query that
+ * already includes `absences`) — avoids a second query shape for the same fact. Dates are the
+ * same UTC `YYYY-MM-DD` key every reader of this module uses.
+ */
+export function vocationalSchoolDateSetFromRows(
+  rows: Array<{ type: string; startDate: Date }>,
+): Set<string> {
+  return new Set(
+    rows
+      .filter((row) => row.type === "VOCATIONAL_SCHOOL")
+      .map((row) => row.startDate.toISOString().slice(0, 10)),
+  );
+}
+
+/**
+ * D-05: the BS dates from `bsDates` that fall inside `range`, sorted ascending — but only when
+ * {@link vocationalSchoolDisplacesLeave} says this leave type is displaced by a Berufsschultag at
+ * all (SICK/SPECIAL/etc. always return `[]`, matching the pricing side's own D-02 scope). Pure,
+ * no query — every day of `range` is walked in UTC to build the same `YYYY-MM-DD` keys the
+ * pricing kernels already use.
+ */
+export function vocationalSchoolDatesWithin(
+  range: { startDate: Date; endDate: Date; leaveTypeCode: string | null },
+  bsDates: Set<string>,
+): string[] {
+  if (!vocationalSchoolDisplacesLeave(range.leaveTypeCode)) return [];
+  if (bsDates.size === 0) return [];
+  const dates: string[] = [];
+  const cursor = new Date(
+    Date.UTC(
+      range.startDate.getUTCFullYear(),
+      range.startDate.getUTCMonth(),
+      range.startDate.getUTCDate(),
+    ),
+  );
+  const end = new Date(
+    Date.UTC(
+      range.endDate.getUTCFullYear(),
+      range.endDate.getUTCMonth(),
+      range.endDate.getUTCDate(),
+    ),
+  );
+  while (cursor.getTime() <= end.getTime()) {
+    const key = cursor.toISOString().slice(0, 10);
+    if (bsDates.has(key)) dates.push(key);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return dates;
+}
+
+/**
+ * D-05: ONE {@link getVocationalSchoolDays} call for a whole list of leave requests (GET
+ * /requests, the Urlaubsliste PDF period builder), grouped per employee, then
+ * {@link vocationalSchoolDatesWithin} per request — never a per-request query. `scope` is built
+ * by the caller via `employeeScopeFor(accessContextFromRequest(req), …)` (T-448-12) so a foreign
+ * employee's BS rows can never leak into the returned map.
+ */
+export async function vocationalSchoolDatesForLeaveRequests(
+  db: DbClient,
+  scope: EmployeeScope,
+  requests: Array<{
+    id: string;
+    employeeId: string;
+    startDate: Date;
+    endDate: Date;
+    leaveTypeCode: string | null;
+  }>,
+): Promise<Map<string, string[]>> {
+  const result = new Map<string, string[]>();
+  if (requests.length === 0) return result;
+
+  let minStart = requests[0].startDate;
+  let maxEnd = requests[0].endDate;
+  for (const r of requests) {
+    if (r.startDate.getTime() < minStart.getTime()) minStart = r.startDate;
+    if (r.endDate.getTime() > maxEnd.getTime()) maxEnd = r.endDate;
+  }
+
+  const rows = await getVocationalSchoolDays(db, scope, minStart, maxEnd);
+  const bsDatesByEmployee = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const key = row.startDate.toISOString().slice(0, 10);
+    const set = bsDatesByEmployee.get(row.employeeId);
+    if (set) {
+      set.add(key);
+    } else {
+      bsDatesByEmployee.set(row.employeeId, new Set([key]));
+    }
+  }
+
+  for (const request of requests) {
+    const bsDates = bsDatesByEmployee.get(request.employeeId) ?? new Set<string>();
+    result.set(
+      request.id,
+      vocationalSchoolDatesWithin(
+        {
+          startDate: request.startDate,
+          endDate: request.endDate,
+          leaveTypeCode: request.leaveTypeCode,
+        },
+        bsDates,
+      ),
+    );
+  }
+  return result;
+}
