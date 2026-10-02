@@ -63,6 +63,7 @@
  */
 import type { Prisma, LeaveTypeCode } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
+import type { LeaveDaysPricing } from "./leave-days"; // Issue #436 (D-04/D-09)
 import { isSnapshotLocked, todayInTz } from "../working-time-account"; // Phase 101B
 
 /**
@@ -113,6 +114,7 @@ export type ResolveLeaveDaysFn = (
   end: Date,
   halfDay: boolean,
   holidays: Set<string>,
+  pricing: LeaveDaysPricing, // Issue #436 (D-04/D-09)
 ) => Promise<{ days: number; provisional: boolean }>;
 
 export type GetHolidayMapFn = (
@@ -260,6 +262,7 @@ export async function recalcProvisionalLeaveForShiftChange(
       candidate.endDate,
     );
     const holidays = new Set(holidayMap.keys());
+    // Issue #436 (D-04/D-09): excludes this candidate itself from its own marginal price.
     const recomputed = await deps.resolveLeaveDays(
       tx,
       employeeId,
@@ -268,6 +271,11 @@ export async function recalcProvisionalLeaveForShiftChange(
       candidate.endDate,
       candidate.halfDay,
       holidays,
+      {
+        mode: "request",
+        leaveTypeCode: VACATION_LEAVE_TYPE_CODE,
+        excludeRequestId: candidate.id,
+      },
     );
 
     const oldDays = Number(candidate.days);

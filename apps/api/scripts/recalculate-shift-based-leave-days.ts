@@ -262,6 +262,9 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
             req.endDate,
           );
           const holidays = new Set(holidayMap.keys());
+          // Issue #436 (D-04/D-09): since this issue, the dry-run also lists requests whose
+          // stored days predate the week-union rule (the Bestand list) — excluding the request
+          // itself, so it is never priced against its own stored dates.
           const recomputed = await resolveLeaveDays(
             prisma,
             req.employeeId,
@@ -270,6 +273,7 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
             req.endDate,
             req.halfDay,
             holidays,
+            { mode: "request", leaveTypeCode: "VACATION", excludeRequestId: req.id },
           );
 
           const oldDays = Number(req.days);

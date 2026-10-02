@@ -884,6 +884,59 @@ export function leaveDaysPerWeek(
 }
 
 /**
+ * Issue #436, D-04 (owner Ergänzung 01.10.2026) — the MARGINAL leave-day cost of one request
+ * against the ISO weeks already occupied by `others` (the employee's other counted VACATION
+ * requests overlapping those weeks). Per-week union cost, using the SAME `leaveDaysPerWeek()`
+ * kernel both branches of this function already share:
+ *
+ *   marginal = Σ days(union(others ∪ {request})) − Σ days(union(others))
+ *
+ * capped at 0 (a request can never SUBTRACT from what `others` already cost). With `others`
+ * empty this collapses to `countShiftBasedLeaveDays(request, ...)` — byte-identical to the
+ * pre-436 single-request price (D-05).
+ *
+ * Owner example (4-day contract, no Angabe, one ISO week): A = Mo-Mi, B = Do-Sa.
+ *   marginal(A, []) = cost({A}) = 3
+ *   marginal(B, [A]) = cost({A, B}) − cost({A}) = 4 − 3 = 1
+ *   marginal(A, [B]) = cost({A, B}) − cost({B}) = 4 − 1 = 3  (NOT 1 — see the ordering rule in
+ *   leave-days.ts: A is priced against requests created BEFORE it, so B never enters A's own
+ *   marginal cost once A already exists).
+ *
+ * Weeks outside the request's own span cancel out algebraically: `others`' contribution to a
+ * week the request never touches is identical in both the "with request" and "without request"
+ * union, so the subtraction leaves only the weeks the request actually overlaps.
+ */
+export function marginalShiftBasedLeaveDays(
+  request: { startDate: Date; endDate: Date; halfDay: boolean },
+  others: Array<{ startDate: Date; endDate: Date; halfDay?: boolean }>,
+  contractWorkDaysPerWeek: number,
+  holidays: Set<string>,
+  usualWorkDays: readonly number[],
+): number {
+  if (others.length === 0) {
+    return countShiftBasedLeaveDays(
+      request.startDate,
+      request.endDate,
+      request.halfDay,
+      contractWorkDaysPerWeek,
+      holidays,
+      usualWorkDays,
+    ).days;
+  }
+
+  const sumDays = (weeks: LeaveWeek[]): number => weeks.reduce((acc, w) => acc + w.days, 0);
+
+  const withRequest = sumDays(
+    leaveDaysPerWeek([...others, request], contractWorkDaysPerWeek, holidays, usualWorkDays),
+  );
+  const withoutRequest = sumDays(
+    leaveDaysPerWeek(others, contractWorkDaysPerWeek, holidays, usualWorkDays),
+  );
+
+  return Math.max(0, withRequest - withoutRequest);
+}
+
+/**
  * Issue #429 (D-13, #293 "the receipt follows the account") — the per-REQUEST SHIFT_BASED
  * leave-minutes receipt for a single request in isolation: Σ `leaveDaysPerWeek()` days ×
  * (`weeklyHours` × 60 ÷ `contractWorkDaysPerWeek`). Consumed by `getScheduledHours()`

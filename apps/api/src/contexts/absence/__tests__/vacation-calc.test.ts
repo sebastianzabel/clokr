@@ -9,6 +9,7 @@ import {
   countShiftBasedLeaveDays,
   mondayOfWeekUtc,
   leaveDaysPerWeek,
+  marginalShiftBasedLeaveDays,
   statutoryMinimumVacationDays,
   statutoryMinimumVacationThreshold,
   statutoryMinimumViolationMessage,
@@ -1211,5 +1212,59 @@ describe("leaveDaysPerWeek — usual workdays (Issue #436, D-03)", () => {
         expect(withExplicitEmpty).toEqual(withOmitted);
       }
     }
+  });
+});
+
+describe("marginalShiftBasedLeaveDays (Issue #436, D-04)", () => {
+  it("contract 4, no Angabe: owner example — A=Mo-Mi alone costs 3, B=Do-Sa marginal against [A] costs 1, A marginal against [B] costs 1 (both alone are 3-day fragments, their union is the whole week capped at 4)", () => {
+    const a = { startDate: mon(0), endDate: mon(2), halfDay: false }; // Mo-Mi
+    const b = { startDate: mon(3), endDate: mon(5), halfDay: false }; // Do-Sa
+
+    expect(marginalShiftBasedLeaveDays(a, [], 4, NO_HOLIDAYS, [])).toBe(3);
+    expect(marginalShiftBasedLeaveDays(b, [a], 4, NO_HOLIDAYS, [])).toBe(1);
+    expect(marginalShiftBasedLeaveDays(a, [b], 4, NO_HOLIDAYS, [])).toBe(1);
+  });
+
+  it("contract 4, no Angabe: A=Mo-Mi this week, B=Mo-Mi NEXT week — different ISO weeks never interact, marginal(B, [A]) stays 3", () => {
+    const a = { startDate: mon(0), endDate: mon(2), halfDay: false }; // Mo-Mi, week 1
+    const bNextWeek = { startDate: mon(7), endDate: mon(9), halfDay: false }; // Mo-Mi, week 2
+
+    expect(marginalShiftBasedLeaveDays(bNextWeek, [a], 4, NO_HOLIDAYS, [])).toBe(3);
+  });
+
+  it("contract 5, no Angabe: A=Mo-Di, B=Mi-Do — no cap binding, marginal is purely additive (2)", () => {
+    const a = { startDate: mon(0), endDate: mon(1), halfDay: false }; // Mo-Di
+    const b = { startDate: mon(2), endDate: mon(3), halfDay: false }; // Mi-Do
+
+    expect(marginalShiftBasedLeaveDays(b, [a], 5, NO_HOLIDAYS, [])).toBe(2);
+  });
+
+  it("contract 4, no Angabe: A=Mo-Do already reaches the contract cap (4) — a half-day Fr marginal cost is 0", () => {
+    const a = { startDate: mon(0), endDate: mon(3), halfDay: false }; // Mo-Do, 4 days
+    const bHalfFriday = { startDate: mon(4), endDate: mon(4), halfDay: true }; // half-day Fr
+
+    expect(marginalShiftBasedLeaveDays(bHalfFriday, [a], 4, NO_HOLIDAYS, [])).toBe(0);
+  });
+
+  it("contract 4, usual Di-Fr [2,3,4,5]: A=Mo-Mi (costs 2 alone), B=Do-Sa — union is the whole week (ignores the Angabe, Pitfall 4), marginal(B,[A]) = 4 - 2 = 2", () => {
+    const usual = [2, 3, 4, 5];
+    const a = { startDate: mon(0), endDate: mon(2), halfDay: false }; // Mo-Mi
+    const b = { startDate: mon(3), endDate: mon(5), halfDay: false }; // Do-Sa
+
+    expect(marginalShiftBasedLeaveDays(a, [], 4, NO_HOLIDAYS, usual)).toBe(2);
+    expect(marginalShiftBasedLeaveDays(b, [a], 4, NO_HOLIDAYS, usual)).toBe(2);
+  });
+
+  it("others empty equals countShiftBasedLeaveDays directly (D-05 — byte-identical to the pre-436 single-request price)", () => {
+    const request = { startDate: mon(0), endDate: mon(2), halfDay: false };
+    const direct = countShiftBasedLeaveDays(
+      request.startDate,
+      request.endDate,
+      request.halfDay,
+      4,
+      NO_HOLIDAYS,
+      [],
+    ).days;
+    expect(marginalShiftBasedLeaveDays(request, [], 4, NO_HOLIDAYS, [])).toBe(direct);
   });
 });
