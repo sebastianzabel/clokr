@@ -68,6 +68,7 @@ import { getEffectiveBreakDuration } from "../time-tracking"; // Phase 101B (Iss
 import {
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
+  calcMonthlyHoursHolidayMinutesTz, // Issue #433 (D-03/D-06)
   getDayHoursFromSchedule,
   getDayOfWeekInTz,
   dateStrInTz,
@@ -982,40 +983,41 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
     );
 
     // Holiday subtraction: holidayDateStrings is pre-computed by the caller (merged
-    // computed Feiertage + DB manual holidays). Convert to Date objects for the
-    // getDayHoursFromSchedule lookup.
-    const isMonthlyHoursDeduction =
-      scheduleType === "MONTHLY_HOURS" &&
-      Number(schedule.monthlyHours ?? 0) > 0 &&
-      tenantConfig?.monthlyHoursHolidayDeduction === true;
-
-    let workingDaysInRange = 0;
-    if (isMonthlyHoursDeduction) {
-      const wdCur = new Date(effectiveStart.getTime());
-      while (true) {
-        // Issue #447 (D-01/D-02): sollRangeEnd clips the holiday-deduction day count at the
-        // exit date, mirroring the hire-month clip at effectiveStart.
-        if (wdCur > sollRangeEnd) break;
-        const dow = getDayOfWeekInTz(wdCur, tz);
-        if (getDayHoursFromSchedule(schedule, dow) > 0) workingDaysInRange++;
-        wdCur.setTime(wdCur.getTime() + 24 * 60 * 60 * 1000);
+    // computed Feiertage + DB manual holidays).
+    //
+    // Issue #433 (D-03/D-06, owner decision 2026-10-03): for MONTHLY_HOURS a holiday on
+    // a contractual workday ALWAYS reduces the Soll by the Ø-rate value — the tenant
+    // switch `TenantConfig.monthlyHoursHolidayDeduction` is no longer read anywhere in
+    // this function (§ 2 Abs. 1 / § 12 EFZG is unabdingbar; a tenant cannot opt out).
+    // `calcMonthlyHoursHolidayMinutesTz` owns the day-membership test (D-05: workDays ->
+    // defaultWorkDays -> Mo-Fr, never {day}Hours) and the full-calendar-month denominator
+    // (D-06), shared with the full-Soll and leave/absence branches above/below. Every
+    // other non-SHIFT type keeps the existing per-holiday {day}Hours loop, byte-identical.
+    if (scheduleType === "MONTHLY_HOURS") {
+      const filteredHolidayDateStrings = new Set<string>();
+      for (const hDateStr of holidayDateStrings) {
+        // Issue #447 — holidays after the exit date are not deducted. Callers already
+        // pre-filter holidayDateStrings to [effectiveStart, monthEnd], so a no-exit
+        // input (effectiveEndStr === monthEnd's date) is unaffected by this guard.
+        if (hDateStr < effectiveStartStr || hDateStr > effectiveEndStr) continue;
+        filteredHolidayDateStrings.add(hDateStr);
       }
-    }
-    const dailySollMin =
-      isMonthlyHoursDeduction && workingDaysInRange > 0
-        ? (Number(schedule.monthlyHours!) * 60) / workingDaysInRange
-        : 0;
-
-    for (const hDateStr of holidayDateStrings) {
-      // Issue #447 — holidays after the exit date are not deducted. Callers already
-      // pre-filter holidayDateStrings to [effectiveStart, monthEnd], so a no-exit input
-      // (effectiveEndStr === monthEnd's date) is unaffected by this guard.
-      if (hDateStr < effectiveStartStr || hDateStr > effectiveEndStr) continue;
-      const hDate = new Date(hDateStr + "T00:00:00Z");
-      const dow = getDayOfWeekInTz(hDate, tz);
-      if (isMonthlyHoursDeduction) {
-        if (getDayHoursFromSchedule(schedule, dow) > 0) holidayMinutes += dailySollMin;
-      } else {
+      holidayMinutes = calcMonthlyHoursHolidayMinutesTz(
+        schedule,
+        filteredHolidayDateStrings,
+        effectiveStart,
+        sollRangeEnd,
+        tz,
+        tenantConfig?.defaultWorkDays,
+      );
+    } else {
+      for (const hDateStr of holidayDateStrings) {
+        // Issue #447 — holidays after the exit date are not deducted. Callers already
+        // pre-filter holidayDateStrings to [effectiveStart, monthEnd], so a no-exit input
+        // (effectiveEndStr === monthEnd's date) is unaffected by this guard.
+        if (hDateStr < effectiveStartStr || hDateStr > effectiveEndStr) continue;
+        const hDate = new Date(hDateStr + "T00:00:00Z");
+        const dow = getDayOfWeekInTz(hDate, tz);
         holidayMinutes += getDayHoursFromSchedule(schedule, dow) * 60;
       }
     }

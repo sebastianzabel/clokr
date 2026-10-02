@@ -408,6 +408,43 @@ function monthlyHoursMinutesCore(
 }
 
 /**
+ * Issue #433 (D-03, D-06): MONTHLY_HOURS statutory/manual-holiday Soll reduction.
+ *
+ * A public holiday on a contractual workday (D-05 chain: `workDays` ->
+ * `defaultWorkDays` -> Mo-Fr, via `monthlyHoursWorkDays()`) ALWAYS reduces the Soll by
+ * the SAME per-day Ø value as leave/sickness/absence (D-02) — § 2 Abs. 1 EFZG,
+ * unabdingbar per § 12 EFZG; no tenant setting can opt out. A holiday on a
+ * non-workday reduces nothing (no causality) — `monthlyHoursMinutesCore`'s workday-set
+ * check already excludes it. D-06: the denominator is the full calendar month (the
+ * same `monthlyHoursMinutesCore` convention as the full-Soll and leave/absence
+ * branches), so a hire/exit month and a full month value a holiday day identically.
+ *
+ * One `Math.round()` over the counted holidays (OQ2 — same single-round convention as
+ * the other two MONTHLY_HOURS entry points).
+ *
+ * @param holidayDateStrings tenant-local "YYYY-MM-DD" strings — the caller pre-filters
+ *   to the effective employment range (Issue #447) before calling this function.
+ * @param defaultWorkDays `TenantConfig.defaultWorkDays` (Issue #433, D-05) — the middle
+ *   tier of the workday-set chain; see `monthlyHoursWorkDays`. Ignored for every other
+ *   schedule type (this function is MONTHLY_HOURS-only, unlike `calcExpectedMinutesTz`
+ *   / `calcLeaveAbsenceMinutesTz`, which branch on `schedule.type` internally).
+ * @returns integer minutes (Soll-reduction); 0 when `monthlyHours` is null/0/negative
+ *   (pure tracking, D-01) or when no holiday is a contractual workday.
+ */
+export function calcMonthlyHoursHolidayMinutesTz(
+  schedule: Record<string, unknown>,
+  holidayDateStrings: ReadonlySet<string>,
+  from: Date,
+  to: Date,
+  tz: string,
+  defaultWorkDays?: readonly number[] | null,
+): number {
+  return monthlyHoursMinutesCore(schedule, from, to, tz, defaultWorkDays, (dateStr) =>
+    holidayDateStrings.has(dateStr),
+  );
+}
+
+/**
  * Calculate expected working minutes between two UTC dates in a given timezone,
  * using a schedule object that maps day-of-week to hours.
  * Supports MONTHLY_HOURS schedules (Minijobber): prorates the monthly budget
