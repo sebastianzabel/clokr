@@ -2204,7 +2204,7 @@ dem vollen Monat.
   mehrere Anträge derselben Woche vereint — zwei Anträge Mo–Mi + Do–Sa kosten auf einem
   4-Tage-Vertrag 6 Tage statt der korrekten 4. Dieser Fehler liegt außerhalb dieser Phase (Entitlement
   via Abwesenheiten, nicht der hier geänderte Saldo via Arbeitszeitkonto) und wird nur als Befund
-  gemeldet, nicht gefixt.
+  gemeldet, nicht gefixt. Geschlossen durch Issue #436 (siehe Nachtrag unten).
 
 ### Auswirkung auf die Kontexte
 
@@ -2263,3 +2263,84 @@ pnpm --filter @clokr/api exec vitest run src/__tests__/golden-matrix.test.ts src
 pnpm --filter @clokr/api exec vitest run scripts/__tests__/dry-run-429-leave-contract-days.test.ts
 pnpm --filter @clokr/api exec tsx scripts/dry-run-429-leave-contract-days.ts --tenant-id <uuid>
 ```
+
+### Nachtrag (Phase 436, Issue #436) — übliche Arbeitstage bei SHIFT_BASED und Wochen-Union über Anträge
+
+**Schwere: Semantikänderung des Unterbaus nach ADR 0002, Entscheidung 7. Owner-Entscheidung = Issue
+#436, Ticketbeschreibung 01.10.2026, plus die Ergänzung desselben Tages (Wochen-Union über mehrere
+Anträge) und die bei der Planung getroffenen Verfeinerungen (Reihenfolgeregel, Bestand-Dry-Run).**
+
+**1. Neues Feld.** `WorkSchedule.usualWorkDays Int[] @default([])` (Unterbau-Modell, additive
+Migration `20261002064813_shift_based_usual_work_days`). Leer = keine Angabe. Nur für
+`type: "SHIFT_BASED"` beschreibbar — ein nicht-leerer Wert bei jedem anderen Typ wird mit 400
+abgelehnt (`validateUsualWorkDays()`). Muss mindestens so viele Wochentage enthalten wie
+`contractWorkDaysPerWeek` — sonst 400 mit der deutschen Meldung. Schreibwege: `PUT
+/settings/work/:employeeId` (frühe Ablehnung vor der Phase-49.3-Orphan-Shift-Transaktion; der
+`cancelOrphanShifts`-Zweig schreibt immer `[]`) und `POST /employees`. Beide auditieren das Feld.
+Bestand startet leer (keine Backfill-Migration). Der EINE Leser ist `usualWorkDaysFrom()`
+(`apps/api/src/contexts/absence/leave-days.ts`); `WorkSchedule.workDays` wird dafür weder gelesen
+noch geändert (Phase 95b D-01, Phase 107 D-02 bleiben unberührt).
+
+**2. Die Regel im Wochenkern.** `weekLeaveDays()` (Kern von `countShiftBasedLeaveDays` und
+`leaveDaysPerWeek`) bleibt für eine VOLLE Woche unverändert (kostet immer die Vertragstage). Für
+eine ANGEBROCHENE Woche zählen nur die beantragten Tage, die zugleich in `usualWorkDays` stehen,
+gekappt auf die Vertragstage; ein Feiertag zählt genau einmal; Sonntag folgt reiner
+Mengenzugehörigkeit (`usualWorkDays.includes(0)`), kein Sonderfall mehr; ein halber Tag an einem
+nicht üblichen Wochentag zählt 0. Anspruch (`countShiftBasedLeaveDays`), Saldo (#429,
+`close-employee-month.ts`), Planungswarnung (#430, `getShiftBasedLeaveDaysForWeek`) und die
+Stunden-Vorschau (`getScheduledHours`) erben die Regel alle über denselben Leser.
+
+**3. Wochen-Union über mehrere Anträge.** `marginalShiftBasedLeaveDays()` bepreist einen VACATION-
+Antrag als Grenzkosten gegenüber den anderen zählenden Urlaubsanträgen (PENDING, APPROVED,
+CANCELLATION_REQUESTED) desselben Mitarbeiters, die dieselben ISO-Wochen überlappen UND vor dem
+anfragenden Antrag angelegt wurden (Reihenfolgeregel, Ties nach Id). Ohne diese Regel würde die
+Genehmigung zweier Anträge derselben Woche in einer anderen Reihenfolge ein anderes Ergebnis liefern
+als ihre Anlage-Reihenfolge nahelegt (1 + 1 statt der korrekten 3 + 1 bei nachträglicher Genehmigung
+in umgekehrter Reihenfolge) — die Reihenfolgeregel hält den Preis eines Antrags von seiner Anlage bis
+zu seiner Genehmigung stabil. `resolveLeaveDays()` nimmt dafür ein PFLICHT-Argument
+`LeaveDaysPricing` (`{ mode: "request", leaveTypeCode, excludeRequestId? } | { mode: "isolated" }`);
+der Compiler zählt dadurch jede Aufrufstelle auf. Nur VACATION wird wochenweise über Anträge
+vereint; jahresübergreifende Aufteilung (`prefixLeaveDays()`) bepreist isoliert, weil ein bereits
+bepreister Gesamtbetrag nie neu bepreist werden darf.
+
+**4. Bestand.** Genehmigte Anträge werden von keinem Schreibpfad dieser Phase je stillschweigend neu
+berechnet. Nach dem Deployment listet der Betreiber betroffene Bestandsfälle per Dry-Run:
+
+```bash
+pnpm --filter @clokr/api exec tsx scripts/recalculate-shift-based-leave-days.ts --all-tenants
+```
+
+(ohne `--confirm` — die Liste ist der einzige Effekt; nichts wird geschrieben oder auditiert.)
+
+**5. Bekannte Grenzen.**
+
+- Wird ein früher angelegter, zählender Antrag später abgelehnt oder storniert, bleibt ein bereits
+  genehmigter späterer Antrag bei seinem gespeicherten Tageswert stehen (der Dry-Run listet ihn als
+  Kandidaten, schreibt aber nichts).
+- § 9-gutgeschriebene Tage eines früheren Antrags gelten für die Preisbildung späterer Anträge
+  weiterhin als belegt (kein Rückfluss in den Wochen-Union-Pool).
+- Werden zwei Anträge derselben Woche gleichzeitig angelegt, entscheidet die Reihenfolgeregel über
+  `createdAt`/Id — eine echte Gleichzeitigkeit zweier Schreibtransaktionen ist nicht gesondert
+  gesperrt.
+
+**Auswirkung auf die Kontexte:**
+
+- **Unterbau:** Semantikänderung — neues Feld `WorkSchedule.usualWorkDays`, geschrieben/validiert in
+  `contexts/platform/api/settings.ts` und `contexts/platform/api/employees.ts`.
+- **Abwesenheiten:** Kern der Änderung — `vacation-calc.ts` (`weekLeaveDays`,
+  `leaveDaysPerWeek`, `marginalShiftBasedLeaveDays`), `leave-days.ts` (`usualWorkDaysFrom`,
+  `LeaveDaysPricing`, `countedVacationSiblingRequests`, `resolveLeaveDays`), `api/leave.ts` (alle
+  sieben `resolveLeaveDays`-Aufrufstellen, `GET /hours-preview` type/excludeRequestId),
+  `shift-leave-recalc-resolver.ts`, `scripts/recalculate-shift-based-leave-days.ts`.
+- **Arbeitszeitkonto:** keine eigene Regel — liest die Angabe über `usualWorkDaysFrom()` im
+  bestehenden `leaveDaysPerWeek()`-Aufruf in `close-employee-month.ts` mit.
+- **Schichtplanung:** keine eigene Änderung — `getShiftBasedLeaveDaysForWeek()` folgt derselben
+  Angabe, weil es dieselbe `leaveDaysPerWeek()`-Funktion aufruft.
+- **Zeiterfassung:** keine Codeänderung.
+- **Kompositionsschicht:** keine Codeänderung.
+
+**Gemessen** (RED/GREEN-Werte aus den Plan-Summaries 436-01 bis 436-04): D-05-Äquivalenz ohne Angabe
+über >20.000 generierte Vergleiche (Plan 01); Parity-Fuzz mit Angabe über 4000+ Fälle (Plan 03);
+Eigentümer-Beispiel Mo–Mi = 3 Tage, danach Do–Sa = 1 Tag in derselben ISO-Woche (3 + 1 = 4, nicht 6)
+über HTTP bewiesen, beide Genehmigungsreihenfolgen getestet (Plan 04); volle API- und Web-Testsuite
+nach Plan 05 (6844 passed/3 skipped bzw. 1498 passed, 0 failed), alle projektweiten Gates grün.

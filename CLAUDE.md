@@ -346,6 +346,21 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   No other reader may rebuild this chain inline.
 - `WorkSchedule.contractWorkDaysPerWeek Int?` — the `SHIFT_BASED` employee's contractual weekly
   workday count; `null` for every other schedule type (Phase 107, D-01).
+- `WorkSchedule.usualWorkDays Int[] @default([])` (Phase 436, D-01) — an OPTIONAL "übliche
+  Arbeitstage" Angabe naming the usual weekdays of a `SHIFT_BASED` employee; empty = keine Angabe.
+  Non-empty is rejected with a German 400 for every other schedule type, and must name at least as
+  many days as `contractWorkDaysPerWeek`. It is authoritative ONLY for an angebrochene (fragment)
+  leave week — a whole week always costs the contract days regardless of the Angabe. It is read
+  ONLY through `usualWorkDaysFrom()` in `apps/api/src/contexts/absence/leave-days.ts` and is never
+  derived from `workDays`, which remains the placeholder described above for `SHIFT_BASED`.
+- `resolveLeaveDays()` (Phase 436, D-04/D-09) prices a `SHIFT_BASED` VACATION request as its
+  marginal cost on its ISO weeks against the employee's earlier-created counted vacation requests
+  (PENDING/APPROVED/CANCELLATION_REQUESTED, ordered by `createdAt` then id) — a second request in
+  the same week costs only what it ADDS, not a second full price. Every caller passes a required
+  `LeaveDaysPricing` argument and supplies `excludeRequestId` whenever it holds a request id (so a
+  request is never priced against its own stored dates); approved requests are never re-priced
+  implicitly — the Bestand surfaces only via the dry-run of
+  `scripts/recalculate-shift-based-leave-days.ts` (no `--confirm`, writes nothing).
 - `LeaveRequest.daysProvisional Boolean?` — server-derived, set only at approval time; `true` when
   any day of a `SHIFT_BASED` leave request's period had no roster at calculation time (Phase 107,
   D-10/D-11). Never set by a client.
