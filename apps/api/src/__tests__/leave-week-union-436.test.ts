@@ -21,6 +21,7 @@ import { getTestApp, cleanupTestData, createTestSalon } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
+import { resolveLeaveDays, getHolidayMap } from "../contexts/absence";
 import { utcMidnight, dbDateStr, todayStr } from "./test-dates";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -84,12 +85,12 @@ function holidayFreeMondayFrom(fromMondayIso: string, weekSpan = 1): string {
 
 const PAST_ANCHOR = new Date(Date.UTC(new Date().getUTCFullYear() - 2, 0, 1));
 
-// Nine SEQUENTIALLY built, holiday-free Mondays (each >= 14 days after the previous one) — one
+// Ten SEQUENTIALLY built, holiday-free Mondays (each >= 14 days after the previous one) — one
 // per test group, so no group's requests ever overlap another's (the overlap guard is scoped to
 // the employee, shared across all groups). Built sequentially (not independent `daysOut` calls)
 // so each group's own holiday-skip loop can never leapfrog the next group's base candidate.
 const MONDAYS: string[] = [nextHolidayFreeMonday(14)];
-for (let i = 1; i < 9; i++) {
+for (let i = 1; i < 10; i++) {
   MONDAYS.push(holidayFreeMondayFrom(addDaysIso(MONDAYS[i - 1], 14)));
 }
 
@@ -420,5 +421,65 @@ describe("Issue #436 — per-ISO-week union pricing across sibling requests (D-0
     const sick = await postSick(addDaysIso(monday, 3), addDaysIso(monday, 4)); // Do-Fr
     expect(sick.statusCode).toBe(201);
     expect(Number(JSON.parse(sick.body).days)).toBe(2); // isolated fragment, min(2,4)=2 — unaffected by A
+  });
+
+  it("[KNOWN LIMITATION, 436-REVIEW WR-01] PATCH /requests/:id/correct widening an earlier request into a later sibling's week does NOT recompute the sibling, even when the widened range has no literal date overlap with it: A (Mo only, 1) corrected to Mo-We (3) is left unaware of B (Do-Fr, created after A, priced at 2) -> A(3) + B(2) = 5 booked for one ISO week on a 4-day contract, one over the cap this feature enforces. The correction succeeds (200, no overlap guard hit — A's new end date We is still before B's start date Do). Recomputing B's price against the corrected A (what the dry-run script does) DOES catch it: it returns 1, i.e. the script would list B as a 2 -> 1 candidate. This is a documented gap (ADR 0001-abweichungen.md Nachtrag Phase 436, Bekannte Grenzen) — a future fix changes this test deliberately, not by accident.", async () => {
+    const monday = MONDAYS[9];
+    const resA = await postVacation(monday, monday); // Mo only, created FIRST
+    const idA = JSON.parse(resA.body).id as string;
+    expect(Number(JSON.parse(resA.body).days)).toBe(1);
+    const approveA = await review(idA, "APPROVED");
+    expect(Number(JSON.parse(approveA.body).days)).toBe(1);
+
+    const resB = await postVacation(addDaysIso(monday, 3), addDaysIso(monday, 4)); // Do-Fr, created SECOND
+    const idB = JSON.parse(resB.body).id as string;
+    // marginal(B, [A]) = cost({Mo,Do,Fr}=3, cap 4) - cost({Mo}=1) = 3 - 1 = 2
+    expect(Number(JSON.parse(resB.body).days)).toBe(2);
+    const approveB = await review(idB, "APPROVED");
+    expect(Number(JSON.parse(approveB.body).days)).toBe(2);
+
+    // Widen A (the EARLIER-created request) by two days. The new range (Mo-We) still ends
+    // strictly BEFORE B starts (Do) -- no literal date overlap, so the correction route's own
+    // overlap guard (leave.ts, "Überschneidung mit bestehendem Antrag") does NOT fire.
+    const corrected = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${idA}/correct`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: {
+        startDate: monday, // Mo
+        endDate: addDaysIso(monday, 2), // We
+        halfDay: false,
+        reason: "Testkorrektur Issue #436 WR-01 (known limitation)",
+      },
+    });
+    expect(corrected.statusCode).toBe(200);
+    // A priced isolated (ordering rule: no siblings created before A) = cost({Mo,Tue,We}=3, cap 4) = 3
+    expect(Number(JSON.parse(corrected.body).days)).toBe(3);
+
+    // B's stored row is never touched by A's correction -- the over-cap, temporary state:
+    // A(3) + B(2) = 5 for one ISO week on a 4-day contract.
+    const freshB = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: idB } });
+    expect(Number(freshB.days)).toBe(2);
+
+    // The dry-run repair script (recalculate-shift-based-leave-days.ts) WOULD catch this: it
+    // recomputes each candidate's price via the same resolveLeaveDays() ordering rule used on
+    // every write path. Reproduced here without running the script itself.
+    const weekStart = utcMidnight(addDaysIso(monday, 3));
+    const weekEnd = utcMidnight(addDaysIso(monday, 4));
+    const holidays = new Set(
+      (await getHolidayMap(app.prisma, tenantId, empId, weekStart, weekEnd)).keys(),
+    );
+    const recomputedB = await resolveLeaveDays(
+      app.prisma,
+      empId,
+      tenantId,
+      weekStart,
+      weekEnd,
+      false,
+      holidays,
+      { mode: "request", leaveTypeCode: "VACATION", excludeRequestId: idB },
+    );
+    // marginal(B, [A-with-new-dates]) = cost({Mo,Tue,We,Do,Fr}=5, cap 4) - cost({Mo,Tue,We}=3) = 4 - 3 = 1
+    expect(recomputedB.days).toBe(1); // dry-run candidate: stored 2 -> recomputed 1
   });
 });
