@@ -442,10 +442,11 @@ function dowOfDateStr(dateStr: string): number {
  *     a restricted employee's whole week would wrongly undercount it).
  *   - FRAGMENT, `usualWorkDays` empty: `countedDates` is the requested dates minus Sunday
  *     (unchanged pre-436 behaviour).
- *   - FRAGMENT, `usualWorkDays` non-empty: `countedDates` is the requested Mo-Sat dates whose UTC
- *     weekday is a member of `usualWorkDays` — Sunday stays excluded even when requested (Task 2
- *     of plan 436-01 adds Sunday set-membership). Either way,
- *     `days = max(0, min(|countedDates|, contractWorkDaysPerWeek) - holidays among countedDates)`.
+ *   - FRAGMENT, `usualWorkDays` non-empty: `countedDates` is the requested dates whose UTC weekday
+ *     is a member of `usualWorkDays` — Sunday now follows the SAME set-membership rule as any
+ *     other weekday (Phase 436 Task 2, D-03: if `0` is a usual day, a requested Sunday counts).
+ *     Either way, `days = max(0, min(|countedDates|, contractWorkDaysPerWeek) - holidays among
+ *     countedDates)`.
  * A holiday is therefore deducted exactly once, and only for a date that would otherwise count.
  */
 function weekLeaveDays(
@@ -464,13 +465,19 @@ function weekLeaveDays(
   const countedDates =
     usualWorkDays.length === 0
       ? requestedDates.filter((d) => dowOfDateStr(d) !== 0)
-      : requestedDates.filter((d) => {
-          const dow = dowOfDateStr(d);
-          return dow !== 0 && usualWorkDays.includes(dow);
-        });
+      : requestedDates.filter((d) => usualWorkDays.includes(dowOfDateStr(d)));
   const holidayCount = countedDates.filter((d) => holidays.has(d)).length;
   const days = Math.max(0, Math.min(countedDates.length, contractWorkDaysPerWeek) - holidayCount);
   return { days, countedDates };
+}
+
+/** Phase 436 (D-03, Task 2) — does a HALF-DAY request on UTC weekday `dow` count? `true` when
+ * `usualWorkDays` is empty (unchanged pre-436 behaviour: a half day always counts 0.5 regardless
+ * of weekday), else iff `dow` is a member of `usualWorkDays`. Shared by
+ * `countShiftBasedLeaveDays()`'s halfDay short-circuit and `buildHalfShareForWeek()` so the two
+ * half-day paths can never disagree about which weekday counts. */
+function halfDayCounts(dow: number, usualWorkDays: readonly number[]): boolean {
+  return usualWorkDays.length === 0 || usualWorkDays.includes(dow);
 }
 
 export function countShiftBasedLeaveDays(
@@ -481,7 +488,10 @@ export function countShiftBasedLeaveDays(
   holidays: Set<string>,
   usualWorkDays: readonly number[] = [],
 ): { days: number; provisional: boolean } {
-  if (halfDay) return { days: 0.5, provisional: false };
+  if (halfDay) {
+    const counts = halfDayCounts(utcMidnight(start).getUTCDay(), usualWorkDays);
+    return { days: counts ? 0.5 : 0, provisional: false };
+  }
 
   const s = utcMidnight(start);
   const e = utcMidnight(end);
@@ -777,7 +787,7 @@ export function leaveDaysPerWeek(
     if (fullDayUnion.size === 0) {
       // No full-day leave touches this week — check for half-day-only contribution below before
       // moving on (a week can be half-day-only).
-      const halfOnly = buildHalfShareForWeek(rows, weekMonday, weekSunday, fullDayUnion);
+      const halfOnly = buildHalfShareForWeek(rows, weekMonday, weekSunday, fullDayUnion, []);
       if (halfOnly.size > 0) {
         const days = Array.from(halfOnly.values()).reduce((a, b) => a + b, 0);
         const capped = Math.min(days, contractWorkDaysPerWeek);
@@ -824,7 +834,7 @@ export function leaveDaysPerWeek(
 
     // Half-day contribution: +0.5 per distinct date (a full-day row on the same date always
     // wins — OPEN-01, so buildHalfShareForWeek skips dates already in fullDayUnion).
-    const halfShare = buildHalfShareForWeek(rows, weekMonday, weekSunday, fullDayUnion);
+    const halfShare = buildHalfShareForWeek(rows, weekMonday, weekSunday, fullDayUnion, []);
     const halfTotal = Array.from(halfShare.values()).reduce((a, b) => a + b, 0);
 
     let days = fullDayTotal;
@@ -890,12 +900,14 @@ function buildHalfShareForWeek(
   weekMonday: Date,
   weekSunday: Date,
   fullDayUnion: Set<string>,
+  usualWorkDays: readonly number[] = [],
 ): Map<string, number> {
   const halfShare = new Map<string, number>();
   for (const row of rows) {
     if (!row.halfDay) continue;
     const s = utcMidnight(row.startDate);
     if (s.getTime() < weekMonday.getTime() || s.getTime() > weekSunday.getTime()) continue;
+    if (!halfDayCounts(s.getUTCDay(), usualWorkDays)) continue; // Phase 436 (D-03, Task 2)
     const dateStr = toDateStrUtc(s);
     if (fullDayUnion.has(dateStr)) continue;
     halfShare.set(dateStr, 0.5);
