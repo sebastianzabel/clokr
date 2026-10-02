@@ -181,6 +181,9 @@ export {
   healEntitlementUsedDays, // Issue #445 (D-10) — composition/reports.ts injects this into leave-self-heal.ts's ctx
   resolveVacationBaseDays, // Issue #435 (D-06) — Erweiterung, additive; the ONE base-value resolver, consumed by platform/api/employees.ts
   daysDiffer, // Issue #435 code review (WR-01) — the 2-decimal-precision "did it change" compare, reused by platform/api/employees.ts's PATCH guard instead of a re-implemented inline comparison
+  syncExitYearVacationEntitlement, // Issue #447 (D-07) — Erweiterung, additive; recomputes an exit-year VACATION row to its § 5 BUrlG value, consumed by platform/api/employees.ts and absence/api/leave.ts
+  exitVacationOverUseWarning, // Issue #447 (D-08) — Erweiterung, additive; the one exit-year over-use warning string, consumed by platform/api/employees.ts and absence/api/leave.ts
+  REGULAR_ENTITLEMENT_REASON_EXIT, // Issue #447 (D-07) — the matching audit reason
 } from "./leave-days";
 export { checkJArbSchG } from "./jarbschg";
 export { buildSlotOverrideHierarchy, resolveBsTagSlot } from "./bs-slot-resolver";

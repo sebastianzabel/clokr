@@ -21,9 +21,9 @@ import { preserveCarryOverDeadline } from "./illness-carryover-guard"; // Phase 
 import { getActiveLeaveOverlapping } from "./facade/leave-requests"; // Phase 430 (D-08) — this file is INSIDE contexts/absence, no boundary crossing
 import type { LeaveEntitlement } from "@clokr/db";
 import { computeRegularVacationDays } from "./vacation-calc";
-import { ensureVacationEntitlementForYear } from "./facade/entitlements";
+import { ensureVacationEntitlementForYear, getVacationEntitlement } from "./facade/entitlements"; // getVacationEntitlement: Issue #447 (D-07) — A11, tenant-scoped, never creates
 import { getLeaveTypeByCode } from "./facade/leave-types";
-import { writeEntitlementAudit } from "./entitlement-audit"; // Issue #445
+import { writeEntitlementAudit, type EntitlementAuditEntry } from "./entitlement-audit"; // Issue #445
 import { listConfirmedSection9CreditsByRequest } from "./section9-credit-days"; // Issue #445 (D-10)
 import { EFFECTIVE_LEAVE_STATUSES } from "./effective-leave-statuses"; // Issue #446 (D-01)
 
@@ -593,6 +593,9 @@ export const REGULAR_ENTITLEMENT_REASON_SELF_HEAL =
 /** D-06 — audit reason for a carriedOverDays change written by recalculateCarryOver() /
  * autoCarryOver(). */
 export const CARRY_OVER_RECALC_REASON = "Übertrag neu berechnet";
+/** Issue #447 (D-07) — audit reason for an exit-year VACATION row recomputed by
+ * {@link syncExitYearVacationEntitlement} to its § 5 BUrlG Teilurlaub value. */
+export const REGULAR_ENTITLEMENT_REASON_EXIT = "Austritt — anteiliger Anspruch (§ 5 BUrlG)";
 
 /**
  * Compares two day counts on 2-decimal rounding — the same precision `LeaveEntitlement.
@@ -694,24 +697,25 @@ export async function resolveRegularVacationDays(
 }
 
 /**
- * Issue #445 (D-05) — a VACATION `LeaveEntitlement` row is a *zero placeholder* when `totalDays`
- * is 0, it was never auto-calculated, AND no human/API write ever set `totalDays` on it: no
- * AuditLog row of action CREATE or UPDATE for this entity/id has a `newValue` whose `totalDays`
- * is set while its `isAutoCalculated` is not `true` (PUT /settings/vacation always audits `newValue: body`
- * with `totalDays` — see leave-settings.ts). Idempotent precondition for
- * {@link ensureRegularVacationEntitlement}'s heal branch.
+ * Issue #447 (D-14) — the ONE human-write detection for a `LeaveEntitlement` row: walks its
+ * AuditLog and returns `true` when any CREATE/UPDATE entry's `newValue` sets `totalDays` while
+ * `isAutoCalculated` is not `true` (PUT `/settings/vacation` always audits `newValue: body` with
+ * `totalDays` — see leave-settings.ts — and that write never sets `isAutoCalculated`, so the
+ * column itself is NOT a reliable signal: it stays whatever it was before the human PUT,
+ * including `true` on a row that started out machine-calculated). Extracted out of
+ * {@link isZeroVacationPlaceholder} (Issue #445) so both it and
+ * {@link syncExitYearVacationEntitlement} (Issue #447, D-07) share ONE detector.
  */
-export async function isZeroVacationPlaceholder(
-  db: DbClient,
-  row: { id: string; totalDays: unknown; isAutoCalculated: boolean },
-): Promise<boolean> {
-  if (Number(row.totalDays) !== 0 || row.isAutoCalculated) return false;
-
+export async function hasHumanVacationWrite(db: DbClient, entitlementId: string): Promise<boolean> {
   const audits = await db.auditLog.findMany({
-    where: { entity: "LeaveEntitlement", entityId: row.id, action: { in: ["CREATE", "UPDATE"] } },
+    where: {
+      entity: "LeaveEntitlement",
+      entityId: entitlementId,
+      action: { in: ["CREATE", "UPDATE"] },
+    },
     select: { newValue: true },
   });
-  const hasHumanWrite = audits.some((a) => {
+  return audits.some((a) => {
     const value = a.newValue;
     if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
     const record = value as Record<string, unknown>;
@@ -721,7 +725,74 @@ export async function isZeroVacationPlaceholder(
       record.isAutoCalculated !== true
     );
   });
-  return !hasHumanWrite;
+}
+
+/**
+ * Issue #445 (D-05) — a VACATION `LeaveEntitlement` row is a *zero placeholder* when `totalDays`
+ * is 0, it was never auto-calculated, AND no human/API write ever set `totalDays` on it (the
+ * {@link hasHumanVacationWrite} audit walk, Issue #447 D-14). Idempotent precondition for
+ * {@link ensureRegularVacationEntitlement}'s heal branch.
+ */
+export async function isZeroVacationPlaceholder(
+  db: DbClient,
+  row: { id: string; totalDays: unknown; isAutoCalculated: boolean },
+): Promise<boolean> {
+  if (Number(row.totalDays) !== 0 || row.isAutoCalculated) return false;
+  return !(await hasHumanVacationWrite(db, row.id));
+}
+
+/**
+ * Issue #447 (D-07/D-14) — recomputes the exit-year VACATION `LeaveEntitlement` row for
+ * `employeeId`/`year` to its § 5 BUrlG value, unless a human ever wrote `totalDays` on it
+ * ({@link hasHumanVacationWrite}) or `year` is before the current calendar year (persisted
+ * exit-year values are never changed for past years — Revisionssicherheit, CLAUDE.md). This is
+ * the invariant the booking check (D-06) trusts: by the time `POST /leave/requests` or
+ * `GET /leave/entitlements` reads the row, it already carries the correct Teilurlaub. Never
+ * creates a row — creation stays with {@link ensureRegularVacationEntitlement}. Every actual
+ * change is audited through `audit` (default: the system audit {@link writeEntitlementAudit}
+ * writes; callers inside a request — platform/api/employees.ts — pass one that attributes the
+ * acting user instead, ADR 0002 Entscheidung 10).
+ */
+export async function syncExitYearVacationEntitlement(
+  db: DbClient,
+  employeeId: string,
+  tenantId: string,
+  year: number,
+  audit: (entry: EntitlementAuditEntry) => Promise<void> = (entry) =>
+    writeEntitlementAudit(db, entry),
+): Promise<{ changed: boolean; entitlement: LeaveEntitlement | null }> {
+  const lookup = await getVacationEntitlement(db, employeeId, tenantId, year);
+  const existing = lookup?.entitlement ?? null;
+  if (!existing) return { changed: false, entitlement: null };
+  // D-07: never changes a past year's persisted value.
+  if (year < new Date().getUTCFullYear()) return { changed: false, entitlement: existing };
+  // D-14: a human write (even behind a stale isAutoCalculated=true column) is never overwritten.
+  if (await hasHumanVacationWrite(db, existing.id))
+    return { changed: false, entitlement: existing };
+
+  const target = await resolveRegularVacationDays(db, employeeId, tenantId, year);
+  if (!daysDiffer(Number(existing.totalDays), target))
+    return { changed: false, entitlement: existing };
+
+  const oldTotalDays = Number(existing.totalDays);
+  const { count } = await db.leaveEntitlement.updateMany({
+    where: { id: existing.id, totalDays: oldTotalDays },
+    data: { totalDays: target, isAutoCalculated: true },
+  });
+  const refreshed = await db.leaveEntitlement.findUniqueOrThrow({ where: { id: existing.id } });
+  if (count === 1) {
+    await audit({
+      action: "UPDATE",
+      entityId: existing.id,
+      oldValue: { totalDays: oldTotalDays },
+      newValue: {
+        totalDays: target,
+        isAutoCalculated: true,
+        reason: REGULAR_ENTITLEMENT_REASON_EXIT,
+      },
+    });
+  }
+  return { changed: count === 1, entitlement: refreshed };
 }
 
 export type RegularEntitlementResult = {
@@ -864,6 +935,26 @@ export async function ensureRegularVacationEntitlement(
         return { entitlement, created: false, healed: count === 1, needsReview: false };
       }
     }
+    // Issue #447 (D-06) — the zero heal above did not run (either the row was never a zero
+    // placeholder, or it was but `target` came out 0): this call still precedes every
+    // availability check, so for an exited employee's exit-year row it must carry § 5 Teilurlaub
+    // here too — also for exits written before this change or by a path other than the employee
+    // endpoints (PATCH/deactivate/reactivate).
+    const employeeForExit = await db.employee.findFirst({
+      where: { id: employeeId, tenantId },
+      select: { exitDate: true },
+    });
+    if (employeeForExit?.exitDate && employeeForExit.exitDate.getUTCFullYear() === year) {
+      const synced = await syncExitYearVacationEntitlement(db, employeeId, tenantId, year);
+      if (synced.entitlement) {
+        return {
+          entitlement: synced.entitlement,
+          created: false,
+          healed: synced.changed,
+          needsReview: false,
+        };
+      }
+    }
     return { entitlement: existing, created: false, healed: false, needsReview: false };
   }
 
@@ -917,6 +1008,41 @@ export function vacationEntitlementWarning(row: {
   return row.leaveTypeCode === "VACATION" && row.needsReview === true
     ? `Urlaubsanspruch für ${row.year} fehlt – bitte prüfen`
     : null;
+}
+
+/**
+ * Issue #447 (D-08) — the ONE place the exit-year over-use warning string is built. Both
+ * `platform/api/employees.ts` (PATCH `/employees/:id`) and `absence/api/leave.ts` (the approval
+ * in PATCH `/leave/requests/:id/review`, GET `/leave/entitlements`) call this instead of building
+ * the string themselves — following the exact precedent {@link vacationEntitlementWarning} set.
+ * Deliberately neutral and legally correct: already-granted leave can never be reclaimed (§ 5
+ * Abs. 3 BUrlG), so the message states the fact without suggesting a reclaim — unlike the old
+ * duplicated text it replaces at both sites. Pure — no DB access.
+ */
+export function exitVacationOverUseWarning(params: {
+  employeeName: string;
+  exitDate: Date | null;
+  row: { year: number; totalDays: unknown; carriedOverDays: unknown; usedDays: unknown };
+}): { used: number; entitlement: number; message: string } | null {
+  const { employeeName, exitDate, row } = params;
+  if (!exitDate || exitDate.getUTCFullYear() !== row.year) return null;
+
+  const entitled = Number(row.totalDays) + Number(row.carriedOverDays);
+  const used = Number(row.usedDays);
+  // 2-decimal comparison (same precision as daysDiffer) — used must actually EXCEED the
+  // entitlement, not merely differ from it.
+  if (Math.round(used * 100) <= Math.round(entitled * 100)) return null;
+
+  const usedText = used.toLocaleString("de-DE", { maximumFractionDigits: 2 });
+  const entitledText = entitled.toLocaleString("de-DE", { maximumFractionDigits: 2 });
+  return {
+    used,
+    entitlement: entitled,
+    message:
+      `Hinweis: ${employeeName} hat mehr Urlaub genommen oder genehmigt (${usedText} Tage) ` +
+      `als anteilig zusteht (${entitledText} Tage). Bereits gewährter Urlaub kann nach § 5 Abs. 3 BUrlG ` +
+      `nicht zurückgefordert werden.`,
+  };
 }
 
 // ── Issue #445 — chronological cross-year attribution (D-08/D-09) ──────────────────────────────
