@@ -186,6 +186,13 @@ describe("updateOvertimeAccount — MONTHLY_HOURS multi-month pro-rata + SHIFT_B
         fridayHours: 0,
         saturdayHours: 0,
         sundayHours: 0,
+        // Issue #433 (D-05): the Ø-Methode day-membership test for MONTHLY_HOURS reads
+        // `workDays`, never `{day}Hours` — this fixture's Mo+Tu contract intent must be
+        // stated here (Phase 95b D-01 forbids rewriting STORED rows elsewhere; this is a
+        // test fixture declaring its own contract, not a stored row being corrected).
+        // Without it, D-05 would fall back to the DB default [1,2,3,4,5] (Mo-Fr) and
+        // diverge from `countMondayTuesdayWorkdays`/`expectedMinutesMonthlyMonTue` above.
+        workDays: [1, 2],
         validFrom: MONTHLY_HIRE_DATE,
       },
     });
