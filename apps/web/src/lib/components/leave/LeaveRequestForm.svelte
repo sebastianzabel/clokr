@@ -42,6 +42,7 @@
   } from "$lib/leave/vacation-balance";
   import { deriveVacationSummary } from "$lib/leave/vacation-summary";
   import { SICK_TYPE_CODES } from "$lib/leave/leave-kind";
+  import { halfDayRangeError, endDateForHalfDay } from "$lib/leave/half-day";
   import {
     LEAVE_TYPE_OPTIONS,
     NEUTRAL_CHIP_LABEL,
@@ -225,6 +226,10 @@
   let vacSummary = $derived(deriveVacationSummary(vacationBalance, 0));
   let vacRemaining = $derived(vacSummary.remaining);
   let vacAfter = $derived(vacRemaining !== null ? vacRemaining - effectiveDays : null);
+  // Issue #449 (D-4): non-null whenever halfDay is ticked and the dates differ — true both for a
+  // user-driven edit mid-flight and for a loaded legacy multi-day half-day request (which this
+  // component never silently rewrites on open, see the editingRequest $effect below).
+  let halfDayRangeErrorText = $derived(halfDayRangeError(formHalfDay, formStart, formEnd));
 
   // ── Loaders ──────────────────────────────────────────────────────────────
   async function loadSpecialLeaveRules() {
@@ -399,10 +404,28 @@
     if (SICK_TYPE_CODES.has(formType)) formHalfDay = false;
   });
 
+  // ── Half day = one date (Issue #449, D-4) ───────────────────────────────────
+  // Sync runs ONLY on these two user actions (function bindings below), never reactively on
+  // load — an $effect watching formStart/formHalfDay would also fire when `editingRequest`
+  // populates them, silently collapsing a loaded legacy multi-day half-day request's end date.
+  function setFormStart(value: string) {
+    formStart = value;
+    formEnd = endDateForHalfDay(formHalfDay, formStart, formEnd);
+  }
+
+  function setFormHalfDay(value: boolean) {
+    formHalfDay = value;
+    formEnd = endDateForHalfDay(formHalfDay, formStart, formEnd);
+  }
+
   // ── Submit / mutation ────────────────────────────────────────────────────
   async function submitRequest() {
     if (!employeeId) {
       formError = "Bitte einen Mitarbeiter auswählen";
+      return;
+    }
+    if (halfDayRangeErrorText) {
+      formError = halfDayRangeErrorText;
       return;
     }
     if (editingRequest) {
@@ -492,8 +515,10 @@
       await onSaved();
       return true;
     } catch (e: unknown) {
+      // Issue #449 (D-1): prefer the thrown ApiError's own message — it already carries
+      // "category: detail" (error-message.ts) — over the bare category in `.data.error`.
       const apiErr = e as { data?: { error?: string }; message?: string };
-      formError = apiErr?.data?.error ?? (e instanceof Error ? e.message : "Fehler");
+      formError = (e instanceof Error && e.message) || apiErr?.data?.error || "Fehler";
       // On the collision-confirm path the form Modal is already closed, so the inline error is
       // not visible — surface it via a toast instead.
       if (!open) toasts.error(formError);
@@ -571,7 +596,7 @@
           id="f-start"
           data-testid="leave-form-from"
           type="date"
-          bind:value={formStart}
+          bind:value={() => formStart, setFormStart}
           required
           class="form-input"
         />
@@ -586,8 +611,14 @@
           bind:value={formEnd}
           required
           min={formStart}
+          disabled={formHalfDay}
           class="form-input"
         />
+        {#if halfDayRangeErrorText}
+          <p class="form-hint" data-testid="leave-form-half-day-range-hint">
+            {halfDayRangeErrorText}
+          </p>
+        {/if}
       </div>
 
       {#if !employeeId}
@@ -805,7 +836,7 @@
           <input
             type="checkbox"
             data-testid="leave-form-half-day"
-            bind:checked={formHalfDay}
+            bind:checked={() => formHalfDay, setFormHalfDay}
             disabled={SICK_TYPE_CODES.has(formType)}
             class="toggle-cb"
           />

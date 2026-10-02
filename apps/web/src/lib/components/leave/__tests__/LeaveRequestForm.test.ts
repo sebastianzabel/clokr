@@ -359,7 +359,11 @@ describe("LeaveRequestForm", () => {
       await fireEvent.click(screen.getByTestId("leave-form-submit"));
 
       await waitFor(() => expect(apiPost).toHaveBeenCalledTimes(1));
-      const payload = apiPost.mock.calls[0][1] as { startDate: string; endDate: string };
+      const payload = apiPost.mock.calls[0][1] as {
+        startDate: string;
+        endDate: string;
+        halfDay: boolean;
+      };
       expect(payload.startDate).toBe(payload.endDate);
       expect(payload.halfDay).toBe(true);
     });
