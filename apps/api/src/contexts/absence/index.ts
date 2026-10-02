@@ -108,6 +108,16 @@ export type {
   EnsureVacationEntitlementAuditFn, // Issue #416
 } from "./facade/entitlements";
 
+// Issue #448 (D-01/D-02) — the BS-vs-leave rule module; consumed through this index only
+// (plan 03 wires the display/correction build on top of resolveLeaveDays' widened return).
+export {
+  BS_ONLY_LEAVE_ERROR,
+  BS_ONLY_LEAVE_ERROR_CODE,
+  BS_NO_LEAVE_LABEL,
+  vocationalSchoolDisplacesLeave,
+  vocationalSchoolDateSet,
+} from "./bs-leave-days";
+
 // ── EmployeeVocationalSchoolPattern (plan 11, A20/A21a/A21b) ─────────────────────────────────
 export {
   getActiveBsPattern,

@@ -2037,7 +2037,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       // Phase 107 (D-09): roster-aware recompute of this still-PENDING request's own edit.
       // Issue #436 (D-04/D-09): excludes itself (self-exclusion, Pitfall 1) — the OLD dates of
       // this very request must never shadow its own NEW price.
-      const { days } = await resolveLeaveDays(
+      const { days, vocationalSchoolOnly: editVocationalSchoolOnly } = await resolveLeaveDays(
         app.prisma,
         existing.employeeId,
         tenantId,
@@ -2047,6 +2047,11 @@ export async function leaveRoutes(app: FastifyInstance) {
         holidays,
         { mode: "request", leaveTypeCode: existingTypeCode, excludeRequestId: id },
       );
+
+      // Issue #448 (D-02): one rule on every write path — before any write, mirroring POST.
+      if (editVocationalSchoolOnly) {
+        return reply.code(400).send({ error: BS_ONLY_LEAVE_ERROR, code: BS_ONLY_LEAVE_ERROR_CODE });
+      }
 
       const updated = await app.prisma.leaveRequest.update({
         where: { id },
@@ -2266,7 +2271,11 @@ export async function leaveRoutes(app: FastifyInstance) {
       // applicable" state with a misleading `false`).
       // Issue #436 (D-04/D-09): priced against the corrected (NEW) leave type, excluding this
       // request itself.
-      const { days, provisional: correctionProvisional } = await resolveLeaveDays(
+      const {
+        days,
+        provisional: correctionProvisional,
+        vocationalSchoolOnly: correctVocationalSchoolOnly,
+      } = await resolveLeaveDays(
         app.prisma,
         existing.employeeId,
         tenantId,
@@ -2276,6 +2285,13 @@ export async function leaveRoutes(app: FastifyInstance) {
         holidays,
         { mode: "request", leaveTypeCode: newType, excludeRequestId: existing.id },
       );
+
+      // Issue #448 (D-02): one rule on every write path — before the transaction opens, same
+      // guard shape as the delta-lock 409 above.
+      if (correctVocationalSchoolOnly) {
+        return reply.code(400).send({ error: BS_ONLY_LEAVE_ERROR, code: BS_ONLY_LEAVE_ERROR_CODE });
+      }
+
       const wsForCorrection = await app.prisma.workSchedule.findFirst({
         where: { employeeId: existing.employeeId },
         orderBy: { validFrom: "desc" },
