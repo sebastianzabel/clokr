@@ -42,6 +42,11 @@ export interface VacationBalance {
   carryOver: number;
   carryOverDeadline: string | null;
   section9Movements: Section9Movement[];
+  // Issue #447 (D-08): the neutral § 5 Abs. 3 BUrlG exit-year over-use hint. Built ONCE on the
+  // server (exitVacationOverUseWarning, apps/api/.../absence/leave-days.ts) — this is just the
+  // message string extracted from the row, never a client-side re-derivation of the text or the
+  // underlying pro-rata figure. `null` (never `undefined`) when there is nothing to show.
+  exitOverUseWarningMessage: string | null;
 }
 
 /** Shape of one row of `GET /leave/entitlements/:employeeId` for the VACATION type. */
@@ -59,6 +64,9 @@ export interface VacationEntitlementRow {
   // Phase 107-07: absent on any pre-107-07 response shape (older cached fixtures, other
   // leave types) — defaulted to 0 below, never left undefined.
   provisionalUsedDays?: number;
+  // Issue #447 (D-08): absent on a non-VACATION row or pre-#447 cached shape; `null` when the
+  // server decided there is nothing to warn about for this row.
+  exitOverUseWarning?: { used: number; entitlement: number; message: string } | null;
 }
 
 /**
@@ -81,6 +89,7 @@ export function mapVacationBalance(
     carryOver: Number(vac.effectiveCarryOverDays ?? vac.carriedOverDays),
     carryOverDeadline: vac.carryOverDeadline,
     section9Movements: vac.section9Movements ?? [],
+    exitOverUseWarningMessage: vac.exitOverUseWarning?.message ?? null,
   };
 }
 

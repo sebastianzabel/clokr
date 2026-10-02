@@ -80,8 +80,9 @@ function fnBody(marker: string): string {
 }
 
 /** Build a `VacationBalance` from the four numbers that actually drive the arithmetic.
- *  `provisionalUsed`, `carryOverDeadline` and `section9Movements` play no part in any of the
- *  eight formulas — they are carried only so the fixture is a real `VacationBalance`. */
+ *  `provisionalUsed`, `carryOverDeadline`, `section9Movements` and `exitOverUseWarningMessage`
+ *  play no part in any of the eight formulas — they are carried only so the fixture is a real
+ *  `VacationBalance`. */
 function balance(total: number, used: number, carryOver: number): VacationBalance {
   return {
     total,
@@ -90,6 +91,7 @@ function balance(total: number, used: number, carryOver: number): VacationBalanc
     carryOver,
     carryOverDeadline: null,
     section9Movements: [],
+    exitOverUseWarningMessage: null,
   };
 }
 

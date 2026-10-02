@@ -453,8 +453,6 @@
    * heading „Urlaubsjahr 2025" were the 2026 figures. A forgotten argument must be a compile
    * error, never a silent fallback to „heute" — that fallback IS the bug.
    *
-   * `viewedExitDate` stays here (D-06): the Austrittsdatum is year-independent, loading it
-   * alongside is harmless, and splitting it would churn a file Phase 114 has only just touched.
    */
   async function loadVacationSummary(year: number) {
     vacSummaryLoading = true;
@@ -469,17 +467,15 @@
       return;
     }
     try {
-      const [entitlements, empData] = await Promise.all([
-        api.get<VacationEntitlementRow[]>(`/leave/entitlements/${userId}?year=${year}`),
-        api.get<{ exitDate: string | null }>(`/employees/${userId}`).catch(() => null),
-      ]);
+      const entitlements = await api.get<VacationEntitlementRow[]>(
+        `/leave/entitlements/${userId}?year=${year}`,
+      );
       // Paging the selector twice quickly leaves two responses in flight. Dropping the
       // superseded one is what stops the numbers and the heading from disagreeing again —
       // last-response-wins would reintroduce this very bug on a fast double-click.
       if (year !== calYear) return;
       const vac = entitlements.find((e) => e.typeCode === "VACATION");
       vacationBalance = mapVacationBalance(vac);
-      viewedExitDate = empData?.exitDate ?? null;
     } catch {
       /* silent */
     } finally {
@@ -593,9 +589,6 @@
     return days === 1 ? "1 Tag" : `${days} Tage`;
   }
 
-  // Phase 114: `vacSummary.remaining` is `number | null` — the null branch is what makes the
-  // Urlaubskonto-Karte render "–" instead of a fake "0". Do NOT add `?? 0`.
-  let vacRemaining = $derived(vacSummary.remaining);
   // ── Lane assignment: stable gantt-style rows across calendar days ────────
   // Returns a Map<absenceId, laneIndex> so that a multi-day absence always
   // occupies the same vertical row in every day cell it spans.
@@ -696,33 +689,13 @@
   let vacSummaryCarryOverRemaining = $derived(vacSummary.carryOverRemaining);
   let vacSummaryLeft = $derived(vacSummary.left);
   let showVacSummary = $state(true);
-
-  // ── Austrittsdatum für pro-rata Warnung ──────────────────────────────────
-  let viewedExitDate = $state<string | null>(null);
-
-  // Pro-rata Warnung: erscheint wenn Mitarbeiter exitDate hat und used > pro-rata Anspruch
-  // Inline-Berechnung (Keep in sync with apps/api/src/contexts/absence/vacation-calc.ts::calculateProRataVacation)
-  let proRataWarning = $derived.by(() => {
-    if (!viewedExitDate) return null;
-    const exit = new Date(viewedExitDate);
-    const exitYear = exit.getFullYear();
-    const currentYear = new Date().getFullYear();
-    if (exitYear !== currentYear) return null;
-    const base = vacSummaryTotal;
-    if (base <= 0) return null;
-    // Count volle Beschäftigungsmonate: month is full only if exit >= last day of that month
-    let monthsWorked = 0;
-    for (let month = 0; month < 12; month++) {
-      const lastDayOfMonth = new Date(exitYear, month + 1, 0);
-      if (exit >= lastDayOfMonth) monthsWorked++;
-    }
-    monthsWorked = Math.min(monthsWorked, 12);
-    const proRata = Math.ceil(((base * monthsWorked) / 12) * 2) / 2;
-    if (vacSummaryUsed > proRata) {
-      return { used: vacSummaryUsed, entitlement: proRata };
-    }
-    return null;
-  });
+  // Phase 114: `vacSummary.remaining` is `number | null` — the null branch is what makes the
+  // Urlaubskonto-Karte render "–" instead of a fake "0". Do NOT add `?? 0`. Declared here
+  // (after `vacSummary`, not where the template renders it) — this is a pre-existing
+  // declaration-order finding (unrelated to Issue #447) surfaced by this plan's svelte-check
+  // gate: `$derived` is lazily evaluated at runtime regardless of script position, but the
+  // static checker still flags a forward reference as "used before declaration".
+  let vacRemaining = $derived(vacSummary.remaining);
 
   // ── iCal-Download ────────────────────────────────────────────────────────
   let icalDownloading = $state(false);
@@ -916,12 +889,13 @@
     }}
   />
 
-  <!-- ── Übergreifend: Pro-rata Warnung + Urlaubsübersicht (beide Tabs) ──────── -->
-  {#if proRataWarning}
+  <!-- ── Übergreifend: Austritts-Hinweis (Server, § 5 Abs. 3 BUrlG) + Urlaubsübersicht (beide
+       Tabs) ──────── Issue #447 (D-06/D-08): the hint text is built once on the server
+       (exitVacationOverUseWarning) and rendered verbatim here — no client-side pro-rata
+       re-calculation, no reclaim wording. -->
+  {#if vacationBalance?.exitOverUseWarningMessage}
     <div class="alert alert-warning card-animate" role="status">
-      Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt ({proRataWarning.used} Tage) als
-      ihm anteilig zusteht ({proRataWarning.entitlement} Tage). Bitte prüfen Sie, ob eine Rückforderung
-      nötig ist.
+      {vacationBalance.exitOverUseWarningMessage}
     </div>
   {/if}
   <!-- Phase 113 (issue #116) — the destination explanation the „Attest"-Hinweis deep-links
