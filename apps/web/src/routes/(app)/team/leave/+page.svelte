@@ -30,6 +30,7 @@
   // Phase 415 (#415): the shared create/edit dialog — replaces this page's own copy of the
   // create modal, its collision-confirm flow, and the mutation itself.
   import LeaveRequestForm from "$lib/components/leave/LeaveRequestForm.svelte";
+  import { halfDayRangeError, endDateForHalfDay } from "$lib/leave/half-day"; // Issue #449 (D-4)
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -96,6 +97,10 @@
   let correctReason = $state("");
   let correctSaving = $state(false);
   let correctError = $state("");
+  // Issue #449 (D-4): the effective half-day flag the modal and submitCorrection both reason
+  // about — SICK types never carry a half day (partial incapacity to work does not exist as a
+  // legal concept), independent of whatever correctHalfDay itself currently holds.
+  let correctHalfDayEffective = $derived(correctHalfDay && !SICK_CODES.includes(correctType));
 
   // ── Attest-Nachtrag (Phase 201 / Issue #201) ──────────────────────────────
   // A separate action, NOT a field in the Korrigieren-Modal: PATCH /correct carries the
@@ -549,15 +554,19 @@
   }
 
   // ── Korrektur-Modal (EDIT-05) ─────────────────────────────────────────────
-  // Manager korrigiert einen bereits GENEHMIGTEN Antrag (Zeitraum/Typ/halbtags).
-  // Wire-Kontrakt aus 94-01: PATCH /leave/requests/:id/correct. Server-Guards
-  // (requireRole + APPROVED + Delta-Lock) sind maßgeblich — die UI umgeht sie nie.
+  // Manager corrects an already-APPROVED request (period/type/half-day). Wire
+  // contract from 94-01: PATCH /leave/requests/:id/correct. Server guards
+  // (requireRole + APPROVED + delta-lock) are authoritative — the UI never bypasses them.
   function openCorrect(req: LeaveRequest) {
     correctModal = req;
     correctStart = req.startDate;
+    // Issue #449 (D-4): copies the stored end date AS-IS, with no half-day sync of any kind — a
+    // loaded legacy multi-day half-day request must not be silently collapsed on open. Correcting
+    // it runs through the same submit guard below, which refuses with the same message the
+    // employee-facing form shows.
     correctEnd = req.endDate;
     correctType = req.typeCode;
-    // Halbe Kranktage gibt es nicht — bei Krank-Typen halbtags erzwungen aus.
+    // Half-day sick leave does not exist — forced off for sick types.
     correctHalfDay = SICK_CODES.includes(req.typeCode) ? false : req.halfDay;
     correctNote = req.note ?? "";
     correctReason = "";
@@ -570,16 +579,36 @@
     correctModal = null;
   }
 
-  // halbtags bei Krank-Typen immer zurücksetzen (teilweise AU gibt es nicht).
+  // Issue #449 (D-4): sync runs ONLY on these two user actions, never reactively on load/type
+  // change — see openCorrect's own comment for why a reactive effect would be wrong here.
+  function setCorrectStart(value: string) {
+    correctStart = value;
+    correctEnd = endDateForHalfDay(correctHalfDayEffective, correctStart, correctEnd);
+  }
+
+  function setCorrectHalfDay(value: boolean) {
+    correctHalfDay = value;
+    correctEnd = endDateForHalfDay(correctHalfDayEffective, correctStart, correctEnd);
+  }
+
+  // Half-day is always reset for sick types (partial incapacity to work does not exist).
   $effect(() => {
     if (SICK_CODES.includes(correctType)) correctHalfDay = false;
   });
 
   async function submitCorrection() {
     if (!correctModal) return;
-    // Client-Vorabprüfung (Server ist maßgeblich): Enddatum >= Startdatum.
+    // Client-side pre-check (the server is authoritative): end date >= start date.
     if (correctStart > correctEnd) {
       correctError = "Enddatum muss nach Startdatum liegen";
+      return;
+    }
+    // Issue #449 (D-1/D-4): same single-date rule and message the API enforces on all three
+    // write paths — checked client-side before the mandatory-reason check below so a legacy
+    // multi-day half-day request can never be re-submitted unchanged.
+    const halfDayError = halfDayRangeError(correctHalfDayEffective, correctStart, correctEnd);
+    if (halfDayError) {
+      correctError = halfDayError;
       return;
     }
     // Quick 260824-cjd: Begründung ist Pflicht (server-seitig Zod-level erzwungen) —
@@ -594,7 +623,7 @@
       await api.patch(`/leave/requests/${correctModal.id}/correct`, {
         startDate: correctStart,
         endDate: correctEnd,
-        halfDay: SICK_CODES.includes(correctType) ? false : correctHalfDay,
+        halfDay: correctHalfDayEffective,
         type: correctType,
         note: correctNote || null,
         reason: correctReason.trim(),
@@ -603,8 +632,8 @@
       await Promise.all([loadData(), loadCalendar()]);
       toasts.success("Antrag korrigiert");
     } catch (e: unknown) {
-      // Delta-Lock 409 ("Gesperrter Monat — Korrektur nicht möglich") und
-      // Validierungs-400 landen hier und bleiben im offenen Modal sichtbar.
+      // A delta-lock 409 ("Gesperrter Monat — Korrektur nicht möglich") or a validation 400
+      // lands here and stays visible in the open modal.
       correctError = e instanceof Error ? e.message : "Fehler";
     } finally {
       correctSaving = false;
@@ -1551,7 +1580,7 @@
             data-testid="leave-correct-modal-start"
             type="date"
             class="form-input"
-            bind:value={correctStart}
+            bind:value={() => correctStart, setCorrectStart}
           />
         </div>
         <div class="form-group">
@@ -1562,6 +1591,7 @@
             type="date"
             class="form-input"
             bind:value={correctEnd}
+            disabled={correctHalfDayEffective}
           />
         </div>
       </div>
@@ -1570,13 +1600,17 @@
           <input
             type="checkbox"
             data-testid="leave-correct-modal-halfday"
-            bind:checked={correctHalfDay}
+            bind:checked={() => correctHalfDay, setCorrectHalfDay}
             disabled={SICK_CODES.includes(correctType)}
           />
           Halber Tag
         </label>
         {#if SICK_CODES.includes(correctType)}
           <p class="form-hint">Halbe Kranktage sind nicht zulässig</p>
+        {:else if halfDayRangeError(correctHalfDayEffective, correctStart, correctEnd)}
+          <p class="form-hint" data-testid="leave-correct-modal-half-day-range-hint">
+            {halfDayRangeError(correctHalfDayEffective, correctStart, correctEnd)}
+          </p>
         {/if}
       </div>
       <div class="form-group">
