@@ -425,7 +425,7 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
       const hireYear = year + 12;
       // Jul 1 — on/before the G9 Wartezeit cutoff: full value, no pro-rata (was 9 — 18 × 6/12
       // pro-rated — before the Ergänzung).
-      const hireDate = new Date(hireYear, 6, 1);
+      const hireDate = new Date(Date.UTC(hireYear, 6, 1));
       const result = await ensureVacationEntitlementForYear(
         app.prisma,
         data.employee.id,
