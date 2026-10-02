@@ -209,6 +209,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/plugins/carryover-warning.ts": "abwesenheiten", // BUrlG carry-over expiry reminders over LeaveEntitlement
   "src/contexts/absence/plugins/vocational-school-generator.ts": "abwesenheiten", // cron wrapper around utils/vocational-school-generator.ts's Absence generation
   "src/contexts/absence/bs-leave-days.ts": "abwesenheiten", // Issue #448 — BS-vs-leave rule, reads Absence through the A6 facade (getVocationalSchoolDays)
+  "src/contexts/absence/bs-leave-correction.ts": "abwesenheiten", // Issue #448 (D-04) — writes LeaveRequest/LeaveEntitlement primarily; notification.create is a side effect
   "src/contexts/absence/bs-slot-resolver.ts": "abwesenheiten", // Berufsschule (VOCATIONAL_SCHOOL Absence) time-slot resolution
   "src/contexts/absence/closed-month-guard.ts": "abwesenheiten", // Issue #446 (D-07) — closed-month 409 guard for leave transitions over isMonthClosed
   "src/contexts/absence/correction-lock.ts": "abwesenheiten", // Phase 94 manager LeaveRequest correction guard

@@ -820,26 +820,27 @@ Schichtplanungs-Routen. Keine neue Permission; die Deduplizierung (kein Doppel-N
 noch nicht bestätigte Woche) läuft rein über eine Abfrage gegen das bestehende `Notification`-Modell,
 ohne neue Tabelle.
 
-| Stelle                                                                       | Benachrichtigung              | heute | Permission               | Reichweite |
-| ---------------------------------------------------------------------------- | ----------------------------- | ----- | ------------------------ | ---------- |
-| `contexts/absence/api/leave.ts:760`                                          | `LEAVE_REQUEST`               | A, M  | `leave-request:approve`  | ZUGEWIESEN |
-| `contexts/absence/api/leave.ts:1416`                                         | `SECTION9_AU_PENDING_MANAGER` | A, M  | `section9:decide`        | ZUGEWIESEN |
-| `contexts/scheduling/shift-leave-conflict-notify.ts:91`                      | `SHIFT_LEAVE_CONFLICT`        | A, M  | `shift:plan`             | ZUGEWIESEN |
-| `contexts/scheduling/shift-week-capacity.ts:136`                             | `SHIFT_WEEK_OVERBOOKED`       | A, M  | `shift:plan`             | ZUGEWIESEN |
-| `contexts/absence/api/leave.ts:3455`                                         | `SECTION9_AU_PENDING_MANAGER` | A, M  | `section9:decide`        | ZUGEWIESEN |
-| `contexts/absence/vocational-school-generator.ts:897`                        | `SHIFT_BS_CLEANUP`            | A, M  | `shift:plan`             | ZUGEWIESEN |
-| `contexts/absence/plugins/carryover-warning.ts:124`                          | `CARRYOVER_EXPIRING`          | A     | `leave-config:manage`    | ZUGEWIESEN |
-| `contexts/working-time-account/plugins/auto-close-month.ts:133`              | `MONTH_CLOSE_BLOCKED`         | A, M  | `month-close:close`      | ZUGEWIESEN |
-| `contexts/working-time-account/plugins/deferred-month-close-reminder.ts:118` | `MONTH_CLOSE_DEFERRED`        | A, M  | `month-close:close`      | ZUGEWIESEN |
-| `contexts/time-tracking/plugins/attendance-checker.ts:175`                   | `MISSING_ENTRIES`             | A, M  | `team-overview:read`     | ZUGEWIESEN |
-| `contexts/time-tracking/plugins/attendance-checker.ts:308`                   | `OPEN_ENTRY_INVALIDATED`      | A, M  | `team-overview:read`     | ZUGEWIESEN |
-| `contexts/time-tracking/plugins/attendance-checker.ts:418`                   | `PENDING_LEAVE_REMINDER`      | A, M  | `leave-request:approve`  | ZUGEWIESEN |
-| `contexts/time-tracking/plugins/attendance-checker.ts:825`                   | `GAP_WARNING_MANAGER`         | A, M  | `team-overview:read`     | ZUGEWIESEN |
-| `contexts/time-tracking/api/time-entries.ts:1451`                            | `RETRO_ENTRY_REQUESTED`       | A, M  | `retro-request:approve`  | ZUGEWIESEN |
-| `contexts/time-tracking/api/time-entries.ts:1934`                            | `RETRO_ENTRY_UPDATED`         | A, M  | `retro-request:approve`  | ZUGEWIESEN |
-| `contexts/time-tracking/api/time-entries.ts:2289`                            | `BREAK_COMPLIANCE_ALERT`      | A, M  | `team-overview:read`     | ZUGEWIESEN |
-| `contexts/time-tracking/api/retro-entry-requests.ts:763`                     | `RETRO_ENTRY_WITHDRAWN`       | A, M  | `retro-request:approve`  | ZUGEWIESEN |
-| `contexts/platform/api/auth.ts:122`                                          | `ACCOUNT_LOCKED`              | A     | `employee:manage-access` | ZUGEWIESEN |
+| Stelle                                                                       | Benachrichtigung                                                           | heute | Permission               | Reichweite |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ----- | ------------------------ | ---------- |
+| `contexts/absence/api/leave.ts:760`                                          | `LEAVE_REQUEST`                                                            | A, M  | `leave-request:approve`  | ZUGEWIESEN |
+| `contexts/absence/api/leave.ts:1416`                                         | `SECTION9_AU_PENDING_MANAGER`                                              | A, M  | `section9:decide`        | ZUGEWIESEN |
+| `contexts/scheduling/shift-leave-conflict-notify.ts:91`                      | `SHIFT_LEAVE_CONFLICT`                                                     | A, M  | `shift:plan`             | ZUGEWIESEN |
+| `contexts/scheduling/shift-week-capacity.ts:136`                             | `SHIFT_WEEK_OVERBOOKED`                                                    | A, M  | `shift:plan`             | ZUGEWIESEN |
+| `contexts/absence/api/leave.ts:3455`                                         | `SECTION9_AU_PENDING_MANAGER`                                              | A, M  | `section9:decide`        | ZUGEWIESEN |
+| `contexts/absence/vocational-school-generator.ts:897`                        | `SHIFT_BS_CLEANUP`                                                         | A, M  | `shift:plan`             | ZUGEWIESEN |
+| `contexts/absence/plugins/carryover-warning.ts:124`                          | `CARRYOVER_EXPIRING`                                                       | A     | `leave-config:manage`    | ZUGEWIESEN |
+| `contexts/working-time-account/plugins/auto-close-month.ts:133`              | `MONTH_CLOSE_BLOCKED`                                                      | A, M  | `month-close:close`      | ZUGEWIESEN |
+| `contexts/working-time-account/plugins/deferred-month-close-reminder.ts:118` | `MONTH_CLOSE_DEFERRED`                                                     | A, M  | `month-close:close`      | ZUGEWIESEN |
+| `contexts/time-tracking/plugins/attendance-checker.ts:175`                   | `MISSING_ENTRIES`                                                          | A, M  | `team-overview:read`     | ZUGEWIESEN |
+| `contexts/time-tracking/plugins/attendance-checker.ts:308`                   | `OPEN_ENTRY_INVALIDATED`                                                   | A, M  | `team-overview:read`     | ZUGEWIESEN |
+| `contexts/time-tracking/plugins/attendance-checker.ts:418`                   | `PENDING_LEAVE_REMINDER`                                                   | A, M  | `leave-request:approve`  | ZUGEWIESEN |
+| `contexts/time-tracking/plugins/attendance-checker.ts:825`                   | `GAP_WARNING_MANAGER`                                                      | A, M  | `team-overview:read`     | ZUGEWIESEN |
+| `contexts/time-tracking/api/time-entries.ts:1451`                            | `RETRO_ENTRY_REQUESTED`                                                    | A, M  | `retro-request:approve`  | ZUGEWIESEN |
+| `contexts/time-tracking/api/time-entries.ts:1934`                            | `RETRO_ENTRY_UPDATED`                                                      | A, M  | `retro-request:approve`  | ZUGEWIESEN |
+| `contexts/time-tracking/api/time-entries.ts:2289`                            | `BREAK_COMPLIANCE_ALERT`                                                   | A, M  | `team-overview:read`     | ZUGEWIESEN |
+| `contexts/time-tracking/api/retro-entry-requests.ts:763`                     | `RETRO_ENTRY_WITHDRAWN`                                                    | A, M  | `retro-request:approve`  | ZUGEWIESEN |
+| `contexts/platform/api/auth.ts:122`                                          | `ACCOUNT_LOCKED`                                                           | A     | `employee:manage-access` | ZUGEWIESEN |
+| `contexts/absence/bs-leave-correction.ts:104`                                | `LEAVE_CORRECTED_VOCATIONAL_SCHOOL` (Fallback-Genehmiger, Issue #448 D-04) | A, M  | `leave-request:approve`  | ZUGEWIESEN |
 
 ## Nicht gezählte Treffer
 
