@@ -746,11 +746,20 @@ export type LeaveWeek = {
  * input (D-07, plan 429-02).
  * `holidays` — same UTC "YYYY-MM-DD" format as `countShiftBasedLeaveDays()`. The saldo side
  * passes an empty set (D-05) — SHIFT_BASED contract Soll is not holiday-reduced today.
+ *
+ * `usualWorkDays` (Phase 436, D-03) — the employee's stored "übliche Arbeitstage" Angabe
+ * (0=So..6=Sa), or `[]` when none is recorded. Threaded verbatim into the shared `weekLeaveDays`
+ * kernel: with an empty list every branch below is byte-identical to the pre-436 behaviour
+ * (D-05 equivalence); with a non-empty list a FRAGMENT week's union of requested full-day dates
+ * — and a half-day request's single date — only count when their UTC weekday is a member of the
+ * list, Sunday included on equal footing with any other weekday. A WHOLE week's detection and
+ * day-count are never filtered by this list (Pitfall 4 — see `weekLeaveDays()`'s own docblock).
  */
 export function leaveDaysPerWeek(
   rows: Array<{ startDate: Date; endDate: Date; halfDay?: boolean }>,
   contractWorkDaysPerWeek: number,
   holidays: Set<string>,
+  usualWorkDays: readonly number[] = [],
 ): LeaveWeek[] {
   if (rows.length === 0) return [];
 
@@ -770,7 +779,11 @@ export function leaveDaysPerWeek(
   while (weekMonday.getTime() <= lastMonday.getTime()) {
     const weekSunday = addUtcDays(weekMonday, 6);
 
-    // Union of full-day Mo-Sat dates this week across ALL full-day rows (halfDay falsy).
+    // Union of full-day dates this week across ALL full-day rows (halfDay falsy). Sunday is
+    // included in the union only when `usualWorkDays` names it a usual day (Phase 436, D-03) —
+    // with an empty list this stays the pre-436 unconditional Sunday exclusion (§ 3 Abs. 2
+    // BUrlG). The WHOLE-week test below only ever looks at the six Mo-Sat dates, so this change
+    // cannot affect whole-week detection either way.
     const fullDayUnion = new Set<string>();
     for (const row of rows) {
       if (row.halfDay) continue;
@@ -779,7 +792,7 @@ export function leaveDaysPerWeek(
       const fragStart = weekMonday.getTime() > s.getTime() ? weekMonday : s;
       const fragEnd = weekSunday.getTime() < e.getTime() ? weekSunday : e;
       for (let d = fragStart; d.getTime() <= fragEnd.getTime(); d = addUtcDays(d, 1)) {
-        if (d.getUTCDay() === 0) continue; // Sunday is never a Werktag (§ 3 Abs. 2 BUrlG)
+        if (d.getUTCDay() === 0 && !usualWorkDays.includes(0)) continue;
         fullDayUnion.add(toDateStrUtc(d));
       }
     }
@@ -787,7 +800,13 @@ export function leaveDaysPerWeek(
     if (fullDayUnion.size === 0) {
       // No full-day leave touches this week — check for half-day-only contribution below before
       // moving on (a week can be half-day-only).
-      const halfOnly = buildHalfShareForWeek(rows, weekMonday, weekSunday, fullDayUnion, []);
+      const halfOnly = buildHalfShareForWeek(
+        rows,
+        weekMonday,
+        weekSunday,
+        fullDayUnion,
+        usualWorkDays,
+      );
       if (halfOnly.size > 0) {
         const days = Array.from(halfOnly.values()).reduce((a, b) => a + b, 0);
         const capped = Math.min(days, contractWorkDaysPerWeek);
@@ -812,15 +831,14 @@ export function leaveDaysPerWeek(
       }
     }
 
-    // Phase 436 (D-03): usual-workday list is [] here — this plan does not change
-    // leaveDaysPerWeek()'s public signature (plan 03 adds the parameter); with an empty list
-    // weekLeaveDays()'s fragment branch behaves byte-identically to the pre-436 kernel.
+    // Phase 436 (D-03, plan 03): the Angabe is threaded into the same kernel — with an empty
+    // list weekLeaveDays()'s fragment branch behaves byte-identically to the pre-436 kernel.
     const { days: fullDayTotal, countedDates } = weekLeaveDays(
       Array.from(fullDayUnion),
       isWhole,
       contractWorkDaysPerWeek,
       holidays,
-      [],
+      usualWorkDays,
     );
 
     // Distribute the full-day total UNIFORMLY over the non-holiday counted dates — holiday dates
@@ -834,7 +852,13 @@ export function leaveDaysPerWeek(
 
     // Half-day contribution: +0.5 per distinct date (a full-day row on the same date always
     // wins — OPEN-01, so buildHalfShareForWeek skips dates already in fullDayUnion).
-    const halfShare = buildHalfShareForWeek(rows, weekMonday, weekSunday, fullDayUnion, []);
+    const halfShare = buildHalfShareForWeek(
+      rows,
+      weekMonday,
+      weekSunday,
+      fullDayUnion,
+      usualWorkDays,
+    );
     const halfTotal = Array.from(halfShare.values()).reduce((a, b) => a + b, 0);
 
     let days = fullDayTotal;
@@ -871,6 +895,9 @@ export function leaveDaysPerWeek(
  * `contexts/working-time-account/index.ts` for it — keeping `shift-based-leave-credit.ts` out
  * of the cross-context import cycle gated by `measure-context-boundary-imports --cycles`.
  * Empty holiday set, mirroring the saldo side's D-05 decision.
+ *
+ * `usualWorkDays` (Phase 436, D-03) — passed verbatim into the `leaveDaysPerWeek()` call below,
+ * so the per-request receipt follows the same Angabe the saldo credit does.
  */
 export function shiftBasedLeaveMinutesForRequest(
   schedule: { weeklyHours?: unknown },
@@ -878,6 +905,7 @@ export function shiftBasedLeaveMinutesForRequest(
   end: Date,
   halfDay: boolean,
   contractWorkDaysPerWeek: number,
+  usualWorkDays: readonly number[] = [],
 ): number {
   const weeklyHours = Number(schedule.weeklyHours ?? 0);
   if (weeklyHours <= 0 || contractWorkDaysPerWeek <= 0) return 0;
@@ -886,6 +914,7 @@ export function shiftBasedLeaveMinutesForRequest(
     [{ startDate: start, endDate: end, halfDay }],
     contractWorkDaysPerWeek,
     new Set(),
+    usualWorkDays,
   );
   const totalDays = weeks.reduce((sum, w) => sum + w.days, 0);
   return Math.round(totalDays * daily);

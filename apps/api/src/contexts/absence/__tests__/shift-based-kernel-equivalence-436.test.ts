@@ -204,4 +204,35 @@ describe("D-05 equivalence — leaveDaysPerWeek multi-row union, new (usualWorkD
       }
     }
   });
+
+  it("436-AC-02/D-05: leaveDaysPerWeek(rows, contract, holidays, []) — explicit empty usualWorkDays — equals omitting the 4th parameter, over the same multi-row matrix", () => {
+    const shapes = buildRowShapes();
+    let caseCount = 0;
+    const mismatches: string[] = [];
+    for (const rowA of shapes) {
+      for (const rowB of shapes) {
+        for (const contract of CONTRACTS) {
+          for (const [label, holidays] of HOLIDAY_SETS) {
+            caseCount++;
+            const rows = [rowA, rowB];
+            const withOmitted = leaveDaysPerWeek(rows, contract, holidays);
+            const withExplicitEmpty = leaveDaysPerWeek(rows, contract, holidays, []);
+            const diffs = compareWeeks(
+              withExplicitEmpty,
+              withOmitted as unknown as LegacyLeaveWeek[],
+            );
+            if (diffs.length > 0) {
+              mismatches.push(
+                `rowA=${ds(rowA.startDate)}..${ds(rowA.endDate)}(half=${!!rowA.halfDay}) ` +
+                  `rowB=${ds(rowB.startDate)}..${ds(rowB.endDate)}(half=${!!rowB.halfDay}) ` +
+                  `contract=${contract} holidays=${label}: ${diffs.join("; ")}`,
+              );
+            }
+          }
+        }
+      }
+    }
+    expect(caseCount).toBeGreaterThan(2000);
+    expect(mismatches).toEqual([]);
+  });
 });
