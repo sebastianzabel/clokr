@@ -203,6 +203,10 @@ export function roundVacationDaysBurlG(raw: number): number {
  * {@link hireYearVacationDays}) now applies the twelfthing directly via
  * {@link fullEmploymentMonthsInYear}/{@link roundVacationDaysBurlG}, no production path calls this
  * function any more — its own unit tests keep pinning the § 5 Abs. 2 arithmetic it still encodes.
+ *
+ * Issue #450 (D-10): `hireDate` is read with UTC accessors — since Issue #450 (D-10, owner
+ * decision P4) the whole § 5 family reads and builds dates in UTC, so results no longer depend
+ * on the process timezone. Proven by `vacation-calc-timezone.test.ts`.
  */
 export function calculateProRataVacationForHire(
   baseDays: number,
@@ -211,7 +215,7 @@ export function calculateProRataVacationForHire(
 ): number {
   if (!Number.isFinite(baseDays) || baseDays <= 0) return 0;
 
-  const hireYear = hireDate.getFullYear();
+  const hireYear = hireDate.getUTCFullYear();
 
   // Not yet employed in this year → no entitlement.
   if (hireYear > year) return 0;
@@ -491,8 +495,9 @@ export function countShiftBasedLeaveDays(
  *
  * This is the ONE place deciding WHETHER a hire year is pro-rated —
  * {@link calculateProRataVacationForHire} stays the pure twelfthing step this function delegates
- * to for a later hire. Uses the same local-time getters the existing hire-year check already used
- * (`getFullYear`/`getMonth`/`getDate` — P-01 of #445) so year and day are judged in one frame.
+ * to for a later hire. Delegates to {@link employmentYearVacationDays} (Issue #450, D-10: UTC
+ * accessors throughout the § 5 family, so results no longer depend on the process timezone —
+ * proven by `vacation-calc-timezone.test.ts`).
  *
  * @param fullYearDays - the already contract-scaled full-year entitlement (e.g. via
  *   {@link calculatePartTimeVacation})
@@ -517,22 +522,25 @@ export function hireYearVacationDays(fullYearDays: number, year: number, hireDat
  * numerically matching day (e.g. hire 31.08. -> the "31." of February does not exist -> ends on
  * the last real day of that month, § 188 Abs. 3 BGB).
  *
- * Implemented as the earlier of the two candidate dates in the local frame of `hireDate`
- * (`y`/`m`/`d` via `getFullYear`/`getMonth`/`getDate`, same convention as {@link hireYearVacationDays}):
- * `new Date(y, m + 6, d - 1)` (the day-before-matching-day candidate, which JS Date arithmetic
- * naturally clamps into the correct month when `d - 1` or the overflow month spills over) and
- * `new Date(y, m + 7, 0)` (the last day of the sixth month). Taking the earlier of the two always
- * yields the correct § 188 Abs. 3 BGB result, including across a leap-year February.
+ * Implemented as the earlier of the two candidate dates in the UTC frame of `hireDate`
+ * (`y`/`m`/`d` via `getUTCFullYear`/`getUTCMonth`/`getUTCDate` — Issue #450, D-10, owner decision
+ * P4: since this function no longer depends on the process timezone, the two candidates are
+ * built via `Date.UTC` rather than the local constructor): `new Date(Date.UTC(y, m + 6, d - 1))`
+ * (the day-before-matching-day candidate, which `Date.UTC` arithmetic naturally clamps into the
+ * correct month when `d - 1` or the overflow month spills over) and
+ * `new Date(Date.UTC(y, m + 7, 0))` (the last day of the sixth month). Taking the earlier of the
+ * two always yields the correct § 188 Abs. 3 BGB result, including across a leap-year February.
+ * Proven timezone-independent by `vacation-calc-timezone.test.ts`.
  *
  * @param hireDate - the employee's hire date
- * @returns the last day of the § 4 BUrlG Wartezeit
+ * @returns the last day of the § 4 BUrlG Wartezeit, as a UTC-midnight `Date`
  */
 export function wartezeitEndDate(hireDate: Date): Date {
-  const y = hireDate.getFullYear();
-  const m = hireDate.getMonth();
-  const d = hireDate.getDate();
-  const matchingDayMinusOne = new Date(y, m + 6, d - 1);
-  const lastDayOfSixthMonth = new Date(y, m + 7, 0);
+  const y = hireDate.getUTCFullYear();
+  const m = hireDate.getUTCMonth();
+  const d = hireDate.getUTCDate();
+  const matchingDayMinusOne = new Date(Date.UTC(y, m + 6, d - 1));
+  const lastDayOfSixthMonth = new Date(Date.UTC(y, m + 7, 0));
   return matchingDayMinusOne < lastDayOfSixthMonth ? matchingDayMinusOne : lastDayOfSixthMonth;
 }
 
@@ -561,6 +569,10 @@ export function wartezeitEndDate(hireDate: Date): Date {
  *
  * Issue #450 (D-01): the month loop itself now lives in {@link employmentMonthIndicesInYear} —
  * this function keeps its original signature and docblock, returning that array's length.
+ *
+ * Issue #450 (D-10, owner decision P4): that month loop builds every month-end date in UTC, so
+ * this function's result no longer depends on the process timezone — proven by
+ * `vacation-calc-timezone.test.ts`.
  */
 export function fullEmploymentMonthsInYear(
   year: number,
@@ -594,22 +606,9 @@ export function fullEmploymentMonthsInYear(
  * @param hireDate - the employee's hire date
  * @param exitDate - the employee's exit date, or `null` if still employed
  *
- * Issue #447 WR-02: this function (and {@link wartezeitEndDate}, {@link fullEmploymentMonthsInYear})
- * reads `hireDate`/`exitDate` with the LOCAL accessors (`getFullYear`/`getMonth`/`getDate`),
- * matching {@link hireYearVacationDays}'s established P-01-of-#445 convention, NOT the UTC
- * accessors `statutoryMinimumVacationThreshold`'s own `notEmployedInYear` guard uses. This is safe
- * ONLY because every caller passes a genuine UTC-midnight `@db.Date` value (`Employee.hireDate`/
- * `exitDate` from Prisma) in a server process with a non-negative UTC offset (the documented
- * Europe/Berlin or UTC deployment, CLAUDE.md § Project) — under that constraint local and UTC
- * accessors never disagree on year/month/day for these inputs (proven for the deployment-relevant
- * case by `vacation-calc.test.ts`'s "WR-02 local/UTC frame consistency" suite). A TEST fixture for
- * this function family must therefore also be constructed via `Date.UTC`/`utcMidnight`, never via
- * the local `new Date(y, m, d)` constructor — a locally-constructed midnight is a DIFFERENT
- * instant than the UTC midnight these functions assume, and confusing the two broke 19 of this
- * file's own tests when this finding's production code was experimentally rewritten to UTC
- * accessors without also rewriting the fixtures (see the Issue #447 code-review fix report). Do
- * NOT normalize this function family to UTC accessors without first converting every test fixture
- * that feeds it to `Date.UTC`/`utcMidnight` construction.
+ * Issue #450 (D-10, owner decision P4): since Issue #450 the whole § 5 BUrlG family reads and
+ * builds dates in UTC, so results no longer depend on the process timezone — proven by
+ * `vacation-calc-timezone.test.ts`.
  *
  * Issue #450 (D-01/D-02/D-03): the WHETHER-a-year-is-owed-in-full decision this function's body
  * used to inline (via {@link hireYearVacationDays}) now lives in ONE place,
@@ -622,7 +621,7 @@ export function employmentYearVacationDays(
   hireDate: Date,
   exitDate: Date | null,
 ): number {
-  if (exitDate !== null && exitDate.getFullYear() < year) return 0;
+  if (exitDate !== null && exitDate.getUTCFullYear() < year) return 0;
   if (isFullEntitlementYear(year, hireDate, exitDate)) return fullYearDays;
   return roundVacationDaysBurlG(
     (fullYearDays * fullEmploymentMonthsInYear(year, hireDate, exitDate)) / 12,
@@ -646,22 +645,26 @@ export function employmentYearVacationDays(
  * (and, through it, {@link hireYearVacationDays}) delegates here instead of inlining the decision,
  * and {@link apportionAcrossContractSegments} uses it to pick which calendar months are owed at
  * all before apportioning them across contract segments.
+ *
+ * Issue #450 (D-10): reads `hireDate`/`exitDate` with UTC accessors — since Issue #450 (D-10,
+ * owner decision P4) the whole § 5 family reads and builds dates in UTC, so results no longer
+ * depend on the process timezone. Proven by `vacation-calc-timezone.test.ts`.
  */
 export function isFullEntitlementYear(
   year: number,
   hireDate: Date,
   exitDate: Date | null,
 ): boolean {
-  if (exitDate !== null && exitDate.getFullYear() < year) return false;
+  if (exitDate !== null && exitDate.getUTCFullYear() < year) return false;
   const hireRule =
-    year !== hireDate.getFullYear() ||
-    hireDate.getMonth() < 6 ||
-    (hireDate.getMonth() === 6 && hireDate.getDate() === 1);
-  if (exitDate === null || exitDate.getFullYear() > year) return hireRule;
+    year !== hireDate.getUTCFullYear() ||
+    hireDate.getUTCMonth() < 6 ||
+    (hireDate.getUTCMonth() === 6 && hireDate.getUTCDate() === 1);
+  if (exitDate === null || exitDate.getUTCFullYear() > year) return hireRule;
 
   // Exit happens inside `year`.
   const wartezeitFulfilled = wartezeitEndDate(hireDate) <= exitDate;
-  const firstHalfYear = exitDate.getMonth() < 6;
+  const firstHalfYear = exitDate.getUTCMonth() < 6;
   if (!wartezeitFulfilled || firstHalfYear) return false;
   return hireRule;
 }
@@ -674,6 +677,10 @@ export function isFullEntitlementYear(
  *
  * @returns the month indices (0-11) within `year` that fall inside the employment span
  *   `max(hireDate, 1 Jan year)…min(exitDate, 31 Dec year)`, in ascending order
+ *
+ * Issue #450 (D-10): each month's last day is built via `Date.UTC` — since Issue #450 (D-10,
+ * owner decision P4) the whole § 5 family reads and builds dates in UTC, so results no longer
+ * depend on the process timezone. Proven by `vacation-calc-timezone.test.ts`.
  */
 export function employmentMonthIndicesInYear(
   year: number,
@@ -682,7 +689,7 @@ export function employmentMonthIndicesInYear(
 ): number[] {
   const months: number[] = [];
   for (let month = 0; month < 12; month++) {
-    const lastDayOfMonth = new Date(year, month + 1, 0);
+    const lastDayOfMonth = new Date(Date.UTC(year, month + 1, 0));
     const hireSide = hireDate <= lastDayOfMonth;
     const exitSide = exitDate === null || exitDate >= lastDayOfMonth;
     if (hireSide && exitSide) months.push(month);

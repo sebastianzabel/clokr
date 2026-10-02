@@ -382,13 +382,13 @@ describe("computeRegularVacationDays — exit year, former exit-only cases (Issu
   });
 
   it("§ 5 Abs. 2 BUrlG (Issue #421): 7.5 -> 8 (half-day fraction rounds up to a full day)", () => {
-    // Mirrors calculateProRataVacationForHire(30, YEAR, new Date(YEAR, 2, 31)) semantics —
+    // Mirrors calculateProRataVacationForHire(30, YEAR, new Date(Date.UTC(YEAR, 2, 31))) semantics —
     // same rounding rule, same raw value, EXIT side instead of HIRE side.
     expect(regular(30, new Date(Date.UTC(YEAR, 2, 31)))).toBe(8);
   });
 
   it("§ 5 Abs. 2 BUrlG (Issue #421): 12.5 -> 13, identical to calculateProRataVacationForHire's proven scenario", () => {
-    // calculateProRataVacationForHire(30, YEAR, new Date(YEAR, 7, 1)) === 13 for the same raw
+    // calculateProRataVacationForHire(30, YEAR, new Date(Date.UTC(YEAR, 7, 1))) === 13 for the same raw
     // value (30 * 5/12 = 12.5). The EXIT side must produce the identical rounded result for an
     // equivalent raw value.
     expect(regular(30, new Date(Date.UTC(YEAR, 5, 15)))).toBe(13);
@@ -396,7 +396,7 @@ describe("computeRegularVacationDays — exit year, former exit-only cases (Issu
 
   it("§ 5 Abs. 2 BUrlG (Issue #421): 8.33 stays 8.33 (fraction below half a day is never rounded)", () => {
     // base 25, 4 volle Monate (Jan-Apr, exitDate = Apr 30) → 25 × 4/12 = 8.333.. → stays exact,
-    // mirrors calculateProRataVacationForHire(25, YEAR, new Date(YEAR, 8, 1)) === 8.33.
+    // mirrors calculateProRataVacationForHire(25, YEAR, new Date(Date.UTC(YEAR, 8, 1))) === 8.33.
     expect(regular(25, new Date(Date.UTC(YEAR, 3, 30)))).toBe(8.33);
   });
 });
@@ -469,19 +469,19 @@ describe("calculateProRataVacationForHire (Issue #416)", () => {
 
 describe("wartezeitEndDate (§ 4 BUrlG; §§ 187 Abs. 2, 188 Abs. 2/3 BGB — Issue #447 D-05)", () => {
   it("01.01.2027 -> 30.06.2027", () => {
-    expect(wartezeitEndDate(utcMidnight("2027-01-01"))).toEqual(new Date(2027, 5, 30));
+    expect(wartezeitEndDate(utcMidnight("2027-01-01"))).toEqual(new Date(Date.UTC(2027, 5, 30)));
   });
   it("01.07.2027 -> 31.12.2027", () => {
-    expect(wartezeitEndDate(utcMidnight("2027-07-01"))).toEqual(new Date(2027, 11, 31));
+    expect(wartezeitEndDate(utcMidnight("2027-07-01"))).toEqual(new Date(Date.UTC(2027, 11, 31)));
   });
   it("15.02.2027 -> 14.08.2027", () => {
-    expect(wartezeitEndDate(utcMidnight("2027-02-15"))).toEqual(new Date(2027, 7, 14));
+    expect(wartezeitEndDate(utcMidnight("2027-02-15"))).toEqual(new Date(Date.UTC(2027, 7, 14)));
   });
   it("31.08.2027 -> 29.02.2028 (no numerically matching day six months later, leap year)", () => {
-    expect(wartezeitEndDate(utcMidnight("2027-08-31"))).toEqual(new Date(2028, 1, 29));
+    expect(wartezeitEndDate(utcMidnight("2027-08-31"))).toEqual(new Date(Date.UTC(2028, 1, 29)));
   });
   it("31.08.2026 -> 28.02.2027 (no numerically matching day six months later, non-leap year)", () => {
-    expect(wartezeitEndDate(utcMidnight("2026-08-31"))).toEqual(new Date(2027, 1, 28));
+    expect(wartezeitEndDate(utcMidnight("2026-08-31"))).toEqual(new Date(Date.UTC(2027, 1, 28)));
   });
 });
 
@@ -668,18 +668,18 @@ describe("employmentYearVacationDays — exit year (Issue #447, D-05)", () => {
   );
 });
 
-// Issue #447 code-review fix (WR-02): wartezeitEndDate/fullEmploymentMonthsInYear/
-// employmentYearVacationDays read hireDate/exitDate with LOCAL accessors (matching
-// hireYearVacationDays's established convention), while statutoryMinimumVacationThreshold's own
-// guard uses UTC accessors on the same @db.Date fields. This is safe ONLY because every real
-// caller passes a genuine UTC-midnight Date in a non-negative-UTC-offset deployment (see the
-// WR-02 doc note on employmentYearVacationDays) — this suite fixes that invariant with
-// UTC-constructed fixtures (utcMidnight), NOT the local `new Date(y, m, d)` constructor the other
-// describe blocks above use for these same functions. Converting the production accessors to UTC
-// without also converting every local-constructed test fixture breaks 19 of the tests above
-// (verified while drafting this fix — a locally-constructed midnight is a different instant from
-// a UTC midnight in a non-zero-offset process), which is exactly why that broader rewrite was
-// reverted in favor of this narrower, TZ-neutral regression test.
+// Issue #447 code-review fix (WR-02), superseded by Issue #450 (D-10, owner decision P4):
+// wartezeitEndDate/fullEmploymentMonthsInYear/employmentYearVacationDays used to read
+// hireDate/exitDate with LOCAL accessors, which was safe only under the documented
+// non-negative-UTC-offset deployment — see vacation-calc.ts's own history for that finding.
+// Since Issue #450 the whole § 5 BUrlG family reads and builds dates in UTC (proven
+// timezone-independent by vacation-calc-timezone.test.ts, including under a NEGATIVE-offset
+// process timezone), so this suite's own invariant ("local and UTC accessors never disagree for a
+// genuine UTC-midnight input") is no longer a safety condition production relies on — the
+// functions under test no longer read local accessors at all. This describe block is kept
+// unmodified as the default-TZ regression guard it already was: it still proves the UTC-accessor
+// production code agrees with the independent UTC-accessor reference implementations below,
+// field-by-field, for a UTC-midnight year-boundary pair.
 describe("wartezeitEndDate / fullEmploymentMonthsInYear / employmentYearVacationDays — WR-02 local/UTC frame consistency", () => {
   const utcWartezeitEndDate = (d: Date): Date => {
     const y = d.getUTCFullYear();
