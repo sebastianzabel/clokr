@@ -233,3 +233,133 @@ describe("recalculate-shift-based-leave-days — --status/--request-id filters (
     expect(summary.candidates[0]!.leaveRequestId).toBe(approvedRequestId);
   });
 });
+
+/**
+ * Issue #436 (D-04/D-09) — the Bestand list: two APPROVED VACATION requests of the SAME
+ * SHIFT_BASED employee, sharing one ISO week, both carrying their PRE-436 stored `days` (3 each,
+ * seeded directly via Prisma rather than priced through the live POST/review endpoints — the
+ * live endpoints already apply the week-union rule this script's dry-run is meant to SURFACE,
+ * so seeding the OLD value directly is what makes the row a genuine "predates the fix"
+ * candidate). `A` (created first, Mo-Mi) has no counted sibling created BEFORE it, so its price
+ * under the NEW rule is unchanged (its own 3-day fragment) — NOT a candidate. `B` (created after
+ * `A`, Do-Sa) completes the whole Mo-Sa week together with `A`; under the new week-union rule it
+ * costs only 1 (4 - A's 3), not its own-alone 3 — a Bestand candidate (`3 -> 1`).
+ * `--confirm` is never passed — this proves the dry-run default, not the write path.
+ */
+describe("recalculate-shift-based-leave-days — Bestand list (Issue #436, D-04/D-09)", () => {
+  let app: FastifyInstance;
+  let tenantId: string;
+  let idA: string;
+  let idB: string;
+
+  const WEEK_MONDAY = nextHolidayFreeMonday(95);
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const prisma = app.prisma;
+    const suffix = "u436-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+    const tenant = await prisma.tenant.create({
+      data: { name: `U436B ${suffix}`, slug: `u436b-${suffix}`, federalState: "NIEDERSACHSEN" },
+    });
+    tenantId = tenant.id;
+    await createTestSalon(prisma, tenantId);
+    await prisma.tenantConfig.create({ data: { tenantId } });
+
+    const passwordHash = await bcrypt.hash("test1234", 10);
+    const email = `u436b-emp-${suffix}@test.de`;
+    const user = await prisma.user.create({
+      data: { email, passwordHash, role: "EMPLOYEE", isActive: true },
+    });
+    const employee = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: user.id,
+        employeeNumber: `U436B-${suffix}`,
+        firstName: "U436B",
+        lastName: "emp",
+        hireDate: PAST_ANCHOR,
+      },
+    });
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: employee.id,
+        type: "SHIFT_BASED",
+        weeklyHours: 38,
+        contractWorkDaysPerWeek: 4,
+        workDays: [2, 3, 4, 5],
+        validFrom: PAST_ANCHOR,
+      },
+    });
+
+    const vacType = await prisma.leaveType.create({
+      data: { tenantId, code: "VACATION", name: "Urlaub", isPaid: true, requiresApproval: true },
+    });
+
+    const createdAtA = new Date(PAST_ANCHOR.getTime() + 1000);
+    const createdAtB = new Date(PAST_ANCHOR.getTime() + 2000);
+
+    const a = await prisma.leaveRequest.create({
+      data: {
+        employeeId: employee.id,
+        leaveTypeId: vacType.id,
+        startDate: new Date(WEEK_MONDAY), // Mo
+        endDate: new Date(addDaysIso(WEEK_MONDAY, 2)), // Mi
+        halfDay: false,
+        status: "APPROVED",
+        days: 3, // pre-436 stored value — correct even under the new rule (A alone)
+        createdAt: createdAtA,
+      },
+    });
+    idA = a.id;
+
+    const b = await prisma.leaveRequest.create({
+      data: {
+        employeeId: employee.id,
+        leaveTypeId: vacType.id,
+        startDate: new Date(addDaysIso(WEEK_MONDAY, 3)), // Do
+        endDate: new Date(addDaysIso(WEEK_MONDAY, 5)), // Sa
+        halfDay: false,
+        status: "APPROVED",
+        days: 3, // pre-436 stored value (its OWN 3-day fragment, priced in isolation) — the
+        // NEW week-union rule prices it as 1 (4 - A's 3), so this row is the Bestand candidate.
+        createdAt: createdAtB,
+      },
+    });
+    idB = b.id;
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("recalculate-shift-based-leave-days Bestand test cleanup failed:", err);
+    }
+  });
+
+  it("dry-run lists B (3 -> 1) and does NOT list A; writes nothing and audits nothing", async () => {
+    const auditCountBefore = await app.prisma.auditLog.count({
+      where: { entity: "LeaveRequest", entityId: { in: [idA, idB] } },
+    });
+
+    const summary = await main(["--tenant-id", tenantId], app.prisma);
+
+    const candidateB = summary.candidates.find((c) => c.leaveRequestId === idB);
+    expect(candidateB).toBeDefined();
+    expect(candidateB!.oldDays).toBe(3);
+    expect(candidateB!.newDays).toBe(1);
+
+    const candidateA = summary.candidates.find((c) => c.leaveRequestId === idA);
+    expect(candidateA).toBeUndefined();
+
+    const freshA = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: idA } });
+    const freshB = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: idB } });
+    expect(Number(freshA.days)).toBe(3);
+    expect(Number(freshB.days)).toBe(3); // unchanged — dry-run never writes
+
+    const auditCountAfter = await app.prisma.auditLog.count({
+      where: { entity: "LeaveRequest", entityId: { in: [idA, idB] } },
+    });
+    expect(auditCountAfter).toBe(auditCountBefore);
+  });
+});
