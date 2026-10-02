@@ -9,7 +9,9 @@
  *
  * 32 spec cells total. This file drives 31 of them (all except `az-38-5-bs_combo`,
  * which lives in its own file `golden-azubi-jan2026.test.ts` and is cross-referenced,
- * not duplicated).
+ * not duplicated), PLUS four Issue #447 exit-month cells (`fw-40-5-exit`,
+ * `fx-30-4-exit`, `mj-80-exit` — FIXED/FLEXTIME/MONTHLY_HOURS — and the SHIFT_BASED
+ * `sb-40-5-exit`).
  *
  * Per cell the suite asserts the close snapshot
  *   workedMinutes / expectedMinutes / balanceMinutes / carryOver
@@ -47,7 +49,7 @@ const TZ = "Europe/Berlin";
 
 // ── Descriptor model ─────────────────────────────────────────────────────────
 
-type SchedType = "FIXED_SCHEDULE" | "SHIFT_BASED" | "MONTHLY_HOURS";
+type SchedType = "FIXED_SCHEDULE" | "SHIFT_BASED" | "MONTHLY_HOURS" | "FLEXTIME";
 
 interface ScheduleSpec {
   type: SchedType;
@@ -80,6 +82,11 @@ interface Cell {
   year: number;
   month: number; // 1-based
   hireDate: string; // YYYY-MM-DD
+  /**
+   * Issue #447 (D-03) — inclusive last working day. Absent/undefined = still employed.
+   * Clips Soll, holiday deduction, leave/absence reduction at the exit date (D-01).
+   */
+  exitDate?: string; // YYYY-MM-DD
   /** WORK entries: {date, netto} */
   entries: Array<{ date: string; netto: number }>;
   /** Shifts (SHIFT_BASED only): {date, netto} */
@@ -185,6 +192,10 @@ const FW_30_MWF: ScheduleSpec = {
   sundayHours: 0,
   workDays: [1, 3, 5],
 };
+
+// Issue #447 (D-03) — FLEXTIME shell, same shape as FW_30_4 (30h, Mo-Do). Routed through
+// avgWorkMinutesCore (Ø-Methode) like SHIFT_BASED, unlike FIXED_SCHEDULE's per-day sum.
+const FX_30_4: ScheduleSpec = { ...FW_30_4, type: "FLEXTIME" };
 
 // fw-38-5-halfsick (Wave 2 RED anchor — 76.32.1-02)
 const FW_38_5: ScheduleSpec = {
@@ -323,6 +334,20 @@ const JAN_MO_MI = JAN_MO_FR.filter((d) => {
   const dow = new Date(d + "T00:00:00Z").getUTCDay();
   return dow >= 1 && dow <= 3;
 }); // 12
+
+// Issue #447 (D-03) — Jul 2026 01.-10. Mo-Fr (8 workdays; 01. is a Wednesday, 10. a Friday).
+const JUL_01_10_MO_FR = [
+  "2026-07-01",
+  "2026-07-02",
+  "2026-07-03",
+  "2026-07-06",
+  "2026-07-07",
+  "2026-07-08",
+  "2026-07-09",
+  "2026-07-10",
+];
+// Issue #447 (D-03) — same span, Mo-Do subset (6 workdays; excludes Fri 03./10.).
+const JUL_01_10_MO_DO = JUL_01_10_MO_FR.filter((d) => new Date(d + "T00:00:00Z").getUTCDay() !== 5);
 
 const NEUJAHR = { date: "2026-01-01", name: "Neujahr" };
 
@@ -1324,6 +1349,90 @@ const CELLS: Cell[] = [
     expectedRed: true,
     // NOT redAnchor — runs as a normal failing test (RED until Wave 3 fixes the code)
   },
+
+  // ── Issue #447 — exit-month cells (D-03) ─────────────────────────────────
+  // GitHub Issue #447 finding G3: the exit month's Soll, holiday deduction, leave and
+  // absence reduction must end at the exit date (inclusive), not at month end. Every
+  // cell below was seen RED against pre-fix code (the exit date was only used to clip
+  // entries/shifts/gaps, not Soll). Derivation mirrors GOLDEN-MATRIX-SPEC.md's style;
+  // see that file's "Exit-month cells (Issue #447)" section for the full writeup.
+  {
+    id: "fw-40-5-exit",
+    scheduleType: "FIXED_SCHEDULE",
+    classification: "REGULAR",
+    situation: "exit mid-month (Fri 2026-07-10, inclusive), fully worked through the exit date",
+    schedule: FW_40_5,
+    year: 2026,
+    month: 7,
+    hireDate: "2026-07-01",
+    exitDate: "2026-07-10",
+    // 8 Mo-Fr days (01.-10.07.) x 480 min (8h) = 3840.
+    entries: rows(JUL_01_10_MO_FR, 480),
+    // Spec derivation: FIXED_SCHEDULE Soll = per-day sum over [effectiveStart, exitDate] =
+    // 8 Mo-Fr days x 8h = 3840 min (64h). Pre-fix: Soll ran to month end (23 Mo-Fr days in
+    // July 2026 x 480 = 11040), so worked 3840 - expected 11040 = balance -7200 (-120h) —
+    // the Issue #447 example (184h Soll / -120h saldo instead of 64h / 0).
+    expected: {
+      workedMinutes: 3840,
+      expectedMinutes: 3840,
+      balanceMinutes: 0,
+      carryOver: 0,
+      overtimeHours: 0,
+    },
+    expectedRed: false,
+  },
+  {
+    id: "fx-30-4-exit",
+    scheduleType: "FLEXTIME",
+    classification: "REGULAR",
+    situation:
+      "FLEXTIME 30h Mo-Do, exit on a non-workday (Fri 2026-07-10) — Ø-Methode over the clipped range",
+    schedule: FX_30_4,
+    year: 2026,
+    month: 7,
+    hireDate: "2026-07-01",
+    exitDate: "2026-07-10",
+    // 6 Mo-Do days (01.-10.07., excludes the two Fridays) x 450 min (7.5h) = 2700.
+    entries: rows(JUL_01_10_MO_DO, 450),
+    // Spec derivation: Ø-Methode (avgWorkMinutesCore) = weeklyHours x 60 x workdaysInRange /
+    // workDaysPerWeek = 30 x 60 x 6 / 4 = 2700 min (45h) over [effectiveStart, exitDate].
+    // Pre-fix: workdaysInRange ran to month end (18 Mo-Do days in July 2026), expected =
+    // 30*60*18/4 = 8100, balance 2700 - 8100 = -5400.
+    expected: {
+      workedMinutes: 2700,
+      expectedMinutes: 2700,
+      balanceMinutes: 0,
+      carryOver: 0,
+      overtimeHours: 0,
+    },
+    expectedRed: false,
+  },
+  {
+    id: "mj-80-exit",
+    scheduleType: "MONTHLY_HOURS",
+    classification: "MINIJOB",
+    situation: "MONTHLY_HOURS 80h budget, exit mid-month — budget prorated by workday fraction",
+    schedule: MH_80,
+    year: 2026,
+    month: 7,
+    hireDate: "2026-07-01",
+    exitDate: "2026-07-10",
+    // 8 Mo-Fr days (01.-10.07.) x 240 min (4h) = 1920.
+    entries: rows(JUL_01_10_MO_FR, 240),
+    // Spec derivation: MONTHLY_HOURS proration = round(monthlyHours*60 * rangeWorkdays /
+    // monthWorkdays) = round(80*60*8/23) = round(1669.565...) = 1670 — the SAME proration
+    // the hire month already gets (D-02 symmetry), now applied symmetrically on exit.
+    // balance = 1920 - 1670 = 250 (overtime, since the budget already prorated down).
+    // Pre-fix: expected = 4800 (full-month budget, no clip), balance 1920 - 4800 = -2880.
+    expected: {
+      workedMinutes: 1920,
+      expectedMinutes: 1670,
+      balanceMinutes: 250,
+      carryOver: 250,
+      overtimeHours: 250 / 60,
+    },
+    expectedRed: false,
+  },
 ];
 
 // ── Roster builders for AZUBI cells ──────────────────────────────────────────
@@ -1397,6 +1506,9 @@ const PARITY_IDS = new Set<string>([
   "sb-40-5-s615", // SHIFT §615
   "mj-80-over", // MONTHLY_HOURS
   "az-38-5-bs_first", // AZUBI/BS
+  "fw-40-5-exit", // Issue #447 — FIXED exit month
+  "fx-30-4-exit", // Issue #447 — FLEXTIME exit month
+  "mj-80-exit", // Issue #447 — MONTHLY_HOURS exit month
 ]);
 
 // ── Seeder ───────────────────────────────────────────────────────────────────
@@ -1489,6 +1601,8 @@ async function seedGoldenScenario(app: FastifyInstance, cell: Cell): Promise<See
       firstName: "Test",
       lastName: "GM",
       hireDate: new Date(cell.hireDate + "T00:00:00Z"),
+      // Issue #447 (D-03) — inclusive last working day; undefined cell.exitDate -> null (still employed).
+      exitDate: cell.exitDate ? new Date(cell.exitDate + "T00:00:00Z") : null,
       classification: cell.classification === "AZUBI" ? "AZUBI" : undefined,
       breakOver6hOverride: 0,
       breakOver9hOverride: 0,
@@ -1804,7 +1918,7 @@ describe.each(CELLS)("golden matrix — $id", (cell) => {
       carryOverIn: 0,
       schedule: schedule as unknown as Record<string, unknown>,
       hireDate: employee!.hireDate,
-      exitDate: null,
+      exitDate: employee!.exitDate, // Issue #447 (D-03) — seeded by seedGoldenScenario
       isTimeTrackingExempt: false,
       breakOver6hOverride: 0,
       breakOver9hOverride: 0,
@@ -1970,7 +2084,14 @@ describe.each(CELLS)("golden matrix — $id", (cell) => {
 
       // Path D (cron): only for cells whose every workday has an entry (completeness
       // gate). Clean cells qualify; feiertag/leave/§615 are covered by the paths above.
-      const cronEligible = ["fw-40-5-clean", "sb-40-5-clean", "mj-80-over"].includes(cell.id);
+      const cronEligible = [
+        "fw-40-5-clean",
+        "sb-40-5-clean",
+        "mj-80-over",
+        "fw-40-5-exit", // Issue #447 — every workday through the exit date has an entry
+        "fx-30-4-exit",
+        "mj-80-exit",
+      ].includes(cell.id);
       if (cronEligible) {
         const unlock3 = await unlockMonth(app, adminToken, employeeId, cell.year, cell.month);
         expect(unlock3.statusCode, unlock3.body).toBe(200);
