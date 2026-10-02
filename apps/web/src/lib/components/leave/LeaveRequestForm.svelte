@@ -323,13 +323,18 @@
     if (!formStart || !formEnd || !employeeId) return;
     hoursPreviewLoading = true;
     try {
+      // Issue #436 (D-04): the dialog shows the price the server will store — `type` lets the
+      // server apply the SAME week-union pricing a real request would get; in edit mode
+      // `excludeRequestId` excludes the request being edited from its own siblings (D-09).
       const r = await api.get<{
         hours: number;
         days: number;
         minutesNeeded: number;
         rosterImported?: boolean;
       }>(
-        `/leave/hours-preview?startDate=${formStart}&endDate=${formEnd}&halfDay=${formHalfDay}&employeeId=${employeeId}`,
+        `/leave/hours-preview?startDate=${formStart}&endDate=${formEnd}&halfDay=${formHalfDay}&employeeId=${employeeId}&type=${encodeURIComponent(formType)}${
+          editingRequest ? `&excludeRequestId=${encodeURIComponent(editingRequest.id)}` : ""
+        }`,
       );
       hoursPreview = r.hours;
       minutesNeeded = r.minutesNeeded;
@@ -391,6 +396,9 @@
       formEnd;
       formHalfDay;
       employeeId;
+      // Issue #436 (D-04): the preview price depends on the leave type (only VACATION is
+      // week-union priced) — a type change must refresh serverDays too.
+      formType;
       scheduleHoursPreview();
     }
   });

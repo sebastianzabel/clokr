@@ -20,6 +20,7 @@
     statutoryMinimumFiveDayWeek,
     MISSING_BIRTH_DATE_HINT,
   } from "$lib/statutory-minimum-vacation";
+  import { buildUsualWorkDaysPayload, usualWorkDaysShortfall } from "$lib/utils/work-schedule";
 
   type InvitationStatus = "ACCEPTED" | "PENDING" | "EXPIRED" | "NONE";
   type Role = "ADMIN" | "MANAGER" | "EMPLOYEE";
@@ -67,6 +68,11 @@
   );
   let cWeeklyHours = $state(40);
   let cMonthlyHours = $state<number | null>(null);
+  // Phase 436 Plan 02 (D-06) — SHIFT_BASED-only contract day count + übliche Arbeitstage.
+  // Without a contract field on create, POST would default to 5 and reject any Angabe
+  // below 5 days — exactly the issue's 4-day case (see this plan's <action>).
+  let cContractWorkDays = $state<number>(5);
+  let cUsualWorkDays = $state<number[]>([]);
   let cUsePassword = $state(false);
   let cPassword = $state("");
   // Phase 49.2 — FLEXTIME Kernarbeitszeit fields + tenant defaults for pre-fill
@@ -246,6 +252,9 @@
     cScheduleType = "FIXED_SCHEDULE";
     cWeeklyHours = 40;
     cMonthlyHours = null;
+    // Phase 436 Plan 02 (D-06): reset alongside the other c* schedule fields.
+    cContractWorkDays = 5;
+    cUsualWorkDays = [];
     cUsePassword = false;
     cPassword = "";
     // Phase 49.2 — reset core fields (no pre-fill here; pre-fill happens on FLEXTIME selection)
@@ -309,6 +318,9 @@
         coreStart: cScheduleType === "FLEXTIME" ? cCoreStart || null : null,
         coreEnd: cScheduleType === "FLEXTIME" ? cCoreEnd || null : null,
         coreDays: cScheduleType === "FLEXTIME" ? cCoreDays : [],
+        // Phase 436 Plan 02 (D-02/D-06): SHIFT_BASED contract day count + übliche Arbeitstage.
+        contractWorkDaysPerWeek: cScheduleType === "SHIFT_BASED" ? cContractWorkDays : null,
+        ...buildUsualWorkDaysPayload(cScheduleType, cUsualWorkDays),
         // Personalstruktur (Phase 41)
         classification: cClassification,
         coverageWeight: cCoverageWeight,
@@ -829,6 +841,56 @@
             step="0.5"
             placeholder="z.B. 15 — leer = nur Tracking"
           />
+        </div>
+      {/if}
+
+      {#if cScheduleType === "SHIFT_BASED"}
+        <div class="form-group">
+          <label class="form-label" for="c-contract-workdays">Arbeitstage/Woche</label>
+          <input
+            id="c-contract-workdays"
+            type="number"
+            min="1"
+            max="7"
+            step="1"
+            bind:value={cContractWorkDays}
+            class="input"
+          />
+          <p class="hint">
+            Vertragliche Anzahl Arbeitstage pro Woche. Welche Wochentage das konkret sind, bestimmt
+            der Schichtplan.
+          </p>
+        </div>
+        <div class="form-group form-group--full">
+          <label class="form-label">Übliche Arbeitstage (optional)</label>
+          <div class="weekday-chips" role="group" aria-label="Übliche Arbeitstage">
+            {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
+              <button
+                type="button"
+                class="wd-chip"
+                class:wd-chip--active={cUsualWorkDays.includes(day.value)}
+                aria-pressed={cUsualWorkDays.includes(day.value)}
+                onclick={() => {
+                  if (cUsualWorkDays.includes(day.value)) {
+                    cUsualWorkDays = cUsualWorkDays.filter((d) => d !== day.value);
+                  } else {
+                    cUsualWorkDays = [...cUsualWorkDays, day.value].sort((a, b) => a - b);
+                  }
+                }}>{day.label}</button
+              >
+            {/each}
+          </div>
+          <p class="hint">
+            Nur für angebrochene Urlaubswochen: Dort zählen nur Urlaubstage an diesen Wochentagen.
+            Eine volle Urlaubswoche kostet immer die vertraglichen Arbeitstage. Leer lassen, wenn es
+            keine festen Tage gibt.
+          </p>
+          {#if usualWorkDaysShortfall(cUsualWorkDays, cContractWorkDays) > 0}
+            <div class="callout">
+              Bitte mindestens {cContractWorkDays} Tage ankreuzen – so viele Arbeitstage hat der Vertrag.
+              Sonst wird die Angabe beim Speichern abgelehnt.
+            </div>
+          {/if}
         </div>
       {/if}
 

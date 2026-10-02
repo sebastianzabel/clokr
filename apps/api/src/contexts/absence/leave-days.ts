@@ -16,7 +16,12 @@ import {
   holidaysForSalon,
 } from "../platform"; // Phase 71b (issue #71, D-04) — the engine/state map are gone from this file, see getHolidayMap()
 import { getWorkedEntriesInRange } from "../time-tracking"; // Phase 71b (issue #71) — T2, the work-location rule's entry half
-import { countShiftBasedLeaveDays, leaveDaysPerWeek } from "./vacation-calc"; // Phase 107 (D-04/D-09), Issue #417; leaveDaysPerWeek Issue #429 (D-01/D-02) — the shared per-week kernel, Phase 430-06
+import {
+  countShiftBasedLeaveDays,
+  leaveDaysPerWeek,
+  marginalShiftBasedLeaveDays,
+  mondayOfWeekUtc,
+} from "./vacation-calc"; // Phase 107 (D-04/D-09), Issue #417; leaveDaysPerWeek Issue #429 (D-01/D-02) — the shared per-week kernel, Phase 430-06; marginalShiftBasedLeaveDays/mondayOfWeekUtc Issue #436 (D-04)
 import { preserveCarryOverDeadline } from "./illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
 import { getActiveLeaveOverlapping } from "./facade/leave-requests"; // Phase 430 (D-08) — this file is INSIDE contexts/absence, no boundary crossing
 import type { LeaveEntitlement } from "@clokr/db";
@@ -116,6 +121,22 @@ export function contractWorkDaysPerWeekFrom(
 }
 
 /**
+ * Phase 436 (D-01, 436-AC-11) — the ONLY reader of `WorkSchedule.usualWorkDays`. Returns a copy
+ * of the stored value for a SHIFT_BASED row, else `[]`. A stale value on a non-SHIFT_BASED row
+ * (e.g. left over after a bulk type change) is inert here — it is never surfaced. This function
+ * never falls back to `workDays` (Phase 95b D-01, Phase 107 D-02 — the legacy per-day-hours
+ * placeholders must never act as a usual-workday Angabe).
+ */
+export function usualWorkDaysFrom(
+  schedule: { type?: string | null; usualWorkDays?: number[] | null } | null,
+): number[] {
+  if (schedule?.type === "SHIFT_BASED" && Array.isArray(schedule.usualWorkDays)) {
+    return [...schedule.usualWorkDays];
+  }
+  return [];
+}
+
+/**
  * Resolves an employee's contractual workday count (Phase 107, D-04).
  *
  * This is the DB-fetching side only — the actual resolution chain lives in
@@ -144,8 +165,11 @@ export async function resolveContractWorkDaysPerWeek(
   return contractWorkDaysPerWeekFrom(ws, cfg?.defaultWorkDays);
 }
 
-// German 2-letter weekday abbreviation, indexed by `Date.getUTCDay()` (0=So..6=Sa). Index 0
-// (Sunday) is never read by getShiftBasedLeaveDaysForWeek() below — § 3 Abs. 2 BUrlG excludes it.
+// German 2-letter weekday abbreviation, indexed by `Date.getUTCDay()` (0=So..6=Sa). Phase 436
+// (D-03): index 0 (Sunday) CAN now be read by getShiftBasedLeaveDaysForWeek() below — when the
+// employee's usualWorkDays Angabe names Sunday a usual day, `dayShares` carries a non-zero share
+// for it, exactly like any other weekday. Without an Angabe `dayShares` never has a Sunday key
+// (§ 3 Abs. 2 BUrlG), so the walk below is unchanged output for every pre-436 schedule.
 const GERMAN_WEEKDAY_ABBR = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"] as const;
 
 /**
@@ -195,7 +219,7 @@ export async function getShiftBasedLeaveDaysForWeek(
   weekStart: Date,
   weekEnd: Date,
 ): Promise<{ days: number; weekdays: string[] }> {
-  const [overlapping, contractWorkDaysPerWeek, holidays] = await Promise.all([
+  const [overlapping, contractWorkDaysPerWeek, holidays, latestSchedule] = await Promise.all([
     getActiveLeaveOverlapping(
       prisma,
       { kind: "employee", employeeId, tenantId },
@@ -204,18 +228,34 @@ export async function getShiftBasedLeaveDaysForWeek(
     ),
     resolveContractWorkDaysPerWeek(prisma, employeeId, tenantId),
     getHolidayMap(prisma, tenantId, employeeId, weekStart, weekEnd),
+    // Phase 436 (D-03): the same "latest row" choice resolveContractWorkDaysPerWeek() makes,
+    // scoped by employeeId AND employee.tenantId (T-436-09) — the Angabe follows the contract
+    // count through the identical WorkSchedule row.
+    prisma.workSchedule.findFirst({
+      where: { employeeId, employee: { tenantId } },
+      orderBy: { validFrom: "desc" },
+      select: { type: true, usualWorkDays: true },
+    }),
   ]);
 
   if (overlapping.length === 0) return { days: 0, weekdays: [] };
 
   const holidaySet = new Set(holidays.keys());
-  const weeks = leaveDaysPerWeek(overlapping, contractWorkDaysPerWeek, holidaySet);
+  const weeks = leaveDaysPerWeek(
+    overlapping,
+    contractWorkDaysPerWeek,
+    holidaySet,
+    usualWorkDaysFrom(latestSchedule),
+  );
   const weekMondayStr = weekStart.toISOString().slice(0, 10);
   const match = weeks.find((w) => w.weekMonday === weekMondayStr);
   if (!match) return { days: 0, weekdays: [] };
 
-  // Which weekdays: walk Mon..Sun, skip Sunday (never a Werktag, § 3 Abs. 2 BUrlG) — the
-  // `dayShares` map already excludes holidays (a holiday date never gets a share > 0).
+  // Which weekdays: walk Mon..Sun. Sunday is included (Phase 436, D-03) exactly like any other
+  // weekday — `dayShares` only ever carries a Sunday key when the Angabe names it usual, so this
+  // is byte-identical output for every pre-436 schedule (no Angabe => no Sunday key => skipped
+  // all the same). The `dayShares` map already excludes holidays (a holiday date never gets a
+  // share > 0).
   const weekdays: string[] = [];
   for (
     const d = new Date(weekStart);
@@ -223,7 +263,6 @@ export async function getShiftBasedLeaveDaysForWeek(
     d.setUTCDate(d.getUTCDate() + 1)
   ) {
     const dow = d.getUTCDay(); // 0=So..6=Sa
-    if (dow === 0) continue;
     const dateStr = d.toISOString().slice(0, 10);
     if ((match.dayShares.get(dateStr) ?? 0) > 0) weekdays.push(GERMAN_WEEKDAY_ABBR[dow]);
   }
@@ -530,6 +569,99 @@ export async function reverseVacationDays(
 }
 
 /**
+ * Issue #436, D-04/D-09 — how a call site wants its leave days priced:
+ *
+ * - `{ mode: "isolated" }`: byte-identical to the pre-436 single-request price (no sibling
+ *   query at all). Used by `prefixLeaveDays()` below (cross-year apportionment of an ALREADY
+ *   priced total — never re-prices against siblings) and by every non-request-pricing caller.
+ * - `{ mode: "request", leaveTypeCode, excludeRequestId? }`: price this request against the
+ *   employee's OTHER counted VACATION requests sharing its ISO weeks (D-04 week-union), but
+ *   ONLY when `leaveTypeCode === "VACATION"` — every other leave type is priced in isolation,
+ *   exactly as `countShiftBasedLeaveDays` priced it before this issue (D-04: "VACATION-consuming
+ *   types"). `excludeRequestId`, when given, is the request's own id — it is never priced
+ *   against itself, and (D-09/planner refinement 1) only requests created BEFORE it (by
+ *   `createdAt`, ties broken by `id`) are counted as "others", so a request's price stays stable
+ *   from creation through approval.
+ *
+ * REQUIRED (not optional) on `resolveLeaveDays()` on purpose (Pitfall 1, 436-04-PLAN.md): making
+ * it optional would let a new call site silently fall back to some default and skip this
+ * decision entirely. The compiler enumerates every call site instead.
+ */
+export type LeaveDaysPricing =
+  { mode: "request"; leaveTypeCode: string; excludeRequestId?: string } | { mode: "isolated" };
+
+/**
+ * Issue #436, D-04/D-09 — loads the "other counted VACATION requests" for the week-union
+ * marginal-cost calculation below. Deliberately INLINE here, NOT a facade export, and NOT a
+ * reuse of `getCalendarLeaveOverlapping` ("A3" in facade/leave-requests.ts) — A3's own doc
+ * comment forbids feeding it into a Soll/entitlement calculation (it is a DISPLAY-only set that
+ * additionally includes PENDING, which A3 exists to keep OUT of exactly this kind of
+ * calculation's status set reasoning). This function's status set is its own, independently
+ * reasoned: PENDING (a merely-requested day already reserves its share of the week) PLUS
+ * `EFFECTIVE_LEAVE_STATUSES` (APPROVED, CANCELLATION_REQUESTED — Issue #446, D-01).
+ *
+ * Scope: same `employeeId` AND `employee.tenantId` (T-436-11) — tenant isolation is NOT
+ * optional here, since this read has no route-level scope check of its own. `deletedAt: null`,
+ * `leaveType.code: "VACATION"` only (D-04's "VACATION-consuming types"), overlapping the
+ * request's own ISO-week span (Monday of the start week through Sunday of the end week — the
+ * SAME span `marginalShiftBasedLeaveDays()`'s per-week union needs to see every sibling that
+ * could share a week with the request).
+ *
+ * Ordering rule (D-09, planner refinement 1): when `excludeRequestId` resolves to a real row,
+ * only requests created strictly BEFORE it (by `createdAt`, ties broken by `id`) are returned —
+ * a request is ALWAYS priced against what existed when it itself was created, never against a
+ * sibling created later. Without this rule, approving the FIRST of two pending requests would
+ * re-price it against the SECOND (which did not exist yet when the first was created), turning
+ * the owner's 3 + 1 = 4 into 1 + 1 = 2. When `excludeRequestId` is absent, or does not resolve to
+ * a row in this employee's tenant, no ordering restriction applies (a brand-new request being
+ * priced for the first time has no "itself" to be excluded from, and nothing yet created after
+ * it to filter out).
+ */
+async function countedVacationSiblingRequests(
+  db: DbClient,
+  employeeId: string,
+  tenantId: string,
+  start: Date,
+  end: Date,
+  excludeRequestId: string | undefined,
+): Promise<Array<{ startDate: Date; endDate: Date; halfDay: boolean }>> {
+  const weekSpanStart = mondayOfWeekUtc(start);
+  const weekSpanEnd = new Date(mondayOfWeekUtc(end).getTime() + 6 * 24 * 60 * 60 * 1000);
+
+  let anchor: { createdAt: Date; id: string } | null = null;
+  if (excludeRequestId) {
+    anchor = await db.leaveRequest.findFirst({
+      where: { id: excludeRequestId, employeeId, employee: { tenantId } },
+      select: { createdAt: true, id: true },
+    });
+  }
+
+  const rows = await db.leaveRequest.findMany({
+    where: {
+      employeeId,
+      employee: { tenantId },
+      deletedAt: null,
+      status: { in: ["PENDING", ...EFFECTIVE_LEAVE_STATUSES] },
+      leaveType: { code: "VACATION" },
+      startDate: { lte: weekSpanEnd },
+      endDate: { gte: weekSpanStart },
+      ...(excludeRequestId ? { id: { not: excludeRequestId } } : {}),
+      ...(anchor
+        ? {
+            OR: [
+              { createdAt: { lt: anchor.createdAt } },
+              { createdAt: anchor.createdAt, id: { lt: anchor.id } },
+            ],
+          }
+        : {}),
+    },
+    select: { startDate: true, endDate: true, halfDay: true },
+  });
+
+  return rows;
+}
+
+/**
  * Resolves how many leave days a period costs an employee (Phase 107, D-09's DB-fetching
  * side). Branch-first dispatch, mirroring getScheduledHours()'s shape: SHIFT_BASED resolves the
  * roster-aware calc and RETURNS EARLY; every other schedule type falls through to the existing
@@ -539,6 +671,12 @@ export async function reverseVacationDays(
  * `holidays` is the caller's already-computed Set (`getHolidayMap(...).keys()`, the same value
  * every existing calculateWorkDays() call site already builds) — this function does not fetch
  * holidays itself.
+ *
+ * `pricing` (Issue #436, D-04/D-09) — REQUIRED on purpose (Pitfall 1): decides whether this
+ * price is computed in isolation or as the marginal cost against the employee's other counted
+ * VACATION requests sharing an ISO week. See {@link LeaveDaysPricing}'s own doc comment for the
+ * full contract; see {@link countedVacationSiblingRequests} for the sibling query and its
+ * ordering rule.
  *
  * Exported (Phase 107, D-14): this is the D-04 resolution chain's DB-fetching wrapper. The
  * shift-leave-recalc resolver (`apps/api/src/utils/shift-leave-recalc-resolver.ts`) calls this
@@ -554,6 +692,7 @@ export async function resolveLeaveDays(
   end: Date,
   halfDay: boolean,
   holidays: Set<string>,
+  pricing: LeaveDaysPricing,
 ): Promise<{ days: number; provisional: boolean }> {
   const ws = await prisma.workSchedule.findFirst({
     where: { employeeId },
@@ -568,8 +707,35 @@ export async function resolveLeaveDays(
       employeeId,
       tenantId,
     );
+    const usualWorkDays = usualWorkDaysFrom(ws);
 
-    return countShiftBasedLeaveDays(start, end, halfDay, contractWorkDaysPerWeek, holidays);
+    if (pricing.mode === "request" && pricing.leaveTypeCode === "VACATION") {
+      const others = await countedVacationSiblingRequests(
+        prisma,
+        employeeId,
+        tenantId,
+        start,
+        end,
+        pricing.excludeRequestId,
+      );
+      const days = marginalShiftBasedLeaveDays(
+        { startDate: start, endDate: end, halfDay },
+        others,
+        contractWorkDaysPerWeek,
+        holidays,
+        usualWorkDays,
+      );
+      return { days, provisional: false };
+    }
+
+    return countShiftBasedLeaveDays(
+      start,
+      end,
+      halfDay,
+      contractWorkDaysPerWeek,
+      holidays,
+      usualWorkDays,
+    );
   }
 
   // Every other schedule type: byte-identical to today's five call sites (AC-REG-02).
@@ -1084,7 +1250,11 @@ async function prefixLeaveDays(
   const tt = utcDay(t);
   if (tt.getTime() < start.getTime()) return 0;
   if (tt.getTime() >= end.getTime()) return total;
-  const counted = await resolveLeaveDays(db, employeeId, tenantId, start, tt, false, holidays);
+  // Issue #436 (planner refinement 3): the prefix apportions an ALREADY priced total between two
+  // years — it must never re-price against siblings a second time, so this is always isolated.
+  const counted = await resolveLeaveDays(db, employeeId, tenantId, start, tt, false, holidays, {
+    mode: "isolated",
+  });
   return Math.min(total, counted.days);
 }
 

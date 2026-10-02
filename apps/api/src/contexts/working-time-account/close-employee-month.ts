@@ -78,6 +78,7 @@ import {
   resolveBsTagSlot,
   contractWorkDaysPerWeekFrom, // Issue #429 (D-03/D-11) — the ONE fallback-chain implementation
   leaveDaysPerWeek, // Issue #429 (D-01/D-02) — the shared per-week leave-day count
+  usualWorkDaysFrom, // Issue #436 (D-03) — the saldo side's one reader of the Angabe
   type WeekContext,
 } from "../absence"; // Phase 101B (Issue #101, wave 7)
 import {
@@ -811,13 +812,15 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
       // Full, unclipped startDate/endDate (D-07) — clipping happens inside. D-05: EMPTY
       // holiday set on the saldo side (see shift-based-leave-credit.ts's docblock).
       // Issue #429 audit: only CONTRACT-basis rows count toward the contract week; a sick day
-      // must not turn a fragment into a whole week or shift the week's shares.
+      // must not turn a fragment into a whole week or shift the week's shares. Phase 436 (D-03):
+      // the contract-week count honours the Angabe for fragment weeks exactly like entitlement.
       leaveDaysPerWeek(
         // `!== "ROSTER"` (not `=== "CONTRACT"`): a row built without the field (untyped test
         // fixtures, legacy callers) keeps the contract behaviour, matching the row loop below.
         approvedLeave.filter((lr) => lr.creditBasis !== "ROSTER"),
         contractWorkDaysPerWeek,
         new Set(),
+        usualWorkDaysFrom(schedule as { type?: string | null; usualWorkDays?: number[] | null }),
       ),
       contractWorkDaysPerWeek,
       schedule,

@@ -8,6 +8,7 @@ import {
   countShiftBasedLeaveDays,
   mondayOfWeekUtc,
   leaveDaysPerWeek,
+  marginalShiftBasedLeaveDays,
   statutoryMinimumVacationDays,
   statutoryMinimumVacationThreshold,
   statutoryMinimumViolationMessage,
@@ -1120,5 +1121,361 @@ describe("countWorkDaysPerWeek count-first precedence (Phase 107, D-28/D-29)", (
     // average of the two tiers.
     const schedule = { ...baseHours, workDays: [1, 2, 3, 4, 5], contractWorkDaysPerWeek: 3 };
     expect(countWorkDaysPerWeek(schedule)).toBe(3);
+  });
+});
+
+describe("countShiftBasedLeaveDays — usual workdays (Issue #436, D-03)", () => {
+  it("contract 4, usual Di-Fr [2,3,4,5]: Mo-Mi costs 2, Do(w1)-Mo(w2) costs 2 (unit mirror of the tracer)", () => {
+    const usual = [2, 3, 4, 5];
+    const moMi = countShiftBasedLeaveDays(mon(0), mon(2), false, 4, NO_HOLIDAYS, usual);
+    expect(moMi).toEqual({ days: 2, provisional: false });
+
+    // Do(week1) through Mo(week2): week1 fragment Do,Fr,Sa,So -> Do,Fr counted (2); week2
+    // fragment Mo-only -> 0 (Mon not in usual). Total 2.
+    const doToMo = countShiftBasedLeaveDays(mon(3), mon(7), false, 4, NO_HOLIDAYS, usual);
+    expect(doToMo).toEqual({ days: 2, provisional: false });
+  });
+
+  it("contract 4, usual [1,2,3,4] (Mo-Do): whole Mo-Sa week unaffected by the usual-workday filter (Pitfall 4)", () => {
+    const usual = [1, 2, 3, 4];
+    const wholeWeek = countShiftBasedLeaveDays(mon(0), mon(5), false, 4, NO_HOLIDAYS, usual);
+    expect(wholeWeek).toEqual({ days: 4, provisional: false });
+
+    const withWedHoliday = countShiftBasedLeaveDays(
+      mon(0),
+      mon(5),
+      false,
+      4,
+      new Set([ds(mon(2))]),
+      usual,
+    );
+    expect(withWedHoliday).toEqual({ days: 3, provisional: false });
+
+    const twoWholeWeeks = countShiftBasedLeaveDays(mon(0), mon(13), false, 4, NO_HOLIDAYS, usual);
+    expect(twoWholeWeeks).toEqual({ days: 8, provisional: false });
+  });
+
+  it("contract 4, usual Di-Fr [2,3,4,5]: a holiday on a NON-usual day (Monday) is not deducted; on a usual day (Wednesday) it is", () => {
+    const usual = [2, 3, 4, 5];
+    const holidayOnMonday = countShiftBasedLeaveDays(
+      mon(0),
+      mon(4),
+      false,
+      4,
+      new Set([ds(mon(0))]),
+      usual,
+    );
+    expect(holidayOnMonday).toEqual({ days: 4, provisional: false });
+
+    const holidayOnWednesday = countShiftBasedLeaveDays(
+      mon(0),
+      mon(4),
+      false,
+      4,
+      new Set([ds(mon(2))]),
+      usual,
+    );
+    expect(holidayOnWednesday).toEqual({ days: 3, provisional: false });
+  });
+
+  it("Sunday follows set membership: usual [5,6,0,1] (Fr,Sa,So,Mo) counts a requested Sunday; usual [2,3,4,5] does not", () => {
+    const usualIncludingSunday = [5, 6, 0, 1];
+    const satSun = countShiftBasedLeaveDays(
+      mon(5),
+      mon(6),
+      false,
+      4,
+      NO_HOLIDAYS,
+      usualIncludingSunday,
+    );
+    expect(satSun).toEqual({ days: 2, provisional: false });
+
+    const usualExcludingSunday = [2, 3, 4, 5];
+    const satSunExcluded = countShiftBasedLeaveDays(
+      mon(5),
+      mon(6),
+      false,
+      4,
+      NO_HOLIDAYS,
+      usualExcludingSunday,
+    );
+    expect(satSunExcluded).toEqual({ days: 0, provisional: false });
+  });
+
+  it("half day on a non-usual weekday (Monday, usual Di-Fr) costs 0; on a usual weekday (Tuesday) costs 0.5", () => {
+    const usual = [2, 3, 4, 5];
+    const halfOnMonday = countShiftBasedLeaveDays(mon(0), mon(0), true, 4, NO_HOLIDAYS, usual);
+    expect(halfOnMonday).toEqual({ days: 0, provisional: false });
+
+    const halfOnTuesday = countShiftBasedLeaveDays(mon(1), mon(1), true, 4, NO_HOLIDAYS, usual);
+    expect(halfOnTuesday).toEqual({ days: 0.5, provisional: false });
+  });
+
+  it("half day with an empty usual list costs 0.5 on any weekday (unchanged pre-436 behaviour)", () => {
+    const halfOnMonday = countShiftBasedLeaveDays(mon(0), mon(0), true, 4, NO_HOLIDAYS, []);
+    expect(halfOnMonday).toEqual({ days: 0.5, provisional: false });
+    const halfOnSunday = countShiftBasedLeaveDays(mon(6), mon(6), true, 4, NO_HOLIDAYS, []);
+    expect(halfOnSunday).toEqual({ days: 0.5, provisional: false });
+  });
+
+  it("a usual-workday set LARGER than the contract still caps at the contract (Mo-Fr usual, 4-day contract)", () => {
+    const usual = [1, 2, 3, 4, 5];
+    const moFr = countShiftBasedLeaveDays(mon(0), mon(4), false, 4, NO_HOLIDAYS, usual);
+    expect(moFr).toEqual({ days: 4, provisional: false });
+  });
+});
+
+describe("leaveDaysPerWeek — usual workdays (Issue #436, D-03)", () => {
+  it("contract 4, usual Di-Fr [2,3,4,5]: one Mo-Mi row -> one week, days 2, dayShares exactly {Di:1, Mi:1}", () => {
+    const usual = [2, 3, 4, 5];
+    const weeks = leaveDaysPerWeek(
+      [{ startDate: mon(0), endDate: mon(2) }], // Mo-Mi
+      4,
+      NO_HOLIDAYS,
+      usual,
+    );
+    expect(weeks).toHaveLength(1);
+    expect(weeks[0].days).toBe(2);
+    expect(weeks[0].dayShares).toEqual(
+      new Map([
+        [ds(mon(1)), 1], // Di
+        [ds(mon(2)), 1], // Mi
+      ]),
+    );
+  });
+
+  it("contract 4, usual Mo-Do [1,2,3,4]: one whole Mo-Sa row -> days 4, dayShares 4/6 on each Mo-Sa date (unchanged distribution)", () => {
+    const usual = [1, 2, 3, 4];
+    const weeks = leaveDaysPerWeek(
+      [{ startDate: mon(0), endDate: mon(5) }], // Mo-Sa, whole week
+      4,
+      NO_HOLIDAYS,
+      usual,
+    );
+    expect(weeks).toHaveLength(1);
+    expect(weeks[0].days).toBe(4);
+    for (let i = 0; i <= 5; i++) {
+      expect(weeks[0].dayShares.get(ds(mon(i)))).toBeCloseTo(4 / 6);
+    }
+    expect(weeks[0].dayShares.size).toBe(6);
+  });
+
+  it("contract 4, usual Di-Fr [2,3,4,5]: two rows (Mo-only, Mi-only) in the same week -> days 1, share only on Mi", () => {
+    const usual = [2, 3, 4, 5];
+    const weeks = leaveDaysPerWeek(
+      [
+        { startDate: mon(0), endDate: mon(0) }, // Mo
+        { startDate: mon(2), endDate: mon(2) }, // Mi
+      ],
+      4,
+      NO_HOLIDAYS,
+      usual,
+    );
+    expect(weeks).toHaveLength(1);
+    expect(weeks[0].days).toBe(1);
+    expect(weeks[0].dayShares).toEqual(new Map([[ds(mon(2)), 1]]));
+  });
+
+  it("contract 4, usual [5,6,0,1] (Fr,Sa,So,Mo): Sa-So row -> days 2, shares on Sa and So; usual [] -> days 1 (Saturday only, unchanged)", () => {
+    const usualWithSunday = [5, 6, 0, 1];
+    const withAngabe = leaveDaysPerWeek(
+      [{ startDate: mon(5), endDate: mon(6) }], // Sa-So
+      4,
+      NO_HOLIDAYS,
+      usualWithSunday,
+    );
+    expect(withAngabe).toHaveLength(1);
+    expect(withAngabe[0].days).toBe(2);
+    expect(withAngabe[0].dayShares).toEqual(
+      new Map([
+        [ds(mon(5)), 1], // Sa
+        [ds(mon(6)), 1], // So
+      ]),
+    );
+
+    const withoutAngabe = leaveDaysPerWeek(
+      [{ startDate: mon(5), endDate: mon(6) }], // Sa-So
+      4,
+      NO_HOLIDAYS,
+      [],
+    );
+    expect(withoutAngabe).toHaveLength(1);
+    expect(withoutAngabe[0].days).toBe(1); // Saturday only — Sunday is never a Werktag without an Angabe
+    expect(withoutAngabe[0].dayShares).toEqual(new Map([[ds(mon(5)), 1]]));
+  });
+
+  it("contract 4, usual Di-Fr [2,3,4,5]: half-day row on a Monday -> no week entry; on a Tuesday -> days 0.5", () => {
+    const usual = [2, 3, 4, 5];
+    const halfOnMonday = leaveDaysPerWeek(
+      [{ startDate: mon(0), endDate: mon(0), halfDay: true }],
+      4,
+      NO_HOLIDAYS,
+      usual,
+    );
+    expect(halfOnMonday).toEqual([]);
+
+    const halfOnTuesday = leaveDaysPerWeek(
+      [{ startDate: mon(1), endDate: mon(1), halfDay: true }],
+      4,
+      NO_HOLIDAYS,
+      usual,
+    );
+    expect(halfOnTuesday).toHaveLength(1);
+    expect(halfOnTuesday[0].days).toBe(0.5);
+    expect(halfOnTuesday[0].dayShares).toEqual(new Map([[ds(mon(1)), 0.5]]));
+  });
+
+  it("parity fuzz: Σ leaveDaysPerWeek(...).days === countShiftBasedLeaveDays(...).days for every single row (full or half day), every usual set, every contract 1..6, with and without a holiday (floor: 4000 cases)", () => {
+    const USUAL_SETS: Array<readonly number[]> = [
+      [],
+      [2, 3, 4, 5],
+      [1, 2, 3, 4],
+      [1, 2, 3, 4, 5, 6],
+      [5, 6, 0, 1],
+    ];
+    const CONTRACTS = [1, 2, 3, 4, 5, 6];
+    const HOLIDAY_SETS: Array<Set<string>> = [NO_HOLIDAYS, new Set([ds(mon(2))])]; // none, a Wednesday
+
+    let caseCount = 0;
+    const mismatches: string[] = [];
+
+    // Full-day rows: offsets 0..6 (which day the row starts on) x lengths 1..10 days.
+    for (let offset = 0; offset <= 6; offset++) {
+      for (let length = 1; length <= 10; length++) {
+        const start = mon(offset);
+        const end = mon(offset + length - 1);
+        for (const usual of USUAL_SETS) {
+          for (const contract of CONTRACTS) {
+            for (const holidays of HOLIDAY_SETS) {
+              caseCount++;
+              const weeks = leaveDaysPerWeek(
+                [{ startDate: start, endDate: end }],
+                contract,
+                holidays,
+                usual,
+              );
+              const fromWeeks = weeks.reduce((sum, w) => sum + w.days, 0);
+              const expected = countShiftBasedLeaveDays(
+                start,
+                end,
+                false,
+                contract,
+                holidays,
+                usual,
+              ).days;
+              if (fromWeeks !== expected) {
+                mismatches.push(
+                  `offset=${offset} length=${length} usual=${JSON.stringify(usual)} contract=${contract}: got ${fromWeeks}, expected ${expected}`,
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Half-day rows: one per weekday offset — contract and holidays are irrelevant to the
+    // halfDay short-circuit, but still varied to catch any accidental dependency.
+    for (let offset = 0; offset <= 6; offset++) {
+      const start = mon(offset);
+      for (const usual of USUAL_SETS) {
+        for (const contract of CONTRACTS) {
+          for (const holidays of HOLIDAY_SETS) {
+            caseCount++;
+            const weeks = leaveDaysPerWeek(
+              [{ startDate: start, endDate: start, halfDay: true }],
+              contract,
+              holidays,
+              usual,
+            );
+            const fromWeeks = weeks.reduce((sum, w) => sum + w.days, 0);
+            const expected = countShiftBasedLeaveDays(
+              start,
+              start,
+              true,
+              contract,
+              holidays,
+              usual,
+            ).days;
+            if (fromWeeks !== expected) {
+              mismatches.push(
+                `half-day offset=${offset} usual=${JSON.stringify(usual)} contract=${contract}: got ${fromWeeks}, expected ${expected}`,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    expect(caseCount).toBeGreaterThanOrEqual(4000);
+    expect(mismatches).toEqual([]);
+  });
+
+  it("D-05/436-AC-02: leaveDaysPerWeek with an explicit empty usualWorkDays list equals omitting the parameter (multi-row matrix)", () => {
+    const rows = [
+      { startDate: mon(0), endDate: mon(2) }, // Mo-Mi
+      { startDate: mon(4), endDate: mon(4), halfDay: true }, // Fr half-day
+    ];
+    for (const contract of [1, 3, 4, 5, 6]) {
+      for (const holidays of [NO_HOLIDAYS, new Set([ds(mon(2))])]) {
+        const withExplicitEmpty = leaveDaysPerWeek(rows, contract, holidays, []);
+        const withOmitted = leaveDaysPerWeek(rows, contract, holidays);
+        expect(withExplicitEmpty).toEqual(withOmitted);
+      }
+    }
+  });
+});
+
+describe("marginalShiftBasedLeaveDays (Issue #436, D-04)", () => {
+  it("contract 4, no Angabe: owner example — A=Mo-Mi alone costs 3, B=Do-Sa marginal against [A] costs 1, A marginal against [B] costs 1 (both alone are 3-day fragments, their union is the whole week capped at 4)", () => {
+    const a = { startDate: mon(0), endDate: mon(2), halfDay: false }; // Mo-Mi
+    const b = { startDate: mon(3), endDate: mon(5), halfDay: false }; // Do-Sa
+
+    expect(marginalShiftBasedLeaveDays(a, [], 4, NO_HOLIDAYS, [])).toBe(3);
+    expect(marginalShiftBasedLeaveDays(b, [a], 4, NO_HOLIDAYS, [])).toBe(1);
+    expect(marginalShiftBasedLeaveDays(a, [b], 4, NO_HOLIDAYS, [])).toBe(1);
+  });
+
+  it("contract 4, no Angabe: A=Mo-Mi this week, B=Mo-Mi NEXT week — different ISO weeks never interact, marginal(B, [A]) stays 3", () => {
+    const a = { startDate: mon(0), endDate: mon(2), halfDay: false }; // Mo-Mi, week 1
+    const bNextWeek = { startDate: mon(7), endDate: mon(9), halfDay: false }; // Mo-Mi, week 2
+
+    expect(marginalShiftBasedLeaveDays(bNextWeek, [a], 4, NO_HOLIDAYS, [])).toBe(3);
+  });
+
+  it("contract 5, no Angabe: A=Mo-Di, B=Mi-Do — no cap binding, marginal is purely additive (2)", () => {
+    const a = { startDate: mon(0), endDate: mon(1), halfDay: false }; // Mo-Di
+    const b = { startDate: mon(2), endDate: mon(3), halfDay: false }; // Mi-Do
+
+    expect(marginalShiftBasedLeaveDays(b, [a], 5, NO_HOLIDAYS, [])).toBe(2);
+  });
+
+  it("contract 4, no Angabe: A=Mo-Do already reaches the contract cap (4) — a half-day Fr marginal cost is 0", () => {
+    const a = { startDate: mon(0), endDate: mon(3), halfDay: false }; // Mo-Do, 4 days
+    const bHalfFriday = { startDate: mon(4), endDate: mon(4), halfDay: true }; // half-day Fr
+
+    expect(marginalShiftBasedLeaveDays(bHalfFriday, [a], 4, NO_HOLIDAYS, [])).toBe(0);
+  });
+
+  it("contract 4, usual Di-Fr [2,3,4,5]: A=Mo-Mi (costs 2 alone), B=Do-Sa — union is the whole week (ignores the Angabe, Pitfall 4), marginal(B,[A]) = 4 - 2 = 2", () => {
+    const usual = [2, 3, 4, 5];
+    const a = { startDate: mon(0), endDate: mon(2), halfDay: false }; // Mo-Mi
+    const b = { startDate: mon(3), endDate: mon(5), halfDay: false }; // Do-Sa
+
+    expect(marginalShiftBasedLeaveDays(a, [], 4, NO_HOLIDAYS, usual)).toBe(2);
+    expect(marginalShiftBasedLeaveDays(b, [a], 4, NO_HOLIDAYS, usual)).toBe(2);
+  });
+
+  it("others empty equals countShiftBasedLeaveDays directly (D-05 — byte-identical to the pre-436 single-request price)", () => {
+    const request = { startDate: mon(0), endDate: mon(2), halfDay: false };
+    const direct = countShiftBasedLeaveDays(
+      request.startDate,
+      request.endDate,
+      request.halfDay,
+      4,
+      NO_HOLIDAYS,
+      [],
+    ).days;
+    expect(marginalShiftBasedLeaveDays(request, [], 4, NO_HOLIDAYS, [])).toBe(direct);
   });
 });

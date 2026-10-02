@@ -55,6 +55,16 @@
  *                     apply booking pair + LEAVE_CORRECTED audit, skips (and reports) any
  *                     APPROVED row touching a locked month.
  *
+ *                     Since Issue #436 (week-union pricing across sibling VACATION requests),
+ *                     `--confirm` on an APPROVED row is ALSO the (non-silent, audited) way an
+ *                     already-approved SHIFT_BASED request's stored `days` gets corrected under
+ *                     the week-union rule, not only under the original Issue #417 contract-vs-
+ *                     roster rule this script was written for. An operator reaching for
+ *                     `--confirm` to resolve an Issue #417-flavoured Bestand case now ALSO
+ *                     re-prices every APPROVED SHIFT_BASED VACATION request this process finds
+ *                     under the week-union rule in the same pass — review the dry-run list
+ *                     first. See `docs/adr/0001-abweichungen.md` Nachtrag Phase 436, WR-02.
+ *
  * --status PENDING|APPROVED: restricts scanning to that single status (default: both, the
  *                             existing scope). Any other value throws a German error.
  * --request-id <uuid>:       repeatable — restricts scanning to those specific requests (ANDed
@@ -262,6 +272,9 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
             req.endDate,
           );
           const holidays = new Set(holidayMap.keys());
+          // Issue #436 (D-04/D-09): since this issue, the dry-run also lists requests whose
+          // stored days predate the week-union rule (the Bestand list) — excluding the request
+          // itself, so it is never priced against its own stored dates.
           const recomputed = await resolveLeaveDays(
             prisma,
             req.employeeId,
@@ -270,6 +283,7 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
             req.endDate,
             req.halfDay,
             holidays,
+            { mode: "request", leaveTypeCode: "VACATION", excludeRequestId: req.id },
           );
 
           const oldDays = Number(req.days);

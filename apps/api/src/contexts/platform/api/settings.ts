@@ -31,7 +31,9 @@ import {
   BS_DAILY_MAX_BOUND,
   BS_BLOCK_WEEKLY_MIN_BOUND,
   BS_BLOCK_WEEKLY_MAX_BOUND,
+  contractWorkDaysPerWeekFrom, // Phase 436 (D-02) — resolves the comparison value for validateUsualWorkDays
 } from "../../absence"; // issue #246, E-6
+import { validateUsualWorkDays } from "../usual-work-days"; // Phase 436 (D-02)
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
@@ -377,6 +379,10 @@ export const employeeScheduleSchema = z
     // the whole payload on an explicit null (documented Zod gotcha). Bounds mirror
     // fullTimeWorkDaysPerWeek above verbatim.
     contractWorkDaysPerWeek: z.number().int().min(1).max(7).optional().nullable(),
+    // Phase 436 (D-01/D-02): optional "übliche Arbeitstage", SHIFT_BASED only. .nullable()
+    // (not bare .optional()) because this project's Svelte forms send `field: x ? x : null` —
+    // null clears the Angabe (writes []), undefined keeps the existing value unchanged.
+    usualWorkDays: z.array(z.number().int().min(0).max(6)).max(7).optional().nullable(),
     validFrom: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -1075,6 +1081,18 @@ export async function settingsRoutes(app: FastifyInstance) {
       // (When caller PROVIDES validFrom, the Zod refinement above already enforced it.)
       const validFrom = body.validFrom ? new Date(body.validFrom) : snapToMonthFirstUtc(new Date());
 
+      // Phase 436 Plan 02 (D-02): a non-SHIFT_BASED body must never carry a non-empty Angabe —
+      // reject BEFORE the orphan-shift detection/transaction below, so a rejected switch-away
+      // body neither cancels future shifts nor writes any schedule row. `contractWorkDaysPerWeek`
+      // is irrelevant here (the body never reaches that check for a non-empty, non-SHIFT_BASED
+      // list — validateUsualWorkDays rejects on the type check first).
+      if (body.type !== "SHIFT_BASED" && body.usualWorkDays && body.usualWorkDays.length > 0) {
+        const earlyUsualWorkDaysCheck = validateUsualWorkDays(body.type, body.usualWorkDays, 0);
+        if (!earlyUsualWorkDaysCheck.ok) {
+          return reply.code(400).send({ error: earlyUsualWorkDaysCheck.error });
+        }
+      }
+
       // ── Phase 49.3 — Orphan-Shift-Lifecycle detection ──────────────────────
       // When switching FROM SHIFT_BASED to any other type, check for future shifts.
       // Past shifts (date < today) are immutable (Phase 47.2) and are never touched.
@@ -1160,6 +1178,9 @@ export async function settingsRoutes(app: FastifyInstance) {
               // alongside per-day-hours that disagree. Closes an employee's
               // class of bug (mondayHours=0 but workDays=[1,2,3,4,5]).
               workDays: normalizeWorkDays(body.workDays, body as PerDayHours),
+              // Phase 436 Plan 02 (D-02): a row that is not SHIFT_BASED never carries an Angabe —
+              // the early rejection above already guarantees the body had no non-empty value here.
+              usualWorkDays: [],
               validFrom,
             };
 
@@ -1262,6 +1283,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       // switch away from SHIFT_BASED clears any stale count.
       let workDaysForWrite: number[];
       let contractWorkDaysPerWeekForWrite: number | null;
+      let usualWorkDaysForWrite: number[];
       if (body.type === "SHIFT_BASED") {
         if (existing) {
           workDaysForWrite = existing.workDays;
@@ -1275,9 +1297,32 @@ export async function settingsRoutes(app: FastifyInstance) {
         }
         contractWorkDaysPerWeekForWrite =
           body.contractWorkDaysPerWeek ?? existing?.contractWorkDaysPerWeek ?? 5;
+
+        // Phase 436 (D-01/D-02): undefined keeps the existing Angabe (partial-update semantics,
+        // mirrors contractWorkDaysPerWeekForWrite above); null clears it; otherwise use the body.
+        if (body.usualWorkDays === undefined) {
+          usualWorkDaysForWrite = existing?.usualWorkDays ?? [];
+        } else if (body.usualWorkDays === null) {
+          usualWorkDaysForWrite = [];
+        } else {
+          usualWorkDaysForWrite = body.usualWorkDays;
+        }
+        const usualWorkDaysCheck = validateUsualWorkDays(
+          "SHIFT_BASED",
+          usualWorkDaysForWrite,
+          contractWorkDaysPerWeekFrom({
+            contractWorkDaysPerWeek: contractWorkDaysPerWeekForWrite,
+            workDays: workDaysForWrite,
+          }),
+        );
+        if (!usualWorkDaysCheck.ok) {
+          return reply.code(400).send({ error: usualWorkDaysCheck.error });
+        }
+        usualWorkDaysForWrite = usualWorkDaysCheck.value;
       } else {
         workDaysForWrite = normalizeWorkDays(body.workDays, body as PerDayHours);
         contractWorkDaysPerWeekForWrite = null;
+        usualWorkDaysForWrite = [];
       }
 
       const scheduleData = {
@@ -1310,6 +1355,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         coreDays: body.coreDays ?? [],
         workDays: workDaysForWrite,
         contractWorkDaysPerWeek: contractWorkDaysPerWeekForWrite,
+        usualWorkDays: usualWorkDaysForWrite,
         validFrom,
       };
 

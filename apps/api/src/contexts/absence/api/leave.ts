@@ -25,6 +25,8 @@ import {
   reverseVacationDays,
   recalculateCarryOver,
   contractWorkDaysPerWeekFrom, // Issue #429, D-13 — the getScheduledHours SHIFT_BASED branch below
+  usualWorkDaysFrom, // Issue #436, D-03 — the same branch, threading the Angabe into the receipt
+  type LeaveDaysPricing, // Issue #436, D-04/D-09
 } from "../leave-days";
 import { formatMinutesHM } from "../format-hm"; // Phase 100
 import {
@@ -531,6 +533,8 @@ export async function leaveRoutes(app: FastifyInstance) {
       // Phase 107 (D-09): roster-aware estimate from creation onward, so the number does not
       // visibly jump at approval. daysProvisional itself stays null until approval (D-10) --
       // only `.days` is used here, `.provisional` is deliberately discarded.
+      // Issue #436 (D-04): priced against the employee's other counted VACATION requests
+      // sharing an ISO week — no id yet, so there is nothing to exclude.
       const { days } = await resolveLeaveDays(
         app.prisma,
         employeeId,
@@ -539,6 +543,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         end,
         body.halfDay,
         holidays,
+        { mode: "request", leaveTypeCode: body.type },
       );
 
       // Überschneidung mit eigenem Antrag prüfen.
@@ -1527,6 +1532,9 @@ export async function leaveRoutes(app: FastifyInstance) {
           select: { type: true },
         });
         if (wsForApproval?.type === "SHIFT_BASED") {
+          // Issue #436 (D-04): approval recomputes against the other counted VACATION requests,
+          // excluding this one — the ordering rule (createdAt, ties by id) keeps this request's
+          // price stable whether it is approved before or after a sibling.
           shiftBasedApprovalRecompute = await resolveLeaveDays(
             app.prisma,
             existing.employeeId,
@@ -1535,6 +1543,7 @@ export async function leaveRoutes(app: FastifyInstance) {
             existing.endDate,
             existing.halfDay,
             new Set(holidayMapForDeduct.keys()),
+            { mode: "request", leaveTypeCode: reviewTypeCode, excludeRequestId: existing.id },
           );
         }
       }
@@ -2018,6 +2027,8 @@ export async function leaveRoutes(app: FastifyInstance) {
       const holidayMap = await getHolidayMap(app.prisma, tenantId, existing.employeeId, start, end);
       const holidays = new Set(holidayMap.keys());
       // Phase 107 (D-09): roster-aware recompute of this still-PENDING request's own edit.
+      // Issue #436 (D-04/D-09): excludes itself (self-exclusion, Pitfall 1) — the OLD dates of
+      // this very request must never shadow its own NEW price.
       const { days } = await resolveLeaveDays(
         app.prisma,
         existing.employeeId,
@@ -2026,6 +2037,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         end,
         body.halfDay,
         holidays,
+        { mode: "request", leaveTypeCode: existingTypeCode, excludeRequestId: id },
       );
 
       const updated = await app.prisma.leaveRequest.update({
@@ -2244,6 +2256,8 @@ export async function leaveRoutes(app: FastifyInstance) {
       // SHIFT_BASED (a separate check, since resolveLeaveDays()'s `.provisional` is always
       // `false` for every other type and would otherwise overwrite the column's `null` "not
       // applicable" state with a misleading `false`).
+      // Issue #436 (D-04/D-09): priced against the corrected (NEW) leave type, excluding this
+      // request itself.
       const { days, provisional: correctionProvisional } = await resolveLeaveDays(
         app.prisma,
         existing.employeeId,
@@ -2252,6 +2266,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         end,
         body.halfDay,
         holidays,
+        { mode: "request", leaveTypeCode: newType, excludeRequestId: existing.id },
       );
       const wsForCorrection = await app.prisma.workSchedule.findFirst({
         where: { employeeId: existing.employeeId },
@@ -2813,14 +2828,28 @@ export async function leaveRoutes(app: FastifyInstance) {
         endDate,
         halfDay,
         employeeId: requestedEmployeeId,
+        type: previewTypeCode,
+        excludeRequestId,
       } = req.query as {
         startDate?: string;
         endDate?: string;
         halfDay?: string;
         employeeId?: string;
+        type?: string;
+        excludeRequestId?: string;
       };
       if (!startDate || !endDate) {
         return reply.code(400).send({ error: "startDate und endDate erforderlich" });
+      }
+      // Issue #436 (D-04/D-09): optional — the dialog preview (Task 3) prices exactly like the
+      // server by sending the leave type and, in edit mode, the request being edited. Both are
+      // used ONLY inside the employee- and tenant-scoped helper in leave-days.ts, so a foreign
+      // excludeRequestId behaves exactly like an unknown one (no cross-tenant disclosure).
+      if (previewTypeCode != null && previewTypeCode.length > 40) {
+        return reply.code(400).send({ error: "Ungültiger Abwesenheitstyp" });
+      }
+      if (excludeRequestId != null && !z.string().uuid().safeParse(excludeRequestId).success) {
+        return reply.code(400).send({ error: "Ungültige Antrags-ID" });
       }
       // Phase 415 (#415): optional employeeId — the unified leave-request dialog reads a
       // manager's SELECTED employee's preview, not only the caller's own. Omitted or self is a
@@ -2839,9 +2868,26 @@ export async function leaveRoutes(app: FastifyInstance) {
       const holidays = new Set(holidayMap.keys());
 
       // Phase 107 (D-09): roster-aware live estimate, read-only, no persistence.
+      // Issue #436 (D-04/D-09, Task 3): with `type` given, prices exactly like the server would
+      // (week-union against the employee's other counted VACATION requests, excluding the
+      // request being edited). Without `type`, isolated — byte-identical to every existing
+      // caller's old answer (the neutrality recordings send no new params).
+      const previewPricing: LeaveDaysPricing =
+        previewTypeCode != null
+          ? { mode: "request", leaveTypeCode: previewTypeCode, excludeRequestId }
+          : { mode: "isolated" };
       const [hours, leaveDaysPreview] = await Promise.all([
         getScheduledHours(app.prisma, employeeId, start, end, isHalf, holidays),
-        resolveLeaveDays(app.prisma, employeeId, tenantId, start, end, isHalf, holidays),
+        resolveLeaveDays(
+          app.prisma,
+          employeeId,
+          tenantId,
+          start,
+          end,
+          isHalf,
+          holidays,
+          previewPricing,
+        ),
       ]);
       const { days, provisional } = leaveDaysPreview;
 
@@ -3762,6 +3808,9 @@ export async function leaveRoutes(app: FastifyInstance) {
       // credit-back is routed through the same roster-aware resolver for consistency. `.days`
       // only -- a credit-back is a REDUCTION of a prior deduction, never a new approved
       // consumption, so no daysProvisional is written here.
+      // Issue #436 (D-04/D-09): the credited sub-range is priced against the requests that were
+      // already there when the vacation was priced (excluding the vacation request itself), so
+      // the credit never exceeds what that request actually consumed.
       const { days: creditedDays } = await resolveLeaveDays(
         app.prisma,
         credit.employeeId,
@@ -3770,6 +3819,11 @@ export async function leaveRoutes(app: FastifyInstance) {
         credited.end,
         credit.vacationRequest.halfDay,
         holidays,
+        {
+          mode: "request",
+          leaveTypeCode: credit.vacationRequest.leaveType.code,
+          excludeRequestId: credit.vacationRequest.id,
+        },
       );
       if (creditedDays <= 0) {
         return reply
@@ -4335,8 +4389,16 @@ async function getScheduledHours(
     // `shiftBasedLeaveMinutesForRequest` is timezone-free (it operates on calendar `Date`
     // boundaries via `leaveDaysPerWeek`, like the saldo's `shiftBasedLeaveCreditByDate`) and,
     // mirroring `close-employee-month.ts`'s D-05 decision, is never given a holiday set — a
-    // holiday inside a leave range keeps being a Soll-free day via the leave itself.
-    const minutes = shiftBasedLeaveMinutesForRequest(ws, start, end, halfDay, c);
+    // holiday inside a leave range keeps being a Soll-free day via the leave itself. Phase 436
+    // (D-03): the Angabe follows the receipt through the same `usualWorkDaysFrom()` reader.
+    const minutes = shiftBasedLeaveMinutesForRequest(
+      ws,
+      start,
+      end,
+      halfDay,
+      c,
+      usualWorkDaysFrom(ws),
+    );
     return minutes / 60;
   }
 

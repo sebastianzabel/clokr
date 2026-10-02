@@ -276,6 +276,35 @@ export function buildContractWorkDaysPayload(
   };
 }
 
+/**
+ * Phase 436 Plan 02 (D-06) — the SHIFT_BASED "übliche Arbeitstage" payload slice, mirroring
+ * buildContractWorkDaysPayload's pattern. A non-SHIFT_BASED type never carries an Angabe
+ * (server-side D-02 mirror) — always emits []. Values follow the 0=So..6=Sa convention, the
+ * SAME convention as usualWorkDays/workDays elsewhere in this codebase (do NOT reuse
+ * BS_WEEKDAY_LABELS, which indexes 0=Mo — Pitfall 2).
+ */
+export function buildUsualWorkDaysPayload(
+  type: WorkScheduleLike["type"] | undefined,
+  usualWorkDays: number[],
+): { usualWorkDays: number[] } {
+  if (type !== "SHIFT_BASED") return { usualWorkDays: [] };
+  return { usualWorkDays: [...new Set(usualWorkDays)].sort((a, b) => a - b) };
+}
+
+/**
+ * Phase 436 Plan 02 (D-06) — how many more weekdays must be ticked to reach the contract day
+ * count. Purely advisory (the server is authoritative, T-436-08): an empty list is always valid
+ * ("keine Angabe"), and a null/unknown contract count means there is nothing to compare against.
+ */
+export function usualWorkDaysShortfall(
+  usualWorkDays: number[],
+  contractWorkDaysPerWeek: number | null,
+): number {
+  if (usualWorkDays.length === 0) return 0;
+  if (contractWorkDaysPerWeek == null) return 0;
+  return Math.max(0, contractWorkDaysPerWeek - usualWorkDays.length);
+}
+
 export function monthlyBudgetSollMinutes(
   schedule: WorkScheduleLike | null | undefined,
   monthStart: Date,

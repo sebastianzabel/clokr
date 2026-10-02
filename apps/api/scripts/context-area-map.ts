@@ -159,6 +159,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/compat-role.ts": "unterbau", // Phase 75b (Issue #75), D-14 — the one compat-role derivation (legacy User.role <-> system roles); reads RoleAssignment/AccessRole, and since Plan 11 writes RoleAssignment/User (fallback materialization, system-role replacement, column write-back) — all Unterbau models
   "src/contexts/platform/role-assignment-audit.ts": "unterbau", // Phase 75b Plan 11 (Issue #75) — shared audit helpers for RoleAssignment writes (moved out of api/role-assignments.ts) plus the compatRole-on-last-row rule (D-29); writes AuditLog only via app.audit, Unterbau models
   "src/contexts/platform/scope-filter.ts": "unterbau", // Phase 91b (Issue #91), D-07 — the ONE shared module every context's scope check calls (TimeEntry/EmployeeSalonAssignment/Shift/Employee reads on behalf of all four contexts, per its own module docblock); same category as access-context.ts/request-permissions.ts — shared Unterbau substrate, owned by no single context, per ADR 0002
+  "src/contexts/platform/usual-work-days.ts": "unterbau", // Phase 436 (Issue #436), D-01 — validateUsualWorkDays(), the one write-path validation for WorkSchedule.usualWorkDays, an Unterbau model
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────
@@ -226,6 +227,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/section9-detect.ts": "abwesenheiten", // § 9 BUrlG "krank im Urlaub" detection
   "src/contexts/absence/shift-leave-recalc-resolver.ts": "abwesenheiten", // writes LeaveRequest.daysProvisional when a roster change triggers recalculation (Phase 107) — LeaveRequest is the written model even though the trigger originates in Schichtplanung
   "src/contexts/absence/vacation-calc.ts": "abwesenheiten", // BUrlG vacation-entitlement calculation
+  "src/contexts/absence/__tests__/fixtures/legacy-shift-based-kernel-pre436.ts": "abwesenheiten", // Phase 436 Plan 01 (Issue #436), D-05 — frozen verbatim pre-436 kernel copy for the equivalence proof; test infra specific to this context's own test suite, same category as services/phorest/__tests__/helpers.ts below
   "src/contexts/absence/vocational-school-constants.ts": "abwesenheiten", // Berufsschule pattern constants
   "src/contexts/absence/vocational-school-generator.ts": "abwesenheiten", // writes Absence primarily; notification.create is a side effect
   "src/contexts/absence/vocational-school-pattern-order.ts": "abwesenheiten", // EmployeeVocationalSchoolPattern ordering helper

@@ -308,6 +308,13 @@ function toDateStrUtc(d: Date): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+/** The inverse of `toDateStrUtc()` for the "what weekday is this" question — parses a
+ * "YYYY-MM-DD" string (already UTC-midnight by construction) and returns `getUTCDay()`
+ * (0=Sun..6=Sat). Phase 436 (D-03). */
+function dowOfDateStr(dateStr: string): number {
+  return new Date(`${dateStr}T00:00:00.000Z`).getUTCDay();
+}
+
 /**
  * Counts leave-day consumption for a SHIFT_BASED employee over [start, end] — BY CONTRACT, not
  * by roster (Issue #417, 2026-09-29 owner decision, supersedes Phase 107 D-06). Pure and
@@ -362,31 +369,61 @@ function toDateStrUtc(d: Date): string {
  *      the same `{ days, provisional }` shape — it is now always `false`.
  */
 /**
- * The shared per-week kernel (Issue #429, D-02) behind BOTH `countShiftBasedLeaveDays()` (a
- * single running total) and `leaveDaysPerWeek()` (per-week/per-date breakdown, below). Takes
- * only the numbers each caller has already computed for one ISO week — no Date objects, no
- * holidays Set — and implements the two branches that used to be inline here:
- *   - a WHOLE week (every Mo-Sat day of the week is inside the requested range) contributes
- *     `max(0, contractWorkDaysPerWeek - moSaHolidaysInFragment)` — the contractual cap always
- *     binds for a whole week;
- *   - a FRAGMENT contributes
- *     `max(0, min(moSaDaysInFragment, contractWorkDaysPerWeek) - moSaHolidaysInFragment)`.
- * Extracting this as one function is the "dieselbe Formel" proof Issue #429 AC-2 asks for: both
- * callers literally run the same code, not two independently-written formulas that could drift.
+ * The shared per-week kernel (Issue #429, D-02; extended Phase 436, D-03) behind BOTH
+ * `countShiftBasedLeaveDays()` (a single running total) and `leaveDaysPerWeek()`
+ * (per-week/per-date breakdown, below). Extracting this as one function is the "dieselbe Formel"
+ * proof Issue #429 AC-2 asks for: both callers literally run the same code, not two independently
+ * written formulas that could drift.
+ *
+ * `requestedDates` is every calendar date (Mo-So, as UTC "YYYY-MM-DD" strings) requested in THIS
+ * ISO week's fragment/whole span — Sunday dates ARE included here; this function decides whether
+ * a date counts, the caller no longer pre-filters.
+ *
+ * Branches (Phase 436, D-03):
+ *   - WHOLE (every Mo-Sat day of the week is inside the requested range): `countedDates` is the
+ *     requested Mo-Sat dates (Sunday is never a Werktag, § 3 Abs. 2 BUrlG, so it is dropped even
+ *     here), `days = max(0, contractWorkDaysPerWeek - holidays among countedDates)` — the
+ *     contractual cap always binds for a whole week. `usualWorkDays` is NEVER applied to this
+ *     branch (D-03: "Full-week detection unchanged" — see Pitfall 4 in 436-RESEARCH.md: filtering
+ *     a restricted employee's whole week would wrongly undercount it).
+ *   - FRAGMENT, `usualWorkDays` empty: `countedDates` is the requested dates minus Sunday
+ *     (unchanged pre-436 behaviour).
+ *   - FRAGMENT, `usualWorkDays` non-empty: `countedDates` is the requested dates whose UTC weekday
+ *     is a member of `usualWorkDays` — Sunday now follows the SAME set-membership rule as any
+ *     other weekday (Phase 436 Task 2, D-03: if `0` is a usual day, a requested Sunday counts).
+ *     Either way, `days = max(0, min(|countedDates|, contractWorkDaysPerWeek) - holidays among
+ *     countedDates)`.
+ * A holiday is therefore deducted exactly once, and only for a date that would otherwise count.
  */
 function weekLeaveDays(
-  moSaDaysInFragment: number,
-  moSaHolidaysInFragment: number,
+  requestedDates: string[],
   isWhole: boolean,
   contractWorkDaysPerWeek: number,
-): number {
+  holidays: Set<string>,
+  usualWorkDays: readonly number[] = [],
+): { days: number; countedDates: string[] } {
   if (isWhole) {
-    return Math.max(0, contractWorkDaysPerWeek - moSaHolidaysInFragment);
+    const countedDates = requestedDates.filter((d) => dowOfDateStr(d) !== 0);
+    const holidayCount = countedDates.filter((d) => holidays.has(d)).length;
+    return { days: Math.max(0, contractWorkDaysPerWeek - holidayCount), countedDates };
   }
-  return Math.max(
-    0,
-    Math.min(moSaDaysInFragment, contractWorkDaysPerWeek) - moSaHolidaysInFragment,
-  );
+
+  const countedDates =
+    usualWorkDays.length === 0
+      ? requestedDates.filter((d) => dowOfDateStr(d) !== 0)
+      : requestedDates.filter((d) => usualWorkDays.includes(dowOfDateStr(d)));
+  const holidayCount = countedDates.filter((d) => holidays.has(d)).length;
+  const days = Math.max(0, Math.min(countedDates.length, contractWorkDaysPerWeek) - holidayCount);
+  return { days, countedDates };
+}
+
+/** Phase 436 (D-03, Task 2) — does a HALF-DAY request on UTC weekday `dow` count? `true` when
+ * `usualWorkDays` is empty (unchanged pre-436 behaviour: a half day always counts 0.5 regardless
+ * of weekday), else iff `dow` is a member of `usualWorkDays`. Shared by
+ * `countShiftBasedLeaveDays()`'s halfDay short-circuit and `buildHalfShareForWeek()` so the two
+ * half-day paths can never disagree about which weekday counts. */
+function halfDayCounts(dow: number, usualWorkDays: readonly number[]): boolean {
+  return usualWorkDays.length === 0 || usualWorkDays.includes(dow);
 }
 
 export function countShiftBasedLeaveDays(
@@ -395,8 +432,12 @@ export function countShiftBasedLeaveDays(
   halfDay: boolean,
   contractWorkDaysPerWeek: number,
   holidays: Set<string>,
+  usualWorkDays: readonly number[] = [],
 ): { days: number; provisional: boolean } {
-  if (halfDay) return { days: 0.5, provisional: false };
+  if (halfDay) {
+    const counts = halfDayCounts(utcMidnight(start).getUTCDay(), usualWorkDays);
+    return { days: counts ? 0.5 : 0, provisional: false };
+  }
 
   const s = utcMidnight(start);
   const e = utcMidnight(end);
@@ -414,20 +455,18 @@ export function countShiftBasedLeaveDays(
     const fragStart = weekMonday.getTime() > s.getTime() ? weekMonday : s;
     const fragEnd = weekSunday.getTime() < e.getTime() ? weekSunday : e;
 
-    let moSaDaysInFragment = 0;
-    let moSaHolidaysInFragment = 0;
+    const requestedDates: string[] = [];
     for (let d = fragStart; d.getTime() <= fragEnd.getTime(); d = addUtcDays(d, 1)) {
-      if (d.getUTCDay() === 0) continue; // Sunday is never a Werktag (§ 3 Abs. 2 BUrlG)
-      moSaDaysInFragment++;
-      if (holidays.has(toDateStrUtc(d))) moSaHolidaysInFragment++;
+      requestedDates.push(toDateStrUtc(d));
     }
 
     totalDays += weekLeaveDays(
-      moSaDaysInFragment,
-      moSaHolidaysInFragment,
+      requestedDates,
       isWhole,
       contractWorkDaysPerWeek,
-    );
+      holidays,
+      usualWorkDays,
+    ).days;
 
     weekMonday = addUtcDays(weekMonday, 7);
   }
@@ -794,11 +833,20 @@ export type LeaveWeek = {
  * input (D-07, plan 429-02).
  * `holidays` — same UTC "YYYY-MM-DD" format as `countShiftBasedLeaveDays()`. The saldo side
  * passes an empty set (D-05) — SHIFT_BASED contract Soll is not holiday-reduced today.
+ *
+ * `usualWorkDays` (Phase 436, D-03) — the employee's stored "übliche Arbeitstage" Angabe
+ * (0=So..6=Sa), or `[]` when none is recorded. Threaded verbatim into the shared `weekLeaveDays`
+ * kernel: with an empty list every branch below is byte-identical to the pre-436 behaviour
+ * (D-05 equivalence); with a non-empty list a FRAGMENT week's union of requested full-day dates
+ * — and a half-day request's single date — only count when their UTC weekday is a member of the
+ * list, Sunday included on equal footing with any other weekday. A WHOLE week's detection and
+ * day-count are never filtered by this list (Pitfall 4 — see `weekLeaveDays()`'s own docblock).
  */
 export function leaveDaysPerWeek(
   rows: Array<{ startDate: Date; endDate: Date; halfDay?: boolean }>,
   contractWorkDaysPerWeek: number,
   holidays: Set<string>,
+  usualWorkDays: readonly number[] = [],
 ): LeaveWeek[] {
   if (rows.length === 0) return [];
 
@@ -818,7 +866,11 @@ export function leaveDaysPerWeek(
   while (weekMonday.getTime() <= lastMonday.getTime()) {
     const weekSunday = addUtcDays(weekMonday, 6);
 
-    // Union of full-day Mo-Sat dates this week across ALL full-day rows (halfDay falsy).
+    // Union of full-day dates this week across ALL full-day rows (halfDay falsy). Sunday is
+    // included in the union only when `usualWorkDays` names it a usual day (Phase 436, D-03) —
+    // with an empty list this stays the pre-436 unconditional Sunday exclusion (§ 3 Abs. 2
+    // BUrlG). The WHOLE-week test below only ever looks at the six Mo-Sat dates, so this change
+    // cannot affect whole-week detection either way.
     const fullDayUnion = new Set<string>();
     for (const row of rows) {
       if (row.halfDay) continue;
@@ -827,7 +879,7 @@ export function leaveDaysPerWeek(
       const fragStart = weekMonday.getTime() > s.getTime() ? weekMonday : s;
       const fragEnd = weekSunday.getTime() < e.getTime() ? weekSunday : e;
       for (let d = fragStart; d.getTime() <= fragEnd.getTime(); d = addUtcDays(d, 1)) {
-        if (d.getUTCDay() === 0) continue; // Sunday is never a Werktag (§ 3 Abs. 2 BUrlG)
+        if (d.getUTCDay() === 0 && !usualWorkDays.includes(0)) continue;
         fullDayUnion.add(toDateStrUtc(d));
       }
     }
@@ -835,7 +887,13 @@ export function leaveDaysPerWeek(
     if (fullDayUnion.size === 0) {
       // No full-day leave touches this week — check for half-day-only contribution below before
       // moving on (a week can be half-day-only).
-      const halfOnly = buildHalfShareForWeek(rows, weekMonday, weekSunday, fullDayUnion);
+      const halfOnly = buildHalfShareForWeek(
+        rows,
+        weekMonday,
+        weekSunday,
+        fullDayUnion,
+        usualWorkDays,
+      );
       if (halfOnly.size > 0) {
         const days = Array.from(halfOnly.values()).reduce((a, b) => a + b, 0);
         const capped = Math.min(days, contractWorkDaysPerWeek);
@@ -860,22 +918,19 @@ export function leaveDaysPerWeek(
       }
     }
 
-    let moSaHolidaysInFragment = 0;
-    for (const date of fullDayUnion) {
-      if (holidays.has(date)) moSaHolidaysInFragment++;
-    }
-    const moSaDaysInFragment = fullDayUnion.size;
-
-    const fullDayTotal = weekLeaveDays(
-      moSaDaysInFragment,
-      moSaHolidaysInFragment,
+    // Phase 436 (D-03, plan 03): the Angabe is threaded into the same kernel — with an empty
+    // list weekLeaveDays()'s fragment branch behaves byte-identically to the pre-436 kernel.
+    const { days: fullDayTotal, countedDates } = weekLeaveDays(
+      Array.from(fullDayUnion),
       isWhole,
       contractWorkDaysPerWeek,
+      holidays,
+      usualWorkDays,
     );
 
-    // Distribute the full-day total UNIFORMLY over the non-holiday dates of fullDayUnion —
-    // holiday dates get share 0.
-    const nonHolidayDates = Array.from(fullDayUnion).filter((d) => !holidays.has(d));
+    // Distribute the full-day total UNIFORMLY over the non-holiday counted dates — holiday dates
+    // get share 0.
+    const nonHolidayDates = countedDates.filter((d) => !holidays.has(d));
     const dayShares = new Map<string, number>();
     if (nonHolidayDates.length > 0) {
       const perDate = fullDayTotal / nonHolidayDates.length;
@@ -884,7 +939,13 @@ export function leaveDaysPerWeek(
 
     // Half-day contribution: +0.5 per distinct date (a full-day row on the same date always
     // wins — OPEN-01, so buildHalfShareForWeek skips dates already in fullDayUnion).
-    const halfShare = buildHalfShareForWeek(rows, weekMonday, weekSunday, fullDayUnion);
+    const halfShare = buildHalfShareForWeek(
+      rows,
+      weekMonday,
+      weekSunday,
+      fullDayUnion,
+      usualWorkDays,
+    );
     const halfTotal = Array.from(halfShare.values()).reduce((a, b) => a + b, 0);
 
     let days = fullDayTotal;
@@ -910,6 +971,59 @@ export function leaveDaysPerWeek(
 }
 
 /**
+ * Issue #436, D-04 (owner Ergänzung 01.10.2026) — the MARGINAL leave-day cost of one request
+ * against the ISO weeks already occupied by `others` (the employee's other counted VACATION
+ * requests overlapping those weeks). Per-week union cost, using the SAME `leaveDaysPerWeek()`
+ * kernel both branches of this function already share:
+ *
+ *   marginal = Σ days(union(others ∪ {request})) − Σ days(union(others))
+ *
+ * capped at 0 (a request can never SUBTRACT from what `others` already cost). With `others`
+ * empty this collapses to `countShiftBasedLeaveDays(request, ...)` — byte-identical to the
+ * pre-436 single-request price (D-05).
+ *
+ * Owner example (4-day contract, no Angabe, one ISO week): A = Mo-Mi, B = Do-Sa.
+ *   marginal(A, []) = cost({A}) = 3
+ *   marginal(B, [A]) = cost({A, B}) − cost({A}) = 4 − 3 = 1
+ *   marginal(A, [B]) = cost({A, B}) − cost({B}) = 4 − 1 = 3  (NOT 1 — see the ordering rule in
+ *   leave-days.ts: A is priced against requests created BEFORE it, so B never enters A's own
+ *   marginal cost once A already exists).
+ *
+ * Weeks outside the request's own span cancel out algebraically: `others`' contribution to a
+ * week the request never touches is identical in both the "with request" and "without request"
+ * union, so the subtraction leaves only the weeks the request actually overlaps.
+ */
+export function marginalShiftBasedLeaveDays(
+  request: { startDate: Date; endDate: Date; halfDay: boolean },
+  others: Array<{ startDate: Date; endDate: Date; halfDay?: boolean }>,
+  contractWorkDaysPerWeek: number,
+  holidays: Set<string>,
+  usualWorkDays: readonly number[],
+): number {
+  if (others.length === 0) {
+    return countShiftBasedLeaveDays(
+      request.startDate,
+      request.endDate,
+      request.halfDay,
+      contractWorkDaysPerWeek,
+      holidays,
+      usualWorkDays,
+    ).days;
+  }
+
+  const sumDays = (weeks: LeaveWeek[]): number => weeks.reduce((acc, w) => acc + w.days, 0);
+
+  const withRequest = sumDays(
+    leaveDaysPerWeek([...others, request], contractWorkDaysPerWeek, holidays, usualWorkDays),
+  );
+  const withoutRequest = sumDays(
+    leaveDaysPerWeek(others, contractWorkDaysPerWeek, holidays, usualWorkDays),
+  );
+
+  return Math.max(0, withRequest - withoutRequest);
+}
+
+/**
  * Issue #429 (D-13, #293 "the receipt follows the account") — the per-REQUEST SHIFT_BASED
  * leave-minutes receipt for a single request in isolation: Σ `leaveDaysPerWeek()` days ×
  * (`weeklyHours` × 60 ÷ `contractWorkDaysPerWeek`). Consumed by `getScheduledHours()`
@@ -921,6 +1035,9 @@ export function leaveDaysPerWeek(
  * `contexts/working-time-account/index.ts` for it — keeping `shift-based-leave-credit.ts` out
  * of the cross-context import cycle gated by `measure-context-boundary-imports --cycles`.
  * Empty holiday set, mirroring the saldo side's D-05 decision.
+ *
+ * `usualWorkDays` (Phase 436, D-03) — passed verbatim into the `leaveDaysPerWeek()` call below,
+ * so the per-request receipt follows the same Angabe the saldo credit does.
  */
 export function shiftBasedLeaveMinutesForRequest(
   schedule: { weeklyHours?: unknown },
@@ -928,6 +1045,7 @@ export function shiftBasedLeaveMinutesForRequest(
   end: Date,
   halfDay: boolean,
   contractWorkDaysPerWeek: number,
+  usualWorkDays: readonly number[] = [],
 ): number {
   const weeklyHours = Number(schedule.weeklyHours ?? 0);
   if (weeklyHours <= 0 || contractWorkDaysPerWeek <= 0) return 0;
@@ -936,6 +1054,7 @@ export function shiftBasedLeaveMinutesForRequest(
     [{ startDate: start, endDate: end, halfDay }],
     contractWorkDaysPerWeek,
     new Set(),
+    usualWorkDays,
   );
   const totalDays = weeks.reduce((sum, w) => sum + w.days, 0);
   return Math.round(totalDays * daily);
@@ -950,12 +1069,14 @@ function buildHalfShareForWeek(
   weekMonday: Date,
   weekSunday: Date,
   fullDayUnion: Set<string>,
+  usualWorkDays: readonly number[] = [],
 ): Map<string, number> {
   const halfShare = new Map<string, number>();
   for (const row of rows) {
     if (!row.halfDay) continue;
     const s = utcMidnight(row.startDate);
     if (s.getTime() < weekMonday.getTime() || s.getTime() > weekSunday.getTime()) continue;
+    if (!halfDayCounts(s.getUTCDay(), usualWorkDays)) continue; // Phase 436 (D-03, Task 2)
     const dateStr = toDateStrUtc(s);
     if (fullDayUnion.has(dateStr)) continue;
     halfShare.set(dateStr, 0.5);
