@@ -207,6 +207,26 @@ async function ensureLeaveType(
   }
 }
 
+/**
+ * Issue #449 (D-1): a half-day leave request may only ever cover a single calendar date.
+ * The entitlement booking deducts a flat 0.5 days for a half day (`vacation-calc.ts`) while
+ * the saldo halves the SALDO MINUTES OF THE WHOLE REQUESTED RANGE
+ * (`working-time-account/timezone.ts`) — a half day across e.g. Mon-Fri books 0.5 days of
+ * entitlement but halves five days' worth of Soll, so entitlement, saldo, reports and DATEV
+ * permanently disagree (Befund G5). This is deliberately an INPUT-side fix only — calculation
+ * code is untouched (D-2); an existing multi-day half-day request stays approvable, and any
+ * correction of it runs later through "Antrag korrigieren" after owner approval.
+ *
+ * One shared predicate + message, chained via `.refine()` onto all three write schemas
+ * (createSchema, updateSchema, correctSchema) right after their existing start<=end check —
+ * never copied per schema.
+ */
+const HALF_DAY_SINGLE_DATE_MESSAGE = "Ein halber Tag ist nur für ein einzelnes Datum möglich.";
+
+function halfDayIsSingleDate(data: { halfDay?: boolean; startDate: string; endDate: string }) {
+  return !data.halfDay || data.startDate === data.endDate;
+}
+
 const createSchema = z
   .object({
     type: z.enum(TYPE_CODES),
@@ -228,7 +248,8 @@ const createSchema = z
   .refine((data) => new Date(data.startDate) <= new Date(data.endDate), {
     message: "Enddatum muss nach Startdatum liegen",
     path: ["endDate"],
-  });
+  })
+  .refine(halfDayIsSingleDate, { message: HALF_DAY_SINGLE_DATE_MESSAGE, path: ["endDate"] });
 
 const reviewSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
@@ -251,7 +272,8 @@ const updateSchema = z
   .refine((data) => new Date(data.startDate) <= new Date(data.endDate), {
     message: "Enddatum muss nach Startdatum liegen",
     path: ["endDate"],
-  });
+  })
+  .refine(halfDayIsSingleDate, { message: HALF_DAY_SINGLE_DATE_MESSAGE, path: ["endDate"] });
 
 // Phase 94-01: Manager/Admin DIRECT-correction of an already-APPROVED request.
 // Mirrors updateSchema but adds an optional `type` switch (type-specific recalc
@@ -274,7 +296,8 @@ const correctSchema = z
   .refine((data) => new Date(data.startDate) <= new Date(data.endDate), {
     message: "Enddatum muss nach Startdatum liegen",
     path: ["endDate"],
-  });
+  })
+  .refine(halfDayIsSingleDate, { message: HALF_DAY_SINGLE_DATE_MESSAGE, path: ["endDate"] });
 
 // Quick 260824-cjd — mandatory Storno-Begründung for withdraw/cancellation-request.
 const stornoSchema = z.object({ reason: auditReasonSchema });

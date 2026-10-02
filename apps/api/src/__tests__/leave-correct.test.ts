@@ -259,7 +259,9 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
   });
 
   it("halfDay change on a leave overlapping a locked month → 409 (retained day)", async () => {
-    const req = await createApproved({ startDate: "2025-06-02", endDate: "2025-06-13" });
+    // Issue #449: fixture made single-day — a multi-day halfDay payload is now invalid input
+    // (400 from the new refine) and would never reach the lock guard this test targets.
+    const req = await createApproved({ startDate: "2025-06-02", endDate: "2025-06-02" });
     await lockMonth(data.employee.id, 2025, 6);
 
     const res = await app.inject({
@@ -268,7 +270,7 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
       headers: { authorization: `Bearer ${data.adminToken}` },
       payload: {
         startDate: "2025-06-02",
-        endDate: "2025-06-13",
+        endDate: "2025-06-02",
         halfDay: true,
         reason: "Korrektur nach Rückfrage",
       },
@@ -595,24 +597,28 @@ describe("Leave correction — reverse-OLD/apply-NEW saldo (94-02)", () => {
   });
 
   it("halfDay:true with a SICK new type → 400 pre-write (no partial saldo write)", async () => {
+    // Issue #449: fixture made single-day — a multi-day halfDay payload is now invalid input
+    // (400 from the new refine) and would never reach the SICK halfDay guard this test targets.
     const req = await mkApproved({
       leaveTypeId: data.vacationType.id,
       start: "2026-05-04",
-      end: "2026-05-08",
-      days: 5,
+      end: "2026-05-04",
+      days: 1,
     });
-    await setVacationUsed(5);
+    await setVacationUsed(1);
 
     const res = await correct(req.id, {
       startDate: "2026-05-04",
-      endDate: "2026-05-08",
+      endDate: "2026-05-04",
       type: "SICK",
       halfDay: true,
     });
 
     expect(res.statusCode).toBe(400);
+    // Proves the SICK halfDay guard fired, not the Issue #449 single-date refine.
+    expect(JSON.parse(res.body).error).toContain("Halbe Kranktage");
     // reverse never ran — the OLD booking is untouched
-    expect(await getVacationUsed()).toBe(5);
+    expect(await getVacationUsed()).toBe(1);
   });
 
   it("changed range overlapping a DIFFERENT approved request → 409; self is excluded", async () => {
