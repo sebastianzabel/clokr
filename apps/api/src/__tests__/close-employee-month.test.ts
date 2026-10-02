@@ -985,8 +985,8 @@ describe("closeEmployeeMonth — case 4: SHIFT_BASED BS-day neutrality (worked==
 // Case 5: MONTHLY_HOURS — no daily gap, leave does not reduce expectedMinutes
 // ──────────────────────────────────────────────────────────────────────────────
 
-describe("closeEmployeeMonth — case 5: MONTHLY_HOURS no-gap, leave NOT deducted (CLAUDE.md MONTHLY_HOURS rule)", () => {
-  it("case 5: MONTHLY_HOURS with leave and no entries → result.gaps is [] and leave does not reduce expectedMinutes", async () => {
+describe("closeEmployeeMonth — case 5: MONTHLY_HOURS no-gap, leave reduces expectedMinutes by the Ø value (Issue #433)", () => {
+  it("case 5: MONTHLY_HOURS with leave and no entries → result.gaps is [] and leave reduces expectedMinutes by the Ø-Methode value", async () => {
     const app = await getTestApp();
 
     const { start: JULY_START, end: JULY_END } = monthRangeUtc(2026, 7, TZ);
@@ -1035,11 +1035,17 @@ describe("closeEmployeeMonth — case 5: MONTHLY_HOURS no-gap, leave NOT deducte
 
     const result = closeEmployeeMonth(input);
 
-    // CLAUDE.md MONTHLY_HOURS rule: leave does NOT reduce expectedMinutes
-    // MONTHLY_HOURS gaps are always []
+    // MONTHLY_HOURS gaps are always [] (unchanged by Issue #433).
     expect(result.gaps).toHaveLength(0);
-    // expectedMinutes for MONTHLY_HOURS = monthlyHours × 60 = 80 × 60 = 4800 (not reduced by leave)
-    expect(result.expectedMinutes).toBe(80 * 60);
+    // Issue #433 (owner decision 2026-10-03, D-01/D-02/D-05): monthlyHours is an owed
+    // Soll — the approved leave Tue 07.-Sat 11.07.2026 reduces it by the Ø-Methode
+    // value. No workDays field + tenantConfig null → D-05 Mo-Fr fallback: the leave
+    // range covers 4 Mo-Fr workdays (Tue-Fri; Sat is not a workday), July 2026 has 23
+    // Mo-Fr workdays.
+    //   leaveMinutes = round(80h × 60 × 4 ÷ 23) = round(834.78...) = 835
+    //   expectedMinutes = 80×60 − 835 = 4800 − 835 = 3965
+    // OLD (superseded "hart 0" rule) asserted expectedMinutes = 4800 (unreduced).
+    expect(result.expectedMinutes).toBe(3965);
   });
 });
 
@@ -1381,8 +1387,9 @@ describe("closeEmployeeMonth — case 9: SHIFT_BASED + VOCATIONAL_SCHOOL parity 
         ? {
             defaultBreakOver6h: closeTenantConfig.defaultBreakOver6h,
             defaultBreakOver9h: closeTenantConfig.defaultBreakOver9h,
-            monthlyHoursHolidayDeduction:
-              closeTenantConfig.monthlyHoursHolidayDeduction ?? undefined,
+            // Issue #433 (D-04): the retired MONTHLY_HOURS holiday-deduction tenant switch is
+            // dropped from this literal — behaviour-neutral for this SHIFT_BASED case 9 fixture
+            // (the SHIFT_BASED branch never reads that field) and the DB default here is false anyway.
             vocationalSchoolMinutesPerDay:
               closeTenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
             vocationalSchoolBlockMinutesPerWeek:

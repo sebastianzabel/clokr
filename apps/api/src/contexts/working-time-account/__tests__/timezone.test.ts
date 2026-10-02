@@ -174,13 +174,21 @@ describe("calcLeaveAbsenceMinutesTz — D-06 holiday exclusion", () => {
     expect(full - withHoliday).toBe(8 * 60);
   });
 
-  it("MONTHLY_HOURS: returns 0 regardless of excludeHolidays", () => {
+  it("MONTHLY_HOURS: excludeHolidays is honoured like every other type (Issue #433, Ø-Methode)", () => {
+    // Superseded: "returns 0 regardless of excludeHolidays" (CLAUDE.md's old "hart 0"
+    // wording). Owner decision #433 (D-01/D-02): monthlyHours is an owed Soll, so a
+    // leave/absence row's holiday exclusion behaves the same as FIXED/SHIFT_BASED. No
+    // `workDays` field on `fixed` → D-05 falls back to Mo-Fr; March 2026 has 22 Mo-Fr
+    // workdays. Range Mon 23.-Fri 27.03.2026 = 5 Mo-Fr days, one of them (Wed 25.03.) excluded.
+    //   with exclusion:    round(80h × 60 × 4 ÷ 22) = round(872.72...) = 873
+    //   without exclusion: round(80h × 60 × 5 ÷ 22) = round(1090.90...) = 1091
     const monthly = { ...fixed, type: "MONTHLY_HOURS", monthlyHours: 80 };
     expect(
       calcLeaveAbsenceMinutesTz(monthly, from, to, "UTC", {
         excludeHolidays: new Set(["2026-03-25"]),
       }),
-    ).toBe(0);
+    ).toBe(873);
+    expect(calcLeaveAbsenceMinutesTz(monthly, from, to, "UTC")).toBe(1091);
   });
 });
 
