@@ -88,6 +88,7 @@ export async function computeOvertimeBalanceBreakdown(
     select: {
       tenantId: true,
       hireDate: true,
+      exitDate: true, // Issue #447 (D-12) — clamps the live window at the exit date
       isTimeTrackingExempt: true, // Phase 76.7 (D-04, SALDO-V19-04)
       breakOver6hOverride: true, // v1.8.9 — SHIFT_BASED netto saldo
       breakOver9hOverride: true, // v1.8.9 — SHIFT_BASED netto saldo
@@ -139,7 +140,11 @@ export async function computeOvertimeBalanceBreakdown(
   }
 
   // Determine cutoff: the live window ALWAYS ends yesterday, in the tenant timezone — never
-  // today, and never clamped back up to rangeStart (issue #438).
+  // today, and never clamped back up to rangeStart (issue #438). Issue #447 (D-12) only
+  // SHORTENS this window further for an exited employee: their live lifetime saldo must stop
+  // accruing at the exit day, so the window end becomes the exit day whenever it precedes
+  // yesterday. A still-employed employee (no exitDate) is unaffected — effectiveEnd stays
+  // exactly yesterdayDate, byte-identical to the #438 behavior.
   //
   // A closed entry for today is not evidence that today is over: the clock resolver's REOPEN
   // branch (`services/clock/resolver.ts:232-256`, commit 446d4bb6) closes today's entry on a
@@ -162,7 +167,19 @@ export async function computeOvertimeBalanceBreakdown(
     employeeId,
     tenantId: employee?.tenantId ?? "",
   };
-  const effectiveEnd = yesterdayDate;
+  // Issue #447 (D-12) — normalize exitDate to tenant-TZ UTC midnight, mirroring hireDateNorm
+  // above (and close-employee-month.ts's own exitDateNorm convention).
+  const exitDateNorm = employee?.exitDate
+    ? new Date(dateStrInTz(employee.exitDate, tz) + "T00:00:00Z")
+    : null;
+  const effectiveEnd =
+    exitDateNorm !== null && exitDateNorm < yesterdayDate ? exitDateNorm : yesterdayDate;
+  // Issue #447 (D-13) — true when the employee is still employed AFTER the window end: no
+  // exit day at all, or an exit day later than effectiveEnd (exit falls later in the current
+  // month than "yesterday"). An employee who has left BY the window end (exitDateNorm ===
+  // effectiveEnd, since effectiveEnd is clamped to it above) has a COMPLETE month — the same
+  // numbers as the close path, with no roster proration.
+  const stillEmployedAfterWindowEnd = exitDateNorm === null || exitDateNorm > effectiveEnd;
 
   // Worked minutes since snapshot (or month start). Same T1 facade read — every downstream use of
   // `entries` in this file only reads `date`/`startTime`/`endTime`/`breakMinutes`, exactly the
@@ -424,7 +441,9 @@ export async function computeOvertimeBalanceBreakdown(
       carryOverIn: accumulatedCarryOver,
       schedule: schedule as Record<string, unknown>,
       hireDate: employee!.hireDate,
-      exitDate: null, // live path — still employed
+      // Issue #447 (D-12) — the core clips the exit month at exitDate and zeroes every
+      // complete month after it; this is what makes the live lifetime saldo stop at exit.
+      exitDate: employee?.exitDate ?? null,
       isTimeTrackingExempt: false, // already guarded above
       breakOver6hOverride: employee?.breakOver6hOverride ?? null,
       breakOver9hOverride: employee?.breakOver9hOverride ?? null,
@@ -548,7 +567,12 @@ export async function computeOvertimeBalanceBreakdown(
     // month shifts (coveredDates for the full month). getEffectiveBreakDuration/netto match
     // the core's shift-netto computation.
     let rosterProration: { rosterToDateMinutes: number; rosterPeriodMinutes: number } | undefined;
-    if (scheduleType === "SHIFT_BASED") {
+    // Issue #447 (D-13) — roster proration only applies while the employee is still employed
+    // after the window end. An employee who has left by the window end has a complete month
+    // (no further roster to prorate against) — leaving rosterProration undefined makes the
+    // core use the full period-bound C_net (already clipped to the exit date via sollRangeEnd),
+    // identical to the close path.
+    if (scheduleType === "SHIFT_BASED" && stillEmployedAfterWindowEnd) {
       const employeeBreakShape = {
         breakOver6hOverride: employee?.breakOver6hOverride ?? null,
         breakOver9hOverride: employee?.breakOver9hOverride ?? null,
@@ -648,7 +672,9 @@ export async function computeOvertimeBalanceBreakdown(
       carryOverIn: accumulatedCarryOver,
       schedule: schedule as Record<string, unknown>,
       hireDate: employee!.hireDate,
-      exitDate: null, // live path — still employed
+      // Issue #447 (D-12) — the core clips the exit month at exitDate and zeroes every
+      // complete month after it; this is what makes the live lifetime saldo stop at exit.
+      exitDate: employee?.exitDate ?? null,
       isTimeTrackingExempt: false,
       breakOver6hOverride: employee?.breakOver6hOverride ?? null,
       breakOver9hOverride: employee?.breakOver9hOverride ?? null,

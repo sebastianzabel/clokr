@@ -2147,13 +2147,48 @@ describe.each(CELLS)("golden matrix — $id", (cell) => {
       // and MONTHLY_HOURS pure-tracking. For FIXED_SCHEDULE the open range accrues a
       // negative daily Soll (missing workdays → gaps), so live ≠ carryOver/60 — that
       // invariant is intentionally not asserted here for FIXED cells.
-      if (cell.scheduleType === "SHIFT_BASED") {
+      // Issue #447 (D-12): an exit cell's open range after the close month ALSO
+      // contributes 0 regardless of schedule type — the employee has left, so the
+      // live window never extends past the exit date and nothing accrues afterward.
+      if (cell.scheduleType === "SHIFT_BASED" || cell.exitDate !== undefined) {
         const live = await liveBalanceAt(app, employeeId, liveNowIso(cell.year, cell.month));
         expect(live, "live == carryOver/60").toBeCloseTo(cell.expected.carryOver / 60, 1);
       }
     }
   }, 120_000);
 });
+
+// ── Issue #447 (D-12): exit month — live lifetime saldo == close, before the close ──
+//
+// The exit cells above only prove live == close AFTER the month has been closed
+// (V-03-A). This describe proves the SAME equality while the exit month is still
+// OPEN — computeOvertimeBalanceBreakdown/updateOvertimeAccount must clamp their live
+// window to the employee's exitDate instead of growing it to "yesterday" forever.
+// Checked at two instants: shortly after the exit (same open month) and three months
+// later (several complete-but-after-exit months the loop must zero out).
+describe.each(CELLS.filter((c) => c.exitDate !== undefined))(
+  "exit month live == close (Issue #447, D-12) — $id",
+  (cell) => {
+    it(`${cell.id}: live balance stays at ${cell.expected.balanceMinutes / 60}h at +4 days and +3 months, no close in between`, async () => {
+      sharedApp = await getTestApp();
+      const app = sharedApp;
+      const { tenantId, employeeId } = await seedGoldenScenario(app, cell);
+      seededTenants.push(tenantId);
+
+      const expectedHours = cell.expected.balanceMinutes / 60;
+
+      // 2-digit precision: OvertimeAccount.balanceHours is @db.Decimal(7, 2) — the DB itself
+      // rounds to 2 decimal places (mj-80-exit: 250/60 = 4.1666... persists as 4.17), so a
+      // tighter toBeCloseTo would fail on storage rounding, not on the behavior under test.
+      // Same reasoning as the existing V-03-A assertion above (toBeCloseTo(..., 1)).
+      const liveShortlyAfterExit = await liveBalanceAt(app, employeeId, "2026-07-14T10:00:00.000Z");
+      expect(liveShortlyAfterExit, `${cell.id} live @ 2026-07-14`).toBeCloseTo(expectedHours, 2);
+
+      const liveThreeMonthsLater = await liveBalanceAt(app, employeeId, "2026-10-16T10:00:00.000Z");
+      expect(liveThreeMonthsLater, `${cell.id} live @ 2026-10-16`).toBeCloseTo(expectedHours, 2);
+    });
+  },
+);
 
 // ── GT-08: reopen of earliest snapshot → live saldo == cumulative, not 0 ─────
 //
