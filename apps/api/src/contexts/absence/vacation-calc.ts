@@ -711,17 +711,28 @@ export type VacationContractSegment = { from: Date; workDaysPerWeek: number };
  * unrounded-here value instead of rounding the (already-equal) sum, so a single-segment year is
  * byte-identical to today's {@link computeRegularVacationDays}.
  *
+ * D-03 (boundary months): each owed month's reference instant is clamped into the employment
+ * range — never earlier than the hire month, and, when an exit exists, never later than the exit
+ * month — BEFORE looking up the active segment. A contract row that starts after the exit or
+ * ended before the hire therefore never contributes a month: without the clamp, a full-year exit
+ * (§ 5 Abs. 1 c BUrlG second half-year case) could pick up a segment dated AFTER the exit for its
+ * last calendar months, and a full-year hire (on/before 1 July) could pick up a segment dated
+ * BEFORE the hire for its first calendar months — months before hire and after exit intersect
+ * with the employment range at the hire/exit month itself, not at the calendar month's own date.
+ *
  * Not exported — every caller goes through {@link computeRegularVacationDaysBySegments}.
  *
  * @throws if `segments` is empty — never a silent `0` (fail-closed)
  */
-function apportionAcrossContractSegments(input: {
+type ApportionAcrossContractSegmentsInput = {
   year: number;
   hireDate: Date;
   exitDate: Date | null;
   segments: readonly VacationContractSegment[];
   fullYearValue: (workDaysPerWeek: number) => number;
-}): number {
+};
+
+function apportionAcrossContractSegments(input: ApportionAcrossContractSegmentsInput): number {
   const { year, hireDate, exitDate, segments, fullYearValue } = input;
   if (segments.length === 0) {
     throw new Error("apportionAcrossContractSegments: segments must not be empty");
@@ -733,8 +744,17 @@ function apportionAcrossContractSegments(input: {
     : employmentMonthIndicesInYear(year, hireDate, exitDate);
   if (ownedMonths.length === 0) return 0;
 
+  // D-03: the employment-range clamp for the active-segment lookup below — UTC accessors, new
+  // code (the moved-verbatim § 5 family above stays local-accessor until Issue #450-02, D-10).
+  const hireClamp = Date.UTC(hireDate.getUTCFullYear(), hireDate.getUTCMonth(), 1);
+  const exitClamp =
+    exitDate !== null ? Date.UTC(exitDate.getUTCFullYear(), exitDate.getUTCMonth(), 1) : null;
+
   const monthValues = ownedMonths.map((month) => {
-    const reference = Date.UTC(year, month, 1);
+    let reference = Date.UTC(year, month, 1);
+    if (reference < hireClamp) reference = hireClamp;
+    if (exitClamp !== null && reference > exitClamp) reference = exitClamp;
+
     let active = sorted[0];
     for (const segment of sorted) {
       if (segment.from.getTime() <= reference) active = segment;
