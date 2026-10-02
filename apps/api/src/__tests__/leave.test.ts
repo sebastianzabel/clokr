@@ -2297,7 +2297,7 @@ describe("Phase 97-05 Task 2: iCal export shows the tenant's own display name; e
 
   it("GET /entitlements: only the code = VACATION row gets pro-rata reduced on exit — a SPECIAL row named 'Sonderurlaub' (containing the word) is left at full entitlement", async () => {
     const d = await seed("ic4");
-    const year = 2027;
+    const year = new Date().getUTCFullYear() + 1; // Issue #447: a fixed past year would expire
     // H1 exit date so § 5 Abs. 2 BUrlG pro-rata applies (month < 6).
     await app.prisma.employee.update({
       where: { id: d.employee.id },

@@ -46,6 +46,10 @@
  *   Caller must skip employees whose exitDate < monthFirstDay (they left before
  *   the month started); the core clamps defensively but returns empty results in
  *   that edge case.
+ *   Issue #447 (D-01): the exit clip now bounds Soll, holiday deduction, leave and
+ *   absence reduction too, via `sollRangeEnd` — not only entries, shifts and gaps as
+ *   before. `sollRangeEnd` equals the caller's `monthEnd` unless the exit day precedes
+ *   it, so every no-exit input (and the live SHIFT_BASED roster proration) is unchanged.
  *
  * BS-doubling (pure inline computation):
  *   VOCATIONAL_SCHOOL absence dates are counted per ISO week from the provided
@@ -370,7 +374,8 @@ function isBsAbsence(ab: { type?: string | null; source?: string | null }): bool
  *
  * The function reconciles ALL divergences from RESEARCH.md §2:
  *   - SHIFT_BASED bsExpectedMinutes: INCLUDED (matching P1/P2/P3; live-path gap documented above)
- *   - exitDate handling: effectiveEnd = min(exitDate, monthLastDay) — CLOSE-04
+ *   - exitDate handling: effectiveEnd = min(exitDate, monthLastDay) — CLOSE-04; since Issue #447
+ *     (D-01) the same clip (as `sollRangeEnd`) also bounds Soll, holidays, leave and absences
  *   - General absence subtraction from netExpected: DONE for non-SHIFT, non-MONTHLY_HOURS
  *   - SHIFT_BASED leave credit: Issue #429 — derived from shiftBasedLeaveCreditByDate()
  *     (contract-based, via leaveDaysPerWeek()), which passes an EMPTY holiday set (D-05) —
@@ -437,8 +442,12 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
   const effectiveStart = hireDateNorm > monthFirstDay ? hireDateNorm : monthFirstDay;
 
   let effectiveEnd = monthLastDay;
+  // Issue #447 (D-01/D-13) — hoisted out of the `if` block below so it is visible to the
+  // sollRangeEnd computation that follows. `null` means "still employed" (CLOSE-04) or
+  // "exit does not fall before monthLastDay" (effectiveEnd already covers both).
+  let exitDateNorm: Date | null = null;
   if (exitDate !== null) {
-    const exitDateNorm = new Date(dateStrInTz(exitDate, tz) + "T00:00:00Z");
+    exitDateNorm = new Date(dateStrInTz(exitDate, tz) + "T00:00:00Z");
     if (exitDateNorm < monthFirstDay) {
       // Employee left before this month — return zeroed result.
       return {
@@ -458,6 +467,13 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
       effectiveEnd = exitDateNorm;
     }
   }
+
+  // Issue #447 (D-01/D-13) — the upper bound of every Soll, holiday, leave and absence
+  // computation of this month, mirroring effectiveStart on the hire side. Without an exit
+  // before monthEnd it IS the caller's monthEnd (the same Date object), so every no-exit
+  // caller — including the live SHIFT_BASED roster proration, which needs the full-month
+  // C_net — is byte-identical. With an exit before monthEnd, every site below clips to it.
+  const sollRangeEnd = exitDateNorm !== null && exitDateNorm < monthEnd ? exitDateNorm : monthEnd;
 
   // ── Step 2: Compute entry dates set ──────────────────────────────────────
   //
@@ -764,7 +780,10 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
     // via bsExpectedMinutes (D-06, Phase 63). Holiday credit included automatically by
     // calcExpectedMinutesTz. No excludeHolidays passed (consistent with all four paths; see
     // RESEARCH.md §2 "SHIFT_BASED leave credit excludeHolidays" row).
-    const contractSoll = calcExpectedMinutesTz(schedule, effectiveStart, monthEnd, tz);
+    // Issue #447 (D-13): sollRangeEnd is the caller's monthEnd unless the exit day precedes
+    // it, so the live roster proration keeps its full-month C_net for every still-employed
+    // month and its period ends at the exit date otherwise.
+    const contractSoll = calcExpectedMinutesTz(schedule, effectiveStart, sollRangeEnd, tz);
 
     // Phase 104 (D-15): sbClaimed accumulates the calendar days already credited by a
     // processed leave/absence row, shared across BOTH loops below, so a day covered by
@@ -803,14 +822,14 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
       contractWorkDaysPerWeek,
       schedule,
       effectiveStart,
-      monthEnd,
+      sollRangeEnd,
       tz,
     );
 
     let sbLeaveCredit = 0;
     for (const lr of sortForDedup(approvedLeave)) {
       const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
-      const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
+      const leaveEnd = lr.endDate > sollRangeEnd ? sollRangeEnd : lr.endDate;
       if (leaveStart > leaveEnd) continue;
       // D-09: a date already claimed by an EARLIER row in this same sorted loop contributes
       // nothing to THIS row ("first to claim" — mirrors the old excludeHolidays: sbClaimed
@@ -853,7 +872,7 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
       // isBsAbsence() doc block above. Every other absence participates in the same
       // day-based dedup as approvedLeave.
       const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
-      const absEnd = ab.endDate > monthEnd ? monthEnd : ab.endDate;
+      const absEnd = ab.endDate > sollRangeEnd ? sollRangeEnd : ab.endDate;
       if (absStart > absEnd) continue;
       const bs = isBsAbsence(ab);
       sbAbsenceCredit += calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz, {
@@ -908,7 +927,8 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
   } else {
     // ── Non-SHIFT branch (FIXED_SCHEDULE, FIXED_WEEKLY, FLEXTIME, MONTHLY_HOURS) ──
 
-    expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, monthEnd, tz);
+    // Issue #447 (D-01/D-02): sollRangeEnd clips the Soll at the exit date.
+    expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, sollRangeEnd, tz);
 
     // Holiday subtraction: holidayDateStrings is pre-computed by the caller (merged
     // computed Feiertage + DB manual holidays). Convert to Date objects for the
@@ -922,7 +942,9 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
     if (isMonthlyHoursDeduction) {
       const wdCur = new Date(effectiveStart.getTime());
       while (true) {
-        if (wdCur > monthEnd) break;
+        // Issue #447 (D-01/D-02): sollRangeEnd clips the holiday-deduction day count at the
+        // exit date, mirroring the hire-month clip at effectiveStart.
+        if (wdCur > sollRangeEnd) break;
         const dow = getDayOfWeekInTz(wdCur, tz);
         if (getDayHoursFromSchedule(schedule, dow) > 0) workingDaysInRange++;
         wdCur.setTime(wdCur.getTime() + 24 * 60 * 60 * 1000);
@@ -934,6 +956,10 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
         : 0;
 
     for (const hDateStr of holidayDateStrings) {
+      // Issue #447 — holidays after the exit date are not deducted. Callers already
+      // pre-filter holidayDateStrings to [effectiveStart, monthEnd], so a no-exit input
+      // (effectiveEndStr === monthEnd's date) is unaffected by this guard.
+      if (hDateStr < effectiveStartStr || hDateStr > effectiveEndStr) continue;
       const hDate = new Date(hDateStr + "T00:00:00Z");
       const dow = getDayOfWeekInTz(hDate, tz);
       if (isMonthlyHoursDeduction) {
@@ -962,7 +988,8 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
       leaveMinutes = 0;
       for (const lr of sortForDedup(approvedLeave)) {
         const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
-        const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
+        // Issue #447 (D-01): sollRangeEnd clips the leave credit at the exit date.
+        const leaveEnd = lr.endDate > sollRangeEnd ? sollRangeEnd : lr.endDate;
         if (leaveStart > leaveEnd) continue;
         const rowCredit = calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
           halfDay: Boolean(lr.halfDay),
@@ -982,7 +1009,8 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
         // SHIFT_BASED subtract-then-recredit above), so the carve-out here simply keeps that
         // pre-existing behaviour unchanged while every other absence participates in dedup.
         const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
-        const absEnd = ab.endDate > monthEnd ? monthEnd : ab.endDate;
+        // Issue #447 (D-01): sollRangeEnd clips the absence credit at the exit date.
+        const absEnd = ab.endDate > sollRangeEnd ? sollRangeEnd : ab.endDate;
         if (absStart > absEnd) continue;
         const bs = isBsAbsence(ab);
         absenceMinutes += calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz, {

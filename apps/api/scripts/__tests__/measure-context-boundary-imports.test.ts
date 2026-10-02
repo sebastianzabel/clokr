@@ -911,6 +911,9 @@ describe("per-site entry optional fields (symbols, register)", () => {
 describe("the real exceptions file's SET matches ADR 0001 Eintrag H exactly", () => {
   // Transcribed from docs/adr/0001-abweichungen.md Eintrag H's own register table (also quoted in
   // Plan 05's own <interfaces>). Order-independent — compared as a SET below, never by array order.
+  // Issue #447 (Plan 04, Task 3): E-4 (employees.ts -> absence/vacation-calc) is RESOLVED, not
+  // just removed from the exceptions file — the ADR's own "Nachtrag (Issue #447, 2026-10-02): E-4
+  // aufgelöst" documents why, and this pin must shrink to match, same as the register did.
   const ADR_EINTRAG_H_DEEP_SITES = [
     {
       id: "E-1",
@@ -933,11 +936,6 @@ describe("the real exceptions file's SET matches ADR 0001 Eintrag H exactly", ()
       specifier: "../../working-time-account/recalculate-snapshots",
     },
     {
-      id: "E-4",
-      file: "src/contexts/platform/api/employees.ts",
-      specifier: "../../absence/vacation-calc",
-    },
-    {
       id: "E-8",
       file: "src/contexts/platform/api/test-bootstrap.ts",
       specifier: "../../absence/leave-type.js",
@@ -954,7 +952,7 @@ describe("the real exceptions file's SET matches ADR 0001 Eintrag H exactly", ()
     return `${e.id}::${e.file}::${e.specifier}`;
   }
 
-  it("carries exactly the six ADR-named sites — no extra, none missing", () => {
+  it("carries exactly the five ADR-named sites — no extra, none missing", () => {
     const actual = perSiteEntries
       .map((e) => ({ id: e.id, file: e.file, specifier: e.specifier }))
       .sort((a, b) => sortKey(a).localeCompare(sortKey(b)));
@@ -964,9 +962,9 @@ describe("the real exceptions file's SET matches ADR 0001 Eintrag H exactly", ()
     expect(actual).toEqual(expected);
   });
 
-  it("names exactly six per-site entries plus the one composition-root wholeFile entry", () => {
-    expect(perSiteEntries).toHaveLength(6);
-    expect(real.exceptions).toHaveLength(7);
+  it("names exactly five per-site entries plus the one composition-root wholeFile entry", () => {
+    expect(perSiteEntries).toHaveLength(5);
+    expect(real.exceptions).toHaveLength(6);
   });
 
   it("E-5 and E-7 appear in NEITHER the ADR pin list NOR the real register", () => {

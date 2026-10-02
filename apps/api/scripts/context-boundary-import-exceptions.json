@@ -46,15 +46,6 @@
       "register": "docs/adr/0001-abweichungen.md Eintrag H"
     },
     {
-      "id": "E-4",
-      "file": "src/contexts/platform/api/employees.ts",
-      "specifier": "../../absence/vacation-calc",
-      "symbols": ["calculateProRataVacation"],
-      "reason": "Creating an employee computes the pro-rata leave entitlement through a display-name lookup as a side effect.",
-      "disappearsIn": "Block 2 — employee-created/employee-changed events replace the direct call.",
-      "register": "docs/adr/0001-abweichungen.md Eintrag H"
-    },
-    {
       "id": "E-8",
       "file": "src/contexts/platform/api/test-bootstrap.ts",
       "specifier": "../../absence/leave-type.js",

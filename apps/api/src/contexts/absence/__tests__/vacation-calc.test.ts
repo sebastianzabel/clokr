@@ -4,7 +4,6 @@ import {
   calculatePartTimeVacation,
   calculateStatutoryMinimum,
   splitDaysAcrossYears,
-  calculateProRataVacation,
   calculateProRataVacationForHire,
   countShiftBasedLeaveDays,
   mondayOfWeekUtc,
@@ -12,6 +11,10 @@ import {
   statutoryMinimumVacationDays,
   statutoryMinimumVacationThreshold,
   statutoryMinimumViolationMessage,
+  wartezeitEndDate,
+  fullEmploymentMonthsInYear,
+  employmentYearVacationDays,
+  computeRegularVacationDays,
 } from "../vacation-calc";
 // Phase 107 — single shared tenant-TZ date helper (issue #34); avoids hardcoded calendar
 // dates that expire (see project history in CLAUDE.md / docs/testing.md).
@@ -231,7 +234,7 @@ describe("statutoryMinimumVacationThreshold (Issue #435, D-10)", () => {
     ).toBe(0);
   });
 
-  it("exit happens INSIDE the queried year: no exit pro-rata in the threshold (D-10)", () => {
+  it("exit 30.06. inside the queried year: the threshold is twelfthed like the regular entitlement — § 5 Abs. 1 c BUrlG, Issue #447 D-11", () => {
     expect(
       statutoryMinimumVacationThreshold({
         birthDate: adult,
@@ -239,6 +242,18 @@ describe("statutoryMinimumVacationThreshold (Issue #435, D-10)", () => {
         workDaysPerWeek: 5,
         hireDate: new Date(Date.UTC(2020, 0, 1)),
         exitDate: new Date(Date.UTC(2027, 5, 30)),
+      }),
+    ).toBe(10);
+  });
+
+  it("exit 01.07. inside the queried year: second half-year after a fulfilled Wartezeit -> full threshold (Issue #447 D-11)", () => {
+    expect(
+      statutoryMinimumVacationThreshold({
+        birthDate: adult,
+        year: 2027,
+        workDaysPerWeek: 5,
+        hireDate: new Date(Date.UTC(2020, 0, 1)),
+        exitDate: new Date(Date.UTC(2027, 6, 1)),
       }),
     ).toBe(20);
   });
@@ -282,90 +297,106 @@ describe("statutoryMinimumViolationMessage (Issue #435, D-10/D-11)", () => {
   });
 });
 
-describe("calculateProRataVacation", () => {
+describe("computeRegularVacationDays — exit year, former exit-only cases (Issue #447)", () => {
   const YEAR = 2026;
+  // Hired well before the queried year: the § 4 BUrlG Wartezeit is always fulfilled by exit time
+  // in every case below, so employmentYearVacationDays() takes the same month-counting path the
+  // deleted old exit-only twelfthing function took — these cases prove the move loses nothing
+  // (D-06).
+  const HIRED_BEFORE_YEAR = new Date(2015, 0, 1);
+
+  function regular(baseDays: number, exitDate: Date): number {
+    return computeRegularVacationDays({
+      year: YEAR,
+      hireDate: HIRED_BEFORE_YEAR,
+      birthDate: null,
+      exitDate,
+      workDaysPerWeek: 5,
+      baseDays,
+    });
+  }
 
   it("returns baseDays unchanged when exitDate is in a future year", () => {
     // Employee leaves in 2027 → full 2026 entitlement
-    expect(calculateProRataVacation(30, YEAR, new Date(2027, 0, 15))).toBe(30);
+    expect(regular(30, new Date(2027, 0, 15))).toBe(30);
   });
 
   it("returns 0 when exitDate is before the year starts", () => {
     // Employee already left in 2025
-    expect(calculateProRataVacation(30, YEAR, new Date(2025, 11, 31))).toBe(0);
+    expect(regular(30, new Date(2025, 11, 31))).toBe(0);
   });
 
   it("returns baseDays when exitDate is Dec 31 of the year (12/12)", () => {
     // Last day of year → 12 volle Monate → full entitlement
-    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 11, 31))).toBe(30);
+    expect(regular(30, new Date(YEAR, 11, 31))).toBe(30);
   });
 
   it("returns 15 when exitDate is Jun 30 and base is 30 (6/12)", () => {
     // Jun 30 is the last day of June → 6 volle Monate → 30 × 6/12 = 15
-    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 5, 30))).toBe(15);
+    expect(regular(30, new Date(YEAR, 5, 30))).toBe(15);
   });
 
   it("returns baseDays when exitDate is Jul 1 (H2 — § 5 Abs. 2 BUrlG)", () => {
     // July = month index 6 → H2 → full entitlement, no pro-rata
-    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 6, 1))).toBe(30);
+    expect(regular(30, new Date(YEAR, 6, 1))).toBe(30);
   });
 
   it("returns baseDays when exitDate is Aug 15 (H2)", () => {
-    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 7, 15))).toBe(30);
+    expect(regular(30, new Date(YEAR, 7, 15))).toBe(30);
   });
 
   it("returns baseDays for non-30 base on H2 exit (base=25, Jul 1)", () => {
-    expect(calculateProRataVacation(25, YEAR, new Date(YEAR, 6, 1))).toBe(25);
+    expect(regular(25, new Date(YEAR, 6, 1))).toBe(25);
   });
 
   it("rounds a >= half-day fraction UP to a FULL day (base 30, exitDate Jun 15 = 5/12 = 12.5 -> 13, Issue #421)", () => {
     // Jun 15 is NOT the last day of June → 5 volle Monate (Jan-May)
     // 30 × 5/12 = 12.5 → § 5 Abs. 2 BUrlG: fraction >= 0.5 rounds UP to a full day, not to the
     // nearest half day. This is the issue's own example (Issue #421).
-    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 5, 15))).toBe(13);
+    expect(regular(30, new Date(YEAR, 5, 15))).toBe(13);
   });
 
   it("keeps a < half-day fraction EXACT, never rounded to nearest 0.5 (base 20, exitDate Mar 20 = 2 volle Monate = 3.33.., Issue #421)", () => {
     // Mar 20 is NOT the last day of March → 2 volle Monate (Jan-Feb)
     // 20 × 2/12 = 3.333.. → fraction < 0.5, stays exact to 2 decimals (never rounded to 3.5)
-    expect(calculateProRataVacation(20, YEAR, new Date(YEAR, 2, 20))).toBe(3.33);
+    expect(regular(20, new Date(YEAR, 2, 20))).toBe(3.33);
   });
 
   it("returns 0 when baseDays is 0", () => {
-    expect(calculateProRataVacation(0, YEAR, new Date(YEAR, 5, 30))).toBe(0);
+    expect(regular(0, new Date(YEAR, 5, 30))).toBe(0);
   });
 
   it("returns 0 for negative baseDays (defensive)", () => {
-    expect(calculateProRataVacation(-5, YEAR, new Date(YEAR, 5, 30))).toBe(0);
+    expect(regular(-5, new Date(YEAR, 5, 30))).toBe(0);
   });
 
   it("returns 0 for NaN baseDays (defensive)", () => {
-    expect(calculateProRataVacation(NaN, YEAR, new Date(YEAR, 5, 30))).toBe(0);
+    expect(regular(NaN, new Date(YEAR, 5, 30))).toBe(0);
   });
 
   it("correctly counts volle Monate: Mar 31 counts March (3/12 for Jan-Mar), rounds exact half day UP (Issue #421)", () => {
     // Mar 31 is the last day of March → 3 volle Monate
     // 30 × 3/12 = 7.5 → exactly a half-day fraction → § 5 Abs. 2 BUrlG rounds it UP to 8
-    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 2, 31))).toBe(8);
+    expect(regular(30, new Date(YEAR, 2, 31))).toBe(8);
   });
 
   it("§ 5 Abs. 2 BUrlG (Issue #421): 7.5 -> 8 (half-day fraction rounds up to a full day)", () => {
     // Mirrors calculateProRataVacationForHire(30, YEAR, new Date(YEAR, 2, 31)) semantics —
-    // same rounding rule, same raw value, EXIT function instead of HIRE function.
-    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 2, 31))).toBe(8);
+    // same rounding rule, same raw value, EXIT side instead of HIRE side.
+    expect(regular(30, new Date(YEAR, 2, 31))).toBe(8);
   });
 
   it("§ 5 Abs. 2 BUrlG (Issue #421): 12.5 -> 13, identical to calculateProRataVacationForHire's proven scenario", () => {
     // calculateProRataVacationForHire(30, YEAR, new Date(YEAR, 7, 1)) === 13 for the same raw
-    // value (30 * 5/12 = 12.5). The EXIT function must now produce the identical rounded result
-    // for an equivalent raw value.
-    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 5, 15))).toBe(13);
+    // value (30 * 5/12 = 12.5). The EXIT side must produce the identical rounded result for an
+    // equivalent raw value.
+    expect(regular(30, new Date(YEAR, 5, 15))).toBe(13);
   });
 
   it("§ 5 Abs. 2 BUrlG (Issue #421): 8.33 stays 8.33 (fraction below half a day is never rounded)", () => {
     // base 25, 4 volle Monate (Jan-Apr, exitDate = Apr 30) → 25 × 4/12 = 8.333.. → stays exact,
     // mirrors calculateProRataVacationForHire(25, YEAR, new Date(YEAR, 8, 1)) === 8.33.
-    expect(calculateProRataVacation(25, YEAR, new Date(YEAR, 3, 30))).toBe(8.33);
+    expect(regular(25, new Date(YEAR, 3, 30))).toBe(8.33);
   });
 });
 
@@ -432,6 +463,186 @@ describe("calculateProRataVacationForHire (Issue #416)", () => {
 
   it("returns 0 for NaN baseDays (defensive)", () => {
     expect(calculateProRataVacationForHire(NaN, YEAR, new Date(YEAR, 5, 1))).toBe(0);
+  });
+});
+
+describe("wartezeitEndDate (§ 4 BUrlG; §§ 187 Abs. 2, 188 Abs. 2/3 BGB — Issue #447 D-05)", () => {
+  it("01.01.2027 -> 30.06.2027", () => {
+    expect(wartezeitEndDate(new Date(2027, 0, 1))).toEqual(new Date(2027, 5, 30));
+  });
+  it("01.07.2027 -> 31.12.2027", () => {
+    expect(wartezeitEndDate(new Date(2027, 6, 1))).toEqual(new Date(2027, 11, 31));
+  });
+  it("15.02.2027 -> 14.08.2027", () => {
+    expect(wartezeitEndDate(new Date(2027, 1, 15))).toEqual(new Date(2027, 7, 14));
+  });
+  it("31.08.2027 -> 29.02.2028 (no numerically matching day six months later, leap year)", () => {
+    expect(wartezeitEndDate(new Date(2027, 7, 31))).toEqual(new Date(2028, 1, 29));
+  });
+  it("31.08.2026 -> 28.02.2027 (no numerically matching day six months later, non-leap year)", () => {
+    expect(wartezeitEndDate(new Date(2026, 7, 31))).toEqual(new Date(2027, 1, 28));
+  });
+});
+
+describe("fullEmploymentMonthsInYear (Issue #447 D-05) — one span twelfthing, hire + exit combined", () => {
+  it("(2027, 01.02.2027, 30.06.2027) -> 5", () => {
+    expect(fullEmploymentMonthsInYear(2027, new Date(2027, 1, 1), new Date(2027, 5, 30))).toBe(5);
+  });
+  it("(2027, 2024-01-01, 31.03.2027) -> 3", () => {
+    expect(fullEmploymentMonthsInYear(2027, new Date(2024, 0, 1), new Date(2027, 2, 31))).toBe(3);
+  });
+  it("(2027, 2024-01-01, 15.06.2027) -> 5", () => {
+    expect(fullEmploymentMonthsInYear(2027, new Date(2024, 0, 1), new Date(2027, 5, 15))).toBe(5);
+  });
+  it("(2027, 01.07.2027, 30.11.2027) -> 5", () => {
+    expect(fullEmploymentMonthsInYear(2027, new Date(2027, 6, 1), new Date(2027, 10, 30))).toBe(5);
+  });
+  it("(2027, 02.07.2027, null) -> 6", () => {
+    expect(fullEmploymentMonthsInYear(2027, new Date(2027, 6, 2), null)).toBe(6);
+  });
+  it("(2027, 2024-01-01, null) -> 12", () => {
+    expect(fullEmploymentMonthsInYear(2027, new Date(2024, 0, 1), null)).toBe(12);
+  });
+  it("(2027, 2024-01-01, exit in 2028) -> 12", () => {
+    expect(fullEmploymentMonthsInYear(2027, new Date(2024, 0, 1), new Date(2028, 2, 31))).toBe(12);
+  });
+  it("(2027, hire 2028, null) -> 0", () => {
+    expect(fullEmploymentMonthsInYear(2027, new Date(2028, 0, 15), null)).toBe(0);
+  });
+});
+
+describe("employmentYearVacationDays — exit year (Issue #447, D-05)", () => {
+  it("base 24, hire 01.02.2027, exit 30.06.2027 -> 10 (D-09 '10 not 12': Wartezeit not fulfilled)", () => {
+    expect(employmentYearVacationDays(24, 2027, new Date(2027, 1, 1), new Date(2027, 5, 30))).toBe(
+      10,
+    );
+  });
+  it("base 23, hire 01.07.2027, exit 30.11.2027 -> 10 (D-09 '10 not 23': Wartezeit not fulfilled)", () => {
+    expect(employmentYearVacationDays(23, 2027, new Date(2027, 6, 1), new Date(2027, 10, 30))).toBe(
+      10,
+    );
+  });
+  it("base 30, hire 2024-01-01, exit 31.03.2027 -> 8 (H1 after Wartezeit, 3/12 = 7.5 -> 8)", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2024, 0, 1), new Date(2027, 2, 31))).toBe(
+      8,
+    );
+  });
+  it("base 30, hire 2024-01-01, exit 30.06.2027 -> 15", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2024, 0, 1), new Date(2027, 5, 30))).toBe(
+      15,
+    );
+  });
+  it("base 30, hire 2024-01-01, exit 15.06.2027 -> 13 (12.5 -> 13)", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2024, 0, 1), new Date(2027, 5, 15))).toBe(
+      13,
+    );
+  });
+  it("base 30, hire 2024-01-01, exit 01.07.2027 -> 30 (H2, full)", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2024, 0, 1), new Date(2027, 6, 1))).toBe(
+      30,
+    );
+  });
+  it("base 30, hire 01.03.2027, exit 31.10.2027 -> 30 (Wartezeit ended 31.08., H2 -> full; supersedes RESEARCH row 467)", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2027, 2, 1), new Date(2027, 9, 31))).toBe(
+      30,
+    );
+  });
+  it("base 30, hire 01.10.2026, exit 15.03.2027 -> 5 (Wartezeit ends 31.03.2027 -> not fulfilled -> Jan, Feb = 2/12)", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2026, 9, 1), new Date(2027, 2, 15))).toBe(
+      5,
+    );
+  });
+  it("base 30, hire 01.10.2026, exit 30.09.2027 -> 30 (Wartezeit fulfilled 31.03.2027, H2 -> full)", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2026, 9, 1), new Date(2027, 8, 30))).toBe(
+      30,
+    );
+  });
+  it("base 30, year 2027, hire 02.07.2027, exit 31.03.2028 (later year) -> 15 (identical to hireYearVacationDays)", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2027, 6, 2), new Date(2028, 2, 31))).toBe(
+      15,
+    );
+  });
+  it("base 30, year 2027, exit 31.12.2026 (earlier year) -> 0", () => {
+    expect(employmentYearVacationDays(30, 2027, new Date(2024, 0, 1), new Date(2026, 11, 31))).toBe(
+      0,
+    );
+  });
+
+  it.each([
+    [new Date(2027, 0, 1), 20],
+    [new Date(2027, 5, 1), 20],
+    [new Date(2027, 6, 1), 20],
+    [new Date(2027, 6, 2), 10],
+    [new Date(2027, 9, 1), 5],
+  ])(
+    "exitDate null, base 20, hire %s -> %i (identical to hireYearVacationDays — the #435 table)",
+    (hireDate, expected) => {
+      expect(employmentYearVacationDays(20, 2027, hireDate, null)).toBe(expected);
+    },
+  );
+});
+
+// Issue #447 code-review fix (WR-02): wartezeitEndDate/fullEmploymentMonthsInYear/
+// employmentYearVacationDays read hireDate/exitDate with LOCAL accessors (matching
+// hireYearVacationDays's established convention), while statutoryMinimumVacationThreshold's own
+// guard uses UTC accessors on the same @db.Date fields. This is safe ONLY because every real
+// caller passes a genuine UTC-midnight Date in a non-negative-UTC-offset deployment (see the
+// WR-02 doc note on employmentYearVacationDays) — this suite fixes that invariant with
+// UTC-constructed fixtures (utcMidnight), NOT the local `new Date(y, m, d)` constructor the other
+// describe blocks above use for these same functions. Converting the production accessors to UTC
+// without also converting every local-constructed test fixture breaks 19 of the tests above
+// (verified while drafting this fix — a locally-constructed midnight is a different instant from
+// a UTC midnight in a non-zero-offset process), which is exactly why that broader rewrite was
+// reverted in favor of this narrower, TZ-neutral regression test.
+describe("wartezeitEndDate / fullEmploymentMonthsInYear / employmentYearVacationDays — WR-02 local/UTC frame consistency", () => {
+  const utcWartezeitEndDate = (d: Date): Date => {
+    const y = d.getUTCFullYear();
+    const m = d.getUTCMonth();
+    const day = d.getUTCDate();
+    const matchingDayMinusOne = new Date(Date.UTC(y, m + 6, day - 1));
+    const lastDayOfSixthMonth = new Date(Date.UTC(y, m + 7, 0));
+    return matchingDayMinusOne < lastDayOfSixthMonth ? matchingDayMinusOne : lastDayOfSixthMonth;
+  };
+  const utcFullEmploymentMonthsInYear = (year: number, hire: Date, exit: Date | null): number => {
+    let months = 0;
+    for (let month = 0; month < 12; month++) {
+      const lastDayOfMonth = new Date(Date.UTC(year, month + 1, 0));
+      const hireSide = hire <= lastDayOfMonth;
+      const exitSide = exit === null || exit >= lastDayOfMonth;
+      if (hireSide && exitSide) months++;
+    }
+    return Math.min(months, 12);
+  };
+
+  it("wartezeitEndDate (local accessors) and its UTC-accessor re-implementation agree on the calendar date for a UTC-midnight hireDate", () => {
+    // Compared field-by-field in each function's OWN frame (not getTime()) — a
+    // local-midnight Date and a UTC-midnight Date for the "same" calendar date are, correctly,
+    // different instants (they differ by the process UTC offset); the WR-02 invariant under test
+    // is that the CALENDAR fields (year/month/day) agree, not the absolute instant.
+    const hireDate = utcMidnight("2024-01-01");
+    const prod = wartezeitEndDate(hireDate);
+    const ref = utcWartezeitEndDate(hireDate);
+    expect([prod.getFullYear(), prod.getMonth(), prod.getDate()]).toEqual([
+      ref.getUTCFullYear(),
+      ref.getUTCMonth(),
+      ref.getUTCDate(),
+    ]);
+    expect([prod.getFullYear(), prod.getMonth(), prod.getDate()]).toEqual([2024, 5, 30]);
+  });
+
+  it("fullEmploymentMonthsInYear agrees with a UTC-accessor re-implementation across a year boundary exit", () => {
+    const hireDate = utcMidnight("2024-01-01");
+    const exitDate = utcMidnight("2027-01-01"); // the WR-01 boundary: exit exactly on 1 Jan
+    expect(fullEmploymentMonthsInYear(2027, hireDate, exitDate)).toBe(
+      utcFullEmploymentMonthsInYear(2027, hireDate, exitDate),
+    );
+    expect(fullEmploymentMonthsInYear(2027, hireDate, exitDate)).toBe(0);
+  });
+
+  it("employmentYearVacationDays stays correct for the same UTC-midnight year-boundary pair", () => {
+    const hireDate = utcMidnight("2024-01-01");
+    const exitDate = utcMidnight("2027-01-01");
+    expect(employmentYearVacationDays(30, 2027, hireDate, exitDate)).toBe(0);
   });
 });
 

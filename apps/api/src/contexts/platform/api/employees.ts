@@ -9,8 +9,6 @@ import { validatePassword, loadPasswordPolicy } from "../password-policy";
 import { accessContextFromRequest } from "../access-context"; // Phase 91b Plan 10 (#91), D-12/D-14
 import { resolveAccessReach } from "../facade/role-assignments"; // Phase 91b Plan 10 (#91), D-12/D-14
 import { isPersonMasterDataInScope, isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 10 (#91), D-10/D-12/D-14
-// eslint-disable-next-line no-restricted-imports -- E-4: creating an employee computes the pro-rata leave entitlement as a side effect. Disappears in Block 2 via employee-created/employee-changed events. ADR 0001 Eintrag H.
-import { calculateProRataVacation } from "../../absence/vacation-calc";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { anonymizeEmployeeData, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../anonymize";
 import {
@@ -66,7 +64,9 @@ import {
   statutoryMinimumVacationDays, // Issue #435 (D-11) — 5-day-base floor on POST/PATCH
   statutoryMinimumViolationMessage, // Issue #435 (D-11) — the ONE German 400 message builder
   daysDiffer, // Issue #435 code review (WR-01) — reused by the PATCH "did annualVacationDays change" guard
-} from "../../absence"; // Phase 100B Plan 10 — A11 (Issue #205 reroute) / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6; issue #416; issue #435
+  syncExitYearVacationEntitlement, // Issue #447 (D-07) — recomputes an exit-year row on exitDate set/change
+  exitVacationOverUseWarning, // Issue #447 (D-08) — the one over-use warning string
+} from "../../absence"; // Phase 100B Plan 10 — A11 (Issue #205 reroute) / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6; issue #416; issue #435; issue #447 (E-4 resolved)
 // Phase 67b Plan 03 (issue #67, D-22/D-07/D-24) — the Stammsalon lifecycle helpers.
 import {
   createInitialHomeAssignment,
@@ -766,6 +766,9 @@ export async function employeeRoutes(app: FastifyInstance) {
           emp.hireDate.getFullYear(),
           emp.hireDate,
           emp.birthDate,
+          // Issue #447 (D-05): the create schema has no exitDate field, so this is always null at
+          // hire time — passed anyway, truthfully, now that the parameter is required.
+          emp.exitDate,
           workDaysPerWeek,
           vacationBaseDays,
           "Automatisch angelegt bei Mitarbeiteranlage",
@@ -1108,6 +1111,39 @@ export async function employeeRoutes(app: FastifyInstance) {
         updated = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
           const updatedEmp = await tx.employee.update({ where: { id }, data: updates });
 
+          // Issue #447 (D-07) — invariant-carrying (ADR 0002 Entscheidung 10): when exitDate was
+          // sent and the stored value actually changed (null-safe time-value compare), the
+          // exit-year rows of BOTH the old and the new exit year are recomputed to their § 5
+          // BUrlG value inside this same transaction — the booking check (D-06) trusts the
+          // persisted row, so the recompute commits or rolls back with the exit-date write. The
+          // actor is the PATCH user (API-key safe, via requestAuditFields).
+          if (body.exitDate !== undefined) {
+            const oldExitDate = employee.exitDate;
+            const newExitDate = updatedEmp.exitDate;
+            if ((oldExitDate?.getTime() ?? null) !== (newExitDate?.getTime() ?? null)) {
+              const exitYears = new Set<number>();
+              if (oldExitDate) exitYears.add(oldExitDate.getUTCFullYear());
+              if (newExitDate) exitYears.add(newExitDate.getUTCFullYear());
+              for (const exitYear of exitYears) {
+                await syncExitYearVacationEntitlement(
+                  tx,
+                  id,
+                  req.user.tenantId,
+                  exitYear,
+                  (entry) =>
+                    app.audit({
+                      action: entry.action,
+                      entity: "LeaveEntitlement",
+                      entityId: entry.entityId,
+                      oldValue: entry.oldValue,
+                      tx,
+                      ...requestAuditFields(req, entry.newValue as object | undefined),
+                    }),
+                );
+              }
+            }
+          }
+
           // D-15/D-26/D-29: the role is no longer written into the column directly — it replaces
           // the system-role assignment, and the column follows the stored assignments.
           if (requestedRole !== undefined) {
@@ -1191,7 +1227,9 @@ export async function employeeRoutes(app: FastifyInstance) {
       const effectiveExitDate =
         (updates.exitDate as Date | null | undefined) ?? employee.exitDate ?? null;
       if (effectiveExitDate !== null) {
-        const exitYear = effectiveExitDate.getFullYear();
+        // Issue #447 WR-01: exitDate is a UTC-midnight @db.Date value — use the UTC accessor
+        // to match the sync code (getUTCFullYear()) that just keyed the LeaveEntitlement row.
+        const exitYear = effectiveExitDate.getUTCFullYear();
         try {
           // Issue #205, finding 2: resolves the VACATION leave type by its stable code (A11),
           // not by its tenant-editable display name — a renamed "Urlaub" type no longer silently
@@ -1204,19 +1242,14 @@ export async function employeeRoutes(app: FastifyInstance) {
           );
           const entitlement = vacation?.entitlement ?? null;
           if (entitlement) {
-            const proRata = calculateProRataVacation(
-              Number(entitlement.totalDays),
-              exitYear,
-              effectiveExitDate,
-            );
-            const used = Number(entitlement.usedDays);
-            if (used > proRata) {
-              proRataWarning = {
-                used,
-                entitlement: proRata,
-                message: `Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt (${used} Tage) als ihm anteilig zusteht (${proRata} Tage). Bitte prüfen Sie, ob eine Rückforderung nötig ist.`,
-              };
-            }
+            // Issue #447 (D-08) — the one over-use warning string, neutral and legally correct
+            // (no reclaim suggestion, § 5 Abs. 3 BUrlG); the row is already exit-synced above.
+            proRataWarning =
+              exitVacationOverUseWarning({
+                employeeName: `${updated.firstName} ${updated.lastName}`,
+                exitDate: effectiveExitDate,
+                row: entitlement,
+              }) ?? undefined;
           }
         } catch (err) {
           app.log.warn({ err }, "Pro-rata warning calculation failed silently");
@@ -1429,6 +1462,30 @@ export async function employeeRoutes(app: FastifyInstance) {
               where: { id },
               data: { exitDate: effectiveExitDate },
             });
+            // Issue #447 (D-07) — same invariant-carrying recompute as PATCH /:id: both the
+            // old and the new exit year's VACATION row are brought to their § 5 BUrlG value
+            // inside this guarded transaction.
+            {
+              const exitYears = new Set<number>([effectiveExitDate.getUTCFullYear()]);
+              if (employee.exitDate) exitYears.add(employee.exitDate.getUTCFullYear());
+              for (const exitYear of exitYears) {
+                await syncExitYearVacationEntitlement(
+                  tx,
+                  id,
+                  req.user.tenantId,
+                  exitYear,
+                  (entry) =>
+                    app.audit({
+                      action: entry.action,
+                      entity: "LeaveEntitlement",
+                      entityId: entry.entityId,
+                      oldValue: entry.oldValue,
+                      tx,
+                      ...requestAuditFields(req, entry.newValue as object | undefined),
+                    }),
+                );
+              }
+            }
             await tx.refreshToken.updateMany({
               where: { userId: employee.userId, revokedAt: null },
               data: { revokedAt: new Date() },
@@ -1498,16 +1555,32 @@ export async function employeeRoutes(app: FastifyInstance) {
       if (employee.user.isActive)
         return reply.code(409).send({ error: "Mitarbeiter ist bereits aktiv" });
 
-      await app.prisma.$transaction([
-        app.prisma.user.update({
+      // Issue #447 (D-07) — converted from the array-form $transaction to an interactive one:
+      // clearing exitDate syncs the old exit year's VACATION row back to its regular (non-exit)
+      // value inside the same transaction as the two writes below.
+      await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        await tx.user.update({
           where: { id: employee.userId },
           data: { isActive: true },
-        }),
-        app.prisma.employee.update({
+        });
+        await tx.employee.update({
           where: { id },
           data: { exitDate: null },
-        }),
-      ]);
+        });
+        if (employee.exitDate) {
+          const exitYear = employee.exitDate.getUTCFullYear();
+          await syncExitYearVacationEntitlement(tx, id, req.user.tenantId, exitYear, (entry) =>
+            app.audit({
+              action: entry.action,
+              entity: "LeaveEntitlement",
+              entityId: entry.entityId,
+              oldValue: entry.oldValue,
+              tx,
+              ...requestAuditFields(req, entry.newValue as object | undefined),
+            }),
+          );
+        }
+      });
 
       await app.audit({
         userId: req.user.sub,
