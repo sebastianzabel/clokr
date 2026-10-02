@@ -554,6 +554,23 @@ export function fullEmploymentMonthsInYear(
  * @param year - the calendar year being computed
  * @param hireDate - the employee's hire date
  * @param exitDate - the employee's exit date, or `null` if still employed
+ *
+ * Issue #447 WR-02: this function (and {@link wartezeitEndDate}, {@link fullEmploymentMonthsInYear})
+ * reads `hireDate`/`exitDate` with the LOCAL accessors (`getFullYear`/`getMonth`/`getDate`),
+ * matching {@link hireYearVacationDays}'s established P-01-of-#445 convention, NOT the UTC
+ * accessors `statutoryMinimumVacationThreshold`'s own `notEmployedInYear` guard uses. This is safe
+ * ONLY because every caller passes a genuine UTC-midnight `@db.Date` value (`Employee.hireDate`/
+ * `exitDate` from Prisma) in a server process with a non-negative UTC offset (the documented
+ * Europe/Berlin or UTC deployment, CLAUDE.md § Project) — under that constraint local and UTC
+ * accessors never disagree on year/month/day for these inputs (proven for the deployment-relevant
+ * case by `vacation-calc.test.ts`'s "WR-02 local/UTC frame consistency" suite). A TEST fixture for
+ * this function family must therefore also be constructed via `Date.UTC`/`utcMidnight`, never via
+ * the local `new Date(y, m, d)` constructor — a locally-constructed midnight is a DIFFERENT
+ * instant than the UTC midnight these functions assume, and confusing the two broke 19 of this
+ * file's own tests when this finding's production code was experimentally rewritten to UTC
+ * accessors without also rewriting the fixtures (see the Issue #447 code-review fix report). Do
+ * NOT normalize this function family to UTC accessors without first converting every test fixture
+ * that feeds it to `Date.UTC`/`utcMidnight` construction.
  */
 export function employmentYearVacationDays(
   fullYearDays: number,

@@ -582,6 +582,70 @@ describe("employmentYearVacationDays — exit year (Issue #447, D-05)", () => {
   );
 });
 
+// Issue #447 code-review fix (WR-02): wartezeitEndDate/fullEmploymentMonthsInYear/
+// employmentYearVacationDays read hireDate/exitDate with LOCAL accessors (matching
+// hireYearVacationDays's established convention), while statutoryMinimumVacationThreshold's own
+// guard uses UTC accessors on the same @db.Date fields. This is safe ONLY because every real
+// caller passes a genuine UTC-midnight Date in a non-negative-UTC-offset deployment (see the
+// WR-02 doc note on employmentYearVacationDays) — this suite fixes that invariant with
+// UTC-constructed fixtures (utcMidnight), NOT the local `new Date(y, m, d)` constructor the other
+// describe blocks above use for these same functions. Converting the production accessors to UTC
+// without also converting every local-constructed test fixture breaks 19 of the tests above
+// (verified while drafting this fix — a locally-constructed midnight is a different instant from
+// a UTC midnight in a non-zero-offset process), which is exactly why that broader rewrite was
+// reverted in favor of this narrower, TZ-neutral regression test.
+describe("wartezeitEndDate / fullEmploymentMonthsInYear / employmentYearVacationDays — WR-02 local/UTC frame consistency", () => {
+  const utcWartezeitEndDate = (d: Date): Date => {
+    const y = d.getUTCFullYear();
+    const m = d.getUTCMonth();
+    const day = d.getUTCDate();
+    const matchingDayMinusOne = new Date(Date.UTC(y, m + 6, day - 1));
+    const lastDayOfSixthMonth = new Date(Date.UTC(y, m + 7, 0));
+    return matchingDayMinusOne < lastDayOfSixthMonth ? matchingDayMinusOne : lastDayOfSixthMonth;
+  };
+  const utcFullEmploymentMonthsInYear = (year: number, hire: Date, exit: Date | null): number => {
+    let months = 0;
+    for (let month = 0; month < 12; month++) {
+      const lastDayOfMonth = new Date(Date.UTC(year, month + 1, 0));
+      const hireSide = hire <= lastDayOfMonth;
+      const exitSide = exit === null || exit >= lastDayOfMonth;
+      if (hireSide && exitSide) months++;
+    }
+    return Math.min(months, 12);
+  };
+
+  it("wartezeitEndDate (local accessors) and its UTC-accessor re-implementation agree on the calendar date for a UTC-midnight hireDate", () => {
+    // Compared field-by-field in each function's OWN frame (not getTime()) — a
+    // local-midnight Date and a UTC-midnight Date for the "same" calendar date are, correctly,
+    // different instants (they differ by the process UTC offset); the WR-02 invariant under test
+    // is that the CALENDAR fields (year/month/day) agree, not the absolute instant.
+    const hireDate = utcMidnight("2024-01-01");
+    const prod = wartezeitEndDate(hireDate);
+    const ref = utcWartezeitEndDate(hireDate);
+    expect([prod.getFullYear(), prod.getMonth(), prod.getDate()]).toEqual([
+      ref.getUTCFullYear(),
+      ref.getUTCMonth(),
+      ref.getUTCDate(),
+    ]);
+    expect([prod.getFullYear(), prod.getMonth(), prod.getDate()]).toEqual([2024, 5, 30]);
+  });
+
+  it("fullEmploymentMonthsInYear agrees with a UTC-accessor re-implementation across a year boundary exit", () => {
+    const hireDate = utcMidnight("2024-01-01");
+    const exitDate = utcMidnight("2027-01-01"); // the WR-01 boundary: exit exactly on 1 Jan
+    expect(fullEmploymentMonthsInYear(2027, hireDate, exitDate)).toBe(
+      utcFullEmploymentMonthsInYear(2027, hireDate, exitDate),
+    );
+    expect(fullEmploymentMonthsInYear(2027, hireDate, exitDate)).toBe(0);
+  });
+
+  it("employmentYearVacationDays stays correct for the same UTC-midnight year-boundary pair", () => {
+    const hireDate = utcMidnight("2024-01-01");
+    const exitDate = utcMidnight("2027-01-01");
+    expect(employmentYearVacationDays(30, 2027, hireDate, exitDate)).toBe(0);
+  });
+});
+
 describe("splitDaysAcrossYears", () => {
   const noHolidays = new Set<string>();
   const MO_FR = [1, 2, 3, 4, 5];
