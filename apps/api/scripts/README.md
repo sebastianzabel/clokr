@@ -24,6 +24,7 @@ classified by lifecycle.
 | audit-exit-month-saldo.ts                      | 2026-10-02 | List, per employee with a non-null exitDate (any schedule type), the exit month's stored vs. Issue #447-exit-clip-formula-recomputed expected/balance minutes and the delta, plus the locked flag; months with no stored snapshot yet print stored=none (read-only, no opt-in write flag, exits 2 on findings)                                                                                                                                                                                                                                                      | Audit tool                                   |
 | audit-multi-day-half-day-leave.ts              | 2026-10-02 | List non-deleted multi-day half-day LeaveRequests (Issue #449), read-only, ids only, exits 2 on findings                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Audit tool                                   |
 | audit-bs-leave-overlap.ts                      | 2026-10-02 | List non-deleted PENDING/APPROVED/CANCELLATION_REQUESTED VACATION LeaveRequests overlapping a VOCATIONAL_SCHOOL Absence (Issue #448, D-06), stored vs. resolveLeaveDays-recomputed BS-free days plus the locked-month flag, read-only, ids only, exits 2 on findings                                                                                                                                                                                                                                                                                                | Audit tool                                   |
+| audit-vacation-entitlements.ts                 | 2026-10-02 | Prüfbericht over every stored VACATION LeaveEntitlement row, base year + following year (Issue #444), eight categories incl. OK, read-only, ids only, exits 2 on findings                                                                                                                                                                                                                                                                                                                                                                                           | Audit tool                                   |
 | migrate-opening-balances.ts                    | 2026-08-19 | Move documented opening balances out of SaldoSnapshot.carryOver onto the OpeningBalance model; dry-run default, per-employee zero-drift assertion, aborts writing nothing on any failure                                                                                                                                                                                                                                                                                                                                                                            | Migration artifact (Phase 99)                |
 | ensure-test-database.ts                        | 2026-08-21 | Idempotent `CREATE DATABASE "clokr_test"` + `COMMENT ON DATABASE` marker stamp; refuses any non-test target (wrong name, `?schema=` param, or NODE_ENV=production) before opening a connection                                                                                                                                                                                                                                                                                                                                                                      | Test infrastructure (Phase 101)              |
 | reset-test-databases.ts                        | 2026-08-26 | Drops and re-clones the N per-worker test databases from the migrated `clokr_test` template; the ONLY `DROP-DATABASE` statement in this repo, gated on marker possession AND the anchored worker-name pattern; excluded from the runtime image (Phase 106 D-07/D-08)                                                                                                                                                                                                                                                                                                | Test infrastructure (Phase 106)              |
@@ -122,6 +123,55 @@ one of these rows runs only through "Antrag korrigieren" after owner approval, n
 script. It follows `audit-saldo-chain-integrity.ts`'s / `dry-run-429-leave-contract-days.ts`'s
 DSGVO convention of printing no employee name and no employee number, but — unlike those two —
 prints FULL, untruncated UUIDs: the owner must be able to locate each request directly.
+
+`audit-vacation-entitlements.ts` (Issue #444) is a Prüfbericht over every stored VACATION
+`LeaveEntitlement` row of a base year (`--year`, default the current UTC calendar year) and the
+following year (only rows that exist, plus synthetic `entitlementId=missing` lines — see
+JAHRESUEBERGREIFEND_FEHLT below). It computes, per row, `target` via `resolveRegularVacationDays()`
+(Issue #435 D-05 person/tenant base + statutory floor, Issue #447 exit twelfthing — the ONE
+computation, never reimplemented here) and `minimum` via `statutoryMinimumVacationThreshold()` fed
+by `resolveContractWorkDaysPerWeek()`, then classifies the row into zero or more of:
+
+- `UNTER_MINIMUM` — stored is below the statutory minimum (applies to manually-set rows too).
+- `ABWEICHUNG_VERTRAG` — NOT manual, NOT `UNTER_MINIMUM`, and stored differs from `target`; OR,
+  for an AZUBI without a person value (`annualVacationDays` null) whose birth date is known,
+  stored differs from a second comparison target computed the SAME way but seeded with
+  `TenantConfig.defaultApprenticeVacationDays` instead of the tenant's regular default
+  (report-only — the production resolver in `leave-days.ts` stays unchanged, #435 D-05 never
+  reads `classification`). This second comparison is skipped while `GEBURTSDATUM_FEHLT` already
+  applies on the same row — the statutory floor computed with no birth date is already unreliable,
+  so a second, independent deviation finding on top of it would only add noise.
+- `GEBURTSDATUM_FEHLT` — classification `AZUBI` and `birthDate` is `null`; the statutory minimum
+  then fails open to § 3 BUrlG, which is why the owner must check this row by hand.
+- `NULL_PLATZHALTER` — `totalDays` is 0, never auto-calculated, no human write ever set it
+  (`isZeroVacationPlaceholder`/`hasHumanVacationWrite`, Issues #445/#447), and the target is > 0 (a
+  not-employed year legitimately holds 0). Supersedes `UNTER_MINIMUM`/`ABWEICHUNG_VERTRAG` for
+  that row — the placeholder is the cause; the #445 read-time heal fixes it.
+- `JAHRESUEBERGREIFEND_FEHLT` — an APPROVED/CANCELLATION_REQUESTED VACATION request spans two
+  calendar years and the year's stored `usedDays` is below the chronological-prefix split
+  (`countedLeaveDaysWithin()`, Issue #445). When the year has no entitlement row at all, a
+  synthetic line is printed instead (`entitlementId=missing`, `stored`/`used`/`carriedOver=none`,
+  `deviation=n/a`; `target`/`minimum` are still computed).
+- `UEBERTRAG_VERFALLEN_WIEDER` — the previous year's carry-over partially lapsed per
+  `carryOverRemainder()` (Issue #445 FIFO/expiry) but this year's stored `carriedOverDays` still
+  reflects the un-lapsed, larger amount.
+- `VERTRAGSWECHSEL_PRUEFEN` (flag only — Issue #450 implements the actual split) — the employee has
+  a `WorkSchedule` change (not the initial contract) whose `validFrom`, read as a calendar date in
+  the tenant's `TenantConfig.timezone`, falls inside the year.
+- `OK` — none of the above; a manually-set row at or above the statutory minimum is `manual=yes
+categories=OK`, not an error.
+
+Precedence: `NULL_PLATZHALTER` supersedes `UNTER_MINIMUM`/`ABWEICHUNG_VERTRAG`; `UNTER_MINIMUM`
+supersedes `ABWEICHUNG_VERTRAG`; a manually-set row (`hasHumanVacationWrite`, not the
+`isAutoCalculated` column — see Issue #447 D-14) never carries `ABWEICHUNG_VERTRAG`. Usage:
+`--tenant-id <uuid>` or `--all-tenants` (one required, no silent default), optional `--year
+<YYYY>` for deterministic runs/tests. Exit codes: `0` every row OK, `1` DATABASE_URL missing or a
+DB/query failure, `2` one or more findings. It performs ZERO writes and has no opt-in
+write/correction flag anywhere in its source (mechanically checked by its own test, incl. a DB
+snapshot + AuditLog-count proof before/after both run modes) — corrections run only through the
+existing audited correction path ("Antrag korrigieren" / PUT `/settings/vacation`), never through
+this script. Output prints full, untruncated UUIDs only — no employee name, no employee number, no
+birth/hire date (DSGVO).
 
 `audit-bs-leave-overlap.ts` (Issue #448, D-06) lists every non-deleted VACATION `LeaveRequest`
 (status `PENDING` or in `EFFECTIVE_LEAVE_STATUSES` — the same set plan 448-02's
