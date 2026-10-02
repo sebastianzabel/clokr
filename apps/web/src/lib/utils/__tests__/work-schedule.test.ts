@@ -23,6 +23,8 @@ import {
   monthlyBudgetSollMinutes,
   arbeitstageFieldVariant,
   buildContractWorkDaysPayload,
+  buildUsualWorkDaysPayload,
+  usualWorkDaysShortfall,
   type WorkScheduleLike,
 } from "../work-schedule";
 
@@ -268,6 +270,40 @@ describe("buildContractWorkDaysPayload (Phase 107 D-02/D-23)", () => {
       expect(payload.contractWorkDaysPerWeek).toBeNull();
     },
   );
+});
+
+describe("buildUsualWorkDaysPayload (Phase 436 Plan 02 D-06)", () => {
+  it("SHIFT_BASED: sorts and de-duplicates", () => {
+    expect(buildUsualWorkDaysPayload("SHIFT_BASED", [5, 2, 3, 2])).toEqual({
+      usualWorkDays: [2, 3, 5],
+    });
+  });
+
+  it("non-SHIFT_BASED: always emits []", () => {
+    expect(buildUsualWorkDaysPayload("FIXED_SCHEDULE", [1, 2])).toEqual({ usualWorkDays: [] });
+  });
+
+  it("undefined type: emits []", () => {
+    expect(buildUsualWorkDaysPayload(undefined, [1, 2])).toEqual({ usualWorkDays: [] });
+  });
+});
+
+describe("usualWorkDaysShortfall (Phase 436 Plan 02 D-06)", () => {
+  it("empty list is always valid (keine Angabe)", () => {
+    expect(usualWorkDaysShortfall([], 4)).toBe(0);
+  });
+
+  it("fewer ticked days than the contract count reports the missing count", () => {
+    expect(usualWorkDaysShortfall([2, 3, 4], 4)).toBe(1);
+  });
+
+  it("exactly the contract count reports 0", () => {
+    expect(usualWorkDaysShortfall([2, 3, 4, 5], 4)).toBe(0);
+  });
+
+  it("null contract count (not yet known) reports 0", () => {
+    expect(usualWorkDaysShortfall([1, 2], null)).toBe(0);
+  });
 });
 
 // Phase 107 gap closure (G-01/G-02, issue #94 follow-up, 107-UAT.md) — hoisted

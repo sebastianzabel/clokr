@@ -22,7 +22,12 @@
     applyDefaults,
     isOverridden,
   } from "$lib/employee-classification";
-  import { isWorkDay, buildContractWorkDaysPayload } from "$lib/utils/work-schedule";
+  import {
+    isWorkDay,
+    buildContractWorkDaysPayload,
+    buildUsualWorkDaysPayload,
+    usualWorkDaysShortfall,
+  } from "$lib/utils/work-schedule";
   import {
     statutoryMinimumFiveDayWeek,
     MISSING_BIRTH_DATE_HINT,
@@ -52,6 +57,8 @@
     coreDays?: number[];
     workDays?: number[];
     contractWorkDaysPerWeek?: number | null;
+    // Phase 436 Plan 02 (D-06): SHIFT_BASED-only "übliche Arbeitstage" Angabe.
+    usualWorkDays?: number[];
   }
 
   interface VacationEntitlement {
@@ -372,6 +379,7 @@
         eOvertimeMode,
         eWorkDays,
         eContractWorkDays,
+        eUsualWorkDays,
         eValidFrom,
       );
       pausendauerSnapshot = snap(eBreakOver6hOverride, eBreakOver9hOverride);
@@ -701,6 +709,8 @@
         : [1, 2, 3, 4, 5];
     // Phase 107 (D-01) — hydrate the vertragliche Anzahl alongside eWorkDays.
     eContractWorkDays = sched?.contractWorkDaysPerWeek ?? null;
+    // Phase 436 Plan 02 (D-06) — hydrate the übliche Arbeitstage Angabe, sorted copy.
+    eUsualWorkDays = [...(sched?.usualWorkDays ?? [])].sort((a, b) => a - b);
     eMon = sched ? Number(sched.mondayHours) : 8;
     eTue = sched ? Number(sched.tuesdayHours) : 8;
     eWed = sched ? Number(sched.wednesdayHours) : 8;
@@ -1358,6 +1368,9 @@
   // Phase 107 (D-01/D-23) — vertragliche Anzahl Arbeitstage/Woche, SHIFT_BASED only.
   // Writes EXCLUSIVELY contractWorkDaysPerWeek; never derives or touches eWorkDays.
   let eContractWorkDays = $state<number | null>(null);
+  // Phase 436 Plan 02 (D-06) — übliche Arbeitstage (optional), SHIFT_BASED only.
+  // 0=So..6=Sa, the SAME convention as workDays/usualWorkDays elsewhere.
+  let eUsualWorkDays = $state<number[]>([]);
   let eMon = $state<number>(8);
   let eTue = $state<number>(8);
   let eWed = $state<number>(8);
@@ -1455,6 +1468,8 @@
       // to a pure helper (apps/web/src/lib/utils/work-schedule.ts) so this exact slice
       // is unit-testable without mounting the component.
       ...buildContractWorkDaysPayload(eType, eWorkDays, eContractWorkDays),
+      // Phase 436 Plan 02 (D-06): übliche Arbeitstage, SHIFT_BASED only (D-02 mirror).
+      ...buildUsualWorkDaysPayload(eType, eUsualWorkDays),
       validFrom: eValidFrom,
       ...extra,
     };
@@ -1496,6 +1511,7 @@
         eOvertimeMode,
         eWorkDays,
         eContractWorkDays,
+        eUsualWorkDays,
         eValidFrom,
       );
       setTimeout(() => (arbeitszeitSaved = false), 3000);
@@ -1631,6 +1647,7 @@
       eOvertimeMode,
       eWorkDays,
       eContractWorkDays,
+      eUsualWorkDays,
       eValidFrom,
     ) !== scheduleSnapshot,
   );
@@ -2306,6 +2323,41 @@
                 Vertragliche Anzahl Arbeitstage pro Woche. Welche Wochentage das konkret sind,
                 bestimmt der Schichtplan — nicht dieses Feld.
               </p>
+            </div>
+
+            <!-- Phase 436 Plan 02 (D-06) — übliche Arbeitstage: an advisory Angabe used ONLY
+                 for pricing angebrochene Urlaubswochen (D-01/D-03). The server is authoritative
+                 (T-436-08); this chip row and the shortfall hint below are UX only. -->
+            <div class="form-group" style="margin-top: 1rem;">
+              <span class="form-label">Übliche Arbeitstage (optional)</span>
+              <div class="weekday-chips" role="group" aria-label="Übliche Arbeitstage">
+                {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
+                  <button
+                    type="button"
+                    class="wd-chip"
+                    class:wd-chip--active={eUsualWorkDays.includes(day.value)}
+                    aria-pressed={eUsualWorkDays.includes(day.value)}
+                    onclick={() => {
+                      if (eUsualWorkDays.includes(day.value)) {
+                        eUsualWorkDays = eUsualWorkDays.filter((d) => d !== day.value);
+                      } else {
+                        eUsualWorkDays = [...eUsualWorkDays, day.value].sort((a, b) => a - b);
+                      }
+                    }}>{day.label}</button
+                  >
+                {/each}
+              </div>
+              <p class="form-hint">
+                Nur für angebrochene Urlaubswochen: Dort zählen nur Urlaubstage an diesen
+                Wochentagen. Eine volle Urlaubswoche kostet immer die vertraglichen Arbeitstage.
+                Leer lassen, wenn es keine festen Tage gibt.
+              </p>
+              {#if usualWorkDaysShortfall(eUsualWorkDays, eContractWorkDays) > 0}
+                <div class="callout">
+                  Bitte mindestens {eContractWorkDays} Tage ankreuzen – so viele Arbeitstage hat der Vertrag.
+                  Sonst wird die Angabe beim Speichern abgelehnt.
+                </div>
+              {/if}
             </div>
           {/if}
 
