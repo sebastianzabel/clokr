@@ -1355,16 +1355,20 @@
                     </td>
                     <td>{formatLastWarning(row.lastWarningSentAt)}</td>
                     <td class="row-actions">
-                      <button
-                        class="btn-ghost btn-warn-now"
-                        disabled={carryoverWarnBusy[row.entitlementId]}
-                        onclick={() => sendCarryoverWarning(row)}
-                      >
-                        {carryoverWarnBusy[row.entitlementId] ? "Senden…" : "Hinweis jetzt senden"}
-                      </button>
-                      {#if carryoverRowMsg[row.entitlementId]}
-                        <span class="row-msg">{carryoverRowMsg[row.entitlementId]}</span>
-                      {/if}
+                      <div class="row-actions__group">
+                        <button
+                          class="btn-ghost btn-warn-now"
+                          disabled={carryoverWarnBusy[row.entitlementId]}
+                          onclick={() => sendCarryoverWarning(row)}
+                        >
+                          {carryoverWarnBusy[row.entitlementId]
+                            ? "Senden…"
+                            : "Hinweis jetzt senden"}
+                        </button>
+                        {#if carryoverRowMsg[row.entitlementId]}
+                          <span class="row-msg">{carryoverRowMsg[row.entitlementId]}</span>
+                        {/if}
+                      </div>
                     </td>
                   </tr>
                 {/each}
@@ -1447,22 +1451,24 @@
                     {/if}
                   </td>
                   <td class="row-actions">
-                    <button
-                      class="btn-icon btn-icon-pdf"
-                      title="Stundennachweis PDF ({row.name})"
-                      onclick={() => downloadEmployeePdf(row.id, row.name)}>PDF</button
-                    >
-                    <button
-                      class="btn-icon btn-icon-datev"
-                      title="DATEV LODAS ({row.name})"
-                      onclick={() => downloadEmployeeDatev(row.id, row.name)}>TXT</button
-                    >
-                    {#if empDownloadErrors[`pdf-${row.id}`]}
-                      <span class="row-dl-error">{empDownloadErrors[`pdf-${row.id}`]}</span>
-                    {/if}
-                    {#if empDownloadErrors[`datev-${row.id}`]}
-                      <span class="row-dl-error">{empDownloadErrors[`datev-${row.id}`]}</span>
-                    {/if}
+                    <div class="row-actions__group">
+                      <button
+                        class="btn-icon btn-icon-pdf"
+                        title="Stundennachweis PDF ({row.name})"
+                        onclick={() => downloadEmployeePdf(row.id, row.name)}>PDF</button
+                      >
+                      <button
+                        class="btn-icon btn-icon-datev"
+                        title="DATEV LODAS ({row.name})"
+                        onclick={() => downloadEmployeeDatev(row.id, row.name)}>TXT</button
+                      >
+                      {#if empDownloadErrors[`pdf-${row.id}`]}
+                        <span class="row-dl-error">{empDownloadErrors[`pdf-${row.id}`]}</span>
+                      {/if}
+                      {#if empDownloadErrors[`datev-${row.id}`]}
+                        <span class="row-dl-error">{empDownloadErrors[`datev-${row.id}`]}</span>
+                      {/if}
+                    </div>
                   </td>
                 </tr>
               {/each}
@@ -1960,6 +1966,10 @@
   .row-actions {
     text-align: right;
     white-space: nowrap;
+  }
+  /* Issue #442 — flex layout lives on the inner wrapper, never on the td itself, so the cell
+     keeps display: table-cell and lines up with the rest of the row. */
+  .row-actions__group {
     display: flex;
     align-items: center;
     gap: 0.375rem;

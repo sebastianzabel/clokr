@@ -165,22 +165,24 @@
             <td class="mono">{entry.validUntil ? formatDE(entry.validUntil) : "—"}</td>
             <td class="av-note">{entry.note ?? ""}</td>
             <td class="av-col-action">
-              <button
-                type="button"
-                class="btn btn-ghost btn-sm"
-                {disabled}
-                onclick={() => openEdit(entry)}
-              >
-                Bearbeiten
-              </button>
-              <button
-                type="button"
-                class="btn btn-ghost btn-sm"
-                {disabled}
-                onclick={() => askRemove(entry)}
-              >
-                Entfernen
-              </button>
+              <div class="av-col-action__group">
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  {disabled}
+                  onclick={() => openEdit(entry)}
+                >
+                  Bearbeiten
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  {disabled}
+                  onclick={() => askRemove(entry)}
+                >
+                  Entfernen
+                </button>
+              </div>
             </td>
           </tr>
         {/each}
@@ -273,6 +275,11 @@
   .av-col-action {
     width: 1%;
     white-space: nowrap;
+  }
+  /* Issue #442 — flex layout lives on the inner wrapper, never on the td itself, so the cell
+     keeps display: table-cell (th.av-col-action carries no wrapper, only the text-align rule
+     below). */
+  .av-col-action__group {
     display: flex;
     gap: var(--s-1);
     justify-content: flex-end;
