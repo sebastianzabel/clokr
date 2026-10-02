@@ -66,7 +66,9 @@ import {
   statutoryMinimumVacationDays, // Issue #435 (D-11) — 5-day-base floor on POST/PATCH
   statutoryMinimumViolationMessage, // Issue #435 (D-11) — the ONE German 400 message builder
   daysDiffer, // Issue #435 code review (WR-01) — reused by the PATCH "did annualVacationDays change" guard
-} from "../../absence"; // Phase 100B Plan 10 — A11 (Issue #205 reroute) / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6; issue #416; issue #435
+  contractWorkDaysPerWeekFrom, // Phase 436 Plan 02 (D-02) — resolves the comparison value for validateUsualWorkDays
+} from "../../absence"; // Phase 100B Plan 10 — A11 (Issue #205 reroute) / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6; issue #416; issue #435; issue #436
+import { validateUsualWorkDays } from "../usual-work-days"; // Phase 436 Plan 02 (D-02)
 // Phase 67b Plan 03 (issue #67, D-22/D-07/D-24) — the Stammsalon lifecycle helpers.
 import {
   createInitialHomeAssignment,
@@ -174,6 +176,10 @@ const createEmployeeSchema = z.object({
   // SHIFT_BASED befüllt. .optional().nullable(): see settings.ts's identical field
   // for the rationale (Svelte forms send `field: x ? x : null`).
   contractWorkDaysPerWeek: z.number().int().min(1).max(7).optional().nullable(),
+  // Phase 436 Plan 02 (D-02): optional "übliche Arbeitstage" at creation, SHIFT_BASED only.
+  // .optional().nullable() (not bare .optional()): same convention as settings.ts — this
+  // project's Svelte forms send `field: x ? x : null`.
+  usualWorkDays: z.array(z.number().int().min(0).max(6)).max(7).optional().nullable(),
   // Phase 64 — Pausendauer Override (D-08, BREAK-02, BREAK-04):
   // nullable Int — null clears override → fall back to TenantConfig defaults.
   // Floor enforces ArbZG §4 Pflichtpause; cap is a sane upper bound.
@@ -660,6 +666,25 @@ export async function employeeRoutes(app: FastifyInstance) {
         tenantConfigForDefaults?.defaultWorkDays,
       );
 
+      // Phase 436 Plan 02 (D-02, 436-AC-03): validate BEFORE the transaction — a rejected body
+      // must create neither Employee nor User row.
+      const usualWorkDaysForCreate = body.usualWorkDays ?? [];
+      const usualWorkDaysCheck = validateUsualWorkDays(
+        body.scheduleType,
+        usualWorkDaysForCreate,
+        contractWorkDaysPerWeekFrom(
+          {
+            contractWorkDaysPerWeek:
+              body.scheduleType === "SHIFT_BASED" ? (body.contractWorkDaysPerWeek ?? 5) : null,
+            workDays: resolvedWorkDays,
+          },
+          tenantConfigForDefaults?.defaultWorkDays,
+        ),
+      );
+      if (!usualWorkDaysCheck.ok) {
+        return reply.code(400).send({ error: usualWorkDaysCheck.error });
+      }
+
       // Phase 67b Plan 03 (D-22, issue #67): only reads TenantConfig (cached), safe before the tx.
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
 
@@ -738,6 +763,9 @@ export async function employeeRoutes(app: FastifyInstance) {
             // freeze on the settings.ts re-save path is exempted from this.
             contractWorkDaysPerWeek:
               body.scheduleType === "SHIFT_BASED" ? (body.contractWorkDaysPerWeek ?? 5) : null,
+            // Phase 436 Plan 02 (D-02): the Angabe is only ever non-empty for SHIFT_BASED,
+            // validated above via validateUsualWorkDays before this transaction started.
+            usualWorkDays: body.scheduleType === "SHIFT_BASED" ? usualWorkDaysCheck.value : [],
             validFrom: new Date(body.hireDate),
           },
         });
@@ -887,6 +915,13 @@ export async function employeeRoutes(app: FastifyInstance) {
           coverageWeight: employee.coverageWeight.toString(),
           // Issue #435 (D-02) — Decimal → string for stable JSON (same treatment as coverageWeight)
           annualVacationDays: employee.annualVacationDays?.toString() ?? null,
+          // Phase 436 Plan 02 (D-02): the initial Angabe must be traceable (CLAUDE.md "prefer
+          // creating an audit entry over skipping it").
+          workSchedule: {
+            type: workSchedule.type,
+            contractWorkDaysPerWeek: workSchedule.contractWorkDaysPerWeek,
+            usualWorkDays: workSchedule.usualWorkDays,
+          },
         },
       });
 

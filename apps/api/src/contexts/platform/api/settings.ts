@@ -1081,6 +1081,18 @@ export async function settingsRoutes(app: FastifyInstance) {
       // (When caller PROVIDES validFrom, the Zod refinement above already enforced it.)
       const validFrom = body.validFrom ? new Date(body.validFrom) : snapToMonthFirstUtc(new Date());
 
+      // Phase 436 Plan 02 (D-02): a non-SHIFT_BASED body must never carry a non-empty Angabe —
+      // reject BEFORE the orphan-shift detection/transaction below, so a rejected switch-away
+      // body neither cancels future shifts nor writes any schedule row. `contractWorkDaysPerWeek`
+      // is irrelevant here (the body never reaches that check for a non-empty, non-SHIFT_BASED
+      // list — validateUsualWorkDays rejects on the type check first).
+      if (body.type !== "SHIFT_BASED" && body.usualWorkDays && body.usualWorkDays.length > 0) {
+        const earlyUsualWorkDaysCheck = validateUsualWorkDays(body.type, body.usualWorkDays, 0);
+        if (!earlyUsualWorkDaysCheck.ok) {
+          return reply.code(400).send({ error: earlyUsualWorkDaysCheck.error });
+        }
+      }
+
       // ── Phase 49.3 — Orphan-Shift-Lifecycle detection ──────────────────────
       // When switching FROM SHIFT_BASED to any other type, check for future shifts.
       // Past shifts (date < today) are immutable (Phase 47.2) and are never touched.
@@ -1166,6 +1178,9 @@ export async function settingsRoutes(app: FastifyInstance) {
               // alongside per-day-hours that disagree. Closes an employee's
               // class of bug (mondayHours=0 but workDays=[1,2,3,4,5]).
               workDays: normalizeWorkDays(body.workDays, body as PerDayHours),
+              // Phase 436 Plan 02 (D-02): a row that is not SHIFT_BASED never carries an Angabe —
+              // the early rejection above already guarantees the body had no non-empty value here.
+              usualWorkDays: [],
               validFrom,
             };
 
