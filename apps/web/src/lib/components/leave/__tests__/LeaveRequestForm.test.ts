@@ -446,4 +446,88 @@ describe("LeaveRequestForm", () => {
       timeout: 1000,
     });
   });
+
+  // ── Issue #436 (D-04): preview prices like the server (type + excludeRequestId) ─────────────
+  describe("hours-preview URL carries type and excludeRequestId (Issue #436)", () => {
+    it("create mode: the preview request URL contains type=VACATION (the default form type)", async () => {
+      renderForm();
+      await fireEvent.input(screen.getByTestId("leave-form-from"), {
+        target: { value: "2026-10-05" },
+      });
+      await fireEvent.input(screen.getByTestId("leave-form-to"), {
+        target: { value: "2026-10-06" },
+      });
+      await waitFor(
+        () => {
+          const previewCall = apiGet.mock.calls.findLast((c) =>
+            String(c[0]).startsWith("/leave/hours-preview"),
+          );
+          expect(previewCall).toBeTruthy();
+          expect(String(previewCall![0])).toContain("type=VACATION");
+          expect(String(previewCall![0])).not.toContain("excludeRequestId=");
+        },
+        { timeout: 1000 },
+      );
+    });
+
+    it("edit mode: the preview request URL also contains excludeRequestId=<editingRequest.id>", async () => {
+      renderForm({
+        editingRequest: {
+          id: "req-edit-436",
+          typeCode: "VACATION",
+          startDate: "2026-10-05",
+          endDate: "2026-10-06",
+          halfDay: false,
+          note: null,
+        },
+      });
+      await waitFor(
+        () => {
+          const previewCall = apiGet.mock.calls.findLast((c) =>
+            String(c[0]).startsWith("/leave/hours-preview"),
+          );
+          expect(previewCall).toBeTruthy();
+          expect(String(previewCall![0])).toContain("type=VACATION");
+          expect(String(previewCall![0])).toContain("excludeRequestId=req-edit-436");
+        },
+        { timeout: 1000 },
+      );
+    });
+
+    it("changing the type re-triggers the preview with the NEW type in the URL", async () => {
+      renderForm();
+      await fireEvent.input(screen.getByTestId("leave-form-from"), {
+        target: { value: "2026-10-05" },
+      });
+      await fireEvent.input(screen.getByTestId("leave-form-to"), {
+        target: { value: "2026-10-06" },
+      });
+      await waitFor(
+        () => {
+          const previewCall = apiGet.mock.calls.findLast((c) =>
+            String(c[0]).startsWith("/leave/hours-preview"),
+          );
+          expect(previewCall).toBeTruthy();
+          expect(String(previewCall![0])).toContain("type=VACATION");
+        },
+        { timeout: 1000 },
+      );
+
+      apiGet.mockClear();
+      await fireEvent.change(screen.getByTestId("leave-form-type"), {
+        target: { value: "SICK" },
+      });
+
+      await waitFor(
+        () => {
+          const previewCall = apiGet.mock.calls.findLast((c) =>
+            String(c[0]).startsWith("/leave/hours-preview"),
+          );
+          expect(previewCall).toBeTruthy();
+          expect(String(previewCall![0])).toContain("type=SICK");
+        },
+        { timeout: 1000 },
+      );
+    });
+  });
 });
