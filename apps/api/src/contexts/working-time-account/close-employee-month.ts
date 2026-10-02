@@ -780,7 +780,10 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
     // via bsExpectedMinutes (D-06, Phase 63). Holiday credit included automatically by
     // calcExpectedMinutesTz. No excludeHolidays passed (consistent with all four paths; see
     // RESEARCH.md §2 "SHIFT_BASED leave credit excludeHolidays" row).
-    const contractSoll = calcExpectedMinutesTz(schedule, effectiveStart, monthEnd, tz);
+    // Issue #447 (D-13): sollRangeEnd is the caller's monthEnd unless the exit day precedes
+    // it, so the live roster proration keeps its full-month C_net for every still-employed
+    // month and its period ends at the exit date otherwise.
+    const contractSoll = calcExpectedMinutesTz(schedule, effectiveStart, sollRangeEnd, tz);
 
     // Phase 104 (D-15): sbClaimed accumulates the calendar days already credited by a
     // processed leave/absence row, shared across BOTH loops below, so a day covered by
@@ -819,14 +822,14 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
       contractWorkDaysPerWeek,
       schedule,
       effectiveStart,
-      monthEnd,
+      sollRangeEnd,
       tz,
     );
 
     let sbLeaveCredit = 0;
     for (const lr of sortForDedup(approvedLeave)) {
       const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
-      const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
+      const leaveEnd = lr.endDate > sollRangeEnd ? sollRangeEnd : lr.endDate;
       if (leaveStart > leaveEnd) continue;
       // D-09: a date already claimed by an EARLIER row in this same sorted loop contributes
       // nothing to THIS row ("first to claim" — mirrors the old excludeHolidays: sbClaimed
@@ -869,7 +872,7 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
       // isBsAbsence() doc block above. Every other absence participates in the same
       // day-based dedup as approvedLeave.
       const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
-      const absEnd = ab.endDate > monthEnd ? monthEnd : ab.endDate;
+      const absEnd = ab.endDate > sollRangeEnd ? sollRangeEnd : ab.endDate;
       if (absStart > absEnd) continue;
       const bs = isBsAbsence(ab);
       sbAbsenceCredit += calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz, {

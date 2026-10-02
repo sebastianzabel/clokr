@@ -1433,6 +1433,42 @@ const CELLS: Cell[] = [
     },
     expectedRed: false,
   },
+  {
+    id: "sb-40-5-exit",
+    scheduleType: "SHIFT_BASED",
+    classification: "REGULAR",
+    situation:
+      "exit mid-month (Fri 2026-07-10) — overtime above the exit-clipped contract is not swallowed",
+    schedule: SB_40_5,
+    year: 2026,
+    month: 7,
+    hireDate: "2026-07-01",
+    exitDate: "2026-07-10",
+    // Shifts on the 8 Mo-Fr days 01.-10.07. at 480 min each (R = 3840).
+    shifts: rows(JUL_01_10_MO_FR, 480),
+    // Entries the same 8 days at 480 min, except Fri 10.07. at 570 min (W = 3930).
+    entries: [
+      ...rows(
+        JUL_01_10_MO_FR.filter((d) => d !== "2026-07-10"),
+        480,
+      ),
+      { date: "2026-07-10", netto: 570 },
+    ],
+    // Spec derivation: C_net = contractSoll (Ø-Methode) over [effectiveStart, exitDate] =
+    // 40*60*8/5 = 3840 (no leave/absence credits). R = 3840 (8 shifts, none covered).
+    // W = 3930. overtime = max(0, W - C_net) = 90; undertime = max(0, R - W) = 0; balance = 90.
+    // Pre-fix: C_net used the full-month contractSoll = 40*60*23/5 = 11040; R stayed 3840
+    // (shifts were already exit-clipped) < C_net, so the undertime clause dominated and the
+    // 90 min of real overtime above the exit-clipped contract was swallowed to balance 0.
+    expected: {
+      workedMinutes: 3930,
+      expectedMinutes: 3840,
+      balanceMinutes: 90,
+      carryOver: 90,
+      overtimeHours: 1.5,
+    },
+    expectedRed: false,
+  },
 ];
 
 // ── Roster builders for AZUBI cells ──────────────────────────────────────────
@@ -1509,6 +1545,7 @@ const PARITY_IDS = new Set<string>([
   "fw-40-5-exit", // Issue #447 — FIXED exit month
   "fx-30-4-exit", // Issue #447 — FLEXTIME exit month
   "mj-80-exit", // Issue #447 — MONTHLY_HOURS exit month
+  "sb-40-5-exit", // Issue #447 — SHIFT_BASED exit month
 ]);
 
 // ── Seeder ───────────────────────────────────────────────────────────────────
@@ -2091,6 +2128,7 @@ describe.each(CELLS)("golden matrix — $id", (cell) => {
         "fw-40-5-exit", // Issue #447 — every workday through the exit date has an entry
         "fx-30-4-exit",
         "mj-80-exit",
+        "sb-40-5-exit",
       ].includes(cell.id);
       if (cronEligible) {
         const unlock3 = await unlockMonth(app, adminToken, employeeId, cell.year, cell.month);
