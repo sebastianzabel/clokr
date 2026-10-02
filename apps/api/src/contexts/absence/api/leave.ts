@@ -27,6 +27,7 @@ import {
   recalculateCarryOver,
   contractWorkDaysPerWeekFrom, // Issue #429, D-13 — the getScheduledHours SHIFT_BASED branch below
   usualWorkDaysFrom, // Issue #436, D-03 — the same branch, threading the Angabe into the receipt
+  type LeaveDaysPricing, // Issue #436, D-04/D-09
 } from "../leave-days";
 import { formatMinutesHM } from "../format-hm"; // Phase 100
 import {
@@ -2857,14 +2858,28 @@ export async function leaveRoutes(app: FastifyInstance) {
         endDate,
         halfDay,
         employeeId: requestedEmployeeId,
+        type: previewTypeCode,
+        excludeRequestId,
       } = req.query as {
         startDate?: string;
         endDate?: string;
         halfDay?: string;
         employeeId?: string;
+        type?: string;
+        excludeRequestId?: string;
       };
       if (!startDate || !endDate) {
         return reply.code(400).send({ error: "startDate und endDate erforderlich" });
+      }
+      // Issue #436 (D-04/D-09): optional — the dialog preview (Task 3) prices exactly like the
+      // server by sending the leave type and, in edit mode, the request being edited. Both are
+      // used ONLY inside the employee- and tenant-scoped helper in leave-days.ts, so a foreign
+      // excludeRequestId behaves exactly like an unknown one (no cross-tenant disclosure).
+      if (previewTypeCode != null && previewTypeCode.length > 40) {
+        return reply.code(400).send({ error: "Ungültiger Abwesenheitstyp" });
+      }
+      if (excludeRequestId != null && !z.string().uuid().safeParse(excludeRequestId).success) {
+        return reply.code(400).send({ error: "Ungültige Antrags-ID" });
       }
       // Phase 415 (#415): optional employeeId — the unified leave-request dialog reads a
       // manager's SELECTED employee's preview, not only the caller's own. Omitted or self is a
@@ -2883,14 +2898,26 @@ export async function leaveRoutes(app: FastifyInstance) {
       const holidays = new Set(holidayMap.keys());
 
       // Phase 107 (D-09): roster-aware live estimate, read-only, no persistence.
-      // Issue #436 (D-04/D-09, Task 3 of 436-04 widens this to `{ mode: "request" }` behind new
-      // query parameters): isolated for now, so every existing caller sees exactly the old
-      // answer.
+      // Issue #436 (D-04/D-09, Task 3): with `type` given, prices exactly like the server would
+      // (week-union against the employee's other counted VACATION requests, excluding the
+      // request being edited). Without `type`, isolated — byte-identical to every existing
+      // caller's old answer (the neutrality recordings send no new params).
+      const previewPricing: LeaveDaysPricing =
+        previewTypeCode != null
+          ? { mode: "request", leaveTypeCode: previewTypeCode, excludeRequestId }
+          : { mode: "isolated" };
       const [hours, leaveDaysPreview] = await Promise.all([
         getScheduledHours(app.prisma, employeeId, start, end, isHalf, holidays),
-        resolveLeaveDays(app.prisma, employeeId, tenantId, start, end, isHalf, holidays, {
-          mode: "isolated",
-        }),
+        resolveLeaveDays(
+          app.prisma,
+          employeeId,
+          tenantId,
+          start,
+          end,
+          isHalf,
+          holidays,
+          previewPricing,
+        ),
       ]);
       const { days, provisional } = leaveDaysPreview;
 
