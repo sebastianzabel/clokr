@@ -12,7 +12,13 @@
  * updated to the new amount.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  seedEntitlementYears,
+} from "./setup";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import type { FastifyInstance } from "fastify";
 
@@ -20,6 +26,7 @@ describe("Leave correction — Überstundenausgleich reverses the stored value (
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
   let overtimeTypeId: string;
+  const ENTITLEMENT_YEAR = 2027;
 
   beforeAll(async () => {
     app = await getTestApp();
@@ -30,6 +37,14 @@ describe("Leave correction — Überstundenausgleich reverses the stored value (
         data: { tenantId: data.tenant.id, ...leaveTypeFields("OVERTIME_COMP"), color: "#8B5CF6" },
       })
     ).id;
+
+    // Fixtures use fixed 2027 dates (CLAUDE.md: hardcoded-date test time-bombs) — seed the
+    // vacation entitlement for that year explicitly; seedTestData only seeds the live year.
+    await seedEntitlementYears(app, {
+      employeeId: data.employee.id,
+      leaveTypeId: data.vacationType.id,
+      years: [ENTITLEMENT_YEAR],
+    });
   });
 
   afterAll(async () => {
@@ -105,7 +120,7 @@ describe("Leave correction — Überstundenausgleich reverses the stored value (
 
   // ── Task 1 ───────────────────────────────────────────────────────────────
 
-  it("K1: a date correction after a retroactive schedule edit reverses the stored 40h, not a recomputed 38h, and audits the delta (D-02)", async () => {
+  it("K1: a date correction after a retroactive schedule edit reverses the stored 40h, not a recomputed 38h", async () => {
     const leaveId = await approveOt("2027-04-05", "2027-04-09"); // Mon-Fri, 5 * 8h = 2400 min
 
     const approved = await app.prisma.leaveRequest.findUnique({ where: { id: leaveId } });
@@ -138,19 +153,42 @@ describe("Leave correction — Überstundenausgleich reverses the stored value (
 
       const finalRow = await app.prisma.leaveRequest.findUnique({ where: { id: leaveId } });
       expect(finalRow?.overtimeCompMinutes, "stores the new amount").toBe(1320);
+    } finally {
+      await app.prisma.workSchedule.updateMany({
+        where: { employeeId: data.employee.id },
+        data: { mondayHours: 8 },
+      });
+    }
+  });
+
+  it("K1's LEAVE_CORRECTED audit carries old/new minutes, the signed delta and the reversal source (D-02)", async () => {
+    const leaveId = await approveOt("2027-04-20", "2027-04-20"); // Tuesday, 8h = 480 min — own
+    // fixture (same scenario shape, a different range) so this test does not depend on
+    // execution order relative to the journal-rows test above.
+    const approved = await app.prisma.leaveRequest.findUnique({ where: { id: leaveId } });
+    expect(approved?.overtimeCompMinutes).toBe(480);
+
+    await app.prisma.workSchedule.updateMany({
+      where: { employeeId: data.employee.id },
+      data: { tuesdayHours: 5 },
+    });
+
+    try {
+      const res = await correct(leaveId, { startDate: "2027-04-20", endDate: "2027-04-20" });
+      expect(res.statusCode, res.body).toBe(200);
 
       const audit = await lastCorrectedAudit(leaveId);
       expect(audit).not.toBeNull();
       const oldValue = audit!.oldValue as Record<string, unknown>;
       const newValue = audit!.newValue as Record<string, unknown>;
-      expect(oldValue.overtimeCompMinutes).toBe(2400);
-      expect(newValue.overtimeCompMinutes).toBe(1320);
-      expect(newValue.overtimeCompDeltaMinutes).toBe(-1080);
+      expect(oldValue.overtimeCompMinutes).toBe(480);
+      expect(newValue.overtimeCompMinutes).toBe(300);
+      expect(newValue.overtimeCompDeltaMinutes).toBe(-180);
       expect(newValue.overtimeCompReversalSource).toBe("stored");
     } finally {
       await app.prisma.workSchedule.updateMany({
         where: { employeeId: data.employee.id },
-        data: { mondayHours: 8 },
+        data: { tuesdayHours: 8 },
       });
     }
   });
@@ -183,5 +221,187 @@ describe("Leave correction — Überstundenausgleich reverses the stored value (
     const newValue = audit!.newValue as Record<string, unknown>;
     expect(newValue.overtimeCompDeltaMinutes, "net movement is zero").toBe(0);
     expect(newValue.overtimeCompReversalSource).toBe("stored");
+  });
+
+  // ── Task 2 ───────────────────────────────────────────────────────────────
+
+  it("OT→SICK: reverses the stored booking exactly once, no new OT booking, column cleared, delta/source audited", async () => {
+    const leaveId = await approveOt("2027-04-12", "2027-04-12"); // Monday, 8h = 480 min
+
+    const corrBefore = await countTx("CORRECTION");
+    const redBefore = await countTx("REDUCTION");
+
+    const res = await correct(leaveId, {
+      startDate: "2027-04-12",
+      endDate: "2027-04-12",
+      type: "SICK",
+    });
+    expect(res.statusCode, res.body).toBe(200);
+
+    expect(await countTx("CORRECTION")).toBe(corrBefore + 1);
+    expect(await countTx("REDUCTION"), "SICK apply books nothing").toBe(redBefore);
+
+    const corrTx = await lastTx("CORRECTION");
+    expect(Number(corrTx!.hours)).toBeCloseTo(8, 5);
+
+    const finalRow = await app.prisma.leaveRequest.findUnique({ where: { id: leaveId } });
+    expect(
+      finalRow?.overtimeCompMinutes,
+      "cleared once the request is no longer OVERTIME_COMP",
+    ).toBeNull();
+
+    const audit = await lastCorrectedAudit(leaveId);
+    const newValue = audit!.newValue as Record<string, unknown>;
+    expect(newValue.overtimeCompDeltaMinutes).toBe(-480);
+    expect(newValue.overtimeCompReversalSource).toBe("stored");
+  });
+
+  it("VACATION→OT: reverses usedDays, books the new amount once (REDUCTION), audits delta with no reversal source", async () => {
+    const vacLeave = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: data.employee.id,
+        leaveTypeId: data.vacationType.id,
+        startDate: new Date("2027-04-19"), // Monday
+        endDate: new Date("2027-04-19"),
+        days: 1,
+        status: "APPROVED",
+        reviewedBy: data.adminUser.id,
+        reviewedAt: new Date(),
+      },
+    });
+    await app.prisma.leaveEntitlement.updateMany({
+      where: {
+        employeeId: data.employee.id,
+        leaveTypeId: data.vacationType.id,
+        year: ENTITLEMENT_YEAR,
+      },
+      data: { usedDays: 1 },
+    });
+
+    const corrBefore = await countTx("CORRECTION");
+    const redBefore = await countTx("REDUCTION");
+
+    const res = await correct(vacLeave.id, {
+      startDate: "2027-04-19",
+      endDate: "2027-04-19",
+      type: "OVERTIME_COMP",
+    });
+    expect(res.statusCode, res.body).toBe(200);
+
+    const entitlement = await app.prisma.leaveEntitlement.findFirst({
+      where: {
+        employeeId: data.employee.id,
+        leaveTypeId: data.vacationType.id,
+        year: ENTITLEMENT_YEAR,
+      },
+    });
+    expect(Number(entitlement?.usedDays), "the old VACATION day is given back").toBe(0);
+
+    expect(await countTx("CORRECTION"), "the OLD side was VACATION, not OT").toBe(corrBefore);
+    expect(await countTx("REDUCTION")).toBe(redBefore + 1);
+
+    const redTx = await lastTx("REDUCTION");
+    expect(Number(redTx!.hours)).toBeCloseTo(-8, 5);
+
+    const finalRow = await app.prisma.leaveRequest.findUnique({ where: { id: vacLeave.id } });
+    expect(finalRow?.overtimeCompMinutes, "stores the newly booked amount").toBe(480);
+
+    const audit = await lastCorrectedAudit(vacLeave.id);
+    const newValue = audit!.newValue as Record<string, unknown>;
+    expect(newValue.overtimeCompDeltaMinutes).toBe(480);
+    expect(
+      newValue.overtimeCompReversalSource,
+      "the OLD side was not OVERTIME_COMP — no reversal source",
+    ).toBeUndefined();
+  });
+
+  it("legacy row with no stored value recomputes under the CURRENT schedule and audits source 'recomputed' (A-4)", async () => {
+    const leave = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: data.employee.id,
+        leaveTypeId: overtimeTypeId,
+        startDate: new Date("2027-04-26"), // Monday
+        endDate: new Date("2027-04-26"),
+        days: 1,
+        status: "APPROVED",
+        overtimeCompMinutes: null,
+        reviewedBy: data.adminUser.id,
+        reviewedAt: new Date(),
+      },
+    });
+
+    // Schedule edited 8h -> 6h AFTER the (legacy, unstored) approval.
+    await app.prisma.workSchedule.updateMany({
+      where: { employeeId: data.employee.id },
+      data: { mondayHours: 6 },
+    });
+
+    try {
+      const corrBefore = await countTx("CORRECTION");
+
+      const res = await correct(leave.id, {
+        startDate: "2027-04-26",
+        endDate: "2027-04-26",
+        note: "Korrektur unter dem aktuellen Plan",
+      });
+      expect(res.statusCode, res.body).toBe(200);
+
+      expect(await countTx("CORRECTION")).toBe(corrBefore + 1);
+      const corrTx = await lastTx("CORRECTION");
+      expect(
+        Number(corrTx!.hours),
+        "A-4 fallback: recomputed under the CURRENT (6h) schedule, not the original 8h",
+      ).toBeCloseTo(6, 5);
+
+      const finalRow = await app.prisma.leaveRequest.findUnique({ where: { id: leave.id } });
+      expect(finalRow?.overtimeCompMinutes, "the correction now stores a value").toBe(360);
+
+      const audit = await lastCorrectedAudit(leave.id);
+      const newValue = audit!.newValue as Record<string, unknown>;
+      expect(newValue.overtimeCompReversalSource).toBe("recomputed");
+    } finally {
+      await app.prisma.workSchedule.updateMany({
+        where: { employeeId: data.employee.id },
+        data: { mondayHours: 8 },
+      });
+    }
+  });
+
+  it("D-03: a correction touching a closed month is rejected 409 before any write — journal and stored value unchanged", async () => {
+    const leaveId = await approveOt("2027-06-07", "2027-06-07"); // Monday, stored 480
+
+    try {
+      await app.prisma.saldoSnapshot.create({
+        data: {
+          employeeId: data.employee.id,
+          periodType: "MONTHLY",
+          periodStart: new Date("2027-06-01T00:00:00Z"),
+          periodEnd: new Date("2027-06-30T00:00:00Z"),
+          workedMinutes: 0,
+          expectedMinutes: 0,
+          balanceMinutes: 0,
+          carryOver: 0,
+          closedAt: new Date(),
+          closedBy: "test-system",
+        },
+      });
+
+      const corrBefore = await countTx("CORRECTION");
+      const redBefore = await countTx("REDUCTION");
+
+      const res = await correct(leaveId, { startDate: "2027-06-07", endDate: "2027-06-08" });
+      expect(res.statusCode, res.body).toBe(409);
+      expect(JSON.parse(res.body).error).toBe("Gesperrter Monat — Korrektur nicht möglich");
+
+      expect(await countTx("CORRECTION"), "no write before the 409").toBe(corrBefore);
+      expect(await countTx("REDUCTION")).toBe(redBefore);
+
+      const finalRow = await app.prisma.leaveRequest.findUnique({ where: { id: leaveId } });
+      expect(finalRow?.overtimeCompMinutes, "stored value unchanged").toBe(480);
+    } finally {
+      await app.prisma.saldoSnapshot.deleteMany({
+        where: { employeeId: data.employee.id, periodStart: new Date("2027-06-01T00:00:00Z") },
+      });
+    }
   });
 });
