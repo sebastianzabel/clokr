@@ -7,7 +7,7 @@
  * Ø-Methode day (the same figure the saldo itself uses to credit it), and the roster is no
  * longer read at all. This file now pins THAT invariant across the gate (POST
  * /leave/requests) and the preview (GET /leave/hours-preview) — the same function,
- * `getScheduledHours`, backs both.
+ * `scheduledLeaveMinutes` (Issue #468 renamed this function from its original name), backs both.
  *
  * This file owns its own tenant + two-employee fixture (SHIFT_BASED + FIXED_SCHEDULE, same
  * tenant) rather than reusing another suite's — Phase 100's sibling files each build their own
@@ -99,7 +99,7 @@ const STALE_BALANCE_HOURS = 999;
 // always in the past (never expires), carries no literal calendar-year string.
 const PAST_ANCHOR = new Date(Date.UTC(new Date().getUTCFullYear() - 2, 0, 1));
 
-describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getScheduledHours (issue #293)", () => {
+describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED scheduledLeaveMinutes (issue #293)", () => {
   let app: FastifyInstance;
   let tenantId: string;
   let shiftEmpToken: string;
@@ -460,13 +460,14 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
  * Issue #429 (D-13, plan 429-03) — the mandatory receipt-equals-credit equality test.
  *
  * A contract deliberately chosen so the OLD receipt formula (weeklyHours ÷ `workDays.length`,
- * via the since-removed `calcLeaveAbsenceMinutesTz` call in `getScheduledHours`) and the NEW
+ * via the since-removed `calcLeaveAbsenceMinutesTz` call in the function now named
+ * `scheduledLeaveMinutes`, Issue #468) and the NEW
  * one (weeklyHours ÷ `contractWorkDaysPerWeek`, via `shiftBasedLeaveMinutesForRequest`) give
  * DIFFERENT numbers: `contractWorkDaysPerWeek: 4` but `workDays: [1,2,3,4,5]` (length 5) — the
  * exact divisor-unification divergence #429 exists to close (429-02-SUMMARY.md's
  * `section9-soll-dedup.test.ts` Integration 4/5 changes are the same divergence class).
  *
- * Receipt side: `GET /leave/hours-preview` (goes through `getScheduledHours()`) for one
+ * Receipt side: `GET /leave/hours-preview` (goes through `scheduledLeaveMinutes()`) for one
  * unplanned weekday inside a month, no other leave.
  * Saldo side: `closeEmployeeMonth()` (pure, no DB) for the SAME schedule/month, run twice —
  * once with NO leave (baseline contract Soll) and once with the SAME single leave row — so the
@@ -475,7 +476,7 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
  * `shiftBasedLeaveCreditByDate()` directly. No cap binds (one day out of a 4-day contract week,
  * entirely inside the month — see 429-CONTEXT.md D-08).
  */
-describe("getScheduledHours SHIFT_BASED == saldo credit (Issue #429, D-13)", () => {
+describe("scheduledLeaveMinutes SHIFT_BASED == saldo credit (Issue #429, D-13)", () => {
   let app: FastifyInstance;
   let tenantId: string;
   let empToken: string;
@@ -581,7 +582,7 @@ describe("getScheduledHours SHIFT_BASED == saldo credit (Issue #429, D-13)", () 
     }
   });
 
-  it("receipt (getScheduledHours) equals the saldo's credited minutes for the same lone request", async () => {
+  it("receipt (scheduledLeaveMinutes) equals the saldo's credited minutes for the same lone request", async () => {
     const preview = await app.inject({
       method: "GET",
       url: `/api/v1/leave/hours-preview?startDate=${LEAVE_DAY}&endDate=${LEAVE_DAY}&halfDay=false`,

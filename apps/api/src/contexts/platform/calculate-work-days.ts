@@ -159,8 +159,8 @@ function isLiteralMoFr(arr: number[]): boolean {
  * `WorkSchedule.contractWorkDaysPerWeek` instead (see `resolveContractWorkDaysPerWeek()` in
  * `apps/api/src/routes/leave.ts` and CLAUDE.md §"Schedule Types"). Do NOT read this function's
  * output as governing SHIFT_BASED `workDays` — for that type the `{day}Hours` columns are
- * placeholders (`getScheduledHours()`, Phase 100 / OTC-04) and a value derived here has no
- * authority.
+ * placeholders (`scheduledLeaveMinutes()`, Phase 100 / OTC-04, renamed by Issue #468) and a value
+ * derived here has no authority.
  *
  * Existing divergent rows are left alone PERMANENTLY, and no correction is pending (Phase 95b, D-01).
  * They are not guessed `workDays`: they are stale placeholder `{day}Hours`, which this function

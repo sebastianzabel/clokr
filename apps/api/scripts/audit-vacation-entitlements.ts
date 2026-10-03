@@ -90,6 +90,10 @@ import {
 } from "../src/contexts/absence/vacation-calc";
 import { getLeaveTypeByCode } from "../src/contexts/absence/facade/leave-types";
 import { EFFECTIVE_LEAVE_STATUSES } from "../src/contexts/absence/effective-leave-statuses";
+import {
+  activeParentalReductionMonths, // Issue #468 plan 07 (D-07) — the same reduced floor the write guard uses
+  remainingAfterParentalMonths,
+} from "../src/contexts/absence/parental-leave-reduction";
 
 // ── Exit codes ──────────────────────────────────────────────────────────────
 export const EXIT_OK = 0;
@@ -164,6 +168,7 @@ export type ReportRow = {
   carriedOver: number | null;
   target: number;
   minimum: number;
+  parentalMonths: number; // Issue #468 plan 07 (D-07) — 0 when no ACTIVE reduction touches this year
   deviation: number | null; // null (printed "n/a") for a synthetic row
   manual: boolean;
   categories: string[];
@@ -200,12 +205,15 @@ function fmtNullable(n: number | null): string {
 export function formatLine(row: ReportRow): string {
   const categories = row.categories.length > 0 ? row.categories.join(",") : "OK";
   const deviation = row.deviation === null ? "n/a" : round2(row.deviation).toFixed(2);
+  // Issue #468 plan 07 (D-07): appended ONLY when a reduction actually applies — every other
+  // line stays byte-identical to before this plan.
+  const elternzeitSuffix = row.parentalMonths > 0 ? ` elternzeitMonate=${row.parentalMonths}` : "";
   return (
     `tenantId=${row.tenantId} employeeId=${row.employeeId} entitlementId=${row.entitlementId} ` +
     `year=${row.year} stored=${fmtNullable(row.stored)} used=${fmtNullable(row.used)} ` +
     `carriedOver=${fmtNullable(row.carriedOver)} target=${round2(row.target).toFixed(2)} ` +
     `minimum=${round2(row.minimum).toFixed(2)} deviation=${deviation} manual=${row.manual ? "yes" : "no"} ` +
-    `categories=${categories}`
+    `categories=${categories}${elternzeitSuffix}`
   );
 }
 
@@ -255,13 +263,18 @@ async function classifyRow(
 
   const segments = await loadVacationContractSegments(prisma, employee.id, tenantId);
   const target = await resolveRegularVacationDays(prisma, employee.id, tenantId, year);
-  const minimum = statutoryMinimumVacationThresholdBySegments({
+  const minimumUnreduced = statutoryMinimumVacationThresholdBySegments({
     birthDate: employee.birthDate,
     year,
     segments,
     hireDate: employee.hireDate,
     exitDate: employee.exitDate,
   });
+  // Issue #468 plan 07 (D-07/D-09): the SAME reduced floor the PUT /settings/vacation guard
+  // enforces — a legally reduced year is never flagged UNTER_MINIMUM against the unreduced
+  // threshold.
+  const parentalMonths = await activeParentalReductionMonths(prisma, employee.id, tenantId, year);
+  const minimum = remainingAfterParentalMonths(minimumUnreduced, parentalMonths);
   const manual = await hasHumanVacationWrite(prisma, entitlement.id);
   const nullPlaceholder =
     target > 0 &&
@@ -313,6 +326,7 @@ async function classifyRow(
     carriedOver,
     target,
     minimum,
+    parentalMonths,
     deviation: round2(stored - target),
     manual,
     categories,
@@ -441,13 +455,16 @@ async function applyCrossYearCheck(
     void apprenticeDefault; // target/minimum below never need the apprentice comparison
     const segments = await loadVacationContractSegments(prisma, employee.id, tenantId);
     const target = await resolveRegularVacationDays(prisma, employee.id, tenantId, y);
-    const minimum = statutoryMinimumVacationThresholdBySegments({
+    const minimumUnreduced = statutoryMinimumVacationThresholdBySegments({
       birthDate: employee.birthDate,
       year: y,
       segments,
       hireDate: employee.hireDate,
       exitDate: employee.exitDate,
     });
+    // Issue #468 plan 07 (D-07): same reduced floor as the stored-row path above.
+    const parentalMonths = await activeParentalReductionMonths(prisma, employee.id, tenantId, y);
+    const minimum = remainingAfterParentalMonths(minimumUnreduced, parentalMonths);
     extraRows.push({
       tenantId,
       employeeId: employee.id,
@@ -458,6 +475,7 @@ async function applyCrossYearCheck(
       carriedOver: null,
       target,
       minimum,
+      parentalMonths,
       deviation: null,
       manual: false,
       categories: ["JAHRESUEBERGREIFEND_FEHLT"],

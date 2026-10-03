@@ -179,24 +179,44 @@ describe("Section9Credit — model shape (Phase 104 Plan 01)", () => {
     // across the whole file) so legitimate reads like `select: { documentPath: true }` or
     // `where: { documentPath: { not: null } }` — both present in employees.ts's DSGVO
     // deletion flow — do not trip this check; only an actual write payload counts.
-    const filesExceptSection9Upload = files.filter((f) => !f.endsWith("section9-documents.ts"));
-    const srcExceptSection9Upload = filesExceptSection9Upload
+    //
+    // Issue #468 (D-04/A-3, plan 05): a SECOND named exception, `leave.ts` — `/correct`'s
+    // revision+1 correction credit (Step 10b) copies the ORIGINAL credit's `documentPath`
+    // forward (`documentPath: original.documentPath`) rather than nulling it. This is not a
+    // new sickness-document write (no new upload happens here) — it carries an EXISTING
+    // attest document reference along the supersession chain so a correction never silently
+    // drops a paper-AU's stored document. Excluded by name, same pattern as section9-
+    // documents.ts above; `leave.ts` had zero OTHER documentPath write sites before this plan
+    // (verified below) and still has exactly one after it.
+    const filesExceptKnownNonNullWrites = files.filter(
+      (f) => !f.endsWith("section9-documents.ts") && !f.endsWith("/api/leave.ts"),
+    );
+    const srcExceptKnownNonNullWrites = filesExceptKnownNonNullWrites
       .map((f) => readFileSync(f, "utf8"))
       .join("\n");
     const dataWriteBlocks =
-      srcExceptSection9Upload.match(/data:\s*\{[^}]*documentPath:[^}]*\}/g) ?? [];
+      srcExceptKnownNonNullWrites.match(/data:\s*\{[^}]*documentPath:[^}]*\}/g) ?? [];
     expect(dataWriteBlocks.length).toBeGreaterThan(0);
     for (const b of dataWriteBlocks) {
       expect(b).toMatch(/documentPath:\s*null\b/);
     }
 
-    // Positive pin: the ONE excluded file writes a non-null documentPath to Section9Credit
-    // specifically (not Absence) — so the exclusion above is narrowly scoped to the actual
-    // sanctioned write, not a blanket carve-out.
+    // Positive pin: the ONE excluded upload-route file writes a non-null documentPath to
+    // Section9Credit specifically (not Absence) — so the exclusion above is narrowly scoped to
+    // the actual sanctioned write, not a blanket carve-out.
     const section9UploadFile = files.find((f) => f.endsWith("section9-documents.ts"));
     expect(section9UploadFile).toBeTruthy();
     const section9UploadSrc = readFileSync(section9UploadFile!, "utf8");
     expect(section9UploadSrc).toMatch(/section9Credit\.update\(\{[\s\S]*?documentPath:\s*path/);
+
+    // Positive pin (Issue #468): `leave.ts` has EXACTLY ONE documentPath write — the
+    // correction-credit forward-copy — and it is non-null-valued by construction (a variable
+    // carrying the original credit's own value forward, never a hardcoded new document path).
+    const leaveFile = files.find((f) => f.endsWith("/api/leave.ts"));
+    expect(leaveFile).toBeTruthy();
+    const leaveSrc = readFileSync(leaveFile!, "utf8");
+    const leaveDocumentPathWrites = leaveSrc.match(/documentPath:\s*[^,\n]+/g) ?? [];
+    expect(leaveDocumentPathWrites).toEqual(["documentPath: original.documentPath"]);
   });
 
   it("Test 4: Section9Credit has no deletedAt column (D-11 is a status transition, not a soft delete)", async () => {

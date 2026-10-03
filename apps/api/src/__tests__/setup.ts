@@ -559,6 +559,10 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   // fails and leaks fixture rows into the shared test database.
   await prisma.phorestAppointment.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.absence.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  // Issue #468 — ParentalLeaveReduction's FKs onto Employee AND LeaveRequest are both
+  // onDelete: Restrict — must be deleted before leaveRequest.deleteMany (and employee.deleteMany)
+  // below, or the delete fails and leaks fixture rows into the shared test database.
+  await prisma.parentalLeaveReduction.deleteMany({ where: { employeeId: { in: employeeIds } } });
   // Phase 104-05: Section9Credit's two LeaveRequest FKs (sickRequest/vacationRequest) are
   // onDelete: Restrict — must be deleted before leaveRequest.deleteMany, or the delete below
   // fails silently (afterAll only console.error's cleanup failures) and leaks fixture rows

@@ -15,7 +15,8 @@
  * fail-safe (never 500s, never silently permits an unbounded request).
  *
  * No frozen-time dependency: the OVERTIME_COMP balance check does not read "now" at all (it only
- * compares getScheduledHours for the requested range against getConfirmedCarryOver), so this
+ * compares scheduledLeaveMinutes (Issue #468 renamed this function) for the requested range
+ * against getConfirmedCarryOver), so this
  * suite is immune to the documented UTC-vs-tenant-timezone midnight fixture window. That
  * statement is about the BALANCE CHECK only, though — the ROUTE around it (POST /leave/requests)
  * DOES validate the requested date against "today" elsewhere (lead-time / max-advance checks),
@@ -52,7 +53,7 @@ import { todayStr } from "./test-dates";
  * not "today"'s year — those differ across a Dec→Jan boundary, and checking a January candidate
  * against the wrong year's holiday list would miss Neujahr (a holiday every year).
  *
- * getScheduledHours subtracts holidays, so an un-checked holiday Monday would silently cost 0h
+ * scheduledLeaveMinutes subtracts holidays, so an un-checked holiday Monday would silently cost 0h
  * and invert every assertion in this file.
  *
  * Issue #136 batch E — `now` is an explicit parameter rather than an internal `new Date()` read.

@@ -503,6 +503,48 @@
       "validatedAt": null
     },
     {
+      "route": "GET /api/v1/leave/parental-reductions/:leaveRequestId",
+      "file": "apps/api/src/contexts/absence/api/parental-leave-reductions.ts",
+      "category": "probe",
+      "params": {
+        "leaveRequestId": "leaveRequest"
+      },
+      "minimalBody": null,
+      "reason": "Issue #468 (D-11): parental-leave-reductions.ts:147, guard shared by all three routes via loadReducibleRequest — not-found (404, no audit) -> foreign tenant (audited CROSS_TENANT_ACCESS_DENIED, same 404) -> out-of-scope (audited SCOPE_ACCESS_DENIED, same 404) -> not-PARENTAL (409), in that order. The t100-09 `leaveRequest` fixture is tenantB's PENDING VACATION request, so both arms (foreign real id, unknown id) resolve through the tenant guard before the type check ever runs — byte-identical 404. GET parses no body.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/leave/parental-reductions/:leaveRequestId",
+      "file": "apps/api/src/contexts/absence/api/parental-leave-reductions.ts",
+      "category": "probe",
+      "params": {
+        "leaveRequestId": "leaveRequest"
+      },
+      "minimalBody": {
+        "declaredAt": "2026-01-05",
+        "years": [2026]
+      },
+      "reason": "Issue #468 (D-11): parental-leave-reductions.ts:169, same loadReducibleRequest guard as the GET route above. commitBodySchema.parse(req.body) runs BEFORE the lookup (D-07), so minimalBody is required for a bodyless probe not to 400 on both arms; the given body is a minimal valid payload that reaches the guard.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/leave/parental-reductions/:leaveRequestId/revoke",
+      "file": "apps/api/src/contexts/absence/api/parental-leave-reductions.ts",
+      "category": "probe",
+      "params": {
+        "leaveRequestId": "leaveRequest"
+      },
+      "minimalBody": {
+        "year": 2026,
+        "reason": "T-100-09 Probe"
+      },
+      "reason": "Issue #468 (D-11): parental-leave-reductions.ts:354, same loadReducibleRequest guard. revokeBodySchema.parse(req.body) runs BEFORE the lookup, requiring year and a reason of auditReasonSchema's minimum length (3) — the given reason satisfies it.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "POST /api/v1/time-entries/:id/breaks",
       "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
       "category": "probe",

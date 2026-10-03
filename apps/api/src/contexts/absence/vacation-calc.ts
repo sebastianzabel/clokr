@@ -60,6 +60,18 @@ export function countWorkDaysPerWeek(schedule: ScheduleForCalc): number {
 
 /**
  * Calculate pro-rata vacation days for a part-time employee.
+ *
+ * Issue #468 (D-06): a contract with MORE workdays than the reference week scales UP exactly
+ * like a part-time contract scales DOWN — BUrlG § 3 counts Werktage, not a weekly-hours ratio, so
+ * a Mo-Sa (6-day) contract is 6/5 of the Mo-Fr base (30 at 5 days -> 36 at 6 days), never capped
+ * at the 5-day value. Only the EQUALITY branch (`employeeWorkDays === fullTimeWorkDays`) returns
+ * `baseVacationDays` unrounded and unchanged: it exists so a person base with a non-half fraction
+ * (`Employee.annualVacationDays Decimal(5,2)`, e.g. 29.3) stays byte-identical at the reference
+ * week count instead of being re-rounded by the general formula below (`Math.ceil(29.3 * 2) / 2`
+ * would return 29.5). Every `employeeWorkDays > fullTimeWorkDays` case now reaches that general
+ * proportional formula. The statutory minimum floor is computed separately
+ * ({@link statutoryMinimumVacationDays}) and is unaffected by this change.
+ *
  * @param schedule - Employee's work schedule
  * @param fullTimeWorkDays - Reference full-time work days per week (typically 5)
  * @param baseVacationDays - Full-time vacation entitlement (e.g. 30)
@@ -73,7 +85,7 @@ export function calculatePartTimeVacation(
   const employeeWorkDays = countWorkDaysPerWeek(schedule);
 
   if (employeeWorkDays === 0 || fullTimeWorkDays === 0) return 0;
-  if (employeeWorkDays >= fullTimeWorkDays) return baseVacationDays;
+  if (employeeWorkDays === fullTimeWorkDays) return baseVacationDays;
 
   const raw = (employeeWorkDays / fullTimeWorkDays) * baseVacationDays;
   // Round to nearest 0.5 (German standard: always round UP to nearest 0.5)
@@ -1254,8 +1266,9 @@ export function marginalShiftBasedLeaveDays(
 /**
  * Issue #429 (D-13, #293 "the receipt follows the account") — the per-REQUEST SHIFT_BASED
  * leave-minutes receipt for a single request in isolation: Σ `leaveDaysPerWeek()` days ×
- * (`weeklyHours` × 60 ÷ `contractWorkDaysPerWeek`). Consumed by `getScheduledHours()`
- * (`./api/leave.ts`). The saldo side (`working-time-account/shift-based-leave-credit.ts`)
+ * (`weeklyHours` × 60 ÷ `contractWorkDaysPerWeek`). Consumed by `scheduledLeaveMinutes()`
+ * (`./api/leave.ts`, Issue #468 renamed this function from its original name). The saldo side
+ * (`working-time-account/shift-based-leave-credit.ts`)
  * applies the SAME per-week count and the SAME daily value per date; for a lone request with
  * no cap binding both are one number (pinned by `leave-overtime-comp-shift-based.test.ts`).
  *
