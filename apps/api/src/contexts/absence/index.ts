@@ -200,7 +200,9 @@ export {
   REGULAR_ENTITLEMENT_REASON_EXIT, // Issue #447 (D-07) — the matching audit reason
   recalcVacationEntitlementsForContractChange, // Issue #450 (D-06/D-08) — Erweiterung, additive; consumed by platform/api/settings.ts
   REGULAR_ENTITLEMENT_REASON_CONTRACT_CHANGE, // Issue #450 (D-06/D-08) — Erweiterung, additive; consumed by platform/api/settings.ts
+  leaveDaysByCodeWithin, // Issue #451 (D-01) — Erweiterung, additive; consumed by composition/reports.ts (the DATEV export)
 } from "./leave-days";
+export type { LeaveDaysForCode } from "./leave-days"; // Issue #451 (D-01)
 export { checkJArbSchG } from "./jarbschg";
 export { buildSlotOverrideHierarchy, resolveBsTagSlot } from "./bs-slot-resolver";
 export type { WeekContext } from "./bs-slot-resolver";

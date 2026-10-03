@@ -54,6 +54,8 @@ import {
   vocationalSchoolDateSetFromRows, // Issue #448 (D-05, plan 03)
   vocationalSchoolDatesForLeaveRequests, // Issue #448 (D-05, plan 03)
   BS_NO_LEAVE_LABEL, // Issue #448 (D-05, plan 03)
+  leaveDaysByCodeWithin, // Issue #451 (D-01) — the DATEV export's VACATION Lohnart line
+  type LeaveDaysForCode, // Issue #451 (D-01)
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
 import type { LeaveTypeCode } from "@clokr/db";
 
@@ -695,6 +697,11 @@ function buildDatevLodas(params: {
   // vocationalSchoolDatesForLeaveRequests — keyed by LeaveRequest.id, same shape as that
   // function's own return value. Only consumed by daysForCode's VACATION branch below.
   bsDatesByRequestId?: Map<string, string[]>;
+  // Issue #451 (D-01): per-employee, per-LeaveTypeCode priced leave days, bulk-fetched by the
+  // caller via leaveDaysByCodeWithin (fetchLeaveDaysByEmployeeForDatev) — the absence context's
+  // OWN counted days, § 9-netted. Required, not optional: both call sites always provide it, and
+  // the VACATION line below has no other source of its value any more.
+  leaveDaysByEmployee: Map<string, Map<LeaveTypeCode, LeaveDaysForCode>>;
 }): Buffer {
   const {
     employees,
@@ -706,6 +713,7 @@ function buildDatevLodas(params: {
     kanzlei,
     section9ByEmp,
     bsDatesByRequestId,
+    leaveDaysByEmployee,
   } = params;
   const CRLF = "\r\n";
   const lines: string[] = [];
@@ -755,6 +763,14 @@ function buildDatevLodas(params: {
         const bsWorkdayCount = bsDates.filter((d) => workdayKeys.includes(d)).length;
         return sum + Math.max(0, workdayKeys.length - bsWorkdayCount);
       }, 0);
+  }
+
+  // Issue #451 (D-01): the ONE accessor for a priced, § 9-netted leave-day count — no counting
+  // happens here, it reads what leaveDaysByEmployee (fetchLeaveDaysByEmployeeForDatev,
+  // leaveDaysByCodeWithin) already computed. A code absent from the employee's map (no counted
+  // request that month) reads as 0.
+  function priceDaysFor(emp: DatevEmployee, code: LeaveTypeCode): number {
+    return leaveDaysByEmployee.get(emp.id)?.get(code)?.netDays ?? 0;
   }
 
   /**
@@ -857,7 +873,13 @@ function buildDatevLodas(params: {
     const section9OrphanDays = [...section9Keys].filter((key) => !sickClaimed.has(key)).length;
 
     // Abwesenheiten aus LeaveRequest (nur Arbeitstage)
-    const vacationDays = daysForCode(emp, "VACATION");
+    //
+    // Issue #451 (D-01): the Urlaub line now reads leaveDaysByEmployee's own § 9-netted
+    // `netDays` — the absence context's priced VACATION count for this month, already clipped,
+    // workDay-aware (incl. SHIFT_BASED contract days and Tue-Sat-style contracts), holiday-aware
+    // and Berufsschultag-excluded (#448), and already net of the SAME confirmed § 9 credit the
+    // old `section9WorkDays` subtraction below used to compute by hand. No local counting left.
+    const vacationDaysDatev = priceDaysFor(emp, "VACATION");
     const overtimeCompDays = daysForCode(emp, "OVERTIME_COMP");
     const specialDays = daysForCode(emp, "SPECIAL");
     const educationDays = daysForCode(emp, "EDUCATION");
@@ -865,13 +887,6 @@ function buildDatevLodas(params: {
     const maternityDays = daysForCode(emp, "MATERNITY");
     const parentalDays = daysForCode(emp, "PARENTAL");
 
-    // Phase 104 (D-30): subtract § 9 days from the Urlaub Lohnart — unchanged by
-    // Issue #210, the Urlaub side of the § 9 move stays literally as it was.
-    const section9WorkDays = (section9ByEmp?.get(emp.id) ?? []).reduce(
-      (s, c) => s + workDaysInMonthRange(c.creditedStart, c.creditedEnd),
-      0,
-    );
-    const vacationDaysDatev = Math.max(0, vacationDays - section9WorkDays);
     // Issue #210: the Krank side is no longer `+ section9WorkDays` — that was only
     // correct while the base was the always-empty Absence source. sickDaysBase already
     // includes every § 9-credited day whose sickness request is readable (the union
@@ -981,6 +996,42 @@ async function fetchConfirmedSection9CreditsByEmp(
     byEmp.set(c.employeeId, arr);
   }
   return byEmp;
+}
+
+// Issue #451 (D-01): one leaveDaysByCodeWithin call per employee with at least one non-sick
+// leave request in the exported month — the absence context's OWN priced leave-day count, read
+// through its index (never a composition-layer day walk). The payroll-month bounds passed to it
+// are UTC-midnight CALENDAR days (new Date(Date.UTC(y, m-1, 1)) / new Date(Date.UTC(y, m, 0))),
+// deliberately NOT monthRangeUtc()'s tenant-tz instants: leaveDaysByCodeWithin/
+// countedLeaveDaysWithin normalise with utcDay(), so a tenant-tz instant (e.g. a `start` of
+// 2026-11-30T23:00Z for a December period) would silently shift the window by one day — see that
+// function's own docblock. An employee with only sick leave in the month is skipped entirely
+// (the Krank/§9 lines read section9ByEmp and the UTC-weekday-key walk below, unchanged by this
+// plan) — no facade call is wasted on a population this map is never read for.
+async function fetchLeaveDaysByEmployeeForDatev(
+  app: FastifyInstance,
+  tenantId: string,
+  employees: Array<{
+    id: string;
+    leaveRequests: Array<{ leaveType: { code: LeaveTypeCode | null } }>;
+  }>,
+  year: number,
+  month: number,
+): Promise<Map<string, Map<LeaveTypeCode, LeaveDaysForCode>>> {
+  const from = new Date(Date.UTC(year, month - 1, 1));
+  const to = new Date(Date.UTC(year, month, 0));
+  const result = new Map<string, Map<LeaveTypeCode, LeaveDaysForCode>>();
+  for (const emp of employees) {
+    const hasNonSickLeave = emp.leaveRequests.some(
+      (lr) => lr.leaveType.code !== null && !isSickLeaveTypeCode(lr.leaveType.code),
+    );
+    if (!hasNonSickLeave) continue;
+    result.set(
+      emp.id,
+      await leaveDaysByCodeWithin(app.prisma, { employeeId: emp.id, tenantId, from, to }),
+    );
+  }
+  return result;
 }
 
 // Issue #448 (D-05, plan 03): one batch BS-date read for the whole DATEV export (company-wide
@@ -1687,6 +1738,16 @@ export async function reportRoutes(app: FastifyInstance) {
         req.user.tenantId,
         employees,
       );
+      // Issue #451 (D-01): UTC-midnight calendar-day bounds for the facade call — NOT `start`/
+      // `end` above, which are monthRangeUtc()'s tenant-tz instants (see
+      // fetchLeaveDaysByEmployeeForDatev's own docblock).
+      const leaveDaysByEmployeeDatev = await fetchLeaveDaysByEmployeeForDatev(
+        app,
+        req.user.tenantId,
+        employees,
+        y,
+        m,
+      );
 
       const buf = buildDatevLodas({
         employees,
@@ -1698,6 +1759,7 @@ export async function reportRoutes(app: FastifyInstance) {
         kanzlei,
         section9ByEmp: section9ByEmpDatev,
         bsDatesByRequestId: bsDatesByRequestIdDatev,
+        leaveDaysByEmployee: leaveDaysByEmployeeDatev,
       });
 
       // Issue #256, acceptance criterion "the export reports whom it leaves out": count
@@ -1858,6 +1920,13 @@ export async function reportRoutes(app: FastifyInstance) {
         req.user.tenantId,
         [emp],
       );
+      const leaveDaysByEmployeeDatevSingle = await fetchLeaveDaysByEmployeeForDatev(
+        app,
+        req.user.tenantId,
+        [emp],
+        y,
+        m,
+      );
 
       const buf = buildDatevLodas({
         employees: [emp],
@@ -1869,6 +1938,7 @@ export async function reportRoutes(app: FastifyInstance) {
         kanzlei,
         section9ByEmp: section9ByEmpDatevSingle,
         bsDatesByRequestId: bsDatesByRequestIdDatevSingle,
+        leaveDaysByEmployee: leaveDaysByEmployeeDatevSingle,
       });
 
       await app.audit({

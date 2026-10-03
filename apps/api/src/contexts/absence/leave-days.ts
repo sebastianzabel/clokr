@@ -25,7 +25,7 @@ import {
 } from "./vacation-calc"; // Phase 107 (D-04/D-09), Issue #417; leaveDaysPerWeek Issue #429 (D-01/D-02) — the shared per-week kernel, Phase 430-06; marginalShiftBasedLeaveDays/mondayOfWeekUtc Issue #436 (D-04)
 import { preserveCarryOverDeadline } from "./illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
 import { getActiveLeaveOverlapping } from "./facade/leave-requests"; // Phase 430 (D-08) — this file is INSIDE contexts/absence, no boundary crossing
-import type { LeaveEntitlement } from "@clokr/db";
+import type { LeaveEntitlement, LeaveTypeCode } from "@clokr/db"; // LeaveTypeCode: Issue #451 (D-01)
 import {
   computeRegularVacationDaysBySegments,
   type VacationContractSegment,
@@ -1689,6 +1689,75 @@ export async function countedLeaveDaysWithin(
   }
 
   return { requestDays: round2(requestDays), section9CreditDays: round2(section9CreditDays) };
+}
+
+/**
+ * Issue #451 (D-01) — Erweiterung, additive. The leave-day share EVERY LeaveTypeCode this
+ * employee has a counted request for prices within a UTC-midnight calendar window, keyed by
+ * code, § 9 BUrlG-netted. Carries no day-counting rule of its own: one `leaveRequest.findMany`
+ * groups this employee's requests overlapping `[from, to]` by `leaveType.code`, then delegates
+ * once per code to {@link countedLeaveDaysWithin} — the SAME kernel every other reader of a
+ * priced leave-day count already goes through (workDays, holidays, half days, SHIFT_BASED
+ * contract days, Berufsschultage #448 — all already inside that function's own dispatch). A code
+ * with no counted request in the window is absent from the returned map; callers treat "absent"
+ * as zero. `from`/`to` MUST be UTC-midnight calendar days — see {@link countedLeaveDaysWithin}'s
+ * own docblock on why a tenant-tz instant would silently shift the window by one day.
+ *
+ * Generic over every code, including the sickness ones: a caller that only wants non-sick
+ * Lohnarten (composition/reports.ts's DATEV export) simply never reads the sickness entries back
+ * out of the map — this function does not decide which codes matter to its caller.
+ *
+ * Consumed by composition/reports.ts (the DATEV LODAS export) through contexts/absence/index.ts.
+ */
+export type LeaveDaysForCode = {
+  requestDays: number;
+  section9CreditDays: number;
+  netDays: number;
+};
+
+export async function leaveDaysByCodeWithin(
+  db: DbClient,
+  args: { employeeId: string; tenantId: string; from: Date; to: Date },
+): Promise<Map<LeaveTypeCode, LeaveDaysForCode>> {
+  const { employeeId, tenantId, from, to } = args;
+
+  const requests = await db.leaveRequest.findMany({
+    where: {
+      employeeId,
+      deletedAt: null,
+      employee: { tenantId },
+      status: { in: [...EFFECTIVE_LEAVE_STATUSES] },
+      startDate: { lte: to },
+      endDate: { gte: from },
+    },
+    select: { leaveTypeId: true, leaveType: { select: { code: true } } },
+  });
+
+  const idsByCode = new Map<LeaveTypeCode, Set<string>>();
+  for (const r of requests) {
+    const code = r.leaveType.code;
+    if (code === null) continue;
+    const ids = idsByCode.get(code) ?? new Set<string>();
+    ids.add(r.leaveTypeId);
+    idsByCode.set(code, ids);
+  }
+
+  const result = new Map<LeaveTypeCode, LeaveDaysForCode>();
+  for (const [code, idSet] of idsByCode) {
+    const { requestDays, section9CreditDays } = await countedLeaveDaysWithin(db, {
+      employeeId,
+      tenantId,
+      leaveTypeIds: [...idSet],
+      from,
+      to,
+    });
+    result.set(code, {
+      requestDays,
+      section9CreditDays,
+      netDays: Math.max(0, round2(requestDays - section9CreditDays)),
+    });
+  }
+  return result;
 }
 
 /**
