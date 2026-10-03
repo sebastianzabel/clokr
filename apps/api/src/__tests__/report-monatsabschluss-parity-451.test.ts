@@ -66,6 +66,7 @@ async function createFixedEmployee(
   salonId: string,
   label: string,
   hireDate: string,
+  scheduleType: "FIXED_SCHEDULE" | "FLEXTIME" = "FIXED_SCHEDULE",
 ): Promise<{ id: string }> {
   const passwordHash = await bcrypt.hash("test1234", 10);
   const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -86,7 +87,7 @@ async function createFixedEmployee(
   await app.prisma.workSchedule.create({
     data: {
       employeeId: employee.id,
-      type: "FIXED_SCHEDULE",
+      type: scheduleType,
       weeklyHours: 40,
       mondayHours: 8,
       tuesdayHours: 8,
@@ -279,6 +280,83 @@ for (let d = 1; d <= 31; d++) {
   const dateStr = `2026-05-${String(d).padStart(2, "0")}`;
   const dow = new Date(`${dateStr}T00:00:00Z`).getUTCDay();
   if (dow >= 1 && dow <= 5) MAY_2026_MON_FRI.push(dateStr);
+}
+const MAY_2026_HOLIDAYS = new Set(["2026-05-01", "2026-05-14", "2026-05-25"]);
+
+// Task 3 — all Mon-Fri dates of a given 2026 month as "YYYY-MM-DD".
+function monFriInMonth2026(month: number): string[] {
+  const lastDay = new Date(Date.UTC(2026, month, 0)).getUTCDate();
+  const out: string[] = [];
+  for (let d = 1; d <= lastDay; d++) {
+    const dateStr = `2026-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const dow = new Date(`${dateStr}T00:00:00Z`).getUTCDay();
+    if (dow >= 1 && dow <= 5) out.push(dateStr);
+  }
+  return out;
+}
+
+// April 2026: 22 Mon-Fri weekdays; NI holidays Karfreitag 03.04. (Fri) and Ostermontag 06.04.
+// (Mon) leave 20 contract workdays.
+const APRIL_2026_MON_FRI = monFriInMonth2026(4);
+const APRIL_2026_HOLIDAYS = new Set(["2026-04-03", "2026-04-06"]);
+// June 2026: 22 Mon-Fri weekdays, no NI statutory holiday (context fact, plan Planner-measured
+// facts section).
+const JUNE_2026_MON_FRI = monFriInMonth2026(6);
+
+async function closeMonth(
+  app: FastifyInstance,
+  adminToken: string,
+  employeeId: string,
+  year: number,
+  month: number,
+) {
+  return app.inject({
+    method: "POST",
+    url: "/api/v1/overtime/close-month",
+    headers: { authorization: `Bearer ${adminToken}` },
+    payload: { employeeId, year, month },
+  });
+}
+
+/** Seed a WORK entry (08:00-16:30, 30min break = 480 net) for every date in `dates` not in `exclude`. */
+async function seedWeekdayEntries(
+  app: FastifyInstance,
+  employeeId: string,
+  dates: string[],
+  exclude: Set<string> = new Set(),
+) {
+  for (const dateStr of dates) {
+    if (exclude.has(dateStr)) continue;
+    await seedEntry(app, employeeId, dateStr, "08:00", 480, 30);
+  }
+}
+
+/** Seed a matching Shift + WORK entry (08:00-16:00, 480 net, no break) for every date not excluded. */
+async function seedWeekdayShiftsAndEntries(
+  app: FastifyInstance,
+  employeeId: string,
+  dates: string[],
+  exclude: Set<string> = new Set(),
+) {
+  for (const dateStr of dates) {
+    if (exclude.has(dateStr)) continue;
+    await seedShift(app, employeeId, dateStr, "08:00", 480);
+    await seedEntry(app, employeeId, dateStr, "08:00", 480);
+  }
+}
+
+async function seedVocationalSchoolDay(app: FastifyInstance, employeeId: string, dateStr: string) {
+  await app.prisma.absence.create({
+    data: {
+      employeeId,
+      type: "VOCATIONAL_SCHOOL",
+      source: "MANUAL",
+      startDate: new Date(`${dateStr}T00:00:00Z`),
+      endDate: new Date(`${dateStr}T00:00:00Z`),
+      days: 1,
+      createdBy: "test-fixture-451-03-t3",
+    },
+  });
 }
 
 describe("Issue #451 (D-03) — report == Monatsabschluss, Task 1 (issue examples 168->144, 208->core)", () => {
@@ -583,5 +661,308 @@ describe("Issue #451 (D-03) — report == Monatsabschluss, Task 2 (both monthly 
     expect(spy).toHaveBeenCalledTimes(1);
     const payload = spy.mock.calls[0][0];
     expect(payload.overtimeConfirmed).toBeNull();
+  });
+});
+
+describe("Issue #451 (D-03) — report == Monatsabschluss, Task 3 (closed / open complete / current month per schedule type)", () => {
+  let app: FastifyInstance;
+  let tenantId: string;
+  let salonId: string;
+  let adminToken: string;
+
+  let fixedEmpId: string;
+  let flexEmpId: string;
+  let mhEmpId: string;
+  let shiftEmpId: string;
+  let azubiEmpId: string;
+
+  // Hired exactly on the 1st of April — closing April needs no prior month closed first
+  // (the sequential-close guard has nothing before hireDate to demand).
+  const HIRE = "2026-04-01";
+  const APRIL_BS_DATE = "2026-04-09"; // Thursday, not a holiday
+  const MAY_BS_DATE = "2026-05-07"; // Thursday, not a holiday
+  const JUNE_BS_DATE = "2026-06-11"; // Thursday, before the 15.06. fake-clock cutoff
+
+  beforeAll(async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-15T10:00:00.000Z"));
+
+    app = await getTestApp();
+    const seed = await seedTestData(app, "rmp451t3", { withDefaultSalon: false });
+    tenantId = seed.tenant.id;
+    adminToken = seed.adminToken;
+
+    const salon = await createTestSalon(app.prisma, tenantId, { federalState: "NIEDERSACHSEN" });
+    salonId = salon.id;
+
+    const fixedEmp = await createFixedEmployee(app, tenantId, salonId, "rmp451t3fix", HIRE);
+    fixedEmpId = fixedEmp.id;
+    const flexEmp = await createFixedEmployee(
+      app,
+      tenantId,
+      salonId,
+      "rmp451t3flex",
+      HIRE,
+      "FLEXTIME",
+    );
+    flexEmpId = flexEmp.id;
+    const mhEmp = await createMonthlyHoursEmployee(app, tenantId, salonId, "rmp451t3mh", HIRE, 160);
+    mhEmpId = mhEmp.id;
+    const shiftEmp = await createShiftBasedEmployee(app, tenantId, salonId, "rmp451t3shift", HIRE);
+    shiftEmpId = shiftEmp.id;
+    const azubiEmp = await createFixedEmployee(app, tenantId, salonId, "rmp451t3azubi", HIRE);
+    azubiEmpId = azubiEmp.id;
+
+    // ── April 2026 — will be closed. Full coverage (minus the 2 NI holidays, minus the Azubi's
+    // BS day which the VOCATIONAL_SCHOOL absence already excuses) so POST /close-month never
+    // hits the gaps gate.
+    const aprilAzubiExclude = new Set([...APRIL_2026_HOLIDAYS, APRIL_BS_DATE]);
+    await seedWeekdayEntries(app, fixedEmpId, APRIL_2026_MON_FRI, APRIL_2026_HOLIDAYS);
+    await seedWeekdayEntries(app, flexEmpId, APRIL_2026_MON_FRI, APRIL_2026_HOLIDAYS);
+    await seedWeekdayEntries(app, mhEmpId, APRIL_2026_MON_FRI, APRIL_2026_HOLIDAYS);
+    await seedWeekdayShiftsAndEntries(app, shiftEmpId, APRIL_2026_MON_FRI, APRIL_2026_HOLIDAYS);
+    await seedWeekdayEntries(app, azubiEmpId, APRIL_2026_MON_FRI, aprilAzubiExclude);
+    await seedVocationalSchoolDay(app, azubiEmpId, APRIL_BS_DATE);
+
+    // ── May 2026 — stays open (never closed). Same full-coverage pattern (not required by any
+    // gate since May is never closed, but keeps every type's workedHours non-trivial).
+    const mayAzubiExclude = new Set([...MAY_2026_HOLIDAYS, MAY_BS_DATE]);
+    await seedWeekdayEntries(app, fixedEmpId, MAY_2026_MON_FRI, MAY_2026_HOLIDAYS);
+    await seedWeekdayEntries(app, flexEmpId, MAY_2026_MON_FRI, MAY_2026_HOLIDAYS);
+    await seedWeekdayEntries(app, mhEmpId, MAY_2026_MON_FRI, MAY_2026_HOLIDAYS);
+    await seedWeekdayShiftsAndEntries(app, shiftEmpId, MAY_2026_MON_FRI, MAY_2026_HOLIDAYS);
+    await seedWeekdayEntries(app, azubiEmpId, MAY_2026_MON_FRI, mayAzubiExclude);
+    await seedVocationalSchoolDay(app, azubiEmpId, MAY_BS_DATE);
+
+    // ── June 2026 — the running month (fake clock 15.06., so "yesterday" is 14.06.). June 2026
+    // has no NI statutory holiday. Only through-yesterday days are seeded — June is never closed,
+    // so the gaps gate never applies, and the report only ever prints entries through yesterday
+    // anyway (issue #438).
+    const juneToDate = JUNE_2026_MON_FRI.filter((d) => d <= "2026-06-14");
+    await seedWeekdayEntries(app, fixedEmpId, juneToDate);
+    await seedWeekdayEntries(app, flexEmpId, juneToDate);
+    await seedWeekdayEntries(app, mhEmpId, juneToDate);
+    await seedWeekdayShiftsAndEntries(app, shiftEmpId, JUNE_2026_MON_FRI); // full roster, incl. future shifts
+    await seedWeekdayEntries(
+      app,
+      azubiEmpId,
+      juneToDate.filter((d) => d !== JUNE_BS_DATE),
+    );
+    await seedVocationalSchoolDay(app, azubiEmpId, JUNE_BS_DATE);
+
+    // Close April for all five schedule types.
+    for (const id of [fixedEmpId, flexEmpId, mhEmpId, shiftEmpId, azubiEmpId]) {
+      const res = await closeMonth(app, adminToken, id, 2026, 4);
+      expect(res.statusCode, `close April 2026 for employee ${id}: ${res.body}`).toBe(201);
+    }
+  });
+
+  afterAll(async () => {
+    vi.useRealTimers();
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("report-monatsabschluss-parity-451 Task3 cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  type Oracle = {
+    workedMinutes: number;
+    expectedMinutes: number;
+    balanceMinutes: number;
+    closed: boolean;
+    monthSollMinutes?: number;
+  };
+
+  async function monthSaldoOracle(
+    employeeId: string,
+    year: number,
+    month: number,
+  ): Promise<Oracle> {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/overtime/month-saldo/${employeeId}?year=${year}&month=${month}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    return JSON.parse(res.body) as Oracle;
+  }
+
+  type ReportRow = {
+    employeeId: string;
+    workedHours: number;
+    shouldHours: number;
+    overtimeHours?: number;
+    overtimeConfirmed?: boolean | null;
+    balanceAdjustmentHours?: number;
+  };
+
+  async function monthlyReportRow(
+    employeeId: string,
+    year: number,
+    month: number,
+  ): Promise<ReportRow> {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/reports/monthly?employeeId=${employeeId}&year=${year}&month=${month}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { rows: ReportRow[] };
+    const row = body.rows.find((r) => r.employeeId === employeeId);
+    if (!row) throw new Error(`no row for ${employeeId} ${year}-${month}`);
+    return row;
+  }
+
+  async function pdfPayloadFor(employeeId: string, year: number, month: number) {
+    const spy = vi.mocked(pdfUtils.generateMonthlyReportPdf);
+    spy.mockClear();
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/reports/monthly/pdf?employeeId=${employeeId}&year=${year}&month=${month}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(1);
+    return spy.mock.calls[0][0];
+  }
+
+  // D-03's own consistency identity: balanceAdjustmentMinutes = balance - (worked - expected), so
+  // this holds BY CONSTRUCTION for every labelled row — a sanity pin, not an independent proof.
+  function expectConsistent(row: ReportRow) {
+    if (row.overtimeConfirmed === null) return; // unlabelled rows carry no Soll to check against
+    const diff =
+      (row.workedHours ?? 0) -
+      (row.shouldHours ?? 0) +
+      (row.balanceAdjustmentHours ?? 0) -
+      (row.overtimeHours ?? 0);
+    expect(Math.abs(diff), `consistency identity for row ${JSON.stringify(row)}`).toBeLessThan(
+      0.005,
+    );
+  }
+
+  describe.each([
+    ["FIXED_SCHEDULE", () => fixedEmpId],
+    ["FLEXTIME", () => flexEmpId],
+    ["Azubi (FIXED_SCHEDULE + VOCATIONAL_SCHOOL)", () => azubiEmpId],
+  ] as const)("%s", (_label, getEmpId) => {
+    it("April 2026 (closed): JSON row and single-PDF payload equal the SaldoSnapshot", async () => {
+      const empId = getEmpId();
+      const oracle = await monthSaldoOracle(empId, 2026, 4);
+      expect(oracle.closed).toBe(true);
+      const row = await monthlyReportRow(empId, 2026, 4);
+      expect(row.workedHours).toBe(Math.round((oracle.workedMinutes / 60) * 100) / 100);
+      expect(row.shouldHours).toBe(Math.round((oracle.expectedMinutes / 60) * 100) / 100);
+      expect(row.overtimeHours).toBe(Math.round((oracle.balanceMinutes / 60) * 100) / 100);
+      expect(row.overtimeConfirmed).toBe(true);
+      expectConsistent(row);
+
+      const payload = await pdfPayloadFor(empId, 2026, 4);
+      expect(payload.workedHours).toBe(row.workedHours);
+      expect(payload.targetHours).toBe(row.shouldHours);
+      expect(payload.overtimeHours).toBe(row.overtimeHours);
+      expect(payload.overtimeConfirmed).toBe(true);
+    });
+
+    it("May 2026 (open, fully elapsed): JSON row equals GET /overtime/month-saldo (header)", async () => {
+      const empId = getEmpId();
+      const oracle = await monthSaldoOracle(empId, 2026, 5);
+      expect(oracle.closed).toBe(false);
+      const row = await monthlyReportRow(empId, 2026, 5);
+      expect(row.workedHours).toBe(Math.round((oracle.workedMinutes / 60) * 100) / 100);
+      expect(row.shouldHours).toBe(Math.round((oracle.expectedMinutes / 60) * 100) / 100);
+      expect(row.overtimeHours).toBe(Math.round((oracle.balanceMinutes / 60) * 100) / 100);
+      expect(row.overtimeConfirmed).toBe(false);
+      expectConsistent(row);
+    });
+
+    it("June 2026 (running): shouldHours equals the hand-derived full-month value (22 workdays * 8h = 176, no NI holiday)", async () => {
+      const empId = getEmpId();
+      const row = await monthlyReportRow(empId, 2026, 6);
+      expect(row.shouldHours).toBe(176);
+      expect(row.overtimeConfirmed).toBe(false);
+      expectConsistent(row);
+    });
+  });
+
+  describe("MONTHLY_HOURS (budget 160h)", () => {
+    it("April 2026 (closed): JSON row and single-PDF payload equal the SaldoSnapshot", async () => {
+      const oracle = await monthSaldoOracle(mhEmpId, 2026, 4);
+      expect(oracle.closed).toBe(true);
+      const row = await monthlyReportRow(mhEmpId, 2026, 4);
+      expect(row.workedHours).toBe(Math.round((oracle.workedMinutes / 60) * 100) / 100);
+      expect(row.shouldHours).toBe(Math.round((oracle.expectedMinutes / 60) * 100) / 100);
+      expect(row.overtimeHours).toBe(Math.round((oracle.balanceMinutes / 60) * 100) / 100);
+      expect(row.overtimeConfirmed).toBe(true);
+      expectConsistent(row);
+
+      const payload = await pdfPayloadFor(mhEmpId, 2026, 4);
+      expect(payload.workedHours).toBe(row.workedHours);
+      expect(payload.targetHours).toBe(row.shouldHours);
+      expect(payload.overtimeHours).toBe(row.overtimeHours);
+      expect(payload.overtimeConfirmed).toBe(true);
+    });
+
+    it("May 2026 (open, fully elapsed): JSON row equals GET /overtime/month-saldo (header)", async () => {
+      const oracle = await monthSaldoOracle(mhEmpId, 2026, 5);
+      expect(oracle.closed).toBe(false);
+      const row = await monthlyReportRow(mhEmpId, 2026, 5);
+      expect(row.workedHours).toBe(Math.round((oracle.workedMinutes / 60) * 100) / 100);
+      expect(row.shouldHours).toBe(Math.round((oracle.expectedMinutes / 60) * 100) / 100);
+      expect(row.overtimeHours).toBe(Math.round((oracle.balanceMinutes / 60) * 100) / 100);
+      expect(row.overtimeConfirmed).toBe(false);
+      expectConsistent(row);
+    });
+
+    it("June 2026 (running): shouldHours equals GET /overtime/month-saldo's own monthSollMinutes / 60", async () => {
+      const oracle = await monthSaldoOracle(mhEmpId, 2026, 6);
+      expect(oracle.monthSollMinutes).toBeDefined();
+      const row = await monthlyReportRow(mhEmpId, 2026, 6);
+      expect(row.shouldHours).toBe(Math.round((oracle.monthSollMinutes! / 60) * 100) / 100);
+      expect(row.overtimeConfirmed).toBe(false);
+      expectConsistent(row);
+    });
+  });
+
+  describe("SHIFT_BASED", () => {
+    it("April 2026 (closed): JSON row and single-PDF payload equal the SaldoSnapshot", async () => {
+      const oracle = await monthSaldoOracle(shiftEmpId, 2026, 4);
+      expect(oracle.closed).toBe(true);
+      const row = await monthlyReportRow(shiftEmpId, 2026, 4);
+      expect(row.workedHours).toBe(Math.round((oracle.workedMinutes / 60) * 100) / 100);
+      expect(row.shouldHours).toBe(Math.round((oracle.expectedMinutes / 60) * 100) / 100);
+      expect(row.overtimeHours).toBe(Math.round((oracle.balanceMinutes / 60) * 100) / 100);
+      expect(row.overtimeConfirmed).toBe(true);
+      expectConsistent(row);
+
+      const payload = await pdfPayloadFor(shiftEmpId, 2026, 4);
+      expect(payload.workedHours).toBe(row.workedHours);
+      expect(payload.targetHours).toBe(row.shouldHours);
+      expect(payload.overtimeHours).toBe(row.overtimeHours);
+      expect(payload.overtimeConfirmed).toBe(true);
+    });
+
+    it("May 2026 (open, fully elapsed): JSON row equals GET /overtime/month-saldo (header)", async () => {
+      const oracle = await monthSaldoOracle(shiftEmpId, 2026, 5);
+      expect(oracle.closed).toBe(false);
+      const row = await monthlyReportRow(shiftEmpId, 2026, 5);
+      expect(row.workedHours).toBe(Math.round((oracle.workedMinutes / 60) * 100) / 100);
+      expect(row.shouldHours).toBe(Math.round((oracle.expectedMinutes / 60) * 100) / 100);
+      expect(row.overtimeHours).toBe(Math.round((oracle.balanceMinutes / 60) * 100) / 100);
+      expect(row.overtimeConfirmed).toBe(false);
+      expectConsistent(row);
+    });
+
+    it("June 2026 (running): JSON row equals GET /overtime/month-saldo's to-date header — never the full, not-yet-worked roster", async () => {
+      const oracle = await monthSaldoOracle(shiftEmpId, 2026, 6);
+      expect(oracle.closed).toBe(false);
+      const row = await monthlyReportRow(shiftEmpId, 2026, 6);
+      expect(row.workedHours).toBe(Math.round((oracle.workedMinutes / 60) * 100) / 100);
+      expect(row.shouldHours).toBe(Math.round((oracle.expectedMinutes / 60) * 100) / 100);
+      expect(row.overtimeHours).toBe(Math.round((oracle.balanceMinutes / 60) * 100) / 100);
+      expect(row.overtimeConfirmed).toBe(false);
+      expectConsistent(row);
+    });
   });
 });
