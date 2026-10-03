@@ -693,14 +693,14 @@ function buildDatevLodas(params: {
   // Phase 104 (D-30): bestätigte § 9-Gutschriften je Mitarbeiter, bereits bulk-fetched
   // und CONFIRMED-only gefiltert vom Aufrufer (T-104-09-N1/PENDING).
   section9ByEmp?: Map<string, Array<{ creditedStart: Date; creditedEnd: Date }>>;
-  // Issue #448 (D-05, plan 03): per-request BS dates, bulk-fetched by the caller via
-  // vocationalSchoolDatesForLeaveRequests — keyed by LeaveRequest.id, same shape as that
-  // function's own return value. Only consumed by daysForCode's VACATION branch below.
-  bsDatesByRequestId?: Map<string, string[]>;
   // Issue #451 (D-01): per-employee, per-LeaveTypeCode priced leave days, bulk-fetched by the
   // caller via leaveDaysByCodeWithin (fetchLeaveDaysByEmployeeForDatev) — the absence context's
   // OWN counted days, § 9-netted. Required, not optional: both call sites always provide it, and
-  // the VACATION line below has no other source of its value any more.
+  // every non-sick Lohnart line below has no other source of its value any more. Replaces the
+  // old `bsDatesByRequestId` parameter (Issue #448, D-05) entirely — Berufsschultage are already
+  // excluded from the priced days this map carries, so the DATEV builder no longer needs its own
+  // batch read of Berufsschultage at all (the module-private async helper that used to supply it
+  // is gone).
   leaveDaysByEmployee: Map<string, Map<LeaveTypeCode, LeaveDaysForCode>>;
 }): Buffer {
   const {
@@ -712,7 +712,6 @@ function buildDatevLodas(params: {
     lna,
     kanzlei,
     section9ByEmp,
-    bsDatesByRequestId,
     leaveDaysByEmployee,
   } = params;
   const CRLF = "\r\n";
@@ -739,30 +738,6 @@ function buildDatevLodas(params: {
       cur.setUTCDate(cur.getUTCDate() + 1);
     }
     return keys;
-  }
-
-  /** Arbeitstage (Mo-Fr) im Schnittmenge aus [from,to] ∩ [start,end] zählen */
-  function workDaysInMonthRange(from: Date, to: Date): number {
-    return workdayKeysInMonthRange(from, to).length;
-  }
-
-  // Phase 97 (D-13): the payroll export selects by the stable code. Selecting by display name
-  // meant a single tenant-side rename silently returned 0 here — and because each Lohnart line
-  // is only written when its day count is > 0, the line vanished from the export entirely.
-  // A missing leave day in a payroll file is a silent accounting error with an external recipient.
-  function daysForCode(emp: DatevEmployee, code: LeaveTypeCode): number {
-    return emp.leaveRequests
-      .filter((lr) => lr.leaveType.code === code)
-      .reduce((sum, lr) => {
-        const workdayKeys = workdayKeysInMonthRange(lr.startDate, lr.endDate);
-        if (code !== "VACATION") return sum + workdayKeys.length;
-        // Issue #448 (D-05): a Berufsschultag inside a VACATION request's range is not a
-        // payroll vacation day — subtract only the BS dates that also fall on a counted
-        // workday key (weekday, clipped to the exported month). Other codes unchanged.
-        const bsDates = bsDatesByRequestId?.get(lr.id) ?? [];
-        const bsWorkdayCount = bsDates.filter((d) => workdayKeys.includes(d)).length;
-        return sum + Math.max(0, workdayKeys.length - bsWorkdayCount);
-      }, 0);
   }
 
   // Issue #451 (D-01): the ONE accessor for a priced, § 9-netted leave-day count — no counting
@@ -880,12 +855,12 @@ function buildDatevLodas(params: {
     // and Berufsschultag-excluded (#448), and already net of the SAME confirmed § 9 credit the
     // old `section9WorkDays` subtraction below used to compute by hand. No local counting left.
     const vacationDaysDatev = priceDaysFor(emp, "VACATION");
-    const overtimeCompDays = daysForCode(emp, "OVERTIME_COMP");
-    const specialDays = daysForCode(emp, "SPECIAL");
-    const educationDays = daysForCode(emp, "EDUCATION");
-    const unpaidDays = daysForCode(emp, "UNPAID");
-    const maternityDays = daysForCode(emp, "MATERNITY");
-    const parentalDays = daysForCode(emp, "PARENTAL");
+    const overtimeCompDays = priceDaysFor(emp, "OVERTIME_COMP");
+    const specialDays = priceDaysFor(emp, "SPECIAL");
+    const educationDays = priceDaysFor(emp, "EDUCATION");
+    const unpaidDays = priceDaysFor(emp, "UNPAID");
+    const maternityDays = priceDaysFor(emp, "MATERNITY");
+    const parentalDays = priceDaysFor(emp, "PARENTAL");
 
     // Issue #210: the Krank side is no longer `+ section9WorkDays` — that was only
     // correct while the base was the always-empty Absence source. sickDaysBase already
@@ -1034,60 +1009,14 @@ async function fetchLeaveDaysByEmployeeForDatev(
   return result;
 }
 
-// Issue #448 (D-05, plan 03): one batch BS-date read for the whole DATEV export (company-wide
-// or single-employee), scoped via employeeScopeFor(accessContextFromRequest(req), …) over
-// exactly the employees already loaded by the caller's own query (T-448-12) — never a
-// per-employee query, never a hand-built scope literal. Only VACATION-coded requests are
-// relevant (daysForCode's BS subtraction only fires for that code), so non-VACATION requests
-// are not even sent into the batch reader.
-//
-// Phase 448 review (WR-01): `employeeIds` is re-derived from `employees`, which the caller is
-// expected to have already tenant-scoped — but this function had no second line of defense if a
-// future caller passed an unscoped or partially-scoped list. `tenantId` is now required and the
-// candidate ids are verified against `Employee.tenantId` before `employeeScopeFor` ever sees them,
-// mirroring the explicit `tenantId` filter the two route-level `employee.findMany` calls earlier
-// in this file already use — a foreign id is silently dropped here, not passed through.
-async function fetchBsDatesByRequestIdForDatev(
-  app: FastifyInstance,
-  req: Parameters<typeof accessContextFromRequest>[0],
-  tenantId: string,
-  employees: Array<{
-    id: string;
-    leaveRequests: Array<{
-      id: string;
-      startDate: Date;
-      endDate: Date;
-      leaveType: { code: LeaveTypeCode | null };
-    }>;
-  }>,
-): Promise<Map<string, string[]>> {
-  const requests = employees.flatMap((emp) =>
-    emp.leaveRequests
-      .filter((lr) => lr.leaveType.code === "VACATION")
-      .map((lr) => ({
-        id: lr.id,
-        employeeId: emp.id,
-        startDate: lr.startDate,
-        endDate: lr.endDate,
-        leaveTypeCode: lr.leaveType.code,
-      })),
-  );
-  if (requests.length === 0) return new Map();
-  const candidateEmployeeIds = [...new Set(requests.map((r) => r.employeeId))];
-  const tenantOwned = await app.prisma.employee.findMany({
-    where: { id: { in: candidateEmployeeIds }, tenantId },
-    select: { id: true },
-  });
-  const tenantOwnedIds = new Set(tenantOwned.map((e) => e.id));
-  const scopedRequests = requests.filter((r) => tenantOwnedIds.has(r.employeeId));
-  if (scopedRequests.length === 0) return new Map();
-  const employeeIds = [...new Set(scopedRequests.map((r) => r.employeeId))];
-  return vocationalSchoolDatesForLeaveRequests(
-    app.prisma,
-    employeeScopeFor(accessContextFromRequest(req), { employeeIds }),
-    scopedRequests,
-  );
-}
+// Issue #448 (D-05, plan 03)'s DATEV-only BS batch reader (the module-private async helper that
+// used to live here) was removed by Issue #451 (D-01, Task 2): Berufsschultage are already
+// excluded from the priced
+// `days` leaveDaysByEmployee carries (the same #448 exclusion, now reached once, inside the
+// absence context, instead of being re-derived a second time here). The Urlaubsliste PDF's own
+// BS-note reader below (vocationalSchoolDatesForLeaveRequests via buildLeaveListPeriods) is
+// untouched — that is a display-only BS note, not a payroll day count, and out of this plan's
+// scope (451-02).
 
 // Issue #448 (D-05, plan 03): the ONE `periods` builder for both `/leave-list/pdf` and the list
 // part of `/vacation/pdf` — both built this identically before this plan. `bsDatesByRequestId`
@@ -1732,12 +1661,6 @@ export async function reportRoutes(app: FastifyInstance) {
         start,
         end,
       );
-      const bsDatesByRequestIdDatev = await fetchBsDatesByRequestIdForDatev(
-        app,
-        req,
-        req.user.tenantId,
-        employees,
-      );
       // Issue #451 (D-01): UTC-midnight calendar-day bounds for the facade call — NOT `start`/
       // `end` above, which are monthRangeUtc()'s tenant-tz instants (see
       // fetchLeaveDaysByEmployeeForDatev's own docblock).
@@ -1758,7 +1681,6 @@ export async function reportRoutes(app: FastifyInstance) {
         lna,
         kanzlei,
         section9ByEmp: section9ByEmpDatev,
-        bsDatesByRequestId: bsDatesByRequestIdDatev,
         leaveDaysByEmployee: leaveDaysByEmployeeDatev,
       });
 
@@ -1914,12 +1836,6 @@ export async function reportRoutes(app: FastifyInstance) {
         start,
         end,
       );
-      const bsDatesByRequestIdDatevSingle = await fetchBsDatesByRequestIdForDatev(
-        app,
-        req,
-        req.user.tenantId,
-        [emp],
-      );
       const leaveDaysByEmployeeDatevSingle = await fetchLeaveDaysByEmployeeForDatev(
         app,
         req.user.tenantId,
@@ -1937,7 +1853,6 @@ export async function reportRoutes(app: FastifyInstance) {
         lna,
         kanzlei,
         section9ByEmp: section9ByEmpDatevSingle,
-        bsDatesByRequestId: bsDatesByRequestIdDatevSingle,
         leaveDaysByEmployee: leaveDaysByEmployeeDatevSingle,
       });
 
