@@ -776,6 +776,10 @@ export async function settingsRoutes(app: FastifyInstance) {
         // change is unambiguous at the saldo engine. Snap once here, reuse in both
         // branches below (employees-without-schedule + FIXED_SCHEDULE update).
         const now = snapToMonthFirstUtc(new Date());
+        // Issue #450 (D-06) — ids of employees that received a NEW WorkSchedule row in this
+        // bulk apply; a skipped same-month-collision employee is NOT collected. The entitlement
+        // recompute runs once per id, sequentially, after the loop below.
+        const changedEmployeeIds: string[] = [];
         for (const emp of employees) {
           const current = emp.workSchedules[0];
           if (!current) {
@@ -820,6 +824,7 @@ export async function settingsRoutes(app: FastifyInstance) {
               request: { ip: req.ip, headers: req.headers as Record<string, string> },
             });
             appliedCount++;
+            changedEmployeeIds.push(emp.id);
           } else if (current.type === "FIXED_SCHEDULE") {
             // Nur FIXED_SCHEDULE MA updaten (nicht Minijobber)
 
@@ -878,7 +883,35 @@ export async function settingsRoutes(app: FastifyInstance) {
               request: { ip: req.ip, headers: req.headers as Record<string, string> },
             });
             appliedCount++;
+            changedEmployeeIds.push(emp.id);
           }
+        }
+
+        // Issue #450 (D-06) — reactive (ADR 0002 Entscheidung 10): recompute each changed
+        // employee's affected auto-calculated VACATION entitlement years once, sequentially,
+        // so one employee's failure never stops the others. Only the entitlement recompute is
+        // added here; the bulk path's missing saldo recalculation is a separate, pre-existing
+        // gap (orchestrator decision A2), deliberately not closed in this change.
+        for (const id of changedEmployeeIds) {
+          await recalcVacationEntitlementsForContractChange(
+            app.prisma,
+            id,
+            tenantId,
+            now,
+            (entry) =>
+              app.audit({
+                action: entry.action,
+                entity: "LeaveEntitlement",
+                entityId: entry.entityId,
+                oldValue: entry.oldValue,
+                ...requestAuditFields(req, entry.newValue as object | undefined),
+              }),
+          ).catch((err) =>
+            app.log.error(
+              { err, employeeId: id },
+              "Failed to recalculate vacation entitlements after schedule change",
+            ),
+          );
         }
       }
 
@@ -1251,6 +1284,29 @@ export async function settingsRoutes(app: FastifyInstance) {
                 ),
               );
             }
+
+            // Issue #450 (D-06) — reactive (ADR 0002 Entscheidung 10): this branch returns
+            // early and never reaches the regular branch's own call below, so it needs the
+            // same recompute here, run after the transaction committed.
+            await recalcVacationEntitlementsForContractChange(
+              app.prisma,
+              employeeId,
+              req.user.tenantId,
+              validFrom,
+              (entry) =>
+                app.audit({
+                  action: entry.action,
+                  entity: "LeaveEntitlement",
+                  entityId: entry.entityId,
+                  oldValue: entry.oldValue,
+                  ...requestAuditFields(req, entry.newValue as object | undefined),
+                }),
+            ).catch((err) =>
+              app.log.error(
+                { err, employeeId },
+                "Failed to recalculate vacation entitlements after schedule change",
+              ),
+            );
 
             return schedule;
           }
