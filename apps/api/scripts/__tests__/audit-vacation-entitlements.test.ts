@@ -232,6 +232,14 @@ describe("audit-vacation-entitlements (Issue #444)", () => {
     ids.apprenticeDeviation = await mkEmployee(dataA, { classification: "AZUBI" });
     await mkEntitlement(dataA, ids.apprenticeDeviation, 2026, { totalDays: 30 });
 
+    // Issue #468 (D-06/D-07): a Mo-Sa (6-day) employee whose auto-calculated stored row still
+    // carries the pre-#468 capped value (30) is an ABWEICHUNG_VERTRAG against the now-correct
+    // target (36) — the report lists it, it never writes.
+    ids.sixDayContract = await mkEmployee(dataA, { firstRowWorkDays: [1, 2, 3, 4, 5, 6] });
+    ids.sixDayContractEntitlement = await mkEntitlement(dataA, ids.sixDayContract, 2026, {
+      totalDays: 30,
+    });
+
     ids.tenantBOk = await mkEmployee(dataB);
     await mkEntitlement(dataB, ids.tenantBOk, 2026, { totalDays: 30 });
 
@@ -396,6 +404,19 @@ describe("audit-vacation-entitlements (Issue #444)", () => {
       const line = lineFor(lines, ids.apprenticeDeviation, 2026)!;
       expect(line).toContain("categories=ABWEICHUNG_VERTRAG");
       expect(line).not.toContain("GEBURTSDATUM_FEHLT");
+    });
+
+    it("Issue #468 (D-07): a Mo-Sa (6-day) employee's stored-30 auto row shows target=36.00, manual=no, ABWEICHUNG_VERTRAG — and is NOT written", async () => {
+      const { lines } = await run(["--tenant-id", dataA.tenant.id, "--year", "2026"]);
+      const line = lineFor(lines, ids.sixDayContract, 2026)!;
+      expect(line).toContain("target=36.00");
+      expect(line).toContain("manual=no");
+      expect(line).toContain("categories=ABWEICHUNG_VERTRAG");
+
+      const row = await app.prisma.leaveEntitlement.findUniqueOrThrow({
+        where: { id: ids.sixDayContractEntitlement },
+      });
+      expect(Number(row.totalDays)).toBe(30);
     });
 
     it("tenant isolation: B has no findings, A does, --all-tenants sees both", async () => {

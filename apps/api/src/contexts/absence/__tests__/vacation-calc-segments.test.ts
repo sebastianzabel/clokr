@@ -205,6 +205,24 @@ describe("computeRegularVacationDaysBySegments (Issue #450, D-01/D-02/D-03)", ()
         ],
       }),
     ).toBe(17.5); // NOT 18 — roundVacationDaysBurlG(17.5) would round up; D-02 skips that second rounding
+    // Issue #468 (D-06): this second segment pair USED to be [5, 6] — under the pre-#468 cap, a
+    // 6-day segment resolved to the SAME 30 as a 5-day segment, so it doubled as a D-02 "equal
+    // values" example. Since D-06 removed that cap, [5, 6] is no longer an equal pair (30 vs 36 —
+    // see the new "Issue #468 D-06" test right below); this expectation now uses a genuinely
+    // equal pair ([5, 5]) so it keeps proving ONLY D-02.
+    expect(
+      computeRegularVacationDaysBySegments({
+        year: 2027,
+        hireDate: HIRE_2020,
+        birthDate: null,
+        exitDate: null,
+        baseDays: 30,
+        segments: [seg(HIRE_2020, 5), seg(utcMidnight("2027-07-01"), 5)],
+      }),
+    ).toBe(30);
+  });
+
+  it("Issue #468 D-06: 5->6 days from 01.07. = 33 — the 6-day segment no longer caps at the base", () => {
     expect(
       computeRegularVacationDaysBySegments({
         year: 2027,
@@ -214,7 +232,7 @@ describe("computeRegularVacationDaysBySegments (Issue #450, D-01/D-02/D-03)", ()
         baseDays: 30,
         segments: [seg(HIRE_2020, 5), seg(utcMidnight("2027-07-01"), 6)],
       }),
-    ).toBe(30);
+    ).toBe(33); // (6*30 + 6*36) / 12 = 33
   });
 
   it("baseDays 0 -> 0, regardless of segments", () => {
