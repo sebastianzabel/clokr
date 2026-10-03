@@ -12,10 +12,15 @@
  * plus the read-only preview builder. `api/parental-leave-reductions.ts` owns every write path
  * (commit, revoke) and every permission/scope/tenant guard.
  */
+import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
 import { resolveRegularVacationDays } from "./leave-days";
 import { getVacationEntitlement } from "./facade/entitlements";
 import { roundVacationDaysBurlG } from "./vacation-calc";
+
+// Prisma client shape shared by `app.prisma` (top-level) and the `tx` handle inside a
+// $transaction — same alias as leave-days.ts's own private DbClient (Issue #468 plan 07).
+type DbClient = FastifyInstance["prisma"] | Prisma.TransactionClient;
 
 /** One calendar year touched by an Elternzeit span, with the count of FULL calendar months of
  * that Elternzeit falling inside it. A year with zero full months is still included — a caller
@@ -168,4 +173,77 @@ export async function buildParentalReductionPreview(
     endDate: request.endDate.toISOString().slice(0, 10),
     years,
   };
+}
+
+/**
+ * Issue #468 plan 07 (D-10): a declared Elternzeit-Kürzung is anchored on a calendar year's FULL
+ * month count at the time it was declared. When a correction moves the Elternzeit's own date
+ * range, that count can change — this pure function names every reduced year (from
+ * `reducedYears`) whose full-month count under `[oldStart, oldEnd]` differs from its count under
+ * `[newStart, newEnd]`. A day-level shift that leaves every reduced year's full-month count
+ * unchanged (e.g. shortening only an unreduced tail month) returns an empty array — only a
+ * CHANGE in the full-month count of an already-reduced year blocks a correction, never any date
+ * change whatsoever.
+ */
+export function reducedYearsAffectedByRange(params: {
+  oldStart: Date;
+  oldEnd: Date;
+  newStart: Date;
+  newEnd: Date;
+  reducedYears: Array<{ year: number; months: number }>;
+}): number[] {
+  const { oldStart, oldEnd, newStart, newEnd, reducedYears } = params;
+  const oldMonthsByYear = new Map(
+    fullCalendarMonthsByYear(oldStart, oldEnd).map((row) => [row.year, row.months]),
+  );
+  const newMonthsByYear = new Map(
+    fullCalendarMonthsByYear(newStart, newEnd).map((row) => [row.year, row.months]),
+  );
+  const affected: number[] = [];
+  for (const { year } of reducedYears) {
+    const oldMonths = oldMonthsByYear.get(year) ?? 0;
+    const newMonths = newMonthsByYear.get(year) ?? 0;
+    if (oldMonths !== newMonths) affected.push(year);
+  }
+  return affected;
+}
+
+/**
+ * Every ACTIVE ParentalLeaveReduction declared against `leaveRequestId`, tenant-scoped via the
+ * employee relation (D-10's revoke route uses the identical shape — lint:tenant-scoping's
+ * isPrincipalExpression only recognises the literal `employee: { tenantId }` relation filter,
+ * not a pre-validated local alias; see 468-04-SUMMARY.md Decisions).
+ */
+export async function activeParentalReductions(
+  db: DbClient,
+  leaveRequestId: string,
+  tenantId: string,
+): Promise<Array<{ year: number; months: number }>> {
+  const rows = await db.parentalLeaveReduction.findMany({
+    where: { leaveRequestId, status: "ACTIVE", employee: { tenantId } },
+    select: { year: true, months: true },
+  });
+  return rows.map((row) => ({ year: row.year, months: row.months }));
+}
+
+/**
+ * The sum of ACTIVE ParentalLeaveReduction months declared for `employeeId`+`year` (across every
+ * Elternzeit of that employee in that year — § 17 Abs. 1 BEEG does not cap how many separate
+ * Elternzeit spans may be declared in one year, only the total months), capped at 12 (the same
+ * clamp `remainingAfterParentalMonths` applies). Used by the statutory-floor guard (PUT
+ * /settings/vacation) and the read-only Prüfbericht — both reduce the SAME threshold the SAME
+ * way (Issue #468 plan 07, D-07/D-09).
+ */
+export async function activeParentalReductionMonths(
+  db: DbClient,
+  employeeId: string,
+  tenantId: string,
+  year: number,
+): Promise<number> {
+  const rows = await db.parentalLeaveReduction.findMany({
+    where: { year, status: "ACTIVE", employeeId, employee: { tenantId } },
+    select: { months: true },
+  });
+  const total = rows.reduce((sum, row) => sum + row.months, 0);
+  return Math.min(12, total);
 }

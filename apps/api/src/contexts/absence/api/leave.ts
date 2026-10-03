@@ -74,6 +74,7 @@ import {
   planSection9CreditsForCorrection,
 } from "../section9-detect"; // Phase 104-05/06, Issue #468 (D-04/A-3)
 import { isSickLeaveTypeCode } from "../leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
+import { activeParentalReductions, reducedYearsAffectedByRange } from "../parental-leave-reduction"; // Issue #468 plan 07 (D-10) — revoke-before-change guards
 import { karenzOverrunFromRequests, normalizeKarenzDays } from "../find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
 import {
   ensureRegularVacationEntitlement,
@@ -1307,6 +1308,24 @@ export async function leaveRoutes(app: FastifyInstance) {
             });
           }
 
+          // Issue #468 plan 07 (D-10): a declared Elternzeit-Kürzung is changed only by its own
+          // correction entry (revocation), never implicitly by cancelling the Elternzeit it
+          // anchors on — approving the cancellation here would otherwise leave an ACTIVE
+          // reduction referencing a now-CANCELLED request.
+          if (existing.leaveType.code === "PARENTAL") {
+            const activeReductions = await activeParentalReductions(
+              app.prisma,
+              existing.id,
+              existing.employee.tenantId,
+            );
+            if (activeReductions.length > 0) {
+              return reply.code(409).send({
+                error:
+                  "Für diese Elternzeit ist eine Kürzung erklärt — bitte die Kürzung zuerst widerrufen.",
+              });
+            }
+          }
+
           // Stornierung genehmigen → CANCELLED + Rückbuchung
           await app.prisma.leaveRequest.update({
             where: { id },
@@ -2359,6 +2378,35 @@ export async function leaveRoutes(app: FastifyInstance) {
         });
         if (blockingOverlap) {
           return reply.code(409).send({ error: "Überschneidung mit bestehendem Antrag" });
+        }
+      }
+
+      // ── Step 7c (Issue #468 plan 07, D-10): a declared Elternzeit-Kürzung is changed only by
+      // its own correction entry (revocation), never implicitly by moving the Elternzeit it
+      // anchors on. A type change away from PARENTAL always invalidates every ACTIVE reduction's
+      // anchor; a date change invalidates it only when a reduced year's own full-month count
+      // would actually differ — a day-level shift inside the same full months stays allowed.
+      if (existingTypeCode === "PARENTAL") {
+        const activeReductions = await activeParentalReductions(app.prisma, existing.id, tenantId);
+        if (activeReductions.length > 0) {
+          if (typeChanged) {
+            return reply.code(409).send({
+              error:
+                "Für diese Elternzeit ist eine Kürzung erklärt — bitte die Kürzung zuerst widerrufen.",
+            });
+          }
+          const affectedYears = reducedYearsAffectedByRange({
+            oldStart: existing.startDate,
+            oldEnd: existing.endDate,
+            newStart: start,
+            newEnd: end,
+            reducedYears: activeReductions,
+          });
+          if (affectedYears.length > 0) {
+            return reply.code(409).send({
+              error: `Für diese Elternzeit ist eine Kürzung für ${affectedYears.join(", ")} erklärt — bitte die Kürzung zuerst widerrufen.`,
+            });
+          }
         }
       }
 
