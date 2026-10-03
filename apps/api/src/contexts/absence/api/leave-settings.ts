@@ -37,6 +37,10 @@ import {
   statutoryMinimumVacationThresholdBySegments, // Issue #450 (D-09) — the ONE segment-aware floor, GET and PUT
   statutoryMinimumViolationMessage, // Issue #435 (D-10) — the ONE German 400 message builder
 } from "../vacation-calc";
+import {
+  activeParentalReductionMonths, // Issue #468 plan 07 (D-07/D-09) — § 17 BEEG reduces the floor too
+  remainingAfterParentalMonths,
+} from "../parental-leave-reduction";
 
 const vacationEntitlementSchema = z.object({
   year: z.number().int().min(2000).max(2100),
@@ -133,13 +137,26 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
         employee.tenantId,
         year,
       );
-      const statutoryMinimumDays = statutoryMinimumVacationThresholdBySegments({
+      const statutoryThresholdForYear = statutoryMinimumVacationThresholdBySegments({
         birthDate: employee.birthDate,
         year,
         segments: contractSegments,
         hireDate: employee.hireDate,
         exitDate: employee.exitDate,
       });
+      // Issue #468 plan 07 (D-07/D-09): § 17 Abs. 1 BEEG reduces the STATUTORY entitlement too —
+      // the GET suggestion follows the same reduced floor the PUT guard below enforces (one rule
+      // for read and write).
+      const parentalMonthsForYear = await activeParentalReductionMonths(
+        app.prisma,
+        employeeId,
+        employee.tenantId,
+        year,
+      );
+      const statutoryMinimumDays = remainingAfterParentalMonths(
+        statutoryThresholdForYear,
+        parentalMonthsForYear,
+      );
 
       // Issue #416, CONTEXT.md decision 6 ("first access"): an active employee's row for the
       // CURRENT year that no code path ever created (either a genuinely new hire whose
@@ -311,13 +328,27 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
         employeeId,
         employee.tenantId,
       );
-      const statutoryThreshold = statutoryMinimumVacationThresholdBySegments({
+      const statutoryThresholdUnreduced = statutoryMinimumVacationThresholdBySegments({
         birthDate: employee.birthDate,
         year: body.year,
         segments: contractSegments,
         hireDate: employee.hireDate,
         exitDate: employee.exitDate,
       });
+      // Issue #468 plan 07 (D-07/D-09): § 17 Abs. 1 BEEG reduces the statutory entitlement by the
+      // same one-twelfth-per-full-month rule as the regular one — this guard uses
+      // remainingAfterParentalMonths(threshold, months), the SAME § 421 rounding the Elternzeit-
+      // Kürzung itself applies, instead of the unreduced threshold.
+      const parentalMonths = await activeParentalReductionMonths(
+        app.prisma,
+        employeeId,
+        employee.tenantId,
+        body.year,
+      );
+      const statutoryThreshold = remainingAfterParentalMonths(
+        statutoryThresholdUnreduced,
+        parentalMonths,
+      );
       const totalDaysChanged = !existing || daysDiffer(Number(existing.totalDays), body.totalDays);
       if (
         totalDaysChanged &&

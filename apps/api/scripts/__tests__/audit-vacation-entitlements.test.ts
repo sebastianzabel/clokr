@@ -329,6 +329,51 @@ describe("audit-vacation-entitlements (Issue #444)", () => {
     ids.e5 = await mkEmployee(dataA, { firstRowWorkDays: [1, 2, 3, 4, 5] });
     ids.e5ScheduleId = await mkScheduleChange(ids.e5, "2026-05-18", [1, 2, 3]);
     await mkEntitlement(dataA, ids.e5, 2026, { totalDays: 23 });
+
+    // Issue #468 plan 07 (D-07): an ACTIVE Elternzeit-Kürzung reduces the statutory floor too —
+    // stored=15 is BELOW the unreduced minimum (20) but AT the reduced one (10), so this row must
+    // never be UNTER_MINIMUM. Mirrors the real commit route's shape: human-owned entitlement
+    // (manual write audit) + an ACTIVE ParentalLeaveReduction row, created directly via Prisma
+    // since this script only reads the DB.
+    const parentalLeaveType = await app.prisma.leaveType.create({
+      data: {
+        tenantId: dataA.tenant.id,
+        code: "PARENTAL",
+        name: "Elternzeit",
+        isPaid: false,
+        requiresApproval: true,
+      },
+    });
+    ids.parentalReduced = await mkEmployee(dataA);
+    const parentalReducedRow = await mkEntitlement(dataA, ids.parentalReduced, 2027, {
+      totalDays: 15,
+      isAutoCalculated: false,
+    });
+    await mkManualWrite(parentalReducedRow, 15);
+    const parentalLeaveRequest = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: ids.parentalReduced,
+        leaveTypeId: parentalLeaveType.id,
+        startDate: new Date("2027-01-01T00:00:00Z"),
+        endDate: new Date("2027-06-30T00:00:00Z"),
+        days: 0,
+        status: "APPROVED",
+        reviewedBy: "system",
+        reviewedAt: new Date(),
+      },
+    });
+    await app.prisma.parentalLeaveReduction.create({
+      data: {
+        employeeId: ids.parentalReduced,
+        leaveRequestId: parentalLeaveRequest.id,
+        year: 2027,
+        months: 6,
+        reducedDays: 15,
+        declaredAt: new Date("2020-01-01T00:00:00Z"),
+        status: "ACTIVE",
+        createdBy: dataA.adminUser.id,
+      },
+    });
   });
 
   afterAll(async () => {
@@ -550,6 +595,48 @@ describe("audit-vacation-entitlements (Issue #444)", () => {
     });
   });
 
+  // ── Issue #468 plan 07 (D-07/D-09) — Elternzeit-Kürzung reduces the floor ──────────────────
+  describe("Issue #468 plan 07 — Elternzeit-Kürzung reduces the statutory floor", () => {
+    it("a reduced row (stored 15, reduced floor 10) is never UNTER_MINIMUM — unlike against the unreduced minimum (20)", async () => {
+      const { lines } = await run(["--tenant-id", dataA.tenant.id, "--year", "2026"]);
+      const line = lineFor(lines, ids.parentalReduced, 2027)!;
+      expect(line).toBeDefined();
+      expect(line).not.toContain("UNTER_MINIMUM");
+      expect(line).toContain("minimum=10.00");
+      expect(line).toContain("elternzeitMonate=6");
+    });
+
+    it("a row of another employee without any reduction prints exactly as before — no elternzeitMonate field", async () => {
+      const { lines } = await run(["--tenant-id", dataA.tenant.id, "--year", "2026"]);
+      const line = lineFor(lines, ids.ok, 2026)!;
+      expect(line).toBeDefined();
+      expect(line).not.toContain("elternzeitMonate");
+    });
+
+    it("the run still writes nothing (zero mutations) for the reduced employee's rows", async () => {
+      const before = await app.prisma.leaveEntitlement.findUnique({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId: ids.parentalReduced,
+            leaveTypeId: dataA.vacationType.id,
+            year: 2027,
+          },
+        },
+      });
+      await main(["--tenant-id", dataA.tenant.id, "--year", "2026"], app.prisma);
+      const after = await app.prisma.leaveEntitlement.findUnique({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId: ids.parentalReduced,
+            leaveTypeId: dataA.vacationType.id,
+            year: 2027,
+          },
+        },
+      });
+      expect(after).toEqual(before);
+    });
+  });
+
   // ── CLI ───────────────────────────────────────────────────────────────────
   describe("CLI", () => {
     it("main([]) rejects without a tenant selection", async () => {
@@ -587,6 +674,7 @@ describe("audit-vacation-entitlements (Issue #444)", () => {
         carriedOver: null,
         target: 30,
         minimum: 20,
+        parentalMonths: 0,
         deviation: null,
         manual: false,
         categories: ["JAHRESUEBERGREIFEND_FEHLT"],
@@ -595,6 +683,32 @@ describe("audit-vacation-entitlements (Issue #444)", () => {
       expect(line).toContain("stored=none");
       expect(line).toContain("deviation=n/a");
       expect(line).not.toMatch(/firstName|lastName|employeeNumber/);
+      expect(line).not.toContain("elternzeitMonate"); // parentalMonths=0 → suffix omitted
+    });
+
+    it("formatLine appends elternzeitMonate only when parentalMonths > 0 — every other line byte-identical otherwise", () => {
+      const base = {
+        tenantId: "11111111-1111-1111-1111-111111111111",
+        employeeId: "22222222-2222-2222-2222-222222222222",
+        entitlementId: "33333333-3333-3333-3333-333333333333",
+        year: 2027,
+        stored: 15,
+        used: 0,
+        carriedOver: 0,
+        target: 30,
+        deviation: -15,
+        manual: true,
+        categories: [] as string[],
+      };
+      const unreduced = formatLine({ ...base, minimum: 20, parentalMonths: 0 });
+      const reduced = formatLine({ ...base, minimum: 10, parentalMonths: 6 });
+      expect(unreduced).not.toContain("elternzeitMonate");
+      expect(reduced).toContain("minimum=10.00");
+      expect(reduced).toContain("elternzeitMonate=6");
+      // Every field except minimum/elternzeitMonate is byte-identical between the two lines.
+      expect(
+        reduced.replace(" elternzeitMonate=6", "").replace("minimum=10.00", "minimum=20.00"),
+      ).toBe(unreduced);
     });
   });
 
