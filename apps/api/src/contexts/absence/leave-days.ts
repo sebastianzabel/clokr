@@ -955,8 +955,9 @@ async function loadRegularVacationInputs(
   hireDate: Date;
   birthDate: Date | null;
   exitDate: Date | null;
-  workDaysPerWeek: number;
-  // Issue #450 (D-01/D-09): the full contract-segment history, for the segment-aware formula.
+  // Issue #450 (D-01/D-09): the full contract-segment history, for the segment-aware formula —
+  // this is now the ONLY contract-shape this function returns; the newest-row-only contractual
+  // day count was removed once the create path (below) switched to segments.
   segments: LoadedContractSegment[];
   baseDays: number;
 }> {
@@ -976,12 +977,7 @@ async function loadRegularVacationInputs(
     employee.hireDate.getUTCFullYear() <= year &&
     (employee.exitDate === null || employee.exitDate.getUTCFullYear() >= year);
 
-  const [workDaysPerWeek, segments] = await Promise.all([
-    // Issue #450: kept for the create path of ensureRegularVacationEntitlement only — see that
-    // function's call site below. Every other reader now uses `segments`.
-    resolveContractWorkDaysPerWeek(db, employeeId, tenantId),
-    loadVacationContractSegments(db, employeeId, tenantId),
-  ]);
+  const segments = await loadVacationContractSegments(db, employeeId, tenantId);
   const baseDays = employedInYear ? await resolveVacationBaseDays(db, employeeId, tenantId) : 0;
 
   return {
@@ -990,7 +986,6 @@ async function loadRegularVacationInputs(
     // Issue #447 (D-05): threaded into the regular formula so it follows § 5 BUrlG's exit-year
     // Teilurlaub rule, not just the hire-year rule.
     exitDate: employee.exitDate,
-    workDaysPerWeek,
     segments,
     baseDays,
   };
@@ -1377,7 +1372,9 @@ export async function ensureRegularVacationEntitlement(
     inputs.hireDate,
     inputs.birthDate,
     inputs.exitDate,
-    inputs.workDaysPerWeek,
+    // Issue #450 (D-09): the create path is now segment-aware — no VACATION row is ever created
+    // from the newest WorkSchedule row alone.
+    inputs.segments,
     inputs.baseDays,
     reason,
     (entry) =>

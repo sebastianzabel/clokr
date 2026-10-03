@@ -1,14 +1,20 @@
 /**
- * Issue #450 (D-04) — DB-backed suite for `loadVacationContractSegments`'s D-04 normalization
- * (legacy non-1st `WorkSchedule.validFrom` rows take effect on the 1st of the following month,
- * through the one extended Unterbau helper; the first contract row is never moved).
+ * Issue #450 (D-04/D-09) — DB-backed suite for `loadVacationContractSegments`'s D-04
+ * normalization (legacy non-1st `WorkSchedule.validFrom` rows take effect on the 1st of the
+ * following month, through the one extended Unterbau helper; the first contract row is never
+ * moved) and for `ensureRegularVacationEntitlement`'s create path now computing per segment
+ * (D-09) instead of from the newest `WorkSchedule` row alone.
  *
  * Fixed dates only — every date is built via `new Date(Date.UTC(...))`. Initials-only fixtures
  * (firstName "T", lastName "T") — no PII per CLAUDE.md. Own seeded tenant per `seedTestData`.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
-import { loadVacationContractSegments, resolveRegularVacationDays } from "../leave-days";
+import {
+  loadVacationContractSegments,
+  resolveRegularVacationDays,
+  ensureRegularVacationEntitlement,
+} from "../leave-days";
 import type { FastifyInstance } from "fastify";
 
 describe("loadVacationContractSegments / resolveRegularVacationDays (Issue #450, D-04)", () => {
@@ -137,5 +143,93 @@ describe("loadVacationContractSegments / resolveRegularVacationDays (Issue #450,
     expect(segments).toHaveLength(1);
     expect(segments[0].workDaysPerWeek).toBe(5);
     expect(segments[0].workScheduleId).toBeNull();
+  });
+});
+
+describe("ensureRegularVacationEntitlement create path (Issue #450, D-09)", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+
+  async function mkEmployeeNoEntitlement(
+    label: string,
+    hireDate: Date,
+    schedules: Array<{ validFrom: Date; workDays: number[] }>,
+  ): Promise<string> {
+    const uid = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const user = await app.prisma.user.create({
+      data: {
+        email: `cs450e-${label}-${uid}@test.de`,
+        passwordHash: "x",
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const employee = await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        employeeNumber: `CS450E-${label}-${uid}`,
+        firstName: "T",
+        lastName: "T",
+        hireDate,
+      },
+    });
+    for (const { validFrom, workDays } of schedules) {
+      await app.prisma.workSchedule.create({
+        data: {
+          employeeId: employee.id,
+          type: "FIXED_SCHEDULE",
+          mondayHours: workDays.includes(1) ? 8 : 0,
+          tuesdayHours: workDays.includes(2) ? 8 : 0,
+          wednesdayHours: workDays.includes(3) ? 8 : 0,
+          thursdayHours: workDays.includes(4) ? 8 : 0,
+          fridayHours: workDays.includes(5) ? 8 : 0,
+          saturdayHours: 0,
+          sundayHours: 0,
+          workDays,
+          validFrom,
+        },
+      });
+    }
+    return employee.id;
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "cs450e");
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  it("creates the 2026 entitlement at the segment-computed value (24), not the newest-row value (30)", async () => {
+    const employeeId = await mkEmployeeNoEntitlement("a", new Date(Date.UTC(2024, 0, 1)), [
+      { validFrom: new Date(Date.UTC(2024, 0, 1)), workDays: [1, 2, 3] }, // Mo-Mi (3-day)
+      { validFrom: new Date(Date.UTC(2026, 6, 1)), workDays: [1, 2, 3, 4, 5] }, // Mo-Fr (5-day) from 01.07.
+    ]);
+
+    const result = await ensureRegularVacationEntitlement(
+      app.prisma,
+      employeeId,
+      data.tenant.id,
+      2026,
+      data.vacationType.id,
+      "reason",
+    );
+    expect(result.created).toBe(true);
+    // 6x18 (Jan-Jun, wd=3) + 6x30 (Jul-Dec, wd=5) = 108+180=288; 288/12=24.
+    expect(Number(result.entitlement.totalDays)).toBe(24);
+
+    const audits = await app.prisma.auditLog.findMany({
+      where: { entity: "LeaveEntitlement", entityId: result.entitlement.id, action: "CREATE" },
+    });
+    expect(audits).toHaveLength(1);
+    expect((audits[0].newValue as { totalDays: number }).totalDays).toBe(24);
   });
 });
