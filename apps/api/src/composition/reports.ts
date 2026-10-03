@@ -251,6 +251,21 @@ function computeEmployeeSummary(
   const unpaidDays = leaveDaysByCode.get("UNPAID")?.netDays ?? 0;
   const maternityDays = leaveDaysByCode.get("MATERNITY")?.netDays ?? 0;
   const parentalDays = leaveDaysByCode.get("PARENTAL")?.netDays ?? 0;
+  // WR-02 (451-REVIEW.md): this sum has no cross-type same-day dedup (451-02-SUMMARY.md,
+  // Deviation #2) — each non-sick code's own netDays is added independently. Verified
+  // (reports-total-absence-days-wr02.test.ts) that this cannot double-count a day shared
+  // between an APPROVED VACATION request and an overlapping APPROVED SICK request — the one
+  // combination § 9 BUrlG makes "the normal case, not the exception" (sortLeaveForDedup's own
+  // doc comment above): every sick code is excluded from this loop by isSickLeaveTypeCode, so a
+  // SICK day never adds to the sum regardless of whether its underlying § 9 Section9Credit is
+  // still AU_PENDING (VACATION's netDays not yet netted — the shared day is counted once, via
+  // VACATION, full price) or CONFIRMED (VACATION's netDays already subtracts the credited day —
+  // still counted once, via VACATION, at the reduced price). The ONE overlap that WOULD
+  // double-count this sum — two DIFFERENT non-sick codes claiming the same calendar day — is
+  // structurally unreachable through the real API: leave.ts's create-time overlap guard
+  // (`blockingOverlap`, `if (!isSickRequest) return true`) rejects every non-sick request that
+  // overlaps ANY existing PENDING/APPROVED request, sick or not. No cross-type dedup pass is
+  // reinstated here.
   let totalAbsenceDays = 0;
   for (const [code, days] of leaveDaysByCode) {
     if (!isSickLeaveTypeCode(code)) totalAbsenceDays += days.netDays;
