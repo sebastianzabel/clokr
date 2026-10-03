@@ -220,36 +220,44 @@ export async function dashboardRoutes(app: FastifyInstance) {
             where: { id: employeeId },
             select: { hireDate: true, exitDate: true },
           });
-          const [monthLeave, monthAbsences] = await Promise.all([
-            getActiveLeaveOverlapping(
-              app.prisma,
-              employeeScopeFor(access, { employeeId }),
-              monthStart,
-              monthEnd,
-            ),
-            getAbsencesOverlapping(
-              app.prisma,
-              employeeScopeFor(access, { employeeId }),
-              monthStart,
-              monthEnd,
-            ),
-          ]);
-          monthSollMinutes =
-            monthlyHoursMonthSollMinutes({
-              employeeId,
-              schedule: schedule as Record<string, unknown>,
-              monthStart,
-              monthEnd,
-              monthFirstDay,
-              monthLastDay,
-              tz,
-              hireDate: meEmployee?.hireDate ?? today,
-              exitDate: meEmployee?.exitDate ?? null,
-              leave: monthLeave,
-              absences: monthAbsences,
-              holidayDateStrings: new Set(holidayDates.keys()),
-              defaultWorkDays: tenantConfig?.defaultWorkDays,
-            }) ?? 0;
+          // WR-01 (Issue #433 review): mirror the established "employee row vanished"
+          // convention elsewhere in this file (dashboard.ts: `meEmployee?.hireDate ?? null`,
+          // see the open-items block below) — never fabricate `today` as a stand-in hireDate.
+          // A missing employee row (deleted mid-request, DB inconsistency) means there is no
+          // Soll to compute at all; skip the call and leave `monthSollMinutes` at its 0 default
+          // rather than silently rendering a too-small "hired today" Soll.
+          if (meEmployee) {
+            const [monthLeave, monthAbsences] = await Promise.all([
+              getActiveLeaveOverlapping(
+                app.prisma,
+                employeeScopeFor(access, { employeeId }),
+                monthStart,
+                monthEnd,
+              ),
+              getAbsencesOverlapping(
+                app.prisma,
+                employeeScopeFor(access, { employeeId }),
+                monthStart,
+                monthEnd,
+              ),
+            ]);
+            monthSollMinutes =
+              monthlyHoursMonthSollMinutes({
+                employeeId,
+                schedule: schedule as Record<string, unknown>,
+                monthStart,
+                monthEnd,
+                monthFirstDay,
+                monthLastDay,
+                tz,
+                hireDate: meEmployee.hireDate,
+                exitDate: meEmployee.exitDate ?? null,
+                leave: monthLeave,
+                absences: monthAbsences,
+                holidayDateStrings: new Set(holidayDates.keys()),
+                defaultWorkDays: tenantConfig?.defaultWorkDays,
+              }) ?? 0;
+          }
         }
       } else {
         // FIXED_SCHEDULE / FLEXTIME / SHIFT_BASED: sum scheduled hours from week start up to today (inclusive).
