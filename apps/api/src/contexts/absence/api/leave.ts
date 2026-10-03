@@ -68,7 +68,11 @@ import {
   employeeScopeFor, // Phase 430 Plan 04 (D-15) — rosterImported's getShiftsInRange scope
 } from "../../platform"; // Quick 260824-cjd
 import { preserveCarryOverDeadline } from "../illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
-import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06
+import {
+  findSection9Overlaps,
+  intersectRanges,
+  planSection9CreditsForCorrection,
+} from "../section9-detect"; // Phase 104-05/06, Issue #468 (D-04/A-3)
 import { isSickLeaveTypeCode } from "../leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
 import { karenzOverrunFromRequests, normalizeKarenzDays } from "../find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
 import {
@@ -2321,7 +2325,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         start.getTime() !== existing.startDate.getTime() ||
         end.getTime() !== existing.endDate.getTime();
       if (dateChanged) {
-        const overlap = await app.prisma.leaveRequest.findFirst({
+        const overlaps = await app.prisma.leaveRequest.findMany({
           where: {
             employeeId: existing.employeeId,
             deletedAt: null,
@@ -2330,8 +2334,24 @@ export async function leaveRoutes(app: FastifyInstance) {
             endDate: { gte: start },
             id: { not: existing.id },
           },
+          include: { leaveType: true },
         });
-        if (overlap) {
+        // Issue #468 (Rule 1/3 auto-fix, blocking): the R1 exception from POST /requests
+        // (leave.ts above, "§ 9 BUrlG — wird ein Mitarbeiter während genehmigten Urlaubs
+        // krank...") was never mirrored here, so correcting EITHER side of an already-APPROVED
+        // sick-over-vacation § 9 pair always 409'd — even a trivial shortening of the vacation's
+        // tail that leaves the sick days fully inside the new range. Without this, the § 9
+        // credit-aware correction this plan adds (Steps 8b/10b above) could never actually be
+        // exercised through PATCH /correct for the "credit stays inside" shape central to this
+        // phase. Mirrored bidirectionally: /correct can be called on either side of the pair.
+        const correctedIsSick = isSickLeaveTypeCode(newType);
+        const blockingOverlap = overlaps.find((o) => {
+          if (o.status !== "APPROVED") return true; // § 9 exception never applies vs PENDING
+          const otherIsSick = isSickLeaveTypeCode(o.leaveType.code);
+          if (correctedIsSick !== otherIsSick) return false; // § 9 case — permitted either way
+          return true; // same-kind overlap (vacation/vacation, sick/sick) — still blocked
+        });
+        if (blockingOverlap) {
           return reply.code(409).send({ error: "Überschneidung mit bestehendem Antrag" });
         }
       }
@@ -2441,6 +2461,80 @@ export async function leaveRoutes(app: FastifyInstance) {
         );
       }
 
+      // Issue #468 (D-04/A-3, finding 2/G18): pure reads BEFORE the transaction opens — the §
+      // 9 credits touching this request (either side), classified against the NEW range by
+      // planSection9CreditsForCorrection, then every clipped replacement range re-priced. Only
+      // the write (status, ledger undo/re-credit, audit) happens inside the CR-01 transaction
+      // below (Steps 8b/10b).
+      const touchingSection9Credits = await app.prisma.section9Credit.findMany({
+        where: {
+          OR: [{ vacationRequestId: existing.id }, { sickRequestId: existing.id }],
+          status: { not: "SUPERSEDED" },
+          employee: { tenantId },
+        },
+        include: {
+          vacationRequest: {
+            select: {
+              id: true,
+              leaveTypeId: true,
+              halfDay: true,
+              leaveType: { select: { code: true } },
+            },
+          },
+        },
+      });
+      const section9CorrectionPlan = planSection9CreditsForCorrection({
+        credits: touchingSection9Credits.map((c) => ({
+          id: c.id,
+          status: c.status,
+          creditedStart: c.creditedStart,
+          creditedEnd: c.creditedEnd,
+          overlapStart: c.overlapStart,
+          overlapEnd: c.overlapEnd,
+        })),
+        newStart: start,
+        newEnd: end,
+        typeChanged,
+      });
+      type Section9ClipPricing = {
+        id: string;
+        start: Date;
+        end: Date;
+        priced: number;
+        vacationTypeCode: string | null;
+        vacationLeaveTypeId: string;
+      };
+      const section9ClipPricings: Section9ClipPricing[] = [];
+      for (const clip of section9CorrectionPlan.clip) {
+        const credit = touchingSection9Credits.find((c) => c.id === clip.id)!;
+        // D-04: the VACATION-side type code never changes on this path (a type change on the
+        // vacation side always forces a full supersede above, never a clip) — stable for
+        // either side of the correction.
+        const isVacationSide = credit.vacationRequestId === existing.id;
+        const { days: priced } = await resolveLeaveDays(
+          app.prisma,
+          existing.employeeId,
+          tenantId,
+          clip.start,
+          clip.end,
+          isVacationSide ? body.halfDay : credit.vacationRequest.halfDay,
+          holidays,
+          {
+            mode: "request",
+            leaveTypeCode: credit.vacationRequest.leaveType.code,
+            excludeRequestId: isVacationSide ? existing.id : credit.vacationRequest.id,
+          },
+        );
+        section9ClipPricings.push({
+          id: clip.id,
+          start: clip.start,
+          end: clip.end,
+          priced,
+          vacationTypeCode: credit.vacationRequest.leaveType.code,
+          vacationLeaveTypeId: credit.vacationRequest.leaveTypeId,
+        });
+      }
+
       // ── Steps 8-11 run inside ONE interactive transaction (94 CR-01) ──────────
       //    The correction issues TWO authoritative ledger writes (reverse OLD +
       //    apply NEW). Without a transaction a mid-sequence failure would leave the
@@ -2474,6 +2568,56 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
         // SICK / SICK_CHILD / PARENTAL / MATERNITY / SPECIAL / UNPAID / EDUCATION:
         // entitlement-neutral on the reverse side (no usedDays / balance booking).
+
+        // ── Step 8b: SUPERSEDE § 9 credits the new range leaves behind (Issue #468, D-04/A-3,
+        //    finding 2/G18) — classified ABOVE (section9CorrectionPlan), written here. A
+        //    CONFIRMED credit actually booked a ledger entry at confirm time (reverseVacationDays
+        //    — gave the day back); undoing it here is the exact mirror: deductVacationDays takes
+        //    the day back out again. AU_PENDING/REJECTED credits never booked anything, so only
+        //    their status changes. Worked numbers (see <objective>): approve 10 → 10; confirm 3
+        //    → 7; correct to 7 with the credit now outside: reverse 10 → −3, undo (deduct) 3 → 0,
+        //    apply 7 → 7.
+        for (const sup of section9CorrectionPlan.supersede) {
+          const credit = touchingSection9Credits.find((c) => c.id === sup.id)!;
+          await tx.section9Credit.update({
+            where: { id: sup.id },
+            data: { status: "SUPERSEDED" },
+          });
+          if (sup.ledgerUndo && credit.vacationRequest.leaveType.code === "VACATION") {
+            await deductVacationDays(
+              tx,
+              existing.employeeId,
+              credit.vacationRequest.leaveTypeId,
+              credit.creditedStart!,
+              credit.creditedEnd!,
+              Number(credit.creditedDays),
+              holidays,
+              tenantId,
+            );
+          }
+          await app.audit({
+            tx,
+            userId: req.user.sub,
+            action: "SECTION9_CREDIT_SUPERSEDED",
+            entity: "Section9Credit",
+            entityId: sup.id,
+            oldValue: {
+              status: credit.status,
+              creditedStart: credit.creditedStart?.toISOString().split("T")[0] ?? null,
+              creditedEnd: credit.creditedEnd?.toISOString().split("T")[0] ?? null,
+              creditedDays: credit.creditedDays !== null ? Number(credit.creditedDays) : null,
+            },
+            newValue: {
+              status: "SUPERSEDED",
+              correctedLeaveRequestId: existing.id,
+              newStartDate: start.toISOString().split("T")[0],
+              newEndDate: end.toISOString().split("T")[0],
+              auditReason: body.reason,
+              note: "§ 9 BUrlG — durch Korrektur des Antrags überholt",
+            },
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+        }
 
         // ── Step 9: update the row (94-01 base + NEW leaveTypeId) ───────────────
         const updatedRow = await tx.leaveRequest.update({
@@ -2524,6 +2668,76 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
         // SICK / SICK_CHILD / PARENTAL / MATERNITY / SPECIAL / UNPAID / EDUCATION:
         // entitlement-neutral on the apply side (light).
+
+        // ── Step 10b: RE-CREDIT the clipped part of a partially-superseded CONFIRMED credit
+        //    (Issue #468, D-04/A-3) — a new revision+1 correction credit for exactly the part
+        //    that is still inside the new range, re-priced ABOVE (section9ClipPricings). A clip
+        //    priced at 0 days (e.g. the clipped range is a non-workday) becomes a plain
+        //    supersede — no replacement row, nothing to re-credit. Worked: partial (2 of 3 days
+        //    stay) — reverse 10 → −3, undo (deduct) 3 → 0, apply 7 → 7, re-credit 2 → 5.
+        for (const cp of section9ClipPricings) {
+          if (cp.priced <= 0) continue;
+          const original = touchingSection9Credits.find((c) => c.id === cp.id)!;
+          // The sick/vacation overlap is recomputed against the NEW range of whichever side of
+          // the pair this correction touches — `start`/`end` are the corrected request's own
+          // new range, which is exactly the side `original` references via existing.id.
+          const overlapClip = intersectRanges(
+            original.overlapStart,
+            original.overlapEnd,
+            start,
+            end,
+          )!;
+          const created = await tx.section9Credit.create({
+            data: {
+              employeeId: original.employeeId,
+              sickRequestId: original.sickRequestId,
+              vacationRequestId: original.vacationRequestId,
+              revision: original.revision + 1,
+              supersedesId: original.id,
+              status: "CONFIRMED",
+              overlapStart: overlapClip.start,
+              overlapEnd: overlapClip.end,
+              creditedStart: cp.start,
+              creditedEnd: cp.end,
+              creditedDays: cp.priced,
+              attestSource: original.attestSource,
+              attestValidFrom: original.attestValidFrom,
+              attestValidTo: original.attestValidTo,
+              documentPath: original.documentPath,
+              reason: "Korrektur: Antrag geändert — § 9-Gutschrift angepasst",
+              reviewedBy: req.user.sub,
+              reviewedAt: new Date(),
+            },
+          });
+          if (cp.vacationTypeCode === "VACATION") {
+            await reverseVacationDays(
+              tx,
+              existing.employeeId,
+              cp.vacationLeaveTypeId,
+              cp.start,
+              cp.end,
+              cp.priced,
+              holidays,
+              tenantId,
+            );
+          }
+          await app.audit({
+            tx,
+            userId: req.user.sub,
+            action: "SECTION9_CREDIT_CORRECTED",
+            entity: "Section9Credit",
+            entityId: created.id,
+            newValue: {
+              supersedesId: original.id,
+              revision: created.revision,
+              creditedStart: cp.start.toISOString().split("T")[0],
+              creditedEnd: cp.end.toISOString().split("T")[0],
+              creditedDays: cp.priced,
+              correctedLeaveRequestId: existing.id,
+            },
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+        }
 
         // ── Step 11: revalidate removed-day time entries (old range \ new range).
         //    A shortened/moved leave frees days whose leave-caused invalidation must
