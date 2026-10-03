@@ -279,8 +279,8 @@ describe("Issue #451 Plan 08 (D-07, D-08) — one Resturlaub across dashboard, U
     const streamEntry = streamCall![1].employees.find((e: { employeeNumber: string }) =>
       e.employeeNumber.startsWith("RBP451-"),
     );
-    expect(streamEntry.remainingDays, "vacation/pdf overview — RED before: 28").toBe(26);
-    expect(streamEntry.carriedOver, "vacation/pdf overview — RED before: 5").toBe(3);
+    expect(streamEntry!.remainingDays, "vacation/pdf overview — RED before: 28").toBe(26);
+    expect(streamEntry!.carriedOver, "vacation/pdf overview — RED before: 5").toBe(3);
 
     const overviewPdfRes = await app.inject({
       method: "GET",
@@ -298,7 +298,7 @@ describe("Issue #451 Plan 08 (D-07, D-08) — one Resturlaub across dashboard, U
     const generateEntry = generateCall![0].employees.find((e: { employeeNumber: string }) =>
       e.employeeNumber.startsWith("RBP451-"),
     );
-    expect(generateEntry.remainingDays, "leave-overview/pdf overview — RED before: 28").toBe(26);
+    expect(generateEntry!.remainingDays, "leave-overview/pdf overview — RED before: 28").toBe(26);
   });
 
   it("carryover-at-risk: FIFO-adjusted atRiskDays, not raw carriedOverDays (D-08)", async () => {

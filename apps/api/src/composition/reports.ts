@@ -1265,26 +1265,34 @@ export async function reportRoutes(app: FastifyInstance) {
         },
       });
 
-      const rows = entitlements
-        .map((e) => {
-          const deadline = e.carryOverDeadline as Date;
-          const daysUntilDeadline = Math.ceil(
-            (deadline.getTime() - now.getTime()) / (24 * 60 * 60 * 1000),
-          );
-          return {
-            entitlementId: e.id,
-            employee: e.employee,
-            leaveType: e.leaveType,
-            year: e.year,
-            carriedOverDays: Number(e.carriedOverDays),
-            deadline: deadline.toISOString(),
-            daysUntilDeadline,
-            lastWarningSentAt: lastWarningMap.get(e.id)?.toISOString() ?? null,
-          };
-        })
-        .sort((a, b) => a.daysUntilDeadline - b.daysUntilDeadline);
+      // Issue #451 (D-07/D-08) — the ONE Resturlaub facade's FIFO-adjusted atRiskDays, not the
+      // raw carriedOverDays (a fully-consumed carry is no longer "gefährdet"). `lastWarningMap`
+      // above already carries the Hinweis flag per entitlement — no second AuditLog query.
+      const rowsWithRisk = [];
+      for (const e of entitlements) {
+        const deadline = e.carryOverDeadline as Date;
+        const daysUntilDeadline = Math.ceil(
+          (deadline.getTime() - now.getTime()) / (24 * 60 * 60 * 1000),
+        );
+        const balance = await app.vacationBalanceForRow(e, req.user.tenantId, now, {
+          hinweisIssued: lastWarningMap.has(e.id),
+        });
+        if (balance.atRiskDays <= 0) continue; // already fully consumed via FIFO — not at risk
+        rowsWithRisk.push({
+          entitlementId: e.id,
+          employee: e.employee,
+          leaveType: e.leaveType,
+          year: e.year,
+          carriedOverDays: Number(e.carriedOverDays),
+          atRiskDays: balance.atRiskDays,
+          deadline: deadline.toISOString(),
+          daysUntilDeadline,
+          lastWarningSentAt: lastWarningMap.get(e.id)?.toISOString() ?? null,
+        });
+      }
+      const rows = rowsWithRisk.sort((a, b) => a.daysUntilDeadline - b.daysUntilDeadline);
 
-      const totalDaysAtRisk = rows.reduce((sum, r) => sum + r.carriedOverDays, 0);
+      const totalDaysAtRisk = rows.reduce((sum, r) => sum + r.atRiskDays, 0);
 
       return {
         horizonDays: horizon,
@@ -2010,8 +2018,9 @@ export async function reportRoutes(app: FastifyInstance) {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
     preHandler: requirePermission("report:export:ZUGEWIESEN"),
     handler: async (req, reply) => {
+      const now = new Date();
       const { year } = req.query as { year: string };
-      const y = parseInt(year ?? new Date().getFullYear().toString());
+      const y = parseInt(year ?? now.getFullYear().toString());
       const yearStart = new Date(`${y}-01-01T00:00:00.000Z`);
       const yearEnd = new Date(`${y}-12-31T23:59:59.999Z`);
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
@@ -2138,8 +2147,9 @@ export async function reportRoutes(app: FastifyInstance) {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
     preHandler: requirePermission("report:export:ZUGEWIESEN"),
     handler: async (req, reply) => {
+      const now = new Date();
       const { year } = req.query as { year: string };
-      const y = parseInt(year ?? new Date().getFullYear().toString());
+      const y = parseInt(year ?? now.getFullYear().toString());
       const yearStart = new Date(`${y}-01-01T00:00:00.000Z`);
       const yearEnd = new Date(`${y}-12-31T23:59:59.999Z`);
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
@@ -2248,7 +2258,29 @@ export async function reportRoutes(app: FastifyInstance) {
         }),
       };
 
-      // Build overview data
+      // Build overview data. Issue #451 (D-07) — the ONE Resturlaub facade, bulk Hinweis
+      // prefetch (the GET /entitlements pattern), no composition remaining arithmetic any more.
+      const vacationOverviewVacationRows = entitlements.filter(
+        // Phase 97 (D-11): the annual-leave overview is the VACATION entitlement, selected by
+        // code. The previous version lower-cased the display name and matched a substring of it,
+        // which caught four of the nine canonical names — annual leave plus the special, unpaid
+        // and further-education types, all of which end in the same German word — and summed all
+        // four into a single annual-leave figure. Behaviour change, deliberate and tested.
+        (e) => e.leaveType.code === "VACATION",
+      );
+      const vacationOverviewWarnedIds = new Set(
+        (
+          await app.prisma.auditLog.findMany({
+            where: {
+              action: "CARRYOVER_WARNED",
+              entity: "LeaveEntitlement",
+              entityId: { in: vacationOverviewVacationRows.map((e) => e.id) },
+            },
+            select: { entityId: true },
+            distinct: ["entityId"],
+          })
+        ).map((al) => al.entityId!),
+      );
       const empMap = new Map<
         string,
         {
@@ -2260,19 +2292,16 @@ export async function reportRoutes(app: FastifyInstance) {
           carriedOver: number;
         }
       >();
-      for (const e of entitlements) {
-        // Phase 97 (D-11): the annual-leave overview is the VACATION entitlement, selected by
-        // code. The previous version lower-cased the display name and matched a substring of it,
-        // which caught four of the nine canonical names — annual leave plus the special, unpaid
-        // and further-education types, all of which end in the same German word — and summed all
-        // four into a single annual-leave figure. Behaviour change, deliberate and tested.
-        if (e.leaveType.code !== "VACATION") continue;
+      for (const e of vacationOverviewVacationRows) {
+        const balance = await app.vacationBalanceForRow(e, req.user.tenantId, now, {
+          hinweisIssued: vacationOverviewWarnedIds.has(e.id),
+        });
         const key = e.employee.employeeNumber;
         const existing = empMap.get(key);
-        const total = Number(e.totalDays);
-        const carried = Number(e.carriedOverDays);
-        const used = Number(e.usedDays);
-        const remaining = total + carried - used;
+        const total = balance.entitlementDays;
+        const carried = balance.carriedOverEffectiveDays;
+        const used = balance.usedDays;
+        const remaining = balance.remainingDays;
         if (existing) {
           existing.totalDays += total;
           existing.carriedOver += carried;
@@ -2319,8 +2348,9 @@ export async function reportRoutes(app: FastifyInstance) {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
     preHandler: requirePermission("report:export:ZUGEWIESEN"),
     handler: async (req, reply) => {
+      const now = new Date();
       const { year } = req.query as { year: string };
-      const y = parseInt(year ?? new Date().getFullYear().toString());
+      const y = parseInt(year ?? now.getFullYear().toString());
 
       const tenant = await app.prisma.tenant.findUnique({
         where: { id: req.user.tenantId },
@@ -2357,7 +2387,30 @@ export async function reportRoutes(app: FastifyInstance) {
               leaveOverviewPdfScopedIds.includes(e.employeeId),
             );
 
-      // Group by employee and aggregate (VACATION entitlement only, selected by code)
+      // Group by employee and aggregate (VACATION entitlement only, selected by code). Issue
+      // #451 (D-07) — the ONE Resturlaub facade, bulk Hinweis prefetch, no composition
+      // remaining arithmetic any more.
+      const leaveOverviewPdfVacationRows = entitlements.filter(
+        // Phase 97 (D-11): the annual-leave overview is the VACATION entitlement, selected by
+        // code. The previous version lower-cased the display name and matched a substring of it,
+        // which caught four of the nine canonical names — annual leave plus the special, unpaid
+        // and further-education types, all of which end in the same German word — and summed all
+        // four into a single annual-leave figure. Behaviour change, deliberate and tested.
+        (e) => e.leaveType.code === "VACATION",
+      );
+      const leaveOverviewPdfWarnedIds = new Set(
+        (
+          await app.prisma.auditLog.findMany({
+            where: {
+              action: "CARRYOVER_WARNED",
+              entity: "LeaveEntitlement",
+              entityId: { in: leaveOverviewPdfVacationRows.map((e) => e.id) },
+            },
+            select: { entityId: true },
+            distinct: ["entityId"],
+          })
+        ).map((al) => al.entityId!),
+      );
       const empMap = new Map<
         string,
         {
@@ -2370,19 +2423,16 @@ export async function reportRoutes(app: FastifyInstance) {
         }
       >();
 
-      for (const e of entitlements) {
-        // Phase 97 (D-11): the annual-leave overview is the VACATION entitlement, selected by
-        // code. The previous version lower-cased the display name and matched a substring of it,
-        // which caught four of the nine canonical names — annual leave plus the special, unpaid
-        // and further-education types, all of which end in the same German word — and summed all
-        // four into a single annual-leave figure. Behaviour change, deliberate and tested.
-        if (e.leaveType.code !== "VACATION") continue;
+      for (const e of leaveOverviewPdfVacationRows) {
+        const balance = await app.vacationBalanceForRow(e, req.user.tenantId, now, {
+          hinweisIssued: leaveOverviewPdfWarnedIds.has(e.id),
+        });
         const key = e.employee.employeeNumber;
         const existing = empMap.get(key);
-        const total = Number(e.totalDays);
-        const carried = Number(e.carriedOverDays);
-        const used = Number(e.usedDays);
-        const remaining = total + carried - used;
+        const total = balance.entitlementDays;
+        const carried = balance.carriedOverEffectiveDays;
+        const used = balance.usedDays;
+        const remaining = balance.remainingDays;
 
         if (existing) {
           existing.totalDays += total;
