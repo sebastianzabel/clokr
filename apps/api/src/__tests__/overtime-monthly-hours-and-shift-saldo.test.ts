@@ -410,20 +410,46 @@ describe("updateOvertimeAccount — MONTHLY_HOURS multi-month pro-rata + SHIFT_B
     // Expected (correct, per-month-segmented) value.
     let expectedMin = expectedMinutesMonthlyMonTue(rangeStart, effectiveEnd, 80);
 
-    // Production subtracts holidays from expected when monthlyHoursHolidayDeduction
-    // is FALSE (our test tenant default) via getDayHoursFromSchedule(dow) * 60.
-    // For our Mo+Tu=4h schedule, any Mo/Tu Feiertag in [rangeStart, effectiveEnd]
-    // subtracts 4h × 60 = 240 minutes.
+    // Issue #433 (D-03, plan 02): a statutory holiday on a Mo/Tu contractual workday
+    // (this fixture's `workDays: [1, 2]`) ALWAYS reduces the Soll — the retired tenant
+    // switch is no longer read anywhere, by production or by this test. Mirrors the
+    // production core's per-month single-division shape: each
+    // complete calendar month is its OWN `closeEmployeeMonth()` call (production loops
+    // one month at a time — `overtime-balance.ts`), so the holiday deduction for THAT
+    // month is `80 × 60 × (Mo/Tu holidays in the overlapped segment) ÷ (Mo/Tu days of
+    // THAT full calendar month)`, rounded ONCE per month (not once over the whole
+    // multi-month range) — the per-month contributions are then summed as integers.
     const stateCode = STATE_MAP["NIEDERSACHSEN"] ?? "NI";
     const rangeStartStr = dateStrInTz(rangeStart, TZ);
     const effectiveEndStr = dateStrInTz(effectiveEnd, TZ);
     let holidayMin = 0;
-    for (let yr = rangeStart.getUTCFullYear(); yr <= effectiveEnd.getUTCFullYear(); yr++) {
-      for (const h of getHolidays(yr, stateCode)) {
-        if (h.date < rangeStartStr || h.date > effectiveEndStr) continue;
-        // h.date is a "YYYY-MM-DD" string. Get day-of-week via UTC midnight.
-        const dow = new Date(h.date + "T00:00:00Z").getUTCDay();
-        if (dow === 1 || dow === 2) holidayMin += 4 * 60;
+    {
+      let [hy, hm] = rangeStartStr.split("-").map(Number);
+      for (let i = 0; i < 240; i++) {
+        const { start: mStart, end: mEnd } = monthRangeUtc(hy, hm, TZ);
+        const segStart = rangeStart > mStart ? rangeStart : mStart;
+        const segEnd = effectiveEnd < mEnd ? effectiveEnd : mEnd;
+        if (segStart <= segEnd) {
+          const segStartStr = dateStrInTz(segStart, TZ);
+          const segEndStr = dateStrInTz(segEnd, TZ);
+          let holidayDaysInSeg = 0;
+          for (const h of getHolidays(hy, stateCode)) {
+            if (h.date < segStartStr || h.date > segEndStr) continue;
+            // h.date is a "YYYY-MM-DD" string. Get day-of-week via UTC midnight.
+            const dow = new Date(h.date + "T00:00:00Z").getUTCDay();
+            if (dow === 1 || dow === 2) holidayDaysInSeg++;
+          }
+          const monthFullWd = countMondayTuesdayWorkdays(mStart, mEnd);
+          if (monthFullWd > 0) {
+            holidayMin += Math.round((80 * 60 * holidayDaysInSeg) / monthFullWd);
+          }
+        }
+        if (dateStrInTz(mEnd, TZ) >= effectiveEndStr) break;
+        hm++;
+        if (hm > 12) {
+          hm = 1;
+          hy++;
+        }
       }
     }
     expectedMin = Math.max(0, expectedMin - holidayMin);

@@ -27,11 +27,20 @@
  * the 2nd BS-Langtag + Kurztag to the individual daily Soll, so both cells run as
  * regular GREEN golden cells (912 = 456+456 BS credit → worked=expected=10944).
  *
- * Phase 433 (Issue #433, owner decision 2026-10-03): MONTHLY_HOURS `monthlyHours` is an
- * owed monthly Soll; approved leave, sickness and imposed absences reduce it by
+ * Phase 433 plan 01 (Issue #433, owner decision 2026-10-03): MONTHLY_HOURS `monthlyHours` is
+ * an owed monthly Soll; approved leave, sickness and imposed absences reduce it by
  * `monthlyHours ÷ contractual workdays of the month` (Ø-Methode), instead of leaving the
  * Soll untouched. `mj-80-urlaub` flips 4800/0 → 4145/655 on purpose (derivation at the
- * cell). No other cell changed in this plan.
+ * cell). No other cell changed in plan 01.
+ *
+ * Phase 433 plan 02 (Issue #433, orchestrator OQ1): the SAME Ø-Methode now also governs
+ * holidays (D-03) — a statutory or manual public holiday on a contractual workday ALWAYS
+ * reduces the Soll, for the identical reason leave/sickness/absence do (§ 2 Abs. 1 / § 12
+ * EFZG, unabdingbar). `mj-80-feiertag` flips 4800/0 → 4582/218 on purpose: the D-05
+ * workday-set chain (`workDays` -> `TenantConfig.defaultWorkDays` -> Mo-Fr) also governs an
+ * EMPTY `workDays` for this cell's holiday test, and the full-calendar-month denominator
+ * (D-06) replaces the removed calendar-day-proration fallback. Derivation at the cell. No
+ * other golden cell changed in Phase 433 (plan 01's or plan 02's commits).
  *
  * Model / references: golden-azubi-jan2026.test.ts (harness), shift-based-saldo-parity.test.ts,
  * close-employee-month.test.ts case 9 (pure-core pin), GOLDEN-MATRIX-SPEC.md.
@@ -129,7 +138,6 @@ interface Cell {
   halfAbsences?: Array<{ date: string }>;
   /** PublicHoliday rows to seed */
   holidays?: Array<{ date: string; name: string }>;
-  monthlyHoursHolidayDeduction?: boolean;
   expected: Expected;
   expectedRed: boolean;
 }
@@ -961,7 +969,15 @@ const CELLS: Cell[] = [
     id: "mj-80-feiertag",
     scheduleType: "MONTHLY_HOURS",
     classification: "MINIJOB",
-    situation: "minijob_feiertag — holiday NOT deducted (flexible)",
+    // Issue #433 (D-03/D-06, orchestrator OQ1, owner decision 2026-10-03): a holiday on
+    // a contractual workday ALWAYS reduces the owed Soll — the superseded "flexible,
+    // holiday NOT deducted" situation is gone. MH_80_FLAT has workDays=[] -> falls
+    // through the D-05 chain to TenantConfig.defaultWorkDays, which defaults to
+    // Mo-Fr -> January 2026 has 22 Mo-Fr days. Neujahr (01.01.2026) is a Thursday, a
+    // Mo-Fr workday, so it counts: holiday value = round(80*60 / 22) = round(218.18) =
+    // 218. expectedMinutes = 4800 - 218 = 4582. worked stays 4800 (unaffected by the
+    // Soll side) -> balance = 4800 - 4582 = 218, carryOver = 218.
+    situation: "minijob_feiertag — holiday on a contractual workday reduces the Soll",
     schedule: MH_80_FLAT,
     year: 2026,
     month: 1,
@@ -985,10 +1001,10 @@ const CELLS: Cell[] = [
     holidays: [NEUJAHR],
     expected: {
       workedMinutes: 4800,
-      expectedMinutes: 4800,
-      balanceMinutes: 0,
-      carryOver: 0,
-      overtimeHours: 0,
+      expectedMinutes: 4582,
+      balanceMinutes: 218,
+      carryOver: 218,
+      overtimeHours: 218 / 60,
     },
     expectedRed: false,
   },
@@ -1667,9 +1683,6 @@ async function seedGoldenScenario(app: FastifyInstance, cell: Cell): Promise<See
       tenantId,
       defaultVacationDays: 30,
       timezone: TZ,
-      ...(cell.monthlyHoursHolidayDeduction != null
-        ? { monthlyHoursHolidayDeduction: cell.monthlyHoursHolidayDeduction }
-        : {}),
       // Phase 76.38 — explicit bsSlot* config so SHORT credit ≠ daily Soll (observable).
       ...(cell.bsSlotConfig ?? {}),
     },
@@ -2050,7 +2063,10 @@ describe.each(CELLS)("golden matrix — $id", (cell) => {
       ? {
           defaultBreakOver6h: tc.defaultBreakOver6h,
           defaultBreakOver9h: tc.defaultBreakOver9h,
-          monthlyHoursHolidayDeduction: tc.monthlyHoursHolidayDeduction ?? undefined,
+          // Issue #433 (D-05) — the MONTHLY_HOURS workday-set chain's middle tier; every
+          // other schedule type ignores this field. Tests neither read nor write the
+          // retired MONTHLY_HOURS holiday tenant switch (D-04).
+          defaultWorkDays: tc.defaultWorkDays,
           vocationalSchoolMinutesPerDay: tc.vocationalSchoolMinutesPerDay ?? undefined,
           vocationalSchoolBlockMinutesPerWeek: tc.vocationalSchoolBlockMinutesPerWeek ?? undefined,
           bsSlotFirstLongDayMinutes: tc.bsSlotFirstLongDayMinutes ?? undefined,
@@ -2177,13 +2193,18 @@ describe.each(CELLS)("golden matrix — $id", (cell) => {
       } finally {
         vi.useRealTimers();
       }
-      // MONTHLY_HOURS prorates its monthly budget by CALENDAR days, so the unavoidable
-      // clamp day (1st of the following month) always contributes budget/daysInMonth — the
-      // lifetime read cannot equal a month-boundary snapshot at any post-close instant. The
-      // read==snapshot invariant is therefore only well-defined for non-MONTHLY_HOURS
-      // schedules; MONTHLY_HOURS is fully covered by the close-snapshot golden + core-parity
-      // assertions above. (Only mj-80-feiertag reaches this branch — the other MONTHLY_HOURS
-      // cells are skipped by httpHolidaysMatchDeclared.)
+      // Issue #433 (plan 02): tried enabling this assertion unconditionally for
+      // MONTHLY_HOURS after the core fix (the old "prorates by CALENDAR days" reason
+      // this guard previously cited is gone — plan 01 removed that fallback). MEASURED
+      // result: it still fails for mj-80-feiertag — 218/60 = 3.6(3) h, but
+      // `overtime.ts:270`'s `Math.round(balance * 100) / 100` rounds the LIVE
+      // GET /overtime response to 2 decimals (`balanceHours: 3.63`), which misses
+      // `toBeCloseTo(3.6333..., 4)` by 0.0033. This is a display-rounding artifact of
+      // the HTTP read path, not a Soll-calculation gap — the close-snapshot golden
+      // assertions above already pin the exact minute-level value (218) that this
+      // rounded read is derived from. The read==snapshot invariant at 4-decimal
+      // precision is therefore still only well-defined for non-MONTHLY_HOURS schedules,
+      // whose golden `overtimeHours` values happen to be exact at 2 decimals.
       if (cell.scheduleType !== "MONTHLY_HOURS") {
         expect(body.balanceHours, "GET /overtime balanceHours == overtimeHours").toBeCloseTo(
           cell.expected.overtimeHours,
