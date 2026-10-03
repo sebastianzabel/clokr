@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.14.0](https://github.com/sebastianzabel/clokr/compare/v1.13.1...v1.14.0) (2026-10-03)
+
+
+### Features
+
+* **429:** Urlaub reduziert die vertraglichen Wochenarbeitstage (SHIFT_BASED) ([#437](https://github.com/sebastianzabel/clokr/issues/437)) ([c77eb55](https://github.com/sebastianzabel/clokr/commit/c77eb55e82ade9ce70c7c6ed40a87446f8ad8ab2))
+* **435:** Urlaubstage pro Person, Azubi-Standard und gesetzlicher Mindesturlaub ([#456](https://github.com/sebastianzabel/clokr/issues/456)) ([ab32aff](https://github.com/sebastianzabel/clokr/commit/ab32affde3877d36d27b78ebbfb8b6cecbd26b0e))
+* **436:** SHIFT_BASED – übliche Arbeitstage; angebrochene Urlaubswochen und Wochen-Union ([#464](https://github.com/sebastianzabel/clokr/issues/464)) ([8d95116](https://github.com/sebastianzabel/clokr/commit/8d9511688dc008781ed7ef8454d34eadb7276539))
+* **444:** Prüfbericht Urlaubsansprüche (nur lesend) ([#466](https://github.com/sebastianzabel/clokr/issues/466)) ([2fcadfe](https://github.com/sebastianzabel/clokr/commit/2fcadfe415097ebe33e7b3b8af3edddda48bb34a))
+* Schicht/Urlaub-Konflikterkennung + Wochenübersicht Planungsbedarf ([#430](https://github.com/sebastianzabel/clokr/issues/430)) ([#439](https://github.com/sebastianzabel/clokr/issues/439)) ([d23dc84](https://github.com/sebastianzabel/clokr/commit/d23dc841cdb77858e19928b3a76adca3d5131143))
+
+
+### Bug Fixes
+
+* **433:** MONTHLY_HOURS – Monats-Soll: Urlaub, Krankheit und Feiertage mindern das Soll (Ø-Methode) ([#474](https://github.com/sebastianzabel/clokr/issues/474)) ([cbe460d](https://github.com/sebastianzabel/clokr/commit/cbe460ddeaacfe9f4ebc3d6986cf53f002d24fdc))
+* **438:** Saldo zählt heute nie mehr mit — laufender Saldo endet immer gestern ([#443](https://github.com/sebastianzabel/clokr/issues/443)) ([b860252](https://github.com/sebastianzabel/clokr/commit/b86025207eabc19462944648af6502507fcb3587))
+* **442:** Aktionsspalten bleiben Tabellenzellen (Team-Anträge, Meine Anträge, Berichte, Verfügbarkeit) ([#460](https://github.com/sebastianzabel/clokr/issues/460)) ([76463ee](https://github.com/sebastianzabel/clokr/commit/76463ee4524b22b798709df7bd4ba26b8d8ef100))
+* **445:** Urlaubskonto – Folgejahr-Anspruch, jahresübergreifender Self-Heal, Resturlaub und Übertragsfrist ([#455](https://github.com/sebastianzabel/clokr/issues/455)) ([9603d04](https://github.com/sebastianzabel/clokr/commit/9603d04b728cfa1a38a3f64ee34072f815794471))
+* **446:** Urlaub mit beantragter Stornierung zählt im Saldo; 409 bei abgeschlossenem Monat ([#458](https://github.com/sebastianzabel/clokr/issues/458)) ([c45aafa](https://github.com/sebastianzabel/clokr/commit/c45aafa09559de7c6451318db63d54138035bc58))
+* **447:** Austritt – Soll endet am Austrittstag; Anspruch nach § 5 BUrlG ([#463](https://github.com/sebastianzabel/clokr/issues/463)) ([a384644](https://github.com/sebastianzabel/clokr/commit/a3846445544fa9c95a35136e82fddce135b2600f))
+* **448:** Kein Urlaub an Berufsschultagen – keine doppelte Gutschrift im Saldo ([#465](https://github.com/sebastianzabel/clokr/issues/465)) ([e5b625a](https://github.com/sebastianzabel/clokr/commit/e5b625a4fd317d7e04542c0af4eb88fe62d29fc0))
+* **449:** Halber Urlaubstag nur für ein einzelnes Datum ([#461](https://github.com/sebastianzabel/clokr/issues/461)) ([a8e4d4b](https://github.com/sebastianzabel/clokr/commit/a8e4d4b5d8e7644803bcc59847e9981d486bd2df))
+* **468:** Urlaubsbuchungen – Überstundenausgleich, /correct mit § 9, 6-Tage-Vertrag, Elternzeit-Kürzung ([#476](https://github.com/sebastianzabel/clokr/issues/476)) ([b82ca33](https://github.com/sebastianzabel/clokr/commit/b82ca33dd7377e5da074bd4bdcd4a58d5b800618))
+
 ## [1.13.1](https://github.com/sebastianzabel/clokr/compare/v1.13.0...v1.13.1) (2026-09-30)
 
 
