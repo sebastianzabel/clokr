@@ -773,8 +773,11 @@ function apportionAcrossContractSegments(input: ApportionAcrossContractSegmentsI
   if (distinctValues.size <= 1) {
     // D-02 precedence: every owed month carries the same full-year value — this IS a
     // one-contract year, so it returns today's (unrounded-here) value rather than rounding an
-    // already-uniform sum a second time.
-    return employmentYearVacationDays(monthValues[0] ?? 0, year, hireDate, exitDate);
+    // already-uniform sum a second time. `monthValues[0]` is always defined here: `ownedMonths`
+    // (and therefore `monthValues`, its 1:1 map) is guaranteed non-empty by the `length === 0`
+    // return above (code review finding IN-01 — `noUncheckedIndexedAccess` is not enabled in this
+    // project, so no `?? 0` fallback is needed to satisfy the type checker).
+    return employmentYearVacationDays(monthValues[0], year, hireDate, exitDate);
   }
 
   const sum = monthValues.reduce((acc, value) => acc + value, 0);
