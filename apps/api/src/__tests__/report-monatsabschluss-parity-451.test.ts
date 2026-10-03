@@ -35,6 +35,20 @@ import {
   createTestSalon,
   salonIdForEmployee,
 } from "./setup";
+import * as pdfUtils from "../composition/pdf";
+
+// Task 2 — both monthly PDFs read the SAME working-time-account figures the JSON row does.
+// `vi.fn(actual.fn)` wraps the REAL generator (byte content stays a valid PDF — RESEARCH.md's
+// own "never byte-search a PDF" pitfall) so the spy only lets the test inspect the DATA payload
+// handed to it, mirroring reports-priced-leave-days-451.test.ts's established pattern.
+vi.mock("../composition/pdf", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../composition/pdf")>();
+  return {
+    ...actual,
+    generateMonthlyReportPdf: vi.fn(actual.generateMonthlyReportPdf),
+    streamCompanyMonthlyReportPdf: vi.fn(actual.streamCompanyMonthlyReportPdf),
+  };
+});
 
 async function loginAs(app: FastifyInstance, email: string, password = "test1234") {
   const res = await app.inject({
@@ -144,6 +158,55 @@ async function createShiftBasedEmployee(
       saturdayHours: 8,
       sundayHours: 0,
       workDays: [1, 2, 3, 4, 5],
+      validFrom: new Date(`${hireDate}T00:00:00Z`),
+    },
+  });
+  await app.prisma.employeeSalonAssignment.create({
+    data: {
+      tenantId,
+      employeeId: employee.id,
+      salonId,
+      kind: "HOME",
+      validFrom: new Date(`${hireDate}T00:00:00Z`),
+      validUntil: null,
+      weekdays: [],
+    },
+  });
+  await app.prisma.overtimeAccount.create({ data: { employeeId: employee.id, balanceHours: 0 } });
+  return { id: employee.id };
+}
+
+async function createMonthlyHoursEmployee(
+  app: FastifyInstance,
+  tenantId: string,
+  salonId: string,
+  label: string,
+  hireDate: string,
+  monthlyHours: number,
+): Promise<{ id: string }> {
+  const passwordHash = await bcrypt.hash("test1234", 10);
+  const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const email = `${label}-${suffix}@test.de`;
+  const user = await app.prisma.user.create({
+    data: { email, passwordHash, role: "EMPLOYEE", isActive: true },
+  });
+  const employee = await app.prisma.employee.create({
+    data: {
+      tenantId,
+      userId: user.id,
+      employeeNumber: `${label}-${suffix}`,
+      firstName: label,
+      lastName: "Parity451MH",
+      hireDate: new Date(`${hireDate}T00:00:00Z`),
+    },
+  });
+  await app.prisma.workSchedule.create({
+    data: {
+      employeeId: employee.id,
+      type: "MONTHLY_HOURS",
+      monthlyHours,
+      workDays: [1, 2, 3, 4, 5],
+      overtimeMode: "TRACK_ONLY",
       validFrom: new Date(`${hireDate}T00:00:00Z`),
     },
   });
@@ -358,5 +421,167 @@ describe("Issue #451 (D-03) — report == Monatsabschluss, Task 1 (issue example
         ((row.overtimeHours ?? 0) - ((row.workedHours ?? 0) - (row.shouldHours ?? 0))) * 100,
       ) / 100;
     expect(row.balanceAdjustmentHours).toBe(expected);
+  });
+});
+
+describe("Issue #451 (D-03) — report == Monatsabschluss, Task 2 (both monthly PDFs on the same figures)", () => {
+  let app: FastifyInstance;
+  let tenantId: string;
+  let salonId: string;
+  let adminToken: string;
+
+  let fixedEmpId: string;
+  let shiftEmpId: string;
+  let mhNoBudgetEmpId: string;
+
+  beforeAll(async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-15T10:00:00.000Z"));
+
+    app = await getTestApp();
+    const seed = await seedTestData(app, "rmp451t2", { withDefaultSalon: false });
+    tenantId = seed.tenant.id;
+    adminToken = seed.adminToken;
+
+    const salon = await createTestSalon(app.prisma, tenantId, { federalState: "NIEDERSACHSEN" });
+    salonId = salon.id;
+
+    const fixedEmp = await createFixedEmployee(app, tenantId, salonId, "rmp451t2fix", "2025-01-01");
+    fixedEmpId = fixedEmp.id;
+    await seedEntry(app, fixedEmpId, "2026-05-04", "08:00", 480, 30);
+
+    const shiftEmp = await createShiftBasedEmployee(
+      app,
+      tenantId,
+      salonId,
+      "rmp451t2shift",
+      "2025-01-01",
+    );
+    shiftEmpId = shiftEmp.id;
+    for (const dateStr of MAY_2026_MON_FRI) {
+      await seedShift(app, shiftEmpId, dateStr, "08:00", 480);
+      await seedEntry(app, shiftEmpId, dateStr, "08:00", 480);
+    }
+
+    // MONTHLY_HOURS employee with NO budget (pure tracking, D-01) — the resolver's own
+    // "unlabelled" population: overtimeConfirmed must stay null (not relabelled false), never a
+    // fabricated Soll, while workedHours still reflects the recorded entries (docs/saldo-anzeige.md).
+    const mhEmp = await createMonthlyHoursEmployee(
+      app,
+      tenantId,
+      salonId,
+      "rmp451t2mh0",
+      "2025-01-01",
+      0,
+    );
+    mhNoBudgetEmpId = mhEmp.id;
+    await seedEntry(app, mhNoBudgetEmpId, "2026-05-04", "08:00", 480, 30);
+  });
+
+  afterAll(async () => {
+    vi.useRealTimers();
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("report-monatsabschluss-parity-451 Task2 cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  async function monthSaldoOracle(employeeId: string) {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/overtime/month-saldo/${employeeId}?year=2026&month=5`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    return JSON.parse(res.body) as {
+      workedMinutes: number;
+      expectedMinutes: number;
+      balanceMinutes: number;
+    };
+  }
+
+  async function monthlyReportRow(employeeId: string) {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/reports/monthly?employeeId=${employeeId}&year=2026&month=5`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      rows: Array<{
+        employeeId: string;
+        workedHours: number;
+        shouldHours: number;
+        overtimeHours?: number;
+        overtimeConfirmed?: boolean | null;
+      }>;
+    };
+    const row = body.rows.find((r) => r.employeeId === employeeId);
+    if (!row) throw new Error(`no row for ${employeeId}`);
+    return row;
+  }
+
+  it("FIXED_SCHEDULE: GET /reports/monthly/pdf payload targetHours == 144, not 168; workedHours/overtimeHours equal the JSON row; overtimeConfirmed false", async () => {
+    const spy = vi.mocked(pdfUtils.generateMonthlyReportPdf);
+    spy.mockClear();
+
+    const jsonRow = await monthlyReportRow(fixedEmpId);
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/reports/monthly/pdf?employeeId=${fixedEmpId}&year=2026&month=5`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const payload = spy.mock.calls[0][0];
+    expect(payload.targetHours).toBe(144);
+    expect(payload.workedHours).toBe(jsonRow.workedHours);
+    expect(payload.overtimeHours).toBe(jsonRow.overtimeHours);
+    expect(payload.overtimeConfirmed).toBe(false);
+  });
+
+  it("SHIFT_BASED: GET /reports/monthly/pdf/all company PDF row targetHours equals GET /overtime/month-saldo expectedMinutes", async () => {
+    const spy = vi.mocked(pdfUtils.streamCompanyMonthlyReportPdf);
+    spy.mockClear();
+
+    const oracle = await monthSaldoOracle(shiftEmpId);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/reports/monthly/pdf/all?year=2026&month=5",
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const companyData = spy.mock.calls[0][1];
+    const row = companyData.rows.find((r) => {
+      // employeeNumber carries the fixture label — the shift employee's label contains "shift".
+      return r.employeeNumber.includes("rmp451t2shift");
+    });
+    expect(row).toBeDefined();
+    expect(row!.targetHours).toBe(Math.round((oracle.expectedMinutes / 60) * 100) / 100);
+  });
+
+  it("MONTHLY_HOURS without budget: JSON overtimeConfirmed null, overtimeHours 0, shouldHours 0, workedHours == recorded hours; PDF payload overtimeConfirmed null", async () => {
+    const jsonRow = await monthlyReportRow(mhNoBudgetEmpId);
+    expect(jsonRow.overtimeConfirmed).toBeNull();
+    expect(jsonRow.overtimeHours).toBe(0);
+    expect(jsonRow.shouldHours).toBe(0);
+    expect(jsonRow.workedHours).toBe(8); // 480min / 60
+
+    const spy = vi.mocked(pdfUtils.generateMonthlyReportPdf);
+    spy.mockClear();
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/reports/monthly/pdf?employeeId=${mhNoBudgetEmpId}&year=2026&month=5`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const payload = spy.mock.calls[0][0];
+    expect(payload.overtimeConfirmed).toBeNull();
   });
 });
