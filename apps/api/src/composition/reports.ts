@@ -55,6 +55,7 @@ import {
   BS_NO_LEAVE_LABEL, // Issue #448 (D-05, plan 03)
   leaveDaysByCodeWithin, // Issue #451 (D-01) — the DATEV export's VACATION Lohnart line
   type LeaveDaysForCode, // Issue #451 (D-01)
+  leaveRequestDaysWithin, // Issue #451 (D-02) — the Urlaubsliste / Urlaubs-PDF list's per-period priced days
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
 import type { LeaveTypeCode } from "@clokr/db";
 
@@ -1005,12 +1006,21 @@ async function fetchLeaveDaysByCodeForMonthlyReport(
 // Issue #448 (D-05, plan 03): the ONE `periods` builder for both `/leave-list/pdf` and the list
 // part of `/vacation/pdf` — both built this identically before this plan. `bsDatesByRequestId`
 // comes from ONE vocationalSchoolDatesForLeaveRequests call per route (never per period); a BS
-// date outside the year-clamped `[s, e2]` window is neither subtracted from `days` nor named in
-// `note` — it was never counted in the unclamped period either. Module-private — the test suite
-// inspects its output the same way reports.test.ts already does for the vacation-overview PDF: a
-// `vi.mock("../pdf")` spy on `streamLeaveListPdf` captures the `LeaveListData` argument before it
-// reaches PDFKit's Flate-compressed streams (see that file's own header comment on why a
-// byte-content substring search on the PDF payload is proven vacuous).
+// date outside the year-clamped `[s, e2]` window is neither named in `note` nor affects `days` —
+// it was never counted in the unclamped period either.
+//
+// Issue #451 (D-02): `days` is read from `pricedDaysByRequestId` (the absence context's own
+// year-clipped leaveRequestDaysWithin result, prefetched once per route) — the local
+// calendar-day count this function used to compute itself, and its BS-date subtraction, are
+// gone; the absence context's own pricing already excludes a Berufsschultag from a VACATION
+// request's count (#448). The BS note itself stays exactly as built before — it explains WHY the
+// priced days are lower, independent of how those days were priced.
+//
+// Module-private — the test suite inspects its output the same way reports.test.ts already does
+// for the vacation-overview PDF: a `vi.mock("../pdf")` spy on `streamLeaveListPdf` captures the
+// `LeaveListData` argument before it reaches PDFKit's Flate-compressed streams (see that file's
+// own header comment on why a byte-content substring search on the PDF payload is proven
+// vacuous).
 function buildLeaveListPeriods(
   leaveRequests: Array<{
     id: string;
@@ -1022,6 +1032,7 @@ function buildLeaveListPeriods(
   yearEnd: Date,
   tz: string,
   bsDatesByRequestId: Map<string, string[]>,
+  pricedDaysByRequestId: Map<string, number>,
 ): Array<{
   startDate: string;
   endDate: string;
@@ -1032,12 +1043,11 @@ function buildLeaveListPeriods(
   return leaveRequests.map((lr) => {
     const s = lr.startDate < yearStart ? yearStart : lr.startDate;
     const e2 = lr.endDate > yearEnd ? yearEnd : lr.endDate;
-    const rawDays = Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
     const bsDatesInRange = (bsDatesByRequestId.get(lr.id) ?? []).filter((d) => {
       const dt = new Date(`${d}T00:00:00.000Z`);
       return dt >= s && dt <= e2;
     });
-    const days = Math.max(0, rawDays - bsDatesInRange.length);
+    const days = pricedDaysByRequestId.get(lr.id) ?? 0;
     const note = bsDatesInRange.length
       ? `${BS_NO_LEAVE_LABEL}: ${bsDatesInRange
           .map((d) => formatInTimeZone(new Date(`${d}T00:00:00.000Z`), tz, "dd.MM."))
@@ -1051,6 +1061,41 @@ function buildLeaveListPeriods(
       ...(note ? { note } : {}),
     };
   });
+}
+
+// Issue #451 (D-02): one leaveRequestDaysWithin call per leave request in the year — feeds
+// buildLeaveListPeriods's required pricedDaysByRequestId parameter with the absence context's
+// own priced, year-clipped day count, replacing the unclamped-at-year-boundary calendar-day count
+// buildLeaveListPeriods used to compute itself. `yearFrom`/`yearTo` MUST be UTC-midnight calendar
+// days (not `yearStart`/`yearEnd`'s own `23:59:59.999Z` end-of-day instant) — see
+// leaveRequestDaysWithin's own docblock. Sequential awaits (no unbounded Promise.all), same shape
+// as fetchLeaveDaysByCodeForMonthlyReport above.
+async function fetchPricedDaysByRequestId(
+  app: FastifyInstance,
+  tenantId: string,
+  employees: Array<{
+    id: string;
+    leaveRequests: Array<{ id: string; startDate: Date; endDate: Date; days: unknown }>;
+  }>,
+  yearFrom: Date,
+  yearTo: Date,
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  for (const emp of employees) {
+    for (const lr of emp.leaveRequests) {
+      result.set(
+        lr.id,
+        await leaveRequestDaysWithin(app.prisma, {
+          employeeId: emp.id,
+          tenantId,
+          request: lr,
+          from: yearFrom,
+          to: yearTo,
+        }),
+      );
+    }
+  }
+  return result;
 }
 
 export async function reportRoutes(app: FastifyInstance) {
@@ -2329,6 +2374,16 @@ export async function reportRoutes(app: FastifyInstance) {
           )
         : new Map<string, string[]>();
 
+      // Issue #451 (D-02): the absence context's own priced, year-clipped day count for every
+      // listed request — UTC-midnight bounds, never yearStart/yearEnd's own end-of-day instant.
+      const leaveListPricedDays = await fetchPricedDaysByRequestId(
+        app,
+        req.user.tenantId,
+        employees,
+        new Date(Date.UTC(y, 0, 1)),
+        new Date(Date.UTC(y, 11, 31)),
+      );
+
       // Build leave list data (include all employees, even those with no leave — show empty periods)
       const leaveListData = {
         tenantName: tenant?.name ?? "",
@@ -2340,6 +2395,7 @@ export async function reportRoutes(app: FastifyInstance) {
             yearEnd,
             tz,
             leaveListBsDates,
+            leaveListPricedDays,
           );
           return {
             employeeName: `${emp.firstName} ${emp.lastName}`,
@@ -2452,6 +2508,15 @@ export async function reportRoutes(app: FastifyInstance) {
           )
         : new Map<string, string[]>();
 
+      // Issue #451 (D-02): same ONE batch priced-days read as /leave-list/pdf above.
+      const vacationPdfPricedDays = await fetchPricedDaysByRequestId(
+        app,
+        req.user.tenantId,
+        employees,
+        new Date(Date.UTC(y, 0, 1)),
+        new Date(Date.UTC(y, 11, 31)),
+      );
+
       // Build leave list data
       const leaveListData = {
         tenantName: tenant?.name ?? "",
@@ -2463,6 +2528,7 @@ export async function reportRoutes(app: FastifyInstance) {
             yearEnd,
             tz,
             vacationPdfBsDates,
+            vacationPdfPricedDays,
           );
           return {
             employeeName: `${emp.firstName} ${emp.lastName}`,

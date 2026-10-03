@@ -1761,6 +1761,51 @@ export async function leaveDaysByCodeWithin(
 }
 
 /**
+ * Issue #451 (D-02) — Erweiterung, additive. One leave request's priced days inside a UTC
+ * calendar-day window `[from, to]`, mirroring the per-request branch inside
+ * {@link countedLeaveDaysWithin}: a request fully inside `[from, to]` returns its own stored
+ * `days` (no holiday-map round trip); otherwise {@link getHolidayMap} is fetched over the
+ * request's own `[startDate, endDate]` range and the chronological-prefix rule
+ * ({@link leaveDaysWithin}) apportions the clipped share. Returns 0 when `[from, to]` does not
+ * overlap the request at all — `leaveDaysWithin`'s own prefix rule already yields 0 for both
+ * "window entirely before the request" and "window entirely after it" (see that function's own
+ * docblock), so no separate overlap check is needed here.
+ *
+ * Consumed by composition/reports.ts (the Urlaubsliste / Urlaubs-PDF list, through
+ * contexts/absence/index.ts).
+ */
+export async function leaveRequestDaysWithin(
+  db: DbClient,
+  args: {
+    employeeId: string;
+    tenantId: string;
+    request: { startDate: Date; endDate: Date; days: unknown };
+    from: Date;
+    to: Date;
+  },
+): Promise<number> {
+  const { employeeId, tenantId, request, from, to } = args;
+  const fromDay = utcDay(from);
+  const toDay = utcDay(to);
+
+  if (
+    utcDay(request.startDate).getTime() >= fromDay.getTime() &&
+    utcDay(request.endDate).getTime() <= toDay.getTime()
+  ) {
+    return round2(Number(request.days));
+  }
+
+  const holidayMap = await getHolidayMap(
+    db,
+    tenantId,
+    employeeId,
+    request.startDate,
+    request.endDate,
+  );
+  return leaveDaysWithin(db, employeeId, tenantId, request, from, to, new Set(holidayMap.keys()));
+}
+
+/**
  * Issue #445 (D-10) — heals one `LeaveEntitlement.usedDays` row in place: recomputes
  * `requestDays - section9CreditDays` for the row's calendar year via
  * {@link countedLeaveDaysWithin}, writes the new value plus an audited UPDATE (reason
