@@ -37,7 +37,6 @@ import {
   weekRangeUtc,
   monthRangeUtc,
   monthDayBounds,
-  calcExpectedMinutesTz,
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
   timeStrInTz,
@@ -47,6 +46,7 @@ import {
   resolveMissingEntriesDays,
   computeOvertimeBalanceBreakdown,
   monthlyHoursMonthSollMinutes, // Issue #433 (D-11)
+  computeWeekProgress, // Issue #451 (D-06) — whole-week Soll + to-date pair from the saldo core
   type OvertimeBalanceBreakdown,
 } from "../contexts/working-time-account"; // Phase 100B Plan 06 — W8/W9/W10; Plan 07 — W5/W6; Phase 101B
 import {
@@ -177,32 +177,40 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const weekMinutes = isMonthlyHoursSchedule ? 0 : periodWorkedMinutes;
 
       // ── Holidays by work location (Phase 71b, issue #71) ─────────────────
-      // Resolved ONCE per request, over the full range the Soll computation below needs (the
-      // whole month for MONTHLY_HOURS, the whole week otherwise) — fed with the SAME T2 rows
-      // already loaded above (`periodEntries`), per § 2 EFZG (work location, not a single
-      // tenant-wide federal state).
-      const holidayRangeStart = isMonthlyHoursSchedule && monthStart ? monthStart : weekStart;
-      const holidayRangeEnd = isMonthlyHoursSchedule && monthEnd ? monthEnd : weekEnd;
-      const workLocationEntries: WorkLocationEntry[] = periodEntries.map((e) => ({
-        employeeId,
-        date: e.date,
-        startTime: e.startTime,
-        salonId: e.salonId,
-      }));
-      const employeeHolidaysMap = await holidaysAtWorkLocation(
-        app.prisma,
-        tenantId,
-        [employeeId],
-        dateStrInTz(holidayRangeStart, tz),
-        dateStrInTz(holidayRangeEnd, tz),
-        workLocationEntries,
-      );
-      const holidayDates = employeeHolidaysMap.get(employeeId) ?? new Map<string, string>();
+      // Issue #451 (D-06): resolved HERE only for the MONTHLY_HOURS month case now — its only
+      // remaining consumer. The non-MONTHLY_HOURS week Soll comes from computeWeekProgress
+      // below, which resolves its own per-piece work-location holidays from the saldo core —
+      // fed with the SAME T2 rows already loaded above (`periodEntries`), per § 2 EFZG (work
+      // location, not a single tenant-wide federal state).
+      let holidayDates = new Map<string, string>();
+      if (isMonthlyHoursSchedule && monthStart && monthEnd) {
+        const workLocationEntries: WorkLocationEntry[] = periodEntries.map((e) => ({
+          employeeId,
+          date: e.date,
+          startTime: e.startTime,
+          salonId: e.salonId,
+        }));
+        const employeeHolidaysMap = await holidaysAtWorkLocation(
+          app.prisma,
+          tenantId,
+          [employeeId],
+          dateStrInTz(monthStart, tz),
+          dateStrInTz(monthEnd, tz),
+          workLocationEntries,
+        );
+        holidayDates = employeeHolidaysMap.get(employeeId) ?? new Map<string, string>();
+      }
 
       // ── Soll-Stunden ──────────────────────────────────────────────────
 
       let weekSollMinutes = 0;
       let monthSollMinutes = 0;
+      // Issue #451 (D-06) — the to-date Soll/Ist pair (through yesterday, issue #438); stays
+      // undefined (never a fabricated 0) for MONTHLY_HOURS and for a null computeWeekProgress
+      // result — the response omits both fields in that case (an older cached client degrades
+      // to the previous workedHours − targetHours delta).
+      let weekWorkedToDateHours: number | undefined;
+      let weekTargetToDateHours: number | undefined;
 
       if (isMonthlyHoursSchedule) {
         // Issue #433 (D-11): the composition layer carries no Soll rule of its own — the full
@@ -260,21 +268,17 @@ export async function dashboardRoutes(app: FastifyInstance) {
           }
         }
       } else {
-        // FIXED_SCHEDULE / FLEXTIME / SHIFT_BASED: sum scheduled hours from week start up to today (inclusive).
-        // clampedEnd = today limits to hours that "should have been worked by now".
-        const clampedEnd = new Date(Math.min(today.getTime(), weekEnd.getTime()));
-        weekSollMinutes = calcExpectedMinutesTz(schedule, weekStart, clampedEnd, tz);
-
-        // Subtract holidays that fall within [weekStart, clampedEnd]
-        for (const dateStr of holidayDates.keys()) {
-          const hDate = new Date(dateStr + "T12:00:00Z");
-          if (hDate >= weekStart && hDate <= clampedEnd) {
-            const dow = getDayOfWeekInTz(hDate, tz);
-            weekSollMinutes -=
-              getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
-          }
+        // FIXED_SCHEDULE / FLEXTIME / SHIFT_BASED: Issue #451 (D-06) — the whole week's net
+        // Soll (after leave, absence, Berufsschule and holiday reduction) and the to-date
+        // Soll/Ist pair, both from the saldo core (closeEmployeeMonth) — never a composition
+        // {day}Hours walk. `null` (missing/exempt employee, or any part of the week under a
+        // MONTHLY_HOURS contract) degrades to targetHours 0 with the to-date fields omitted.
+        const weekProgress = await computeWeekProgress(app, employeeId, now);
+        if (weekProgress) {
+          weekSollMinutes = weekProgress.weekSollMinutes;
+          weekWorkedToDateHours = round(weekProgress.toDateWorkedMinutes / 60);
+          weekTargetToDateHours = round(weekProgress.toDateSollMinutes / 60);
         }
-        if (weekSollMinutes < 0) weekSollMinutes = 0;
       }
 
       // ── Überstunden ───────────────────────────────────────────────────
@@ -383,7 +387,18 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       return {
         today: { workedHours: round(todayMinutes / 60), entries: todayEntries.length },
-        week: { workedHours: round(weekMinutes / 60), targetHours: round(weekSollMinutes / 60) },
+        week: {
+          workedHours: round(weekMinutes / 60),
+          targetHours: round(weekSollMinutes / 60),
+          // Issue #451 (D-06) — additive, omitted (never a fabricated 0) when
+          // computeWeekProgress returned null (MONTHLY_HOURS or a missing/exempt employee).
+          ...(weekWorkedToDateHours !== undefined
+            ? { workedToDateHours: weekWorkedToDateHours }
+            : {}),
+          ...(weekTargetToDateHours !== undefined
+            ? { targetToDateHours: weekTargetToDateHours }
+            : {}),
+        },
         // For MONTHLY_HOURS employees the dashboard widget shows a monthly view instead of weekly.
         // periodType tells the frontend which widget to render.
         periodType: isMonthlyHoursSchedule ? "month" : "week",

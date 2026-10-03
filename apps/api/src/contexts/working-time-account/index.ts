@@ -99,6 +99,10 @@ export { computeMonthSaldo } from "./month-saldo";
 export { computeMonthReportFigures } from "./month-saldo";
 export type { MonthReportFigures } from "./month-saldo";
 export { loadNegativeBalanceTolerance } from "./negative-balance-tolerance";
+// Issue #451 (D-06) — the dashboard week block's whole-week Soll and to-date Soll/Ist, both from
+// the saldo core; see week-progress.ts's own doc block for the split-into-month-pieces algorithm.
+export { computeWeekProgress } from "./week-progress";
+export type { WeekProgress } from "./week-progress";
 export { isSnapshotLocked } from "./snapshot-lock";
 export { closeEmployeeMonth } from "./close-employee-month";
 // Issue #433 (D-11) — pure re-export, no Prisma: the one full-month MONTHLY_HOURS Soll, shared
