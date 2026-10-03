@@ -474,6 +474,8 @@ model Employee {
   section9Credits          Section9Credit[]
   // Phase 67b (issue #67) — Salonzuordnung rows (Restrict FK — never cascade-delete history)
   salonAssignments         EmployeeSalonAssignment[]
+  // Issue #468 — § 17 Abs. 1 BEEG Elternzeit-Kürzung rows (Restrict FK — never cascade-delete history)
+  parentalLeaveReductions  ParentalLeaveReduction[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
@@ -837,12 +839,19 @@ model LeaveRequest {
   deletedAt               DateTime?          @db.Timestamptz // soft delete
   createdAt               DateTime           @default(now()) @db.Timestamptz
   updatedAt               DateTime           @updatedAt @db.Timestamptz
+  // Issue #468 A-4/D-02 — minutes booked against the Überstundenkonto at approval time, for
+  // type OVERTIME_COMP only. Storno/correction reverse THIS stored value, never a
+  // recomputation. Null on every row approved before #468 and on every other leave type.
+  overtimeCompMinutes     Int?
 
-  employee           Employee          @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  leaveType          LeaveType         @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
-  specialLeaveRule   SpecialLeaveRule? @relation(fields: [specialLeaveRuleId], references: [id])
-  section9AsSick     Section9Credit[]  @relation("Section9SickRequest")
-  section9AsVacation Section9Credit[]  @relation("Section9VacationRequest")
+  employee              Employee                 @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  leaveType              LeaveType                @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  specialLeaveRule       SpecialLeaveRule?        @relation(fields: [specialLeaveRuleId], references: [id])
+  section9AsSick         Section9Credit[]         @relation("Section9SickRequest")
+  section9AsVacation     Section9Credit[]         @relation("Section9VacationRequest")
+  // Issue #468 (D-09/A-1) — § 17 Abs. 1 BEEG manual reduction(s) anchored on this request when
+  // it is an APPROVED PARENTAL leave request.
+  parentalLeaveReductions ParentalLeaveReduction[]
 
   @@index([employeeId])
   @@index([employeeId, status])
@@ -967,24 +976,82 @@ model Section9Credit {
   reviewedAt        DateTime?            @db.Timestamptz
   createdAt         DateTime             @default(now()) @db.Timestamptz
   updatedAt         DateTime             @updatedAt @db.Timestamptz
+  // Issue #468 (D-04/A-3): 0 = the originally detected credit; n+1 = the correction credit
+  // that replaces revision n after a `/correct` clipped its range. Detection always creates
+  // revision 0, so the WR-03 race protection (the widened unique below) is unchanged.
+  revision          Int                  @default(0)
+  // Issue #468 (D-04/A-3): set on the NEW correction credit, pointing at the credit it
+  // replaces. NoAction (not Restrict) so a whole supersession chain can be removed in one
+  // statement by test cleanup, while a single still-referenced row cannot be deleted.
+  supersedesId      String?              @unique
 
-  employee        Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  sickRequest     LeaveRequest @relation("Section9SickRequest", fields: [sickRequestId], references: [id], onDelete: Restrict)
-  vacationRequest LeaveRequest @relation("Section9VacationRequest", fields: [vacationRequestId], references: [id], onDelete: Restrict)
+  employee        Employee        @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  sickRequest     LeaveRequest    @relation("Section9SickRequest", fields: [sickRequestId], references: [id], onDelete: Restrict)
+  vacationRequest LeaveRequest    @relation("Section9VacationRequest", fields: [vacationRequestId], references: [id], onDelete: Restrict)
+  supersedes      Section9Credit? @relation("Section9CreditSupersedes", fields: [supersedesId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  supersededBy     Section9Credit? @relation("Section9CreditSupersedes")
 
-  // Phase 104 code review WR-03: exactly ONE § 9 Vorgang per (Krankmeldung, Urlaubsantrag)
-  // pair. The detection path guards with a findFirst/create pair that is NOT in a
+  // Phase 104 code review WR-03: exactly ONE § 9 Vorgang per (Krankmeldung, Urlaubsantrag,
+  // Revision) triple. The detection path guards with a findFirst/create pair that is NOT in a
   // transaction, so two concurrent approvals of the same sick request (double click, retry,
   // a manager racing a cron path) could create two AU_PENDING rows for the same overlap. If
   // both were later confirmed, reverseVacationDays() would run twice and
   // sumConfirmedSection9DaysByRequest() would sum both — a double credit that SURVIVES the
   // self-heal, because self-heal trusts the credit sum. The DB is the only place this can
-  // be enforced.
-  @@unique([sickRequestId, vacationRequestId])
+  // be enforced. Issue #468 (D-04/A-3): widened with `revision` so a `/correct` correction
+  // credit (revision n+1) for the same (sick, vacation) pair no longer collides with the
+  // detected revision-0 row it supersedes.
+  @@unique([sickRequestId, vacationRequestId, revision])
   @@index([employeeId])
   @@index([sickRequestId])
   @@index([vacationRequestId])
   @@index([status])
+}
+
+// ─────────────────────────────────────────────
+// ELTERNZEIT-KÜRZUNG (Issue #468, D-08/D-09, as amended by A-1)
+// ─────────────────────────────────────────────
+//
+// § 17 Abs. 1 BEEG: Elternzeit reduces the yearly vacation entitlement by 1/12 per full
+// calendar month of Elternzeit — but only once the employer has DECLARED the reduction to the
+// employee ("erklärt"); it does not apply automatically (owner decision on #451, 2026-10-03).
+//
+// A-1 (research-confirmed, supersedes the Absence anchor in D-08/D-09): Elternzeit in this
+// codebase is an APPROVED `LeaveRequest` with leaveType code PARENTAL (REQUESTABLE_CODES), not
+// an `Absence` — no production code path ever writes an Absence(PARENTAL) row (documented
+// deviation, docs/adr/0001-abweichungen.md). This model therefore anchors on `LeaveRequest`,
+// not `Absence`.
+enum ParentalLeaveReductionStatus {
+  ACTIVE
+  REVOKED
+}
+
+model ParentalLeaveReduction {
+  id             String                       @id @default(uuid())
+  employeeId     String
+  leaveRequestId String
+  year           Int
+  months         Int
+  reducedDays    Decimal                      @db.Decimal(5, 2)
+  // Date the reduction was declared ("erklärt") to the employee — § 17 Abs. 1 BEEG requires
+  // this declaration before the reduction may take effect; mandatory input, never derived.
+  declaredAt     DateTime                     @db.Date
+  status         ParentalLeaveReductionStatus @default(ACTIVE)
+  createdBy      String
+  createdAt      DateTime                     @default(now()) @db.Timestamptz
+  revokedAt      DateTime?                    @db.Timestamptz
+  revokedBy      String?
+
+  // Issue #468 (D-09): Restrict — a reduction row is retention-relevant history and is never
+  // cascade-deleted when the employee or the underlying leave request go away.
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  leaveRequest LeaveRequest @relation(fields: [leaveRequestId], references: [id], onDelete: Restrict)
+
+  // Issue #468 (D-09): idempotent per (request, year) — a second commit for the same
+  // Elternzeit/year pair is rejected (409), never a second row.
+  @@unique([leaveRequestId, year])
+  @@index([employeeId])
+  @@index([employeeId, year])
 }
 
 // ─────────────────────────────────────────────
@@ -1363,6 +1430,10 @@ enum Section9CreditStatus {
   AU_PENDING
   CONFIRMED
   REJECTED
+  // Issue #468 (D-04/A-3): a CONFIRMED credit a `/correct` made obsolete (its credited range no
+  // longer overlaps the corrected request's new range). Kept, never deleted (R7); a NEW
+  // correction credit with the clipped range may be created referencing it via `supersedesId`.
+  SUPERSEDED
 }
 
 // Phase 63 (D-22): origin of an Absence row.

@@ -1311,9 +1311,14 @@ export async function leaveRoutes(app: FastifyInstance) {
         // Issue #294: the OVERTIME_COMP reversal below is computed here but NOT written here —
         // it is issued at the tail, in the SAME $transaction as the balance persist, so a failed
         // persist rolls the reversal back with it instead of leaving an orphan receipt.
+        // Issue #468 (A-4/D-02): `minutes`/`source` added — a stored booking is reversed by
+        // exactly that value ("stored"); a legacy row with no stored value falls back to
+        // today's recomputation ("recomputed").
         let pendingOvertimeReversal: {
           tenantId: string;
           hours: number;
+          minutes: number;
+          source: "stored" | "recomputed";
           description: string;
         } | null = null;
         if (body.status === "APPROVED") {
@@ -1400,24 +1405,44 @@ export async function leaveRoutes(app: FastifyInstance) {
               select: { tenantId: true },
             });
             const tenantIdForReversal = empT?.tenantId ?? "";
-            const hMap = await getHolidayMap(
-              app.prisma,
-              tenantIdForReversal,
-              existing.employeeId,
-              existing.startDate,
-              existing.endDate,
-            );
-            const hrs = await getScheduledHours(
-              app.prisma,
-              existing.employeeId,
-              existing.startDate,
-              existing.endDate,
-              existing.halfDay,
-              new Set(hMap.keys()),
-            );
+            // Issue #468 (A-4/D-02): reverse the STORED booking, never a recomputation — a
+            // schedule edited after approval (or the D-01 formula fix itself changing the
+            // amount for a still-pending-cancellation request) must not change what gets
+            // reversed. Only a legacy row with no stored value falls back to today's
+            // recomputation, logged so the fallback stays visible.
+            let reversalMinutes: number;
+            let reversalSource: "stored" | "recomputed";
+            if (existing.overtimeCompMinutes != null) {
+              reversalMinutes = existing.overtimeCompMinutes;
+              reversalSource = "stored";
+            } else {
+              const hMap = await getHolidayMap(
+                app.prisma,
+                tenantIdForReversal,
+                existing.employeeId,
+                existing.startDate,
+                existing.endDate,
+              );
+              const hrs = await getScheduledHours(
+                app.prisma,
+                existing.employeeId,
+                existing.startDate,
+                existing.endDate,
+                existing.halfDay,
+                new Set(hMap.keys()),
+              );
+              reversalMinutes = Math.round(hrs * 60);
+              reversalSource = "recomputed";
+              app.log.warn(
+                { leaveRequestId: existing.id, employeeId: existing.employeeId },
+                "OVERTIME_COMP reversal without a stored booking — recomputed (Issue #468 A-4 legacy fallback)",
+              );
+            }
             pendingOvertimeReversal = {
               tenantId: tenantIdForReversal,
-              hours: hrs,
+              hours: reversalMinutes / 60,
+              minutes: reversalMinutes,
+              source: reversalSource,
               description: `Stornierung Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]}`,
             };
           }
@@ -1483,6 +1508,22 @@ export async function leaveRoutes(app: FastifyInstance) {
                 pendingOvertimeReversal.hours,
                 pendingOvertimeReversal.description,
               );
+              // Issue #468 (A-4/D-02): audits the reversal next to the journal row, in the SAME
+              // transaction — `source` names whether the stored booking or a legacy
+              // recomputation was reversed. The stored column itself is never cleared (history).
+              await app.audit({
+                tx,
+                userId: req.user.sub,
+                action: "OVERTIME_COMP_REVERSED",
+                entity: "LeaveRequest",
+                entityId: existing.id,
+                newValue: {
+                  overtimeCompMinutes: pendingOvertimeReversal.minutes,
+                  hours: pendingOvertimeReversal.minutes / 60,
+                  source: pendingOvertimeReversal.source,
+                },
+                request: { ip: req.ip, headers: req.headers as Record<string, string> },
+              });
             }
             // null = §18-exempt: persist nothing, the reversal above (if any) still stands as
             // the sole writer for that path.
@@ -1539,8 +1580,15 @@ export async function leaveRoutes(app: FastifyInstance) {
       // Issue #294: the OVERTIME_COMP booking below is computed but NOT written where it is
       // decided — it is issued at the tail, in the SAME $transaction as the balance persist,
       // so a failed persist rolls the booking back with it instead of leaving an orphan receipt.
-      let pendingOvertimeBooking: { tenantId: string; hours: number; description: string } | null =
-        null;
+      // Issue #468 (A-4/D-02): `minutes` carried alongside `hours` — the exact integer value
+      // stored on LeaveRequest.overtimeCompMinutes, written in the SAME transaction as the
+      // REDUCTION journal row below.
+      let pendingOvertimeBooking: {
+        tenantId: string;
+        hours: number;
+        minutes: number;
+        description: string;
+      } | null = null;
 
       // Phase 107 (D-07/D-10, T-107-20): for an APPROVED SHIFT_BASED vacation request, recompute
       // `days` from the roster and determine `daysProvisional` BEFORE the update() call below, so
@@ -1652,9 +1700,11 @@ export async function leaveRoutes(app: FastifyInstance) {
             existing.halfDay,
             new Set(hMap.keys()),
           );
+          const bookingMinutes = Math.round(hours * 60);
           pendingOvertimeBooking = {
             tenantId: tenantIdForBooking,
-            hours,
+            hours: bookingMinutes / 60,
+            minutes: bookingMinutes,
             description: `Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]} – ${existing.endDate.toISOString().split("T")[0]}`,
           };
         }
@@ -1860,6 +1910,26 @@ export async function leaveRoutes(app: FastifyInstance) {
         const effectiveBalanceHours = await computeOvertimeBalanceHours(app, existing.employeeId);
         await app.prisma.$transaction(async (tx) => {
           if (pendingOvertimeBooking) {
+            // Issue #468 (A-4/D-02): the booked minutes, the journal row and the audit commit
+            // together or not at all — written BEFORE bookOvertimeCompensation so
+            // "overtimeCompMinutes is set" <=> "the booking was written" even if a later
+            // statement in this same transaction fails.
+            await tx.leaveRequest.update({
+              where: { id: existing.id },
+              data: { overtimeCompMinutes: pendingOvertimeBooking.minutes },
+            });
+            await app.audit({
+              tx,
+              userId: req.user.sub,
+              action: "OVERTIME_COMP_BOOKED",
+              entity: "LeaveRequest",
+              entityId: existing.id,
+              newValue: {
+                overtimeCompMinutes: pendingOvertimeBooking.minutes,
+                hours: pendingOvertimeBooking.hours,
+              },
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            });
             await bookOvertimeCompensation(
               tx,
               existing.employeeId,
@@ -2000,6 +2070,10 @@ export async function leaveRoutes(app: FastifyInstance) {
         typeCode: updated.leaveType.code,
         startDate: updated.startDate.toISOString().split("T")[0],
         endDate: updated.endDate.toISOString().split("T")[0],
+        // Issue #468 (A-4/D-02): `updated` was read BEFORE the tail transaction wrote
+        // overtimeCompMinutes — reflect the just-booked value in the response without a
+        // second round-trip.
+        ...(pendingOvertimeBooking ? { overtimeCompMinutes: pendingOvertimeBooking.minutes } : {}),
         ...(proRataWarning ? { proRataWarning } : {}),
       };
     },
