@@ -92,6 +92,9 @@
     usedDays: number;
     remainingDays: number;
     pendingDays: number;
+    // Issue #451 (D-07) — additive; an older cached response has neither field, hence `??`
+    // fallback to the pre-#451 raw carriedOverDays at every call site below.
+    carriedOverEffectiveDays?: number;
     missingEntitlement?: false;
   };
   type LeaveOverviewMissingRow = {
@@ -252,6 +255,9 @@
     leaveType: { id: string; name: string };
     year: number;
     carriedOverDays: number;
+    // Issue #451 (D-08) — additive; an older cached response has no field, hence `??` fallback
+    // to the pre-#451 raw carriedOverDays at the call site below.
+    atRiskDays?: number;
     deadline: string; // ISO
     daysUntilDeadline: number;
     lastWarningSentAt: string | null;
@@ -1334,7 +1340,7 @@
                 <tr>
                   <th>Mitarbeiter</th>
                   <th>Nr.</th>
-                  <th class="numeric">Anspruch (T.)</th>
+                  <th class="numeric">Gefährdet (T.)</th>
                   <th>Verfällt am</th>
                   <th class="numeric">Verbleibend</th>
                   <th>Letzter Hinweis</th>
@@ -1346,7 +1352,7 @@
                   <tr>
                     <td>{row.employee.firstName} {row.employee.lastName}</td>
                     <td>{row.employee.employeeNumber}</td>
-                    <td class="numeric">{formatDays(row.carriedOverDays)}</td>
+                    <td class="numeric">{formatDays(row.atRiskDays ?? row.carriedOverDays)}</td>
                     <td>{formatDeDate(row.deadline)}</td>
                     <td class="numeric">
                       <span class={row.daysUntilDeadline <= 14 ? "danger" : ""}>
@@ -1520,7 +1526,9 @@
                   {:else}
                     <td>{row.leaveType?.name}</td>
                     <td class="numeric">{formatDays(row.totalDays)}</td>
-                    <td class="numeric">{formatDays(row.carriedOverDays)}</td>
+                    <td class="numeric"
+                      >{formatDays(row.carriedOverEffectiveDays ?? row.carriedOverDays)}</td
+                    >
                     <td class="numeric">{formatDays(row.usedDays)}</td>
                     <td class="numeric">{formatDays(row.pendingDays)}</td>
                     <td class="numeric strong">{formatDays(row.remainingDays)}</td>
