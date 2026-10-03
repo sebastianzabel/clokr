@@ -17,6 +17,12 @@
  *   - the German error string surfaced to the API client
  *   - the Zod refinement predicate
  *   - the deterministic snap-to-1st helper used by the bulk-apply flow
+ *   - Issue #450 (D-04), read side: `snapToMonthFirstUtc`'s `"up"` direction, consumed by
+ *     `contexts/absence/leave-days.ts`'s `loadVacationContractSegments` — a pre-Phase-60
+ *     contract change whose `validFrom` is not the 1st of a month takes effect on the 1st of the
+ *     FOLLOWING month for the vacation-entitlement segment calculation, never as a fractional
+ *     month. This is additive (Unterbau Erweiterung, ADR 0002 Entscheidung 7) — the default
+ *     `"down"` direction and every existing caller are unchanged.
  *
  * Out of scope (kept stable):
  *   - POST /employees initial schedule (validFrom = hireDate may be mid-month)
@@ -75,8 +81,8 @@ export function isMonthFirstDate(s: string): boolean {
 export const monthFirstRefinement = (s: string): boolean => isMonthFirstDate(s);
 
 /**
- * Returns a new Date set to the 1st of the input's UTC month at 00:00:00.000Z.
- * Idempotent: snap(snap(d)) === snap(d).
+ * Returns a new Date set to the 1st of the input's UTC month at 00:00:00.000Z — direction
+ * `"down"` (the default, pre-existing behavior). Idempotent: snap(snap(d)) === snap(d).
  *
  * Used by the applyToExisting bulk-apply flow so server-side "now" timestamps
  * are normalized to month-1st before being written to WorkSchedule.validFrom.
@@ -84,7 +90,17 @@ export const monthFirstRefinement = (s: string): boolean => isMonthFirstDate(s);
  * UTC components are used deliberately — WorkSchedule.validFrom is stored as
  * Timestamptz and the saldo engine compares it against UTC midnights elsewhere
  * (recalculate-snapshots.ts midpoint heuristic).
+ *
+ * Issue #450 (D-04) — direction `"up"`: a date already on the 1st (any time-of-day) stays in its
+ * own UTC month; any other date moves to the 1st of the FOLLOWING UTC month. Also idempotent
+ * (the result of `"up"` is always on the 1st, so a second `"up"` call takes the `"down"` branch
+ * and returns the same value). Used by `loadVacationContractSegments` (Issue #450, D-04) so a
+ * pre-Phase-60 contract change that was not written on the 1st takes effect on the 1st of the
+ * following month, never as a fractional month.
  */
-export function snapToMonthFirstUtc(date: Date): Date {
+export function snapToMonthFirstUtc(date: Date, direction: "down" | "up" = "down"): Date {
+  if (direction === "up" && date.getUTCDate() !== 1) {
+    return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1, 0, 0, 0, 0));
+  }
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1, 0, 0, 0, 0));
 }

@@ -14,6 +14,7 @@ import {
   findDefaultSalon,
   holidaysAtWorkLocation,
   holidaysForSalon,
+  snapToMonthFirstUtc, // Issue #450 (D-04) — normalizes a legacy non-1st validFrom in loadVacationContractSegments
 } from "../platform"; // Phase 71b (issue #71, D-04) — the engine/state map are gone from this file, see getHolidayMap()
 import { getWorkedEntriesInRange } from "../time-tracking"; // Phase 71b (issue #71) — T2, the work-location rule's entry half
 import {
@@ -189,6 +190,16 @@ export type LoadedContractSegment = VacationContractSegment & {
  * through the ONE fallback chain, {@link contractWorkDaysPerWeekFrom}, never re-derived inline. No
  * row at all → exactly one entry anchored at the epoch, with the same value today's
  * newest-row-only resolver ({@link resolveContractWorkDaysPerWeek}) yields.
+ *
+ * Issue #450 (D-04): the FIRST row's `from` is the raw `validFrom` (the contract start, which may
+ * be mid-month = hire date — exempt from the 1st-of-month rule, CLAUDE.md § Schedule Types,
+ * pre-Phase-60 "initial schedule" exception). Every LATER row's `from` is normalized with
+ * {@link snapToMonthFirstUtc} (`"up"`): a pre-Phase-60 non-1st change takes effect on the 1st of
+ * the FOLLOWING month, never as a fractional month. Each entry keeps its own raw `validFrom`
+ * (via {@link LoadedContractSegment.validFrom}) regardless of normalization, so a dry-run can
+ * list the before/after. When two rows normalize to the SAME `from` (a tie), the kernel
+ * ({@link apportionAcrossContractSegments} in `vacation-calc.ts`) picks the LAST sorted segment
+ * for any month at or after that `from` — i.e. the later of the two tied rows wins.
  */
 export async function loadVacationContractSegments(
   db: DbClient,
@@ -216,8 +227,8 @@ export async function loadVacationContractSegments(
       },
     ];
   }
-  return rows.map((row) => ({
-    from: row.validFrom,
+  return rows.map((row, index) => ({
+    from: index === 0 ? row.validFrom : snapToMonthFirstUtc(row.validFrom, "up"),
     workDaysPerWeek: contractWorkDaysPerWeekFrom(row, cfg?.defaultWorkDays),
     workScheduleId: row.id,
     validFrom: row.validFrom,
