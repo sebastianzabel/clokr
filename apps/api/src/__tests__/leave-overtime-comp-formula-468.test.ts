@@ -10,8 +10,8 @@
  * /requests/:id`), closing the gap where POST enforced the limit but widening an already-created
  * PENDING request did not.
  *
- * RED before this plan's leave.ts changes: FLEXTIME priced 60 min/day instead of 480 (the old
- * `getScheduledHours` placeholder-hours branch), the Berufsschultag exclusion did not apply to
+ * RED before this plan's leave.ts changes: FLEXTIME priced 60 min/day instead of 480 (the
+ * function's pre-rename placeholder-hours branch), the Berufsschultag exclusion did not apply to
  * FIXED_SCHEDULE OVERTIME_COMP pricing, and the PENDING-edit gate did not exist at all (any
  * widening of a still-PENDING OVERTIME_COMP request was accepted unconditionally).
  */

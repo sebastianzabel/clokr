@@ -1266,8 +1266,9 @@ export function marginalShiftBasedLeaveDays(
 /**
  * Issue #429 (D-13, #293 "the receipt follows the account") — the per-REQUEST SHIFT_BASED
  * leave-minutes receipt for a single request in isolation: Σ `leaveDaysPerWeek()` days ×
- * (`weeklyHours` × 60 ÷ `contractWorkDaysPerWeek`). Consumed by `getScheduledHours()`
- * (`./api/leave.ts`). The saldo side (`working-time-account/shift-based-leave-credit.ts`)
+ * (`weeklyHours` × 60 ÷ `contractWorkDaysPerWeek`). Consumed by `scheduledLeaveMinutes()`
+ * (`./api/leave.ts`, Issue #468 renamed this function from its original name). The saldo side
+ * (`working-time-account/shift-based-leave-credit.ts`)
  * applies the SAME per-week count and the SAME daily value per date; for a lone request with
  * no cap binding both are one number (pinned by `leave-overtime-comp-shift-based.test.ts`).
  *

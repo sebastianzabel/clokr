@@ -37,8 +37,8 @@
  * †`month-saldo.ts:194`/`recalculate-snapshots.ts:350`/`auto-close-month.ts:558` select
  * `date`+`startTime`+`endTime` (no `id`/`label`/`template`); listed once above, not duplicated.
  *
- * Ordering: `[{ date: "asc" }, { startTime: "asc" }]` on EVERY call — `leave.ts:3822`
- * (`getScheduledHours`, "first rostered shift" for a half-day credit) is the one site that already
+ * Ordering: `[{ date: "asc" }, { startTime: "asc" }]` on EVERY call — `leave.ts`'s
+ * `scheduledLeaveMinutes` (renamed by Issue #468), "first rostered shift" for a half-day credit, is the one site that already
  * needed this exact tie-break (D-07/WR-02: `Shift` has no unique constraint on
  * `(employeeId, date)`, so same-day split shifts tie under `date`-only ordering with no guaranteed
  * row order from Postgres/Prisma). The other 15 sites had no `orderBy` at all; giving them the same

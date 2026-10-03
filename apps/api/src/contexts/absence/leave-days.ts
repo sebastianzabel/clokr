@@ -733,7 +733,8 @@ async function countedVacationSiblingRequests(
 
 /**
  * Resolves how many leave days a period costs an employee (Phase 107, D-09's DB-fetching
- * side). Branch-first dispatch, mirroring getScheduledHours()'s shape: SHIFT_BASED resolves the
+ * side). Branch-first dispatch, mirroring scheduledLeaveMinutes()'s shape (Issue #468 renamed
+ * this function from its original name): SHIFT_BASED resolves the
  * roster-aware calc and RETURNS EARLY; every other schedule type falls through to the existing
  * calculateWorkDays() wrapper below, behaviour-identical to every current call site (AC-REG-02)
  * — this function is a wrapper around that call, not a rewrite of it.

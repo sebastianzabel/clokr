@@ -151,6 +151,12 @@ Clokr MUST be audit-proof (revisionssicher). All data relevant to working time, 
   recomputes a `SHIFT_BASED` employee's approved, provisional leave-day count for a period that
   overlaps the changed roster week; carries `oldValue`/`newValue` (`{days, daysProvisional}`) and
   a `Roster-Planung` trigger note — same pattern as `LEAVE_CORRECTED` (Phase 94).
+- **Überstundenausgleich** (Issue #468, D-02): `LeaveRequest.overtimeCompMinutes` stores the booked
+  minutes at approval; storno and correction reverse exactly that stored value, never a
+  recomputation (a legacy row with no stored value falls back to a logged recomputation).
+- **§ 9-Korrektur** (Issue #468, A-3): a `/correct` never deletes a `Section9Credit` — a credit
+  that no longer applies is marked `SUPERSEDED` and, if it partially survives, replaced by a new
+  correction credit (`supersedesId`), both audited.
 
 These rules apply to ALL code changes touching time entries, leave, overtime, and employee data. When in doubt, prefer creating an audit log entry over skipping it.
 
@@ -165,7 +171,7 @@ When an employee is "deleted" (DSGVO Art. 17), the system **anonymizes** instead
 - **§ 9-Vorgänge**: Section9Credit documentPath → null, reason → null (Zeilen bleiben erhalten — Korrektureintrag nach R7)
 - **Auth tokens**: Invitations, OTP, RefreshTokens are hard-deleted (not retention-relevant)
 - **Role assignments** (Phase 74b, #74): the user's `RoleAssignment` rows are hard-deleted inside the anonymization transaction, each with a `DELETE` audit entry (`newValue.reason` "Anonymisierung"); person-scope lists that contain the employee's id stay unchanged (ids only — the resolution ignores anonymized targets). `User.role` IS rewritten to EMPLOYEE in the same update as `isActive: false` (Issue #357 sub-fix C, revises Phase 75b D-14, #75): with no stored assignment left it used to be the legacy-role fallback a still-valid access token resolves through, which handed a self-anonymizing MANAGER/ADMIN's live token full rights for the rest of its lifetime — the exact gap #357's security review reported. Two neutrality cells changed on purpose (`DELETE /api/v1/employees/:id | foreign` for ADMIN and FALLBACK_ADMIN, 204→403) and are recorded as an amendment (`contexts/platform/anonymize.ts`, `apps/api/src/__tests__/neutrality/recorded/matrix-amendments.json`, ADR 0001-abweichungen Eintrag N).
-- **Preserved**: TimeEntries, LeaveRequests, Absences, Schedules, OvertimeAccount (for retention compliance)
+- **Preserved**: TimeEntries, LeaveRequests, Absences, Schedules, OvertimeAccount, `ParentalLeaveReduction` rows (no free text, nothing to anonymize — Issue #468) (for retention compliance)
 - **AuditLog**: userId → null (anonymized, not deleted)
 
 ## Data Retention (Aufbewahrungsfristen)

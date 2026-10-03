@@ -591,7 +591,7 @@ schlägt fehl, wenn er oder ein Rollenvergleich zurückkommt (D-19).
 | `contexts/absence/api/leave.ts:3389`                       | `POST /section9/:id/reopen`                     | A, M    | `section9:decide`              | ZUGEWIESEN                                   |
 | `contexts/absence/api/parental-leave-reductions.ts:147`    | `GET /:leaveRequestId`                          | A, M    | `leave-entitlement:update`     | ZUGEWIESEN                                   |
 | `contexts/absence/api/parental-leave-reductions.ts:169`    | `POST /:leaveRequestId`                         | A, M    | `leave-entitlement:update`     | ZUGEWIESEN                                   |
-| `contexts/absence/api/parental-leave-reductions.ts:354`    | `POST /:leaveRequestId/revoke`                  | A, M    | `leave-entitlement:update`     | ZUGEWIESEN                                   |
+| `contexts/absence/api/parental-leave-reductions.ts:365`    | `POST /:leaveRequestId/revoke`                  | A, M    | `leave-entitlement:update`     | ZUGEWIESEN                                   |
 | `contexts/absence/api/special-leave.ts:97`                 | `POST /rules`                                   | A       | `leave-config:manage`          | ZUGEWIESEN                                   |
 | `contexts/absence/api/special-leave.ts:130`                | `PUT /rules/:id`                                | A       | `leave-config:manage`          | ZUGEWIESEN                                   |
 | `contexts/absence/api/special-leave.ts:174`                | `DELETE /rules/:id`                             | A       | `leave-config:manage`          | ZUGEWIESEN                                   |

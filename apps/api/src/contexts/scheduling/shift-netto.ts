@@ -17,8 +17,9 @@
  * the same convention `time-arithmetic.ts` states and follows for the Phorest
  * Vor-/Nachbereitungszeit padding.
  *
- * `Shift` has NO `breakMinutes` column. The pre-Phase-100 KNOWN GAP docblock on
- * `getScheduledHours()` (apps/api/src/routes/leave.ts) prescribed a formula of
+ * `Shift` has NO `breakMinutes` column. The pre-Phase-100 KNOWN GAP docblock on the function now
+ * named `scheduledLeaveMinutes()` (`contexts/absence/api/leave.ts`, renamed by Issue #468)
+ * prescribed a formula of
  * `(endTime - startTime - breakMinutes)`, naming a field that does not exist on `Shift`. The break
  * here instead comes from the shared `getEffectiveBreakDuration()` helper (`break-effective.ts`),
  * the same auto-break resolution TimeEntry and the month-saldo roster-proration already use.
