@@ -244,4 +244,67 @@ describe("Issue #451 Plan 06 — dashboard week target is the whole-week Soll fr
     expect(body.periodType).toBe("month");
     expect(body.week.targetHours).toBe(0);
   });
+
+  // Plan 451-06, Task 2 — the to-date pair through Berufsschule and a Monday fake clock.
+  it("Azubi (FIXED_SCHEDULE) with a BS day Mon-Tue, fake clock Wed: workedToDateHours - targetToDateHours is 0 (BS is balance-neutral)", async () => {
+    const emp = await createEmployee(
+      app,
+      data.tenant.id,
+      data.salonId,
+      "azubibs",
+      "2026-01-01",
+      "FIXED_SCHEDULE",
+      { weeklyHours: 40, dayHours: 8 },
+    );
+    const token = await loginAs(app, emp.email);
+
+    // Mon 11.05. + Tue 12.05. Berufsschule, no entries at all this week.
+    await app.prisma.absence.create({
+      data: {
+        employeeId: emp.id,
+        type: "VOCATIONAL_SCHOOL",
+        source: "PATTERN",
+        startDate: new Date("2026-05-11T00:00:00Z"),
+        endDate: new Date("2026-05-12T00:00:00Z"),
+        days: 2,
+        createdBy: data.adminUser.id,
+      },
+    });
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-05-13T10:00:00.000Z"));
+
+    const body = await getDashboard(app, token);
+
+    // BBiG §15: the saldo core credits a Berufsschultag to BOTH worked and expected with the
+    // SAME value (bsWorkedMinutes === bsExpectedMinutes for FIXED_SCHEDULE — see
+    // bs-day-saldo-parity.test.ts) — whatever the concrete BBiG §15 slot credit is, the two
+    // BS days' contribution to (worked - target) is exactly 0.
+    expect(
+      (body.week.workedToDateHours ?? 0) - (body.week.targetToDateHours ?? 0),
+      "a Berufsschultag is balance-neutral in the to-date pair",
+    ).toBe(0);
+  });
+
+  it("fake clock on a Monday: workedToDateHours and targetToDateHours are both 0 (yesterday is last week)", async () => {
+    const emp = await createEmployee(
+      app,
+      data.tenant.id,
+      data.salonId,
+      "monday",
+      "2026-01-01",
+      "FIXED_SCHEDULE",
+      { weeklyHours: 40, dayHours: 8 },
+    );
+    const token = await loginAs(app, emp.email);
+
+    // 2026-05-11 is a Monday; yesterday (2026-05-10, Sunday) is in the PREVIOUS week.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-05-11T10:00:00.000Z"));
+
+    const body = await getDashboard(app, token);
+
+    expect(body.week.workedToDateHours).toBe(0);
+    expect(body.week.targetToDateHours).toBe(0);
+  });
 });
