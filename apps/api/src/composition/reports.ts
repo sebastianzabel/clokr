@@ -4,8 +4,6 @@ import iconv from "iconv-lite";
 import { formatInTimeZone } from "date-fns-tz";
 import { requireAuth } from "../middleware/auth";
 import {
-  holidaysAtWorkLocation,
-  type WorkLocationEntry,
   requirePermission,
   permissionReach,
   parseCompatRoleFilter,
@@ -26,15 +24,8 @@ import {
   streamVacationOverviewPdf,
 } from "./pdf";
 import {
-  getMonthClosingBalance, // Phase 100B Plan 07 — W4
   getTenantTimezone,
   monthRangeUtc,
-  monthDayBounds,
-  getDayOfWeekInTz,
-  getDayHoursFromSchedule,
-  dateStrInTz,
-  computeMonthSaldo,
-  monthlyHoursMonthSollMinutes, // Issue #433 (D-11)
   computeMonthReportFigures, // Issue #451 (D-03)
 } from "../contexts/working-time-account"; // Phase 101B
 import {
@@ -98,15 +89,15 @@ type LeaveRequestWithType = {
   leaveType: { name: string; code: LeaveTypeCode | null };
 };
 
-// ── Phase 104 (D-15, Tier 2) — day-based Soll dedup; Issue #451 (D-02) narrowed its scope ──────
+// ── Phase 104 (D-15, Tier 2) — day-based dedup; Issue #451 narrowed its scope twice ────────────
 // Leave-DAY counts (vacationDays, totalAbsenceDays, and every other per-type count) come from the
 // absence context's own priced, §9-netted leaveDaysByCodeWithin map (computeEmployeeSummary's
-// required leaveDaysByCode parameter) — no local day-counting rule lives in this file any more.
-// The day-iterating code below (sortLeaveForDedup, calcAbsenceMinutes) still exists ONLY to
-// dedupe the Soll-MINUTES walk (a calendar day covered by two overlapping APPROVED requests must
-// reduce Soll exactly once — SICK vs. VACATION, § 9 BUrlG, is the normal case since R1, not the
-// exception). That Soll/Ist/overtime computation is unchanged by this plan and is 451-03's to
-// replace.
+// required leaveDaysByCode parameter, Issue #451 D-02) — no local day-counting rule for THOSE
+// lives in this file any more. Soll/Ist/Überstunden (Issue #451 D-03) likewise come from the
+// working-time-account's own month result (`computeMonthReportFigures`) — this file computes no
+// Soll of its own either. `sortLeaveForDedup` below now exists ONLY for the DATEV Krank-line's
+// own per-type day dedup (`sickDaysForCode`, further down this file) — a calendar day covered by
+// two overlapping APPROVED same-type requests must be counted exactly once.
 //
 // Order identical to close-employee-month.ts's sortForDedup(): full day before half day, then
 // startDate, then id — so both implementations agree on the same value for a half vacation day
@@ -161,23 +152,14 @@ type EmployeeWithIncludes = {
   user: { role: "ADMIN" | "MANAGER" | "EMPLOYEE" };
 };
 
-// ── Helper: pick the schedule valid on a given date ──────────────────────────
-// Issue #433 (D-11): hoisted to module scope (was a local closure inside
-// computeEmployeeSummary) so the three GET handlers below can also ask "is at least one
-// listed employee's latest schedule MONTHLY_HOURS" before deciding whether to batch the
-// work-location holiday resolver call — the same question computeEmployeeSummary itself asks
-// per employee.
-function getScheduleForDate(schedules: WorkSchedule[], date: Date): WorkSchedule | null {
-  return (
-    schedules
-      .filter((s) => s.validFrom <= date)
-      .sort((a, b) => b.validFrom.getTime() - a.validFrom.getTime())[0] ?? null
-  );
-}
-
 // ── computeEmployeeSummary ────────────────────────────────────────────────────
-// Pure helper — single source of truth for monthly summary calculation.
+// Pure helper — single source of truth for the monthly report's sick/leave/§9 fields.
 // Called by GET /monthly (JSON), GET /monthly/pdf (single-emp), GET /monthly/pdf/all (company).
+//
+// Issue #451 (D-03): this function computes NO Soll/Ist/Überstunden any more — all three GET
+// handlers below call `computeMonthReportFigures` (the working-time-account's own month result)
+// directly for those. The day-iterating helper left here (`daysInRange`) exists ONLY for the
+// sick-day / § 9 day counts, which are calendar-day spans, not Soll minutes.
 function computeEmployeeSummary(
   emp: EmployeeWithIncludes,
   start: Date,
@@ -187,20 +169,11 @@ function computeEmployeeSummary(
   // leave-day map for this employee's report window (leaveDaysByCodeWithin, prefetched ONCE per
   // request by the caller). No business rule lives here; this function only reads it.
   leaveDaysByCode: Map<LeaveTypeCode, LeaveDaysForCode>,
-  // Issue #433 (D-11): facade-fetched inputs ONLY — no business rule lives here. Work-location
-  // holidays (batched once per request by the caller) and the tenant's defaultWorkDays (the D-05
-  // workday tier) are the only two things a MONTHLY_HOURS employee's Soll needs beyond what
-  // `emp` already carries; the actual Soll computation happens inside
-  // `monthlyHoursMonthSollMinutes()` (the saldo core), never here.
-  monthlyHoursOpts?: { holidayDates: Set<string>; defaultWorkDays: number[] | null },
   // Phase 104 (D-30): confirmed § 9 credits overlapping the report month, bulk-fetched
   // ONCE by the caller (no per-employee query — T-104-09-N1) and pre-filtered to
   // pre-filtered to CONFIRMED-only (T-104-09-PENDING: an AU_PENDING credit changes nothing).
   section9Credits: Array<{ creditedStart: Date; creditedEnd: Date }> = [],
 ): {
-  workedHours: number;
-  targetHours: number;
-  overtimeHours: number;
   sickDays: number;
   sickDaysWithAttest: number;
   sickDaysWithoutAttest: number;
@@ -222,128 +195,11 @@ function computeEmployeeSummary(
     note?: string;
   }>;
 } {
-  // ── Soll-Minuten (day-by-day, TZ-aware) ──────────────────────────────────
-  // Issue #433 (D-11): MONTHLY_HOURS no longer has a branch here — its Soll comes from
-  // `monthlyHoursMonthSollMinutes()` at the call site below, never from this day-by-day
-  // {day}Hours walk. This function is now called ONLY for FIXED_SCHEDULE / FLEXTIME /
-  // SHIFT_BASED, byte-identical to before.
-  function calcShouldMinutes(schedules: WorkSchedule[], hireDate?: Date): number {
-    if (schedules.length === 0) return 0;
-    const effectiveStart = hireDate && hireDate > start ? hireDate : start;
-    let totalMin = 0;
-    const cur = new Date(effectiveStart);
-    while (cur <= end) {
-      const schedule = getScheduleForDate(schedules, cur);
-      if (schedule) {
-        const dow = getDayOfWeekInTz(cur, tz);
-        totalMin += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
-      }
-      cur.setDate(cur.getDate() + 1);
-    }
-    return totalMin;
-  }
-
-  // ── Abwesenheitsminuten (Schnittmenge mit Monat, TZ-aware) ───────────────
-  // Phase 104 (D-15, Tier 2): `claimed` is a Set<string> of YYYY-MM-DD dates already
-  // credited by an earlier-processed (per sortLeaveForDedup) leave request THIS
-  // report is summing — shared across the whole absenceMin reduce below, so a
-  // calendar day covered by two overlapping APPROVED requests reduces Soll exactly
-  // once. Mirrors close-employee-month.ts's claimDays()/excludeHolidays reuse.
-  // `halfDay` moves INSIDE the function (previously multiplied at the call site) so
-  // the halving applies only to the days THIS request actually claimed.
-  function calcAbsenceMinutes(
-    schedules: WorkSchedule[],
-    absStart: Date,
-    absEnd: Date,
-    claimed: Set<string>,
-    halfDay: boolean,
-  ): number {
-    if (schedules.length === 0) return 0;
-    const rangeStart = absStart < start ? start : absStart;
-    const rangeEnd = absEnd > end ? end : absEnd;
-    let min = 0;
-    const cur = new Date(rangeStart);
-    while (cur <= rangeEnd) {
-      const key = dateStrInTz(cur, tz);
-      if (!claimed.has(key)) {
-        const schedule = getScheduleForDate(schedules, cur);
-        if (schedule) {
-          const dow = getDayOfWeekInTz(cur, tz);
-          min += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
-        }
-        claimed.add(key);
-      }
-      cur.setDate(cur.getDate() + 1);
-    }
-    return halfDay ? Math.round(min / 2) : min;
-  }
-
   // ── Days in range clamped to [start, end] ────────────────────────────────
   function daysInRange(from: Date, to: Date): number {
     const s = from < start ? start : from;
     const e2 = to > end ? end : to;
     return Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
-  }
-
-  // ── Worked hours ─────────────────────────────────────────────────────────
-  const workedMin = emp.timeEntries.reduce((sum, e) => {
-    const slotMin = e.endTime ? (e.endTime.getTime() - e.startTime.getTime()) / 60000 : 0;
-    return sum + slotMin - Number(e.breakMinutes ?? 0);
-  }, 0);
-
-  // ── Target hours ─────────────────────────────────────────────────────────
-  const latestSchedule = getScheduleForDate(emp.workSchedules, end);
-  const isMonthlyHours = String(latestSchedule?.type ?? "") === "MONTHLY_HOURS";
-  const monthlyHoursValue = isMonthlyHours ? Number(latestSchedule?.monthlyHours ?? 0) : 0;
-
-  // Issue #433 (D-11): MONTHLY_HOURS no longer computes its own Soll here — the full month's
-  // net Soll (holiday/leave/absence already folded in, by construction) comes from the saldo
-  // core, the SAME function Monatsabschluss and the dashboard tile call. No further absenceMin
-  // subtraction happens for this row — unlike FIXED/FLEXTIME/SHIFT_BASED below, whose Soll and
-  // absence reduction stay byte-identical to before this plan.
-  let shouldMin: number;
-  if (isMonthlyHours) {
-    if (monthlyHoursValue > 0 && monthlyHoursOpts) {
-      const { firstDay: monthFirstDay, lastDay: monthLastDay } = monthDayBounds(start, end, tz);
-      shouldMin =
-        monthlyHoursMonthSollMinutes({
-          employeeId: emp.id,
-          schedule: latestSchedule as Record<string, unknown>,
-          monthStart: start,
-          monthEnd: end,
-          monthFirstDay,
-          monthLastDay,
-          tz,
-          hireDate: emp.hireDate,
-          exitDate: emp.exitDate,
-          leave: emp.leaveRequests,
-          absences: emp.absences,
-          holidayDateStrings: monthlyHoursOpts.holidayDates,
-          defaultWorkDays: monthlyHoursOpts.defaultWorkDays,
-        }) ?? 0;
-    } else {
-      // monthlyHours null/0 (pure tracking, D-01) — no Soll target.
-      shouldMin = 0;
-    }
-  } else {
-    const rawShouldMin = calcShouldMinutes(emp.workSchedules, emp.hireDate);
-    // Phase 104 (D-15, Tier 2): sollClaimed accumulates the calendar days already
-    // credited by a processed leave request, shared across the whole reduce, so an
-    // overlapping day (SICK vs. VACATION, R1) is deducted exactly once.
-    const sollClaimed = new Set<string>();
-    const absenceMin = sortLeaveForDedup(emp.leaveRequests).reduce(
-      (sum, lr) =>
-        sum +
-        calcAbsenceMinutes(
-          emp.workSchedules,
-          lr.startDate,
-          lr.endDate,
-          sollClaimed,
-          Boolean(lr.halfDay),
-        ),
-      0,
-    );
-    shouldMin = Math.max(0, rawShouldMin - absenceMin);
   }
 
   // ── Sick days ────────────────────────────────────────────────────────────
@@ -450,13 +306,7 @@ function computeEmployeeSummary(
     note: (e as Record<string, unknown>).note as string | undefined,
   }));
 
-  const workedHours = Math.round((workedMin / 60) * 100) / 100;
-  const targetHours = Math.round((shouldMin / 60) * 100) / 100;
-
   return {
-    workedHours,
-    targetHours,
-    overtimeHours: Math.round((workedHours - targetHours) * 100) / 100,
     sickDays: sickDaysWithAttest + sickDaysWithoutAttest,
     sickDaysWithAttest,
     sickDaysWithoutAttest,
@@ -471,85 +321,6 @@ function computeEmployeeSummary(
     totalAbsenceDays,
     entries,
   };
-}
-
-// ── resolveReportOvertimeHours ────────────────────────────────────────────────
-// §615-consistent Überstunden figure for the monthly Stundennachweis PDF (the legal
-// Arbeitszeitnachweis). computeEmployeeSummary computes overtime NAIVELY as worked − target, which is
-// wrong for SHIFT_BASED (no §615, roster Soll lives in the Shift table). This resolver picks the
-// correct source and also reports the labelling metadata the PDF needs (SALDO-DISP-05): `confirmed`
-// is true only for the CLOSED-month branch (the one figure that is final), and `labelled` is false
-// only for the MONTHLY_HOURS-no-budget branch, whose figure never moves and already has its own
-// dedicated "Keine Soll-Vorgabe" state on screen — the PDF renderer omits the Bestätigt/Prognose
-// label entirely for it rather than calling an unmoving figure a permanent "Prognose". The PDF
-// payload SHAPE is otherwise unchanged beyond the new `overtimeConfirmed` field this resolver feeds:
-//   - MONTHLY_HOURS(null/0) / no schedule → 0, confirmed:false, labelled:false (pure tracking, no
-//     saldo target — this check fires BEFORE the snapshot check below, for every month, open or
-//     closed).
-//   - CLOSED month (non-superseded MONTHLY SaldoSnapshot for the exact period) → snapshot.balanceMinutes,
-//     confirmed:true, labelled:true, for ALL remaining schedule types (immutable —
-//     Revisionssicherheit; never recompute a closed month).
-//   - OPEN month + SHIFT_BASED → computeMonthSaldo(...).balanceMinutes (§615 two-clause; same source of
-//     truth as the live calendar header / dashboard / overtime-overview), confirmed:false,
-//     labelled:true.
-//   - OPEN month + non-SHIFT (FIXED_*/FLEXTIME/MONTHLY_HOURS target>0) → keep the naive worked − target
-//     (unchanged: preserves the working absence-deduction + whole-month Stundennachweis model),
-//     confirmed:false, labelled:true.
-// Fail-safe: on any error, fall back to the provided naive value (confirmed:false, labelled:true) so
-// the PDF never fails to generate.
-async function resolveReportOvertimeHours(
-  app: FastifyInstance,
-  emp: EmployeeWithIncludes,
-  tenantId: string,
-  year: number,
-  month: number,
-  monthStart: Date,
-  naiveOvertimeHours: number,
-): Promise<{ hours: number; confirmed: boolean; labelled: boolean }> {
-  try {
-    // Effective schedule for the reported month (latest validFrom ≤ month end already resolved by
-    // the caller's include ordering; use the last row as the effective one).
-    const latest =
-      emp.workSchedules.length > 0 ? emp.workSchedules[emp.workSchedules.length - 1] : null;
-    const scheduleType = String(latest?.type ?? "");
-
-    // MONTHLY_HOURS pure-tracking (null/0 budget) → no saldo target.
-    if (scheduleType === "MONTHLY_HOURS" && !(Number(latest?.monthlyHours ?? 0) > 0)) {
-      // labelled:false — see the resolver's leading comment. The PDF renderer omits the
-      // Bestätigt/Prognose label entirely for this population instead of mislabelling it.
-      return { hours: 0, confirmed: false, labelled: false };
-    }
-
-    // CLOSED month → immutable snapshot balance (all types). Phase 100B Plan 07 — W4
-    // (getMonthClosingBalance); bare periodStart:monthStart comparison preserved exactly, see
-    // facade/saldo-snapshot.ts's module header on why this is NOT part of the W1 D1 decision.
-    const balanceMinutes = await getMonthClosingBalance(app.prisma, emp.id, tenantId, monthStart);
-    if (balanceMinutes !== null) {
-      return {
-        hours: Math.round((balanceMinutes / 60) * 100) / 100,
-        confirmed: true,
-        labelled: true,
-      };
-    }
-
-    // OPEN month + SHIFT_BASED → §615 core (computeMonthSaldo). Non-SHIFT keeps the naive value.
-    if (scheduleType === "SHIFT_BASED") {
-      const ms = await computeMonthSaldo(app, emp.id, year, month);
-      return {
-        hours: Math.round((ms.balanceMinutes / 60) * 100) / 100,
-        confirmed: false,
-        labelled: true,
-      };
-    }
-
-    return { hours: naiveOvertimeHours, confirmed: false, labelled: true };
-  } catch (err) {
-    app.log.warn(
-      { err, employeeId: emp.id, year, month },
-      "resolveReportOvertimeHours failed, using naive worked−target",
-    );
-    return { hours: naiveOvertimeHours, confirmed: false, labelled: true };
-  }
 }
 
 // ── DATEV payroll period person set ───────────────────────────────────────────
@@ -1119,14 +890,6 @@ export async function reportRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, m, tz);
 
-      // Issue #433 (D-11): the retired holiday-deduction switch is no longer read — only
-      // `defaultWorkDays` (the D-05 MONTHLY_HOURS workday tier, fed into
-      // `monthlyHoursMonthSollMinutes()` below) is needed from TenantConfig here.
-      const tenantCfg = await app.prisma.tenantConfig.findUnique({
-        where: { tenantId: req.user.tenantId },
-        select: { defaultWorkDays: true },
-      });
-
       // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
       // building the report body. Stichtag = the report period's own last day (`end`, already
       // computed above). This is the template every other list route in this file follows.
@@ -1163,37 +926,6 @@ export async function reportRoutes(app: FastifyInstance) {
         include: buildEmployeeInclude(start, end),
         orderBy: { lastName: "asc" },
       })) as unknown as EmployeeWithIncludes[];
-
-      // Issue #433 (D-11): holidays are resolved once per request whenever at least one
-      // listed employee's latest schedule is MONTHLY_HOURS with monthlyHours > 0 — the
-      // composition layer no longer reads the retired holiday-deduction switch to decide this.
-      const hasMonthlyHoursEmployee = employees.some((e) => {
-        const latest = getScheduleForDate(e.workSchedules, end);
-        return (
-          String(latest?.type ?? "") === "MONTHLY_HOURS" && Number(latest?.monthlyHours ?? 0) > 0
-        );
-      });
-
-      // Holidays by work location (Phase 71b, issue #71) — ONE batched resolver call for the
-      // whole request, fed with the T2-shaped rows already loaded via buildEmployeeInclude's
-      // `timeEntries` include (carries salonId additively).
-      const monthlyHolidaysByEmployee = hasMonthlyHoursEmployee
-        ? await holidaysAtWorkLocation(
-            app.prisma,
-            req.user.tenantId,
-            employees.map((e) => e.id),
-            dateStrInTz(start, tz),
-            dateStrInTz(end, tz),
-            employees.flatMap((emp): WorkLocationEntry[] =>
-              emp.timeEntries.map((e) => ({
-                employeeId: emp.id,
-                date: e.date,
-                startTime: e.startTime,
-                salonId: e.salonId,
-              })),
-            ),
-          )
-        : new Map<string, Map<string, string>>();
 
       // Phase 104 (D-30): bulk-fetched once, keyed by employeeId — see the function's
       // own doc block above for the tenant/status/N1 rationale.
@@ -1247,10 +979,6 @@ export async function reportRoutes(app: FastifyInstance) {
           end,
           tz,
           leaveDaysByCodeByEmp.get(emp.id) ?? new Map(),
-          {
-            holidayDates: new Set(monthlyHolidaysByEmployee.get(emp.id)?.keys() ?? []),
-            defaultWorkDays: tenantCfg?.defaultWorkDays ?? null,
-          },
           section9ByEmp.get(emp.id) ?? [],
         );
         const figures = await computeMonthReportFigures(app, emp.id, y, m);
@@ -1972,18 +1700,10 @@ export async function reportRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, m, tz);
 
-      // Issue #433 (D-11): the retired holiday-deduction switch is no longer read — only
-      // `defaultWorkDays` (the D-05 MONTHLY_HOURS workday tier) is needed here.
-      const [tenant, pdfTenantCfg] = await Promise.all([
-        app.prisma.tenant.findUnique({
-          where: { id: req.user.tenantId },
-          select: { name: true },
-        }),
-        app.prisma.tenantConfig.findUnique({
-          where: { tenantId: req.user.tenantId },
-          select: { defaultWorkDays: true },
-        }),
-      ]);
+      const tenant = await app.prisma.tenant.findUnique({
+        where: { id: req.user.tenantId },
+        select: { name: true },
+      });
 
       const emp = (await app.prisma.employee.findFirst({
         where: {
@@ -2031,33 +1751,6 @@ export async function reportRoutes(app: FastifyInstance) {
         }
       }
 
-      // Issue #433 (D-11): same "at least one MONTHLY_HOURS employee" decision as GET /monthly —
-      // here there is only the one employee being exported.
-      const pdfIsMonthlyHoursSchedule = (() => {
-        const latest = getScheduleForDate(emp.workSchedules, end);
-        return (
-          String(latest?.type ?? "") === "MONTHLY_HOURS" && Number(latest?.monthlyHours ?? 0) > 0
-        );
-      })();
-
-      // Holidays by work location (Phase 71b, issue #71) — see GET /monthly above for the general
-      // shape; here there is only a single employee.
-      const pdfHolidaysByEmployee = pdfIsMonthlyHoursSchedule
-        ? await holidaysAtWorkLocation(
-            app.prisma,
-            req.user.tenantId,
-            [emp.id],
-            dateStrInTz(start, tz),
-            dateStrInTz(end, tz),
-            emp.timeEntries.map((e): WorkLocationEntry => ({
-              employeeId: emp.id,
-              date: e.date,
-              startTime: e.startTime,
-              salonId: e.salonId,
-            })),
-          )
-        : new Map<string, Map<string, string>>();
-
       // Phase 104 (D-30): the PDF (Arbeitszeitnachweis handed to the employee/auditor)
       // must show the identical § 9 attribution as the JSON Monatsbericht.
       const section9ByEmpPdf = await fetchConfirmedSection9CreditsByEmp(
@@ -2080,39 +1773,26 @@ export async function reportRoutes(app: FastifyInstance) {
         end,
         tz,
         leaveDaysByCodePdf.get(emp.id) ?? new Map(),
-        {
-          holidayDates: new Set(pdfHolidaysByEmployee.get(emp.id)?.keys() ?? []),
-          defaultWorkDays: pdfTenantCfg?.defaultWorkDays ?? null,
-        },
         section9ByEmpPdf.get(emp.id) ?? [],
       );
-      // §615-correct Überstunden for the legal Stundennachweis (SHIFT_BASED / closed-month snapshot);
-      // non-SHIFT open months keep summary.overtimeHours. Shape unchanged — only the number's source.
-      // overtimeConfirmed is null (not a boolean) when labelled is false, so the PDF renderer can
-      // omit the Bestätigt/Prognose label entirely instead of mislabelling it (SALDO-DISP-05).
-      const {
-        hours: reportOvertimeHours,
-        confirmed: reportOvertimeConfirmed,
-        labelled: reportOvertimeLabelled,
-      } = await resolveReportOvertimeHours(
-        app,
-        emp,
-        req.user.tenantId,
-        y,
-        m,
-        start,
-        summary.overtimeHours,
-      );
+      // Issue #451 (D-03): the legal Stundennachweis prints the SAME working-time-account result
+      // as the JSON Monatsbericht — never a composition-layer Soll. `overtimeConfirmed` is null
+      // (not a boolean) when unlabelled, so the PDF renderer can omit the Bestätigt/Prognose label
+      // entirely instead of mislabelling it (SALDO-DISP-05).
+      const figures = await computeMonthReportFigures(app, emp.id, y, m);
+      const workedHours = Math.round((figures.workedMinutes / 60) * 100) / 100;
+      const targetHours = Math.round((figures.expectedMinutes / 60) * 100) / 100;
+      const overtimeHours = Math.round((figures.balanceMinutes / 60) * 100) / 100;
 
       const pdfBuffer = await generateMonthlyReportPdf({
         tenantName: tenant?.name ?? "",
         employeeName: `${emp.firstName} ${emp.lastName}`,
         employeeNumber: emp.employeeNumber,
         month: `${MONTH_NAMES[m - 1]} ${y}`,
-        workedHours: summary.workedHours,
-        targetHours: summary.targetHours,
-        overtimeHours: reportOvertimeHours,
-        overtimeConfirmed: reportOvertimeLabelled ? reportOvertimeConfirmed : null,
+        workedHours,
+        targetHours,
+        overtimeHours,
+        overtimeConfirmed: figures.labelled ? figures.confirmed : null,
         sickDays: summary.sickDays,
         sickDaysWithAttest: summary.sickDaysWithAttest,
         vacationDays: summary.vacationDays,
@@ -2163,18 +1843,10 @@ export async function reportRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, m, tz);
 
-      // Issue #433 (D-11): the retired holiday-deduction switch is no longer read — only
-      // `defaultWorkDays` (the D-05 MONTHLY_HOURS workday tier) is needed here.
-      const [tenant, allPdfTenantCfg] = await Promise.all([
-        app.prisma.tenant.findUnique({
-          where: { id: req.user.tenantId },
-          select: { name: true },
-        }),
-        app.prisma.tenantConfig.findUnique({
-          where: { tenantId: req.user.tenantId },
-          select: { defaultWorkDays: true },
-        }),
-      ]);
+      const tenant = await app.prisma.tenant.findUnique({
+        where: { id: req.user.tenantId },
+        select: { name: true },
+      });
 
       // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
       // building the company-wide PDF. Stichtag = the report period's own last day (`end`).
@@ -2210,34 +1882,6 @@ export async function reportRoutes(app: FastifyInstance) {
         return { error: "Keine Mitarbeiter gefunden" };
       }
 
-      // Issue #433 (D-11): same "at least one MONTHLY_HOURS employee" decision as GET /monthly.
-      const allPdfHasMonthlyHoursEmployee = employees.some((e) => {
-        const latest = getScheduleForDate(e.workSchedules, end);
-        return (
-          String(latest?.type ?? "") === "MONTHLY_HOURS" && Number(latest?.monthlyHours ?? 0) > 0
-        );
-      });
-
-      // Holidays by work location (Phase 71b, issue #71) — ONE batched resolver call for the
-      // whole company PDF, mirroring GET /monthly above.
-      const allPdfHolidaysByEmployee = allPdfHasMonthlyHoursEmployee
-        ? await holidaysAtWorkLocation(
-            app.prisma,
-            req.user.tenantId,
-            employees.map((e) => e.id),
-            dateStrInTz(start, tz),
-            dateStrInTz(end, tz),
-            employees.flatMap((emp): WorkLocationEntry[] =>
-              emp.timeEntries.map((e) => ({
-                employeeId: emp.id,
-                date: e.date,
-                startTime: e.startTime,
-                salonId: e.salonId,
-              })),
-            ),
-          )
-        : new Map<string, Map<string, string>>();
-
       // Phase 104 (D-30): one bulk fetch for the whole company PDF, not per employee.
       const section9ByEmpAll = await fetchConfirmedSection9CreditsByEmp(
         app,
@@ -2257,46 +1901,49 @@ export async function reportRoutes(app: FastifyInstance) {
         m,
       );
 
-      const rows = await Promise.all(
-        employees.map(async (emp) => {
-          const summary = computeEmployeeSummary(
-            emp,
-            start,
-            end,
-            tz,
-            leaveDaysByCodeAll.get(emp.id) ?? new Map(),
-            {
-              holidayDates: new Set(allPdfHolidaysByEmployee.get(emp.id)?.keys() ?? []),
-              defaultWorkDays: allPdfTenantCfg?.defaultWorkDays ?? null,
-            },
-            section9ByEmpAll.get(emp.id) ?? [],
-          );
-          // §615-correct Überstunden (SHIFT_BASED / closed-month snapshot); non-SHIFT open months
-          // keep summary.overtimeHours. Override AFTER the spread so the shape stays identical.
-          // overtimeConfirmed is null when labelled is false (PDF omits the label for this row).
-          const {
-            hours: overtimeHours,
-            confirmed: overtimeConfirmedResolved,
-            labelled: overtimeLabelled,
-          } = await resolveReportOvertimeHours(
-            app,
-            emp,
-            req.user.tenantId,
-            y,
-            m,
-            start,
-            summary.overtimeHours,
-          );
-          return {
-            employeeName: `${emp.firstName} ${emp.lastName}`,
-            employeeNumber: emp.employeeNumber,
-            role: emp.user.role,
-            ...summary,
-            overtimeHours,
-            overtimeConfirmed: overtimeLabelled ? overtimeConfirmedResolved : null,
-          };
-        }),
-      );
+      // Issue #451 (D-03): sequential — one computeMonthReportFigures call per employee, never
+      // inside a Promise.all (the plan's own requirement for the company PDF).
+      const rows: Array<{
+        employeeName: string;
+        employeeNumber: string;
+        role: "ADMIN" | "MANAGER" | "EMPLOYEE";
+        workedHours: number;
+        targetHours: number;
+        overtimeHours: number;
+        overtimeConfirmed: boolean | null;
+        sickDaysWithAttest: number;
+        sickDaysWithoutAttest: number;
+        vacationDays: number;
+        totalAbsenceDays: number;
+        section9DaysThisMonth: number;
+        entries: ReturnType<typeof computeEmployeeSummary>["entries"];
+      }> = [];
+      for (const emp of employees) {
+        const summary = computeEmployeeSummary(
+          emp,
+          start,
+          end,
+          tz,
+          leaveDaysByCodeAll.get(emp.id) ?? new Map(),
+          section9ByEmpAll.get(emp.id) ?? [],
+        );
+        const figures = await computeMonthReportFigures(app, emp.id, y, m);
+        rows.push({
+          employeeName: `${emp.firstName} ${emp.lastName}`,
+          employeeNumber: emp.employeeNumber,
+          role: emp.user.role,
+          workedHours: Math.round((figures.workedMinutes / 60) * 100) / 100,
+          targetHours: Math.round((figures.expectedMinutes / 60) * 100) / 100,
+          overtimeHours: Math.round((figures.balanceMinutes / 60) * 100) / 100,
+          overtimeConfirmed: figures.labelled ? figures.confirmed : null,
+          sickDaysWithAttest: summary.sickDaysWithAttest,
+          sickDaysWithoutAttest: summary.sickDaysWithoutAttest,
+          vacationDays: summary.vacationDays,
+          totalAbsenceDays: summary.totalAbsenceDays,
+          section9DaysThisMonth: summary.section9DaysThisMonth,
+          entries: summary.entries,
+        });
+      }
 
       const doc = new PDFDocument({ size: "A4", margin: 50 });
       reply.header("Content-Type", "application/pdf");
