@@ -2397,6 +2397,50 @@ export async function leaveRoutes(app: FastifyInstance) {
       // its own 5-minute cache makes a second lookup pointless.
       const tzForCorrection = await getTenantTimezone(app.prisma, tenantId);
 
+      // Issue #468 (D-02): the OLD and NEW Überstundenausgleich amounts are resolved HERE — pure
+      // reads on app.prisma, before the transaction opens — never inside it. The OLD side reverses
+      // the STORED booking (never a recomputation, so a schedule edited after approval cannot
+      // change what gets reversed); a legacy row with no stored value falls back to today's
+      // recomputation (A-4), logged so the fallback stays visible. The NEW side is always priced
+      // fresh against the corrected range.
+      let oldOtMinutes: number | null = null;
+      let oldOtSource: "stored" | "recomputed" | null = null;
+      if (oldTypeCode === "OVERTIME_COMP") {
+        if (existing.overtimeCompMinutes != null) {
+          oldOtMinutes = existing.overtimeCompMinutes;
+          oldOtSource = "stored";
+        } else {
+          oldOtMinutes = await scheduledLeaveMinutes(
+            app.prisma,
+            existing.employeeId,
+            tenantId,
+            existing.startDate,
+            existing.endDate,
+            existing.halfDay,
+            holidays,
+            tzForCorrection,
+          );
+          oldOtSource = "recomputed";
+          app.log.warn(
+            { leaveRequestId: existing.id, employeeId: existing.employeeId },
+            "OVERTIME_COMP correction without a stored booking — recomputed (Issue #468 A-4 legacy fallback)",
+          );
+        }
+      }
+      let newOtMinutes: number | null = null;
+      if (newType === "OVERTIME_COMP") {
+        newOtMinutes = await scheduledLeaveMinutes(
+          app.prisma,
+          existing.employeeId,
+          tenantId,
+          start,
+          end,
+          body.halfDay,
+          holidays,
+          tzForCorrection,
+        );
+      }
+
       // ── Steps 8-11 run inside ONE interactive transaction (94 CR-01) ──────────
       //    The correction issues TWO authoritative ledger writes (reverse OLD +
       //    apply NEW). Without a transaction a mid-sequence failure would leave the
@@ -2418,24 +2462,13 @@ export async function leaveRoutes(app: FastifyInstance) {
             tenantId,
           );
         } else if (oldTypeCode === "OVERTIME_COMP") {
-          // Issue #468 (D-01): mechanical switch to the shared formula so this file compiles —
-          // plan 03 rewrites this call site to honor the stored overtimeCompMinutes (D-02).
-          const hrs =
-            (await scheduledLeaveMinutes(
-              tx,
-              existing.employeeId,
-              tenantId,
-              existing.startDate,
-              existing.endDate,
-              existing.halfDay,
-              holidays,
-              tzForCorrection,
-            )) / 60;
+          // Issue #468 (D-02): reverses the STORED/recomputed-fallback amount resolved ABOVE,
+          // before the transaction opened — never a fresh recomputation inside the transaction.
           await reverseOvertimeCompensation(
             tx,
             existing.employeeId,
             tenantId,
-            hrs,
+            (oldOtMinutes ?? 0) / 60,
             `Korrektur Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]}`,
           );
         }
@@ -2453,6 +2486,10 @@ export async function leaveRoutes(app: FastifyInstance) {
             daysProvisional: daysProvisionalForCorrection, // Phase 107 (D-10)
             note: body.note,
             leaveTypeId: newLeaveTypeId,
+            // Issue #468 (D-02): keeps the stored booking current — null when the corrected
+            // type is no longer OVERTIME_COMP, so a later correction never reverses a stale
+            // amount from a type the request has since moved away from.
+            overtimeCompMinutes: newType === "OVERTIME_COMP" ? newOtMinutes : null,
           },
           include: {
             leaveType: true,
@@ -2475,24 +2512,13 @@ export async function leaveRoutes(app: FastifyInstance) {
             tenantId,
           );
         } else if (newType === "OVERTIME_COMP") {
-          // Issue #468 (D-01): mechanical switch to the shared formula so this file compiles —
-          // plan 03 rewrites this call site to honor the stored overtimeCompMinutes (D-02).
-          const hrs =
-            (await scheduledLeaveMinutes(
-              tx,
-              existing.employeeId,
-              tenantId,
-              start,
-              end,
-              body.halfDay,
-              holidays,
-              tzForCorrection,
-            )) / 60;
+          // Issue #468 (D-02): books the amount resolved ABOVE, before the transaction opened —
+          // never a fresh recomputation inside the transaction.
           await bookOvertimeCompensation(
             tx,
             existing.employeeId,
             tenantId,
-            hrs,
+            (newOtMinutes ?? 0) / 60,
             `Überstundenausgleich ${start.toISOString().split("T")[0]} – ${end.toISOString().split("T")[0]}`,
           );
         }
@@ -2556,7 +2582,24 @@ export async function leaveRoutes(app: FastifyInstance) {
         entity: "LeaveRequest",
         entityId: id,
         oldValue: existing,
-        newValue: { ...updated, auditReason: body.reason },
+        newValue: {
+          ...updated,
+          auditReason: body.reason,
+          // Issue #468 (D-02): the net movement of the Überstundenausgleich journal — the
+          // journal itself keeps the 94-02 two-entry shape (stored old reversed, new booked);
+          // this delta is the documented net, never a recomputed reversal. Only present when
+          // either side of the correction is OVERTIME_COMP.
+          ...(oldTypeCode === "OVERTIME_COMP" || newType === "OVERTIME_COMP"
+            ? {
+                overtimeCompDeltaMinutes:
+                  (newType === "OVERTIME_COMP" ? newOtMinutes! : 0) -
+                  (oldTypeCode === "OVERTIME_COMP" ? oldOtMinutes! : 0),
+              }
+            : {}),
+          // T-468-10: names whether the OLD side's reversal used the stored booking or the A-4
+          // legacy recomputation fallback. Only present when the OLD side was OVERTIME_COMP.
+          ...(oldTypeCode === "OVERTIME_COMP" ? { overtimeCompReversalSource: oldOtSource } : {}),
+        },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
