@@ -118,12 +118,13 @@ async function createLeave(
   startDate: string,
   endDate: string,
   halfDay = false,
+  extra: Record<string, unknown> = {},
 ): Promise<string> {
   const res = await app.inject({
     method: "POST",
     url: "/api/v1/leave/requests",
     headers: { authorization: `Bearer ${token}` },
-    payload: { type, startDate, endDate, ...(halfDay ? { halfDay: true } : {}) },
+    payload: { type, startDate, endDate, ...(halfDay ? { halfDay: true } : {}), ...extra },
   });
   expect(res.statusCode).toBe(201);
   return (JSON.parse(res.body) as { id: string }).id;
@@ -331,5 +332,115 @@ describe("Issue #451 (D-01) — DATEV VACATION day-count equals the absence cont
     });
     expect(janRes.statusCode).toBe(200);
     expect(tageFor(datevRows(janRes.rawPayload), empCrossMonth.employeeNumber, "300")).toBe("5,0");
+  });
+});
+
+describe("Issue #451 (D-01) — every non-sick Lohnart reads the same priced-days mechanism", () => {
+  let app: FastifyInstance;
+  let d: Awaited<ReturnType<typeof seedTestData>>;
+  let empSpecial: { id: string; token: string; employeeNumber: string };
+  let empEducation: { id: string; token: string; employeeNumber: string };
+  let empUnpaid: { id: string; token: string; employeeNumber: string };
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    d = await seedTestData(app, "451nonvac");
+    await configureDatevKanzlei(app, d.tenant.id);
+
+    empSpecial = await createFixedScheduleEmployee(
+      app,
+      d.tenant.id,
+      d.salonId,
+      "special451",
+      "2024-01-01",
+      MOFR_8H,
+    );
+    empEducation = await createFixedScheduleEmployee(
+      app,
+      d.tenant.id,
+      d.salonId,
+      "education451",
+      "2024-01-01",
+      TUESAT_8H,
+    );
+    empUnpaid = await createFixedScheduleEmployee(
+      app,
+      d.tenant.id,
+      d.salonId,
+      "unpaid451",
+      "2024-01-01",
+      MOFR_8H,
+    );
+
+    // SPECIAL (Sonderurlaub) requires an Anlass (SpecialLeaveRule) — #223.
+    const specialRule = await app.prisma.specialLeaveRule.create({
+      data: {
+        tenantId: d.tenant.id,
+        name: "451 Sonderurlaubsanlass",
+        defaultDays: 10,
+        isActive: true,
+      },
+    });
+
+    // SPECIAL (Sonderurlaub) 24.-31.12.2026, same holiday-excluded Mo-Fr shape as case (d) above.
+    await approveLeave(
+      app,
+      d.adminToken,
+      await createLeave(app, empSpecial.token, "SPECIAL", "2026-12-24", "2026-12-31", false, {
+        specialLeaveRuleId: specialRule.id,
+      }),
+    );
+
+    // EDUCATION (Bildungsurlaub) on a Saturday for a Tue-Sat contract, same shape as case (b).
+    await approveLeave(
+      app,
+      d.adminToken,
+      await createLeave(app, empEducation.token, "EDUCATION", "2026-07-11", "2026-07-11"),
+    );
+
+    // UNPAID (Unbezahlter Urlaub) half day on a Wednesday, same shape as case (a).
+    await approveLeave(
+      app,
+      d.adminToken,
+      await createLeave(app, empUnpaid.token, "UNPAID", "2026-07-08", "2026-07-08", true),
+    );
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, d.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  it("SPECIAL 24.-31.12.2026 on a Mo-Fr contract exports tage 5,0 on the Sonderurlaub line (302) — not 6,0", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/reports/datev/employee?employeeId=${empSpecial.id}&year=2026&month=12`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(tageFor(datevRows(res.rawPayload), empSpecial.employeeNumber, "302")).toBe("5,0");
+  });
+
+  it("EDUCATION on a Saturday for a Tue-Sat contract exports tage 1,0 on line 303 — the row is not absent", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/reports/datev/employee?employeeId=${empEducation.id}&year=2026&month=7`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(tageFor(datevRows(res.rawPayload), empEducation.employeeNumber, "303")).toBe("1,0");
+  });
+
+  it("UNPAID half day on a Mo-Fr contract exports tage 0,5 on line 304 — not 1,0", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/reports/datev/employee?employeeId=${empUnpaid.id}&year=2026&month=7`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(tageFor(datevRows(res.rawPayload), empUnpaid.employeeNumber, "304")).toBe("0,5");
   });
 });
