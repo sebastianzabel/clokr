@@ -32,6 +32,12 @@
     statutoryMinimumFiveDayWeek,
     MISSING_BIRTH_DATE_HINT,
   } from "$lib/statutory-minimum-vacation";
+  import {
+    CARRY_OVER_REASON_OPTIONS,
+    carryOverReasonLabel,
+    carryOverReasonPatch,
+    carryOverReasonHint,
+  } from "$lib/leave/carry-over-reason";
 
   // ── Types ──────────────────────────────────────────────────────────────────
   type Role = "ADMIN" | "MANAGER" | "EMPLOYEE";
@@ -67,6 +73,9 @@
     usedDays: number;
     carriedOverDays: number;
     carryOverDeadline: string | null;
+    // Issue #451 / #445 addendum (D-09) — the documented carry-over reason and note.
+    carryOverReason?: string | null;
+    carryOverNote?: string | null;
     // Issue #435 (D-14) — server's own regular-entitlement suggestion and statutory minimum.
     regularDays?: number;
     statutoryMinimumDays?: number;
@@ -392,6 +401,11 @@
         empBsSlotBlockWeek,
       );
       vacationSnapshot = snap(vacYear, eVacTotal, eVacCarried, eVacDeadline);
+      // Issue #451 / #445 addendum (D-09) — a second snap() for the Übertragsgrund fields,
+      // kept separate so the pinned `vacationSnapshot = snap(vacYear` baseline text (WR-01,
+      // admin-employee-save-wiring.test.ts) stays byte-identical rather than wrapping past the
+      // 100-col print width once two more fields are appended to the same call.
+      vacationReasonSnapshot = snap(eVacReason, eVacReasonNote);
       snapshotsReady = true;
     } catch {
       loadError = "Fehler beim Laden des Mitarbeiters.";
@@ -750,6 +764,13 @@
     eVacDeadline = vacData?.carryOverDeadline
       ? String(vacData.carryOverDeadline).split("T")[0]
       : "";
+    // Issue #451 / #445 addendum (D-09) — `loadedVacReason`/`loadedVacReasonNote` track what
+    // the server last confirmed, so saveVacation's carryOverReasonPatch only sends a key when
+    // the admin actually changed it (#445 D-16 semantics — see carry-over-reason.ts header).
+    eVacReason = vacData?.carryOverReason ?? null;
+    eVacReasonNote = vacData?.carryOverNote ?? "";
+    loadedVacReason = vacData?.carryOverReason ?? null;
+    loadedVacReasonNote = vacData?.carryOverNote ?? null;
   }
 
   function onClassificationChange() {
@@ -1563,6 +1584,19 @@
   let eVacTotal = $state<number | null>(null);
   let eVacCarried = $state<number>(0);
   let eVacDeadline = $state<string>("");
+  // Issue #451 / #445 addendum (D-09) — Übertragsgrund / Notiz zum Übertrag.
+  let eVacReason = $state<string | null>(null);
+  let eVacReasonNote = $state<string>("");
+  // The pair last confirmed by the server — carryOverReasonPatch diffs against THIS, never
+  // against a hardcoded default, so an unrelated save never sends an unintended null (T-451-26).
+  let loadedVacReason = $state<string | null>(null);
+  let loadedVacReasonNote = $state<string | null>(null);
+  let eVacReasonHint = $derived(carryOverReasonHint(eVacReason, eVacReasonNote, eVacDeadline));
+  // The select's "Kein Grund" option has to carry a real value (empty string — a native
+  // <select> cannot bind an option to `null`), so the binding converts "" <-> null here.
+  function setEVacReason(value: string) {
+    eVacReason = value === "" ? null : value;
+  }
   let urlaubSaving = $state(false);
   let urlaubError = $state("");
   let urlaubSaved = $state(false);
@@ -1578,9 +1612,16 @@
         totalDays: eVacTotal ?? eVacSuggestion,
         carriedOverDays: eVacCarried,
         carryOverDeadline: eVacDeadline || null,
+        ...carryOverReasonPatch(
+          { reason: loadedVacReason, note: loadedVacReasonNote },
+          { reason: eVacReason, note: eVacReasonNote },
+        ),
       });
       urlaubSaved = true;
+      loadedVacReason = eVacReason;
+      loadedVacReasonNote = eVacReasonNote.trim() === "" ? null : eVacReasonNote.trim();
       vacationSnapshot = snap(vacYear, eVacTotal, eVacCarried, eVacDeadline);
+      vacationReasonSnapshot = snap(eVacReason, eVacReasonNote);
       setTimeout(() => (urlaubSaved = false), 3000);
     } catch (e: unknown) {
       urlaubError = e instanceof Error ? e.message : "Fehler beim Speichern";
@@ -1674,8 +1715,13 @@
   );
 
   let vacationSnapshot = $state("");
+  // Issue #451 / #445 addendum (D-09) — separate snapshot for Übertragsgrund/Notiz (see the
+  // onMount comment on vacationReasonSnapshot for why this is a second snap() rather than more
+  // arguments on the one above).
+  let vacationReasonSnapshot = $state("");
   let vacationDirty = $derived(
-    snap(vacYear, eVacTotal, eVacCarried, eVacDeadline) !== vacationSnapshot,
+    snap(vacYear, eVacTotal, eVacCarried, eVacDeadline) !== vacationSnapshot ||
+      snap(eVacReason, eVacReasonNote) !== vacationReasonSnapshot,
   );
 
   // Phase 109 (D-12) — one registry entry per page. Cleanup de-registers on unmount so a saved
@@ -3391,6 +3437,43 @@
               <input id="e-vac-deadline" type="date" bind:value={eVacDeadline} class="form-input" />
               <p class="form-hint">Leer lassen für globale Einstellung</p>
             </div>
+
+            <div class="form-group">
+              <label class="form-label" for="e-vac-reason">Übertragsgrund</label>
+              <select
+                id="e-vac-reason"
+                bind:value={() => eVacReason ?? "", setEVacReason}
+                class="form-input"
+              >
+                <option value="">Kein Grund</option>
+                {#each CARRY_OVER_REASON_OPTIONS as option (option.value)}
+                  <option value={option.value}>{option.label}</option>
+                {/each}
+                {#if eVacReason !== null && !CARRY_OVER_REASON_OPTIONS.some((o) => o.value === eVacReason)}
+                  <!-- Issue #451 (D-09): a legacy stored value (e.g. OPERATIONAL) is shown,
+                       read-only, instead of being silently replaced by "Kein Grund". -->
+                  <option value={eVacReason} disabled selected
+                    >{carryOverReasonLabel(eVacReason)}</option
+                  >
+                {/if}
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="e-vac-reason-note">Notiz zum Übertrag</label>
+            <textarea
+              id="e-vac-reason-note"
+              class="form-input"
+              rows="2"
+              maxlength="500"
+              bind:value={eVacReasonNote}
+            ></textarea>
+            {#if eVacReasonHint}
+              <p class={eVacReasonHint.includes("erforderlich.") ? "form-error" : "form-hint"}>
+                {eVacReasonHint}
+              </p>
+            {/if}
           </div>
 
           {#if vacationEntitlement}

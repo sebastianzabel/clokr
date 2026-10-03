@@ -182,6 +182,10 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
             usedDays: Number(healed.entitlement.usedDays),
             carriedOverDays: Number(healed.entitlement.carriedOverDays),
             carryOverDeadline: healed.entitlement.carryOverDeadline ?? null,
+            // Issue #451 / #445 addendum (D-09): additive — the Urlaub tab's carry-over reason
+            // field reads these on every GET, including the first-access heal branch.
+            carryOverReason: healed.entitlement.carryOverReason ?? null,
+            carryOverNote: healed.entitlement.carryOverNote ?? null,
             regularDays, // Issue #435 (D-14)
             statutoryMinimumDays, // Issue #435 (D-14)
           };
@@ -212,6 +216,11 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
         usedDays: entitlement ? Number(entitlement.usedDays) : 0,
         carriedOverDays: entitlement ? Number(entitlement.carriedOverDays) : 0,
         carryOverDeadline: entitlement?.carryOverDeadline ?? null,
+        // Issue #451 / #445 addendum (D-09): additive — the admin Urlaub tab's carry-over
+        // reason field (ILLNESS/MATERNITY/PARENTAL_LEAVE/OTHER, or the legacy OPERATIONAL
+        // value) and its note, so the form can show what PUT already accepts since #445.
+        carryOverReason: entitlement?.carryOverReason ?? null,
+        carryOverNote: entitlement?.carryOverNote ?? null,
         regularDays, // Issue #435 (D-14)
         statutoryMinimumDays, // Issue #435 (D-14)
       };
