@@ -20,6 +20,7 @@ describe("GET/PUT /api/v1/settings/vacation/:employeeId — segment-aware (Issue
     label: string,
     hireDate: Date,
     schedules: Array<{ validFrom: Date; workDays: number[] }>,
+    annualVacationDays?: number,
   ): Promise<string> {
     const uid = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const user = await app.prisma.user.create({
@@ -38,6 +39,7 @@ describe("GET/PUT /api/v1/settings/vacation/:employeeId — segment-aware (Issue
         firstName: "T",
         lastName: "T",
         hireDate,
+        annualVacationDays,
       },
     });
     for (const { validFrom, workDays } of schedules) {
@@ -108,6 +110,48 @@ describe("GET/PUT /api/v1/settings/vacation/:employeeId — segment-aware (Issue
         where: { employeeId, year: currentYear },
       });
       expect(Number(row?.totalDays)).toBe(24);
+    });
+  });
+
+  describe("threshold consistency — GET suggestion and PUT 400 guard (Issue #450, D-09)", () => {
+    it("base 20, 3->5 from 01.07.2026: GET regularDays 16, statutoryMinimumDays 16; PUT totalDays 16 -> 200", async () => {
+      const employeeId = await mkEmployee(
+        "threshold-a",
+        new Date(Date.UTC(2024, 0, 1)),
+        [
+          { validFrom: new Date(Date.UTC(2024, 0, 1)), workDays: [1, 2, 3] }, // Mo-Mi (3-day)
+          { validFrom: new Date(Date.UTC(2026, 6, 1)), workDays: [1, 2, 3, 4, 5] }, // Mo-Fr from 01.07.
+        ],
+        20,
+      );
+
+      const getRes = await getVacation(employeeId, 2026);
+      expect(getRes.statusCode, `must succeed: ${getRes.body}`).toBe(200);
+      const body = JSON.parse(getRes.body) as { regularDays: number; statutoryMinimumDays: number };
+      // regular: 6x12 (wd=3) + 6x20 (wd=5) = 192; 192/12=16. statutory floor: same shape -> 16.
+      expect(body.regularDays).toBe(16);
+      expect(body.statutoryMinimumDays).toBe(16);
+
+      // Newest-row-only threshold would be 20 (wd=5) — this must be 200, not 400.
+      const putRes = await putVacation(employeeId, { year: 2026, totalDays: 16 });
+      expect(putRes.statusCode, `must succeed: ${putRes.body}`).toBe(200);
+    });
+
+    it("base 30, 5->3 from 01.07.2026: PUT totalDays 15.5 -> 400 '16'/'§ 3 BUrlG'; 16 -> 200", async () => {
+      const employeeId = await mkEmployee("threshold-b", new Date(Date.UTC(2024, 0, 1)), [
+        { validFrom: new Date(Date.UTC(2024, 0, 1)), workDays: [1, 2, 3, 4, 5] }, // Mo-Fr (5-day)
+        { validFrom: new Date(Date.UTC(2026, 6, 1)), workDays: [1, 2, 3] }, // Mo-Mi from 01.07.
+      ]);
+
+      // Newest-row-only threshold would be 12 (wd=3), which would wrongly accept 15.5.
+      const rejected = await putVacation(employeeId, { year: 2026, totalDays: 15.5 });
+      expect(rejected.statusCode, `must be rejected: ${rejected.body}`).toBe(400);
+      const rejectedBody = JSON.parse(rejected.body) as { error: string };
+      expect(rejectedBody.error).toContain("16");
+      expect(rejectedBody.error).toContain("§ 3 BUrlG");
+
+      const accepted = await putVacation(employeeId, { year: 2026, totalDays: 16 });
+      expect(accepted.statusCode, `must succeed: ${accepted.body}`).toBe(200);
     });
   });
 });

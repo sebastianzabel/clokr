@@ -16,6 +16,7 @@ import {
   employmentYearVacationDays,
   calculatePartTimeVacation,
   statutoryMinimumVacationDays,
+  statutoryMinimumVacationThresholdBySegments,
   type ScheduleForCalc,
   type VacationContractSegment,
 } from "../vacation-calc";
@@ -358,5 +359,106 @@ describe("computeRegularVacationDaysBySegments (Issue #450, D-01/D-02/D-03)", ()
     }
 
     expect(checked).toBeGreaterThan(10_000);
+  });
+});
+
+/** Oracle for the single-segment equivalence property: the pre-#450 threshold formula,
+ * independent of {@link statutoryMinimumVacationThresholdBySegments} under test. */
+function statutoryThresholdOracle(
+  birthDate: Date | null,
+  year: number,
+  workDaysPerWeek: number,
+  hireDate: Date,
+  exitDate: Date | null,
+): number {
+  const notEmployedInYear =
+    hireDate.getUTCFullYear() > year || (exitDate !== null && exitDate.getUTCFullYear() < year);
+  if (notEmployedInYear) return 0;
+  return employmentYearVacationDays(
+    statutoryMinimumVacationDays(birthDate, year, workDaysPerWeek),
+    year,
+    hireDate,
+    exitDate,
+  );
+}
+
+describe("statutoryMinimumVacationThresholdBySegments (Issue #450, D-09)", () => {
+  it("adult, base 3->5 from 01.07.2027: 6x12 (wd=3) + 6x20 (wd=5) = 192; 192/12 = 16", () => {
+    expect(
+      statutoryMinimumVacationThresholdBySegments({
+        birthDate: null,
+        year: 2027,
+        hireDate: HIRE_2020,
+        exitDate: null,
+        segments: [seg(HIRE_2020, 3), seg(utcMidnight("2027-07-01"), 5)],
+      }),
+    ).toBe(16);
+  });
+
+  it("adult, base 5->3 from 01.07.2027 (symmetric): 6x20 + 6x12 = 192; 192/12 = 16", () => {
+    expect(
+      statutoryMinimumVacationThresholdBySegments({
+        birthDate: null,
+        year: 2027,
+        hireDate: HIRE_2020,
+        exitDate: null,
+        segments: [seg(HIRE_2020, 5), seg(utcMidnight("2027-07-01"), 3)],
+      }),
+    ).toBe(16);
+  });
+
+  it("minor (age 14 on 1 Jan 2027, 30 Werktage band), 3->5 from 01.07.2027: 6x15 + 6x25 = 240; 240/12 = 20", () => {
+    expect(
+      statutoryMinimumVacationThresholdBySegments({
+        birthDate: utcMidnight("2012-06-15"),
+        year: 2027,
+        hireDate: HIRE_2020,
+        exitDate: null,
+        segments: [seg(HIRE_2020, 3), seg(utcMidnight("2027-07-01"), 5)],
+      }),
+    ).toBe(20);
+  });
+
+  it("not employed in the year (hire 2028-02-01, year 2027) -> 0", () => {
+    expect(
+      statutoryMinimumVacationThresholdBySegments({
+        birthDate: null,
+        year: 2027,
+        hireDate: utcMidnight("2028-02-01"),
+        exitDate: null,
+        segments: [seg(utcMidnight("2028-02-01"), 5)],
+      }),
+    ).toBe(0);
+  });
+
+  it("single-segment equivalence: equals the pre-#450 threshold oracle for every hire/exit/wd/birthDate combination", () => {
+    const hires = [utcMidnight("2020-01-01"), utcMidnight("2027-03-01"), utcMidnight("2027-08-01")];
+    const exits: (Date | null)[] = [null, utcMidnight("2027-03-31"), utcMidnight("2027-09-30")];
+    const workdays = [1, 2, 3, 4, 5, 6];
+    const birthDates = [null, utcMidnight("2012-06-15")];
+    const year = 2027;
+
+    let checked = 0;
+    for (const hireDate of hires) {
+      for (const exitDate of exits) {
+        if (exitDate !== null && exitDate.getTime() < hireDate.getTime()) continue;
+        for (const wd of workdays) {
+          for (const birthDate of birthDates) {
+            const expected = statutoryThresholdOracle(birthDate, year, wd, hireDate, exitDate);
+            const actual = statutoryMinimumVacationThresholdBySegments({
+              birthDate,
+              year,
+              hireDate,
+              exitDate,
+              segments: [seg(hireDate, wd)],
+            });
+            expect(actual).toBe(expected);
+            checked++;
+          }
+        }
+      }
+    }
+
+    expect(checked).toBeGreaterThan(0);
   });
 });

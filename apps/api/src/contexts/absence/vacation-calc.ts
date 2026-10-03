@@ -875,6 +875,45 @@ export function statutoryMinimumVacationDays(
 }
 
 /**
+ * Issue #450 (D-09) — the segment-aware form of {@link statutoryMinimumVacationThreshold}: the
+ * statutory-minimum floor a `PUT /settings/vacation/:employeeId` write (or the `GET` suggestion)
+ * must not undercut, apportioned across the employee's contract segments exactly like
+ * {@link computeRegularVacationDaysBySegments} apportions the regular entitlement — same reason
+ * CLAUDE.md names for sharing `hireYearVacationDays`/`employmentYearVacationDays` (#435 D-10):
+ * the threshold is the floor half of the same per-segment computation, so a correct segment value
+ * (e.g. base 20, 3->5 days from 01.07.: regular 16) is never rejected against a newest-row-only
+ * floor that ignores the earlier segment (which would wrongly answer 20).
+ *
+ * Not-employed-in-`year` short-circuits to `0` (same guard {@link statutoryMinimumVacationThreshold}
+ * has always had) — the floor must never invent an entitlement for a year the employee wasn't
+ * employed in. `fullYearValue` is the statutory minimum ITSELF for that segment's workdays — no
+ * `calculatePartTimeVacation`/base-days scaling, unlike the regular-entitlement kernel — because
+ * the threshold IS the floor, not a value floored against something else.
+ *
+ * @returns the statutory-minimum threshold at 2-decimal precision; `0` when not employed in `year`
+ */
+export function statutoryMinimumVacationThresholdBySegments(input: {
+  birthDate: Date | null;
+  year: number;
+  segments: readonly VacationContractSegment[];
+  hireDate: Date;
+  exitDate: Date | null;
+}): number {
+  const { birthDate, year, segments, hireDate, exitDate } = input;
+  const notEmployedInYear =
+    hireDate.getUTCFullYear() > year || (exitDate !== null && exitDate.getUTCFullYear() < year);
+  if (notEmployedInYear) return 0;
+  return apportionAcrossContractSegments({
+    year,
+    hireDate,
+    exitDate,
+    segments,
+    fullYearValue: (workDaysPerWeek) =>
+      statutoryMinimumVacationDays(birthDate, year, workDaysPerWeek),
+  });
+}
+
+/**
  * Issue #435 (D-10) — the statutory-minimum THRESHOLD a `PUT /settings/vacation/:employeeId`
  * write (or the `GET` suggestion, D-14) must not undercut, for one employee/year. This is the
  * SAME hire-year Wartezeit decision {@link computeRegularVacationDays} applies to the regular
@@ -894,6 +933,12 @@ export function statutoryMinimumVacationDays(
  * correct Teilurlaub never triggers a false statutory-minimum violation and the floor is never set
  * below what the law actually requires for that partial year.
  *
+ * Issue #450 (D-09): this signature and this function's own behavior are UNCHANGED — it is now a
+ * one-line delegate to {@link statutoryMinimumVacationThresholdBySegments} with a single segment
+ * spanning the whole employed range (`from: 1 January of year`), which is byte-identical to the
+ * body this docblock describes (the D-02-style single-segment collapse in
+ * {@link apportionAcrossContractSegments} guarantees it).
+ *
  * @returns the statutory-minimum threshold at 2-decimal precision; `0` when not employed in `year`
  */
 export function statutoryMinimumVacationThreshold(input: {
@@ -904,15 +949,13 @@ export function statutoryMinimumVacationThreshold(input: {
   exitDate: Date | null;
 }): number {
   const { birthDate, year, workDaysPerWeek, hireDate, exitDate } = input;
-  const notEmployedInYear =
-    hireDate.getUTCFullYear() > year || (exitDate !== null && exitDate.getUTCFullYear() < year);
-  if (notEmployedInYear) return 0;
-  return employmentYearVacationDays(
-    statutoryMinimumVacationDays(birthDate, year, workDaysPerWeek),
+  return statutoryMinimumVacationThresholdBySegments({
+    birthDate,
     year,
     hireDate,
     exitDate,
-  );
+    segments: [{ from: new Date(Date.UTC(year, 0, 1)), workDaysPerWeek }],
+  });
 }
 
 /**
