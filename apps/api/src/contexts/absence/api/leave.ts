@@ -24,12 +24,13 @@ import {
   deductVacationDays,
   reverseVacationDays,
   recalculateCarryOver,
-  contractWorkDaysPerWeekFrom, // Issue #429, D-13 — the getScheduledHours SHIFT_BASED branch below
+  contractWorkDaysPerWeekFrom, // Issue #429, D-13 — the scheduledLeaveMinutes SHIFT_BASED branch below
   usualWorkDaysFrom, // Issue #436, D-03 — the same branch, threading the Angabe into the receipt
   type LeaveDaysPricing, // Issue #436, D-04/D-09
 } from "../leave-days";
 import { BS_ONLY_LEAVE_ERROR, BS_ONLY_LEAVE_ERROR_CODE } from "../bs-leave-days"; // Issue #448 (D-02)
 import { vocationalSchoolDatesForLeaveRequests } from "../bs-leave-days"; // Issue #448 (D-05, plan 03)
+import { vocationalSchoolDateSet } from "../bs-leave-days"; // Issue #468 (D-01) — same BS exclusion the saldo uses
 import { formatMinutesHM } from "../format-hm"; // Phase 100
 import {
   flagShiftsConflictingWithLeave,
@@ -46,6 +47,7 @@ import {
   recalculateSnapshots,
   getConfirmedCarryOver,
   loadNegativeBalanceTolerance,
+  calcLeaveAbsenceMinutesTz, // Issue #468 (D-01) — the saldo's own per-row credit/withdrawal
   computeOvertimeBalanceBreakdown,
   computeOvertimeBalanceHours, // Issue #294 — pure read, run BEFORE the booking+persist transaction
   persistOvertimeBalance, // Issue #294 — booking + recompute in one $transaction
@@ -776,76 +778,31 @@ export async function leaveRoutes(app: FastifyInstance) {
       // at read time everywhere else) and, worse, the LIVE total (confirmed + open-month
       // forecast), while the leave form's own affordability UI (97-06) validates against the
       // CONFIRMED (closed-month) carry-over only — never against a forecast that can still
-      // erode. Rewired onto the SAME source: getConfirmedCarryOver (confirmed-saldo.ts),
-      // already used by GET /leave/overtime-balance for exactly this reason. This is a WRITE
-      // path touching entitlement, so the fail-safe branch intentionally falls back to the
-      // PRE-EXISTING stored-balance check (never 500, never silently permits an unbounded
-      // request) rather than inventing a new default.
-      //
-      // Phase 100 (OTC-01/OTC-02, D-00a/D-00b) — availability now also includes the
-      // configured `maxNegativeBalanceMinutes` TOLERANCE, resolved through the SAME
-      // precedence chain overtime.ts uses (loadNegativeBalanceTolerance,
-      // negative-balance-tolerance.ts): per-employee WorkSchedule override > tenant
-      // default > null. D-00b: for THIS booking gate, an unconfigured (`null`) value
-      // means a tolerance of ZERO — the opposite of the schema comment's "unbegrenzt"
-      // ALERTING reading that `isNegativeLimitExceeded` uses elsewhere — so with
-      // nothing configured this gate stays byte-identical to pre-Phase-100. D-02: the
-      // catch branch below applies ZERO tolerance regardless of what is configured — a
-      // read failure must never be MORE generous than the normal path. D-04: the
-      // comparison itself happens in MINUTES; hours only appear in the response body
-      // and the rejection copy.
+      // erode. This is a WRITE path touching entitlement, so {@link overtimeCompBalanceRejection}'s
+      // fail-safe branch intentionally falls back to the PRE-EXISTING stored-balance check (never
+      // 500, never silently permits an unbounded request) rather than inventing a new default.
+      // Issue #468 (D-01): the needed amount comes from `scheduledLeaveMinutes` — the SAME
+      // function the saldo and the booking/reversal use — not a `{day}Hours` placeholder sum.
       if (body.type === "OVERTIME_COMP") {
-        const hoursNeeded = await getScheduledHours(
+        const tzForGate = await getTenantTimezone(app.prisma, tenantId);
+        const neededMinutes = await scheduledLeaveMinutes(
           app.prisma,
           employeeId,
+          tenantId,
           start,
           end,
           body.halfDay,
           holidays,
+          tzForGate,
         );
-        const neededMinutes = Math.round(hoursNeeded * 60);
-
-        const { toleranceMinutes } = await loadNegativeBalanceTolerance(
-          app.prisma,
+        const rejection = await overtimeCompBalanceRejection(
+          app,
           employeeId,
           tenantId,
+          neededMinutes,
         );
-
-        let availableMinutes: number;
-        let appliedToleranceMinutes: number;
-        try {
-          const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, tenantId);
-          appliedToleranceMinutes = toleranceMinutes;
-          availableMinutes = confirmed.minutes + appliedToleranceMinutes;
-        } catch (err) {
-          app.log.warn(
-            { err, employeeId },
-            "POST /leave/requests: getConfirmedCarryOver failed for OVERTIME_COMP check, falling back to stored OvertimeAccount.balanceHours",
-          );
-          // D-02: fail-safe applies ZERO tolerance — a broken read path must never
-          // be more permissive than the normal path.
-          appliedToleranceMinutes = 0;
-          const account = await getOvertimeAccount(app.prisma, employeeId, tenantId);
-          availableMinutes = account ? Math.round(Number(account.balanceHours) * 60) : 0;
-        }
-
-        if (neededMinutes > availableMinutes) {
-          // OTC-06 / D-14: names the applied tolerance when one was applied; the
-          // "(inkl. … erlaubtem Minus)" clause is omitted entirely at tolerance 0 so
-          // an unconfigured tenant sees the plain pre-Phase-100 message (100-UI-SPEC.md
-          // "Rejection copy").
-          const toleranceClause =
-            appliedToleranceMinutes > 0
-              ? ` (inkl. ${formatMinutesHM(appliedToleranceMinutes)} Std. erlaubtem Minus)`
-              : "";
-          return reply.code(400).send({
-            error:
-              `Nicht genug Überstunden: verfügbar ${formatMinutesHM(availableMinutes)} Std.` +
-              `${toleranceClause}, benötigt ${formatMinutesHM(neededMinutes)} Std.`,
-            available: +(availableMinutes / 60).toFixed(2),
-            requested: +(neededMinutes / 60).toFixed(2),
-            tolerance: +(appliedToleranceMinutes / 60).toFixed(2),
-          });
+        if (rejection) {
+          return reply.code(400).send(rejection);
         }
       }
 
@@ -1423,15 +1380,17 @@ export async function leaveRoutes(app: FastifyInstance) {
                 existing.startDate,
                 existing.endDate,
               );
-              const hrs = await getScheduledHours(
+              const tzForReversal = await getTenantTimezone(app.prisma, tenantIdForReversal);
+              reversalMinutes = await scheduledLeaveMinutes(
                 app.prisma,
                 existing.employeeId,
+                tenantIdForReversal,
                 existing.startDate,
                 existing.endDate,
                 existing.halfDay,
                 new Set(hMap.keys()),
+                tzForReversal,
               );
-              reversalMinutes = Math.round(hrs * 60);
               reversalSource = "recomputed";
               app.log.warn(
                 { leaveRequestId: existing.id, employeeId: existing.employeeId },
@@ -1692,15 +1651,17 @@ export async function leaveRoutes(app: FastifyInstance) {
             existing.startDate,
             existing.endDate,
           );
-          const hours = await getScheduledHours(
+          const tzForBooking = await getTenantTimezone(app.prisma, tenantIdForBooking);
+          const bookingMinutes = await scheduledLeaveMinutes(
             app.prisma,
             existing.employeeId,
+            tenantIdForBooking,
             existing.startDate,
             existing.endDate,
             existing.halfDay,
             new Set(hMap.keys()),
+            tzForBooking,
           );
-          const bookingMinutes = Math.round(hours * 60);
           pendingOvertimeBooking = {
             tenantId: tenantIdForBooking,
             hours: bookingMinutes / 60,
@@ -2151,6 +2112,32 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: BS_ONLY_LEAVE_ERROR, code: BS_ONLY_LEAVE_ERROR_CODE });
       }
 
+      // Issue #468 (D-01): the negative-balance gate used to run ONLY on POST — a still-PENDING
+      // OVERTIME_COMP request could be widened here past the confirmed carry-over with no check
+      // at all. Same shared gate as POST, before any write.
+      if (existingTypeCode === "OVERTIME_COMP") {
+        const tzForEditGate = await getTenantTimezone(app.prisma, tenantId);
+        const editNeededMinutes = await scheduledLeaveMinutes(
+          app.prisma,
+          existing.employeeId,
+          tenantId,
+          start,
+          end,
+          body.halfDay,
+          holidays,
+          tzForEditGate,
+        );
+        const editRejection = await overtimeCompBalanceRejection(
+          app,
+          existing.employeeId,
+          tenantId,
+          editNeededMinutes,
+        );
+        if (editRejection) {
+          return reply.code(400).send(editRejection);
+        }
+      }
+
       const updated = await app.prisma.leaveRequest.update({
         where: { id },
         data: { startDate: start, endDate: end, halfDay: body.halfDay, days, note: body.note },
@@ -2405,6 +2392,11 @@ export async function leaveRoutes(app: FastifyInstance) {
           ? await ensureLeaveType(app.prisma, app.log, tenantId, body.type)
           : existing.leaveTypeId;
 
+      // Issue #468 (D-01): resolved ONCE on app.prisma, BEFORE the transaction opens —
+      // getTenantTimezone() is typed against FastifyInstance["prisma"], not a tx client, and
+      // its own 5-minute cache makes a second lookup pointless.
+      const tzForCorrection = await getTenantTimezone(app.prisma, tenantId);
+
       // ── Steps 8-11 run inside ONE interactive transaction (94 CR-01) ──────────
       //    The correction issues TWO authoritative ledger writes (reverse OLD +
       //    apply NEW). Without a transaction a mid-sequence failure would leave the
@@ -2426,14 +2418,19 @@ export async function leaveRoutes(app: FastifyInstance) {
             tenantId,
           );
         } else if (oldTypeCode === "OVERTIME_COMP") {
-          const hrs = await getScheduledHours(
-            tx,
-            existing.employeeId,
-            existing.startDate,
-            existing.endDate,
-            existing.halfDay,
-            holidays,
-          );
+          // Issue #468 (D-01): mechanical switch to the shared formula so this file compiles —
+          // plan 03 rewrites this call site to honor the stored overtimeCompMinutes (D-02).
+          const hrs =
+            (await scheduledLeaveMinutes(
+              tx,
+              existing.employeeId,
+              tenantId,
+              existing.startDate,
+              existing.endDate,
+              existing.halfDay,
+              holidays,
+              tzForCorrection,
+            )) / 60;
           await reverseOvertimeCompensation(
             tx,
             existing.employeeId,
@@ -2478,14 +2475,19 @@ export async function leaveRoutes(app: FastifyInstance) {
             tenantId,
           );
         } else if (newType === "OVERTIME_COMP") {
-          const hrs = await getScheduledHours(
-            tx,
-            existing.employeeId,
-            start,
-            end,
-            body.halfDay,
-            holidays,
-          );
+          // Issue #468 (D-01): mechanical switch to the shared formula so this file compiles —
+          // plan 03 rewrites this call site to honor the stored overtimeCompMinutes (D-02).
+          const hrs =
+            (await scheduledLeaveMinutes(
+              tx,
+              existing.employeeId,
+              tenantId,
+              start,
+              end,
+              body.halfDay,
+              holidays,
+              tzForCorrection,
+            )) / 60;
           await bookOvertimeCompensation(
             tx,
             existing.employeeId,
@@ -3005,8 +3007,20 @@ export async function leaveRoutes(app: FastifyInstance) {
         previewTypeCode != null
           ? { mode: "request", leaveTypeCode: previewTypeCode, excludeRequestId }
           : { mode: "isolated" };
-      const [hours, leaveDaysPreview] = await Promise.all([
-        getScheduledHours(app.prisma, employeeId, start, end, isHalf, holidays),
+      // Issue #468 (D-01): the SAME function the POST/PATCH gate, the booking and the saldo
+      // use — the preview never computes a second, independent number.
+      const tzForPreview = await getTenantTimezone(app.prisma, tenantId);
+      const [minutes, leaveDaysPreview] = await Promise.all([
+        scheduledLeaveMinutes(
+          app.prisma,
+          employeeId,
+          tenantId,
+          start,
+          end,
+          isHalf,
+          holidays,
+          tzForPreview,
+        ),
         resolveLeaveDays(
           app.prisma,
           employeeId,
@@ -3056,21 +3070,21 @@ export async function leaveRoutes(app: FastifyInstance) {
         rosterImported = shiftsThisWeek.length > 0;
       }
 
-      // WR-03 (code review) — exact integer minutes, computed with the SAME
-      // Math.round(hoursNeeded * 60) formula the POST /requests OVERTIME_COMP gate
-      // uses for `neededMinutes` above. `hours` is rounded to 2 decimal PLACES for
-      // display; `minutesNeeded` lets the client compare against confirmedMinutes /
-      // maxNegativeBalanceMinutes (already exact integer minutes from GET
-      // /leave/overtime-balance) without reconstructing the server's exact-minute
-      // gate through two different rounding paths.
+      // WR-03 (code review) — exact integer minutes, the SAME `scheduledLeaveMinutes` value
+      // the POST /requests OVERTIME_COMP gate uses for `neededMinutes` above (Issue #468, D-01:
+      // now literally the same function call, not a parallel formula). `hours` is rounded to 2
+      // decimal PLACES for display; `minutesNeeded` lets the client compare against
+      // confirmedMinutes / maxNegativeBalanceMinutes (already exact integer minutes from GET
+      // /leave/overtime-balance) without reconstructing the server's exact-minute gate through
+      // two different rounding paths.
       // `provisional` (Phase 107, D-09) additive: lets the request form show a
       // "Vorläufig" hint before submission for a SHIFT_BASED period with no roster yet.
       return {
-        hours: +hours.toFixed(2),
+        hours: +(minutes / 60).toFixed(2),
         days,
         provisional,
         rosterImported,
-        minutesNeeded: Math.round(hours * 60),
+        minutesNeeded: minutes,
         vocationalSchoolDates,
         vocationalSchoolOnly,
       };
@@ -4461,42 +4475,37 @@ class Section9MissingEntitlementError extends Error {
 // calculateWorkDays moved to ../utils/calculate-work-days (Phase 61).
 
 /**
- * Berechnet die tatsächlich geplanten Arbeitsstunden für einen Zeitraum
- * basierend auf dem individuellen WorkSchedule des Mitarbeiters (oder den
- * globalen Tenant-Defaults falls kein individueller Plan vorhanden).
- * Halbe Tage = halbe Stunden des ersten Arbeitstages.
+ * Issue #468 (D-01) — the ONE function behind every Überstundenausgleich amount: the POST/PATCH
+ * negative-balance gate, the approval booking, the cancellation-reversal legacy fallback, the
+ * `/correct` reverse/apply pair, and GET /hours-preview all call this, never a second formula.
  *
- * SHIFT_BASED (owner decision on issue #293, 2026-09-23): this used to sum the rostered
- * `Shift` rows (Phase 100 / OTC-04, D-05..D-08 — superseded by this decision, not just
- * amended). That made the receipt answer a different question than the saldo, which credited
- * an OVERTIME_COMP day via the Ø-Methode (the saldo's own Ø-Methode entry point,
- * `close-employee-month.ts:721`) — the two could and did diverge (issue #293). The decided
- * rule: the day IS the average contract day, full stop. This branch calls the SAME
- * function the saldo calls, on the SAME schedule row, so the receipt amount and the saldo
- * effect are one number because they are one function call — not two formulas kept in sync by
- * hand. Half-day uses that function's own `halfDay` option (no bespoke first-shift-halved
- * path any more). An employee with no shifts in the range now costs a full Ø-Methode day —
- * an empty roster is no longer free, which is the material behavior change from D-08.
+ * SHIFT_BASED keeps the #293/#429 "receipt follows the account" branch verbatim — do not route
+ * it through `calcLeaveAbsenceMinutesTz` (that function's own SHIFT_BASED branch is a DIFFERENT,
+ * already-correct formula per #429, see its own docblock).
  *
- * Issue #429 (D-13): the saldo side (`close-employee-month.ts`) stopped calling that old
- * Ø-Methode entry point for SHIFT_BASED approved leave — it now derives the credit from
- * the contractual workday count via `leaveDaysPerWeek()` (`contexts/absence`, D-01/D-02) times
- * `weeklyHours × 60 ÷ contractWorkDaysPerWeek` (D-04). #293's principle ("the receipt follows
- * the account") means this branch had to follow that same change: it now calls
- * `shiftBasedLeaveMinutesForRequest()` (`../vacation-calc`), the per-request
- * counterpart of the saldo's `shiftBasedLeaveCreditByDate()`, with `c` resolved via the SAME
- * `contractWorkDaysPerWeekFrom()` fallback chain (Phase 107, D-04) the saldo uses — the same
- * two functions plan 429-01/429-02 built, not a third independent formula.
+ * Every other schedule type calls `calcLeaveAbsenceMinutesTz` below — the Arbeitszeitkonto's own
+ * per-row credit/withdrawal function (`close-employee-month.ts` uses the SAME call for the
+ * saldo's non-SHIFT leave credit, #220 model B) — reached through the
+ * `contexts/working-time-account` facade, never a local `{day}Hours` placeholder read. This is
+ * what makes a FLEXTIME day cost the real Ø-Methode average (480 min, not the measured
+ * placeholder's 60) and keeps MONTHLY_HOURS following whatever the Arbeitszeitkonto returns
+ * (hard 0 until Phase 433 merges, a real rate afterward) rather than a number hardcoded here.
+ *
+ * Holidays AND Berufsschultage are excluded exactly like the saldo's own `excludeHolidays` set
+ * (#448 D-03) — an Azubi's Ausgleichstag on a school day costs nothing, mirroring the saldo,
+ * which never withdraws for that day either.
  */
-async function getScheduledHours(
-  prisma: DbClient,
+async function scheduledLeaveMinutes(
+  db: DbClient,
   employeeId: string,
+  tenantId: string,
   start: Date,
   end: Date,
   halfDay: boolean,
-  holidays: Set<string> = new Set(),
+  holidays: Set<string>,
+  tz: string,
 ): Promise<number> {
-  const employee = await prisma.employee.findUnique({
+  const employee = await db.employee.findUnique({
     where: { id: employeeId },
     include: {
       workSchedules: {
@@ -4504,16 +4513,13 @@ async function getScheduledHours(
         orderBy: { validFrom: "desc" },
         take: 1,
       },
-      tenant: { include: { config: true } },
     },
   });
-
   const ws = employee?.workSchedules[0] ?? null;
-  const cfg = employee?.tenant?.config;
+  const cfg = await db.tenantConfig.findUnique({ where: { tenantId } });
 
-  // SHIFT_BASED (issue #293): the receipt follows the account — see the docblock above.
-  // Returns BEFORE the FIXED_SCHEDULE / FLEXTIME / MONTHLY_HOURS per-weekday path below, which
-  // stays byte-for-byte unchanged for every other schedule type.
+  // SHIFT_BASED (issue #293/#429): the receipt follows the account — see the docblock above.
+  // Returns BEFORE the saldo-facade path below, which stays untouched for every other type.
   if (ws?.type === "SHIFT_BASED") {
     // Issue #429, D-13: `c` via the SAME fallback chain the saldo uses (Phase 107, D-04) —
     // `contractWorkDaysPerWeek` -> `workDays.length` -> tenant `defaultWorkDays.length` -> 5.
@@ -4524,46 +4530,104 @@ async function getScheduledHours(
     // mirroring `close-employee-month.ts`'s D-05 decision, is never given a holiday set — a
     // holiday inside a leave range keeps being a Soll-free day via the leave itself. Phase 436
     // (D-03): the Angabe follows the receipt through the same `usualWorkDaysFrom()` reader.
-    const minutes = shiftBasedLeaveMinutesForRequest(
-      ws,
-      start,
-      end,
-      halfDay,
-      c,
-      usualWorkDaysFrom(ws),
+    return shiftBasedLeaveMinutesForRequest(ws, start, end, halfDay, c, usualWorkDaysFrom(ws));
+  }
+
+  // Issue #468 (D-01): the WorkSchedule row when present, else the tenant-default
+  // FIXED_SCHEDULE shape — mirrors `getEffectiveSchedule()`'s shape (entry-invariants.ts), not
+  // imported (that helper takes `app`, a time-tracking module this file does not reach into).
+  const schedule =
+    ws ??
+    ({
+      type: "FIXED_SCHEDULE" as const,
+      weeklyHours: cfg?.defaultWeeklyHours ?? 40,
+      monthlyHours: null,
+      mondayHours: cfg?.defaultMondayHours ?? 8,
+      tuesdayHours: cfg?.defaultTuesdayHours ?? 8,
+      wednesdayHours: cfg?.defaultWednesdayHours ?? 8,
+      thursdayHours: cfg?.defaultThursdayHours ?? 8,
+      fridayHours: cfg?.defaultFridayHours ?? 8,
+      saturdayHours: cfg?.defaultSaturdayHours ?? 0,
+      sundayHours: cfg?.defaultSundayHours ?? 0,
+    } as const);
+
+  // Issue #468 (D-01, mirrors #448 D-03): a Berufsschultag is excluded exactly like a holiday —
+  // the saldo never withdraws Soll for either inside a leave range, so the booking must not
+  // either.
+  const excluded = new Set<string>([
+    ...holidays,
+    ...(await vocationalSchoolDateSet(db, employeeId, tenantId, start, end)), // Issue #468 (D-01)
+  ]);
+
+  return calcLeaveAbsenceMinutesTz(schedule, start, end, tz, {
+    halfDay,
+    excludeHolidays: excluded,
+  });
+}
+
+/**
+ * Issue #468 (D-01) — the shared Überstundenausgleich negative-balance gate, lifted out of
+ * `POST /requests` so the PENDING edit (`PATCH /requests/:id`) can run the SAME check instead of
+ * the gap D-01 found (an employee widening a still-PENDING request could pass the limit the
+ * initial POST already enforced). Logic is byte-identical to the original POST-only gate —
+ * tolerance chain, confirmed carry-over, zero-tolerance fail-safe fallback — only the needed
+ * amount is now a caller-supplied minutes figure (from {@link scheduledLeaveMinutes}) rather than
+ * recomputed here.
+ *
+ * Phase 100 (OTC-01/OTC-02, D-00a/D-00b) — availability also includes the configured
+ * `maxNegativeBalanceMinutes` TOLERANCE, resolved through the SAME precedence chain overtime.ts
+ * uses (loadNegativeBalanceTolerance, negative-balance-tolerance.ts): per-employee WorkSchedule
+ * override > tenant default > null. D-00b: for THIS booking gate, an unconfigured (`null`) value
+ * means a tolerance of ZERO — the opposite of the schema comment's "unbegrenzt" ALERTING reading
+ * that `isNegativeLimitExceeded` uses elsewhere — so with nothing configured this gate stays
+ * byte-identical to pre-Phase-100. D-02: the catch branch below applies ZERO tolerance regardless
+ * of what is configured — a read failure must never be MORE generous than the normal path. D-04:
+ * the comparison itself happens in MINUTES; hours only appear in the response body/rejection copy.
+ *
+ * Returns `null` when the request is affordable, otherwise the 400 response body.
+ */
+async function overtimeCompBalanceRejection(
+  app: FastifyInstance,
+  employeeId: string,
+  tenantId: string,
+  neededMinutes: number,
+): Promise<{ error: string; available: number; requested: number; tolerance: number } | null> {
+  const { toleranceMinutes } = await loadNegativeBalanceTolerance(app.prisma, employeeId, tenantId);
+
+  let availableMinutes: number;
+  let appliedToleranceMinutes: number;
+  try {
+    const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, tenantId);
+    appliedToleranceMinutes = toleranceMinutes;
+    availableMinutes = confirmed.minutes + appliedToleranceMinutes;
+  } catch (err) {
+    app.log.warn(
+      { err, employeeId },
+      "OVERTIME_COMP balance gate: getConfirmedCarryOver failed, falling back to stored OvertimeAccount.balanceHours",
     );
-    return minutes / 60;
+    // D-02: fail-safe applies ZERO tolerance — a broken read path must never be more
+    // permissive than the normal path.
+    appliedToleranceMinutes = 0;
+    const account = await getOvertimeAccount(app.prisma, employeeId, tenantId);
+    availableMinutes = account ? Math.round(Number(account.balanceHours) * 60) : 0;
   }
 
-  // Stunden pro Wochentag (0=So, 1=Mo … 6=Sa)
-  const h: Record<number, number> = {
-    0: ws ? Number(ws.sundayHours) : Number(cfg?.defaultSundayHours ?? 0), // D-07: was hardcoded 0 (Sunday workers)
-    1: ws ? Number(ws.mondayHours) : Number(cfg?.defaultMondayHours ?? 8),
-    2: ws ? Number(ws.tuesdayHours) : Number(cfg?.defaultTuesdayHours ?? 8),
-    3: ws ? Number(ws.wednesdayHours) : Number(cfg?.defaultWednesdayHours ?? 8),
-    4: ws ? Number(ws.thursdayHours) : Number(cfg?.defaultThursdayHours ?? 8),
-    5: ws ? Number(ws.fridayHours) : Number(cfg?.defaultFridayHours ?? 8),
-    6: ws ? Number(ws.saturdayHours) : Number(cfg?.defaultSaturdayHours ?? 0),
-  };
-
-  if (halfDay) {
-    // Halber erster Arbeitstag (Feiertage überspringen)
-    const cur = new Date(start);
-    while (cur <= end) {
-      const dow = cur.getDay();
-      const ds = cur.toISOString().split("T")[0];
-      if (h[dow] > 0 && !holidays.has(ds)) return h[dow] / 2;
-      cur.setDate(cur.getDate() + 1);
-    }
-    return 0;
+  if (neededMinutes > availableMinutes) {
+    // OTC-06 / D-14: names the applied tolerance when one was applied; the
+    // "(inkl. … erlaubtem Minus)" clause is omitted entirely at tolerance 0 so an unconfigured
+    // tenant sees the plain pre-Phase-100 message (100-UI-SPEC.md "Rejection copy").
+    const toleranceClause =
+      appliedToleranceMinutes > 0
+        ? ` (inkl. ${formatMinutesHM(appliedToleranceMinutes)} Std. erlaubtem Minus)`
+        : "";
+    return {
+      error:
+        `Nicht genug Überstunden: verfügbar ${formatMinutesHM(availableMinutes)} Std.` +
+        `${toleranceClause}, benötigt ${formatMinutesHM(neededMinutes)} Std.`,
+      available: +(availableMinutes / 60).toFixed(2),
+      requested: +(neededMinutes / 60).toFixed(2),
+      tolerance: +(appliedToleranceMinutes / 60).toFixed(2),
+    };
   }
-
-  let total = 0;
-  const cur = new Date(start);
-  while (cur <= end) {
-    const ds = cur.toISOString().split("T")[0];
-    if (!holidays.has(ds)) total += h[cur.getDay()];
-    cur.setDate(cur.getDate() + 1);
-  }
-  return total;
+  return null;
 }
