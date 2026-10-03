@@ -40,13 +40,13 @@ import {
   calcExpectedMinutesTz,
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
-  iterateDaysInTz,
   timeStrInTz,
   getConfirmedCarryOver,
   getConfirmedCarryOverBulk,
   findMissingWorkdays,
   resolveMissingEntriesDays,
   computeOvertimeBalanceBreakdown,
+  monthlyHoursMonthSollMinutes, // Issue #433 (D-11)
   type OvertimeBalanceBreakdown,
 } from "../contexts/working-time-account"; // Phase 100B Plan 06 — W8/W9/W10; Plan 07 — W5/W6; Phase 101B
 import {
@@ -123,12 +123,15 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const schedule = await getEffectiveSchedule(app, employeeId);
       const isMonthlyHoursSchedule = String(schedule.type ?? "") === "MONTHLY_HOURS";
 
-      // Holiday deduction config for MONTHLY_HOURS (the tenant's federal state is no longer
-      // read here — holidays are resolved by work location, Phase 71b, issue #71).
+      // Issue #433 (D-11): the composition layer carries no Soll rule of its own for
+      // MONTHLY_HOURS — the retired per-tenant holiday-deduction switch (Issue #433, D-04) is
+      // no longer read here or anywhere else in the saldo pipeline. `defaultWorkDays` only
+      // feeds the D-05 workday tier inside the saldo core (`monthlyHoursMonthSollMinutes`
+      // below), the SAME function Monatsabschluss and the monthly report call.
       const tenantConfig = isMonthlyHoursSchedule
         ? await app.prisma.tenantConfig.findUnique({
             where: { tenantId },
-            select: { monthlyHoursHolidayDeduction: true },
+            select: { defaultWorkDays: true },
           })
         : null;
 
@@ -202,49 +205,51 @@ export async function dashboardRoutes(app: FastifyInstance) {
       let monthSollMinutes = 0;
 
       if (isMonthlyHoursSchedule) {
-        // MONTHLY_HOURS: show full monthly budget as Soll, optionally reduced by holidays.
+        // Issue #433 (D-11): the composition layer carries no Soll rule of its own — the full
+        // month's net Soll (holiday/leave/absence already folded in) comes from the saldo
+        // core, the SAME function Monatsabschluss and the monthly report call, so this tile
+        // can never diverge from them.
         const mh = Number(schedule.monthlyHours ?? 0);
         if (mh > 0 && monthStart && monthEnd) {
-          const holidayDeductionEnabled = tenantConfig?.monthlyHoursHolidayDeduction === true;
-
-          if (holidayDeductionEnabled) {
-            // Replicate reports.ts calcShouldMinutes holiday deduction logic:
-            // dailySoll = budget / workdays_in_month; deduct dailySoll for each holiday on a workday.
-            const DOW_KEYS_MH = [
-              "sundayHours",
-              "mondayHours",
-              "tuesdayHours",
-              "wednesdayHours",
-              "thursdayHours",
-              "fridayHours",
-              "saturdayHours",
-            ] as const;
-            let monthWorkdays = 0;
-            iterateDaysInTz(monthStart, monthEnd, tz, (dow) => {
-              if (Number((schedule as Record<string, unknown>)[DOW_KEYS_MH[dow]] ?? 0) > 0)
-                monthWorkdays++;
-            });
-
-            if (monthWorkdays > 0) {
-              const dailySollMin = (mh * 60) / monthWorkdays;
-              let holidayDeductionMin = 0;
-              for (const dateStr of holidayDates.keys()) {
-                const hDate = new Date(dateStr + "T12:00:00Z");
-                if (hDate >= monthStart && hDate <= monthEnd) {
-                  const dow = getDayOfWeekInTz(hDate, tz);
-                  if (Number((schedule as Record<string, unknown>)[DOW_KEYS_MH[dow]] ?? 0) > 0) {
-                    holidayDeductionMin += dailySollMin;
-                  }
-                }
-              }
-              monthSollMinutes = Math.max(0, Math.round(mh * 60 - holidayDeductionMin));
-            } else {
-              // No per-day config (flexible Minijobber): full budget, no deduction
-              monthSollMinutes = mh * 60;
-            }
-          } else {
-            monthSollMinutes = mh * 60;
-          }
+          const { firstDay: monthFirstDay, lastDay: monthLastDay } = monthDayBounds(
+            monthStart,
+            monthEnd,
+            tz,
+          );
+          const meEmployee = await app.prisma.employee.findUnique({
+            where: { id: employeeId },
+            select: { hireDate: true, exitDate: true },
+          });
+          const [monthLeave, monthAbsences] = await Promise.all([
+            getActiveLeaveOverlapping(
+              app.prisma,
+              employeeScopeFor(access, { employeeId }),
+              monthStart,
+              monthEnd,
+            ),
+            getAbsencesOverlapping(
+              app.prisma,
+              employeeScopeFor(access, { employeeId }),
+              monthStart,
+              monthEnd,
+            ),
+          ]);
+          monthSollMinutes =
+            monthlyHoursMonthSollMinutes({
+              employeeId,
+              schedule: schedule as Record<string, unknown>,
+              monthStart,
+              monthEnd,
+              monthFirstDay,
+              monthLastDay,
+              tz,
+              hireDate: meEmployee?.hireDate ?? today,
+              exitDate: meEmployee?.exitDate ?? null,
+              leave: monthLeave,
+              absences: monthAbsences,
+              holidayDateStrings: new Set(holidayDates.keys()),
+              defaultWorkDays: tenantConfig?.defaultWorkDays,
+            }) ?? 0;
         }
       } else {
         // FIXED_SCHEDULE / FLEXTIME / SHIFT_BASED: sum scheduled hours from week start up to today (inclusive).
