@@ -39,10 +39,17 @@
  * same drift-free guarantee the web's former per-day helper used to pin, now pinned here for the
  * core itself. expectedMinutes = 900, regardless of July's actual workday count (23).
  *
- * Employee D (FIXED_SCHEDULE, 40h/week Mon-Fri 8h, hire 2025-01-01, same tenant): completely
- * unrelated to the MONTHLY_HOURS core — this plan does not touch the FIXED/FLEXTIME/SHIFT_BASED
- * report Soll (T-433-18). Its report `shouldHours` value is captured in the RED run (before this
- * plan's Task 2 edits) and asserted again after — byte-identical both times.
+ * Employee D (FIXED_SCHEDULE, 40h/week Mon-Fri 8h, hire 2025-01-01, same tenant): unrelated to
+ * the MONTHLY_HOURS core itself — this plan (#433) did not touch the FIXED/FLEXTIME/SHIFT_BASED
+ * report Soll (T-433-18).
+ *
+ * Issue #451 (D-03), authorised assertion-policy correction: Employee D's report `shouldHours`
+ * changed from 176 (22 workdays * 8h, no holiday deduction — the D-03 bug) to 168 (minus the
+ * manual holiday on Wed 10.06.2026, a workday) once plan 451-03 switched GET /reports/monthly to
+ * read its Soll from the working-time-account's `fullMonth` result instead of its own
+ * `{day}Hours` walk — the SAME manual holiday that already reduced employees A/B/C's
+ * MONTHLY_HOURS Soll on this fixture now also reduces Employee D's FIXED_SCHEDULE Soll, which it
+ * never did before 451-03.
  */
 import type { FastifyInstance } from "fastify";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
@@ -229,9 +236,16 @@ describe("Issue #433 D-11 — month-saldo, dashboard and monthly report agree on
   const EXPECTED_A_MINUTES = 1740; // 2640 - 120 (holiday) - 600 (vacation) - 0 (overlap) - 60 (half day) - 120 (absence)
   const EXPECTED_B_MINUTES = 1320; // round(2640*12/22)=1440 - 120 (vacation); holiday before hire ignored
   const EXPECTED_C_MINUTES = 900; // 15h * 60, full month, no exclusions — drift-free by construction
-  // Employee D (FIXED_SCHEDULE, 40h/week Mon-Fri 8h): 22 workdays in June 2026 * 8h = 176h.
-  // Pinned value for T-433-18 — unaffected by the MONTHLY_HOURS core change.
-  const EXPECTED_D_HOURS = 176;
+  // Employee D (FIXED_SCHEDULE, 40h/week Mon-Fri 8h): 22 workdays in June 2026 * 8h = 176h,
+  // minus the manual holiday on Wed 10.06.2026 (a workday, 8h) = 168h.
+  // Issue #451 (D-03): this is the authorised assertion-policy correction (176 -> 168) —
+  // the OLD value encoded the D-03 bug (public/manual holiday not deducted from a
+  // FIXED_SCHEDULE report Soll); the monthly report now reads its Soll from the
+  // working-time-account's `fullMonth` result (`computeMonthReportFigures`), which deducts
+  // the same manual holiday the MONTHLY_HOURS employees A/B/C on this fixture already have
+  // deducted — unaffected by the MONTHLY_HOURS core change itself (T-433-18 still holds: no
+  // MONTHLY_HOURS code path is involved for Employee D), but no longer unaffected by 451-03.
+  const EXPECTED_D_HOURS = 168;
 
   beforeAll(async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -393,7 +407,7 @@ describe("Issue #433 D-11 — month-saldo, dashboard and monthly report agree on
     expect(result.monthSollMinutes).toBeUndefined();
   });
 
-  it(`Employee D (FIXED_SCHEDULE): report shouldHours == ${EXPECTED_D_HOURS} (pinned, unaffected by this plan)`, async () => {
+  it(`Employee D (FIXED_SCHEDULE): report shouldHours == ${EXPECTED_D_HOURS} (Issue #451 D-03: manual holiday now deducted)`, async () => {
     const shouldHours = await reportShouldHours(fixedEmpId, 2026, 6);
     expect(shouldHours).toBe(EXPECTED_D_HOURS);
   });

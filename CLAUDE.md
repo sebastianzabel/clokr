@@ -191,6 +191,13 @@ Legal retention periods (Germany):
 
 Current: recalculated from hire date on every request (does not scale). Target architecture (SaldoSnapshot per month, Jahresübertrag, correction flow) — see GitHub issue #6.
 
+- **Report Soll/Ist/Überstunden has one source (Issue #451, D-03).** `GET /reports/monthly` (JSON
+  and both PDFs) reads `computeMonthReportFigures()` (`contexts/working-time-account/month-saldo.ts`)
+  exclusively — the composition layer computes no Soll of its own. Leave-day counts printed in
+  reports/DATEV go only through `leaveDaysByCodeWithin`/`leaveRequestDaysWithin`
+  (`contexts/absence/leave-days.ts`) — the same priced, §9-netted day-counting kernel the absence
+  context's own vacation calculation uses, never a separate calendar walk.
+
 ## Releases & Deployment
 
 **Read `docs/release-process.md` before cutting, tagging or deploying a release.** It is the
@@ -283,6 +290,12 @@ These rules MUST be followed when implementing or modifying ArbZG compliance che
 ## Vacation Carry-Over & Cross-Year Booking
 
 BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO priority, carry-over validation with documented reasons → see `docs/burlg-carryover.md` (and GitHub issue #58).
+
+- **Resturlaub (remaining, expired, at-risk) comes from one function (Issue #451, D-07).**
+  `vacationBalanceForRow`/`getVacationBalance` (`contexts/absence/facade/vacation-balance.ts`) is
+  the only place that computes it; every reader (Dashboard, Urlaubsübersicht, Urlaubs-PDFs, the
+  carry-over expiry cron, `GET /leave/entitlements`, the admin Urlaubsverwaltung) reads this
+  facade instead of re-deriving the arithmetic.
 
 ## Overtime Saldo Calculation (current)
 

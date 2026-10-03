@@ -228,3 +228,64 @@ describe("Issue #435 — server-driven vacation values", () => {
     expect(slice).toContain("eAnnualVacationDays");
   });
 });
+
+describe("Issue #451 D-09 — carry-over reason select/note stay button-gated and snapshotted", () => {
+  it("the Übertragsgrund select carries no onchange=/oninput= handler", () => {
+    const tag = PAGE.match(/<select\s+id="e-vac-reason"[\s\S]*?<\/select>/)?.[0];
+    expect(tag, "#e-vac-reason select not found").toBeDefined();
+    expect(tag).not.toMatch(/on(?:change|input)=\{/);
+  });
+
+  it("the Notiz zum Übertrag textarea carries no onchange=/oninput= handler", () => {
+    const tag = PAGE.match(/<textarea\s+id="e-vac-reason-note"[\s\S]*?<\/textarea>/)?.[0];
+    expect(tag, "#e-vac-reason-note textarea not found").toBeDefined();
+    expect(tag).not.toMatch(/on(?:change|input)=\{/);
+  });
+
+  // The vacation section snapshots eVacReason/eVacReasonNote via a SECOND snap() call
+  // (vacationReasonSnapshot) rather than appending them to the existing `vacationSnapshot =
+  // snap(vacYear, ...)` call — appending would push that line past the 100-col print width and
+  // Prettier would wrap it, breaking the WR-01 pin above (`vacationSnapshot = snap(vacYear`).
+  // All three sites (onMount baseline, saveVacation re-take, vacationDirty) must carry BOTH
+  // snap() calls.
+  it("the onMount baseline takes both vacation snapshots", () => {
+    const idx = PAGE.indexOf(
+      "vacationSnapshot = snap(vacYear, eVacTotal, eVacCarried, eVacDeadline);\n",
+    );
+    expect(idx, "onMount vacationSnapshot baseline not found").toBeGreaterThan(-1);
+    const slice = PAGE.slice(idx, idx + 600);
+    expect(slice).toContain("vacationReasonSnapshot = snap(eVacReason, eVacReasonNote);");
+  });
+
+  it("saveVacation re-takes both vacation snapshots on the success path", () => {
+    const idx = PAGE.indexOf("async function saveVacation()");
+    expect(idx, "saveVacation not found").toBeGreaterThan(-1);
+    const slice = PAGE.slice(idx, idx + 1200);
+    expect(slice).toContain(
+      "vacationSnapshot = snap(vacYear, eVacTotal, eVacCarried, eVacDeadline);",
+    );
+    expect(slice).toContain("vacationReasonSnapshot = snap(eVacReason, eVacReasonNote);");
+  });
+
+  it("vacationDirty compares against both snapshots", () => {
+    const idx = PAGE.indexOf("let vacationDirty = $derived(");
+    expect(idx, "vacationDirty derivation not found").toBeGreaterThan(-1);
+    const slice = PAGE.slice(idx, idx + 300);
+    expect(slice).toContain("vacationSnapshot");
+    expect(slice).toContain("vacationReasonSnapshot");
+    expect(slice).toContain("eVacReason");
+    expect(slice).toContain("eVacReasonNote");
+  });
+
+  it("a legacy stored value is shown read-only via a disabled option, never silently dropped", () => {
+    expect(PAGE).toContain("disabled selected");
+    expect(PAGE).toContain("carryOverReasonLabel(eVacReason)");
+  });
+
+  it("the Notiz textarea shows the carryOverReasonHint below it", () => {
+    const idx = PAGE.indexOf('id="e-vac-reason-note"');
+    expect(idx, "#e-vac-reason-note not found").toBeGreaterThan(-1);
+    const slice = PAGE.slice(idx, idx + 400);
+    expect(slice).toContain("eVacReasonHint");
+  });
+});

@@ -143,7 +143,12 @@ export async function getEntitlementById(
  * A15 (H2) — entitlements whose carry-over deadline falls in `(now, cutoff]` and still carry
  * non-zero `carriedOverDays`, for the BUrlG § 7 Hinweispflicht / EuGH C-684/16 "Verfall-Warnungen"
  * widget. `where` copied verbatim from `reports.ts`'s pre-facade `GET /carryover-at-risk` — see
- * `docs/burlg-carryover.md`, not re-derived here.
+ * `docs/burlg-carryover.md`, not re-derived here. Issue #451 (D-08): the carry-over expiry
+ * window is BUrlG § 7 Abs. 3 law AND the carry-over concept exists for the statutory VACATION
+ * entitlement only — `recalculateCarryOver`/`autoCarryOver` and PUT /settings/vacation write
+ * carry-over on VACATION rows only, same rule the carry-over warning cron's own `where` already
+ * applies (`plugins/carryover-warning.ts`) — so a different leave type's row is never scanned
+ * here either.
  */
 export async function getExpiringCarryOver(
   db: Prisma.TransactionClient,
@@ -156,10 +161,11 @@ export async function getExpiringCarryOver(
       employee: { tenantId, exitDate: null },
       carriedOverDays: { gt: 0 },
       carryOverDeadline: { gt: now, lte: cutoff },
+      leaveType: { code: "VACATION" },
     },
     include: {
       employee: { select: { id: true, firstName: true, lastName: true, employeeNumber: true } },
-      leaveType: { select: { id: true, name: true } },
+      leaveType: { select: { id: true, name: true, code: true } },
     },
   });
 }

@@ -74,13 +74,25 @@ describe("Issue #448 — Berichte, DATEV und Urlaubsliste zählen Berufsschultag
 
     // Same Mo-Fr VACATION week for both employees — `data` has the BS row, `controlData` does
     // not, so the control employee's figures are the "without BS" baseline.
+    //
+    // Issue #451 (D-01, fixture correction): `days` here must be the PRICED value (the absence
+    // context already excludes a Berufsschultag from a VACATION request's count, #448) — this
+    // row is created directly via Prisma (bypassing the API's own resolveLeaveDays pricing), so
+    // it has to state that priced value itself. The DATEV export now reads this stored `days`
+    // through leaveDaysByCodeWithin's fully-inside branch instead of re-deriving it from the
+    // date range via its own BS-aware subtraction (removed), so a `days: 5` here — correct only
+    // for a calendar count that ignores the BS day on 2027-03-09 — would make the DATEV line
+    // disagree with GET /reports/monthly's and the Urlaubsliste PDF's independently-computed 4,
+    // which both stay unaffected by this field (see their own call sites). `controlData`'s
+    // request below has no BS day inside its range, so its calendar count and priced count
+    // already agree at 5 — unchanged.
     await app.prisma.leaveRequest.create({
       data: {
         employeeId: data.employee.id,
         leaveTypeId: data.vacationType.id,
         startDate: new Date("2027-03-08"),
         endDate: new Date("2027-03-12"),
-        days: 5,
+        days: 4,
         status: "APPROVED",
       },
     });

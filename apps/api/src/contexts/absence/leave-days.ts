@@ -25,7 +25,7 @@ import {
 } from "./vacation-calc"; // Phase 107 (D-04/D-09), Issue #417; leaveDaysPerWeek Issue #429 (D-01/D-02) — the shared per-week kernel, Phase 430-06; marginalShiftBasedLeaveDays/mondayOfWeekUtc Issue #436 (D-04)
 import { preserveCarryOverDeadline } from "./illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
 import { getActiveLeaveOverlapping } from "./facade/leave-requests"; // Phase 430 (D-08) — this file is INSIDE contexts/absence, no boundary crossing
-import type { LeaveEntitlement } from "@clokr/db";
+import type { LeaveEntitlement, LeaveTypeCode } from "@clokr/db"; // LeaveTypeCode: Issue #451 (D-01)
 import {
   computeRegularVacationDaysBySegments,
   type VacationContractSegment,
@@ -1693,6 +1693,120 @@ export async function countedLeaveDaysWithin(
 }
 
 /**
+ * Issue #451 (D-01) — Erweiterung, additive. The leave-day share EVERY LeaveTypeCode this
+ * employee has a counted request for prices within a UTC-midnight calendar window, keyed by
+ * code, § 9 BUrlG-netted. Carries no day-counting rule of its own: one `leaveRequest.findMany`
+ * groups this employee's requests overlapping `[from, to]` by `leaveType.code`, then delegates
+ * once per code to {@link countedLeaveDaysWithin} — the SAME kernel every other reader of a
+ * priced leave-day count already goes through (workDays, holidays, half days, SHIFT_BASED
+ * contract days, Berufsschultage #448 — all already inside that function's own dispatch). A code
+ * with no counted request in the window is absent from the returned map; callers treat "absent"
+ * as zero. `from`/`to` MUST be UTC-midnight calendar days — see {@link countedLeaveDaysWithin}'s
+ * own docblock on why a tenant-tz instant would silently shift the window by one day.
+ *
+ * Generic over every code, including the sickness ones: a caller that only wants non-sick
+ * Lohnarten (composition/reports.ts's DATEV export) simply never reads the sickness entries back
+ * out of the map — this function does not decide which codes matter to its caller.
+ *
+ * Consumed by composition/reports.ts (the DATEV LODAS export) through contexts/absence/index.ts.
+ */
+export type LeaveDaysForCode = {
+  requestDays: number;
+  section9CreditDays: number;
+  netDays: number;
+};
+
+export async function leaveDaysByCodeWithin(
+  db: DbClient,
+  args: { employeeId: string; tenantId: string; from: Date; to: Date },
+): Promise<Map<LeaveTypeCode, LeaveDaysForCode>> {
+  const { employeeId, tenantId, from, to } = args;
+
+  const requests = await db.leaveRequest.findMany({
+    where: {
+      employeeId,
+      deletedAt: null,
+      employee: { tenantId },
+      status: { in: [...EFFECTIVE_LEAVE_STATUSES] },
+      startDate: { lte: to },
+      endDate: { gte: from },
+    },
+    select: { leaveTypeId: true, leaveType: { select: { code: true } } },
+  });
+
+  const idsByCode = new Map<LeaveTypeCode, Set<string>>();
+  for (const r of requests) {
+    const code = r.leaveType.code;
+    if (code === null) continue;
+    const ids = idsByCode.get(code) ?? new Set<string>();
+    ids.add(r.leaveTypeId);
+    idsByCode.set(code, ids);
+  }
+
+  const result = new Map<LeaveTypeCode, LeaveDaysForCode>();
+  for (const [code, idSet] of idsByCode) {
+    const { requestDays, section9CreditDays } = await countedLeaveDaysWithin(db, {
+      employeeId,
+      tenantId,
+      leaveTypeIds: [...idSet],
+      from,
+      to,
+    });
+    result.set(code, {
+      requestDays,
+      section9CreditDays,
+      netDays: Math.max(0, round2(requestDays - section9CreditDays)),
+    });
+  }
+  return result;
+}
+
+/**
+ * Issue #451 (D-02) — Erweiterung, additive. One leave request's priced days inside a UTC
+ * calendar-day window `[from, to]`, mirroring the per-request branch inside
+ * {@link countedLeaveDaysWithin}: a request fully inside `[from, to]` returns its own stored
+ * `days` (no holiday-map round trip); otherwise {@link getHolidayMap} is fetched over the
+ * request's own `[startDate, endDate]` range and the chronological-prefix rule
+ * ({@link leaveDaysWithin}) apportions the clipped share. Returns 0 when `[from, to]` does not
+ * overlap the request at all — `leaveDaysWithin`'s own prefix rule already yields 0 for both
+ * "window entirely before the request" and "window entirely after it" (see that function's own
+ * docblock), so no separate overlap check is needed here.
+ *
+ * Consumed by composition/reports.ts (the Urlaubsliste / Urlaubs-PDF list, through
+ * contexts/absence/index.ts).
+ */
+export async function leaveRequestDaysWithin(
+  db: DbClient,
+  args: {
+    employeeId: string;
+    tenantId: string;
+    request: { startDate: Date; endDate: Date; days: unknown };
+    from: Date;
+    to: Date;
+  },
+): Promise<number> {
+  const { employeeId, tenantId, request, from, to } = args;
+  const fromDay = utcDay(from);
+  const toDay = utcDay(to);
+
+  if (
+    utcDay(request.startDate).getTime() >= fromDay.getTime() &&
+    utcDay(request.endDate).getTime() <= toDay.getTime()
+  ) {
+    return round2(Number(request.days));
+  }
+
+  const holidayMap = await getHolidayMap(
+    db,
+    tenantId,
+    employeeId,
+    request.startDate,
+    request.endDate,
+  );
+  return leaveDaysWithin(db, employeeId, tenantId, request, from, to, new Set(holidayMap.keys()));
+}
+
+/**
  * Issue #445 (D-10) — heals one `LeaveEntitlement.usedDays` row in place: recomputes
  * `requestDays - section9CreditDays` for the row's calendar year via
  * {@link countedLeaveDaysWithin}, writes the new value plus an audited UPDATE (reason
@@ -1825,4 +1939,96 @@ export async function carryOverRemainder(
     hinweisIssued,
   );
   return Math.max(0, round2(Number(prev.totalDays) + effectiveCarry - Number(prev.usedDays)));
+}
+
+/**
+ * Issue #451 (D-07/D-08) — the carried-over days of `row` that are STILL exposed to a FUTURE
+ * deadline, i.e. the part that has neither lapsed (deadline already passed) nor been consumed yet
+ * by days already taken before the deadline (FIFO, same window as {@link effectiveCarryOverDays}):
+ * `max(0, carriedOverDays − takenUpToDeadline)`, where `takenUpToDeadline` is this row's counted
+ * (vacation-aware) days inside `[1 Jan of row.year, min(deadline, 31 Dec of row.year)]` via
+ * {@link countedLeaveDaysWithin}.
+ *
+ * Unlike {@link effectiveCarryOverDays} (which answers "how much of the carry still counts towards
+ * the balance", and returns the FULL carry once the deadline has passed without a Hinweis), this
+ * answers "how much is still at risk of lapsing in the future" — so it is deliberately `0` once
+ * the deadline has passed (nothing left to warn about — either it already lapsed or it was fully
+ * used) OR when no deadline is configured (nothing can lapse). Legal basis: BUrlG § 7 Abs. 3
+ * (carry-over must be taken by the deadline), EuGH C-684/16 (Hinweispflicht — the employer must
+ * warn about what is ACTUALLY at risk, not the raw, possibly already-consumed carry). Consumed by
+ * the carry-over expiry warning cron (D-08, Issue #451) and the Resturlaub facade
+ * ({@link import("./facade/vacation-balance").vacationBalanceForRow}).
+ */
+export async function carryOverAtRiskDays(
+  db: DbClient,
+  row: {
+    employeeId: string;
+    leaveTypeId: string;
+    year: number;
+    carriedOverDays: unknown;
+    carryOverDeadline: Date | null;
+  },
+  tenantId: string,
+  now: Date,
+): Promise<number> {
+  const carry = Number(row.carriedOverDays);
+  if (carry <= 0) return 0;
+  if (!row.carryOverDeadline) return 0; // nothing can lapse without a deadline
+  if (now.getTime() > row.carryOverDeadline.getTime()) return 0; // deadline already passed
+
+  const yearEnd = Date.UTC(row.year, 11, 31, 23, 59, 59);
+  const windowEnd = new Date(Math.min(row.carryOverDeadline.getTime(), yearEnd));
+  const { requestDays, section9CreditDays } = await countedLeaveDaysWithin(db, {
+    employeeId: row.employeeId,
+    tenantId,
+    leaveTypeIds: [row.leaveTypeId],
+    from: new Date(Date.UTC(row.year, 0, 1)),
+    to: windowEnd,
+  });
+  const takenUpToDeadline = Math.max(0, round2(requestDays - section9CreditDays));
+  return Math.max(0, round2(carry - takenUpToDeadline));
+}
+
+/**
+ * Issue #451 (D-07) — the § 5 BUrlG reduction applied to `employeeId`'s regular VACATION
+ * entitlement BECAUSE of an exit in `year`: the regular full-year value the employee would have
+ * had WITHOUT the exit, minus the regular value WITH it (both via
+ * {@link computeRegularVacationDaysBySegments}, same inputs {@link resolveRegularVacationDays}
+ * uses) — never negative. `0` when the employee has no exit date, or the exit falls in a
+ * different calendar year than `year` (the reduction is only meaningful in the employee's actual
+ * exit year — Teilurlaub, § 5 Abs. 1 Buchst. c BUrlG). Read-only — this never recomputes or writes
+ * the stored `LeaveEntitlement.totalDays`; that stays {@link syncExitYearVacationEntitlement}'s job
+ * (D-06/D-07). Consumed by the Resturlaub facade
+ * ({@link import("./facade/vacation-balance").vacationBalanceForRow}).
+ */
+export async function exitYearReductionDays(
+  db: DbClient,
+  employeeId: string,
+  tenantId: string,
+  year: number,
+): Promise<number> {
+  const employee = await db.employee.findFirst({
+    where: { id: employeeId, tenantId },
+    select: { exitDate: true },
+  });
+  if (!employee?.exitDate || employee.exitDate.getUTCFullYear() !== year) return 0;
+
+  const inputs = await loadRegularVacationInputs(db, employeeId, tenantId, year);
+  const withoutExit = computeRegularVacationDaysBySegments({
+    year,
+    hireDate: inputs.hireDate,
+    birthDate: inputs.birthDate,
+    exitDate: null,
+    segments: inputs.segments,
+    baseDays: inputs.baseDays,
+  });
+  const withExit = computeRegularVacationDaysBySegments({
+    year,
+    hireDate: inputs.hireDate,
+    birthDate: inputs.birthDate,
+    exitDate: employee.exitDate,
+    segments: inputs.segments,
+    baseDays: inputs.baseDays,
+  });
+  return Math.max(0, round2(withoutExit - withExit));
 }

@@ -30,6 +30,8 @@ import {
   OVERTIME_LABEL_FORECAST,
   COMPANY_PROVISIONAL_LEGEND,
   SECTION9_LEGEND,
+  BALANCE_ADJUSTMENT_LABEL,
+  BALANCE_ADJUSTMENT_LEGEND,
   type CompanyMonthlyReportData,
 } from "../composition/pdf";
 
@@ -86,6 +88,8 @@ function makeRow(overrides: Partial<CompanyRow>): CompanyRow {
     targetHours: 0,
     overtimeHours: 0,
     overtimeConfirmed: true,
+    // Issue #451 (D-03): default 0 — the vast majority of rows carry no reconciliation item.
+    balanceAdjustmentHours: 0,
     sickDaysWithAttest: 0,
     sickDaysWithoutAttest: 0,
     vacationDays: 0,
@@ -258,5 +262,84 @@ describe("§ 9 BUrlG legend (Phase 104, D-30)", () => {
     expect(SECTION9_LEGEND).toBe(
       "Tage mit bestätigter AU während genehmigten Urlaubs werden als Kranktage geführt und nicht auf den Jahresurlaub angerechnet (§ 9 BUrlG).",
     );
+  });
+});
+
+describe("Verrechnung column + legend (Issue #451, D-03)", () => {
+  it("writes a 'Verr. (h)' header between 'Ist (h)' and 'Saldo (h)', '-8.00' for the non-zero row, an empty cell for the zero row, and the legend exactly once after the table", () => {
+    const doc = createRecordingDoc();
+
+    streamCompanyMonthlyReportPdf(
+      doc,
+      makeData([
+        // targetHours/workedHours deliberately non-zero so "0.00" cannot leak from those columns
+        // and mask an incorrectly-printed empty-cell assertion below.
+        makeRow({
+          employeeName: "Alpha NonZero",
+          targetHours: 100,
+          workedHours: 92,
+          balanceAdjustmentHours: -8,
+        }),
+        makeRow({
+          employeeName: "Beta Zero",
+          targetHours: 100,
+          workedHours: 100,
+          balanceAdjustmentHours: 0,
+        }),
+      ]),
+    );
+
+    const istIdx = doc.texts.indexOf("Ist (h)");
+    const verrIdx = doc.texts.indexOf("Verr. (h)");
+    const saldoIdx = doc.texts.indexOf("Saldo (h)");
+    expect(istIdx).toBeGreaterThanOrEqual(0);
+    expect(verrIdx).toBeGreaterThan(istIdx);
+    expect(saldoIdx).toBeGreaterThan(verrIdx);
+
+    expect(doc.texts).toContain("-8.00");
+    // Zero row must not print a Verr. cell — only the non-zero row's "-8.00" exists.
+    expect(doc.texts.filter((t) => t === "-8.00")).toHaveLength(1);
+    expect(doc.texts.filter((t) => t === "0.00")).toHaveLength(0);
+
+    expect(doc.texts.filter((t) => t === BALANCE_ADJUSTMENT_LEGEND)).toHaveLength(1);
+  });
+
+  it("never writes the legend when every row's balanceAdjustmentHours is 0", () => {
+    const doc = createRecordingDoc();
+
+    streamCompanyMonthlyReportPdf(
+      doc,
+      makeData([
+        makeRow({ employeeName: "Alpha", balanceAdjustmentHours: 0 }),
+        makeRow({ employeeName: "Beta", balanceAdjustmentHours: 0 }),
+      ]),
+    );
+
+    expect(doc.texts).not.toContain(BALANCE_ADJUSTMENT_LEGEND);
+  });
+
+  it("an unlabelled row (overtimeConfirmed null) with balanceAdjustmentHours 0 prints no Verr. value and no asterisk — existing contract kept", () => {
+    const doc = createRecordingDoc();
+
+    streamCompanyMonthlyReportPdf(
+      doc,
+      makeData([
+        makeRow({
+          employeeName: "Gamma Unlabelled",
+          overtimeHours: 0,
+          overtimeConfirmed: null,
+          balanceAdjustmentHours: 0,
+        }),
+      ]),
+    );
+
+    expect(doc.texts.some((t) => t.includes("*"))).toBe(false);
+    expect(doc.texts).not.toContain(BALANCE_ADJUSTMENT_LEGEND);
+  });
+
+  it("BALANCE_ADJUSTMENT_LABEL equals 'Verrechnung'; the legend states the closing identity with an ASCII hyphen (WinAnsi has no U+2212)", () => {
+    expect(BALANCE_ADJUSTMENT_LABEL).toBe("Verrechnung");
+    expect(BALANCE_ADJUSTMENT_LEGEND).toContain("Ist - Soll + Verrechnung = Überstunden");
+    expect(BALANCE_ADJUSTMENT_LEGEND).not.toContain("−");
   });
 });
