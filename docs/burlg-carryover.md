@@ -182,6 +182,40 @@ segment, not from whichever contract happened to be current when the row was las
 - Reminders starting in October (configurable) when vacation is at risk of expiring.
 - Escalation to manager in November, final warning in December.
 
+## Remaining Vacation — One Function (Issue #451)
+
+- **`vacationBalanceForRow(db, row, tenantId, now, opts?)`** (`contexts/absence/facade/vacation-balance.ts`,
+  loader: `getVacationBalance(db, employeeId, tenantId, year, now)`) is the ONE function that answers
+  "how much vacation does this employee have left in year Y" for a VACATION `LeaveEntitlement` row.
+  Before this facade the formula was duplicated across readers (Dashboard, Urlaubsübersicht,
+  Urlaubs-PDFs, the carry-over expiry cron, `GET /leave/entitlements`) and could silently diverge —
+  the trigger for Issue #451. The facade is read-only (never writes a `LeaveEntitlement` row) and
+  composes existing rules rather than re-deriving them: `effectiveCarryOverDays` (FIFO, Issue #445),
+  `carryOverAtRiskDays` and `exitYearReductionDays` (new in this issue, in `leave-days.ts`), and
+  `exitVacationOverUseWarning` (Issue #447).
+- **`VacationBalance` fields**: `year`, `entitlementDays` (stored `totalDays`), `carriedOverDays`
+  (stored), `carriedOverEffectiveDays` (FIFO-adjusted, non-expired carry-over),
+  `carriedOverExpiredDays` (`carriedOverDays − carriedOverEffectiveDays`, clamped to ≥0),
+  `exitReductionDays` (§ 5 BUrlG Teilurlaub on an exit year), `usedDays` (stored), `pendingDays`
+  (Σ days of PENDING requests of the row's type starting in the row's year), `remainingDays`
+  (`entitlementDays + carriedOverEffectiveDays − usedDays`, not clamped), `atRiskDays` (the FIFO
+  carry-over that will lapse without further booking), `carryOverDeadline`, `hinweisIssued`
+  (whether the Hinweispflicht warning, EuGH C-684/16, was documented), and
+  `exitOverUseWarning` (Issue #447, `null` when not applicable).
+- **Every reader**: `GET /leave/entitlements/:employeeId` additively returns the full breakdown as
+  `vacationBalance` on the row's VACATION entry, and that route's own `effectiveCarryOverDays`
+  field is now taken FROM the facade result for the same row so the two cannot diverge (D-07). The
+  Dashboard Urlaubstage tile, the Urlaubsübersicht JSON, `GET /reports/carryover-at-risk` and both
+  Urlaubs-PDFs read the same facade via `app.getVacationBalance()` / `app.vacationBalanceForRow()`
+  Fastify decorations registered from the composition root (D-07, 451-08) — not an `index.ts`
+  re-export, because that edge would close an existing absence/scheduling/time-tracking/
+  working-time-account import cycle. The `/leave` page (web) computes its own equivalent figure
+  from the same fields the API now returns, bound to the facade by an equality test (planner
+  decision P-07) rather than calling the API function directly.
+- **The carry-over expiry warning cron** (`runCarryoverWarningOnce`) scans VACATION entitlements
+  only (not every leave type) and warns with the FIFO-adjusted `atRiskDays` — never the raw stored
+  `carriedOverDays` — and skips an entitlement whose carry-over is already fully consumed (D-08).
+
 ## 6-Tage-Vertrag (Issue #468, D-06/D-07)
 
 - The base vacation value scales proportionally above the 5-day reference week, not just below

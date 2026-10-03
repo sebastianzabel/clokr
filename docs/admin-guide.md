@@ -51,6 +51,16 @@ Ausgeschiedene Mitarbeiter werden **nicht hard-gelöscht**, sondern anonymisiert
 - Jahresanspruch in Tagen
 - Übertrag aus dem Vorjahr (manuell oder automatisch nach Monatsabschluss)
 - Verfallsdatum für Resturlaub (Standard: 31. März des Folgejahres)
+- **Übertragsgrund** (Tab „Urlaub" auf der Mitarbeiter-Detailseite, Issue #451/#445): bei einem
+  verlängerten Verfallsdatum kann ein Grund mit Notiz dokumentiert werden — Krankheit
+  (EuGH C-684/16/C-214/10, automatisch 31. März des Folgejahres), Mutterschutz (§ 24 S. 2 MuSchG),
+  Elternzeit (§ 17 Abs. 2 BEEG) oder Sonstiges (erfordert eine Notiz). Das Feld wird wie alle Felder
+  dieses Abschnitts über den **Speichern**-Button des Tabs übernommen, nicht sofort beim Auswählen.
+- Der im Admin angezeigte **Resturlaub** (verbleibend, verfallen, gefährdet) kommt aus derselben
+  einen Funktion wie die Berichte und das Dashboard (Issue #451, siehe unten). In den Berichten
+  (**Admin → Berichte**) zeigt die Spalte „Übertrag" den **wirksamen** (FIFO-bereinigten, nicht
+  verfallenen) Übertrag, und die Verfall-Warnung zeigt die **gefährdeten** Tage — den Teil des
+  Übertrags, der ohne weitere Buchung bis zum Verfallsdatum verfällt.
 
 ### Genehmigungen
 
@@ -113,6 +123,13 @@ CSV-Vorlagen stehen zum Download bereit.
 ## DATEV-Export
 
 **Admin → DATEV Export** — Export der Lohn-/Zeitdaten im DATEV-CSV-Format für die Weitergabe an die Lohnbuchhaltung. Zeitraum (Monat) wählen, exportieren, CSV herunterladen.
+
+Die exportierten **Urlaubs- und Abwesenheitstage** sind die vom System berechneten Tage —
+Arbeitstage laut Vertrag, Feiertage, halbe Tage, Schichtvertrag (SHIFT_BASED) und
+Berufsschultage werden alle berücksichtigt (Issue #451, D-01: dieselbe Funktion, die auch die
+Urlaubsberechnung selbst nutzt, statt eines eigenen Mo-Fr-Kalenderlaufs im Export). Das betrifft
+alle Abwesenheits-Lohnarten außer Krankheit — **Krankheitstage** werden weiterhin nach der
+eigenen, unveränderten Tagesregel exportiert.
 
 ---
 
