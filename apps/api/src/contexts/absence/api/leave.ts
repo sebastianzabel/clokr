@@ -366,8 +366,10 @@ const section9ReasonSchema = z.object({
 // outside the enum made Prisma throw a PrismaClientValidationError, which the global handler
 // turns into a 500 echoing the full Prisma text (model name, field list, expected enum
 // members) back to the caller. Every other route in this file validates its query with Zod.
+// Issue #468 (D-04/A-3): a manager can list overholt Vorgänge for audit traceability
+// (GET /section9?status=<value>), same as every other status value below.
 const section9StatusQuerySchema = z.object({
-  status: z.enum(["AU_PENDING", "CONFIRMED", "REJECTED"]).optional(),
+  status: z.enum(["AU_PENDING", "CONFIRMED", "REJECTED", "SUPERSEDED"]).optional(),
 });
 
 /**
@@ -1037,6 +1039,10 @@ export async function leaveRoutes(app: FastifyInstance) {
                 { sickRequestId: { in: requestIds } },
                 { vacationRequestId: { in: requestIds } },
               ],
+              // Issue #468 (D-04/A-3): a SUPERSEDED credit has no effect and must not surface
+              // as a marker on either side of the pair — skipped entirely, not merely ranked
+              // lowest, so a request whose ONLY credit is superseded shows `section9Status: null`.
+              status: { not: "SUPERSEDED" },
             },
             select: { id: true, sickRequestId: true, vacationRequestId: true, status: true },
           })
@@ -4143,6 +4149,13 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
       }
 
+      // Issue #468 (D-04/A-3, Task 2): a SUPERSEDED credit was overholt by a `/correct` call —
+      // before every OTHER state check, so a still-SUPERSEDED-but-otherwise-AU_PENDING-looking
+      // row can never be re-activated by confirming or rejecting it (T-468-20).
+      if (credit.status === "SUPERSEDED") {
+        return reply.code(409).send({ error: "Der Vorgang ist durch eine Korrektur überholt." });
+      }
+
       if (credit.status === "CONFIRMED") {
         return reply.code(409).send({ error: "Vorgang wurde bereits bestätigt" });
       }
@@ -4183,11 +4196,27 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       // D-07: gutgeschrieben wird ausschließlich die attestierte Schnittmenge mit der
       // Überlappung. Ein Attest kann keine Tage zurückgeben, die nie Urlaub waren.
-      const credited = intersectRanges(
+      const attestOverlap = intersectRanges(
         attestFrom,
         attestTo,
         credit.overlapStart,
         credit.overlapEnd,
+      );
+      if (!attestOverlap) {
+        return reply.code(400).send({
+          error:
+            "Die AU deckt keinen Tag des betroffenen Urlaubszeitraums ab — keine Gutschrift nach § 9 BUrlG.",
+        });
+      }
+      // Issue #468 (D-04/A-3, Task 2): `/correct` may have narrowed the vacation's range since
+      // this credit's overlap was computed at detection time — clip the attested overlap
+      // additionally to the vacation's CURRENT [startDate, endDate] so a still-AU_PENDING
+      // credit is never confirmed for days the vacation no longer covers.
+      const credited = intersectRanges(
+        attestOverlap.start,
+        attestOverlap.end,
+        credit.vacationRequest.startDate,
+        credit.vacationRequest.endDate,
       );
       if (!credited) {
         return reply.code(400).send({
@@ -4445,6 +4474,12 @@ export async function leaveRoutes(app: FastifyInstance) {
           });
           return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
         }
+      }
+
+      // Issue #468 (D-04/A-3, Task 2): same SUPERSEDED guard as confirm, before every other
+      // state check — a `/correct`-overholt Vorgang cannot be rejected either (T-468-20).
+      if (credit.status === "SUPERSEDED") {
+        return reply.code(409).send({ error: "Der Vorgang ist durch eine Korrektur überholt." });
       }
 
       // D-11: eine bereits gebuchte Gutschrift kann nicht abgelehnt werden — eine
