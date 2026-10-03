@@ -30,6 +30,12 @@
  * entitlement helper directly — the SAME helper `ensureVacationEntitlementForYear` (the
  * `--confirm` path) calls internally — so the two can never drift (RESEARCH.md Pitfall 4).
  *
+ * Issue #450 (D-09): the per-candidate contract input is the employee's FULL `WorkSchedule`
+ * history (`loadVacationContractSegments()`), never the newest row alone — a mid-year contract
+ * change is apportioned per segment (EuGH Brandes/Greenfield) in both the dry-run preview
+ * (`computeRegularVacationDaysBySegments()`) and the `--confirm` write (passed as
+ * `ensureVacationEntitlementForYear`'s `contract` argument), so the two still can never drift.
+ *
  * Invariants:
  *   - NEVER hard-deletes anything (Revisionssicherheit per CLAUDE.md) — this script only
  *     creates missing rows, never mutates or removes an existing one.
@@ -59,10 +65,10 @@ import pg from "pg";
 import { parseArgs } from "node:util";
 import { ensureVacationEntitlementForYear } from "../src/contexts/absence";
 import {
-  resolveContractWorkDaysPerWeek,
+  loadVacationContractSegments, // Issue #450 (D-09) — the employee's full contract history
   resolveVacationBaseDays, // Issue #435 (D-06) — the ONE base-value resolution, same as --confirm
 } from "../src/contexts/absence/leave-days";
-import { computeRegularVacationDays } from "../src/contexts/absence/vacation-calc";
+import { computeRegularVacationDaysBySegments } from "../src/contexts/absence/vacation-calc";
 
 const REPAIR_REASON = "Nachtrag fehlender Urlaubsanspruch";
 
@@ -206,7 +212,10 @@ export async function main(
             continue;
           }
 
-          const workDaysPerWeek = await resolveContractWorkDaysPerWeek(prisma, emp.id, t.id);
+          // Issue #450 (D-09): the employee's full contract history, loaded ONCE per candidate
+          // and used by both the dry-run preview and --confirm, so the two can never drift on the
+          // contract input either.
+          const segments = await loadVacationContractSegments(prisma, emp.id, t.id);
           // Issue #435 (D-06): the ONE base-value resolution — person value ?? tenant default ??
           // 30 — computed ONCE per candidate and used by both the dry-run preview and --confirm,
           // so the two can never drift on the base value either.
@@ -215,15 +224,15 @@ export async function main(
           if (!args.confirm) {
             // Dry-run preview: calls the EXACT function and inputs ensureVacationEntitlementForYear
             // (the --confirm path below) uses internally — not a hand-rolled duplicate — so the two
-            // can never drift (Issue #435, RESEARCH.md Pitfall 4).
-            const proposedTotalDays = computeRegularVacationDays({
+            // can never drift (Issue #435, RESEARCH.md Pitfall 4; Issue #450, D-09).
+            const proposedTotalDays = computeRegularVacationDaysBySegments({
               year,
               hireDate: emp.hireDate,
               birthDate: emp.birthDate,
               // Issue #447 (D-05): this script's query (above) selects only exitDate: null
               // employees — null is the truthful value here, not a shortcut.
               exitDate: null,
-              workDaysPerWeek,
+              segments,
               baseDays,
             });
 
@@ -253,7 +262,7 @@ export async function main(
               // Issue #447 (D-05): same query-level guarantee as the dry-run preview above —
               // this candidate list only ever contains exitDate: null employees.
               null,
-              workDaysPerWeek,
+              segments,
               baseDays,
               REPAIR_REASON,
               (entry) =>

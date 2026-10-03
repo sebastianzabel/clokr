@@ -129,9 +129,15 @@ prints FULL, untruncated UUIDs: the owner must be able to locate each request di
 `LeaveEntitlement` row of a base year (`--year`, default the current UTC calendar year) and the
 following year (only rows that exist, plus synthetic `entitlementId=missing` lines — see
 JAHRESUEBERGREIFEND_FEHLT below). It computes, per row, `target` via `resolveRegularVacationDays()`
-(Issue #435 D-05 person/tenant base + statutory floor, Issue #447 exit twelfthing — the ONE
-computation, never reimplemented here) and `minimum` via `statutoryMinimumVacationThreshold()` fed
-by `resolveContractWorkDaysPerWeek()`, then classifies the row into zero or more of:
+(Issue #435 D-05 person/tenant base + statutory floor, Issue #447 exit twelfthing, Issue #450
+per-contract-segment apportionment — the ONE computation, never reimplemented here) and `minimum`
+via `statutoryMinimumVacationThresholdBySegments()` fed by the employee's full `WorkSchedule`
+history (`loadVacationContractSegments()`) — the floor is apportioned per contract segment exactly
+like the regular entitlement, never computed from the newest `WorkSchedule` row alone. This script
+is the Issue #450 read-only dry-run for existing (Bestand) data: since `target`/`minimum` are now
+per-segment values, `stored` vs `target` on the same line IS the old-vs-new-value comparison —
+nothing is ever corrected automatically (D-11), and an owner-approved correction runs only through
+the existing audited correction path below. It then classifies the row into zero or more of:
 
 - `UNTER_MINIMUM` — stored is below the statutory minimum (applies to manually-set rows too).
 - `ABWEICHUNG_VERTRAG` — NOT manual, NOT `UNTER_MINIMUM`, and stored differs from `target`; OR,
@@ -156,11 +162,21 @@ by `resolveContractWorkDaysPerWeek()`, then classifies the row into zero or more
 - `UEBERTRAG_VERFALLEN_WIEDER` — the previous year's carry-over partially lapsed per
   `carryOverRemainder()` (Issue #445 FIFO/expiry) but this year's stored `carriedOverDays` still
   reflects the un-lapsed, larger amount.
-- `VERTRAGSWECHSEL_PRUEFEN` (flag only — Issue #450 implements the actual split) — the employee has
-  a `WorkSchedule` change (not the initial contract) whose `validFrom`, read as a calendar date in
-  the tenant's `TenantConfig.timezone`, falls inside the year.
+- `VERTRAGSWECHSEL_PRUEFEN` — the employee has a `WorkSchedule` change (not the initial contract)
+  whose `validFrom`, read as a calendar date in the tenant's `TenantConfig.timezone`, falls inside
+  the year. Since Issue #450 `target`/`minimum` are per-segment values, so this flag's row already
+  shows the old (`stored`) vs. new (`target`) value — a human-set row is listed with the new value
+  too, never corrected (D-07).
 - `OK` — none of the above; a manually-set row at or above the statutory minimum is `manual=yes
 categories=OK`, not an error.
+
+Separately, after the report rows, Issue #450 (D-04) prints one informational line per legacy
+(pre-Phase-60) non-1st-of-month contract-change row — never a finding, never counted toward the
+exit code: `tenantId=... employeeId=... workScheduleId=... validFrom=YYYY-MM-DD
+effectiveFrom=YYYY-MM-DD note=VERTRAGSBEGINN_NORMALISIERT`. `validFrom` is the row's own raw date;
+`effectiveFrom` is the 1st of the FOLLOWING month the segment kernel actually applies. The
+employee's first (hire-time) `WorkSchedule` row never produces this line — it is exempt from the
+1st-of-month rule by definition.
 
 Precedence: `NULL_PLATZHALTER` supersedes `UNTER_MINIMUM`/`ABWEICHUNG_VERTRAG`; `UNTER_MINIMUM`
 supersedes `ABWEICHUNG_VERTRAG`; a manually-set row (`hasHumanVacationWrite`, not the

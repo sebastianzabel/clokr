@@ -47,7 +47,11 @@
  */
 import type { LeaveEntitlement, Prisma } from "@clokr/db";
 import { getLeaveTypeByCode } from "./leave-types";
-import { computeRegularVacationDays } from "../vacation-calc"; // Issue #445 (D-01) — the one regular-entitlement computation
+import {
+  computeRegularVacationDays, // Issue #445 (D-01) — the one regular-entitlement computation
+  computeRegularVacationDaysBySegments, // Issue #450 (D-09) — the segment-aware form
+  type VacationContractSegment,
+} from "../vacation-calc";
 
 // ── A11 — the vacation entitlement, resolved by code ────────────────────────────────────────
 
@@ -246,9 +250,20 @@ export type EnsureVacationEntitlementAuditFn = (entry: {
  * Returns `null` only in the practically-unreachable case where the tenant has no VACATION
  * `LeaveType` configured (mirrors {@link getVacationEntitlement} / {@link upsertVacationEntitlement}).
  *
- * Sites: `platform/api/employees.ts`'s `POST /employees` (hire-time), `leave-settings.ts`'s
- * `GET /vacation/:employeeId` (first access), `scripts/backfill-missing-vacation-entitlements.ts`
- * (repair script).
+ * Sites: `platform/api/employees.ts`'s `POST /employees` (hire-time, always a single contractual
+ * workday number — a brand-new hire has exactly one contract), `leave-days.ts`'s create path of
+ * `ensureRegularVacationEntitlement` (the employee's full contract-segment history, Issue #450
+ * D-09), `leave-settings.ts`'s `GET /vacation/:employeeId` first-access heal (also the segment
+ * history, Issue #450 D-09), `scripts/backfill-missing-vacation-entitlements.ts` (repair script,
+ * 450-05).
+ *
+ * Issue #450 (D-09) — `contract` is either a plain `number` (one contract for the whole year;
+ * delegates to {@link computeRegularVacationDays}, byte-identical to this function's pre-#450
+ * behavior) or the employee's `readonly VacationContractSegment[]` history (delegates to
+ * {@link computeRegularVacationDaysBySegments}, apportioning per contract segment). This keeps
+ * every VACATION-row creator on the same single formula (CLAUDE.md "no other reader may rebuild
+ * this chain inline") without forcing the hire-time caller — which never has more than one
+ * contract — to build a one-element segment array.
  */
 export async function ensureVacationEntitlementForYear(
   db: Prisma.TransactionClient,
@@ -258,7 +273,7 @@ export async function ensureVacationEntitlementForYear(
   hireDate: Date,
   birthDate: Date | null,
   exitDate: Date | null,
-  workDaysPerWeek: number,
+  contract: number | readonly VacationContractSegment[],
   baseDays: number,
   reason: string,
   auditFn: EnsureVacationEntitlementAuditFn,
@@ -274,14 +289,27 @@ export async function ensureVacationEntitlementForYear(
   // never a raw TenantConfig value. Issue #447 (D-05): `exitDate` is threaded through the same way,
   // so an employee who has already left owes the § 5 BUrlG Teilurlaub of the exit year, not the
   // full amount.
-  const totalDays = computeRegularVacationDays({
-    year,
-    hireDate,
-    birthDate,
-    exitDate,
-    workDaysPerWeek,
-    baseDays,
-  });
+  // Issue #450 (D-09): a number contract still goes through computeRegularVacationDays (the
+  // single-segment delegate) — see that function's own docblock for why this is byte-identical to
+  // computeRegularVacationDaysBySegments with a one-element segment list.
+  const totalDays =
+    typeof contract === "number"
+      ? computeRegularVacationDays({
+          year,
+          hireDate,
+          birthDate,
+          exitDate,
+          workDaysPerWeek: contract,
+          baseDays,
+        })
+      : computeRegularVacationDaysBySegments({
+          year,
+          hireDate,
+          birthDate,
+          exitDate,
+          segments: contract,
+          baseDays,
+        });
 
   let entitlement: LeaveEntitlement | null;
   try {

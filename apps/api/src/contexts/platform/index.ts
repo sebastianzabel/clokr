@@ -186,3 +186,5 @@ export {
   compatRoleUserWhere,
 } from "./compat-role";
 export type { CompatRoleAssignmentRow, CompatRoleFilter } from "./compat-role";
+// Issue #450 (D-04) — Erweiterung, additive; consumed by contexts/absence/leave-days.ts
+export { snapToMonthFirstUtc } from "./month-first-date";

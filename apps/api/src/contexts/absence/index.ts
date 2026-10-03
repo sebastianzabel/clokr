@@ -198,6 +198,8 @@ export {
   syncExitYearVacationEntitlement, // Issue #447 (D-07) — Erweiterung, additive; recomputes an exit-year VACATION row to its § 5 BUrlG value, consumed by platform/api/employees.ts and absence/api/leave.ts
   exitVacationOverUseWarning, // Issue #447 (D-08) — Erweiterung, additive; the one exit-year over-use warning string, consumed by platform/api/employees.ts and absence/api/leave.ts
   REGULAR_ENTITLEMENT_REASON_EXIT, // Issue #447 (D-07) — the matching audit reason
+  recalcVacationEntitlementsForContractChange, // Issue #450 (D-06/D-08) — Erweiterung, additive; consumed by platform/api/settings.ts
+  REGULAR_ENTITLEMENT_REASON_CONTRACT_CHANGE, // Issue #450 (D-06/D-08) — Erweiterung, additive; consumed by platform/api/settings.ts
 } from "./leave-days";
 export { checkJArbSchG } from "./jarbschg";
 export { buildSlotOverrideHierarchy, resolveBsTagSlot } from "./bs-slot-resolver";
