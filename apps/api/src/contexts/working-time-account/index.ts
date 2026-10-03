@@ -94,6 +94,10 @@ export {
 } from "./vocational-school-saldo";
 export { findMissingWorkdays } from "./find-missing-workdays";
 export { computeMonthSaldo } from "./month-saldo";
+// Issue #451 (D-03) — the ONE Soll/Ist/Überstunden result for the monthly report (JSON + both
+// PDFs); see month-saldo.ts's own doc block for the snapshot/fullMonth/to-date basis rules.
+export { computeMonthReportFigures } from "./month-saldo";
+export type { MonthReportFigures } from "./month-saldo";
 export { loadNegativeBalanceTolerance } from "./negative-balance-tolerance";
 export { isSnapshotLocked } from "./snapshot-lock";
 export { closeEmployeeMonth } from "./close-employee-month";

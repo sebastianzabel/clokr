@@ -35,6 +35,7 @@ import {
   dateStrInTz,
   computeMonthSaldo,
   monthlyHoursMonthSollMinutes, // Issue #433 (D-11)
+  computeMonthReportFigures, // Issue #451 (D-03)
 } from "../contexts/working-time-account"; // Phase 101B
 import {
   listEntitlementsForYear,
@@ -1214,7 +1215,32 @@ export async function reportRoutes(app: FastifyInstance) {
         m,
       );
 
-      const rows = employees.map((emp) => {
+      // Issue #451 (D-03): one Soll/Ist/Überstunden result per employee, sequentially — the
+      // working-time-account's own month result (snapshot / fullMonth / to-date header), never a
+      // composition-layer Soll. See computeMonthReportFigures's own doc block for the basis rules.
+      const rows: Array<{
+        employeeId: string;
+        employeeName: string;
+        employeeNumber: string;
+        workedHours: number;
+        shouldHours: number;
+        overtimeHours: number;
+        overtimeConfirmed: boolean | null;
+        balanceAdjustmentHours: number;
+        sickDays: number;
+        sickDaysWithAttest: number;
+        sickDaysWithoutAttest: number;
+        vacationDays: number;
+        overtimeCompDays: number;
+        specialLeaveDays: number;
+        educationDays: number;
+        unpaidDays: number;
+        maternityDays: number;
+        parentalDays: number;
+        totalAbsenceDays: number;
+        section9DaysThisMonth: number;
+      }> = [];
+      for (const emp of employees) {
         const summary = computeEmployeeSummary(
           emp,
           start,
@@ -1227,12 +1253,16 @@ export async function reportRoutes(app: FastifyInstance) {
           },
           section9ByEmp.get(emp.id) ?? [],
         );
-        return {
+        const figures = await computeMonthReportFigures(app, emp.id, y, m);
+        rows.push({
           employeeId: emp.id,
           employeeName: `${emp.firstName} ${emp.lastName}`,
           employeeNumber: emp.employeeNumber,
-          workedHours: summary.workedHours,
-          shouldHours: summary.targetHours,
+          workedHours: Math.round((figures.workedMinutes / 60) * 100) / 100,
+          shouldHours: Math.round((figures.expectedMinutes / 60) * 100) / 100,
+          overtimeHours: Math.round((figures.balanceMinutes / 60) * 100) / 100,
+          overtimeConfirmed: figures.labelled ? figures.confirmed : null,
+          balanceAdjustmentHours: Math.round((figures.balanceAdjustmentMinutes / 60) * 100) / 100,
           // Krankheit
           sickDays: summary.sickDays,
           sickDaysWithAttest: summary.sickDaysWithAttest,
@@ -1247,8 +1277,8 @@ export async function reportRoutes(app: FastifyInstance) {
           parentalDays: summary.parentalDays,
           totalAbsenceDays: summary.totalAbsenceDays,
           section9DaysThisMonth: summary.section9DaysThisMonth,
-        };
-      });
+        });
+      }
 
       // D-30's "erklärender Hinweis in der Legende": emitted only when at least one
       // employee's figures were actually touched, so unaffected reports are unchanged.

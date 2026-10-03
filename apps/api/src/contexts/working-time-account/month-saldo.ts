@@ -93,8 +93,130 @@ export type MonthSaldoResult = {
    * no schedule). Same convention as `rosterIncomplete` / `workedDays` above.
    */
   monthSollMinutes?: number;
+  /**
+   * Issue #451 (D-03) — OPEN months of a non-SHIFT_BASED schedule only: the FULL calendar
+   * month's §615 state (`closeEmployeeMonth` over `monthStart`..`monthLastDay`, the month's OWN
+   * end, never the to-date cursor), computed once from the SAME prefetched collections
+   * (`sharedInput`) the per-day series above already builds — no second query. `workedMinutes`
+   * is still clamped to entries recorded through yesterday (issue #438: today never counts), so
+   * it reflects only what has actually happened; `expectedMinutes`/`balanceMinutes` already fold
+   * in the WHOLE month's holidays/leave/absence, giving the monthly report's Stundennachweis
+   * model its whole-month Soll even while the month is still running (planner decision P-03).
+   *
+   * ABSENT — never a fabricated value — for SHIFT_BASED (the running month must show the
+   * roster-to-date state the header already carries, never the not-yet-worked full roster,
+   * issue #438 Bug 3) and for a CLOSED month (the snapshot is the only truth, D-12). Same
+   * "absent, never fabricated" convention as `monthSollMinutes` / `workedDays` above.
+   */
+  fullMonth?: { workedMinutes: number; expectedMinutes: number; balanceMinutes: number };
   days: MonthSaldoDay[];
 };
+
+/**
+ * Issue #451 (D-03) — ONE Soll/Ist/Überstunden result for the monthly report (JSON + both PDFs),
+ * sourced exclusively from the working-time-account's own month result: the SaldoSnapshot for a
+ * closed month (verbatim, Revisionssicherheit — never recomputed), `MonthSaldoResult.fullMonth`
+ * for an open non-SHIFT_BASED month (the whole month's Stundennachweis Soll, Ist capped to
+ * yesterday — planner decision P-03), or the saldo core's to-date header for an open SHIFT_BASED
+ * month (never the not-yet-worked roster, issue #438 Bug 3). `reports.ts` reads only this
+ * function — see its own module comment for why it computes no Soll of its own any more.
+ *
+ * `balanceAdjustmentMinutes` is `balanceMinutes - (workedMinutes - expectedMinutes)`: the
+ * Überstundenausgleich withdrawal and any other non-additive § 615 adjustment `closeEmployeeMonth`
+ * folds into `balanceMinutes` without changing `workedMinutes`/`expectedMinutes` themselves (see
+ * `close-employee-month.ts`'s own `overtimeCompensationMinutes` doc block) — 0 for every
+ * unlabelled result.
+ *
+ * `labelled: false` only for: `isTimeTrackingExempt`, no `WorkSchedule` valid at the month's end,
+ * or MONTHLY_HOURS with `monthlyHours` null/0 (pure tracking, D-01) — never a fabricated Soll of
+ * 0 for a population that genuinely has none. `workedMinutes` is still reported for an unlabelled
+ * employee (the sum of their valid worked entries that month, via the T1 facade) so the report's
+ * Ist column is never blank just because there is no Soll to compare it against.
+ *
+ * Read-only: no write, ever (T-451-07 — closed months are legal record).
+ */
+export type MonthReportFigures = {
+  workedMinutes: number;
+  expectedMinutes: number;
+  balanceMinutes: number;
+  balanceAdjustmentMinutes: number;
+  /** true only for the CLOSED-month branch (the one figure that is final). */
+  confirmed: boolean;
+  /** false only for the three unlabelled populations above. */
+  labelled: boolean;
+  basis: "snapshot" | "fullMonth" | "toDate" | "untracked";
+};
+
+export async function computeMonthReportFigures(
+  app: FastifyInstance,
+  employeeId: string,
+  year: number,
+  month: number,
+): Promise<MonthReportFigures> {
+  const unlabelled = (workedMinutes: number): MonthReportFigures => ({
+    workedMinutes,
+    expectedMinutes: 0,
+    balanceMinutes: 0,
+    balanceAdjustmentMinutes: 0,
+    confirmed: false,
+    labelled: false,
+    basis: "untracked",
+  });
+
+  const employee = await app.prisma.employee.findUnique({
+    where: { id: employeeId },
+    select: { tenantId: true, isTimeTrackingExempt: true },
+  });
+  if (!employee || employee.isTimeTrackingExempt) {
+    return unlabelled(0);
+  }
+
+  const tz = await getTenantTimezone(app.prisma, employee.tenantId);
+  const { start: monthStart, end: monthEnd } = monthRangeUtc(year, month, tz);
+
+  // Same eligibility rule as computeMonthSaldo's OPEN path: the schedule valid at the reported
+  // month's end — NOT the employee's schedule today, which can differ for a past month.
+  const schedule = await app.prisma.workSchedule.findFirst({
+    where: { employeeId, validFrom: { lte: monthEnd } },
+    orderBy: { validFrom: "desc" },
+  });
+  const scheduleType = String(schedule?.type ?? "");
+  const isUntrackedMonthlyHours =
+    scheduleType === "MONTHLY_HOURS" && !(Number(schedule?.monthlyHours ?? 0) > 0);
+
+  if (!schedule || isUntrackedMonthlyHours) {
+    const entries = await getValidWorkedEntriesInRange(
+      app.prisma,
+      { kind: "employee", employeeId, tenantId: employee.tenantId },
+      monthStart,
+      monthEnd,
+    );
+    const workedMinutes = entries.reduce((sum, e) => {
+      const slotMin = e.endTime ? (e.endTime.getTime() - e.startTime.getTime()) / 60000 : 0;
+      return sum + slotMin - Number(e.breakMinutes ?? 0);
+    }, 0);
+    return unlabelled(Math.round(workedMinutes));
+  }
+
+  const ms = await computeMonthSaldo(app, employeeId, year, month);
+  const basis: MonthReportFigures["basis"] = ms.closed
+    ? "snapshot"
+    : ms.fullMonth
+      ? "fullMonth"
+      : "toDate";
+  const source = ms.closed || !ms.fullMonth ? ms : ms.fullMonth;
+  const balanceAdjustmentMinutes =
+    source.balanceMinutes - (source.workedMinutes - source.expectedMinutes);
+  return {
+    workedMinutes: source.workedMinutes,
+    expectedMinutes: source.expectedMinutes,
+    balanceMinutes: source.balanceMinutes,
+    balanceAdjustmentMinutes,
+    confirmed: ms.closed,
+    labelled: true,
+    basis,
+  };
+}
 
 // ── Main function ─────────────────────────────────────────────────────────────
 
@@ -558,6 +680,34 @@ export async function computeMonthSaldo(
         todayStr < monthLastStr
       : undefined;
 
+  // Issue #451 (D-03) — the FULL calendar month's §615 state for non-SHIFT_BASED schedules only;
+  // see this field's own doc comment above (MonthSaldoResult.fullMonth) for the rationale. Reuses
+  // `sharedInput` (no new query): `monthLastDay` is the month's own end (not the to-date cursor),
+  // `holidayDateStrings` is already the FULL unwindowed set (`sharedInput.holidayDateStrings`),
+  // and only `entries` is re-filtered to the SAME `windowEnd` cutoff the per-day loop above uses
+  // (today never counts, issue #438) — so `workedMinutes` still reflects only what has happened
+  // while `expectedMinutes`/`balanceMinutes` fold in the whole month's reductions.
+  let fullMonth:
+    { workedMinutes: number; expectedMinutes: number; balanceMinutes: number } | undefined;
+  if (scheduleType !== "SHIFT_BASED") {
+    const fullMonthEntries = closeEntries.filter((e) => dateStrInTz(e.date, tz) <= windowEnd);
+    const fullMonthResult = closeEmployeeMonth({
+      ...sharedInput,
+      monthLastDay,
+      entries: fullMonthEntries.map((e) => ({
+        date: e.date,
+        startTime: e.startTime,
+        endTime: e.endTime!,
+        breakMinutes: e.breakMinutes,
+      })),
+    });
+    fullMonth = {
+      workedMinutes: fullMonthResult.workedMinutes,
+      expectedMinutes: fullMonthResult.expectedMinutes,
+      balanceMinutes: fullMonthResult.balanceMinutes,
+    };
+  }
+
   // Header numbers = last included day's to-date §615 state (single source of truth with cells).
   // If no days were included (e.g. employee hired after windowEnd, or an all-future window),
   // fall back to a zeroed to-date state — the terminal cumulative is just carryOverIn.
@@ -569,6 +719,7 @@ export async function computeMonthSaldo(
     rosterIncomplete,
     workedDays: lastDayResult?.workedDays ?? 0,
     monthSollMinutes,
+    fullMonth,
     days,
   };
 }

@@ -1766,8 +1766,12 @@ describe("Reports API", () => {
     let sickLeaveTypeId: string;
     let vacationTypeIdHd: string;
 
-    // Fixed test month: April 2026 (Mon–Fri workdays, no German public holiday issues)
+    // Fixed test month: April 2026 (Mon–Fri workdays).
     // Mon 2026-04-06, Wed 2026-04-08, Fri 2026-04-10 are normal workdays.
+    // Issue #451 (D-03): this comment used to claim "no German public holiday issues" — false.
+    // April 2026 HAS two NI statutory holidays, Karfreitag 03.04. (Fri) and Ostermontag 06.04.
+    // (Mon); they were simply invisible to the OLD `{day}Hours`-walk shouldHours (the D-03 bug
+    // this plan fixes). See HD-02 below for the derivation.
     const YEAR = 2026;
     const MONTH = 4;
 
@@ -1869,12 +1873,22 @@ describe("Reports API", () => {
       // 2026-04-01 Wed, 02 Thu, 03 Fri, (6 Mon, 7 Tue, 8 Wed, 9 Thu, 10 Fri),
       // (13 Mon, 14 Tue, 15 Wed, 16 Thu, 17 Fri), (20 Mon..24 Fri), (27 Mon..30 Thu)
       // Total workdays in April 2026: 22 days → raw Soll = 22 * 8h = 176h
-      // Absence deduction:
-      //   3 half-day sick: 3 * 4h = 12h (correct) vs 3 * 8h = 24h (bug)
-      //   1 full-day sick: 1 * 8h = 8h
-      //   1 half-day vacation: 1 * 4h = 4h (correct) vs 1 * 8h = 8h (bug)
-      // Total correct deduction: 12 + 8 + 4 = 24h → shouldHours = 176 - 24 = 152h
-      // Bug deduction: 24 + 8 + 8 = 40h → shouldHours = 176 - 40 = 136h
+      //
+      // Issue #451 (D-03), authorised assertion-policy correction: April 2026 has TWO NI
+      // statutory holidays the OLD `{day}Hours`-walk-based shouldHours never deducted —
+      // Karfreitag 03.04.2026 (Fri) and Ostermontag 06.04.2026 (Mon) — holidayMinutes = 2 * 8h
+      // = 16h. 06.04. is ALSO one of the three half-day-sick dates below; the saldo core's
+      // per-day "claimed" dedup counts that day once, via the holiday, so the half-day-sick
+      // deduction for 06.04. drops out of the leave sum (the GET /reports/monthly report now
+      // reads its Soll from the working-time-account's `fullMonth` result, which already
+      // applies this same dedup `closeEmployeeMonth` uses for every close/cron/recalc caller).
+      //
+      // Absence deduction (leave only, holiday-claimed 06.04. excluded):
+      //   2 half-day sick (08., 10., NOT 06.): 2 * 4h = 8h (correct) vs 2 * 8h = 16h (bug)
+      //   1 full-day sick (13.): 1 * 8h = 8h
+      //   1 half-day vacation (14.): 1 * 4h = 4h (correct) vs 1 * 8h = 8h (bug)
+      // Total correct leave deduction: 8 + 8 + 4 = 20h
+      // shouldHours = 176 - 16 (holiday) - 20 (leave) = 140h
       const res = await app.inject({
         method: "GET",
         url: `/api/v1/reports/monthly?employeeId=${hdData.employee.id}&year=${YEAR}&month=${MONTH}`,
@@ -1886,9 +1900,22 @@ describe("Reports API", () => {
         (r: { employeeId: string }) => r.employeeId === hdData.employee.id,
       );
       expect(row).toBeDefined();
-      // After fix: shouldHours === 152
-      // With bug:  shouldHours === 136
-      expect(row.shouldHours).toBe(152);
+      // Issue #451 (D-03): 176 - 16 (2 NI holidays) - 20 (leave, net of the holiday-claimed day)
+      // = 140. Equal to GET /overtime/month-saldo's own expectedMinutes for the same employee
+      // (asserted in a dedicated parity case below) — the report no longer computes a second,
+      // independent Soll.
+      expect(row.shouldHours).toBe(140);
+    });
+
+    it("HD-02b (Issue #451 D-03): shouldHours equals GET /overtime/month-saldo expectedMinutes — one Soll, not two", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/month-saldo/${hdData.employee.id}?year=${YEAR}&month=${MONTH}`,
+        headers: { authorization: `Bearer ${hdData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const saldo = JSON.parse(res.body) as { expectedMinutes: number };
+      expect(Math.round((saldo.expectedMinutes / 60) * 100) / 100).toBe(140);
     });
 
     it("HD-03: regression guard — full-day sick still counts as 1 in sickDays total", async () => {
