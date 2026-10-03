@@ -51,7 +51,6 @@ import {
   vacationEntitlementWarning, // Issue #445 — composition carries no business rule (CLAUDE.md); the warning string is built in the absence context
   healEntitlementUsedDays, // Issue #445 (D-10) — injected into selfHealUsedDays's ctx below
   EFFECTIVE_LEAVE_STATUSES, // Issue #446 (D-01/D-04)
-  vocationalSchoolDateSetFromRows, // Issue #448 (D-05, plan 03)
   vocationalSchoolDatesForLeaveRequests, // Issue #448 (D-05, plan 03)
   BS_NO_LEAVE_LABEL, // Issue #448 (D-05, plan 03)
   leaveDaysByCodeWithin, // Issue #451 (D-01) — the DATEV export's VACATION Lohnart line
@@ -97,18 +96,19 @@ type LeaveRequestWithType = {
   leaveType: { name: string; code: LeaveTypeCode | null };
 };
 
-// ── Phase 104 (D-15, Tier 2) — tagesbasierte Entdopplung ───────────────────────
-// reports.ts hat EIGENE Soll-/Tage-Berechnungen (calcAbsenceMinutes, daysForTypeCode,
-// daysForCode im DATEV-Export), die weder closeEmployeeMonth() (Tier 1, Plan 104-02)
-// noch calcLeaveAbsenceMinutesTz aufrufen. Der dortige Fix erreicht diese Stellen
-// deshalb NICHT — siehe RESEARCH.md "The D-15 Soll-Dedup Surface" (Tier 2). Seit R1
-// (§ 9 BUrlG) ist die Überlappung zweier genehmigter Anträge (SICK vs. VACATION) der
-// Normalfall, nicht die Ausnahme. Ohne diese Entdopplung würde der Monatsbericht ein
-// anderes Soll ausweisen als Dashboard und Monatsabschluss.
+// ── Phase 104 (D-15, Tier 2) — day-based Soll dedup; Issue #451 (D-02) narrowed its scope ──────
+// Leave-DAY counts (vacationDays, totalAbsenceDays, and every other per-type count) come from the
+// absence context's own priced, §9-netted leaveDaysByCodeWithin map (computeEmployeeSummary's
+// required leaveDaysByCode parameter) — no local day-counting rule lives in this file any more.
+// The day-iterating code below (sortLeaveForDedup, calcAbsenceMinutes) still exists ONLY to
+// dedupe the Soll-MINUTES walk (a calendar day covered by two overlapping APPROVED requests must
+// reduce Soll exactly once — SICK vs. VACATION, § 9 BUrlG, is the normal case since R1, not the
+// exception). That Soll/Ist/overtime computation is unchanged by this plan and is 451-03's to
+// replace.
 //
-// Reihenfolge identisch zu close-employee-month.ts sortForDedup(): Ganztags vor
-// Halbtags, dann startDate, dann id. Nur so kommen beide Implementierungen bei einem
-// halben Urlaubstag unter ganztägiger Krankheit auf denselben Wert.
+// Order identical to close-employee-month.ts's sortForDedup(): full day before half day, then
+// startDate, then id — so both implementations agree on the same value for a half vacation day
+// under a full sick day.
 function sortLeaveForDedup<
   T extends { id: string; startDate: Date; endDate: Date; halfDay: boolean },
 >(rows: T[]): T[] {
@@ -181,6 +181,10 @@ function computeEmployeeSummary(
   start: Date,
   end: Date,
   tz: string,
+  // Issue #451 (D-02): facade-fetched input — the absence context's own priced, §9-netted
+  // leave-day map for this employee's report window (leaveDaysByCodeWithin, prefetched ONCE per
+  // request by the caller). No business rule lives here; this function only reads it.
+  leaveDaysByCode: Map<LeaveTypeCode, LeaveDaysForCode>,
   // Issue #433 (D-11): facade-fetched inputs ONLY — no business rule lives here. Work-location
   // holidays (batched once per request by the caller) and the tenant's defaultWorkDays (the D-05
   // workday tier) are the only two things a MONTHLY_HOURS employee's Soll needs beyond what
@@ -277,48 +281,6 @@ function computeEmployeeSummary(
     const s = from < start ? start : from;
     const e2 = to > end ? end : to;
     return Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
-  }
-
-  // Phase 104 (D-15, Tier 2): day-iterating, dedup-aware day count. `dayClaimed` is
-  // a FRESH Set for each call (own claim set per aggregation), so a day claimed for
-  // one purpose (e.g. computing vacationDays) never silently zeroes out an unrelated
-  // aggregation (e.g. totalAbsenceDays) that also needs to see that same day. Within
-  // a single call, two overlapping rows in `rows` (same type, or the nonSickLeave
-  // union) claim a shared day exactly once, in sortLeaveForDedup order.
-  // Issue #448 (D-05, plan 03): `skip` is additive and additive ONLY — a date in it is never
-  // counted and never added to `dayClaimed`, so it cannot make a later overlapping row claim
-  // that date instead (skip-not-seed, same pattern as `claimDays()` in
-  // working-time-account/close-employee-month.ts, plan 01). Passed only by the VACATION
-  // `daysForTypeCode` call below — never by `totalAbsenceDays`, never by the Soll computation.
-  function countDedupedDays(rows: LeaveRequestWithType[], skip?: Set<string>): number {
-    const dayClaimed = new Set<string>();
-    let total = 0;
-    for (const lr of sortLeaveForDedup(rows)) {
-      const s = lr.startDate < start ? start : lr.startDate;
-      const e2 = lr.endDate > end ? end : lr.endDate;
-      if (s > e2) continue;
-      let dayCount = 0;
-      const cur = new Date(s);
-      while (cur <= e2) {
-        const key = dateStrInTz(cur, tz);
-        if (!dayClaimed.has(key) && !skip?.has(key)) {
-          dayCount++;
-          dayClaimed.add(key);
-        }
-        cur.setDate(cur.getDate() + 1);
-      }
-      total += lr.halfDay ? dayCount / 2 : dayCount;
-    }
-    return total;
-  }
-
-  // Phase 97 (T2): the type is selected by its stable code. The display name is a tenant's to
-  // change; selecting by it silently dropped a renamed type out of its own row.
-  function daysForTypeCode(code: LeaveTypeCode, skip?: Set<string>): number {
-    return countDedupedDays(
-      emp.leaveRequests.filter((lr) => lr.leaveType.code === code),
-      skip,
-    );
   }
 
   // ── Worked hours ─────────────────────────────────────────────────────────
@@ -421,33 +383,23 @@ function computeEmployeeSummary(
     }
   }
 
-  // ── Absence breakdown ────────────────────────────────────────────────────
-  const nonSickLeave = emp.leaveRequests.filter((lr) => !isSickLeaveTypeCode(lr.leaveType.code));
-  // Phase 104 (D-15, Tier 2): countDedupedDays() gives totalAbsenceDays its OWN
-  // claim set (separate from every daysForTypeCode call below) so a day covered by
-  // two overlapping non-sick requests is counted once in the aggregate figure too —
-  // independent from, not shared with, the per-type calls (which must not lose a
-  // day just because an unrelated type's call already saw it).
-  let totalAbsenceDays = countDedupedDays(nonSickLeave);
-  // Issue #448 (D-05): a Berufsschultag inside a VACATION request counts as 0 vacation days in
-  // the monthly report — the ONLY call that receives the BS skip set. `totalAbsenceDays` above
-  // and the Soll computation below are untouched; this report does not model BS at all for Soll
-  // (pre-existing, finding — see 448-03-SUMMARY.md).
-  //
-  // Phase 448 review (WR-02): `vocationalSchoolDateSetFromRows` is pure and has no way to exclude
-  // soft-deleted rows itself — this relies on `emp.absences` already being fetched with
-  // `deletedAt: null` (confirmed: `buildEmployeeInclude`'s `absences` include below applies that
-  // filter, same as every other soft-deletable query in this file). A soft-deleted
-  // VOCATIONAL_SCHOOL row therefore never reaches this set; see
-  // `reports-bs-leave-448.test.ts` for the regression test proving it.
-  const bsDatesForReport = vocationalSchoolDateSetFromRows(emp.absences);
-  let vacationDays = daysForTypeCode("VACATION", bsDatesForReport);
-  const overtimeCompDays = daysForTypeCode("OVERTIME_COMP");
-  const specialLeaveDays = daysForTypeCode("SPECIAL");
-  const educationDays = daysForTypeCode("EDUCATION");
-  const unpaidDays = daysForTypeCode("UNPAID");
-  const maternityDays = daysForTypeCode("MATERNITY");
-  const parentalDays = daysForTypeCode("PARENTAL");
+  // ── Absence breakdown (Issue #451, D-02) ─────────────────────────────────
+  // Every per-type leave count, and totalAbsenceDays, comes from the absence context's own
+  // priced, §9-netted leave-day map (leaveDaysByCode, prefetched by the caller via
+  // leaveDaysByCodeWithin) — no local day-counting rule lives in this file any more. A code
+  // absent from the map (no counted request that month) reads as 0.
+  const vacationDays = leaveDaysByCode.get("VACATION")?.netDays ?? 0;
+  const overtimeCompDays = leaveDaysByCode.get("OVERTIME_COMP")?.netDays ?? 0;
+  const specialLeaveDays = leaveDaysByCode.get("SPECIAL")?.netDays ?? 0;
+  const educationDays = leaveDaysByCode.get("EDUCATION")?.netDays ?? 0;
+  const unpaidDays = leaveDaysByCode.get("UNPAID")?.netDays ?? 0;
+  const maternityDays = leaveDaysByCode.get("MATERNITY")?.netDays ?? 0;
+  const parentalDays = leaveDaysByCode.get("PARENTAL")?.netDays ?? 0;
+  let totalAbsenceDays = 0;
+  for (const [code, days] of leaveDaysByCode) {
+    if (!isSickLeaveTypeCode(code)) totalAbsenceDays += days.netDays;
+  }
+  totalAbsenceDays = Math.round(totalAbsenceDays * 100) / 100;
 
   // Phase 104 (D-30): gutgeschriebene § 9-Tage wandern von Urlaub nach Krank-mit-
   // Attest. Sie sind per Definition attestiert — ohne ärztliches Zeugnis gäbe es die
@@ -477,8 +429,8 @@ function computeEmployeeSummary(
   const section9DaysShiftedToAttest = Math.min(sickDaysWithoutAttest, section9DaysThisMonth);
   sickDaysWithoutAttest -= section9DaysShiftedToAttest;
   sickDaysWithAttest += section9DaysShiftedToAttest;
-  vacationDays = Math.max(0, vacationDays - section9DaysThisMonth);
-  totalAbsenceDays = Math.max(0, totalAbsenceDays - section9DaysThisMonth);
+  // Issue #451 (D-02): vacationDays/totalAbsenceDays are already §9-netted by leaveDaysByCode
+  // (the absence context's own netDays) — no second subtraction here.
 
   // ── Time entries (formatted) ─────────────────────────────────────────────
   const entries = emp.timeEntries.map((e) => ({
@@ -1009,6 +961,38 @@ async function fetchLeaveDaysByEmployeeForDatev(
   return result;
 }
 
+// Issue #451 (D-02): one leaveDaysByCodeWithin call per employee with at least one leave request
+// in the report month — feeds computeEmployeeSummary's required leaveDaysByCode parameter for
+// the three Monatsbericht handlers (JSON, single PDF, company PDF). Same UTC-midnight
+// calendar-month bounds as fetchLeaveDaysByEmployeeForDatev above (not monthRangeUtc's tenant-tz
+// instants), for the identical reason: leaveDaysByCodeWithin/countedLeaveDaysWithin normalise
+// with utcDay(), so a tenant-tz instant would silently shift the window by one day. Sequential
+// awaits (no unbounded Promise.all) — mirrors the DATEV helper's own shape. Unlike that helper,
+// the skip condition here is "no leave request at all" (not "no NON-SICK leave request"):
+// computeEmployeeSummary also needs to tell a genuinely leave-free employee (empty map, every
+// per-type count 0) from one whose only requests are sick leave — an employee with only SICK
+// leave still gets a Map (populated with the SICK code, which computeEmployeeSummary simply
+// never reads a non-sick count from).
+async function fetchLeaveDaysByCodeForMonthlyReport(
+  app: FastifyInstance,
+  tenantId: string,
+  employees: Array<{ id: string; leaveRequests: Array<unknown> }>,
+  year: number,
+  month: number,
+): Promise<Map<string, Map<LeaveTypeCode, LeaveDaysForCode>>> {
+  const from = new Date(Date.UTC(year, month - 1, 1));
+  const to = new Date(Date.UTC(year, month, 0));
+  const result = new Map<string, Map<LeaveTypeCode, LeaveDaysForCode>>();
+  for (const emp of employees) {
+    if (emp.leaveRequests.length === 0) continue;
+    result.set(
+      emp.id,
+      await leaveDaysByCodeWithin(app.prisma, { employeeId: emp.id, tenantId, from, to }),
+    );
+  }
+  return result;
+}
+
 // Issue #448 (D-05, plan 03)'s DATEV-only BS batch reader (the module-private async helper that
 // used to live here) was removed by Issue #451 (D-01, Task 2): Berufsschultage are already
 // excluded from the priced
@@ -1174,12 +1158,24 @@ export async function reportRoutes(app: FastifyInstance) {
         end,
       );
 
+      // Issue #451 (D-02): the absence context's own priced leave-day map, one
+      // leaveDaysByCodeWithin call per employee with at least one leave request this month —
+      // see the helper's own doc block for the UTC-midnight bounds rationale.
+      const leaveDaysByCodeByEmp = await fetchLeaveDaysByCodeForMonthlyReport(
+        app,
+        req.user.tenantId,
+        employees,
+        y,
+        m,
+      );
+
       const rows = employees.map((emp) => {
         const summary = computeEmployeeSummary(
           emp,
           start,
           end,
           tz,
+          leaveDaysByCodeByEmp.get(emp.id) ?? new Map(),
           {
             holidayDates: new Set(monthlyHolidaysByEmployee.get(emp.id)?.keys() ?? []),
             defaultWorkDays: tenantCfg?.defaultWorkDays ?? null,
@@ -1995,11 +1991,20 @@ export async function reportRoutes(app: FastifyInstance) {
         start,
         end,
       );
+      // Issue #451 (D-02): same priced leave-day map as GET /monthly, for this one employee.
+      const leaveDaysByCodePdf = await fetchLeaveDaysByCodeForMonthlyReport(
+        app,
+        req.user.tenantId,
+        [emp],
+        y,
+        m,
+      );
       const summary = computeEmployeeSummary(
         emp,
         start,
         end,
         tz,
+        leaveDaysByCodePdf.get(emp.id) ?? new Map(),
         {
           holidayDates: new Set(pdfHolidaysByEmployee.get(emp.id)?.keys() ?? []),
           defaultWorkDays: pdfTenantCfg?.defaultWorkDays ?? null,
@@ -2166,6 +2171,17 @@ export async function reportRoutes(app: FastifyInstance) {
         end,
       );
 
+      // Issue #451 (D-02): the absence context's own priced leave-day map, prefetched
+      // SEQUENTIALLY for the whole company PDF (never inside the per-employee Promise.all
+      // below) — same helper, same bounds as GET /monthly above.
+      const leaveDaysByCodeAll = await fetchLeaveDaysByCodeForMonthlyReport(
+        app,
+        req.user.tenantId,
+        employees,
+        y,
+        m,
+      );
+
       const rows = await Promise.all(
         employees.map(async (emp) => {
           const summary = computeEmployeeSummary(
@@ -2173,6 +2189,7 @@ export async function reportRoutes(app: FastifyInstance) {
             start,
             end,
             tz,
+            leaveDaysByCodeAll.get(emp.id) ?? new Map(),
             {
               holidayDates: new Set(allPdfHolidaysByEmployee.get(emp.id)?.keys() ?? []),
               defaultWorkDays: allPdfTenantCfg?.defaultWorkDays ?? null,

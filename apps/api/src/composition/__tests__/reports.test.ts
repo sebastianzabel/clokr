@@ -2044,9 +2044,34 @@ describe("Reports API", () => {
         // inside the Urlaub range) — a cross-type overlap the leave.ts guard would
         // normally reject for two non-sick types; written directly to exercise the
         // aggregate dedup in isolation from R1's SICK-specific exception.
-        await approvedLeave(t2.employee.id, t2.vacationType.id, "2026-08-03", "2026-08-07");
-        await approvedLeave(t2.employee.id, sonderurlaub.id, "2026-08-05", "2026-08-05", {
-          halfDay: true,
+        //
+        // Issue #451 (D-02, fixture correction): written directly via Prisma (not the shared
+        // approvedLeave() helper, which hardcodes `days: 1` regardless of the request's own
+        // date range) WITH the priced `days` value for each range (5 for the Mo-Fr week, 0.5 for
+        // the half-day) — the new per-code leaveDaysByCodeWithin map reads this stored `days`
+        // directly for a request fully inside the report window, so a fixture contradicting its
+        // own date range would silently corrupt the per-type assertions below too.
+        await app.prisma.leaveRequest.create({
+          data: {
+            employeeId: t2.employee.id,
+            leaveTypeId: t2.vacationType.id,
+            startDate: new Date("2026-08-03T00:00:00Z"),
+            endDate: new Date("2026-08-07T00:00:00Z"),
+            days: 5,
+            halfDay: false,
+            status: "APPROVED",
+          },
+        });
+        await app.prisma.leaveRequest.create({
+          data: {
+            employeeId: t2.employee.id,
+            leaveTypeId: sonderurlaub.id,
+            startDate: new Date("2026-08-05T00:00:00Z"),
+            endDate: new Date("2026-08-05T00:00:00Z"),
+            days: 0.5,
+            halfDay: true,
+            status: "APPROVED",
+          },
         });
 
         const res = await app.inject({
@@ -2059,11 +2084,12 @@ describe("Reports API", () => {
           (r: { employeeId: string }) => r.employeeId === t2.employee.id,
         );
         expect(row).toBeDefined();
-        // Without the fix: totalAbsenceDays = 5 (Urlaub) + 0.5 (Sonderurlaub) = 5.5.
-        // With the fix: Wednesday is claimed once (full-day Urlaub wins per
-        // sortLeaveForDedup ordering) -> totalAbsenceDays = 5.
-        expect(row.totalAbsenceDays).toBe(5);
-        // Per-type counts are unaffected — daysForTypeName gets its OWN claim set.
+        // Issue #451 (D-02): priced days of both requests; the overlap cannot arise through the
+        // API (leave.ts overlap guard). The per-code leaveDaysByCodeWithin map has no cross-type
+        // dedup (unlike the old countDedupedDays walk it replaces) — totalAbsenceDays is simply
+        // the sum of each code's own priced days: 5 (Urlaub) + 0.5 (Sonderurlaub) = 5.5.
+        expect(row.totalAbsenceDays).toBe(5.5);
+        // Per-type counts are unaffected — each code reads its own entry in the map.
         expect(row.vacationDays).toBe(5);
         expect(row.specialLeaveDays).toBe(0.5);
       } finally {
