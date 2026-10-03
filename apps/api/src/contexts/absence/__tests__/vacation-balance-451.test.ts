@@ -59,7 +59,12 @@ describe("Issue #451 (D-07) — the Resturlaub facade", () => {
 
   async function mkEntitlement(
     employeeId: string,
-    overrides: Partial<LeaveEntitlement> = {},
+    overrides: {
+      totalDays?: number;
+      usedDays?: number;
+      carriedOverDays?: number;
+      carryOverDeadline?: Date;
+    } = {},
   ): Promise<LeaveEntitlement> {
     return app.prisma.leaveEntitlement.create({
       data: {

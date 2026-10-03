@@ -1939,3 +1939,95 @@ export async function carryOverRemainder(
   );
   return Math.max(0, round2(Number(prev.totalDays) + effectiveCarry - Number(prev.usedDays)));
 }
+
+/**
+ * Issue #451 (D-07/D-08) — the carried-over days of `row` that are STILL exposed to a FUTURE
+ * deadline, i.e. the part that has neither lapsed (deadline already passed) nor been consumed yet
+ * by days already taken before the deadline (FIFO, same window as {@link effectiveCarryOverDays}):
+ * `max(0, carriedOverDays − takenUpToDeadline)`, where `takenUpToDeadline` is this row's counted
+ * (vacation-aware) days inside `[1 Jan of row.year, min(deadline, 31 Dec of row.year)]` via
+ * {@link countedLeaveDaysWithin}.
+ *
+ * Unlike {@link effectiveCarryOverDays} (which answers "how much of the carry still counts towards
+ * the balance", and returns the FULL carry once the deadline has passed without a Hinweis), this
+ * answers "how much is still at risk of lapsing in the future" — so it is deliberately `0` once
+ * the deadline has passed (nothing left to warn about — either it already lapsed or it was fully
+ * used) OR when no deadline is configured (nothing can lapse). Legal basis: BUrlG § 7 Abs. 3
+ * (carry-over must be taken by the deadline), EuGH C-684/16 (Hinweispflicht — the employer must
+ * warn about what is ACTUALLY at risk, not the raw, possibly already-consumed carry). Consumed by
+ * the carry-over expiry warning cron (D-08, Issue #451) and the Resturlaub facade
+ * ({@link import("./facade/vacation-balance").vacationBalanceForRow}).
+ */
+export async function carryOverAtRiskDays(
+  db: DbClient,
+  row: {
+    employeeId: string;
+    leaveTypeId: string;
+    year: number;
+    carriedOverDays: unknown;
+    carryOverDeadline: Date | null;
+  },
+  tenantId: string,
+  now: Date,
+): Promise<number> {
+  const carry = Number(row.carriedOverDays);
+  if (carry <= 0) return 0;
+  if (!row.carryOverDeadline) return 0; // nothing can lapse without a deadline
+  if (now.getTime() > row.carryOverDeadline.getTime()) return 0; // deadline already passed
+
+  const yearEnd = Date.UTC(row.year, 11, 31, 23, 59, 59);
+  const windowEnd = new Date(Math.min(row.carryOverDeadline.getTime(), yearEnd));
+  const { requestDays, section9CreditDays } = await countedLeaveDaysWithin(db, {
+    employeeId: row.employeeId,
+    tenantId,
+    leaveTypeIds: [row.leaveTypeId],
+    from: new Date(Date.UTC(row.year, 0, 1)),
+    to: windowEnd,
+  });
+  const takenUpToDeadline = Math.max(0, round2(requestDays - section9CreditDays));
+  return Math.max(0, round2(carry - takenUpToDeadline));
+}
+
+/**
+ * Issue #451 (D-07) — the § 5 BUrlG reduction applied to `employeeId`'s regular VACATION
+ * entitlement BECAUSE of an exit in `year`: the regular full-year value the employee would have
+ * had WITHOUT the exit, minus the regular value WITH it (both via
+ * {@link computeRegularVacationDaysBySegments}, same inputs {@link resolveRegularVacationDays}
+ * uses) — never negative. `0` when the employee has no exit date, or the exit falls in a
+ * different calendar year than `year` (the reduction is only meaningful in the employee's actual
+ * exit year — Teilurlaub, § 5 Abs. 1 Buchst. c BUrlG). Read-only — this never recomputes or writes
+ * the stored `LeaveEntitlement.totalDays`; that stays {@link syncExitYearVacationEntitlement}'s job
+ * (D-06/D-07). Consumed by the Resturlaub facade
+ * ({@link import("./facade/vacation-balance").vacationBalanceForRow}).
+ */
+export async function exitYearReductionDays(
+  db: DbClient,
+  employeeId: string,
+  tenantId: string,
+  year: number,
+): Promise<number> {
+  const employee = await db.employee.findFirst({
+    where: { id: employeeId, tenantId },
+    select: { exitDate: true },
+  });
+  if (!employee?.exitDate || employee.exitDate.getUTCFullYear() !== year) return 0;
+
+  const inputs = await loadRegularVacationInputs(db, employeeId, tenantId, year);
+  const withoutExit = computeRegularVacationDaysBySegments({
+    year,
+    hireDate: inputs.hireDate,
+    birthDate: inputs.birthDate,
+    exitDate: null,
+    segments: inputs.segments,
+    baseDays: inputs.baseDays,
+  });
+  const withExit = computeRegularVacationDaysBySegments({
+    year,
+    hireDate: inputs.hireDate,
+    birthDate: inputs.birthDate,
+    exitDate: employee.exitDate,
+    segments: inputs.segments,
+    baseDays: inputs.baseDays,
+  });
+  return Math.max(0, round2(withoutExit - withExit));
+}
