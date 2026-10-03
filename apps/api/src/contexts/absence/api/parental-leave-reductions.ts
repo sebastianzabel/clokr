@@ -250,6 +250,19 @@ export async function parentalLeaveReductionRoutes(app: FastifyInstance) {
             const oldTotal = Number(entitlementRow.totalDays);
             const newTotal = Math.round((oldTotal - yearPreview.proposedReducedDays) * 100) / 100;
 
+            // WR-01 (Issue #468 review): the `resultingTotalDays < 0` floor above was checked
+            // only against the PREVIEW's `oldTotal`, built before this transaction opened. The
+            // `updateMany({ where: { totalDays: oldTotal } })` optimistic lock below only
+            // catches a LOST UPDATE (mismatch -> 409) — it does not stop the write when the
+            // freshly-read `oldTotal` here is lower than the preview's (e.g. a concurrent write
+            // already reduced it), which can drive `newTotal` negative without being caught.
+            // Re-validate the same statutory floor against the fresh read before writing.
+            if (newTotal < 0) {
+              throw new ParentalReductionYearConflictError(
+                `Die Kürzung übersteigt den Urlaubsanspruch ${year}.`,
+              );
+            }
+
             const { count } = await tx.leaveEntitlement.updateMany({
               where: { id: entitlementRow.id, totalDays: oldTotal },
               data: { totalDays: newTotal },
