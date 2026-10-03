@@ -25,6 +25,7 @@ classified by lifecycle.
 | audit-multi-day-half-day-leave.ts              | 2026-10-02 | List non-deleted multi-day half-day LeaveRequests (Issue #449), read-only, ids only, exits 2 on findings                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Audit tool                                   |
 | audit-bs-leave-overlap.ts                      | 2026-10-02 | List non-deleted PENDING/APPROVED/CANCELLATION_REQUESTED VACATION LeaveRequests overlapping a VOCATIONAL_SCHOOL Absence (Issue #448, D-06), stored vs. resolveLeaveDays-recomputed BS-free days plus the locked-month flag, read-only, ids only, exits 2 on findings                                                                                                                                                                                                                                                                                                | Audit tool                                   |
 | audit-vacation-entitlements.ts                 | 2026-10-02 | Prüfbericht over every stored VACATION LeaveEntitlement row, base year + following year (Issue #444), eight categories incl. OK, read-only, ids only, exits 2 on findings                                                                                                                                                                                                                                                                                                                                                                                           | Audit tool                                   |
+| dry-run-433-monthly-hours-soll.ts              | 2026-10-03 | List, per MONTHLY_HOURS employee (monthlyHours > 0) and non-superseded MONTHLY snapshot, the stored vs. Issue #433-rule-recomputed expected/balance minutes, the delta and the locked flag; only differing months are printed (read-only, no opt-in write flag, exits 2 on findings)                                                                                                                                                                                                                                                                                | Audit tool                                   |
 | migrate-opening-balances.ts                    | 2026-08-19 | Move documented opening balances out of SaldoSnapshot.carryOver onto the OpeningBalance model; dry-run default, per-employee zero-drift assertion, aborts writing nothing on any failure                                                                                                                                                                                                                                                                                                                                                                            | Migration artifact (Phase 99)                |
 | ensure-test-database.ts                        | 2026-08-21 | Idempotent `CREATE DATABASE "clokr_test"` + `COMMENT ON DATABASE` marker stamp; refuses any non-test target (wrong name, `?schema=` param, or NODE_ENV=production) before opening a connection                                                                                                                                                                                                                                                                                                                                                                      | Test infrastructure (Phase 101)              |
 | reset-test-databases.ts                        | 2026-08-26 | Drops and re-clones the N per-worker test databases from the migrated `clokr_test` template; the ONLY `DROP-DATABASE` statement in this repo, gated on marker possession AND the anchored worker-name pattern; excluded from the runtime image (Phase 106 D-07/D-08)                                                                                                                                                                                                                                                                                                | Test infrastructure (Phase 106)              |
@@ -190,6 +191,29 @@ write's own correction path (plan 02, D-04) or through "Antrag korrigieren" afte
 approval, never through this script. It follows `audit-saldo-chain-integrity.ts`'s DSGVO
 convention of printing no employee name and no employee number. Measured against prod on
 01.10.2026 (the owner's implementation-decisions comment on Issue #448): 0 overlaps.
+
+`dry-run-433-monthly-hours-soll.ts` (Issue #433, D-12) lists every `MONTHLY_HOURS` employee-month
+(`monthlyHours > 0` — a pure-tracking schedule with `monthlyHours` null/0/negative is never
+considered, nor is any other schedule type) that has a stored non-superseded `MONTHLY`
+`SaldoSnapshot`, next to what `closeEmployeeMonth()` (the Issue #433 rule — approved/effective
+leave, imposed absences and public holidays on a contractual workday each now reduce the owed
+Monats-Soll by a per-day average value) RECOMPUTES for the same month, the delta, and the locked
+flag (`isSnapshotLocked`). Plans 433-01..06 only changed saldo computed FROM NOW ON — every
+MONTHLY_HOURS month a tenant already had CLOSED under the old, pre-#433 formula (no leave/
+absence/holiday deduction at all) keeps its stored numbers untouched (Revisionssicherheit: a
+locked month is immutable even to admins), so this script gives whoever owns payroll a concrete
+list of which closed months would now compute differently, for THEM to decide whether and how to
+correct any of them via the existing correction-booking flow. An open month (no stored snapshot
+yet) is not in scope at all — it picks up the Issue #433 rule automatically the next time it is
+closed, so there is nothing for the owner to action. Usage: `--tenant-id <uuid>` or
+`--all-tenants`, exactly one of which is required (a German usage message on stderr, exit `1`,
+for neither or both). Exit codes: `0` no finding, `1` usage error or DATABASE_URL missing/a DB
+failure, `2` one or more findings. It performs ZERO writes and has no opt-in write/repair flag
+anywhere in its source (mechanically checked by its own test) — correcting a finding happens only
+through the existing correction-booking flow after owner approval, never through this script. It
+follows `audit-saldo-chain-integrity.ts`'s / `audit-exit-month-saldo.ts`'s DSGVO convention of
+printing truncated ids only — no employee name, no employee number. Operator step: run it once on
+prod after the release that ships Issue #433.
 
 ## Test infrastructure
 
