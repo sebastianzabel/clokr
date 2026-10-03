@@ -532,8 +532,8 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
     });
   });
 
-  describe("TENANT-01: Holiday deduction toggle", () => {
-    it("GET /settings/work returns monthlyHoursHolidayDeduction=false by default", async () => {
+  describe("Issue #433 — retired MONTHLY_HOURS holiday switch (D-04)", () => {
+    it("GET /settings/work no longer returns the retired holiday-deduction switch", async () => {
       const res = await app.inject({
         method: "GET",
         url: "/api/v1/settings/work",
@@ -541,47 +541,28 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body);
-      expect(body.monthlyHoursHolidayDeduction).toBe(false);
+      expect(body).not.toHaveProperty("monthlyHoursHolidayDeduction");
     });
 
-    it("PUT /settings/work persists monthlyHoursHolidayDeduction=true", async () => {
-      const res = await app.inject({
+    it("PUT /settings/work with the legacy key is accepted (200), the key is stripped from the response, and the retired column is never written", async () => {
+      const putRes = await app.inject({
         method: "PUT",
         url: "/api/v1/settings/work",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: { monthlyHoursHolidayDeduction: true },
       });
-      expect(res.statusCode).toBe(200);
-    });
-
-    it("GET /settings/work returns persisted monthlyHoursHolidayDeduction=true", async () => {
-      const res = await app.inject({
-        method: "GET",
-        url: "/api/v1/settings/work",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-      });
-      expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.body);
-      expect(body.monthlyHoursHolidayDeduction).toBe(true);
-    });
-
-    it("PUT /settings/work reverts monthlyHoursHolidayDeduction to false", async () => {
-      const putRes = await app.inject({
-        method: "PUT",
-        url: "/api/v1/settings/work",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { monthlyHoursHolidayDeduction: false },
-      });
       expect(putRes.statusCode).toBe(200);
+      const putBody = JSON.parse(putRes.body);
+      expect(putBody).not.toHaveProperty("monthlyHoursHolidayDeduction");
 
-      const getRes = await app.inject({
-        method: "GET",
-        url: "/api/v1/settings/work",
-        headers: { authorization: `Bearer ${data.adminToken}` },
+      // Issue #433 (D-04): the ONE sanctioned direct-DB read of the retired column in this
+      // codebase outside the omit constant in settings.ts itself — proves the legacy PUT above
+      // never wrote it. The column stays for image-rollback safety until the follow-up release
+      // (GitHub #470) drops it.
+      const stored = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: data.tenant.id },
       });
-      expect(getRes.statusCode).toBe(200);
-      const body = JSON.parse(getRes.body);
-      expect(body.monthlyHoursHolidayDeduction).toBe(false);
+      expect(stored?.monthlyHoursHolidayDeduction).toBe(false);
     });
   });
 });

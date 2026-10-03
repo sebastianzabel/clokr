@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
 import { permissionReach, requirePermission } from "../request-permissions";
-import { FederalState, type TenantConfig } from "@clokr/db";
+import { FederalState, type TenantConfig, type Prisma } from "@clokr/db";
 import { encrypt } from "../../../utils/crypto";
 // Phase 64b (issue #64, D-16): mirrors a storeHours change into the tenant's sole active salon.
 import { syncSoleActiveSalonOpeningHours } from "../facade/salons";
@@ -58,6 +58,15 @@ const decimalFromApi = (schema: z.ZodType<number>) =>
     (v) => (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v.trim()) ? Number(v) : v),
     schema,
   );
+
+/**
+ * Issue #433 (D-04) — the column stays in the schema for image-rollback safety until the
+ * follow-up release (GitHub #470) drops it; no code path may read or write it any more.
+ * Delete this constant together with the column.
+ */
+const RETIRED_TENANT_CONFIG_COLUMNS: Prisma.TenantConfigOmit = {
+  monthlyHoursHolidayDeduction: true,
+};
 
 const tenantConfigSchema = z
   .object({
@@ -158,8 +167,6 @@ const tenantConfigSchema = z
     // Mandantennummer 5 digits.
     datevBeraterNr: z.number().int().min(1).max(9999999).nullable().optional(),
     datevMandantenNr: z.number().int().min(1).max(99999).nullable().optional(),
-    // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
-    monthlyHoursHolidayDeduction: z.boolean().optional(),
     // Ladenöffnungszeiten (Phase 42) — 7 entries Mo-So. Phase 64b (issue #64): deliberately the
     // pre-64b legacy schema, NOT the Salon facade's stricter salonOpeningHoursSchema — the admin UI
     // round-trips the stored value, and a stricter check would lock tenants whose stored hours it
@@ -541,7 +548,10 @@ export async function settingsRoutes(app: FastifyInstance) {
     handler: async (req) => {
       const tenantId = req.user.tenantId;
       const [config, tenant] = await Promise.all([
-        app.prisma.tenantConfig.findUnique({ where: { tenantId } }),
+        app.prisma.tenantConfig.findUnique({
+          where: { tenantId },
+          omit: RETIRED_TENANT_CONFIG_COLUMNS,
+        }),
         app.prisma.tenant.findUnique({ where: { id: tenantId } }),
       ]);
 
@@ -593,7 +603,6 @@ export async function settingsRoutes(app: FastifyInstance) {
         // visibly unset so the export can refuse, not silently become a usable-looking 0.
         datevBeraterNr: null,
         datevMandantenNr: null,
-        monthlyHoursHolidayDeduction: false,
         dataRetentionYears: 10,
         carryoverWarningEnabled: true,
         carryoverWarningThresholds: [60, 30, 14, 7],
@@ -725,6 +734,7 @@ export async function settingsRoutes(app: FastifyInstance) {
           where: { tenantId },
           update: configData,
           create: { tenantId, ...configData },
+          omit: RETIRED_TENANT_CONFIG_COLUMNS,
         });
 
         if (Object.keys(tenantUpdate).length > 0) {
