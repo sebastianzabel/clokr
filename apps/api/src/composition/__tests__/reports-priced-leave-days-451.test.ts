@@ -17,7 +17,13 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  seedEntitlementYears,
+  cleanupTestData,
+} from "../../__tests__/setup";
 import * as pdfUtils from "../pdf";
 
 vi.mock("../pdf", async (importOriginal) => {
@@ -289,5 +295,114 @@ describe("Issue #451 (D-02) — Monatsbericht leave counts come from the absence
     expect(row).toBeDefined();
     expect(row.vacationDays).toBe(1);
     expect(row.sickDaysWithoutAttest).toBe(1);
+  });
+
+  it("GET /reports/leave-list/pdf: the 14-day VACATION period prices as 10 days, not 14", async () => {
+    const spy = vi.mocked(pdfUtils.streamLeaveListPdf);
+    spy.mockClear();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/reports/leave-list/pdf?year=2026",
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const leaveListData = spy.mock.calls[0][1];
+    const empData = leaveListData.employees.find(
+      (e) => e.employeeNumber === d.employee.employeeNumber,
+    );
+    expect(empData).toBeDefined();
+    expect(empData!.periods).toHaveLength(1);
+    expect(empData!.periods[0].days).toBe(10);
+    expect(empData!.totalDays).toBe(10);
+  });
+
+  it("GET /reports/vacation/pdf: the list part shows the same 14-day period priced at 10 days", async () => {
+    const spy = vi.mocked(pdfUtils.streamLeaveListPdf);
+    spy.mockClear();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/reports/vacation/pdf?year=2026",
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const leaveListData = spy.mock.calls[0][1];
+    const empData = leaveListData.employees.find(
+      (e) => e.employeeNumber === d.employee.employeeNumber,
+    );
+    expect(empData).toBeDefined();
+    expect(empData!.periods[0].days).toBe(10);
+  });
+});
+
+describe("Issue #451 (D-02) — Urlaubsliste cross-year clipping", () => {
+  let app: FastifyInstance;
+  let d: Awaited<ReturnType<typeof seedTestData>>;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    d = await seedTestData(app, "rpld2cy");
+    await seedEntitlementYears(app, {
+      employeeId: d.employee.id,
+      leaveTypeId: d.vacationType.id,
+      years: [2027],
+    });
+
+    // One VACATION request crossing the year boundary on the default Mo-Fr contract: 28.12.
+    // (Mon) - 31.12.2026 (Thu) = 4 workdays in 2026 (no holiday in that range); 01.01.2027 (Fri,
+    // New Year, a real holiday, excluded) through 08.01.2027 (Fri) = 5 workdays in 2027.
+    await approveLeave(
+      app,
+      d.adminToken,
+      await createLeave(app, d.empToken, "VACATION", "2026-12-28", "2027-01-08"),
+    );
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, d.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  it("GET /reports/leave-list/pdf?year=2026: the cross-year period clips to 4 days", async () => {
+    const spy = vi.mocked(pdfUtils.streamLeaveListPdf);
+    spy.mockClear();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/reports/leave-list/pdf?year=2026",
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const leaveListData = spy.mock.calls[0][1];
+    const empData = leaveListData.employees.find(
+      (e) => e.employeeNumber === d.employee.employeeNumber,
+    );
+    expect(empData).toBeDefined();
+    expect(empData!.periods[0].days).toBe(4);
+  });
+
+  it("GET /reports/leave-list/pdf?year=2027: the same cross-year period clips to 5 days, not 8", async () => {
+    const spy = vi.mocked(pdfUtils.streamLeaveListPdf);
+    spy.mockClear();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/reports/leave-list/pdf?year=2027",
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const leaveListData = spy.mock.calls[0][1];
+    const empData = leaveListData.employees.find(
+      (e) => e.employeeNumber === d.employee.employeeNumber,
+    );
+    expect(empData).toBeDefined();
+    expect(empData!.periods[0].days).toBe(5);
   });
 });
