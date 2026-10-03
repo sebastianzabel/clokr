@@ -67,8 +67,8 @@ function isP2002(err: unknown): boolean {
 /** Thrown inside a `$transaction` callback to signal a specific, year-scoped 409 to the outer
  * handler — `$transaction` itself rejects with whatever the callback throws. */
 class ParentalReductionYearConflictError extends Error {
-  constructor(public readonly message2: string) {
-    super(message2);
+  constructor(message: string) {
+    super(message);
   }
 }
 
@@ -334,7 +334,7 @@ export async function parentalLeaveReductionRoutes(app: FastifyInstance) {
         });
       } catch (err) {
         if (err instanceof ParentalReductionYearConflictError) {
-          return reply.code(409).send({ error: err.message2 });
+          return reply.code(409).send({ error: err.message });
         }
         throw err;
       }
@@ -453,7 +453,7 @@ export async function parentalLeaveReductionRoutes(app: FastifyInstance) {
         });
       } catch (err) {
         if (err instanceof ParentalReductionYearConflictError) {
-          return reply.code(409).send({ error: err.message2 });
+          return reply.code(409).send({ error: err.message });
         }
         throw err;
       }
