@@ -100,9 +100,14 @@ export { computeMonthReportFigures } from "./month-saldo";
 export type { MonthReportFigures } from "./month-saldo";
 export { loadNegativeBalanceTolerance } from "./negative-balance-tolerance";
 // Issue #451 (D-06) — the dashboard week block's whole-week Soll and to-date Soll/Ist, both from
-// the saldo core; see week-progress.ts's own doc block for the split-into-month-pieces algorithm.
-export { computeWeekProgress } from "./week-progress";
-export type { WeekProgress } from "./week-progress";
+// the saldo core; see close-employee-month.ts's "computeWeekProgress" section for the
+// split-into-month-pieces algorithm. Relocated from its own former file `week-progress.ts` into
+// `close-employee-month.ts` in 451-08 (cycle fix) — a standalone file here would have joined the
+// pre-existing absence/scheduling/time-tracking/working-time-account import cycle as a NEW graph
+// node (measured 24 -> 25); `close-employee-month.ts` was already a member, so the relocation
+// removes that node with zero behavior change (see that section's own relocation note).
+export { computeWeekProgress } from "./close-employee-month";
+export type { WeekProgress } from "./close-employee-month";
 export { isSnapshotLocked } from "./snapshot-lock";
 export { closeEmployeeMonth } from "./close-employee-month";
 // Issue #433 (D-11) — pure re-export, no Prisma: the one full-month MONTHLY_HOURS Soll, shared

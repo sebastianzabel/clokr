@@ -37,7 +37,6 @@ import {
   selfHealUsedDays,
   loadVacationTypeMeta,
   isSickLeaveTypeCode,
-  runCarryoverWarningOnce, // Phase 101B (Issue #101, wave 7) — was `await import(...)`, see :1090
   ensureRegularVacationEntitlement, // Issue #445 (D-05) — injected into selfHealUsedDays's ctx below
   REGULAR_ENTITLEMENT_REASON_SELF_HEAL, // Issue #445 (D-05)
   vacationEntitlementWarning, // Issue #445 — composition carries no business rule (CLAUDE.md); the warning string is built in the absence context
@@ -1331,7 +1330,10 @@ export async function reportRoutes(app: FastifyInstance) {
         }
       }
 
-      const result = await runCarryoverWarningOnce(app, { onlyEntitlementId: entitlementId });
+      // Issue #451 (D-08, 451-08 cycle fix) — reached via the Fastify decoration
+      // `plugins/carryover-warning.ts` registers, not an index.ts re-export (see that file's
+      // module header for why).
+      const result = await app.runCarryoverWarningOnce({ onlyEntitlementId: entitlementId });
 
       // Audit the manual trigger separately so we can distinguish operator
       // action from the cron-driven warnings in the audit log.

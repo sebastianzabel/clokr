@@ -5,6 +5,24 @@ import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-adviso
 import { userIdsHoldingPermission } from "../../platform"; // Phase 75b Plan 10 (#75), D-16
 import { vacationBalanceForRow } from "../facade/vacation-balance"; // Issue #451 (D-08) — same context, relative import (no index.ts detour — see 451-07-SUMMARY.md)
 
+// Issue #451 (D-08, 451-08 cycle fix). `runCarryoverWarningOnce` now imports
+// `facade/vacation-balance.ts`, which imports the already-in-cycle `leave-days.ts` —
+// so the OLD `contexts/absence/index.ts` re-export of this function (index.ts -> this
+// module -> facade/vacation-balance.ts -> leave-days.ts -> ... -> index.ts) closed a
+// loop and pulled both this module and the facade into the pre-existing
+// absence/scheduling/time-tracking/working-time-account import cycle. `composition/reports.ts`
+// is the only caller outside this context; it now reaches this function via the Fastify
+// decoration below instead of an index.ts re-export, exactly like `app.audit()`/`app.notify()` —
+// app.ts already imports this module's plugin directly (the documented composition-root
+// exception), so the decoration carries no new cross-context import edge at all.
+declare module "fastify" {
+  interface FastifyInstance {
+    runCarryoverWarningOnce: (
+      opts?: Parameters<typeof runCarryoverWarningOnce>[1],
+    ) => ReturnType<typeof runCarryoverWarningOnce>;
+  }
+}
+
 /**
  * BUrlG § 7 Hinweispflicht (EuGH C-684/16 "Max-Planck").
  *
@@ -303,6 +321,9 @@ export async function runCarryoverWarningOnce(
 
 export const carryoverWarningPlugin = fp(async (app) => {
   const tasks: ScheduledTask[] = [];
+
+  // Issue #451 (D-08, 451-08 cycle fix) — see the module-header note above.
+  app.decorate("runCarryoverWarningOnce", (opts) => runCarryoverWarningOnce(app, opts));
 
   app.addHook("onReady", async () => {
     try {
