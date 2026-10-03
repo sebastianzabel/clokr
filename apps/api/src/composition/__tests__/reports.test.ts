@@ -34,6 +34,7 @@ import {
   monthStartUtc,
   monthEndUtc,
 } from "../../__tests__/test-dates";
+import { getHolidays, STATE_MAP } from "../../contexts/platform/holidays";
 import type { FastifyInstance } from "fastify";
 
 // Mirror of the module-private classifyOvertimeBalance thresholds in dashboard.ts (NORMAL |x|<=20,
@@ -1678,8 +1679,24 @@ describe("Reports API", () => {
         (e: { employeeNumber: string }) => e.employeeNumber === empMissing.employeeNumber,
       );
       expect(emp).toBeDefined();
-      expect(emp.status).toBe("missing");
+      // The endpoint resolves the REAL "today": on a statutory holiday the holiday outranks
+      // "missing" (resolvePresenceState), so a weekday holiday must not turn this red.
+      expect(emp.status).toBe((await todayIsStatutoryHoliday()) ? "holiday" : "missing");
     });
+
+    // Independent of the endpoint under test: today's statutory holidays for the tenant's salon,
+    // computed with the same catalogue other tests use (getHolidays + STATE_MAP). The endpoint
+    // resolves the real calendar date, so Cases 5/6 would otherwise fail on every real holiday
+    // (first seen on 2026-10-03, Tag der Deutschen Einheit).
+    async function todayIsStatutoryHoliday(): Promise<boolean> {
+      const salon = await app.prisma.salon.findFirst({
+        where: { tenantId: attData.tenant.id },
+        select: { federalState: true },
+      });
+      const today = todayStr();
+      const state = salon ? STATE_MAP[salon.federalState] : null;
+      return getHolidays(Number(today.slice(0, 4)), state).some((h) => h.date === today);
+    }
 
     it("Case 6: employee with all-zero schedule has status none", async () => {
       const res = await app.inject({
@@ -1693,7 +1710,8 @@ describe("Reports API", () => {
         (e: { employeeNumber: string }) => e.employeeNumber === empNoWorkday.employeeNumber,
       );
       expect(emp).toBeDefined();
-      expect(emp.status).toBe("none");
+      // Real "today" (see Case 5): a statutory holiday outranks "none" in resolvePresenceState.
+      expect(emp.status).toBe((await todayIsStatutoryHoliday()) ? "holiday" : "none");
     });
 
     it("Case 7: response.summary counts sum equals employees.length", async () => {
