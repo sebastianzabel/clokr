@@ -12,10 +12,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import { hasHumanVacationWrite } from "../contexts/absence/leave-days";
+import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
+import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 
 const PASSWORD = "test1234";
 
@@ -62,6 +65,49 @@ describe("Elternzeit-Kürzung (§ 17 Abs. 1 BEEG) — Issue #468, D-08..D-11", (
     return app.prisma.leaveEntitlement.create({
       data: { employeeId, leaveTypeId, year, totalDays: 30, usedDays: 0, isAutoCalculated: true },
     });
+  }
+
+  function createHome(employeeId: string, salonId: string) {
+    return app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: data.tenant.id,
+        employeeId,
+        salonId,
+        kind: "HOME",
+        validFrom: new Date("2020-01-01"),
+        validUntil: null,
+        weekdays: [],
+      },
+    });
+  }
+
+  /** Same idiom as `leave-decisions-salon-scope.test.ts` (Issue #91). */
+  async function createScopedManager(
+    label: string,
+    permissions: string[],
+    scope: { scopeType: "SALONS" | "PERSONS"; salonIds?: string[]; employeeIds?: string[] },
+  ) {
+    const { user } = await createFixedEmployee(label, "2020-01-01");
+    const name = `PLR468 Scope ${crypto.randomBytes(3).toString("hex")}`;
+    const role = await app.prisma.accessRole.create({
+      data: {
+        tenantId: data.tenant.id,
+        name,
+        nameKey: roleNameKey(name),
+        permissions: normalizeRolePermissions(permissions),
+      },
+    });
+    await app.prisma.roleAssignment.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        accessRoleId: role.id,
+        scopeType: scope.scopeType,
+        salonIds: scope.salonIds ?? [],
+        employeeIds: scope.employeeIds ?? [],
+      },
+    });
+    return { user };
   }
 
   async function login(email: string): Promise<string> {
@@ -454,5 +500,451 @@ describe("Elternzeit-Kürzung (§ 17 Abs. 1 BEEG) — Issue #468, D-08..D-11", (
     } finally {
       await cleanupTestData(app, other.tenant.id);
     }
+  });
+
+  // ── Task 2 (D-10/D-11): revocation, T-100-09/scope sweep for all three routes, 12-month case ──
+
+  it("revoke restores the 2026 entitlement by the stored reducedDays, audits both rows, never deletes the reduction row", async () => {
+    const token = await login(data.adminUser.email);
+    const row2026Before = await app.prisma.leaveEntitlement.findUnique({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: pEmployeeId,
+          leaveTypeId: vacationTypeId,
+          year: 2026,
+        },
+      },
+    });
+    expect(Number(row2026Before!.totalDays)).toBe(23);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/leave/parental-reductions/${pLeaveRequestId}/revoke`,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      payload: JSON.stringify({ year: 2026, reason: "Erklärung zurückgenommen" }),
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { status: string; totalDays: number };
+    expect(body.status).toBe("REVOKED");
+    expect(body.totalDays).toBe(30);
+
+    const row2026After = await app.prisma.leaveEntitlement.findUnique({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: pEmployeeId,
+          leaveTypeId: vacationTypeId,
+          year: 2026,
+        },
+      },
+    });
+    expect(Number(row2026After!.totalDays)).toBe(30);
+
+    const reductions = await app.prisma.parentalLeaveReduction.findMany({
+      where: { leaveRequestId: pLeaveRequestId, year: 2026 },
+    });
+    expect(reductions).toHaveLength(1); // never deleted
+    expect(reductions[0].status).toBe("REVOKED");
+    expect(reductions[0].revokedAt).toBeTruthy();
+    expect(reductions[0].revokedBy).toBe(data.adminUser.id);
+
+    // Both the commit-time AND the revoke-time audit reference the same reductionId in
+    // newValue — order by createdAt desc to get the latest (the revoke) one.
+    const entitlementAudit = await app.prisma.auditLog.findFirst({
+      where: {
+        entity: "LeaveEntitlement",
+        entityId: row2026After!.id,
+        action: "UPDATE",
+        newValue: { path: ["parentalLeaveReductionId"], equals: reductions[0].id },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(entitlementAudit).toBeTruthy();
+    expect(entitlementAudit!.oldValue).toMatchObject({ totalDays: 23 });
+    expect((entitlementAudit!.newValue as Record<string, unknown>).totalDays).toBe(30);
+
+    const revocationAudit = await app.prisma.auditLog.findFirst({
+      where: {
+        entity: "ParentalLeaveReduction",
+        entityId: reductions[0].id,
+        action: "PARENTAL_LEAVE_REDUCTION_REVOKED",
+      },
+    });
+    expect(revocationAudit).toBeTruthy();
+    expect(revocationAudit!.oldValue).toMatchObject({ status: "ACTIVE" });
+  });
+
+  it("a second revoke of the same reduction -> 409 'Die Kürzung ist bereits widerrufen.'", async () => {
+    const token = await login(data.adminUser.email);
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/leave/parental-reductions/${pLeaveRequestId}/revoke`,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      payload: JSON.stringify({ year: 2026, reason: "Erklärung zurückgenommen" }),
+    });
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({ error: "Die Kürzung ist bereits widerrufen." });
+  });
+
+  it("revoke for a year with no declared reduction -> 404 'Keine Kürzung für {year} erklärt.'", async () => {
+    const token = await login(data.adminUser.email);
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/leave/parental-reductions/${pLeaveRequestId}/revoke`,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      payload: JSON.stringify({ year: 2027, reason: "Keine Kürzung vorhanden" }),
+    });
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body)).toEqual({ error: "Keine Kürzung für 2027 erklärt." });
+  });
+
+  it("re-committing a REVOKED year -> 409 naming the revoked declaration (D-09 limit)", async () => {
+    const token = await login(data.adminUser.email);
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/leave/parental-reductions/${pLeaveRequestId}`,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      payload: JSON.stringify({ declaredAt: "2026-09-01", years: [2026] }),
+    });
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.body) as { error: string };
+    expect(body.error).toContain("bereits eine Kürzung erklärt");
+    expect(body.error).toContain("widerrufen am");
+  });
+
+  it("revoke restores by the STORED reducedDays even after a manual PUT /settings/vacation edit in between", async () => {
+    const { employee: sEmployee } = await createFixedEmployee("s", "2020-01-01");
+    await seedVacationRow(sEmployee.id, vacationTypeId, 2029);
+    const sRequest = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: sEmployee.id,
+        leaveTypeId: parentalTypeId,
+        startDate: new Date("2029-01-01"),
+        endDate: new Date("2029-04-30"),
+        days: 120,
+        status: "APPROVED",
+      },
+    });
+    const token = await login(data.adminUser.email);
+
+    const commitRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/leave/parental-reductions/${sRequest.id}`,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      payload: JSON.stringify({ declaredAt: "2026-09-01", years: [2029] }),
+    });
+    expect(commitRes.statusCode).toBe(201);
+    const rowAfterCommit = await app.prisma.leaveEntitlement.findUnique({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: sEmployee.id,
+          leaveTypeId: vacationTypeId,
+          year: 2029,
+        },
+      },
+    });
+    expect(Number(rowAfterCommit!.totalDays)).toBe(20); // 30 - parentalLeaveReducedDays(30, 4) = 30-20
+
+    const reduction = await app.prisma.parentalLeaveReduction.findUniqueOrThrow({
+      where: { leaveRequestId_year: { leaveRequestId: sRequest.id, year: 2029 } },
+    });
+    expect(Number(reduction.reducedDays)).toBe(10);
+
+    // Manual edit in between — an admin raises the total to 25 (still >= statutory minimum).
+    const editRes = await app.inject({
+      method: "PUT",
+      url: `/api/v1/settings/vacation/${sEmployee.id}`,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      payload: JSON.stringify({ year: 2029, totalDays: 25 }),
+    });
+    expect(editRes.statusCode).toBe(200);
+
+    const revokeRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/leave/parental-reductions/${sRequest.id}/revoke`,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      payload: JSON.stringify({ year: 2029, reason: "Fehlbuchung korrigiert" }),
+    });
+    expect(revokeRes.statusCode).toBe(200);
+
+    const rowAfterRevoke = await app.prisma.leaveEntitlement.findUnique({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: sEmployee.id,
+          leaveTypeId: vacationTypeId,
+          year: 2029,
+        },
+      },
+    });
+    // 25 (the edited value) + 10 (the STORED reducedDays, not a recomputation) = 35.
+    expect(Number(rowAfterRevoke!.totalDays)).toBe(35);
+  });
+
+  it("a 12-month Elternzeit reduces the entitlement to 0, which survives the #445 zero-placeholder heal and the #450 contract-change recompute", async () => {
+    const { employee: tEmployee } = await createFixedEmployee("t", "2020-01-01");
+    await seedVacationRow(tEmployee.id, vacationTypeId, 2027);
+    const tRequest = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: tEmployee.id,
+        leaveTypeId: parentalTypeId,
+        startDate: new Date("2027-01-01"),
+        endDate: new Date("2027-12-31"),
+        days: 365,
+        status: "APPROVED",
+      },
+    });
+    const token = await login(data.adminUser.email);
+
+    const commitRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/leave/parental-reductions/${tRequest.id}`,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      payload: JSON.stringify({ declaredAt: "2026-09-01", years: [2027] }),
+    });
+    expect(commitRes.statusCode).toBe(201);
+
+    const rowAfterCommit = await app.prisma.leaveEntitlement.findUnique({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: tEmployee.id,
+          leaveTypeId: vacationTypeId,
+          year: 2027,
+        },
+      },
+    });
+    expect(Number(rowAfterCommit!.totalDays)).toBe(0);
+
+    // #445 zero-placeholder heal: GET /settings/vacation must NOT heal this row back up.
+    const getRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/settings/vacation/${tEmployee.id}?year=2027`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(getRes.statusCode).toBe(200);
+    expect((JSON.parse(getRes.body) as { totalDays: number }).totalDays).toBe(0);
+
+    // #450 contract-change recompute (validFrom inside the recompute range) must also skip it.
+    const putRes = await app.inject({
+      method: "PUT",
+      url: `/api/v1/settings/work/${tEmployee.id}`,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      payload: JSON.stringify({
+        type: "FIXED_SCHEDULE",
+        fridayHours: 0,
+        weeklyHours: 32,
+        validFrom: "2027-03-01",
+      }),
+    });
+    expect(putRes.statusCode).toBe(200);
+
+    const rowAfterContractChange = await app.prisma.leaveEntitlement.findUnique({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: tEmployee.id,
+          leaveTypeId: vacationTypeId,
+          year: 2027,
+        },
+      },
+    });
+    expect(Number(rowAfterContractChange!.totalDays)).toBe(0);
+  });
+
+  describe("T-100-09 sweep for POST commit and POST revoke (foreign tenant vs. unknown id, byte-identical)", () => {
+    it("POST /:leaveRequestId", async () => {
+      const other = await seedTestData(app, "plr468-c1");
+      try {
+        const otherParentalType = await app.prisma.leaveType.create({
+          data: { tenantId: other.tenant.id, ...leaveTypeFields("PARENTAL"), color: "#EC4899" },
+        });
+        const otherRequest = await app.prisma.leaveRequest.create({
+          data: {
+            employeeId: other.employee.id,
+            leaveTypeId: otherParentalType.id,
+            startDate: new Date("2026-01-01"),
+            endDate: new Date("2026-12-31"),
+            days: 365,
+            status: "APPROVED",
+          },
+        });
+        const token = await login(data.adminUser.email);
+        const payload = JSON.stringify({ declaredAt: "2026-09-01", years: [2026] });
+        const foreignRes = await app.inject({
+          method: "POST",
+          url: `/api/v1/leave/parental-reductions/${otherRequest.id}`,
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          payload,
+        });
+        const unknownRes = await app.inject({
+          method: "POST",
+          url: `/api/v1/leave/parental-reductions/11111111-1111-4111-8111-111111111111`,
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          payload,
+        });
+        expect(foreignRes.statusCode).toBe(404);
+        expect(foreignRes.body).toBe(unknownRes.body);
+
+        const foreignAudits = await app.prisma.auditLog.count({
+          where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: otherRequest.id },
+        });
+        expect(foreignAudits).toBe(1);
+        const unknownAudits = await app.prisma.auditLog.count({
+          where: {
+            action: "CROSS_TENANT_ACCESS_DENIED",
+            entityId: "11111111-1111-4111-8111-111111111111",
+          },
+        });
+        expect(unknownAudits).toBe(0);
+      } finally {
+        await cleanupTestData(app, other.tenant.id);
+      }
+    });
+
+    it("POST /:leaveRequestId/revoke", async () => {
+      const other = await seedTestData(app, "plr468-c2");
+      try {
+        const otherParentalType = await app.prisma.leaveType.create({
+          data: { tenantId: other.tenant.id, ...leaveTypeFields("PARENTAL"), color: "#EC4899" },
+        });
+        const otherRequest = await app.prisma.leaveRequest.create({
+          data: {
+            employeeId: other.employee.id,
+            leaveTypeId: otherParentalType.id,
+            startDate: new Date("2026-01-01"),
+            endDate: new Date("2026-12-31"),
+            days: 365,
+            status: "APPROVED",
+          },
+        });
+        const token = await login(data.adminUser.email);
+        const payload = JSON.stringify({ year: 2026, reason: "T-100-09 Probe" });
+        const foreignRes = await app.inject({
+          method: "POST",
+          url: `/api/v1/leave/parental-reductions/${otherRequest.id}/revoke`,
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          payload,
+        });
+        const unknownRes = await app.inject({
+          method: "POST",
+          url: `/api/v1/leave/parental-reductions/22222222-2222-4222-8222-222222222222/revoke`,
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          payload,
+        });
+        expect(foreignRes.statusCode).toBe(404);
+        expect(foreignRes.body).toBe(unknownRes.body);
+      } finally {
+        await cleanupTestData(app, other.tenant.id);
+      }
+    });
+  });
+
+  it("a SALONS-scoped manager sees a Stammsalon-B employee's request identically to an unknown id, but a Stammsalon-A employee's request succeeds", async () => {
+    const salonA = await app.prisma.salon.create({
+      data: {
+        tenantId: data.tenant.id,
+        name: "PLR468 Salon A",
+        openingHours: DEFAULT_SALON_OPENING_HOURS,
+        isActive: true,
+        federalState: "NIEDERSACHSEN",
+      },
+    });
+    const salonB = await app.prisma.salon.create({
+      data: {
+        tenantId: data.tenant.id,
+        name: "PLR468 Salon B",
+        openingHours: DEFAULT_SALON_OPENING_HOURS,
+        isActive: true,
+        federalState: "NIEDERSACHSEN",
+      },
+    });
+    const { employee: uEmployee } = await createFixedEmployee("u", "2020-01-01");
+    await createHome(uEmployee.id, salonB.id);
+    await seedVacationRow(uEmployee.id, vacationTypeId, 2026);
+    const uRequest = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: uEmployee.id,
+        leaveTypeId: parentalTypeId,
+        startDate: new Date("2026-01-01"),
+        endDate: new Date("2026-12-31"),
+        days: 365,
+        status: "APPROVED",
+      },
+    });
+
+    const { employee: vEmployee } = await createFixedEmployee("v", "2020-01-01");
+    await createHome(vEmployee.id, salonA.id);
+    await seedVacationRow(vEmployee.id, vacationTypeId, 2026);
+    const vRequest = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: vEmployee.id,
+        leaveTypeId: parentalTypeId,
+        startDate: new Date("2026-01-01"),
+        endDate: new Date("2026-12-31"),
+        days: 365,
+        status: "APPROVED",
+      },
+    });
+
+    const { user: scopedUser } = await createScopedManager(
+      "plr468mgr",
+      ["leave-entitlement:update:ZUGEWIESEN"],
+      { scopeType: "SALONS", salonIds: [salonA.id] },
+    );
+    const scopedToken = await login(scopedUser.email);
+
+    const outOfScopeRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/parental-reductions/${uRequest.id}`,
+      headers: { authorization: `Bearer ${scopedToken}` },
+    });
+    const unknownRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/parental-reductions/33333333-3333-4333-8333-333333333333`,
+      headers: { authorization: `Bearer ${scopedToken}` },
+    });
+    expect(outOfScopeRes.statusCode).toBe(404);
+    expect(outOfScopeRes.body).toBe(unknownRes.body);
+
+    const scopeAudits = await app.prisma.auditLog.count({
+      where: { action: "SCOPE_ACCESS_DENIED", entityId: uRequest.id },
+    });
+    expect(scopeAudits).toBe(1);
+
+    const inScopeRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/parental-reductions/${vRequest.id}`,
+      headers: { authorization: `Bearer ${scopedToken}` },
+    });
+    expect(inScopeRes.statusCode).toBe(200);
+  });
+
+  it("a manager WITHOUT leave-entitlement:update -> 403 on all three routes", async () => {
+    const { user: noPermUser } = await createScopedManager(
+      "plr468noperm",
+      ["leave-request:approve:ZUGEWIESEN"],
+      { scopeType: "SALONS", salonIds: [] },
+    );
+    const noPermToken = await login(noPermUser.email);
+
+    const getRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/parental-reductions/${pLeaveRequestId}`,
+      headers: { authorization: `Bearer ${noPermToken}` },
+    });
+    expect(getRes.statusCode).toBe(403);
+
+    const postRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/leave/parental-reductions/${pLeaveRequestId}`,
+      headers: { authorization: `Bearer ${noPermToken}`, "content-type": "application/json" },
+      payload: JSON.stringify({ declaredAt: "2026-09-01", years: [2026] }),
+    });
+    expect(postRes.statusCode).toBe(403);
+
+    const revokeRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/leave/parental-reductions/${pLeaveRequestId}/revoke`,
+      headers: { authorization: `Bearer ${noPermToken}`, "content-type": "application/json" },
+      payload: JSON.stringify({ year: 2026, reason: "ohne Berechtigung" }),
+    });
+    expect(revokeRes.statusCode).toBe(403);
   });
 });
