@@ -1123,16 +1123,23 @@ export async function syncExitYearVacationEntitlement(
  * `platform/api/settings.ts` AFTER the `WorkSchedule` write and its own audit commit, never
  * inside that write's transaction — the caller awaits this with a `.catch` that logs and swallows
  * the failure, exactly like the existing `recalculateSnapshots` call it sits next to. Recomputes
- * every YEAR from `changedFrom`'s UTC year through the current UTC year + 1 that already has a
- * VACATION `LeaveEntitlement` row, via {@link resolveRegularVacationDays} (now segment-aware,
- * D-09) — so this function itself carries no formula, only the per-year gate and the write.
+ * every YEAR from `max(changedFrom's UTC year, current UTC year)` through the current UTC year +
+ * 1 that already has a VACATION `LeaveEntitlement` row, via {@link resolveRegularVacationDays}
+ * (now segment-aware, D-09) — so this function itself carries no formula, only the per-year gate
+ * and the write.
  *
  * D-07 (literal): a row is skipped — never overwritten — when `isAutoCalculated` is `false` OR
- * {@link hasHumanVacationWrite} finds a human write in its audit trail. D-05: the write touches
- * ONLY `totalDays` and `isAutoCalculated` — the entitlement's already-taken and already-carried
- * balances are never read or written here, and a total that ends up below one of them is never
- * clamped or hidden (the existing `audit-vacation-entitlements.ts` PRUEFEN pattern surfaces that,
- * read-only, elsewhere). Never creates a row — a year with none yet is simply skipped.
+ * {@link hasHumanVacationWrite} finds a human write in its audit trail, OR `year` is before the
+ * current UTC calendar year — same rule, and same Revisionssicherheit rationale (CLAUDE.md
+ * "Immutability after lock"), as the sibling {@link syncExitYearVacationEntitlement}'s past-year
+ * guard (code review finding WR-01): a `validFrom` dated into a past year (e.g. correcting an old
+ * contract record) must never silently rewrite that year's already-reported entitlement. Such a
+ * past year surfaces, read-only, via `audit-vacation-entitlements.ts`'s dry-run instead. D-05: the
+ * write touches ONLY `totalDays` and `isAutoCalculated` — the entitlement's already-taken and
+ * already-carried balances are never read or written here, and a total that ends up below one of
+ * them is never clamped or hidden (the existing `audit-vacation-entitlements.ts` PRUEFEN pattern
+ * surfaces that, read-only, elsewhere). Never creates a row — a year with none yet is simply
+ * skipped.
  *
  * @param audit - defaults to the system write {@link writeEntitlementAudit}; `settings.ts` passes
  *   a callback that attributes the acting user via `requestAuditFields` instead (ADR 0002 E10,
@@ -1155,10 +1162,15 @@ export async function recalcVacationEntitlementsForContractChange(
     newTotalDays: number;
   }> = [];
 
+  const currentYear = new Date().getUTCFullYear();
   const startYear = changedFrom.getUTCFullYear();
-  const endYear = new Date().getUTCFullYear() + 1;
+  const endYear = currentYear + 1;
 
   for (let year = startYear; year <= endYear; year++) {
+    // WR-01 (code review finding) — never rewrites a past year's persisted, possibly
+    // already-reported auto-calculated entitlement; same rule as
+    // syncExitYearVacationEntitlement's "D-07: never changes a past year's persisted value".
+    if (year < currentYear) continue;
     const lookup = await getVacationEntitlement(db, employeeId, tenantId, year);
     const row = lookup?.entitlement ?? null;
     if (!row) continue;

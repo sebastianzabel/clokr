@@ -96,10 +96,13 @@ segment, not from whichever contract happened to be current when the row was las
   apply, each employee independently. The recompute is REACTIVE: it runs after the triggering
   write's own transaction commits, with its own `.catch`, so one employee's recompute failure never
   rolls back the write or blocks a sibling employee's recompute (ADR 0002 Entscheidung 10) — a
-  failure is logged, never thrown back at the caller. The affected years are every year from the
-  changed `WorkSchedule` row's `validFrom` year through the current year plus one, for which a
-  `LeaveEntitlement` row ALREADY exists (no new year is ever created by this recompute) and whose
-  row is auto-calculated.
+  failure is logged, never thrown back at the caller. The affected years are every year from
+  `max(changed WorkSchedule row's validFrom year, current year)` through the current year plus
+  one, for which a `LeaveEntitlement` row ALREADY exists (no new year is ever created by this
+  recompute) and whose row is auto-calculated — a `validFrom` dated into a past year never
+  rewrites that past year's already-reported entitlement, the same rule
+  `syncExitYearVacationEntitlement` already applies (code review finding WR-01); such a past year
+  surfaces, read-only, via the dry-run script below instead.
 - **Human-set rows are never overwritten.** A row is skipped by the recompute when either
   `isAutoCalculated` is `false` or the row's `AuditLog` history shows a human write
   (`hasHumanVacationWrite()`, Issue #447 D-14 — the `isAutoCalculated` column alone is not a

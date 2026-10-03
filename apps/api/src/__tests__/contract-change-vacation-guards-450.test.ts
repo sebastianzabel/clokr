@@ -302,6 +302,31 @@ describe("PUT /api/v1/settings/work/:employeeId — Vertragswechsel recompute gu
     expect(Number(rowNext.totalDays)).toBe(30);
   });
 
+  it("past-dated validFrom: a contract change dated into a PAST year leaves that year's auto-calculated entitlement untouched (no audit), while the current year is recomputed (WR-01, code review finding)", async () => {
+    const cy = new Date().getUTCFullYear();
+    const pastYear = cy - 2;
+    const employeeId = await mkEmployee("pastdated", [1, 2, 3]);
+    // Both rows deliberately carry a value the formula would NOT produce (20) — if the loop
+    // ever touched the past year, this assertion would catch it; the current year must still
+    // be corrected by the same recompute run.
+    const pastEntitlementId = await mkEntitlement(employeeId, pastYear, 20);
+    const currentEntitlementId = await mkEntitlement(employeeId, cy, 20);
+
+    const res = await putWork(employeeId, {
+      type: "FIXED_SCHEDULE",
+      validFrom: `${pastYear}-07-01`,
+    });
+    expect(res.statusCode).toBe(200);
+
+    const pastRow = await entitlementRow(employeeId, pastYear);
+    expect(Number(pastRow.totalDays)).toBe(20);
+    expect(await entitlementAudits(pastEntitlementId)).toHaveLength(0);
+
+    const currentRow = await entitlementRow(employeeId, cy);
+    expect(Number(currentRow.totalDays)).not.toBe(20);
+    expect(await entitlementAudits(currentEntitlementId)).toHaveLength(1);
+  });
+
   it("tenant isolation: a foreign tenant's employee is untouched by another tenant's admin PUT (existing 404 guard)", async () => {
     const employeeId = await mkForeignTenantEmployee();
     await app.prisma.leaveEntitlement.create({
