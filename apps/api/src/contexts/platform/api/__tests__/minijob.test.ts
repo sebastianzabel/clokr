@@ -7,6 +7,7 @@ import {
 } from "../../../../__tests__/setup";
 import { calcExpectedMinutesTz } from "../../../working-time-account/timezone";
 import type { FastifyInstance } from "fastify";
+import bcrypt from "bcryptjs";
 
 describe("Minijob / MONTHLY_HOURS Schedule", () => {
   let app: FastifyInstance;
@@ -348,253 +349,191 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
   });
 
   describe("TENANT-01: Holiday deduction in saldo computation", () => {
-    // Uses a DB-stored public holiday on a workday within the current month's computation window.
-    // The MONTHLY_HOURS schedule has mondayHours=1..fridayHours=1 (workday markers) and monthlyHours=45.
-    // With toggle ON:  holidayMinutes = dailySoll = 45*60 / workingDaysInRange (approx 117 min/workday)
-    // With toggle OFF: holidayMinutes = getDayHoursFromSchedule(schedule, dow)*60 = 1*60 = 60 min
-    // These produce different overtime balances, proving the guard works.
+    // Issue #433 (D-03, plan 02): the retired tenant switch (see the separate "Holiday
+    // deduction toggle" describe below for its GET/PUT persistence, plan 04's territory)
+    // has no effect any more — a holiday on a contractual workday ALWAYS reduces the Soll.
+    // The former ON-vs-OFF comparison this block used to run is void; it is rewritten to assert
+    // the D-03 rule over HTTP directly, without ever touching the switch.
+    //
+    // Two dedicated MONTHLY_HOURS employees, hire 2026-04-01, monthlyHours=45 (2700 min),
+    // {day}Hours all 0 (prod shape, D-05 — workDays carries the contract), one 6h (360 min)
+    // entry on Tue 2026-04-07:
+    //   - employeeMoFri: workDays=[1,2,3,4,5]
+    //   - employeeTueThu: workDays=[2,3,4]
+    //
+    // Fake clock pinned to 2026-04-15T10:00Z (unchanged from before this plan): the live
+    // saldo window is 01.-14.04. (yesterday rule, #438), April 2026 starts Wednesday with 22
+    // Mo-Fr / 14 Tue-Thu days (full month, D-06 denominator).
+    const ENTRY_DATE = "2026-04-07"; // Tuesday — a workday for BOTH workday sets
+    const HIRE_DATE = new Date("2026-04-01T00:00:00Z");
 
-    const WORKDAY_HOLIDAY = "2026-04-06"; // Monday April 6, 2026 — within April computation window
-    const ENTRY_DATE = "2026-04-07"; // Tuesday April 7, 2026 — workday with a time entry
+    let employeeMoFriId: string;
+    let employeeTueThuId: string;
 
-    let testHoliday: { id: string } | null = null;
-    let testEntry: { id: string } | null = null;
-
-    beforeAll(() => {
-      // Phase 66 fix (failure #8): pin test clock to April 15, 2026 so the saldo's
-      // current-month range (April 1 → April 15) covers the seeded holiday (April 6)
-      // and entry (April 7). Without the pin, June 3 runtime → range = June only →
-      // April data has zero effect → toggle ON vs OFF balances are identical.
+    beforeAll(async () => {
       vi.useFakeTimers({ now: new Date("2026-04-15T10:00:00.000Z"), toFake: ["Date"] });
+
+      const s = `mj433-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+
+      async function createMonthlyHoursEmployee(
+        label: string,
+        workDays: number[],
+      ): Promise<string> {
+        const user = await app.prisma.user.create({
+          data: {
+            email: `${label}-${s}@test.de`,
+            passwordHash: await bcrypt.hash("test1234", 10),
+            role: "EMPLOYEE",
+            isActive: true,
+          },
+        });
+        const employee = await app.prisma.employee.create({
+          data: {
+            tenantId: data.tenant.id,
+            userId: user.id,
+            employeeNumber: `${label}-${s}`,
+            firstName: "Mini",
+            lastName: label,
+            hireDate: HIRE_DATE,
+          },
+        });
+        await app.prisma.workSchedule.create({
+          data: {
+            employeeId: employee.id,
+            type: "MONTHLY_HOURS",
+            weeklyHours: 0,
+            monthlyHours: 45,
+            // Prod shape (D-05): {day}Hours are placeholders, workDays carries the contract.
+            mondayHours: 0,
+            tuesdayHours: 0,
+            wednesdayHours: 0,
+            thursdayHours: 0,
+            fridayHours: 0,
+            saturdayHours: 0,
+            sundayHours: 0,
+            workDays,
+            validFrom: HIRE_DATE,
+          },
+        });
+        await app.prisma.overtimeAccount.create({
+          data: { employeeId: employee.id, balanceHours: 0 },
+        });
+        await app.prisma.timeEntry.create({
+          data: {
+            employeeId: employee.id,
+            date: new Date(ENTRY_DATE),
+            startTime: new Date(ENTRY_DATE + "T08:00:00Z"),
+            endTime: new Date(ENTRY_DATE + "T14:00:00Z"),
+            breakMinutes: 0,
+            source: "MANUAL",
+            salonId: data.salonId, // Phase 68b (issue #68)
+          },
+        });
+        return employee.id;
+      }
+
+      employeeMoFriId = await createMonthlyHoursEmployee("mofri", [1, 2, 3, 4, 5]);
+      employeeTueThuId = await createMonthlyHoursEmployee("tuethu", [2, 3, 4]);
     });
 
     afterAll(() => {
       vi.useRealTimers();
     });
 
-    it("toggle ON: holiday reduces expected by dailySoll formula, improving balance", async () => {
-      // Set MONTHLY_HOURS schedule with configured workdays and monthlyHours=45
-      const schedRes = await app.inject({
-        method: "PUT",
-        url: `/api/v1/settings/work/${data.employee.id}`,
+    it("D-03: Mo-Fr contract — Karfreitag + Ostermontag (both Mo-Fr) reduce the Soll", async () => {
+      // Window 01.-14.04: 10 Mo-Fr workdays; April 2026 (full month) has 22 Mo-Fr days.
+      // E = round(2700*10/22) = 1227. Karfreitag (03.04., Fri) + Ostermontag (06.04., Mon)
+      // are both Mo-Fr workdays -> holiday = round(2700*2/22) = 245. Worked = 360 (one 6h
+      // entry on 07.04.). balance = 360 - (1227 - 245) = -622 min = -622/60 h.
+      const { updateOvertimeAccount } = await import("../../../time-tracking/api/time-entries");
+      await updateOvertimeAccount(app, employeeMoFriId);
+
+      const overtimeRes = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${employeeMoFriId}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: {
-          type: "MONTHLY_HOURS",
-          weeklyHours: 0,
-          monthlyHours: 45,
-          mondayHours: 1,
-          tuesdayHours: 1,
-          wednesdayHours: 1,
-          thursdayHours: 1,
-          fridayHours: 1,
-          saturdayHours: 0,
-          sundayHours: 0,
-          overtimeThreshold: 60,
-          allowOvertimePayout: false,
-          validFrom: "2026-01-01",
+      });
+      expect(overtimeRes.statusCode).toBe(200);
+      const body = JSON.parse(overtimeRes.body);
+      expect(Number(body.balanceHours)).toBeCloseTo(-622 / 60, 2);
+    });
+
+    it("D-03/D-05: Tue-Thu contract — the SAME holidays are non-workdays, nothing is deducted", async () => {
+      // Window 01.-14.04: 6 Tue-Thu days (01,02,07,08,09,14); April 2026 (full month) has 14
+      // Tue-Thu days. E = round(2700*6/14) = 1157. Karfreitag (Fri) and Ostermontag (Mon) are
+      // NOT in the Tue-Thu workday set -> holiday deduction = 0 (D-03: no causality on a
+      // non-workday). Worked = 360. balance = 360 - 1157 = -797 min = -797/60 h.
+      const { updateOvertimeAccount } = await import("../../../time-tracking/api/time-entries");
+      await updateOvertimeAccount(app, employeeTueThuId);
+
+      const overtimeRes = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${employeeTueThuId}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(overtimeRes.statusCode).toBe(200);
+      const body = JSON.parse(overtimeRes.body);
+      expect(Number(body.balanceHours)).toBeCloseTo(-797 / 60, 2);
+    });
+
+    it("pure tracking (monthlyHours=null) — no crash, no deduction applied", async () => {
+      const s = `mj433-null-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+      const user = await app.prisma.user.create({
+        data: {
+          email: `null-${s}@test.de`,
+          passwordHash: await bcrypt.hash("test1234", 10),
+          role: "EMPLOYEE",
+          isActive: true,
         },
       });
-      expect(schedRes.statusCode).toBe(200);
-
-      // Enable the toggle
-      const toggleRes = await app.inject({
-        method: "PUT",
-        url: "/api/v1/settings/work",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { monthlyHoursHolidayDeduction: true },
-      });
-      expect(toggleRes.statusCode).toBe(200);
-
-      // Seed a public holiday on a workday in the computation window
-      testHoliday = await app.prisma.publicHoliday.create({
+      const employee = await app.prisma.employee.create({
         data: {
           tenantId: data.tenant.id,
-          salonId: data.salonId, // Phase 71b (issue #71)
-          date: new Date(WORKDAY_HOLIDAY + "T00:00:00Z"),
-          name: "Test-Feiertag",
-          federalState: "NIEDERSACHSEN",
-          year: 2026,
+          userId: user.id,
+          employeeNumber: `NULL-${s}`,
+          firstName: "Mini",
+          lastName: "Null",
+          hireDate: HIRE_DATE,
         },
       });
-
-      // Create a time entry on a different workday (6h = 360 min worked)
-      testEntry = await app.prisma.timeEntry.create({
+      await app.prisma.workSchedule.create({
         data: {
-          employeeId: data.employee.id,
-          date: new Date(ENTRY_DATE),
-          startTime: new Date(ENTRY_DATE + "T08:00:00Z"),
-          endTime: new Date(ENTRY_DATE + "T14:00:00Z"),
-          breakMinutes: 0,
-          source: "MANUAL",
-          salonId: data.salonId, // Phase 68b (issue #68)
-        },
-      });
-
-      // Trigger recalculation
-      const { updateOvertimeAccount } = await import("../../../time-tracking/api/time-entries");
-      await updateOvertimeAccount(app, data.employee.id);
-
-      const overtimeRes = await app.inject({
-        method: "GET",
-        url: `/api/v1/overtime/${data.employee.id}`,
-        headers: { authorization: `Bearer ${data.adminToken}` },
-      });
-      expect(overtimeRes.statusCode).toBe(200);
-      const body = JSON.parse(overtimeRes.body);
-      const balanceOn = Number(body.balanceHours);
-
-      // Store balance for comparison in next test (toggle off)
-      // Balance with toggle ON should be GREATER than toggle OFF because more expected minutes deducted
-      expect(typeof balanceOn).toBe("number");
-      // The balance should be a finite number (no crash, no NaN)
-      expect(isFinite(balanceOn)).toBe(true);
-    });
-
-    it("toggle OFF: no dailySoll deduction — balance differs from toggle ON", async () => {
-      // Disable the toggle
-      const toggleRes = await app.inject({
-        method: "PUT",
-        url: "/api/v1/settings/work",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { monthlyHoursHolidayDeduction: false },
-      });
-      expect(toggleRes.statusCode).toBe(200);
-
-      // Trigger recalculation with toggle OFF
-      const { updateOvertimeAccount } = await import("../../../time-tracking/api/time-entries");
-      await updateOvertimeAccount(app, data.employee.id);
-
-      const overtimeRes = await app.inject({
-        method: "GET",
-        url: `/api/v1/overtime/${data.employee.id}`,
-        headers: { authorization: `Bearer ${data.adminToken}` },
-      });
-      expect(overtimeRes.statusCode).toBe(200);
-      const body = JSON.parse(overtimeRes.body);
-      const balanceOff = Number(body.balanceHours);
-
-      // Verify: toggle OFF produces a different (lower) balance than toggle ON
-      // because fewer expected minutes were deducted (60 min/holiday instead of dailySoll ~117 min)
-      expect(typeof balanceOff).toBe("number");
-      expect(isFinite(balanceOff)).toBe(true);
-      // Toggle ON deducts more expected → higher balance; toggle OFF deducts less → lower balance
-      // (dailySoll ~117 min > 60 min per holiday)
-
-      // Get toggle ON balance to compare
-      await app.inject({
-        method: "PUT",
-        url: "/api/v1/settings/work",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { monthlyHoursHolidayDeduction: true },
-      });
-      await updateOvertimeAccount(app, data.employee.id);
-      const onRes = await app.inject({
-        method: "GET",
-        url: `/api/v1/overtime/${data.employee.id}`,
-        headers: { authorization: `Bearer ${data.adminToken}` },
-      });
-      const balanceOnAgain = Number(JSON.parse(onRes.body).balanceHours);
-
-      // Toggle ON deducts more from expected, producing a higher balance
-      expect(balanceOnAgain).toBeGreaterThan(balanceOff);
-
-      // Disable toggle after comparison
-      await app.inject({
-        method: "PUT",
-        url: "/api/v1/settings/work",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { monthlyHoursHolidayDeduction: false },
-      });
-    });
-
-    it("toggle ON + pure tracking (monthlyHours=null): no crash, no deduction applied", async () => {
-      // Enable toggle
-      await app.inject({
-        method: "PUT",
-        url: "/api/v1/settings/work",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { monthlyHoursHolidayDeduction: true },
-      });
-
-      // Set schedule to pure tracking (monthlyHours=null)
-      await app.inject({
-        method: "PUT",
-        url: `/api/v1/settings/work/${data.employee.id}`,
-        headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: {
+          employeeId: employee.id,
           type: "MONTHLY_HOURS",
           weeklyHours: 0,
           monthlyHours: null,
-          mondayHours: 1,
-          tuesdayHours: 1,
-          wednesdayHours: 1,
-          thursdayHours: 1,
-          fridayHours: 1,
+          mondayHours: 0,
+          tuesdayHours: 0,
+          wednesdayHours: 0,
+          thursdayHours: 0,
+          fridayHours: 0,
           saturdayHours: 0,
           sundayHours: 0,
-          overtimeThreshold: 60,
-          allowOvertimePayout: false,
-          validFrom: "2026-01-01",
+          workDays: [1, 2, 3, 4, 5],
+          validFrom: HIRE_DATE,
         },
       });
+      await app.prisma.overtimeAccount.create({
+        data: { employeeId: employee.id, balanceHours: 0 },
+      });
 
-      // Trigger recalculation — must not crash
       const { updateOvertimeAccount } = await import("../../../time-tracking/api/time-entries");
-      await expect(updateOvertimeAccount(app, data.employee.id)).resolves.not.toThrow();
+      await expect(updateOvertimeAccount(app, employee.id)).resolves.not.toThrow();
 
       const overtimeRes = await app.inject({
         method: "GET",
-        url: `/api/v1/overtime/${data.employee.id}`,
+        url: `/api/v1/overtime/${employee.id}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
       expect(overtimeRes.statusCode).toBe(200);
       const body = JSON.parse(overtimeRes.body);
-      // Pure tracking: balanceHours reflects worked hours only (no soll to deduct against)
+      // Pure tracking: balanceHours reflects worked hours only (no soll to deduct against).
       expect(isFinite(Number(body.balanceHours))).toBe(true);
-
-      // Cleanup: revert schedule to FIXED_SCHEDULE, disable toggle, soft-delete entries
-      await app.inject({
-        method: "PUT",
-        url: `/api/v1/settings/work/${data.employee.id}`,
-        headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: {
-          type: "FIXED_SCHEDULE",
-          weeklyHours: 40,
-          monthlyHours: null,
-          mondayHours: 8,
-          tuesdayHours: 8,
-          wednesdayHours: 8,
-          thursdayHours: 8,
-          fridayHours: 8,
-          saturdayHours: 0,
-          sundayHours: 0,
-          overtimeThreshold: 60,
-          allowOvertimePayout: false,
-          validFrom: "2024-01-01",
-        },
-      });
-      await app.inject({
-        method: "PUT",
-        url: "/api/v1/settings/work",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { monthlyHoursHolidayDeduction: false },
-      });
-      // Soft-delete test entry
-      if (testEntry) {
-        await app.prisma.timeEntry.update({
-          where: { id: testEntry.id },
-          data: { deletedAt: new Date() },
-        });
-      }
-      // Delete test holiday
-      if (testHoliday) {
-        await app.prisma.publicHoliday.delete({ where: { id: testHoliday.id } });
-      }
     });
   });
 
-  describe("TENANT-01: Holiday deduction toggle", () => {
-    it("GET /settings/work returns monthlyHoursHolidayDeduction=false by default", async () => {
+  describe("Issue #433 — retired MONTHLY_HOURS holiday switch (D-04)", () => {
+    it("GET /settings/work no longer returns the retired holiday-deduction switch", async () => {
       const res = await app.inject({
         method: "GET",
         url: "/api/v1/settings/work",
@@ -602,47 +541,28 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body);
-      expect(body.monthlyHoursHolidayDeduction).toBe(false);
+      expect(body).not.toHaveProperty("monthlyHoursHolidayDeduction");
     });
 
-    it("PUT /settings/work persists monthlyHoursHolidayDeduction=true", async () => {
-      const res = await app.inject({
-        method: "PUT",
-        url: "/api/v1/settings/work",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { monthlyHoursHolidayDeduction: true },
-      });
-      expect(res.statusCode).toBe(200);
-    });
-
-    it("GET /settings/work returns persisted monthlyHoursHolidayDeduction=true", async () => {
-      const res = await app.inject({
-        method: "GET",
-        url: "/api/v1/settings/work",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-      });
-      expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.body);
-      expect(body.monthlyHoursHolidayDeduction).toBe(true);
-    });
-
-    it("PUT /settings/work reverts monthlyHoursHolidayDeduction to false", async () => {
+    it("PUT /settings/work with the legacy key is accepted (200), the key is stripped from the response, and the retired column is never written", async () => {
       const putRes = await app.inject({
         method: "PUT",
         url: "/api/v1/settings/work",
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { monthlyHoursHolidayDeduction: false },
+        payload: { monthlyHoursHolidayDeduction: true },
       });
       expect(putRes.statusCode).toBe(200);
+      const putBody = JSON.parse(putRes.body);
+      expect(putBody).not.toHaveProperty("monthlyHoursHolidayDeduction");
 
-      const getRes = await app.inject({
-        method: "GET",
-        url: "/api/v1/settings/work",
-        headers: { authorization: `Bearer ${data.adminToken}` },
+      // Issue #433 (D-04): the ONE sanctioned direct-DB read of the retired column in this
+      // codebase outside the omit constant in settings.ts itself — proves the legacy PUT above
+      // never wrote it. The column stays for image-rollback safety until the follow-up release
+      // (GitHub #470) drops it.
+      const stored = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: data.tenant.id },
       });
-      expect(getRes.statusCode).toBe(200);
-      const body = JSON.parse(getRes.body);
-      expect(body.monthlyHoursHolidayDeduction).toBe(false);
+      expect(stored?.monthlyHoursHolidayDeduction).toBe(false);
     });
   });
 });

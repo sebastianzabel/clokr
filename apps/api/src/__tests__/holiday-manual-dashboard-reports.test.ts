@@ -224,7 +224,7 @@ describe("D-06 correction — dashboard.ts my-week/team-week/today-attendance/op
   });
 });
 
-describe("D-06 correction — dashboard.ts GET / and reports.ts GET /monthly deduct a MONTHLY_HOURS employee's Soll by a manual holiday (Phase 71b Plan 07, issue #71)", () => {
+describe("Issue #433 (D-03/D-11) — dashboard.ts GET / and reports.ts GET /monthly deduct a MONTHLY_HOURS employee's Soll by a manual holiday on a contractual workday, unconditionally (Phase 71b Plan 07 origin, issue #71)", () => {
   let app: FastifyInstance;
   let tenantId: string;
   let salonId: string;
@@ -234,9 +234,12 @@ describe("D-06 correction — dashboard.ts GET / and reports.ts GET /monthly ded
 
   const MANUAL_HOLIDAY_DATE = "2026-06-10"; // Wednesday, configured workday (default day-hours > 0)
   const MANUAL_HOLIDAY_NAME = "Betriebsfeiertag NS Monatslohn";
-  // June 2026 has 22 Mon-Fri workdays (the JUNE_WORKDAYS list established in Plan 05's own
-  // fixture). monthlyHours=176 -> dailySoll = 176*60/22 = 480min (8h); one holiday deducts
-  // exactly one daily share -> 168h (10080min) when the deduction is honored, 176h otherwise.
+  // Issue #433 (D-03/D-05): the deduction is no longer tenant-gated — a holiday on a
+  // contractual workday (workDays -> defaultWorkDays -> Mo-Fr; DB default Mo-Fr applies here,
+  // the fixture never sets workDays) ALWAYS reduces the Soll. June 2026 has 22 Mo-Fr workdays
+  // (the JUNE_WORKDAYS list established in Plan 05's own fixture). monthlyHours=176 ->
+  // dailySoll = round(176*60/22) = 480min (8h); the one holiday deducts exactly one daily
+  // share -> 168h (10080min = 10560 - 480).
   const MONTHLY_HOURS = 176;
   const EXPECTED_TARGET_HOURS_WITH_DEDUCTION = 168;
 
@@ -248,11 +251,6 @@ describe("D-06 correction — dashboard.ts GET / and reports.ts GET /monthly ded
     const seed = await seedTestData(app, "hmdr2", { withDefaultSalon: false });
     tenantId = seed.tenant.id;
     adminToken = seed.adminToken;
-
-    await app.prisma.tenantConfig.update({
-      where: { tenantId },
-      data: { monthlyHoursHolidayDeduction: true },
-    });
 
     const salon = await createTestSalon(app.prisma, tenantId, { federalState: "NIEDERSACHSEN" });
     salonId = salon.id;

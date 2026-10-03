@@ -20,7 +20,8 @@ import {
   getDayExpectedHours,
   getDayExpectedMinutes,
   countWorkingDaysInMonth,
-  monthlyBudgetSollMinutes,
+  monthlyHoursWorkDays,
+  monthlyHoursDailyRateMinutes,
   arbeitstageFieldVariant,
   buildContractWorkDaysPayload,
   buildUsualWorkDaysPayload,
@@ -155,66 +156,68 @@ describe("work-schedule helper (Phase 76.3 SALDO-V19-01)", () => {
   });
 });
 
-// Item C (v1.8.24) — MONTHLY_HOURS header SOLL = flat full-month budget (no working-day drift).
-describe("monthlyBudgetSollMinutes — MONTHLY_HOURS flat budget (Item C)", () => {
-  // Nils: 15h/month Minijobber, Mon–Fri workdays (via *Hours drift or workDays).
-  const nils = (): WorkScheduleLike => ({
-    type: "MONTHLY_HOURS",
-    workDays: [1, 2, 3, 4, 5],
-    monthlyHours: 15,
-    sundayHours: 0,
-    mondayHours: 3,
-    tuesdayHours: 3,
-    wednesdayHours: 3,
-    thursdayHours: 3,
-    fridayHours: 3,
-    saturdayHours: 0,
-  });
-  const BUDGET = 900; // 15h × 60 = 900 min
-
-  it("flag OFF (default): SOLL == flat monthlyHours (900 = 15:00), NOT the drifted 897 = 14:57", () => {
-    // July 2026 has 23 Mon–Fri workdays → round(900/23)×23 = 39×23 = 897 (the drifted value).
-    const july = new Date(2026, 6, 1);
-    expect(countWorkingDaysInMonth(nils(), july)).toBe(23);
-    // Flat budget must be exactly 900 (no drift), regardless of working-day count.
-    expect(monthlyBudgetSollMinutes(nils(), july, BUDGET, false, [])).toBe(900);
+// MONTHLY_HOURS day rate — display mirror of the server (Issue #433, D-05/D-06).
+//
+// The former Item C guarantee (a reduction-free month shows exactly the flat
+// budget, e.g. 15h/month -> 900) is now asserted SERVER-SIDE (plan 05's
+// monthly-hours-soll-parity-433.test.ts, Employee C: drift-free full month,
+// 900 min exactly) because the calendar header's month Soll comes from the
+// server's monthSollMinutes, not from a client formula any more — the
+// guarantee moved, it was not weakened or dropped.
+describe("MONTHLY_HOURS day rate — display mirror of the server (Issue #433, D-05/D-06)", () => {
+  it("monthlyHoursWorkDays: non-empty schedule.workDays wins over defaultWorkDays (D-05)", () => {
+    expect(monthlyHoursWorkDays({ workDays: [2, 3, 4] }, [1, 2, 3, 4, 5])).toEqual([2, 3, 4]);
   });
 
-  it("flag OFF: SOLL is month-count-invariant — same 900 in a 22-workday and a 23-workday month", () => {
-    const june = new Date(2026, 5, 1); // 22 workdays
-    const july = new Date(2026, 6, 1); // 23 workdays
-    expect(countWorkingDaysInMonth(nils(), june)).toBe(22);
-    expect(countWorkingDaysInMonth(nils(), july)).toBe(23);
-    expect(monthlyBudgetSollMinutes(nils(), june, BUDGET, false, [])).toBe(900);
-    expect(monthlyBudgetSollMinutes(nils(), july, BUDGET, false, [])).toBe(900);
+  it("monthlyHoursWorkDays: empty schedule.workDays falls back to a non-empty defaultWorkDays", () => {
+    expect(monthlyHoursWorkDays({ workDays: [] }, [1, 2, 3, 4])).toEqual([1, 2, 3, 4]);
   });
 
-  it("MONAT-SALDO semantic: worked − flat budget (Nils July, IST 6:30) = 390 − 900 = −510 (−8:30)", () => {
-    const july = new Date(2026, 6, 1);
-    const soll = monthlyBudgetSollMinutes(nils(), july, BUDGET, false, []);
-    const worked = 390; // 6:30h
-    expect(worked - soll).toBe(-510); // −8:30
+  it("monthlyHoursWorkDays: empty schedule.workDays + null defaultWorkDays falls back to Mo-Fr", () => {
+    expect(monthlyHoursWorkDays({ workDays: [] }, null)).toEqual([1, 2, 3, 4, 5]);
   });
 
-  it("flag ON: subtracts holiday workdays at the flat daily rate round(budget/totalWorkdays)", () => {
-    // Oct 2026: 3 Oct (Tag der Deutschen Einheit) is a Saturday 2026 → not a workday. Use a holiday
-    // that lands on a workday: 2026-07-01 (Wed) as a synthetic holiday in July (23 workdays).
-    const july = new Date(2026, 6, 1);
-    const dailyRate = Math.round(BUDGET / 23); // 39
-    // One holiday on a workday → budget − 39.
-    expect(monthlyBudgetSollMinutes(nils(), july, BUDGET, true, ["2026-07-01"])).toBe(
-      900 - dailyRate,
-    );
-    // A holiday on a weekend (2026-07-04 Sat) is NOT a workday → no deduction.
-    expect(monthlyBudgetSollMinutes(nils(), july, BUDGET, true, ["2026-07-04"])).toBe(900);
-    // No holidays with flag ON → still exactly the flat budget (no drift).
-    expect(monthlyBudgetSollMinutes(nils(), july, BUDGET, true, [])).toBe(900);
+  it("monthlyHoursWorkDays: schedule without workDays and *Hours=4 on Mo-Fr, defaults null -> Mo-Fr fallback, NEVER derived from *Hours", () => {
+    const sched = build({
+      type: "MONTHLY_HOURS",
+      workDays: undefined,
+      mondayHours: 4,
+      tuesdayHours: 4,
+      wednesdayHours: 4,
+      thursdayHours: 4,
+      fridayHours: 4,
+    });
+    expect(monthlyHoursWorkDays(sched, null)).toEqual([1, 2, 3, 4, 5]);
   });
 
-  it("zero / null budget → 0; null schedule → 0", () => {
-    const july = new Date(2026, 6, 1);
-    expect(monthlyBudgetSollMinutes(nils(), july, 0, false, [])).toBe(0);
-    expect(monthlyBudgetSollMinutes(null, july, BUDGET, false, [])).toBe(0);
+  it("monthlyHoursDailyRateMinutes: Mo-Fr schedule, June 2026, 2640 budget -> 120 (22 workdays)", () => {
+    const june = new Date(2026, 5, 1);
+    expect(monthlyHoursDailyRateMinutes({ workDays: [1, 2, 3, 4, 5] }, june, 2640)).toBe(120);
+  });
+
+  it("monthlyHoursDailyRateMinutes: a holiday on a workday does NOT change the rate — there is no holiday parameter any more; holidays stay in the denominator (D-06)", () => {
+    const june = new Date(2026, 5, 1);
+    expect(monthlyHoursDailyRateMinutes({ workDays: [1, 2, 3, 4, 5] }, june, 2640)).toBe(120);
+  });
+
+  it("monthlyHoursDailyRateMinutes: workDays [2,3,4] in June 2026 -> round(2640/13) = 203", () => {
+    const june = new Date(2026, 5, 1);
+    expect(monthlyHoursDailyRateMinutes({ workDays: [2, 3, 4] }, june, 2640)).toBe(203);
+  });
+
+  it("monthlyHoursDailyRateMinutes: empty workDays falls back to defaults [1,2,3,4] in June 2026 -> round(2640/18) = 147", () => {
+    const june = new Date(2026, 5, 1);
+    expect(monthlyHoursDailyRateMinutes({ workDays: [] }, june, 2640, [1, 2, 3, 4])).toBe(147);
+  });
+
+  it("monthlyHoursDailyRateMinutes: null schedule -> 0", () => {
+    const june = new Date(2026, 5, 1);
+    expect(monthlyHoursDailyRateMinutes(null, june, 2640)).toBe(0);
+  });
+
+  it("monthlyHoursDailyRateMinutes: budget 0 -> 0", () => {
+    const june = new Date(2026, 5, 1);
+    expect(monthlyHoursDailyRateMinutes({ workDays: [1, 2, 3, 4, 5] }, june, 0)).toBe(0);
   });
 });
 

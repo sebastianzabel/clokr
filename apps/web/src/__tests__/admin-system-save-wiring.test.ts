@@ -73,11 +73,10 @@ function fnBody(marker: string): string {
   return PAGE.slice(bodyStart, j + 1);
 }
 
-describe("D-03/N-11 — the nine instant handlers stay instant", () => {
+describe("D-03/N-11 — the eight instant handlers stay instant", () => {
   const INSTANT_HANDLERS = [
     "saveAvailabilityEnabled",
     "saveVocationalSchoolAutoCleanupShifts",
-    "saveHolidayDeduction",
     "saveDefaultBreakStart",
     "saveCloseMonthWithGaps",
     "toggleAutoBreak",
@@ -93,10 +92,12 @@ describe("D-03/N-11 — the nine instant handlers stay instant", () => {
 
   // N-11: toggleTwoFa is 2FA, textbook security-relevant, but D-07's enumeration does not
   // name it. Owner decision recorded in 109-CONTEXT.md: leave it as-is (status quo) unless
-  // explicitly decided otherwise. This count pins that the list above is exactly the nine
+  // explicitly decided otherwise. This count pins that the list above is exactly the eight
   // handlers the research established — not four, not five, not ten.
-  it("there are exactly nine instant handlers (D-03 correction, not five)", () => {
-    expect(INSTANT_HANDLERS.length).toBe(9);
+  // Issue #433 (D-04): the count drops from nine to eight because saveHolidayDeduction and its
+  // toggle were removed — the control no longer exists, not because a check was relaxed.
+  it("there are exactly eight instant handlers (D-04 correction, not nine)", () => {
+    expect(INSTANT_HANDLERS.length).toBe(8);
   });
 });
 
@@ -115,10 +116,9 @@ describe("D-03/N-11 — the nine instant handlers stay instant", () => {
 //
 // `saveDefaultBreakStart` is excluded: it sits on a `type="time"` input, not a checkbox, so the
 // DOM/state divergence described above does not apply to it.
-describe("WR-02 — the eight instant checkbox toggles roll back and report on failure", () => {
+describe("WR-02 — the seven instant checkbox toggles roll back and report on failure", () => {
   /** handler → the state variable it owns */
   const TOGGLES: Record<string, string> = {
-    saveHolidayDeduction: "monthlyHoursHolidayDeduction",
     saveAvailabilityEnabled: "availabilityEnabled",
     saveVocationalSchoolAutoCleanupShifts: "vocationalSchoolAutoCleanupShifts",
     saveCloseMonthWithGaps: "closeMonthWithGapsAllowed",
@@ -129,8 +129,10 @@ describe("WR-02 — the eight instant checkbox toggles roll back and report on f
   };
   const ENTRIES = Object.entries(TOGGLES);
 
-  it("there are exactly eight of them (saveDefaultBreakStart is a time input, not a checkbox)", () => {
-    expect(ENTRIES.length).toBe(8);
+  // Issue #433 (D-04): the count drops from eight to seven because saveHolidayDeduction and its
+  // toggle were removed — the control no longer exists, not because a check was relaxed.
+  it("there are exactly seven of them (saveDefaultBreakStart is a time input, not a checkbox)", () => {
+    expect(ENTRIES.length).toBe(7);
   });
 
   // This is the assertion that would have FAILED against the old source: every one of these
@@ -220,7 +222,7 @@ describe("D-01 — genuine form groups stay button-gated", () => {
 describe("AK-02 — text/number inputs never write outside a button-gated group", () => {
   // Filtered to type="number" | type="text" and not "every input" on purpose:
   // `saveDefaultBreakStart` sits on a type="time" field that D-03 explicitly leaves instant,
-  // and all nine instant handlers above are checkboxes — neither is a D-02 concern.
+  // and all eight instant handlers above are checkboxes — neither is a D-02 concern.
   function textOrNumberInputHandlers(source: string): string[] {
     const found: string[] = [];
     for (const tag of source.match(/<input\b[\s\S]*?>/g) ?? []) {
@@ -377,5 +379,14 @@ describe("D-11/D-12 — unsaved markers on admin/system", () => {
     expect(PAGE).toContain(
       "snap(bsSlotFirstLong, bsSlotSecondLong, bsSlotShortDay, bsSlotBlockWeek)",
     );
+  });
+});
+
+describe("Issue #433 (D-04) — the retired holiday-deduction toggle is gone from the page", () => {
+  it("the page carries neither the handler, the state flag, nor the removed toggle's label", () => {
+    expect(PAGE).not.toContain("saveHolidayDeduction");
+    expect(PAGE).not.toContain("monthlyHoursHolidayDeduction");
+    expect(PAGE).not.toContain("holidayDeductionSaving");
+    expect(PAGE).not.toContain("Feiertage kürzen Monatsstunden-Soll");
   });
 });

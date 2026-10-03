@@ -1,13 +1,15 @@
 /**
- * Integration tests for Phase 58 (issue #192):
+ * Integration tests for Phase 58 (issue #192), rule updated by Issue #433:
  *
- *  A) MONTHLY_HOURS Minijobber with APPROVED leave → expected (Soll) is NOT reduced
- *     by leaveMinutes. Per CLAUDE.md "Schedule Types": MONTHLY_HOURS is a flexible
- *     schedule, holiday/absence deductions do NOT apply.
+ *  A) MONTHLY_HOURS Minijobber with APPROVED leave → expected (Soll) IS reduced by the
+ *     Ø-Methode day value (owner decision 2026-10-03, D-01/D-02). Supersedes the old
+ *     CLAUDE.md "Schedule Types" wording ("flexible schedule, holiday/absence deductions
+ *     do NOT apply", under which the Soll stayed untouched) — monthlyHours is now an
+ *     OWED Soll.
  *  B) NEGATIVE CONTROL: FIXED_SCHEDULE employee with APPROVED leave → expected IS
- *     reduced (no regression for the standard case).
+ *     reduced (no regression for the standard case; unaffected by #433).
  *  C) MONTHLY_HOURS pure-tracking (monthlyHours = 0) — broader gate preserves the
- *     pre-existing isPureTracking behavior.
+ *     pre-existing isPureTracking behavior (D-01: no owed Soll, so nothing to reduce).
  *
  * Test pattern mirrors apps/api/src/__tests__/overtime-monthly-hours-and-shift-saldo.test.ts:
  * shared singleton Fastify app via getTestApp, per-suite tenant slug, no Date mocking.
@@ -16,6 +18,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup";
 import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
 import { dateStrInTz } from "../contexts/working-time-account/timezone";
+import { getHolidays } from "../contexts/platform/holidays";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 
@@ -37,8 +40,13 @@ describe("updateOvertimeAccount — MONTHLY_HOURS leave-skip (#192)", () => {
   let pureTrackingEmpId: string;
 
   // Skip-guard: if `leaveDate === hireDate` (month just started, no past weekday
-  // available inside the current month), Test B's 8h delta cannot materialize.
+  // available inside the current month), neither Test A's nor Test B's delta can
+  // materialize (Issue #433: Test A now asserts a Soll-reduction delta too, same as B).
   let skipFixedDelta = false;
+  // Issue #433 (D-02/D-06): the Ø-Methode delta Test A expects, in hours — computed from
+  // the SAME monthLabel/leaveDate this beforeAll derives, so the assertion tracks whatever
+  // real-clock month the suite happens to run in.
+  let expectedMhLeaveDeltaHours = 0;
 
   beforeAll(async () => {
     app = await getTestApp();
@@ -49,26 +57,51 @@ describe("updateOvertimeAccount — MONTHLY_HOURS leave-skip (#192)", () => {
     const now = new Date();
     const monthLabel = dateStrInTz(now, TZ).slice(0, 7); // "YYYY-MM"
     const hireDate = new Date(`${monthLabel}-01T00:00:00Z`);
+    const [monthYear, monthNum] = monthLabel.split("-").map(Number);
 
-    // Find a past weekday inside the current month (walk back from yesterday)
+    // Issue #433 (D-05/D-06): Mo-Fr workdays of the FULL calendar month (the employees here
+    // carry the DB-default workDays [1..5] — mkEmployee below never sets workDays explicitly).
+    // D-06: holidays count as workdays in this denominator (they are excused workdays, not
+    // non-workdays), so this count does NOT exclude holiday dates.
+    const lastDayOfMonth = new Date(monthYear, monthNum, 0).getDate();
+    let monthWorkdays = 0;
+    for (let d = 1; d <= lastDayOfMonth; d++) {
+      const ds = `${monthLabel}-${String(d).padStart(2, "0")}`;
+      const dow = new Date(ds + "T00:00:00Z").getUTCDay();
+      if (dow !== 0 && dow !== 6) monthWorkdays++;
+    }
+
+    // Statutory holidays for this tenant's federal state (NIEDERSACHSEN -> "NI"), so the
+    // leave-day picker below can skip one: a holiday is excluded from the leave loop's
+    // Ø-Methode numerator (D-06), which would make Test A's delta 0 instead of the expected
+    // Soll-reduction.
+    const niHolidays = new Set(getHolidays(monthYear, "NI").map((h) => h.date));
+
+    // Find a past weekday inside the current month that is NOT a statutory holiday
+    // (walk back from yesterday).
     let leaveDate: Date | null = null;
     const cursor = new Date(now.getTime() - 86400000); // yesterday
     for (let i = 0; i < 30; i++) {
       const cursorStr = dateStrInTz(cursor, TZ);
       if (!cursorStr.startsWith(monthLabel)) break;
       const dow = new Date(cursorStr + "T00:00:00Z").getUTCDay();
-      if (dow !== 0 && dow !== 6) {
+      if (dow !== 0 && dow !== 6 && !niHolidays.has(cursorStr)) {
         leaveDate = new Date(cursorStr + "T00:00:00Z");
         break;
       }
       cursor.setUTCDate(cursor.getUTCDate() - 1);
     }
-    // If no past weekday inside the current month, fall back to hireDate itself
-    // and flag that Test B's 8h-delta assertion should be skipped.
+    // If no past non-holiday weekday inside the current month, fall back to hireDate
+    // itself and flag that both Test A's and Test B's delta assertions should be skipped.
     if (!leaveDate) {
       leaveDate = hireDate;
       skipFixedDelta = true;
     }
+
+    // Issue #433 (D-02): monthlyHours=15 (see mkEmployee below), 1 leave workday of
+    // monthWorkdays. ONE Math.round over the row total (avgWorkMinutesCore convention) —
+    // same math as monthlyHoursMinutesCore in timezone.ts.
+    expectedMhLeaveDeltaHours = Math.round((15 * 60 * 1) / monthWorkdays) / 60;
 
     // ── Tenant + admin + leaveType ──────────────────────────────────────
     const tenant = await prisma.tenant.create({
@@ -213,7 +246,13 @@ describe("updateOvertimeAccount — MONTHLY_HOURS leave-skip (#192)", () => {
     await closeTestApp();
   });
 
-  it("Test A: MONTHLY_HOURS Minijobber with APPROVED leave → expected NOT reduced (issue #192)", async () => {
+  it("Test A: MONTHLY_HOURS Minijobber with APPROVED leave → expected IS reduced by the Ø-Methode value (Issue #433)", async () => {
+    if (skipFixedDelta) {
+      // Month just started — no past non-holiday weekday available; leave falls on
+      // hireDate, outside the open range. No delta can materialize; skip rather than flake
+      // (same guard Test B already used).
+      return;
+    }
     await updateOvertimeAccount(app, mhWithLeaveEmpId);
     await updateOvertimeAccount(app, mhNoLeaveEmpId);
 
@@ -224,12 +263,15 @@ describe("updateOvertimeAccount — MONTHLY_HOURS leave-skip (#192)", () => {
       where: { employeeId: mhNoLeaveEmpId },
     });
 
-    // With the fix: balances should be (approximately) equal — leave does NOT deduct.
-    // Tolerance: 0.05h (3 minutes) for floating-point + holiday arithmetic noise.
-    const diff = Math.abs(
-      Number(withLeave?.balanceHours ?? 0) - Number(noLeave?.balanceHours ?? 0),
-    );
-    expect(diff).toBeLessThan(0.05);
+    // Issue #433 (owner decision 2026-10-03, D-01/D-02): monthlyHours is an OWED Soll —
+    // the leave day now reduces it by the Ø-Methode value computed in beforeAll
+    // (expectedMhLeaveDeltaHours), so balanceWithLeave is HIGHER (less negative / more
+    // positive) than balanceNoLeave by that amount.
+    // Tolerance: 0.01h — balanceHours is persisted as a 2-decimal value (Prisma Decimal),
+    // so the stored number can differ from the raw float by up to half a cent-hour.
+    // OLD (superseded "hart 0" rule) asserted |delta| < 0.05h (leave did not deduct at all).
+    const delta = Number(withLeave?.balanceHours ?? 0) - Number(noLeave?.balanceHours ?? 0);
+    expect(Math.abs(delta - expectedMhLeaveDeltaHours)).toBeLessThan(0.01);
   });
 
   it("Test B: FIXED_SCHEDULE with APPROVED leave → expected IS reduced by ~8h (negative control)", async () => {

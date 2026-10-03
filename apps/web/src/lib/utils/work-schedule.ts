@@ -209,23 +209,6 @@ export function countWorkingDaysInMonth(
   return count;
 }
 
-/**
- * Item C (v1.8.24) — MONTHLY_HOURS header SOLL = the FLAT full-month budget, drift-free.
- *
- * The header must show the flat monthly budget (e.g. 15:00 for a 15h Minijobber), NOT the
- * per-working-day distribution sum round(budget/workingDays) × workingDays, which drifts (e.g.
- * round(900/23)×23 = 897 = 14:57). Semantics (owner-decided):
- *   - Tenant holiday-deduction flag OFF (default) → exactly monthlyBudgetMinutes (no drift).
- *   - Flag ON → subtract holiday days that fall on configured workdays, at the FLAT daily rate
- *     round(budget/totalWorkdays) (matches the backend isMonthlyHoursDeduction path), computed
- *     from the budget (not by summing rounded per-day values), so a no-holiday month stays exact.
- *
- * @param schedule            the MONTHLY_HOURS work schedule (workDays / *Hours drive workday detection)
- * @param monthStart          any Date within the target calendar month (local time)
- * @param monthlyBudgetMinutes monthlyHours × 60 (caller resolves; 0 → returns 0)
- * @param holidayDeduction    the tenant monthlyHoursHolidayDeduction flag
- * @param holidayDateStrings  yyyy-MM-dd keys of public holidays (any range; filtered to this month)
- */
 // ── Phase 107 (D-22..D-26, issue #94) — Arbeitstage/Woche field decision ──
 //
 // The employee form (admin/employees/[id]/+page.svelte) renders exactly one
@@ -305,30 +288,64 @@ export function usualWorkDaysShortfall(
   return Math.max(0, contractWorkDaysPerWeek - usualWorkDays.length);
 }
 
-export function monthlyBudgetSollMinutes(
-  schedule: WorkScheduleLike | null | undefined,
+// Minimal shape both MONTHLY_HOURS display helpers below need — a schedule's
+// own workDays only. Looser than WorkScheduleLike so callers that only have
+// the workDays slice (e.g. tests, or a narrower fetch) can use it directly.
+type MonthlyHoursScheduleLike = { workDays?: number[] } | null | undefined;
+
+/**
+ * Issue #433 (D-05) — display-only mirror of the server's MONTHLY_HOURS workday set
+ * (apps/api/src/contexts/working-time-account/timezone.ts's monthlyHoursWorkDays). The authoritative
+ * month Soll is always the server's `monthSollMinutes` (plan 05) — this function only decides
+ * which calendar cells render as "workday" cells. Resolution order: the schedule's own non-empty
+ * `workDays`, else a non-empty `defaultWorkDays` (TenantConfig.defaultWorkDays), else Mo–Fr.
+ * NEVER derived from the legacy `{day}Hours` placeholder (CLAUDE.md — `{day}Hours` is authoritative
+ * data only for FIXED_SCHEDULE).
+ */
+export function monthlyHoursWorkDays(
+  schedule: MonthlyHoursScheduleLike,
+  defaultWorkDays?: number[] | null,
+): number[] {
+  if (schedule && Array.isArray(schedule.workDays) && schedule.workDays.length > 0) {
+    return schedule.workDays;
+  }
+  if (Array.isArray(defaultWorkDays) && defaultWorkDays.length > 0) {
+    return defaultWorkDays;
+  }
+  return [1, 2, 3, 4, 5];
+}
+
+/**
+ * Issue #433 (D-06) — display-only mirror of the server's MONTHLY_HOURS Ø day rate
+ * (apps/api/src/contexts/working-time-account/timezone.ts's monthlyHoursMinutesCore). Per-day Soll for a
+ * MONTHLY_HOURS calendar cell: `round(monthlyBudgetMinutes ÷ workdays of the FULL calendar month)`.
+ * Holidays are deliberately NOT excluded from the denominator (D-06) — unlike the retired
+ * holiday-deduction switch, a holiday elsewhere in the month never changes this rate. The
+ * authoritative month Soll remains the server's `monthSollMinutes`; per-cell rounding means the
+ * sum of cells can differ from the server total by up to 0.5 min per day (same note as the
+ * FLEXTIME helper above).
+ *
+ * @param schedule             the MONTHLY_HOURS schedule's workDays (see monthlyHoursWorkDays)
+ * @param monthStart           any Date within the target calendar month (local time)
+ * @param monthlyBudgetMinutes monthlyHours × 60 (caller resolves; <= 0 → returns 0)
+ * @param defaultWorkDays      TenantConfig.defaultWorkDays — the D-05 fallback tier
+ */
+export function monthlyHoursDailyRateMinutes(
+  schedule: MonthlyHoursScheduleLike,
   monthStart: Date,
   monthlyBudgetMinutes: number,
-  holidayDeduction: boolean,
-  holidayDateStrings: Iterable<string>,
+  defaultWorkDays?: number[] | null,
 ): number {
   if (!schedule || monthlyBudgetMinutes <= 0) return 0;
-  if (!holidayDeduction) return monthlyBudgetMinutes; // flat budget — no working-day drift
 
-  const totalWorkdays = countWorkingDaysInMonth(schedule, monthStart);
-  if (totalWorkdays <= 0) return monthlyBudgetMinutes;
-  const dailyRate = Math.round(monthlyBudgetMinutes / totalWorkdays);
-
-  let holidayWorkdays = 0;
-  for (const dateStr of holidayDateStrings) {
-    const d = new Date(dateStr + "T12:00:00");
-    if (
-      d.getFullYear() === monthStart.getFullYear() &&
-      d.getMonth() === monthStart.getMonth() &&
-      isWorkDay(schedule, d)
-    ) {
-      holidayWorkdays++;
-    }
+  const daySet = new Set(monthlyHoursWorkDays(schedule, defaultWorkDays));
+  const end = lastDayOfMonth(monthStart);
+  const cur = new Date(monthStart);
+  let count = 0;
+  while (cur <= end) {
+    if (daySet.has(cur.getDay())) count++;
+    cur.setDate(cur.getDate() + 1);
   }
-  return Math.max(0, monthlyBudgetMinutes - holidayWorkdays * dailyRate);
+  if (count <= 0) return 0;
+  return Math.round(monthlyBudgetMinutes / count);
 }

@@ -354,9 +354,8 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
           ? {
               defaultBreakOver6h: tenantConfigRow.defaultBreakOver6h,
               defaultBreakOver9h: tenantConfigRow.defaultBreakOver9h,
+              // Issue #433 (D-05) — also the MONTHLY_HOURS workday tier.
               defaultWorkDays: tenantConfigRow.defaultWorkDays ?? undefined,
-              monthlyHoursHolidayDeduction:
-                tenantConfigRow.monthlyHoursHolidayDeduction ?? undefined,
               vocationalSchoolMinutesPerDay:
                 tenantConfigRow.vocationalSchoolMinutesPerDay ?? undefined,
               vocationalSchoolBlockMinutesPerWeek:

@@ -36,8 +36,6 @@
     defaultVacationDays: number;
     carryOverDeadlineDay: number;
     carryOverDeadlineMonth: number;
-    // MONTHLY_HOURS: Feiertage reduzieren Monatsstunden-Soll (Phase 15)
-    monthlyHoursHolidayDeduction?: boolean;
     // ArbZG § 4 — Auto-Pausen (Pflege hier, nicht mehr auf /admin/vacation)
     autoBreakEnabled?: boolean;
     defaultBreakStart?: string | null;
@@ -189,10 +187,6 @@
       setTimeout(() => (storeHoursMsg = ""), 2500);
     }
   }
-
-  // Phase 15: MONTHLY_HOURS holiday deduction toggle
-  let monthlyHoursHolidayDeduction = $state(false);
-  let holidayDeductionSaving = $state(false);
 
   // ArbZG § 4 — Auto-Pausen (moved from /admin/vacation in v1.6.5)
   let autoBreakEnabled = $state(false);
@@ -569,7 +563,6 @@
         carryOverDeadlineDay: cfg.carryOverDeadlineDay,
         carryOverDeadlineMonth: cfg.carryOverDeadlineMonth,
       };
-      monthlyHoursHolidayDeduction = cfg.monthlyHoursHolidayDeduction ?? false;
       // ArbZG § 4 — Auto-Pausen (moved from /admin/vacation in v1.6.5)
       autoBreakEnabled = cfg.autoBreakEnabled ?? false;
       defaultBreakStart = cfg.defaultBreakStart ?? "12:00";
@@ -736,41 +729,14 @@
 
   // saveDatev moved to /admin/export (Phase 58).
 
-  async function saveHolidayDeduction() {
-    // bind:checked has already written the new value into the state, so the DOM and the state
-    // agree and an explicit revert actually lands (WR-02). The former one-way `checked={…}` plus
-    // "assign only on success" left the browser's own flip on screen after a failed save.
-    const previous = !monthlyHoursHolidayDeduction;
-    // guard: need full work-settings context to avoid partial overwrite
-    if (!_gOtherFields) {
-      monthlyHoursHolidayDeduction = previous;
-      toasts.error("Einstellungen sind noch nicht geladen.");
-      return;
-    }
-    holidayDeductionSaving = true;
-    try {
-      await api.put("/settings/work", {
-        ..._gOtherFields,
-        federalState: gFederalState,
-        timezone: gTimezone,
-        monthlyHoursHolidayDeduction,
-      });
-      toasts.success("Einstellung gespeichert.");
-    } catch (e: unknown) {
-      monthlyHoursHolidayDeduction = previous;
-      toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
-    } finally {
-      holidayDeductionSaving = false;
-    }
-  }
-
   // ArbZG § 4 — Auto-Pausen-Toggle (moved from /admin/vacation in v1.6.5).
   // When enabled, the time-entries pipeline deducts 30min (>6h) / 45min (>9h)
   // breaks on clock-out (apps/api/src/contexts/time-tracking/api/time-entries.ts:400,641,909).
   async function toggleAutoBreak() {
-    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02). This drives
-    // the § 4 ArbZG auto-deduction, so the checkbox must never outlive a failed save. Error
-    // feedback stays the section's own inline banner (autoBreakError, rendered above the toggle).
+    // bind:checked has already written the new value into the state, so the DOM and the state
+    // agree and an explicit revert actually lands (WR-02). This drives the § 4 ArbZG
+    // auto-deduction, so the checkbox must never outlive a failed save. Error feedback stays the
+    // section's own inline banner (autoBreakError, rendered above the toggle).
     const previous = !autoBreakEnabled;
     if (!_gOtherFields) {
       autoBreakEnabled = previous;
@@ -874,7 +840,7 @@
   // one never clobbers the other. blockMonthCloseOnUnconfirmedBreak is only
   // meaningful while enforceBreakConfirmation is on (UI disables toggle #2).
   async function toggleEnforceBreakConfirmation() {
-    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02).
+    // bind:checked already applied the new value — see toggleAutoBreak (WR-02).
     const previous = !enforceBreakConfirmation;
     if (!_gOtherFields) {
       enforceBreakConfirmation = previous;
@@ -903,7 +869,7 @@
   }
 
   async function toggleBlockMonthCloseOnUnconfirmedBreak() {
-    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02).
+    // bind:checked already applied the new value — see toggleAutoBreak (WR-02).
     const previous = !blockMonthCloseOnUnconfirmedBreak;
     if (!_gOtherFields) {
       blockMonthCloseOnUnconfirmedBreak = previous;
@@ -939,7 +905,7 @@
 
   // Phase 47.3 / 49.4 — Tenant Feature-Toggle: Verfügbarkeits-System
   async function saveAvailabilityEnabled() {
-    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02).
+    // bind:checked already applied the new value — see toggleAutoBreak (WR-02).
     const previous = !availabilityEnabled;
     if (!_gOtherFields) {
       availabilityEnabled = previous;
@@ -968,7 +934,7 @@
   // Mirrors saveAvailabilityEnabled exactly; the backend reads
   // TenantConfig.vocationalSchoolAutoCleanupShifts in shift-cleanup.ts.
   async function saveVocationalSchoolAutoCleanupShifts() {
-    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02).
+    // bind:checked already applied the new value — see toggleAutoBreak (WR-02).
     const previous = !vocationalSchoolAutoCleanupShifts;
     if (!_gOtherFields) {
       vocationalSchoolAutoCleanupShifts = previous;
@@ -994,7 +960,7 @@
 
   // Phase 76.29 — Monatsabschluss mit Lücken toggle
   async function saveCloseMonthWithGaps() {
-    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02). This one
+    // bind:checked already applied the new value — see toggleAutoBreak (WR-02). This one
     // gates Monatsabschluss with missing entries, so a silently-wrong checkbox is a compliance
     // problem, not just a cosmetic one.
     const previous = !closeMonthWithGapsAllowed;
@@ -1226,7 +1192,7 @@
   }
 
   async function toggleTwoFa() {
-    // bind:checked already applied the new value — see saveHolidayDeduction (WR-02). 2FA is the
+    // bind:checked already applied the new value — see toggleAutoBreak (WR-02). 2FA is the
     // most security-relevant toggle on the page; it must never claim a state the server rejected.
     const previous = !twoFaEnabled;
     twoFaSaving = true;
@@ -1722,29 +1688,6 @@
           </div>
         </Section>
       {:else if currentTab === "arbeitszeit"}
-        <!-- ── Arbeitszeit ──────────────────────────────────────────────────── -->
-        <Section title="Arbeitszeit" sub="Monatsstunden & Feiertagsabzug">
-          <div class="toggle-row">
-            <div class="toggle-info">
-              <span class="toggle-row-label">Feiertage kürzen Monatsstunden-Soll</span>
-              <p class="form-hint text-muted">
-                Feiertage auf Arbeitstagen von Monatsstunden-Mitarbeitern reduzieren das
-                Monats-Soll. Formel: Budget ÷ (Arbeitstage − Feiertage auf Arbeitstagen)
-              </p>
-            </div>
-            <label class="switch">
-              <input
-                type="checkbox"
-                aria-label="Feiertagsabzug für Monatsstunden aktivieren"
-                bind:checked={monthlyHoursHolidayDeduction}
-                onchange={saveHolidayDeduction}
-                disabled={holidayDeductionSaving}
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-        </Section>
-
         <!-- ── Automatische Pausen (§ 4 ArbZG) ──────────────────────────────── -->
         <Section
           title="Pausen automatisch abziehen"

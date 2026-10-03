@@ -21,9 +21,11 @@ Zwei Modelle stehen zur Verfügung:
 
 **Monatsstunden (MONTHLY_HOURS)**
 
-- Monatliches Stundenbudget für flexible Arbeit / Minijob
-- Kein tägliches Soll, keine Feiertags-Abzüge
-- Optional: ohne Stundenlimit (reine Zeiterfassung)
+- Monats-Soll (geschuldet) für flexible Arbeit / Minijob
+- Urlaub, Krankheit, angeordnete Abwesenheit und Feiertage an Arbeitstagen mindern das Soll
+  anteilig (Monatsstunden ÷ Arbeitstage des Monats; ein halber Tag mindert um die Hälfte)
+- Kein tägliches Soll, keine tägliche +/- Anzeige im Kalender
+- Optional: ohne Stundenwert (reine Zeiterfassung)
 
 ### Mitarbeiter bearbeiten
 

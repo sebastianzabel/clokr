@@ -193,6 +193,19 @@ export function iterateDaysInTz(
 }
 
 /**
+ * Internal: read `WorkSchedule.workDays` as a plain array of weekday indices
+ * (0=Sun..6=Sat), or `[]` when absent/empty.
+ *
+ * The sole place this array is read out of the raw schedule shape — both
+ * `avgWorkMinutesCore`'s {day}Hours-fallback day-membership test and the D-05
+ * `monthlyHoursWorkDays` chain (Issue #433) build on it, so the two never
+ * diverge on what counts as "workDays is set".
+ */
+function explicitWorkDaysOf(schedule: Record<string, unknown>): number[] {
+  return Array.isArray(schedule.workDays) ? (schedule.workDays as number[]) : [];
+}
+
+/**
  * Internal: Ø-Methode math used for SHIFT_BASED + FLEXTIME schedules.
  *
  * Returns weeklyHours / workDaysPerWeek × workdaysInRange × 60, rounded to integer minutes.
@@ -260,7 +273,7 @@ function avgWorkMinutesCore(
   // empty/absent (e.g. some MONTHLY_HOURS rows never set it) so the
   // well-behaved majority (workDays and {day}Hours already in sync) sees
   // byte-identical output.
-  const explicitWorkDays = Array.isArray(schedule.workDays) ? (schedule.workDays as number[]) : [];
+  const explicitWorkDays = explicitWorkDaysOf(schedule);
   const useWorkDays = explicitWorkDays.length > 0;
   const isWorkday = (dow: number): boolean =>
     useWorkDays ? explicitWorkDays.includes(dow) : Number(schedule[DOW_KEYS[dow]] ?? 0) > 0;
@@ -288,6 +301,150 @@ function avgWorkMinutesCore(
 }
 
 /**
+ * Internal (Issue #433, D-05): the MONTHLY_HOURS contractual-workday set.
+ *
+ * Precedence: `WorkSchedule.workDays` (non-empty) → `defaultWorkDays`
+ * (`TenantConfig.defaultWorkDays`, non-empty) → Mo-Fr. Unlike
+ * `avgWorkMinutesCore`'s `isWorkday`, this NEVER falls back to `{day}Hours >
+ * 0` — per CLAUDE.md § Schedule Types, `{day}Hours` are uniformly 0.00
+ * placeholders for MONTHLY_HOURS on prod and must never gate anything here
+ * (OQ1: the calendar-day proration fallback this function replaces is gone).
+ * This is the ONE place this chain lives for MONTHLY_HOURS — it mirrors the
+ * shape of the absence context's async `resolveWorkDays()`
+ * (`contexts/absence/leave-days.ts`) for non-FIXED types, re-implemented as a
+ * pure function because this WTA core cannot import an async, peer-context
+ * DB resolver (purity + context-boundary gate). Phase 95b (D-01): stored
+ * `workDays` rows are never rewritten — this function only reads them.
+ */
+function monthlyHoursWorkDays(
+  schedule: Record<string, unknown>,
+  defaultWorkDays?: readonly number[] | null,
+): ReadonlySet<number> {
+  const explicit = explicitWorkDaysOf(schedule);
+  if (explicit.length > 0) return new Set(explicit);
+  if (Array.isArray(defaultWorkDays) && defaultWorkDays.length > 0) {
+    return new Set(defaultWorkDays);
+  }
+  return new Set([1, 2, 3, 4, 5]);
+}
+
+/**
+ * Internal (Issue #433, D-02/D-06, OQ2): count of `monthlyHoursWorkDays()`
+ * days in the full tenant-local calendar month identified by `monthKey`
+ * ("YYYY-MM"). D-06: holidays count as workdays in this denominator (they
+ * are excused workdays, not non-workdays) — this function never excludes
+ * any date, unlike the numerator in `monthlyHoursMinutesCore` below.
+ */
+function monthlyHoursFullMonthWorkdays(
+  monthKey: string,
+  tz: string,
+  workdaySet: ReadonlySet<number>,
+): number {
+  const [y, m] = monthKey.split("-").map(Number);
+  const monthStart = fromZonedTime(new Date(y, m - 1, 1, 0, 0, 0, 0), tz);
+  const lastDay = new Date(y, m, 0).getDate();
+  const monthEnd = fromZonedTime(new Date(y, m - 1, lastDay, 23, 59, 59, 999), tz);
+  let count = 0;
+  iterateDaysInTz(monthStart, monthEnd, tz, (dow) => {
+    if (workdaySet.has(dow)) count++;
+  });
+  return count;
+}
+
+/**
+ * Internal (Issue #433): the MONTHLY_HOURS Ø-rate core.
+ *
+ * D-02: per-day value = `monthlyHours × 60 ÷ (contractual workdays of the
+ * FULL calendar month)`. D-05: the workday set is `monthlyHoursWorkDays()`
+ * (never `{day}Hours`). D-06: the denominator is the full calendar month,
+ * also in a hire/exit month, so a day is valued identically in partial and
+ * full months. OQ2: a SINGLE `Math.round()` over the total across every
+ * calendar month the range spans (mirrors `avgWorkMinutesCore`'s
+ * single-round convention) — for a range inside one month this collapses to
+ * the one-line `Math.round((monthlyHours * 60 * count) / monthWorkdays)`.
+ *
+ * `includeDay(dateStr)` lets a caller exclude specific tenant-local
+ * "YYYY-MM-DD" days from the numerator (e.g. `calcLeaveAbsenceMinutesTz`
+ * excluding already-claimed/holiday dates) without touching the full-month
+ * denominator above.
+ *
+ * Returns 0 when `monthlyHours` is null/0/negative (pure tracking, D-01) or
+ * when the range contributes no countable day.
+ */
+function monthlyHoursMinutesCore(
+  schedule: Record<string, unknown>,
+  from: Date,
+  to: Date,
+  tz: string,
+  defaultWorkDays: readonly number[] | null | undefined,
+  includeDay: (dateStr: string) => boolean,
+): number {
+  const mh = Number(schedule.monthlyHours ?? 0);
+  if (mh <= 0) return 0;
+
+  const workdaySet = monthlyHoursWorkDays(schedule, defaultWorkDays);
+
+  // Numerator: days in [from, to] that are contractual workdays AND pass
+  // includeDay, grouped by tenant-local calendar month ("YYYY-MM").
+  const countByMonth = new Map<string, number>();
+  iterateDaysInTz(from, to, tz, (dow, dateStr) => {
+    if (!workdaySet.has(dow)) return;
+    if (!includeDay(dateStr)) return;
+    const monthKey = dateStr.slice(0, 7);
+    countByMonth.set(monthKey, (countByMonth.get(monthKey) ?? 0) + 1);
+  });
+
+  if (countByMonth.size === 0) return 0;
+
+  let totalMinutes = 0;
+  for (const [monthKey, count] of countByMonth) {
+    const fullMonthWorkdays = monthlyHoursFullMonthWorkdays(monthKey, tz, workdaySet);
+    // Defensive only: impossible given the Mo-Fr fallback in monthlyHoursWorkDays(),
+    // which guarantees workdaySet is never empty.
+    if (fullMonthWorkdays === 0) continue;
+    totalMinutes += (mh * 60 * count) / fullMonthWorkdays;
+  }
+  return Math.round(totalMinutes);
+}
+
+/**
+ * Issue #433 (D-03, D-06): MONTHLY_HOURS statutory/manual-holiday Soll reduction.
+ *
+ * A public holiday on a contractual workday (D-05 chain: `workDays` ->
+ * `defaultWorkDays` -> Mo-Fr, via `monthlyHoursWorkDays()`) ALWAYS reduces the Soll by
+ * the SAME per-day Ø value as leave/sickness/absence (D-02) — § 2 Abs. 1 EFZG,
+ * unabdingbar per § 12 EFZG; no tenant setting can opt out. A holiday on a
+ * non-workday reduces nothing (no causality) — `monthlyHoursMinutesCore`'s workday-set
+ * check already excludes it. D-06: the denominator is the full calendar month (the
+ * same `monthlyHoursMinutesCore` convention as the full-Soll and leave/absence
+ * branches), so a hire/exit month and a full month value a holiday day identically.
+ *
+ * One `Math.round()` over the counted holidays (OQ2 — same single-round convention as
+ * the other two MONTHLY_HOURS entry points).
+ *
+ * @param holidayDateStrings tenant-local "YYYY-MM-DD" strings — the caller pre-filters
+ *   to the effective employment range (Issue #447) before calling this function.
+ * @param defaultWorkDays `TenantConfig.defaultWorkDays` (Issue #433, D-05) — the middle
+ *   tier of the workday-set chain; see `monthlyHoursWorkDays`. Ignored for every other
+ *   schedule type (this function is MONTHLY_HOURS-only, unlike `calcExpectedMinutesTz`
+ *   / `calcLeaveAbsenceMinutesTz`, which branch on `schedule.type` internally).
+ * @returns integer minutes (Soll-reduction); 0 when `monthlyHours` is null/0/negative
+ *   (pure tracking, D-01) or when no holiday is a contractual workday.
+ */
+export function calcMonthlyHoursHolidayMinutesTz(
+  schedule: Record<string, unknown>,
+  holidayDateStrings: ReadonlySet<string>,
+  from: Date,
+  to: Date,
+  tz: string,
+  defaultWorkDays?: readonly number[] | null,
+): number {
+  return monthlyHoursMinutesCore(schedule, from, to, tz, defaultWorkDays, (dateStr) =>
+    holidayDateStrings.has(dateStr),
+  );
+}
+
+/**
  * Calculate expected working minutes between two UTC dates in a given timezone,
  * using a schedule object that maps day-of-week to hours.
  * Supports MONTHLY_HOURS schedules (Minijobber): prorates the monthly budget
@@ -298,12 +455,21 @@ function avgWorkMinutesCore(
  *     (BAG 9 AZR 406/17 — weeklyHours / workDaysPerWeek × workdaysInRange).
  *     The prior `weeklyHours × Kalendertage ÷ 7` formula was mathematically
  *     wrong for ranges not divisible by 7 (Phase 76.12 fix).
- *   - MONTHLY_HOURS: prorate monthly budget by working-day fraction (unchanged).
+ *   - MONTHLY_HOURS: prorate monthly budget by working-day fraction, via
+ *     `monthlyHoursMinutesCore` (Issue #433, D-02/D-05/D-06). The day-membership
+ *     test is `monthlyHoursWorkDays()` (workDays → `defaultWorkDays` → Mo-Fr),
+ *     never `{day}Hours`; the prior calendar-day-proration fallback for ranges
+ *     with no `{day}Hours > 0` is gone (OQ1) — the Mo-Fr tier of the D-05 chain
+ *     replaces it, since the new workday set can never be empty.
  *   - FIXED_SCHEDULE: per-day sum from {day}Hours (unchanged).
  *
  * For Leave/Absence Soll-reduction (BAG 9 AZR 406/17), callers MUST use the
  * idiomatic entry point `calcLeaveAbsenceMinutesTz` (same math, plus halfDay
- * support + MONTHLY_HOURS-hart-0 semantics).
+ * support + the Issue #433 MONTHLY_HOURS Ø-Methode reduction).
+ *
+ * @param defaultWorkDays `TenantConfig.defaultWorkDays` (Issue #433, D-05) — read ONLY
+ *   by the MONTHLY_HOURS branch, as the middle tier of its workday-set chain.
+ *   Every other schedule type ignores this parameter.
  */
 export function calcExpectedMinutesTz(
   schedule: Record<string, unknown>,
@@ -311,6 +477,7 @@ export function calcExpectedMinutesTz(
   to: Date,
   tz: string,
   excludeHolidays?: Set<string>,
+  defaultWorkDays?: readonly number[] | null,
 ): number {
   // SHIFT_BASED: Schichtplan ist führend. Soll = Ø-Methode (BAG 9 AZR 406/17):
   // weeklyHours × workdaysInRange ÷ workDaysPerWeek. For Leave/Absence
@@ -333,53 +500,14 @@ export function calcExpectedMinutesTz(
     return avgWorkMinutesCore(schedule, from, to, tz, excludeHolidays);
   }
 
-  // Minijobber / flexible monthly hours: prorate monthly budget by working-day fraction
+  // Minijobber / flexible monthly hours: prorate monthly budget by working-day
+  // fraction. Issue #433 (D-02/D-05/D-06, OQ1): the day-membership test and the
+  // full-month denominator both live in `monthlyHoursMinutesCore` /
+  // `monthlyHoursWorkDays` now — `{day}Hours` is never read here, and the old
+  // "fall back to calendar-day proration" branch is gone because the Mo-Fr
+  // tier of `monthlyHoursWorkDays()` guarantees a non-empty workday set.
   if (String(schedule.type ?? "") === "MONTHLY_HOURS") {
-    const mh = Number(schedule.monthlyHours ?? 0);
-    if (mh <= 0) return 0; // pure tracking mode — no Soll target
-
-    const DOW_KEYS_MH = [
-      "sundayHours",
-      "mondayHours",
-      "tuesdayHours",
-      "wednesdayHours",
-      "thursdayHours",
-      "fridayHours",
-      "saturdayHours",
-    ];
-
-    // Count working days in the range [from, to]
-    let rangeWorkdays = 0;
-    iterateDaysInTz(from, to, tz, (dow) => {
-      if (Number(schedule[DOW_KEYS_MH[dow]] ?? 0) > 0) rangeWorkdays++;
-    });
-
-    // Count working days in the full calendar month that contains `from`
-    const fromZoned = toZonedTime(from, tz);
-    const monthStart = fromZonedTime(
-      new Date(fromZoned.getFullYear(), fromZoned.getMonth(), 1, 0, 0, 0, 0),
-      tz,
-    );
-    const lastDay = new Date(fromZoned.getFullYear(), fromZoned.getMonth() + 1, 0).getDate();
-    const monthEnd = fromZonedTime(
-      new Date(fromZoned.getFullYear(), fromZoned.getMonth(), lastDay, 23, 59, 59, 999),
-      tz,
-    );
-    let monthWorkdays = 0;
-    iterateDaysInTz(monthStart, monthEnd, tz, (dow) => {
-      if (Number(schedule[DOW_KEYS_MH[dow]] ?? 0) > 0) monthWorkdays++;
-    });
-
-    // If no per-day hours configured, fall back to calendar-day proration
-    if (monthWorkdays === 0) {
-      // Fallback: prorate by calendar days (flexible Minijobber with no fixed workdays).
-      // Use Math.floor to get inclusive day count without double-counting boundary days.
-      const rangeDays = Math.floor((to.getTime() - from.getTime()) / 86400000) + 1;
-      const monthDays = lastDay;
-      return Math.round((mh * 60 * rangeDays) / monthDays);
-    }
-
-    return Math.round((mh * 60 * rangeWorkdays) / monthWorkdays);
+    return monthlyHoursMinutesCore(schedule, from, to, tz, defaultWorkDays, () => true);
   }
 
   const DOW_KEYS = [
@@ -428,9 +556,15 @@ export function getDayHoursFromSchedule(schedule: Record<string, unknown>, dow: 
  *   - SHIFT_BASED + FLEXTIME: `avgWorkMinutesCore` (Ø-Methode).
  *   - FIXED_SCHEDULE: Σ over [from, to] of {day}Hours[dow] × 60 (per-day sum,
  *     identical to the default branch in `calcExpectedMinutesTz`).
- *   - MONTHLY_HOURS: returns 0 hard (CLAUDE.md "Schedule Types" —
- *     "Holiday/absence deductions do NOT apply").
+ *   - MONTHLY_HOURS (Issue #433, owner decision 2026-10-03, D-01/D-02): `monthlyHours`
+ *     is an OWED monthly Soll, not a flexible budget — leave/sickness/absence reduce
+ *     it by `monthlyHoursMinutesCore` (same Ø-Methode shape as SHIFT_BASED/FLEXTIME,
+ *     but with a monthly rate and a per-calendar-month denominator, D-05/D-06). The
+ *     superseded "hart 0" rule ("Holiday/absence deductions do NOT apply" per the old
+ *     CLAUDE.md "Schedule Types" wording) no longer holds for leave/absence; `monthlyHours`
+ *     null/0 (pure tracking) still returns 0 via `monthlyHoursMinutesCore`'s own guard.
  *
+
  * `opts.halfDay` applies to the TOTAL (not per-day): returns
  * `Math.round(rawMinutes / 2)`. Single halfDay-Boolean per LeaveRequest
  * applies to ALL days of the request (schema convention).
@@ -473,7 +607,12 @@ export function getDayHoursFromSchedule(schedule: Record<string, unknown>, dow: 
  * @param opts.excludeHolidays tenant-TZ "YYYY-MM-DD" days already credited
  *   elsewhere; they are skipped, so a holiday inside the range is deducted ONCE
  *   (D-06/D-08). Materially changes the result — pass it whenever the caller
- *   subtracts holiday minutes separately.
+ *   subtracts holiday minutes separately. For MONTHLY_HOURS this is also how a
+ *   caller excludes already-claimed days (Issue #433's D-07 dedup) from the
+ *   Ø-rate numerator without touching the full-month denominator.
+ * @param opts.defaultWorkDays `TenantConfig.defaultWorkDays` (Issue #433, D-05) —
+ *   read ONLY by the MONTHLY_HOURS branch, the middle tier of its workday-set
+ *   chain (`workDays` → `defaultWorkDays` → Mo-Fr). Every other type ignores it.
  * @returns integer minutes (Soll-reduction)
  */
 export function calcLeaveAbsenceMinutesTz(
@@ -481,7 +620,11 @@ export function calcLeaveAbsenceMinutesTz(
   from: Date,
   to: Date,
   tz: string,
-  opts?: { halfDay?: boolean; excludeHolidays?: Set<string> },
+  opts?: {
+    halfDay?: boolean;
+    excludeHolidays?: Set<string>;
+    defaultWorkDays?: readonly number[] | null;
+  },
 ): number {
   const type = String(schedule.type ?? "");
 
@@ -489,9 +632,18 @@ export function calcLeaveAbsenceMinutesTz(
   if (type === "SHIFT_BASED" || type === "FLEXTIME") {
     raw = avgWorkMinutesCore(schedule, from, to, tz, opts?.excludeHolidays);
   } else if (type === "MONTHLY_HOURS") {
-    // CLAUDE.md "Schedule Types": Holiday/absence deductions do NOT apply for
-    // MONTHLY_HOURS (flexible Minijobber budget). Hart 0.
-    return 0;
+    // Issue #433 (D-01/D-02/D-05/D-07, owner decision 2026-10-03): monthlyHours is
+    // an OWED monthly Soll — leave/sickness/absence reduce it by the Ø-Methode
+    // day value, excluding already-claimed/holiday days from the numerator via
+    // includeDay, same denominator convention as the full-Soll branch above.
+    raw = monthlyHoursMinutesCore(
+      schedule,
+      from,
+      to,
+      tz,
+      opts?.defaultWorkDays,
+      (d) => !opts?.excludeHolidays?.has(d),
+    );
   } else {
     // FIXED_SCHEDULE (and any unknown type): per-day sum from {day}Hours.
     // D-06: skip holidays inside the range so the holiday is deducted ONCE
