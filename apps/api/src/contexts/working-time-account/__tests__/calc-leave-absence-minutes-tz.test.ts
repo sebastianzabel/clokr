@@ -193,9 +193,19 @@ describe("calcLeaveAbsenceMinutesTz", () => {
     expect(result).toBe(240);
   });
 
-  // ── MONTHLY_HOURS hart 0 (CLAUDE.md Schedule Types) ───────────────────────
+  // ── MONTHLY_HOURS Ø-Methode (Issue #433, owner decision 2026-10-03) ────────
+  //
+  // Superseded rule: "Holiday/absence deductions do NOT apply" (a hard zero). Owner
+  // decision #433 (D-01/D-02): monthlyHours is an OWED monthly Soll — leave and
+  // absence now reduce it by the Ø-Methode day value, exactly like every other
+  // schedule type. D-05: the workday set is `WorkSchedule.workDays` → tier →
+  // `opts.defaultWorkDays` → Mo-Fr, NEVER `{day}Hours`.
 
-  it("MONTHLY_HOURS mit monthlyHours=80, Range Mo-Fr → 0 min (hart 0)", () => {
+  it("MONTHLY_HOURS mit monthlyHours=80, Range Mo-Fr (no workDays field) → 1091 min (Ø-Methode)", () => {
+    // No `workDays` field at all → D-05 falls back to the Mo-Fr tier (no
+    // opts.defaultWorkDays passed either). June 2026 has 22 Mo-Fr workdays;
+    // the range Mon 01.-Fri 05.06. covers 5 of them.
+    //   round(80h × 60 × 5 ÷ 22) = round(1090.90...) = 1091
     const schedule: Record<string, unknown> = {
       type: "MONTHLY_HOURS",
       weeklyHours: null,
@@ -214,10 +224,118 @@ describe("calcLeaveAbsenceMinutesTz", () => {
       tzEnd("2026-06-05"),
       TZ,
     );
+    expect(result).toBe(1091);
+  });
+
+  it("MONTHLY_HOURS mit monthlyHours=80, Range Mo-Fr, halfDay=true → 546 min (half of 1091)", () => {
+    // Same range/schedule as above with opts.halfDay: Math.round(1091 / 2) = 546
+    // (D-02: half-day leave = half the Ø-Methode day value).
+    const schedule: Record<string, unknown> = {
+      type: "MONTHLY_HOURS",
+      weeklyHours: null,
+      monthlyHours: 80,
+      sundayHours: 0,
+      mondayHours: 4,
+      tuesdayHours: 4,
+      wednesdayHours: 4,
+      thursdayHours: 4,
+      fridayHours: 4,
+      saturdayHours: 0,
+    };
+    const result = calcLeaveAbsenceMinutesTz(
+      schedule,
+      tzStart("2026-06-01"),
+      tzEnd("2026-06-05"),
+      TZ,
+      { halfDay: true },
+    );
+    expect(result).toBe(546);
+  });
+
+  it("MONTHLY_HOURS mit workDays=[2,3,4] (divergent von {day}Hours Mo-Fr) → workDays wins, 1108 min", () => {
+    // D-05: a non-empty workDays wins over {day}Hours even when they disagree
+    // (prod-like divergence, Phase 95b legacy rows). workDays = [Tue, Wed, Thu];
+    // over Mon 01.-Fri 05.06.2026 only Tue-Thu count (3 of the range's 5 days).
+    // June 2026 has 13 Tue-Thu days.
+    //   round(80h × 60 × 3 ÷ 13) = round(1107.69...) = 1108
+    const schedule: Record<string, unknown> = {
+      type: "MONTHLY_HOURS",
+      weeklyHours: null,
+      monthlyHours: 80,
+      sundayHours: 0,
+      mondayHours: 4,
+      tuesdayHours: 4,
+      wednesdayHours: 4,
+      thursdayHours: 4,
+      fridayHours: 4,
+      saturdayHours: 0,
+      workDays: [2, 3, 4],
+    };
+    const result = calcLeaveAbsenceMinutesTz(
+      schedule,
+      tzStart("2026-06-01"),
+      tzEnd("2026-06-05"),
+      TZ,
+    );
+    expect(result).toBe(1108);
+  });
+
+  it("MONTHLY_HOURS mit workDays=[] + opts.defaultWorkDays=[1,2,3,4] → Fri (non-default-workday) = 0 min", () => {
+    // D-05 tier 2: workDays empty → opts.defaultWorkDays [Mon,Tue,Wed,Thu] wins
+    // over the Mo-Fr fallback. Friday (dow 5) is not in that set → 0.
+    const schedule: Record<string, unknown> = {
+      type: "MONTHLY_HOURS",
+      weeklyHours: null,
+      monthlyHours: 80,
+      sundayHours: 0,
+      mondayHours: 0,
+      tuesdayHours: 0,
+      wednesdayHours: 0,
+      thursdayHours: 0,
+      fridayHours: 0,
+      saturdayHours: 0,
+      workDays: [],
+    };
+    const result = calcLeaveAbsenceMinutesTz(
+      schedule,
+      tzStart("2026-06-05"),
+      tzEnd("2026-06-05"),
+      TZ,
+      { defaultWorkDays: [1, 2, 3, 4] },
+    );
     expect(result).toBe(0);
   });
 
-  it("MONTHLY_HOURS ohne monthlyHours (null) → 0 min (pure tracking mode)", () => {
+  it("MONTHLY_HOURS mit workDays=[] + opts.defaultWorkDays=[1,2,3,4] → Mon (default workday) = 267 min", () => {
+    // Same defaultWorkDays tier, but Monday (dow 1) IS in the set. June 2026
+    // has 18 Mon-Thu days (the full-month denominator for this set).
+    //   round(80h × 60 × 1 ÷ 18) = round(266.67) = 267
+    const schedule: Record<string, unknown> = {
+      type: "MONTHLY_HOURS",
+      weeklyHours: null,
+      monthlyHours: 80,
+      sundayHours: 0,
+      mondayHours: 0,
+      tuesdayHours: 0,
+      wednesdayHours: 0,
+      thursdayHours: 0,
+      fridayHours: 0,
+      saturdayHours: 0,
+      workDays: [],
+    };
+    const result = calcLeaveAbsenceMinutesTz(
+      schedule,
+      tzStart("2026-06-08"),
+      tzEnd("2026-06-08"),
+      TZ,
+      { defaultWorkDays: [1, 2, 3, 4] },
+    );
+    expect(result).toBe(267);
+  });
+
+  it("MONTHLY_HOURS ohne monthlyHours (null) → 0 min (pure tracking stays 0)", () => {
+    // D-01: monthlyHours null/0 is pure tracking, no Soll to reduce — unaffected
+    // by the Issue #433 Ø-Methode change.
     const schedule: Record<string, unknown> = {
       type: "MONTHLY_HOURS",
       weeklyHours: null,

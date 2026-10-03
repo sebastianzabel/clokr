@@ -284,7 +284,7 @@ model TenantConfig {
   loginLockoutMinutes               Int      @default(15) // Sperrzeit in Minuten
   // Aufbewahrungsfrist in Jahren (Minimum 2, Default 10)
   dataRetentionYears                Int      @default(10)
-  // MONTHLY_HOURS: Feiertage reduzieren Monatsstunden-Soll
+  // RETIRED (Issue #433): no code reads or writes this column; kept for image-rollback safety and dropped in a follow-up release.
   monthlyHoursHolidayDeduction      Boolean  @default(false)
   // DATEV Lohnartennummern (konfigurierbar pro Mandant, Phase 4)
   datevNormalstundenNr              Int      @default(100)

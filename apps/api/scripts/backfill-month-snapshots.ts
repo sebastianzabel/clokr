@@ -458,8 +458,8 @@ export async function main(app: FastifyInstance, opts: BackfillOptions): Promise
                 ? {
                     defaultBreakOver6h: tenant.config.defaultBreakOver6h,
                     defaultBreakOver9h: tenant.config.defaultBreakOver9h,
-                    monthlyHoursHolidayDeduction:
-                      tenant.config.monthlyHoursHolidayDeduction ?? undefined,
+                    // Issue #433 (D-05) — the MONTHLY_HOURS workday tier, mirroring production.
+                    defaultWorkDays: tenant.config.defaultWorkDays ?? undefined,
                     vocationalSchoolMinutesPerDay:
                       tenant.config.vocationalSchoolMinutesPerDay ?? undefined,
                     vocationalSchoolBlockMinutesPerWeek:
@@ -559,8 +559,8 @@ export async function main(app: FastifyInstance, opts: BackfillOptions): Promise
                   ? {
                       defaultBreakOver6h: tenant.config.defaultBreakOver6h,
                       defaultBreakOver9h: tenant.config.defaultBreakOver9h,
-                      monthlyHoursHolidayDeduction:
-                        tenant.config.monthlyHoursHolidayDeduction ?? undefined,
+                      // Issue #433 (D-05) — the MONTHLY_HOURS workday tier, mirroring production.
+                      defaultWorkDays: tenant.config.defaultWorkDays ?? undefined,
                       vocationalSchoolMinutesPerDay:
                         tenant.config.vocationalSchoolMinutesPerDay ?? undefined,
                       vocationalSchoolBlockMinutesPerWeek:

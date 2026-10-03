@@ -808,8 +808,8 @@ export async function run(): Promise<number> {
               ? {
                   defaultBreakOver6h: closeTenantConfig.defaultBreakOver6h,
                   defaultBreakOver9h: closeTenantConfig.defaultBreakOver9h,
-                  monthlyHoursHolidayDeduction:
-                    closeTenantConfig.monthlyHoursHolidayDeduction ?? undefined,
+                  // Issue #433 (D-05) — the MONTHLY_HOURS workday tier, mirroring production.
+                  defaultWorkDays: closeTenantConfig.defaultWorkDays ?? undefined,
                   vocationalSchoolMinutesPerDay:
                     closeTenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
                   vocationalSchoolBlockMinutesPerWeek:

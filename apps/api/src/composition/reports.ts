@@ -29,11 +29,12 @@ import {
   getMonthClosingBalance, // Phase 100B Plan 07 — W4
   getTenantTimezone,
   monthRangeUtc,
+  monthDayBounds,
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
-  iterateDaysInTz,
   dateStrInTz,
   computeMonthSaldo,
+  monthlyHoursMonthSollMinutes, // Issue #433 (D-11)
 } from "../contexts/working-time-account"; // Phase 101B
 import {
   listEntitlementsForYear,
@@ -121,6 +122,12 @@ type AbsenceRecord = {
   startDate: Date;
   endDate: Date;
   type: string;
+  // Issue #433 (D-11): read by monthlyHoursMonthSollMinutes()'s absences mapper for a
+  // MONTHLY_HOURS employee — present on every row because buildEmployeeInclude's `absences`
+  // include has no `select` (full Absence row), unlike this type's pre-433 narrower shape.
+  source: string;
+  halfDay: boolean;
+  unterrichtsMinutes: number | null;
 };
 
 type TimeEntryRecord = {
@@ -150,6 +157,20 @@ type EmployeeWithIncludes = {
   user: { role: "ADMIN" | "MANAGER" | "EMPLOYEE" };
 };
 
+// ── Helper: pick the schedule valid on a given date ──────────────────────────
+// Issue #433 (D-11): hoisted to module scope (was a local closure inside
+// computeEmployeeSummary) so the three GET handlers below can also ask "is at least one
+// listed employee's latest schedule MONTHLY_HOURS" before deciding whether to batch the
+// work-location holiday resolver call — the same question computeEmployeeSummary itself asks
+// per employee.
+function getScheduleForDate(schedules: WorkSchedule[], date: Date): WorkSchedule | null {
+  return (
+    schedules
+      .filter((s) => s.validFrom <= date)
+      .sort((a, b) => b.validFrom.getTime() - a.validFrom.getTime())[0] ?? null
+  );
+}
+
 // ── computeEmployeeSummary ────────────────────────────────────────────────────
 // Pure helper — single source of truth for monthly summary calculation.
 // Called by GET /monthly (JSON), GET /monthly/pdf (single-emp), GET /monthly/pdf/all (company).
@@ -158,7 +179,12 @@ function computeEmployeeSummary(
   start: Date,
   end: Date,
   tz: string,
-  holidayDeductionOpts?: { enabled: boolean; holidayDates: ReadonlySet<string> },
+  // Issue #433 (D-11): facade-fetched inputs ONLY — no business rule lives here. Work-location
+  // holidays (batched once per request by the caller) and the tenant's defaultWorkDays (the D-05
+  // workday tier) are the only two things a MONTHLY_HOURS employee's Soll needs beyond what
+  // `emp` already carries; the actual Soll computation happens inside
+  // `monthlyHoursMonthSollMinutes()` (the saldo core), never here.
+  monthlyHoursOpts?: { holidayDates: Set<string>; defaultWorkDays: number[] | null },
   // Phase 104 (D-30): confirmed § 9 credits overlapping the report month, bulk-fetched
   // ONCE by the caller (no per-employee query — T-104-09-N1) and pre-filtered to
   // pre-filtered to CONFIRMED-only (T-104-09-PENDING: an AU_PENDING credit changes nothing).
@@ -188,60 +214,14 @@ function computeEmployeeSummary(
     note?: string;
   }>;
 } {
-  // ── Helper: pick schedule valid on a given date ───────────────────────────
-  function getScheduleForDate(schedules: WorkSchedule[], date: Date): WorkSchedule | null {
-    return (
-      schedules
-        .filter((s) => s.validFrom <= date)
-        .sort((a, b) => b.validFrom.getTime() - a.validFrom.getTime())[0] ?? null
-    );
-  }
-
   // ── Soll-Minuten (day-by-day, TZ-aware) ──────────────────────────────────
+  // Issue #433 (D-11): MONTHLY_HOURS no longer has a branch here — its Soll comes from
+  // `monthlyHoursMonthSollMinutes()` at the call site below, never from this day-by-day
+  // {day}Hours walk. This function is now called ONLY for FIXED_SCHEDULE / FLEXTIME /
+  // SHIFT_BASED, byte-identical to before.
   function calcShouldMinutes(schedules: WorkSchedule[], hireDate?: Date): number {
     if (schedules.length === 0) return 0;
     const effectiveStart = hireDate && hireDate > start ? hireDate : start;
-    const latestSchedule = getScheduleForDate(schedules, end);
-    if (latestSchedule && String(latestSchedule.type) === "MONTHLY_HOURS") {
-      const mh = Number(latestSchedule.monthlyHours ?? 0);
-      if (mh <= 0) return 0;
-
-      // Phase 15: apply holiday deduction when tenant toggle is enabled
-      if (holidayDeductionOpts?.enabled) {
-        const DOW_KEYS_MH = [
-          "sundayHours",
-          "mondayHours",
-          "tuesdayHours",
-          "wednesdayHours",
-          "thursdayHours",
-          "fridayHours",
-          "saturdayHours",
-        ] as const;
-        // Count working days in the full calendar month (denominator for dailySoll)
-        let monthWorkdays = 0;
-        iterateDaysInTz(start, end, tz, (dow) => {
-          if (Number(latestSchedule[DOW_KEYS_MH[dow]] ?? 0) > 0) monthWorkdays++;
-        });
-        if (monthWorkdays > 0) {
-          const dailySollMin = (mh * 60) / monthWorkdays;
-          // Phase 71b (issue #71): holidays resolved by work location (§ 2 EFZG), batched ONCE
-          // per report request by the caller — see the three GET handlers below.
-          let holidayDeductionMin = 0;
-          for (const dateStr of holidayDeductionOpts.holidayDates) {
-            const hDate = new Date(dateStr + "T12:00:00Z");
-            if (hDate >= start && hDate <= end) {
-              const dow = getDayOfWeekInTz(hDate, tz);
-              if (Number(latestSchedule[DOW_KEYS_MH[dow]] ?? 0) > 0) {
-                holidayDeductionMin += dailySollMin;
-              }
-            }
-          }
-          return Math.max(0, Math.round(mh * 60 - holidayDeductionMin));
-        }
-      }
-
-      return mh * 60;
-    }
     let totalMin = 0;
     const cur = new Date(effectiveStart);
     while (cur <= end) {
@@ -346,29 +326,59 @@ function computeEmployeeSummary(
   }, 0);
 
   // ── Target hours ─────────────────────────────────────────────────────────
-  const rawShouldMin = calcShouldMinutes(emp.workSchedules, emp.hireDate);
   const latestSchedule = getScheduleForDate(emp.workSchedules, end);
   const isMonthlyHours = String(latestSchedule?.type ?? "") === "MONTHLY_HOURS";
-  // Minijobber (MONTHLY_HOURS) arbeiten flexibel — Abwesenheiten reduzieren Soll nicht
-  // Phase 104 (D-15, Tier 2): sollClaimed accumulates the calendar days already
-  // credited by a processed leave request, shared across the whole reduce, so an
-  // overlapping day (SICK vs. VACATION, R1) is deducted exactly once.
-  const sollClaimed = new Set<string>();
-  const absenceMin = isMonthlyHours
-    ? 0
-    : sortLeaveForDedup(emp.leaveRequests).reduce(
-        (sum, lr) =>
-          sum +
-          calcAbsenceMinutes(
-            emp.workSchedules,
-            lr.startDate,
-            lr.endDate,
-            sollClaimed,
-            Boolean(lr.halfDay),
-          ),
-        0,
-      );
-  const shouldMin = Math.max(0, rawShouldMin - absenceMin);
+  const monthlyHoursValue = isMonthlyHours ? Number(latestSchedule?.monthlyHours ?? 0) : 0;
+
+  // Issue #433 (D-11): MONTHLY_HOURS no longer computes its own Soll here — the full month's
+  // net Soll (holiday/leave/absence already folded in, by construction) comes from the saldo
+  // core, the SAME function Monatsabschluss and the dashboard tile call. No further absenceMin
+  // subtraction happens for this row — unlike FIXED/FLEXTIME/SHIFT_BASED below, whose Soll and
+  // absence reduction stay byte-identical to before this plan.
+  let shouldMin: number;
+  if (isMonthlyHours) {
+    if (monthlyHoursValue > 0 && monthlyHoursOpts) {
+      const { firstDay: monthFirstDay, lastDay: monthLastDay } = monthDayBounds(start, end, tz);
+      shouldMin =
+        monthlyHoursMonthSollMinutes({
+          employeeId: emp.id,
+          schedule: latestSchedule as Record<string, unknown>,
+          monthStart: start,
+          monthEnd: end,
+          monthFirstDay,
+          monthLastDay,
+          tz,
+          hireDate: emp.hireDate,
+          exitDate: emp.exitDate,
+          leave: emp.leaveRequests,
+          absences: emp.absences,
+          holidayDateStrings: monthlyHoursOpts.holidayDates,
+          defaultWorkDays: monthlyHoursOpts.defaultWorkDays,
+        }) ?? 0;
+    } else {
+      // monthlyHours null/0 (pure tracking, D-01) — no Soll target.
+      shouldMin = 0;
+    }
+  } else {
+    const rawShouldMin = calcShouldMinutes(emp.workSchedules, emp.hireDate);
+    // Phase 104 (D-15, Tier 2): sollClaimed accumulates the calendar days already
+    // credited by a processed leave request, shared across the whole reduce, so an
+    // overlapping day (SICK vs. VACATION, R1) is deducted exactly once.
+    const sollClaimed = new Set<string>();
+    const absenceMin = sortLeaveForDedup(emp.leaveRequests).reduce(
+      (sum, lr) =>
+        sum +
+        calcAbsenceMinutes(
+          emp.workSchedules,
+          lr.startDate,
+          lr.endDate,
+          sollClaimed,
+          Boolean(lr.halfDay),
+        ),
+      0,
+    );
+    shouldMin = Math.max(0, rawShouldMin - absenceMin);
+  }
 
   // ── Sick days ────────────────────────────────────────────────────────────
   // Single source of truth: sick days are counted exclusively from LeaveRequest
@@ -1099,12 +1109,13 @@ export async function reportRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, m, tz);
 
-      // Phase 15: fetch tenant config for MONTHLY_HOURS holiday deduction
+      // Issue #433 (D-11): the retired holiday-deduction switch is no longer read — only
+      // `defaultWorkDays` (the D-05 MONTHLY_HOURS workday tier, fed into
+      // `monthlyHoursMonthSollMinutes()` below) is needed from TenantConfig here.
       const tenantCfg = await app.prisma.tenantConfig.findUnique({
         where: { tenantId: req.user.tenantId },
-        select: { monthlyHoursHolidayDeduction: true },
+        select: { defaultWorkDays: true },
       });
-      const monthlyHolidayDeductionEnabled = tenantCfg?.monthlyHoursHolidayDeduction === true;
 
       // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
       // building the report body. Stichtag = the report period's own last day (`end`, already
@@ -1143,10 +1154,20 @@ export async function reportRoutes(app: FastifyInstance) {
         orderBy: { lastName: "asc" },
       })) as unknown as EmployeeWithIncludes[];
 
+      // Issue #433 (D-11): holidays are resolved once per request whenever at least one
+      // listed employee's latest schedule is MONTHLY_HOURS with monthlyHours > 0 — the
+      // composition layer no longer reads the retired holiday-deduction switch to decide this.
+      const hasMonthlyHoursEmployee = employees.some((e) => {
+        const latest = getScheduleForDate(e.workSchedules, end);
+        return (
+          String(latest?.type ?? "") === "MONTHLY_HOURS" && Number(latest?.monthlyHours ?? 0) > 0
+        );
+      });
+
       // Holidays by work location (Phase 71b, issue #71) — ONE batched resolver call for the
       // whole request, fed with the T2-shaped rows already loaded via buildEmployeeInclude's
       // `timeEntries` include (carries salonId additively).
-      const monthlyHolidaysByEmployee = monthlyHolidayDeductionEnabled
+      const monthlyHolidaysByEmployee = hasMonthlyHoursEmployee
         ? await holidaysAtWorkLocation(
             app.prisma,
             req.user.tenantId,
@@ -1180,8 +1201,8 @@ export async function reportRoutes(app: FastifyInstance) {
           end,
           tz,
           {
-            enabled: monthlyHolidayDeductionEnabled,
             holidayDates: new Set(monthlyHolidaysByEmployee.get(emp.id)?.keys() ?? []),
+            defaultWorkDays: tenantCfg?.defaultWorkDays ?? null,
           },
           section9ByEmp.get(emp.id) ?? [],
         );
@@ -1895,6 +1916,8 @@ export async function reportRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, m, tz);
 
+      // Issue #433 (D-11): the retired holiday-deduction switch is no longer read — only
+      // `defaultWorkDays` (the D-05 MONTHLY_HOURS workday tier) is needed here.
       const [tenant, pdfTenantCfg] = await Promise.all([
         app.prisma.tenant.findUnique({
           where: { id: req.user.tenantId },
@@ -1902,10 +1925,9 @@ export async function reportRoutes(app: FastifyInstance) {
         }),
         app.prisma.tenantConfig.findUnique({
           where: { tenantId: req.user.tenantId },
-          select: { monthlyHoursHolidayDeduction: true },
+          select: { defaultWorkDays: true },
         }),
       ]);
-      const pdfHolidayDeductionEnabled = pdfTenantCfg?.monthlyHoursHolidayDeduction === true;
 
       const emp = (await app.prisma.employee.findFirst({
         where: {
@@ -1953,9 +1975,18 @@ export async function reportRoutes(app: FastifyInstance) {
         }
       }
 
+      // Issue #433 (D-11): same "at least one MONTHLY_HOURS employee" decision as GET /monthly —
+      // here there is only the one employee being exported.
+      const pdfIsMonthlyHoursSchedule = (() => {
+        const latest = getScheduleForDate(emp.workSchedules, end);
+        return (
+          String(latest?.type ?? "") === "MONTHLY_HOURS" && Number(latest?.monthlyHours ?? 0) > 0
+        );
+      })();
+
       // Holidays by work location (Phase 71b, issue #71) — see GET /monthly above for the general
       // shape; here there is only a single employee.
-      const pdfHolidaysByEmployee = pdfHolidayDeductionEnabled
+      const pdfHolidaysByEmployee = pdfIsMonthlyHoursSchedule
         ? await holidaysAtWorkLocation(
             app.prisma,
             req.user.tenantId,
@@ -1985,8 +2016,8 @@ export async function reportRoutes(app: FastifyInstance) {
         end,
         tz,
         {
-          enabled: pdfHolidayDeductionEnabled,
           holidayDates: new Set(pdfHolidaysByEmployee.get(emp.id)?.keys() ?? []),
+          defaultWorkDays: pdfTenantCfg?.defaultWorkDays ?? null,
         },
         section9ByEmpPdf.get(emp.id) ?? [],
       );
@@ -2067,6 +2098,8 @@ export async function reportRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, m, tz);
 
+      // Issue #433 (D-11): the retired holiday-deduction switch is no longer read — only
+      // `defaultWorkDays` (the D-05 MONTHLY_HOURS workday tier) is needed here.
       const [tenant, allPdfTenantCfg] = await Promise.all([
         app.prisma.tenant.findUnique({
           where: { id: req.user.tenantId },
@@ -2074,10 +2107,9 @@ export async function reportRoutes(app: FastifyInstance) {
         }),
         app.prisma.tenantConfig.findUnique({
           where: { tenantId: req.user.tenantId },
-          select: { monthlyHoursHolidayDeduction: true },
+          select: { defaultWorkDays: true },
         }),
       ]);
-      const allPdfHolidayDeductionEnabled = allPdfTenantCfg?.monthlyHoursHolidayDeduction === true;
 
       // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
       // building the company-wide PDF. Stichtag = the report period's own last day (`end`).
@@ -2113,9 +2145,17 @@ export async function reportRoutes(app: FastifyInstance) {
         return { error: "Keine Mitarbeiter gefunden" };
       }
 
+      // Issue #433 (D-11): same "at least one MONTHLY_HOURS employee" decision as GET /monthly.
+      const allPdfHasMonthlyHoursEmployee = employees.some((e) => {
+        const latest = getScheduleForDate(e.workSchedules, end);
+        return (
+          String(latest?.type ?? "") === "MONTHLY_HOURS" && Number(latest?.monthlyHours ?? 0) > 0
+        );
+      });
+
       // Holidays by work location (Phase 71b, issue #71) — ONE batched resolver call for the
       // whole company PDF, mirroring GET /monthly above.
-      const allPdfHolidaysByEmployee = allPdfHolidayDeductionEnabled
+      const allPdfHolidaysByEmployee = allPdfHasMonthlyHoursEmployee
         ? await holidaysAtWorkLocation(
             app.prisma,
             req.user.tenantId,
@@ -2149,8 +2189,8 @@ export async function reportRoutes(app: FastifyInstance) {
             end,
             tz,
             {
-              enabled: allPdfHolidayDeductionEnabled,
               holidayDates: new Set(allPdfHolidaysByEmployee.get(emp.id)?.keys() ?? []),
+              defaultWorkDays: allPdfTenantCfg?.defaultWorkDays ?? null,
             },
             section9ByEmpAll.get(emp.id) ?? [],
           );

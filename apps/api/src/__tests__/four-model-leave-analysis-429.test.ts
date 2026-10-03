@@ -10,10 +10,12 @@
  * PURE unit tests: no DB, no `getTestApp` — same style as
  * `shift-based-leave-week-soll-429.test.ts`.
  *
- * FIXED_SCHEDULE / FLEXTIME / MONTHLY_HOURS: pins the "Heute (Code)" values from
- * 429-CONTEXT.md's `<analysis_results>` table — UNCHANGED by this phase (a pin, not a new
- * expectation). MONTHLY_HOURS's B-scenario Minusstunden-durch-Urlaub is D-12's deliberately
- * DEFERRED fix (follow-up Issue #433) — see the comment on that case.
+ * FIXED_SCHEDULE / FLEXTIME: pins the "Heute (Code)" values from 429-CONTEXT.md's
+ * `<analysis_results>` table — UNCHANGED by this phase (a pin, not a new expectation).
+ * MONTHLY_HOURS's B-scenario Minusstunden-durch-Urlaub was D-12's deliberately DEFERRED fix
+ * (follow-up Issue #433) — that fix has now landed (owner decision 2026-10-03): leave
+ * reduces the owed monthly Soll by the Ø-Methode value instead of producing minus hours.
+ * See the comment on each MONTHLY_HOURS case for the derivation.
  *
  * SHIFT_BASED: pins the CORRECTED values this plan produces (+180/+180/0 minutes for
  * A/A2/B across all three `workDays` variants) — cross-referencing
@@ -137,7 +139,7 @@ function fixedSchedule(type: string): Sched {
   };
 }
 
-describe("Issue #429 — four-model analysis (FIXED_SCHEDULE/FLEXTIME/MONTHLY_HOURS unchanged, SHIFT_BASED corrected)", () => {
+describe("Issue #429 — four-model analysis (FIXED_SCHEDULE/FLEXTIME unchanged, SHIFT_BASED corrected, MONTHLY_HOURS updated by Issue #433)", () => {
   describe.each(["FIXED_SCHEDULE", "FLEXTIME"])(
     "%s 40h Mo-Fr — unchanged by this phase",
     (type) => {
@@ -172,7 +174,7 @@ describe("Issue #429 — four-model analysis (FIXED_SCHEDULE/FLEXTIME/MONTHLY_HO
     },
   );
 
-  describe("MONTHLY_HOURS 44h/Monat (Tagesstunden 0 = Prod-Form) — unchanged by this phase", () => {
+  describe("MONTHLY_HOURS 44h/Monat (Tagesstunden 0 = Prod-Form) — Issue #433 owed monthly Soll (Ø-Methode)", () => {
     const schedule: Sched = {
       type: "MONTHLY_HOURS",
       monthlyHours: 44,
@@ -189,7 +191,18 @@ describe("Issue #429 — four-model analysis (FIXED_SCHEDULE/FLEXTIME/MONTHLY_HO
     };
     const base = (d: string) => (dow(d) >= 1 && dow(d) <= 5 ? 120 : 0);
 
-    it("A — leave Mon + Tue-Fri 3h each -> +120 min (2h)", () => {
+    // Derivation shared by both cases below: June 2026 has 22 Mo-Fr workdays; the
+    // per-workday Ø-Methode value is round(44h × 60 ÷ 22) = 120 min (= base's daily rate,
+    // by construction of this fixture).
+
+    it("A — leave Mon + Tue-Fri 3h each -> +240 min (4h), owed Soll reduced by 1 leave day (Issue #433)", () => {
+      // Baseline (no leave): workedMinutes = expectedMinutes = 22 × 120 = 2640 -> balance 0.
+      // Scenario: 1 leave day (Mon) -> leaveMinutes = round(2640 × 1 ÷ 22) = 120;
+      //   expectedMinutes = 2640 − 120 = 2520.
+      //   workedMinutes = 2640 (baseline) − 120 (Monday, now 0) + 4×60 (Tue-Fri extra 60 min
+      //     each, 180 instead of 120) = 2760.
+      //   balance = 2760 − 2520 = 240 ; effect = 240 − 0 = 240.
+      // OLD (superseded "hart 0" rule): leave did not reduce the Soll at all -> effect 120.
       const effect = weekEffect(
         schedule,
         base,
@@ -199,24 +212,31 @@ describe("Issue #429 — four-model analysis (FIXED_SCHEDULE/FLEXTIME/MONTHLY_HO
         },
         base,
       );
-      expect(effect).toBe(120);
+      expect(effect).toBe(240);
     });
 
-    it("B — whole week leave -> -600 min (-10h, Minusstunden durch Urlaub, D-12 deferred to #433)", () => {
-      // D-12 (429-CONTEXT.md): whether MONTHLY_HOURS's `monthlyHours` is an owed Soll or a
-      // Verdienstgrenzen-budget, and the leave-day valuation, are owner decisions with
-      // payroll consequences — deliberately NOT changed by this phase. Follow-up Issue #433.
+    it("B — whole week leave -> 0 min (owed Soll reduced by the same 5 leave days not worked, Issue #433)", () => {
+      // Issue #433 (owner decision 2026-10-03, D-01/D-02): monthlyHours is an OWED monthly
+      // Soll — D-12's deferred fix has landed. 5 Mo-Fr leave days of 22:
+      //   leaveMinutes = round(2640 × 5 ÷ 22) = 600 ; expectedMinutes = 2640 − 600 = 2040.
+      //   workedMinutes = 2640 − 5×120 (the 5 leave days, now 0) = 2040.
+      //   balance = 2040 − 2040 = 0 ; effect = 0 − 0 = 0.
+      // OLD (superseded "hart 0" rule) pinned -600 (-10h, Minusstunden durch Urlaub) — the
+      // exact issue-#433 repro: a full leave week used to cost 10 hours of balance.
       const effect = weekEffect(
         schedule,
         base,
         { perDay: (d) => (inWeek(d) ? 0 : base(d)), leave: [{ s: "2026-06-08", e: "2026-06-14" }] },
         base,
       );
-      expect(effect).toBe(-600);
+      expect(effect).toBe(0);
     });
   });
 
-  it("MONTHLY_HOURS 44h/Monat (Tagesstunden 2) — B whole week leave -> -600 min, unchanged", () => {
+  it("MONTHLY_HOURS 44h/Monat (Tagesstunden 2) — B whole week leave -> 0 min (Issue #433, workDays wins over {day}Hours)", () => {
+    // Same workDays=[1,2,3,4,5] as the "Tagesstunden 0" fixture above -> D-05 reads workDays,
+    // never {day}Hours, so this non-zero {day}Hours value is irrelevant and the result is
+    // byte-identical to the "Tagesstunden 0" B case: effect 0 (was -600 under the superseded rule).
     const schedule: Sched = {
       type: "MONTHLY_HOURS",
       monthlyHours: 44,
@@ -238,10 +258,14 @@ describe("Issue #429 — four-model analysis (FIXED_SCHEDULE/FLEXTIME/MONTHLY_HO
       { perDay: (d) => (inWeek(d) ? 0 : base(d)), leave: [{ s: "2026-06-08", e: "2026-06-14" }] },
       base,
     );
-    expect(effect).toBe(-600);
+    expect(effect).toBe(0);
   });
 
-  it("MONTHLY_HOURS ohne Monats-Soll (monthlyHours 0) — B whole week leave -> -600 min, unchanged", () => {
+  it("MONTHLY_HOURS ohne Monats-Soll (monthlyHours 0) — B whole week leave -> -600 min, unchanged (Issue #433: pure tracking has no Soll to reduce)", () => {
+    // D-01 (owner decision 2026-10-03): monthlyHours null/0 stays pure tracking — there is no
+    // owed Soll for leave to reduce, so a leave week simply means less worked time with no
+    // Soll-side compensation (both monthlyHoursMinutesCore and the old code return 0 for
+    // expectedMinutes here). This is the ONE MONTHLY_HOURS case genuinely unaffected by #433.
     const schedule: Sched = {
       type: "MONTHLY_HOURS",
       monthlyHours: 0,

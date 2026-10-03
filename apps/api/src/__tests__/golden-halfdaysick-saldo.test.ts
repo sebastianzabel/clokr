@@ -512,7 +512,6 @@ async function buildCoreInput(
       ? {
           defaultBreakOver6h: tc.defaultBreakOver6h,
           defaultBreakOver9h: tc.defaultBreakOver9h,
-          monthlyHoursHolidayDeduction: tc.monthlyHoursHolidayDeduction ?? undefined,
           vocationalSchoolMinutesPerDay: tc.vocationalSchoolMinutesPerDay ?? undefined,
           vocationalSchoolBlockMinutesPerWeek: tc.vocationalSchoolBlockMinutesPerWeek ?? undefined,
           bsSlotFirstLongDayMinutes: tc.bsSlotFirstLongDayMinutes ?? undefined,

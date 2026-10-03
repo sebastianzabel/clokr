@@ -646,8 +646,6 @@ describe("Phase 76.32 — GOLDEN Azubi Jan 2026: BS + Urlaub + Feiertag", () => 
         ? {
             defaultBreakOver6h: closeTenantConfig.defaultBreakOver6h,
             defaultBreakOver9h: closeTenantConfig.defaultBreakOver9h,
-            monthlyHoursHolidayDeduction:
-              closeTenantConfig.monthlyHoursHolidayDeduction ?? undefined,
             vocationalSchoolMinutesPerDay:
               closeTenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
             vocationalSchoolBlockMinutesPerWeek:

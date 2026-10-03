@@ -484,8 +484,8 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
               tenantConfig: {
                 defaultBreakOver6h: tenantConfig.defaultBreakOver6h,
                 defaultBreakOver9h: tenantConfig.defaultBreakOver9h,
-                monthlyHoursHolidayDeduction:
-                  tenantConfig.monthlyHoursHolidayDeduction ?? undefined,
+                // Issue #433 (D-05) — the MONTHLY_HOURS workday tier, mirroring production.
+                defaultWorkDays: tenantConfig.defaultWorkDays ?? undefined,
                 vocationalSchoolMinutesPerDay:
                   tenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
                 vocationalSchoolBlockMinutesPerWeek:

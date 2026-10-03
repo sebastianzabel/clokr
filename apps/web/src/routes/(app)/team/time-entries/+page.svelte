@@ -23,10 +23,9 @@
     resolveSaldoCardState,
   } from "$lib/time-entries/month-view-state";
   import {
-    isWorkDay,
     getDayExpectedMinutes,
-    countWorkingDaysInMonth,
-    monthlyBudgetSollMinutes,
+    monthlyHoursWorkDays,
+    monthlyHoursDailyRateMinutes,
   } from "$lib/utils/work-schedule";
 
   interface Break {
@@ -158,7 +157,9 @@
   let saving = $state(false);
   let saveError = $state("");
   let arbzgEnabled = $state(true);
-  let monthlyHoursHolidayDeduction = $state(false);
+  // Issue #433 (D-05) — TenantConfig.defaultWorkDays, the MONTHLY_HOURS workday fallback tier
+  // (the retired per-tenant holiday-deduction switch, D-04, is gone).
+  let defaultWorkDays: number[] | null = $state(null);
 
   const today = new Date();
   const todayStr = format(today, "yyyy-MM-dd");
@@ -208,6 +209,10 @@
     // `workedMinutes`. Absent for a CLOSED month (the SaldoSnapshot stores no day count) —
     // undefined, never a fabricated 0, matching computeMonthSaldo's own contract.
     workedDays?: number;
+    // Issue #433 (D-11) — MONTHLY_HOURS with a target only: the FULL calendar month's net Soll,
+    // from the SAME saldo core the dashboard tile and the monthly report use. Absent — never a
+    // fabricated 0 — for every other schedule type and for pure tracking.
+    monthSollMinutes?: number;
     days: MonthSaldoDay[];
   }
   let monthSaldo: MonthSaldo | null = $state(null);
@@ -352,7 +357,7 @@
           .get<{
             arbzgEnabled?: boolean;
             defaultBreakStart?: string | null;
-            monthlyHoursHolidayDeduction?: boolean;
+            defaultWorkDays?: number[];
           }>("/settings/work")
           .catch(() => null),
         // 260611-ly6 — Berufsschultage (BS) for the selected employee in the current
@@ -383,15 +388,19 @@
       hireDate = rawEmployee?.hireDate ? rawEmployee.hireDate.split("T")[0] : null;
       arbzgEnabled = rawConfig?.arbzgEnabled !== false;
       defaultBreakStart = rawConfig?.defaultBreakStart ?? null;
-      monthlyHoursHolidayDeduction = rawConfig?.monthlyHoursHolidayDeduction === true;
+      defaultWorkDays = rawConfig?.defaultWorkDays ?? null;
       // v1.8.8 — fetch Shift rows for SHIFT_BASED so the calendar can render Soll.
       // Other schedule types compute expectedMin via getDayExpectedHours (D-03 returns 0
       // for SHIFT_BASED — this page-level wiring fills the gap).
-      // §615 Monatssaldo vom §615-Core-Endpoint laden — SHIFT_BASED only. It feeds the per-month
-      // header SOLL(BISHER)/IST/MONAT-SALDO tiles + the per-day cumulative cells. GESAMT-SALDO is NO
-      // LONGER sourced from here (it must be month-INDEPENDENT — see the Gesamt-Saldo tile, bound to
-      // the live lifetime GET /overtime/:id), so non-SHIFT types no longer need this fetch.
-      if (schedule?.type === "SHIFT_BASED") {
+      // §615 Monatssaldo vom §615-Core-Endpoint laden — SHIFT_BASED, and (Issue #433, D-11)
+      // MONTHLY_HOURS with a target. It feeds the per-month header SOLL(BISHER)/IST/MONAT-SALDO
+      // tiles + the per-day cumulative cells for SHIFT_BASED, and the MONTHLY_HOURS header's
+      // monthSollMinutes below. GESAMT-SALDO is NO LONGER sourced from here (it must be
+      // month-INDEPENDENT — see the Gesamt-Saldo tile, bound to the live lifetime
+      // GET /overtime/:id), so non-SHIFT/non-MONTHLY_HOURS-with-target types never need this fetch.
+      const isMonthlyHoursWithTarget =
+        schedule?.type === "MONTHLY_HOURS" && Number(schedule.monthlyHours ?? 0) > 0;
+      if (schedule?.type === "SHIFT_BASED" || isMonthlyHoursWithTarget) {
         // Phase 116 (issue #119) — for SHIFT_BASED this endpoint is THE source of every figure
         // MonatSaldoCard shows. On failure monthMetrics silently fell through to the
         // FIXED_*/FLEXTIME branch and rendered a DIFFERENT, wrong number as fact.
@@ -402,6 +411,11 @@
         );
         monthSaldo = valueOr(rawMonthSaldo, null);
         if (anyFailed(rawMonthSaldo)) saldoFetchFailed = true;
+        // Issue #433 (D-11) — a MONTHLY_HOURS-with-target response missing monthSollMinutes must
+        // never render as a fabricated 0; route it into the same error branch as a failed fetch.
+        if (isMonthlyHoursWithTarget && monthSaldo && monthSaldo.monthSollMinutes === undefined) {
+          saldoFetchFailed = true;
+        }
       } else {
         monthSaldo = null;
       }
@@ -540,61 +554,20 @@
     // Range-Walk wie bei regular Absences nötig.
     const bsByDate = new Set<string>(bsAbsenceList.map((b) => b.date));
 
-    // For MONTHLY_HOURS: detect whether any per-day hours are configured.
-    // When none are set (pure flexible Minijobber), treat Mon-Fri as workdays.
-    const hasPerDayHours =
-      monthly && sched
-        ? ["mondayHours", "tuesdayHours", "wednesdayHours", "thursdayHours", "fridayHours"].some(
-            (k) => Number(sched[k as keyof WorkSchedule] ?? 0) > 0,
-          )
-        : false;
-
+    // Issue #433 (D-05/D-06) — MONTHLY_HOURS per-day rate: display mirror of the server's
+    // workday set and Ø rate. Holidays stay in the denominator (no toggle, no redistribution —
+    // the retired per-tenant holiday-deduction switch, D-04, is gone); the authoritative month
+    // Soll is the server's monthSollMinutes (header, above).
     let dailySollMin = 0;
     if (monthly && sched) {
       const monthlyBudgetMin = Number(sched.monthlyHours ?? 0) * 60;
       if (monthlyBudgetMin > 0) {
-        // Phase 15: holiday deduction logic for MONTHLY_HOURS.
-        //
-        // Toggle ON  (monthlyHoursHolidayDeduction=true):
-        //   dailySollMin = budget / totalWorkdays  (fixed rate)
-        //   Holiday days get expectedMin=0 → total reduces by holiday count × dailySollMin
-        //   Matches backend: shouldMin = budget - sum(dailySollMin per holiday on workday)
-        //
-        // Toggle OFF:
-        //   dailySollMin = budget / (totalWorkdays - holidayWorkdays)  (redistribution)
-        //   Holiday days still get expectedMin=0, but the higher daily rate compensates
-        //   → totalMonthExpected stays at full budget
-        //
-        // For flexible Minijobber (no per-day hours): treat Mon-Fri as workdays.
-
-        // Identify qualifying holiday dates (holidays falling on configured workdays)
-        const qualifyingHolidayDates = [...hols.keys()].filter((dateStr) => {
-          const d = new Date(dateStr + "T12:00:00");
-          if (hasPerDayHours) return isWorkDay(sched, d);
-          const dow = d.getDay();
-          return dow >= 1 && dow <= 5;
-        });
-
-        // When toggle is ON: use ALL workdays as denominator (holidays will zero out their days)
-        // When toggle is OFF: exclude holidays from denominator so total redistributes to full budget
-        const excludeForDenom = monthlyHoursHolidayDeduction ? [] : qualifyingHolidayDates;
-
-        let workingDays: number;
-        if (hasPerDayHours) {
-          workingDays = countWorkingDaysInMonth(sched, monthStart, excludeForDenom);
-        } else {
-          // Flexible Minijobber: count Mon-Fri days in month
-          const excludeSet = new Set(excludeForDenom);
-          workingDays = 0;
-          const end = endOfMonth(monthStart);
-          const cur = new Date(monthStart);
-          while (cur <= end) {
-            const dow = cur.getDay();
-            if (dow >= 1 && dow <= 5 && !excludeSet.has(format(cur, "yyyy-MM-dd"))) workingDays++;
-            cur.setDate(cur.getDate() + 1);
-          }
-        }
-        if (workingDays > 0) dailySollMin = Math.round(monthlyBudgetMin / workingDays);
+        dailySollMin = monthlyHoursDailyRateMinutes(
+          sched,
+          monthStart,
+          monthlyBudgetMin,
+          defaultWorkDays,
+        );
       }
     }
 
@@ -617,7 +590,6 @@
           hireDateStr,
           monthly,
           dailySollMin,
-          hasPerDayHours,
           shiftMinByDate,
           bsByDate,
           bsNoLeaveDates,
@@ -637,7 +609,6 @@
           hireDateStr,
           monthly,
           dailySollMin,
-          hasPerDayHours,
           shiftMinByDate,
           bsByDate,
           bsNoLeaveDates,
@@ -660,7 +631,6 @@
           hireDateStr,
           monthly,
           dailySollMin,
-          hasPerDayHours,
           shiftMinByDate,
           bsByDate,
           bsNoLeaveDates,
@@ -680,7 +650,6 @@
     hireDateStr: string | null = null,
     monthly: boolean = false,
     dailySollMin: number = 0,
-    hasPerDayHours: boolean = true,
     shiftMinByDate: Map<string, number> = new Map(), // v1.8.8 — SHIFT_BASED Soll override
     bsByDate: Set<string> = new Set(), // bs-tage-in-calendar — set of yyyy-MM-dd that are Berufsschultage
     bsNoLeaveDates: Set<string> = new Set(), // Issue #448 (D-05) — BS dates inside a VACATION request
@@ -702,14 +671,12 @@
     const isBeforeHire = hireDateStr ? dateStr < hireDateStr : false;
 
     // Soll-Stunden: Feiertage + ganztägige Abwesenheiten zählen nicht; Tage vor hireDate = 0
-    // Bei MONTHLY_HOURS: dailySollMin auf konfigurierten Arbeitstagen setzen.
-    // Flexible Minijobber (keine per-day Stunden): Mo-Fr als Arbeitstage annehmen.
+    // MONTHLY_HOURS: apply dailySollMin to the D-05 workday set (Issue #433).
     // v1.8.8 — SHIFT_BASED: expectedMin comes from Shift rows (D-03 returns 0 intentionally).
     let expectedMin: number;
     if (monthly) {
-      const isWorkday = hasPerDayHours
-        ? dailySollMin > 0 && sched && isWorkDay(sched, date)
-        : dailySollMin > 0 && dow >= 1 && dow <= 5;
+      const isWorkday =
+        dailySollMin > 0 && sched && monthlyHoursWorkDays(sched, defaultWorkDays).includes(dow);
       expectedMin = isWorkday ? dailySollMin : 0;
     } else if (sched?.type === "SHIFT_BASED") {
       // Soll for SHIFT_BASED comes from Shift rows (D-03). Sum already done
@@ -1073,23 +1040,16 @@
     isMonthlyHours && schedule?.monthlyHours ? Number(schedule.monthlyHours) * 60 : 0,
   );
   let hasMonthlyTarget = $derived(isMonthlyHours && monthlyTarget > 0);
-  // MONTHLY_HOURS header SOLL = the FLAT full-month budget (owner decision, Item C), drift-free.
-  // Shared helper (also unit-tested): flag OFF → exactly monthlyTarget; flag ON → holiday-deducted.
-  let monthlyBudgetSoll = $derived(
-    hasMonthlyTarget
-      ? monthlyBudgetSollMinutes(
-          schedule ?? undefined,
-          calMonth,
-          monthlyTarget,
-          monthlyHoursHolidayDeduction,
-          holidays.keys(),
-        )
-      : 0,
-  );
+  // Issue #433 (D-11) — the MONTHLY_HOURS header SOLL is the server's monthSollMinutes, the SAME
+  // saldo-core value Monatsabschluss, the dashboard and the monthly report use (plan 05). A
+  // reduction-free month still equals the budget exactly; the browser computes no month Soll of
+  // its own any more. The `?? 0` is unreachable in practice: a response missing
+  // monthSollMinutes routes into saldoFetchFailed above instead of being rendered as a
+  // fabricated 0 (see the month-saldo fetch in loadAll).
+  let monthlyBudgetSoll = $derived(hasMonthlyTarget ? (monthSaldo?.monthSollMinutes ?? 0) : 0);
   let mBalance = $derived(
-    // For MONTHLY_HOURS with a monthly target: compare worked against the FLAT full-month budget
-    // (monthlyBudgetSoll), not the partial daily accrual (totalExpected) and not the drifted
-    // per-day distribution (totalMonthExpected). "Budget remaining" semantic, full-month.
+    // For MONTHLY_HOURS with a monthly target: compare worked against the server's month Soll
+    // (monthlyBudgetSoll), "budget remaining" semantic, full-month.
     // For FIXED_SCHEDULE / FLEXTIME and no-target MONTHLY_HOURS: keep the up-to-today accrual.
     hasMonthlyTarget ? totalWorked - monthlyBudgetSoll : totalWorked - totalExpected,
   );

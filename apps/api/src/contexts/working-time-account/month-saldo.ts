@@ -29,7 +29,11 @@ import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from ".
 import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — central resolver
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
-import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "./close-employee-month";
+import {
+  closeEmployeeMonth,
+  toCloseMonthApprovedLeave,
+  monthlyHoursMonthSollMinutes, // Issue #433 (D-11)
+} from "./close-employee-month";
 import {
   getValidWorkedEntriesInRange, // Phase 100B Plan 08 — T1; Phase 101B wave 8 merged in
   getWorkedEntriesInRange, // Phase 71b (issue #71) — T2, feeds the holiday resolver below
@@ -73,6 +77,22 @@ export type MonthSaldoResult = {
    *  the honest answer is "not known here", exactly as `rosterIncomplete` above is undefined
    *  rather than false where it cannot be known. Consumers must render nothing in that case. */
   workedDays?: number;
+  /**
+   * Issue #433 (D-11) — MONTHLY_HOURS with `monthlyHours > 0` only: the FULL calendar month's
+   * net Soll (holiday/leave/absence already folded in), from the SAME
+   * `monthlyHoursMonthSollMinutes` call the dashboard tile and the monthly report use — so the
+   * calendar header can never show a different number than they do.
+   *
+   * Closed month: the stored snapshot's `expectedMinutes`, verbatim (Revisionssicherheit) — a
+   * closed month is never recomputed, D-12. Open month: computed once over the full calendar
+   * month from the SAME prefetched collections (`sharedInput`) the per-day series below already
+   * builds, with `monthLastDay` set to the month's actual last day (not the to-date cursor).
+   *
+   * ABSENT — never a fabricated 0 — for every other schedule type, for pure tracking
+   * (`monthlyHours` null/0), and for the three zeroed early returns (missing employee, exempt,
+   * no schedule). Same convention as `rosterIncomplete` / `workedDays` above.
+   */
+  monthSollMinutes?: number;
   days: MonthSaldoDay[];
 };
 
@@ -137,11 +157,21 @@ export async function computeMonthSaldo(
     // days[] has a single terminal entry whose cumulativeSaldoMinutes = carryOver
     // (the carry-over into the next month, i.e. snapshotCarryOver + balance).
     const lastDayStr = dateStrInTz(monthLastDay, tz);
+    // Issue #433 (D-11/D-12): fetched ONLY to decide whether `monthSollMinutes` is set on a
+    // closed month — the snapshot's own stored values above are never recomputed or touched.
+    const closedSchedule = await app.prisma.workSchedule.findFirst({
+      where: { employeeId, validFrom: { lte: monthEnd } },
+      orderBy: { validFrom: "desc" },
+    });
+    const closedIsMonthlyHours =
+      String(closedSchedule?.type ?? "") === "MONTHLY_HOURS" &&
+      Number(closedSchedule?.monthlyHours ?? 0) > 0;
     return {
       workedMinutes: snapshot.workedMinutes,
       expectedMinutes: snapshot.expectedMinutes,
       balanceMinutes: snapshot.balanceMinutes,
       closed: true,
+      ...(closedIsMonthlyHours ? { monthSollMinutes: snapshot.expectedMinutes } : {}),
       days: [{ date: lastDayStr, cumulativeSaldoMinutes: snapshot.carryOver }],
     };
   }
@@ -250,9 +280,9 @@ export async function computeMonthSaldo(
     ? {
         defaultBreakOver6h: tenantConfig.defaultBreakOver6h,
         defaultBreakOver9h: tenantConfig.defaultBreakOver9h,
-        // Issue #429 (D-11) — contractWorkDaysPerWeekFrom()'s tenant fallback tier.
+        // Issue #429 (D-11) — contractWorkDaysPerWeekFrom()'s tenant fallback tier;
+        // also the MONTHLY_HOURS workday tier (Issue #433, D-05).
         defaultWorkDays: tenantConfig.defaultWorkDays ?? undefined,
-        monthlyHoursHolidayDeduction: tenantConfig.monthlyHoursHolidayDeduction ?? undefined,
         vocationalSchoolMinutesPerDay: tenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
         vocationalSchoolBlockMinutesPerWeek:
           tenantConfig.vocationalSchoolBlockMinutesPerWeek ?? undefined,
@@ -305,6 +335,28 @@ export async function computeMonthSaldo(
     patternSlots,
     patternUnterrichtsMinutenByDow,
   };
+
+  // Issue #433 (D-11) — the SAME full-month MONTHLY_HOURS Soll the dashboard tile and the
+  // monthly report call, computed ONCE over the FULL calendar month (`monthLastDay`, not the
+  // to-date cursor the per-day loop below uses) from the collections already prefetched above.
+  // `null` (→ `undefined` here) for every other schedule type and for pure tracking
+  // (`monthlyHours` null/0) — the wrapper itself tells the two apart, never a fabricated 0.
+  const monthSollMinutes =
+    monthlyHoursMonthSollMinutes({
+      employeeId,
+      schedule: schedule as Record<string, unknown>,
+      monthStart,
+      monthEnd,
+      monthFirstDay,
+      monthLastDay,
+      tz,
+      hireDate: employee.hireDate,
+      exitDate: employee.exitDate ?? null,
+      leave: closeApprovedLeave,
+      absences: closeAbsences,
+      holidayDateStrings,
+      defaultWorkDays: tenantCfg?.defaultWorkDays,
+    }) ?? undefined;
 
   // ── Per-day cumulative series ─────────────────────────────────────────────
   // For SHIFT_BASED we need rosterProration per day.  Pre-compute the helper
@@ -516,6 +568,7 @@ export async function computeMonthSaldo(
     closed: false,
     rosterIncomplete,
     workedDays: lastDayResult?.workedDays ?? 0,
+    monthSollMinutes,
     days,
   };
 }

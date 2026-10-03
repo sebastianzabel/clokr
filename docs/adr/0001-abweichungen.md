@@ -2391,3 +2391,64 @@ pnpm --filter @clokr/api exec tsx scripts/recalculate-shift-based-leave-days.ts 
 Eigentümer-Beispiel Mo–Mi = 3 Tage, danach Do–Sa = 1 Tag in derselben ISO-Woche (3 + 1 = 4, nicht 6)
 über HTTP bewiesen, beide Genehmigungsreihenfolgen getestet (Plan 04); volle API- und Web-Testsuite
 nach Plan 05 (6844 passed/3 skipped bzw. 1498 passed, 0 failed), alle projektweiten Gates grün.
+
+## U — MONTHLY_HOURS: Monats-Soll nach Ø-Methode, Schalter `monthlyHoursHolidayDeduction` stillgelegt (Phase 433, Issue #433)
+
+**Schwere: Semantikänderung des Unterbaus nach ADR 0002, Entscheidung 7 (`TenantConfig`). Owner-Entscheidung = Issue #433, Kommentar vom 03.10.2026 (plus die Umsetzungsentscheidungen desselben Tages).**
+
+### Warum dieser Eintrag existiert
+
+Die Vier-Modell-Analyse zu Issue #429 hatte für `MONTHLY_HOURS` einen Befund mitgeliefert, der dort bewusst nicht gefixt wurde (siehe Eintrag T, Abschnitt „Was bewusst NICHT geschah", D-12): bei 44 h/Monat reduzierte eine volle Urlaubswoche das Soll um nichts — der Mitarbeiter bekam dadurch de facto 10 h weniger Soll angerechnet, als ihm nach § 1, § 13 Abs. 1 BUrlG, §§ 3, 4 EFZG und § 2 Abs. 2 MiLoG zustand ("vertraglich vereinbarte Arbeitszeit" bleibt geschuldet, Urlaub/Krankheit ersetzen sie, sie löschen sie nicht). Der tenantweite Schalter `TenantConfig.monthlyHoursHolidayDeduction` war zusätzlich bereits vor dieser Phase wirkungslos, weil er `{day}Hours > 0` prüfte und jede reale `MONTHLY_HOURS`-Zeile `{day}Hours` uniform auf 0,00 hält (Phase 95b, CLAUDE.md § Schedule Types).
+
+### Was sich geändert hat
+
+- **Ø-Rate-Kern** (`apps/api/src/contexts/working-time-account/timezone.ts`): neue private Helfer `explicitWorkDaysOf` (:204), `monthlyHoursWorkDays` (:319, D-05-Kette), `monthlyHoursFullMonthWorkdays` (:338), `monthlyHoursMinutesCore` (:374) — ein gemeinsamer Kern mit drei dünnen Einstiegspunkten: `calcMonthlyHoursHolidayMinutesTz` (:434, Feiertag), `calcExpectedMinutesTz` (:474, volles Soll), `calcLeaveAbsenceMinutesTz` (:618, Urlaub/Krankheit/angeordnete Abwesenheit) — derselbe Aufbau wie das bestehende `avgWorkMinutesCore` für SHIFT_BASED/FLEXTIME (Plan 01/02).
+- **`close-employee-month.ts`**: die bisherige `if (scheduleType !== "MONTHLY_HOURS")`-Sperre um die Nicht-SHIFT-Urlaubs-/Abwesenheits-Schleifen ist entfernt; ein neuer MONTHLY_HOURS-spezifischer Skip verhindert, dass ein bereits von der BS-Schleife gutgeschriebener Berufsschultag zusätzlich das Soll mindert (D-07, "ein Tag mindert das Soll genau einmal", Plan 01). Der Feiertagsblock liest den Schalter nicht mehr und testet nicht mehr `{day}Hours` (Plan 02). `monthlyHoursMonthSollMinutes()` (:338) ist die EINE Stelle, die den vollen Monats-Soll-Wert für die Monatsansicht, das Dashboard, Berichte/PDF und den Web-Kalender-Kopf liefert (Plan 05) — alle drei Konsumenten rufen dieselbe Funktion, keine eigene Formel mehr.
+- **Schalter entfernt** aus `CloseMonthInput`-Typ, allen 6 Produktions-Aufrufern und 5 Betreiberskripten (Plan 03), aus der Settings-API (`GET`/`PUT /api/v1/settings/work`, Prisma `omit`-Konstante statt Zod-Feld, alte Clients erhalten weiterhin 200) und dem Admin-UI-Toggle (Plan 04), aus Dashboard und Bericht (Plan 05) und aus den beiden Web-Kalenderköpfen (`/time-entries`, `/team/time-entries`, Plan 06).
+- Die alte Kalendertag-Ersatzrechnung (Fallback auf Kalendertage statt Arbeitstage bei leeren `workDays`) entfällt für MONTHLY_HOURS vollständig — Rückfallkette ist durchgehend `workDays` → `TenantConfig.defaultWorkDays` → Mo–Fr (D-05), nie `{day}Hours`.
+- Rundung: ein `Math.round()` über die Monatssumme, wie bei `avgWorkMinutesCore` (OQ2).
+- Lesender Prüfbericht Urlaubsansprüche: unverändert, weil er die Entitlement-Seite (Abwesenheiten), nicht das Arbeitszeitkonto-Soll betrifft.
+
+### Wie die "genau einmal"-Invariante gesichert bleibt
+
+Die bestehende `sbClaimed`/`holidayExcludeSet`-Erstbelegung aus `close-employee-month.ts` ist unverändert; ein Berufsschultag wird ausschließlich auf der Ist-Seite (Arbeitsminuten) gutgeschrieben, nie zusätzlich auf der Soll-Seite abgezogen (MONTHLY_HOURS-Skip im Abwesenheits-Loop). Die 14-Fall-Entscheidungsmatrix (Plan 02, Fall d) prüft explizit die Überlappung aus Feiertag, Urlaub, Krankheit und angeordneter Abwesenheit am selben Kalendertag — genau einmal entlastet.
+
+### Was bewusst NICHT geschah
+
+- **Die Spalte `TenantConfig.monthlyHoursHolidayDeduction` wurde nicht gelöscht.** Sie bleibt für Image-Rollback-Sicherheit bis zu einem Folge-Release bestehen (kein Code liest oder schreibt sie mehr) — Folge-Issue #470.
+- **Bereits abgeschlossene Monate wurden nicht neu berechnet.** Revisionssicherheit: ein `SaldoSnapshot` ändert sich nie stillschweigend. Der Bestand wird ausschließlich über `scripts/dry-run-433-monthly-hours-soll.ts` (read-only, Plan 07) sichtbar gemacht; eine Korrektur erfolgt nur als bewusste Korrekturbuchung nach Owner-Entscheidung.
+- **Berichte für andere Vertragsmodelle (FIXED/FLEXTIME) wurden nicht konvergiert.** Die vorbestehende Lücke "angeordnete Abwesenheit mindert den Berichts-Soll für FIXED/FLEXTIME nicht" bleibt unverändert — Folge-Issue #451.
+- **`WorkSchedule.workDays`-Bestand wurde nicht angefasst.** Die Divergenz zwischen `{day}Hours`-Platzhaltern und `workDays` für `MONTHLY_HOURS`-Zeilen bleibt unkorrigiert, wie Phase 95b, D-01 es für alle Modelle vorschreibt.
+- **§ 11 BUrlG (Referenzprinzip)** betrifft das Urlaubs*entgelt* (Lohnabrechnung), nicht das Soll im Zeitkonto — deshalb hier nicht angewendet.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** keine Codeänderung.
+- **Abwesenheiten:** keine Codeänderung — die Entitlement-Seite (`LeaveRequest`, Anspruchszählung) ist unberührt; nur die Soll-Seite im Arbeitszeitkonto ändert sich.
+- **Schichtplanung:** keine eigene Codeänderung; der wöchentliche Planer-Soll-Zweig (`contractSollMinutesByEmp`) bleibt wie vor dieser Phase, sein Blattwert für MONTHLY_HOURS-Mitarbeiter in der roster-pro-Woche-Urlaubskarte führt nun einen von 0 abweichenden Wert, den die Planer-UI für diesen Zeitplan-Typ nicht auswertet — keine sichtbare Änderung.
+- **Arbeitszeitkonto:** der Kern der Änderung — `timezone.ts` (Ø-Rate-Kern, drei Einstiegspunkte), `close-employee-month.ts` (geöffnete Schleifen, BS-Skip, `monthlyHoursMonthSollMinutes`), alle Aufrufer und Betreiberskripte.
+- **Unterbau:** der Schalter `TenantConfig.monthlyHoursHolidayDeduction` wird stillgelegt (nicht gelöscht); die Settings-API liest/schreibt ihn nicht mehr (`omit`-Konstante bis zur Spaltenlöschung in Folge-Issue #470).
+- **Kompositionsschicht:** `dashboard.ts` und `reports.ts` lesen den Soll-Wert für MONTHLY_HOURS jetzt ausschließlich aus dem Arbeitszeitkonto-Kern (`monthlyHoursMonthSollMinutes()`), keine eigene Formel mehr.
+
+### Gemessen
+
+- Golden-Zellen bewusst umgedreht: `mj-80-urlaub` 4800/0/0 → 4145/655/655 (Plan 01); `mj-80-feiertag` 4800/0/0 → 4582/218/218 (Plan 02); alle übrigen 47 Zellen byte-identisch bei beiden Flips (RED-first je nur eine Zelle betroffen, 49/49 grün danach).
+- 14-Fall-Entscheidungsmatrix (`close-employee-month-monthly-hours.test.ts`, D-02/D-03/D-05 bis D-10): 14/14 grün.
+- Cross-Path-Paritätstest (`monthly-hours-soll-parity-433.test.ts`, D-11): Monatsabschluss, Dashboard und Bericht liefern denselben Wert für drei Mitarbeiter-Fixturen — 1740 min (überlappende Urlaub/Krankheit/Abwesenheit/Feiertag), 1320 min (Monatseintritt), 900 min (drift-freier voller Monat) — 9/9 Assertions grün.
+- `dry-run-433-monthly-hours-soll.ts`-Testfixtur (D-12): Eigentümer-Beispiel 44 h/Monat, 5-tägige Urlaubswoche — gespeichert 2640 min vs. neu berechnet 2040 min, Delta −600 min, Saldo-Delta +600 min, `locked: true` — 13/13 grün, Null-Mutation bewiesen.
+- Volle API-Suite (Plan 01–07, letzter gemessener Stand vor dem finalen Gate-Lauf dieses Plans): 7036+ passed, 1 vorbestehender, nicht zusammenhängender `reports.test.ts`-Flake (siehe unten), 3 skipped.
+- Volle Web-Suite (Plan 06): 95 Dateien, 1519 passed, 0 failed.
+- Finaler Gate-Lauf auf dem Phasen-HEAD (Plan 08, Task 3): volle API-Suite 423 passed, 1 failed (424 Dateien) / 7056 passed, 3 skipped (7060 Tests) — die eine Fehlermeldung ist der bereits dokumentierte, datumsabhängige `reports.test.ts`-Flake (heutiger deutscher Feiertag, auf `main` bereits separat behoben, auf diesem Branch unverändert vorbestehend); Test-Vollständigkeits-Untergrenze 424/346 Dateien, 7060/6023 Tests — erfüllt; API-Build (`tsc`) grün. Volle Web-Suite: 95 Dateien, 1519 passed, 0 failed; Web-Build grün. Alle projektweiten Gates grün: Typecheck, Lint, `lint:tenant-scoping` (492 Aufrufe, 0 Befunde), Kontextgrenzen (`--check 0`: 0 Workload; `--cycles --check 22`: 1 Komponente/22 Module, unverändert), Facade-Signaturen (128 Funktionen, 0 Befunde), Import-Ziele (1833 Spezifizierer, alle aufgelöst), fremder Kontextzugriff (0), T-100-09-Vollständigkeit (92 Routen klassifiziert) und der Oracle-Probe-Test, Guard-Vakuität (852 Dateien, 0 vakuos), Rollenprüfungen (API 0/191, Web 0/14), Saldo-Lock-Herleitung (0 Befunde), Kommentarsprache (0 neue Verstöße, Baseline 221 unverändert), sowie auf Web-Seite `lint:tokens`, `lint:ui-classes`, `lint:save-pattern`, Typecheck. Die Permission-Neutralitätsmatrix (1712 Fälle) und der T-100-09-Oracle-Probe-Test liefen erneut grün, ohne dass eine Aufzeichnungsdatei unter `apps/api/src/__tests__/neutrality` verändert wurde (`git diff --stat` leer).
+- AC-3-Identifikator-Gate (getrackte Dateien, `git grep -l monthlyHoursHolidayDeduction -- apps/`): außerhalb von Nicht-Testdateien kommt die Kennung nur noch in `apps/api/src/contexts/platform/api/settings.ts` vor; innerhalb von Testdateien zusätzlich in drei Negativ-Assertions (`apps/api/src/contexts/platform/api/__tests__/minijob.test.ts`, `apps/api/scripts/__tests__/dry-run-433-monthly-hours-soll.test.ts`, `apps/web/src/__tests__/admin-system-save-wiring.test.ts`, `apps/web/src/__tests__/monthly-hours-calendar-433.test.ts`), die alle `expect(...).not.toContain("monthlyHoursHolidayDeduction")` prüfen und die Kennung deshalb strukturell selbst enthalten müssen (dasselbe bereits in den Plänen 03–07 dokumentierte Selbsttreffer-Muster). Außerhalb von Testdateien ist die Kennung ausschließlich in `settings.ts` (der `omit`-Konstante) vorhanden — der fachliche Teil des Kriteriums ist erfüllt.
+
+### Nachrechnen
+
+```bash
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/__tests__/golden-matrix.test.ts
+pnpm --filter @clokr/api exec vitest run src/contexts/working-time-account/__tests__/close-employee-month-monthly-hours.test.ts
+pnpm --filter @clokr/api exec vitest run src/__tests__/monthly-hours-soll-parity-433.test.ts
+pnpm --filter @clokr/api exec vitest run src/contexts/platform/api/__tests__/minijob.test.ts
+pnpm --filter @clokr/api exec tsx scripts/dry-run-433-monthly-hours-soll.ts --tenant-id <uuid>
+pnpm --filter @clokr/web exec vitest run src/__tests__/monthly-hours-calendar-433.test.ts src/lib/utils/__tests__/work-schedule.test.ts
+```
