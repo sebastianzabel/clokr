@@ -3,6 +3,7 @@ import cron, { type ScheduledTask } from "node-cron";
 import type { FastifyInstance } from "fastify";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
 import { userIdsHoldingPermission } from "../../platform"; // Phase 75b Plan 10 (#75), D-16
+import { vacationBalanceForRow } from "../facade/vacation-balance"; // Issue #451 (D-08) — same context, relative import (no index.ts detour — see 451-07-SUMMARY.md)
 
 /**
  * BUrlG § 7 Hinweispflicht (EuGH C-684/16 "Max-Planck").
@@ -28,6 +29,7 @@ export interface CarryoverWarningRunResult {
   warned: number; // new warnings issued (one per employee-threshold)
   skippedDedup: number; // already warned for same year+threshold
   skippedDisabled: number; // tenants where the feature is disabled
+  skippedNoRisk: number; // Issue #451 (D-08) — threshold matched, but FIFO at-risk days is 0
 }
 
 const SOURCE_TAG = "carryover-warning-cron";
@@ -63,6 +65,7 @@ export async function runCarryoverWarningOnce(
     warned: 0,
     skippedDedup: 0,
     skippedDisabled: 0,
+    skippedNoRisk: 0,
   };
 
   const now = new Date();
@@ -88,11 +91,15 @@ export async function runCarryoverWarningOnce(
           ? [...cfg.carryoverWarningThresholds]
           : [60, 30, 14, 7];
 
-      // Find entitlements with active carry-over and a future deadline
+      // Find entitlements with active carry-over and a future deadline. Issue #451 (D-08):
+      // carry-over and its expiry exist for the statutory VACATION entitlement only —
+      // `recalculateCarryOver`/`autoCarryOver` and PUT /settings/vacation write carry-over on
+      // VACATION rows only, so a different leave type's row is never scanned.
       const where: Record<string, unknown> = {
         employee: { tenantId: tenant.id, exitDate: null },
         carryOverDeadline: { gt: now },
         carriedOverDays: { gt: 0 },
+        leaveType: { code: "VACATION" },
       };
       if (opts.onlyEntitlementId) {
         where.id = opts.onlyEntitlementId;
@@ -178,6 +185,15 @@ export async function runCarryoverWarningOnce(
         // above already ties dedup to a specific year (one entitlement = one
         // year). No additional check needed.
 
+        // Issue #451 (D-08): warn about what is ACTUALLY at risk of lapsing, not the raw,
+        // possibly already-consumed carriedOverDays — days taken before the deadline are
+        // consumed from the carry FIRST (FIFO, Issue #445).
+        const { atRiskDays } = await vacationBalanceForRow(app.prisma, ent, tenant.id, now);
+        if (atRiskDays <= 0) {
+          result.skippedNoRisk++;
+          continue;
+        }
+
         const carriedOverDays = Number(ent.carriedOverDays);
         const deadlineDe = formatDeDate(ent.carryOverDeadline);
 
@@ -197,6 +213,7 @@ export async function runCarryoverWarningOnce(
             thresholdDays: matchedThreshold,
             daysUntilDeadline: daysUntil,
             carriedOverDays,
+            atRiskDays, // Issue #451 (D-08) — the FIFO-adjusted part this warning is actually about
           },
           request: { ip: "cron", headers: { "user-agent": SOURCE_TAG } },
         });
@@ -206,7 +223,7 @@ export async function runCarryoverWarningOnce(
         // 2) Employee notification — skip if the user is inactive
         if (ent.employee.user.isActive) {
           const empMessage =
-            `Ihr Resturlaub aus ${ent.year - 1} (${carriedOverDays} Tage) verfällt am ` +
+            `Ihr Resturlaub aus ${ent.year - 1} (${atRiskDays} Tage) verfällt am ` +
             `${deadlineDe}. Sie haben noch ${daysUntil} Tage Zeit, um diesen Urlaub zu nehmen. ` +
             `Gemäß § 7 Abs. 3 BUrlG (EuGH C-684/16 "Max-Planck") wurden Sie hiermit ausdrücklich ` +
             `auf den drohenden Verfall hingewiesen.`;
@@ -233,7 +250,7 @@ export async function runCarryoverWarningOnce(
         // 3) Manager CC — different message, link to admin view
         const mgrMessage =
           `${ent.employee.firstName} ${ent.employee.lastName} ` +
-          `(Mitarbeiter-Nr. ${ent.employee.employeeNumber}) hat noch ${carriedOverDays} Tage ` +
+          `(Mitarbeiter-Nr. ${ent.employee.employeeNumber}) hat noch ${atRiskDays} Tage ` +
           `Resturlaub aus ${ent.year - 1}, der am ${deadlineDe} verfällt (in ${daysUntil} Tagen). ` +
           `Eine Hinweis-Mail wurde dem Mitarbeiter automatisch zugestellt.`;
 
@@ -267,6 +284,7 @@ export async function runCarryoverWarningOnce(
             thresholdDays: matchedThreshold,
             daysUntil,
             carriedOverDays,
+            atRiskDays,
           },
           "Hinweispflicht: Resturlaub-Verfall-Warnung ausgestellt",
         );
