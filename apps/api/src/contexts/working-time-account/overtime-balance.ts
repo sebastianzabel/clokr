@@ -203,11 +203,12 @@ export async function computeOvertimeBalanceBreakdown(
   //
   // Issue #451 (D-04): `schedule` (fetched with no date above, i.e. "today's" contract) is NO
   // LONGER the contract passed to closeEmployeeMonth() for every month — each complete open
-  // month and the current partial month now resolve THEIR OWN contract below, the exact same
-  // getEffectiveSchedule(app, employeeId, <that month's midpoint>) rule the close paths
-  // (auto-close-month.ts, api/overtime.ts, recalculate-snapshots.ts) already use. `schedule`
-  // survives only for the final TRACK_ONLY display rule at the end of this function, which is
-  // deliberately a rule of the CURRENT (today's) contract, not a historical one.
+  // month and the current partial month now resolve THEIR OWN contract below, via
+  // getEffectiveSchedule(app, employeeId, <that month's end>) — WR-01 (451-REVIEW.md): the same
+  // `validFrom: { lte: monthEnd } }` rule month-saldo.ts uses for the Monatsbericht, not the
+  // close paths' midpoint convention (see the WR-01 comment at the resolution site below).
+  // `schedule` survives only for the final TRACK_ONLY display rule at the end of this function,
+  // which is deliberately a rule of the CURRENT (today's) contract, not a historical one.
 
   // Tenant config is needed by the closeEmployeeMonth branches
   const tenantConfig = await app.prisma.tenantConfig.findUnique({
@@ -336,21 +337,27 @@ export async function computeOvertimeBalanceBreakdown(
   // Resolve the contract valid IN EACH evaluated month BEFORE the shift/leave/absence
   // prefetch below, so that prefetch's SHIFT_BASED gate (next block) and every
   // closeEmployeeMonth() call in the two loops further down can use a schedule dated to that
-  // specific month — exactly the close paths' own rule (midMonth = the month's midpoint,
-  // see auto-close-month.ts / api/overtime.ts / recalculate-snapshots.ts), instead of reusing
-  // ONE "today's contract" lookup (`schedule` above) for every month, which is the pre-451 bug.
+  // specific month, instead of reusing ONE "today's contract" lookup (`schedule` above) for
+  // every month, which is the pre-451 bug.
+  //
+  // WR-01 (451-REVIEW.md): resolve via the month's END, the SAME rule month-saldo.ts's
+  // computeMonthSaldo/computeMonthReportFigures already use (`validFrom: { lte: monthEnd } }`,
+  // the Monatsbericht's own resolver — see getEffectiveSchedule in entry-invariants.ts, which
+  // implements exactly that query), not the month's midpoint. An employee's very first
+  // WorkSchedule.validFrom is hireDate, which is exempt from the "contracts only change on the
+  // 1st" rule and can fall anywhere in a month, including after that month's midpoint — a
+  // midpoint lookup then finds no row at all and silently falls back to the tenant-default
+  // schedule for the whole hire month, diverging from month-saldo.ts's (unchanged) monthEnd
+  // resolution for the identical month. The close paths (auto-close-month.ts, api/overtime.ts,
+  // recalculate-snapshots.ts) still use their own midpoint convention and are deliberately left
+  // unchanged here (no regression test proves them wrong).
   //
   // currentMonthOpenStart is hoisted here (its original, single use site further below is
   // unchanged) because this section already needs it to know whether a partial month exists
   // at all — the SAME `effectiveEnd >= currentMonthOpenStart` condition the partial-month block
   // itself gates on.
-  const midpointOf = (monthStart: Date, monthEnd: Date) =>
-    new Date((monthStart.getTime() + monthEnd.getTime()) / 2);
-
   const completeMonthSchedules = await Promise.all(
-    completeOpenMonths.map((cm) =>
-      getEffectiveSchedule(app, employeeId, midpointOf(cm.monthStart, cm.monthEnd)),
-    ),
+    completeOpenMonths.map((cm) => getEffectiveSchedule(app, employeeId, cm.monthEnd)),
   );
 
   const currentMonthOpenStart =
@@ -361,11 +368,7 @@ export async function computeOvertimeBalanceBreakdown(
   // the SHIFT_BASED prefetch gate below.
   const partialMonthSchedule =
     effectiveEnd >= currentMonthOpenStart
-      ? await getEffectiveSchedule(
-          app,
-          employeeId,
-          midpointOf(currentMonthRange.start, currentMonthRange.end),
-        )
+      ? await getEffectiveSchedule(app, employeeId, currentMonthRange.end)
       : null;
   const partialMonthScheduleType = partialMonthSchedule
     ? String(partialMonthSchedule.type ?? "")

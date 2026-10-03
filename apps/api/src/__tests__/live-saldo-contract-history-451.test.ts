@@ -171,6 +171,46 @@ describe("Issue #451 Plan 05 — live saldo per-month contract (D-04/D-05, OQ1)"
     expect(liveBalance).toBeCloseTo(monthSaldoSum, 2);
   });
 
+  it("WR-01 (451-REVIEW.md): hire on the 20th (second half of January) — the hire month must use the HIRE schedule, not the tenant-default fallback, and must agree with the sum of month-saldo balances", async () => {
+    // January's midpoint (~16.01.) precedes the 20.01. hire date: the pre-fix
+    // getEffectiveSchedule(app, employeeId, <month midpoint>) resolution finds no WorkSchedule
+    // row for January and silently falls back to the tenant-default FIXED_SCHEDULE (40h/8h
+    // Mo-Fr) instead of this employee's real 30h/6h contract — for every day of January from
+    // the hire date onward, not just the pre-hire days. month-saldo.ts (unchanged by this
+    // phase) resolves via `validFrom: { lte: monthEnd } }`, which DOES find the hire row, so
+    // the two diverge for exactly this month.
+    const emp = await createEmployeeWithSchedules(app, data.tenant.id, "wr01", "2026-01-20", [
+      { validFrom: "2026-01-20", weeklyHours: 30, dayHours: 6 },
+    ]);
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-03-05T10:00:00.000Z"));
+
+    const liveBalance = await getBalanceHours(app, data.adminToken, emp.id);
+
+    // Derivation (NIEDERSACHSEN 2026, no holiday Jan 20-31 or in Feb or Mar 1-4):
+    //   Jan 20-31 (hire month, hireDate clips the range to 20.-31.): 9 Mo-Fr days (20,21,22,23,
+    //     26,27,28,29,30) * 6h = 54h.
+    //   Feb (complete, 20 Mo-Fr days) * 6h = 120h.
+    //   Mar 1-4 (partial, "today" 05.03. -> window end 04.03."): Mon 02., Tue 03., Wed 04. =
+    //     3 Mo-Fr days * 6h = 18h.
+    //   Total Soll = 192h, Ist = 0 -> balance = -192h.
+    const expectedTotal = -192;
+
+    const janMinutes = await getMonthSaldoBalanceMinutes(app, data.adminToken, emp.id, 2026, 1);
+    const febMinutes = await getMonthSaldoBalanceMinutes(app, data.adminToken, emp.id, 2026, 2);
+    const marMinutes = await getMonthSaldoBalanceMinutes(app, data.adminToken, emp.id, 2026, 3);
+    const monthSaldoSum = (janMinutes + febMinutes + marMinutes) / 60;
+
+    // RED on the unchanged code: the live path's January piece falls back to the tenant default
+    // (8h) for the days from the hire date onward -> Jan 9*8=72h instead of 54h, collapsing the
+    // total to -(72+120+18) = -210h instead of -192h. month-saldo.ts is unaffected by the bug
+    // (it already resolves via monthEnd), so `monthSaldoSum` stays correct at -192h even before
+    // the fix — it is the live path that must be brought into agreement with it.
+    expect(liveBalance).toBeCloseTo(expectedTotal, 2);
+    expect(liveBalance).toBeCloseTo(monthSaldoSum, 2);
+  });
+
   it("OQ1-a: contract change effective THIS month (01.02.) — the partial month alongside one complete prior month", async () => {
     const emp = await createEmployeeWithSchedules(app, data.tenant.id, "oq1a", "2026-01-01", [
       { validFrom: "2026-01-01", weeklyHours: 40, dayHours: 8 },

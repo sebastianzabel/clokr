@@ -1278,9 +1278,11 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
 // never counts) — the `toDateSollMinutes`/`toDateWorkedMinutes` pair below.
 //
 // Contract resolution mirrors Phase 451-05's per-month rule for the live lifetime saldo
-// (`getEffectiveSchedule(app, employeeId, <that month's midpoint>)`, the close paths' own rule):
-// a week is split into at most two contiguous calendar-month pieces (Mon-Sun straddles at most
-// one month boundary), and each piece resolves ITS OWN contract before any prefetch. Any piece
+// (`getEffectiveSchedule(app, employeeId, <that month's end>)` — WR-01 (451-REVIEW.md): the
+// same rule month-saldo.ts uses for the Monatsbericht, not the close paths' midpoint
+// convention): a week is split into at most two contiguous calendar-month pieces (Mon-Sun
+// straddles at most one month boundary), and each piece resolves ITS OWN contract before any
+// prefetch. Any piece
 // under a MONTHLY_HOURS contract degrades the whole result to `null` — that schedule type keeps
 // its own month view, never a week view (dashboard.ts does not even call this function for a
 // MONTHLY_HOURS employee's TODAY contract, but a contract change mid-week could still make one
@@ -1370,19 +1372,21 @@ export async function computeWeekProgress(
 
   const pieces = splitWeekIntoMonthPieces(days);
 
-  // Issue #451 (D-04/D-05 carry-over from Phase 451-05) — resolve EACH piece's own contract via
-  // its calendar month's midpoint (the close paths' rule) before any prefetch, so a piece in a
-  // different calendar month can never reuse another piece's (or "today's") contract.
-  const midpointOf = (a: Date, b: Date) => new Date((a.getTime() + b.getTime()) / 2);
+  // Issue #451 (D-04/D-05 carry-over from Phase 451-05) — resolve EACH piece's own contract
+  // before any prefetch, so a piece in a different calendar month can never reuse another
+  // piece's (or "today's") contract.
+  //
+  // WR-01 (451-REVIEW.md): resolve via the piece's calendar month's END, the SAME
+  // `validFrom: { lte: monthEnd } }` rule month-saldo.ts uses for the Monatsbericht — not the
+  // month's midpoint. An employee's very first WorkSchedule.validFrom is hireDate, exempt from
+  // the "contracts only change on the 1st" rule, and can fall anywhere in a month, including
+  // after that month's midpoint; a midpoint lookup then finds no row and silently falls back to
+  // the tenant-default schedule for the whole hire month's week pieces.
   const pieceSchedules = await Promise.all(
     pieces.map(async (piece) => {
       const [y, m] = piece.start.split("-").map(Number) as [number, number];
       const { start: calMonthStart, end: calMonthEnd } = monthRangeUtc(y, m, tz);
-      const schedule = await getEffectiveSchedule(
-        app,
-        employeeId,
-        midpointOf(calMonthStart, calMonthEnd),
-      );
+      const schedule = await getEffectiveSchedule(app, employeeId, calMonthEnd);
       return { piece, calMonthStart, schedule };
     }),
   );

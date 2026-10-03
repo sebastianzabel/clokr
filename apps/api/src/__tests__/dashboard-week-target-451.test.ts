@@ -307,4 +307,43 @@ describe("Issue #451 Plan 06 — dashboard week target is the whole-week Soll fr
     expect(body.week.workedToDateHours).toBe(0);
     expect(body.week.targetToDateHours).toBe(0);
   });
+
+  // WR-01 (451-REVIEW.md): a hire date in the SECOND HALF of a month falls after that calendar
+  // month's midpoint. computeWeekProgress resolved each week-piece's contract via
+  // getEffectiveSchedule(app, employeeId, <that month's midpoint>) — for the hire month this
+  // midpoint precedes the hire date, so getEffectiveSchedule finds no WorkSchedule row and
+  // silently falls back to the tenant-default FIXED_SCHEDULE (40h/8h Mo-Fr) instead of the
+  // employee's real 30h/6h contract. Fixed: resolve via the month's END (the same rule
+  // month-saldo.ts already uses), so the hire-date row (validFrom 20.01. <= monthEnd 31.01.) is
+  // found for every day from the hire date onward.
+  it("WR-01: hire on the 20th (second half of January) — week tile uses the HIRE schedule (6h/day), not the tenant default (8h/day)", async () => {
+    const emp = await createEmployee(
+      app,
+      data.tenant.id,
+      data.salonId,
+      "hire20",
+      "2026-01-20",
+      "FIXED_SCHEDULE",
+      { weeklyHours: 30, dayHours: 6 },
+    );
+    const token = await loginAs(app, emp.email);
+
+    // Week Mon 19.01. - Sun 25.01. Mon 19.01. is BEFORE the 20.01. hire date (not employed yet).
+    // Fake clock Thu 22.01. -> yesterday = Wed 21.01.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-01-22T10:00:00.000Z"));
+
+    const body = await getDashboard(app, token);
+
+    // Whole week: Tue 20. - Fri 23. = 4 workdays (Mon 19. excluded, before hire) * 6h = 24h.
+    // Before the fix: tenant-default fallback (8h) -> 32h (RED).
+    expect(
+      body.week.targetHours,
+      "whole-week Soll on the HIRE schedule, not the tenant default",
+    ).toBe(24);
+    // To-date (through yesterday 21.01.): Tue 20. + Wed 21. = 2 workdays * 6h = 12h.
+    // Before the fix: 2 * 8h = 16h (RED).
+    expect(body.week.targetToDateHours).toBe(12);
+    expect(body.week.workedToDateHours).toBe(0);
+  });
 });
