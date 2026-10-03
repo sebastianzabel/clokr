@@ -16,6 +16,18 @@ export const OVERTIME_FORECAST_FOOTNOTE =
 export const COMPANY_PROVISIONAL_LEGEND =
   "* Monat noch nicht abgeschlossen — Saldo ist eine Prognose und kann sich bis zum Monatsabschluss noch ändern.";
 
+// Issue #451 (D-03): the working-time-account's own reconciliation item (Überstundenausgleich
+// withdrawal; for SHIFT_BASED the § 615 BGB two-clause evaluation) can make Ist - Soll differ from
+// the printed Überstunden — not a bug, the WTA simply charges/credits the balance without touching
+// Soll. Printed only when non-zero, with an explaining legend, so the arithmetic always closes:
+// Ist - Soll + Verrechnung = Überstunden. Never computed in the composition layer — always read
+// from MonthReportFigures.balanceAdjustmentMinutes (contexts/working-time-account).
+export const BALANCE_ADJUSTMENT_LABEL = "Verrechnung";
+export const BALANCE_ADJUSTMENT_LEGEND =
+  "Verrechnung: Überstundenausgleich und bei Schichtdienst die Bewertung nach § 615 BGB (Minderarbeit gegenüber dem Dienstplan, Mehrarbeit gegenüber dem Vertrag). Es gilt: Ist - Soll + Verrechnung = Überstunden.";
+// ASCII hyphen on purpose: PDFKit's standard Helvetica uses WinAnsi encoding, which has no U+2212
+// minus sign.
+
 // ── § 9 BUrlG legend (Phase 104, D-30) ───────────────────────────────────────
 // Single source of the wording, shared by the JSON Monatsbericht (routes/reports.ts), the
 // single-employee PDF and the company PDF — the same drift argument as the OVERTIME_* labels
@@ -36,6 +48,9 @@ interface MonthlyReportData {
    *  null = intentionally unlabelled (MONTHLY_HOURS with no budget — mirrors
    *  resolveReportOvertimeHours's `labelled` flag in reports.ts; renderer omits the label). */
   overtimeConfirmed: boolean | null;
+  /** Issue #451 (D-03): the WTA's own reconciliation item — see BALANCE_ADJUSTMENT_LEGEND above.
+   *  0 for the vast majority of months; printed only when non-zero. */
+  balanceAdjustmentHours: number;
   sickDays: number;
   sickDaysWithAttest: number;
   vacationDays: number;
@@ -67,6 +82,8 @@ export interface CompanyMonthlyReportData {
     overtimeHours: number;
     /** Same tri-state meaning as MonthlyReportData.overtimeConfirmed above. */
     overtimeConfirmed: boolean | null;
+    /** Issue #451 (D-03): same reconciliation item as MonthlyReportData.balanceAdjustmentHours. */
+    balanceAdjustmentHours: number;
     sickDaysWithAttest: number;
     sickDaysWithoutAttest: number;
     vacationDays: number;
@@ -213,6 +230,15 @@ export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffe
     doc.text(`Urlaubstage: ${data.vacationDays}`, col3, sy);
     sy += 18;
     doc.text(`Sonstige Abwesenheit: ${data.otherAbsenceDays}`, col1, sy);
+    // Issue #451 (D-03): printed only when the WTA reports a non-zero reconciliation item — same
+    // ASCII sign style as the Überstunden line above.
+    if (data.balanceAdjustmentHours !== 0) {
+      doc.text(
+        `${BALANCE_ADJUSTMENT_LABEL}: ${data.balanceAdjustmentHours >= 0 ? "+" : ""}${data.balanceAdjustmentHours.toFixed(2)} h`,
+        col2,
+        sy,
+      );
+    }
 
     doc.y = summaryY + 90;
     // Open-month footnote (Task 2, SALDO-DISP-05) — only when the figure is a labelled Prognose;
@@ -226,6 +252,16 @@ export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffe
       });
       doc.text(OVERTIME_FORECAST_FOOTNOTE, 50, doc.y, { width: footnoteWidth });
       doc.y += footnoteHeight;
+      doc.fillColor("#111827");
+    }
+    // Issue #451 (D-03): explains the Verrechnung line above — same grey 8pt style as the
+    // forecast footnote, printed only when the item is actually non-zero.
+    if (data.balanceAdjustmentHours !== 0) {
+      doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
+      const legendWidth = doc.page.width - 100;
+      const legendHeight = doc.heightOfString(BALANCE_ADJUSTMENT_LEGEND, { width: legendWidth });
+      doc.text(BALANCE_ADJUSTMENT_LEGEND, 50, doc.y, { width: legendWidth });
+      doc.y += legendHeight;
       doc.fillColor("#111827");
     }
     // § 9-Legende (D-30) — erklärt, warum Tage von Urlaub nach "Krank mit Attest" gewandert sind.
@@ -329,16 +365,19 @@ export function streamCompanyMonthlyReportPdf(
   doc.fontSize(11).font("Helvetica-Bold").fillColor("#111827").text("Übersicht");
   doc.moveDown(0.5);
 
+  // Issue #451 (D-03): "Verr. (h)" inserted between "Ist (h)" and "Saldo (h)" — widths rebalanced
+  // to the same total of 490 as before.
   const summaryHeaders = [
     "Mitarbeiter",
     "Nr.",
     "Soll (h)",
     "Ist (h)",
+    "Verr. (h)",
     "Saldo (h)",
     "Urlaub",
     "Krank",
   ];
-  const summaryWidths = [150, 60, 60, 60, 60, 50, 50];
+  const summaryWidths = [130, 50, 55, 55, 50, 55, 50, 45];
   const tableMargin = 50;
   const ROW_H = 16;
   const FOOTER_MARGIN = 60; // reserved space for footer at bottom
@@ -358,6 +397,7 @@ export function streamCompanyMonthlyReportPdf(
   doc.fontSize(8).font("Helvetica").fillColor("#111827");
   let rowY = tableTop + 18;
   let anyProvisional = false; // set when any row's overtimeConfirmed === false (Task 2, SALDO-DISP-05)
+  let anyBalanceAdjustment = false; // set when any row's balanceAdjustmentHours !== 0 (Issue #451, D-03)
 
   for (const row of data.rows) {
     if (rowY + ROW_H > doc.page.height - FOOTER_MARGIN) {
@@ -393,12 +433,24 @@ export function streamCompanyMonthlyReportPdf(
     rx += summaryWidths[2];
     doc.text(row.workedHours.toFixed(2), rx, rowY, { width: summaryWidths[3] });
     rx += summaryWidths[3];
-    doc.text(saldoText, rx, rowY, { width: summaryWidths[4] });
+    // Issue #451 (D-03): empty cell when the WTA reports no reconciliation item — only a non-zero
+    // value is printed, mirroring the single-PDF Verrechnung line's "printed only when non-zero".
+    if (row.balanceAdjustmentHours !== 0) {
+      doc.text(
+        `${row.balanceAdjustmentHours >= 0 ? "+" : ""}${row.balanceAdjustmentHours.toFixed(2)}`,
+        rx,
+        rowY,
+        { width: summaryWidths[4] },
+      );
+      anyBalanceAdjustment = true;
+    }
     rx += summaryWidths[4];
-    doc.text(String(row.vacationDays), rx, rowY, { width: summaryWidths[5] });
+    doc.text(saldoText, rx, rowY, { width: summaryWidths[5] });
     rx += summaryWidths[5];
+    doc.text(String(row.vacationDays), rx, rowY, { width: summaryWidths[6] });
+    rx += summaryWidths[6];
     doc.text(String(row.sickDaysWithAttest + row.sickDaysWithoutAttest), rx, rowY, {
-      width: summaryWidths[6],
+      width: summaryWidths[7],
     });
     rowY += ROW_H;
   }
@@ -411,6 +463,20 @@ export function streamCompanyMonthlyReportPdf(
     }
     doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
     doc.text(COMPANY_PROVISIONAL_LEGEND, tableMargin, rowY, {
+      width: doc.page.width - 2 * tableMargin,
+    });
+    rowY += ROW_H;
+    doc.fillColor("#111827");
+  }
+
+  // Issue #451 (D-03): explains the "Verr. (h)" column above — only when at least one row
+  // actually carries a non-zero reconciliation item. Same pagination guard as the other legends.
+  if (anyBalanceAdjustment) {
+    if (rowY + ROW_H > doc.page.height - FOOTER_MARGIN) {
+      rowY = nextPage();
+    }
+    doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
+    doc.text(BALANCE_ADJUSTMENT_LEGEND, tableMargin, rowY, {
       width: doc.page.width - 2 * tableMargin,
     });
     rowY += ROW_H;

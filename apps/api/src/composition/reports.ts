@@ -1783,6 +1783,10 @@ export async function reportRoutes(app: FastifyInstance) {
       const workedHours = Math.round((figures.workedMinutes / 60) * 100) / 100;
       const targetHours = Math.round((figures.expectedMinutes / 60) * 100) / 100;
       const overtimeHours = Math.round((figures.balanceMinutes / 60) * 100) / 100;
+      // Issue #451 (D-03): same WTA reconciliation item as GET /monthly's balanceAdjustmentHours.
+      const balanceAdjustmentHours = figures.labelled
+        ? Math.round((figures.balanceAdjustmentMinutes / 60) * 100) / 100
+        : 0;
 
       const pdfBuffer = await generateMonthlyReportPdf({
         tenantName: tenant?.name ?? "",
@@ -1793,6 +1797,7 @@ export async function reportRoutes(app: FastifyInstance) {
         targetHours,
         overtimeHours,
         overtimeConfirmed: figures.labelled ? figures.confirmed : null,
+        balanceAdjustmentHours,
         sickDays: summary.sickDays,
         sickDaysWithAttest: summary.sickDaysWithAttest,
         vacationDays: summary.vacationDays,
@@ -1911,6 +1916,7 @@ export async function reportRoutes(app: FastifyInstance) {
         targetHours: number;
         overtimeHours: number;
         overtimeConfirmed: boolean | null;
+        balanceAdjustmentHours: number;
         sickDaysWithAttest: number;
         sickDaysWithoutAttest: number;
         vacationDays: number;
@@ -1936,6 +1942,10 @@ export async function reportRoutes(app: FastifyInstance) {
           targetHours: Math.round((figures.expectedMinutes / 60) * 100) / 100,
           overtimeHours: Math.round((figures.balanceMinutes / 60) * 100) / 100,
           overtimeConfirmed: figures.labelled ? figures.confirmed : null,
+          // Issue #451 (D-03): same WTA reconciliation item as GET /monthly's balanceAdjustmentHours.
+          balanceAdjustmentHours: figures.labelled
+            ? Math.round((figures.balanceAdjustmentMinutes / 60) * 100) / 100
+            : 0,
           sickDaysWithAttest: summary.sickDaysWithAttest,
           sickDaysWithoutAttest: summary.sickDaysWithoutAttest,
           vacationDays: summary.vacationDays,
