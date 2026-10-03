@@ -281,4 +281,155 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
     expect(ours).toBeDefined();
     expect(ours!.daysUntilDeadline).toBeLessThanOrEqual(60);
   });
+
+  // ── Issue #451 (D-08) — the cron warns with the FIFO-adjusted at-risk days ──────────────────
+  // Fresh employees (not the shared `data.employee` row the `beforeEach` above resets) so these
+  // three cases never interact with the dedup/threshold assertions above — same isolation
+  // {@link import("../contexts/absence/__tests__/vacation-balance-451.test.ts")}'s own `mkEmployee`
+  // uses.
+
+  async function mkRiskEmployee(label: string): Promise<string> {
+    const uid = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const user = await app.prisma.user.create({
+      data: {
+        email: `cowarn451-${label}-${uid}@test.de`,
+        passwordHash: "x",
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const employee = await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        employeeNumber: `COWARN451-${label}-${uid}`,
+        firstName: "T",
+        lastName: "T",
+        hireDate: new Date(Date.UTC(2024, 0, 1)),
+      },
+    });
+    await app.prisma.workSchedule.create({
+      data: {
+        employeeId: employee.id,
+        type: "FIXED_SCHEDULE",
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date(Date.UTC(2024, 0, 1)),
+      },
+    });
+    await app.prisma.overtimeAccount.create({ data: { employeeId: employee.id, balanceHours: 0 } });
+    return employee.id;
+  }
+
+  it("warns with the FIFO-adjusted at-risk days, not the raw carry-over (D-08)", async () => {
+    const employeeId = await mkRiskEmployee("risk1");
+    const deadline = new Date(Date.now() + 30 * DAY_MS); // matches the default 30-day threshold
+    const ent = await app.prisma.leaveEntitlement.create({
+      data: {
+        employeeId,
+        leaveTypeId: data.vacationType.id,
+        year: new Date().getFullYear(),
+        totalDays: 30,
+        usedDays: 0,
+        carriedOverDays: 5,
+        carryOverDeadline: deadline,
+        isAutoCalculated: true,
+      },
+    });
+    // 3 days approved before the deadline — carry 5 minus these 3 leaves 2 still at risk.
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId,
+        leaveTypeId: data.vacationType.id,
+        status: "APPROVED",
+        startDate: new Date(Date.now() + DAY_MS),
+        endDate: new Date(Date.now() + 3 * DAY_MS),
+        days: 3,
+      },
+    });
+
+    await runCarryoverWarningOnce(app, { onlyTenantId: data.tenant.id });
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: { action: "CARRYOVER_WARNED", entity: "LeaveEntitlement", entityId: ent.id },
+    });
+    expect(audit).not.toBeNull();
+    const v = audit!.newValue as Record<string, unknown>;
+    expect(v.carriedOverDays).toBe(5);
+    expect(v.atRiskDays).toBe(2);
+
+    const notif = await app.prisma.notification.findFirst({
+      where: { relatedId: ent.id, type: "CARRYOVER_EXPIRING" },
+    });
+    expect(notif).not.toBeNull();
+    expect(notif!.message).toContain("(2 Tage)");
+  });
+
+  it("skips when the carry is fully consumed before the deadline — no at-risk days left (skippedNoRisk)", async () => {
+    const employeeId = await mkRiskEmployee("risk2");
+    const deadline = new Date(Date.now() + 30 * DAY_MS);
+    const ent = await app.prisma.leaveEntitlement.create({
+      data: {
+        employeeId,
+        leaveTypeId: data.vacationType.id,
+        year: new Date().getFullYear(),
+        totalDays: 30,
+        usedDays: 5,
+        carriedOverDays: 5,
+        carryOverDeadline: deadline,
+        isAutoCalculated: true,
+      },
+    });
+    // 5 days approved before the deadline — the full carry is already consumed.
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId,
+        leaveTypeId: data.vacationType.id,
+        status: "APPROVED",
+        startDate: new Date(Date.now() + DAY_MS),
+        endDate: new Date(Date.now() + 5 * DAY_MS),
+        days: 5,
+      },
+    });
+
+    const res = await runCarryoverWarningOnce(app, { onlyTenantId: data.tenant.id });
+    expect(res.skippedNoRisk).toBeGreaterThanOrEqual(1);
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: { action: "CARRYOVER_WARNED", entity: "LeaveEntitlement", entityId: ent.id },
+    });
+    expect(audit).toBeNull();
+  });
+
+  it("never scans a non-VACATION entitlement, even with carry and a matching threshold (D-08)", async () => {
+    const employeeId = await mkRiskEmployee("risk3");
+    const specialType = await app.prisma.leaveType.create({
+      data: { tenantId: data.tenant.id, name: "Sonderurlaub (Test #451)", code: "SPECIAL" },
+    });
+    const deadline = new Date(Date.now() + 30 * DAY_MS);
+    const ent = await app.prisma.leaveEntitlement.create({
+      data: {
+        employeeId,
+        leaveTypeId: specialType.id,
+        year: new Date().getFullYear(),
+        totalDays: 10,
+        usedDays: 0,
+        carriedOverDays: 5,
+        carryOverDeadline: deadline,
+        isAutoCalculated: true,
+      },
+    });
+
+    await runCarryoverWarningOnce(app, { onlyTenantId: data.tenant.id });
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: { action: "CARRYOVER_WARNED", entity: "LeaveEntitlement", entityId: ent.id },
+    });
+    expect(audit).toBeNull();
+  });
 });

@@ -200,7 +200,15 @@ export async function computeOvertimeBalanceBreakdown(
   // ALL schedule models now use the unified per-month loop for COMPLETE open months,
   // calling closeEmployeeMonth() once per month. The current partial month is computed
   // inline (F-01 Option A — SHIFT_BASED: roster-prorated; non-SHIFT: flat calcExpectedMinutesTz).
-  const scheduleType = String(schedule.type ?? "");
+  //
+  // Issue #451 (D-04): `schedule` (fetched with no date above, i.e. "today's" contract) is NO
+  // LONGER the contract passed to closeEmployeeMonth() for every month — each complete open
+  // month and the current partial month now resolve THEIR OWN contract below, via
+  // getEffectiveSchedule(app, employeeId, <that month's end>) — WR-01 (451-REVIEW.md): the same
+  // `validFrom: { lte: monthEnd } }` rule month-saldo.ts uses for the Monatsbericht, not the
+  // close paths' midpoint convention (see the WR-01 comment at the resolution site below).
+  // `schedule` survives only for the final TRACK_ONLY display rule at the end of this function,
+  // which is deliberately a rule of the CURRENT (today's) contract, not a historical one.
 
   // Tenant config is needed by the closeEmployeeMonth branches
   const tenantConfig = await app.prisma.tenantConfig.findUnique({
@@ -325,6 +333,55 @@ export async function computeOvertimeBalanceBreakdown(
     }
   }
 
+  // ── Issue #451 (D-04) — per-month contract resolution ──────────────────────────
+  // Resolve the contract valid IN EACH evaluated month BEFORE the shift/leave/absence
+  // prefetch below, so that prefetch's SHIFT_BASED gate (next block) and every
+  // closeEmployeeMonth() call in the two loops further down can use a schedule dated to that
+  // specific month, instead of reusing ONE "today's contract" lookup (`schedule` above) for
+  // every month, which is the pre-451 bug.
+  //
+  // WR-01 (451-REVIEW.md): resolve via the month's END, the SAME rule month-saldo.ts's
+  // computeMonthSaldo/computeMonthReportFigures already use (`validFrom: { lte: monthEnd } }`,
+  // the Monatsbericht's own resolver — see getEffectiveSchedule in entry-invariants.ts, which
+  // implements exactly that query), not the month's midpoint. An employee's very first
+  // WorkSchedule.validFrom is hireDate, which is exempt from the "contracts only change on the
+  // 1st" rule and can fall anywhere in a month, including after that month's midpoint — a
+  // midpoint lookup then finds no row at all and silently falls back to the tenant-default
+  // schedule for the whole hire month, diverging from month-saldo.ts's (unchanged) monthEnd
+  // resolution for the identical month. The close paths (auto-close-month.ts, api/overtime.ts,
+  // recalculate-snapshots.ts) still use their own midpoint convention and are deliberately left
+  // unchanged here (no regression test proves them wrong).
+  //
+  // currentMonthOpenStart is hoisted here (its original, single use site further below is
+  // unchanged) because this section already needs it to know whether a partial month exists
+  // at all — the SAME `effectiveEnd >= currentMonthOpenStart` condition the partial-month block
+  // itself gates on.
+  const completeMonthSchedules = await Promise.all(
+    completeOpenMonths.map((cm) => getEffectiveSchedule(app, employeeId, cm.monthEnd)),
+  );
+
+  const currentMonthOpenStart =
+    currentMonthRange.start < rangeStart ? rangeStart : currentMonthRange.start;
+  // null whenever there is no open partial month at all (effectiveEnd < currentMonthOpenStart —
+  // e.g. an employee who has already exited before the current month even opens, D-05 exit
+  // case) — never fetched speculatively, so an unevaluated month's contract can never leak into
+  // the SHIFT_BASED prefetch gate below.
+  const partialMonthSchedule =
+    effectiveEnd >= currentMonthOpenStart
+      ? await getEffectiveSchedule(app, employeeId, currentMonthRange.end)
+      : null;
+  const partialMonthScheduleType = partialMonthSchedule
+    ? String(partialMonthSchedule.type ?? "")
+    : "";
+
+  // "any evaluated month is SHIFT_BASED" — replaces the old today-only gate
+  // (`scheduleType === "SHIFT_BASED"`, where scheduleType came from today's contract) for the
+  // shift prefetch below. A complete month's or the partial month's own contract may be
+  // SHIFT_BASED even when today's CURRENT contract is not (or vice versa).
+  const anyMonthShiftBased =
+    completeMonthSchedules.some((s) => String(s.type ?? "") === "SHIFT_BASED") ||
+    partialMonthScheduleType === "SHIFT_BASED";
+
   // ── Range-wide pre-fetch (ONE query per collection) ───────────────────────────
   // Pre-fetch all data for [rangeStart, effectiveEnd] once. The per-month loop
   // and current-month computation filter inline — no N×DB-round-trips (RESEARCH §2.4).
@@ -347,16 +404,16 @@ export async function computeOvertimeBalanceBreakdown(
   const shiftRangeLastDay =
     currentMonthRange.end > rangeLastDay ? currentMonthRange.end : rangeLastDay;
 
-  // Phase 100B Plan 05 — S1, contexts/scheduling facade.
-  const allShifts =
-    scheduleType === "SHIFT_BASED"
-      ? await getShiftsInRange(
-          app.prisma,
-          { kind: "employee", employeeId, tenantId: employee?.tenantId ?? "" },
-          rangeFirstDay,
-          shiftRangeLastDay,
-        )
-      : [];
+  // Phase 100B Plan 05 — S1, contexts/scheduling facade. Issue #451 (D-04): gated on
+  // anyMonthShiftBased (any EVALUATED month's own contract), not today's contract.
+  const allShifts = anyMonthShiftBased
+    ? await getShiftsInRange(
+        app.prisma,
+        { kind: "employee", employeeId, tenantId: employee?.tenantId ?? "" },
+        rangeFirstDay,
+        shiftRangeLastDay,
+      )
+    : [];
 
   // Upper bound = shiftRangeLastDay (= full current calendar month, NOT effectiveEnd).
   // The SHIFT_BASED partial-month C_net credit (closeEmployeeMonth uses monthEnd =
@@ -400,8 +457,12 @@ export async function computeOvertimeBalanceBreakdown(
   let accumulatedCarryOver = snapshotCarryOver;
   let openPeriodBalance = 0;
 
-  for (const cm of completeOpenMonths) {
+  for (let monthIndex = 0; monthIndex < completeOpenMonths.length; monthIndex++) {
+    const cm = completeOpenMonths[monthIndex]!;
     const { monthStart, monthEnd, monthFirstDay, monthLastDay } = cm;
+    // Issue #451 (D-04): this month's OWN contract (resolved above, dated to its midpoint) —
+    // not `schedule` (today's contract), which every month used to share.
+    const monthSchedule = completeMonthSchedules[monthIndex]!;
 
     // Filter each pre-fetched collection to this month's range.
     // entries: @db.Date comparison (date >= monthFirstDay && date <= monthLastDay)
@@ -439,7 +500,7 @@ export async function computeOvertimeBalanceBreakdown(
       monthLastDay,
       tz,
       carryOverIn: accumulatedCarryOver,
-      schedule: schedule as Record<string, unknown>,
+      schedule: monthSchedule as Record<string, unknown>,
       hireDate: employee!.hireDate,
       // Issue #447 (D-12) — the core clips the exit month at exitDate and zeroes every
       // complete month after it; this is what makes the live lifetime saldo stop at exit.
@@ -511,10 +572,8 @@ export async function computeOvertimeBalanceBreakdown(
   //
   // currentMonthOpenStart: the later of rangeStart and the current month's UTC start.
   // If rangeStart is already within the current month (no complete open months), the
-  // entire open range is the current partial month.
-
-  const currentMonthOpenStart =
-    currentMonthRange.start < rangeStart ? rangeStart : currentMonthRange.start;
+  // entire open range is the current partial month. (Issue #451: hoisted above, next to
+  // partialMonthSchedule's resolution — same variable, same value, one declaration.)
 
   // Current-month leave and absences (filtered from pre-fetched collections)
   const curLeave = allApprovedLeave.filter(
@@ -549,8 +608,10 @@ export async function computeOvertimeBalanceBreakdown(
   // fabricated `false` for a schedule type that has no roster proration.
   let rosterIncomplete: boolean | undefined;
 
-  // effectiveEnd < currentMonthOpenStart → no open partial month (nothing to add).
-  if (effectiveEnd >= currentMonthOpenStart) {
+  // partialMonthSchedule === null → no open partial month (nothing to add) — equivalent to
+  // the original `effectiveEnd < currentMonthOpenStart` gate, narrowed so TypeScript (and the
+  // reader) can see partialMonthSchedule is non-null for the rest of this block.
+  if (partialMonthSchedule !== null) {
     const { firstDay: curMonthFirstDay, lastDay: curMonthLastDay } = monthDayBounds(
       currentMonthRange.start,
       currentMonthRange.end,
@@ -572,7 +633,7 @@ export async function computeOvertimeBalanceBreakdown(
     // (no further roster to prorate against) — leaving rosterProration undefined makes the
     // core use the full period-bound C_net (already clipped to the exit date via sollRangeEnd),
     // identical to the close path.
-    if (scheduleType === "SHIFT_BASED" && stillEmployedAfterWindowEnd) {
+    if (partialMonthScheduleType === "SHIFT_BASED" && stillEmployedAfterWindowEnd) {
       const employeeBreakShape = {
         breakOver6hOverride: employee?.breakOver6hOverride ?? null,
         breakOver9hOverride: employee?.breakOver9hOverride ?? null,
@@ -668,7 +729,9 @@ export async function computeOvertimeBalanceBreakdown(
 
     // monthEnd: SHIFT_BASED → full-month end (C_net Soll); non-SHIFT → effectiveEnd
     // (partial-window expected). monthLastDay = effectiveEnd for shift/entry clamping.
-    const partialMonthEnd = scheduleType === "SHIFT_BASED" ? currentMonthRange.end : effectiveEnd;
+    // Issue #451 (D-04): decided by the PARTIAL MONTH'S OWN contract, not today's.
+    const partialMonthEnd =
+      partialMonthScheduleType === "SHIFT_BASED" ? currentMonthRange.end : effectiveEnd;
 
     const partialResult = closeEmployeeMonth({
       employeeId,
@@ -678,7 +741,9 @@ export async function computeOvertimeBalanceBreakdown(
       monthLastDay: effectiveEnd, // partial window end
       tz,
       carryOverIn: accumulatedCarryOver,
-      schedule: schedule as Record<string, unknown>,
+      // Issue #451 (D-04): the partial month's OWN contract (resolved above, dated to the
+      // current calendar month's midpoint) — not `schedule` (today's contract).
+      schedule: partialMonthSchedule as Record<string, unknown>,
       hireDate: employee!.hireDate,
       // Issue #447 (D-12) — the core clips the exit month at exitDate and zeroes every
       // complete month after it; this is what makes the live lifetime saldo stop at exit.

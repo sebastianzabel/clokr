@@ -51,6 +51,7 @@
     type ClockDayEntry,
   } from "$lib/dashboard/day-state";
   import { interpretClockOut, type ClockOutResponse } from "$lib/dashboard/clock-out-result"; // Phase 307 Plan 02 (D-04)
+  import { weekProgressDelta } from "$lib/dashboard/week-progress"; // Issue #451 (D-06)
   import { format, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
   import {
@@ -87,7 +88,15 @@
   // ── Types ──────────────────────────────────────────────────────────────────
   interface DashboardStats {
     today: { workedHours: number; entries: number };
-    week: { workedHours: number; targetHours: number };
+    // Issue #451 (D-06) — additive, through-yesterday pair (issue #438: today never counts);
+    // absent on an older cached response, in which case the tile degrades to the previous
+    // whole-week delta (see weekProgressDelta()'s own docblock).
+    week: {
+      workedHours: number;
+      targetHours: number;
+      workedToDateHours?: number;
+      targetToDateHours?: number;
+    };
     periodType?: "week" | "month";
     // Phase 49.1 — schedule type for per-model widget branching
     scheduleType?: "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
@@ -1554,7 +1563,7 @@
             />
           {/if}
           {#if stats.scheduleType === "FLEXTIME"}
-            {@const weekDiff = stats.week.workedHours - stats.week.targetHours}
+            {@const weekDiff = weekProgressDelta(stats.week)}
             <KPIStat
               label="Diese Woche Soll"
               value={fmtHours(stats.week.workedHours)}

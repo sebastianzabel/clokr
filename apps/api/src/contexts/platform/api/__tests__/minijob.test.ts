@@ -108,6 +108,25 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       });
       expect(schedRes.statusCode).toBe(200);
 
+      // Issue #451 (D-04/D-05): the live saldo now resolves EACH historical month's own
+      // contract (getEffectiveSchedule at that month's midpoint) instead of applying today's
+      // schedule retroactively — so this employee's pre-existing FIXED_SCHEDULE period
+      // (seeded hireDate 2024-01-01 through the switch above) carries a real, non-zero Soll
+      // with no worked entries, which is now correctly counted. An absolute `balanceHours > 0`
+      // assertion would therefore measure that unrelated historical deficit, not pure tracking
+      // — and would also be a time-bomb (the deficit grows with "today"). Capture a BASELINE
+      // before adding the 4h entry and assert the DELTA equals the worked hours instead, which
+      // isolates pure tracking's own behavior regardless of the contract history before it.
+      const { updateOvertimeAccount } = await import("../../../time-tracking/api/time-entries");
+      await updateOvertimeAccount(app, data.employee.id);
+      const baselineRes = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(baselineRes.statusCode).toBe(200);
+      const baselineBalanceHours = Number(JSON.parse(baselineRes.body).balanceHours);
+
       // Create a time entry 2 days ago (4h of work)
       const now = new Date();
       const twoDaysAgo = new Date(now);
@@ -133,7 +152,6 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       // Trigger overtime recalculation via POST time entry or direct call
       // Use the API to GET overtime which triggers update via updateOvertimeAccount
       // Actually we need to call updateOvertimeAccount — do it via the API endpoint
-      const { updateOvertimeAccount } = await import("../../../time-tracking/api/time-entries");
       await updateOvertimeAccount(app, data.employee.id);
 
       const overtimeRes = await app.inject({
@@ -143,9 +161,10 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       });
       expect(overtimeRes.statusCode).toBe(200);
       const overtimeBody = JSON.parse(overtimeRes.body);
-      // Pure tracking: balanceHours should reflect worked hours (4h), not 0
+      // Pure tracking: the 4h worked entry increases balanceHours by exactly 4h over the
+      // baseline captured above (not "balanceHours > 0" — see the Issue #451 note above).
       // Note: Prisma Decimal is serialized as string in JSON, so we cast to Number
-      expect(Number(overtimeBody.balanceHours)).toBeGreaterThan(0);
+      expect(Number(overtimeBody.balanceHours) - baselineBalanceHours).toBeCloseTo(4, 2);
 
       // Cleanup: soft-delete test entry (hard deletes violate audit-proof convention)
       await app.prisma.timeEntry.update({

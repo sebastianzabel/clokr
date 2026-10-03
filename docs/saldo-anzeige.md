@@ -91,23 +91,40 @@ intentionally the smaller, secondary one.
 The exported Stundennachweis (single-employee and company-wide monthly PDF, `apps/api/src/composition/reports.ts`
 
 - `apps/api/src/composition/pdf.ts`) and the Kalender-Header/Berichte screens do **not** show the lifetime
-  split described above — they show a single, MONTH-scoped Monats-Saldo
-  (`GET /overtime/month-saldo/:employeeId`, `computeMonthSaldo()`), which has no lifetime counterpart
-  to split against. Forcing a lifetime "Bestätigt" line into a month-scoped figure would fabricate a
-  key figure that was never there. Instead, this month-scoped figure is **relabelled** using the same
-  two words: a CLOSED month's value is labelled with `OVERTIME_LABEL_CONFIRMED`
-  ("Überstunden (Bestätigt)"), an OPEN month's with `OVERTIME_LABEL_FORECAST`
-  ("Überstunden (Prognose)") — both exported from `apps/api/src/composition/pdf.ts` so the wording cannot
-  drift between the single-employee and the company generator. `resolveReportOvertimeHours` in
-  `reports.ts` resolves which applies per employee per month; its `confirmed` flag is `true` only for
-  the branch that found a non-superseded `SaldoSnapshot` for the exact period (the one branch whose
-  figure is final).
+  split described above — they show a single, MONTH-scoped Monats-Saldo. Since Issue #451 (D-03),
+  `reports.ts` computes NO Soll/Ist/Überstunden of its own any more: the JSON row, the single-employee
+  PDF and the company-wide PDF all read the same result from
+  **`computeMonthReportFigures(app, employeeId, year, month)`**
+  (`contexts/working-time-account/month-saldo.ts`, exported via that context's `index.ts`) —
+  a CLOSED month returns the stored `SaldoSnapshot` verbatim (`basis: "snapshot"`), an OPEN,
+  fully-elapsed month returns the saldo core's own full-month figure (`basis: "fullMonth"`), and
+  the current running month returns the saldo core's to-date header (`basis: "toDate"` — SHIFT_BASED
+  always takes this branch, since its Soll is roster-based and the not-yet-worked roster must never
+  be counted). This closes Issue #451's two literal examples: a FIXED_SCHEDULE 40h Mon–Fri
+  employee's May 2026 report now shows `shouldHours` 144, not the old `{day}Hours`-walk's 168 (a
+  Monday public holiday was never deducted); a SHIFT_BASED employee's report shows the roster-based
+  Soll, not the placeholder walk's 208. This figure has no lifetime counterpart to split against —
+  forcing a lifetime "Bestätigt" line into a month-scoped figure would fabricate a key figure that
+  was never there. Instead, the figure is **relabelled** using the same two words: a CLOSED month is
+  labelled with `OVERTIME_LABEL_CONFIRMED` ("Überstunden (Bestätigt)"), an OPEN month with
+  `OVERTIME_LABEL_FORECAST` ("Überstunden (Prognose)") — both exported from `pdf.ts` so the wording
+  cannot drift between the single-employee and the company generator; `figures.labelled`/
+  `figures.basis === "snapshot"` from `computeMonthReportFigures` decides which applies.
+- **Verrechnung (D-03 page identity, Issue #451)**: whenever the working-time-account's own
+  reconciliation item is non-zero — an approved Überstundenausgleich withdrawal, or a SHIFT_BASED
+  § 615 BGB under-/overtime adjustment — both PDFs additionally print a `Verrechnung: <+/-x.xx> h`
+  line (single-employee summary box) or a `Verr. (h)` column (company table), fed by
+  `figures.balanceAdjustmentMinutes` from the SAME `computeMonthReportFigures` call, with an
+  explaining legend (`BALANCE_ADJUSTMENT_LABEL`/`BALANCE_ADJUSTMENT_LEGEND` in `pdf.ts`). The
+  printed arithmetic always closes: **Ist − Soll + Verrechnung = Überstunden**; when there is no
+  reconciliation item (`balanceAdjustmentHours == 0`), the simpler Ist − Soll = Überstunden holds
+  exactly and the line/column is omitted.
 
-One population is deliberately given **neither** label: a `MONTHLY_HOURS` schedule with no monthly
+One population is deliberately given **neither** overtime label: a `MONTHLY_HOURS` schedule with no monthly
 budget (`monthlyHours` null/0) has no Soll target at all — the screen already shows a dedicated
 „Keine Soll-Vorgabe" state for it, and its exported figure never moves. Labelling it "Prognose"
 would be a fabrication (there is nothing being forecast) and a screen-vs-export contradiction, so
-`resolveReportOvertimeHours` resolves `labelled: false` for this population and the PDF renderer
+`computeMonthReportFigures` resolves `labelled: false` for this population and the PDF renderer
 omits the label — and, on the company table, the asterisk — entirely for it.
 
 Because the company-wide PDF lists many employees at once and month-close happens **per employee**,

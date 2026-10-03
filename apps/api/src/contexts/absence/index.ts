@@ -200,18 +200,31 @@ export {
   REGULAR_ENTITLEMENT_REASON_EXIT, // Issue #447 (D-07) — the matching audit reason
   recalcVacationEntitlementsForContractChange, // Issue #450 (D-06/D-08) — Erweiterung, additive; consumed by platform/api/settings.ts
   REGULAR_ENTITLEMENT_REASON_CONTRACT_CHANGE, // Issue #450 (D-06/D-08) — Erweiterung, additive; consumed by platform/api/settings.ts
+  leaveDaysByCodeWithin, // Issue #451 (D-01) — Erweiterung, additive; consumed by composition/reports.ts (the DATEV export)
+  leaveRequestDaysWithin, // Issue #451 (D-02) — Erweiterung, additive; consumed by composition/reports.ts (Urlaubsliste / Urlaubs-PDF list)
 } from "./leave-days";
+export type { LeaveDaysForCode } from "./leave-days"; // Issue #451 (D-01)
 export { checkJArbSchG } from "./jarbschg";
 export { buildSlotOverrideHierarchy, resolveBsTagSlot } from "./bs-slot-resolver";
 export type { WeekContext } from "./bs-slot-resolver";
 export { selfHealUsedDays, loadVacationTypeMeta } from "./leave-self-heal";
 export { karenzOverrunFromRequests } from "./find-karenz-overrun-days";
-// Closes the one production dynamic import() no-restricted-imports cannot see
-// (composition/reports.ts previously did `await import("./plugins/carryover-warning")`).
-// carryoverWarningPlugin from the same module is already registered from app.ts at boot,
-// so the module is loaded eagerly in every running process regardless — nothing here needed
-// the lazy form, so it becomes a plain static import like everything else on this surface.
-export { runCarryoverWarningOnce } from "./plugins/carryover-warning";
+// `runCarryoverWarningOnce` is deliberately NOT re-exported here (Issue #451, D-08, 451-08 cycle
+// fix — revises the Phase 101B wave 7 note this replaced). It now imports `facade/vacation-balance.ts`,
+// which imports the already-in-cycle `leave-days.ts` — an index.ts re-export of it would close
+// index.ts -> this re-export -> carryover-warning.ts -> facade/vacation-balance.ts -> leave-days.ts
+// -> ... -> index.ts, pulling both modules into the pre-existing absence/scheduling/time-tracking/
+// working-time-account import cycle (measured: 22 -> 24). `composition/reports.ts`, the only
+// foreign caller, now reaches it via the `app.runCarryoverWarningOnce()` Fastify decoration
+// `plugins/carryover-warning.ts` registers — see that file's module header. `app.ts` already
+// imports `carryoverWarningPlugin` directly (the documented composition-root exception), so this
+// carries no new cross-context import edge.
+//
+// `facade/vacation-balance.ts`'s own `vacationBalanceForRow`/`getVacationBalance`/`VacationBalance`
+// are, for the identical reason, NOT re-exported here either — `plugins/vacation-balance-decorate.ts`
+// (registered directly from app.ts, same composition-root exception) hands them to
+// composition/dashboard.ts and composition/reports.ts as `app.getVacationBalance()` /
+// `app.vacationBalanceForRow()` instead. See that file's module header.
 
 // Two more symbols from ./leave-type and ./vacation-calc are deliberately NOT re-exported here:
 // their only foreign callers are the two permanent register sites (E-8: platform's test

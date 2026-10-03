@@ -91,6 +91,7 @@ import {
   syncExitYearVacationEntitlement, // Issue #447 (D-06/D-07) — exit-year row sync, GET-time heal
   exitVacationOverUseWarning, // Issue #447 (D-08) — the one over-use warning string (approval + GET)
 } from "../leave-days"; // Issue #445 — own statement: PR #437 edits the block above
+import { vacationBalanceForRow, type VacationBalance } from "../facade/vacation-balance"; // Issue #451 (D-07) — the ONE Resturlaub function, additive on the VACATION row of GET /entitlements
 import { writeEntitlementAudit } from "../entitlement-audit"; // Issue #445
 import { revalidateLeaveCancellationEntries } from "../../time-tracking"; // Phase 100B Plan 08 — T6
 import {
@@ -3898,17 +3899,35 @@ export async function leaveRoutes(app: FastifyInstance) {
       // Issue #445 (D-13): effectiveCarryOverDays() is async (it may need to count the days
       // taken before the deadline), so it is resolved here, in a loop, BEFORE the synchronous
       // rows.map() below — the response field's name and meaning are unchanged.
+      //
+      // Issue #451 (D-07): for the VACATION row(s), the facade's vacationBalanceForRow computes
+      // effectiveCarryOverDays internally with the SAME inputs — calling effectiveCarryOverDays
+      // a second time here for those rows would re-derive the identical number from two call
+      // sites, which is exactly how the pre-#451 duplication this facade replaces could silently
+      // diverge. So the VACATION row's `effectiveCarryByRowId` entry is taken FROM the facade
+      // result instead; every other (non-VACATION) row is unaffected and keeps calling
+      // effectiveCarryOverDays directly, as before.
       const effectiveCarryByRowId = new Map<string, number>();
+      const vacationBalanceByRowId = new Map<string, VacationBalance>();
       for (const r of rows) {
-        effectiveCarryByRowId.set(
-          r.id,
-          await effectiveCarryOverDays(
-            app.prisma,
-            { ...r, tenantId },
-            now,
-            warnedEntitlementIds.has(r.id),
-          ),
-        );
+        const hinweisIssued = warnedEntitlementIds.has(r.id);
+        if (r.leaveType.code === "VACATION") {
+          const balance = await vacationBalanceForRow(app.prisma, r, tenantId, now, {
+            hinweisIssued,
+            employee: {
+              firstName: employee.firstName,
+              lastName: employee.lastName,
+              exitDate: employeeExitDate,
+            },
+          });
+          vacationBalanceByRowId.set(r.id, balance);
+          effectiveCarryByRowId.set(r.id, balance.carriedOverEffectiveDays);
+        } else {
+          effectiveCarryByRowId.set(
+            r.id,
+            await effectiveCarryOverDays(app.prisma, { ...r, tenantId }, now, hinweisIssued),
+          );
+        }
       }
 
       // typeCode + effektiven Resturlaub + anteiligen Urlaubsanspruch im Response markieren
@@ -3971,6 +3990,12 @@ export async function leaveRoutes(app: FastifyInstance) {
           // `provisionalLeaveRequests` query above. Always 0 for an employee/year with no
           // provisional requests; every other field on this response is unchanged.
           provisionalUsedDays,
+          // Issue #451 (D-07) — additive: the facade's full Resturlaub breakdown, VACATION row
+          // only (null for every other row). `remainingDays` equals the same
+          // `totalDays + effectiveCarryOverDays - usedDays` formula the /leave page's own
+          // Resturlaub display already computes (apps/web/src/lib/leave/vacation-summary.ts,
+          // Phase 114 oracle — unchanged by this plan).
+          vacationBalance: isVacationRow ? (vacationBalanceByRowId.get(r.id) ?? null) : null,
           // D-31: die Gutschrift erscheint als eigene, erklärte Bewegungszeile — ein
           // stillschweigend höherer Restanspruch wirkt wie ein Fehler und erzeugt Rückfragen.
           section9Movements: creditsForYear.map((c) => ({

@@ -298,3 +298,124 @@ describe("Issue #445 finding 5 — protected carry-over deadline with a document
     expect(res.statusCode).toBe(400);
   });
 });
+
+// Issue #451 / #445 addendum (D-09) — the GET side of the round trip. The PUT tests above
+// already prove the row is written correctly; these prove the admin UI's load path (the
+// Urlaub tab reads via GET /settings/vacation/:employeeId) actually sees it.
+describe("GET /settings/vacation returns carryOverReason/carryOverNote (Issue #451 D-09)", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+
+  async function mkEmployeeD09(label: string): Promise<{ employeeId: string }> {
+    const uid = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const user = await app.prisma.user.create({
+      data: {
+        email: `cors-d09-${label}-${uid}@test.de`,
+        passwordHash: "x",
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const employee = await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        employeeNumber: `CORS-D09-${label}-${uid}`,
+        firstName: "T",
+        lastName: "T",
+        hireDate: new Date(Date.UTC(2024, 0, 1)),
+      },
+    });
+    await app.prisma.workSchedule.create({
+      data: {
+        employeeId: employee.id,
+        type: "FIXED_SCHEDULE",
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date(Date.UTC(2024, 0, 1)),
+      },
+    });
+    await app.prisma.overtimeAccount.create({ data: { employeeId: employee.id, balanceHours: 0 } });
+    await app.prisma.leaveEntitlement.create({
+      data: {
+        employeeId: employee.id,
+        leaveTypeId: data.vacationType.id,
+        year: 2027,
+        totalDays: 30,
+        usedDays: 0,
+        carriedOverDays: 3,
+      },
+    });
+    return { employeeId: employee.id };
+  }
+
+  const putVacationD09 = (employeeId: string, body: Record<string, unknown>) =>
+    app.inject({
+      method: "PUT",
+      url: `/api/v1/settings/vacation/${employeeId}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: body,
+    });
+
+  const getVacationD09 = (employeeId: string, year = 2027) =>
+    app.inject({
+      method: "GET",
+      url: `/api/v1/settings/vacation/${employeeId}?year=${year}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "cors-d09");
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  it("returns the stored reason and note after a PUT sets them", async () => {
+    const { employeeId } = await mkEmployeeD09("a");
+
+    const putRes = await putVacationD09(employeeId, {
+      year: 2027,
+      totalDays: 30,
+      carriedOverDays: 3,
+      carryOverReason: "MATERNITY",
+      carryOverNote: "Mutterschutz bis 15.02.",
+      carryOverDeadline: "2028-06-30",
+    });
+    expect(putRes.statusCode, `PUT must succeed: ${putRes.body}`).toBe(200);
+
+    const getRes = await getVacationD09(employeeId);
+    expect(getRes.statusCode).toBe(200);
+    const body = getRes.json() as {
+      carryOverReason: string | null;
+      carryOverNote: string | null;
+    };
+    expect(body.carryOverReason).toBe("MATERNITY");
+    expect(body.carryOverNote).toBe("Mutterschutz bis 15.02.");
+  });
+
+  it("returns carryOverReason null and carryOverNote null for a row without a documented reason", async () => {
+    const { employeeId } = await mkEmployeeD09("b");
+
+    const getRes = await getVacationD09(employeeId);
+    expect(getRes.statusCode).toBe(200);
+    const body = getRes.json() as {
+      carryOverReason: string | null;
+      carryOverNote: string | null;
+    };
+    expect(body.carryOverReason).toBeNull();
+    expect(body.carryOverNote).toBeNull();
+  });
+});
