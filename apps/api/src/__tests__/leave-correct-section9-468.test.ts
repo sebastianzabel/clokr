@@ -647,4 +647,309 @@ describe("Leave correction and § 9 credits (Issue #468, D-04/A-3)", () => {
     }>;
     expect(section9ListBody.some((r) => r.id === creditId && r.status === "SUPERSEDED")).toBe(true);
   });
+
+  // ── Issue #468 code review (2026-10-03): CR-01/WR-02/WR-03 regression guards ────────────
+
+  /** Seed a MONTHLY superseded:false SaldoSnapshot = "month is closed/locked" (same fixture
+   * shape as leave-correct.test.ts's own `lockMonth`). */
+  async function lockMonth(employeeId: string, year: number, month: number) {
+    await app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId,
+        periodType: "MONTHLY",
+        periodStart: new Date(Date.UTC(year, month - 1, 1)),
+        periodEnd: new Date(Date.UTC(year, month, 0)),
+        workedMinutes: 0,
+        expectedMinutes: 0,
+        balanceMinutes: 0,
+        carryOver: 0,
+        closedAt: new Date(),
+      },
+    });
+  }
+
+  async function getEntitlementUsed(leaveTypeId: string, year: number): Promise<number> {
+    const e = await app.prisma.leaveEntitlement.findFirst({
+      where: { employeeId: data.employee.id, leaveTypeId, year },
+    });
+    return Number(e?.usedDays ?? -999);
+  }
+
+  it("CR-01: a CONFIRMED § 9 credit against a non-VACATION (UNPAID) leave request is clawed back exactly once when /correct moves it fully outside the new range", async () => {
+    const unpaid = await createRequest({
+      type: "UNPAID",
+      startDate: "2029-06-01",
+      endDate: "2029-06-12",
+    });
+    expect(unpaid.statusCode).toBe(201);
+    const unpaidId = JSON.parse(unpaid.body).id as string;
+    await approve(unpaidId);
+
+    const unpaidType = await app.prisma.leaveType.findFirst({
+      where: { tenantId: data.tenant.id, code: "UNPAID" },
+    });
+    expect(unpaidType).not.toBeNull();
+    await seedEntitlementYears(app, {
+      employeeId: data.employee.id,
+      leaveTypeId: unpaidType!.id,
+      years: [2029],
+    });
+    // UNPAID is entitlement-neutral on approval (leave.ts only deducts for VACATION), so a
+    // freshly-seeded row starts at usedDays=0 — give it a non-zero baseline so the claw-back
+    // below is observable instead of landing on an already-correct 0.
+    const unpaidEnt = await app.prisma.leaveEntitlement.findFirst({
+      where: { employeeId: data.employee.id, leaveTypeId: unpaidType!.id, year: 2029 },
+    });
+    await app.prisma.leaveEntitlement.update({
+      where: { id: unpaidEnt!.id },
+      data: { usedDays: 5 },
+    });
+
+    const sick = await createRequest({
+      type: "SICK",
+      startDate: "2029-06-10",
+      endDate: "2029-06-12",
+    });
+    expect(sick.statusCode).toBe(201);
+    const sickId = JSON.parse(sick.body).id as string;
+    await approve(sickId);
+    const credit = await app.prisma.section9Credit.findFirst({ where: { sickRequestId: sickId } });
+    expect(credit).not.toBeNull();
+    const creditId = credit!.id;
+
+    const confirmRes = await confirmSection9(creditId, {
+      attestValidFrom: "2029-06-10",
+      attestValidTo: "2029-06-12",
+    });
+    expect(confirmRes.statusCode).toBe(200);
+    const creditedDays = Number(JSON.parse(confirmRes.body).creditedDays);
+    expect(creditedDays).toBeGreaterThan(0);
+    expect(await getEntitlementUsed(unpaidType!.id, 2029)).toBe(5 - creditedDays);
+
+    // CR-01: shorten the UNPAID request's tail so the credit's range is now fully outside.
+    const correctRes = await correct(unpaidId, {
+      startDate: "2029-06-01",
+      endDate: "2029-06-09",
+    });
+    expect(correctRes.statusCode).toBe(200);
+
+    const creditAfter = await app.prisma.section9Credit.findUnique({ where: { id: creditId } });
+    expect(creditAfter?.status).toBe("SUPERSEDED");
+
+    // Before the fix: the undo was gated on leaveType.code === "VACATION" and never ran for
+    // UNPAID, permanently stranding the give-back at (5 - creditedDays) — a silent, permanent
+    // over-credit. The fix claws it back exactly once, restoring the pre-confirm baseline.
+    expect(await getEntitlementUsed(unpaidType!.id, 2029)).toBe(5);
+  });
+
+  it("CR-01: a CONFIRMED § 9 credit against a non-VACATION (UNPAID) leave request, partially clipped by /correct, is undone and re-credited for exactly the clipped remainder", async () => {
+    const unpaid = await createRequest({
+      type: "UNPAID",
+      startDate: "2029-07-01",
+      endDate: "2029-07-12",
+    });
+    expect(unpaid.statusCode).toBe(201);
+    const unpaidId = JSON.parse(unpaid.body).id as string;
+    await approve(unpaidId);
+
+    const unpaidType = await app.prisma.leaveType.findFirst({
+      where: { tenantId: data.tenant.id, code: "UNPAID" },
+    });
+    await seedEntitlementYears(app, {
+      employeeId: data.employee.id,
+      leaveTypeId: unpaidType!.id,
+      years: [2029],
+    });
+    const unpaidEnt = await app.prisma.leaveEntitlement.findFirst({
+      where: { employeeId: data.employee.id, leaveTypeId: unpaidType!.id, year: 2029 },
+    });
+    await app.prisma.leaveEntitlement.update({
+      where: { id: unpaidEnt!.id },
+      data: { usedDays: 5 },
+    });
+
+    const sick = await createRequest({
+      type: "SICK",
+      startDate: "2029-07-10",
+      endDate: "2029-07-12",
+    });
+    expect(sick.statusCode).toBe(201);
+    const sickId = JSON.parse(sick.body).id as string;
+    await approve(sickId);
+    const credit = await app.prisma.section9Credit.findFirst({ where: { sickRequestId: sickId } });
+    const creditId = credit!.id;
+    const confirmRes = await confirmSection9(creditId, {
+      attestValidFrom: "2029-07-10",
+      attestValidTo: "2029-07-12",
+    });
+    expect(confirmRes.statusCode).toBe(200);
+    const creditedDays = Number(JSON.parse(confirmRes.body).creditedDays);
+    expect(creditedDays).toBeGreaterThan(0);
+    const usedAfterConfirm = await getEntitlementUsed(unpaidType!.id, 2029);
+    expect(usedAfterConfirm).toBe(5 - creditedDays);
+
+    // Shorten the tail by one day — the credit (07-10..07-12) now only PARTIALLY overlaps.
+    const correctRes = await correct(unpaidId, {
+      startDate: "2029-07-01",
+      endDate: "2029-07-11",
+    });
+    expect(correctRes.statusCode).toBe(200);
+
+    const originalAfter = await app.prisma.section9Credit.findUnique({ where: { id: creditId } });
+    expect(originalAfter?.status).toBe("SUPERSEDED");
+    const replacements = await app.prisma.section9Credit.findMany({
+      where: { supersedesId: creditId },
+    });
+    expect(replacements).toHaveLength(1);
+    const clippedDays = Number(replacements[0].creditedDays);
+    expect(clippedDays).toBeGreaterThan(0);
+    expect(clippedDays).toBeLessThan(creditedDays); // strictly the clipped part, not the whole
+
+    // Before the fix: Step 10b's re-credit was ALSO gated on vacationTypeCode === "VACATION",
+    // so for UNPAID the clip would undo the full original credit (claw-back) but never
+    // re-apply the still-covered remainder, leaving the ledger PERMANENTLY short by
+    // `clippedDays`. The fix re-credits exactly the clipped part: net movement is
+    // (+creditedDays undo) - (clippedDays re-credit), i.e. usedDays ends up HIGHER than right
+    // after confirm by (creditedDays - clippedDays) — never losing the clipped days.
+    const expectedUsed = usedAfterConfirm + creditedDays - clippedDays;
+    expect(await getEntitlementUsed(unpaidType!.id, 2029)).toBe(expectedUsed);
+  });
+
+  it("WR-03: a § 9 ledger write that touches a locked month OUTSIDE the correction's own delta-lock range is blocked (409), not silently booked", async () => {
+    // Vacation spans April into May; the sick/credit range straddles the same boundary
+    // (04-28..05-02). Shrinking the vacation's tail to end in April removes only MAY days from
+    // the delta-lock's own symmetric diff — April stays in the retained intersection and is
+    // NOT type/halfDay-changed, so computeAffectedMonths above never flags April. But Step 8b's
+    // ledger UNDO always targets the credit's OWN creditedStart (04-28) through creditedEnd
+    // (05-02) — which includes April days the delta-lock never checked. Locking April alone
+    // (May stays open) must still block the correction.
+    await seedEntitlementYears(app, {
+      employeeId: data.employee.id,
+      leaveTypeId: data.vacationType.id,
+      years: [2029],
+    });
+
+    const vac = await createRequest({
+      type: "VACATION",
+      startDate: "2029-04-20",
+      endDate: "2029-05-10",
+    });
+    expect(vac.statusCode).toBe(201);
+    const vacId = JSON.parse(vac.body).id as string;
+    await approve(vacId);
+
+    const sick = await createRequest({
+      type: "SICK",
+      startDate: "2029-04-28",
+      endDate: "2029-05-02",
+    });
+    expect(sick.statusCode).toBe(201);
+    const sickId = JSON.parse(sick.body).id as string;
+    await approve(sickId);
+    const credit = await app.prisma.section9Credit.findFirst({ where: { sickRequestId: sickId } });
+    expect(credit).not.toBeNull();
+    const creditId = credit!.id;
+
+    const confirmRes = await confirmSection9(creditId, {
+      attestValidFrom: "2029-04-28",
+      attestValidTo: "2029-05-02",
+    });
+    expect(confirmRes.statusCode).toBe(200);
+    const usedAfterConfirm = await getEntitlementUsed(data.vacationType.id, 2029);
+
+    // Lock April only AFTER create/approve/confirm — the pre-468 closed-month TRANSITION
+    // guard (Issue #446) blocks CREATING/APPROVING a request that touches an already-closed
+    // month, which would reject the fixture setup above for the wrong reason.
+    await lockMonth(data.employee.id, 2029, 4);
+
+    // Shrink the vacation's tail into April only — removes May 1-10 (delta-lock sees MAY as
+    // affected, never April), but the credit's own creditedStart (04-28) is in April.
+    const correctRes = await correct(vacId, { startDate: "2029-04-20", endDate: "2029-04-30" });
+    expect(correctRes.statusCode).toBe(409);
+    expect(JSON.parse(correctRes.body).error).toBe("Gesperrter Monat — Korrektur nicht möglich");
+
+    // Nothing was written: the vacation request, the credit and the ledger are all unchanged.
+    const vacAfter = await app.prisma.leaveRequest.findUnique({ where: { id: vacId } });
+    expect(vacAfter?.endDate.toISOString().slice(0, 10)).toBe("2029-05-10");
+    const creditAfter = await app.prisma.section9Credit.findUnique({ where: { id: creditId } });
+    expect(creditAfter?.status).toBe("CONFIRMED");
+    expect(await getEntitlementUsed(data.vacationType.id, 2029)).toBe(usedAfterConfirm);
+  });
+
+  it("WR-02: a /correct call racing a concurrent writer that already superseded the same credit is rejected (409), never double-undoing the ledger", async () => {
+    const vac = await createRequest({
+      type: "VACATION",
+      startDate: "2029-08-01",
+      endDate: "2029-08-12",
+    });
+    expect(vac.statusCode).toBe(201);
+    const vacId = JSON.parse(vac.body).id as string;
+    await approve(vacId);
+
+    const sick = await createRequest({
+      type: "SICK",
+      startDate: "2029-08-10",
+      endDate: "2029-08-12",
+    });
+    expect(sick.statusCode).toBe(201);
+    const sickId = JSON.parse(sick.body).id as string;
+    await approve(sickId);
+    const credit = await app.prisma.section9Credit.findFirst({ where: { sickRequestId: sickId } });
+    const creditId = credit!.id;
+    const confirmRes = await confirmSection9(creditId, {
+      attestValidFrom: "2029-08-10",
+      attestValidTo: "2029-08-12",
+    });
+    expect(confirmRes.statusCode).toBe(200);
+    const usedAfterConfirm = await getEntitlementUsed(data.vacationType.id, 2029);
+
+    // Deterministic reproduction of the race (Issue #468 review, WR-02): an interactive
+    // transaction holds an UNCOMMITTED UPDATE lock on the credit row (status -> SUPERSEDED,
+    // simulating a concurrent writer that reached Step 8b first) while `/correct` is fired —
+    // `touchingSection9Credits`'s own pre-transaction read runs OUTSIDE any transaction
+    // (plain SELECT, READ COMMITTED) and therefore still sees the pre-lock CONFIRMED status,
+    // classifying the credit for supersede exactly as the real race requires. `/correct`'s own
+    // `updateMany` then BLOCKS on the same row lock; releasing the lock (committing the
+    // concurrent writer) lets it proceed and re-evaluate `status: { not: "SUPERSEDED" }`
+    // against the now-current (SUPERSEDED) value — 0 rows match, so the fix's optimistic-lock
+    // guard throws before `deductVacationDays` ever runs a second time.
+    let releaseLock: () => void;
+    const lockHeld = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const concurrentWriterTx = app.prisma.$transaction(async (tx) => {
+      await tx.section9Credit.update({ where: { id: creditId }, data: { status: "SUPERSEDED" } });
+      await lockHeld; // hold the row lock open until released below
+    });
+
+    // Give the concurrent writer's UPDATE time to acquire the row lock before /correct's own
+    // pre-transaction read runs.
+    await new Promise((r) => setTimeout(r, 50));
+
+    const correctPromise = correct(sickId, { startDate: "2029-08-20", endDate: "2029-08-20" });
+
+    // Give /correct time to run its pre-transaction read and reach (and block on) the same
+    // row's UPDATE inside its own transaction.
+    await new Promise((r) => setTimeout(r, 50));
+
+    releaseLock!();
+    await concurrentWriterTx;
+
+    const correctRes = await correctPromise;
+    expect(correctRes.statusCode).toBe(409);
+    expect(JSON.parse(correctRes.body).error).toBe(
+      "Gleichzeitige Änderung der § 9-Gutschrift — bitte erneut versuchen.",
+    );
+
+    // Nothing from the LOSING /correct call was applied: the credit stays exactly as the
+    // concurrent writer left it (SUPERSEDED), the sick request's dates are unchanged, and —
+    // the actual bug WR-02 fixes — the ledger undo ran NEITHER zero NOR twice via /correct;
+    // the concurrent writer itself never touched the ledger (it only flipped status, mirroring
+    // "a second replacement row is not the issue — a second unconditional ledger write is").
+    const creditAfter = await app.prisma.section9Credit.findUnique({ where: { id: creditId } });
+    expect(creditAfter?.status).toBe("SUPERSEDED");
+    const sickAfter = await app.prisma.leaveRequest.findUnique({ where: { id: sickId } });
+    expect(sickAfter?.endDate.toISOString().slice(0, 10)).toBe("2029-08-12");
+    expect(await getEntitlementUsed(data.vacationType.id, 2029)).toBe(usedAfterConfirm);
+  });
 });
