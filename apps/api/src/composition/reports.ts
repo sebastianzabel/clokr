@@ -33,7 +33,6 @@ import {
   getExpiringCarryOver,
   getEntitlementById,
   getConfirmedSection9Credits,
-  getPendingLeaveDaysInYear, // Phase 100B Plan 13 — A7c
   selfHealUsedDays,
   loadVacationTypeMeta,
   isSickLeaveTypeCode,
@@ -1023,8 +1022,9 @@ export async function reportRoutes(app: FastifyInstance) {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
     preHandler: requirePermission("report:read:ZUGEWIESEN"),
     handler: async (req) => {
+      const now = new Date();
       const { year } = req.query as { year: string };
-      const y = parseInt(year ?? new Date().getFullYear().toString());
+      const y = parseInt(year ?? now.getFullYear().toString());
 
       const allEntitlements = await listEntitlementsForYear(app.prisma, req.user.tenantId, y);
 
@@ -1092,38 +1092,58 @@ export async function reportRoutes(app: FastifyInstance) {
       };
       await selfHealUsedDays(app.prisma, entitlements, vacMeta);
 
-      // Bulk fetch PENDING leave requests for the same year + tenant (NO per-entitlement loop)
-      // Phase 100B Plan 13 — A7c, contexts/absence facade.
-      const pending = await getPendingLeaveDaysInYear(app.prisma, req.user.tenantId, y);
+      // Issue #451 (D-07) — ONE bulk AuditLog query for the Hinweis flag, the GET /entitlements
+      // pattern (apps/api/src/contexts/absence/api/leave.ts) — no N+1 inside the facade loop
+      // below.
+      const warnedEntitlementIds = new Set(
+        (
+          await app.prisma.auditLog.findMany({
+            where: {
+              action: "CARRYOVER_WARNED",
+              entity: "LeaveEntitlement",
+              entityId: { in: entitlements.map((e) => e.id) },
+            },
+            select: { entityId: true },
+            distinct: ["entityId"],
+          })
+        ).map((al) => al.entityId!),
+      );
 
-      // Build a lookup map keyed by "employeeId:leaveTypeId" → summed pending days
-      const pendingMap = new Map<string, number>();
-      for (const row of pending) {
-        const key = `${row.employeeId}:${row.leaveTypeId}`;
-        pendingMap.set(key, (pendingMap.get(key) ?? 0) + Number(row.days));
-      }
-
-      const realRows = entitlements.map((e) => ({
-        employee: e.employee,
-        leaveType: e.leaveType,
-        year: e.year,
-        totalDays: Number(e.totalDays),
-        carriedOverDays: Number(e.carriedOverDays),
-        usedDays: Number(e.usedDays),
-        remainingDays: Number(e.totalDays) + Number(e.carriedOverDays) - Number(e.usedDays),
-        pendingDays: pendingMap.get(`${e.employeeId}:${e.leaveTypeId}`) ?? 0,
-        missingEntitlement: false as const,
-        // Issue #445 (coordinator deviation from CONTEXT D-05) — selfHealUsedDays above sets
-        // needsReview on a VACATION row whose zero placeholder was left unhealed because it
-        // was ambiguous (see isAmbiguousRegularEntitlement in contexts/absence/leave-days.ts).
-        // The flag AND the warning string are both computed in the absence context — this
-        // composition layer carries no business rule (CLAUDE.md, ADR 0002 Entscheidung 9).
-        entitlementWarning: vacationEntitlementWarning({
-          leaveTypeCode: e.leaveType.code,
+      // Issue #451 (D-07) — the ONE Resturlaub facade, sequential (its own `pendingDays`
+      // aggregate replaces the old bulk getPendingLeaveDaysInYear query below); `remainingDays`
+      // and `pendingDays` come from it, plus the additive carriedOverEffectiveDays/
+      // carriedOverExpiredDays/exitReductionDays/atRiskDays fields.
+      const realRows = [];
+      for (const e of entitlements) {
+        const balance = await app.vacationBalanceForRow(e, req.user.tenantId, now, {
+          hinweisIssued: warnedEntitlementIds.has(e.id),
+        });
+        realRows.push({
+          employee: e.employee,
+          leaveType: e.leaveType,
           year: e.year,
-          needsReview: (e as { needsReview?: boolean }).needsReview,
-        }),
-      }));
+          totalDays: Number(e.totalDays),
+          carriedOverDays: Number(e.carriedOverDays),
+          usedDays: Number(e.usedDays),
+          remainingDays: balance.remainingDays,
+          pendingDays: balance.pendingDays,
+          carriedOverEffectiveDays: balance.carriedOverEffectiveDays,
+          carriedOverExpiredDays: balance.carriedOverExpiredDays,
+          exitReductionDays: balance.exitReductionDays,
+          atRiskDays: balance.atRiskDays,
+          missingEntitlement: false as const,
+          // Issue #445 (coordinator deviation from CONTEXT D-05) — selfHealUsedDays above sets
+          // needsReview on a VACATION row whose zero placeholder was left unhealed because it
+          // was ambiguous (see isAmbiguousRegularEntitlement in contexts/absence/leave-days.ts).
+          // The flag AND the warning string are both computed in the absence context — this
+          // composition layer carries no business rule (CLAUDE.md, ADR 0002 Entscheidung 9).
+          entitlementWarning: vacationEntitlementWarning({
+            leaveTypeCode: e.leaveType.code,
+            year: e.year,
+            needsReview: (e as { needsReview?: boolean }).needsReview,
+          }),
+        });
+      }
 
       // Issue #416 (AC-3/AC-4): active tenant employees (same Stammsalon scope as the
       // entitlements query above) with NO VACATION-coded entitlement row for `y` are surfaced as

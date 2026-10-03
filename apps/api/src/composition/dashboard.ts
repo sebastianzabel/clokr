@@ -50,7 +50,6 @@ import {
   type OvertimeBalanceBreakdown,
 } from "../contexts/working-time-account"; // Phase 100B Plan 06 — W8/W9/W10; Plan 07 — W5/W6; Phase 101B
 import {
-  getEntitlementsForEmployee, // Phase 100B Plan 10 — A13
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
   getActiveLeaveOverlapping, // Phase 100B Plan 13 — A2 (Issue #446 D-02: A1 retired, merged into A2)
   getCalendarLeaveOverlapping, // Phase 100B Plan 13 — A3
@@ -365,24 +364,21 @@ export async function dashboardRoutes(app: FastifyInstance) {
       let vacationResult: { remaining: number; total: number; used: number } | null = null;
 
       if (canReadOwnVacation) {
+        // Issue #451 (D-07) — the ONE Resturlaub facade in contexts/absence/facade/vacation-balance.ts,
+        // reached via the Fastify decoration below (not an index.ts re-export — see
+        // plugins/vacation-balance-decorate.ts's module header, 451-08 cycle fix) so every
+        // reader of "how much vacation does this employee have left" agrees. No VACATION row for
+        // the year → null, same `{ remaining: 0, total: 0, used: 0 }` shape as before.
         const yearNow = parseInt(dateStrInTz(now, tz).slice(0, 4));
-        const entitlements = await getEntitlementsForEmployee(
-          app.prisma,
-          employeeId,
-          tenantId,
-          yearNow,
-        );
-        const totalVacation = entitlements.reduce(
-          (sum, e) => sum + Number(e.totalDays) + Number(e.carriedOverDays),
-          0,
-        );
-        const usedVacation = entitlements.reduce((sum, e) => sum + Number(e.usedDays), 0);
+        const balance = await app.getVacationBalance(employeeId, tenantId, yearNow, now);
 
-        vacationResult = {
-          remaining: totalVacation - usedVacation,
-          total: totalVacation,
-          used: usedVacation,
-        };
+        vacationResult = balance
+          ? {
+              remaining: balance.remainingDays,
+              total: balance.entitlementDays + balance.carriedOverEffectiveDays,
+              used: balance.usedDays,
+            }
+          : { remaining: 0, total: 0, used: 0 };
       }
 
       return {
