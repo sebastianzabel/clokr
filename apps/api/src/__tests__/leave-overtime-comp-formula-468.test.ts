@@ -324,6 +324,147 @@ describe("Überstundenausgleich — ONE formula for gate, booking and preview (I
     expect(reloaded?.overtimeCompMinutes).toBe(expectedMinutes);
   });
 
+  // Phase 468-08 (post-merge, Issue #433): MONTHLY_HOURS now prices via the real Ø-Methode rate
+  // (monthlyHoursMinutesCore), not the pre-merge hard-0. June 2027 has 22 Mo–Fr workdays —
+  // round(80h×60×1/22) = 218 min, booked as -3.63h (218/60 to 2 decimals, Decimal(7,2) column).
+  it("MONTHLY_HOURS: a single Tuesday (June 2027, 22 Mo–Fr workdays) costs 218 min, booked as -3.63h (Phase 433 Ø-Methode)", async () => {
+    const leave = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: m1EmployeeId,
+        leaveTypeId: overtimeCompTypeId,
+        startDate: new Date("2027-06-08"), // Tuesday, no NI holiday
+        endDate: new Date("2027-06-08"),
+        days: 1,
+        status: "PENDING",
+      },
+    });
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${leave.id}/review`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { status: "APPROVED" },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(JSON.parse(res.body).overtimeCompMinutes).toBe(218);
+
+    const acct = await app.prisma.overtimeAccount.findUnique({
+      where: { employeeId: m1EmployeeId },
+    });
+    const tx = await app.prisma.overtimeTransaction.findFirst({
+      where: { overtimeAccountId: acct!.id },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(tx?.type).toBe("REDUCTION");
+    expect(Number(tx?.hours)).toBe(-3.63);
+  });
+
+  it("MONTHLY_HOURS: GET /hours-preview for the same Tuesday reports minutesNeeded 218", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/hours-preview?startDate=2027-06-15&endDate=2027-06-15&employeeId=${m1EmployeeId}`, // different Tuesday, previous one already booked
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(JSON.parse(res.body).minutesNeeded).toBe(218);
+  });
+
+  // Phase 468-08: a MONTHLY_HOURS row with an EMPTY workDays falls through to the tenant's
+  // `defaultWorkDays` tier (Phase 433, D-05) — proves `scheduledLeaveMinutes` threads
+  // `cfg?.defaultWorkDays` into the facade call's opts, not just relying on the Mo–Fr default.
+  it("MONTHLY_HOURS: an empty workDays row follows the tenant's defaultWorkDays tier (Phase 433, D-05) — proves the threading", async () => {
+    const m2User = await app.prisma.user.create({
+      data: {
+        email: `ot468f-m2-${Date.now().toString(36)}@test.de`,
+        passwordHash: data.adminUser.passwordHash,
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const m2Employee = await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: m2User.id,
+        employeeNumber: `OT468F-M2-${Date.now().toString(36)}`,
+        firstName: "MO",
+        lastName: "N2",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    await app.prisma.workSchedule.create({
+      data: {
+        employeeId: m2Employee.id,
+        type: "MONTHLY_HOURS",
+        weeklyHours: null,
+        monthlyHours: 80,
+        mondayHours: 0,
+        tuesdayHours: 0,
+        wednesdayHours: 0,
+        thursdayHours: 0,
+        fridayHours: 0,
+        saturdayHours: 0,
+        sundayHours: 0,
+        workDays: [], // empty -> falls through to defaultWorkDays, then Mo-Fr
+        validFrom: new Date("2024-01-01"),
+      },
+    });
+    await app.prisma.overtimeAccount.create({
+      data: { employeeId: m2Employee.id, balanceHours: 0 },
+    });
+
+    const originalCfg = await app.prisma.tenantConfig.findUnique({
+      where: { tenantId: data.tenant.id },
+    });
+    await app.prisma.tenantConfig.update({
+      where: { tenantId: data.tenant.id },
+      data: { defaultWorkDays: [1, 2, 3, 4] }, // Mo-Thu only, excludes Friday
+    });
+    try {
+      const fridayDate = "2027-06-11"; // Friday, no NI holiday, inside the same 22-Mo-Fr-day month
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/leave/hours-preview?startDate=${fridayDate}&endDate=${fridayDate}&employeeId=${m2Employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      const minutesNeeded = JSON.parse(res.body).minutesNeeded;
+
+      const schedule = await app.prisma.workSchedule.findFirst({
+        where: { employeeId: m2Employee.id },
+        orderBy: { validFrom: "desc" },
+      });
+      const tz = await getTenantTimezone(app.prisma, data.tenant.id);
+      const d = new Date(fridayDate);
+      const withDefaultWorkDays = calcLeaveAbsenceMinutesTz(
+        schedule as unknown as Record<string, unknown>,
+        d,
+        d,
+        tz,
+        { halfDay: false, excludeHolidays: new Set<string>(), defaultWorkDays: [1, 2, 3, 4] },
+      );
+      const moFriFallback = calcLeaveAbsenceMinutesTz(
+        schedule as unknown as Record<string, unknown>,
+        d,
+        d,
+        tz,
+        { halfDay: false, excludeHolidays: new Set<string>() },
+      );
+
+      expect(
+        minutesNeeded,
+        "scheduledLeaveMinutes threads cfg.defaultWorkDays into the facade call",
+      ).toBe(withDefaultWorkDays);
+      expect(
+        withDefaultWorkDays,
+        "defaultWorkDays [1-4] excludes Friday, differs from the Mo-Fr fallback (RED before threading: equals it)",
+      ).not.toBe(moFriFallback);
+    } finally {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: data.tenant.id },
+        data: { defaultWorkDays: originalCfg?.defaultWorkDays ?? [1, 2, 3, 4, 5] },
+      });
+    }
+  });
+
   it("POST gate: FLEXTIME with confirmed carry-over of 4h (no tolerance) rejects an 8h request — requested 8, available 4 (RED: 201)", async () => {
     const requestMonday = computeRequestMonday(new Date());
 

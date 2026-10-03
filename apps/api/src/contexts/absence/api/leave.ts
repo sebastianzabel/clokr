@@ -4902,6 +4902,10 @@ async function scheduledLeaveMinutes(
   return calcLeaveAbsenceMinutesTz(schedule, start, end, tz, {
     halfDay,
     excludeHolidays: excluded,
+    // Phase 433 (D-05) — the MONTHLY_HOURS workday tier, same as the saldo: a WorkSchedule
+    // with no explicit workDays falls through to the tenant's defaultWorkDays before Mo-Fr.
+    // Every other schedule type ignores this opt.
+    defaultWorkDays: cfg?.defaultWorkDays ?? null,
   });
 }
 
