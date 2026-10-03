@@ -30,6 +30,10 @@
   // Phase 415 (#415): the shared create/edit dialog — replaces this page's own copy of the
   // create modal, its collision-confirm flow, and the mutation itself.
   import LeaveRequestForm from "$lib/components/leave/LeaveRequestForm.svelte";
+  // Issue #468 (D-12, A-2): "Elternzeit-Kürzung erklären" row action on an approved PARENTAL
+  // request.
+  import ParentalReductionDialog from "$lib/components/leave/ParentalReductionDialog.svelte";
+  import { showsParentalReductionAction } from "$lib/leave/parental-reduction";
   import { halfDayRangeError, endDateForHalfDay } from "$lib/leave/half-day"; // Issue #449 (D-4)
 
   // ── Typen ─────────────────────────────────────────────────────────────────
@@ -114,6 +118,17 @@
   let attestSaving = $state(false);
   let attestError = $state("");
 
+  // ── Elternzeit-Kürzung (Issue #468, D-12/A-2) ────────────────────────────────
+  // A separate action, like Attest-Nachtrag above: it mounts its own dialog (not a field in the
+  // Korrigieren-Modal), gets its own preview from the server and never computes a number itself.
+  let parentalModal: LeaveRequest | null = $state(null);
+  let parentalOpen = $state(false);
+
+  function openParentalReduction(req: LeaveRequest) {
+    parentalModal = req;
+    parentalOpen = true;
+  }
+
   // Quick 260824-ef6: Storno-Button (Zurückziehen / Stornierung beantragen) in der
   // Anträge-Tabelle. `resolveStornoAction` gates which button (if any) a row gets;
   // see apps/web/src/lib/leave/storno.ts for the full decision matrix and reasoning.
@@ -154,7 +169,10 @@
     id: string;
     employeeId: string;
     employeeName: string;
-    status: "AU_PENDING" | "CONFIRMED" | "REJECTED";
+    // #468: GET /leave/section9 can also return SUPERSEDED — a CONFIRMED credit a correction
+    // (PATCH /correct) made obsolete, never an open case (the filter below still only lists
+    // AU_PENDING and REJECTED).
+    status: "AU_PENDING" | "CONFIRMED" | "REJECTED" | "SUPERSEDED";
     overlapStart: string;
     overlapEnd: string;
     creditedStart: string | null;
@@ -1405,6 +1423,15 @@
                           {req.attestPresent ? "Attest ändern" : "Attest erfassen"}
                         </button>
                       {/if}
+                      {#if showsParentalReductionAction(req, $authStore.user)}
+                        <button
+                          data-testid={`leave-team-row-${req.id}-parental-reduction`}
+                          class="btn btn-sm btn-ghost"
+                          onclick={() => openParentalReduction(req)}
+                        >
+                          Elternzeit-Kürzung erklären
+                        </button>
+                      {/if}
                     {/if}
                     {#if resolveStornoAction(req.status, req.employeeId === $authStore.user?.employeeId)}
                       {@const kind = resolveStornoAction(
@@ -1550,6 +1577,22 @@
   request={reviewModal}
   currentEmployeeId={$authStore.user?.employeeId ?? null}
   onReviewed={async () => {
+    await Promise.all([loadData(), loadCalendar()]);
+  }}
+/>
+
+<!-- ── Elternzeit-Kürzung-Modal (Issue #468, D-12/A-2) ───────────────────── -->
+<ParentalReductionDialog
+  bind:open={parentalOpen}
+  request={parentalModal
+    ? {
+        id: parentalModal.id,
+        employeeName: `${parentalModal.employee.firstName} ${parentalModal.employee.lastName}`,
+        startDate: parentalModal.startDate,
+        endDate: parentalModal.endDate,
+      }
+    : null}
+  onChanged={async () => {
     await Promise.all([loadData(), loadCalendar()]);
   }}
 />

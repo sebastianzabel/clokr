@@ -181,3 +181,112 @@ segment, not from whichever contract happened to be current when the row was las
   deadline NEVER protects `carriedOverDays`, which is still recomputed on every pass.
 - Reminders starting in October (configurable) when vacation is at risk of expiring.
 - Escalation to manager in November, final warning in December.
+
+## 6-Tage-Vertrag (Issue #468, D-06/D-07)
+
+- The base vacation value scales proportionally above the 5-day reference week, not just below
+  it: `calculatePartTimeVacation()` (`contexts/absence/vacation-calc.ts`) removed the implicit
+  cap at the tenant base, so a 6-day contract computes `base × 6/5` (e.g. base 30 → **36**), the
+  same `raw × workDays / fullTimeWorkDays` formula every other workday count already used. The
+  statutory minimum (§ 3 BUrlG, `calculateStatutoryMinimum()`) was already unaffected by this
+  phase's fix — `workDaysPerWeek × 4` already scaled linearly with contractual days (5 days → 20,
+  6 days → 24 Werktage), so the statutory floor was never capped in the first place.
+- **Equality case unchanged (byte-identical):** `employeeWorkDays === fullTimeWorkDays` still
+  returns `baseVacationDays` verbatim — a 5-day employee against a 5-day reference week gets
+  exactly the stored base, with no floating-point rounding through the proportional formula. Every
+  existing ≤5-day result stays byte-identical to its pre-#468 value (equivalence test,
+  `468-02-SUMMARY.md`).
+- **The #450 segment kernel (contract-change-during-the-year, see above) inherits the same removed
+  cap** — a contract-change segment that is itself a 6-day (or more) week prices through the same
+  `calculatePartTimeVacation()` call, so the "5 → 6 days from 1 July" segment case the kernel
+  already handles produces the uncapped (36-equivalent) value for the 6-day months, not the
+  previously-capped 30.
+- **Rounding** follows the existing § 5 Abs. 2 BUrlG convention (#421) — unchanged by this phase.
+- **Existing data is never bulk-corrected.** A 6-day employee's auto-calculated entitlement changes
+  only through the normal recompute paths already described above (#450's reactive recompute on a
+  contract-change write, the zero-placeholder first-access heal) — never a bulk rewrite. The
+  read-only dry-run, `scripts/audit-vacation-entitlements.ts`, lists every stored row next to its
+  newly-computed target (unchanged script, now also surfacing the previously-capped 6-day rows as
+  a `stored` ≠ `target` deviation for the owner to review).
+
+## § 9-Gutschrift und Korrektur (Issue #468, D-04/D-05/A-3)
+
+A `PATCH /requests/:id/correct` on a VACATION (or the corresponding SICK) request now classifies
+every confirmed § 9 BUrlG credit touching the request against the corrected range via
+`planSection9CreditsForCorrection()` (`contexts/absence/section9-detect.ts`, pure, DB-free):
+
+- **Keep:** a `CONFIRMED` credit that stays fully INSIDE the corrected range is left untouched —
+  no re-detection, no re-pricing.
+- **Supersede (never delete, R7):** a credit that falls fully OUTSIDE the corrected range, or
+  whose request changed type away from VACATION/SICK, is marked `SUPERSEDED` (additive enum
+  value) — kept for the audit trail, visible via `GET /section9?status=SUPERSEDED`, never
+  returned by `GET /requests`' bulk status map. A `CONFIRMED` credit's ledger entry is undone
+  (`deductVacationDays()`, the exact mirror of confirm's `reverseVacationDays()`) in the same
+  transaction as the status flip.
+- **Clip + correction credit (A-3):** a `CONFIRMED` credit that only PARTIALLY survives the new
+  range is superseded and replaced by exactly one new `CONFIRMED` correction credit at
+  `revision + 1` (`supersedesId` pointing at the original, re-priced via `resolveLeaveDays()` over
+  the clipped range, re-credited the same way). A second correction on the same pair chains to
+  `revision + 2`, and so on — `Section9Credit`'s unique constraint widened to `(sickRequestId,
+vacationRequestId, revision)` to allow the chain.
+- **AU_PENDING/REJECTED credits are left alone by `/correct`** (nothing was ever booked for them);
+  `confirm`/`reject` clip the attested overlap to the vacation's CURRENT range at decision time
+  instead, and refuse a `SUPERSEDED` credit outright (409).
+- **Worked examples (the Issue #468 finding 2 regression, both now closed):** 10 days vacation
+  with 3 confirmed sick days corrected to a 7-day range —
+  - sick days fully OUTSIDE the new 7-day range → consumed **7** (not 4, the old
+    double-credit bug: the OLD logic net-reversed the 10-day booking by the credit's −3 a SECOND
+    time against the new range).
+  - sick days fully INSIDE the new 7-day range → consumed **4** (unaffected regression guard).
+  - sick days PARTIALLY inside → consumed **5** via a `revision + 1` correction credit for the
+    still-covered part.
+  - the vacation side changes type away from VACATION → the credit fully supersedes (**0**
+    consumed on the credit side), never a partial clip even if the ranges still overlap
+    geometrically.
+- Correcting the SICK request's own range (instead of the vacation side) clips/supersedes its
+  credits the same way; a cross-year correction that moves a credit entirely out of its origin
+  year leaves BOTH years' ledgers equal to their self-heal value (no stray residual in the origin
+  year).
+
+## Elternzeit-Kürzung (§ 17 Abs. 1 BEEG) (Issue #468, D-08–D-12, A-1/A-2)
+
+A declared Elternzeit does NOT automatically reduce the vacation entitlement — § 17 Abs. 1 BEEG
+gives the employer the RIGHT to reduce it, and this project implements that as a manual, audited
+action, never an automatic recompute (owner decision, #451 comment 2026-10-03):
+
+- **Anchored on the `LeaveRequest`, not an `Absence` (A-1).** In this codebase Elternzeit is
+  requested and approved as a `LeaveRequest` of type `PARENTAL` (not an imposed `Absence`) —
+  `ParentalLeaveReduction.leaveRequestId` is a required FK onto an APPROVED (`EFFECTIVE_LEAVE_
+STATUSES`) `PARENTAL` request, `onDelete: Restrict`, unique `(leaveRequestId, year)`.
+- **Preview/commit/revoke, one per calendar year touched** (`GET/POST
+/api/v1/leave/parental-reductions/:leaveRequestId`, `POST .../revoke`) — the UI lives on the
+  approved PARENTAL request's own detail view (A-2), behind `leave-entitlement:update:ZUGEWIESEN`
+  (reusing the same permission `PUT /settings/vacation` already requires).
+- **Reduction formula:** one twelfth of the regular yearly entitlement per FULL calendar month of
+  the Elternzeit in that year (`fullCalendarMonthsByYear()`), § 5 Abs. 2 BUrlG rounding (#421)
+  applied to the REMAINING entitlement after the reduction — never to the reduction itself — so
+  the reduction is always the employee-favourable difference. A 12-month Elternzeit reduces the
+  entitlement to exactly 0.
+- **Human-owned, never silently overwritten.** The commit transaction's `LeaveEntitlement` UPDATE
+  audit never sets `isAutoCalculated`, which is the entire mechanism that makes the existing
+  `hasHumanVacationWrite()` detector (see "Human-set rows are never overwritten" above) skip the
+  row during #450's reactive recompute.
+- **One declaration per Elternzeit and year.** The unique `(leaveRequestId, year)` is kept
+  literally — a REVOKED year cannot be re-declared via the same action (a re-commit answers 409
+  naming the revoked declaration); a genuinely new declaration requires a new issue/manual
+  correction path, not a silent second row.
+- **Revocation is a correction entry, never a delete (D-10).** `ParentalLeaveReduction.status`
+  flips `ACTIVE → REVOKED` (`revokedAt`/`revokedBy`), restoring the entitlement by the STORED
+  `reducedDays` — never a recomputation, even after an intervening manual
+  `PUT /settings/vacation/:employeeId` edit changed the entitlement in between.
+- **Revoke-before-change guard (D-10, consistency):** a `/correct` or a cancellation-approval of
+  the anchoring PARENTAL request is blocked (409) while an `ACTIVE` reduction exists and the
+  change would either alter a reduced year's full-month count or move the request away from type
+  PARENTAL entirely — a harmless date shift that leaves every reduced year's month count unchanged
+  is allowed through. Cancellation-approval is blocked unconditionally on ANY active reduction
+  (cancellation destroys the anchor outright).
+- **Reduced statutory floor (D-07/D-09).** `PUT /settings/vacation/:employeeId`'s guard, its `GET`
+  suggestion, and the read-only Prüfbericht (`audit-vacation-entitlements.ts`) all compare against
+  the SAME reduced floor (`remainingAfterParentalMonths(unreducedThreshold,
+activeParentalReductionMonths(...))`) for a reduced year — one rule for read, write and report.
+  An unreduced year is unaffected.

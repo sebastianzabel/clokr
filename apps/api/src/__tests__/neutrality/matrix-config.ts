@@ -226,6 +226,20 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "recorded cell; it genuinely satisfies the matrix's purpose (proving requireRole->permission " +
       "is behavior-preserving) vacuously, by never having had the old behavior at all.",
   },
+  ...[
+    "GET /api/v1/leave/parental-reductions/:leaveRequestId",
+    "POST /api/v1/leave/parental-reductions/:leaveRequestId",
+    "POST /api/v1/leave/parental-reductions/:leaveRequestId/revoke",
+  ].map((route) => ({
+    route,
+    reason:
+      "New routes added in Phase 468 (Issue #468, D-08..D-11), long after the role guard " +
+      "(`requireRole`) was deleted from middleware/auth.ts (#75b/#83) — built permission-gated " +
+      "(`leave-entitlement:update:ZUGEWIESEN`) from their very first commit and never had " +
+      "role-based access behavior to compare. Same vacuous-satisfaction reasoning as the Phase " +
+      "430 entry directly above: RECORD/MERGE mode refuses to run once the role guard is gone, so " +
+      "there is no mechanism left to give these routes a recorded cell.",
+  })),
 ];
 
 /** Routes declared in `app.ts` itself — invisible to the source parser, proven registered. */

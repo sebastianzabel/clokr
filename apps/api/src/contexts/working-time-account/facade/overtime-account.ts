@@ -35,9 +35,10 @@
  * the captured transcript.
  *
  * `hours`/`description` are computed by the CALLER (both differ per call site — the description
- * text and, for `getScheduledHours`-derived hours, the date range) and passed in unchanged from
+ * text and, for `scheduledLeaveMinutes`-derived hours (Issue #468 renamed this function from its
+ * original name), the date range) and passed in unchanged from
  * what the four original copies computed inline; this facade does not recompute or normalise
- * either. `getScheduledHours()` itself stays in `leave.ts` — it is Abwesenheiten's own policy
+ * either. `scheduledLeaveMinutes()` itself stays in `leave.ts` — it is Abwesenheiten's own policy
  * function (R-D, established by plan 05 H4) and is unrelated to the Arbeitszeitkonto booking rule
  * this facade owns.
  *

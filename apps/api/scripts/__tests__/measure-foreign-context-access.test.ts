@@ -56,17 +56,19 @@ function writeFixture(relPath: string, content: string): void {
 // ── Model-ownership table exhaustiveness ─────────────────────────────────────────────────────
 
 describe("MODEL_OWNER", () => {
-  // Merge of Phase 65b (#65: + SalonCoupling, scheduling 8 -> 9) and Phase 67b
-  // (#67: + EmployeeSalonAssignment, platform 16 -> 17) — 44 -> 46 models.
-  it("assigns exactly 46 models, every owner one of the five OWNER_AREAS", () => {
+  // Merge of Phase 65b (#65: + SalonCoupling, scheduling 8 -> 9), Phase 67b
+  // (#67: + EmployeeSalonAssignment, platform 16 -> 17) — 44 -> 46 models — and Issue #468
+  // (+ ParentalLeaveReduction, absence 9 -> 10) — 46 -> 47 models. This is the new model's own
+  // schema change landing in the count, not a correction of a prior miscount.
+  it("assigns exactly 47 models, every owner one of the five OWNER_AREAS", () => {
     const models = Object.keys(MODEL_OWNER);
-    expect(models).toHaveLength(46);
+    expect(models).toHaveLength(47);
     for (const owner of Object.values(MODEL_OWNER)) {
       expect(OWNER_AREAS).toContain(owner);
     }
   });
 
-  it("matches the measurement authority's per-owner model count (17/6/9/5/9)", () => {
+  it("matches the measurement authority's per-owner model count (17/6/10/5/9)", () => {
     const counts: Record<string, number> = {};
     for (const owner of Object.values(MODEL_OWNER)) {
       counts[owner] = (counts[owner] ?? 0) + 1;
@@ -74,7 +76,7 @@ describe("MODEL_OWNER", () => {
     expect(counts).toEqual({
       platform: 17,
       "time-tracking": 6,
-      absence: 9,
+      absence: 10,
       "working-time-account": 5,
       scheduling: 9,
     });

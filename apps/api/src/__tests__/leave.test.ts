@@ -1107,7 +1107,7 @@ describe("Leave / Absence API", () => {
 
   // ── Plan 76.19-05: Sunday hours + revalidation guard + deletedAt filters ──────
 
-  describe("D-07: getScheduledHours reads ws.sundayHours (DATA-V1814-06)", () => {
+  describe("D-07: scheduledLeaveMinutes reads ws.sundayHours (DATA-V1814-06, Issue #468 renamed this function)", () => {
     let sundayEmpToken = "";
 
     beforeAll(async () => {

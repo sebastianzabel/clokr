@@ -201,6 +201,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/api/company-shutdowns.ts": "abwesenheiten", // writes CompanyShutdown/CompanyShutdownException
   "src/contexts/absence/api/leave-settings.ts": "abwesenheiten", // Phase 243 Plan 02 (B1) — moved from contexts/platform/api/settings.ts: writes LeaveEntitlement/LeaveType under the /settings URL prefix, which is a UI grouping, not a context boundary
   "src/contexts/absence/api/leave.ts": "abwesenheiten", // writes LeaveEntitlement/LeaveRequest/LeaveType/Section9Credit primarily; overtimeAccount/overtimeTransaction/timeEntry/shift writes are documented cross-context side effects of leave approval/cancellation
+  "src/contexts/absence/api/parental-leave-reductions.ts": "abwesenheiten", // Issue #468 (D-08..D-11) — writes LeaveEntitlement/ParentalLeaveReduction primarily (§ 17 Abs. 1 BEEG Elternzeit-Kürzung), anchored on an approved PARENTAL LeaveRequest
   "src/contexts/absence/api/section9-documents.ts": "abwesenheiten", // writes Section9Credit
   "src/contexts/absence/api/special-leave.ts": "abwesenheiten", // writes SpecialLeaveRule
   "src/contexts/absence/api/vocational-school-pattern.ts": "abwesenheiten", // writes EmployeeVocationalSchoolPattern
@@ -225,6 +226,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/leave-self-heal.ts": "abwesenheiten", // LeaveEntitlement/LeaveRequest/LeaveType self-heal
   "src/contexts/absence/leave-type.ts": "abwesenheiten", // LeaveTypeCode -> German display-name registry
   "src/contexts/absence/load-bs-slot-overrides.ts": "abwesenheiten", // EmployeeVocationalSchoolPattern slot overrides
+  "src/contexts/absence/parental-leave-reduction.ts": "abwesenheiten", // Issue #468 (D-08) — pure month/rounding functions + read-only preview builder for the Elternzeit-Kürzung (§ 17 Abs. 1 BEEG)
   "src/contexts/absence/section9-credit-days.ts": "abwesenheiten", // Section9Credit day counting
   "src/contexts/absence/section9-detect.ts": "abwesenheiten", // § 9 BUrlG "krank im Urlaub" detection
   "src/contexts/absence/shift-leave-recalc-resolver.ts": "abwesenheiten", // writes LeaveRequest.daysProvisional when a roster change triggers recalculation (Phase 107) — LeaveRequest is the written model even though the trigger originates in Schichtplanung

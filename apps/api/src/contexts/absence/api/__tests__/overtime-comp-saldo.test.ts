@@ -358,7 +358,8 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
   });
 
   it("SHIFT_BASED (#293, owner decision 2026-09-23): the journal amount and the measured saldo withdrawal are EQUAL — the receipt follows the account", async () => {
-    // Pre-fix, the OvertimeTransaction amount came from getScheduledHours() (leave.ts), which
+    // Pre-fix, the OvertimeTransaction amount came from scheduledLeaveMinutes()
+    // (leave.ts, Issue #468 renamed this function from its original name), which
     // for SHIFT_BASED summed the ROSTER (Shift netto, Phase 100 / OTC-04), while the saldo
     // withdrawal came from calcLeaveAbsenceMinutesTz(), the Ø-Methode (weeklyHours / contracted
     // workdays, BAG 9 AZR 406/17) — the same figure that granted the day's Soll credit. The two
@@ -477,8 +478,9 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
 
     // ONE equality assertion, not three pins: the journal's absolute amount and the measured
     // saldo withdrawal must be the SAME number. Issue #429 (D-13) moved the receipt chain from
-    // `getScheduledHours() -> calcLeaveAbsenceMinutesTz()` to
-    // `getScheduledHours() -> shiftBasedLeaveMinutesForRequest()`, while the saldo side already
+    // `scheduledLeaveMinutes() -> calcLeaveAbsenceMinutesTz()` to
+    // `scheduledLeaveMinutes() -> shiftBasedLeaveMinutesForRequest()` (Issue #468 renamed the
+    // function from its original name), while the saldo side already
     // moved (plan 429-02) to `closeEmployeeMonth() -> shiftBasedLeaveCreditByDate()` — two
     // different functions now, not one, but both derived from the SAME `leaveDaysPerWeek()`
     // kernel (429-01, D-01/D-02) and the SAME `contractWorkDaysPerWeekFrom()` resolution chain

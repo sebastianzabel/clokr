@@ -2452,3 +2452,149 @@ pnpm --filter @clokr/api exec vitest run src/contexts/platform/api/__tests__/min
 pnpm --filter @clokr/api exec tsx scripts/dry-run-433-monthly-hours-soll.ts --tenant-id <uuid>
 pnpm --filter @clokr/web exec vitest run src/__tests__/monthly-hours-calendar-433.test.ts src/lib/utils/__tests__/work-schedule.test.ts
 ```
+
+---
+
+## V — Urlaubsbuchungen: gespeicherter Überstundenausgleich, § 9 bei Korrektur, 6-Tage-Vertrag, Elternzeit-Kürzung (Phase 468, Issue #468)
+
+**Schwere: Semantikänderung des Unterbaus nach ADR 0002, Entscheidung 7 (neue Fremdschlüssel-Referenz
+`ParentalLeaveReduction.employeeId -> Employee`). Owner-Entscheidung = Issue #451 Kommentar vom
+2026-10-03 (Elternzeit: manuell, auditiert) plus die Grauzonen-Entscheidungen desselben Tages (A-1 bis
+A-4, dokumentiert in `468-CONTEXT.md`).**
+
+### Warum dieser Eintrag existiert
+
+Issue #468 bündelte vier unabhängige, von #451 abgespaltene Befunde der Buchungsseite im Kontext
+Abwesenheiten: (1) der Überstundenausgleich prüfte, buchte und stornierte mit drei unterschiedlichen
+Formeln, die bei nicht-FIXED-Vertragsmodellen voneinander abwichen; (2) `PATCH
+/requests/:id/correct` ignorierte bestätigte § 9 BUrlG-Gutschriften und rechnete sie teils doppelt an;
+(3) ein 6-Tage-Vertrag war beim Basiswert implizit auf den 5-Tage-Wert gedeckelt (30 statt 36); (4) die
+Elternzeit-Kürzung nach § 17 Abs. 1 BEEG existierte nur als manueller Edit ohne Audit-Spur.
+
+### Was sich geändert hat
+
+- **Überstundenausgleich, EINE Formel (D-01/D-02/D-03, Pläne 01/03/08):** `scheduledLeaveMinutes()`
+  (`contexts/absence/api/leave.ts`, ersetzt das vormalige `getScheduledHours()`) ist jetzt die EINE
+  Funktion hinter dem Negativsaldo-Gate (POST UND der PENDING-Edit-Pfad PATCH `/requests/:id`), der
+  Buchung bei Genehmigung, dem Storno/Korrektur-Reversal und `GET /hours-preview`. Für SHIFT_BASED
+  bleibt die #293/#429-„Quittung folgt dem Konto"-Verzweigung byte-gleich; jeder andere Vertragstyp
+  ruft dieselbe Fassadenfunktion wie das Saldo selbst (`calcLeaveAbsenceMinutesTz`,
+  `contexts/working-time-account`) statt der `{day}Hours`-Platzhalter — ein FLEXTIME-Tag kostet jetzt
+  die reale Ø-Methode (480 min statt der gemessenen 60-min-Platzhalterstunde). Feiertage UND
+  Berufsschultage sind genau wie beim Saldo ausgeschlossen. Die gebuchten Minuten werden bei
+  Genehmigung auf `LeaveRequest.overtimeCompMinutes Int?` (additive Spalte) gespeichert; Storno und
+  Korrektur kehren GENAU den gespeicherten Wert um, nie eine Neuberechnung — eine Alt-Zeile ohne
+  gespeicherten Wert fällt protokolliert auf die aktuelle Formel zurück (A-4). Nach dem Merge mit
+  Phase 433 (Issue #433, `fix(433): MONTHLY_HOURS – Monats-Soll ...`) reicht
+  `scheduledLeaveMinutes()` zusätzlich `cfg?.defaultWorkDays` in die Fassaden-Opts durch (Plan 08) —
+  eine MONTHLY_HOURS-Zeile mit leerem `workDays` folgt jetzt derselben mandantenweiten
+  `defaultWorkDays`-Stufe wie das Saldo selbst, statt direkt auf Mo–Fr zu springen.
+- **§ 9 bei Korrektur (D-04/D-05/A-3, Plan 05):** `planSection9CreditsForCorrection()`
+  (`contexts/absence/section9-detect.ts`, rein, ohne DB-Zugriff) klassifiziert jede bestätigte § 9-
+  Gutschrift gegen den neuen Zeitraum einer Korrektur in „keep" (vollständig innerhalb, unverändert),
+  „supersede" (vollständig außerhalb oder Typwechsel — Status `SUPERSEDED`, additiver Enum-Wert, NIE
+  gelöscht, R7) oder „clip" (teilweise innerhalb — eine neue `revision + 1`-Korrekturgutschrift mit
+  `supersedesId`-Verweis für den noch abgedeckten Teil). Die Issue-Beispiele sind jetzt alle vier
+  grün: 10 Tage Urlaub mit 3 bestätigten Kranktagen, korrigiert auf 7 Tage → außerhalb **7**
+  verbraucht (vorher fälschlich 4, der Doppelanrechnungs-Fehler), innerhalb **4** (Regressionswächter),
+  teilweise **5** (Korrekturgutschrift), Typwechsel **0** (vollständige Überholung).
+- **6-Tage-Vertrag (D-06/D-07, Plan 02):** `calculatePartTimeVacation()`
+  (`contexts/absence/vacation-calc.ts`) rechnet den Basiswert jetzt proportional auch ÜBER die
+  5-Tage-Referenzwoche hoch (Deckel entfernt) — Basis 30 → **36** bei 6 Tagen. Die Äquivalenz für
+  ≤5 Tage ist byte-gleich zum Vorzustand; der gesetzliche Mindesturlaub (`workDaysPerWeek × 4`) war
+  nie gedeckelt und bleibt unverändert.
+- **Elternzeit-Kürzung (D-08..D-12, A-1/A-2, Pläne 04/06/07):** neues additives Modell
+  `ParentalLeaveReduction`, verankert auf einem genehmigten `LeaveRequest` vom Typ `PARENTAL` (A-1 —
+  in dieser Codebase ist Elternzeit ein beantragter, kein angeordneter Vorgang; der ADR-0001-
+  Zielbild-Absatz zu Abwesenheiten bleibt dadurch unverändert und weiterhin nicht umgesetzt).
+  Vorschau/Buchung/Widerruf (`GET/POST /api/v1/leave/parental-reductions/:leaveRequestId`,
+  `POST .../revoke`) hinter `leave-entitlement:update:ZUGEWIESEN` (dieselbe Permission wie `PUT
+/settings/vacation`); die Oberfläche hängt an der Detailansicht des genehmigten PARENTAL-Antrags
+  (A-2). Die Kürzung beträgt ein Zwölftel des regulären Jahresanspruchs je vollem Kalendermonat der
+  Elternzeit in diesem Jahr, § 5 Abs. 2 BUrlG-Rundung (#421) auf den VERBLEIBENDEN Anspruch, nie auf
+  die Kürzung selbst angewendet. Die Buchung macht die Anspruchszeile menschen-eigentümerisch (die
+  UPDATE-Audit setzt `isAutoCalculated` nie), wodurch #450s reaktive Neuberechnung die Zeile
+  überspringt. Widerruf ist ausschließlich eine Korrekturbuchung (`ACTIVE -> REVOKED`,
+  `revokedAt`/`revokedBy`), nie ein Löschen, und stellt den Anspruch um den GESPEICHERTEN
+  `reducedDays`-Wert wieder her — nie eine Neuberechnung. Eine `/correct` oder eine
+  Storno-Genehmigung des verankernden PARENTAL-Antrags ist gesperrt (409), solange eine `ACTIVE`-
+  Kürzung besteht und die Änderung die Vollmonatszahl eines gekürzten Jahres ändern würde oder den
+  Typ von PARENTAL wegbewegt; eine reine Datumsverschiebung ohne Monatszahl-Änderung bleibt erlaubt.
+  Der reduzierte gesetzliche Mindesturlaub gilt identisch in `PUT /settings/vacation`, dessen `GET`-
+  Vorschlag und im lesenden Prüfbericht (`audit-vacation-entitlements.ts`) — eine Regel für Lesen,
+  Schreiben und Bericht.
+
+### Was bewusst NICHT geschah
+
+- **Keine automatische Elternzeit-Kürzung.** Vom Owner explizit abgelehnt (#451-Kommentar) —
+  Elternzeit reduziert den Anspruch nur, wenn ein Mensch die Kürzung aktiv erklärt und bucht.
+- **Kein Backfill von `overtimeCompMinutes` für Alt-Anträge.** Eine bereits genehmigte
+  OVERTIME_COMP-Zeile ohne gespeicherten Wert bleibt ohne Rückwirkung; Storno/Korrektur fallen bei
+  ihr protokolliert auf die aktuelle Formel zurück (A-4) — keine Migration schreibt den Wert
+  rückwirkend.
+- **Keine erneute § 9-Erkennung bei `/correct`.** Die Klassifikation arbeitet ausschließlich mit den
+  bereits existierenden Gutschriften des Antrags; `/correct` erkennt keine NEUEN § 9-Überlappungen.
+- **Der Hard-Delete-Pfad erbt die Phase-99-OB-05-Lücke unverändert** — außerhalb des Scopes dieser
+  Phase.
+- **`WorkSchedule.workDays`-Bestand wurde nicht angefasst** (Phase 95b, D-01 gilt weiterhin für jeden
+  Vertragstyp).
+- **Berichte/DATEV/Dashboard-Einzelberechnung (#451) wurden nicht konvergiert** — eigenes Issue.
+
+### Auswirkung auf die Kontexte
+
+- **Abwesenheiten:** alles — `scheduledLeaveMinutes()`, die § 9-Korrekturklassifikation, der
+  6-Tage-Vertrag, das neue `ParentalLeaveReduction`-Modell und seine drei Routen.
+- **Arbeitszeitkonto:** nur lesend über die Fassade (`calcLeaveAbsenceMinutesTz`,
+  `contexts/working-time-account`) — keine eigene Codeänderung an der Saldo-Berechnung selbst.
+- **Unterbau:** keine Feldänderung an einem bestehenden Modell; **neue Fremdschlüssel-Referenz**
+  `ParentalLeaveReduction.employeeId -> Employee` (`onDelete: Restrict`) = neue
+  Shared-Kernel-Abhängigkeit (ADR 0002, Entscheidung 4/7), mit Back-Relation
+  `Employee.parentalLeaveReductions` im Prisma-Schema. `ParentalLeaveReduction.leaveRequestId ->
+LeaveRequest` bleibt innerhalb des Kontexts Abwesenheiten, keine Unterbau-Abhängigkeit.
+- **Zeiterfassung, Schichtplanung, Kompositionsschicht:** keine.
+
+### Gemessen
+
+- § 9-Korrektur (Plan 05): alle vier Issue-Arbeitsbeispiele grün — außerhalb 7, innerhalb 4
+  (Regressionswächter), teilweise 5 (Korrekturgutschrift, Revisionskette geprüft bis `revision + 2`),
+  Typwechsel 0 (vollständige Überholung); 18 neue Tests (7 rein + 11 Integration).
+- 6-Tage-Vertrag (Plan 02): Basis 30 → 36 bei 6 Tagen; Äquivalenz ≤5 Tage byte-gleich.
+- Elternzeit-Kürzung (Pläne 04/06/07): 13 reine Tests (Monats-/Rundungs-Kern), 21 Routen-Tests
+  (Vorschau/Buchung/Widerruf, Idempotenz, T-100-09-Durchlauf, Scope-Identität), 8
+  Konsistenz-Guard-Tests (Korrektur-/Storno-Sperre, reduzierter Mindesturlaub in Guard/Vorschlag/
+  Prüfbericht); ein 12-monatiger Fall reduziert den Anspruch auf exakt 0 und überlebt sowohl den
+  #445-Nullwert-Heal als auch die #450-Neuberechnung.
+- Überstundenausgleich (Pläne 01/03/08): 13 Tests Speicherbuchung/Reversal + Formel-Parität, 7 Tests
+  Korrektur auf dem gespeicherten Wert; nach dem Merge mit Phase 433 zwei neue relationale
+  MONTHLY_HOURS-Fälle (Juni 2027, 22 Mo–Fr-Arbeitstage: ein Dienstag kostet round(4800/22) = 218 min,
+  gebucht als −3,63 h; die `defaultWorkDays`-Durchreichung bewiesen über einen Freitag, der in
+  Mo–Fr, aber nicht in der mandantenweiten `[1,2,3,4]`-Stufe liegt).
+- Merge mit `origin/main` (Phase 433 + Phase 450, Commit `8fbef761`): konfliktfrei außer einer
+  automatisch zusammengeführten `schema.prisma`-Region; die 468-01-Migration
+  (`20261003052042_leave_booking_issue_468`) bleibt nach Zeitstempel die letzte Migration;
+  Post-Merge-Ankerprüfung für jede der Pläne 01–07 bestand.
+- Finaler Gate-Lauf auf dem Phasen-HEAD (Plan 08, Task 2): volle API-Suite 445 Dateien, 7238
+  bestanden, 3 übersprungen (7241 Tests), 0 Fehler; volle Web-Suite 97 Dateien, 1540 bestanden;
+  `test:scripts` 3 Dateien, 152 bestanden. Alle projektweiten Gates grün: Typecheck (API+Web), Lint
+  (API 0 Fehler/63 Warnungen vorbestehend, Web 0 Fehler/27 Warnungen vorbestehend),
+  `lint:tenant-scoping`, Import-Ziele (1888 Spezifizierer), Facade-Signaturen, fremder Kontextzugriff
+  (`--check 0`), Kontextgrenzen (`--check 0`; `--cycles --check 22`: 1 Komponente/22 Module,
+  unverändert gegenüber dem CI-Pin), Guard-Vakuität (878 Dateien, 0 vakuos), E2E-Spec-Registry (24
+  Dateien), T-100-09-Vollständigkeit (95 Routen klassifiziert), Rollenprüfungen (API 0/193, Web
+  0/14), Saldo-Lock-Herleitung, Web-Token-/UI-Klassen-/Save-Pattern-Lints, Kommentarsprache (0 neue
+  Verstöße, Baseline 221 unverändert); beide Builds (`tsc` API, SvelteKit-Adapter-Node Web) grün. Die
+  Permission-Neutralitätsmatrix-Dateien unter `apps/api/src/__tests__/neutrality/recorded` sind
+  gegenüber `origin/main` unverändert (`git diff --quiet` erfolgreich) — keine Datei wurde
+  neu aufgezeichnet.
+
+### Nachrechnen
+
+```bash
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/__tests__/leave-overtime-comp-formula-468.test.ts src/__tests__/leave-overtime-comp-booking-468.test.ts src/__tests__/leave-correct-overtime-comp-468.test.ts
+pnpm --filter @clokr/api exec vitest run src/contexts/absence/__tests__/section9-correction-plan-468.test.ts src/__tests__/leave-correct-section9-468.test.ts
+pnpm --filter @clokr/api exec vitest run src/contexts/absence/__tests__/parental-leave-reduction-468.test.ts src/__tests__/parental-leave-reduction-468.test.ts src/__tests__/parental-leave-consistency-468.test.ts
+pnpm --filter @clokr/api exec vitest run src/__tests__/leave.test.ts
+pnpm --filter @clokr/api test
+pnpm --filter @clokr/web test
+```

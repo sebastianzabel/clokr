@@ -56,6 +56,7 @@ import { terminalRoutes } from "./contexts/time-tracking/api/terminals";
 import { specialLeaveRoutes } from "./contexts/absence/api/special-leave";
 import { avatarRoutes } from "./contexts/platform/api/avatars";
 import { section9DocumentRoutes } from "./contexts/absence/api/section9-documents";
+import { parentalLeaveReductionRoutes } from "./contexts/absence/api/parental-leave-reductions"; // Issue #468 (D-08..D-11)
 import { apiKeyRoutes } from "./contexts/platform/api/api-keys";
 import { salonRoutes } from "./contexts/platform/api/salons"; // Phase 64b (issue #64)
 import { salonAssignmentRoutes } from "./contexts/platform/api/salon-assignments"; // Phase 67b (issue #67)
@@ -348,6 +349,10 @@ export async function buildApp() {
   await app.register(vocationalSchoolRoutes, { prefix: "/api/v1/vocational-school" });
   await app.register(avatarRoutes, { prefix: "/api/v1/avatars" });
   await app.register(section9DocumentRoutes, { prefix: "/api/v1/section9-documents" });
+  // Issue #468 (D-08..D-11) — § 17 Abs. 1 BEEG Elternzeit-Kürzung: preview/commit/revoke
+  await app.register(parentalLeaveReductionRoutes, {
+    prefix: "/api/v1/leave/parental-reductions",
+  });
   await app.register(apiKeyRoutes, { prefix: "/api/v1/api-keys" });
   await app.register(roleRoutes, { prefix: "/api/v1/roles" });
   await app.register(roleAssignmentRoutes, { prefix: "/api/v1/role-assignments" }); // Phase 74b (issue #74)
