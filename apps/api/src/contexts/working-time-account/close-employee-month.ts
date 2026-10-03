@@ -170,8 +170,9 @@ export type CloseMonthInput = {
     // Issue #429 (D-11): tenant fallback for the SHIFT_BASED contractWorkDaysPerWeek chain
     // (contractWorkDaysPerWeekFrom) when the schedule itself has neither
     // contractWorkDaysPerWeek nor a non-empty workDays. Absent → chain falls back to 5.
+    // Also the MONTHLY_HOURS workday tier (Issue #433, D-05: workDays → defaultWorkDays →
+    // Mo–Fr).
     defaultWorkDays?: number[] | null;
-    monthlyHoursHolidayDeduction?: boolean;
     vocationalSchoolMinutesPerDay?: number | null;
     vocationalSchoolBlockMinutesPerWeek?: number | null;
     // Phase 76.31 — BVaDiG-2024 slot-aware BS crediting (D-06 tenant layer).
@@ -986,9 +987,9 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
     // computed Feiertage + DB manual holidays).
     //
     // Issue #433 (D-03/D-06, owner decision 2026-10-03): for MONTHLY_HOURS a holiday on
-    // a contractual workday ALWAYS reduces the Soll by the Ø-rate value — the tenant
-    // switch `TenantConfig.monthlyHoursHolidayDeduction` is no longer read anywhere in
-    // this function (§ 2 Abs. 1 / § 12 EFZG is unabdingbar; a tenant cannot opt out).
+    // a contractual workday ALWAYS reduces the Soll by the Ø-rate value — the retired
+    // per-tenant holiday-deduction switch (Issue #433, D-04) is no longer read anywhere
+    // in this function (§ 2 Abs. 1 / § 12 EFZG is unabdingbar; a tenant cannot opt out).
     // `calcMonthlyHoursHolidayMinutesTz` owns the day-membership test (D-05: workDays ->
     // defaultWorkDays -> Mo-Fr, never {day}Hours) and the full-calendar-month denominator
     // (D-06), shared with the full-Soll and leave/absence branches above/below. Every
