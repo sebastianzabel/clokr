@@ -21,6 +21,19 @@ import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup
 import { getVacationBalance } from "../contexts/absence/facade/vacation-balance";
 import type { FastifyInstance } from "fastify";
 
+// Task 2 (D-07, D-08) — the two overview PDF handlers only expose their aggregated data by
+// feeding it into pdfkit, not observable by decoding the response body. Spies that still call
+// straight through to the real implementation, same pattern as composition/__tests__/reports.test.ts.
+vi.mock("../composition/pdf", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../composition/pdf")>();
+  return {
+    ...actual,
+    generateVacationOverviewPdf: vi.fn(actual.generateVacationOverviewPdf),
+    streamVacationOverviewPdf: vi.fn(actual.streamVacationOverviewPdf),
+  };
+});
+import * as pdfUtils from "../composition/pdf";
+
 async function loginAs(app: FastifyInstance, email: string, password = "test1234") {
   const res = await app.inject({
     method: "POST",
@@ -244,5 +257,132 @@ describe("Issue #451 Plan 08 (D-07, D-08) — one Resturlaub across dashboard, U
     expect(overviewRow!.pendingDays).toBe(2);
     expect(overviewRow!.pendingDays).toBe(direct!.pendingDays);
     expect(entRow!.vacationBalance!.pendingDays).toBe(2);
+  });
+
+  it("both overview PDFs read the facade: remainingDays 26, carriedOver 3 (D-07)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-07-01T10:00:00.000Z"));
+
+    const pdfRes = await app.inject({
+      method: "GET",
+      url: "/api/v1/reports/vacation/pdf?year=2026",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(pdfRes.statusCode, `vacation/pdf must succeed: ${pdfRes.statusCode}`).toBe(200);
+    const streamCalls = vi.mocked(pdfUtils.streamVacationOverviewPdf).mock.calls;
+    const streamCall = streamCalls.find((c) =>
+      c[1].employees.some((e: { employeeNumber: string }) =>
+        e.employeeNumber.startsWith("RBP451-"),
+      ),
+    );
+    expect(streamCall, "overview PDF must include this employee").toBeDefined();
+    const streamEntry = streamCall![1].employees.find((e: { employeeNumber: string }) =>
+      e.employeeNumber.startsWith("RBP451-"),
+    );
+    expect(streamEntry.remainingDays, "vacation/pdf overview — RED before: 28").toBe(26);
+    expect(streamEntry.carriedOver, "vacation/pdf overview — RED before: 5").toBe(3);
+
+    const overviewPdfRes = await app.inject({
+      method: "GET",
+      url: "/api/v1/reports/leave-overview/pdf?year=2026",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(overviewPdfRes.statusCode, `leave-overview/pdf must succeed`).toBe(200);
+    const generateCalls = vi.mocked(pdfUtils.generateVacationOverviewPdf).mock.calls;
+    const generateCall = generateCalls.find((c) =>
+      c[0].employees.some((e: { employeeNumber: string }) =>
+        e.employeeNumber.startsWith("RBP451-"),
+      ),
+    );
+    expect(generateCall, "leave-overview/pdf must include this employee").toBeDefined();
+    const generateEntry = generateCall![0].employees.find((e: { employeeNumber: string }) =>
+      e.employeeNumber.startsWith("RBP451-"),
+    );
+    expect(generateEntry.remainingDays, "leave-overview/pdf overview — RED before: 28").toBe(26);
+  });
+
+  it("carryover-at-risk: FIFO-adjusted atRiskDays, not raw carriedOverDays (D-08)", async () => {
+    // A SECOND employee whose 5 carried days are fully consumed before the deadline — must
+    // NOT be listed (RED before: listed with carriedOverDays 5).
+    const passwordHash = await bcrypt.hash("test1234", 10);
+    const suffix2 = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const user2 = await app.prisma.user.create({
+      data: {
+        email: `rbp451b-${suffix2}@test.de`,
+        passwordHash,
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const employee2 = await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: user2.id,
+        employeeNumber: `RBP451B-${suffix2}`,
+        firstName: "Consumed",
+        lastName: "Parity451",
+        hireDate: new Date(Date.UTC(2024, 0, 1)),
+      },
+    });
+    await app.prisma.overtimeAccount.create({
+      data: { employeeId: employee2.id, balanceHours: 0 },
+    });
+    const ent2 = await app.prisma.leaveEntitlement.create({
+      data: {
+        employeeId: employee2.id,
+        leaveTypeId: data.vacationType.id,
+        year: 2026,
+        totalDays: 30,
+        usedDays: 5,
+        carriedOverDays: 5,
+        carryOverDeadline: new Date(Date.UTC(2026, 2, 31, 23, 59, 59)),
+        isAutoCalculated: true,
+      },
+    });
+    await app.prisma.auditLog.create({
+      data: {
+        action: "CARRYOVER_WARNED",
+        entity: "LeaveEntitlement",
+        entityId: ent2.id,
+        newValue: { year: 2026, carriedOverDays: 5 },
+      },
+    });
+    // 5 days taken before the deadline — fully consumes the carry via FIFO.
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: employee2.id,
+        leaveTypeId: data.vacationType.id,
+        status: "APPROVED",
+        startDate: new Date(Date.UTC(2026, 1, 2)),
+        endDate: new Date(Date.UTC(2026, 1, 6)),
+        days: 5,
+      },
+    });
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-03-01T10:00:00.000Z"));
+
+    // The main fixture's entitlement (5 carried, deadline 31.03.2026, 3 days taken 02.-04.02. —
+    // before the deadline window) is the plan's own "2 days at risk" example: 5 - 3 = 2. The
+    // fixture's OTHER leave request (4 days in June) falls after this test's fake clock horizon
+    // and outside the carry-over window (Jan-deadline), so it does not affect this count.
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/reports/carryover-at-risk?days=60",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode, `carryover-at-risk must succeed: ${res.body}`).toBe(200);
+    const body = JSON.parse(res.body) as {
+      summary: { totalDaysAtRisk: number };
+      rows: Array<{ entitlementId: string; atRiskDays: number }>;
+    };
+
+    const row2 = body.rows.find((r) => r.entitlementId === ent2.id);
+    expect(row2, "fully-consumed carry must NOT be listed — RED before: listed").toBeUndefined();
+
+    const row1 = body.rows.find((r) => r.entitlementId === entitlementId);
+    expect(row1, "partially-consumed carry must be listed").toBeDefined();
+    expect(row1!.atRiskDays, "5 carried - 3 taken before deadline — RED before: 5").toBe(2);
+    expect(body.summary.totalDaysAtRisk).toBe(2);
   });
 });
