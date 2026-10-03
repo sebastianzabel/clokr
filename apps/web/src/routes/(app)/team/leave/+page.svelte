@@ -169,7 +169,10 @@
     id: string;
     employeeId: string;
     employeeName: string;
-    status: "AU_PENDING" | "CONFIRMED" | "REJECTED";
+    // #468: GET /leave/section9 can also return SUPERSEDED — a CONFIRMED credit a correction
+    // (PATCH /correct) made obsolete, never an open case (the filter below still only lists
+    // AU_PENDING and REJECTED).
+    status: "AU_PENDING" | "CONFIRMED" | "REJECTED" | "SUPERSEDED";
     overlapStart: string;
     overlapEnd: string;
     creditedStart: string | null;

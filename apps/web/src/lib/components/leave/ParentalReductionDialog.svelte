@@ -13,6 +13,7 @@
    * (`GET /leave/parental-reductions/:leaveRequestId`) — this component computes none of them.
    */
   import Modal from "$components/ui/Modal.svelte";
+  import ReasonDialog from "$components/ui/ReasonDialog.svelte";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import {
@@ -47,32 +48,39 @@
   let error = $state("");
   let declaredAt = $state("");
   let selectedYears: number[] = $state([]);
+  // D-10: which year's revocation is being confirmed, or null when the ReasonDialog is closed.
+  let revokeYear: number | null = $state(null);
+  let revokeOpen = $state(false);
 
   const todayIso = new Date().toISOString().slice(0, 10);
+
+  // Shared by the initial load (the $effect below) and by a successful revoke (D-10's "reloads
+  // the preview") — one place, never two copies of the same fetch.
+  async function loadPreview() {
+    if (!request) return;
+    error = "";
+    loading = true;
+    try {
+      const p = await api.get<ParentalReductionPreview>(`/leave/parental-reductions/${request.id}`);
+      preview = p;
+      // Committable years are preselected (D-12) — the manager opts OUT, not in.
+      selectedYears = p.years.filter((y) => y.committable).map((y) => y.year);
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : "Fehler beim Laden der Vorschau.";
+    } finally {
+      loading = false;
+    }
+  }
 
   // Re-fetch the preview whenever the dialog opens with a request to show — including the very
   // first mount with `open: true` already set (same idiom as LeaveReviewDialog.svelte:83-106;
   // there is no earlier `false` state to transition FROM in a mounted test).
   $effect(() => {
     if (open && request) {
-      error = "";
       declaredAt = "";
       selectedYears = [];
       preview = null;
-      loading = true;
-      api
-        .get<ParentalReductionPreview>(`/leave/parental-reductions/${request.id}`)
-        .then((p) => {
-          preview = p;
-          // Committable years are preselected (D-12) — the manager opts OUT, not in.
-          selectedYears = p.years.filter((y) => y.committable).map((y) => y.year);
-        })
-        .catch((e: unknown) => {
-          error = e instanceof Error ? e.message : "Fehler beim Laden der Vorschau.";
-        })
-        .finally(() => {
-          loading = false;
-        });
+      void loadPreview();
     }
   });
 
@@ -90,6 +98,24 @@
   }
 
   let canSubmit = $derived(declaredAt !== "" && selectedYears.length > 0);
+  let anyCommittable = $derived(preview?.years.some((y) => y.committable) ?? false);
+
+  function openRevoke(year: number) {
+    revokeYear = year;
+    revokeOpen = true;
+  }
+
+  // Never catches — a rejection must propagate so ReasonDialog's own throw-keeps-open contract
+  // (see its doc comment) surfaces the server's German message inline and leaves the dialog open.
+  async function confirmRevoke(reason: string) {
+    if (!request || revokeYear === null) return;
+    const year = revokeYear;
+    await api.post(`/leave/parental-reductions/${request.id}/revoke`, { year, reason });
+    toasts.success("Elternzeit-Kürzung widerrufen.");
+    revokeYear = null;
+    await loadPreview();
+    await onChanged();
+  }
 
   // ── Mutation ─────────────────────────────────────────────────────────────
   async function submit() {
@@ -154,6 +180,13 @@
                       <span class="badge badge-green"
                         >erklärt am {fmtDate(y.existing.declaredAt)}</span
                       >
+                      <button
+                        class="btn btn-sm btn-ghost text-red"
+                        data-testid={`parental-reduction-revoke-${y.year}`}
+                        onclick={() => openRevoke(y.year)}
+                      >
+                        Widerrufen
+                      </button>
                     {:else if y.existing?.status === "REVOKED"}
                       <span class="badge badge-gray"
                         >widerrufen am {fmtDate(y.existing.revokedAt ?? "")}</span
@@ -194,6 +227,13 @@
           <span class="ico" aria-hidden="true">⚖</span>
           <p>{PARENTAL_REDUCTION_HINT}</p>
         </div>
+
+        {#if !anyCommittable}
+          <div class="callout brand">
+            <span class="ico" aria-hidden="true">ℹ</span>
+            <p>Für diese Elternzeit ist keine weitere Kürzung möglich.</p>
+          </div>
+        {/if}
       {/if}
 
       {#if error}
@@ -215,16 +255,27 @@
         Abbrechen
       </button>
       <span class="spacer"></span>
-      <button
-        data-testid="parental-reduction-commit"
-        class="btn btn-primary"
-        onclick={submit}
-        disabled={!canSubmit || saving}
-      >
-        {saving ? "…" : "Kürzung buchen"}
-      </button>
+      {#if anyCommittable}
+        <button
+          data-testid="parental-reduction-commit"
+          class="btn btn-primary"
+          onclick={submit}
+          disabled={!canSubmit || saving}
+        >
+          {saving ? "…" : "Kürzung buchen"}
+        </button>
+      {/if}
     {/snippet}
   </Modal>
+
+  <ReasonDialog
+    bind:open={revokeOpen}
+    title="Elternzeit-Kürzung widerrufen"
+    label="Begründung"
+    confirmLabel="Widerrufen"
+    danger
+    onConfirm={confirmRevoke}
+  />
 {/if}
 
 <style>
