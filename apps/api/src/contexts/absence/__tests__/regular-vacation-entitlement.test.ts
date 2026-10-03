@@ -30,7 +30,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
     expect(
       computeRegularVacationDays({
         year: 2027,
-        hireDate: new Date(2024, 0, 1),
+        hireDate: new Date(Date.UTC(2024, 0, 1)),
         birthDate: null,
         exitDate: null,
         workDaysPerWeek: 5,
@@ -43,7 +43,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
     expect(
       computeRegularVacationDays({
         year: 2027,
-        hireDate: new Date(2024, 0, 1),
+        hireDate: new Date(Date.UTC(2024, 0, 1)),
         birthDate: null,
         exitDate: null,
         workDaysPerWeek: 4,
@@ -53,7 +53,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
     expect(
       computeRegularVacationDays({
         year: 2027,
-        hireDate: new Date(2024, 0, 1),
+        hireDate: new Date(Date.UTC(2024, 0, 1)),
         birthDate: null,
         exitDate: null,
         workDaysPerWeek: 4,
@@ -63,7 +63,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
     expect(
       computeRegularVacationDays({
         year: 2027,
-        hireDate: new Date(2024, 0, 1),
+        hireDate: new Date(Date.UTC(2024, 0, 1)),
         birthDate: null,
         exitDate: null,
         workDaysPerWeek: 3,
@@ -77,7 +77,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
     expect(
       computeRegularVacationDays({
         year: 2027,
-        hireDate: new Date(2027, 9, 1),
+        hireDate: new Date(Date.UTC(2027, 9, 1)),
         birthDate: null,
         exitDate: null,
         workDaysPerWeek: 5,
@@ -90,7 +90,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
     expect(
       computeRegularVacationDays({
         year: 2026,
-        hireDate: new Date(2026, 1, 1),
+        hireDate: new Date(Date.UTC(2026, 1, 1)),
         birthDate: null,
         exitDate: null,
         workDaysPerWeek: 5,
@@ -102,7 +102,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
     expect(
       computeRegularVacationDays({
         year: 2027,
-        hireDate: new Date(2027, 6, 1),
+        hireDate: new Date(Date.UTC(2027, 6, 1)),
         birthDate: null,
         exitDate: null,
         workDaysPerWeek: 4,
@@ -115,7 +115,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
     const cases = [
       {
         year: 2027,
-        hireDate: new Date(2024, 0, 1),
+        hireDate: new Date(Date.UTC(2024, 0, 1)),
         birthDate: null,
         exitDate: null,
         workDaysPerWeek: 5,
@@ -123,7 +123,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
       },
       {
         year: 2027,
-        hireDate: new Date(2024, 0, 1),
+        hireDate: new Date(Date.UTC(2024, 0, 1)),
         birthDate: null,
         exitDate: null,
         workDaysPerWeek: 4,
@@ -131,7 +131,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
       },
       {
         year: 2027,
-        hireDate: new Date(2024, 0, 1),
+        hireDate: new Date(Date.UTC(2024, 0, 1)),
         birthDate: null,
         exitDate: null,
         workDaysPerWeek: 4,
@@ -139,7 +139,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
       },
       {
         year: 2027,
-        hireDate: new Date(2024, 0, 1),
+        hireDate: new Date(Date.UTC(2024, 0, 1)),
         birthDate: null,
         exitDate: null,
         workDaysPerWeek: 3,
@@ -147,7 +147,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
       },
       {
         year: 2027,
-        hireDate: new Date(2027, 9, 1),
+        hireDate: new Date(Date.UTC(2027, 9, 1)),
         birthDate: null,
         exitDate: null,
         workDaysPerWeek: 5,
@@ -155,7 +155,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
       },
       {
         year: 2026,
-        hireDate: new Date(2026, 1, 1),
+        hireDate: new Date(Date.UTC(2026, 1, 1)),
         birthDate: null,
         exitDate: null,
         workDaysPerWeek: 5,
@@ -163,7 +163,7 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
       },
       {
         year: 2027,
-        hireDate: new Date(2027, 6, 1),
+        hireDate: new Date(Date.UTC(2027, 6, 1)),
         birthDate: null,
         exitDate: null,
         workDaysPerWeek: 4,
@@ -196,23 +196,23 @@ describe("computeRegularVacationDays (Issue #445, D-01)", () => {
 
 describe("hireYearVacationDays — Wartezeit im Eintrittsjahr (Issue #435, G9)", () => {
   it("base 20, 5-day week: hire 01.01./01.06./01.07. -> full year 20; 02.07. -> 10; 01.10. -> 5", () => {
-    expect(hireYearVacationDays(20, 2027, new Date(2027, 0, 1))).toBe(20);
-    expect(hireYearVacationDays(20, 2027, new Date(2027, 5, 1))).toBe(20);
-    expect(hireYearVacationDays(20, 2027, new Date(2027, 6, 1))).toBe(20);
-    expect(hireYearVacationDays(20, 2027, new Date(2027, 6, 2))).toBe(10);
-    expect(hireYearVacationDays(20, 2027, new Date(2027, 9, 1))).toBe(5);
+    expect(hireYearVacationDays(20, 2027, new Date(Date.UTC(2027, 0, 1)))).toBe(20);
+    expect(hireYearVacationDays(20, 2027, new Date(Date.UTC(2027, 5, 1)))).toBe(20);
+    expect(hireYearVacationDays(20, 2027, new Date(Date.UTC(2027, 6, 1)))).toBe(20);
+    expect(hireYearVacationDays(20, 2027, new Date(Date.UTC(2027, 6, 2)))).toBe(10);
+    expect(hireYearVacationDays(20, 2027, new Date(Date.UTC(2027, 9, 1)))).toBe(5);
   });
 
   it("base 30, 5-day week: hire 01.01./01.06./01.07. -> full year 30; 02.07. -> 15; 01.10. -> 8 (§ 5 Abs. 2 rounding, #421)", () => {
-    expect(hireYearVacationDays(30, 2027, new Date(2027, 0, 1))).toBe(30);
-    expect(hireYearVacationDays(30, 2027, new Date(2027, 5, 1))).toBe(30);
-    expect(hireYearVacationDays(30, 2027, new Date(2027, 6, 1))).toBe(30);
-    expect(hireYearVacationDays(30, 2027, new Date(2027, 6, 2))).toBe(15);
-    expect(hireYearVacationDays(30, 2027, new Date(2027, 9, 1))).toBe(8);
+    expect(hireYearVacationDays(30, 2027, new Date(Date.UTC(2027, 0, 1)))).toBe(30);
+    expect(hireYearVacationDays(30, 2027, new Date(Date.UTC(2027, 5, 1)))).toBe(30);
+    expect(hireYearVacationDays(30, 2027, new Date(Date.UTC(2027, 6, 1)))).toBe(30);
+    expect(hireYearVacationDays(30, 2027, new Date(Date.UTC(2027, 6, 2)))).toBe(15);
+    expect(hireYearVacationDays(30, 2027, new Date(Date.UTC(2027, 9, 1)))).toBe(8);
   });
 
   it("a year other than the hire year is unaffected — full value unchanged", () => {
-    expect(hireYearVacationDays(30, 2028, new Date(2027, 9, 1))).toBe(30);
+    expect(hireYearVacationDays(30, 2028, new Date(Date.UTC(2027, 9, 1)))).toBe(30);
   });
 });
 
@@ -221,7 +221,7 @@ describe("computeRegularVacationDays — statutory floor (Issue #435, D-09)", ()
     expect(
       computeRegularVacationDays({
         year: 2027,
-        hireDate: new Date(2024, 0, 1),
+        hireDate: new Date(Date.UTC(2024, 0, 1)),
         birthDate: null,
         exitDate: null,
         workDaysPerWeek: 5,
@@ -234,7 +234,7 @@ describe("computeRegularVacationDays — statutory floor (Issue #435, D-09)", ()
     expect(
       computeRegularVacationDays({
         year: 2027,
-        hireDate: new Date(2024, 0, 1),
+        hireDate: new Date(Date.UTC(2024, 0, 1)),
         birthDate: new Date(Date.UTC(2012, 5, 15)),
         exitDate: null,
         workDaysPerWeek: 5,
@@ -247,7 +247,7 @@ describe("computeRegularVacationDays — statutory floor (Issue #435, D-09)", ()
     expect(
       computeRegularVacationDays({
         year: 2027,
-        hireDate: new Date(2024, 0, 1),
+        hireDate: new Date(Date.UTC(2024, 0, 1)),
         birthDate: new Date(Date.UTC(2009, 5, 15)),
         exitDate: null,
         workDaysPerWeek: 4,
@@ -262,7 +262,7 @@ describe("computeRegularVacationDays — statutory floor (Issue #435, D-09)", ()
     expect(
       computeRegularVacationDays({
         year: 2027,
-        hireDate: new Date(2027, 9, 1),
+        hireDate: new Date(Date.UTC(2027, 9, 1)),
         birthDate: new Date(Date.UTC(2012, 5, 15)),
         exitDate: null,
         workDaysPerWeek: 5,
@@ -275,7 +275,7 @@ describe("computeRegularVacationDays — statutory floor (Issue #435, D-09)", ()
     expect(
       computeRegularVacationDays({
         year: 2027,
-        hireDate: new Date(2027, 5, 1),
+        hireDate: new Date(Date.UTC(2027, 5, 1)),
         birthDate: new Date(Date.UTC(2012, 5, 15)),
         exitDate: null,
         workDaysPerWeek: 5,
@@ -288,7 +288,7 @@ describe("computeRegularVacationDays — statutory floor (Issue #435, D-09)", ()
     expect(
       computeRegularVacationDays({
         year: 2027,
-        hireDate: new Date(2024, 0, 1),
+        hireDate: new Date(Date.UTC(2024, 0, 1)),
         birthDate: new Date(Date.UTC(2012, 5, 15)),
         exitDate: null,
         workDaysPerWeek: 5,

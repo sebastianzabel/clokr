@@ -26,7 +26,7 @@ import {
 } from "../facade/entitlements"; // Phase 100B Plan 10 — A11/A16
 import { listLeaveTypes, updateLeaveType } from "../facade/leave-types"; // Phase 100B Plan 10 — A18/A19
 import {
-  resolveContractWorkDaysPerWeek, // Issue #416 — same-context internal import, the one resolution chain (CLAUDE.md)
+  loadVacationContractSegments, // Issue #450 (D-09) — the segment history for the heal and both thresholds
   ensureRegularVacationEntitlement, // Issue #445 (D-05, P-07) — zero-placeholder heal
   REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
   resolveVacationBaseDays, // Issue #435 (D-06) — person value ?? tenant default ?? 30
@@ -34,7 +34,7 @@ import {
   daysDiffer, // Issue #435 (D-10) — 2-decimal-precision "did totalDays actually change" test
 } from "../leave-days";
 import {
-  statutoryMinimumVacationThreshold, // Issue #435 (D-10/D-14) — the ONE hire-year-adjusted floor
+  statutoryMinimumVacationThresholdBySegments, // Issue #450 (D-09) — the ONE segment-aware floor, GET and PUT
   statutoryMinimumViolationMessage, // Issue #435 (D-10) — the ONE German 400 message builder
 } from "../vacation-calc";
 
@@ -118,8 +118,11 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
 
       // Issue #435 (D-14): the Urlaub tab's suggestion values, computed server-side ONCE — never
       // a client-side formula. Hoisted here (before the #416 heal block below) so the heal branch
-      // reuses this SAME workDaysPerWeek instead of resolving it a second time.
-      const workDaysPerWeek = await resolveContractWorkDaysPerWeek(
+      // reuses this SAME segment history instead of resolving it a second time.
+      // Issue #450 (D-09): the full contract-segment history, loaded once and reused by the
+      // first-access heal below AND the statutory-minimum threshold — the newest-row-only
+      // workday count is no longer the input to either.
+      const contractSegments = await loadVacationContractSegments(
         app.prisma,
         employeeId,
         employee.tenantId,
@@ -130,10 +133,10 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
         employee.tenantId,
         year,
       );
-      const statutoryMinimumDays = statutoryMinimumVacationThreshold({
+      const statutoryMinimumDays = statutoryMinimumVacationThresholdBySegments({
         birthDate: employee.birthDate,
         year,
-        workDaysPerWeek,
+        segments: contractSegments,
         hireDate: employee.hireDate,
         exitDate: employee.exitDate,
       });
@@ -159,7 +162,9 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
           // Issue #447 (D-05): this branch is only reached when employee.exitDate === null
           // (see the guard above) — passed through anyway, now that the parameter is required.
           employee.exitDate,
-          workDaysPerWeek,
+          // Issue #450 (D-09): the segment history, not the newest-row-only workDaysPerWeek — a
+          // mid-year contract change is reflected in the healed row from the very first read.
+          contractSegments,
           baseDays,
           "Jahreswechsel — automatisch angelegt",
           (entry) =>
@@ -299,15 +304,17 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
       // carryOverDeadline/carriedOverDays edited) stays editable — otherwise Bestand rows below
       // the minimum would become uneditable; correcting those rows is the follow-up
       // "Prüfbericht" ticket (CONTEXT.md, out of scope here).
-      const workDaysPerWeek = await resolveContractWorkDaysPerWeek(
+      // Issue #450 (D-09): the floor follows the SAME per-segment apportionment as the regular
+      // entitlement — a correct segment value is never rejected against a newest-row-only floor.
+      const contractSegments = await loadVacationContractSegments(
         app.prisma,
         employeeId,
         employee.tenantId,
       );
-      const statutoryThreshold = statutoryMinimumVacationThreshold({
+      const statutoryThreshold = statutoryMinimumVacationThresholdBySegments({
         birthDate: employee.birthDate,
         year: body.year,
-        workDaysPerWeek,
+        segments: contractSegments,
         hireDate: employee.hireDate,
         exitDate: employee.exitDate,
       });

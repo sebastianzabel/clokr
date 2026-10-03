@@ -10,9 +10,13 @@
  * Target/minimum are computed with the SAME helpers the write paths use — no formula is
  * reimplemented here:
  *   - target: `resolveRegularVacationDays()` (Issue #435 D-05 person/tenant base + statutory
- *     floor, Issue #447 exit twelfthing). Never reads `classification` — the apprentice tenant
- *     default is a UI pre-fill only (D-05), see the ABWEICHUNG_VERTRAG note below.
- *   - minimum: `statutoryMinimumVacationThreshold()`, fed by `resolveContractWorkDaysPerWeek()`.
+ *     floor, Issue #447 exit twelfthing, Issue #450 per-contract-segment apportionment). Never
+ *     reads `classification` — the apprentice tenant default is a UI pre-fill only (D-05), see
+ *     the ABWEICHUNG_VERTRAG note below.
+ *   - minimum: `statutoryMinimumVacationThresholdBySegments()`, fed by the employee's full
+ *     `WorkSchedule` history via `loadVacationContractSegments()` (Issue #450 D-09) — the floor is
+ *     apportioned per contract segment exactly like the regular entitlement, never computed from
+ *     the newest `WorkSchedule` row alone.
  *
  * Categories (fixed output order; a row may carry several; `OK` only when none apply):
  *   - UNTER_MINIMUM: stored is below the statutory minimum (applies to manual rows too).
@@ -37,9 +41,18 @@
  *   - UEBERTRAG_VERFALLEN_WIEDER: the previous year's carry-over partially lapsed per
  *     `carryOverRemainder()` (Issue #445 FIFO/expiry) but this year's stored `carriedOverDays`
  *     still reflects the un-lapsed (larger) amount.
- *   - VERTRAGSWECHSEL_PRUEFEN (flag only — Issue #450 implements the split): the employee has a
- *     WorkSchedule change (not the initial contract) whose `validFrom`, read as a calendar date
- *     in the tenant's timezone, falls inside the year.
+ *   - VERTRAGSWECHSEL_PRUEFEN: the employee has a WorkSchedule change (not the initial contract)
+ *     whose `validFrom`, read as a calendar date in the tenant's timezone, falls inside the year.
+ *     Since Issue #450 the row's `target` (and `minimum`) is the per-segment value, so `stored`
+ *     vs `target` on the same line IS the old-vs-new-value comparison (D-11 dry-run) — a human row
+ *     is listed with the new value here too, never corrected (D-07).
+ *
+ * Issue #450 (D-04): a normalization note, printed after the report rows and never counted as a
+ * finding, lists every legacy (pre-Phase-60) non-1st-of-month contract-change row once:
+ * `validFrom` (the row's own raw date) vs `effectiveFrom` (the 1st of the FOLLOWING month the
+ * segment kernel actually uses). The employee's first (hire-time) row is never listed — it is
+ * exempt from the 1st-of-month rule by definition (CLAUDE.md § Schedule Types), so its segment
+ * `from` always equals its raw `validFrom`.
  *
  * Output contains ids only — no name, no employee number, no birth/hire date (DSGVO). Full,
  * untruncated UUIDs so the owner can locate each row directly.
@@ -64,7 +77,7 @@ import { pathToFileURL } from "node:url";
 import { formatInTimeZone } from "date-fns-tz";
 import {
   resolveRegularVacationDays,
-  resolveContractWorkDaysPerWeek,
+  loadVacationContractSegments,
   hasHumanVacationWrite,
   isZeroVacationPlaceholder,
   countedLeaveDaysWithin,
@@ -72,8 +85,8 @@ import {
   daysDiffer,
 } from "../src/contexts/absence/leave-days";
 import {
-  computeRegularVacationDays,
-  statutoryMinimumVacationThreshold,
+  computeRegularVacationDaysBySegments,
+  statutoryMinimumVacationThresholdBySegments,
 } from "../src/contexts/absence/vacation-calc";
 import { getLeaveTypeByCode } from "../src/contexts/absence/facade/leave-types";
 import { EFFECTIVE_LEAVE_STATUSES } from "../src/contexts/absence/effective-leave-statuses";
@@ -196,6 +209,29 @@ export function formatLine(row: ReportRow): string {
   );
 }
 
+function fmtUtcDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Issue #450 (D-04/D-11) — one legacy non-1st-of-month contract-change row, informational only
+ * (never a finding, never counted toward the exit code). `validFrom` is the row's own raw date;
+ * `effectiveFrom` is the 1st-of-the-following-month date the segment kernel actually applies.
+ */
+export function formatNormalizationLine(input: {
+  tenantId: string;
+  employeeId: string;
+  workScheduleId: string;
+  validFrom: Date;
+  effectiveFrom: Date;
+}): string {
+  return (
+    `tenantId=${input.tenantId} employeeId=${input.employeeId} ` +
+    `workScheduleId=${input.workScheduleId} validFrom=${fmtUtcDate(input.validFrom)} ` +
+    `effectiveFrom=${fmtUtcDate(input.effectiveFrom)} note=VERTRAGSBEGINN_NORMALISIERT`
+  );
+}
+
 // ── Per-row classification (Kernkategorien) ──────────────────────────────────
 type RawEntitlement = {
   id: string;
@@ -217,12 +253,12 @@ async function classifyRow(
   const used = Number(entitlement.usedDays);
   const carriedOver = Number(entitlement.carriedOverDays);
 
-  const workDaysPerWeek = await resolveContractWorkDaysPerWeek(prisma, employee.id, tenantId);
+  const segments = await loadVacationContractSegments(prisma, employee.id, tenantId);
   const target = await resolveRegularVacationDays(prisma, employee.id, tenantId, year);
-  const minimum = statutoryMinimumVacationThreshold({
+  const minimum = statutoryMinimumVacationThresholdBySegments({
     birthDate: employee.birthDate,
     year,
-    workDaysPerWeek,
+    segments,
     hireDate: employee.hireDate,
     exitDate: employee.exitDate,
   });
@@ -246,12 +282,12 @@ async function classifyRow(
     !birthDateMissing
   ) {
     const employed = employedInYear(employee.hireDate, employee.exitDate, year);
-    apprenticeTarget = computeRegularVacationDays({
+    apprenticeTarget = computeRegularVacationDaysBySegments({
       year,
       hireDate: employee.hireDate,
       birthDate: employee.birthDate,
       exitDate: employee.exitDate,
-      workDaysPerWeek,
+      segments,
       baseDays: employed ? apprenticeDefault : 0,
     });
   }
@@ -403,12 +439,12 @@ async function applyCrossYearCheck(
 
     // No entitlement row at all for this year — synthetic line, target/minimum still computed.
     void apprenticeDefault; // target/minimum below never need the apprentice comparison
-    const workDaysPerWeek = await resolveContractWorkDaysPerWeek(prisma, employee.id, tenantId);
+    const segments = await loadVacationContractSegments(prisma, employee.id, tenantId);
     const target = await resolveRegularVacationDays(prisma, employee.id, tenantId, y);
-    const minimum = statutoryMinimumVacationThreshold({
+    const minimum = statutoryMinimumVacationThresholdBySegments({
       birthDate: employee.birthDate,
       year: y,
-      workDaysPerWeek,
+      segments,
       hireDate: employee.hireDate,
       exitDate: employee.exitDate,
     });
@@ -430,13 +466,39 @@ async function applyCrossYearCheck(
   return extraRows;
 }
 
+// ── Ergänzung (e): legacy non-1st contract starts, informational (Issue #450 D-04) ──
+async function collectNormalizationLines(
+  prisma: PrismaClient,
+  tenantId: string,
+  employeesSeen: Map<string, EmployeeInfo>,
+): Promise<string[]> {
+  const lines: string[] = [];
+  for (const employee of employeesSeen.values()) {
+    const segments = await loadVacationContractSegments(prisma, employee.id, tenantId);
+    for (const segment of segments) {
+      if (segment.validFrom === null) continue; // no-WorkSchedule placeholder — never a real row
+      if (segment.from.getTime() === segment.validFrom.getTime()) continue; // not normalized
+      lines.push(
+        formatNormalizationLine({
+          tenantId,
+          employeeId: employee.id,
+          workScheduleId: segment.workScheduleId!,
+          validFrom: segment.validFrom,
+          effectiveFrom: segment.from,
+        }),
+      );
+    }
+  }
+  return lines;
+}
+
 async function auditTenant(
   prisma: PrismaClient,
   tenantId: string,
   baseYear: number,
-): Promise<ReportRow[]> {
+): Promise<{ rows: ReportRow[]; normalizationLines: string[] }> {
   const vacationType = await getLeaveTypeByCode(prisma, tenantId, "VACATION");
-  if (!vacationType) return [];
+  if (!vacationType) return { rows: [], normalizationLines: [] };
 
   const tenantConfig = await prisma.tenantConfig.findUnique({
     where: { tenantId },
@@ -503,7 +565,9 @@ async function auditTenant(
     );
   }
 
-  return [...rowsByEmployeeYear.values(), ...extraRows];
+  const normalizationLines = await collectNormalizationLines(prisma, tenantId, employeesSeen);
+
+  return { rows: [...rowsByEmployeeYear.values(), ...extraRows], normalizationLines };
 }
 
 // ── Main entry point ─────────────────────────────────────────────────────────
@@ -548,8 +612,11 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       : [{ id: args.tenantId! }];
 
     const allRows: ReportRow[] = [];
+    const allNormalizationLines: string[] = [];
     for (const t of tenants) {
-      allRows.push(...(await auditTenant(prisma, t.id, args.year)));
+      const { rows, normalizationLines } = await auditTenant(prisma, t.id, args.year);
+      allRows.push(...rows);
+      allNormalizationLines.push(...normalizationLines);
     }
 
     allRows.sort((a, b) => {
@@ -557,7 +624,10 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       if (a.employeeId !== b.employeeId) return a.employeeId.localeCompare(b.employeeId);
       return a.year - b.year;
     });
+    allNormalizationLines.sort();
 
+    // Findings and the exit code are computed from `allRows` only — a normalization note
+    // (Issue #450 D-04) is informational and never contributes to either.
     const counts = new Map<string, number>();
     let findingsCount = 0;
     for (const row of allRows) {
@@ -568,6 +638,10 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
         findingsCount++;
         for (const c of row.categories) counts.set(c, (counts.get(c) ?? 0) + 1);
       }
+    }
+
+    for (const line of allNormalizationLines) {
+      console.info(line);
     }
 
     const byCategory = Array.from(counts.entries())
