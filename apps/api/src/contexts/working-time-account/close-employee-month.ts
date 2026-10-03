@@ -311,6 +311,91 @@ export function toCloseMonthApprovedLeave(
   }));
 }
 
+/**
+ * Issue #433 (D-11) — the full calendar month's net Soll of a MONTHLY_HOURS employee,
+ * computed BY the saldo core itself rather than by a hand-rolled copy in the composition
+ * layer. Every server-side display of a MONTHLY_HOURS month Soll (the month-saldo endpoint,
+ * the dashboard tile, the monthly report/PDFs) calls this ONE function, so they can never
+ * disagree with each other or with Monatsabschluss — parity is by construction, not by three
+ * independently-maintained formulas happening to agree.
+ *
+ * Returns `null` for every schedule type other than MONTHLY_HOURS, and for MONTHLY_HOURS with
+ * `monthlyHours` null/0/negative (pure tracking, D-01) — never a fabricated 0, so a caller can
+ * tell "no Soll applies here" apart from "the Soll is zero this month".
+ *
+ * Internally calls {@link closeEmployeeMonth} over the FULL calendar month
+ * (`monthStart`..`monthLastDay`, never a partial window) with `carryOverIn: 0`,
+ * `isTimeTrackingExempt: false`, no break overrides, no entries and no shifts — none of
+ * those four inputs can change a MONTHLY_HOURS employee's `expectedMinutes` (BS credits
+ * contribute to `workedMinutes` only, since `contributesToExpected` is false for MONTHLY_HOURS
+ * in the BS loop; see this file's own D-04 comments), so passing the caller's real entries/
+ * shifts/carry-over/BS slot overrides would do nothing except cost the caller a fetch they
+ * don't need. Callers pass the SAME facade-fetched data the close paths use — effective-status
+ * leave (`getActiveLeaveOverlapping`), non-deleted absences (`getAbsencesOverlapping`), and
+ * work-location holidays (`holidaysAtWorkLocation`) — through `toCloseMonthApprovedLeave` /
+ * the absences mapper below, never a reach-around into Prisma from this pure function.
+ */
+export function monthlyHoursMonthSollMinutes(input: {
+  employeeId: string;
+  schedule: Record<string, unknown>;
+  monthStart: Date;
+  monthEnd: Date;
+  monthFirstDay: Date;
+  monthLastDay: Date;
+  tz: string;
+  hireDate: Date;
+  exitDate: Date | null;
+  leave: Parameters<typeof toCloseMonthApprovedLeave>[0];
+  absences: ReadonlyArray<{
+    startDate: Date;
+    endDate: Date;
+    type: string;
+    source: string;
+    halfDay?: boolean | null;
+    unterrichtsMinutes?: number | null;
+  }>;
+  holidayDateStrings: Set<string>;
+  defaultWorkDays: number[] | null | undefined;
+}): number | null {
+  const scheduleType = String(input.schedule.type ?? "");
+  const mh = Number(input.schedule.monthlyHours ?? 0);
+  if (scheduleType !== "MONTHLY_HOURS" || !(mh > 0)) return null;
+
+  const result = closeEmployeeMonth({
+    employeeId: input.employeeId,
+    monthStart: input.monthStart,
+    monthEnd: input.monthEnd,
+    monthFirstDay: input.monthFirstDay,
+    monthLastDay: input.monthLastDay,
+    tz: input.tz,
+    carryOverIn: 0,
+    schedule: input.schedule,
+    hireDate: input.hireDate,
+    exitDate: input.exitDate,
+    isTimeTrackingExempt: false,
+    breakOver6hOverride: null,
+    breakOver9hOverride: null,
+    entries: [],
+    shifts: [],
+    approvedLeave: toCloseMonthApprovedLeave(input.leave),
+    absences: input.absences.map((ab) => ({
+      startDate: ab.startDate,
+      endDate: ab.endDate,
+      type: ab.type,
+      source: ab.source,
+      halfDay: Boolean(ab.halfDay),
+      unterrichtsMinutes: ab.unterrichtsMinutes ?? null,
+    })),
+    holidayDateStrings: input.holidayDateStrings,
+    tenantConfig: {
+      defaultBreakOver6h: 30,
+      defaultBreakOver9h: 45,
+      defaultWorkDays: input.defaultWorkDays,
+    },
+  });
+  return result.expectedMinutes;
+}
+
 // ── Implementation ────────────────────────────────────────────────────────────
 
 /**

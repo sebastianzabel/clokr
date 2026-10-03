@@ -97,6 +97,9 @@ export { computeMonthSaldo } from "./month-saldo";
 export { loadNegativeBalanceTolerance } from "./negative-balance-tolerance";
 export { isSnapshotLocked } from "./snapshot-lock";
 export { closeEmployeeMonth } from "./close-employee-month";
+// Issue #433 (D-11) — pure re-export, no Prisma: the one full-month MONTHLY_HOURS Soll, shared
+// by the month-saldo endpoint, the dashboard tile and the monthly report/PDFs.
+export { monthlyHoursMonthSollMinutes } from "./close-employee-month";
 export { fetchCloseMonthData } from "./close-month-data";
 // Phase 101B plan 04 moved these here out of time-tracking/api/time-entries.ts (Arbeitszeitkonto
 // subject matter in a Zeiterfassung route file — owner Nebenbefund, measured cycle-neutral).
