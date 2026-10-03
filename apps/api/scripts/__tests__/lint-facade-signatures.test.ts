@@ -507,7 +507,12 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // except `salon-assignments.ts`, where they add two DIFFERENT functions (salonsForDays vs.
   // homeSalonAt) — counts still add, re-measured on the merged tree. Exceptions unchanged at 17
   // (71b added none).
-  it("the real tree has exactly 128 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  //
+  // 128 -> 130 in Phase 451-10 (Issue #451, D-07): new file
+  // `contexts/absence/facade/vacation-balance.ts` (the ONE Resturlaub read path) adds 2 exported
+  // functions (vacationBalanceForRow, getVacationBalance) — both pass F1/F2/F3 directly, no new
+  // exception needed; exceptions unchanged at 17.
+  it("the real tree has exactly 130 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -530,6 +535,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
         "apps/api/src/contexts/absence/facade/section9-credits.ts",
         "apps/api/src/contexts/absence/facade/absences.ts",
         "apps/api/src/contexts/absence/facade/leave-requests.ts",
+        "apps/api/src/contexts/absence/facade/vacation-balance.ts",
       ].sort((a, b) => a.localeCompare(b)),
     );
 
@@ -547,7 +553,9 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // longer counted) — 130 -> 129. See that file's own module docblock for the full reasoning.
     // Issue #446: contexts/absence/facade/leave-requests.ts lost getApprovedLeaveOverlapping
     // (merged into getActiveLeaveOverlapping, no alias) — 129 -> 128.
-    expect(functions).toHaveLength(128);
+    // Issue #451 (D-07): new file contexts/absence/facade/vacation-balance.ts adds
+    // vacationBalanceForRow + getVacationBalance — 128 -> 130.
+    expect(functions).toHaveLength(130);
 
     const rawExceptions = JSON.parse(
       readFileSync(

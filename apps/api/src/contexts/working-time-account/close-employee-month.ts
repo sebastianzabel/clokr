@@ -1402,7 +1402,8 @@ export async function computeWeekProgress(
   // ── ONE prefetch for the whole week ──────────────────────────────────────────────────────
   const [weekWorkEntries, toDateEntries, weekLeave, weekAbsences, tenantConfig] = await Promise.all(
     [
-      // T2 — closed WORK entries, carries salonId; feeds the holiday resolver (§ 2 EFZG).
+      // T2 — closed WORK entries, carries the employee's work location; feeds the holiday
+      // resolver (§ 2 EFZG). This file never names or reads that field itself (D-05 structural).
       getWorkedEntriesInRange(app.prisma, employeeScope, weekStart, weekEnd),
       // T1 — THE SALDO INPUT, Monday..yesterday only (today never counts, issue #438).
       getValidWorkedEntriesInRange(
@@ -1421,19 +1422,16 @@ export async function computeWeekProgress(
     ? await getShiftsInRange(app.prisma, employeeScope, weekStart, weekEnd)
     : [];
 
-  const workLocationEntries = weekWorkEntries.map((e) => ({
-    employeeId,
-    date: e.date,
-    startTime: e.startTime,
-    salonId: e.salonId,
-  }));
+  // T2 rows already project to WorkLocationEntry's shape (employeeId/date/startTime + the field
+  // the resolver needs) — forwarded as-is, same pattern month-saldo.ts uses, so this file never
+  // names that field itself (D-05 structural: Arbeitszeitkonto never interprets a salon).
   const employeeHolidaysMap = await holidaysAtWorkLocation(
     app.prisma,
     employee.tenantId,
     [employeeId],
     dateStrInTz(weekStart, tz),
     dateStrInTz(weekEnd, tz),
-    workLocationEntries,
+    weekWorkEntries,
   );
   const weekHolidayDateStrings = new Set<string>(employeeHolidaysMap.get(employeeId)?.keys() ?? []);
 
