@@ -286,9 +286,24 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
 
 - `FIXED_WEEKLY` — fixed weekly hours with per-day allocation (e.g., 40h, Mo-Fr 8h)
 - `MONTHLY_HOURS` — monthly hour budget for Minijobber/flexible workers
-  - `monthlyHours` is optional — when null/0, pure time tracking without Soll comparison
+  - `monthlyHours` is an OWED monthly Soll (Issue #433, owner decision 2026-10-03), not a budget
+    ceiling — null/0 stays pure time tracking without Soll comparison
   - No daily targets, no daily +/- display in calendar
-  - Holiday/absence deductions do NOT apply (flexible schedule)
+  - Effective leave (all types incl. SICK), imposed absences, and statutory/manual holidays on a
+    contractual workday reduce the owed Soll by `monthlyHours × 60 ÷ (contractual workdays of the
+    FULL calendar month)` (Ø-Methode; a half day reduces by half; one `Math.round()` per computed
+    range; a holiday on a non-workday reduces nothing). The contractual workday set is `workDays` →
+    `TenantConfig.defaultWorkDays` → Mo–Fr, read ONLY by the private `monthlyHoursWorkDays()` in
+    `apps/api/src/contexts/working-time-account/timezone.ts` — never `{day}Hours`.
+  - Every display of a MONTHLY_HOURS month Soll (month view, dashboard, reports/PDF, web calendar
+    header) is computed by `monthlyHoursMonthSollMinutes()` in `close-employee-month.ts` — the one
+    place this rule lives; no caller derives its own formula.
+  - A VOCATIONAL_SCHOOL (Berufsschule) day is credited to worked minutes only, never also a Soll
+    reduction (one day reduces Soll exactly once).
+  - `TenantConfig.monthlyHoursHolidayDeduction` is retired — no code reads or writes it; the column
+    is dropped in a follow-up release (GitHub #470).
+  - Closed months are never recalculated — `scripts/dry-run-433-monthly-hours-soll.ts` lists the
+    affected stored months read-only; any correction is a deliberate correction booking.
 - `WorkSchedule.validFrom` MUST be the 1st of a calendar month for every contract CHANGE (PUT `/api/v1/settings/work/:employeeId` and tenant-config bulk apply). Non-1st dates are rejected with HTTP 400 + German message `"Vertragswechsel sind nur zum Monats-1. erlaubt."` (see `apps/api/src/contexts/platform/month-first-date.ts` for the canonical constant `MONTH_FIRST_ERROR`). The initial schedule on employee creation (POST `/api/v1/employees`) is exempt — `validFrom = hireDate` may be any day, because contract START is not a contract CHANGE. Existing non-1st rows (pre-Phase-60) are preserved for audit-trail purposes; surface them via `pnpm --filter @clokr/api exec tsx scripts/audit-workschedule-non-month1.ts`. See GitHub issue #220.
 - **`{day}Hours` is authoritative data only for `FIXED_SCHEDULE`.** For `FLEXTIME`, `MONTHLY_HOURS`
   and `SHIFT_BASED` the seven `{day}Hours` columns are a legacy 1/0 flag rather than hours;
