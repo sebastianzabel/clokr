@@ -193,6 +193,28 @@ describe("Issue #451 (D-07) — GET /leave/entitlements exposes vacationBalance"
         carriedOverDays: 0,
       },
     });
+    // Same 3+4-day split as the first test — reproduces the known effectiveCarryOverDays=3
+    // value AND keeps selfHealUsedDays a no-op (usedDays above already matches the sum).
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId,
+        leaveTypeId: data.vacationType.id,
+        status: "APPROVED",
+        startDate: new Date(Date.UTC(2026, 1, 2)),
+        endDate: new Date(Date.UTC(2026, 1, 4)),
+        days: 3,
+      },
+    });
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId,
+        leaveTypeId: data.vacationType.id,
+        status: "APPROVED",
+        startDate: new Date(Date.UTC(2026, 5, 1)),
+        endDate: new Date(Date.UTC(2026, 5, 4)),
+        days: 4,
+      },
+    });
 
     const res = await app.inject({
       method: "GET",
