@@ -296,6 +296,13 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   the only place that computes it; every reader (Dashboard, Urlaubsübersicht, Urlaubs-PDFs, the
   carry-over expiry cron, `GET /leave/entitlements`, the admin Urlaubsverwaltung) reads this
   facade instead of re-deriving the arithmetic.
+- **The regular yearly base value comes from one function (Issue #482).**
+  `resolveVacationBaseDays()` (`contexts/absence/leave-days.ts`) is the only place the chain
+  lives — `Employee.annualVacationDays`, then for an AZUBI
+  `TenantConfig.defaultApprenticeVacationDays`, then `TenantConfig.defaultVacationDays`, then 30;
+  the statutory floor is applied afterwards by the regular-entitlement formula. A settings or
+  classification change writes no row by itself; new years, the #445 zero heal and the audited
+  #447/#450 recomputes read the current value. No reader rebuilds the chain.
 
 ## Overtime Saldo Calculation (current)
 

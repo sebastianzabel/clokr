@@ -17,11 +17,12 @@ These rules MUST be followed when implementing or modifying vacation/leave carry
 
 - A `LeaveEntitlement` row for the next year is created with the **regular yearly entitlement** —
   computed by ONE function, `computeRegularVacationDays()` (`contexts/absence/vacation-calc.ts`):
-  the tenant/person base value (today: `TenantConfig.defaultVacationDays`, resolved by
-  `resolveVacationBaseDays()` — Issue #435 changes only this one resolver to "person value ??
-  tenant default") scaled by the contractual workdays of each contract segment (see below), then
-  pro-rated for a mid-year hire. It is NEVER created with a hard-coded `totalDays: 0` — a missing
-  row used to silently skip the availability check on `POST /leave/requests` entirely.
+  the base value resolved by `resolveVacationBaseDays()` (Issue #482 — the four-step chain:
+  `Employee.annualVacationDays`, then for an AZUBI `TenantConfig.defaultApprenticeVacationDays`,
+  then `TenantConfig.defaultVacationDays`, then 30) scaled by the contractual workdays of each
+  contract segment (see below), then pro-rated for a mid-year hire. It is NEVER created with a
+  hard-coded `totalDays: 0` — a missing row used to silently skip the availability check on
+  `POST /leave/requests` entirely.
 - An employee who exited before 1 January of the target year gets `0` (no employment in that
   year). An exit DURING the year carries the § 5 BUrlG Teilurlaub on the PERSISTED row itself
   (`employmentYearVacationDays()`, Issue #447): the exit-year row is recomputed — with an audit

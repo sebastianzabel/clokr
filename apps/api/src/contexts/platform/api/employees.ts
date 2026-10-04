@@ -60,7 +60,7 @@ import {
   BS_BLOCK_WEEKLY_MIN_BOUND,
   BS_BLOCK_WEEKLY_MAX_BOUND,
   ensureVacationEntitlementForYear, // Issue #416 — auto-seed vacation entitlement at hire time
-  resolveVacationBaseDays, // Issue #435 (D-06) — person value ?? tenant default ?? 30
+  resolveVacationBaseDays, // Issue #482 — the classification-aware base value
   statutoryMinimumVacationDays, // Issue #435 (D-11) — 5-day-base floor on POST/PATCH
   statutoryMinimumViolationMessage, // Issue #435 (D-11) — the ONE German 400 message builder
   daysDiffer, // Issue #435 code review (WR-01) — reused by the PATCH "did annualVacationDays change" guard
@@ -233,8 +233,9 @@ const createEmployeeSchema = z.object({
   // accepted because Clokr frontends send `field: x ? x : null`, never omit the key.
   homeSalonId: z.string().uuid().optional().nullable(),
   // Issue #435 D-02 — base days at a 5-day week, two decimals because the JArbSchG minimum is
-  // 20,83 (D-11 pre-fill), Decimal(5,2) column. null = tenant default (resolveVacationBaseDays).
-  // The statutory-minimum 400 is plan 03's (D-11) and runs in the handler, not in Zod.
+  // 20,83 (D-11 pre-fill), Decimal(5,2) column. null = the classification-aware base value from
+  // resolveVacationBaseDays() (Issue #482). The statutory-minimum 400 is plan 03's (D-11) and
+  // runs in the handler, not in Zod.
   annualVacationDays: z
     .number()
     .min(0.5)
@@ -260,7 +261,8 @@ const updateEmployeeSchema = z.object({
   // Phase 65 — Geburtsdatum (needed for JArbSchG §9 AZUBI <18 check + UI suggestion)
   birthDate: z.string().datetime().nullable().optional(),
   // Issue #435 D-02/D-11 — identical Zod chain to createEmployeeSchema's field; null = back to
-  // tenant default (resolveVacationBaseDays). The statutory-minimum 400 runs in the handler.
+  // the classification-aware base value from resolveVacationBaseDays() (Issue #482). The
+  // statutory-minimum 400 runs in the handler.
   annualVacationDays: z
     .number()
     .min(0.5)
@@ -736,7 +738,8 @@ export async function employeeRoutes(app: FastifyInstance) {
             bsSlotSecondLongDayMinutes: body.bsSlotSecondLongDayMinutes ?? null,
             bsSlotShortDayMinutes: body.bsSlotShortDayMinutes ?? null,
             bsSlotBlockWeekMinutes: body.bsSlotBlockWeekMinutes ?? null,
-            // Issue #435 (D-02): per-person vacation base value, null = tenant default.
+            // Issue #482: per-person vacation base value, null = the classification's own
+            // Standard, resolved by resolveVacationBaseDays().
             annualVacationDays: body.annualVacationDays ?? null,
             // Issue #435 (D-11 prerequisite): needed at creation for the statutory-minimum floor.
             birthDate: body.birthDate ? new Date(body.birthDate) : null,
@@ -777,15 +780,17 @@ export async function employeeRoutes(app: FastifyInstance) {
         // until an admin happened to open the Urlaubsanspruch tab. Runs on `tx` (invariant-
         // carrying, ADR 0002 Entscheidung 10): if this fails, the whole employee-creation
         // transaction rolls back rather than committing an employee with a silently missing
-        // entitlement. No classification special-case (AZUBI included) — CONTEXT.md decision 3.
+        // entitlement. The create path itself has no classification branch of its own — since
+        // Issue #482 the Azubi-Standard is resolved inside resolveVacationBaseDays() below, the
+        // one place that chain lives.
         const workDaysPerWeek =
           body.scheduleType === "SHIFT_BASED"
             ? (body.contractWorkDaysPerWeek ?? 5)
             : // Mirrors countWorkDaysPerWeek()'s workDays.length tier — the same raw input
               // resolvedWorkDays above already resolved for the WorkSchedule row.
               resolvedWorkDays.length;
-        // Issue #435 (D-06): the ONE base-value resolution — person value ?? tenant default ?? 30
-        // — on `tx` since `emp` already exists inside this transaction.
+        // Issue #482: the ONE base-value resolution — the classification-aware base value from
+        // resolveVacationBaseDays() — on `tx` since `emp` already exists inside this transaction.
         const vacationBaseDays = await resolveVacationBaseDays(tx, emp.id, req.user.tenantId);
         await ensureVacationEntitlementForYear(
           tx,

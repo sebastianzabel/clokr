@@ -66,7 +66,7 @@ import { parseArgs } from "node:util";
 import { ensureVacationEntitlementForYear } from "../src/contexts/absence";
 import {
   loadVacationContractSegments, // Issue #450 (D-09) — the employee's full contract history
-  resolveVacationBaseDays, // Issue #435 (D-06) — the ONE base-value resolution, same as --confirm
+  resolveVacationBaseDays, // Issue #482 — the classification-aware base value, same as --confirm
 } from "../src/contexts/absence/leave-days";
 import { computeRegularVacationDaysBySegments } from "../src/contexts/absence/vacation-calc";
 
@@ -216,9 +216,9 @@ export async function main(
           // and used by both the dry-run preview and --confirm, so the two can never drift on the
           // contract input either.
           const segments = await loadVacationContractSegments(prisma, emp.id, t.id);
-          // Issue #435 (D-06): the ONE base-value resolution — person value ?? tenant default ??
-          // 30 — computed ONCE per candidate and used by both the dry-run preview and --confirm,
-          // so the two can never drift on the base value either.
+          // Issue #482: the ONE base-value resolution — the classification-aware base value from
+          // resolveVacationBaseDays() — computed ONCE per candidate and used by both the dry-run
+          // preview and --confirm, so the two can never drift on the base value either.
           const baseDays = await resolveVacationBaseDays(prisma, emp.id, t.id);
 
           if (!args.confirm) {

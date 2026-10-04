@@ -240,8 +240,8 @@ export type EnsureVacationEntitlementAuditFn = (entry: {
  *
  * When creating, `totalDays` is computed by {@link computeRegularVacationDays} (Issue #445,
  * D-01 — extracted verbatim from this function's own former inline formula): `baseDays` —
- * the caller's resolved output of `resolveVacationBaseDays()` (Issue #435, D-05/D-06: person
- * value ?? tenant default ?? 30 — never a raw `TenantConfig.defaultVacationDays` read) — scaled
+ * the caller's resolved output of `resolveVacationBaseDays()` (the classification-aware base
+ * value, Issue #482 — never a raw `TenantConfig.defaultVacationDays` read) — scaled
  * by the employee's contractual workdays (owner decision, Issue #416: `baseDays` means "N days at
  * a 5-day-week workload" — the reference week is stated there because the data model has no
  * explicit reference-week field), floored at the § 19 JArbSchG / § 3 BUrlG statutory minimum for
@@ -290,9 +290,9 @@ export async function ensureVacationEntitlementForYear(
 
   // Issue #445 (D-01): the regular-entitlement computation now lives in ONE place —
   // computeRegularVacationDays() in vacation-calc.ts — moved verbatim from here.
-  // Issue #435 (D-06/D-09): callers pass the output of resolveVacationBaseDays() (person value ??
-  // tenant default) as `baseDays`, and the employee's birth date for the statutory-minimum floor —
-  // never a raw TenantConfig value. Issue #447 (D-05): `exitDate` is threaded through the same way,
+  // Issue #482: callers pass the classification-aware base value from resolveVacationBaseDays()
+  // as `baseDays`, and the employee's birth date for the statutory-minimum floor — never a raw
+  // TenantConfig value. Issue #447 (D-05): `exitDate` is threaded through the same way,
   // so an employee who has already left owes the § 5 BUrlG Teilurlaub of the exit year, not the
   // full amount.
   // Issue #450 (D-09): a number contract still goes through computeRegularVacationDays (the
