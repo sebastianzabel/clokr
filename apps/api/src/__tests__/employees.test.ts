@@ -231,7 +231,12 @@ describe("Employees API", () => {
       expect(Number(entitlement?.totalDays)).toBe(18);
     });
 
-    it("AZUBI classification gets the identical auto-seeded entitlement — no special-casing", async () => {
+    // Issue #482 (owner decision 2026-10-04): supersedes the #416 decision 3 / #435 D-05
+    // position this test used to pin ("no special-casing") — an AZUBI without a person value
+    // now resolves through the tenant's Azubi-Standard (TenantConfig.defaultApprenticeVacationDays),
+    // not the regular tenant default. On a freshly seeded tenant the Azubi-Standard is the
+    // schema default (20).
+    it("AZUBI without a person value gets the tenant's Azubi-Standard (Issue #482)", async () => {
       const year = new Date().getFullYear();
       const hireDateIso = new Date(Date.UTC(year, 0, 1)).toISOString(); // Jan 1 -> full year
       const res = await app.inject({
@@ -262,7 +267,7 @@ describe("Employees API", () => {
           },
         },
       });
-      expect(Number(entitlement?.totalDays)).toBe(30);
+      expect(Number(entitlement?.totalDays)).toBe(20);
       expect(entitlement?.isAutoCalculated).toBe(true);
     });
 
