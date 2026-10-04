@@ -18,11 +18,12 @@ import {
 } from "../platform"; // Phase 71b (issue #71, D-04) — the engine/state map are gone from this file, see getHolidayMap()
 import { getWorkedEntriesInRange } from "../time-tracking"; // Phase 71b (issue #71) — T2, the work-location rule's entry half
 import {
-  countShiftBasedLeaveDays,
+  contractSegmentAt,
+  countShiftBasedLeaveDaysBySegments,
   leaveDaysPerWeek,
-  marginalShiftBasedLeaveDays,
+  marginalShiftBasedLeaveDaysBySegments,
   mondayOfWeekUtc,
-} from "./vacation-calc"; // Phase 107 (D-04/D-09), Issue #417; leaveDaysPerWeek Issue #429 (D-01/D-02) — the shared per-week kernel, Phase 430-06; marginalShiftBasedLeaveDays/mondayOfWeekUtc Issue #436 (D-04)
+} from "./vacation-calc"; // Phase 107 (D-04/D-09), Issue #417; leaveDaysPerWeek Issue #429 (D-01/D-02) — the shared per-week kernel, Phase 430-06; mondayOfWeekUtc Issue #436 (D-04); contractSegmentAt/*BySegments Issue #481 (R1)
 import { preserveCarryOverDeadline } from "./illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
 import { getActiveLeaveOverlapping } from "./facade/leave-requests"; // Phase 430 (D-08) — this file is INSIDE contexts/absence, no boundary crossing
 import type { LeaveEntitlement, LeaveTypeCode } from "@clokr/db"; // LeaveTypeCode: Issue #451 (D-01)
@@ -51,6 +52,57 @@ type DbClient = FastifyInstance["prisma"] | Prisma.TransactionClient;
  * 3. Sonst: TenantConfig.defaultWorkDays.
  * 4. Sonst: Mo-Fr.
  */
+/**
+ * Issue #481 (R2) — the pure resolution chain behind `resolveWorkDays()`: given one
+ * `WorkSchedule` row (or `null`) and the tenant's default workdays, returns the workday set
+ * (0=So..6=Sa) that row implies. This is the ONLY place this chain is written out —
+ * `resolveWorkDays()` below is "fetch, then delegate" to it for "the current contract";
+ * `loadVacationContractSegments()` calls it once PER SEGMENT for pricing (Issue #481).
+ *
+ * Chain, in order:
+ *   1. FIXED_SCHEDULE: per-day-hours derived weekdays (`{day}Hours > 0`), sorted — when non-empty.
+ *   2. `schedule.workDays`, when non-empty.
+ *   3. `tenantDefaultWorkDays`, when non-empty.
+ *   4. Mo-Fr ([1,2,3,4,5]).
+ */
+export function workDaysSetFrom(
+  schedule: {
+    type?: string | null;
+    workDays?: number[] | null;
+    sundayHours?: number | string | Prisma.Decimal | null;
+    mondayHours?: number | string | Prisma.Decimal | null;
+    tuesdayHours?: number | string | Prisma.Decimal | null;
+    wednesdayHours?: number | string | Prisma.Decimal | null;
+    thursdayHours?: number | string | Prisma.Decimal | null;
+    fridayHours?: number | string | Prisma.Decimal | null;
+    saturdayHours?: number | string | Prisma.Decimal | null;
+  } | null,
+  tenantDefaultWorkDays?: number[] | null,
+): number[] {
+  if (schedule) {
+    // FIXED_SCHEDULE: per-Tag-Soll ist die präziseste Quelle (Frisör Di-Sa wird hier sichtbar)
+    if (schedule.type === "FIXED_SCHEDULE") {
+      const fields: Array<[number, number]> = [
+        [0, Number(schedule.sundayHours)],
+        [1, Number(schedule.mondayHours)],
+        [2, Number(schedule.tuesdayHours)],
+        [3, Number(schedule.wednesdayHours)],
+        [4, Number(schedule.thursdayHours)],
+        [5, Number(schedule.fridayHours)],
+        [6, Number(schedule.saturdayHours)],
+      ];
+      const derived = fields
+        .filter(([, h]) => h > 0)
+        .map(([d]) => d)
+        .sort((a, b) => a - b);
+      if (derived.length > 0) return derived;
+    }
+    if (schedule.workDays && schedule.workDays.length > 0) return schedule.workDays;
+  }
+  if (tenantDefaultWorkDays && tenantDefaultWorkDays.length > 0) return tenantDefaultWorkDays;
+  return [1, 2, 3, 4, 5];
+}
+
 export async function resolveWorkDays(
   prisma: DbClient,
   employeeId: string,
@@ -66,28 +118,7 @@ export async function resolveWorkDays(
       select: { defaultWorkDays: true },
     }),
   ]);
-  if (ws) {
-    // FIXED_SCHEDULE: per-Tag-Soll ist die präziseste Quelle (Frisör Di-Sa wird hier sichtbar)
-    if (ws.type === "FIXED_SCHEDULE") {
-      const fields: Array<[number, number]> = [
-        [0, Number(ws.sundayHours)],
-        [1, Number(ws.mondayHours)],
-        [2, Number(ws.tuesdayHours)],
-        [3, Number(ws.wednesdayHours)],
-        [4, Number(ws.thursdayHours)],
-        [5, Number(ws.fridayHours)],
-        [6, Number(ws.saturdayHours)],
-      ];
-      const derived = fields
-        .filter(([, h]) => h > 0)
-        .map(([d]) => d)
-        .sort((a, b) => a - b);
-      if (derived.length > 0) return derived;
-    }
-    if (ws.workDays && ws.workDays.length > 0) return ws.workDays;
-  }
-  if (cfg?.defaultWorkDays && cfg.defaultWorkDays.length > 0) return cfg.defaultWorkDays;
-  return [1, 2, 3, 4, 5];
+  return workDaysSetFrom(ws, cfg?.defaultWorkDays);
 }
 
 // ── Phase 107 (D-04/D-09): SHIFT_BASED-aware leave-day resolution ─────────────────────────
@@ -179,6 +210,15 @@ export async function resolveContractWorkDaysPerWeek(
 export type LoadedContractSegment = VacationContractSegment & {
   workScheduleId: string | null;
   validFrom: Date | null;
+  // Issue #481 (R1/R2) — additive widening (RESEARCH.md Pitfall 3: never rename/remove the
+  // fields above; `facade/entitlements.ts` and `leave-settings.ts` destructure only those and
+  // must keep compiling unchanged). `type` dispatches the per-segment pricing kernel;
+  // `usualWorkDays` is the SHIFT_BASED Angabe (`usualWorkDaysFrom`, `[]` for every other type);
+  // `resolvedWorkDays` is the non-SHIFT_BASED per-row workday set (`workDaysSetFrom`) — pricing
+  // reads it too (D-02), never re-deriving the chain inline.
+  type: string | null;
+  usualWorkDays: number[];
+  resolvedWorkDays: number[];
 };
 
 /**
@@ -210,7 +250,24 @@ export async function loadVacationContractSegments(
     db.workSchedule.findMany({
       where: { employeeId, employee: { tenantId } },
       orderBy: [{ validFrom: "asc" }, { createdAt: "asc" }],
-      select: { id: true, validFrom: true, contractWorkDaysPerWeek: true, workDays: true },
+      select: {
+        id: true,
+        validFrom: true,
+        contractWorkDaysPerWeek: true,
+        workDays: true,
+        // Issue #481 (R1/R2) — additive widening: type dispatches the per-segment pricing
+        // kernel; usualWorkDays is the SHIFT_BASED Angabe; the seven {day}Hours feed
+        // workDaysSetFrom() for the FIXED_SCHEDULE per-row derivation.
+        type: true,
+        usualWorkDays: true,
+        mondayHours: true,
+        tuesdayHours: true,
+        wednesdayHours: true,
+        thursdayHours: true,
+        fridayHours: true,
+        saturdayHours: true,
+        sundayHours: true,
+      },
     }),
     db.tenantConfig.findUnique({
       where: { tenantId },
@@ -224,6 +281,9 @@ export async function loadVacationContractSegments(
         workDaysPerWeek: contractWorkDaysPerWeekFrom(null, cfg?.defaultWorkDays),
         workScheduleId: null,
         validFrom: null,
+        type: null,
+        usualWorkDays: [],
+        resolvedWorkDays: workDaysSetFrom(null, cfg?.defaultWorkDays),
       },
     ];
   }
@@ -232,6 +292,9 @@ export async function loadVacationContractSegments(
     workDaysPerWeek: contractWorkDaysPerWeekFrom(row, cfg?.defaultWorkDays),
     workScheduleId: row.id,
     validFrom: row.validFrom,
+    type: row.type,
+    usualWorkDays: usualWorkDaysFrom(row),
+    resolvedWorkDays: workDaysSetFrom(row, cfg?.defaultWorkDays),
   }));
 }
 
@@ -739,6 +802,16 @@ async function countedVacationSiblingRequests(
  * calculateWorkDays() wrapper below, behaviour-identical to every current call site (AC-REG-02)
  * — this function is a wrapper around that call, not a rewrite of it.
  *
+ * Issue #481 (R1/R2) — priced by the contract valid in each ISO week, not the newest
+ * `WorkSchedule` row: ONE `loadVacationContractSegments()` call (D-02) replaces the former
+ * newest-row `findFirst(desc)`, and the dispatch below picks the segment valid at `start`
+ * (Task 1 of plan 481-01; Task 2 generalises this to a per-date/per-type-group split for a
+ * request whose range spans a schedule-TYPE or segment-boundary change). A week whose REQUESTED
+ * dates straddle a segment boundary is split at the boundary and each part priced as its own
+ * FRAGMENT against its own segment, never as a whole week (D-01/D-07); a boundary that changes
+ * neither the count nor the Angabe is not a pricing boundary (PD-01). This function never
+ * writes — no implicit repricing of an already-stored request ever happens here.
+ *
  * `holidays` is the caller's already-computed Set (`getHolidayMap(...).keys()`, the same value
  * every existing calculateWorkDays() call site already builds) — this function does not fetch
  * holidays itself.
@@ -781,10 +854,13 @@ export async function resolveLeaveDays(
   vocationalSchoolDates: string[];
   vocationalSchoolOnly: boolean;
 }> {
-  const ws = await prisma.workSchedule.findFirst({
-    where: { employeeId },
-    orderBy: { validFrom: "desc" },
-  });
+  // Issue #481 (R1/R2, D-02) — ONE findMany per pricing call (replaces the former newest-row
+  // `findFirst(desc)`): every segment of the employee's full WorkSchedule history, each already
+  // resolving its own count/Angabe/workday-set through the single fallback chains
+  // (contractWorkDaysPerWeekFrom/usualWorkDaysFrom/workDaysSetFrom). `segments` is ascending by
+  // `from` (loadVacationContractSegments' own ordering), the precondition `contractSegmentAt`
+  // requires.
+  const segments = await loadVacationContractSegments(prisma, employeeId, tenantId);
 
   // Issue #448 (D-02) — the dispatch body, extracted so the BS-priced run and the BS-free
   // baseline run below share the IDENTICAL day-count logic for every schedule type; only the
@@ -792,16 +868,16 @@ export async function resolveLeaveDays(
   const dispatch = async (
     holidaySet: Set<string>,
   ): Promise<{ days: number; provisional: boolean }> => {
-    if (ws?.type === "SHIFT_BASED") {
+    // Issue #481 (R1, D-01) — the segment valid at the request's START decides the dispatch for
+    // this task; Task 2 (plan 481-01) generalises this to a per-date/per-type-group split for a
+    // request whose range spans a schedule-TYPE change (RESEARCH.md Pitfall 2).
+    const activeSegment = contractSegmentAt(segments, start);
+
+    if (activeSegment.type === "SHIFT_BASED") {
       // Issue #417 (2026-09-29 owner decision, supersedes Phase 107 D-06): counted BY CONTRACT,
       // never by roster — the roster is not queried here any more (no getShiftsInRange call).
-      const contractWorkDaysPerWeek = await resolveContractWorkDaysPerWeek(
-        prisma,
-        employeeId,
-        tenantId,
-      );
-      const usualWorkDays = usualWorkDaysFrom(ws);
-
+      // Issue #481 (R1): priced against the FULL segment list, not one scalar pair — a week
+      // straddling a segment boundary splits per D-01/D-07.
       if (pricing.mode === "request" && pricing.leaveTypeCode === "VACATION") {
         const others = await countedVacationSiblingRequests(
           prisma,
@@ -811,29 +887,21 @@ export async function resolveLeaveDays(
           end,
           pricing.excludeRequestId,
         );
-        const days = marginalShiftBasedLeaveDays(
+        const days = marginalShiftBasedLeaveDaysBySegments(
           { startDate: start, endDate: end, halfDay },
           others,
-          contractWorkDaysPerWeek,
+          segments,
           holidaySet,
-          usualWorkDays,
         );
         return { days, provisional: false };
       }
 
-      return countShiftBasedLeaveDays(
-        start,
-        end,
-        halfDay,
-        contractWorkDaysPerWeek,
-        holidaySet,
-        usualWorkDays,
-      );
+      return countShiftBasedLeaveDaysBySegments(start, end, halfDay, segments, holidaySet);
     }
 
-    // Every other schedule type: byte-identical to today's five call sites (AC-REG-02).
-    const workDays = await resolveWorkDays(prisma, employeeId, tenantId);
-    const days = calculateWorkDays(start, end, halfDay, workDays, holidaySet);
+    // Every other schedule type: Issue #481 (R2) — the workday set of the contract valid at
+    // `start` (Task 2 generalises this to a per-date segment lookup across the full range).
+    const days = calculateWorkDays(start, end, halfDay, activeSegment.resolvedWorkDays, holidaySet);
     return { days, provisional: false };
   };
 
