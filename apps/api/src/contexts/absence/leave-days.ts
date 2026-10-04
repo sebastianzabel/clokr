@@ -19,11 +19,12 @@ import {
 import { getWorkedEntriesInRange } from "../time-tracking"; // Phase 71b (issue #71) — T2, the work-location rule's entry half
 import {
   contractSegmentAt,
+  contractSegmentPieces,
   countShiftBasedLeaveDaysBySegments,
-  leaveDaysPerWeek,
+  leaveDaysPerWeekBySegments,
   marginalShiftBasedLeaveDaysBySegments,
   mondayOfWeekUtc,
-} from "./vacation-calc"; // Phase 107 (D-04/D-09), Issue #417; leaveDaysPerWeek Issue #429 (D-01/D-02) — the shared per-week kernel, Phase 430-06; mondayOfWeekUtc Issue #436 (D-04); contractSegmentAt/*BySegments Issue #481 (R1)
+} from "./vacation-calc"; // Phase 107 (D-04/D-09), Issue #417; mondayOfWeekUtc Issue #436 (D-04); contractSegmentAt/contractSegmentPieces/*BySegments Issue #481 (R1/R2)
 import { preserveCarryOverDeadline } from "./illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
 import { getActiveLeaveOverlapping } from "./facade/leave-requests"; // Phase 430 (D-08) — this file is INSIDE contexts/absence, no boundary crossing
 import type { LeaveEntitlement, LeaveTypeCode } from "@clokr/db"; // LeaveTypeCode: Issue #451 (D-01)
@@ -80,7 +81,7 @@ export function workDaysSetFrom(
   tenantDefaultWorkDays?: number[] | null,
 ): number[] {
   if (schedule) {
-    // FIXED_SCHEDULE: per-Tag-Soll ist die präziseste Quelle (Frisör Di-Sa wird hier sichtbar)
+    // FIXED_SCHEDULE: the per-day Soll is the most precise source (a Tue-Sat hairdresser shows up here)
     if (schedule.type === "FIXED_SCHEDULE") {
       const fields: Array<[number, number]> = [
         [0, Number(schedule.sundayHours)],
@@ -344,6 +345,11 @@ const GERMAN_WEEKDAY_ABBR = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"] as const;
  *
  * Consumed by the Type-2 week-capacity conflict check (`contexts/scheduling/shift-week-capacity.ts`)
  * and the Wochenübersicht "Planungsbedarf" view.
+ *
+ * Issue #481 (R1, Pitfall 4) — both former newest-row reads (the `resolveContractWorkDaysPerWeek()`
+ * call and the separate `type`/`usualWorkDays` `findFirst`) are replaced by ONE
+ * `loadVacationContractSegments()` call: the contract/Angabe valid in THIS week, not the newest
+ * overall. No type clipping here — the callers already filter to SHIFT_BASED employees.
  */
 export async function getShiftBasedLeaveDaysForWeek(
   prisma: DbClient,
@@ -352,34 +358,25 @@ export async function getShiftBasedLeaveDaysForWeek(
   weekStart: Date,
   weekEnd: Date,
 ): Promise<{ days: number; weekdays: string[] }> {
-  const [overlapping, contractWorkDaysPerWeek, holidays, latestSchedule] = await Promise.all([
+  // Issue #481 (R1, Pitfall 4) — ONE contract-segment load replaces BOTH former
+  // newest-row reads (resolveContractWorkDaysPerWeek() and the second findFirst for
+  // type/usualWorkDays): the segment valid in THIS week, not the newest overall. Callers filter
+  // SHIFT_BASED employees themselves, so every segment type is passed through unclipped.
+  const [overlapping, segments, holidays] = await Promise.all([
     getActiveLeaveOverlapping(
       prisma,
       { kind: "employee", employeeId, tenantId },
       weekStart,
       weekEnd,
     ),
-    resolveContractWorkDaysPerWeek(prisma, employeeId, tenantId),
+    loadVacationContractSegments(prisma, employeeId, tenantId),
     getHolidayMap(prisma, tenantId, employeeId, weekStart, weekEnd),
-    // Phase 436 (D-03): the same "latest row" choice resolveContractWorkDaysPerWeek() makes,
-    // scoped by employeeId AND employee.tenantId (T-436-09) — the Angabe follows the contract
-    // count through the identical WorkSchedule row.
-    prisma.workSchedule.findFirst({
-      where: { employeeId, employee: { tenantId } },
-      orderBy: { validFrom: "desc" },
-      select: { type: true, usualWorkDays: true },
-    }),
   ]);
 
   if (overlapping.length === 0) return { days: 0, weekdays: [] };
 
   const holidaySet = new Set(holidays.keys());
-  const weeks = leaveDaysPerWeek(
-    overlapping,
-    contractWorkDaysPerWeek,
-    holidaySet,
-    usualWorkDaysFrom(latestSchedule),
-  );
+  const weeks = leaveDaysPerWeekBySegments(overlapping, segments, holidaySet);
   const weekMondayStr = weekStart.toISOString().slice(0, 10);
   const match = weeks.find((w) => w.weekMonday === weekMondayStr);
   if (!match) return { days: 0, weekdays: [] };
@@ -804,9 +801,11 @@ async function countedVacationSiblingRequests(
  *
  * Issue #481 (R1/R2) — priced by the contract valid in each ISO week, not the newest
  * `WorkSchedule` row: ONE `loadVacationContractSegments()` call (D-02) replaces the former
- * newest-row `findFirst(desc)`, and the dispatch below picks the segment valid at `start`
- * (Task 1 of plan 481-01; Task 2 generalises this to a per-date/per-type-group split for a
- * request whose range spans a schedule-TYPE or segment-boundary change). A week whose REQUESTED
+ * newest-row `findFirst(desc)`. The dispatch below splits the range into per-segment pieces
+ * (`contractSegmentPieces`): consecutive SHIFT_BASED pieces form ONE part priced by the
+ * SHIFT_BASED kernel over the full segment list; every other piece is priced day by day with the
+ * workday set of its own segment (R2) — so a request across a schedule-TYPE change is priced part
+ * by part (RESEARCH Pitfall 2). A half-day request is never split. A week whose REQUESTED
  * dates straddle a segment boundary is split at the boundary and each part priced as its own
  * FRAGMENT against its own segment, never as a whole week (D-01/D-07); a boundary that changes
  * neither the count nor the Angabe is not a pricing boundary (PD-01). This function never
@@ -862,47 +861,160 @@ export async function resolveLeaveDays(
   // requires.
   const segments = await loadVacationContractSegments(prisma, employeeId, tenantId);
 
+  // Issue #481 (R1/R2, Pitfall 2) — one SHIFT_BASED contract span's lower/upper bound (in
+  // calendar dates, inclusive) around `segment`: the maximal run of CONSECUTIVE SHIFT_BASED
+  // segments (ascending `from`) containing it. `null` means unbounded on that side (the run
+  // reaches the first segment overall / there is no later non-SHIFT_BASED segment) — an
+  // all-SHIFT_BASED employee therefore gets `{ lowerBound: null, upperBound: null }`, i.e. no
+  // clipping at all, identical to today.
+  const shiftBasedContractSpan = (
+    segment: LoadedContractSegment,
+  ): { lowerBound: Date | null; upperBound: Date | null } => {
+    const idx = segments.indexOf(segment);
+    let lo = idx;
+    while (lo > 0 && segments[lo - 1].type === "SHIFT_BASED") lo--;
+    let hi = idx;
+    while (hi < segments.length - 1 && segments[hi + 1].type === "SHIFT_BASED") hi++;
+    const lowerBound = lo === 0 ? null : segments[lo].from;
+    const upperBound =
+      hi === segments.length - 1 ? null : addUtcDays(utcDay(segments[hi + 1].from), -1);
+    return { lowerBound, upperBound };
+  };
+
   // Issue #448 (D-02) — the dispatch body, extracted so the BS-priced run and the BS-free
   // baseline run below share the IDENTICAL day-count logic for every schedule type; only the
   // holiday Set passed in differs between the two runs — never a second day counter.
   const dispatch = async (
     holidaySet: Set<string>,
   ): Promise<{ days: number; provisional: boolean }> => {
-    // Issue #481 (R1, D-01) — the segment valid at the request's START decides the dispatch for
-    // this task; Task 2 (plan 481-01) generalises this to a per-date/per-type-group split for a
-    // request whose range spans a schedule-TYPE change (RESEARCH.md Pitfall 2).
-    const activeSegment = contractSegmentAt(segments, start);
-
-    if (activeSegment.type === "SHIFT_BASED") {
-      // Issue #417 (2026-09-29 owner decision, supersedes Phase 107 D-06): counted BY CONTRACT,
-      // never by roster — the roster is not queried here any more (no getShiftsInRange call).
-      // Issue #481 (R1): priced against the FULL segment list, not one scalar pair — a week
-      // straddling a segment boundary splits per D-01/D-07.
-      if (pricing.mode === "request" && pricing.leaveTypeCode === "VACATION") {
-        const others = await countedVacationSiblingRequests(
-          prisma,
-          employeeId,
-          tenantId,
-          start,
-          end,
-          pricing.excludeRequestId,
-        );
-        const days = marginalShiftBasedLeaveDaysBySegments(
-          { startDate: start, endDate: end, halfDay },
-          others,
-          segments,
-          holidaySet,
-        );
-        return { days, provisional: false };
+    // Issue #481 (R1) — a half-day request is always a single date (#449) and is never split:
+    // price it entirely under the segment valid on `start`, exactly like a single-part request.
+    if (halfDay) {
+      const activeSegment = contractSegmentAt(segments, start);
+      if (activeSegment.type === "SHIFT_BASED") {
+        if (pricing.mode === "request" && pricing.leaveTypeCode === "VACATION") {
+          const others = await countedVacationSiblingRequests(
+            prisma,
+            employeeId,
+            tenantId,
+            start,
+            end,
+            pricing.excludeRequestId,
+          );
+          const days = marginalShiftBasedLeaveDaysBySegments(
+            { startDate: start, endDate: end, halfDay },
+            others,
+            segments,
+            holidaySet,
+          );
+          return { days, provisional: false };
+        }
+        return countShiftBasedLeaveDaysBySegments(start, end, halfDay, segments, holidaySet);
       }
-
-      return countShiftBasedLeaveDaysBySegments(start, end, halfDay, segments, holidaySet);
+      const days = calculateWorkDays(
+        start,
+        end,
+        halfDay,
+        activeSegment.resolvedWorkDays,
+        holidaySet,
+      );
+      return { days, provisional: false };
     }
 
-    // Every other schedule type: Issue #481 (R2) — the workday set of the contract valid at
-    // `start` (Task 2 generalises this to a per-date segment lookup across the full range).
-    const days = calculateWorkDays(start, end, halfDay, activeSegment.resolvedWorkDays, holidaySet);
-    return { days, provisional: false };
+    // Issue #481 (R2, D-01, Pitfall 2) — split [start, end] into pieces per `contractSegmentAt`,
+    // then fold CONSECUTIVE SHIFT_BASED pieces into one part (priced by the SHIFT_BASED kernel
+    // over the FULL segment list); every other piece is its own part, priced per-date by
+    // `calculateWorkDays` with that piece's own resolved workday set.
+    const pieces = contractSegmentPieces(start, end, segments);
+    const parts: Array<{
+      start: Date;
+      end: Date;
+      segment: LoadedContractSegment;
+      isShiftBased: boolean;
+    }> = [];
+    for (const piece of pieces) {
+      const isShiftBased = piece.segment.type === "SHIFT_BASED";
+      const last = parts[parts.length - 1];
+      if (last && last.isShiftBased && isShiftBased) {
+        last.end = piece.end;
+      } else {
+        parts.push({ start: piece.start, end: piece.end, segment: piece.segment, isShiftBased });
+      }
+    }
+
+    // Issue #436 (D-04/D-09) — the sibling query is loaded ONCE per dispatch call (the whole
+    // request's range, unchanged query shape), never once per part.
+    let siblings: Array<{ startDate: Date; endDate: Date; halfDay: boolean }> | null = null;
+    const loadSiblingsOnce = async () => {
+      if (siblings === null) {
+        siblings =
+          pricing.mode === "request" && pricing.leaveTypeCode === "VACATION"
+            ? await countedVacationSiblingRequests(
+                prisma,
+                employeeId,
+                tenantId,
+                start,
+                end,
+                pricing.excludeRequestId,
+              )
+            : [];
+      }
+      return siblings;
+    };
+
+    let totalDays = 0;
+    for (const part of parts) {
+      if (part.isShiftBased) {
+        // Issue #417: counted BY CONTRACT, never by roster. Issue #481 (R1): priced against the
+        // FULL segment list — a week straddling a segment boundary splits per D-01/D-07.
+        if (pricing.mode === "request" && pricing.leaveTypeCode === "VACATION") {
+          const others = await loadSiblingsOnce();
+          const span = shiftBasedContractSpan(part.segment);
+          // Clip every sibling to the SHIFT_BASED contract span and drop the ones outside it —
+          // a sibling's dates under a non-SHIFT_BASED contract are not part of this week union.
+          const clipped: Array<{ startDate: Date; endDate: Date; halfDay: boolean }> = [];
+          for (const o of others) {
+            let oStart = utcDay(o.startDate);
+            let oEnd = utcDay(o.endDate);
+            if (span.lowerBound && oStart.getTime() < span.lowerBound.getTime()) {
+              oStart = utcDay(span.lowerBound);
+            }
+            if (span.upperBound && oEnd.getTime() > span.upperBound.getTime()) {
+              oEnd = span.upperBound;
+            }
+            if (oStart.getTime() > oEnd.getTime()) continue;
+            clipped.push({ startDate: oStart, endDate: oEnd, halfDay: o.halfDay });
+          }
+          totalDays += marginalShiftBasedLeaveDaysBySegments(
+            { startDate: part.start, endDate: part.end, halfDay: false },
+            clipped,
+            segments,
+            holidaySet,
+          );
+        } else {
+          totalDays += countShiftBasedLeaveDaysBySegments(
+            part.start,
+            part.end,
+            false,
+            segments,
+            holidaySet,
+          ).days;
+        }
+      } else {
+        // Every other schedule type: Issue #481 (R2) — the workday set of the contract valid on
+        // this part's dates (per-date, additive by construction — `calculateWorkDays` is already
+        // a flat day-by-day loop).
+        totalDays += calculateWorkDays(
+          part.start,
+          part.end,
+          false,
+          part.segment.resolvedWorkDays,
+          holidaySet,
+        );
+      }
+    }
+
+    return { days: totalDays, provisional: false };
   };
 
   const excludeBs =
