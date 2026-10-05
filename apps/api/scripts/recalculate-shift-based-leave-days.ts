@@ -98,6 +98,8 @@ export type CliArgs = {
   allTenants: boolean;
   status: "PENDING" | "APPROVED" | null;
   requestIds: string[];
+  /** Issue #481 (D-09): optional explicit cut-off; requests ending before it are skipped. */
+  before: Date | null;
   confirm: boolean;
   help: boolean;
 };
@@ -121,6 +123,10 @@ export type Summary = {
   correctedPending: number;
   correctedApproved: number;
   skippedLocked: Array<{ leaveRequestId: string; employeeId: string; reason: string }>;
+  /** Issue #481 (D-09): would-be candidates left untouched as imported pre-tracking data. */
+  skippedPreTracking: Array<{ leaveRequestId: string; employeeId: string; reason: string }>;
+  /** Issue #481 (D-09): employees with no tracked day — the exclusion cannot apply (fail-open). */
+  employeesWithoutTrackedDay: string[];
   errors: Array<{ leaveRequestId: string; employeeId: string; error: string }>;
 };
 
@@ -131,6 +137,7 @@ Usage:
     ( --tenant-id <uuid> | --all-tenants ) \\
     [--status PENDING|APPROVED] \\
     [--request-id <uuid> ...] \\
+    [--before <YYYY-MM-DD>] \\
     [--confirm] \\
     [--help]
 
@@ -147,6 +154,14 @@ Scope:
   - --status PENDING|APPROVED restricts scanning to that single status (default: both).
   - --request-id <uuid> is repeatable and restricts scanning to those specific requests
     (ANDed with --status when both are given).
+
+Pre-tracking exclusion (Issue #481, D-09):
+  - A would-be candidate that ends before the employee's first tracked day (first
+    non-deleted time entry) is imported pre-tracking data: listed as [SKIPPED-PRE-TRACKING]
+    and never repriced, in dry-run and with --confirm.
+  - --before <YYYY-MM-DD> additionally skips every would-be candidate ending before that date.
+  - An employee without any tracked day cannot be excluded this way; the run prints one
+    [NOTE] line for them — review those requests (--request-id / --before) before --confirm.
 `;
 
 // ── CLI parsing ─────────────────────────────────────────────────────────────
@@ -158,6 +173,7 @@ export function parseCli(argv: string[]): CliArgs {
       "all-tenants": { type: "boolean", default: false },
       status: { type: "string" },
       "request-id": { type: "string", multiple: true },
+      before: { type: "string" },
       confirm: { type: "boolean", default: false },
       help: { type: "boolean", default: false },
     },
@@ -169,11 +185,23 @@ export function parseCli(argv: string[]): CliArgs {
     throw new Error(`Ungültiger --status Wert: "${rawStatus}" (erlaubt: PENDING, APPROVED).`);
   }
 
+  let before: Date | null = null;
+  if (values.before !== undefined) {
+    const raw = values.before;
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+    const d = m ? new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))) : null;
+    if (!d || d.toISOString().slice(0, 10) !== raw) {
+      throw new Error(`Ungültiger --before Wert: "${raw}" (erwartet YYYY-MM-DD).`);
+    }
+    before = d;
+  }
+
   return {
     tenantId: values["tenant-id"] ?? null,
     allTenants: Boolean(values["all-tenants"]),
     status: rawStatus ?? null,
     requestIds: values["request-id"] ?? [],
+    before,
     confirm: Boolean(values.confirm),
     help: Boolean(values.help),
   };
@@ -193,6 +221,8 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       correctedPending: 0,
       correctedApproved: 0,
       skippedLocked: [],
+      skippedPreTracking: [],
+      employeesWithoutTrackedDay: [],
       errors: [],
     };
   }
@@ -225,6 +255,8 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       correctedPending: 0,
       correctedApproved: 0,
       skippedLocked: [],
+      skippedPreTracking: [],
+      employeesWithoutTrackedDay: [],
       errors: [],
     };
 
@@ -232,6 +264,22 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       ? await prisma.tenant.findMany({ select: { id: true } })
       : [{ id: args.tenantId! }];
     summary.tenantsScanned = tenants.length;
+
+    // Issue #481 (D-09): first non-deleted time entry per employee — the data-derived marker of
+    // tracking start (no tracking-start field exists; OpeningBalance.effectiveFrom is not
+    // universal). One query per scanned employee, cached for the run.
+    const firstTrackedDayCache = new Map<string, Date | null>();
+    const firstTrackedDay = async (tenantId: string, employeeId: string): Promise<Date | null> => {
+      if (!firstTrackedDayCache.has(employeeId)) {
+        const first = await prisma.timeEntry.findFirst({
+          where: { employeeId, deletedAt: null, employee: { tenantId } },
+          orderBy: { date: "asc" },
+          select: { date: true },
+        });
+        firstTrackedDayCache.set(employeeId, first?.date ?? null);
+      }
+      return firstTrackedDayCache.get(employeeId) ?? null;
+    };
 
     for (const t of tenants) {
       const requests = await prisma.leaveRequest.findMany({
@@ -253,10 +301,10 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       for (const req of requests) {
         summary.requestsScanned++;
         try {
-          // Only a request whose employee's CURRENT WorkSchedule is SHIFT_BASED is in scope —
-          // mirrors resolveLeaveDays()'s own dispatch (the "some" filter above is a coarse
-          // pre-filter; a schedule-type CHANGE since the request was booked must not be
-          // reinterpreted here).
+          // Deliberate SCAN scope: only employees whose CURRENT WorkSchedule is SHIFT_BASED (the
+          // "some" filter above is a coarse pre-filter). Since Issue #481 the PRICE of every
+          // request comes from the contract valid at the time inside resolveLeaveDays(), so a
+          // schedule-type change since booking is no longer misinterpreted there.
           const ws = await prisma.workSchedule.findFirst({
             where: { employeeId: req.employeeId },
             orderBy: { validFrom: "desc" },
@@ -293,6 +341,36 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
           // happens to match (e.g. a request whose only fragment week was always a whole week).
           const isCandidate = newDays !== oldDays || req.daysProvisional === true;
           if (!isCandidate) continue;
+
+          // Issue #481 (D-09): imported pre-tracking data is never repriced — checked before
+          // anything is listed as a candidate or written, in dry-run AND with --confirm.
+          const tracked = await firstTrackedDay(t.id, req.employeeId);
+          let skipReason: string | null = null;
+          if (tracked && req.endDate.getTime() < tracked.getTime()) {
+            skipReason = `Endet vor dem ersten erfassten Arbeitstag (${tracked.toISOString().slice(0, 10)}) – Vorlauf/Import, wird nicht neu bepreist`;
+          } else if (args.before && req.endDate.getTime() < args.before.getTime()) {
+            skipReason = `Endet vor --before ${args.before.toISOString().slice(0, 10)} – wird nicht neu bepreist`;
+          }
+          if (!tracked && !summary.employeesWithoutTrackedDay.includes(req.employeeId)) {
+            summary.employeesWithoutTrackedDay.push(req.employeeId);
+            console.info(
+              `[NOTE] employeeId=${req.employeeId} (${req.employee.employeeNumber}) – kein erfasster ` +
+                `Arbeitstag: Vorlauf-Ausschluss nicht anwendbar, Anträge vor --confirm prüfen ` +
+                `(--request-id / --before)`,
+            );
+          }
+          if (skipReason) {
+            summary.skippedPreTracking.push({
+              leaveRequestId: req.id,
+              employeeId: req.employeeId,
+              reason: skipReason,
+            });
+            console.info(
+              `[SKIPPED-PRE-TRACKING] leaveRequestId=${req.id} employeeId=${req.employeeId} ` +
+                `(${req.employee.employeeNumber}) days ${oldDays} -> ${newDays} — ${skipReason}`,
+            );
+            continue;
+          }
 
           summary.candidates.push({
             leaveRequestId: req.id,
@@ -456,13 +534,15 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       console.info(
         `\nSummary: ${summary.candidates.length} candidate(s) found ` +
           `(${summary.candidates.filter((c) => c.status === "PENDING").length} PENDING, ` +
-          `${summary.candidates.filter((c) => c.status === "APPROVED").length} APPROVED). ` +
+          `${summary.candidates.filter((c) => c.status === "APPROVED").length} APPROVED), ` +
+          `${summary.skippedPreTracking.length} skipped (Vorlauf/--before). ` +
           `Re-run with --confirm to write.`,
       );
     } else {
       console.info(
         `\nDone: ${summary.correctedPending} PENDING corrected, ${summary.correctedApproved} ` +
           `APPROVED corrected, ${summary.skippedLocked.length} skipped (locked month), ` +
+          `${summary.skippedPreTracking.length} skipped (Vorlauf/--before), ` +
           `${summary.errors.length} error(s).`,
       );
     }
