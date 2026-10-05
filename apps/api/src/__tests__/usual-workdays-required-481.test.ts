@@ -253,3 +253,158 @@ describe("Issue #481 R5 — übliche Arbeitstage are required for SHIFT_BASED co
     );
   });
 });
+
+describe("D-08 write-path audit (Issue #481) — paths without a validator call never write SHIFT_BASED", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+  const pastValidFrom = monthFirstStr(-6);
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "uwr481d");
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Cleanup failed:", err);
+    }
+  });
+
+  async function bareEmployee(tag: string) {
+    const user = await app.prisma.user.create({
+      data: {
+        email: `uwr481d-${tag}-${Date.now()}@test.de`,
+        passwordHash: "x",
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const employee = await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        employeeNumber: `UWRD-${tag}-${Date.now()}`,
+        firstName: "D",
+        lastName: "W",
+        hireDate: new Date(pastValidFrom),
+      },
+    });
+    await app.prisma.overtimeAccount.create({ data: { employeeId: employee.id, balanceHours: 0 } });
+    return employee;
+  }
+
+  async function shiftBasedRowCount() {
+    return app.prisma.workSchedule.count({
+      where: { type: "SHIFT_BASED", employee: { tenantId: data.tenant.id } },
+    });
+  }
+
+  it("tenant bulk apply never creates or changes a SHIFT_BASED row", async () => {
+    const shiftEmp = await bareEmployee("bulk-shift");
+    const shiftRow = await app.prisma.workSchedule.create({
+      data: {
+        employeeId: shiftEmp.id,
+        type: "SHIFT_BASED",
+        weeklyHours: 32,
+        workDays: [2, 3, 4, 5],
+        contractWorkDaysPerWeek: 4,
+        usualWorkDays: [],
+        validFrom: new Date(pastValidFrom),
+      },
+    });
+    const noScheduleEmp = await bareEmployee("bulk-none");
+    const shiftCountBefore = await shiftBasedRowCount();
+
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/v1/settings/work",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { applyToExisting: true, defaultWeeklyHours: 39 },
+    });
+    expect(res.statusCode).toBe(200);
+
+    expect(await shiftBasedRowCount()).toBe(shiftCountBefore);
+    const shiftRowAfter = await app.prisma.workSchedule.findUniqueOrThrow({
+      where: { id: shiftRow.id },
+    });
+    expect(shiftRowAfter).toEqual(shiftRow);
+    const created = await app.prisma.workSchedule.findMany({
+      where: { employeeId: noScheduleEmp.id },
+    });
+    expect(created.map((r) => r.type)).toEqual(["FIXED_SCHEDULE"]);
+  });
+
+  it("cancelOrphanShifts (leaving SHIFT_BASED) writes only a non-SHIFT_BASED row with an empty Angabe", async () => {
+    const emp = await bareEmployee("orphan");
+    const oldRow = await app.prisma.workSchedule.create({
+      data: {
+        employeeId: emp.id,
+        type: "SHIFT_BASED",
+        weeklyHours: 32,
+        workDays: [2, 3, 4, 5],
+        contractWorkDaysPerWeek: 4,
+        usualWorkDays: [2, 3, 4, 5],
+        validFrom: new Date(pastValidFrom),
+      },
+    });
+    const future = new Date(
+      Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() + 1, 15),
+    );
+    await app.prisma.shift.create({
+      data: {
+        employeeId: emp.id,
+        salonId: data.salonId!,
+        date: future,
+        startTime: "09:00",
+        endTime: "17:00",
+      },
+    });
+    const shiftCountBefore = await shiftBasedRowCount();
+
+    const res = await app.inject({
+      method: "PUT",
+      url: `/api/v1/settings/work/${emp.id}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {
+        type: "FLEXTIME",
+        weeklyHours: 32,
+        workDays: [1, 2, 3, 4],
+        cancelOrphanShifts: true,
+        validFrom: monthFirstStr(1),
+      },
+    });
+    expect(res.statusCode, res.body.slice(0, 300)).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.type).toBe("FLEXTIME");
+    expect(body.usualWorkDays).toEqual([]);
+    expect(await shiftBasedRowCount()).toBe(shiftCountBefore);
+    const oldRowAfter = await app.prisma.workSchedule.findUniqueOrThrow({
+      where: { id: oldRow.id },
+    });
+    expect(oldRowAfter.updatedAt).toEqual(oldRow.updatedAt);
+  });
+
+  it("CSV employee import rejects a SHIFT_BASED row and still imports a FIXED_SCHEDULE row", async () => {
+    const uid = Date.now().toString(36);
+    const csv = `email;vorname;nachname;nr;eintrittsdatum;rolle;wochenstunden;modell;passwort
+uwr481-csv-s-${uid}@test.de;C;S;CSVS-${uid};01.01.2026;EMPLOYEE;40;SHIFT_BASED;test12345
+uwr481-csv-f-${uid}@test.de;C;F;CSVF-${uid};01.01.2026;EMPLOYEE;40;FIXED_SCHEDULE;test12345`;
+    const shiftCountBefore = await shiftBasedRowCount();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/imports/employees",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { csv },
+    });
+    expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.imported).toBe(1);
+    expect(body.errors).toBe(1);
+    expect(await app.prisma.employee.count({ where: { employeeNumber: `CSVS-${uid}` } })).toBe(0);
+    expect(await app.prisma.employee.count({ where: { employeeNumber: `CSVF-${uid}` } })).toBe(1);
+    expect(await shiftBasedRowCount()).toBe(shiftCountBefore);
+  });
+});
