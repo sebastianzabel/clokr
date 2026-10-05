@@ -231,6 +231,22 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
 - `openAdd()` on frontend redirects to edit if entry already exists for that day
 - API POST rejects with 409 if entry already exists for employee+date
 - **Every entry carries a required `salonId`** (FK onto `Salon`, `onDelete: Restrict`, Phase 68b / issue #68), decided by `resolveEntrySalon()` in `apps/api/src/contexts/time-tracking/entry-salon.ts` — the only place this rule lives: an explicit, active salon of the same tenant on manual entries, corrections, Zeitnachträge and the CSV import (400 `SALON_INACTIVE` when deactivated, 404 indistinguishable for a foreign or unknown id); otherwise `salonForDay()`, then the tenant's default salon, 409 `NO_ACTIVE_SALON` if none exists. The clock paths (NFC/MOBILE/WIFI) take no salon input until #87. `PUT` may change the salon (never on a locked entry, never re-derived from a changed date). The salon hangs on the entry, not the day (#70).
+- **Presence and working time come from one function (Issue #79).** `entryDurations()` and its
+  fold step `addWorkingMinutes()` (`apps/api/src/contexts/time-tracking/entry-durations.ts`,
+  exported via `contexts/time-tracking/index.ts`) are the ONLY place presence time (end − start)
+  and working time (presence − the stored `breakMinutes`) are computed. Both are derived, never
+  stored — no column, no migration, a locked month cannot drift. The values are exact minutes,
+  unrounded and unclamped: a caller rounds or clamps around the call where it did before. The
+  auto-break is never re-applied at read time — what the write path stored is what counts. An open
+  entry is 0/0 in the kernel and `null` in `GET /time-entries` (`presenceMinutes`/`workingMinutes`
+  per item). `GET /time-entries/summary` (`employeeId`, `from`, `to`, at most 366 days) sums
+  presence, working time and breaks over the saldo's own entry set, so its `workingMinutes` IS the
+  account's Ist (a scoped manager gets the sum over the entries in scope). `addWorkingMinutes`
+  keeps the legacy association of the left folds (`(sum + presence) − break`) on purpose — never
+  simplify it to `sum + workingMinutes`, that changes the last bit for millisecond-precision rows.
+  `apps/api/src/__tests__/working-time-formula-one-place-79.test.ts` fails on an inline copy. The
+  JArbSchG pre-write plan values (`plannedNetMin…`, `correctedNetWorkMin`) and shift netto
+  (`scheduling/shift-netto.ts`) are deliberately different calculations and stay as they are.
 
 ## Public Holidays
 
