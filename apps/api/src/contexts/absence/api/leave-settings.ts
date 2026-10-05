@@ -29,7 +29,7 @@ import {
   loadVacationContractSegments, // Issue #450 (D-09) — the segment history for the heal and both thresholds
   ensureRegularVacationEntitlement, // Issue #445 (D-05, P-07) — zero-placeholder heal
   REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
-  resolveVacationBaseDays, // Issue #435 (D-06) — person value ?? tenant default ?? 30
+  resolveVacationBaseDays, // Issue #482 — the classification-aware base value
   resolveRegularVacationDays, // Issue #435 (D-14) — the GET suggestion value, never a client formula
   daysDiffer, // Issue #435 (D-10) — 2-decimal-precision "did totalDays actually change" test
 } from "../leave-days";
@@ -166,8 +166,8 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
       // side effect) and NEVER for an inactive employee (`exitDate` set).
       const currentYear = new Date().getFullYear();
       if (!entitlement && employee.exitDate === null && year === currentYear) {
-        // Issue #435 (D-06): the ONE base-value resolution — person value ?? tenant default ?? 30
-        // — replaces the previous direct TenantConfig.defaultVacationDays read.
+        // Issue #482: the ONE base-value resolution — the classification-aware base value from
+        // resolveVacationBaseDays() — replaces a direct TenantConfig column read.
         const baseDays = await resolveVacationBaseDays(app.prisma, employeeId, employee.tenantId);
         const healed = await ensureVacationEntitlementForYear(
           app.prisma,

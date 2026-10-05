@@ -129,7 +129,8 @@ prints FULL, untruncated UUIDs: the owner must be able to locate each request di
 `LeaveEntitlement` row of a base year (`--year`, default the current UTC calendar year) and the
 following year (only rows that exist, plus synthetic `entitlementId=missing` lines — see
 JAHRESUEBERGREIFEND_FEHLT below). It computes, per row, `target` via `resolveRegularVacationDays()`
-(Issue #435 D-05 person/tenant base + statutory floor, Issue #447 exit twelfthing, Issue #450
+(since Issue #482 this already includes the Azubi-Standard for an AZUBI without a person value —
+Issue #435 D-05 person/tenant base + statutory floor, Issue #447 exit twelfthing, Issue #450
 per-contract-segment apportionment — the ONE computation, never reimplemented here) and `minimum`
 via `statutoryMinimumVacationThresholdBySegments()` fed by the employee's full `WorkSchedule`
 history (`loadVacationContractSegments()`) — the floor is apportioned per contract segment exactly
@@ -140,14 +141,13 @@ nothing is ever corrected automatically (D-11), and an owner-approved correction
 the existing audited correction path below. It then classifies the row into zero or more of:
 
 - `UNTER_MINIMUM` — stored is below the statutory minimum (applies to manually-set rows too).
-- `ABWEICHUNG_VERTRAG` — NOT manual, NOT `UNTER_MINIMUM`, and stored differs from `target`; OR,
-  for an AZUBI without a person value (`annualVacationDays` null) whose birth date is known,
-  stored differs from a second comparison target computed the SAME way but seeded with
-  `TenantConfig.defaultApprenticeVacationDays` instead of the tenant's regular default
-  (report-only — the production resolver in `leave-days.ts` stays unchanged, #435 D-05 never
-  reads `classification`). This second comparison is skipped while `GEBURTSDATUM_FEHLT` already
-  applies on the same row — the statutory floor computed with no birth date is already unreliable,
-  so a second, independent deviation finding on top of it would only add noise.
+- `ABWEICHUNG_VERTRAG` — NOT manual, NOT `UNTER_MINIMUM`, and stored differs from `target`. Since
+  Issue #482 `target` itself already IS the apprentice-based value for an AZUBI without a person
+  value, so this is the same single comparison for every row — no second, independent "apprentice
+  comparison target" is computed any more (G-6). Suppressed only for an AZUBI without a person
+  value while `GEBURTSDATUM_FEHLT` already applies on the same row — without a birth date the
+  § 19 JArbSchG floor of a possible minor is unknown, so the apprentice-based target itself is
+  unreliable there, and flagging a deviation against it would only add noise.
 - `GEBURTSDATUM_FEHLT` — classification `AZUBI` and `birthDate` is `null`; the statutory minimum
   then fails open to § 3 BUrlG, which is why the owner must check this row by hand.
 - `NULL_PLATZHALTER` — `totalDays` is 0, never auto-calculated, no human write ever set it

@@ -91,8 +91,9 @@ const tenantConfigSchema = z
     carryOverDeadlineDay: z.number().int().min(1).max(31).optional(),
     carryOverDeadlineMonth: z.number().int().min(1).max(12).optional(),
     defaultVacationDays: decimalFromApi(z.number().min(0.5).max(365).multipleOf(0.5)).optional(),
-    // Issue #435 D-03 — pre-fill for apprentices in the create form; min 20 = § 3 BUrlG at a
-    // 5-day week; never read by the entitlement computation (D-05).
+    // Issue #482: the Azubi-Standard — a calculation input for an AZUBI without a person value
+    // (resolveVacationBaseDays()) and the create-dialog pre-fill suggestion (#435 D-03); min 20
+    // = § 3 BUrlG at a 5-day week.
     defaultApprenticeVacationDays: decimalFromApi(
       z.number().min(20).max(365).multipleOf(0.5),
     ).optional(),
