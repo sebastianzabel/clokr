@@ -288,6 +288,51 @@ export function usualWorkDaysShortfall(
   return Math.max(0, contractWorkDaysPerWeek - usualWorkDays.length);
 }
 
+/**
+ * Issue #481 R5 — the SHIFT_BASED Angabe is required: true when a SHIFT_BASED contract has no
+ * übliche Arbeitstage at all. Every other type carries no Angabe, so it is never "missing".
+ * Advisory only — the server rejects the write with a German 400 either way.
+ */
+export function usualWorkDaysMissing(
+  type: WorkScheduleLike["type"] | string | undefined,
+  usualWorkDays: number[],
+): boolean {
+  return type === "SHIFT_BASED" && usualWorkDays.length === 0;
+}
+
+/** Issue #481 R6/R7 — one row of GET /settings/work/:employeeId/history as the Nachtrag needs it. */
+export type ContractHistoryRow = {
+  id: string;
+  type: string;
+  validFrom: string;
+  contractWorkDaysPerWeek?: number | null;
+  usualWorkDays?: number[] | null;
+};
+
+/**
+ * Issue #481 R7 — the contract rows (current or historic) that still lack the Angabe: SHIFT_BASED
+ * rows with an empty or absent usualWorkDays, oldest first. Leave pricing reads the Angabe of the
+ * row valid in each week, so an empty historic row matters as much as the current one.
+ */
+export function shiftContractsMissingUsualWorkDays(
+  rows: readonly ContractHistoryRow[],
+): ContractHistoryRow[] {
+  return rows
+    .filter((r) => r.type === "SHIFT_BASED" && (r.usualWorkDays?.length ?? 0) === 0)
+    .sort((a, b) => a.validFrom.localeCompare(b.validFrom));
+}
+
+/**
+ * Issue #481 R6 — body of PATCH /settings/work/:employeeId/usual-work-days: the row id plus the
+ * Angabe, sorted and de-duplicated like buildUsualWorkDaysPayload.
+ */
+export function buildUsualWorkDaysBackfillPayload(
+  workScheduleId: string,
+  usualWorkDays: number[],
+): { workScheduleId: string; usualWorkDays: number[] } {
+  return { workScheduleId, usualWorkDays: [...new Set(usualWorkDays)].sort((a, b) => a - b) };
+}
+
 // Minimal shape both MONTHLY_HOURS display helpers below need — a schedule's
 // own workDays only. Looser than WorkScheduleLike so callers that only have
 // the workDays slice (e.g. tests, or a narrower fetch) can use it directly.

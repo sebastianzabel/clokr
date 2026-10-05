@@ -20,7 +20,11 @@
     statutoryMinimumFiveDayWeek,
     MISSING_BIRTH_DATE_HINT,
   } from "$lib/statutory-minimum-vacation";
-  import { buildUsualWorkDaysPayload, usualWorkDaysShortfall } from "$lib/utils/work-schedule";
+  import {
+    buildUsualWorkDaysPayload,
+    usualWorkDaysShortfall,
+    usualWorkDaysMissing,
+  } from "$lib/utils/work-schedule";
 
   type InvitationStatus = "ACCEPTED" | "PENDING" | "EXPIRED" | "NONE";
   type Role = "ADMIN" | "MANAGER" | "EMPLOYEE";
@@ -73,6 +77,12 @@
   // below 5 days — exactly the issue's 4-day case (see this plan's <action>).
   let cContractWorkDays = $state<number>(5);
   let cUsualWorkDays = $state<number[]>([]);
+  // Issue #481 R5 — a SHIFT_BASED contract cannot be created without (enough) übliche Arbeitstage.
+  let createBlockedByUsualWorkDays = $derived(
+    cScheduleType === "SHIFT_BASED" &&
+      (usualWorkDaysMissing(cScheduleType, cUsualWorkDays) ||
+        usualWorkDaysShortfall(cUsualWorkDays, cContractWorkDays) > 0),
+  );
   let cUsePassword = $state(false);
   let cPassword = $state("");
   // Phase 49.2 — FLEXTIME Kernarbeitszeit fields + tenant defaults for pre-fill
@@ -862,7 +872,10 @@
           </p>
         </div>
         <div class="form-group form-group--full">
-          <label class="form-label">Übliche Arbeitstage (optional)</label>
+          <!-- Issue #481 R5: required for SHIFT_BASED; the server is authoritative. -->
+          <label class="form-label"
+            >Übliche Arbeitstage <span class="badge badge-gray">Pflicht</span></label
+          >
           <div class="weekday-chips" role="group" aria-label="Übliche Arbeitstage">
             {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
               <button
@@ -881,11 +894,16 @@
             {/each}
           </div>
           <p class="hint">
-            Nur für angebrochene Urlaubswochen: Dort zählen nur Urlaubstage an diesen Wochentagen.
-            Eine volle Urlaubswoche kostet immer die vertraglichen Arbeitstage. Leer lassen, wenn es
-            keine festen Tage gibt.
+            Pflicht bei Schichtbetrieb: mindestens so viele Tage wie Arbeitstage pro Woche. In
+            angebrochenen Urlaubswochen zählen nur Urlaubstage an diesen Wochentagen; eine volle
+            Urlaubswoche kostet immer die vertraglichen Arbeitstage.
           </p>
-          {#if usualWorkDaysShortfall(cUsualWorkDays, cContractWorkDays) > 0}
+          {#if usualWorkDaysMissing(cScheduleType, cUsualWorkDays)}
+            <div class="callout">
+              Bitte die üblichen Arbeitstage ankreuzen – bei Schichtbetrieb Pflicht. Ohne Angabe
+              kann der Mitarbeiter nicht angelegt werden.
+            </div>
+          {:else if usualWorkDaysShortfall(cUsualWorkDays, cContractWorkDays) > 0}
             <div class="callout">
               Bitte mindestens {cContractWorkDays} Tage ankreuzen – so viele Arbeitstage hat der Vertrag.
               Sonst wird die Angabe beim Speichern abgelehnt.
@@ -966,7 +984,11 @@
   {#snippet footer()}
     {#if !createEmailError}
       <button class="btn btn-ghost" onclick={() => (createOpen = false)}>Abbrechen</button>
-      <button class="btn btn-primary" onclick={createEmployee} disabled={creating}>
+      <button
+        class="btn btn-primary"
+        onclick={createEmployee}
+        disabled={creating || createBlockedByUsualWorkDays}
+      >
         {creating ? "Anlegen…" : "Mitarbeiter anlegen"}
       </button>
     {:else}

@@ -27,6 +27,10 @@
     buildContractWorkDaysPayload,
     buildUsualWorkDaysPayload,
     usualWorkDaysShortfall,
+    usualWorkDaysMissing,
+    shiftContractsMissingUsualWorkDays,
+    buildUsualWorkDaysBackfillPayload,
+    type ContractHistoryRow,
   } from "$lib/utils/work-schedule";
   import {
     statutoryMinimumFiveDayWeek,
@@ -44,6 +48,7 @@
   type ScheduleType = "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
 
   interface WorkSchedule {
+    id?: string;
     type: ScheduleType;
     weeklyHours: number | string | null;
     monthlyHours: number | string | null;
@@ -293,6 +298,8 @@
       }
       employee = empRes.value;
       workSchedule = schedRes.status === "fulfilled" ? schedRes.value : null;
+      // Issue #481 R7 — the Nachtrag section reads the full contract history (fail-soft).
+      void loadContractHistory();
       vacationEntitlement = vacRes.status === "fulfilled" ? vacRes.value : null;
       // Phase 65 — tenant defaults for placeholder display (D-08)
       tenantBreakConfig = cfgRes.status === "fulfilled" ? cfgRes.value : null;
@@ -1506,6 +1513,8 @@
     try {
       await api.put<WorkSchedule>(`/settings/work/${employee.id}`, buildSchedulePayload(extra));
       arbeitszeitSaved = true;
+      // Issue #481 R7 — a contract change may add or replace a SHIFT_BASED row.
+      void loadContractHistory();
       scheduleSnapshot = snap(
         eType,
         eWeeklyHours,
@@ -1557,6 +1566,105 @@
 
   async function saveSchedule() {
     return doSaveSchedule();
+  }
+
+  // ── Issue #481 R6/R7 — Nachtrag übliche Arbeitstage on existing SHIFT_BASED rows ──
+  let contractHistory = $state<ContractHistoryRow[]>([]);
+  let backfillSelection = $state<Record<string, number[]>>({});
+  let backfillSaving = $state(false);
+  let backfillError = $state("");
+  let contractsMissingUsual = $derived(shiftContractsMissingUsualWorkDays(contractHistory));
+  let backfillBlocked = $derived(
+    contractsMissingUsual.every((r) => (backfillSelection[r.id]?.length ?? 0) === 0) ||
+      contractsMissingUsual.some(
+        (r) =>
+          usualWorkDaysShortfall(backfillSelection[r.id] ?? [], r.contractWorkDaysPerWeek ?? null) >
+          0,
+      ),
+  );
+
+  function contractValidFromLabel(row: ContractHistoryRow): string {
+    return new Date(row.validFrom).toLocaleDateString("de-DE", { timeZone: "UTC" });
+  }
+
+  async function loadContractHistory() {
+    try {
+      contractHistory = await api.get<ContractHistoryRow[]>(`/settings/work/${employeeId}/history`);
+    } catch {
+      // Without contract:read (or on any error) the section simply stays hidden.
+      contractHistory = [];
+    }
+  }
+
+  function toggleBackfillDay(rowId: string, day: number) {
+    const current = backfillSelection[rowId] ?? [];
+    backfillSelection[rowId] = current.includes(day)
+      ? current.filter((d) => d !== day)
+      : [...current, day].sort((a, b) => a - b);
+  }
+
+  async function saveUsualWorkDaysBackfill() {
+    if (!employee) return;
+    backfillSaving = true;
+    backfillError = "";
+    const errors: string[] = [];
+    let saved = 0;
+    let currentRowFilled: number[] | null = null;
+    for (const row of contractsMissingUsual) {
+      const selection = backfillSelection[row.id] ?? [];
+      if (selection.length === 0) continue;
+      try {
+        const updated = await api.patch<ContractHistoryRow>(
+          `/settings/work/${employee.id}/usual-work-days`,
+          buildUsualWorkDaysBackfillPayload(row.id, selection),
+        );
+        saved++;
+        if (row.id === workSchedule?.id) currentRowFilled = updated.usualWorkDays ?? selection;
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : "Fehler beim Speichern";
+        errors.push(`Vertrag gültig ab ${contractValidFromLabel(row)}: ${message}`);
+      }
+    }
+    await loadContractHistory();
+    backfillSelection = {};
+    // Keep the contract form in step when the current row was filled — only when it holds no
+    // unsaved edits of its own, so nothing the admin typed is overwritten.
+    if (currentRowFilled && workSchedule && !scheduleDirty) {
+      workSchedule = { ...workSchedule, usualWorkDays: currentRowFilled };
+      eUsualWorkDays = [...currentRowFilled];
+      scheduleSnapshot = snap(
+        eType,
+        eWeeklyHours,
+        eMonthlyHours,
+        eCoreStart,
+        eCoreEnd,
+        eCoreDays,
+        eMon,
+        eTue,
+        eWed,
+        eThu,
+        eFri,
+        eSat,
+        eSun,
+        eMonWd,
+        eTueWd,
+        eWedWd,
+        eThuWd,
+        eFriWd,
+        eSatWd,
+        eSunWd,
+        eThreshold,
+        ePayout,
+        eOvertimeMode,
+        eWorkDays,
+        eContractWorkDays,
+        eUsualWorkDays,
+        eValidFrom,
+      );
+    }
+    backfillError = errors.join(" ");
+    if (saved > 0) toasts.success("Übliche Arbeitstage gespeichert");
+    backfillSaving = false;
   }
 
   async function orphanKeep() {
@@ -1659,6 +1767,12 @@
   );
 
   let scheduleSnapshot = $state("");
+  // Issue #481 R5 — a SHIFT_BASED contract cannot be saved without (enough) übliche Arbeitstage.
+  let scheduleBlockedByUsualWorkDays = $derived(
+    eType === "SHIFT_BASED" &&
+      (usualWorkDaysMissing(eType, eUsualWorkDays) ||
+        usualWorkDaysShortfall(eUsualWorkDays, eContractWorkDays) > 0),
+  );
   let scheduleDirty = $derived(
     // N-04: eValidFrom (the WorkSchedule's validFrom) is part of this snapshot — value and
     // effective date are one decision, so changing either marks this section unsaved.
@@ -1994,7 +2108,11 @@
           dirty={scheduleDirty}
         >
           {#snippet footer()}
-            <button class="btn btn-primary" onclick={saveSchedule} disabled={arbeitszeitSaving}>
+            <button
+              class="btn btn-primary"
+              onclick={saveSchedule}
+              disabled={arbeitszeitSaving || scheduleBlockedByUsualWorkDays}
+            >
               {arbeitszeitSaving ? "Speichern…" : "Speichern"}
             </button>
             {#if arbeitszeitSaved}<span class="saved-hint">Gespeichert</span>{/if}
@@ -2371,11 +2489,13 @@
               </p>
             </div>
 
-            <!-- Phase 436 Plan 02 (D-06) — übliche Arbeitstage: an advisory Angabe used ONLY
-                 for pricing angebrochene Urlaubswochen (D-01/D-03). The server is authoritative
-                 (T-436-08); this chip row and the shortfall hint below are UX only. -->
+            <!-- Phase 436 Plan 02 (D-06) — übliche Arbeitstage, used for pricing angebrochene
+                 Urlaubswochen (D-01/D-03). Issue #481 R5: required for SHIFT_BASED; the server is
+                 authoritative (T-436-08), this chip row and the hints below are UX only. -->
             <div class="form-group" style="margin-top: 1rem;">
-              <span class="form-label">Übliche Arbeitstage (optional)</span>
+              <span class="form-label"
+                >Übliche Arbeitstage <span class="badge badge-gray">Pflicht</span></span
+              >
               <div class="weekday-chips" role="group" aria-label="Übliche Arbeitstage">
                 {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
                   <button
@@ -2394,11 +2514,16 @@
                 {/each}
               </div>
               <p class="form-hint">
-                Nur für angebrochene Urlaubswochen: Dort zählen nur Urlaubstage an diesen
-                Wochentagen. Eine volle Urlaubswoche kostet immer die vertraglichen Arbeitstage.
-                Leer lassen, wenn es keine festen Tage gibt.
+                Pflicht bei Schichtbetrieb: mindestens so viele Tage wie Arbeitstage pro Woche. In
+                angebrochenen Urlaubswochen zählen nur Urlaubstage an diesen Wochentagen; eine volle
+                Urlaubswoche kostet immer die vertraglichen Arbeitstage.
               </p>
-              {#if usualWorkDaysShortfall(eUsualWorkDays, eContractWorkDays) > 0}
+              {#if usualWorkDaysMissing(eType, eUsualWorkDays)}
+                <div class="callout">
+                  Bitte die üblichen Arbeitstage ankreuzen – bei Schichtbetrieb Pflicht. Ohne Angabe
+                  kann der Vertrag nicht gespeichert werden.
+                </div>
+              {:else if usualWorkDaysShortfall(eUsualWorkDays, eContractWorkDays) > 0}
                 <div class="callout">
                   Bitte mindestens {eContractWorkDays} Tage ankreuzen – so viele Arbeitstage hat der Vertrag.
                   Sonst wird die Angabe beim Speichern abgelehnt.
@@ -2445,6 +2570,59 @@
             <p class="form-hint">Wechsel werden zum 1. eines Monats wirksam.</p>
           </div>
         </Section>
+
+        <!-- Issue #481 R6/R7 — Nachtrag of the übliche Arbeitstage on existing SHIFT_BASED contract
+             rows (current or historic) that have none. Button-gated per ADMIN_STRUCTURE §3.2.1:
+             the chips only change local state; the server validates and audits each row. -->
+        {#if contractsMissingUsual.length > 0}
+          <Section title="Übliche Arbeitstage nachtragen" sub="Schichtbetrieb-Verträge ohne Angabe">
+            {#snippet footer()}
+              <button
+                class="btn btn-primary"
+                onclick={saveUsualWorkDaysBackfill}
+                disabled={backfillSaving || backfillBlocked}
+              >
+                {backfillSaving ? "Speichern…" : "Speichern"}
+              </button>
+            {/snippet}
+
+            <div class="callout">
+              Für diese Verträge fehlen die üblichen Arbeitstage. Ohne Angabe zählt in angebrochenen
+              Urlaubswochen jeder beantragte Tag von Montag bis Samstag als Urlaubstag. Die Angabe
+              wird im bestehenden Vertragsdatensatz gespeichert – es entsteht kein neuer Vertrag.
+              Bereits genehmigte Anträge werden dadurch nicht automatisch neu berechnet.
+            </div>
+            {#if backfillError}
+              <div class="callout error">{backfillError}</div>
+            {/if}
+
+            {#each contractsMissingUsual as row (row.id)}
+              <div class="form-group" style="margin-top: 1rem;">
+                <span class="form-label">
+                  Vertrag gültig ab {contractValidFromLabel(row)} · {row.contractWorkDaysPerWeek ??
+                    "–"} Tage/Woche
+                </span>
+                <div class="weekday-chips" role="group" aria-label="Übliche Arbeitstage">
+                  {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
+                    <button
+                      type="button"
+                      class="wd-chip"
+                      class:wd-chip--active={(backfillSelection[row.id] ?? []).includes(day.value)}
+                      aria-pressed={(backfillSelection[row.id] ?? []).includes(day.value)}
+                      onclick={() => toggleBackfillDay(row.id, day.value)}>{day.label}</button
+                    >
+                  {/each}
+                </div>
+                {#if usualWorkDaysShortfall(backfillSelection[row.id] ?? [], row.contractWorkDaysPerWeek ?? null) > 0}
+                  <div class="callout">
+                    Bitte mindestens {row.contractWorkDaysPerWeek} Tage ankreuzen – so viele Arbeitstage
+                    hat der Vertrag.
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          </Section>
+        {/if}
 
         <!-- Phase 65 — Pausendauer (Optional) per-Employee Override (BREAK-06, BREAK-07, D-04..D-07) -->
         <!-- Phase 73-05: data-testid surface for the per-employee Pausendauer editor.
