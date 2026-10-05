@@ -33,6 +33,7 @@
 import type { FastifyInstance } from "fastify";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
+import iconv from "iconv-lite";
 import {
   getTestApp,
   closeTestApp,
@@ -40,7 +41,20 @@ import {
   cleanupTestData,
   createTestSalon,
   salonIdForEmployee,
+  configureDatevKanzlei,
 } from "./setup";
+import * as pdfUtils from "../composition/pdf";
+import { checkArbZG } from "../contexts/time-tracking/arbzg";
+
+// The monthly-report PDF spy: `vi.fn(actual.fn)` wraps the REAL generator so the bytes stay a valid
+// PDF and the test only inspects the DATA payload handed to it (same pattern as the #451 parity test).
+vi.mock("../composition/pdf", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../composition/pdf")>();
+  return {
+    ...actual,
+    generateMonthlyReportPdf: vi.fn(actual.generateMonthlyReportPdf),
+  };
+});
 
 async function loginAs(app: FastifyInstance, email: string, password = "test1234") {
   const res = await app.inject({
@@ -371,6 +385,231 @@ describe("Phase 79 D-10 — saldo-neutrality characterisation (frozen on the unt
     it("B (untracked MONTHLY_HOURS, shape S3): /reports/monthly workedHours is 45.55 (hand)", async () => {
       const row = await reportRow(b.id);
       expect(row.workedHours).toBe(45.55);
+    });
+  });
+
+  describe("live balance — clock 2026-03-31T10:00:00Z", () => {
+    it("A: GET /overtime/:employeeId balanceHours and status (captured; the live saldo excludes today)", async () => {
+      vi.setSystemTime(new Date("2026-03-31T10:00:00.000Z"));
+      const adminToken = await loginAs(app, adminEmail);
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${a.id}`,
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as { balanceHours: number; status: string };
+      // captured at 1396e30c (untouched call sites)
+      expect({ balanceHours: body.balanceHours, status: body.status }).toEqual({
+        balanceHours: -450.45,
+        status: "NORMAL",
+      });
+    });
+  });
+
+  describe("dashboard — clock 2026-03-20T20:00:00Z", () => {
+    let empToken: string;
+    let adminToken: string;
+
+    beforeAll(async () => {
+      vi.setSystemTime(new Date("2026-03-20T20:00:00.000Z"));
+      empToken = await loginAs(app, a.email);
+      adminToken = await loginAs(app, adminEmail);
+    });
+
+    it("A: GET /dashboard today counts the invalid row 5 (8h, hand, D-15); week values captured (S4/S5)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard",
+        headers: { authorization: `Bearer ${empToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as {
+        today: { workedHours: number; entries: number };
+        week: { workedHours: number; targetHours: number };
+      };
+      expect(body.today.workedHours).toBe(8);
+      // captured at 1396e30c: Mon-Fri 16.-20.03 closed rows incl. the invalid row 5
+      expect(body.week).toEqual({
+        workedHours: 39.31,
+        targetHours: 40,
+        workedToDateHours: 31.3,
+        targetToDateHours: 32,
+      });
+    });
+
+    it("A: GET /dashboard/my-week 16.-22.03 — per-day workedHours (hand; invalid row counted, open row 0 — D-15) and statuses (captured, S7)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/my-week?date=2026-03-18",
+        headers: { authorization: `Bearer ${empToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as {
+        days: Array<{ date: string; workedHours: number; status: string }>;
+      };
+      expect(body.days.map((d) => d.date)).toEqual([
+        "2026-03-16",
+        "2026-03-17",
+        "2026-03-18",
+        "2026-03-19",
+        "2026-03-20",
+        "2026-03-21",
+        "2026-03-22",
+      ]);
+      expect(body.days.map((d) => d.workedHours)).toEqual([8, 8.25, 6.5, 8.56, 8, 0, 0]);
+      expect(body.days.map((d) => d.status)).toEqual([
+        "complete",
+        "complete",
+        "partial",
+        "complete",
+        "complete",
+        "clocked_in",
+        "weekend",
+      ]);
+    });
+
+    it("A: GET /dashboard/team-week 16.-22.03 — per-day workedHours (hand; invalid row excluded) and statuses (captured, S6)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/team-week?date=2026-03-18",
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as {
+        team: Array<{ id: string; days: Array<{ workedHours: number; status: string }> }>;
+      };
+      const member = body.team.find((t) => t.id === a.id);
+      expect(member).toBeDefined();
+      expect(member!.days.map((d) => d.workedHours)).toEqual([8, 8.25, 6.5, 8.56, 0, 0, 0]);
+      expect(member!.days.map((d) => d.status)).toEqual([
+        "present",
+        "present",
+        "present",
+        "present",
+        "scheduled",
+        "clocked_in",
+        "none",
+      ]);
+    });
+  });
+
+  describe("dashboard team-week 23.-29.03 — clock 2026-03-31T10:00:00Z", () => {
+    it("A: cross-midnight 27.03 and DST day 29.03 (hand) and statuses (captured, S6)", async () => {
+      vi.setSystemTime(new Date("2026-03-31T10:00:00.000Z"));
+      const adminToken = await loginAs(app, adminEmail);
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/team-week?date=2026-03-25",
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as {
+        team: Array<{ id: string; days: Array<{ workedHours: number; status: string }> }>;
+      };
+      const member = body.team.find((t) => t.id === a.id);
+      expect(member).toBeDefined();
+      expect(member!.days.map((d) => d.workedHours)).toEqual([0, 0, 0, 0, 7.5, 0, 6.75]);
+      expect(member!.days.map((d) => d.status)).toEqual([
+        "missing",
+        "missing",
+        "missing",
+        "missing",
+        "present",
+        "none",
+        "present",
+      ]);
+    });
+  });
+
+  describe("reports — clock 2026-04-15T10:00:00Z", () => {
+    let adminToken: string;
+
+    beforeAll(async () => {
+      vi.setSystemTime(new Date("2026-04-15T10:00:00.000Z"));
+      adminToken = await loginAs(app, adminEmail);
+      await configureDatevKanzlei(app, tenantId);
+      await app.prisma.employee.update({
+        where: { id: a.id },
+        data: { employeeNumber: "SNC79-A" },
+      });
+      await app.prisma.employee.update({
+        where: { id: b.id },
+        data: { employeeNumber: "SNC79-B" },
+      });
+    });
+
+    it("A: monthly-report PDF netHours per entry in date order (hand, S8; invalid and open rows are not in the report set)", async () => {
+      const spy = vi.mocked(pdfUtils.generateMonthlyReportPdf);
+      spy.mockClear();
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/monthly/pdf?employeeId=${a.id}&year=2026&month=3`,
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const payload = spy.mock.calls[0][0];
+      expect(payload.entries.map((e) => e.netHours)).toEqual([8, 8.25, 6.5, 8.56, 7.5, 6.75]);
+    });
+
+    it("A and B: DATEV worked-hours line (Normalstunden) in [Bewegungsdaten] (hand 45,56 for 2733.4644 min, S9)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=3",
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = iconv.decode(res.rawPayload, "win1252");
+      const rows = body
+        .split("[Bewegungsdaten]")[1]
+        .split("\r\n")
+        .filter((l) => l.trim().length > 0)
+        .map((l) => l.split(";"));
+      // Field offsets: 1 = Personalnummer, 4 = Ausfallschluessel (empty on a worked-hours line), 6 = Stunden.
+      const hoursOf = (pn: string) => rows.find((r) => r[1] === pn && r[4] === "")?.[6];
+      expect(hoursOf("SNC79-A")).toBe("45,56");
+      expect(hoursOf("SNC79-B")).toBe("45,56");
+    });
+  });
+
+  describe("ArbZG — clock 2026-04-15T10:00:00Z", () => {
+    // The fixture stays below the 48h weekly and 8h-average thresholds, so S11 (weekly) and S12
+    // (24-week average) emit nothing here; their arithmetic is covered by the 79-01 matrices.
+    async function warningsOn(day: string) {
+      vi.setSystemTime(new Date("2026-04-15T10:00:00.000Z"));
+      const warnings = await checkArbZG(app.prisma, a.id, new Date(`${day}T00:00:00Z`));
+      return warnings.map((w) => ({ code: w.code, severity: w.severity, message: w.message }));
+    }
+
+    it("2026-03-17 (Break[] rows, S10)", async () => {
+      expect(await warningsOn("2026-03-17")).toEqual([]);
+    });
+
+    it("2026-03-19 (millisecond precision without a recorded break, S10)", async () => {
+      expect(await warningsOn("2026-03-19")).toEqual([
+        {
+          code: "BREAK_TOO_SHORT",
+          severity: "warning",
+          message:
+            "§ 4 ArbZG: Bei über 6 Stunden Arbeitszeit sind mindestens 30 Minuten Pause vorgeschrieben. Erfasst: 0 Min.",
+        },
+      ]);
+    });
+
+    it("2026-03-27 (cross-midnight)", async () => {
+      expect(await warningsOn("2026-03-27")).toEqual([]);
+    });
+
+    it("2026-03-29 (DST switch)", async () => {
+      expect(await warningsOn("2026-03-29")).toEqual([
+        {
+          code: "BREAK_TOO_SHORT",
+          severity: "warning",
+          message:
+            "§ 4 ArbZG: Bei über 6 Stunden Arbeitszeit sind mindestens 30 Minuten Pause vorgeschrieben. Erfasst: 15 Min.",
+        },
+      ]);
     });
   });
 });
