@@ -129,6 +129,12 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
         d5,
       );
       expect(rows.map((r) => r.date.toISOString().slice(0, 10)).sort()).toEqual(["2026-02-02"]);
+      // Phase 79 (issue #79), D-13: every T1 row carries its entry id.
+      const validEntry = await app.prisma.timeEntry.findFirstOrThrow({
+        where: { employeeId: data.employee.id, date: d1 },
+        select: { id: true },
+      });
+      expect(rows.map((r) => r.id)).toEqual([validEntry.id]);
     });
 
     it("T2 getWorkedEntriesInRange returns the valid AND invalid closed rows, never the open/deleted/non-WORK ones", async () => {

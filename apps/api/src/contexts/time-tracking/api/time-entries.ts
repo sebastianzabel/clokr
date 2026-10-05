@@ -7,6 +7,7 @@ import {
   requirePermission,
   userIdsHoldingPermission, // Phase 75b Plan 10 (#75), D-16
   accessContextFromRequest, // Phase 91b Plan 03 (#91), D-09/D-14
+  employeeScopeFor, // Phase 79 (#79), D-13 — summary route's T1 scope
   resolveAccessReach, // Phase 91b Plan 03 (#91), D-09/D-14
   isTimeEntryInScope, // Phase 91b Plan 03 (#91), D-09/D-14
   scopedTimeEntryIds, // Phase 91b Plan 03 (#91), D-09
@@ -21,6 +22,7 @@ import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { buildClockOutDebounceMessage } from "../clock-out-debounce-message"; // Phase 307 Plan 02 (D-03/D-05)
 import { resolveEntrySalon } from "../entry-salon"; // Phase 68b (issue #68), D-08/D-10
 import { entryDurations } from "../entry-durations"; // Phase 79 (Issue #79), D-06/D-14 — per-entry presence/working time
+import { getValidWorkedEntriesInRange } from "../facade/time-entries"; // Phase 79 (#79), D-07 — T1, the saldo's own entry set
 import { resolveClockEvent } from "../../../services/clock/resolver";
 import { resolveActor } from "../../../services/clock/audit-actor";
 import type { ClockEvent } from "../../../services/clock/types";
@@ -109,6 +111,25 @@ const manualEntrySchema = z.object({
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
+
+// Phase 79 (Issue #79), D-09: an ISO calendar date. The regex alone accepts "2026-02-31", and V8
+// rolls `new Date("2026-02-31")` over to 3 March, so the parsed date must also round-trip.
+const isoDateParam = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Datum im Format JJJJ-MM-TT erwartet")
+  .refine((s) => {
+    const d = new Date(s);
+    return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+  }, "Ungültiges Datum");
+
+const timeEntrySummaryQuerySchema = z.object({
+  employeeId: z.string().uuid("Ungültige Mitarbeiter-ID"),
+  from: isoDateParam,
+  to: isoDateParam,
+});
+
+// D-09: the summary reads one bounded findMany; cap the window at a leap year (inclusive days).
+const SUMMARY_MAX_RANGE_DAYS = 366;
 
 // Phase 91 (BREAK-03) — BAG 12.02.2025, 5 AZR 51/24: an automatically inserted break does not
 // prove the break was actually taken. `confirm` lets the employee/manager acknowledge it was
@@ -2605,6 +2626,99 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
 
       return { entry: updated };
+    },
+  });
+
+  // ── GET /api/v1/time-entries/summary — presence and working time of one employee over a period (Phase 79, Issue #79, R3) ──
+  app.get("/summary", {
+    schema: {
+      tags: ["Zeiterfassung"],
+      summary: "Presence, working and break minutes of one employee over a period",
+      description:
+        "Sums over the entry set the working-time account counts: closed, valid WORK entries that are not deleted. " +
+        "Open, invalid, deleted and non-WORK entries are excluded. A SALONS/PERSONS-scoped manager receives the sum " +
+        "over the entries GET /time-entries would list for them (a partial sum by design). Minutes are exact sums, " +
+        "rounded once at the end. At most 366 days per request.",
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      // D-08: authorization mirrors GET /time-entries — a caller holding no time-entry:read reach
+      // is rejected before anything else is looked at.
+      const readReach = await permissionReach(req, "time-entry:read");
+      if (readReach === null) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+      const isManager = readReach === "ZUGEWIESEN";
+
+      const q = timeEntrySummaryQuerySchema.parse(req.query);
+
+      // #368 rule: EIGENE reach with a foreign employeeId is a 403 (an API-key actor without an
+      // employeeId never matches either).
+      if (!isManager && q.employeeId !== req.user.employeeId) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+
+      const from = new Date(q.from);
+      const to = new Date(q.to);
+      if (from.getTime() > to.getTime()) {
+        return reply.code(400).send({ error: "Startdatum muss vor Enddatum liegen" });
+      }
+      const inclusiveDays = (to.getTime() - from.getTime()) / 86_400_000 + 1;
+      if (inclusiveDays > SUMMARY_MAX_RANGE_DAYS) {
+        return reply.code(400).send({ error: "Der Zeitraum darf höchstens 366 Tage umfassen" });
+      }
+
+      // One statement for a foreign tenant's employee and an unknown id (T-79-13); like the reads
+      // of GET /time-entries this is not audited.
+      const tenantId = req.user.tenantId;
+      const employee = await app.prisma.employee.findFirst({
+        where: { id: q.employeeId, tenantId },
+        select: { id: true },
+      });
+      if (!employee) {
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
+      // D-07: T1 is the saldo's own entry set, so workingMinutes here is the account's Ist.
+      const access = accessContextFromRequest(req);
+      let entries = await getValidWorkedEntriesInRange(
+        app.prisma,
+        employeeScopeFor(access, { employeeId: q.employeeId }),
+        from,
+        to,
+      );
+
+      // D-13: a ZUGEWIESEN caller is bounded to the entries GET /time-entries would list for them.
+      if (isManager) {
+        const reach = await resolveAccessReach(app.prisma, access, "time-entry:read:ZUGEWIESEN");
+        const scopedIds = await scopedTimeEntryIds(app.prisma, tenantId, reach, from, to);
+        if (scopedIds !== "all") {
+          const inScope = new Set(scopedIds);
+          entries = entries.filter((e) => inScope.has(e.id));
+        }
+      }
+
+      // Exact per-entry values summed, rounded once at the end.
+      let presence = 0;
+      let working = 0;
+      let breaks = 0;
+      for (const e of entries) {
+        const d = entryDurations(e);
+        presence += d.presenceMinutes;
+        working += d.workingMinutes;
+        breaks += d.breakMinutes;
+      }
+
+      return {
+        employeeId: q.employeeId,
+        from: q.from,
+        to: q.to,
+        presenceMinutes: Math.round(presence),
+        workingMinutes: Math.round(working),
+        breakMinutes: Math.round(breaks),
+        entryCount: entries.length,
+      };
     },
   });
 }
