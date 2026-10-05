@@ -20,6 +20,7 @@ import { getEffectiveBreakDuration } from "../break-effective";
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { buildClockOutDebounceMessage } from "../clock-out-debounce-message"; // Phase 307 Plan 02 (D-03/D-05)
 import { resolveEntrySalon } from "../entry-salon"; // Phase 68b (issue #68), D-08/D-10
+import { entryDurations } from "../entry-durations"; // Phase 79 (Issue #79), D-06/D-14 — per-entry presence/working time
 import { resolveClockEvent } from "../../../services/clock/resolver";
 import { resolveActor } from "../../../services/clock/audit-actor";
 import type { ClockEvent } from "../../../services/clock/types";
@@ -1096,7 +1097,20 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         );
       }
 
-      return entries;
+      // Phase 79 (Issue #79), D-06/D-14: every item additionally states its presence and working
+      // time as integer minutes (Math.round here at the API edge only; the kernel stays exact).
+      // An open entry has no duration yet, which is not the same as zero, hence null.
+      return entries.map((entry) => {
+        if (!entry.endTime) {
+          return { ...entry, presenceMinutes: null, workingMinutes: null };
+        }
+        const { presenceMinutes, workingMinutes } = entryDurations(entry);
+        return {
+          ...entry,
+          presenceMinutes: Math.round(presenceMinutes),
+          workingMinutes: Math.round(workingMinutes),
+        };
+      });
     },
   });
 
