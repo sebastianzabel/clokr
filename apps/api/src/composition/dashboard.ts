@@ -22,6 +22,7 @@ import {
   isDayDue,
   findUnconfirmedBreakDays, // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
   entryDurations, // Phase 79 (Issue #79), D-03/D-05 — presence/working-time kernel
+  addWorkingMinutes, // Phase 79 (Issue #79), D-12 — fold step
   type PresenceEntry,
   type PresenceLeave,
   type PresenceAbsence,
@@ -114,8 +115,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       let todayMinutes = 0;
       for (const e of todayEntries) {
         if (e.endTime) {
-          todayMinutes +=
-            (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
+          todayMinutes += entryDurations(e).workingMinutes;
         }
       }
 
@@ -168,8 +168,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       let periodWorkedMinutes = 0;
       for (const e of periodEntries) {
         if (e.endTime) {
-          periodWorkedMinutes +=
-            (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
+          periodWorkedMinutes += entryDurations(e).workingMinutes;
         }
       }
 
@@ -1190,14 +1189,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       const days = weekDays.map((dateStr: string) => {
         const dayEntries = entries.filter((e) => dateStrInTz(e.date, tz) === dateStr);
-        const workedMin = dayEntries.reduce((sum: number, e) => {
-          if (!e.endTime) return sum;
-          return (
-            sum +
-            (e.endTime.getTime() - e.startTime.getTime()) / 60000 -
-            Number(e.breakMinutes || 0)
-          );
-        }, 0);
+        const workedMin = dayEntries.reduce((sum: number, e) => addWorkingMinutes(sum, e), 0);
 
         const dow = getDayOfWeekInTz(new Date(dateStr + "T12:00:00Z"), tz);
         const holidayName = myWeekHolidayMap.get(dateStr) ?? null;
