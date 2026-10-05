@@ -432,11 +432,15 @@ describe("audit-vacation-entitlements (Issue #444)", () => {
       expect(line).toContain("categories=ABWEICHUNG_VERTRAG");
     });
 
+    // Issue #482 (owner decision 2026-10-04): since the resolver itself reads the
+    // Azubi-Standard for an AZUBI without a person value, `target` here IS the
+    // apprentice-based value (20.00 on this plain seedTestData tenant) — not the regular
+    // tenant default (30.00) this test used to pin pre-#482.
     it("GEBURTSDATUM_FEHLT: AZUBI without birth date, nothing else", async () => {
       const { lines } = await run(["--tenant-id", dataA.tenant.id, "--year", "2026"]);
       const line = lineFor(lines, ids.birthDateMissing, 2026)!;
-      expect(line).toContain("target=30.00");
-      expect(line).toContain("deviation=0.00");
+      expect(line).toContain("target=20.00");
+      expect(line).toContain("deviation=10.00");
       expect(line).toContain("manual=no");
       expect(line).toContain("categories=GEBURTSDATUM_FEHLT");
       expect(line).not.toContain("UNTER_MINIMUM");
@@ -444,9 +448,13 @@ describe("audit-vacation-entitlements (Issue #444)", () => {
       expect(line).not.toContain("NULL_PLATZHALTER");
     });
 
-    it("Orchestrator correction (#444): AZUBI, no person value, deviates from apprentice default", async () => {
+    // Issue #482: the second, independent "apprentice comparison target" (G-6) is removed —
+    // `target` itself is now the apprentice-based value, so this case is a plain
+    // stored-vs-target deviation like any other ABWEICHUNG_VERTRAG row.
+    it("Orchestrator correction (#444/#482): AZUBI, no person value, target is the Azubi-Standard, deviates from stored", async () => {
       const { lines } = await run(["--tenant-id", dataA.tenant.id, "--year", "2026"]);
       const line = lineFor(lines, ids.apprenticeDeviation, 2026)!;
+      expect(line).toContain("target=20.00");
       expect(line).toContain("categories=ABWEICHUNG_VERTRAG");
       expect(line).not.toContain("GEBURTSDATUM_FEHLT");
     });
@@ -565,7 +573,7 @@ describe("audit-vacation-entitlements (Issue #444)", () => {
       expect(line).toContain("categories=VERTRAGSWECHSEL_PRUEFEN");
     });
 
-    it("E4: the minimum and the apprentice comparison target follow the segment list (D-09) — no false UNTER_MINIMUM", async () => {
+    it("E4: the minimum and the target follow the segment list (D-09) — no false UNTER_MINIMUM", async () => {
       const { lines } = await run(["--tenant-id", dataA.tenant.id, "--year", "2026"]);
       const line = lineFor(lines, ids.e4, 2026)!;
       expect(line).toContain("minimum=16.00");

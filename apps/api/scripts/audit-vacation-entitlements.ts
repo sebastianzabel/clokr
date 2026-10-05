@@ -9,10 +9,11 @@
  *
  * Target/minimum are computed with the SAME helpers the write paths use — no formula is
  * reimplemented here:
- *   - target: `resolveRegularVacationDays()` (Issue #435 D-05 person/tenant base + statutory
- *     floor, Issue #447 exit twelfthing, Issue #450 per-contract-segment apportionment). Never
- *     reads `classification` — the apprentice tenant default is a UI pre-fill only (D-05), see
- *     the ABWEICHUNG_VERTRAG note below.
+ *   - target: `resolveRegularVacationDays()`, which since Issue #482 already includes the
+ *     Azubi-Standard (`TenantConfig.defaultApprenticeVacationDays`) for an AZUBI without a
+ *     person value (Issue #435 D-05 person/tenant base + statutory floor, Issue #447 exit
+ *     twelfthing, Issue #450 per-contract-segment apportionment). This script reads no tenant
+ *     default column itself — it only resolves `target` through that one function.
  *   - minimum: `statutoryMinimumVacationThresholdBySegments()`, fed by the employee's full
  *     `WorkSchedule` history via `loadVacationContractSegments()` (Issue #450 D-09) — the floor is
  *     apportioned per contract segment exactly like the regular entitlement, never computed from
@@ -20,14 +21,15 @@
  *
  * Categories (fixed output order; a row may carry several; `OK` only when none apply):
  *   - UNTER_MINIMUM: stored is below the statutory minimum (applies to manual rows too).
- *   - ABWEICHUNG_VERTRAG: NOT manual, NOT UNTER_MINIMUM, and stored differs from the target —
- *     OR, for an AZUBI without a person value (`annualVacationDays` null) whose birth date is
- *     known, stored differs from a second comparison target computed the SAME way but seeded
- *     with `TenantConfig.defaultApprenticeVacationDays` instead of the tenant's regular default
- *     (report-only; the production resolver in leave-days.ts stays unchanged, #435 D-05). The
- *     apprentice comparison is skipped while GEBURTSDATUM_FEHLT already applies — the statutory
- *     floor computed with no birth date is unreliable, so a second, independent deviation
- *     finding on top of it would only add noise (documented decision, see issue #444 comment).
+ *   - ABWEICHUNG_VERTRAG: NOT manual, NOT UNTER_MINIMUM, and stored differs from the target.
+ *     Since Issue #482 `target` for an AZUBI without a person value already IS the
+ *     apprentice-based value, so this is the same single comparison for every row — no second,
+ *     independent "apprentice comparison target" is computed any more. Suppressed only for an
+ *     AZUBI without a person value while GEBURTSDATUM_FEHLT already applies (see
+ *     `apprenticeTargetWithoutBirthDate` below) — without a birth date the § 19 JArbSchG floor of
+ *     a possible minor is unknown, so the apprentice-based target itself is unreliable there, and
+ *     flagging a deviation against it would only add noise (documented decision, see issue #444
+ *     comment, kept under #482).
  *   - GEBURTSDATUM_FEHLT: classification AZUBI and `birthDate` is null — the statutory minimum
  *     then fails open to § 3 BUrlG, which is why the owner must check this row manually.
  *   - NULL_PLATZHALTER: `totalDays` is 0, not auto-calculated, no human write ever set it (Issue
@@ -84,10 +86,7 @@ import {
   carryOverRemainder,
   daysDiffer,
 } from "../src/contexts/absence/leave-days";
-import {
-  computeRegularVacationDaysBySegments,
-  statutoryMinimumVacationThresholdBySegments,
-} from "../src/contexts/absence/vacation-calc";
+import { statutoryMinimumVacationThresholdBySegments } from "../src/contexts/absence/vacation-calc";
 import { getLeaveTypeByCode } from "../src/contexts/absence/facade/leave-types";
 import { EFFECTIVE_LEAVE_STATUSES } from "../src/contexts/absence/effective-leave-statuses";
 import {
@@ -191,12 +190,6 @@ function belowThreshold(stored: number, threshold: number): boolean {
   return Math.round(stored * 100) < Math.round(threshold * 100);
 }
 
-function employedInYear(hireDate: Date, exitDate: Date | null, year: number): boolean {
-  return (
-    hireDate.getUTCFullYear() <= year && (exitDate === null || exitDate.getUTCFullYear() >= year)
-  );
-}
-
 function fmtNullable(n: number | null): string {
   return n === null ? "none" : round2(n).toFixed(2);
 }
@@ -255,7 +248,6 @@ async function classifyRow(
   employee: EmployeeInfo,
   entitlement: RawEntitlement,
   year: number,
-  apprenticeDefault: number,
 ): Promise<ReportRow> {
   const stored = Number(entitlement.totalDays);
   const used = Number(entitlement.usedDays);
@@ -286,29 +278,19 @@ async function classifyRow(
   const underMinimum = !nullPlaceholder && belowThreshold(stored, minimum);
   const birthDateMissing = employee.classification === "AZUBI" && employee.birthDate === null;
 
-  // ABWEICHUNG_VERTRAG, second comparison target — see the ABWEICHUNG_VERTRAG docblock note above
-  // for the GEBURTSDATUM_FEHLT exclusion.
-  let apprenticeTarget: number | null = null;
-  if (
-    employee.classification === "AZUBI" &&
-    employee.annualVacationDays === null &&
-    !birthDateMissing
-  ) {
-    const employed = employedInYear(employee.hireDate, employee.exitDate, year);
-    apprenticeTarget = computeRegularVacationDaysBySegments({
-      year,
-      hireDate: employee.hireDate,
-      birthDate: employee.birthDate,
-      exitDate: employee.exitDate,
-      segments,
-      baseDays: employed ? apprenticeDefault : 0,
-    });
-  }
+  // Issue #482 (G-6): `target` already IS the apprentice-based value for an AZUBI without a
+  // person value — ABWEICHUNG_VERTRAG is suppressed only while GEBURTSDATUM_FEHLT applies,
+  // because without a birth date the § 19 JArbSchG floor of a possible minor is unknown, so that
+  // target itself is unreliable (kept from the #444 decision).
+  const apprenticeTargetWithoutBirthDate = birthDateMissing && employee.annualVacationDays === null;
 
-  const deviatesFromTarget =
-    daysDiffer(stored, target) ||
-    (apprenticeTarget !== null && daysDiffer(stored, apprenticeTarget));
-  const contractDeviation = !manual && !underMinimum && !nullPlaceholder && deviatesFromTarget;
+  const deviatesFromTarget = daysDiffer(stored, target);
+  const contractDeviation =
+    !manual &&
+    !underMinimum &&
+    !nullPlaceholder &&
+    deviatesFromTarget &&
+    !apprenticeTargetWithoutBirthDate;
 
   const categories: string[] = [];
   if (underMinimum) categories.push("UNTER_MINIMUM");
@@ -412,7 +394,6 @@ async function applyCrossYearCheck(
   vacationTypeId: string,
   baseYear: number,
   rowsByEmployeeYear: Map<string, ReportRow>,
-  apprenticeDefault: number,
 ): Promise<ReportRow[]> {
   const requests = await prisma.leaveRequest.findMany({
     where: {
@@ -452,7 +433,6 @@ async function applyCrossYearCheck(
     }
 
     // No entitlement row at all for this year — synthetic line, target/minimum still computed.
-    void apprenticeDefault; // target/minimum below never need the apprentice comparison
     const segments = await loadVacationContractSegments(prisma, employee.id, tenantId);
     const target = await resolveRegularVacationDays(prisma, employee.id, tenantId, y);
     const minimumUnreduced = statutoryMinimumVacationThresholdBySegments({
@@ -520,9 +500,8 @@ async function auditTenant(
 
   const tenantConfig = await prisma.tenantConfig.findUnique({
     where: { tenantId },
-    select: { defaultApprenticeVacationDays: true, timezone: true },
+    select: { timezone: true },
   });
-  const apprenticeDefault = Number(tenantConfig?.defaultApprenticeVacationDays ?? 20);
   const timezone = tenantConfig?.timezone ?? "Europe/Berlin";
 
   const entitlements = await prisma.leaveEntitlement.findMany({
@@ -558,7 +537,7 @@ async function auditTenant(
 
   for (const e of entitlements) {
     employeesSeen.set(e.employee.id, e.employee);
-    const row = await classifyRow(prisma, tenantId, e.employee, e, e.year, apprenticeDefault);
+    const row = await classifyRow(prisma, tenantId, e.employee, e, e.year);
     rowsByEmployeeYear.set(`${e.employee.id}:${e.year}`, row);
   }
 
@@ -578,7 +557,6 @@ async function auditTenant(
         vacationType.id,
         baseYear,
         rowsByEmployeeYear,
-        apprenticeDefault,
       )),
     );
   }

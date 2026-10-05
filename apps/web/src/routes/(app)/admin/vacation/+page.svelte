@@ -117,7 +117,8 @@
   let gThreshold = $state(60);
   let gPayout = $state(false);
   let gVacationDays = $state(30);
-  // Issue #435 (D-03) — tenant default pre-filled for apprentices in the create form.
+  // Issue #482: the Azubi-Standard — a calculation input for apprentices without an own value
+  // (resolveVacationBaseDays()), also the create-dialog pre-fill suggestion (#435 D-03).
   let gApprenticeVacationDays = $state(20);
   let gSaving = $state(false);
   let gSaved = $state(false);
@@ -760,7 +761,7 @@
               </p>
             </div>
 
-            <!-- Issue #435 (D-03) — tenant default pre-filled for AZUBI in the create dialog -->
+            <!-- Issue #482: the Azubi-Standard (calculation input + create-dialog pre-fill) -->
             <div class="form-group">
               <label class="form-label" for="g-apprentice-vac-days"
                 >Urlaubstage Azubis (Basis 5-Tage-Woche)</label
@@ -778,9 +779,10 @@
                 <span class="input-suffix">Tage</span>
               </div>
               <p class="form-hint">
-                Vorschlag beim Anlegen von Auszubildenden, jederzeit überschreibbar. Mindestens 20
-                Tage (§ 3 BUrlG); Jugendliche erhalten automatisch den höheren Mindesturlaub nach §
-                19 JArbSchG.
+                Gilt für Auszubildende ohne eigenen Wert unter „Urlaubstage pro Jahr“ und wird beim
+                Anlegen vorgeschlagen. Wirkt auf künftig angelegte Urlaubsjahre; bestehende
+                Ansprüche bleiben unverändert. Mindestens 20 Tage (§ 3 BUrlG); Jugendliche erhalten
+                automatisch den höheren Mindesturlaub nach § 19 JArbSchG.
               </p>
             </div>
 

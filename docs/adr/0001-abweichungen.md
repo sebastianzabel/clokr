@@ -2651,3 +2651,123 @@ pnpm --filter @clokr/api exec vitest run src/__tests__/leave.test.ts
 pnpm --filter @clokr/api test
 pnpm --filter @clokr/web test
 ```
+
+## W — Azubi-Standard wird Berechnungsgrundlage des Urlaubsanspruchs (Issue #482)
+
+**Schwere: Unterbau-Semantikänderung nach ADR 0002, Entscheidung 7**
+(`TenantConfig.defaultApprenticeVacationDays` wechselt von Vorschlagswert (nur Anlage-Dialog) zu
+Berechnungsgrundlage; keine Schemaänderung, keine Migration). Owner-Entscheidung = Issue #482
+vom 2026-10-04.
+
+### Warum dieser Eintrag existiert
+
+Seit #435 (D-05) wurde `TenantConfig.defaultApprenticeVacationDays` ("Azubi-Standard", Admin →
+Urlaubsverwaltung → Standards) ausschließlich zum Vorbefüllen des Anlage-Dialogs gelesen — die
+eigentliche Berechnung des regulären Jahresanspruchs (`resolveVacationBaseDays()`) kannte
+`Employee.classification` nicht und griff für jeden Mitarbeiter ohne eigenen Wert auf den
+regulären Mandanten-Standard (`defaultVacationDays`) zurück. Jeder Auszubildende ohne eigenen Wert
+bekam damit den Mandanten-Standard statt des Azubi-Standards — ohne Namen, ohne Bestandszahlen.
+
+### Was sich geändert hat
+
+- **Vierstufige Kette (G-1/G-2), eine Funktion:** `resolveVacationBaseDays()`
+  (`apps/api/src/contexts/absence/leave-days.ts`) löst den Basiswert jetzt auf: (1)
+  `Employee.annualVacationDays`, wenn gesetzt; (2) sonst, bei aktueller `classification = AZUBI`:
+  `TenantConfig.defaultApprenticeVacationDays`; (3) sonst `TenantConfig.defaultVacationDays`; (4)
+  sonst 30 — auch wenn der Mandant gar kein `TenantConfig`-Datensatz hat (G-1: die Kette nennt den
+  TenantConfig-Wert, der dann nicht existiert). Der gesetzliche Mindesturlaub (§ 3 BUrlG / § 19
+  JArbSchG) wird unverändert NACH diesem Basiswert angewendet
+  (`computeRegularVacationDaysBySegments`). `classification` wird jeweils zum Zeitpunkt der
+  Auflösung gelesen — es gibt keine Klassifikations-Historie (G-2); nach Ende der Ausbildung
+  (Wechsel auf z. B. VOLLZEIT) nutzen NEU erzeugte oder geheilte Zeilen den Mandanten-Standard,
+  bereits gespeicherte Zeilen bleiben unverändert.
+- **Prüfbericht ohne zweiten Vergleichswert (G-6):** `audit-vacation-entitlements.ts` vergleicht
+  `stored` nur noch gegen das EINE `target` (das jetzt bereits den Azubi-Standard einschließt) —
+  der vormalige, zweite "Lehrlings-Vergleichswert" ist entfernt. Die `ABWEICHUNG_VERTRAG`-
+  Unterdrückung bei fehlendem Geburtsdatum (#444) bleibt: ohne Geburtsdatum ist der § 19 JArbSchG-
+  Mindesturlaub eines möglichen Minderjährigen unbekannt, ein zusätzlicher Befund auf dieser
+  Grundlage wäre nur Rauschen.
+- **Admin-UI erklärt die Wirkung (AC-6):** neue Hinweistexte unter Urlaubsverwaltung → Standards,
+  im Anlage-Dialog und in den Stammdaten der Mitarbeiter-Detailseite benennen den Azubi-Standard
+  als Berechnungsgrundlage, nicht nur als Vorschlag.
+- **Anlage-Dialog folgt künftigen Standard-Änderungen (G-5):** ein Wert, der dem Standard der
+  gewählten Klassifikation entspricht (AZUBI → Azubi-Standard, sonst Mandanten-Standard), wird als
+  `null` gespeichert (spiegelt #435 D-13) — die Person folgt dann späteren Änderungen des
+  Standards. Eine durch den Mindesturlaub angehobene Vorschlagszahl bleibt explizit gespeichert
+  (unverändertes #435 D-11-Verhalten).
+- **Web-Anzeigespiegel (G-7):** `apps/web/src/lib/vacation-base-default.ts`
+  (`vacationBaseDefaultFor`/`annualVacationDaysPayload`/`vacationBaseDefaultPlaceholder`)
+  entscheidet nur, welcher Standard angezeigt wird und wann ein Wert kollabiert — die Berechnung
+  selbst bleibt serverseitig in `resolveVacationBaseDays()`.
+
+### Was bewusst NICHT geschah
+
+- **Keine Migration, kein Backfill, kein Datenschreibvorgang** — die Spalte existiert bereits
+  (#435), nur ihre Bedeutung ändert sich.
+- **Bestehende `LeaveEntitlement`-Zeilen bleiben unverändert** (#435 D-15 gilt weiter): eine
+  Einstellungs- oder Klassifikationsänderung schreibt keine Zeile um sich selbst; nur eine NEUE
+  Jahreszeile, der #445-Nullwert-Heal oder ein auditierter #447/#450-Recompute lesen den neuen
+  Wert.
+- **Keine Klassifikations-Historie** (G-2) — diese Phase fügt keine hinzu.
+- **Auditierte #447/#450-Recomputes nutzen weiterhin DIE EINE Funktion** (G-3) — kein zweiter,
+  legacy Auflösungsweg wird eingeführt; das würde "eine Stelle" widersprechen.
+- **#445-Mehrdeutigkeits-Gate bleibt unverändert** (G-4): eine Nullwert-Zeile, deren Vorjahr einen
+  abweichenden, nicht-platzhalter Wert trägt, wird NICHT automatisch geheilt, sondern als
+  `needsReview` zurückgegeben.
+- **Die separate, auditierte Korrektur der bereits auf 30 gesetzten prod-Zeile für 2027** läuft
+  getrennt (laut Issue-Text "erfolgt getrennt") — kein Teil dieser Phase.
+- **Explizit über den Anlage-Dialog gesetzte Personenwerte zwischen #435 und #482** bleiben
+  Overrides — ein Leeren des Feldes bringt die Person zurück auf den (jetzt korrekt wirkenden)
+  Standard.
+
+### Auswirkung auf die Kontexte
+
+- **Unterbau:** nur Bedeutungsänderung des Feldes `TenantConfig.defaultApprenticeVacationDays`
+  (Vorschlagswert → Berechnungsgrundlage); keine Feld-, Relations- oder Enum-Änderung.
+- **Abwesenheiten:** der Resolver (`resolveVacationBaseDays()`) und der Prüfbericht
+  (`audit-vacation-entitlements.ts`).
+- **Arbeitszeitkonto, Schichtplanung, Zeiterfassung, Kompositionsschicht:** keine.
+- **Web-Oberfläche:** drei neue Hinweistexte (Standards, Anlage-Dialog, Stammdaten) und der neue
+  Anzeigespiegel `vacation-base-default.ts`; der Anlage-Dialog kollabiert einen Standard-Wert auf
+  `null`.
+
+### Gemessen
+
+- Task 1 (Resolver + Prüfbericht): 14 Testdateien, 204 Tests bestanden (RED-Lauf zuvor: 10
+  erwartete Fehlschläge — B1, B5–B10 plus die zwei überholten Pins — 82 bestanden als Kontrollen).
+  `lint:tenant-scoping`: 0 Funde.
+- Task 2 (Web-Anzeigespiegel + UI-Verdrahtung): 4 Testdateien, 72 Tests bestanden; `svelte-check`
+  für die drei geänderten Seiten vor und nach den Edits identisch (0/6/0 Fehler je Seite — Baseline
+  vor dieser Phase gemessen, kein Anstieg).
+- Task 3 (Gates): volle API-Suite 456 Dateien, 7324 bestanden, 11 fehlgeschlagen, 3 übersprungen
+  (7338 Tests). Die 11 Fehlschläge verteilen sich auf 4 Dateien, KEINE davon in den
+  `files_modified` dieser Phase (`src/__tests__/overtime-calc.test.ts`,
+  `src/__tests__/snap-02-cross-year.test.ts`, `scripts/__tests__/audit-exit-month-saldo.test.ts`
+  — alle Arbeitszeitkonto, unberührt von dieser Phase — und
+  `scripts/__tests__/audit-vacation-entitlements.test.ts`, dort NUR der vorbestehende
+  `Nullmutation`-Fall mit einem ungescopeten `app.prisma.auditLog.count()` über die GESAMTE
+  Worker-Datenbank, nicht die beiden von dieser Phase geänderten Testfälle). Alle vier Dateien
+  isoliert erneut gelaufen: 67/67 grün — bestätigt geteilte-Worker-DB-Nebenläufigkeit (dieselbe
+  Fehlerklasse wie in `reference_api_test_time_bombs_and_db_residue`), keine durch diese Phase
+  verursachte Regression. Volle Web-Suite 101 Dateien / 1586 Tests bestanden; `test:scripts` 3
+  Dateien / 152 Tests bestanden. Typecheck (API+Web) grün; Lint (API 0 Fehler/64 Warnungen, Web 0
+  Fehler/27 Warnungen — beide vorbestehend); `lint:tenant-scoping` (0 Funde, 4 Ausnahme-
+  Zeilennummern wegen der Kommentar-Verschiebung dieser Phase nachgezogen), `lint:import-targets`
+  (1929 Spezifizierer), `lint:facade-signatures` (130 Funktionen, 0 Funde), fremder Kontextzugriff
+  (`--check 0`, 0 Funde), Kontextgrenzen (`--check 0`, 0 Workload), Guard-Vakuität (898 Dateien, 0
+  vakuos), Rollenprüfungen (API 0/195), Kommentarsprache (0 neue Verstöße, Baseline 221
+  unverändert); Web-Token-/UI-Klassen-/Save-Pattern-/UI-Lints grün; `prettier --check` über jede
+  von dieser Phase geänderte Datei grün (`schema.prisma` separat per Diff auf Kommentarzeilen
+  beschränkt geprüft, da Prettier keinen `.prisma`-Parser hat; ein `prisma format`-Testlauf zeigte
+  vorbestehende, nicht von dieser Phase stammende Spalten-Ausrichtungs-Drift und wurde verworfen,
+  nicht übernommen).
+
+### Nachrechnen
+
+```bash
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/contexts/absence/__tests__/azubi-vacation-standard-482.test.ts src/__tests__/employees.test.ts scripts/__tests__/audit-vacation-entitlements.test.ts
+pnpm --filter @clokr/web exec vitest run src/lib/__tests__/vacation-base-default.test.ts
+pnpm --filter @clokr/api test
+pnpm --filter @clokr/web test
+```

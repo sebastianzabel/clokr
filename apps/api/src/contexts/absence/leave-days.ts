@@ -1095,12 +1095,24 @@ export function daysDiffer(a: number, b: number): boolean {
 }
 
 /**
- * Issue #435 (D-05) — the ONE base-value resolver for the regular vacation entitlement: person
- * value ?? tenant default ?? 30. Every regular-entitlement path resolves the base value here and
- * nowhere else (D-06); every caller of {@link resolveRegularVacationDays} /
- * {@link ensureRegularVacationEntitlement} keeps working unchanged. Never reads `classification`
- * or `TenantConfig.defaultApprenticeVacationDays` — the apprentice tenant value is a UI pre-fill
- * only (D-05).
+ * Issue #482 (owner decision 2026-10-04) — the ONE base-value resolver for the regular vacation
+ * entitlement. Every regular-entitlement path resolves the base value here and nowhere else
+ * (D-06 of #445); every caller of {@link resolveRegularVacationDays} /
+ * {@link ensureRegularVacationEntitlement} keeps working unchanged (same signature as before
+ * #482). The chain, in order:
+ *   1. `Employee.annualVacationDays` when set (a person-level override).
+ *   2. else, when the employee's CURRENT `classification` is "AZUBI" (no classification
+ *      history — read at the moment the base value is resolved, G-2):
+ *      `TenantConfig.defaultApprenticeVacationDays` ("Azubi-Standard").
+ *   3. else `TenantConfig.defaultVacationDays`.
+ *   4. else 30 (also the fallback for step 2/3 when the tenant has no `TenantConfig` row at
+ *      all — the Azubi-Standard does not exist there either, G-1).
+ * The statutory floor (§ 3 BUrlG / § 19 JArbSchG) is applied downstream, by
+ * computeRegularVacationDaysBySegments — not here. This function writes nothing: it is
+ * consulted when a row is created, when the #445 heal fills a zero placeholder, and by the
+ * audited #447 (Austritt)/#450 (Vertragswechsel) recomputes (G-3). A settings or classification
+ * change never rewrites an existing row by itself (#435 D-15) — only a later create/heal/
+ * recompute call picks up the new value.
  */
 export async function resolveVacationBaseDays(
   db: DbClient,
@@ -1109,15 +1121,18 @@ export async function resolveVacationBaseDays(
 ): Promise<number> {
   const employee = await db.employee.findFirst({
     where: { id: employeeId, tenantId },
-    select: { annualVacationDays: true },
+    select: { annualVacationDays: true, classification: true },
   });
   if (employee?.annualVacationDays != null) {
     return Number(employee.annualVacationDays);
   }
   const config = await db.tenantConfig.findUnique({
     where: { tenantId },
-    select: { defaultVacationDays: true },
+    select: { defaultVacationDays: true, defaultApprenticeVacationDays: true },
   });
+  if (employee?.classification === "AZUBI" && config) {
+    return Number(config.defaultApprenticeVacationDays);
+  }
   return Number(config?.defaultVacationDays ?? 30);
 }
 

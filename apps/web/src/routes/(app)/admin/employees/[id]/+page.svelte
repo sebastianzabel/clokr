@@ -36,6 +36,7 @@
     statutoryMinimumFiveDayWeek,
     MISSING_BIRTH_DATE_HINT,
   } from "$lib/statutory-minimum-vacation";
+  import { vacationBaseDefaultPlaceholder } from "$lib/vacation-base-default";
   import {
     CARRY_OVER_REASON_OPTIONS,
     carryOverReasonLabel,
@@ -98,7 +99,8 @@
     requiresSupervision?: boolean;
     // Phase 64/65 — Pausendauer per-Employee overrides
     birthDate?: string | null; // ISO date or null
-    // Issue #435 (D-13) — per-person vacation base value; null = tenant default.
+    // Issue #482: per-person vacation base value; null = the classification's own Standard,
+    // resolved server-side (resolveVacationBaseDays()).
     annualVacationDays?: number | string | null;
     breakOver6hOverride?: number | null; // null = use tenant default
     breakOver9hOverride?: number | null;
@@ -138,6 +140,9 @@
     phorestWrapupMinutes?: number;
     // Issue #435 (D-13) — tenant default for the Stammdaten placeholder (same response).
     defaultVacationDays?: number | string;
+    // Issue #482 — the Azubi-Standard, same GET /settings/work response; feeds the Stammdaten
+    // placeholder for an AZUBI (vacationBaseDefaultPlaceholder).
+    defaultApprenticeVacationDays?: number | string;
   }
 
   // Phase 67 (BERSCH-15) — Vocational-school pattern row returned by
@@ -642,6 +647,10 @@
 
   // Issue #435 (D-13) — tenant default shown as the Stammdaten placeholder.
   let tenantDefaultVacationDays = $derived(Number(tenantBreakConfig?.defaultVacationDays) || 30);
+  // Issue #482 — the Azubi-Standard, same fallback as admin/vacation's own form (20).
+  let tenantDefaultApprenticeVacationDays = $derived(
+    Number(tenantBreakConfig?.defaultApprenticeVacationDays) || 20,
+  );
   // Issue #435 (D-13 hint) — below the statutory minimum for the CURRENT year (display-only;
   // the server's PUT/PATCH guards, plan 03, are authoritative).
   let eAnnualVacationMinimum = $derived(
@@ -658,7 +667,8 @@
     eNfcCardId = employee.nfcCardId ?? "";
     eExitDate = employee.exitDate ? String(employee.exitDate).split("T")[0] : "";
     eBirthDate = employee.birthDate ? String(employee.birthDate).split("T")[0] : "";
-    // Issue #435 (D-13) — null/undefined = tenant default (placeholder shown in the input).
+    // Issue #482: null/undefined = the classification's own Standard, resolved server-side
+    // (placeholder shown in the input).
     eAnnualVacationDays =
       employee.annualVacationDays !== undefined && employee.annualVacationDays !== null
         ? Number(employee.annualVacationDays)
@@ -813,7 +823,8 @@
           classification: eClassification,
           coverageWeight: eCoverageWeight,
           requiresSupervision: eRequiresSupervision,
-          // Issue #435 (D-13) — null = back to the tenant default.
+          // Issue #482 (G-5): null = back to the classification's own Standard (an explicit
+          // stored value is an override; clearing the field returns the person to the Standard).
           annualVacationDays: eAnnualVacationDays ?? null,
         },
       );
@@ -1684,9 +1695,10 @@
 
   // ── Urlaub state ───────────────────────────────────────────────────────────
   const vacYear = new Date().getFullYear();
-  // Issue #435 (D-14) — the server's own regular-entitlement suggestion (person's/tenant's base
-  // value, scaled to contract workdays, hire-year pro-rata applied) replaces the former
-  // client-side flat-30-days formula, which ignored the per-person base value entirely.
+  // Issue #435 (D-14) — the server's own regular-entitlement suggestion (classification-aware
+  // base value from resolveVacationBaseDays(), Issue #482, scaled to contract workdays, hire-year
+  // pro-rata applied) replaces the former client-side flat-30-days formula, which ignored the
+  // per-person base value entirely.
   let eVacSuggestion = $derived(vacationEntitlement?.regularDays ?? 0);
   let eVacMinimum = $derived(vacationEntitlement?.statutoryMinimumDays ?? 0);
   let eVacTotal = $state<number | null>(null);
@@ -2049,7 +2061,7 @@
                 <div class="callout">{MISSING_BIRTH_DATE_HINT}</div>
               {/if}
             </div>
-            <!-- Issue #435 (D-13) — per-person vacation base value -->
+            <!-- Issue #482: per-person vacation base value -->
             <div class="form-group form-group--full">
               <label class="form-label" for="e-annual-vacation-days">
                 Urlaubstage pro Jahr (5-Tage-Woche)
@@ -2062,10 +2074,15 @@
                 step="0.01"
                 class="input"
                 bind:value={eAnnualVacationDays}
-                placeholder={`Mandanten-Standard (${tenantDefaultVacationDays})`}
+                placeholder={vacationBaseDefaultPlaceholder(
+                  eClassification,
+                  tenantDefaultVacationDays,
+                  tenantDefaultApprenticeVacationDays,
+                )}
               />
               <p class="hint">
-                Leer = Mandanten-Standard. Gilt für künftige Urlaubsjahre; bestehende Ansprüche
+                Leer = Azubi-Standard für Auszubildende, sonst Mandanten-Standard (beides unter
+                Urlaubsverwaltung → Standards). Gilt für künftige Urlaubsjahre; bestehende Ansprüche
                 ändern sich nur im Tab Urlaub (mit Protokoll).
               </p>
               {#if eAnnualVacationMinimum && eAnnualVacationDays !== null && eAnnualVacationDays < eAnnualVacationMinimum.days}

@@ -20,6 +20,7 @@
     statutoryMinimumFiveDayWeek,
     MISSING_BIRTH_DATE_HINT,
   } from "$lib/statutory-minimum-vacation";
+  import { vacationBaseDefaultFor, annualVacationDaysPayload } from "$lib/vacation-base-default";
   import {
     buildUsualWorkDaysPayload,
     usualWorkDaysShortfall,
@@ -96,7 +97,8 @@
   let cClassification: EmployeeClassification = $state("VOLLZEIT");
   let cCoverageWeight = $state(1.0);
   let cRequiresSupervision = $state(false);
-  // Issue #435 (D-13 tracer) — per-person vacation base value; null = tenant default.
+  // Issue #482: per-person vacation base value; null = the classification's own Standard,
+  // resolved server-side (resolveVacationBaseDays()).
   let cAnnualVacationDays = $state<number | null>(null);
   // Issue #435 (D-01/D-11) — tenant defaults loaded onMount, for the create-dialog pre-fill.
   let tenantDefaultVacationDays = $state<number | null>(null);
@@ -120,12 +122,15 @@
     isOverridden(cClassification, "requiresSupervision", cRequiresSupervision),
   );
 
-  // Issue #435 (D-01/D-11) — proposes the apprentice or regular tenant default, raised to the
-  // legal minimum (§ 19 JArbSchG with a birth date, else § 3 BUrlG); never overwrites a value
-  // the admin typed.
+  // Issue #482 (G-7 display mirror) — proposes the classification's own Standard (Azubi-Standard
+  // or Mandanten-Standard), raised to the legal minimum (§ 19 JArbSchG with a birth date, else
+  // § 3 BUrlG); never overwrites a value the admin typed.
   function refreshVacationPrefill() {
-    const base =
-      cClassification === "AZUBI" ? tenantDefaultApprenticeVacationDays : tenantDefaultVacationDays;
+    const base = vacationBaseDefaultFor(
+      cClassification,
+      tenantDefaultVacationDays,
+      tenantDefaultApprenticeVacationDays,
+    );
     const next = base === null ? null : Math.max(base, cBirthMinimum.days);
     if (cAnnualVacationDays === null || cAnnualVacationDays === cVacationPrefill) {
       cAnnualVacationDays = next;
@@ -337,16 +342,17 @@
         requiresSupervision: cRequiresSupervision,
         // Issue #435 (D-11/D-12) — optional, drives the statutory-minimum pre-fill/hint only.
         birthDate: cBirthDate ? new Date(cBirthDate).toISOString() : null,
-        // Issue #435 (D-13): null = tenant default (resolveVacationBaseDays). A non-AZUBI value
-        // that still equals the tenant default is sent as null, so the person keeps following a
-        // later change to the tenant default; an AZUBI pre-fill is always sent explicitly (the
-        // resolver never branches on classification, D-05).
-        annualVacationDays:
-          cAnnualVacationDays === null
-            ? null
-            : cClassification !== "AZUBI" && cAnnualVacationDays === tenantDefaultVacationDays
-              ? null
-              : cAnnualVacationDays,
+        // Issue #482 (G-5, mirrors #435 D-13): a value equal to the classification's OWN
+        // Standard (AZUBI -> Azubi-Standard, everyone else -> Mandanten-Standard) is sent as
+        // null, so the person keeps following later changes of that Standard instead of
+        // freezing today's number as an explicit override. A floor-raised minor suggestion
+        // stays explicit (unchanged #435 D-11 behaviour).
+        annualVacationDays: annualVacationDaysPayload(
+          cAnnualVacationDays,
+          cClassification,
+          tenantDefaultVacationDays,
+          tenantDefaultApprenticeVacationDays,
+        ),
       };
       if (cUsePassword && cPassword) payload.password = cPassword;
       const res = await api.post<Employee & { emailError?: string }>("/employees", payload);
@@ -792,8 +798,10 @@
           data-testid="admin-employees-create-annual-vacation-days"
         />
         <p class="form-hint">
-          Vorschlag aus den Mandanten-Einstellungen (Azubis: „Urlaubstage Azubis"). Wird auf die
-          vertraglichen Arbeitstage umgerechnet und im Eintrittsjahr anteilig berechnet.
+          Vorschlag aus den Mandanten-Einstellungen (Azubis: „Urlaubstage Azubis"). Entspricht der
+          Wert dem Standard, wird kein eigener Wert gespeichert – die Person folgt dann auch
+          späteren Änderungen des Standards. Wird auf die vertraglichen Arbeitstage umgerechnet und
+          im Eintrittsjahr anteilig berechnet.
         </p>
         {#if cBirthMinimum && cAnnualVacationDays !== null && cAnnualVacationDays < cBirthMinimum.days}
           <div class="callout error">
