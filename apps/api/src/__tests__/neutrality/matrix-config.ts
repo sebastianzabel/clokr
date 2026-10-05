@@ -240,6 +240,15 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "430 entry directly above: RECORD/MERGE mode refuses to run once the role guard is gone, so " +
       "there is no mechanism left to give these routes a recorded cell.",
   })),
+  {
+    route: "PATCH /api/v1/settings/work/:employeeId/usual-work-days",
+    reason:
+      "New route added in Phase 481 (Issue #481, R6), long after the role guard (`requireRole`) " +
+      "was deleted from middleware/auth.ts (#75b/#83) — built permission-gated " +
+      "(`contract:update:ZUGEWIESEN`) from its very first commit and never had role-based access " +
+      "behavior to compare. Same vacuous-satisfaction reasoning as the Phase 430 and Phase 468 " +
+      "entries above: RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
 ];
 
 /** Routes declared in `app.ts` itself — invisible to the source parser, proven registered. */

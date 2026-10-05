@@ -91,6 +91,7 @@ export async function seedClosableMonth(tenant: TestTenant): Promise<ClosableMon
     employeeNumber: `CYC-${Date.now()}`,
     hireDate: "2024-01-01",
     role: "EMPLOYEE",
+    usualWorkDays: [1, 2, 3, 4, 5], // Issue #481 R5
   };
   const empRes = await fetch(`${API_BASE}/api/v1/employees`, {
     method: "POST",
@@ -179,14 +180,11 @@ export async function requestReopen(
   month: string,
   reason: string,
 ): Promise<ReopenRequest> {
-  const res = await fetch(
-    `${API_BASE}/api/v1/monatsabschluss/${month}/reopen-request`,
-    {
-      method: "POST",
-      headers: authHeaders(tenant.adminToken),
-      body: JSON.stringify({ reason }),
-    },
-  );
+  const res = await fetch(`${API_BASE}/api/v1/monatsabschluss/${month}/reopen-request`, {
+    method: "POST",
+    headers: authHeaders(tenant.adminToken),
+    body: JSON.stringify({ reason }),
+  });
   if (!res.ok) await failFast("requestReopen", res);
 
   const body = (await res.json()) as { id: string };

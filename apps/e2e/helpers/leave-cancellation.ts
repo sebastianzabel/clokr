@@ -128,6 +128,7 @@ export async function createManager(
     method: "POST",
     headers: headersFor(tenant.adminToken),
     body: JSON.stringify({
+      usualWorkDays: [1, 2, 3, 4, 5], // Issue #481 R5
       email,
       firstName: opts.firstName ?? "Manager",
       lastName: opts.lastName ?? `Test-${suffix}`,
@@ -139,9 +140,7 @@ export async function createManager(
   });
   if (!createRes.ok) {
     const text = await createRes.text();
-    throw new Error(
-      `createManager: employee create failed (${createRes.status}): ${text}`,
-    );
+    throw new Error(`createManager: employee create failed (${createRes.status}): ${text}`);
   }
   const employee = (await createRes.json()) as { id: string };
 
@@ -152,15 +151,11 @@ export async function createManager(
   });
   if (!loginRes.ok) {
     const text = await loginRes.text();
-    throw new Error(
-      `createManager: login failed for ${email} (${loginRes.status}): ${text}`,
-    );
+    throw new Error(`createManager: login failed for ${email} (${loginRes.status}): ${text}`);
   }
   const tokens = (await loginRes.json()) as { accessToken: string };
   if (!tokens.accessToken) {
-    throw new Error(
-      `createManager: login response missing accessToken for ${email}`,
-    );
+    throw new Error(`createManager: login response missing accessToken for ${email}`);
   }
 
   return { id: employee.id, email, token: tokens.accessToken };
@@ -190,6 +185,7 @@ export async function seedApprovedLeave(
     method: "POST",
     headers: headersFor(tenant.adminToken),
     body: JSON.stringify({
+      usualWorkDays: [1, 2, 3, 4, 5], // Issue #481 R5
       email: employeeEmail,
       firstName: "Cancel",
       lastName: `Test-${suffix}`,
@@ -200,9 +196,7 @@ export async function seedApprovedLeave(
   });
   if (!empRes.ok) {
     const text = await empRes.text();
-    throw new Error(
-      `seedApprovedLeave: employee create failed (${empRes.status}): ${text}`,
-    );
+    throw new Error(`seedApprovedLeave: employee create failed (${empRes.status}): ${text}`);
   }
   const employee = (await empRes.json()) as { id: string };
 
@@ -228,19 +222,14 @@ export async function seedApprovedLeave(
 
   // 3. Approve the request — only needed if it didn't auto-approve (VACATION = PENDING by default).
   if (leaveRequest.status !== "APPROVED") {
-    const approveRes = await fetch(
-      `${API_BASE}/api/v1/leave/requests/${leaveRequest.id}/review`,
-      {
-        method: "PATCH",
-        headers: headersFor(approverToken),
-        body: JSON.stringify({ status: "APPROVED" }),
-      },
-    );
+    const approveRes = await fetch(`${API_BASE}/api/v1/leave/requests/${leaveRequest.id}/review`, {
+      method: "PATCH",
+      headers: headersFor(approverToken),
+      body: JSON.stringify({ status: "APPROVED" }),
+    });
     if (!approveRes.ok) {
       const text = await approveRes.text();
-      throw new Error(
-        `seedApprovedLeave: approve failed (${approveRes.status}): ${text}`,
-      );
+      throw new Error(`seedApprovedLeave: approve failed (${approveRes.status}): ${text}`);
     }
   }
 
@@ -269,18 +258,13 @@ export async function requestCancellation(
   leaveRequestId: string,
   requesterToken: string,
 ): Promise<void> {
-  const res = await fetch(
-    `${API_BASE}/api/v1/leave/requests/${leaveRequestId}`,
-    {
-      method: "DELETE",
-      headers: headersFor(requesterToken),
-    },
-  );
+  const res = await fetch(`${API_BASE}/api/v1/leave/requests/${leaveRequestId}`, {
+    method: "DELETE",
+    headers: headersFor(requesterToken),
+  });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(
-      `requestCancellation: cancel-request failed (${res.status}): ${text}`,
-    );
+    throw new Error(`requestCancellation: cancel-request failed (${res.status}): ${text}`);
   }
 }
 
@@ -299,14 +283,11 @@ export async function reviewCancellation(
   decision: "APPROVED" | "REJECTED",
   reviewerToken: string,
 ): Promise<ReviewResult> {
-  const res = await fetch(
-    `${API_BASE}/api/v1/leave/requests/${leaveRequestId}/review`,
-    {
-      method: "PATCH",
-      headers: headersFor(reviewerToken),
-      body: JSON.stringify({ status: decision }),
-    },
-  );
+  const res = await fetch(`${API_BASE}/api/v1/leave/requests/${leaveRequestId}/review`, {
+    method: "PATCH",
+    headers: headersFor(reviewerToken),
+    body: JSON.stringify({ status: decision }),
+  });
   // Try JSON first, fall back to text — error responses may not always be JSON.
   let body: unknown = null;
   const text = await res.text();

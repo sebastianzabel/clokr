@@ -26,6 +26,9 @@ import {
   buildContractWorkDaysPayload,
   buildUsualWorkDaysPayload,
   usualWorkDaysShortfall,
+  usualWorkDaysMissing,
+  shiftContractsMissingUsualWorkDays,
+  buildUsualWorkDaysBackfillPayload,
   type WorkScheduleLike,
 } from "../work-schedule";
 
@@ -306,6 +309,44 @@ describe("usualWorkDaysShortfall (Phase 436 Plan 02 D-06)", () => {
 
   it("null contract count (not yet known) reports 0", () => {
     expect(usualWorkDaysShortfall([1, 2], null)).toBe(0);
+  });
+});
+
+describe("usualWorkDaysMissing (Issue #481 R5)", () => {
+  it("SHIFT_BASED without any day is missing", () => {
+    expect(usualWorkDaysMissing("SHIFT_BASED", [])).toBe(true);
+  });
+  it("SHIFT_BASED with a day is not missing (the shortfall helper handles too few)", () => {
+    expect(usualWorkDaysMissing("SHIFT_BASED", [2])).toBe(false);
+  });
+  it("other or unknown types never miss an Angabe", () => {
+    expect(usualWorkDaysMissing("FIXED_SCHEDULE", [])).toBe(false);
+    expect(usualWorkDaysMissing("FLEXTIME", [])).toBe(false);
+    expect(usualWorkDaysMissing(undefined, [])).toBe(false);
+  });
+});
+
+describe("shiftContractsMissingUsualWorkDays (Issue #481 R7)", () => {
+  it("keeps only SHIFT_BASED rows without an Angabe, oldest first", () => {
+    const rows = [
+      { id: "c", type: "SHIFT_BASED", validFrom: "2026-10-01", usualWorkDays: [] },
+      { id: "f", type: "FIXED_SCHEDULE", validFrom: "2026-01-01", usualWorkDays: [] },
+      { id: "s", type: "SHIFT_BASED", validFrom: "2026-08-01", usualWorkDays: [2, 3, 4, 5] },
+      { id: "a", type: "SHIFT_BASED", validFrom: "2026-05-18", usualWorkDays: null },
+    ];
+    expect(shiftContractsMissingUsualWorkDays(rows).map((r) => r.id)).toEqual(["a", "c"]);
+  });
+  it("empty input stays empty", () => {
+    expect(shiftContractsMissingUsualWorkDays([])).toEqual([]);
+  });
+});
+
+describe("buildUsualWorkDaysBackfillPayload (Issue #481 R6)", () => {
+  it("sorts and de-duplicates the Angabe", () => {
+    expect(buildUsualWorkDaysBackfillPayload("id-1", [5, 2, 2, 3, 4])).toEqual({
+      workScheduleId: "id-1",
+      usualWorkDays: [2, 3, 4, 5],
+    });
   });
 });
 

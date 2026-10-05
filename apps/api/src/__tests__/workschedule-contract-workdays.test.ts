@@ -141,6 +141,7 @@ describe("PUT /api/v1/settings/work/:employeeId — WorkSchedule.contractWorkDay
         weeklyHours: 32,
         workDays: [0, 1, 2, 3, 4, 5, 6], // attempted overwrite — must be ignored
         contractWorkDaysPerWeek: 6,
+        usualWorkDays: [1, 2, 3, 4, 5, 6], // Issue #481 R5: SHIFT_BASED requires übliche Arbeitstage
         validFrom: seedValidFrom,
       },
     });
@@ -166,6 +167,7 @@ describe("PUT /api/v1/settings/work/:employeeId — WorkSchedule.contractWorkDay
         weeklyHours: 32,
         workDays: [1, 2, 3, 4, 5, 6, 0], // attempted overwrite — must be ignored
         contractWorkDaysPerWeek: 5,
+        usualWorkDays: [1, 2, 3, 4, 5], // Issue #481 R5: SHIFT_BASED requires übliche Arbeitstage
         validFrom: newValidFrom,
       },
     });
@@ -189,6 +191,7 @@ describe("PUT /api/v1/settings/work/:employeeId — WorkSchedule.contractWorkDay
         weeklyHours: 24,
         workDays: [1, 2, 3, 4, 5], // attempted overwrite — must be ignored
         contractWorkDaysPerWeek: 3,
+        usualWorkDays: [0, 3, 6], // Issue #481 R5: SHIFT_BASED requires übliche Arbeitstage
         validFrom: seed2ValidFrom, // update-in-place
       },
     });
@@ -346,6 +349,7 @@ describe("PUT /api/v1/settings/work/:employeeId — cross-tenant guard with cont
         type: "SHIFT_BASED",
         weeklyHours: 24,
         contractWorkDaysPerWeek: 7,
+        usualWorkDays: [0, 1, 2, 3, 4, 5, 6], // Issue #481 R5: SHIFT_BASED requires übliche Arbeitstage
         validFrom: monthFirstStr(3),
       },
     });

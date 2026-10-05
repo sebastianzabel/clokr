@@ -472,6 +472,7 @@ describe("Role bridge: employee form, compat column and fallback materialization
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${tenant.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email,
           firstName: "Anlage",
           lastName: "Manager",

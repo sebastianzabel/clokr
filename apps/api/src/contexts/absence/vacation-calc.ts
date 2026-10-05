@@ -447,16 +447,95 @@ function halfDayCounts(dow: number, usualWorkDays: readonly number[]): boolean {
   return usualWorkDays.length === 0 || usualWorkDays.includes(dow);
 }
 
-export function countShiftBasedLeaveDays(
+/**
+ * Issue #481 (R1) — one contract segment for leave PRICING: `from` per the #450 segment
+ * semantics (`loadVacationContractSegments` in `leave-days.ts` — first row raw `validFrom`,
+ * later rows snapped up to the 1st of the month), `workDaysPerWeek` from
+ * `contractWorkDaysPerWeekFrom`, `usualWorkDays` from `usualWorkDaysFrom` — NEVER derived here;
+ * this file stays DB-free (D-09's purity contract).
+ */
+export type ShiftLeavePricingSegment = {
+  from: Date;
+  workDaysPerWeek: number;
+  usualWorkDays: readonly number[];
+};
+
+/**
+ * Issue #481 (R1) — the ONE segment-selection rule, generic over any segment shape carrying a
+ * `from: Date`: given `sorted` (ASCENDING by `from` — the caller's responsibility, same
+ * precondition every caller of this rule already satisfies), returns the LAST segment whose
+ * `from` is at or before `at`; an `at` earlier than every segment resolves to the FIRST segment
+ * (the earliest known contract always reaches back to the employee's hire — #450's own
+ * semantics); an empty list throws (fail-closed — same contract
+ * `apportionAcrossContractSegments` already had before this change, which now delegates to this
+ * function instead of carrying its own copy of the pick loop).
+ */
+export function contractSegmentAt<T extends { from: Date }>(sorted: readonly T[], at: Date): T {
+  if (sorted.length === 0) {
+    throw new Error("contractSegmentAt: segments must not be empty");
+  }
+  const atTime = at.getTime();
+  let active = sorted[0];
+  for (const segment of sorted) {
+    if (segment.from.getTime() <= atTime) active = segment;
+  }
+  return active;
+}
+
+/**
+ * Issue #481 (PD-01, planning decision, posted on #481) — before pricing, consecutive segments
+ * whose contractual count AND usual-workday Angabe are BOTH identical (by value — sorted
+ * number-set equality for `usualWorkDays`, not segment identity) are merged into one: a contract
+ * row that changes neither (e.g. only `weeklyHours`) must not turn an otherwise-untouched week
+ * into two fragments. Rows differing ONLY in the Angabe are NOT merged — that is exactly the R6
+ * backfill case (filling in a previously-empty Angabe on an existing row IS a pricing-relevant
+ * change). `segments` need not already be sorted; the result is sorted ascending by `from`.
+ */
+function coalesceShiftPricingSegments(
+  segments: readonly ShiftLeavePricingSegment[],
+): ShiftLeavePricingSegment[] {
+  const sorted = [...segments].sort((a, b) => a.from.getTime() - b.from.getTime());
+  const result: ShiftLeavePricingSegment[] = [];
+  for (const segment of sorted) {
+    const prev = result[result.length - 1];
+    if (prev && sameShiftPricing(prev, segment)) continue;
+    result.push(segment);
+  }
+  return result;
+}
+
+function sameShiftPricing(a: ShiftLeavePricingSegment, b: ShiftLeavePricingSegment): boolean {
+  if (a.workDaysPerWeek !== b.workDaysPerWeek) return false;
+  const aSorted = [...a.usualWorkDays].sort((x, y) => x - y);
+  const bSorted = [...b.usualWorkDays].sort((x, y) => x - y);
+  if (aSorted.length !== bSorted.length) return false;
+  return aSorted.every((v, i) => v === bSorted[i]);
+}
+
+/**
+ * Issue #481 (R1, D-01, D-07) — segment-aware `countShiftBasedLeaveDays()`: the identical
+ * per-ISO-week loop (see that function's own docblock for the full whole/fragment/holiday
+ * algorithm, unchanged here), except every requested date is mapped to the segment valid on it
+ * (`contractSegmentAt`) instead of using one caller-supplied count/Angabe pair for the entire
+ * range. Exactly one segment touching a week's requested dates → byte-identical to today
+ * (`weekLeaveDays` called once, with that segment's values, `isWhole` from the actual date
+ * range). More than one (D-01: a week whose REQUESTED dates straddle a segment boundary) → the
+ * week is NEVER whole (D-07) — the requested dates are grouped by segment in ascending `from`
+ * order and each group is priced as its own FRAGMENT against its own segment, summed.
+ * `segments` are coalesced first (PD-01).
+ */
+export function countShiftBasedLeaveDaysBySegments(
   start: Date,
   end: Date,
   halfDay: boolean,
-  contractWorkDaysPerWeek: number,
+  segments: readonly ShiftLeavePricingSegment[],
   holidays: Set<string>,
-  usualWorkDays: readonly number[] = [],
 ): { days: number; provisional: boolean } {
+  const coalesced = coalesceShiftPricingSegments(segments);
+
   if (halfDay) {
-    const counts = halfDayCounts(utcMidnight(start).getUTCDay(), usualWorkDays);
+    const segment = contractSegmentAt(coalesced, utcMidnight(start));
+    const counts = halfDayCounts(utcMidnight(start).getUTCDay(), segment.usualWorkDays);
     return { days: counts ? 0.5 : 0, provisional: false };
   }
 
@@ -470,8 +549,10 @@ export function countShiftBasedLeaveDays(
     const weekSaturday = addUtcDays(weekMonday, 5);
     const weekSunday = addUtcDays(weekMonday, 6);
     // D-07: "whole" is decided on the Mo-Sat span only — Sunday is not a Werktag, so a Mo-Sa
-    // request already covers the whole working week.
-    const isWhole = weekMonday.getTime() >= s.getTime() && weekSaturday.getTime() <= e.getTime();
+    // request already covers the whole working week. Overridden to `false` below when this
+    // week's requested dates straddle more than one segment (D-01).
+    const isWholeByRange =
+      weekMonday.getTime() >= s.getTime() && weekSaturday.getTime() <= e.getTime();
 
     const fragStart = weekMonday.getTime() > s.getTime() ? weekMonday : s;
     const fragEnd = weekSunday.getTime() < e.getTime() ? weekSunday : e;
@@ -481,18 +562,97 @@ export function countShiftBasedLeaveDays(
       requestedDates.push(toDateStrUtc(d));
     }
 
-    totalDays += weekLeaveDays(
-      requestedDates,
-      isWhole,
-      contractWorkDaysPerWeek,
-      holidays,
-      usualWorkDays,
-    ).days;
+    const bySegment = new Map<ShiftLeavePricingSegment, string[]>();
+    for (const dateStr of requestedDates) {
+      const segment = contractSegmentAt(coalesced, new Date(`${dateStr}T00:00:00.000Z`));
+      const list = bySegment.get(segment);
+      if (list) list.push(dateStr);
+      else bySegment.set(segment, [dateStr]);
+    }
+
+    if (bySegment.size === 1) {
+      const [segment] = bySegment.keys();
+      totalDays += weekLeaveDays(
+        requestedDates,
+        isWholeByRange,
+        segment.workDaysPerWeek,
+        holidays,
+        segment.usualWorkDays,
+      ).days;
+    } else {
+      // D-01/D-07: never isWhole:true for a straddling week — group by segment in ascending
+      // `from` order and price each group as its own fragment.
+      const orderedSegments = [...bySegment.keys()].sort(
+        (a, b) => a.from.getTime() - b.from.getTime(),
+      );
+      for (const segment of orderedSegments) {
+        totalDays += weekLeaveDays(
+          bySegment.get(segment)!,
+          false,
+          segment.workDaysPerWeek,
+          holidays,
+          segment.usualWorkDays,
+        ).days;
+      }
+    }
 
     weekMonday = addUtcDays(weekMonday, 7);
   }
 
   return { days: totalDays, provisional: false };
+}
+
+/**
+ * Issue #481 (R1) — walks every UTC day from `start` to `end` inclusive and returns one piece
+ * per maximal run of consecutive days resolving (via `contractSegmentAt`) to the SAME segment
+ * object — used by `resolveLeaveDays()` (leave-days.ts, Task 2) to split a request spanning a
+ * schedule-TYPE change into per-type parts. `sorted` must already be ascending by `from` (same
+ * precondition as `contractSegmentAt`).
+ */
+export function contractSegmentPieces<T extends { from: Date }>(
+  start: Date,
+  end: Date,
+  sorted: readonly T[],
+): Array<{ start: Date; end: Date; segment: T }> {
+  const pieces: Array<{ start: Date; end: Date; segment: T }> = [];
+  const last = utcMidnight(end);
+  let cur = utcMidnight(start);
+  let pieceStart = cur;
+  let pieceSegment = contractSegmentAt(sorted, cur);
+  while (cur.getTime() < last.getTime()) {
+    const next = addUtcDays(cur, 1);
+    const nextSegment = contractSegmentAt(sorted, next);
+    if (nextSegment !== pieceSegment) {
+      pieces.push({ start: pieceStart, end: cur, segment: pieceSegment });
+      pieceStart = next;
+      pieceSegment = nextSegment;
+    }
+    cur = next;
+  }
+  pieces.push({ start: pieceStart, end: cur, segment: pieceSegment });
+  return pieces;
+}
+
+/**
+ * Issue #481 (R3, D-04) — one-segment delegate, kept for `shift-leave-recalc-resolver.ts` and
+ * every other existing caller: byte-identical to {@link countShiftBasedLeaveDaysBySegments} with
+ * exactly one segment anchored at the epoch (so it is always the active one).
+ */
+export function countShiftBasedLeaveDays(
+  start: Date,
+  end: Date,
+  halfDay: boolean,
+  contractWorkDaysPerWeek: number,
+  holidays: Set<string>,
+  usualWorkDays: readonly number[] = [],
+): { days: number; provisional: boolean } {
+  return countShiftBasedLeaveDaysBySegments(
+    start,
+    end,
+    halfDay,
+    [{ from: new Date(0), workDaysPerWeek: contractWorkDaysPerWeek, usualWorkDays }],
+    holidays,
+  );
 }
 
 // ── Issue #445 (D-01) — the regular yearly vacation entitlement, in ONE place ──────────────────
@@ -774,10 +934,8 @@ function apportionAcrossContractSegments(input: ApportionAcrossContractSegmentsI
     if (reference < hireClamp) reference = hireClamp;
     if (exitClamp !== null && reference > exitClamp) reference = exitClamp;
 
-    let active = sorted[0];
-    for (const segment of sorted) {
-      if (segment.from.getTime() <= reference) active = segment;
-    }
+    // Issue #481 (R1): the ONE segment-selection rule, reused here instead of a second copy.
+    const active = contractSegmentAt(sorted, new Date(reference));
     return fullYearValue(active.workDaysPerWeek);
   });
 
@@ -1082,13 +1240,146 @@ export type LeaveWeek = {
  * list, Sunday included on equal footing with any other weekday. A WHOLE week's detection and
  * day-count are never filtered by this list (Pitfall 4 — see `weekLeaveDays()`'s own docblock).
  */
-export function leaveDaysPerWeek(
+/**
+ * Issue #481 (R1, D-01) — today's `leaveDaysPerWeek()` per-week pricing body (Issue #429 D-01),
+ * now parameterized by ONE segment's `contractWorkDaysPerWeek`/`usualWorkDays` and an explicit
+ * `forceFragment`. Preserves today's arithmetic ORDER exactly (dayShares are floats — the Task 3
+ * equivalence test compares them with exact equality).
+ *
+ * `dateFilter`, when given, restricts both the full-day union and the half-day candidates to
+ * dates that are members of it (D-01's per-segment split inside a straddling week); `null` means
+ * no restriction — today's whole-week flow for a single-segment week. `forceFragment` overrides
+ * the whole-week detection to `false` (D-07: a straddling week's fragments are NEVER whole,
+ * regardless of what the Mo-Sat test alone would say) — `false` for the single-segment call,
+ * which then computes `isWhole` exactly as the pre-481 code did.
+ */
+function priceLeaveWeekPart(
   rows: Array<{ startDate: Date; endDate: Date; halfDay?: boolean }>,
+  weekMonday: Date,
+  weekSunday: Date,
   contractWorkDaysPerWeek: number,
   holidays: Set<string>,
-  usualWorkDays: readonly number[] = [],
+  usualWorkDays: readonly number[],
+  dateFilter: Set<string> | null,
+  forceFragment: boolean,
+): { days: number; dayShares: Map<string, number> } {
+  // Union of full-day dates this week across ALL full-day rows (halfDay falsy). Sunday is
+  // included in the union only when `usualWorkDays` names it a usual day (Phase 436, D-03) —
+  // with an empty list this stays the pre-436 unconditional Sunday exclusion (§ 3 Abs. 2
+  // BUrlG). The WHOLE-week test below only ever looks at the six Mo-Sat dates, so this change
+  // cannot affect whole-week detection either way.
+  const fullDayUnion = new Set<string>();
+  for (const row of rows) {
+    if (row.halfDay) continue;
+    const s = utcMidnight(row.startDate);
+    const e = utcMidnight(row.endDate);
+    const fragStart = weekMonday.getTime() > s.getTime() ? weekMonday : s;
+    const fragEnd = weekSunday.getTime() < e.getTime() ? weekSunday : e;
+    for (let d = fragStart; d.getTime() <= fragEnd.getTime(); d = addUtcDays(d, 1)) {
+      if (d.getUTCDay() === 0 && !usualWorkDays.includes(0)) continue;
+      const dateStr = toDateStrUtc(d);
+      if (dateFilter && !dateFilter.has(dateStr)) continue; // Issue #481 (R1) — per-segment split
+      fullDayUnion.add(dateStr);
+    }
+  }
+
+  if (fullDayUnion.size === 0) {
+    // No full-day leave touches this part — check for half-day-only contribution.
+    const halfOnly = buildHalfShareForWeek(
+      rows,
+      weekMonday,
+      weekSunday,
+      fullDayUnion,
+      usualWorkDays,
+      dateFilter,
+    );
+    if (halfOnly.size === 0) return { days: 0, dayShares: new Map() };
+    const days = Array.from(halfOnly.values()).reduce((a, b) => a + b, 0);
+    const capped = Math.min(days, contractWorkDaysPerWeek);
+    const scale = days > 0 ? capped / days : 0;
+    const dayShares = new Map<string, number>();
+    for (const [date, share] of halfOnly) dayShares.set(date, share * scale);
+    return { days: capped, dayShares };
+  }
+
+  // Whole-ness generalises to the union: a week is WHOLE when all six Mo-Sat dates are members
+  // of fullDayUnion (equivalent to countShiftBasedLeaveDays's single-row test when there is
+  // exactly one row; correctly extends it to several adjoining rows covering a whole week).
+  // D-07: a straddling week is NEVER whole (forceFragment overrides to false).
+  let isWhole = true;
+  for (let i = 0; i < 6; i++) {
+    if (!fullDayUnion.has(toDateStrUtc(addUtcDays(weekMonday, i)))) {
+      isWhole = false;
+      break;
+    }
+  }
+  if (forceFragment) isWhole = false;
+
+  // Phase 436 (D-03, plan 03): the Angabe is threaded into the same kernel — with an empty
+  // list weekLeaveDays()'s fragment branch behaves byte-identically to the pre-436 kernel.
+  const { days: fullDayTotal, countedDates } = weekLeaveDays(
+    Array.from(fullDayUnion),
+    isWhole,
+    contractWorkDaysPerWeek,
+    holidays,
+    usualWorkDays,
+  );
+
+  // Distribute the full-day total UNIFORMLY over the non-holiday counted dates — holiday dates
+  // get share 0.
+  const nonHolidayDates = countedDates.filter((d) => !holidays.has(d));
+  const dayShares = new Map<string, number>();
+  if (nonHolidayDates.length > 0) {
+    const perDate = fullDayTotal / nonHolidayDates.length;
+    for (const date of nonHolidayDates) dayShares.set(date, perDate);
+  }
+
+  // Half-day contribution: +0.5 per distinct date (a full-day row on the same date always
+  // wins — OPEN-01, so buildHalfShareForWeek skips dates already in fullDayUnion).
+  const halfShare = buildHalfShareForWeek(
+    rows,
+    weekMonday,
+    weekSunday,
+    fullDayUnion,
+    usualWorkDays,
+    dateFilter,
+  );
+  const halfTotal = Array.from(halfShare.values()).reduce((a, b) => a + b, 0);
+
+  let days = fullDayTotal;
+  if (halfTotal > 0) {
+    const room = Math.max(0, contractWorkDaysPerWeek - fullDayTotal);
+    const cappedHalfTotal = Math.min(halfTotal, room);
+    const scale = cappedHalfTotal > 0 ? cappedHalfTotal / halfTotal : 0;
+    for (const [date, share] of halfShare) {
+      const scaled = share * scale;
+      if (scaled > 0) dayShares.set(date, (dayShares.get(date) ?? 0) + scaled);
+    }
+    days = Math.min(fullDayTotal + halfTotal, contractWorkDaysPerWeek);
+  }
+
+  return { days, dayShares };
+}
+
+/**
+ * Issue #481 (R1, D-01) — segment-aware `leaveDaysPerWeek()`: per ISO week, the week's RAW
+ * requested dates (every full-day row's calendar date inside the week, Sunday included, before
+ * any filtering, plus every half-day row's start date) are grouped by the segment valid on each
+ * date (`contractSegmentAt`). Exactly one segment touching the week → `priceLeaveWeekPart()` runs
+ * byte-identically to the pre-481 `leaveDaysPerWeek()` (no date filter, `isWhole` computed from
+ * the actual union, never forced). More than one (D-01 straddle) → one part per segment (that
+ * segment's dates only, in ascending `from` order), each priced as a FRAGMENT
+ * (`forceFragment: true`, D-07) against its own segment; the week's `days` is the sum of the
+ * parts and `dayShares` the union of the parts' shares — still at most ONE `LeaveWeek` per ISO
+ * week, pushed only when `days` is above 0. `segments` are coalesced first (PD-01).
+ */
+export function leaveDaysPerWeekBySegments(
+  rows: Array<{ startDate: Date; endDate: Date; halfDay?: boolean }>,
+  segments: readonly ShiftLeavePricingSegment[],
+  holidays: Set<string>,
 ): LeaveWeek[] {
   if (rows.length === 0) return [];
+  const coalesced = coalesceShiftPricingSegments(segments);
 
   let minStart = utcMidnight(rows[0].startDate);
   let maxEnd = utcMidnight(rows[0].endDate);
@@ -1106,108 +1397,103 @@ export function leaveDaysPerWeek(
   while (weekMonday.getTime() <= lastMonday.getTime()) {
     const weekSunday = addUtcDays(weekMonday, 6);
 
-    // Union of full-day dates this week across ALL full-day rows (halfDay falsy). Sunday is
-    // included in the union only when `usualWorkDays` names it a usual day (Phase 436, D-03) —
-    // with an empty list this stays the pre-436 unconditional Sunday exclusion (§ 3 Abs. 2
-    // BUrlG). The WHOLE-week test below only ever looks at the six Mo-Sat dates, so this change
-    // cannot affect whole-week detection either way.
-    const fullDayUnion = new Set<string>();
+    const bySegmentDates = new Map<ShiftLeavePricingSegment, Set<string>>();
+    const addToSegment = (dateStr: string) => {
+      const segment = contractSegmentAt(coalesced, new Date(`${dateStr}T00:00:00.000Z`));
+      const set = bySegmentDates.get(segment);
+      if (set) set.add(dateStr);
+      else bySegmentDates.set(segment, new Set([dateStr]));
+    };
     for (const row of rows) {
-      if (row.halfDay) continue;
       const s = utcMidnight(row.startDate);
       const e = utcMidnight(row.endDate);
+      if (row.halfDay) {
+        if (s.getTime() >= weekMonday.getTime() && s.getTime() <= weekSunday.getTime()) {
+          addToSegment(toDateStrUtc(s));
+        }
+        continue;
+      }
       const fragStart = weekMonday.getTime() > s.getTime() ? weekMonday : s;
       const fragEnd = weekSunday.getTime() < e.getTime() ? weekSunday : e;
       for (let d = fragStart; d.getTime() <= fragEnd.getTime(); d = addUtcDays(d, 1)) {
-        if (d.getUTCDay() === 0 && !usualWorkDays.includes(0)) continue;
-        fullDayUnion.add(toDateStrUtc(d));
+        addToSegment(toDateStrUtc(d));
       }
     }
 
-    if (fullDayUnion.size === 0) {
-      // No full-day leave touches this week — check for half-day-only contribution below before
-      // moving on (a week can be half-day-only).
-      const halfOnly = buildHalfShareForWeek(
+    let weekResult: { days: number; dayShares: Map<string, number> };
+    if (bySegmentDates.size <= 1) {
+      const segment = bySegmentDates.size === 1 ? [...bySegmentDates.keys()][0] : coalesced[0];
+      weekResult = priceLeaveWeekPart(
         rows,
         weekMonday,
         weekSunday,
-        fullDayUnion,
-        usualWorkDays,
+        segment.workDaysPerWeek,
+        holidays,
+        segment.usualWorkDays,
+        null,
+        false,
       );
-      if (halfOnly.size > 0) {
-        const days = Array.from(halfOnly.values()).reduce((a, b) => a + b, 0);
-        const capped = Math.min(days, contractWorkDaysPerWeek);
-        const scale = days > 0 ? capped / days : 0;
-        const dayShares = new Map<string, number>();
-        for (const [date, share] of halfOnly) dayShares.set(date, share * scale);
-        if (capped > 0)
-          result.push({ weekMonday: toDateStrUtc(weekMonday), days: capped, dayShares });
+    } else {
+      const orderedSegments = [...bySegmentDates.keys()].sort(
+        (a, b) => a.from.getTime() - b.from.getTime(),
+      );
+      let days = 0;
+      const dayShares = new Map<string, number>();
+      for (const segment of orderedSegments) {
+        const part = priceLeaveWeekPart(
+          rows,
+          weekMonday,
+          weekSunday,
+          segment.workDaysPerWeek,
+          holidays,
+          segment.usualWorkDays,
+          bySegmentDates.get(segment)!,
+          true,
+        );
+        days += part.days;
+        for (const [date, share] of part.dayShares) dayShares.set(date, share);
       }
-      weekMonday = addUtcDays(weekMonday, 7);
-      continue;
+      weekResult = { days, dayShares };
     }
 
-    // Whole-ness generalises to the union: a week is WHOLE when all six Mo-Sat dates are members
-    // of fullDayUnion (equivalent to countShiftBasedLeaveDays's single-row test when there is
-    // exactly one row; correctly extends it to several adjoining rows covering a whole week).
-    let isWhole = true;
-    for (let i = 0; i < 6; i++) {
-      if (!fullDayUnion.has(toDateStrUtc(addUtcDays(weekMonday, i)))) {
-        isWhole = false;
-        break;
-      }
-    }
-
-    // Phase 436 (D-03, plan 03): the Angabe is threaded into the same kernel — with an empty
-    // list weekLeaveDays()'s fragment branch behaves byte-identically to the pre-436 kernel.
-    const { days: fullDayTotal, countedDates } = weekLeaveDays(
-      Array.from(fullDayUnion),
-      isWhole,
-      contractWorkDaysPerWeek,
-      holidays,
-      usualWorkDays,
-    );
-
-    // Distribute the full-day total UNIFORMLY over the non-holiday counted dates — holiday dates
-    // get share 0.
-    const nonHolidayDates = countedDates.filter((d) => !holidays.has(d));
-    const dayShares = new Map<string, number>();
-    if (nonHolidayDates.length > 0) {
-      const perDate = fullDayTotal / nonHolidayDates.length;
-      for (const date of nonHolidayDates) dayShares.set(date, perDate);
-    }
-
-    // Half-day contribution: +0.5 per distinct date (a full-day row on the same date always
-    // wins — OPEN-01, so buildHalfShareForWeek skips dates already in fullDayUnion).
-    const halfShare = buildHalfShareForWeek(
-      rows,
-      weekMonday,
-      weekSunday,
-      fullDayUnion,
-      usualWorkDays,
-    );
-    const halfTotal = Array.from(halfShare.values()).reduce((a, b) => a + b, 0);
-
-    let days = fullDayTotal;
-    if (halfTotal > 0) {
-      const room = Math.max(0, contractWorkDaysPerWeek - fullDayTotal);
-      const cappedHalfTotal = Math.min(halfTotal, room);
-      const scale = cappedHalfTotal > 0 ? cappedHalfTotal / halfTotal : 0;
-      for (const [date, share] of halfShare) {
-        const scaled = share * scale;
-        if (scaled > 0) dayShares.set(date, (dayShares.get(date) ?? 0) + scaled);
-      }
-      days = Math.min(fullDayTotal + halfTotal, contractWorkDaysPerWeek);
-    }
-
-    if (days > 0) {
-      result.push({ weekMonday: toDateStrUtc(weekMonday), days, dayShares });
+    if (weekResult.days > 0) {
+      result.push({
+        weekMonday: toDateStrUtc(weekMonday),
+        days: weekResult.days,
+        dayShares: weekResult.dayShares,
+      });
     }
 
     weekMonday = addUtcDays(weekMonday, 7);
   }
 
   return result;
+}
+
+/**
+ * Per-ISO-week leave-day count AND per-calendar-date fractional breakdown for a set of leave
+ * rows (Issue #429, D-01) — the information the saldo side (Arbeitszeitkonto, plan 429-02) needs
+ * to know WHICH date gets WHICH share of a week's leave days, something `countShiftBasedLeaveDays`
+ * (a single running total) cannot answer.
+ *
+ * Issue #481 (R3, D-04) — one-segment delegate, kept for the saldo side
+ * (`close-employee-month.ts`) and `shiftBasedLeaveMinutesForRequest` below: byte-identical to
+ * {@link leaveDaysPerWeekBySegments} with exactly one segment anchored at the epoch.
+ *
+ * `usualWorkDays` (Phase 436, D-03) — the employee's stored "übliche Arbeitstage" Angabe
+ * (0=So..6=Sa), or `[]` when none is recorded.
+ */
+export function leaveDaysPerWeek(
+  rows: Array<{ startDate: Date; endDate: Date; halfDay?: boolean }>,
+  contractWorkDaysPerWeek: number,
+  holidays: Set<string>,
+  usualWorkDays: readonly number[] = [],
+): LeaveWeek[] {
+  return leaveDaysPerWeekBySegments(
+    rows,
+    [{ from: new Date(0), workDaysPerWeek: contractWorkDaysPerWeek, usualWorkDays }],
+    holidays,
+  );
 }
 
 /**
@@ -1233,6 +1519,35 @@ export function leaveDaysPerWeek(
  * week the request never touches is identical in both the "with request" and "without request"
  * union, so the subtraction leaves only the weeks the request actually overlaps.
  */
+export function marginalShiftBasedLeaveDaysBySegments(
+  request: { startDate: Date; endDate: Date; halfDay: boolean },
+  others: Array<{ startDate: Date; endDate: Date; halfDay?: boolean }>,
+  segments: readonly ShiftLeavePricingSegment[],
+  holidays: Set<string>,
+): number {
+  if (others.length === 0) {
+    return countShiftBasedLeaveDaysBySegments(
+      request.startDate,
+      request.endDate,
+      request.halfDay,
+      segments,
+      holidays,
+    ).days;
+  }
+
+  const sumDays = (weeks: LeaveWeek[]): number => weeks.reduce((acc, w) => acc + w.days, 0);
+
+  const withRequest = sumDays(leaveDaysPerWeekBySegments([...others, request], segments, holidays));
+  const withoutRequest = sumDays(leaveDaysPerWeekBySegments(others, segments, holidays));
+
+  return Math.max(0, withRequest - withoutRequest);
+}
+
+/**
+ * Issue #481 (R3, D-04) — one-segment delegate, kept for every existing caller: byte-identical
+ * to {@link marginalShiftBasedLeaveDaysBySegments} with exactly one segment anchored at the
+ * epoch.
+ */
 export function marginalShiftBasedLeaveDays(
   request: { startDate: Date; endDate: Date; halfDay: boolean },
   others: Array<{ startDate: Date; endDate: Date; halfDay?: boolean }>,
@@ -1240,27 +1555,12 @@ export function marginalShiftBasedLeaveDays(
   holidays: Set<string>,
   usualWorkDays: readonly number[],
 ): number {
-  if (others.length === 0) {
-    return countShiftBasedLeaveDays(
-      request.startDate,
-      request.endDate,
-      request.halfDay,
-      contractWorkDaysPerWeek,
-      holidays,
-      usualWorkDays,
-    ).days;
-  }
-
-  const sumDays = (weeks: LeaveWeek[]): number => weeks.reduce((acc, w) => acc + w.days, 0);
-
-  const withRequest = sumDays(
-    leaveDaysPerWeek([...others, request], contractWorkDaysPerWeek, holidays, usualWorkDays),
+  return marginalShiftBasedLeaveDaysBySegments(
+    request,
+    others,
+    [{ from: new Date(0), workDaysPerWeek: contractWorkDaysPerWeek, usualWorkDays }],
+    holidays,
   );
-  const withoutRequest = sumDays(
-    leaveDaysPerWeek(others, contractWorkDaysPerWeek, holidays, usualWorkDays),
-  );
-
-  return Math.max(0, withRequest - withoutRequest);
 }
 
 /**
@@ -1311,6 +1611,7 @@ function buildHalfShareForWeek(
   weekSunday: Date,
   fullDayUnion: Set<string>,
   usualWorkDays: readonly number[] = [],
+  dateFilter: Set<string> | null = null,
 ): Map<string, number> {
   const halfShare = new Map<string, number>();
   for (const row of rows) {
@@ -1319,6 +1620,7 @@ function buildHalfShareForWeek(
     if (s.getTime() < weekMonday.getTime() || s.getTime() > weekSunday.getTime()) continue;
     if (!halfDayCounts(s.getUTCDay(), usualWorkDays)) continue; // Phase 436 (D-03, Task 2)
     const dateStr = toDateStrUtc(s);
+    if (dateFilter && !dateFilter.has(dateStr)) continue; // Issue #481 (R1) — per-segment split
     if (fullDayUnion.has(dateStr)) continue;
     halfShare.set(dateStr, 0.5);
   }

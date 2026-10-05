@@ -22,6 +22,8 @@ function minimalEmployeeBody(overrides: Record<string, unknown> = {}) {
     lastName: "Salon",
     employeeNumber: `HS-${s}`,
     hireDate: "2026-03-01T23:30:00.000Z",
+    // Issue #481 R5: SHIFT_BASED contracts (the create default) require übliche Arbeitstage.
+    usualWorkDays: [1, 2, 3, 4, 5],
     // A direct password skips the invitation-mail path (SMTP not configured in tests) — this
     // file's assertions are about the Stammsalon row, not the invitation flow.
     password: "Test-hs-pw1234!",

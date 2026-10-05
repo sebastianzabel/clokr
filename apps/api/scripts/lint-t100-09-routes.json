@@ -389,6 +389,21 @@
       "validatedAt": null
     },
     {
+      "route": "PATCH /api/v1/settings/work/:employeeId/usual-work-days",
+      "file": "apps/api/src/contexts/platform/api/settings.ts",
+      "category": "probe",
+      "params": {
+        "employeeId": "employee"
+      },
+      "minimalBody": {
+        "workScheduleId": "00000000-0000-4000-8000-000000000000",
+        "usualWorkDays": []
+      },
+      "reason": "settings.ts:1519 parses the body (usualWorkDaysBackfillSchema) BEFORE the employee lookup, and this minimalBody satisfies it, so the request reaches the guard; settings.ts:1521-1552: the same combined-shape guard as PUT /work/:employeeId — byte-identical \"Mitarbeiter nicht gefunden\" 404 for a missing, foreign-tenant (CROSS_TENANT_ACCESS_DENIED audited) or out-of-Stammsalon-scope (SCOPE_ACCESS_DENIED audited) employee. The row lookup at settings.ts:1553-1556 is scoped by id + employeeId + tenant and answers one uniform \"Vertragsdatensatz nicht gefunden\" 404 for an unknown, another employee's or a foreign tenant's row, proven in usual-work-days-backfill-route-481.test.ts. Issue #481 R6.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "GET /api/v1/settings/work/:employeeId/history",
       "file": "apps/api/src/contexts/platform/api/settings.ts",
       "category": "probe",
