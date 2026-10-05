@@ -99,3 +99,9 @@ export { countEntriesForSalon } from "./facade/time-entries";
 // would make that import legal and would delete the only mechanical marker the defect has.
 // This surface publishes ./entry-invariants, a leaf module, never ./api/time-entries — Phase 101B
 // plan 04 lifted these helpers out of the route file for exactly that reason.
+
+// ── Phase 79 (Issue #79) — presence and working time of an entry (D-03/D-12) ──────────────────
+// The one place presence and working time are computed; every other context reads it through
+// this index (D-05).
+export { entryDurations, addWorkingMinutes } from "./entry-durations";
+export type { EntryDurationInput, EntryDurations } from "./entry-durations";
