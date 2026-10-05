@@ -109,6 +109,7 @@ describe("Customer-role escalation guards (Issue #354, pre-merge review of #75)"
         url: "/api/v1/employees",
         headers: { authorization: actor.bearer },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `esc-a-${uid}@test.de`,
           firstName: "Eskalation",
           lastName: "A",
@@ -136,6 +137,7 @@ describe("Customer-role escalation guards (Issue #354, pre-merge review of #75)"
         url: "/api/v1/employees",
         headers: { authorization: actor.bearer },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `esc-b-${uid}@test.de`,
           firstName: "Eskalation",
           lastName: "B",

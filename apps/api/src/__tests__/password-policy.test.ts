@@ -38,6 +38,7 @@ describe("Password Policy (BSI)", () => {
       url: "/api/v1/employees",
       headers: { authorization: `Bearer ${data.adminToken}` },
       payload: {
+        usualWorkDays: [1, 2, 3, 4, 5],
         email: `weak-pw-${Date.now()}@test.de`,
         firstName: "Test",
         lastName: "Weak",
@@ -58,6 +59,7 @@ describe("Password Policy (BSI)", () => {
       url: "/api/v1/employees",
       headers: { authorization: `Bearer ${data.adminToken}` },
       payload: {
+        usualWorkDays: [1, 2, 3, 4, 5],
         email: `strong-pw-${Date.now()}-${Math.random().toString(36).slice(2)}@test.de`,
         employeeNumber: `PW2-${Date.now()}`,
         firstName: "Test",

@@ -286,6 +286,7 @@ describe("Employee self-service WiFi API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `emp2-${uid}@test.de`,
           firstName: "Zweiter",
           lastName: "Mitarbeiter",

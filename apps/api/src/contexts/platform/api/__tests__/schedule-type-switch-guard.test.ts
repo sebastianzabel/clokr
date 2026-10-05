@@ -50,6 +50,7 @@ function shiftPayload(validFrom: string) {
   return {
     type: "SHIFT_BASED",
     weeklyHours: 40,
+    usualWorkDays: [1, 2, 3, 4, 5], // Issue #481 R5: SHIFT_BASED requires übliche Arbeitstage
     monthlyHours: null,
     mondayHours: 0,
     tuesdayHours: 0,

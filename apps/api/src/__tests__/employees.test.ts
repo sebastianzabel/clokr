@@ -35,6 +35,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email,
           firstName: "Direct",
           lastName: "Created",
@@ -66,6 +67,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email,
           firstName: "Invited",
           lastName: "User",
@@ -95,6 +97,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `short-pw-${uid}@test.de`,
           firstName: "Short",
           lastName: "Password",
@@ -114,6 +117,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `admin-${uid}@test.de`,
           firstName: "Duplicate",
           lastName: "Email",
@@ -132,6 +136,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `admin-${uid}@test.de`,
           firstName: "Duplicate",
           lastName: "Email",
@@ -160,6 +165,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `entitlement-midyear-${uid}@test.de`,
           firstName: "Mid",
           lastName: "Year",
@@ -239,6 +245,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `entitlement-azubi-${uid}@test.de`,
           firstName: "Azubi",
           lastName: "Test",
@@ -346,6 +353,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `vacbase-ac01-${uid}@test.de`,
           firstName: "Vac",
           lastName: "Base",
@@ -382,6 +390,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `vacbase-ac02-${uid}@test.de`,
           firstName: "Vac",
           lastName: "Default",
@@ -416,6 +425,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `vacbase-null-${uid}@test.de`,
           firstName: "Vac",
           lastName: "Null",
@@ -439,6 +449,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `vacbase-decimals-ok-${uid}@test.de`,
           firstName: "Vac",
           lastName: "Decimals",
@@ -460,6 +471,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `vacbase-decimals-bad-${uid}@test.de`,
           firstName: "Vac",
           lastName: "Decimals",
@@ -485,6 +497,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `vacbase-audit-${uid}@test.de`,
           firstName: "Vac",
           lastName: "Audit",
@@ -521,6 +534,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `s435-a1-${uid}@test.de`,
           firstName: "D11",
           lastName: "Adult",
@@ -549,6 +563,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `s435-a2-bad-${uid}@test.de`,
           firstName: "D11",
           lastName: "Minor",
@@ -570,6 +585,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `s435-a2-ok-${uid}@test.de`,
           firstName: "D11",
           lastName: "Minor",
@@ -598,6 +614,7 @@ describe("Employees API", () => {
           url: "/api/v1/employees",
           headers: { authorization: `Bearer ${lowDefaultData.adminToken}` },
           payload: {
+            usualWorkDays: [1, 2, 3, 4, 5],
             email: `s435-a3-jan-${uid}@test.de`,
             firstName: "D09",
             lastName: "Floor",
@@ -620,6 +637,7 @@ describe("Employees API", () => {
           url: "/api/v1/employees",
           headers: { authorization: `Bearer ${lowDefaultData.adminToken}` },
           payload: {
+            usualWorkDays: [1, 2, 3, 4, 5],
             email: `s435-a3-oct-${uid}@test.de`,
             firstName: "D09",
             lastName: "Floor",
@@ -651,6 +669,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `s435-p4-${uid}@test.de`,
           firstName: "D15",
           lastName: "Patch",
@@ -691,6 +710,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `s435-p5-${uid}@test.de`,
           firstName: "D11",
           lastName: "PatchReject",
@@ -722,6 +742,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `s435-p6-${uid}@test.de`,
           firstName: "Legacy",
           lastName: "Row",
@@ -754,6 +775,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `s435-p7-${uid}@test.de`,
           firstName: "D15",
           lastName: "Untouched",
@@ -792,6 +814,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `s435-p8-${uid}@test.de`,
           firstName: "D15",
           lastName: "BackToDefault",
@@ -838,6 +861,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email,
           firstName: "Reload",
           lastName: "Failure",
@@ -953,6 +977,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email,
           firstName: "To",
           lastName: "Deactivate",
@@ -1129,6 +1154,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `${puid}@test.de`,
           firstName: "Pers",
           lastName: "Struktur",
@@ -1156,6 +1182,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `${puid}@test.de`,
           firstName: "Def",
           lastName: "Vollzeit",
@@ -1181,6 +1208,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `${puid}@test.de`,
           firstName: "Patch",
           lastName: "Test",
@@ -1236,6 +1264,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `${puid}@test.de`,
           firstName: "Bad",
           lastName: "Class",
@@ -1257,6 +1286,7 @@ describe("Employees API", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           email: `${puid}@test.de`,
           firstName: "Bad",
           lastName: "Range",
