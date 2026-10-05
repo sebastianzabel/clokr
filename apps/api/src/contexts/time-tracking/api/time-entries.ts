@@ -2667,7 +2667,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const from = new Date(q.from);
       const to = new Date(q.to);
       if (from.getTime() > to.getTime()) {
-        return reply.code(400).send({ error: "Startdatum muss vor Enddatum liegen" });
+        return reply.code(400).send({ error: "Startdatum darf nicht nach dem Enddatum liegen" });
       }
       const inclusiveDays = (to.getTime() - from.getTime()) / 86_400_000 + 1;
       if (inclusiveDays > SUMMARY_MAX_RANGE_DAYS) {

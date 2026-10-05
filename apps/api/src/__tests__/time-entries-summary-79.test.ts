@@ -269,7 +269,9 @@ describe("Issue #79 (Phase 79 Plan 04) — GET /api/v1/time-entries/summary", ()
         `employeeId=${eid()}&from=2026-02-28&to=2026-02-01`,
       );
       expect(res.statusCode).toBe(400);
-      expect(JSON.parse(res.body)).toEqual({ error: "Startdatum muss vor Enddatum liegen" });
+      expect(JSON.parse(res.body)).toEqual({
+        error: "Startdatum darf nicht nach dem Enddatum liegen",
+      });
     });
 
     it("allows at most 366 inclusive days: 367 is rejected, 366 passes (also across a leap year)", async () => {
