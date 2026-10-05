@@ -93,6 +93,7 @@
 │   ├── /static/index.html (GET, HEAD)
 │   ├── /static/swagger-initializer.js (GET, HEAD)
 │   ├── /status (GET, HEAD)
+│   ├── /summary (GET, HEAD)
 │   ├── /team-week (GET, HEAD)
 │   ├── /templates (GET, HEAD, POST)
 │   ├── /today-attendance (GET, HEAD)
