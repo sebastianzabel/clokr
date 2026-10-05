@@ -14,6 +14,7 @@ import {
 } from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports
 import type { TimeEntry } from "@clokr/db";
 import { findEntriesOfDay } from "./day-entries"; // Phase 69b — the single day lookup
+import { entryDurations, addWorkingMinutes } from "./entry-durations"; // Phase 79 (Issue #79), D-03/D-12
 
 // Phase 69b: in-memory equivalents of the former `findFirst({ endTime: { not: null }, orderBy })`
 // rest-period lookups. Only closed rows count; the first maximum/minimum wins on ties.
@@ -164,14 +165,14 @@ export async function checkArbZG(
     // is waived, and the gap-as-break rule below decides how entry gaps count as breaks.
     const dayIsWaived = daySlots.some((s) => s.breakStatus === "WAIVED");
 
-    // Netto-Arbeitszeit + explizite Pausen
+    // Net working time + explicit breaks
     let netWorkedMin = 0;
     let explicitBreakMin = 0;
 
     for (const slot of daySlots) {
-      const slotMin = (slot.endTime!.getTime() - slot.startTime.getTime()) / 60000;
-      explicitBreakMin += Number(slot.breakMinutes ?? 0);
-      netWorkedMin += slotMin - Number(slot.breakMinutes ?? 0);
+      const d = entryDurations(slot);
+      explicitBreakMin += d.breakMinutes;
+      netWorkedMin += d.workingMinutes;
     }
 
     // Lücken zwischen Slots zählen als Pausen
@@ -334,10 +335,7 @@ export async function checkArbZG(
     },
   });
 
-  const weeklyNetMin = weekSlots.reduce((sum, e) => {
-    const slotMin = (e.endTime!.getTime() - e.startTime.getTime()) / 60000;
-    return sum + slotMin - Number(e.breakMinutes ?? 0);
-  }, 0);
+  const weeklyNetMin = weekSlots.reduce((sum, e) => addWorkingMinutes(sum, e), 0);
 
   // Phase 76.31-05 (D-08 FULL) — sum the slot-resolved BS minutes for every
   // VOCATIONAL_SCHOOL day in this ISO week, instead of a flat bsDailyMin × N (or
@@ -398,10 +396,7 @@ export async function checkArbZG(
       select: { startTime: true, endTime: true, breakMinutes: true },
     });
 
-    const totalNetMin = avgEntries.reduce((sum, e) => {
-      const slotMin = (e.endTime!.getTime() - e.startTime.getTime()) / 60000;
-      return sum + slotMin - Number(e.breakMinutes ?? 0);
-    }, 0);
+    const totalNetMin = avgEntries.reduce((sum, e) => addWorkingMinutes(sum, e), 0);
 
     // Phase 63 D-05 — Count VOCATIONAL_SCHOOL absence days in the same 168-day
     // window and multiply by bsDailyMin. We use a simple `count × daily` even on
