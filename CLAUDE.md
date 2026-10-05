@@ -380,13 +380,20 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   No other reader may rebuild this chain inline.
 - `WorkSchedule.contractWorkDaysPerWeek Int?` — the `SHIFT_BASED` employee's contractual weekly
   workday count; `null` for every other schedule type (Phase 107, D-01).
-- `WorkSchedule.usualWorkDays Int[] @default([])` (Phase 436, D-01) — an OPTIONAL "übliche
-  Arbeitstage" Angabe naming the usual weekdays of a `SHIFT_BASED` employee; empty = keine Angabe.
-  Non-empty is rejected with a German 400 for every other schedule type, and must name at least as
-  many days as `contractWorkDaysPerWeek`. It is authoritative ONLY for an angebrochene (fragment)
-  leave week — a whole week always costs the contract days regardless of the Angabe. It is read
-  ONLY through `usualWorkDaysFrom()` in `apps/api/src/contexts/absence/leave-days.ts` and is never
-  derived from `workDays`, which remains the placeholder described above for `SHIFT_BASED`.
+- `WorkSchedule.usualWorkDays Int[] @default([])` (Phase 436, D-01; required for SHIFT_BASED
+  writes since Issue #481) — the "übliche Arbeitstage" Angabe of a `SHIFT_BASED` contract ROW.
+  Every write that creates or changes a `SHIFT_BASED` contract must name at least
+  `contractWorkDaysPerWeek` days (`validateUsualWorkDays()` in
+  `apps/api/src/contexts/platform/usual-work-days.ts`, German 400; owner decision 04.10.2026,
+  Unterbau-Semantikänderung, ADR 0001-abweichungen Nachtrag Phase 481). Stored rows are never
+  backfilled or guessed — an empty stored Angabe still means "keine Angabe" and is filled only
+  through the audited `PATCH /api/v1/settings/work/:employeeId/usual-work-days` (same row, no new
+  contract row, no repricing, no saldo or entitlement recompute). Non-empty is rejected with a
+  German 400 for every other schedule type. It is authoritative ONLY for an angebrochene
+  (fragment) leave week — a whole week always costs the contract days regardless of the Angabe. It
+  is read ONLY through `usualWorkDaysFrom()` in `apps/api/src/contexts/absence/leave-days.ts` and
+  is never derived from `workDays`, which remains the placeholder described above for
+  `SHIFT_BASED`.
 - `resolveLeaveDays()` (Phase 436, D-04/D-09) prices a `SHIFT_BASED` VACATION request as its
   marginal cost on its ISO weeks against the employee's earlier-created counted vacation requests
   (PENDING/APPROVED/CANCELLATION_REQUESTED, ordered by `createdAt` then id) — a second request in
@@ -394,7 +401,20 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   `LeaveDaysPricing` argument and supplies `excludeRequestId` whenever it holds a request id (so a
   request is never priced against its own stored dates); approved requests are never re-priced
   implicitly — the Bestand surfaces only via the dry-run of
-  `scripts/recalculate-shift-based-leave-days.ts` (no `--confirm`, writes nothing).
+  `scripts/recalculate-shift-based-leave-days.ts` (no `--confirm`, writes nothing). That script
+  skips requests ending before the employee's first non-deleted time entry (imported
+  pre-tracking data) and, with `--before <YYYY-MM-DD>`, before that date; skipped requests are
+  listed with their reason (Issue #481, D-09).
+  Since Issue #481 every ISO week is priced with the contract valid IN IT, not the newest row: one
+  `loadVacationContractSegments()` call per pricing (#450 segment semantics); the segment-aware
+  kernels `countShiftBasedLeaveDaysBySegments` / `leaveDaysPerWeekBySegments` /
+  `marginalShiftBasedLeaveDaysBySegments` in `vacation-calc.ts` (the scalar functions are
+  one-segment delegates; the saldo's own `leaveDaysPerWeek` call is unchanged). A week whose
+  REQUESTED dates fall into two segments is split and each part priced as a fragment (D-01/D-07);
+  consecutive segments with identical count and Angabe are one pricing segment (PD-01). Other
+  schedule types count each date with that date's workday set via `workDaysSetFrom()` in
+  `leave-days.ts`, the only place that chain lives; the cross-year and report helpers follow
+  through `prefixLeaveDays`.
 - `LeaveRequest.daysProvisional Boolean?` — server-derived, set only at approval time; `true` when
   any day of a `SHIFT_BASED` leave request's period had no roster at calculation time (Phase 107,
   D-10/D-11). Never set by a client.
