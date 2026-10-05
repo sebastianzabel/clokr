@@ -14,10 +14,7 @@
  */
 import { test } from "../fixtures";
 import type { TestTenant } from "../fixtures";
-import {
-  expectLockedMonthError,
-  expectNoLockedMonthError,
-} from "../helpers/locked-month";
+import { expectLockedMonthError, expectNoLockedMonthError } from "../helpers/locked-month";
 
 const API_BASE = process.env.E2E_API_BASE ?? "http://localhost:4000";
 
@@ -52,6 +49,7 @@ async function seedLockedMonth(tenant: TestTenant): Promise<LockedMonthSeed> {
     method: "POST",
     headers,
     body: JSON.stringify({
+      usualWorkDays: [1, 2, 3, 4, 5], // Issue #481 R5
       firstName: "Lock",
       lastName: "Test",
       email: `lock-${Date.now()}@${tenant.tenantId}.test`,
@@ -103,17 +101,14 @@ async function seedLockedMonth(tenant: TestTenant): Promise<LockedMonthSeed> {
 
   // 5. Return a closure that reopens + admin-approves the month
   const reopenAndApprove = async (): Promise<void> => {
-    const requestRes = await fetch(
-      `${API_BASE}/api/v1/monatsabschluss/${month}/reopen-request`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          employeeId: employee.id,
-          reason: "E2E reopen for cross-surface symmetry test",
-        }),
-      },
-    );
+    const requestRes = await fetch(`${API_BASE}/api/v1/monatsabschluss/${month}/reopen-request`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        employeeId: employee.id,
+        reason: "E2E reopen for cross-surface symmetry test",
+      }),
+    });
     if (!requestRes.ok) {
       throw new Error(`reopenAndApprove: request failed (${requestRes.status})`);
     }
@@ -143,9 +138,7 @@ test.describe("Locked-month immutability — cross-surface consistency", () => {
   }) => {
     const { employeeId, month, timeEntryId } = await seedLockedMonth(tenant);
 
-    await page.goto(
-      `/zeiterfassung/${employeeId}/entry/${timeEntryId}/edit?month=${month}`,
-    );
+    await page.goto(`/zeiterfassung/${employeeId}/entry/${timeEntryId}/edit?month=${month}`);
     await expectLockedMonthError(page, "time-entry");
   });
 
@@ -172,9 +165,7 @@ test.describe("Locked-month immutability — cross-surface consistency", () => {
     const { employeeId, month } = await seedLockedMonth(tenant);
     const lockedDate = `${month}-15`;
 
-    await page.goto(
-      `/employee/${employeeId}/abwesenheit/neu?date=${lockedDate}`,
-    );
+    await page.goto(`/employee/${employeeId}/abwesenheit/neu?date=${lockedDate}`);
     await page.getByTestId("absence-form-submit").click();
     await expectLockedMonthError(page, "absence");
   });
@@ -188,18 +179,12 @@ test.describe("Locked-month immutability — cross-surface consistency", () => {
 
     await page.goto(`/admin/shifts?date=${lockedDate}&employeeId=${employeeId}`);
     // Click the shift cell for the locked day — expect banner instead of editor
-    await page
-      .getByTestId(`shift-cell-${lockedDate}-${employeeId}`)
-      .click();
+    await page.getByTestId(`shift-cell-${lockedDate}-${employeeId}`).click();
     await expectLockedMonthError(page, "schedule");
   });
 
-  test("after reopen approval, banner disappears on every surface", async ({
-    page,
-    tenant,
-  }) => {
-    const { employeeId, month, timeEntryId, reopenAndApprove } =
-      await seedLockedMonth(tenant);
+  test("after reopen approval, banner disappears on every surface", async ({ page, tenant }) => {
+    const { employeeId, month, timeEntryId, reopenAndApprove } = await seedLockedMonth(tenant);
 
     // Pre-condition: the time-entry surface is locked
     await page.goto(`/zeiterfassung/${employeeId}?month=${month}`);

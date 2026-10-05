@@ -58,6 +58,7 @@ async function bootstrapSecondAdmin(tenant: TestTenant): Promise<string> {
     method: "POST",
     headers,
     body: JSON.stringify({
+      usualWorkDays: [1, 2, 3, 4, 5], // Issue #481 R5
       firstName: "Second",
       lastName: "Admin",
       email,
@@ -110,6 +111,7 @@ async function bootstrapManager(tenant: TestTenant): Promise<string> {
     method: "POST",
     headers,
     body: JSON.stringify({
+      usualWorkDays: [1, 2, 3, 4, 5], // Issue #481 R5
       firstName: "Test",
       lastName: "Manager",
       email,
@@ -151,10 +153,7 @@ async function bootstrapManager(tenant: TestTenant): Promise<string> {
  * Used in the happy-path test to recover the request id the manager filed
  * via the admin UI (which doesn't expose the id in the DOM).
  */
-async function getLatestReopenRequestId(
-  tenant: TestTenant,
-  month: string,
-): Promise<string> {
+async function getLatestReopenRequestId(tenant: TestTenant, month: string): Promise<string> {
   const res = await fetch(
     `${API_BASE}/api/v1/overtime/reopen-requests?status=PENDING&month=${month}`,
     {
@@ -162,24 +161,17 @@ async function getLatestReopenRequestId(
     },
   );
   if (!res.ok) {
-    throw new Error(
-      `getLatestReopenRequestId: query failed (${res.status}): ${await res.text()}`,
-    );
+    throw new Error(`getLatestReopenRequestId: query failed (${res.status}): ${await res.text()}`);
   }
   const body = (await res.json()) as Array<{ id: string }>;
   if (!body.length) {
-    throw new Error(
-      `getLatestReopenRequestId: no PENDING request found for month ${month}`,
-    );
+    throw new Error(`getLatestReopenRequestId: no PENDING request found for month ${month}`);
   }
   return body[0].id;
 }
 
 test.describe("Monatsabschluss locking cycle", () => {
-  test("lock → edit blocked in UI → reopen → approve → edit allowed", async ({
-    page,
-    tenant,
-  }) => {
+  test("lock → edit blocked in UI → reopen → approve → edit allowed", async ({ page, tenant }) => {
     // ── Seed + lock ───────────────────────────────────────────────────────
     const { employeeId, month, timeEntryId } = await seedClosableMonth(tenant);
     await lockMonth(tenant, month, employeeId);
@@ -194,9 +186,7 @@ test.describe("Monatsabschluss locking cycle", () => {
     // mirrors the 73-05 data-testid migration contract.
     const editBtn = page.getByTestId(`time-entry-row-${timeEntryId}-edit`);
     await expect(editBtn).toBeDisabled();
-    await expect(
-      page.getByTestId(`time-entry-row-${timeEntryId}-locked-badge`),
-    ).toBeVisible();
+    await expect(page.getByTestId(`time-entry-row-${timeEntryId}-locked-badge`)).toBeVisible();
 
     // 3. Force-attempt the edit via direct URL — this is the bypass path
     // (T-74-01-01). The shared expectLockedMonthError helper is the single
@@ -224,14 +214,10 @@ test.describe("Monatsabschluss locking cycle", () => {
     // round-trip proof that the SaldoSnapshot was deleted and the time
     // entries were unlocked atomically (see overtime.ts unlock-month).
     await page.goto(`/zeiterfassung/${employeeId}?month=${month}`);
-    await expect(
-      page.getByTestId(`time-entry-row-${timeEntryId}-edit`),
-    ).toBeEnabled();
+    await expect(page.getByTestId(`time-entry-row-${timeEntryId}-edit`)).toBeEnabled();
   });
 
-  test("non-admin manager cannot approve a reopen request (403)", async ({
-    tenant,
-  }) => {
+  test("non-admin manager cannot approve a reopen request (403)", async ({ tenant }) => {
     // Setup: lock a month and file a reopen request — same seed as the
     // happy path so behavior is comparable.
     const { employeeId, month } = await seedClosableMonth(tenant);
@@ -242,15 +228,10 @@ test.describe("Monatsabschluss locking cycle", () => {
     // approveReopen throws on non-2xx with the body in the message —
     // matching /403/ proves we hit the role guard, not a different error.
     const managerToken = await bootstrapManager(tenant);
-    await expect(
-      approveReopen(tenant, requestId, managerToken),
-    ).rejects.toThrow(/403/);
+    await expect(approveReopen(tenant, requestId, managerToken)).rejects.toThrow(/403/);
   });
 
-  test("delete attempt on a locked entry is blocked at UI level", async ({
-    page,
-    tenant,
-  }) => {
+  test("delete attempt on a locked entry is blocked at UI level", async ({ page, tenant }) => {
     const { employeeId, month, timeEntryId } = await seedClosableMonth(tenant);
     await lockMonth(tenant, month, employeeId);
 
@@ -265,9 +246,7 @@ test.describe("Monatsabschluss locking cycle", () => {
     // the hidden "delete anyway" affordance, the API surfaces the locked
     // error and the UI shows the canonical banner.
     await page.getByTestId(`time-entry-row-${timeEntryId}-menu`).click();
-    await page
-      .getByTestId(`time-entry-row-${timeEntryId}-force-delete`)
-      .click();
+    await page.getByTestId(`time-entry-row-${timeEntryId}-force-delete`).click();
     await expectLockedMonthError(page, "time-entry");
   });
 });

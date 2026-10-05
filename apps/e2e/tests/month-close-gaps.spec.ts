@@ -62,6 +62,7 @@ async function seedGapEmployee(adminToken: string): Promise<{
     method: "POST",
     headers,
     body: JSON.stringify({
+      usualWorkDays: [1, 2, 3, 4, 5], // Issue #481 R5
       firstName: "Gap",
       lastName: "Tester",
       email: `gap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@test.local`,
@@ -220,6 +221,7 @@ test.describe("Month-close gap acknowledgement (UX-01)", () => {
       method: "POST",
       headers,
       body: JSON.stringify({
+        usualWorkDays: [1, 2, 3, 4, 5], // Issue #481 R5
         firstName: "No",
         lastName: "Gap",
         email: `nogap-${Date.now()}@test.local`,
@@ -241,6 +243,7 @@ test.describe("Month-close gap acknowledgement (UX-01)", () => {
       method: "POST",
       headers,
       body: JSON.stringify({
+        usualWorkDays: [1, 2, 3, 4, 5], // Issue #481 R5
         firstName: "Ready",
         lastName: "Emp",
         email: `ready-${Date.now()}@test.local`,

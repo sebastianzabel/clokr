@@ -235,6 +235,7 @@ test.describe("Leave (Urlaub) UI flow", () => {
     const empRes = await page.request.post(`${API_BASE}/api/v1/employees`, {
       headers: tenantAuthHeaders(tenant),
       data: {
+        usualWorkDays: [1, 2, 3, 4, 5], // Issue #481 R5
         email: `emp-${Date.now()}@${tenant.tenantId}.test`,
         firstName: "Review",
         lastName: "Target",
