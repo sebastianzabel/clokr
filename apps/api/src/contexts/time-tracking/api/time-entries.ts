@@ -2680,7 +2680,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
-      // D-07: T1 is the saldo's own entry set, so workingMinutes here is the account's Ist.
+      // D-07: T1 is the saldo's own entry set; no Berufsschule credit, no hire/exit-span clamp.
       const access = accessContextFromRequest(req);
       let entries = await getValidWorkedEntriesInRange(
         app.prisma,

@@ -479,5 +479,61 @@ describe("Issue #79 (Phase 79 Plan 04) — GET /api/v1/time-entries/summary", ()
       expect(sum.breakMinutes).toBe(90);
       expect(sum.presenceMinutes).not.toBe(sum.workingMinutes);
     });
+
+    // Documented difference (review WR-01): the summary sums the T1 entry set over the requested
+    // period as-is, while the account additionally clamps to the employment span (and, for an
+    // Azubi, adds the Berufsschule credit). This case pins the clamp so the two numbers cannot
+    // silently be assumed equal for an employee with an entry before the hire date.
+    it("an entry before the hire date counts in the summary but not in the month saldo", async () => {
+      const { employee } = await createEmployee("clamp");
+      await app.prisma.employee.update({
+        where: { id: employee.id },
+        data: { hireDate: new Date("2026-05-05T00:00:00Z") },
+      });
+      await app.prisma.workSchedule.create({
+        data: {
+          employeeId: employee.id,
+          type: "FIXED_SCHEDULE",
+          weeklyHours: 40,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          workDays: [1, 2, 3, 4, 5],
+          validFrom: new Date("2026-05-05T00:00:00Z"),
+        },
+      });
+      await createHome(employee.id, data.salonId);
+      await app.prisma.overtimeAccount.create({
+        data: { employeeId: employee.id, balanceHours: 0 },
+      });
+      // 2026-05-04 lies one day before the hire date; the 5th and 6th are inside the span.
+      await createEntry(employee.id, data.salonId, "2026-05-04");
+      await createEntry(employee.id, data.salonId, "2026-05-05");
+      await createEntry(employee.id, data.salonId, "2026-05-06");
+
+      const res = await summary(
+        data.adminToken,
+        `employeeId=${employee.id}&from=2026-05-01&to=2026-05-31`,
+      );
+      expect(res.statusCode).toBe(200);
+      const sum = JSON.parse(res.body) as { workingMinutes: number; entryCount: number };
+
+      const saldoRes = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/month-saldo/${employee.id}?year=2026&month=5`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(saldoRes.statusCode).toBe(200);
+      const saldo = JSON.parse(saldoRes.body) as { workedMinutes: number };
+
+      // Summary: all three entries (3 x 480). Account: only the two inside the employment span.
+      expect(sum.entryCount).toBe(3);
+      expect(sum.workingMinutes).toBe(1440);
+      expect(saldo.workedMinutes).toBe(960);
+    });
   });
 });

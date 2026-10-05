@@ -240,8 +240,11 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   auto-break is never re-applied at read time — what the write path stored is what counts. An open
   entry is 0/0 in the kernel and `null` in `GET /time-entries` (`presenceMinutes`/`workingMinutes`
   per item). `GET /time-entries/summary` (`employeeId`, `from`, `to`, at most 366 days) sums
-  presence, working time and breaks over the saldo's own entry set, so its `workingMinutes` IS the
-  account's Ist (a scoped manager gets the sum over the entries in scope). `addWorkingMinutes`
+  presence, working time and breaks over the saldo's own entry set (T1: closed, valid, non-deleted
+  WORK entries), so its `workingMinutes` equals the Ist the account counts from recorded entries
+  (a scoped manager gets the sum over the entries in scope). It is NOT the account's full month
+  Ist: the account additionally adds the Berufsschule credit (Azubi) and clamps entries to the
+  hire/exit span, the summary does neither — never assert "same number" for those employees. `addWorkingMinutes`
   keeps the legacy association of the left folds (`(sum + presence) − break`) on purpose — never
   simplify it to `sum + workingMinutes`, that changes the last bit for millisecond-precision rows.
   `apps/api/src/__tests__/working-time-formula-one-place-79.test.ts` fails on an inline copy. The
