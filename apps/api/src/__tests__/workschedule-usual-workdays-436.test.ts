@@ -219,7 +219,9 @@ describe("Issue #436 Plan 02 — WorkSchedule.usualWorkDays on every write path 
     expect(res.statusCode).toBe(400);
   });
 
-  it("PUT SHIFT_BASED update-in-place: stored [2,3,4,5], omitting usualWorkDays keeps it; sending null clears to []", async () => {
+  // Issue #481 R5 (owner decision 04.10.2026): empty Angabe no longer valid for SHIFT_BASED — null
+  // used to clear the Angabe to [], it is now rejected and the stored value survives.
+  it("PUT SHIFT_BASED update-in-place: stored [2,3,4,5], omitting usualWorkDays keeps it; sending null is rejected and keeps it", async () => {
     // First, make sure the stored value is [2,3,4,5] (seed already set it, but be explicit).
     const setRes = await putWork(shiftEmployee.id, {
       type: "SHIFT_BASED",
@@ -246,8 +248,11 @@ describe("Issue #436 Plan 02 — WorkSchedule.usualWorkDays on every write path 
       usualWorkDays: null,
       validFrom: seedValidFrom,
     });
-    expect(nullRes.statusCode).toBe(200);
-    expect(JSON.parse(nullRes.body).usualWorkDays).toEqual([]);
+    expect(nullRes.statusCode).toBe(400);
+    const stored = await app.prisma.workSchedule.findFirstOrThrow({
+      where: { employeeId: shiftEmployee.id, validFrom: new Date(seedValidFrom) },
+    });
+    expect(stored.usualWorkDays).toEqual([2, 3, 4, 5]);
 
     // Restore for subsequent tests in this file.
     const restoreRes = await putWork(shiftEmployee.id, {
@@ -339,15 +344,16 @@ describe("Issue #436 Plan 02 — WorkSchedule.usualWorkDays on every write path 
   });
 
   it("audit: PUT changing [] -> [2,3,4,5] writes a WorkSchedule AuditLog row with usualWorkDays in old and new value", async () => {
-    const zeroRes = await putWork(shiftEmployee.id, {
-      type: "SHIFT_BASED",
-      weeklyHours: 32,
-      contractWorkDaysPerWeek: 4,
-      usualWorkDays: null,
-      validFrom: seedValidFrom,
+    // Issue #481 R5 (owner decision 04.10.2026): empty Angabe no longer valid for SHIFT_BASED — the
+    // legacy empty state can no longer be produced through the route, so the fixture sets it directly.
+    const zeroRow = await app.prisma.workSchedule.findFirstOrThrow({
+      where: { employeeId: shiftEmployee.id, validFrom: new Date(seedValidFrom) },
     });
-    expect(zeroRes.statusCode).toBe(200);
-    const scheduleId = JSON.parse(zeroRes.body).id as string;
+    await app.prisma.workSchedule.update({
+      where: { id: zeroRow.id },
+      data: { usualWorkDays: [] },
+    });
+    const scheduleId = zeroRow.id;
 
     const updateRes = await putWork(shiftEmployee.id, {
       type: "SHIFT_BASED",
@@ -424,17 +430,19 @@ describe("Issue #436 Plan 02 — WorkSchedule.usualWorkDays on every write path 
     expect(JSON.parse(res.body).error).toContain("nur bei Schichtbetrieb");
   });
 
-  it("POST SHIFT_BASED without usualWorkDays field -> stored []", async () => {
+  // Issue #481 R5 (owner decision 04.10.2026): empty Angabe no longer valid for SHIFT_BASED — a
+  // create without the field used to store [], it is now rejected and nothing is created.
+  it("POST SHIFT_BASED without usualWorkDays field -> 400, no Employee/User created", async () => {
+    const email = `w436p-noangabe-${Date.now()}@test.de`;
     const res = await postEmployee({
+      email,
       scheduleType: "SHIFT_BASED",
       contractWorkDaysPerWeek: 4,
     });
-    expect(res.statusCode).toBe(201);
-    const body = JSON.parse(res.body);
-    const schedule = await app.prisma.workSchedule.findFirstOrThrow({
-      where: { employeeId: body.id },
-    });
-    expect(schedule.usualWorkDays).toEqual([]);
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error).toContain("Pflicht");
+    const user = await app.prisma.user.findUnique({ where: { email } });
+    expect(user).toBeNull();
   });
 
   it("POST audit: Employee CREATE newValue.workSchedule equals {type, contractWorkDaysPerWeek, usualWorkDays}", async () => {

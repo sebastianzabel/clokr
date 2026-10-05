@@ -48,6 +48,7 @@ async function seedEmployee(tenant: TestTenant): Promise<{ employeeId: string }>
       authorization: `Bearer ${tenant.adminToken}`,
     },
     body: JSON.stringify({
+      usualWorkDays: [1, 2, 3, 4, 5], // Issue #481 R5
       firstName: "Test",
       lastName: "Mitarbeiter",
       email: `emp-exempt-${stamp}@${tenant.tenantId}.test`,

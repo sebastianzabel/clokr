@@ -44,6 +44,7 @@ describe("GET /api/v1/settings/vacation/:employeeId — first-access self-heal (
       url: "/api/v1/employees",
       headers: { authorization: `Bearer ${data.adminToken}` },
       payload: {
+        usualWorkDays: [1, 2, 3, 4, 5],
         email: `selfheal-${uid}@test.de`,
         firstName: "Self",
         lastName: "Heal",
@@ -110,6 +111,7 @@ describe("GET /api/v1/settings/vacation/:employeeId — first-access self-heal (
       url: "/api/v1/employees",
       headers: { authorization: `Bearer ${data.adminToken}` },
       payload: {
+        usualWorkDays: [1, 2, 3, 4, 5],
         email: `selfheal-pv-${uid}@test.de`,
         firstName: "Person",
         lastName: "Value",
@@ -149,6 +151,7 @@ describe("GET /api/v1/settings/vacation/:employeeId — first-access self-heal (
       url: "/api/v1/employees",
       headers: { authorization: `Bearer ${data.adminToken}` },
       payload: {
+        usualWorkDays: [1, 2, 3, 4, 5],
         email: `selfheal-exited-${uid}@test.de`,
         firstName: "Exited",
         lastName: "Employee",

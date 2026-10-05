@@ -2392,6 +2392,59 @@ Eigentümer-Beispiel Mo–Mi = 3 Tage, danach Do–Sa = 1 Tag in derselben ISO-W
 über HTTP bewiesen, beide Genehmigungsreihenfolgen getestet (Plan 04); volle API- und Web-Testsuite
 nach Plan 05 (6844 passed/3 skipped bzw. 1498 passed, 0 failed), alle projektweiten Gates grün.
 
+### Nachtrag (Phase 481, Issue #481) — übliche Arbeitstage Pflicht bei SHIFT_BASED; Urlaubsverbrauch nach dem Vertrag am Urlaubstag
+
+**Warum.** Messung auf prod am 04.10.2026 nach dem Rollout von v1.14.0 (nur lesend): Die Bepreisung
+des Urlaubsverbrauchs las für jede Woche den **neuesten** `WorkSchedule`-Datensatz, auch für Urlaub
+vor einem Vertragswechsel. 0 von 15 `SHIFT_BASED`-Mitarbeitenden hatten „übliche Arbeitstage“; ohne
+Angabe zählte jede angebrochene Woche jeden beantragten Tag Mo–Sa. Der Probelauf von
+`recalculate-shift-based-leave-days.ts` hätte zudem importierte Vorlauf-Anträge (März/April, Import
+vom 26.05.) umbepreist. Owner-Entscheidung 04.10.2026: die Angabe ist bei Schichtbetrieb Pflicht.
+
+**Was sich geändert hat.**
+
+- **Semantikänderung** `WorkSchedule.usualWorkDays`: optional → Pflicht bei jedem Schreibvorgang, der
+  einen `SHIFT_BASED`-Vertrag anlegt oder ändert (`validateUsualWorkDays()`, deutsche 400). Die zwei
+  echten Schreibwege (Mitarbeiter anlegen, `PUT /settings/work/:employeeId`) erben die Regel; für
+  Sammelanwendung, den `cancelOrphanShifts`-Zweig und den CSV-Import ist per Test belegt, dass sie
+  keine `SHIFT_BASED`-Zeile schreiben.
+- Neue Route `PATCH /settings/work/:employeeId/usual-work-days`: setzt die Angabe auf einem
+  **bestehenden** Vertragsdatensatz, auditiert (`UPDATE WorkSchedule`, alt/neu), gleiche Berechtigung
+  und Scope-Prüfung wie der Vertragswechsel, einheitliche 404 für fremde/unbekannte Datensätze.
+- Bepreisung je Woche mit dem in ihr gültigen Vertrag (#450-Abschnitte); eine Woche, deren
+  beantragte Tage in zwei Abschnitten liegen, wird geteilt und je Teil als angebrochene Woche
+  gerechnet (D-01/D-07); gleichwertige Folgeabschnitte bilden einen Abschnitt (PD-01); andere
+  Vertragsarten zählen jeden Tag mit dem Wochentagssatz des an ihm gültigen Vertrags.
+- Das Neuberechnungs-Skript überspringt Anträge, die vor dem ersten erfassten Arbeitstag enden,
+  optional zusätzlich vor `--before`.
+- UI: Abschnitt „Übliche Arbeitstage nachtragen“ und Pflicht-Kennzeichnung in beiden Vertragsmasken.
+
+**Was bewusst NICHT geschah.** Kein Backfill, kein Ableiten aus `workDays`, keine Migration, keine
+automatische Umbepreisung gespeicherter Anträge (nur das Skript mit Probelauf und `--confirm`),
+keine Saldo- oder Anspruchs-Neuberechnung beim Nachtrag. Die Saldo-Seite (Monatsabschluss, ein
+Vertrag je Kalendermonat) bleibt unverändert; der enge Grenzfall einer Woche über einen
+Monatswechsel mit Vertragswechsel ist als Befund in #481 notiert (D-10).
+
+**Auswirkung auf die Kontexte.**
+
+- Unterbau: Pflichtregel in `validateUsualWorkDays()`; neue Nachtrag-Route in `settings.ts`.
+- Abwesenheiten: Bepreisung nach Vertragsabschnitt (`resolveLeaveDays`, Segment-Kerne), Skript-Ausschluss.
+- Schichtplanung: `getShiftBasedLeaveDaysForWeek` liest den Vertrag der Woche; die Spalte
+  „Vertragstage“ zeigt weiter den aktuellen Vertrag (Befund, nicht geändert).
+- Arbeitszeitkonto: keine.
+- Zeiterfassung: keine (das Skript liest nur das Datum des ersten nicht gelöschten Zeiteintrags).
+- Composition-Schicht: keine (Berichte folgen über `prefixLeaveDays`/`resolveLeaveDays`).
+
+**Gemessen.** Vertrag A (5 Tage Mo–Fr bis 31.07., 4 Tage Di–Fr ab 01.08.2026): 23.–29.07. → 5,
+11.–14.09. → 1; ohne Angabe 6 bzw. 3. Vertrag B (4 Tage, Angabe nur auf dem Oktober-Datensatz):
+Vorschau 12.–28.06. 10, nach Nachtrag auf dem Mai-Datensatz 9, gespeicherter Antrag bleibt 10.
+Einzelvertrag-Äquivalenz gegen den eingefrorenen Kern vor #481 über generierte Matrizen (481-01).
+Skript-Probelauf: importierte Anträge als `[SKIPPED-PRE-TRACKING]`, echte Kandidaten 4 → 5.
+
+**Nachrechnen.**
+`pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api exec vitest run src/__tests__/leave-days-contract-at-time-481.test.ts src/contexts/absence/__tests__/leave-pricing-segments-481.test.ts src/contexts/absence/__tests__/shift-based-kernel-equivalence-481.test.ts src/__tests__/usual-workdays-required-481.test.ts src/__tests__/usual-work-days-backfill-route-481.test.ts scripts/__tests__/recalculate-shift-based-leave-days-481.test.ts`;
+Probelauf auf einer Datenbank: `pnpm --filter @clokr/api exec tsx scripts/recalculate-shift-based-leave-days.ts --all-tenants` (ohne `--confirm`).
+
 ## U — MONTHLY_HOURS: Monats-Soll nach Ø-Methode, Schalter `monthlyHoursHolidayDeduction` stillgelegt (Phase 433, Issue #433)
 
 **Schwere: Semantikänderung des Unterbaus nach ADR 0002, Entscheidung 7 (`TenantConfig`). Owner-Entscheidung = Issue #433, Kommentar vom 03.10.2026 (plus die Umsetzungsentscheidungen desselben Tages).**

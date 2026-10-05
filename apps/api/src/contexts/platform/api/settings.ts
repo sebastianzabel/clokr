@@ -389,9 +389,10 @@ export const employeeScheduleSchema = z
     // the whole payload on an explicit null (documented Zod gotcha). Bounds mirror
     // fullTimeWorkDaysPerWeek above verbatim.
     contractWorkDaysPerWeek: z.number().int().min(1).max(7).optional().nullable(),
-    // Phase 436 (D-01/D-02): optional "übliche Arbeitstage", SHIFT_BASED only. .nullable()
-    // (not bare .optional()) because this project's Svelte forms send `field: x ? x : null` —
-    // null clears the Angabe (writes []), undefined keeps the existing value unchanged.
+    // Phase 436 (D-01/D-02): "übliche Arbeitstage", SHIFT_BASED only. .nullable() (not bare
+    // .optional()) because this project's Svelte forms send `field: x ? x : null` — undefined
+    // keeps the existing value; null means an empty Angabe, which validateUsualWorkDays rejects
+    // for SHIFT_BASED since Issue #481 R5.
     usualWorkDays: z.array(z.number().int().min(0).max(6)).max(7).optional().nullable(),
     validFrom: z
       .string()
@@ -443,6 +444,13 @@ export const employeeScheduleSchema = z
       });
     }
   });
+
+// Issue #481 R6 (D-05) — body of PATCH /work/:employeeId/usual-work-days. The contract row id
+// travels in the body so the route keeps a single, already-probed path parameter (employeeId).
+const usualWorkDaysBackfillSchema = z.object({
+  workScheduleId: z.string().uuid(),
+  usualWorkDays: z.array(z.number().int().min(0).max(6)).max(7),
+});
 
 // ── PUT/GET /api/v1/settings/security — the writable field set, stated ONCE ──────────────────────
 //
@@ -1491,6 +1499,101 @@ export async function settingsRoutes(app: FastifyInstance) {
       );
 
       return schedule;
+    },
+  });
+
+  // ── PATCH /api/v1/settings/work/:employeeId/usual-work-days — Nachtrag übliche Arbeitstage ──
+  // Issue #481 R6 (D-05): sets the Angabe on an EXISTING SHIFT_BASED contract row in place, so a
+  // historic contract can carry the übliche Arbeitstage that leave pricing reads for its weeks
+  // (pricing uses the row valid in each week since Issue #481 R1). The row id is in the body, so
+  // the route has one path parameter, guarded exactly like PUT /work/:employeeId above; the row's
+  // own lookup answers one uniform 404 for an unknown, another employee's or a foreign row.
+  // Deliberately recomputes neither saldo nor entitlement nor any leave price: stored approved
+  // requests are corrected only by the audited repricing script, and nothing derived is
+  // rewritten, so closed months are untouched.
+  app.patch("/work/:employeeId/usual-work-days", {
+    schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
+    preHandler: requirePermission("contract:update:ZUGEWIESEN"),
+    handler: async (req, reply) => {
+      const access = accessContextFromRequest(req);
+      const { employeeId } = req.params as { employeeId: string };
+      const body = usualWorkDaysBackfillSchema.parse(req.body);
+
+      const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
+      if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      // T-100-09: identical 404 for a foreign tenant's employee, audited.
+      if (employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "WorkSchedule",
+          entityId: employeeId,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+      if (
+        !(await isStammsalonScopeMatch(
+          app.prisma,
+          req.user.tenantId,
+          await resolveAccessReach(app.prisma, access, "contract:update:ZUGEWIESEN"),
+          employeeId,
+          new Date(),
+        ))
+      ) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "SCOPE_ACCESS_DENIED",
+          entity: "WorkSchedule",
+          entityId: employeeId,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
+      const row = await app.prisma.workSchedule.findFirst({
+        where: { id: body.workScheduleId, employeeId, employee: { tenantId: req.user.tenantId } },
+      });
+      if (!row) return reply.code(404).send({ error: "Vertragsdatensatz nicht gefunden" });
+      if (row.type !== "SHIFT_BASED") {
+        return reply
+          .code(400)
+          .send({ error: "Übliche Arbeitstage gibt es nur bei Schichtbetrieb." });
+      }
+
+      const cfg = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: req.user.tenantId },
+        select: { defaultWorkDays: true },
+      });
+      const check = validateUsualWorkDays(
+        "SHIFT_BASED",
+        body.usualWorkDays,
+        contractWorkDaysPerWeekFrom(row, cfg?.defaultWorkDays),
+      );
+      if (!check.ok) return reply.code(400).send({ error: check.error });
+
+      // Same Angabe as stored: nothing to write, nothing to audit.
+      if (
+        check.value.length === row.usualWorkDays.length &&
+        check.value.every((d, i) => d === row.usualWorkDays[i])
+      ) {
+        return row;
+      }
+
+      const updated = await app.prisma.workSchedule.update({
+        where: { id: row.id },
+        data: { usualWorkDays: check.value },
+      });
+      await app.audit({
+        userId: req.user.sub,
+        action: "UPDATE",
+        entity: "WorkSchedule",
+        entityId: row.id,
+        oldValue: row,
+        newValue: updated,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+      return updated;
     },
   });
 

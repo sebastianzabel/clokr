@@ -7,9 +7,16 @@
  * Rules, in this order:
  *   1. every value must be an integer 0..6 (0=Sun..6=Sat, same convention as `workDays`);
  *   2. no value may repeat;
- *   3. a non-empty list is only accepted for `scheduleType === "SHIFT_BASED"`;
- *   4. for SHIFT_BASED, a non-empty list must have at least `contractWorkDaysPerWeek` entries.
- * An empty list is always valid — it means "keine Angabe" (D-01).
+ *   3. an empty list is valid only for non-SHIFT_BASED types (they carry no Angabe at all);
+ *   4. a non-empty list is only accepted for `scheduleType === "SHIFT_BASED"`;
+ *   5. for SHIFT_BASED, the list must have at least `contractWorkDaysPerWeek` entries.
+ *
+ * Issue #481 R5 (owner decision 2026-10-04): the Angabe is REQUIRED for SHIFT_BASED — an empty
+ * list no longer means "keine Angabe" there, because leave pricing counts every requested Mo–Sa
+ * date of a fragment week without it. This is an Unterbau-Semantikänderung (ADR 0002,
+ * Entscheidung 7); the Nachtrag lives in docs/adr/0001-abweichungen.md. The rule applies to
+ * writes only: existing rows with an empty Angabe are never backfilled or guessed from
+ * `workDays`.
  */
 export function validateUsualWorkDays(
   scheduleType: string,
@@ -30,7 +37,11 @@ export function validateUsualWorkDays(
   }
 
   if (usualWorkDays.length === 0) {
-    return { ok: true, value: [] };
+    if (scheduleType !== "SHIFT_BASED") return { ok: true, value: [] };
+    return {
+      ok: false,
+      error: `Bei Schichtbetrieb sind die üblichen Arbeitstage Pflicht – bitte mindestens ${contractWorkDaysPerWeek} Wochentage ankreuzen, so viele Arbeitstage hat der Vertrag pro Woche.`,
+    };
   }
 
   if (scheduleType !== "SHIFT_BASED") {

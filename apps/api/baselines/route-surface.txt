@@ -32,6 +32,7 @@
 │       ├── /salon-assignments (GET, HEAD, POST)
 │       ├── /shift-patterns (GET, HEAD, PUT)
 │       ├── /unlock (PATCH)
+│       ├── /usual-work-days (PATCH)
 │       ├── /vocational-school-pattern (GET, HEAD, PUT)
 │   │       └── /:id (DELETE)
 │   │   └── /:id (PUT, DELETE)

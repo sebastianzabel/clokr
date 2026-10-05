@@ -51,6 +51,7 @@ async function seedEmployee(
       authorization: `Bearer ${tenant.adminToken}`,
     },
     body: JSON.stringify({
+      usualWorkDays: [1, 2, 3, 4, 5], // Issue #481 R5
       firstName: opts.firstName ?? "Test",
       lastName: opts.lastName ?? "Mitarbeiter",
       email: `emp-${Date.now()}@${tenant.tenantId}.test`,
@@ -68,10 +69,7 @@ async function seedEmployee(
 }
 
 test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
-  test("tenant-default Pausendauer saves and persists across reload", async ({
-    page,
-    tenant,
-  }) => {
+  test("tenant-default Pausendauer saves and persists across reload", async ({ page, tenant }) => {
     await loginAsTenantAdmin(page, tenant);
     await page.goto("/admin/system");
     await expect(page.getByTestId("admin-system-page")).toBeVisible();

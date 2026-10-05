@@ -152,6 +152,7 @@ describe("Work Schedule Versioning", () => {
         payload: {
           type: "SHIFT_BASED",
           weeklyHours: 40,
+          usualWorkDays: [1, 2, 3, 4, 5], // Issue #481 R5: SHIFT_BASED requires übliche Arbeitstage
           monthlyHours: null,
           mondayHours: 0,
           tuesdayHours: 0,
@@ -239,6 +240,7 @@ describe("Work Schedule Versioning", () => {
         url: "/api/v1/employees",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
+          usualWorkDays: [1, 2, 3, 4, 5],
           firstName: "Test",
           lastName: "ShiftBased",
           email: `shiftbased-${Date.now()}@example.com`,

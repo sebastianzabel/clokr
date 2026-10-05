@@ -234,6 +234,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/shift-leave-recalc-resolver.ts": "abwesenheiten", // writes LeaveRequest.daysProvisional when a roster change triggers recalculation (Phase 107) — LeaveRequest is the written model even though the trigger originates in Schichtplanung
   "src/contexts/absence/vacation-calc.ts": "abwesenheiten", // BUrlG vacation-entitlement calculation
   "src/contexts/absence/__tests__/fixtures/legacy-shift-based-kernel-pre436.ts": "abwesenheiten", // Phase 436 Plan 01 (Issue #436), D-05 — frozen verbatim pre-436 kernel copy for the equivalence proof; test infra specific to this context's own test suite, same category as services/phorest/__tests__/helpers.ts below
+  "src/contexts/absence/__tests__/fixtures/legacy-shift-based-kernel-pre481.ts": "abwesenheiten", // Phase 481 Plan 01 (Issue #481), R3 — frozen verbatim pre-481 kernel copy (commit 973553f0) for the single-contract equivalence proof; same category as the pre-436 fixture above
   "src/contexts/absence/vocational-school-constants.ts": "abwesenheiten", // Berufsschule pattern constants
   "src/contexts/absence/vocational-school-generator.ts": "abwesenheiten", // writes Absence primarily; notification.create is a side effect
   "src/contexts/absence/vocational-school-pattern-order.ts": "abwesenheiten", // EmployeeVocationalSchoolPattern ordering helper
